@@ -1,0 +1,323 @@
+// 输入区底部「本机硬件状态」小网格（HostHud）。
+//
+// 三格读数直接排在动作行最左侧（紧跟加号，替代了原来的工作区名称位），不套底色
+// 也不描边——它读起来是输入区的一部分，而不是贴在底部的一条独立状态条：
+// 前两格是 CPU 与内存占用（用「液位字形」表达：图标从底部按占用比例着色填满，
+// 与模型触发器里那个大脑图标同一套逻辑，精确读数让给悬停提示），末格是后台任务
+// 计数，鼠标移上去在卡片上方展开任务面板。
+//
+// 高度 26px（与动作行里 24~28px 的控件同处一条中线），宽度按内容取（约 110px）。
+
+import { Theme, CommandTask } from "theme.slint";
+import { I18n } from "i18n.slint";
+
+// 占用类：字形即仪表。底字用弱色，另一份同形图元放在一个从底部往上裁的容器里，
+// 按占用比例露出——和模型触发器的大脑图标（液位填充）是同一套做法，因此两处都
+// 是「填得越高越满、越满越警示」。数字一概不进格子，只留在悬停提示里。
+component GaugeCell inherits Rectangle {
+    in property <image> icon;
+    in property <float> ratio: 0.0;
+    in property <string> hint: "";
+    out property <bool> hovered: touch.has-hover;
+
+    width: 26px;
+    height: 26px;
+    background: transparent;
+
+    private property <float> fill: Math.clamp(root.ratio, 0.0, 1.0);
+    // 与模型触发器的大脑图标同一套暖色阶：强调橙 → 深橙 → 红（0.80 / 0.90 两档），
+    // 同为 16px 的实心填充，两处读数才一致。这里特意不用 Theme.warning(#C98A2B)：
+    // 那种赭黄夹在橙与红之间会读成棕色，在实心小字形上像「脏了」而不是「告警」。
+    private property <color> level-color: root.fill >= 0.9 ? #DC2626
+        : root.fill >= 0.8 ? #EA580C
+        : Theme.accent;
+
+    // 16px 与模型触发器里的大脑图标同尺寸：液位填充在这个尺寸下才有足够的
+    // 纵向分辨率（14px 时 60% 与 80% 几乎分不出来）。
+    glyph := Rectangle {
+        x: (parent.width - 16px) / 2;
+        y: (parent.height - 16px) / 2;
+        width: 16px;
+        height: 16px;
+
+        // 底色：未占用部分，保持弱色，填满之前仍能认出这是哪个指标。
+        Image {
+            x: 0px; y: 0px;
+            width: 16px; height: 16px;
+            source: root.icon;
+            colorize: Theme.muted;
+            image-fit: contain;
+        }
+        // 已占用部分：底边对齐的裁剪窗 + 反向偏移的同形图元，露出下半段。
+        Rectangle {
+            x: 0px; y: 16px - 16px * root.fill;
+            width: 16px; height: 16px * root.fill;
+            clip: true;
+            Image {
+                x: 0px; y: -16px * (1.0 - root.fill);
+                width: 16px; height: 16px;
+                source: root.icon;
+                colorize: root.level-color;
+                image-fit: contain;
+            }
+        }
+    }
+    touch := TouchArea {
+        Tooltip { text: @markdown("\{root.hint}"); }
+    }
+}
+
+// 后台任务格：图标 + 计数。有任务时整格点亮，计数用强调色。
+// 图标与占用格的字形同为 16px——同一行里三种图标尺寸不一致时，最小的那个会像
+// 没对齐的次级信息，而不是同一组状态。
+component TaskCell inherits Rectangle {
+    in property <int> count: 0;
+    in property <string> hint: "";
+    out property <bool> hovered: touch.has-hover;
+
+    width: 40px;
+    height: 26px;
+    background: transparent;
+
+    Image {
+        // 与占用格的字形共用同一条中线（26 高里居中）。
+        x: 5px; y: 5px; width: 16px; height: 16px;
+        source: @image-url("../assets/icons/terminal.svg");
+        colorize: root.count > 0 ? Theme.accent-ink : Theme.muted;
+        image-fit: contain;
+    }
+    Text {
+        x: 23px; y: 0px; width: parent.width - 23px; height: 26px;
+        // 两位数以上折成 "9+"：格子只给一个数字的宽度，超过就失去可读性。
+        text: root.count > 9 ? "9+" : "\{root.count}";
+        color: root.count > 0 ? Theme.accent-ink : Theme.muted;
+        font-size: Theme.font-xs;
+        font-weight: 600;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    touch := TouchArea {
+        // 有任务时由任务面板承担说明，不再弹自己的悬停提示（两者会打架）。
+        if root.count == 0 : Tooltip { text: @markdown("\{root.hint}"); }
+    }
+}
+
+// 任务面板的一行：主行是命令 + 时长 + 终止；展开后是工作目录与输出尾部。
+component TaskRow inherits Rectangle {
+    in property <CommandTask> task;
+    callback toggle(string);
+    callback terminate(string);
+
+    height: root.task.expanded ? 96px : 30px;
+    background: transparent;
+
+    // 主行：整行可点开/收起详情，终止按钮单独占右侧 20px。
+    TouchArea {
+        x: 0px; y: 0px; width: parent.width - 22px; height: 30px;
+        mouse-cursor: pointer;
+        clicked => { root.toggle(root.task.id); }
+        Tooltip { text: root.task.expanded ? @markdown("\{I18n.hud_tasks_collapse}") : @markdown("\{I18n.hud_tasks_expand}"); }
+    }
+    Rectangle {
+        x: 0px; y: 13px; width: 5px; height: 5px;
+        border-radius: 2.5px;
+        background: Theme.accent;
+    }
+    Text {
+        x: 12px; y: 0px; width: parent.width - 22px - 12px - elapsed.preferred-width - 6px; height: 30px;
+        text: root.task.command;
+        color: Theme.text;
+        font-size: Theme.font-xs;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    elapsed := Text {
+        x: parent.width - 22px - self.width; y: 0px; width: self.preferred-width; height: 30px;
+        text: root.task.elapsed;
+        color: Theme.muted;
+        font-size: Theme.font-2xs;
+        vertical-alignment: center;
+    }
+    stop-touch := TouchArea {
+        x: parent.width - 20px; y: 5px; width: 20px; height: 20px;
+        mouse-cursor: pointer;
+        clicked => { root.terminate(root.task.id); }
+        Tooltip { text: @markdown("\{I18n.hud_tasks_stop}"); }
+        Rectangle {
+            width: parent.width; height: parent.height;
+            border-radius: Theme.radius-tag;
+            background: stop-touch.has-hover ? Theme.danger-bg : transparent;
+            Image {
+                x: (parent.width - 9px) / 2; y: (parent.height - 9px) / 2;
+                width: 9px; height: 9px;
+                source: @image-url("../assets/icons/xmark.svg");
+                colorize: stop-touch.has-hover ? Theme.danger : Theme.muted;
+                image-fit: contain;
+            }
+        }
+    }
+
+    // 展开区：工作目录一行 + 输出尾部。定高并直接截断，完整输出仍在时间线里。
+    if root.task.expanded : Rectangle {
+        x: 12px; y: 32px; width: parent.width - 24px; height: 58px;
+        background: Theme.panel;
+        border-radius: Theme.radius-sm;
+        border-width: 1px;
+        border-color: Theme.border;
+
+        Text {
+            x: 8px; y: 4px; width: parent.width - 16px; height: 11px;
+            text: root.task.cwd;
+            color: Theme.muted;
+            font-size: 9px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            x: 8px; y: 17px; width: parent.width - 16px; height: 37px;
+            text: root.task.detail-state == 0 ? I18n.hud_tasks_loading
+                : root.task.output == "" ? I18n.hud_tasks_no_output
+                : root.task.output;
+            color: root.task.output == "" ? Theme.muted : Theme.text-secondary;
+            font-family: Theme.font-mono;
+            font-size: 9px;
+            wrap: word-wrap;
+            overflow: elide;
+            vertical-alignment: top;
+        }
+    }
+}
+
+// 悬停展开的任务面板。整体上浮在输入卡之上，底边与读数行紧贴（0 间距），
+// 这样指针从读数移进面板时悬停不会中断，面板不会闪。
+component TaskPanel inherits Rectangle {
+    in property <[CommandTask]> tasks;
+    in property <int> count: 0;
+    in property <int> hidden: 0;
+    out property <bool> hovered: bridge.has-hover;
+    callback toggle(string);
+    callback terminate(string);
+
+    width: 380px;
+    height: card.height + 6px;
+    background: transparent;
+
+    // 先在底层铺满悬停区，再画卡片：卡片里的按钮因此仍然优先命中。
+    bridge := TouchArea {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+    }
+    card := Rectangle {
+        y: 0px; width: parent.width; height: body.preferred-height + 16px;
+        border-radius: Theme.radius-lg;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 4px;
+
+        body := VerticalLayout {
+            x: 8px; y: 8px; width: parent.width - 16px;
+            spacing: 2px;
+
+            HorizontalLayout {
+                height: 18px; spacing: 6px;
+                Text {
+                    text: I18n.hud_tasks_title;
+                    color: Theme.text;
+                    font-size: Theme.font-xs;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: I18n.hud_tasks_count(root.count);
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                    vertical-alignment: center;
+                }
+            }
+            if root.tasks.length == 0 : Text {
+                height: 24px;
+                text: I18n.hud_tasks_empty;
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                vertical-alignment: center;
+            }
+            for task[index] in root.tasks : TaskRow {
+                task: task;
+                toggle(id) => { root.toggle(id); }
+                terminate(id) => { root.terminate(id); }
+            }
+            if root.hidden > 0 : Text {
+                height: 16px;
+                text: I18n.hud_tasks_more(root.hidden);
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+export component HostHud inherits Rectangle {
+    // CPU / 内存占用比例（0..=1），只驱动进度条长度与告警色。
+    in property <float> cpu: 0.0;
+    in property <float> memory: 0.0;
+    // 悬停提示，调用方按当前语言组装好整句。
+    in property <string> cpu-hint: "";
+    in property <string> memory-hint: "";
+    // 后台任务
+    in property <int> task-count: 0;
+    in property <int> task-hidden: 0;
+    in property <[CommandTask]> tasks: [];
+    in property <string> task-hint: "";
+    callback toggle-task(string);
+    callback terminate-task(string);
+
+    // 面板在任务格或面板本身上悬停时展开；两个区域上下紧贴，切换时不会中断。
+    // 只在任务格上触发：其余格子有自己的数值提示，不该顺带弹出任务列表。
+    private property <bool> panel-open: root.task-count > 0
+        && (task-cell.hovered || panel.hovered);
+
+    // 无底色、无描边：这组读数直接长在动作行上，不再自成一格「底部状态条」，
+    // 免得和输入卡之间出现一条硬边。留白交给格内居中与行内的 spacing。
+    width: body.preferred-width;
+    height: 26px;
+    background: transparent;
+
+    body := HorizontalLayout {
+        // 没有卡片之后，分隔线会变成没有归属的短刻度，分组交给间距本身：
+        // 12px 的留白足够把三个读数分开，又不至于散成三个孤立图标。
+        // 左侧 10px 是补上加号那一段：格的字形在 26px 格里居中，天然内缩 5px，
+        // 不补的话首个图标离加号只有 11px，和后面 22px 的节奏对不上。
+        padding-left: 10px;
+        spacing: 12px;
+        cpu-cell := GaugeCell {
+            icon: @image-url("../assets/icons/cpu-chip.svg");
+            ratio: root.cpu;
+            hint: root.cpu-hint;
+        }
+        mem-cell := GaugeCell {
+            icon: @image-url("../assets/icons/fa-memory.svg");
+            ratio: root.memory;
+            hint: root.memory-hint;
+        }
+        task-cell := TaskCell {
+            count: root.task-count;
+            hint: root.task-hint;
+        }
+    }
+    // 常驻实例 + visible 控制：条件元素里的 id 不能在 `panel-open` 里前向引用，
+    // 而悬停判定又必须先读到 panel.hovered。
+    panel := TaskPanel {
+        visible: root.panel-open;
+        // 左对齐到卡片左缘，不再水平居中：网格已经退回动作行最左侧，居中的话面板
+        // 会往左伸出去 (380-118)/2 ≈ 131px，被输入区甚至窗口边缘切掉。
+        x: 0px;
+        y: -self.height;
+        tasks: root.tasks;
+        count: root.task-count;
+        hidden: root.task-hidden;
+        toggle(id) => { root.toggle-task(id); }
+        terminate(id) => { root.terminate-task(id); }
+    }
+}

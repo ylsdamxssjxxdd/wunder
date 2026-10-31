@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # Build the plain Linux CLI inside the Ubuntu 18.04 CI image. This mirrors the
-# AppImage-native entry: amd64 compiles natively, arm64 cross-compiles with the
+# Native CLI entry: amd64 compiles natively, arm64 cross-compiles with the
 # target that the image installs. CLI distribution is always a bare ELF, never
-# an AppImage; prompts and skills are embedded into the binary at build time.
+# an archive; prompts and skills are embedded into the binary at build time.
 
 repo_root="${WUNDER_REPO_ROOT:-$(cd -- "$(dirname -- "$0")/.." && pwd)}"
 output_dir="${WUNDER_CLI_OUTPUT_DIR:-}"

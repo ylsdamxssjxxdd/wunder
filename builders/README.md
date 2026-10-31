@@ -1,6 +1,6 @@
 # Desktop and CLI builders
 
-本目录集中放置桌面 Slint 与 CLI 的离线发布、交叉编译和分发门禁脚本。仓库根目录只保留两个公开入口：Linux 使用 `build.sh`，Windows 使用 `build.bat`。`frontend-slint/scripts/` 只保留原生联调、启动回归和 AppImage 内容检查。
+本目录集中放置桌面 Slint 与 CLI 的离线发布、交叉编译和分发门禁脚本。仓库根目录只保留两个公开入口：Linux 使用 `build.sh`，Windows 使用 `build.bat`。`frontend-slint/scripts/` 只保留原生联调与启动回归。
 
 公开入口统一以程序目标和分发架构选择构建，并按宿主自动选择离线 SDK：ARM64 Linux 使用 `Rust-builder/kylin-arm`，x86_64 Linux 使用 `Rust-builder/kylin-x86`（准备方法见“kylin-x86”章节）。推荐使用简拼 `-t`/`-a`，`-target`/`-arch`/`--target`/`--arch` 写法等价：
 
@@ -14,13 +14,15 @@ bash build.sh -t cli -a linux-arm64
 bash build.sh -t desktop -a win7-x86
 bash build.sh -t cli -a win7-x86
 
-# Linux Desktop（arm64 与 amd64）默认都打成 AppImage，同时保留裸 ELF；
-# CLI 永远是普通 ELF。AppImage runtime 默认取离线 SDK 的
-# offline/appimage-runtime/ 内同架构 blob，仅在需要覆盖时才设置
-# WUNDER_APPIMAGE_RUNTIME_ARM64 / WUNDER_APPIMAGE_RUNTIME_AMD64。
+# Linux Desktop（arm64 与 amd64）产出裸 ELF 和同目录的 AppDir 目录归档
+# （wunder-slint-<ver>-linux-<arch>.tar.gz），.run 安装包与便携包都从该归档
+# 解压安装，目标机无需 FUSE/libfuse2；CLI 永远是普通 ELF。
 
 # 构建当前 Linux 主机可发布的全部程序：三个架构 × Desktop/CLI。
 bash build.sh -all
+
+# 打出免安装便携包（单文件，首次启动自解压到 ~/.wunder，无需 FUSE）。
+bash build.sh portable -a linux-amd64
 ```
 
 `--docker` 固定使用 ARM64 Ubuntu 18.04 构建镜像并读取 `Rust-builder/kylin-arm`，与宿主架构无关；ARM64 宿主的默认 `--native` 走 kylin-arm，x86_64 宿主走 kylin-x86。
@@ -30,7 +32,7 @@ Windows 使用同一套目标/架构名称。Windows 上的 Linux 目标通过 D
 ```bat
 build.bat -t desktop -a win7-x86
 build.bat -t cli -a linux-amd64
-build.bat -All -AppImageRuntimeArm64 X:\runtime-arm64.AppImage -AppImageRuntimeAmd64 X:\runtime-amd64.AppImage
+build.bat -All
 ```
 
 ## 打包安装器（pack）
@@ -50,17 +52,19 @@ bash build.sh pack -a linux-arm64
 
 Windows 安装包优先使用离线 SDK 中的 `Rust-builder/win7/offline/tools/inno-setup/app/ISCC.exe`（Inno Setup 6.7.3，随 SDK 分发，版本与 SHA256 见同目录 `VERSION.txt`）；也可以用 `-Iscc` 或 `WUNDER_ISCC` 覆盖，`-NoDownload` 禁止联网。只有离线编译器缺失且允许下载时，才会准备到 `temp_dir/tools/inno-setup`。SDK 根目录可用 `WUNDER_WIN7_BUILDER_ROOT` 或 `WUNDER_BUILDER_ROOT` 覆盖。
 
+Linux 免安装便携包由 `build.sh portable` 生成：`packaging/linux/portable/portable-header.sh` 是 POSIX shell 启动器，`builders/pack-portable.sh` 把渲染后的启动器与 AppDir 目录归档直接拼成 `wunder-<ver>-<x64|arm64>.portable`。首次启动解压到 `<home>/app/desktop` 并写入 `.wunder-home`，之后按 `.portable-version` 跳过解压；布局与 `.run` 的安装结果完全一致，两者可互相替换且不会动用户数据。它不需要 FUSE、`libfuse2`、AppImage runtime 或 root 权限，是现代 Linux 上"下载即跑"的推荐形态。
+
 Linux 安装包是单文件自解压 `.run`，由 Python 3.6+ 组装，不需要 Docker 或 Rust 工具链，也不访问网络。Windows 上组包时优先复用 SDK 的 `Rust-builder/win7/offline/tools/python/python.exe`（Python 3.8.10 embeddable），因此宿主机未安装 Python 也能离线生成 `.run`；Linux 宿主使用系统 `python3`。
 
 输入默认从构建产物目录查找：
 
-- 蛹：`target/frontend-slint/dist/win7-x86/wunder-frontend-slint-<ver>-win7-x86.exe`，或 `target/slint/dist/linux-<arch>/wunder-slint-<ver>-linux-<arch>.AppImage`
+- 蛹：`target/frontend-slint/dist/win7-x86/wunder-frontend-slint-<ver>-win7-x86.exe`；Linux 优先使用 `target/slint/dist/linux-<arch>/wunder-slint-<ver>-linux-<arch>.tar.gz`（AppDir 目录归档，安装时解压，无需 FUSE）
 - 舵机：`target/cli/dist/<target>/wunder-cli-<ver>-<target>[.exe]`
 - 补充包：`dist/<target>/`、`target/installer/payload/<target>/`、`temp_dir/win7-gnu-lab/win7-supplement/dist/`、`temp_dir/linux-supplement/dist/`。找不到或匹配到多个时用 `-Supplement`/`--supplement` 指定。Windows 的 `-Supplement` 也接受已解开的目录（其下直接有 `opt/<component>` 和 `wunder-win7-supplement.json`），可复用补充包构建产物并跳过首次 zip 解压。
 
 `pack` 会校验版本、PE/ELF 架构和补充包的 `opt/<component>` 结构，输出到 `target/installer/dist/<target>/`，并生成 `.sha256` 与 `.manifest.json`。`-CoreOnly` 只生成不含补充组件的安装器，便于快速验证。
 
-安装器默认目录为 `%USERPROFILE%\.wunder`（Windows）或 `~/.wunder`（Linux）；Windows 安装向导和 Linux 交互菜单都允许改到任意可写目录。安装根会写入 `.wunder-home` 标记，蛹和舵机在启动最早期把 `WUNDER_HOME` 指向该根，因此配置、会话、工作区、日志、数据库和 `opt/` 补充组件都会跟着迁移；显式设置的非空 `WUNDER_HOME` 仍然优先。补充组件默认全部不勾选；Windows 组件页的“全选（推荐）”会一次勾选全部补充组件与桌面快捷方式，任一项取消会自动回退全选状态；选中已存在的组件会先清空对应 `opt/<component>`，用户数据不会删除。
+安装器默认目录为 `%USERPROFILE%\.wunder`（Windows）或 `~/.wunder`（Linux）；Windows 安装向导可改到任意可写目录，Linux 用 `--home=PATH` 指定（交互模式只有一屏组件选择，回车即开始安装）。安装根会写入 `.wunder-home` 标记，蛹和舵机在启动最早期把 `WUNDER_HOME` 指向该根，因此配置、会话、工作区、日志、数据库和 `opt/` 补充组件都会跟着迁移；显式设置的非空 `WUNDER_HOME` 仍然优先。补充组件默认全部不勾选；Windows 组件页的“全选（推荐）”会一次勾选全部补充组件与桌面快捷方式，任一项取消会自动回退全选状态；选中已存在的组件会先清空对应 `opt/<component>`，用户数据不会删除。
 
 ## CI 发布
 
@@ -97,11 +101,11 @@ Glow 后端，便于先运行 `--demo` 做视觉验收。Win7 x86 的产物位�
 `Rust-builder/win7/offline/cargo-vendor-egui` 锁定快照；缺失依赖时构建应直接失败，
 不得改用主机 Cargo 或手工复制系统 DLL。
 
-`-all` 为完整发布构建 Linux ARM64、Linux amd64 与 Win7 x86 的 Desktop/CLI；Linux Desktop 产物均为 AppImage，CLI 在所有目标都只产生普通 ELF/EXE，绝不打包 AppImage。Windows 的 `-All` 默认分别使用相邻的 `Rust-builder/kylin-arm` 和 `Rust-builder/win7`；如需覆盖，使用 `-KylinBuilderRoot` 与 `-Win7BuilderRoot`，不要把两套 SDK 指到同一目录。
+`-all` 为完整发布构建 Linux ARM64、Linux amd64 与 Win7 x86 的 Desktop/CLI；Linux Desktop 产物为 AppDir 目录归档，`.run` 与 `-portable` 都从它解压，目标机不需要 FUSE；CLI 在所有目标都只产生普通 ELF/EXE。Windows 的 `-All` 默认分别使用相邻的 `Rust-builder/kylin-arm` 和 `Rust-builder/win7`；如需覆盖，使用 `-KylinBuilderRoot` 与 `-Win7BuilderRoot`，不要把两套 SDK 指到同一目录。
 
-底层实现包括 `build-linux-*-*.sh`、`build-cli-*.sh`、`build-win7-*.ps1`、`build-win7-arm64-offline.sh`、`build-cli-win7-arm64-offline.sh` 和链接器辅助脚本。其中 `build-linux-appimage-native.sh` 是 CI 专用入口：在已预装 Ubuntu 18.04 工具链的容器内在线原生构建并打包 AppImage，不依赖 kylin-arm 离线 SDK，打包语义与 `build-linux-arm64-appimage.sh` 保持同步。Win7 Windows 本机构建固定使用相邻的 `Rust-builder/win7/offline`；Linux ARM64 开发机与 Windows Docker 的 Linux 交叉构建固定使用相邻的 `Rust-builder/kylin-arm/offline`（Win7 交叉使用其中的 `nightly-2026-03-14-aarch64-unknown-linux-gnu` 工具链 + rust-src，-Z build-std 重编 std，MinGW 链接与导入库由 `mingw-i686-windows-gnu` 提供，sdk-version 戳接受 wunder/rcho 两种印记）。Linux 可通过 `WUNDER_BUILDER_ROOT` 覆盖 kylin-arm 根目录；Windows 分别通过 `-KylinBuilderRoot`、`-Win7BuilderRoot` 覆盖两套 SDK。脚本不探测或回退到旧 SDK 目录。
+底层实现包括 `build-linux-*-*.sh`、`build-cli-*.sh`、`build-win7-*.ps1`、`build-win7-arm64-offline.sh`、`build-cli-win7-arm64-offline.sh` 和链接器辅助脚本。其中 `build-linux-desktop-native.sh` 是 CI 专用入口：在已预装 Ubuntu 18.04 工具链的容器内在线原生构建并打包 AppDir 归档，不依赖 kylin-arm 离线 SDK，打包语义与 `build-linux-arm64-desktop.sh` 保持同步。Win7 Windows 本机构建固定使用相邻的 `Rust-builder/win7/offline`；Linux ARM64 开发机与 Windows Docker 的 Linux 交叉构建固定使用相邻的 `Rust-builder/kylin-arm/offline`（Win7 交叉使用其中的 `nightly-2026-03-14-aarch64-unknown-linux-gnu` 工具链 + rust-src，-Z build-std 重编 std，MinGW 链接与导入库由 `mingw-i686-windows-gnu` 提供，sdk-version 戳接受 wunder/rcho 两种印记）。Linux 可通过 `WUNDER_BUILDER_ROOT` 覆盖 kylin-arm 根目录；Windows 分别通过 `-KylinBuilderRoot`、`-Win7BuilderRoot` 覆盖两套 SDK。脚本不探测或回退到旧 SDK 目录。
 
-`prepare-linux-amd64-runtime-sysroot.sh` 是 `kylin-arm` 的一次性维护脚本，用于补齐 Linux amd64 Desktop AppImage 的 X11、XTest 与 ALSA 运行库。它不是日常构建步骤，必须在 **x86_64 Ubuntu 18.04** 环境执行，且只能将 SDK 挂载为可写；脚本固定使用 Ubuntu Bionic 归档源，下载完成后会把校验清单写入 SDK。常规 `build.sh`、`build.bat` 构建始终离线，不会调用它。例如：
+`prepare-linux-amd64-runtime-sysroot.sh` 是 `kylin-arm` 的一次性维护脚本，用于补齐 Linux amd64 Desktop 的 X11、XTest 与 ALSA 运行库。它不是日常构建步骤，必须在 **x86_64 Ubuntu 18.04** 环境执行，且只能将 SDK 挂载为可写；脚本固定使用 Ubuntu Bionic 归档源，下载完成后会把校验清单写入 SDK。常规 `build.sh`、`build.bat` 构建始终离线，不会调用它。例如：
 
 ```bash
 docker run --rm --network host \
@@ -138,7 +142,6 @@ docker run --rm --network none --platform linux/amd64 --entrypoint bash \
 
 # 4. cargo vendor（主 workspace + frontend-slint + rust-src 的 std 依赖三者并集；
 #    cargo vendor 会清空目标目录，必须各自 vendor 到临时目录后合并）。
-# 5. AppImage runtime（AppImageKit continuous 的 runtime-x86_64 / runtime-aarch64）。
 # 6. docker image save 到 offline/archives/builder-amd64-ubuntu18.docker.tar，
 #    再跑 check-kylin-x86-sdk.sh 门禁与 index-kylin-x86-sdk.py 索引。
 ```
@@ -146,9 +149,9 @@ docker run --rm --network none --platform linux/amd64 --entrypoint bash \
 SDK 就绪后，x86_64 主机直接用根入口构建全部目标（无需 Docker）：
 
 ```bash
-WUNDER_BUILD_JOBS=$(nproc) bash build.sh -t desktop -a linux-amd64   # 原生 AppImage
+WUNDER_BUILD_JOBS=$(nproc) bash build.sh -t desktop -a linux-amd64   # 原生桌面归档
 WUNDER_BUILD_JOBS=$(nproc) bash build.sh -t cli     -a linux-amd64   # 原生 ELF
-WUNDER_BUILD_JOBS=$(nproc) bash build.sh -t desktop -a linux-arm64   # 交叉 AppImage
+WUNDER_BUILD_JOBS=$(nproc) bash build.sh -t desktop -a linux-arm64   # 交叉桌面归档
 WUNDER_BUILD_JOBS=$(nproc) bash build.sh -t cli     -a linux-arm64   # 交叉 ELF
 WUNDER_BUILD_JOBS=$(nproc) bash build.sh -t desktop -a win7-x86      # 交叉 PE
 WUNDER_BUILD_JOBS=$(nproc) bash build.sh -t cli     -a win7-x86      # 交叉 PE
@@ -178,7 +181,7 @@ libisl/libmpc/libmpfr/libgmp）剔除 `-lgcc_eh/-lgcc` 后追加 DW2 存档和
 GNU 目标会请求它，Win7 下相关符号由 kernel32 提供，空存档即可通过链接且不引入
 `api-ms-win-*` 导入。产物仍需通过 PE 导入表门禁。
 
-准备完成后，`linux-amd64-ubuntu18/root` 必须包含 `libX11.so.6`、`libXtst.so.6`、`libasound.so.2`、`libasound.so`、`libxcb.so.1`、`libxcb-xkb.so.1`、`libxkbcommon.so.0` 和 `libxkbcommon-x11.so.0`；其中 `libasound.so` 只用于交叉链接，AppImage 内容门禁验证其余运行库。
+准备完成后，`linux-amd64-ubuntu18/root` 必须包含 `libX11.so.6`、`libXtst.so.6`、`libasound.so.2`、`libasound.so`、`libxcb.so.1`、`libxcb-xkb.so.1`、`libxkbcommon.so.0` 和 `libxkbcommon-x11.so.0`；其中 `libasound.so` 只用于交叉链接，打包脚本验证其余运行库。
 
 `prepare-linux-arm64-runtime-sysroot.sh` 是 arm64 侧的同类一次性维护脚本，把 bionic arm64 的 X11/XCB/XKB/ALSA 运行库闭包和 `squashfs-tools`（含压缩依赖）装进 `linux-arm64-ubuntu18/root`；必须在 **aarch64 Ubuntu 18.04** 环境（如 `rcho-slint-arm64-ubuntu18` 镜像）执行并将 SDK 挂载为可写。准备完成后，ARM64 Desktop 构建的运行库和 `mksquashfs` 都可完全来自 SDK，不再要求主机安装这些包。
 
@@ -219,7 +222,7 @@ cargo vendor --offline --locked temp_dir/vendor-full
 bash builders/build-kylin-x86-sdk-docker.sh
 ```
 
-生成目录包含固定 Rust 工具链、Cargo vendor、两架构 sysroot tar、真实 AppImage runtime、宿主工具 tar 和 Docker 镜像归档。Linux 符号链接与权限保存在 tar 中，不能把 Windows 解压结果当成同等 SDK。
+生成目录包含固定 Rust 工具链、Cargo vendor、两架构 sysroot tar、宿主工具 tar 和 Docker 镜像归档。Linux 符号链接与权限保存在 tar 中，不能把 Windows 解压结果当成同等 SDK。
 
 离线机器先执行 `docker load -i offline/archives/builder-amd64-ubuntu18.docker.tar`，再用 `--network none` 运行镜像。ARM64 sysroot 从 `offline/archives/linux-arm64-ubuntu18.tar` 解压到 Linux 文件系统；编译器使用镜像的 `aarch64-linux-gnu-gcc`，不能运行 ARM 宿主 sysroot 中的 GCC。Win7 使用 nightly 的 `-Z build-std=std,panic_abort` 与 `i686-w64-mingw32-gcc`，不能用普通 Windows target 替代 Win7 验收。
 

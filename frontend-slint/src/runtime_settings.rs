@@ -66,8 +66,9 @@ fn persist(app: &MainWindow, api: &Arc<NativeDesktop>) {
     let api = api.clone();
     let weak = app.as_weak();
     std::thread::spawn(move || {
-        let result =
-            api.save_runtime(&workspace, &language, &python, &git, &rg, &ffmpeg, &browser, &shell);
+        let result = api.save_runtime(
+            &workspace, &language, &python, &git, &rg, &ffmpeg, &browser, &shell,
+        );
         let _ = weak.upgrade_in_event_loop(move |app| {
             app.set_saving(false);
             match result {

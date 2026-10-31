@@ -31,12 +31,12 @@ Usage:
 Options:
   -t, -target, --target  Build one program: desktop or cli.
   -a, -arch, --arch      Select one distribution architecture.
-                         linux-arm64: Desktop AppImage or CLI ELF.
-                         linux-amd64: Desktop AppImage or CLI ELF.
+                         linux-arm64: Desktop AppDir archive or CLI ELF.
+                         linux-amd64: Desktop AppDir archive or CLI ELF.
                          win7-x86:    Win7-compatible Desktop or CLI PE
                                       (i686-win7-windows-gnu with -Z build-std).
   -all, --all            Build every distribution available on this host: both programs for
-                         Linux ARM64, Linux amd64 and Win7 x86. Linux Desktop outputs are AppImages.
+                         Linux ARM64, Linux amd64 and Win7 x86. Linux Desktop outputs are AppDir archives.
   --egui                 Build the native wunder-egui desktop into target/wunder-egui/release.
   --native         Build directly on this Linux host (default).
   --docker         Run the ARM64 Ubuntu 18.04 build image. Requires Rust-builder/kylin-arm.
@@ -103,30 +103,6 @@ else
   [[ -n "$arch" ]] || fail "--arch is required unless -all is used"
 fi
 
-runtime_for() {
-  local runtime_arch="$1"
-  local runtime=""
-  case "$runtime_arch" in
-    linux-arm64)
-      runtime="${WUNDER_APPIMAGE_RUNTIME_ARM64:-}"
-      [[ -n "$runtime" || "$build_all" == 1 ]] || runtime="${WUNDER_APPIMAGE_RUNTIME:-}"
-      # The offline SDK carries the pinned AppImageKit type-2 runtime blobs so
-      # a release build never depends on host-side files outside the SDK.
-      [[ -n "$runtime" ]] || runtime="$offline_root/appimage-runtime/runtime-aarch64"
-      ;;
-    linux-amd64)
-      runtime="${WUNDER_APPIMAGE_RUNTIME_AMD64:-}"
-      [[ -n "$runtime" || "$build_all" == 1 ]] || runtime="${WUNDER_APPIMAGE_RUNTIME:-}"
-      [[ -n "$runtime" ]] || runtime="$offline_root/appimage-runtime/runtime-x86_64"
-      ;;
-  esac
-  local variable_name="WUNDER_APPIMAGE_RUNTIME_${runtime_arch#linux-}"
-  variable_name="${variable_name^^}"
-  [[ -n "$runtime" ]] || fail "set ${variable_name} for the ${runtime_arch} AppImage runtime"
-  [[ -f "$runtime" ]] || fail "AppImage runtime does not exist: $runtime"
-  printf '%s\n' "$runtime"
-}
-
 # Build only the requested target in an isolated container. All architecture
 # selection is forwarded as arguments instead of being reconstructed from a
 # shell string, preventing an empty optional argument from changing the call.
@@ -143,16 +119,6 @@ run_in_docker() {
     -v "$repo_root:/workspace"
     -v "$docker_builder_root:/builder/kylin-arm:ro"
   )
-  local runtime
-  if [[ "$build_all" == 1 || ( "$target" == desktop && "$arch" == linux-arm64 ) ]]; then
-    runtime="$(runtime_for linux-arm64)"
-    docker_args+=(-e WUNDER_APPIMAGE_RUNTIME_ARM64=/builder/appimage-runtime/linux-arm64.AppImage -v "$runtime:/builder/appimage-runtime/linux-arm64.AppImage:ro")
-  fi
-  if [[ "$build_all" == 1 || ( "$target" == desktop && "$arch" == linux-amd64 ) ]]; then
-    runtime="$(runtime_for linux-amd64)"
-    docker_args+=(-e WUNDER_APPIMAGE_RUNTIME_AMD64=/builder/appimage-runtime/linux-amd64.AppImage -v "$runtime:/builder/appimage-runtime/linux-amd64.AppImage:ro")
-  fi
-
   local -a nested_args=(--native)
   if [[ "$build_all" == 1 ]]; then
     nested_args+=(-all)
@@ -182,20 +148,16 @@ build_one() {
   local selected_target="$1"
   local selected_arch="$2"
   local script=""
-  local runtime=""
 
   case "$selected_arch:$selected_target" in
     linux-arm64:desktop)
-      script="$repo_root/builders/build-linux-arm64-appimage.sh"
-      runtime="$(runtime_for linux-arm64)"
-      WUNDER_APPIMAGE_RUNTIME="$runtime" run_builder "$script" env
+      run_builder "$repo_root/builders/build-linux-arm64-desktop.sh" env
       ;;
     linux-arm64:cli)
       run_builder "$repo_root/builders/build-cli-linux-arm64-offline.sh" env
       ;;
     linux-amd64:desktop)
-      runtime="$(runtime_for linux-amd64)"
-      WUNDER_APPIMAGE_RUNTIME="$runtime" run_builder "$repo_root/builders/build-linux-amd64-appimage.sh" env
+      run_builder "$repo_root/builders/build-linux-amd64-desktop.sh" env
       ;;
     linux-amd64:cli)
       run_builder "$repo_root/builders/build-cli-linux-amd64-offline.sh" env
@@ -219,10 +181,6 @@ build_one() {
 }
 
 if [[ "$build_all" == 1 ]]; then
-  # Resolve both runtimes before publishing any artifact. This makes a release
-  # invocation fail early instead of leaving a partial architecture set.
-  runtime_for linux-arm64 >/dev/null
-  runtime_for linux-amd64 >/dev/null
   build_one desktop linux-arm64
   build_one cli linux-arm64
   build_one desktop linux-amd64

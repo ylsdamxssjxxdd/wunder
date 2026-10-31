@@ -4,7 +4,7 @@
 
 后端继续复用共享 AppState、SQLite、ThreadRuntime、工具权限与执行链路。默认数据目录是程序旁的 `WUNDER_TEMPD` 和 `WUNDER_WORK`，兼容已有桌面数据；模型供应商与外部工具自身仍按各自网络协议调用。
 
-同一安装位置只运行一个蛹：再次双击会呼出原有主窗口，包括最小化或隐藏到托盘的窗口，不重复启动后端；启动期间的呼出请求也会保留。不同目录的安装副本可独立运行，互不抢占窗口。实例标识使用规范化的程序路径；Linux AppImage 使用原始 AppImage 路径而非临时挂载路径。退出或进程崩溃后实例锁自动释放。该机制不开放 TCP/HTTP 端口，不影响隔离的冒烟检查。
+同一安装位置只运行一个蛹：再次双击会呼出原有主窗口，包括最小化或隐藏到托盘的窗口，不重复启动后端；启动期间的呼出请求也会保留。不同目录的安装副本可独立运行，互不抢占窗口。实例标识使用规范化的程序路径；便携包使用启动文件路径而非解压后的程序路径。退出或进程崩溃后实例锁自动释放。该机制不开放 TCP/HTTP 端口，不影响隔离的冒烟检查。
 
 ## 运行与预览
 
@@ -91,48 +91,50 @@ python frontend-slint/scripts/check-single-instance.py --ui frontend-slint/targe
 
 覆盖启动中重复打开、连续呼出、最小化与隐藏恢复、前台焦点、多目录隔离、修改数据目录不绕过单实例，以及异常退出后重启；不访问日常配置。
 
-## Linux AppImage 与交叉构建
+## Linux 桌面分发与交叉构建
 
-Linux x86_64 与 ARM64 桌面版使用 Ubuntu 18.04/glibc 2.27 作为构建基线，AppImage 内携带
-Slint 软件渲染所需的 XCB/X11/XKB 动态库和 `libasound.so.2`，并使用 gzip SquashFS 兼容老旧发行版。
+Linux x86_64 与 ARM64 桌面版使用 Ubuntu 18.04/glibc 2.27 作为构建基线，AppDir 内携带
+Slint 软件渲染所需的 XCB/X11/XKB 动态库和 `libasound.so.2`。产物是目录归档
+`wunder-slint-<版本>-linux-<架构>.tar.gz`，由两条发布链消费：
+
+- `build.sh pack`：打成 `.run` 安装包（安装到 `~/.wunder`，同时提供舵机与可选组件）
+- `build.sh portable`：打成单文件免安装包 `wunder-<版本>-<x64|arm64>.portable`
+
+两者都在安装或首次启动时解压，不需要 FUSE、`libfuse2` 或 AppImage runtime。
+
 已有的 `rcho-slint-arm64-ubuntu18:latest` 作为基础镜像即可，无需重做；仓库提供的
-wunder 派生镜像只补充 XCB 运行库和 SquashFS 工具：
+wunder 派生镜像只补充 XCB 运行库：
 
 ```bash
-docker build --platform linux/arm64 \
-  -t wunder-slint-arm64-ubuntu18:latest \
-  -f packaging/docker/Dockerfile.ubuntu18-arm64-slint .
+docker build --platform linux/arm64 -t wunder-slint-arm64-ubuntu18:latest -f packaging/docker/Dockerfile.ubuntu18-arm64-slint .
 ```
 
-ARM64 的 Desktop AppImage 从 Windows 主机使用统一入口：
+ARM64 的桌面构建从 Windows 主机使用统一入口：
 
 ```powershell
-.\build.bat -Target desktop -Arch linux-arm64 -AppImageRuntimeArm64 <ARM64-AppImage-runtime>
+.\build.bat -Target desktop -Arch linux-arm64
 ```
 
 Rust 1.92 和 Cargo vendor 从同级 `Rust-builder/kylin-arm` 挂载，构建完成后产物位于
 `target/slint/dist/linux-arm64/`。检查产物可运行：
 
 ```bash
-bash frontend-slint/scripts/check-linux-arm64-appimage.sh \
-  target/slint/dist/linux-arm64/wunder-slint-0.2.0-linux-arm64.AppImage
+bash build.sh portable -a linux-arm64
+./target/slint/dist/linux-arm64/wunder-0.2.0-arm64.portable
 ```
 
-AppImage 启动时把 `WUNDER_TEMPD` 和 `WUNDER_WORK` 放到用户数据目录，不会写入只读的
-AppImage 挂载目录；也可通过 `--temp-root`、`--workspace` 或对应环境变量覆盖。
+运行时把 `WUNDER_TEMPD` 和 `WUNDER_WORK` 放到用户数据目录；也可通过 `--temp-root`、
+`--workspace` 或对应环境变量覆盖。
 
 Win7 本机构建继续使用相邻的 `Rust-builder/win7/offline`；Linux 宿主按架构选择相邻的离线 SDK（ARM64 用 `kylin-arm`，x86_64 用 `kylin-x86`），Windows Docker 交叉构建使用 `kylin-arm`。
 
-构建入口集中在仓库根 `builders/`；`frontend-slint/scripts/` 只保留原生联调、启动回归和
-AppImage 结构检查。Linux 入口自动识别宿主：ARM64 主机原生构建全部目标，x86_64 主机原生
-构建 amd64、交叉构建 arm64 与 Win7 x86：
+构建入口集中在仓库根 `builders/`；`frontend-slint/scripts/` 只保留原生联调与启动回归。
+Linux 入口自动识别宿主：ARM64 主机原生构建全部目标，x86_64 主机原生构建 amd64、交叉构建
+arm64 与 Win7 x86：
 
 ```bash
-# Linux（ARM64 或 x86_64 宿主）-> Ubuntu 18.04 Desktop AppImage / CLI ELF
-# Linux Desktop（arm64 与 amd64）默认都打成 AppImage，同时保留裸 ELF；
-# CLI 永远是普通 ELF。runtime 默认取离线 SDK 的
-# offline/appimage-runtime/ 内同架构 blob，仅在需要覆盖时才设置
-# WUNDER_APPIMAGE_RUNTIME_AMD64 / WUNDER_APPIMAGE_RUNTIME_ARM64。
+# Linux（ARM64 或 x86_64 宿主）-> Ubuntu 18.04 Desktop AppDir 归档 / CLI ELF
+# Desktop 产出裸 ELF 和同目录的目录归档；CLI 永远是普通 ELF。
 bash build.sh -t desktop -a linux-amd64
 bash build.sh -t cli -a linux-amd64
 bash build.sh -t desktop -a linux-arm64
@@ -150,20 +152,15 @@ Windows 主机使用同一个 `build.bat`，Linux/Win32 走 Docker，Win7 留在
 
 ```powershell
 .\build.bat -Target cli -Arch linux-amd64
-.\build.bat -Target desktop -Arch linux-amd64 -AppImageRuntimeAmd64 <x86_64-AppImage-runtime>
+.\build.bat -Target desktop -Arch linux-amd64
 .\build.bat -Target cli -Arch win7-x86
 ```
 
 `build.bat -All` 同时使用 `Rust-builder/kylin-arm` 与 `Rust-builder/win7`；可分别通过 `-KylinBuilderRoot`、`-Win7BuilderRoot` 覆盖，不能用同一目录替代两套工具链。
 
-Linux AppImage 默认使用 kylin-arm SDK `offline/appimage-runtime/` 内的同架构 type-2 runtime（`runtime-aarch64` / `runtime-x86_64`）；需要覆盖时 Linux 命令使用
-`WUNDER_APPIMAGE_RUNTIME_ARM64` / `WUNDER_APPIMAGE_RUNTIME_AMD64`，Windows 使用
-`-AppImageRuntimeArm64` / `-AppImageRuntimeAmd64`，不会再依赖固定版本的参考工程产物。ARM64 打包、amd64 交叉打包
-都在输出目录创建唯一私有临时目录，完成后原子发布；失败会清理临时文件并保留已有版本。
-构建缓存分别位于 `target/linux-arm64-ubuntu18-slint`、
-`target/linux-amd64-ubuntu18-slint` 和 `target/win32-x86-arm64`，与旧桌面壳产物隔离。
+ARM64 与 amd64 打包都在输出目录创建唯一私有临时目录，完成后原子发布；失败会清理临时文件并保留已有版本。构建缓存分别位于 `target/linux-arm64-ubuntu18-slint`、`target/linux-amd64-ubuntu18-slint` 和 `target/win32-x86-arm64`，与旧桌面壳产物隔离。
 
-Desktop CI 发布保留 Win7 32 位 EXE、Ubuntu 18.04 x86_64 AppImage 和 Ubuntu 18.04 ARM64 AppImage。CLI 发布为各目标的普通可执行文件，不生成 AppImage。
+Desktop CI 发布 Win7 32 位 EXE、Linux `.run` 安装包与 `-portable` 免安装包。CLI 发布为各目标的普通可执行文件。
 
 ## 固定轮次回归
 

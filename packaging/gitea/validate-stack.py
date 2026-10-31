@@ -75,10 +75,8 @@ jobs:
         run: |
           if [[ "$ARCH" == arm64 ]]; then
             ./release-assets/wunder-cli-0.0.0-linux-arm64
-            tail -c +"$(($(stat -c %s "$WUNDER_OFFLINE_ROOT/appimage-runtime/runtime-aarch64") + 1))" \\
-              ./release-assets/wunder-slint-0.0.0-linux-arm64.AppImage > appimage.squashfs
-            unsquashfs -processors 2 -d appimage-extracted appimage.squashfs >/dev/null
-            ./appimage-extracted/AppRun
+            tar -tzf ./release-assets/wunder-slint-0.0.0-linux-arm64.tar.gz | grep -qx './AppRun'
+            test -f ./release-assets/wunder-0.0.0-arm64.portable
           fi
       - name: Local release upload
         env:
@@ -101,8 +99,8 @@ fi
 if curl --connect-timeout 2 --max-time 3 -s http://1.1.1.1 >/dev/null; then exit 2; fi
 rustc --version
 """, encoding="utf-8")
-    for relative in ("packaging/gitea/ci/build.sh", "builders/build-linux-arm64-appimage.sh",
-                     "builders/build-linux-amd64-appimage.sh", "builders/build-linux-amd64-offline.sh",
+    for relative in ("packaging/gitea/ci/build.sh", "builders/build-linux-arm64-desktop.sh",
+                     "builders/build-linux-amd64-desktop.sh", "builders/build-linux-amd64-offline.sh",
                      "builders/build-cli-linux-arm64-offline.sh", "builders/build-cli-linux-amd64-offline.sh",
                      "builders/linux_arm64_sysroot_cc.sh", "builders/linux-amd64-cross-cc.sh",
                      "config/wunder-example.yaml", "images/pupa.png"):
@@ -154,14 +152,17 @@ version = "0.0.0"
                 raise RuntimeError("offline stack workflow failed: " + name)
             releases = api("/repos/admin/" + name + "/releases")
             assets = {asset["name"] for asset in releases[0]["assets"]}
-            expected = {"wunder-slint-0.0.0-linux-" + architecture + ".AppImage"
+            expected = {"wunder-slint-0.0.0-linux-" + architecture + ".tar.gz"
                         for architecture in ("arm64", "amd64")}
+            expected.update("wunder-0.0.0-" + label + suffix
+                            for label in ("x64", "arm64")
+                            for suffix in (".run", ".portable"))
             expected.update("wunder-cli-0.0.0-linux-" + architecture for architecture in ("arm64", "amd64"))
             expected.update("SHA256SUMS-linux-" + architecture + ".txt" for architecture in ("arm64", "amd64"))
             if not expected.issubset(assets):
                 raise RuntimeError("both architecture outputs were not published")
             print("PASS: authenticated checkout, push-triggered matrix, ARM64 native/AMD64 cross Rust, "
-                  "read-only mounted SDK, original AppImage/CLI build scripts, ELF/glibc checks, "
+                  "read-only mounted SDK, original desktop/CLI build scripts, ELF/glibc checks, "
                   "isolation and local Release uploads")
             return
         time.sleep(3)

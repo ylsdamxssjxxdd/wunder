@@ -12,7 +12,7 @@ wunder (Xinjian) is a **multi-form agent workbench**:
 Each release publishes the main program, supplement packages, and installers.
 
 - **Legacy systems**: download the `setup` or `.run` installer. It ships with a complete runtime, but compatibility constraints limit many third-party features.
-- **Modern systems**: download the `.exe` or `.AppImage` main program directly; it relies on the local environment, or fetches the full environment later over the network.
+- **Modern systems**: download the `.exe` or the `-portable` single file and run it directly; it needs no extra system packages.
 
 On first launch, configure a model on the settings page and you are ready to go.
 
@@ -23,7 +23,7 @@ On first launch, configure a model on the settings page and you are ready to go.
 | 🚀 | Hull (server) | Rust + axum 0.8; PostgreSQL | User-and-agent management platform. All users share a single sandbox with no barriers between them | Server daemon, Docker deployment | Linux / Docker |
 | 🐉 | Bridge (web) | Plain HTML + CSS + JavaScript (`web/`, no build) | Hull's governance console (four nav groups: system, agents, debugging, docs) | Browser access, statically mounted by the Hull at `/` | Cross-platform browsers |
 | 🐝 | Beehive (web) | Vue 3 + TypeScript (Vite build, `frontend/`) | Cloud AI workbench (the Hull's user frontend) | Browser access; the built `frontend/dist` is mounted read-only into an nginx container and served externally (default port 18001) — **not hosted by the Hull** | Cross-platform browsers |
-| 🍯 | Pupa (desktop) | Rust + Slint 1.18 (default frontend `frontend-slint/`, native UI, software rendering); SQLite | Local AI workbench (flagship form, install and go) | Local desktop process calling the engine in-process (no local HTTP); Electron / Tauri shells are no longer maintained | Windows 7 x86 and up; Linux (ubuntu18.04 baseline) x64 / arm64 AppImage |
+| 🍯 | Pupa (desktop) | Rust + Slint 1.18 (default frontend `frontend-slint/`, native UI, software rendering); SQLite | Local AI workbench (flagship form, install and go) | Local desktop process calling the engine in-process (no local HTTP); Electron / Tauri shells are no longer maintained | Windows 7 x86 and up; Linux (ubuntu18.04 baseline) x64 / arm64 via the `.run` installer or `-portable` |
 | ⚙️ | Helm (cli) | Rust terminal TUI (ratatui + crossterm); SQLite | Hands-on local entry point (terminal work, scripting, automation) | Local terminal process calling the engine in-process; JSONL output supported | Windows 7 and up (GNU toolchain); Linux amd64 / arm64 (ubuntu18.04 sysroot) |
 
 All forms share one engine (wunder-runtime) and one core (wunder-core): threads, tools, storage abstractions, realtime events, and permission semantics are a single codebase — only the access layer differs. Pupa and Helm run standalone without the Hull.

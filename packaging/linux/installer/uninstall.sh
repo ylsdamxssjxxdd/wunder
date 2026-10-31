@@ -88,6 +88,9 @@ if [ "$entry_removed" -eq 1 ] && command -v update-desktop-database >/dev/null 2
 fi
 
 rm -rf -- "$HOME_DIR/bin"
+# The desktop program tree lives outside the user data directories.
+rm -rf -- "$HOME_DIR/app/desktop"
+rmdir "$HOME_DIR/app" 2>/dev/null || true
 rm -f -- "$HOME_DIR/.wunder-home"
 rm -f -- "$HOME_DIR/images/pupa.png" "$HOME_DIR/images/wunder.png"
 rmdir "$HOME_DIR/images" 2>/dev/null || true

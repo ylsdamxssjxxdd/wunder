@@ -293,35 +293,32 @@ jobs:
       matrix:
         include:
           # arch uses the release naming (amd64/arm64) shared with the offline
-          # builders, matching the AppImage file names the packager emits.
+          # builders, matching the desktop archive names the packager emits.
           - arch: amd64
             platform: linux/amd64
             image: wunder-desktop-ubuntu1804-x86_64
-            appimage_runtime: x86_64
           - arch: arm64
             platform: linux/arm64
             image: wunder-desktop-ubuntu1804-arm64
-            appimage_runtime: aarch64
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - name: Build Ubuntu 18.04 desktop AppImage
+      - name: Build Ubuntu 18.04 desktop archive
         shell: bash
         run: |
           set -euo pipefail
           # ARM64 is cross-compiled and packaged on amd64; QEMU is not used
-          # for the expensive Rust or SquashFS phases.
+          # for the expensive Rust phases.
           build_platform=linux/amd64
           if [ "${{ matrix.arch }}" = arm64 ]; then
-            build_script=builders/build-linux-arm64-cross-appimage.sh
+            build_script=builders/build-linux-arm64-cross-desktop.sh
           else
-            build_script=builders/build-linux-appimage-native.sh
+            build_script=builders/build-linux-desktop-native.sh
           fi
           docker build --platform "$build_platform" \
             --build-arg RUST_TOOLCHAIN="${RUST_TOOLCHAIN}" \
-            --build-arg APPIMAGE_RUNTIME_URL="https://github.com/AppImage/AppImageKit/releases/download/continuous/runtime-${{ matrix.appimage_runtime }}" \
             -f packaging/docker/Dockerfile.ubuntu18-desktop \
             -t "${{ matrix.image }}" .
           mkdir -p release-assets
@@ -330,21 +327,19 @@ jobs:
             -w /app \
             -e ARCH="${{ matrix.arch }}" \
             -e WUNDER_OUTPUT_DIR=/app/release-assets \
-            -e WUNDER_APPIMAGE_RUNTIME=/usr/local/lib/wunder/appimage-runtime \
             "${{ matrix.image }}" \
             bash "$build_script"
-          test -n "$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.AppImage" -print -quit)"
-      - name: Verify AppImage payload
+          asset="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
+          test -n "$asset"
+          tar -tzf "$asset" | grep -qx './AppRun'
+      - name: Package portable
         shell: bash
         run: |
           set -euo pipefail
-          asset_name="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.AppImage" -printf '%f' -quit)"
-          test -n "$asset_name"
-          docker run --rm --platform linux/amd64 \
-            -v "$GITHUB_WORKSPACE:/app" \
-            -w /app \
-            "${{ matrix.image }}" \
-            bash frontend-slint/scripts/check-linux-arm64-appimage.sh "/app/release-assets/$asset_name"
+          # The installer needs the CLI built below; only the portable file is
+          # produced here.
+          bash builders/pack-portable.sh -a "linux-${{ matrix.arch }}" --output-dir release-assets
+          test -n "$(find release-assets -maxdepth 1 -name 'wunder-*.portable' -print -quit)"
       - name: Build Linux CLI
         shell: bash
         run: |
@@ -423,29 +418,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          desktop="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.AppImage" -print -quit)"
+          desktop="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
           cli="$(find release-assets -maxdepth 1 -name "wunder-cli-*-linux-${{ matrix.arch }}" -print -quit)"
           supplement="$(find supplement -maxdepth 1 -name "wunder-supplement-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
           test -n "$desktop"
           test -n "$cli"
           test -n "$supplement"
           bash builders/pack.sh -a "linux-${{ matrix.arch }}" \
-            --desktop "$desktop" \
+            --desktop-archive "$desktop" \
             --cli "$cli" \
             --supplement "$supplement" \
             --output-dir release-assets
-          test -n "$(find release-assets -maxdepth 1 -name "wunder-*-linux-${{ matrix.arch }}.run" -print -quit)"
+          test -n "$(find release-assets -maxdepth 1 -name "wunder-*.run" -print -quit)"
           ls -lh release-assets
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-linux-${{ matrix.arch }}
-          path: release-assets/wunder-slint-*-linux-${{ matrix.arch }}.AppImage
+          path: |
+            release-assets/wunder-slint-*-linux-${{ matrix.arch }}.tar.gz
+            release-assets/wunder-*.portable
+            release-assets/wunder-*.run
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: installer-linux-${{ matrix.arch }}
-          path: release-assets/wunder-*-linux-${{ matrix.arch }}.run
+          path: release-assets/wunder-*.run
           if-no-files-found: error
           retention-days: 7
 

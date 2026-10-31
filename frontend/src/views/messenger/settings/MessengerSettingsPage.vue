@@ -25,7 +25,16 @@
           :data-settings-category="item.id"
           @click="selectCategory(item.id)"
         >
-          <i :class="item.icon" class="messenger-settings-frame-nav-icon" aria-hidden="true"></i>
+          <span
+            v-if="item.icon.startsWith('svg:')"
+            :class="[
+              'messenger-settings-frame-nav-icon',
+              'messenger-settings-frame-nav-icon-svg',
+              `messenger-settings-frame-nav-icon-svg-${item.icon.slice(4)}`
+            ]"
+            aria-hidden="true"
+          ></span>
+          <i v-else :class="item.icon" class="messenger-settings-frame-nav-icon" aria-hidden="true"></i>
           <span class="messenger-settings-frame-nav-title">{{ t(item.titleKey) }}</span>
         </button>
         <div v-if="!visibleCategories.length" class="messenger-settings-frame-nav-empty">

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Assemble the Wunder Linux self-extracting installer.
 
-Inputs are the release AppImage, the CLI ELF, and the Linux supplement tar.gz.
+Inputs are the release desktop AppDir archive, the CLI ELF, and the Linux
+supplement tar.gz. The desktop archive is a plain tar.gz of the AppDir, so the
+installer expands it at install time: no FUSE, no libfuse2 and no AppImage
+runtime are needed on the target machine.
 The supplement is normalized to opt/<component>/... while preserving modes and
 relative symlinks; its original ./opt/... layout is accepted too. The result is
 one executable .run file: a POSIX shell header followed by a gzip-compressed
@@ -25,6 +28,10 @@ from pathlib import Path
 
 KNOWN_COMPONENTS = ("python", "git", "rg", "ffmpeg", "browser")
 ELF_MACHINES = {"amd64": 0x3E, "arm64": 0xB7}
+ARCH_LABELS = {"amd64": "x64", "arm64": "arm64"}
+# Path of the desktop binary inside the AppDir, used both for validation and by
+# the installer's launcher.
+DESKTOP_BINARY_MEMBER = "usr/bin/wunder-frontend-slint"
 LABELS = {
     "python": "Python {version} + 常用库",
     "git": "Git {version}",
@@ -85,23 +92,6 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
-def contains_bytes(path, needle):
-    overlap = len(needle) - 1
-    tail = b""
-    handle = path.open("rb")
-    try:
-        while True:
-            block = handle.read(CHUNK)
-            if not block:
-                return False
-            combined = tail + block
-            if needle in combined:
-                return True
-            tail = combined[-overlap:] if overlap else b""
-    finally:
-        handle.close()
-
-
 def read_version(root):
     text = (root / "Cargo.toml").read_text(encoding="utf-8")
     match = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
@@ -142,7 +132,20 @@ def find_supplement(root, arch):
     return found[0].resolve()
 
 
-def validate_elf(path, arch, appimage):
+def check_elf_header(header, arch, source):
+    if len(header) < 20 or header[:4] != b"\x7fELF":
+        fail("not an ELF file: " + str(source))
+    if header[5] != 1:
+        fail("ELF file is not little-endian: " + str(source))
+    machine = int.from_bytes(header[18:20], "little")
+    if machine != ELF_MACHINES[arch]:
+        fail(
+            "ELF architecture mismatch: expected %s (0x%x), got 0x%x: %s"
+            % (arch, ELF_MACHINES[arch], machine, source)
+        )
+
+
+def validate_elf(path, arch):
     if not path.is_file():
         fail("input is missing: " + str(path))
     handle = path.open("rb")
@@ -150,18 +153,42 @@ def validate_elf(path, arch, appimage):
         header = handle.read(64)
     finally:
         handle.close()
-    if len(header) < 20 or header[:4] != b"\x7fELF":
-        fail("not an ELF file: " + str(path))
-    if header[5] != 1:
-        fail("ELF file is not little-endian: " + str(path))
-    machine = int.from_bytes(header[18:20], "little")
-    if machine != ELF_MACHINES[arch]:
+    check_elf_header(header, arch, path)
+
+
+def validate_desktop_archive(path, arch):
+    """Check that the desktop tree archive carries the expected-arch binary."""
+    if not path.is_file():
+        fail("input is missing: " + str(path))
+    if path.stat().st_size <= 0:
+        fail("desktop archive is empty: " + str(path))
+    try:
+        archive = tarfile.open(str(path), "r|gz")
+    except (tarfile.TarError, OSError) as error:
+        fail("cannot read desktop archive %s: %s" % (path, error))
+
+    header = None
+    try:
+        for member in archive:
+            name = member.name.replace("\\", "/")
+            while name.startswith("./"):
+                name = name[2:]
+            if name != DESKTOP_BINARY_MEMBER:
+                continue
+            if not member.isfile():
+                fail("desktop archive entry is not a regular file: " + DESKTOP_BINARY_MEMBER)
+            extracted = archive.extractfile(member)
+            if extracted is not None:
+                header = extracted.read(64)
+            break
+    finally:
+        archive.close()
+
+    if header is None:
         fail(
-            "ELF architecture mismatch: expected %s (0x%x), got 0x%x: %s"
-            % (arch, ELF_MACHINES[arch], machine, path)
+            "desktop archive does not contain %s: %s" % (DESKTOP_BINARY_MEMBER, path)
         )
-    if appimage and not contains_bytes(path, b"hsqs"):
-        fail("desktop artifact is not an AppImage with a type-2 squashfs payload: " + str(path))
+    check_elf_header(header, arch, DESKTOP_BINARY_MEMBER + " in " + str(path))
 
 
 def safe_member_name(raw):
@@ -328,7 +355,18 @@ def add_file(archive, arcname, source, mode):
         handle.close()
 
 
-def build_payload(stage, version, arch, desktop, cli, core_only, components, supplement, installer_dir, image):
+def build_payload(
+    stage,
+    version,
+    arch,
+    desktop_archive,
+    cli,
+    core_only,
+    components,
+    supplement,
+    installer_dir,
+    image,
+):
     payload = stage / "payload.tar.gz"
     temporary = stage / "payload.tar.gz.tmp"
     if temporary.exists():
@@ -387,7 +425,7 @@ def build_payload(stage, version, arch, desktop, cli, core_only, components, sup
             (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
             0o644,
         )
-        add_file(target_tar, "payload/wunder-desktop.AppImage", desktop, 0o755)
+        add_file(target_tar, "payload/wunder-desktop.tar.gz", desktop_archive, 0o644)
         add_file(target_tar, "payload/wunder-cli", cli, 0o755)
         if image is not None and image.is_file():
             add_file(target_tar, "payload/pupa.png", image, 0o644)
@@ -436,7 +474,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", choices=sorted(ELF_MACHINES), required=True)
     parser.add_argument("--version", default="")
-    parser.add_argument("--desktop", default="")
+    parser.add_argument("--desktop-archive", default="")
     parser.add_argument("--cli", default="")
     parser.add_argument("--supplement", default="")
     parser.add_argument("--output-dir", default="")
@@ -450,14 +488,11 @@ def main():
         if frontend_version != version:
             fail("version mismatch: workspace=%s frontend-slint=%s" % (version, frontend_version))
 
-    desktop = resolve_path(root, args.desktop) or (
-        root
-        / "target"
-        / "slint"
-        / "dist"
-        / ("linux-" + args.arch)
-        / ("wunder-slint-%s-linux-%s.AppImage" % (version, args.arch))
+    desktop_dist = root / "target" / "slint" / "dist" / ("linux-" + args.arch)
+    desktop_archive = resolve_path(root, args.desktop_archive) if args.desktop_archive else (
+        desktop_dist / ("wunder-slint-%s-linux-%s.tar.gz" % (version, args.arch))
     )
+
     cli = resolve_path(root, args.cli) or (
         root
         / "target"
@@ -470,8 +505,8 @@ def main():
         None if args.core_only else find_supplement(root, args.arch)
     )
 
-    validate_elf(desktop, args.arch, appimage=True)
-    validate_elf(cli, args.arch, appimage=False)
+    validate_desktop_archive(desktop_archive, args.arch)
+    validate_elf(cli, args.arch)
     if not args.core_only:
         if supplement is None:
             fail(
@@ -528,7 +563,7 @@ def main():
         stage,
         version,
         args.arch,
-        desktop,
+        desktop_archive,
         cli,
         args.core_only,
         components,
@@ -537,7 +572,10 @@ def main():
         image,
     )
 
-    output_name = "wunder-%s-linux-%s.run" % (version, args.arch)
+    # User-facing name: x64/arm64 instead of amd64/aarch64 so the download is
+    # short enough to type, and matches the win7-x86 target naming.
+    arch_label = ARCH_LABELS[args.arch]
+    output_name = "wunder-%s-%s.run" % (version, arch_label)
     output = output_dir / output_name
     build_run(stage, output, installer_dir, payload)
     installer_hash = sha256_file(output)
@@ -553,6 +591,7 @@ def main():
             "sha256": installer_hash,
         },
         "coreOnly": args.core_only,
+        "desktopFormat": "dir-tar",
         "builtAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "components": [
             {
@@ -568,9 +607,9 @@ def main():
         "inputs": [
             {
                 "role": "desktop",
-                "file": desktop.name,
-                "bytes": desktop.stat().st_size,
-                "sha256": sha256_file(desktop),
+                "file": desktop_archive.name,
+                "bytes": desktop_archive.stat().st_size,
+                "sha256": sha256_file(desktop_archive),
             },
             {
                 "role": "cli",
@@ -597,6 +636,7 @@ def main():
     )
 
     print("[wunder-pack] installer: " + str(output))
+    print("[wunder-pack] desktop payload: %s" % desktop_archive.name)
     print("[wunder-pack] size: %.1f MB" % (installer_size / (1024.0 * 1024.0)))
     print("[wunder-pack] sha256: " + installer_hash)
     print("[wunder-pack] manifest: " + str(manifest_path))

@@ -12,6 +12,7 @@ pub mod request_limits;
 pub mod sandbox;
 mod services;
 pub use services::archive_extract;
+pub use services::tools::command_sessions::{CommandTaskDetail, CommandTaskView};
 pub use services::companions;
 pub use services::memory_fragments;
 pub use services::thread_log::export_stream as export_thread_log_stream;

@@ -88,6 +88,22 @@ export struct PatchCard { path: string, action: string, added: string, deleted: 
 // for the tooltip; Slint has no map, so the icon resolves through StatsIcons.
 export struct TurnStatMetric { key: string, value: string }
 
+// 输入区「后台任务」面板的一行：一条仍在执行的命令工具。
+// 输出与工作目录都在 Rust 侧裁剪成固定预算（尾部若干行），渲染只负责排版。
+export struct CommandTask {
+    id: string,
+    // 单行化后的命令行（已截断）。
+    command: string,
+    cwd: string,
+    // 已运行时长，例如 "12s" / "3m20s"。
+    elapsed: string,
+    expanded: bool,
+    // 输出尾部；空串表示还没有输出。
+    output: string,
+    // 0 未加载 1 有输出 2 无输出。
+    detail-state: int,
+}
+
 // One tick of the chat's right-edge turn ruler. `fraction` is the turn row's
 // position in the whole transcript; `user` and `agent` carry the pre-bounded
 // preview text (the user's message and the turn's newest answer), so hovering

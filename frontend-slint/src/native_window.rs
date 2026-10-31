@@ -43,7 +43,9 @@ pub fn begin_system_move(window: &slint::Window) -> bool {
 /// dance the tray restore uses).
 #[cfg(windows)]
 fn activate_for_drag(window: &slint::Window) {
-    let Some(hwnd) = native_hwnd(window) else { return };
+    let Some(hwnd) = native_hwnd(window) else {
+        return;
+    };
     unsafe {
         if GetForegroundWindow() == hwnd {
             return;
@@ -222,7 +224,9 @@ pub fn work_area(_window: &slint::Window) -> Option<(i32, i32, i32, i32)> {
 /// physical corner radius and the caller keeps it small.
 #[cfg(windows)]
 pub fn apply_rounded_region(window: &slint::Window, radius: f32) {
-    let Some(hwnd) = native_hwnd(window) else { return };
+    let Some(hwnd) = native_hwnd(window) else {
+        return;
+    };
     let diameter = (radius.max(0.0) * 2.0).round() as i32;
     if diameter <= 0 {
         return;

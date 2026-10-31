@@ -1,5 +1,6 @@
 use super::types::{
     CommandSessionSnapshot, CommandSessionStartSpec, CommandSessionStatus, CommandSessionStream,
+    CommandTaskDetail, CommandTaskView,
 };
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
@@ -669,6 +670,88 @@ impl CommandSessionBroker {
             return None;
         }
         Some(record.snapshot())
+    }
+
+    /// 正在执行的命令任务（本地 UI 的后台任务面板）。已完成的任务不进这里：
+    /// 面板的语义是「现在还在跑什么」，历史由时间线与日志承担。
+    pub fn running_tasks(&self, user_id: &str, session_id: &str) -> Vec<CommandTaskView> {
+        self.prune_expired();
+        let now = Utc::now();
+        let mut tasks = self
+            .sessions
+            .iter()
+            .filter_map(|entry| {
+                let record = entry.value().lock();
+                if record.user_id != user_id
+                    || record.session_id != session_id
+                    || record.status != CommandSessionStatus::Running
+                {
+                    return None;
+                }
+                Some(record.snapshot().task_view(now))
+            })
+            .collect::<Vec<_>>();
+        // 启动早的排在前面：用户看到的是「最早那个跑了多久」。
+        tasks.sort_by(|left, right| {
+            right
+                .elapsed_ms
+                .cmp(&left.elapsed_ms)
+                .then(left.id.cmp(&right.id))
+        });
+        tasks
+    }
+
+    /// 展开一条任务时读取输出尾部。作用域校验和 `snapshot_for_scope` 一致，
+    /// 不能靠 id 猜别的会话。
+    pub fn task_detail(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        command_session_id: &str,
+    ) -> Option<CommandTaskDetail> {
+        self.prune_expired();
+        let entry = self.sessions.get(command_session_id)?;
+        let record = entry.value().lock();
+        if record.user_id != user_id || record.session_id != session_id {
+            return None;
+        }
+        Some(record.snapshot().task_detail())
+    }
+
+    /// 终止单条命令任务。只取消这一条的 CancellationToken，其余任务与线程
+    /// 本身不受影响；进程回收仍由原来的 watcher 完成，名额在进程真正退出后
+    /// 才释放（与 `terminate_scope` 同一约束）。
+    pub fn terminate_task(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        command_session_id: &str,
+    ) -> bool {
+        let in_scope = self
+            .sessions
+            .get(command_session_id)
+            .map(|entry| {
+                let record = entry.value().lock();
+                record.user_id == user_id
+                    && record.session_id == session_id
+                    && record.status == CommandSessionStatus::Running
+            })
+            .unwrap_or(false);
+        if !in_scope {
+            return false;
+        }
+        match self
+            .processes
+            .get(command_session_id)
+            .map(|entry| Arc::clone(entry.value()))
+        {
+            Some(process) => {
+                process.cancel();
+                true
+            }
+            // 没有进程句柄说明它还没真正拉起或已经在退出，交给 watcher 收尾。
+            None => false,
+        }
     }
 
     pub(crate) fn list_session_snapshots(

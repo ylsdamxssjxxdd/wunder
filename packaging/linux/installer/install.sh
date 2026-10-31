@@ -12,10 +12,6 @@ ARCH=$(cat "$PAYLOAD_DIR/arch" 2>/dev/null || echo "unknown")
   exit 1
 }
 HOME_DIR="${WUNDER_HOME:-$HOME/.wunder}"
-HOME_GIVEN=0
-if [ -n "${WUNDER_HOME:-}" ]; then
-  HOME_GIVEN=1
-fi
 COMPONENTS_FILE="$PAYLOAD_DIR/components.txt"
 SELECTED_FILE="$PAYLOAD_DIR/../.selected"
 ASSUME_YES=0
@@ -34,6 +30,9 @@ usage() {
   cat <<'EOF'
 用法: wunder-<版本>-linux-<架构>.run [选项]
 
+直接运行即可：默认装到 ${WUNDER_HOME:-$HOME/.wunder}，只安装蛹和舵机。
+交互模式只有一屏：勾选补充组件后回车即开始安装。
+
   -y, --yes                不询问确认
       --components=LIST    只安装列出的补充组件，逗号分隔；例如 python,git
       --all                安装全部补充组件
@@ -42,7 +41,7 @@ usage() {
       --no-desktop-icon    不在桌面创建启动图标
   -h, --help               显示帮助
 
-不指定 --components/--all 时默认不安装任何补充组件。交互模式会显示菜单。
+不指定 --components/--all 时默认不安装任何补充组件。
 EOF
 }
 
@@ -105,10 +104,6 @@ component_path() {
   awk -F'|' -v key="$1" '$1 == key { print $3; exit }' "$COMPONENTS_FILE"
 }
 
-component_label() {
-  awk -F'|' -v key="$1" '$1 == key { print $2; exit }' "$COMPONENTS_FILE"
-}
-
 is_selected() {
   grep -Fxq -- "$1" "$SELECTED_FILE" 2>/dev/null
 }
@@ -137,12 +132,11 @@ while [ "$#" -gt 0 ]; do
       COMPONENTS_ARG=$1
       COMPONENTS_GIVEN=1
       ;;
-    --home=*) HOME_DIR=${1#*=}; HOME_GIVEN=1 ;;
+    --home=*) HOME_DIR=${1#*=} ;;
     --home)
       shift
       [ "$#" -gt 0 ] || die "--home 需要一个值"
       HOME_DIR=$1
-      HOME_GIVEN=1
       ;;
     --no-desktop-entry) DESKTOP_ENTRY=0 ;;
     --no-desktop-icon) DESKTOP_ICON=0 ;;
@@ -156,18 +150,6 @@ case "$HOME_DIR" in
   "~") HOME_DIR=$HOME ;;
   "~/"*) HOME_DIR="$HOME/${HOME_DIR#~/}" ;;
 esac
-if [ "$HOME_GIVEN" -eq 0 ] && [ "$ASSUME_YES" -eq 0 ] && [ -t 0 ]; then
-  echo
-  echo "安装目录同时保存配置、会话和工作区等用户数据。"
-  printf '安装目录 [%s]（回车使用默认，或输入绝对路径）：' "$HOME_DIR"
-  if IFS= read -r chosen; then
-    [ -n "$chosen" ] && HOME_DIR=$chosen
-  fi
-  case "$HOME_DIR" in
-    "~") HOME_DIR=$HOME ;;
-    "~/"*) HOME_DIR="$HOME/${HOME_DIR#~/}" ;;
-  esac
-fi
 case "$HOME_DIR" in
   /*) ;;
   *) die "安装目录必须是绝对路径：$HOME_DIR" ;;
@@ -203,68 +185,74 @@ elif [ "$SELECT_ALL" -eq 1 ]; then
   done > "$SELECTED_FILE"
 elif [ "$ASSUME_YES" -eq 0 ]; then
   [ -t 0 ] || die "非交互环境请使用 --yes --components=... 或 --all"
-  while :; do
-    echo
-    echo "心舰 Wunder $VERSION ($ARCH)"
-    echo "安装目录：$HOME_DIR"
-    echo
-    if [ ! -s "$COMPONENTS_FILE" ]; then
-      echo "此安装包不包含补充组件。"
-    else
+  # One screen, one decision: the menu shows the target directory and the
+  # current selection, and Enter starts the install. There is no second
+  # summary and no extra confirmation for a first install.
+  if [ -s "$COMPONENTS_FILE" ]; then
+    printf '\n心舰 Wunder %s · %s\n' "$VERSION" "$ARCH"
+    printf '安装到 %s（配置、会话和工作区也在这里；--home=PATH 可改）\n' "$HOME_DIR"
+    while :; do
+      printf '\n'
       index=0
       while IFS='|' read -r key label path version bytes files; do
         [ -n "$key" ] || continue
         index=$((index + 1))
         mark=' '
         is_selected "$key" && mark='x'
-        printf '  %2d) [%s] %s (%s)\n' "$index" "$mark" "$label" "$(human_size "$bytes")"
+        printf '  %2d) [%s] %s  %s\n' "$index" "$mark" "$label" "$(human_size "$bytes")"
       done < "$COMPONENTS_FILE"
-      echo
-      echo "输入编号切换勾选，a 全选，n 全不选，回车继续，q 退出。"
-    fi
-    printf '选择：'
-    if ! IFS= read -r answer; then
-      answer=q
-    fi
-    case "$answer" in
-      '') break ;;
-      q|Q) exit 0 ;;
-      a|A)
-        cut -d'|' -f1 "$COMPONENTS_FILE" | while IFS= read -r key; do
-          [ -n "$key" ] && printf '%s\n' "$key"
-        done > "$SELECTED_FILE"
-        ;;
-      n|N) : > "$SELECTED_FILE" ;;
-      *[!0-9]*) echo "请输入编号。" ;;
-      *)
-        key=$(awk -F'|' -v n="$answer" 'NF { i++; if (i == n) { print $1; exit } }' "$COMPONENTS_FILE")
-        if [ -z "$key" ]; then
-          echo "编号超出范围。"
-        elif is_selected "$key"; then
-          unselect_one "$key"
-        else
-          select_one "$key"
-        fi
-        ;;
-    esac
-  done
+      printf '\n数字切换，a 全选，n 清空，回车开始安装，q 退出\n> '
+      if ! IFS= read -r answer; then
+        answer=q
+      fi
+      case "$answer" in
+        '') break ;;
+        q|Q) echo "已取消。"; exit 0 ;;
+        a|A)
+          cut -d'|' -f1 "$COMPONENTS_FILE" | while IFS= read -r key; do
+            [ -n "$key" ] && printf '%s\n' "$key"
+          done > "$SELECTED_FILE"
+          ;;
+        n|N) : > "$SELECTED_FILE" ;;
+        *)
+          case "$answer" in
+            *[!0-9]*) ;;
+            *)
+              key=$(awk -F'|' -v n="$answer" 'NF { i++; if (i == n) { print $1; exit } }' "$COMPONENTS_FILE")
+              if [ -n "$key" ]; then
+                if is_selected "$key"; then
+                  unselect_one "$key"
+                else
+                  select_one "$key"
+                fi
+              fi
+              ;;
+          esac
+          ;;
+      esac
+    done
+  fi
 fi
 
 count=$(selected_count)
-echo
-echo "安装目录：$HOME_DIR（同时作为用户数据目录）"
-echo "蛹 + 舵机：将安装"
-if [ "$count" -gt 0 ]; then
-  echo "补充组件："
-  while IFS= read -r key; do
-    [ -n "$key" ] && echo "  - $(component_label "$key")"
-  done < "$SELECTED_FILE"
-else
-  echo "补充组件：不安装"
-fi
 
-if [ "$ASSUME_YES" -eq 0 ]; then
-  printf '继续安装？[Y/n] '
+# A reinstall replaces only program files and the selected component folders.
+# Ask once, and only when something would actually be replaced: a first install
+# goes straight through without any extra confirmation.
+replacing=0
+if [ -f "$HOME_DIR/bin/install-manifest.txt" ]; then
+  replacing=1
+else
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    if [ -d "$HOME_DIR/$(component_path "$key")" ]; then
+      replacing=1
+      break
+    fi
+  done < "$SELECTED_FILE"
+fi
+if [ "$replacing" -eq 1 ] && [ "$ASSUME_YES" -eq 0 ]; then
+  printf '\n%s 已有心舰，将替换程序文件和已选组件目录，配置、会话、工作区保留。继续？[Y/n] ' "$HOME_DIR"
   if ! IFS= read -r reply; then
     reply=y
   fi
@@ -273,55 +261,42 @@ if [ "$ASSUME_YES" -eq 0 ]; then
   esac
 fi
 
-existing=""
-while IFS= read -r key; do
-  [ -n "$key" ] || continue
-  path=$(component_path "$key")
-  [ -d "$HOME_DIR/$path" ] && existing="$existing $key"
-done < "$SELECTED_FILE"
-if [ -n "$existing" ]; then
-  echo "检测到已安装组件：$existing"
-  echo "安装前会先清空这些组件的目录；配置、会话和工作区不会被删除。"
-  if [ "$ASSUME_YES" -eq 0 ]; then
-    printf '继续并清空这些目录？[Y/n] '
-    if ! IFS= read -r reply; then
-      reply=y
-    fi
-    case "$reply" in
-      n|N) echo "已取消。"; exit 0 ;;
-    esac
-  fi
-fi
-
+printf '\n正在安装…\n'
 mkdir -p "$HOME_DIR/bin" "$HOME_DIR/opt"
 
+# Replacing a component means emptying its own folder only; config, sessions,
+# workspaces, logs and every unselected component stay untouched.
 while IFS= read -r key; do
   [ -n "$key" ] || continue
   path=$(component_path "$key")
   if [ -d "$HOME_DIR/$path" ]; then
-    echo "清理旧组件：$path"
     rm -rf -- "$HOME_DIR/$path"
   fi
 done < "$SELECTED_FILE"
 
-echo "安装蛹和舵机..."
-cp -f -- "$PAYLOAD_DIR/wunder-desktop.AppImage" "$HOME_DIR/bin/wunder-desktop.AppImage"
 cp -f -- "$PAYLOAD_DIR/wunder-cli" "$HOME_DIR/bin/wunder-cli"
-chmod 0755 "$HOME_DIR/bin/wunder-desktop.AppImage" "$HOME_DIR/bin/wunder-cli"
+chmod 0755 "$HOME_DIR/bin/wunder-cli"
 
+# The desktop payload is a plain tree archive of the AppDir. Expanding it at
+# install time needs no FUSE, no /dev/fuse and no AppImage runtime, so
+# fuse3-only systems (Ubuntu 24.04 and newer) work without extra packages.
+rm -rf -- "$HOME_DIR/app/desktop"
+mkdir -p "$HOME_DIR/app/desktop"
+if ! tar -xzf "$PAYLOAD_DIR/wunder-desktop.tar.gz" -C "$HOME_DIR/app/desktop" --no-same-owner; then
+  echo "蛹的程序文件解压失败。请检查磁盘空间后重新运行安装包。" >&2
+  exit 1
+fi
+[ -x "$HOME_DIR/app/desktop/AppRun" ] || die "安装包缺少蛹的启动入口。"
+rm -f -- "$HOME_DIR/bin/wunder-desktop.AppImage"
 cat > "$HOME_DIR/bin/wunder-desktop" <<'LAUNCHER'
 #!/bin/sh
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-APP="$DIR/wunder-desktop.AppImage"
 ROOT=$(CDPATH= cd -- "$DIR/.." && pwd)
 if [ -z "${WUNDER_HOME:-}" ]; then
   WUNDER_HOME="$ROOT"
   export WUNDER_HOME
 fi
-if command -v fusermount >/dev/null 2>&1 || command -v fusermount3 >/dev/null 2>&1; then
-  exec "$APP" "$@"
-fi
-exec "$APP" --appimage-extract-and-run "$@"
+exec "$ROOT/app/desktop/AppRun" "$@"
 LAUNCHER
 chmod 0755 "$HOME_DIR/bin/wunder-desktop"
 ln -sf -- "wunder-cli" "$HOME_DIR/bin/wunder"
@@ -469,25 +444,27 @@ printf 'desktop_icon=%s\n' "$desktop_icon_path" >> "$HOME_DIR/bin/install-manife
 cp -f -- "$PAYLOAD_DIR/uninstall.sh" "$HOME_DIR/uninstall.sh"
 chmod 0755 "$HOME_DIR/uninstall.sh"
 
-echo
-echo "安装完成：$HOME_DIR"
-echo "蛹：$HOME_DIR/bin/wunder-desktop"
-if [ -n "$desktop_entry_path" ]; then
-  echo "应用菜单：已注册“蛹”"
-fi
-if [ -n "$desktop_icon_path" ]; then
-  echo "桌面图标：$desktop_icon_path"
-fi
-echo "舵机：$HOME_DIR/bin/wunder-cli"
-if [ "$LINKS_READY" -eq 1 ]; then
-  echo "终端命令：wunder-cli、wunder-desktop、desktop（新开终端或执行 . ~/.profile 后生效）"
-  echo "舵机的工作区默认为启动它的目录。"
-else
-  echo "终端命令尚未加入 PATH；可直接使用上面的完整路径，或把 $HOME_DIR/bin 加入 PATH。"
-fi
-echo "卸载：$HOME_DIR/uninstall.sh"
+printf '\n完成。\n\n'
+printf '  蛹     %s\n' "$HOME_DIR/bin/wunder-desktop"
+printf '  舵机   %s\n' "$HOME_DIR/bin/wunder-cli"
 if [ "$count" -gt 0 ]; then
-  echo "补充组件：$components_csv"
+  printf '  组件   %s\n' "$components_csv"
 else
-  echo "补充组件：未安装；可重新运行安装包并勾选。"
+  printf '  组件   未安装，重新运行安装包可勾选\n'
 fi
+if [ "$LINKS_READY" -eq 1 ]; then
+  printf '  命令   wunder-desktop、wunder-cli、desktop（新开终端生效）\n'
+else
+  printf '  命令   %s/bin 未加入 PATH\n' "$HOME_DIR"
+fi
+if [ -n "$desktop_entry_path" ] || [ -n "$desktop_icon_path" ]; then
+  entries=""
+  if [ -n "$desktop_entry_path" ]; then
+    entries="应用菜单"
+  fi
+  if [ -n "$desktop_icon_path" ]; then
+    entries="${entries:+$entries + }桌面图标"
+  fi
+  printf '  入口   %s已创建\n' "$entries"
+fi
+printf '  卸载   %s\n' "$HOME_DIR/uninstall.sh"

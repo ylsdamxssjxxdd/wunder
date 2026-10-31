@@ -10,6 +10,7 @@ mod channel_ui;
 mod chat_process;
 mod cloud_threads;
 mod code_highlight;
+mod command_tasks;
 mod companion_pet;
 mod companion_sprite;
 mod completion_notice;
@@ -21,6 +22,7 @@ mod expert_ui;
 mod file_dialog;
 mod file_icons;
 mod help_browser;
+mod host_hud;
 mod hotkey;
 mod message_blocks;
 mod model_editor;
@@ -136,7 +138,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if matches!(
         first_argument.as_deref().and_then(std::ffi::OsStr::to_str),
-        Some("--native-smoke" | "--native-restore" | "--native-reasoning-smoke" | "--native-model-smoke")
+        Some(
+            "--native-smoke"
+                | "--native-restore"
+                | "--native-reasoning-smoke"
+                | "--native-model-smoke"
+        )
     ) {
         let directory = std::path::PathBuf::from(
             arguments
@@ -151,7 +158,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let restoring = first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-restore"));
         let reasoning =
             first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-reasoning-smoke"));
-        let models = first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-model-smoke"));
+        let models =
+            first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-model-smoke"));
         if !restoring {
             args.workspace = Some(directory.join("workspace"));
         }
@@ -181,6 +189,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(_) => return Err("旧 bridge 参数已移除；请直接启动桌面程序".into()),
     }
     tray::install(&app);
+    // 输入区底部的本机硬件状态网格。采样在独立线程，这里只装定时投影，
+    // 因此放在窗口显示之前即可，首帧显示占位符、约一秒后落成真实读数。
+    host_hud::install(&app);
     app.show()?;
     startup_log("window_show_return", startup_boot);
     fit_and_center_main_window(&app);

@@ -26,7 +26,11 @@ export type SettingsCategoryId =
 
 export type SettingsCategoryMeta = {
   id: SettingsCategoryId;
-  /** FontAwesome solid icon class, e.g. `fa-solid fa-gear`. */
+  /**
+   * Navigation icon. FontAwesome solid class (`fa-solid fa-gear`) or
+   * `svg:<name>` — a bundled SVG under `src/assets/` rendered through a
+   * currentColor mask (see messenger-settings-page.css), e.g. `svg:brain`.
+   */
   icon: string;
   /** i18n key for the navigation title (also the content pane title). */
   titleKey: string;
@@ -128,7 +132,7 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
     keywords: ['定时', '计划', '任务', 'cron', 'schedule']
   },
   memory: {
-    icon: 'fa-solid fa-brain',
+    icon: 'svg:brain',
     titleKey: 'messenger.settingsPage.cat.memory.title',
     keywords: ['记忆', '碎片', 'memory']
   },

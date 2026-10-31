@@ -958,7 +958,7 @@ export component SettingsPage inherits Rectangle {
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[8];
-                            icon: @image-url("../assets/icons/fa-memory.svg");
+                            icon: @image-url("../assets/icons/brain.svg");
                             title: I18n.stc_memory;
                             selected: root.settings-tab == 6;
                             clicked => { root.settings-tab = 6; root.refresh(); }

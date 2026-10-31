@@ -121,6 +121,25 @@
   color: var(--mz-primary);
 }
 
+/* `svg:` 前缀的分类图标（src/assets/*.svg）：`<img>` 不继承 currentColor，
+   用 mask + 背景色跟随导航的 muted/primary 状态，方案同 AbilityIconBadge
+   的 fa-bee；每个图标用 `-svg-<name>` 规则提供 mask-image。 */
+.messenger-settings-frame-nav-icon-svg {
+  height: 16px;
+  background-color: var(--mz-text-muted);
+  -webkit-mask: center / contain no-repeat;
+  mask: center / contain no-repeat;
+}
+
+.messenger-settings-frame-nav-item.is-active .messenger-settings-frame-nav-icon-svg {
+  background-color: var(--mz-primary);
+}
+
+.messenger-settings-frame-nav-icon-svg-brain {
+  -webkit-mask-image: url('../../assets/brain.svg');
+  mask-image: url('../../assets/brain.svg');
+}
+
 /* 单行条目：分类摘要已从导航里移除，标题自己吃掉剩余宽度并省略。 */
 .messenger-settings-frame-nav-title {
   flex: 1;

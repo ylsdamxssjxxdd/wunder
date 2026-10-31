@@ -8,7 +8,7 @@ import { I18n } from "i18n.slint";
 // the root file get a public wrapper. The fields report focus through
 // components.slint / textedit-base.slint.
 export { TextFieldActivation } from "text_field.slint";
-import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow } from "theme.slint";
+import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow, CommandTask } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 export { ToastState }
 import { ProcessEntry } from "theme.slint";
@@ -526,6 +526,22 @@ export component MainWindow inherits Window {
     callback reconnect-channel();
     in-out property <[ModelCard]> models: [];
     in-out property <[ModelCard]> composer-models: [];
+    // ---- 输入区硬件状态网格 (HostHud) ----
+    // 由 host_hud 控制器每秒投影一次；数值文本在 Rust 侧格式化好，null 值用
+    // 全角破折号占位，避免首帧或指标不可用时空格造成宽度跳动。
+    in-out property <float> host-cpu: 0.0;
+    in-out property <float> host-memory: 0.0;
+    in-out property <string> host-cpu-text: "—";
+    in-out property <string> host-memory-text: "—";
+    in-out property <string> host-memory-used: "—";
+    in-out property <string> host-memory-total: "—";
+    in-out property <int> host-cores: 0;
+    // 后台任务（本线程仍在执行的命令工具）。命令行的裁剪、展开态与输出尾部都在
+    // Rust 侧维护，这里只承载最近一次投影。
+    in-out property <[CommandTask]> running-tasks: [];
+    in-out property <int> running-task-count: 0;
+    callback toggle-task(string);
+    callback terminate-task(string);
     in-out property <string> selected-agent-name;
     in-out property <string> selected-agent-description;
     in-out property <string> selected-agent-model;
@@ -1259,6 +1275,14 @@ export component MainWindow inherits Window {
                             open-model-settings => { root.settings-open = true; root.settings-active-panel = 1; root.refresh-settings(); }
                             workspace-name: root.cloud-chat-active ? I18n.il_browse_title : root.active-workspace-name;
                             branch-name: root.active-workspace-branch;
+                            host-cpu: root.host-cpu; host-memory: root.host-memory;
+                            host-cpu-text: root.host-cpu-text; host-memory-text: root.host-memory-text;
+                            host-memory-used: root.host-memory-used; host-memory-total: root.host-memory-total;
+                            host-cores: root.host-cores;
+                            running-tasks: root.running-tasks;
+                            running-task-count: root.running-task-count;
+                            toggle-task(id) => { root.toggle-task(id); }
+                            terminate-task(id) => { root.terminate-task(id); }
                             permission-mode <=> root.permission-mode;
                             permission-changed(value) => { root.save-permission-mode(value); }
                             attachments: root.pending-attachments;

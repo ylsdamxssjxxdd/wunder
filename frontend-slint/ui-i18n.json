@@ -1786,6 +1786,83 @@
   "en": "Add to the send queue"
  },
  {
+  "key": "hud_cpu",
+  "zh": "CPU",
+  "en": "CPU"
+ },
+ {
+  "key": "hud_memory",
+  "zh": "内存",
+  "en": "Memory"
+ },
+ {
+  "key": "hud_cores",
+  "zh": "{} 核",
+  "en": "{} cores",
+  "params": [
+   "cores"
+  ]
+ },
+ {
+  "key": "hud_tasks_title",
+  "zh": "后台任务",
+  "en": "Running tasks"
+ },
+ {
+  "key": "hud_tasks_count",
+  "zh": "{} 个运行中",
+  "en": "{} running",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "hud_tasks_empty",
+  "zh": "没有正在运行的任务",
+  "en": "Nothing is running"
+ },
+ {
+  "key": "hud_tasks_more",
+  "zh": "还有 {} 条未显示",
+  "en": "{} more not shown",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "hud_tasks_stop",
+  "zh": "终止任务",
+  "en": "Terminate task"
+ },
+ {
+  "key": "hud_tasks_expand",
+  "zh": "展开详情",
+  "en": "Show details"
+ },
+ {
+  "key": "hud_tasks_collapse",
+  "zh": "收起详情",
+  "en": "Hide details"
+ },
+ {
+  "key": "hud_tasks_loading",
+  "zh": "读取输出…",
+  "en": "Reading output…"
+ },
+ {
+  "key": "hud_tasks_no_output",
+  "zh": "暂无输出",
+  "en": "No output yet"
+ },
+ {
+  "key": "hud_tasks_hint",
+  "zh": "后台任务：{} 个命令正在运行",
+  "en": "Background tasks: {} running",
+  "params": [
+   "count"
+  ]
+ },
+ {
   "key": "cp_status_local",
   "zh": "本地",
   "en": "Local"
@@ -2139,6 +2216,151 @@
   "key": "ws_preview_root_b",
   "zh": "示例/资料",
   "en": "sample/reference"
+ },
+ {
+  "key": "st_vr_replay_log",
+  "zh": "回放日志",
+  "en": "Replay log"
+ },
+ {
+  "key": "st_model_vision",
+  "zh": "支持视觉",
+  "en": "Vision"
+ },
+ {
+  "key": "st_model_hearing",
+  "zh": "支持听觉",
+  "en": "Audio"
+ },
+ {
+  "key": "st_model_stream_usage",
+  "zh": "流式返回 usage",
+  "en": "Stream usage"
+ },
+ {
+  "key": "st_model_tool_call_mode",
+  "zh": "工具调用方式",
+  "en": "Tool call mode"
+ },
+ {
+  "key": "st_model_video_frames",
+  "zh": "总帧数",
+  "en": "Frame count"
+ },
+ {
+  "key": "st_model_video_interpolation",
+  "zh": "启用补帧",
+  "en": "Frame interpolation"
+ },
+ {
+  "key": "st_model_video_sync_mode",
+  "zh": "同步模式",
+  "en": "Sync mode"
+ },
+ {
+  "key": "sb_open_settings",
+  "zh": "打开设置",
+  "en": "Open settings"
+ },
+ {
+  "key": "sb_resize_areas",
+  "zh": "调整工作线程区与工作目录区的高度",
+  "en": "Resize the thread and workspace areas"
+ },
+ {
+  "key": "st_unsaved_tag",
+  "zh": "未保存",
+  "en": "Unsaved"
+ },
+ {
+  "key": "st_opening_thread",
+  "zh": "正在打开线程，读取历史记录…",
+  "en": "Opening thread and reading history…"
+ },
+ {
+  "key": "chat_prompt_preview",
+  "zh": "查看系统提示词",
+  "en": "View system prompt"
+ },
+ {
+  "key": "cp_goal_blocked_tag",
+  "zh": "已阻塞",
+  "en": "Blocked"
+ },
+ {
+  "key": "st_browser_path",
+  "zh": "浏览器路径",
+  "en": "Browser path"
+ },
+ {
+  "key": "st_ffmpeg_path",
+  "zh": "ffmpeg 路径",
+  "en": "ffmpeg path"
+ },
+ {
+  "key": "st_param_history_ratio",
+  "zh": "历史压缩阈值比例",
+  "en": "History compaction threshold"
+ },
+ {
+  "key": "st_param_reasoning_effort",
+  "zh": "默认思考等级",
+  "en": "Default reasoning effort"
+ },
+ {
+  "key": "st_param_simulation_speed",
+  "zh": "模拟速度",
+  "en": "Simulation speed"
+ },
+ {
+  "key": "st_shell_path",
+  "zh": "shell 路径",
+  "en": "Shell path"
+ },
+ {
+  "key": "st_stress_count",
+  "zh": "个数",
+  "en": "Count"
+ },
+ {
+  "key": "st_wunder_model_hint",
+  "zh": "在新浏览器窗口打开舰桥 3D 展示",
+  "en": "Open the Bridge 3D viewer in a new browser window"
+ },
+ {
+  "key": "st_wunder_model_open",
+  "zh": "眺望心舰",
+  "en": "Behold Wunder"
+ },
+ {
+  "key": "st_wunder_model_title",
+  "zh": "心舰展示",
+  "en": "Wunder display"
+ },
+ {
+  "key": "stc_archives_delete_confirm",
+  "zh": "该归档线程及其本地记录将被永久删除，无法恢复。确认删除？",
+  "en": "Permanently delete this archived thread and its local records? This cannot be undone."
+ },
+ {
+  "key": "stc_archives_restore",
+  "zh": "还原",
+  "en": "Restore"
+ },
+ {
+  "key": "traj_token_usage",
+  "zh": "新增占用",
+  "en": "New tok"
+ },
+ {
+  "key": "ws_collapse_threads",
+  "zh": "收起工作区线程",
+  "en": "Collapse workspace threads"
+ },
+ {
+  "key": "ws_expand_threads",
+  "zh": "展开工作区线程",
+  "en": "Expand workspace threads"
  },
  {
   "key": "ed_total_legend",
@@ -3749,6 +3971,19 @@
   "en": "Quit"
  },
  {
+  "key": "cn_notice_title",
+  "zh": "智能体任务完成",
+  "en": "Agent task completed"
+ },
+ {
+  "key": "cn_notice_body",
+  "zh": "智能体 {} 已完成任务",
+  "en": "Agent {} finished the task",
+  "params": [
+   "name"
+  ]
+ },
+ {
   "key": "app_window_title",
   "zh": "蛹",
   "en": "Pupa"
@@ -4621,8 +4856,8 @@
  },
  {
   "key": "stc_pet_note",
-  "zh": "形象库、显示方式与动画联动",
-  "en": "Library, display mode and animation"
+  "zh": "桌宠形象、缩放与气泡提示",
+  "en": "Companion avatar, scale and bubble hints"
  },
  {
   "key": "stc_cron",
@@ -4850,21 +5085,6 @@
   "en": "Everything here is local to this machine and is never uploaded."
  },
  {
-  "key": "stc_pet_tab",
-  "zh": "形象库",
-  "en": "Library"
- },
- {
-  "key": "stc_pet_stage",
-  "zh": "动态形象",
-  "en": "Animation"
- },
- {
-  "key": "stc_pet_note_short",
-  "zh": "桌宠的显示、缩放与位置由桌宠窗口控制，此处管理形象库。",
-  "en": "The companion window owns visibility, scale and position; this manages the library."
- },
- {
   "key": "stc_archives_empty",
   "zh": "还没有归档线程。",
   "en": "No archived threads yet."
@@ -4950,34 +5170,44 @@
   "en": "Tool calls"
  },
  {
+  "key": "pet_behavior",
+  "zh": "桌宠行为",
+  "en": "Companion behavior"
+ },
+ {
+  "key": "pet_behavior_note",
+  "zh": "开关即时保存，动画随线程运行状态联动。",
+  "en": "Changes save instantly; animation follows thread state."
+ },
+ {
   "key": "pet_show",
-  "zh": "显示桌宠",
-  "en": "Show companion"
+  "zh": "动画形象",
+  "en": "Companion avatar"
  },
  {
   "key": "pet_show_note",
-  "zh": "关闭后桌宠窗口隐藏，动画状态保留。",
-  "en": "Hiding keeps the animation state; the window simply disappears."
+  "zh": "在桌面显示已选形象。",
+  "en": "Show the selected companion on the desktop."
  },
  {
   "key": "pet_hints",
-  "zh": "消息气泡",
-  "en": "Message bubbles"
+  "zh": "形象消息提示",
+  "en": "Message hints"
  },
  {
   "key": "pet_hints_note",
-  "zh": "桌宠在任务完成或出错时显示提示气泡。",
-  "en": "The companion shows a bubble when a task finishes or fails."
+  "zh": "让形象显示必要的简短状态信息。",
+  "en": "Let the companion show brief status hints."
  },
  {
   "key": "pet_scale",
-  "zh": "缩放档位",
-  "en": "Scale step"
+  "zh": "大小",
+  "en": "Size"
  },
  {
   "key": "pet_scale_note",
-  "zh": "由桌宠窗口的位置与缩放控制，此处只读。",
-  "en": "Owned by the companion window; read-only here."
+  "zh": "拖动滑块调整桌宠大小，范围 0.5–1.6。",
+  "en": "Drag to resize the pet; range 0.5–1.6."
  },
  {
   "key": "pet_library_title",
@@ -4986,13 +5216,11 @@
  },
  {
   "key": "pet_library_subtitle",
-  "zh": "导入、选择或删除桌宠形象包。",
-  "en": "Import, pick or delete companion packages."
- },
- {
-  "key": "pet_library_note",
-  "zh": "支持导入 .zip 形象包，选择后立即生效。",
-  "en": "Import a .zip package; selecting one applies immediately."
+  "zh": "形象库共 {} 个形象。",
+  "en": "{} companions in the library.",
+  "params": [
+   "count"
+  ]
  },
  {
   "key": "pet_library_empty",
@@ -5000,19 +5228,24 @@
   "en": "No packages yet — import one to begin."
  },
  {
-  "key": "pet_open_library",
-  "zh": "打开形象库",
-  "en": "Open library"
+  "key": "pet_import",
+  "zh": "导入",
+  "en": "Import"
  },
  {
-  "key": "pet_import",
-  "zh": "导入形象包",
-  "en": "Import package"
+  "key": "pet_refresh",
+  "zh": "刷新",
+  "en": "Refresh"
+ },
+ {
+  "key": "pet_use",
+  "zh": "选用",
+  "en": "Use"
  },
  {
   "key": "pet_in_use",
-  "zh": "使用中",
-  "en": "In use"
+  "zh": "当前",
+  "en": "Current"
  },
  {
   "key": "cron_new_job",
@@ -6166,6 +6399,56 @@
   "en": "Loading the child thread…"
  },
  {
+  "key": "tl_status_waiting",
+  "zh": "等待确认",
+  "en": "Waiting for confirmation"
+ },
+ {
+  "key": "tl_status_error",
+  "zh": "任务失败",
+  "en": "Task failed"
+ },
+ {
+  "key": "tl_status_stopped",
+  "zh": "已停止",
+  "en": "Stopped"
+ },
+ {
+  "key": "tl_status_queued",
+  "zh": "排队中",
+  "en": "Queued"
+ },
+ {
+  "key": "tl_status_compacting",
+  "zh": "上下文压缩中",
+  "en": "Compacting context"
+ },
+ {
+  "key": "tl_status_subagent",
+  "zh": "子智能体执行中",
+  "en": "Subagent running"
+ },
+ {
+  "key": "tl_status_tool",
+  "zh": "使用工具中",
+  "en": "Using tools"
+ },
+ {
+  "key": "tl_status_outputting",
+  "zh": "模型输出中",
+  "en": "Model outputting"
+ },
+ {
+  "key": "tl_status_requesting",
+  "zh": "请求中",
+  "en": "Requesting"
+ },
+ {
+  "key": "tl_status_running",
+  "zh": "处理中",
+  "en": "Processing"
+ },
+ {
   "key": "tl_process_loading",
   "zh": "正在加载…",
   "en": "Loading…"
@@ -6688,6 +6971,26 @@
   "en": "Search full thread"
  },
  {
+  "key": "traj_history_start",
+  "zh": "已到最早记录",
+  "en": "Beginning of history"
+ },
+ {
+  "key": "traj_history_older",
+  "zh": "向上滚动查看更早记录",
+  "en": "Scroll up for earlier records"
+ },
+ {
+  "key": "traj_history_loading",
+  "zh": "正在读取记录…",
+  "en": "Loading records…"
+ },
+ {
+  "key": "traj_history_retry",
+  "zh": "读取暂时失败，继续滚动可重试",
+  "en": "Could not load records; scroll to retry"
+ },
+ {
   "key": "traj_duration",
   "zh": "时长",
   "en": "Duration"
@@ -7078,26 +7381,52 @@
   "en": "Working directory"
  },
  {
-  "key": "wf_stats",
-  "zh": "已用 {} · {} 个文件",
-  "en": "Used {} · {} files",
+  "key": "wf_upload",
+  "zh": "上传文件",
+  "en": "Upload files"
+ },
+ {
+  "key": "wf_search",
+  "zh": "搜索文件",
+  "en": "Search files"
+ },
+ {
+  "key": "wf_search_placeholder",
+  "zh": "搜索文件名",
+  "en": "Search file names"
+ },
+ {
+  "key": "wf_searching",
+  "zh": "搜索中…",
+  "en": "Searching…"
+ },
+ {
+  "key": "wf_search_empty",
+  "zh": "没有匹配的文件",
+  "en": "No matching files"
+ },
+ {
+  "key": "wf_select",
+  "zh": "多选",
+  "en": "Select"
+ },
+ {
+  "key": "wf_selected_count",
+  "zh": "已选 {} 项",
+  "en": "{} selected",
   "params": [
-   "used",
    "count"
   ]
  },
  {
-  "key": "wf_stats_dirs",
-  "zh": "{} 个文件夹",
-  "en": "{} folders",
-  "params": [
-   "count"
-  ]
+  "key": "wf_batch_download",
+  "zh": "批量下载",
+  "en": "Download"
  },
  {
-  "key": "wf_stats_truncated",
-  "zh": "统计为大目录下界",
-  "en": "Lower bound of a large directory"
+  "key": "wf_connect_cloud",
+  "zh": "连接云端工作目录",
+  "en": "Connect to the cloud workspace"
  },
  {
   "key": "wf_empty",
@@ -7141,11 +7470,6 @@
   "key": "wf_loading_dir",
   "zh": "加载中",
   "en": "Loading"
- },
- {
-  "key": "wf_open_hint",
-  "zh": "点击文件拉取到本地工作区并打开；拖出即下载，拖入即上传",
-  "en": "Click a file to pull and open it; drag out to download, drag in to upload"
  },
  {
   "key": "wf_menu_open",
@@ -7254,25 +7578,5 @@
   "key": "wf_btn_exec",
   "zh": "确认执行",
   "en": "Confirm"
- },
- {
-  "key": "traj_history_start",
-  "zh": "已到最早记录",
-  "en": "Beginning of history"
- },
- {
-  "key": "traj_history_older",
-  "zh": "向上滚动查看更早记录",
-  "en": "Scroll up for earlier records"
- },
- {
-  "key": "traj_history_loading",
-  "zh": "正在读取记录…",
-  "en": "Loading records…"
- },
- {
-  "key": "traj_history_retry",
-  "zh": "读取暂时失败，继续滚动可重试",
-  "en": "Could not load records; scroll to retry"
  }
 ]

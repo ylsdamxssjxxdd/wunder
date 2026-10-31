@@ -536,12 +536,20 @@ export component Sidebar inherits Rectangle {
             height: 32px;
             padding-left: SidebarMetrics.gutter; padding-right: SidebarMetrics.gutter;
             spacing: 4px;
-            // Device selector: the current device owns every workspace row below.
+            // Device selector: the current device owns every workspace row
+            // below. It is a control, not a tree entry: a bordered surface
+            // chip against the panel grey, while the workspace/thread rows
+            // stay borderless with grey hover fills — the different anatomy
+            // keeps the two levels from reading as siblings. Hover only
+            // deepens the stroke, never fills the chip like a row would.
             Rectangle {
                 height: 32px;
                 horizontal-stretch: 1;
                 border-radius: SidebarMetrics.row-radius;
-                background: device-toggle.has-hover && root.cloud-available ? Theme.hover : transparent;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: (device-toggle.has-hover || root.device-menu-open) && root.cloud-available
+                    ? Theme.border-strong : Theme.border;
                 HorizontalLayout {
                     padding-left: SidebarMetrics.row-padding;
                     padding-right: SidebarMetrics.row-padding;

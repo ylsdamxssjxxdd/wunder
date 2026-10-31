@@ -101,6 +101,21 @@ ENTRIES = [
     ("cp_queue_attachments", "附件 {}", "{} attachment(s)", ["count"]),
     ("cp_queue_send", "加入等待发送", "Add to the send queue"),
 
+    # ---- 输入区硬件状态网格 (HostHud) ----
+    ("hud_cpu", "CPU", "CPU"),
+    ("hud_memory", "内存", "Memory"),
+    ("hud_cores", "{} 核", "{} cores", ["cores"]),
+    ("hud_tasks_title", "后台任务", "Running tasks"),
+    ("hud_tasks_count", "{} 个运行中", "{} running", ["count"]),
+    ("hud_tasks_empty", "没有正在运行的任务", "Nothing is running"),
+    ("hud_tasks_more", "还有 {} 条未显示", "{} more not shown", ["count"]),
+    ("hud_tasks_stop", "终止任务", "Terminate task"),
+    ("hud_tasks_expand", "展开详情", "Show details"),
+    ("hud_tasks_collapse", "收起详情", "Hide details"),
+    ("hud_tasks_loading", "读取输出…", "Reading output…"),
+    ("hud_tasks_no_output", "暂无输出", "No output yet"),
+    ("hud_tasks_hint", "后台任务：{} 个命令正在运行", "Background tasks: {} running", ["count"]),
+
     # ---- status bar (§8.5) ----
     ("cp_status_local", "本地", "Local"),
     ("cp_status_branch", "分支", "Branch"),
