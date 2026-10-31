@@ -1,6 +1,7 @@
 import { I18n } from "i18n.slint";
-import { Theme, ChatAttachment, ModelCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall } from "theme.slint";
+import { Theme, ChatAttachment, CommandTask, ModelCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall } from "theme.slint";
 import { Action } from "components.slint";
+import { HostHud } from "host_hud.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { TextFieldActivation, TextFieldMenu } from "text_field.slint";
@@ -1349,6 +1350,23 @@ export component Composer inherits Rectangle {
     // §8.5 status line under the box.
     in property <string> workspace-name: "";
     in property <string> branch-name: "";
+    // ---- 本机硬件状态网格 (HostHud) ----
+    // 采样在后台线程（wunder-desktop::native_host_hud），这里只承接最近一次
+    // 快照的投影。格子里只画图标（按占用做液位填充），精确读数走悬停提示；文本由
+    // Rust 预格式化，渲染路径不做单位换算，也不会因为语言或小数格式让格子宽度跳动。
+    in property <float> host-cpu: 0.0;
+    in property <float> host-memory: 0.0;
+    in property <string> host-cpu-text: "—";
+    in property <string> host-memory-text: "—";
+    in property <string> host-memory-used: "—";
+    in property <string> host-memory-total: "—";
+    in property <int> host-cores: 0;
+    // 后台任务：本线程里仍在执行的命令工具。模型由 command_tasks 控制器按秒投影，
+    // 展开/终止都回到 Rust（展开态与输出尾部不放在 Slint 侧，避免重排时丢状态）。
+    in property <[CommandTask]> running-tasks: [];
+    in property <int> running-task-count: 0;
+    callback toggle-task(string);
+    callback terminate-task(string);
     // §8.4 permission mode: a plain preference string, reported by the runtime
     // sheet; enforcement itself stays in the backend.
     // §8.4 permission mode, named after the runtime's `approval_mode` values
@@ -1622,9 +1640,10 @@ export component Composer inherits Rectangle {
             }
         }
         // ---- action row (§8.2), 对齐蜂巢 composer-action-row: the bordered
-        // plus square opens the single merged menu, the workspace status bar
-        // sits beside it, and the right side carries the merged model trigger
-        // and the send square. ----
+        // plus square opens the single merged menu, and the right side carries
+        // the merged model trigger and the send square. ----
+        // 动作行：左侧加号 + 本机硬件状态网格（占据原工作区名的位置，工作区名
+        // 不再单独显示——它仍用于输入框的占位文案），右侧模型触发器与发送方块。
         HorizontalLayout {
             height: 30px; spacing: 6px;
             Rectangle {
@@ -1835,21 +1854,37 @@ export component Composer inherits Rectangle {
                         }
                 }
             }
-            // 工作目录状态栏（对齐蜂巢 ComposerStatusBar）。
+            // 本机硬件状态网格：占据原来工作区状态栏的位置，紧跟加号。
+            // 外面这层定高容器只为了垂直居中——HorizontalLayout 对固定高度的子元素
+            // 是顶部对齐，直接放 26px 的读数行会贴顶。不再按窗口宽度整块隐藏：它已经
+            // 退回左侧、不再与模型触发器抢中间的位置，最窄的一档（1024px 窗口、
+            // 侧栏展开）也放得下；而 `if` 条件元素包一层、宽度又绑到子元素，会让
+            // 布局高度产生 binding loop。
             Rectangle {
+                width: hud.width;
                 height: 30px;
-                width: min(ws-text.preferred-width, 160px) + 22px;
-                visible: root.workspace-name != "";
-                Image { x: 5px; y: 9px; width: 12px; height: 12px; source: @image-url("../assets/icons/folder-open.svg"); colorize: Theme.accent-ink; image-fit: contain; }
-                ws-text := Text {
-                    x: 22px; width: min(self.preferred-width, 160px); height: parent.height;
-                    text: root.workspace-name; color: Theme.text-secondary; font-size: Theme.font-sm;
-                    vertical-alignment: center; overflow: elide;
+                horizontal-stretch: 0;
+                hud := HostHud {
+                    // 26px 的读数行放进 30px 的行里，y=2 才与加号、发送方块共中线。
+                    y: 2px;
+                    cpu: root.host-cpu;
+                    memory: root.host-memory;
+                    cpu-hint: I18n.hud_cpu + " " + root.host-cpu-text
+                        + (root.host-cores > 0 ? " · " + I18n.hud_cores(root.host-cores) : "");
+                    memory-hint: I18n.hud_memory + " " + root.host-memory-text + " · "
+                        + root.host-memory-used + " / " + root.host-memory-total;
+                    tasks: root.running-tasks;
+                    task-count: root.running-task-count;
+                    task-hidden: max(root.running-task-count - root.running-tasks.length, 0);
+                    task-hint: root.running-task-count > 0
+                        ? I18n.hud_tasks_hint(root.running-task-count) : I18n.hud_tasks_empty;
+                    toggle-task(id) => { root.toggle-task(id); }
+                    terminate-task(id) => { root.terminate-task(id); }
                 }
             }
             // Slack absorber, not decoration: without one stretchable item the
             // row reports a fixed implicit width and the Window shrink-wraps
-            // to it.
+            // to it. The leftover space belongs to the spacer alone.
             Rectangle { horizontal-stretch: 1; }
             // Right: the merged model trigger (liquid brain gauge + model name
             // + effort), then the send square. Zero stretch keeps the picker at

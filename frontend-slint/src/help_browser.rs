@@ -2,7 +2,9 @@
 //! 排版成绝对定位的文本片段与装饰矩形，再绑定到 HelpDocs 全局状态。
 //! 视图层（help_*.slint）只做投影，不持有阅读状态，切页不丢进度。
 
-use crate::{HelpDocs, HelpEntry, HelpImage, HelpRect, HelpTextRun, HelpWindow, TextFieldActivation};
+use crate::{
+    HelpDocs, HelpEntry, HelpImage, HelpRect, HelpTextRun, HelpWindow, TextFieldActivation,
+};
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontWeight, LayoutContext, LineHeight, StyleProperty,
 };
@@ -1101,11 +1103,13 @@ where
         slint::winit_030::EventResult::Propagate
     });
     let weak = window.as_weak();
-    window.global::<TextFieldActivation>().on_activated(move || {
-        if let Some(app) = weak.upgrade() {
-            crate::touch_keyboard::on_text_field_activated(app.window());
-        }
-    });
+    window
+        .global::<TextFieldActivation>()
+        .on_activated(move || {
+            if let Some(app) = weak.upgrade() {
+                crate::touch_keyboard::on_text_field_activated(app.window());
+            }
+        });
     let docs = window.global::<HelpDocs>();
     let controller = Rc::new(RefCell::new(Controller::new(zh)));
     {

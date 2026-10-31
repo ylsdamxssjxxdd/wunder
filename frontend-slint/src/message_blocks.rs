@@ -737,7 +737,10 @@ mod tests {
         let mut source = String::new();
         let mut frozen: Vec<String> = Vec::new();
         for index in 0..40 {
-            let line = format!("第 {index} 行，用于撑满尾块预算的示例文本{}\n", "·".repeat(60));
+            let line = format!(
+                "第 {index} 行，用于撑满尾块预算的示例文本{}\n",
+                "·".repeat(60)
+            );
             source.push_str(&line);
             blocks.append(&line).unwrap();
             blocks.flush();
@@ -769,8 +772,14 @@ mod tests {
         let texts = block_texts(&blocks);
         assert_eq!(texts.first().map(String::as_str), Some(TRUNCATED_NOTICE));
         let window = texts[1..].join("\n");
-        assert!(!window.contains("第 0 行"), "the head leaves the display budget");
-        assert!(window.contains("第 299 行"), "the newest line stays visible");
+        assert!(
+            !window.contains("第 0 行"),
+            "the head leaves the display budget"
+        );
+        assert!(
+            window.contains("第 299 行"),
+            "the newest line stays visible"
+        );
         assert!(window.matches('\n').count() <= DISPLAY_LINES);
         assert_eq!(blocks.raw, source, "copy keeps the complete text");
     }

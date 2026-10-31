@@ -18,12 +18,11 @@ fi
 offline_root="${WUNDER_OFFLINE_ROOT:-$builder_root/offline}"
 target_dir="${CARGO_TARGET_DIR:-$repo_root/target/linux-arm64-ubuntu18-slint/cargo}"
 output_dir="${WUNDER_OUTPUT_DIR:-$repo_root/target/slint/dist/linux-arm64}"
-runtime_source="${WUNDER_APPIMAGE_RUNTIME:-}"
 max_glibc="${WUNDER_SLINT_LINUX_MAX_GLIBC:-2.27}"
 stage_dir=""
 phase=preflight
 
-fail() { echo "[wunder-slint-appimage] $*" >&2; exit 2; }
+fail() { echo "[wunder-slint-arm64-cross-desktop] $*" >&2; exit 2; }
 require_file() { [[ -f "$1" ]] || fail "required file is missing: $1"; }
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "required command is unavailable: $1"; }
 
@@ -39,7 +38,7 @@ cleanup() {
     esac
   fi
   if ((status != 0)); then
-    echo "[wunder-slint-appimage] failed during $phase (exit $status); command: ${BASH_COMMAND:-unknown}; no new AppImage was published" >&2
+    echo "[wunder-slint-arm64-cross-desktop] failed during $phase (exit $status); command: ${BASH_COMMAND:-unknown}; no new archive was published" >&2
   fi
   exit "$status"
 }
@@ -50,8 +49,6 @@ trap 'exit 143' TERM
 
 manifest="$repo_root/frontend-slint/Cargo.toml"
 require_file "$manifest"
-[[ -n "$runtime_source" ]] || fail "WUNDER_APPIMAGE_RUNTIME must point to an ARM64 type-2 AppImage runtime"
-require_file "$runtime_source"
 target="aarch64-unknown-linux-gnu"
 sysroot="${WUNDER_ARM64_SYSROOT:-/}"
 linker="${WUNDER_ARM64_LINKER:-aarch64-linux-gnu-gcc}"
@@ -59,12 +56,10 @@ readelf_tool="${WUNDER_ARM64_READELF:-aarch64-linux-gnu-readelf}"
 strip_tool="${WUNDER_ARM64_STRIP:-aarch64-linux-gnu-strip}"
 command -v "$linker" >/dev/null 2>&1 || linker="aarch64-linux-gnu-gcc"
 [[ -d "$sysroot" ]] || fail "ARM64 cross sysroot is missing: $sysroot"
-for command_name in cargo rustc "$readelf_tool" "$strip_tool" mksquashfs dd awk grep sort mktemp stat od tr sed; do
+for command_name in cargo rustc "$readelf_tool" "$strip_tool" awk grep sort mktemp stat tr sed tar; do
   require_command "$command_name"
 done
 
-runtime_machine="$(LC_ALL=C "$readelf_tool" -h "$runtime_source" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[ \t]+/, "", $2); print $2}')"
-[[ "$runtime_machine" == "AArch64" ]] || fail "AppImage runtime must be AArch64, got: ${runtime_machine:-unknown}"
 
 version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" | head -n 1)"
 [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]] || fail "invalid package version: $version"
@@ -80,9 +75,9 @@ export PKG_CONFIG_PATH="$sysroot/usr/lib/aarch64-linux-gnu/pkgconfig:$sysroot/us
 # CI obtains dependencies through Cargo.lock; no ARM binary is executed during this build.
 export CARGO_TARGET_DIR="$target_dir"
 
-echo "[wunder-slint-appimage] cargo: $(cargo --version)"
-echo "[wunder-slint-appimage] rustc: $(rustc --version)"
-echo "[wunder-slint-appimage] baseline: $(ldd --version | head -n 1)"
+echo "[wunder-slint-arm64-cross-desktop] cargo: $(cargo --version)"
+echo "[wunder-slint-arm64-cross-desktop] rustc: $(rustc --version)"
+echo "[wunder-slint-arm64-cross-desktop] baseline: $(ldd --version | head -n 1)"
 cargo build --locked --release --manifest-path "$manifest" --bin wunder-frontend-slint --target "$target"
 
 phase=validation
@@ -105,7 +100,7 @@ cp -f "$binary" "$appdir/usr/bin/wunder-frontend-slint"
 "$strip_tool" --strip-all --strip-unneeded "$appdir/usr/bin/wunder-frontend-slint"
 
 # Use the example configuration as the distributable seed; runtime state is
-# written outside the AppImage and no machine-specific paths are packaged.
+# written outside the pack and no machine-specific paths are packaged.
 require_file "$repo_root/config/wunder-example.yaml"
 cp -f "$repo_root/config/wunder-example.yaml" "$appdir/config/wunder.yaml"
 for resource in prompts skills preset_worker_cards ppt_templates i18n.messages.json fonts.conf matplotlibrc; do
@@ -171,40 +166,24 @@ cat > "$appdir/AppRun" <<'EOF'
 #!/bin/sh
 set -eu
 APPDIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+export APPDIR
 export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-# Let the shared runtime resolve HOME/.wunder or explicit WUNDER_HOME.
-# Preserve caller overrides without introducing AppImage-specific data roots.
+# The engine resolves WUNDER_HOME from the caller or, when this tree sits at
+# <root>/app/desktop, from the portable marker two levels up.
+if [ -z "${WUNDER_HOME:-}" ]; then
+  install_root=$(CDPATH= cd -- "$APPDIR/../.." 2>/dev/null && pwd) || install_root=""
+  if [ -n "$install_root" ] && [ -f "$install_root/.wunder-home" ]; then
+    WUNDER_HOME="$install_root"
+    export WUNDER_HOME
+  fi
+fi
 exec "$APPDIR/usr/bin/wunder-frontend-slint" "$@"
 EOF
 chmod +x "$appdir/AppRun"
 
-# The runtime blob is prepended to the squashfs verbatim. A fat runtime with
-# an embedded tools filesystem must be cut at that image; a bare blob (the
-# AppImageKit runtime-* downloads) contains none and is used whole. The hsqs
-# magic also appears as look-alike bytes inside the ELF, so a hit is trusted
-# only when a squashfs 4.0 superblock parses at the same offset.
-runtime_offset="$(LC_ALL=C grep -oba -m 1 'hsqs' "$runtime_source" | LC_ALL=C awk -F: '{print $1}' || true)"
-if [[ "$runtime_offset" =~ ^[0-9]+$ && "$runtime_offset" -gt 0 ]]; then
-  block_size="$(dd if="$runtime_source" bs=1 skip=$((runtime_offset + 12)) count=4 status=none | od -An -tu4 | tr -d ' ')"
-  sb_major="$(dd if="$runtime_source" bs=1 skip=$((runtime_offset + 28)) count=2 status=none | od -An -tu2 | tr -d ' ')"
-  sb_minor="$(dd if="$runtime_source" bs=1 skip=$((runtime_offset + 30)) count=2 status=none | od -An -tu2 | tr -d ' ')"
-  if [[ "$sb_major" != 4 || "$sb_minor" != 0 ]] || (( block_size < 4096 || block_size > 1048576 || (block_size & (block_size - 1)) != 0 )); then
-    runtime_offset=""
-  fi
-fi
-# Bare runtime blobs carry no embedded squashfs; prepend the whole file.
-[[ "$runtime_offset" =~ ^[0-9]+$ && "$runtime_offset" -gt 0 ]] || runtime_offset="$(stat -c '%s' "$runtime_source")"
-squashfs="$stage_dir/$app_name.squashfs"
-runtime="$stage_dir/$app_name.runtime"
-staged_appimage="$stage_dir/$app_name.AppImage"
-appimage="$output_dir/$app_name.AppImage"
-squashfs_processors="${WUNDER_SQUASHFS_PROCESSORS:-1}"
-[[ "$squashfs_processors" =~ ^[1-9][0-9]*$ ]] || fail "WUNDER_SQUASHFS_PROCESSORS must be a positive integer"
-echo "[wunder-slint-appimage] packaging SquashFS with $squashfs_processors processor(s)"
-mksquashfs "$appdir" "$squashfs" -noappend -comp gzip -all-root -no-xattrs -b 1048576 -processors "$squashfs_processors"
-dd if="$runtime_source" of="$runtime" bs=1 count="$runtime_offset" status=none
-cat "$runtime" "$squashfs" > "$staged_appimage"
-chmod +x "$staged_appimage"
-# Publish atomically only after the complete image has been written.
-mv -f -- "$staged_appimage" "$appimage"
-echo "[wunder-slint-appimage] produced: $appimage ($(stat -c '%s' "$appimage") bytes)"
+# Publish atomically: the installer and the portable launcher both consume this
+# archive, so a truncated file must never appear in the output directory.
+tarball="$stage_dir/$app_name.tar.gz"
+tar --sort=name --numeric-owner -czf "$tarball" -C "$appdir" .
+mv -f -- "$tarball" "$output_dir/$app_name.tar.gz"
+echo "[wunder-slint-arm64-cross-desktop] produced: $output_dir/$app_name.tar.gz ($(stat -c '%s' "$output_dir/$app_name.tar.gz") bytes)"

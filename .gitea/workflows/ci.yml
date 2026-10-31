@@ -67,15 +67,13 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            appimage_runtime: x86_64
             supplement_platform: linux/amd64
             desktop_image: wunder-desktop-ubuntu1804-x86_64
-            appimage_script: builders/build-linux-appimage-native.sh
+            desktop_script: builders/build-linux-desktop-native.sh
           - arch: arm64
-            appimage_runtime: aarch64
             supplement_platform: linux/arm64
             desktop_image: wunder-desktop-ubuntu1804-arm64
-            appimage_script: builders/build-linux-arm64-cross-appimage.sh
+            desktop_script: builders/build-linux-arm64-cross-desktop.sh
     runs-on: wunder-ci
     timeout-minutes: 360
     steps:
@@ -86,7 +84,6 @@ jobs:
           set -euo pipefail
           docker build --platform linux/amd64 \
             --build-arg RUST_TOOLCHAIN=1.92.0 \
-            --build-arg APPIMAGE_RUNTIME_URL="${GITHUB_PROXY}/https://github.com/AppImage/AppImageKit/releases/download/continuous/runtime-${{ matrix.appimage_runtime }}" \
             -f packaging/docker/Dockerfile.ubuntu18-desktop \
             -t "${{ matrix.desktop_image }}" .
 
@@ -112,7 +109,7 @@ jobs:
           restore-keys: |
             desktop-${{ matrix.arch }}-cargo-
 
-      - name: Build AppImage
+      - name: Build desktop archive
         run: |
           set -euo pipefail
           mkdir -p release-assets
@@ -122,20 +119,18 @@ jobs:
             -w /app \
             -e ARCH="${{ matrix.arch }}" \
             -e WUNDER_OUTPUT_DIR=/app/release-assets \
-            -e WUNDER_APPIMAGE_RUNTIME=/usr/local/lib/wunder/appimage-runtime \
             "${{ matrix.desktop_image }}" \
-            bash "${{ matrix.appimage_script }}"
+            bash "${{ matrix.desktop_script }}"
 
-      - name: Verify AppImage payload
+      - name: Verify desktop archive
         run: |
           set -euo pipefail
-          asset="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.AppImage" -print -quit)"
+          asset="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
           test -n "$asset"
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE:/app" \
-            -w /app \
-            "${{ matrix.desktop_image }}" \
-            bash frontend-slint/scripts/check-linux-arm64-appimage.sh "/app/$asset"
+          tar -tzf "$asset" > /tmp/members.txt
+          grep -qx './AppRun' /tmp/members.txt
+          grep -qx './usr/bin/wunder-frontend-slint' /tmp/members.txt
+          ls -lh "$asset"
 
       - name: Build Linux CLI
         run: |
@@ -197,16 +192,19 @@ jobs:
       - name: Pack installer
         run: |
           set -euo pipefail
-          desktop="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.AppImage" -print -quit)"
+          desktop="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
           cli="$(find release-assets -maxdepth 1 -name "wunder-cli-*-linux-${{ matrix.arch }}" -print -quit)"
           supplement="$(find supplement-dist -maxdepth 1 -name "wunder-supplement-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
           test -n "$desktop"
           test -n "$cli"
           test -n "$supplement"
           bash builders/pack.sh -a "linux-${{ matrix.arch }}" \
-            --desktop "$desktop" \
+            --desktop-archive "$desktop" \
             --cli "$cli" \
             --supplement "$supplement" \
+            --output-dir release-assets
+          bash builders/pack-portable.sh -a "linux-${{ matrix.arch }}" \
+            --desktop-archive "$desktop" \
             --output-dir release-assets
           find release-assets -maxdepth 1 -type f -printf '%f %s\n' | sort
 
@@ -219,9 +217,10 @@ jobs:
           }
           dest="/home/sjxx/gitea/artifacts/linux-${{ matrix.arch }}"
           mkdir -p "$dest"
-          cp release-assets/*.AppImage \
+          cp release-assets/*.tar.gz \
             release-assets/wunder-cli-* \
             release-assets/*.run \
+            release-assets/*.portable \
             supplement-dist/*.tar.gz \
             "$dest"/
           chown -R 1000:1000 "$dest"
@@ -273,7 +272,7 @@ jobs:
             echo "uploaded ${name}"
           }
 
-          for file in release-assets/*.AppImage release-assets/wunder-cli-* release-assets/*.run supplement-dist/*.tar.gz; do
+          for file in release-assets/*.tar.gz release-assets/wunder-cli-* release-assets/*.run release-assets/*.portable supplement-dist/*.tar.gz; do
             upload "$file" "$(basename "$file")"
           done
           echo "release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$tag"

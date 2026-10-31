@@ -247,3 +247,93 @@ mod tests {
         assert_eq!(map.get("stdout_dropped_bytes"), Some(&json!(8)));
     }
 }
+
+/// 一条「正在执行的命令任务」的轻量投影。给本地 UI 的后台任务面板用：
+/// 只带一眼能读的字段，输出尾部要按需另取，避免每秒轮询时搬运大字符串。
+#[derive(Debug, Clone, Serialize)]
+pub struct CommandTaskView {
+    pub id: String,
+    /// 命令行原文（单行化，已按 UI 预算截断）。
+    pub command: String,
+    pub cwd: String,
+    /// 距离开始已运行的毫秒数；已完成的任务为总耗时。
+    pub elapsed_ms: i64,
+    /// 是否仍在运行。
+    pub running: bool,
+    pub exit_code: Option<i32>,
+    /// `running` / `exited` / `failed_to_start`。
+    pub status: &'static str,
+    /// 交互式终端会话：终止等同于结束该进程。
+    pub tty: bool,
+}
+
+/// 展开一条任务时读取的输出细节。三个流分开给，UI 自己决定展示哪个。
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct CommandTaskDetail {
+    pub id: String,
+    pub cwd: String,
+    pub shell: Option<String>,
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+    pub error: Option<String>,
+    /// 输出是否因为环形缓冲被丢弃过（尾部仍是完整的最后一段）。
+    pub truncated: bool,
+    pub stdout_tail: String,
+    pub stderr_tail: String,
+    pub pty_tail: String,
+}
+
+impl CommandSessionSnapshot {
+    /// 轻量投影。命令原文压成一行并截断到 240 字符，够 UI 认出是哪条命令。
+    pub(crate) fn task_view(&self, now: DateTime<Utc>) -> CommandTaskView {
+        let ended = self.ended_at.unwrap_or(now);
+        let elapsed = ended
+            .signed_duration_since(self.started_at)
+            .num_milliseconds()
+            .max(0);
+        let single_line = self
+            .command
+            .split(['\n', '\r'])
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let command = if single_line.chars().count() > 240 {
+            let head: String = single_line.chars().take(239).collect();
+            format!("{head}…")
+        } else {
+            single_line
+        };
+        CommandTaskView {
+            id: self.command_session_id.clone(),
+            command,
+            cwd: self.cwd.clone(),
+            elapsed_ms: elapsed,
+            running: self.status == CommandSessionStatus::Running,
+            exit_code: self.exit_code,
+            status: match self.status {
+                CommandSessionStatus::Running => "running",
+                CommandSessionStatus::Exited => "exited",
+                CommandSessionStatus::FailedToStart => "failed_to_start",
+            },
+            tty: self.tty,
+        }
+    }
+
+    pub(crate) fn task_detail(&self) -> CommandTaskDetail {
+        CommandTaskDetail {
+            id: self.command_session_id.clone(),
+            cwd: self.cwd.clone(),
+            shell: self.shell.clone(),
+            exit_code: self.exit_code,
+            timed_out: self.timed_out,
+            error: self.error.clone(),
+            truncated: self.stdout_dropped_bytes > 0
+                || self.stderr_dropped_bytes > 0
+                || self.pty_dropped_bytes > 0,
+            stdout_tail: self.stdout_tail.clone(),
+            stderr_tail: self.stderr_tail.clone(),
+            pty_tail: self.pty_tail.clone(),
+        }
+    }
+}

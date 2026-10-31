@@ -1029,12 +1029,14 @@ fn install_search(app: &MainWindow, api: Arc<NativeDesktop>) {
         let weak = weak.clone();
         let api = debounce_api.clone();
         SEARCH_TIMER.with(|timer| {
-            timer.borrow().start(TimerMode::SingleShot, SEARCH_DEBOUNCE, move || {
-                if let Some(app) = weak.upgrade() {
-                    let query = app.get_ws_file_search_query().to_string();
-                    run_search(&app.as_weak(), api.clone(), query);
-                }
-            });
+            timer
+                .borrow()
+                .start(TimerMode::SingleShot, SEARCH_DEBOUNCE, move || {
+                    if let Some(app) = weak.upgrade() {
+                        let query = app.get_ws_file_search_query().to_string();
+                        run_search(&app.as_weak(), api.clone(), query);
+                    }
+                });
         });
     });
 
@@ -2174,7 +2176,10 @@ fn stamp_subtree_ends(rows: &mut [WorkspaceFileRow]) {
     let mut open: Vec<(i32, usize)> = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         let depth = row.depth + i32::from(row.kind == 2);
-        while open.last().is_some_and(|(open_depth, _)| *open_depth >= depth) {
+        while open
+            .last()
+            .is_some_and(|(open_depth, _)| *open_depth >= depth)
+        {
             let (_, started) = open.pop().expect("checked above");
             ends[started] = index as i32;
         }
@@ -2486,7 +2491,10 @@ mod tests {
             entry("a.md", "notes/a.md", "file", 2048),
         ]);
         assert_eq!(rows.len(), 2);
-        assert_eq!((rows[0].kind, rows[0].depth, rows[0].expanded), (1, 0, false));
+        assert_eq!(
+            (rows[0].kind, rows[0].depth, rows[0].expanded),
+            (1, 0, false)
+        );
         assert_eq!(rows[0].size_text.as_str(), "");
         assert_eq!((rows[1].kind, rows[1].size_text.as_str()), (0, "2 KB"));
         assert!(rows.iter().all(|row| !row.selected));

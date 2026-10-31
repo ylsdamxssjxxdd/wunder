@@ -4260,10 +4260,7 @@ fn format_count_i64(value: i64) -> String {
 mod turn_tests {
     use super::*;
 
-    fn panel_turn(
-        root: &str,
-        panel: Option<Value>,
-    ) -> wunder_desktop::NativeChatTurn {
+    fn panel_turn(root: &str, panel: Option<Value>) -> wunder_desktop::NativeChatTurn {
         let message = wunder_desktop::NativeMessage {
             turn_id: root.into(),
             text: String::new(),
@@ -4307,8 +4304,7 @@ mod turn_tests {
             "turn_id": "fixture-round"
         });
         let turns = vec![panel_turn("fixture-root", Some(pending.clone()))];
-        let opened =
-            durable_inquiry(session, &turns, &VecDeque::new()).expect("pending panel");
+        let opened = durable_inquiry(session, &turns, &VecDeque::new()).expect("pending panel");
         assert_eq!(opened.inquiry_turn_id, "fixture-round");
         assert_eq!(opened.questions.len(), 1);
         assert_eq!(opened.questions[0].options.len(), 2);

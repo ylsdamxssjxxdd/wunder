@@ -53,7 +53,15 @@ uuid.workspace = true
 wunder-runtime = { path = "../wunder-runtime", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }
+# Win32 宿主探针：GetSystemTimes（CPU 时间）与 GlobalMemoryStatusEx（物理内存）；
+# Win32_Security 是 native_cli 里 CreateProcessW 的前置 feature。
+# 网络计数（iphlpapi）与 PDH 磁盘吞吐已随输入区改版移除。
+windows-sys = { version = "0.52", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 tempfile.workspace = true

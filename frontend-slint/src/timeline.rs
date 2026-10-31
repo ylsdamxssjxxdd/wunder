@@ -445,9 +445,9 @@ impl Timeline {
             let answer = ((index + 1)..end)
                 .rev()
                 .find(|row_index| {
-                    self.model.row_data(*row_index).is_some_and(|row| {
-                        row.kind == KIND_BODY && !row.text.is_empty()
-                    })
+                    self.model
+                        .row_data(*row_index)
+                        .is_some_and(|row| row.kind == KIND_BODY && !row.text.is_empty())
                 })
                 .and_then(|row_index| self.model.row_data(row_index))
                 .map(|row| preview_text(&row.text, AGENT_PREVIEW_LIMIT))

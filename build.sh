@@ -7,4 +7,8 @@ if [[ "${1:-}" == "pack" ]]; then
   shift
   exec bash "$repo_root/builders/pack.sh" "$@"
 fi
+if [[ "${1:-}" == "portable" ]]; then
+  shift
+  exec bash "$repo_root/builders/pack-portable.sh" "$@"
+fi
 exec bash "$repo_root/builders/build.sh" "$@"

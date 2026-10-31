@@ -3008,7 +3008,6 @@ fn tooltip_for(model: &SnapshotModel, texts: &Texts, record_index: i32) -> Strin
 // ------------------------------------------------------------------ */
 // Controller                                                          */
 // ------------------------------------------------------------------ */
-
 /** 直方图与汇总的紧凑 token 数：12,345 → 12.3k。 */
 fn compact_tokens(value: f64) -> String {
     if !value.is_finite() {
@@ -4968,5 +4967,4 @@ mod tests {
         // Structured, non-command results are not mistaken for command output.
         assert!(command_output(&json!({"data": {"entries": []}})).is_none());
     }
-
 }

@@ -150,7 +150,10 @@
   overflow: hidden;
 }
 
-/* 设备选择区：取代原「工作区」组标题，明确 设备 → 工作区 → 线程 的层级。 */
+/* 设备选择区：取代原「工作区」组标题，明确 设备 → 工作区 → 线程 的层级。
+   设备条是一个控件（切换器）而不是树条目：白底描边 chip 压在面板灰底上，
+   与下方无边框、灰底悬停的工作区/线程行在解剖上拉开；悬停只加深描边，
+   不像行那样填充灰底。 */
 .messenger-sidebar-device-bar {
   display: flex;
   flex-shrink: 0;
@@ -162,14 +165,15 @@
 
 .messenger-sidebar-device {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: var(--mz-row-gap);
   min-width: 0;
   height: var(--mz-group-title-height);
   padding: 0 var(--mz-row-padding);
-  border: 0;
+  border: 1px solid var(--mz-border);
   border-radius: var(--mz-row-radius);
-  background: transparent;
+  background: var(--mz-surface);
   color: var(--mz-text);
   font: inherit;
   cursor: pointer;
@@ -177,7 +181,8 @@
 
 .messenger-sidebar-device:hover,
 .messenger-sidebar-device[aria-expanded='true'] {
-  background: var(--mz-hover);
+  background: var(--mz-surface);
+  border-color: var(--mz-border-strong);
 }
 
 .messenger-sidebar-device-icon {

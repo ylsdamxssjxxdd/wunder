@@ -6,8 +6,6 @@ param(
   [string]$KylinBuilderRoot = "",
   [string]$Win7BuilderRoot = "",
   [string]$Image = "rcho-slint-arm64-ubuntu18:latest",
-  [string]$AppImageRuntimeArm64 = "",
-  [string]$AppImageRuntimeAmd64 = "",
   [ValidateRange(1, 8)][int]$Jobs = 8,
   [switch]$Check
 )
@@ -22,14 +20,6 @@ if (-not $KylinBuilderRoot) { $KylinBuilderRoot = if ($env:WUNDER_KYLIN_BUILDER_
 if (-not $Win7BuilderRoot) { $Win7BuilderRoot = if ($env:WUNDER_WIN7_BUILDER_ROOT) { $env:WUNDER_WIN7_BUILDER_ROOT } else { Join-Path (Split-Path $repoRoot -Parent) "Rust-builder\win7" } }
 $KylinBuilderRoot = [IO.Path]::GetFullPath($KylinBuilderRoot)
 $Win7BuilderRoot = [IO.Path]::GetFullPath($Win7BuilderRoot)
-
-# AppImage runtimes default to the blobs shipped in the kylin-arm offline SDK,
-# so plain `-t desktop -a linux-arm64` works without extra parameters; the
-# explicit parameters (or the WUNDER_APPIMAGE_RUNTIME_* env vars) only override.
-if (-not $AppImageRuntimeArm64) { $AppImageRuntimeArm64 = $env:WUNDER_APPIMAGE_RUNTIME_ARM64 }
-if (-not $AppImageRuntimeAmd64) { $AppImageRuntimeAmd64 = $env:WUNDER_APPIMAGE_RUNTIME_AMD64 }
-if (-not $AppImageRuntimeArm64) { $AppImageRuntimeArm64 = Join-Path $KylinBuilderRoot "offline\appimage-runtime\runtime-aarch64" }
-if (-not $AppImageRuntimeAmd64) { $AppImageRuntimeAmd64 = Join-Path $KylinBuilderRoot "offline\appimage-runtime\runtime-x86_64" }
 
 if ($All) {
   if ($Target -or $Arch -or $Egui) { throw "-All selects every distribution; do not combine it with -Target, -Arch or -Egui." }
@@ -49,12 +39,7 @@ function Invoke-LinuxBuild {
   if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "docker.exe is required for the Linux/Win32 Docker build dispatcher."
   }
-  # Both Linux Desktop distributions are AppImages; CLI stays a plain ELF.
-  $needsRuntime = $SelectedTarget -eq "desktop"
-  $runtime = if ($SelectedArch -eq "linux-arm64") { $AppImageRuntimeArm64 } else { $AppImageRuntimeAmd64 }
-  if ($needsRuntime -and -not $runtime) {
-    throw "AppImage runtime for $SelectedArch was not resolved; pass -AppImageRuntimeArm64/-AppImageRuntimeAmd64 or place the blob under $KylinBuilderRoot\offline\appimage-runtime."
-  }
+  # Linux desktop builds produce an AppDir directory archive; CLI stays a plain ELF.
   $dockerArgs = @(
     "run", "--rm", "--network", "none", "--platform", "linux/arm64",
     "-e", "WUNDER_IN_DOCKER=1",
@@ -64,18 +49,6 @@ function Invoke-LinuxBuild {
     "-v", "${repoRoot}:/workspace",
     "-v", "${KylinBuilderRoot}:/builder/kylin-arm:ro"
   )
-  if ($needsRuntime) {
-    $runtimePath = [IO.Path]::GetFullPath($runtime)
-    if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) {
-      throw "AppImage runtime does not exist: $runtimePath"
-    }
-    $runtimeName = if ($SelectedArch -eq "linux-arm64") { "linux-arm64.AppImage" } else { "linux-amd64.AppImage" }
-    $runtimeVariable = if ($SelectedArch -eq "linux-arm64") { "WUNDER_APPIMAGE_RUNTIME_ARM64" } else { "WUNDER_APPIMAGE_RUNTIME_AMD64" }
-    $dockerArgs += @(
-      "-e", ("{0}=/builder/appimage-runtime/{1}" -f $runtimeVariable, $runtimeName),
-      "-v", "${runtimePath}:/builder/appimage-runtime/${runtimeName}:ro"
-    )
-  }
   $dockerArgs += @(
     "-w", "/workspace",
     $Image,

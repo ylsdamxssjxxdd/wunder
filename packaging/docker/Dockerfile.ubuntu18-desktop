@@ -1,12 +1,7 @@
 ARG RUST_TOOLCHAIN=1.92.0
-# URL of the AppImageKit type-2 runtime blob (runtime-x86_64 / runtime-aarch64).
-# The packaging scripts concatenate it with the SquashFS payload; appimagetool
-# itself is not used by the offline-style builders.
-ARG APPIMAGE_RUNTIME_URL
 FROM ubuntu:18.04
 
 ARG RUST_TOOLCHAIN
-ARG APPIMAGE_RUNTIME_URL
 # archive.ubuntu.com only serves the amd64/i386 archive; the arm64 indexes live
 # on ports.ubuntu.com, so pick the apt mirror from the build platform.
 ARG TARGETARCH
@@ -22,7 +17,7 @@ ENV PATH=/usr/local/cargo/bin:$PATH
 # install them explicitly.
 # Cross policy (amd64 host): install the aarch64 cross toolchain (its own
 # /usr/aarch64-linux-gnu tree, cannot clash with the amd64 dev stack) plus the
-# ARM64 runtime libraries the AppImage packager copies out of
+# ARM64 runtime libraries the desktop packager copies out of
 # /usr/lib/aarch64-linux-gnu, and libwayland-dev:arm64 (Multi-Arch: same) for
 # the wayland-sys link path. libasound2-dev:arm64 is required too: the ALSA
 # recording FFI carries #[link(name = "asound")], so libasound.so must be
@@ -77,13 +72,6 @@ RUN if [ "${TARGETARCH}" = "amd64" ]; then \
  && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
  && rustup component add rust-src --toolchain "${RUST_TOOLCHAIN}" \
  && rustup target add aarch64-unknown-linux-gnu --toolchain "${RUST_TOOLCHAIN}" \
- && if [ -z "${APPIMAGE_RUNTIME_URL}" ]; then \
-      echo "APPIMAGE_RUNTIME_URL is required (AppImageKit type-2 runtime blob)"; \
-      exit 1; \
-    fi \
- && mkdir -p /usr/local/lib/wunder \
- && curl -fL --retry 5 "${APPIMAGE_RUNTIME_URL}" -o /usr/local/lib/wunder/appimage-runtime \
- && chmod 0644 /usr/local/lib/wunder/appimage-runtime \
  && rustc --version \
  && cargo --version
 

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Package the cross-built x86_64 executable as a type-2 AppImage.  The
-# runtime must be an x86_64 AppImage (or another compatible type-2 runtime);
-# it is deliberately supplied by the caller so offline builds never download
-# an architecture-mismatched runner.
+# Package the cross-built x86_64 desktop as an AppDir directory archive.
+#
+# The archive is the only desktop distribution unit: the .run installer
+# expands it under <install root>/app/desktop and the portable launcher
+# expands it under <home>/app/desktop. Neither needs FUSE, libfuse2 or an
+# AppImage runtime, which is why Ubuntu 24.04 runs without extra packages.
 set -euo pipefail
 
 repo_root="${WUNDER_REPO_ROOT:-$(cd -- "$(dirname -- "$0")/.." && pwd)}"
@@ -11,7 +13,6 @@ offline_root="${WUNDER_OFFLINE_ROOT:-${WUNDER_BUILDER_ROOT:-$repo_root/../Rust-b
 sdk="$offline_root/linux-amd64-ubuntu18/root"
 target_dir="${CARGO_TARGET_DIR:-$repo_root/target/linux-amd64-ubuntu18-slint/cargo}"
 output_dir="${WUNDER_OUTPUT_DIR:-$repo_root/target/slint/dist/linux-amd64}"
-runtime_source="${WUNDER_APPIMAGE_RUNTIME:-}"
 manifest="$repo_root/frontend-slint/Cargo.toml"
 max_glibc="${WUNDER_SLINT_LINUX_MAX_GLIBC:-2.27}"
 stage_dir=""
@@ -21,15 +22,15 @@ stage_dir=""
 # the host gcc is wrapped with the bionic sysroot; on ARM64 the SDK's cross
 # compiler is required.
 if [[ "$(uname -m)" == x86_64 ]]; then
-  appimage_rust="$offline_root/rust/toolchains/nightly-2026-03-14-x86_64-unknown-linux-gnu"
-  [[ -x "$appimage_rust/bin/cargo" ]] || appimage_rust="$appimage_rust/nightly-2026-03-14-x86_64-unknown-linux-gnu"
-  export PATH="$appimage_rust/bin:$PATH"
+  desktop_rust="$offline_root/rust/toolchains/nightly-2026-03-14-x86_64-unknown-linux-gnu"
+  [[ -x "$desktop_rust/bin/cargo" ]] || desktop_rust="$desktop_rust/nightly-2026-03-14-x86_64-unknown-linux-gnu"
+  export PATH="$desktop_rust/bin:$PATH"
 else
   export PATH="$offline_root/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu/bin:$sdk/usr/bin:$PATH"
 fi
 export WUNDER_AMD64_SDK_ROOT="$sdk"
 
-fail() { echo "[wunder-slint-amd64-appimage] $*" >&2; exit 2; }
+fail() { echo "[wunder-slint-amd64-desktop] $*" >&2; exit 2; }
 require_file() { [[ -f "$1" ]] || fail "required file is missing: $1"; }
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "required command is unavailable: $1"; }
 cleanup() {
@@ -38,18 +39,14 @@ cleanup() {
   if [[ -n "$stage_dir" ]]; then
     case "$stage_dir" in "$output_dir"/.wunder-amd64-package.*) rm -rf -- "$stage_dir" ;; esac
   fi
-  if ((status != 0)); then echo "[wunder-slint-amd64-appimage] failed; no new AppImage was published" >&2; fi
+  if ((status != 0)); then echo "[wunder-slint-amd64-desktop] failed; no new archive was published" >&2; fi
   exit "$status"
 }
 trap cleanup EXIT
 
-[[ -n "$runtime_source" ]] || fail "WUNDER_APPIMAGE_RUNTIME must point to an x86_64 AppImage runtime"
-require_file "$runtime_source"
 require_file "$manifest"
 [[ -d "$sdk" ]] || fail "amd64 sysroot is missing: $sdk"
-for tool in mksquashfs dd grep awk sort sed tail mktemp stat find cut od tr x86_64-linux-gnu-readelf; do require_command "$tool"; done
-runtime_machine="$(LC_ALL=C x86_64-linux-gnu-readelf -h "$runtime_source" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[ \t]+/, "", $2); print $2}')"
-[[ "$runtime_machine" == "Advanced Micro Devices X86-64" ]] || fail "AppImage runtime must be x86_64, got: ${runtime_machine:-unknown}"
+for tool in grep awk sort sed tail mktemp stat find cut tar; do require_command "$tool"; done
 
 # Build first. The child script also validates the x86_64 ELF and glibc floor.
 bash "$repo_root/builders/build-linux-amd64-offline.sh"
@@ -99,35 +96,24 @@ cat > "$appdir/AppRun" <<'EOF'
 #!/bin/sh
 set -eu
 APPDIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+export APPDIR
 export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-# Let the shared runtime resolve HOME/.wunder or explicit WUNDER_HOME.
-# Preserve caller overrides without introducing AppImage-specific data roots.
+# The engine resolves WUNDER_HOME from the caller or, when this tree sits at
+# <root>/app/desktop, from the portable marker two levels up.
+if [ -z "${WUNDER_HOME:-}" ]; then
+  install_root=$(CDPATH= cd -- "$APPDIR/../.." 2>/dev/null && pwd) || install_root=""
+  if [ -n "$install_root" ] && [ -f "$install_root/.wunder-home" ]; then
+    WUNDER_HOME="$install_root"
+    export WUNDER_HOME
+  fi
+fi
 exec "$APPDIR/usr/bin/wunder-frontend-slint" "$@"
 EOF
 chmod +x "$appdir/AppRun"
 
-# The runtime blob is prepended to the squashfs verbatim. A fat runtime with
-# an embedded tools filesystem must be cut at that image; a bare blob (the
-# AppImageKit runtime-* downloads) contains none and is used whole. The hsqs
-# magic also appears as look-alike bytes inside the ELF, so a hit is trusted
-# only when a squashfs 4.0 superblock parses at the same offset.
-runtime_offset="$(LC_ALL=C grep -oba -m 1 'hsqs' "$runtime_source" | LC_ALL=C awk -F: '{print $1}' || true)"
-if [[ "$runtime_offset" =~ ^[0-9]+$ && "$runtime_offset" -gt 0 ]]; then
-  block_size="$(dd if="$runtime_source" bs=1 skip=$((runtime_offset + 12)) count=4 status=none | od -An -tu4 | tr -d ' ')"
-  sb_major="$(dd if="$runtime_source" bs=1 skip=$((runtime_offset + 28)) count=2 status=none | od -An -tu2 | tr -d ' ')"
-  sb_minor="$(dd if="$runtime_source" bs=1 skip=$((runtime_offset + 30)) count=2 status=none | od -An -tu2 | tr -d ' ')"
-  if [[ "$sb_major" != 4 || "$sb_minor" != 0 ]] || (( block_size < 4096 || block_size > 1048576 || (block_size & (block_size - 1)) != 0 )); then
-    runtime_offset=""
-  fi
-fi
-# Bare runtime blobs carry no embedded squashfs; prepend the whole file.
-[[ "$runtime_offset" =~ ^[0-9]+$ && "$runtime_offset" -gt 0 ]] || runtime_offset="$(stat -c '%s' "$runtime_source")"
-squashfs="$stage_dir/$app_name.squashfs"
-runtime="$stage_dir/$app_name.runtime"
-staged="$stage_dir/$app_name.AppImage"
-mksquashfs "$appdir" "$squashfs" -noappend -comp gzip -all-root -no-xattrs -b 1048576 >/dev/null
-dd if="$runtime_source" of="$runtime" bs=1 count="$runtime_offset" status=none
-cat "$runtime" "$squashfs" > "$staged"
-chmod +x "$staged"
-mv -f -- "$staged" "$output_dir/$app_name.AppImage"
-echo "[wunder-slint-amd64-appimage] produced: $output_dir/$app_name.AppImage ($(stat -c '%s' "$output_dir/$app_name.AppImage") bytes)"
+# Publish atomically: the installer and the portable launcher both consume this
+# archive, so a truncated file must never appear in the output directory.
+tarball="$stage_dir/$app_name.tar.gz"
+tar --sort=name --numeric-owner -czf "$tarball" -C "$appdir" .
+mv -f -- "$tarball" "$output_dir/$app_name.tar.gz"
+echo "[wunder-slint-amd64-desktop] produced: $output_dir/$app_name.tar.gz ($(stat -c '%s' "$output_dir/$app_name.tar.gz") bytes)"

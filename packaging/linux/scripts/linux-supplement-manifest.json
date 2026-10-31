@@ -172,7 +172,7 @@
     "arial.ttf"
   ],
   "install": {
-    "extractInto": "desktop install root (Win7-style install dir) or the directory holding the .AppImage file",
+    "extractInto": "desktop install root (Win7-style install dir) or the directory holding the portable launcher",
     "pythonRoot": "opt/python",
     "gitRoot": "opt/git",
     "rgRoot": "opt/rg",

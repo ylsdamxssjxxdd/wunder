@@ -20,7 +20,8 @@ Individual users start with the **Pupa (desktop)**: download the matching build 
 Download the build that matches your system from Releases. The Pupa targets 32-bit Win7 and Ubuntu 18.04 and also covers modern Windows / Linux.
 
 - **Legacy systems** (32-bit Win7, Ubuntu 18.04): download the `setup` or `.run` installer. It ships with a complete runtime, but compatibility constraints limit some third-party features.
-- **Modern systems**: download the `.exe` or `.AppImage` main program directly; it relies on the local environment, or fetches the full environment later over the network.
+- **Modern systems**: download the `.exe` or the `-portable` single file and run it directly; the first launch unpacks into `~/.wunder`, later launches start right away.
+- **Two Linux options**: use the `.run` installer for long-term use with the `wunder-cli` command and optional bundled Python/Git, or the `-portable` file for a green, carry-anywhere install. Neither needs FUSE, `libfuse2` or administrator rights, both work on fuse3-only systems such as Ubuntu 24.04, and they share the same user data.
 
 Install or extract it, then launch.
 

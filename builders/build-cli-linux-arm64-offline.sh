@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the Linux ARM64 wunder CLI. ARM64 hosts build natively; x86_64 hosts
 # cross-build with the host tools shipped in the kylin-x86 SDK.
-# CLI distribution is intentionally a plain executable, never an AppImage.
+# CLI distribution is intentionally a plain executable, never a desktop pack.
 set -euo pipefail
 
 repo_root="${WUNDER_REPO_ROOT:-$(cd -- "$(dirname -- "$0")/.." && pwd)}"

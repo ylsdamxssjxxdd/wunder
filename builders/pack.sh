@@ -6,7 +6,7 @@ set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 script="$repo_root/packaging/linux/scripts/build_linux_installer.py"
 arch=""
-desktop=""
+desktop_archive=""
 cli=""
 supplement=""
 output_dir=""
@@ -19,7 +19,9 @@ Usage:
 
 Options:
   -a, --arch            Target architecture. Defaults to the host architecture.
-      --desktop PATH    Desktop AppImage. Defaults to target/slint/dist/linux-<arch>/.
+      --desktop-archive PATH
+                        Desktop AppDir tar.gz. Defaults to
+                        target/slint/dist/linux-<arch>/.
       --cli PATH        CLI ELF. Defaults to target/cli/dist/linux-<arch>/.
       --supplement PATH Supplement .tar.gz. Defaults to the known build output
                         locations, or dist/linux-<arch>/.
@@ -43,10 +45,10 @@ while (($#)); do
       (($#)) || fail "missing value after $1"
       arch="$1"
       ;;
-    --desktop)
+    --desktop-archive)
       shift
-      (($#)) || fail "missing value after --desktop"
-      desktop="$1"
+      (($#)) || fail "missing value after --desktop-archive"
+      desktop_archive="$1"
       ;;
     --cli)
       shift
@@ -95,7 +97,7 @@ done
 [[ -n "$python" ]] || fail "Python 3 is required to assemble the Linux installer"
 
 args=(--arch "${arch#linux-}")
-[[ -n "$desktop" ]] && args+=(--desktop "$desktop")
+[[ -n "$desktop_archive" ]] && args+=(--desktop-archive "$desktop_archive")
 [[ -n "$cli" ]] && args+=(--cli "$cli")
 [[ -n "$supplement" ]] && args+=(--supplement "$supplement")
 [[ -n "$output_dir" ]] && args+=(--output-dir "$output_dir")

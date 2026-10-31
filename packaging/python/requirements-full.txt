@@ -1,4 +1,4 @@
-﻿# Full dependencies for embedded Python (AppImage)
+﻿# Full dependencies for embedded Python (Linux desktop)
 # Comprehensive list with plotting and office utilities
 requests
 httpx

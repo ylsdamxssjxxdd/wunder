@@ -181,8 +181,7 @@ export global I18n {
     out property <string> chat_back_to_latest: zh ? "回到最新消息" : "Back to latest";
     out property <string> chat_author_you: zh ? "你" : "You";
     out property <string> chat_demo_status: zh ? "本地演示 · 未连接后端" : "Local demo · backend not connected";
-    out property <string> chat_greeting: zh ? "你好！我是你的智能体助手，有什么可以帮你？" : "Hi! I'm your agent assistant. How can I help?";
-    out property <string> chat_prompt_preview: zh ? "查看系统提示词" : "View system prompt";
+    out property <string> chat_greeting: zh ? "你好，可以开始新的对话。" : "Hi, you can start a new conversation.";
     out property <string> demo_conv0_preview: zh ? "随时开始新的对话" : "Start a new conversation anytime";
     out property <string> demo_conv1_title: zh ? "智能体 01" : "Agent 01";
     out property <string> demo_conv1_preview: zh ? "上次任务已完成" : "Last task completed";
@@ -258,8 +257,6 @@ export global I18n {
     out property <string> sb_device_empty: zh ? "暂无工作区，点击右上角 + 新建" : "No workspaces yet. Use + to create one.";
     out property <string> sidebar_settings: zh ? "设置" : "Settings";
     out property <string> ws_menu_new_thread: zh ? "新建线程" : "New thread";
-    out property <string> ws_expand_threads: zh ? "展开工作区线程" : "Expand workspace threads";
-    out property <string> ws_collapse_threads: zh ? "收起工作区线程" : "Collapse workspace threads";
     out property <string> ws_menu_edit: zh ? "编辑工作区" : "Edit workspace";
     public pure function sb_rename_body(name: string) -> string { return zh ? "重命名「" + name + "」为：" : "Rename “" + name + "” to:"; }
     out property <string> ws_menu_reveal: zh ? "打开文件夹" : "Open folder";
@@ -345,7 +342,6 @@ export global I18n {
     out property <string> cp_goal_pause: zh ? "暂停目标" : "Pause goal";
     out property <string> cp_goal_resume: zh ? "继续目标" : "Resume goal";
     out property <string> cp_goal_paused_tag: zh ? "已暂停" : "Paused";
-    out property <string> cp_goal_blocked_tag: zh ? "已阻塞" : "Blocked";
     out property <string> cp_goal_edit_hint: zh ? "输入新的目标内容，回车保存" : "Edit the goal, Enter to save";
     out property <string> cp_goal_edit: zh ? "编辑目标" : "Edit goal";
     out property <string> cp_goal_clear: zh ? "清除目标" : "Clear goal";
@@ -359,6 +355,19 @@ export global I18n {
     out property <string> cp_queue_attachment_only: zh ? "仅附件" : "Attachment only";
     public pure function cp_queue_attachments(count: string) -> string { return zh ? "附件 " + count + "" : "" + count + " attachment(s)"; }
     out property <string> cp_queue_send: zh ? "加入等待发送" : "Add to the send queue";
+    out property <string> hud_cpu: zh ? "CPU" : "CPU";
+    out property <string> hud_memory: zh ? "内存" : "Memory";
+    public pure function hud_cores(cores: string) -> string { return zh ? "" + cores + " 核" : "" + cores + " cores"; }
+    out property <string> hud_tasks_title: zh ? "后台任务" : "Running tasks";
+    public pure function hud_tasks_count(count: string) -> string { return zh ? "" + count + " 个运行中" : "" + count + " running"; }
+    out property <string> hud_tasks_empty: zh ? "没有正在运行的任务" : "Nothing is running";
+    public pure function hud_tasks_more(count: string) -> string { return zh ? "还有 " + count + " 条未显示" : "" + count + " more not shown"; }
+    out property <string> hud_tasks_stop: zh ? "终止任务" : "Terminate task";
+    out property <string> hud_tasks_expand: zh ? "展开详情" : "Show details";
+    out property <string> hud_tasks_collapse: zh ? "收起详情" : "Hide details";
+    out property <string> hud_tasks_loading: zh ? "读取输出…" : "Reading output…";
+    out property <string> hud_tasks_no_output: zh ? "暂无输出" : "No output yet";
+    public pure function hud_tasks_hint(count: string) -> string { return zh ? "后台任务：" + count + " 个命令正在运行" : "Background tasks: " + count + " running"; }
     out property <string> cp_status_local: zh ? "本地" : "Local";
     out property <string> cp_status_branch: zh ? "分支" : "Branch";
     out property <string> ms_agent_loop: zh ? "智能体循环" : "Agent loop";
@@ -367,6 +376,14 @@ export global I18n {
     out property <string> ui_expand_sidebar: zh ? "展开侧栏" : "Expand sidebar";
     out property <string> ui_avatar_mine: zh ? "我" : "Me";
     out property <string> ui_search_placeholder: zh ? "搜索" : "Search";
+    out property <string> cloud_threads_title: zh ? "云端智能体与线程" : "Cloud agent and threads";
+    out property <string> cloud_threads_earlier: zh ? "更早消息" : "Earlier messages";
+    out property <string> cloud_threads_latest: zh ? "回到最新" : "Back to latest";
+    out property <string> cloud_threads_copy_user: zh ? "复制提问原文" : "Copy user text";
+    out property <string> cloud_threads_copy_reply: zh ? "复制回复原文" : "Copy reply text";
+    out property <string> cloud_threads_stop: zh ? "停止线程" : "Stop thread";
+    out property <string> cloud_threads_approval: zh ? "工具审批 ID" : "Tool approval ID";
+    out property <string> cloud_threads_allow_once: zh ? "允许一次" : "Allow once";
     out property <string> composer_goal_hint: zh ? "/goal  设置目标" : "/goal  set a goal";
     out property <string> composer_new_hint: zh ? "/new  新建线程" : "/new  new thread";
     out property <string> composer_stop_hint: zh ? "/stop  停止并退出目标态" : "/stop  stop and leave goal mode";
@@ -422,6 +439,35 @@ export global I18n {
     out property <string> ws_preview_docs: zh ? "资料工作区" : "Reference workspace";
     out property <string> ws_preview_root_a: zh ? "示例/项目" : "sample/project";
     out property <string> ws_preview_root_b: zh ? "示例/资料" : "sample/reference";
+    out property <string> st_vr_replay_log: zh ? "回放日志" : "Replay log";
+    out property <string> st_model_vision: zh ? "支持视觉" : "Vision";
+    out property <string> st_model_hearing: zh ? "支持听觉" : "Audio";
+    out property <string> st_model_stream_usage: zh ? "流式返回 usage" : "Stream usage";
+    out property <string> st_model_tool_call_mode: zh ? "工具调用方式" : "Tool call mode";
+    out property <string> st_model_video_frames: zh ? "总帧数" : "Frame count";
+    out property <string> st_model_video_interpolation: zh ? "启用补帧" : "Frame interpolation";
+    out property <string> st_model_video_sync_mode: zh ? "同步模式" : "Sync mode";
+    out property <string> sb_open_settings: zh ? "打开设置" : "Open settings";
+    out property <string> sb_resize_areas: zh ? "调整工作线程区与工作目录区的高度" : "Resize the thread and workspace areas";
+    out property <string> st_unsaved_tag: zh ? "未保存" : "Unsaved";
+    out property <string> st_opening_thread: zh ? "正在打开线程，读取历史记录…" : "Opening thread and reading history…";
+    out property <string> chat_prompt_preview: zh ? "查看系统提示词" : "View system prompt";
+    out property <string> cp_goal_blocked_tag: zh ? "已阻塞" : "Blocked";
+    out property <string> st_browser_path: zh ? "浏览器路径" : "Browser path";
+    out property <string> st_ffmpeg_path: zh ? "ffmpeg 路径" : "ffmpeg path";
+    out property <string> st_param_history_ratio: zh ? "历史压缩阈值比例" : "History compaction threshold";
+    out property <string> st_param_reasoning_effort: zh ? "默认思考等级" : "Default reasoning effort";
+    out property <string> st_param_simulation_speed: zh ? "模拟速度" : "Simulation speed";
+    out property <string> st_shell_path: zh ? "shell 路径" : "Shell path";
+    out property <string> st_stress_count: zh ? "个数" : "Count";
+    out property <string> st_wunder_model_hint: zh ? "在新浏览器窗口打开舰桥 3D 展示" : "Open the Bridge 3D viewer in a new browser window";
+    out property <string> st_wunder_model_open: zh ? "眺望心舰" : "Behold Wunder";
+    out property <string> st_wunder_model_title: zh ? "心舰展示" : "Wunder display";
+    out property <string> stc_archives_delete_confirm: zh ? "该归档线程及其本地记录将被永久删除，无法恢复。确认删除？" : "Permanently delete this archived thread and its local records? This cannot be undone.";
+    out property <string> stc_archives_restore: zh ? "还原" : "Restore";
+    out property <string> traj_token_usage: zh ? "新增占用" : "New tok";
+    out property <string> ws_collapse_threads: zh ? "收起工作区线程" : "Collapse workspace threads";
+    out property <string> ws_expand_threads: zh ? "展开工作区线程" : "Expand workspace threads";
     out property <string> ed_total_legend: zh ? "○ 累计消耗" : "○ Total usage";
     out property <string> ed_all_tags: zh ? "全部标签" : "All tags";
     out property <string> ed_memory_desc: zh ? "将可复用的长期事实整理为模型友好的记忆索引与详情。" : "Organize reusable long-term facts into model-friendly memory indexes.";
@@ -479,6 +525,7 @@ export global I18n {
     out property <string> ew_type_label: zh ? "类型：" : "Type: ";
     out property <string> ap_all_hives: zh ? "全部蜂群" : "All hives";
     out property <string> ap_archive_thread: zh ? "归档线程" : "Archive thread";
+    out property <string> ap_archive_confirm: zh ? "归档后线程将从侧边栏隐藏，可在设置 → 归档线程中查看。确认归档该线程吗？" : "The thread will be hidden from the sidebar and stays available under Settings → Archived threads. Archive it?";
     out property <string> ap_agent_settings: zh ? "智能体设置" : "Agent settings";
     out property <string> ap_memories: zh ? "记忆碎片" : "Memories";
     out property <string> ap_back_chat: zh ? "返回对话" : "Back to chat";
@@ -929,7 +976,7 @@ export global I18n {
     out property <string> stc_prompts: zh ? "提示词包" : "Prompt packs";
     out property <string> stc_prompts_note: zh ? "分段编辑与最终提示词预览" : "Segment editing and final prompt preview";
     out property <string> stc_archives: zh ? "归档线程" : "Archived threads";
-    out property <string> stc_archives_note: zh ? "已归档线程，可查看、还原或彻底删除" : "Archived threads: review, restore or delete";
+    out property <string> stc_archives_note: zh ? "已归档线程，可查看或彻底删除" : "Archived threads: review or delete";
     out property <string> stc_help: zh ? "帮助" : "Help";
     out property <string> stc_help_note: zh ? "在本机打开使用手册" : "Open the user manual on this machine";
     out property <string> il_tunnel_title: zh ? "互通隧道" : "Interlink tunnel";
@@ -966,8 +1013,6 @@ export global I18n {
     out property <string> stc_archives_empty: zh ? "还没有归档线程。" : "No archived threads yet.";
     out property <string> stc_runs_tab: zh ? "用量统计" : "Usage";
     out property <string> stc_archives_open: zh ? "查看" : "Open";
-    out property <string> stc_archives_restore: zh ? "还原" : "Restore";
-    out property <string> stc_archives_delete_confirm: zh ? "该归档线程及其本地记录将被永久删除，无法恢复。确认删除？" : "Permanently delete this archived thread and its local records? This cannot be undone.";
     out property <string> stc_agent_name: zh ? "智能体名称" : "Agent name";
     out property <string> stc_agent_greeting: zh ? "问候语" : "Greeting";
     out property <string> stc_agent_greeting_hint: zh ? "用于会话中的首次问候" : "Used for the first greeting in a session";
@@ -989,7 +1034,7 @@ export global I18n {
     out property <string> pet_hints: zh ? "形象消息提示" : "Message hints";
     out property <string> pet_hints_note: zh ? "让形象显示必要的简短状态信息。" : "Let the companion show brief status hints.";
     out property <string> pet_scale: zh ? "大小" : "Size";
-    out property <string> pet_scale_note: zh ? "拖动滑块调整桌宠大小，范围 0.1–1.6。" : "Drag to resize the pet; range 0.1–1.6.";
+    out property <string> pet_scale_note: zh ? "拖动滑块调整桌宠大小，范围 0.5–1.6。" : "Drag to resize the pet; range 0.5–1.6.";
     out property <string> pet_library_title: zh ? "形象库" : "Library";
     public pure function pet_library_subtitle(count: string) -> string { return zh ? "形象库共 " + count + " 个形象。" : "" + count + " companions in the library."; }
     out property <string> pet_library_empty: zh ? "还没有形象包，先导入一个。" : "No packages yet — import one to begin.";
@@ -1024,26 +1069,21 @@ export global I18n {
     out property <string> st_language: zh ? "运行时语言" : "Runtime language";
     out property <string> st_language_hint: zh ? "zh-CN 或 en-US" : "zh-CN or en-US";
     out property <string> st_exec_paths: zh ? "执行文件路径" : "Executable paths";
-    out property <string> st_exec_paths_note: zh ? "留空即使用灰字提示的生效路径（补充包内置或系统）；填写后覆盖该路径。补充包导入用户目录 .wunder/opt，与舵机共用；WUNDER_HOME 可覆盖该目录。" : "Leave empty to use the effective path shown in grey (bundled or system); a value overrides it. Supplements are imported into .wunder/opt in your home and shared with the Helm; WUNDER_HOME overrides that location.";
+    out property <string> st_exec_paths_note: zh ? "指定 Python / Git / rg 路径，保存后对新启动的工具生效；留空自动检测。补充包统一导入用户目录 .wunder/opt，与舵机共用；设置 WUNDER_HOME 时使用该目录。" : "Set Python / Git / rg paths for newly started tools; leave empty to auto-detect. Supplements are imported into .wunder/opt in your home and shared with the Helm. WUNDER_HOME overrides this location.";
     out property <string> st_python_path: zh ? "Python 路径" : "Python path";
     out property <string> st_python_hint: zh ? "留空自动检测，可指向 python 可执行文件" : "Empty auto-detects; may point to a python executable";
     out property <string> st_git_path: zh ? "Git 路径" : "Git path";
     out property <string> st_git_hint: zh ? "留空使用系统 PATH 中的 git" : "Empty uses git from the system PATH";
     out property <string> st_rg_path: zh ? "rg 路径" : "rg path";
     out property <string> st_rg_hint: zh ? "留空自动检测 ripgrep" : "Empty auto-detects ripgrep";
-    out property <string> st_ffmpeg_path: zh ? "ffmpeg 路径" : "ffmpeg path";
-    out property <string> st_ffmpeg_hint: zh ? "留空使用补充包内置 ffmpeg" : "Empty uses the bundled ffmpeg";
-    out property <string> st_browser_path: zh ? "浏览器路径" : "Browser path";
-    out property <string> st_browser_hint: zh ? "留空使用补充包内置 Chromium" : "Empty uses the bundled Chromium";
-    out property <string> st_shell_path: zh ? "shell 路径" : "Shell path";
-    out property <string> st_shell_hint: zh ? "留空使用内置 PowerShell；指定后替代系统 PowerShell" : "Empty uses the bundled PowerShell; a value overrides the system one";
     out property <string> st_browse: zh ? "选择…" : "Browse…";
     out property <string> st_supplement_import: zh ? "导入补充包…" : "Import supplement…";
     out property <string> st_supplement_importing: zh ? "正在导入…" : "Importing…";
     out property <string> st_models_loading: zh ? "正在加载模型…" : "Loading models…";
     out property <string> st_models_empty: zh ? "尚未配置模型" : "No models configured";
     out property <string> st_models_list_title: zh ? "配置列表" : "Config list";
-    out property <string> st_models_subtitle: zh ? "配置对话、嵌入、声转文、语音、绘图与视频模型。不同类型只展示实际需要的参数，修改会自动保存并生效。" : "Configure chat, embedding, ASR, TTS, image and video models. Each type only shows the parameters it needs; changes save and apply automatically.";
+    out property <string> st_models_save: zh ? "保存配置" : "Save config";
+    out property <string> st_models_subtitle: zh ? "配置对话、嵌入、声转文、语音、绘图与视频模型。不同类型只展示实际需要的参数，保存后立即生效。" : "Configure chat, embedding, ASR, TTS, image and video models. Each type only shows the parameters it needs; changes apply right after saving.";
     out property <string> st_models_no_info: zh ? "暂无信息" : "No info";
     out property <string> st_models_default_badge: zh ? "默认" : "Default";
     out property <string> st_pick_model: zh ? "选择左侧模型查看配置" : "Pick a model on the left to view its settings";
@@ -1071,9 +1111,6 @@ export global I18n {
     out property <string> st_param_thinking: zh ? "思考 token 预算" : "Thinking token budget";
     out property <string> st_param_max_rounds: zh ? "最大工具轮次" : "Max tool rounds";
     out property <string> st_param_max_context: zh ? "上下文长度" : "Context length";
-    out property <string> st_param_history_ratio: zh ? "历史压缩阈值比例" : "History compaction threshold";
-    out property <string> st_param_reasoning_effort: zh ? "默认思考等级" : "Default reasoning effort";
-    out property <string> st_param_simulation_speed: zh ? "模拟速度" : "Simulation speed";
     out property <string> st_param_context_hint: zh ? "探测或留空" : "Probe or leave empty";
     out property <string> st_param_model_default: zh ? "留空使用模型默认" : "Leave empty for the model default";
     out property <string> st_param_default_option: zh ? "默认" : "Default";
@@ -1099,10 +1136,9 @@ export global I18n {
     out property <string> st_diagnostics: zh ? "诊断" : "Diagnostics";
     out property <string> st_help_open: zh ? "打开帮助手册" : "Open help";
     out property <string> st_stress_title: zh ? "线程渲染压测" : "Thread render stress";
-    out property <string> st_stress_note: zh ? "在本地库生成模拟线程，验证消息呈现与长列表性能。" : "Generates synthetic local threads to verify message rendering and long-list performance.";
+    out property <string> st_stress_note: zh ? "在本地库生成一条模拟线程，验证消息呈现与长列表性能。" : "Generates one synthetic local thread to verify message rendering and long-list performance.";
     out property <string> st_stress_user_rounds: zh ? "用户轮次" : "User rounds";
     out property <string> st_stress_model_rounds: zh ? "每轮模型轮次" : "Model rounds / turn";
-    out property <string> st_stress_count: zh ? "个数" : "Count";
     out property <string> st_stress_hint: zh ? "默认 1000×1000，生成耗时较长；可先用小规模验证渲染。" : "Defaults to 1000×1000 and takes a while; try a smaller scale first.";
     out property <string> st_stress_generate: zh ? "生成压测线程" : "Generate stress thread";
     out property <string> st_stress_running: zh ? "生成中…" : "Generating…";
@@ -1175,9 +1211,6 @@ export global I18n {
     out property <string> fl_file: zh ? "文件" : "File";
     out property <string> fl_folder: zh ? "文件夹" : "Folder";
     out property <string> st_cl_title: zh ? "云端账户" : "Cloud account";
-    out property <string> st_wunder_model_title: zh ? "心舰展示" : "Wunder display";
-    out property <string> st_wunder_model_hint: zh ? "在新浏览器窗口打开舰桥 3D 展示" : "Open the Bridge 3D viewer in a new browser window";
-    out property <string> st_wunder_model_open: zh ? "眺望心舰" : "Behold Wunder";
     out property <string> st_cl_subtitle: zh ? "登录后可使用云端模型与共享额度" : "Sign in to use cloud models and the shared quota";
     out property <string> st_cl_server: zh ? "服务地址" : "Server address";
     out property <string> st_cl_username: zh ? "用户名" : "Username";
@@ -1236,6 +1269,16 @@ export global I18n {
     out property <string> sub_detail_empty: zh ? "子线程暂无内容" : "The child thread has no content yet";
     out property <string> sub_detail_load_failed: zh ? "子线程加载失败" : "Failed to load the child thread";
     out property <string> sub_detail_loading: zh ? "正在加载子线程…" : "Loading the child thread…";
+    out property <string> tl_status_waiting: zh ? "等待确认" : "Waiting for confirmation";
+    out property <string> tl_status_error: zh ? "任务失败" : "Task failed";
+    out property <string> tl_status_stopped: zh ? "已停止" : "Stopped";
+    out property <string> tl_status_queued: zh ? "排队中" : "Queued";
+    out property <string> tl_status_compacting: zh ? "上下文压缩中" : "Compacting context";
+    out property <string> tl_status_subagent: zh ? "子智能体执行中" : "Subagent running";
+    out property <string> tl_status_tool: zh ? "使用工具中" : "Using tools";
+    out property <string> tl_status_outputting: zh ? "模型输出中" : "Model outputting";
+    out property <string> tl_status_requesting: zh ? "请求中" : "Requesting";
+    out property <string> tl_status_running: zh ? "处理中" : "Processing";
     out property <string> tl_process_loading: zh ? "正在加载…" : "Loading…";
     out property <string> tl_process_retry: zh ? "加载失败，重试" : "Loading failed. Retry";
     out property <string> tl_stat_round: zh ? "用户轮次" : "User round";
@@ -1251,16 +1294,6 @@ export global I18n {
     out property <string> tl_thought_done: zh ? "已思考" : "Thought";
     out property <string> tl_thought_running: zh ? "正在思考…" : "Thinking…";
     out property <string> tl_thought_failed: zh ? "思考中断" : "Thinking interrupted";
-    out property <string> tl_status_running: zh ? "处理中" : "Processing";
-    out property <string> tl_status_requesting: zh ? "请求中" : "Requesting";
-    out property <string> tl_status_outputting: zh ? "模型输出中" : "Model outputting";
-    out property <string> tl_status_tool: zh ? "使用工具中" : "Using tools";
-    out property <string> tl_status_subagent: zh ? "子智能体执行中" : "Subagent running";
-    out property <string> tl_status_compacting: zh ? "上下文压缩中" : "Compacting context";
-    out property <string> tl_status_queued: zh ? "排队中" : "Queued";
-    out property <string> tl_status_stopped: zh ? "已停止" : "Stopped";
-    out property <string> tl_status_error: zh ? "任务失败" : "Task failed";
-    out property <string> tl_status_waiting: zh ? "等待确认" : "Waiting for confirmation";
     public pure function tl_tool_calls(count: string) -> string { return zh ? "执行工具 " + count + " 次" : "Ran " + count + " tools"; }
     out property <string> tl_entry_output: zh ? "输出" : "Output";
     out property <string> tl_patch_pending: zh ? "待应用" : "Pending";
@@ -1348,8 +1381,11 @@ export global I18n {
     out property <string> traj_export: zh ? "导出日志" : "Export log";
     out property <string> traj_back: zh ? "返回" : "Back";
     out property <string> traj_search: zh ? "搜索完整线程" : "Search full thread";
+    out property <string> traj_history_start: zh ? "已到最早记录" : "Beginning of history";
+    out property <string> traj_history_older: zh ? "向上滚动查看更早记录" : "Scroll up for earlier records";
+    out property <string> traj_history_loading: zh ? "正在读取记录…" : "Loading records…";
+    out property <string> traj_history_retry: zh ? "读取暂时失败，继续滚动可重试" : "Could not load records; scroll to retry";
     out property <string> traj_duration: zh ? "时长" : "Duration";
-    out property <string> traj_token_usage: zh ? "新增占用" : "New tok";
     out property <string> traj_turns: zh ? "轮次" : "Turns";
     out property <string> traj_calls: zh ? "调用" : "Calls";
     out property <string> traj_lane_input: zh ? "输入" : "Input";
@@ -1465,8 +1501,4 @@ export global I18n {
     public pure function wf_delete_body(name: string) -> string { return zh ? "删除「" + name + "」？云端文件不可恢复。" : "Delete \"" + name + "\"? Cloud files cannot be recovered."; }
     out property <string> wf_cloud_confirm_body: zh ? "云端要求确认后才会执行此操作。" : "The cloud asks for confirmation before running this.";
     out property <string> wf_btn_exec: zh ? "确认执行" : "Confirm";
-    out property <string> traj_history_start: zh ? "已到最早记录" : "Beginning of history";
-    out property <string> traj_history_older: zh ? "向上滚动查看更早记录" : "Scroll up for earlier records";
-    out property <string> traj_history_loading: zh ? "正在读取记录…" : "Loading records…";
-    out property <string> traj_history_retry: zh ? "读取暂时失败，继续滚动可重试" : "Could not load records; scroll to retry";
 }
