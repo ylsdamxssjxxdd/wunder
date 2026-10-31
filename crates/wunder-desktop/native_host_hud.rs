@@ -1,24 +1,35 @@
-//! 本机硬件状态采样：CPU 占用与内存占用。
+//! 本机硬件状态采样：CPU、内存、网络、磁盘四项占用。
+//!
+//! 四个指标都归一成 0..=100 的「占用百分比」，前端因此能用同一个液位字形渲染，
+//! 不需要区分「速率」和「比例」两种量：
+//! - CPU：忙碌增量 / 总增量；
+//! - 内存：已用 / 物理总量；
+//! - 网络：最忙那块网卡的收发速率 / 它自己的链路速率；
+//! - 磁盘：整盘累计忙碌时间 / 实际间隔。
 //!
 //! 设计约束（蛹的运行环境是 32 位 Win7 与 ubuntu18.04，且要求低开销）：
 //! - 采样在独立线程里按固定节拍进行，UI 线程只取最近一次快照，渲染路径上
-//!   没有任何系统调用；两条路径只共享一把保护小结构体的互斥锁，且只在
-//!   每秒一次的快速拷贝里持有。
-//! - 每个平台只保留最小的原生探针：Windows 走 kernel32 的 `GetSystemTimes` 与
-//!   `GlobalMemoryStatusEx`，Linux 读 `/proc/stat` 与 `/proc/meminfo`。不引入
-//!   跨平台采集依赖，避免体积与启动成本，也保证 Win7 32 位这条老链路上的依赖
-//!   图不变。
-//! - 两个指标都是「累计计数器的增量比」，不做平滑也不重采，因此单次采样成本
-//!   恒定且极小：Windows 约 2 个 P/Invoke，Linux 两次小文件读取。
+//!   没有任何系统调用；两条路径只共享一把保护小结构体的互斥锁。
+//! - 每个平台只保留最小的原生探针：Windows 走 kernel32 / iphlpapi / PDH，
+//!   Linux 走 `/proc` 与 `/sys`。不引入跨平台采集依赖，避免体积与启动成本。
 //! - 窗口不可见时由调用方 `set_active(false)`，采样周期退避到 [`IDLE_INTERVAL`]，
 //!   避免后台驻留时每秒唤醒。
+//!
+//! 网络为什么按「最忙的那块网卡」而不是「全部网卡吞吐 / 全部链路带宽」：开发机上
+//! 常年挂着 Hyper-V / WSL / VMware 的虚拟网卡，它们自称 10Gbps 却几乎不跑流量，
+//! 按总和算真实上下行会被稀释到 0.1% 以下，图标永远是空的。取单块网卡自身的占用
+//! 率，读数才跟着真正在用的那条链路走。
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// 窗口不可见（托盘驻留、最小化）时的采样周期。
 const IDLE_INTERVAL: Duration = Duration::from_secs(5);
+/// 差分间隔上界。机器休眠、调试断点后间隔会非常大，直接用会让占用率失真；
+/// 超过该值只重设基线，不产出新值。
+const MAX_GAP_SECONDS: f64 = 30.0;
 
 /// 一次采样的结果。字段全部是「已经算好的数值」，前端只负责格式化。
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -31,10 +42,20 @@ pub struct HostHud {
     pub memory_used: u64,
     /// 物理内存总量（字节）。
     pub memory_total: u64,
+    /// 网络占用百分比（0..=100）：最忙那块网卡的收发速率占其链路速率的比例。
+    pub net_percent: f32,
+    /// 上面那块网卡的链路速率（bit/s），0 表示未知。
+    pub net_link_bps: u64,
+    /// 磁盘占用百分比（0..=100）：整盘忙碌时间占比。
+    pub disk_percent: f32,
     /// 逻辑核心数，0 表示未知。
     pub cores: u32,
-    /// CPU/内存是否可用；平台不支持时为 false，前端据此显示占位符。
+    /// CPU/内存是否可用；平台不支持时为 false。
     pub available: bool,
+    /// 本次是否测到了网络占用（没有可用链路时为 false）。
+    pub net_ok: bool,
+    /// 本次是否测到了磁盘占用（部分系统关闭了磁盘性能计数器）。
+    pub disk_ok: bool,
 }
 
 /// 采样器句柄。内部持有一个脱离线程，`Drop` 时通知线程退出。
@@ -56,10 +77,13 @@ impl HostHudSampler {
         let _ = std::thread::Builder::new()
             .name("host-hud".into())
             .spawn(move || {
+                // 探针初始化有一次性成本（Windows 上 PDH 首次查询要加载性能计数器
+                // 库，约 300~400ms），放在后台线程里，不碰首帧。
                 let mut probe = platform::Probe::new();
-                // 先采一次基线：CPU 是差分量，没有基线就无法在第一个节拍给出
+                let mut last = std::time::Instant::now();
+                // 先采一次基线：四项都是差分量，没有基线就无法在第一个节拍给出
                 // 有效占用（否则会报出一个从开机累计至今的均值）。
-                let _ = probe.sample();
+                let _ = probe.sample(0.0);
                 loop {
                     let wait = if active_thread.load(Ordering::Relaxed) {
                         interval
@@ -70,7 +94,14 @@ impl HostHudSampler {
                     if !running_thread.load(Ordering::Relaxed) {
                         return;
                     }
-                    let sample = probe.sample();
+                    let dt = last.elapsed().as_secs_f64();
+                    last = std::time::Instant::now();
+                    // 间隔过大（休眠/断点）时只重设基线，避免出现假读数。
+                    let sample = if dt > MAX_GAP_SECONDS {
+                        probe.sample(0.0)
+                    } else {
+                        probe.sample(dt)
+                    };
                     if let Ok(mut slot) = latest_thread.lock() {
                         *slot = sample;
                     }
@@ -83,7 +114,7 @@ impl HostHudSampler {
         }
     }
 
-    /// 最近一次采样。拷贝量固定（约 40 字节），不做分配。
+    /// 最近一次采样。拷贝量固定（几十字节），不做分配。
     pub fn snapshot(&self) -> HostHud {
         self.latest.lock().map(|value| *value).unwrap_or_default()
     }
@@ -114,13 +145,73 @@ fn percent(used: u64, total: u64) -> f32 {
     }
 }
 
+/// 一块网卡的一次观测：累计收发字节与链路速率（bit/s，0 表示未知）。
+pub(crate) struct LinkSample {
+    pub id: String,
+    pub received: u64,
+    pub transmitted: u64,
+    pub speed_bps: u64,
+}
+
+#[derive(Default)]
+struct LinkState {
+    bytes: u64,
+}
+
+/// 逐网卡的差值状态。取「占用率最大的那块」，返回（占用率, 该链路速率）。
+#[derive(Default)]
+pub(crate) struct LinkMeter {
+    links: HashMap<String, LinkState>,
+}
+
+impl LinkMeter {
+    pub(crate) fn update(&mut self, dt: f64, rows: &[LinkSample]) -> Option<(f32, u64)> {
+        if rows.is_empty() {
+            self.links.clear();
+            return None;
+        }
+        let mut next = HashMap::with_capacity(rows.len());
+        let mut busiest: Option<(f32, u64)> = None;
+        for row in rows {
+            let bytes = row.received.saturating_add(row.transmitted);
+            let mut usage = 0.0f32;
+            if let Some(previous) = self.links.get(&row.id) {
+                if dt > 0.0 && row.speed_bps > 0 {
+                    let bytes_per_second = bytes.saturating_sub(previous.bytes) as f64 / dt;
+                    let capacity = row.speed_bps as f64 / 8.0;
+                    usage = (bytes_per_second / capacity * 100.0).clamp(0.0, 100.0) as f32;
+                }
+            }
+            if row.speed_bps > 0 && busiest.map(|(seen, _)| usage > seen).unwrap_or(true) {
+                busiest = Some((usage, row.speed_bps));
+            }
+            next.insert(row.id.clone(), LinkState { bytes });
+        }
+        self.links = next;
+        busiest
+    }
+}
+
 #[cfg(windows)]
 mod platform {
-    use super::{cores, percent, HostHud};
+    use super::{cores, percent, HostHud, LinkMeter, LinkSample};
     use std::mem::zeroed;
+    use std::ptr;
     use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::NetworkManagement::IpHelper::{
+        FreeMibTable, GetIfTable2, IF_TYPE_SOFTWARE_LOOPBACK, MIB_IF_ROW2, MIB_IF_TABLE2,
+    };
+    use windows_sys::Win32::NetworkManagement::Ndis::IfOperStatusUp;
+    use windows_sys::Win32::System::Performance::{
+        PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterValue,
+        PdhOpenQueryW, PDH_FMT_COUNTERVALUE, PDH_FMT_DOUBLE,
+    };
     use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
     use windows_sys::Win32::System::Threading::GetSystemTimes;
+
+    /// `_Total` 实例的磁盘忙碌时间占比。PDH 自己按两次采集的间隔折算，这里不再
+    /// 差分。用英文计数器名，避免本地化系统上路径随语言漂移。
+    const DISK_BUSY_PATH: &str = r"\PhysicalDisk(_Total)\% Disk Time";
 
     pub struct Probe {
         last_idle: u64,
@@ -128,6 +219,8 @@ mod platform {
         last_user: u64,
         cpu_percent: f32,
         cores: u32,
+        links: LinkMeter,
+        disk: Option<DiskProbe>,
     }
 
     impl Probe {
@@ -139,33 +232,58 @@ mod platform {
                 last_user,
                 cpu_percent: 0.0,
                 cores: cores(),
+                links: LinkMeter::default(),
+                disk: DiskProbe::new(),
             }
         }
 
-        pub fn sample(&mut self) -> HostHud {
+        /// `dt` 为与上次采样的实际间隔（秒）；0 表示只重设基线。
+        pub fn sample(&mut self, dt: f64) -> HostHud {
             let (memory_used, memory_total) = self.memory();
-            self.update_cpu();
+            self.update_cpu(dt);
+            let links = net_samples();
+            let (net_percent, net_link_bps, net_ok) = match &links {
+                Some(rows) => match self.links.update(dt, rows) {
+                    Some((usage, speed)) => (usage, speed, true),
+                    None => (0.0, 0, false),
+                },
+                None => (0.0, 0, false),
+            };
+            let (disk_percent, disk_ok) = match self.disk.as_mut() {
+                Some(disk) => match disk.sample(dt) {
+                    Some(busy) => (busy, true),
+                    None => (0.0, false),
+                },
+                None => (0.0, false),
+            };
             HostHud {
                 cpu_percent: self.cpu_percent,
                 memory_percent: percent(memory_used, memory_total),
                 memory_used,
                 memory_total,
+                net_percent,
+                net_link_bps,
+                disk_percent,
                 cores: self.cores,
                 available: true,
+                net_ok,
+                disk_ok,
             }
         }
 
-        fn update_cpu(&mut self) {
+        fn update_cpu(&mut self, dt: f64) {
             let Some((idle, kernel, user)) = cpu_times() else {
                 return;
             };
-            // kernel 时间包含 idle，所以总时间是 kernel + user。
-            let idle_delta = idle.saturating_sub(self.last_idle);
-            let total =
-                kernel.saturating_sub(self.last_kernel) + user.saturating_sub(self.last_user);
-            if total > 0 {
-                let busy = total.saturating_sub(idle_delta);
-                self.cpu_percent = (busy as f64 / total as f64 * 100.0) as f32;
+            if dt > 0.0 {
+                // kernel 时间包含 idle，所以总时间是 kernel + user。
+                let idle_delta = idle.saturating_sub(self.last_idle);
+                let total =
+                    kernel.saturating_sub(self.last_kernel) + user.saturating_sub(self.last_user);
+                if total > 0 {
+                    let busy = total.saturating_sub(idle_delta);
+                    self.cpu_percent = (busy as f64 / total as f64 * 100.0) as f32;
+                }
             }
             self.last_idle = idle;
             self.last_kernel = kernel;
@@ -186,6 +304,35 @@ mod platform {
         }
     }
 
+    /// 处于 Up 状态的非回环接口。虚拟网卡也留在里面——占用率按各自链路速率算，
+    /// 空闲的虚拟网卡自然得到 0%，不会污染真正在用的那条。
+    fn net_samples() -> Option<Vec<LinkSample>> {
+        let mut table: *mut MIB_IF_TABLE2 = ptr::null_mut();
+        let status = unsafe { GetIfTable2(&mut table) };
+        if status != 0 || table.is_null() {
+            return None;
+        }
+        let mut rows = Vec::new();
+        unsafe {
+            let count = (*table).NumEntries as usize;
+            let entries: *const MIB_IF_ROW2 = ptr::addr_of!((*table).Table) as *const MIB_IF_ROW2;
+            for index in 0..count {
+                let row = &*entries.add(index);
+                if row.Type == IF_TYPE_SOFTWARE_LOOPBACK || row.OperStatus != IfOperStatusUp {
+                    continue;
+                }
+                rows.push(LinkSample {
+                    id: row.InterfaceIndex.to_string(),
+                    received: row.InOctets,
+                    transmitted: row.OutOctets,
+                    speed_bps: row.TransmitLinkSpeed.max(row.ReceiveLinkSpeed),
+                });
+            }
+            FreeMibTable(table as *const _);
+        }
+        Some(rows)
+    }
+
     fn cpu_times() -> Option<(u64, u64, u64)> {
         let mut idle: FILETIME = unsafe { zeroed() };
         let mut kernel: FILETIME = unsafe { zeroed() };
@@ -200,19 +347,89 @@ mod platform {
     fn filetime(value: FILETIME) -> u64 {
         ((value.dwHighDateTime as u64) << 32) | value.dwLowDateTime as u64
     }
+
+    struct DiskProbe {
+        query: isize,
+        busy: isize,
+    }
+
+    impl DiskProbe {
+        fn new() -> Option<Self> {
+            unsafe {
+                let mut query = 0isize;
+                if PdhOpenQueryW(ptr::null(), 0, &mut query) != 0 {
+                    return None;
+                }
+                let mut busy = 0isize;
+                let path = wide(DISK_BUSY_PATH);
+                if PdhAddEnglishCounterW(query, path.as_ptr(), 0, &mut busy) != 0
+                    || PdhCollectQueryData(query) != 0
+                {
+                    PdhCloseQuery(query);
+                    return None;
+                }
+                Some(Self { query, busy })
+            }
+        }
+
+        /// 第一次调用只建立基线（PDH 需要一个间隔才能算出百分比），返回 None。
+        fn sample(&mut self, dt: f64) -> Option<f32> {
+            unsafe {
+                if PdhCollectQueryData(self.query) != 0 {
+                    return None;
+                }
+                let value = read_counter(self.busy)?;
+                if dt <= 0.0 {
+                    return None;
+                }
+                // 多盘合计可能超过 100%，对读数意义不大，夹住即可。
+                Some((value as f32).clamp(0.0, 100.0))
+            }
+        }
+    }
+
+    impl Drop for DiskProbe {
+        fn drop(&mut self) {
+            unsafe {
+                PdhCloseQuery(self.query);
+            }
+        }
+    }
+
+    unsafe fn read_counter(counter: isize) -> Option<f64> {
+        let mut value: PDH_FMT_COUNTERVALUE = unsafe { zeroed() };
+        let status = unsafe {
+            PdhGetFormattedCounterValue(counter, PDH_FMT_DOUBLE, ptr::null_mut(), &mut value)
+        };
+        if status != 0 {
+            return None;
+        }
+        Some(unsafe { value.Anonymous.doubleValue })
+    }
+
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().chain(std::iter::once(0)).collect()
+    }
 }
 
 #[cfg(target_os = "linux")]
 mod platform {
-    use super::{cores, percent, HostHud};
+    use super::{cores, percent, HostHud, LinkMeter, LinkSample};
+    use std::fs;
     use std::fs::File;
     use std::io::Read;
+
+    /// `/sys/class/net/<if>/speed` 的单位是 Mbit/s。
+    const MBIT: u64 = 1_000_000;
 
     pub struct Probe {
         cores: u32,
         cpu_busy: Option<u64>,
         cpu_total: Option<u64>,
         cpu_percent: f32,
+        links: LinkMeter,
+        disk_busy: Option<u64>,
+        disk_percent: f32,
     }
 
     impl Probe {
@@ -222,35 +439,76 @@ mod platform {
                 cpu_busy: None,
                 cpu_total: None,
                 cpu_percent: 0.0,
+                links: LinkMeter::default(),
+                disk_busy: None,
+                disk_percent: 0.0,
             }
         }
 
-        pub fn sample(&mut self) -> HostHud {
-            // 两个文件各一次小读取，返回的都是 Copy 的累计量，读取结束后不再借用
+        pub fn sample(&mut self, dt: f64) -> HostHud {
+            // 每个文件一次小读取，返回的都是 Copy 的累计量，读取结束后不再借用
             // 自身，随后再更新差分。
             let cpu = read("/proc/stat").map(cpu_totals);
             let memory = read("/proc/meminfo").map(memory_totals).unwrap_or((0, 0));
-            self.update_cpu(cpu);
+            self.update_cpu(cpu, dt);
+
+            let links = read("/proc/net/dev").map(net_samples);
+            let (net_percent, net_link_bps, net_ok) = match &links {
+                Some(rows) => match self.links.update(dt, rows) {
+                    Some((usage, speed)) => (usage, speed, true),
+                    None => (0.0, 0, false),
+                },
+                None => (0.0, 0, false),
+            };
+
+            let busy = read("/proc/diskstats").map(disk_busy_ticks);
+            let (disk_percent, disk_ok) = match (busy, dt) {
+                (Some(ticks), dt) if dt > 0.0 => {
+                    let value = match self.disk_busy {
+                        // io_ticks 的单位是毫秒。
+                        Some(previous) => (ticks.saturating_sub(previous) as f64 / (dt * 1000.0)
+                            * 100.0)
+                            .clamp(0.0, 100.0) as f32,
+                        None => 0.0,
+                    };
+                    self.disk_busy = Some(ticks);
+                    self.disk_percent = value;
+                    (value, true)
+                }
+                (Some(ticks), _) => {
+                    self.disk_busy = Some(ticks);
+                    (self.disk_percent, true)
+                }
+                (None, _) => (0.0, false),
+            };
+
             HostHud {
                 cpu_percent: self.cpu_percent,
                 memory_percent: percent(memory.0, memory.1),
                 memory_used: memory.0,
                 memory_total: memory.1,
+                net_percent,
+                net_link_bps,
+                disk_percent,
                 cores: self.cores,
                 available: true,
+                net_ok,
+                disk_ok,
             }
         }
 
-        fn update_cpu(&mut self, cpu: Option<(u64, u64)>) {
+        fn update_cpu(&mut self, cpu: Option<(u64, u64)>, dt: f64) {
             let Some((busy, total)) = cpu else {
                 return;
             };
             // CPU 占用必须是「忙碌增量 / 总增量」，不能各自差分后再相除。
-            if let (Some(last_busy), Some(last_total)) = (self.cpu_busy, self.cpu_total) {
-                let busy_delta = busy.saturating_sub(last_busy);
-                let total_delta = total.saturating_sub(last_total);
-                if total_delta > 0 {
-                    self.cpu_percent = (busy_delta as f64 / total_delta as f64 * 100.0) as f32;
+            if dt > 0.0 {
+                if let (Some(last_busy), Some(last_total)) = (self.cpu_busy, self.cpu_total) {
+                    let busy_delta = busy.saturating_sub(last_busy);
+                    let total_delta = total.saturating_sub(last_total);
+                    if total_delta > 0 {
+                        self.cpu_percent = (busy_delta as f64 / total_delta as f64 * 100.0) as f32;
+                    }
                 }
             }
             self.cpu_busy = Some(busy);
@@ -258,7 +516,7 @@ mod platform {
         }
     }
 
-    /// 读一个小 `/proc` 文件。两者都在几 KB 以内。
+    /// 读一个小 `/proc` 文件。都在几 KB 以内。
     fn read(path: &str) -> Option<String> {
         let mut file = File::open(path).ok()?;
         let mut buffer = String::with_capacity(4096);
@@ -313,6 +571,93 @@ mod platform {
             total.saturating_mul(1024),
         )
     }
+
+    /// `/proc/net/dev`：跳过回环；链路速率另从 sysfs 取（读不到按未知处理，
+    /// 该网卡仍参与差值统计，只是不贡献占用率）。
+    pub(super) fn net_samples(data: String) -> Vec<LinkSample> {
+        let mut rows = Vec::new();
+        for line in data.lines().skip(2) {
+            let Some((name, rest)) = line.split_once(':') else {
+                continue;
+            };
+            let name = name.trim();
+            if name.is_empty() || name == "lo" {
+                continue;
+            }
+            let mut fields = rest.split_whitespace();
+            let received = fields
+                .next()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(0);
+            // 收字节之后依次是收包数、错误、丢弃等 7 列，第 8 列才是发包字节数。
+            let transmitted = fields
+                .nth(7)
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(0);
+            rows.push(LinkSample {
+                id: name.to_string(),
+                received,
+                transmitted,
+                speed_bps: link_speed_bps(name),
+            });
+        }
+        rows
+    }
+
+    /// `/sys/class/net/*/speed` 给出 Mbit/s，虚拟/未连接接口会返回 -1 或读失败。
+    fn link_speed_bps(name: &str) -> u64 {
+        fs::read_to_string(format!("/sys/class/net/{name}/speed"))
+            .ok()
+            .and_then(|text| text.trim().parse::<i64>().ok())
+            .filter(|value| *value > 0)
+            .map(|mbit| mbit as u64 * MBIT)
+            .unwrap_or(0)
+    }
+
+    /// 第 3 列是设备名，其后的第 10 个字段（`io_ticks`，毫秒）是该盘的累计忙碌时间。
+    pub(super) fn disk_busy_ticks(data: String) -> u64 {
+        let mut busy = 0u64;
+        for line in data.lines() {
+            let mut fields = line.split_whitespace();
+            let _major = fields.next();
+            let _minor = fields.next();
+            let Some(name) = fields.next() else {
+                continue;
+            };
+            if !is_whole_disk(name) {
+                continue;
+            }
+            let mut values = [0u64; 11];
+            for slot in values.iter_mut() {
+                *slot = fields
+                    .next()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(0);
+            }
+            // 读写扇区与耗时之后，第 9 个（0 基）就是 io_ticks。
+            busy = busy.saturating_add(values[9]);
+        }
+        busy
+    }
+
+    /// 只累计整盘，避免分区与整盘各算一次。名字规则按内核命名习惯：
+    /// `sda`/`vda`/`xvda` 以字母结尾的是整盘（`sda1` 是分区）；
+    /// `nvme0n1`/`mmcblk0` 不带 `p` 的是整盘（`nvme0n1p1` 是分区）。
+    pub(super) fn is_whole_disk(name: &str) -> bool {
+        const VIRTUAL: [&str; 9] = [
+            "loop", "ram", "zram", "dm-", "md", "sr", "fd", "nbd", "drbd",
+        ];
+        if VIRTUAL.iter().any(|prefix| name.starts_with(prefix)) {
+            return false;
+        }
+        if name.starts_with("nvme") || name.starts_with("mmcblk") {
+            return !name.contains('p');
+        }
+        name.chars()
+            .last()
+            .map(|last| last.is_ascii_alphabetic())
+            .unwrap_or(false)
+    }
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
@@ -326,7 +671,7 @@ mod platform {
             Self
         }
 
-        pub fn sample(&mut self) -> HostHud {
+        pub fn sample(&mut self, _dt: f64) -> HostHud {
             HostHud::default()
         }
     }
@@ -343,11 +688,67 @@ mod tests {
     }
 
     #[test]
+    fn link_meter_needs_a_baseline_then_reports_the_busiest_link() {
+        let mut meter = LinkMeter::default();
+        // 1Gbps = 125MB/s。首帧只登记基线。
+        let first = vec![
+            LinkSample {
+                id: "wired".into(),
+                received: 1_000,
+                transmitted: 1_000,
+                speed_bps: 1_000_000_000,
+            },
+            LinkSample {
+                id: "virtual".into(),
+                received: 0,
+                transmitted: 0,
+                speed_bps: 10_000_000_000,
+            },
+        ];
+        assert_eq!(
+            meter.update(1.0, &first),
+            Some((0.0, 1_000_000_000)),
+            "有链路速率就应该有读数，首个节拍为 0%"
+        );
+
+        // 有线网卡 1 秒内收 25,000,000 字节 = 125,000,000 B/s 的 20%；虚拟网卡仍闲着。
+        let second = vec![
+            LinkSample {
+                id: "wired".into(),
+                received: 1_000 + 25_000_000,
+                transmitted: 1_000,
+                speed_bps: 1_000_000_000,
+            },
+            LinkSample {
+                id: "virtual".into(),
+                received: 0,
+                transmitted: 0,
+                speed_bps: 10_000_000_000,
+            },
+        ];
+        let (usage, speed) = meter.update(1.0, &second).expect("仍然有读数");
+        assert_eq!(speed, 1_000_000_000);
+        assert!((usage - 20.0).abs() < 0.01, "usage={usage}");
+    }
+
+    #[test]
+    fn link_meter_reports_nothing_without_a_known_speed() {
+        let mut meter = LinkMeter::default();
+        let rows = vec![LinkSample {
+            id: "unknown".into(),
+            received: 10,
+            transmitted: 10,
+            speed_bps: 0,
+        }];
+        assert_eq!(meter.update(0.0, &rows), None);
+    }
+
+    #[test]
     fn sampler_publishes_a_snapshot() {
         let sampler = HostHudSampler::start(Duration::from_millis(200));
-        // 只验证「会发布」，不验证时延：首个快照依赖线程调度。
+        // 只验证「会发布」，不验证时延：首个快照依赖线程调度与 PDH 初始化。
         let mut snapshot = sampler.snapshot();
-        for _ in 0..40 {
+        for _ in 0..60 {
             if snapshot.available {
                 break;
             }
@@ -361,11 +762,31 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn parses_proc_stat() {
-        use super::platform::cpu_totals;
+    fn parses_proc_samples() {
+        use super::platform::{cpu_totals, disk_busy_ticks, is_whole_disk, net_samples};
         let (busy, total) = cpu_totals("cpu  10 0 10 80 0 0 0 0 0 0\n".to_string());
         assert_eq!(busy, 20);
         assert_eq!(total, 100);
+
+        assert!(is_whole_disk("sda"));
+        assert!(!is_whole_disk("sda1"));
+        assert!(is_whole_disk("nvme0n1"));
+        assert!(!is_whole_disk("nvme0n1p1"));
+        assert!(!is_whole_disk("loop0"));
+
+        let rows = net_samples(
+            "Inter-|   Receive\n face |bytes\n  eth0: 100 0 0 0 0 0 0 0 40 0 0 0 0 0 0 0\n"
+                .to_string(),
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].received, rows[0].transmitted), (100, 40));
+
+        // 两个整盘各 30ms / 20ms 的 io_ticks，分区不重复计入。
+        let busy = disk_busy_ticks(
+            "   8       0 sda 10 0 200 30 5 0 400 20 0 0 0\n   8       1 sda1 1 0 20 5 1 0 40 3 0 0 0\n"
+                .to_string(),
+        );
+        assert_eq!(busy, 30);
     }
 }
 
@@ -374,15 +795,15 @@ mod windows_probe {
     use super::platform::Probe;
     use std::time::{Duration, Instant};
 
-    /// 单次采样必须便宜：它每秒跑一次，成本要在微秒级而不是毫秒级。
+    /// 单次采样必须便宜：它每秒跑一次，接口枚举是主要开销。
     #[test]
     fn probe_stays_cheap() {
         let mut probe = Probe::new();
-        let first = probe.sample();
+        let first = probe.sample(0.0);
         assert!(first.available);
         std::thread::sleep(Duration::from_millis(250));
         let started = Instant::now();
-        let second = probe.sample();
+        let second = probe.sample(0.25);
         let single = started.elapsed();
         println!("single={single:?} sample={second:?}");
         assert!(single < Duration::from_millis(20));

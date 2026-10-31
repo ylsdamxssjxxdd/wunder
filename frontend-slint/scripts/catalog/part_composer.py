@@ -104,6 +104,10 @@ ENTRIES = [
     # ---- 输入区硬件状态网格 (HostHud) ----
     ("hud_cpu", "CPU", "CPU"),
     ("hud_memory", "内存", "Memory"),
+    # 网络与磁盘只报占用率（读数在悬停提示里），单位与速率不再进格子。
+    ("hud_network", "网络", "Network"),
+    ("hud_disk", "磁盘", "Disk"),
+    ("hud_link", "链路", "link"),
     ("hud_cores", "{} 核", "{} cores", ["cores"]),
     ("hud_tasks_title", "后台任务", "Running tasks"),
     ("hud_tasks_count", "{} 个运行中", "{} running", ["count"]),

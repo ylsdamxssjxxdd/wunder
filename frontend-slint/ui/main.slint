@@ -531,8 +531,13 @@ export component MainWindow inherits Window {
     // 全角破折号占位，避免首帧或指标不可用时空格造成宽度跳动。
     in-out property <float> host-cpu: 0.0;
     in-out property <float> host-memory: 0.0;
+    in-out property <float> host-net: 0.0;
+    in-out property <float> host-disk: 0.0;
     in-out property <string> host-cpu-text: "—";
     in-out property <string> host-memory-text: "—";
+    in-out property <string> host-net-text: "—";
+    in-out property <string> host-disk-text: "—";
+    in-out property <string> host-link: "";
     in-out property <string> host-memory-used: "—";
     in-out property <string> host-memory-total: "—";
     in-out property <int> host-cores: 0;
@@ -1276,7 +1281,10 @@ export component MainWindow inherits Window {
                             workspace-name: root.cloud-chat-active ? I18n.il_browse_title : root.active-workspace-name;
                             branch-name: root.active-workspace-branch;
                             host-cpu: root.host-cpu; host-memory: root.host-memory;
+                            host-net: root.host-net; host-disk: root.host-disk;
                             host-cpu-text: root.host-cpu-text; host-memory-text: root.host-memory-text;
+                            host-net-text: root.host-net-text; host-disk-text: root.host-disk-text;
+                            host-link: root.host-link;
                             host-memory-used: root.host-memory-used; host-memory-total: root.host-memory-total;
                             host-cores: root.host-cores;
                             running-tasks: root.running-tasks;
