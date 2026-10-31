@@ -357,6 +357,9 @@ export global I18n {
     out property <string> cp_queue_send: zh ? "加入等待发送" : "Add to the send queue";
     out property <string> hud_cpu: zh ? "CPU" : "CPU";
     out property <string> hud_memory: zh ? "内存" : "Memory";
+    out property <string> hud_network: zh ? "网络" : "Network";
+    out property <string> hud_disk: zh ? "磁盘" : "Disk";
+    out property <string> hud_link: zh ? "链路" : "link";
     public pure function hud_cores(cores: string) -> string { return zh ? "" + cores + " 核" : "" + cores + " cores"; }
     out property <string> hud_tasks_title: zh ? "后台任务" : "Running tasks";
     public pure function hud_tasks_count(count: string) -> string { return zh ? "" + count + " 个运行中" : "" + count + " running"; }

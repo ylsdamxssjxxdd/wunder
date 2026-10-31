@@ -1796,6 +1796,21 @@
   "en": "Memory"
  },
  {
+  "key": "hud_network",
+  "zh": "网络",
+  "en": "Network"
+ },
+ {
+  "key": "hud_disk",
+  "zh": "磁盘",
+  "en": "Disk"
+ },
+ {
+  "key": "hud_link",
+  "zh": "链路",
+  "en": "link"
+ },
+ {
   "key": "hud_cores",
   "zh": "{} 核",
   "en": "{} cores",

@@ -136,8 +136,8 @@
 }
 
 .messenger-settings-frame-nav-icon-svg-brain {
-  -webkit-mask-image: url('../../assets/brain.svg');
-  mask-image: url('../../assets/brain.svg');
+  -webkit-mask-image: url('../../assets/fluent-brain.svg');
+  mask-image: url('../../assets/fluent-brain.svg');
 }
 
 /* 单行条目：分类摘要已从导航里移除，标题自己吃掉剩余宽度并省略。 */

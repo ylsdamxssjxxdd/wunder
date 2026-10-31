@@ -1356,8 +1356,14 @@ export component Composer inherits Rectangle {
     // Rust 预格式化，渲染路径不做单位换算，也不会因为语言或小数格式让格子宽度跳动。
     in property <float> host-cpu: 0.0;
     in property <float> host-memory: 0.0;
+    in property <float> host-net: 0.0;
+    in property <float> host-disk: 0.0;
     in property <string> host-cpu-text: "—";
     in property <string> host-memory-text: "—";
+    in property <string> host-net-text: "—";
+    in property <string> host-disk-text: "—";
+    // 网络链路速率（"1.0G" / "100M"），空串表示未知，提示里就不出现「链路」。
+    in property <string> host-link: "";
     in property <string> host-memory-used: "—";
     in property <string> host-memory-total: "—";
     in property <int> host-cores: 0;
@@ -1869,10 +1875,15 @@ export component Composer inherits Rectangle {
                     y: 2px;
                     cpu: root.host-cpu;
                     memory: root.host-memory;
+                    net: root.host-net;
+                    disk: root.host-disk;
                     cpu-hint: I18n.hud_cpu + " " + root.host-cpu-text
                         + (root.host-cores > 0 ? " · " + I18n.hud_cores(root.host-cores) : "");
                     memory-hint: I18n.hud_memory + " " + root.host-memory-text + " · "
                         + root.host-memory-used + " / " + root.host-memory-total;
+                    net-hint: I18n.hud_network + " " + root.host-net-text
+                        + (root.host-link == "" ? "" : " · " + I18n.hud_link + " " + root.host-link);
+                    disk-hint: I18n.hud_disk + " " + root.host-disk-text;
                     tasks: root.running-tasks;
                     task-count: root.running-task-count;
                     task-hidden: max(root.running-task-count - root.running-tasks.length, 0);

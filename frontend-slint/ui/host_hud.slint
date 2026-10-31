@@ -1,10 +1,10 @@
 // 输入区底部「本机硬件状态」小网格（HostHud）。
 //
-// 三格读数直接排在动作行最左侧（紧跟加号，替代了原来的工作区名称位），不套底色
+// 五格读数直接排在动作行最左侧（紧跟加号，替代了原来的工作区名称位），不套底色
 // 也不描边——它读起来是输入区的一部分，而不是贴在底部的一条独立状态条：
-// 前两格是 CPU 与内存占用（用「液位字形」表达：图标从底部按占用比例着色填满，
-// 与模型触发器里那个大脑图标同一套逻辑，精确读数让给悬停提示），末格是后台任务
-// 计数，鼠标移上去在卡片上方展开任务面板。
+// 前四格是 CPU、内存、网络、磁盘占用（用「液位字形」表达：图标从底部按占用比例
+// 着色填满，与模型触发器里那个大脑图标同一套逻辑，精确读数让给悬停提示），末格
+// 是后台任务计数，鼠标移上去在上方展开任务面板。
 //
 // 高度 26px（与动作行里 24~28px 的控件同处一条中线），宽度按内容取（约 110px）。
 
@@ -259,12 +259,17 @@ component TaskPanel inherits Rectangle {
 }
 
 export component HostHud inherits Rectangle {
-    // CPU / 内存占用比例（0..=1），只驱动进度条长度与告警色。
+    // 四项占用比例（0..=1），只驱动液位填充高度与告警色。网络与磁盘给的也是
+    // 占用率（网卡速率占链路带宽、磁盘忙碌时间占比），不是吞吐量。
     in property <float> cpu: 0.0;
     in property <float> memory: 0.0;
+    in property <float> net: 0.0;
+    in property <float> disk: 0.0;
     // 悬停提示，调用方按当前语言组装好整句。
     in property <string> cpu-hint: "";
     in property <string> memory-hint: "";
+    in property <string> net-hint: "";
+    in property <string> disk-hint: "";
     // 后台任务
     in property <int> task-count: 0;
     in property <int> task-hidden: 0;
@@ -300,6 +305,16 @@ export component HostHud inherits Rectangle {
             icon: @image-url("../assets/icons/fa-memory.svg");
             ratio: root.memory;
             hint: root.memory-hint;
+        }
+        net-cell := GaugeCell {
+            icon: @image-url("../assets/icons/fa-earth-asia.svg");
+            ratio: root.net;
+            hint: root.net-hint;
+        }
+        disk-cell := GaugeCell {
+            icon: @image-url("../assets/icons/disk-drive.svg");
+            ratio: root.disk;
+            hint: root.disk-hint;
         }
         task-cell := TaskCell {
             count: root.task-count;
