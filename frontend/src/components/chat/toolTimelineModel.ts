@@ -15,7 +15,7 @@ import {
   type RawToolRun,
   type WorkflowItem
 } from './toolWorkflowRunModel';
-import { buildCollapsedToolWorkflowSummary, isSkillCallTool } from './toolWorkflowCollapsedSummary';
+import { buildCollapsedToolWorkflowSummary, isMemoryManagerTool, isSkillCallTool } from './toolWorkflowCollapsedSummary';
 import { buildTimelineDiffStats, isTimelineEditToolRun } from './toolTimelinePatch';
 import type { TimelineDiffStats } from './toolTimelinePatch';
 import { resolveToolIconClass } from '@/utils/abilityVisuals';
@@ -362,6 +362,8 @@ const resolveRunDetailText = (run: RawToolRun): string => {
       continue;
     }
     const data = extractToolResultDataObject(detailObject);
+    const memoryText = buildMemoryDetailText(run, data);
+    if (memoryText) return memoryText;
     const text = pickString(
       data?.stdout,
       data?.output,
@@ -383,6 +385,44 @@ const resolveRunDetailText = (run: RawToolRun): string => {
 const isExecuteCommandToolName = (toolName: unknown): boolean => {
   const normalized = String(toolName || '').trim().toLowerCase();
   return normalized === 'execute_command' || normalized.includes('\u6267\u884c\u547d\u4ee4');
+};
+
+/**
+ * 记忆管理的展开正文：后端在结果 data.detail 里给出了本地化的一句话操作
+ * （保存/更新/删除了哪条记忆），这里再补上读者关心的正文——get 的完整内容、
+ * list/search 的命中条目、add/update 写入的内容（来自调用参数）。
+ */
+const buildMemoryDetailText = (run: RawToolRun, data: UnknownObject | null): string => {
+  if (!isMemoryManagerTool(run.toolName)) return '';
+  const lines: string[] = [];
+  const detail = pickString(data?.detail);
+  if (detail) lines.push(detail);
+  const item = asObject(data?.item);
+  const itemContent = pickString(item?.content);
+  if (itemContent) {
+    lines.push(truncateSingleLine(itemContent, 400));
+  }
+  const items = Array.isArray(data?.items) ? (data.items as unknown[]) : [];
+  for (const entry of items.slice(0, 8)) {
+    const record = asObject(entry);
+    if (!record) continue;
+    const line = [pickString(record.title), pickString(record.snippet)].filter(Boolean).join(' · ');
+    if (line) lines.push(truncateSingleLine(line, 240));
+  }
+  if (items.length > 8) {
+    lines.push(`…（其余 ${items.length - 8} 条省略）`);
+  }
+  if (lines.length) {
+    return lines.join('\n');
+  }
+  // 兜底：旧数据没有 data.detail 时，至少展示写入的内容。
+  const callSource = run.callItem?.toolCallRawDetail ??
+    run.callItem?.tool_call_raw_detail ??
+    run.callItem?.detail;
+  const callDetail = parseDetailObject(callSource);
+  const args = asObject(callDetail?.arguments) || asObject(callDetail?.args) || asObject(callDetail);
+  const content = pickString(args?.content);
+  return content ? truncateSingleLine(content, 400) : '';
 };
 
 /** 命令类工具的退出码（有界解析，找不到为 null）。 */

@@ -10,6 +10,7 @@ use anyhow::{anyhow, Result};
 use chrono::{Local, NaiveDateTime, TimeZone};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 
 const MAX_MEMORY_RECALL_LIMIT: usize = 30;
 
@@ -307,6 +308,80 @@ fn resolve_related_memory_record_id(
     Ok(Some(resolved))
 }
 
+fn build_memory_manager_detail(action: &str, data: &Value) -> String {
+    let count = data.get("count").and_then(Value::as_u64).unwrap_or(0).to_string();
+    let deleted = data
+        .get("deleted")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .to_string();
+    let memory_id = data
+        .get("memory_id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let title = |fallback: &str| -> String {
+        data.get("title")
+            .and_then(Value::as_str)
+            .or_else(|| data.pointer("/item/title").and_then(Value::as_str))
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| fallback.to_string())
+    };
+    let params = |items: &[(&str, String)]| -> HashMap<String, String> {
+        items
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.clone()))
+            .collect()
+    };
+    match action {
+        "add" => i18n::t_with_params(
+            "tool.memory_manager.detail.add",
+            &params(&[("title", title(&memory_id))]),
+        ),
+        "update" => i18n::t_with_params(
+            "tool.memory_manager.detail.update",
+            &params(&[("title", title(&memory_id))]),
+        ),
+        "get" => i18n::t_with_params(
+            "tool.memory_manager.detail.get",
+            &params(&[("title", title(&memory_id))]),
+        ),
+        "remove" => i18n::t_with_params(
+            "tool.memory_manager.detail.remove",
+            &params(&[("memory_id", memory_id)]),
+        ),
+        "clear" => i18n::t_with_params(
+            "tool.memory_manager.detail.clear",
+            &params(&[("count", deleted)]),
+        ),
+        "list" => i18n::t_with_params(
+            "tool.memory_manager.detail.list",
+            &params(&[("count", count)]),
+        ),
+        "search" => {
+            let query = data
+                .get("query")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if query.is_empty() {
+                i18n::t_with_params(
+                    "tool.memory_manager.detail.found",
+                    &params(&[("count", count)]),
+                )
+            } else {
+                i18n::t_with_params(
+                    "tool.memory_manager.detail.search",
+                    &params(&[("query", query), ("count", count)]),
+                )
+            }
+        }
+        _ => String::new(),
+    }
+}
+
 fn build_memory_manager_success(
     action: &str,
     agent_scope: &str,
@@ -336,12 +411,17 @@ fn build_memory_manager_success(
         ),
         _ => format!("memory_manage {action} completed."),
     };
+    let detail = build_memory_manager_detail(action, &data);
     let mut payload = data;
     if let Some(map) = payload.as_object_mut() {
+        map.insert("action".to_string(), Value::String(action.to_string()));
         map.insert(
             "agent_id".to_string(),
             Value::String(agent_scope.to_string()),
         );
+        if !detail.is_empty() {
+            map.insert("detail".to_string(), Value::String(detail));
+        }
     }
     build_model_tool_success_with_hint(action, state, summary, payload, next_step_hint)
 }
@@ -482,6 +562,7 @@ pub(crate) async fn execute_memory_manager_tool(
                     .or((!title.is_empty()).then_some(title.as_str())),
                 &memory_id,
             );
+            let detail_title = derived_title.clone().unwrap_or_else(|| memory_id.clone());
             let saved_record = fragment_store
                 .save_fragment(
                     context.user_id,
@@ -508,6 +589,7 @@ pub(crate) async fn execute_memory_manager_tool(
                 json!({
                     "memory_id": compact_memory_id_for_model(&saved_record.memory_id),
                     "saved": true,
+                    "title": detail_title,
                 }),
                 Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
             )
@@ -550,6 +632,14 @@ pub(crate) async fn execute_memory_manager_tool(
                         .map(|item| item.title_l0.as_str())),
                 &memory_id,
             );
+            let detail_title = derived_title
+                .clone()
+                .or_else(|| {
+                    existing_fragment
+                        .as_ref()
+                        .map(|item| item.title_l0.clone())
+                })
+                .unwrap_or_else(|| memory_id.clone());
             let updated_record = fragment_store
                 .save_fragment(
                     context.user_id,
@@ -577,6 +667,7 @@ pub(crate) async fn execute_memory_manager_tool(
                 json!({
                     "memory_id": compact_memory_id_for_model(&updated_record.memory_id),
                     "updated": true,
+                    "title": detail_title,
                 }),
                 Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
             )

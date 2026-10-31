@@ -1,0 +1,13 @@
+flowchart TD
+  I["初始：上下文为空 / system=S0 / 未发送请求"] --> W1["Write1：追加 1 号持久条目（whole）"]
+  W1 --> S1["Send：请求 1 前缀 = 回放投影 << whole >>"]
+  S1 --> R1["Shrink1：两次请求之间回改 1 号条目投影为 shrunk"]
+  R1 --> W2["Write2：追加 2 号条目（whole）"]
+  W2 --> S2["Send：请求 2 前缀 = << shrunk, whole >>"]
+  S2 --> V["违反 AppendOnlyPrefix：请求 1 前缀不再是请求 2 前缀的前缀"]
+
+  style I fill:#eef2ff,stroke:#3b5bdb
+  style S1 fill:#e6f4ea,stroke:#1a7f37
+  style R1 fill:#fde8e8,stroke:#c0392b
+  style S2 fill:#fde8e8,stroke:#c0392b
+  style V fill:#fff3cd,stroke:#b8860b

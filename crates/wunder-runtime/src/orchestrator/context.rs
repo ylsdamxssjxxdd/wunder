@@ -316,9 +316,94 @@ fn convert_orphan_tool_message_to_observation(message: &Value) -> Value {
     })
 }
 
+/// Canonical 16-hex hash of a single request message. Shares hashing with
+/// `build_context_cache_probe` so the runtime and the probe agree byte for byte
+/// on what a "repeated prefix" is.
+pub(super) fn stable_json_message_hash(message: &Value) -> String {
+    super::llm::stable_json_hash(message)
+}
+
+/// First index at which `current` stops repeating `previous` byte for byte, or
+/// `None` when `current` repeats every message of `previous`. A provider prompt
+/// cache is reused only while this stays `None` between consecutive requests of
+/// one thread (see `docs/形式化证明/context-cache-prefix/`).
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) fn prefix_divergence_index(previous: &[Value], current: &[Value]) -> Option<usize> {
+    let mut index = 0;
+    while index < previous.len() {
+        match (previous.get(index), current.get(index)) {
+            (Some(a), Some(b)) => {
+                if stable_json_message_hash(a) != stable_json_message_hash(b) {
+                    return Some(index);
+                }
+            }
+            _ => return Some(index),
+        }
+        index += 1;
+    }
+    None
+}
+
+/// `true` when `current` repeats every message of `previous` byte for byte, i.e.
+/// the new request extends the previous prefix without rewriting any of it.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) fn messages_extend_prefix(previous: &[Value], current: &[Value]) -> bool {
+    prefix_divergence_index(previous, current).is_none()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn messages_extend_prefix_accepts_append_only_growth() {
+        let base = vec![
+            json!({ "role": "system", "content": "sys" }),
+            json!({ "role": "user", "content": "hi" }),
+        ];
+        let mut grown = base.clone();
+        grown.push(json!({ "role": "assistant", "content": "hello" }));
+        grown.push(json!({ "role": "user", "content": "next" }));
+        assert!(messages_extend_prefix(&base, &grown));
+        assert_eq!(prefix_divergence_index(&base, &grown), None);
+    }
+
+    #[test]
+    fn messages_extend_prefix_rejects_rewritten_prefix() {
+        let previous = vec![
+            json!({ "role": "system", "content": "sys" }),
+            json!({
+                "role": "assistant",
+                "content": "",
+                "reasoning_content": "think",
+                "tool_calls": [{ "id": "c1", "type": "function",
+                    "function": { "name": "read_file", "arguments": "{}" } }],
+            }),
+        ];
+        let incoming = vec![
+            json!({ "role": "system", "content": "sys" }),
+            json!({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{ "id": "c1", "type": "function",
+                    "function": { "name": "read_file", "arguments": "{}" } }],
+            }),
+            json!({ "role": "tool", "tool_call_id": "c1", "content": "{}" }),
+        ];
+        assert!(!messages_extend_prefix(&previous, &incoming));
+        assert_eq!(prefix_divergence_index(&previous, &incoming), Some(1));
+    }
+
+    #[test]
+    fn messages_extend_prefix_rejects_shorter_prefix() {
+        let previous = vec![
+            json!({ "role": "user", "content": "a" }),
+            json!({ "role": "assistant", "content": "b" }),
+        ];
+        let incoming = vec![json!({ "role": "user", "content": "a" })];
+        assert!(!messages_extend_prefix(&previous, &incoming));
+        assert_eq!(prefix_divergence_index(&previous, &incoming), Some(1));
+    }
 
     #[test]
     fn test_normalize_adds_missing_tool_result() {

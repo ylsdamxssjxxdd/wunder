@@ -1,0 +1,90 @@
+---
+title: "蛹后台线程状态及时投影审计"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef works fill:#f4f6f7,stroke:#566573,color:#1b2631
+  classDef wrong fill:#fdedec,stroke:#c0392b,color:#7b241c
+  classDef fixed fill:#e9f7ef,stroke:#1e8449,color:#145a32
+  classDef mixed fill:#fdebd0,stroke:#d35400,color:#7e5109
+  classDef after fill:#ffffff,stroke:#808b96,color:#566573
+  classDef worse fill:#f4ecf7,stroke:#7d3c98,color:#4a235a
+  classDef worksPath fill:#f4f6f7,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef wrongPath fill:#fdedec,stroke:#1f3a93,stroke-width:4px,color:#7b241c
+  classDef fixedPath fill:#e9f7ef,stroke:#1f3a93,stroke-width:4px,color:#145a32
+  classDef mixedPath fill:#fdebd0,stroke:#1f3a93,stroke-width:4px,color:#7e5109
+  classDef afterPath fill:#ffffff,stroke:#1f3a93,stroke-width:4px,color:#566573
+  classDef worsePath fill:#f4ecf7,stroke:#1f3a93,stroke-width:4px,color:#4a235a
+  state "Legend" as legend {
+    state "状态一致" as legendWorks
+    state "修复后不可达" as legendFixed
+  }
+  class legendWorks works
+  class legendFixed fixed
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>已完成；选中 A；窗口可见" as s0
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>已完成；选中 A；窗口隐藏" as s1
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>已完成；选中 B；窗口可见" as s2
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>已完成；选中 B；窗口隐藏" as s3
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>运行中；选中 A；窗口可见" as s4
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>运行中；选中 A；窗口隐藏" as s5
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>运行中；选中 B；窗口可见" as s6
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>运行中；选中 B；窗口隐藏" as s7
+  state "实际 A 已完成、B 已完成；条目 A 运行中、B<br/>已完成；选中 B；窗口可见" as s8
+  state "实际 A 已完成、B 已完成；条目 A 运行中、B<br/>已完成；选中 B；窗口隐藏" as s9
+  state "实际 A 已完成、B 已完成；条目 A 运行中、B<br/>运行中；选中 B；窗口可见" as s10
+  state "实际 A 已完成、B 已完成；条目 A 运行中、B<br/>运行中；选中 B；窗口隐藏" as s11
+  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 A；窗口可见" as s12
+  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 A；窗口隐藏" as s13
+  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 B；窗口可见" as s14
+  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 B；窗口隐藏" as s15
+  state "实际 A 已完成、B 运行中；条目 A 运行中、B<br/>运行中；选中 B；窗口可见" as s16
+  state "实际 A 已完成、B 运行中；条目 A 运行中、B<br/>运行中；选中 B；窗口隐藏" as s17
+  state "实际 A 运行中、B 运行中；条目 A 运行中、B<br/>运行中；选中 A；窗口可见" as s18
+  state "实际 A 运行中、B 运行中；条目 A 运行中、B<br/>运行中；选中 B；窗口可见" as s19
+  state "实际 A 运行中、B 运行中；条目 A 运行中、B<br/>运行中；选中 B；窗口隐藏" as s20
+  [*] --> s12
+  s12 --> s18 : 向线程 A 发送一条消息
+  s12 --> s14 : 切换到线程 B
+  s12 --> s13 : 窗口失去侧栏（隐藏，或被云端接管）
+  s12 --> s4 : 线程 B 在后台跑完（无本地操作）
+  s18 --> s19 : 切换到线程 B
+  s14 --> s15 : 窗口失去侧栏（隐藏，或被云端接管）
+  s14 --> s6 : 线程 B 在后台跑完（无本地操作）
+  s13 --> s5 : 线程 B 在后台跑完（无本地操作）
+  s19 --> s20 : 窗口失去侧栏（隐藏，或被云端接管）
+  s19 --> s16 : 线程 A 在后台跑完（无本地操作）
+  s15 --> s7 : 线程 B 在后台跑完（无本地操作）
+  s6 --> s2 : B 的观察器把 B 的实际相位写入 B 的条目
+  s20 --> s17 : 线程 A 在后台跑完（无本地操作）
+  s16 --> s10 : 线程 B 在后台跑完（无本地操作）
+  s7 --> s3 : B 的观察器把 B 的实际相位写入 B 的条目
+  s2 --> s0 : 切换到线程 A
+  s17 --> s11 : 线程 B 在后台跑完（无本地操作）
+  s10 --> s8 : B 的观察器把 B 的实际相位写入 B 的条目
+  s3 --> s1 : 切换到线程 A
+  s11 --> s9 : B 的观察器把 B 的实际相位写入 B 的条目
+  class s0 works
+  class s1 works
+  class s2 works
+  class s3 works
+  class s4 fixed
+  class s5 works
+  class s6 works
+  class s7 works
+  class s8 fixed
+  class s9 works
+  class s10 works
+  class s11 works
+  class s12 works
+  class s13 works
+  class s14 works
+  class s15 works
+  class s16 works
+  class s17 works
+  class s18 works
+  class s19 works
+  class s20 works

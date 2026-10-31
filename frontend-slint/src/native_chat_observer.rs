@@ -199,9 +199,65 @@ impl Observation {
     }
 }
 
+/// The catalogue poll cadence while this window is busy with a live turn:
+/// matches the observer's own busy interval so a foreground run and a
+/// background settle share one schedule.
+const POLL_BUSY: Duration = Duration::from_millis(500);
+/// The idle cadence: slow enough to be invisible, fast enough that a background
+/// thread's terminal reaches the sidebar while the user is still looking.
+const POLL_IDLE: Duration = Duration::from_secs(3);
+/// The pump wakes this often and fires the poll only when its own cadence is
+/// due, so an idle window pays one cheap comparison per tick.
+const POLL_TICK: Duration = Duration::from_millis(500);
+
+thread_local! {
+    static STATUS_POLL: slint::Timer = slint::Timer::default();
+    static STATUS_POLL_LAST: RefCell<Option<Instant>> = const { RefCell::new(None) };
+}
+
+/// Wake the catalogue poll on a bounded, adaptive cadence.
+///
+/// `native_thread_update_ready` is the only path into `refresh_chat`, and the
+/// selected thread's watcher only raises it when *that* thread changes. A
+/// background run — or a thread that settles while another thread is selected —
+/// is invisible to that watcher, so without an independent tick its row keeps a
+/// stale status and its completion never raises the toast until the user
+/// reopens it. This pump restores the bounded backstop the catalogue was always
+/// meant to have. It stays quiet while the window is hidden (tray / minimised)
+/// or the cloud surface owns the list: a window nobody is looking at must not
+/// wake the runtime for nothing.
+fn start_status_poll(app: &MainWindow) {
+    let weak = app.as_weak();
+    STATUS_POLL.with(|timer| {
+        timer.start(slint::TimerMode::Repeated, POLL_TICK, move || {
+            let Some(app) = weak.upgrade() else {
+                return;
+            };
+            if !app.window().is_visible() || app.get_cloud_chat_active() {
+                return;
+            }
+            // A live local turn changes the sidebar several times per second;
+            // an idle window only needs the slow backstop.
+            let interval = if app.get_busy() { POLL_BUSY } else { POLL_IDLE };
+            let due = STATUS_POLL_LAST.with(|slot| {
+                let mut slot = slot.borrow_mut();
+                let due = slot.is_none_or(|last: Instant| last.elapsed() >= interval);
+                if due {
+                    *slot = Some(Instant::now());
+                }
+                due
+            });
+            if due {
+                app.invoke_native_thread_update_ready();
+            }
+        });
+    });
+}
+
 pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
     let state_weak = Rc::downgrade(&state);
+    start_status_poll(app);
     app.on_native_thread_update_ready(move || {
         let (Some(app), Some(state)) = (weak.upgrade(), state_weak.upgrade()) else {
             return;

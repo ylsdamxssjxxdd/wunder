@@ -1,0 +1,10 @@
+flowchart LR
+  Init["Init：written=<> / form=whole / sys=S0"] -->|Write1 或 Write2| Grow["已追加条目，未发送"]
+  Grow -->|Send：记录 sentLen=Len(written)| Sent["已发送请求，前缀已冻结"]
+  Sent -->|Write1 或 Write2（仅追加后缀）| Grow
+  Sent -->|Shrink1 / Shrink2 / DriftSystem（仅 Fixed=FALSE）| Break["重新投影已发送前缀 -> 违反 AppendOnlyPrefix"]
+
+  style Init fill:#eef2ff,stroke:#3b5bdb
+  style Grow fill:#e6f4ea,stroke:#1a7f37
+  style Sent fill:#e6f4ea,stroke:#1a7f37
+  style Break fill:#fde8e8,stroke:#c0392b

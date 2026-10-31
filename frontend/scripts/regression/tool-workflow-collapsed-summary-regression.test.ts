@@ -158,3 +158,46 @@ test('skill rows fall back to the persisted result name and never to SKILL.md', 
   assert.equal(summary.brief, 'demo_skill');
   assert.equal(summary.title, '\u6280\u80fd demo_skill');
 });
+
+test('memory rows summarize the concrete action instead of the raw action enum', () => {
+  const run = {
+    key: 'memory-1',
+    toolName: '记忆管理',
+    toolDisplayName: '记忆管理',
+    toolRuntimeName: 'memory_manager',
+    toolFunctionName: 'memory_manager',
+    callItem: {
+      detail: JSON.stringify({
+        args: { action: 'add', title: '回复语言', content: '默认用中文回复。' }
+      })
+    },
+    outputItem: null,
+    resultItem: {
+      detail: JSON.stringify({
+        ok: true,
+        data: { action: 'add', memory_id: 'preftone', saved: true, title: '回复语言', detail: '已保存记忆「回复语言」' }
+      })
+    }
+  };
+  const summary = buildCollapsedToolWorkflowSummary(run, '记忆管理');
+  assert.equal(summary.brief, '保存「回复语言」');
+  assert.equal(summary.title, '记忆管理 保存「回复语言」');
+
+  const search = buildCollapsedToolWorkflowSummary({
+    ...run,
+    key: 'memory-2',
+    callItem: {
+      detail: JSON.stringify({ args: { action: 'recall', query: '语言偏好' } })
+    }
+  }, '记忆管理');
+  assert.equal(search.brief, '搜索「语言偏好」');
+
+  const clear = buildCollapsedToolWorkflowSummary({
+    ...run,
+    key: 'memory-3',
+    callItem: {
+      detail: JSON.stringify({ args: { action: 'clear' } })
+    }
+  }, '记忆管理');
+  assert.equal(clear.brief, '清空全部');
+});

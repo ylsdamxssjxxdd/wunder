@@ -163,6 +163,109 @@ const isKnowledgeQueryTool = (toolName: string): boolean => {
   );
 };
 
+const isMemoryManagerTool = (toolName: string): boolean => {
+  const normalized = normalizeToolName(toolName);
+  return normalized === 'memory_manager' || normalized === 'memory_manage' || toolName.includes('记忆管理');
+};
+
+const normalizeMemoryAction = (raw: unknown): string => {
+  const value = String(raw || '').trim().toLowerCase();
+  if (value === 'list') return 'list';
+  if (value === 'get' || value === 'read' || value === 'detail') return 'get';
+  if (value === 'add' || value === 'create' || value === 'append') return 'add';
+  if (value === 'update' || value === 'upsert') return 'update';
+  if (value === 'delete' || value === 'remove') return 'remove';
+  if (value === 'clear' || value === 'reset') return 'clear';
+  if (value === 'recall' || value === 'search' || value === 'query' || value === 'retrieve') return 'search';
+  return '';
+};
+
+const MEMORY_ACTION_TITLE_KEYS: Record<string, string> = {
+  list: 'chat.toolWorkflow.memory.list',
+  get: 'chat.toolWorkflow.memory.get',
+  add: 'chat.toolWorkflow.memory.add',
+  update: 'chat.toolWorkflow.memory.update',
+  remove: 'chat.toolWorkflow.memory.remove',
+  clear: 'chat.toolWorkflow.memory.clear',
+  search: 'chat.toolWorkflow.memory.search'
+};
+
+const MEMORY_LIST_ITEM_LIMIT = 12;
+
+// 记忆工具把所有动作共用在一个结果形状里；这里按动作给出读者关心的正文：
+// 保存/更新了哪条记忆、检索命中了什么、清空了多少条，而不是裸的 JSON。
+const buildMemoryStructuredView = (
+  dataObject: UnknownObject,
+  t: Translate,
+  callArgs: UnknownObject | null
+): ToolWorkflowStructuredView | null => {
+  const action = normalizeMemoryAction(pickString(callArgs?.action, dataObject.action));
+  const item = asObject(dataObject.item);
+  const entries = Array.isArray(dataObject.items)
+    ? (dataObject.items.map(asObject).filter(Boolean) as UnknownObject[])
+    : [];
+  const detailLine = pickString(dataObject.detail);
+  const title = pickString(dataObject.title, item?.title, callArgs?.title);
+  const memoryId = pickString(dataObject.memory_id, item?.memory_id, callArgs?.memory_id, callArgs?.id);
+
+  const infoRows: ToolWorkflowStructuredGroup['rows'] = [];
+  if (detailLine) {
+    infoRows.push({ key: 'memory-detail', title: truncateText(detailLine, 240) });
+  } else if (action) {
+    const subject = title || memoryId;
+    infoRows.push({
+      key: 'memory-detail',
+      title: subject
+        ? `${t(MEMORY_ACTION_TITLE_KEYS[action])}「${truncateText(subject, 80)}」`
+        : t(MEMORY_ACTION_TITLE_KEYS[action])
+    });
+  }
+
+  if (item) {
+    const content = pickString(item.content);
+    if (content) {
+      infoRows.push({
+        key: 'memory-content',
+        title: t('chat.toolWorkflow.memory.content'),
+        body: truncateText(content),
+        meta: pickString(item.tag)
+      });
+    }
+  }
+
+  const entryRows: ToolWorkflowStructuredGroup['rows'] = entries.slice(0, MEMORY_LIST_ITEM_LIMIT).map((entry, index) => {
+    const entryTitle = pickString(entry.title) || pickString(entry.memory_id) || `${t('chat.toolWorkflow.detail.hit')} ${index + 1}`;
+    const snippet = pickString(entry.snippet);
+    return {
+      key: `memory-entry-${index}`,
+      title: truncateText(snippet ? `${entryTitle} · ${snippet}` : entryTitle, 240)
+    };
+  });
+  if (entries.length > entryRows.length) {
+    entryRows.push({
+      key: 'memory-entries-omitted',
+      title: `... (+${entries.length - entryRows.length} items omitted)`,
+      tone: 'warning'
+    });
+  }
+
+  const metrics = [
+    buildMetric('memory-count', t('chat.toolWorkflow.detail.items'), toInt(dataObject.count)),
+    buildMetric('memory-deleted', t('chat.toolWorkflow.memory.deleted'), toInt(dataObject.deleted))
+  ].filter(Boolean) as ToolWorkflowStructuredMetric[];
+
+  const groups: ToolWorkflowStructuredGroup[] = [];
+  if (infoRows.length) groups.push({ key: 'memory-info', rows: infoRows });
+  if (entryRows.length) groups.push({ key: 'memory-entries', rows: entryRows });
+
+  if (!metrics.length && !groups.length) return null;
+  return {
+    variant: 'list',
+    metrics,
+    groups
+  };
+};
+
 const buildMetric = (
   key: string,
   label: string,
@@ -672,6 +775,7 @@ export const buildStructuredToolResultView = (
   if (isWriteFileTool(toolName)) return buildWriteStructuredView(resultObject, normalizedDataObject, t, callArgs);
   if (isDatabaseQueryTool(toolName)) return buildDatabaseStructuredView(normalizedDataObject, t, callArgs);
   if (isKnowledgeQueryTool(toolName)) return buildKnowledgeStructuredView(normalizedDataObject, t, callArgs);
+  if (isMemoryManagerTool(toolName)) return buildMemoryStructuredView(normalizedDataObject, t, callArgs);
   return null;
 };
 
@@ -716,6 +820,10 @@ export const buildStructuredToolResultNote = (
   }
   if (isWriteFileTool(toolName)) {
     return '';
+  }
+  if (isMemoryManagerTool(toolName)) {
+    const count = toInt(normalizedDataObject.count) || toInt(normalizedDataObject.deleted);
+    return count > 0 ? `${t('chat.toolWorkflow.detail.items')} ${count}` : '';
   }
   return '';
 };

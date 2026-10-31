@@ -1,3 +1,4 @@
+# AI生成
 import contextlib
 import importlib.util
 import io
@@ -18,6 +19,7 @@ RUNNERS = (
     ("check_cron_formal", "cron/models", "CronLifecycle", 2),
     ("check_service_history_formal", "service-history-20261027", "ServiceHistory", 10),
     ("check_thread_history_replay_formal", "thread-history-replay/models", "ThreadHistoryReplay", 10),
+    ("check_context_cache_prefix_formal", "context-cache-prefix/models", "PrefixStability", 6),
     ("check_postgres_io_formal", "postgres-io/models", "PostgresIo", 6),
 )
 

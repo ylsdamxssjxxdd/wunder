@@ -541,6 +541,11 @@ impl Orchestrator {
             let mut stop_meta: Option<Value> = None;
             let mut last_response: Option<(String, String)> = None;
             let mut last_round_info = request_round;
+            // Runtime verification of the request-prefix append-only invariant
+            // (see `docs/形式化证明/context-cache-prefix/`). Every round must repeat
+            // the previous round's message prefix byte for byte; a breach means
+            // the provider prompt cache cannot reuse the shared prefix.
+            let mut last_sent_message_hashes: Vec<String> = Vec::new();
 
             // Every admitted goal round is its own visible user turn, so the
             // model-round sequence always starts fresh inside that turn.
@@ -720,6 +725,23 @@ impl Orchestrator {
                 let mut overflow_recovery_attempts = 0_u32;
                 self.apply_agent_messages(agent_inbox.as_ref().expect("active inbox"),
                     &user_id, &session_id, &mut messages, &emitter, round_info, false).await?;
+                let current_prefix_hashes: Vec<String> = messages
+                    .iter()
+                    .map(super::context::stable_json_message_hash)
+                    .collect();
+                let divergence = last_sent_message_hashes
+                    .iter()
+                    .enumerate()
+                    .position(|(index, hash)| current_prefix_hashes.get(index) != Some(hash));
+                if let Some(index) = divergence {
+                    emitter.emit("context_cache_prefix", json!({
+                        "append_only": false,
+                        "previous_len": last_sent_message_hashes.len(),
+                        "current_len": messages.len(),
+                        "diverged_at": index,
+                    })).await;
+                }
+                last_sent_message_hashes = current_prefix_hashes;
                 let (mut content, reasoning, usage, mut tool_calls_payload, round_speed, output) = loop {
                     match Box::pin(self.call_llm(
                             &apply_context_window_limit_hint(

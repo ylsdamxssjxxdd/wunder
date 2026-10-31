@@ -15,10 +15,12 @@ use super::{
     execute_mcp_tool, execute_memory_manager_tool, execute_thread_control_tool, execute_user_tool,
     is_mcp_tool_name, self_status_tool, subagent_control,
 };
+use crate::i18n;
 use crate::services::goal;
 use crate::skills::execute_skill;
 use anyhow::{anyhow, Result};
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// 工具调度入口：优先处理用户工具、技能与 MCP，再回落到内置工具。
 pub async fn execute_tool(context: &ToolContext<'_>, name: &str, args: &Value) -> Result<Value> {
@@ -52,6 +54,20 @@ pub async fn execute_builtin_tool(
     // 统一参数管线：把 dsh 风格参数别名回填到既有主键，仅补缺不改写。
     let normalized = super::pipeline::normalize_args(&canonical, args);
     let args: &Value = normalized.as_ref().unwrap_or(args);
+    // 子会话禁用清单双保险：即使历史子会话的冻结工具清单仍含这些工具，
+    // 触发时也在分发层直接拒绝，而不是让线程卡进无人应答的等待态。
+    if super::session_tool_access::is_child_session_blocked_tool(&canonical)
+        && super::session_tool_access::session_is_child(
+            context.storage.as_ref(),
+            context.user_id,
+            context.session_id,
+        )
+    {
+        return Err(anyhow!(i18n::t_with_params(
+            "error.tool.blocked_in_subagent_session",
+            &HashMap::from([("tool".to_string(), canonical.clone())])
+        )));
+    }
     match canonical.as_str() {
         canonical if goal::is_goal_tool_name(canonical) => {
             goal::execute_goal_tool(context, &canonical, args).await

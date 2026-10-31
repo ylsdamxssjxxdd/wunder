@@ -409,14 +409,139 @@ pub(super) fn project(tool: &str, data: &Value, args: &Value) -> Vec<Section> {
                 vec![group]
             }
         }
+        _ if tool == "记忆管理" || tool == "memory_manager" || tool == "memory_manage" => {
+            let action = memory_action_name(
+                args["action"]
+                    .as_str()
+                    .or_else(|| data["action"].as_str())
+                    .unwrap_or_default(),
+            );
+            let mut title = text(data, &["detail"]);
+            if title.is_empty() {
+                title = memory_operation_line(action, args, data);
+            }
+            let mut group = section(title, "text");
+            match action {
+                "add" | "update" => {
+                    push_body(&mut group, &text(args, &["content"]), "context");
+                }
+                "get" => {
+                    let content = text(&data["item"], &["content"]);
+                    if !content.is_empty() {
+                        push_body(&mut group, &content, "context");
+                    }
+                }
+                "list" | "search" => {
+                    let items = data["items"].as_array().cloned().unwrap_or_default();
+                    for item in items.iter().take(60) {
+                        let title = text(item, &["title"]);
+                        let snippet = text(item, &["snippet", "content"]);
+                        let body = if snippet.is_empty() {
+                            title
+                        } else if title.is_empty() {
+                            snippet
+                        } else {
+                            format!("{title} · {snippet}")
+                        };
+                        if !body.is_empty() {
+                            group.lines.push(line(body, "context", String::new()));
+                        }
+                    }
+                    let count = data["count"].as_u64().unwrap_or(items.len() as u64);
+                    if count > 0 {
+                        group.meta = format!("{count} 条");
+                    }
+                }
+                "clear" => {
+                    if let Some(deleted) = data["deleted"].as_i64() {
+                        group.meta = format!("已清空 {deleted} 条");
+                    }
+                }
+                _ => {}
+            }
+            if group.lines.is_empty() && group.meta.is_empty() {
+                Vec::new()
+            } else {
+                vec![group]
+            }
+        }
         _ => Vec::new(),
     }
+}
+
+fn memory_action_name(raw: &str) -> &'static str {
+    match raw.trim().to_lowercase().as_str() {
+        "list" => "list",
+        "get" | "read" | "detail" => "get",
+        "add" | "create" | "append" => "add",
+        "update" | "upsert" => "update",
+        "delete" | "remove" => "remove",
+        "clear" | "reset" => "clear",
+        "recall" | "search" | "query" | "retrieve" => "search",
+        _ => "",
+    }
+}
+
+/// Older persisted rows predate the backend-stamped `detail` text; derive a
+/// readable operation line from the raw call arguments instead of showing "add".
+fn memory_operation_line(action: &str, args: &Value, data: &Value) -> String {
+    let verb = match action {
+        "list" => "列出记忆",
+        "get" => "读取记忆",
+        "add" => "保存记忆",
+        "update" => "更新记忆",
+        "remove" => "删除记忆",
+        "clear" => "清空记忆",
+        "search" => "搜索记忆",
+        _ => return String::new(),
+    };
+    let subject = ["title", "query", "memory_id", "id"]
+        .iter()
+        .find_map(|key| {
+            args[*key]
+                .as_str()
+                .or_else(|| data[*key].as_str())
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("「{}」", value.chars().take(104).collect::<String>()))
+        .unwrap_or_default();
+    format!("{verb}{subject}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn memory_details_name_the_operation_and_body() {
+        let sections = project(
+            "记忆管理",
+            &json!({"action":"add","memory_id":"preftone","saved":true,"title":"回复语言","detail":"已保存记忆「回复语言」"}),
+            &json!({"action":"add","title":"回复语言","content":"默认用中文回复。"}),
+        );
+        assert_eq!(sections[0].title, "已保存记忆「回复语言」");
+        assert_eq!(sections[0].lines[0].text, "默认用中文回复。");
+
+        let search = project(
+            "memory_manager",
+            &json!({"action":"search","query":"语言","count":2,"detail":"已搜索记忆「语言」，命中 2 条","items":[{"title":"回复语言","snippet":"默认中文"},{"title":"排版偏好","snippet":"短横线"}]}),
+            &json!({"action":"recall","query":"语言"}),
+        );
+        assert_eq!(search[0].title, "已搜索记忆「语言」，命中 2 条");
+        assert_eq!(search[0].meta, "2 条");
+        assert_eq!(search[0].lines[0].text, "回复语言 · 默认中文");
+
+        // Older rows without the backend detail still derive a readable title.
+        let legacy = project(
+            "记忆管理",
+            &json!({"memory_id":"preftone","saved":true}),
+            &json!({"action":"create","content":"旧数据"}),
+        );
+        assert_eq!(legacy[0].title, "保存记忆「preftone」");
+        assert_eq!(legacy[0].lines[0].text, "旧数据");
+    }
+
     #[test]
     fn question_plan_search_and_table_preserve_readable_structure() {
         let question = project(
