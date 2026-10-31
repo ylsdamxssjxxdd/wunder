@@ -26,6 +26,7 @@
 | 多本地入口共存 | [local-entry-coexistence](./local-entry-coexistence/README.md) | 蛹与多个舵机共享数据根、线程隔离 |
 | 定时任务 | [cron](./cron/README.md) | 领取、编辑、停用、删除与历史原子性 |
 | 服务长线程 | [service-history-20261027](./service-history-20261027/README.md) | 诊断资源边界、元信息与投影计数 |
+| 线程历史窗口外回读 | [thread-history-replay](./thread-history-replay/README.md) | 活动窗口裁剪、稀疏锚点、轮次起点、扫描预算与分页完整性 |
 | 数据库 I/O 隔离 | [postgres-io](./postgres-io/README.md) | 业务运行时阻塞与独立网络驱动模型 |
 | 蛹与蜂巢聊天投影 | [聊天状态一致性验证](./聊天状态一致性验证/README.md) | 完成头、过程刷新、实时条目与思考身份隔离 |
 | 蛹聊天流式跟随 | [stream-follow-20261030](./stream-follow-20261030/README.md) | 外层时间线与工作过程列表的尾部跟随、条目静默变高反例 |
@@ -50,6 +51,7 @@
 ```powershell
 python scripts/check_cron_formal.py --statechart <statechart-skill>/scripts/statechart.mjs --out <external-scratch>/cron
 python scripts/check_service_history_formal.py --statechart <statechart-skill>/scripts/statechart.mjs --out <external-scratch>/service-history
+python scripts/check_thread_history_replay_formal.py --statechart <statechart-skill>/scripts/statechart.mjs --out <external-scratch>/thread-history-replay
 python scripts/check_postgres_io_formal.py --statechart <statechart-skill>/scripts/statechart.mjs --out <external-scratch>/postgres-io
 python scripts/check_work_process_formal.py --statechart <statechart-skill>/scripts/statechart.mjs --out <external-scratch>/work-process
 ```

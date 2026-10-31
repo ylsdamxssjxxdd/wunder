@@ -1,0 +1,77 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 71 and seed 7496269489198849331 with 1 worker on 1 cores with 14484MB heap and 64MB offheap memory [pid: 44820] (Windows 11 10.0 amd64, Eclipse Adoptium 25.0.5 x86_64, MemFPSet, DiskStateQueue).
+Parsing file scratch/ThreadHistoryReplay.tla
+Parsing file scratch/Naturals.tla
+Parsing file scratch/Sequences.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module ThreadHistoryReplay
+Starting... (2026-10-31 11:26:11)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-31 11:26:11.
+Error: Invariant TrimmedTurnNeverEmpty is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ pos = 0
+/\ collected = <<>>
+/\ page = <<>>
+/\ budget = 0
+/\ phase = "idle"
+/\ more = FALSE
+
+State 2: <Start line 34, col 5 to line 40, col 20 of module ThreadHistoryReplay>
+/\ pos = 1
+/\ collected = <<>>
+/\ page = <<>>
+/\ budget = 4
+/\ phase = "scan"
+/\ more = FALSE
+
+State 3: <Advance line 45, col 5 to line 51, col 38 of module ThreadHistoryReplay>
+/\ pos = 2
+/\ collected = <<>>
+/\ page = <<>>
+/\ budget = 3
+/\ phase = "scan"
+/\ more = FALSE
+
+State 4: <Advance line 45, col 5 to line 51, col 38 of module ThreadHistoryReplay>
+/\ pos = 3
+/\ collected = <<>>
+/\ page = <<>>
+/\ budget = 2
+/\ phase = "scan"
+/\ more = FALSE
+
+State 5: <Advance line 45, col 5 to line 51, col 38 of module ThreadHistoryReplay>
+/\ pos = 4
+/\ collected = <<>>
+/\ page = <<>>
+/\ budget = 1
+/\ phase = "scan"
+/\ more = FALSE
+
+State 6: <Advance line 45, col 5 to line 51, col 38 of module ThreadHistoryReplay>
+/\ pos = 5
+/\ collected = <<>>
+/\ page = <<>>
+/\ budget = 0
+/\ phase = "scan"
+/\ more = FALSE
+
+State 7: <Exhaust line 66, col 5 to line 72, col 43 of module ThreadHistoryReplay>
+/\ pos = 5
+/\ collected = <<>>
+/\ page = <<>>
+/\ budget = 0
+/\ phase = "truncated"
+/\ more = TRUE
+
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 3.3E-19
+7 states generated, 6 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 6.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+Finished in 00s at (2026-10-31 11:26:11)

@@ -1,0 +1,49 @@
+---
+title: "线程历史窗口外回读审计"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef works fill:#f4f6f7,stroke:#566573,color:#1b2631
+  classDef wrong fill:#fdedec,stroke:#c0392b,color:#7b241c
+  classDef fixed fill:#e9f7ef,stroke:#1e8449,color:#145a32
+  classDef mixed fill:#fdebd0,stroke:#d35400,color:#7e5109
+  classDef after fill:#ffffff,stroke:#808b96,color:#566573
+  classDef worse fill:#f4ecf7,stroke:#7d3c98,color:#4a235a
+  classDef worksPath fill:#f4f6f7,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef wrongPath fill:#fdedec,stroke:#1f3a93,stroke-width:4px,color:#7b241c
+  classDef fixedPath fill:#e9f7ef,stroke:#1f3a93,stroke-width:4px,color:#145a32
+  classDef mixedPath fill:#fdebd0,stroke:#1f3a93,stroke-width:4px,color:#7e5109
+  classDef afterPath fill:#ffffff,stroke:#1f3a93,stroke-width:4px,color:#566573
+  classDef worsePath fill:#f4ecf7,stroke:#1f3a93,stroke-width:4px,color:#4a235a
+  state "Legend" as legend {
+    state "正常回读" as legendWorks
+    state "修复后不可达" as legendFixed
+  }
+  class legendWorks works
+  class legendFixed fixed
+  state "等待打开较早轮次，尚未返回条目" as s0
+  state "读取 canonical 记录，尚未返回条目" as s1
+  state "读取 canonical 记录，已收集 1 项" as s2
+  state "读取 canonical 记录，已收集 2 项" as s3
+  state "读取 canonical 记录，已收集 3 项" as s4
+  state "轮次条目已返回，已收集 3 项" as s5
+  state "预算耗尽，页面为空，尚未返回条目" as s6
+  [*] --> s0
+  s0 --> s1 : 打开活动窗口外的轮次
+  s1 --> s6 : 记录预算在轮次前耗尽
+  s1 --> s2 : with the fix, 逐条读取 rollout 记录
+  s2 --> s3 : with the fix, 逐条读取 rollout 记录
+  s3 --> s4 : with the fix, 逐条读取 rollout 记录
+  s4 --> s5 : with the fix, 按新到旧返回轮次条目
+  s1 --> s1 : 逐条读取 rollout 记录
+  class s0 works
+  class s1 works
+  class s2 fixed
+  class s3 fixed
+  class s4 fixed
+  class s5 fixed
+  class s6 fixed

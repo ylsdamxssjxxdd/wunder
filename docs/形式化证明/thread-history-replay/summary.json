@@ -1,0 +1,51 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "the fix",
+    "lacks": []
+  },
+  "modelStates": 7,
+  "modelTransitions": 6,
+  "chartStates": 7,
+  "chartTransitions": 7,
+  "chartStatus": {
+    "works": 2,
+    "wrong": 0,
+    "fixed": 5,
+    "mixed": 0,
+    "after": 0,
+    "worse": 0
+  },
+  "mixedStatus": [],
+  "cover": {
+    "drawn": true,
+    "states": 7,
+    "transitions": 7,
+    "leftOutStates": [],
+    "leftOutTransitions": []
+  },
+  "classes": [
+    {
+      "n": 1,
+      "end": "预算耗尽，页面为空，尚未返回条目",
+      "invariant": "TrimmedTurnNeverEmpty",
+      "rule": "A trimmed turn that still has canonical items never returns an empty page.",
+      "cause": "从稀疏锚点起步，预算在到达轮次条目之前耗尽",
+      "readerSteps": 6,
+      "modelSteps": 7,
+      "counterexamples": 1,
+      "lastSteps": [
+        "记录预算在轮次前耗尽"
+      ],
+      "startsHere": false,
+      "fix": "读取 canonical 记录，已收集 1 项"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "scratch/ThreadHistoryReplay.tla": [],
+    "scratch/ThreadHistoryReplayFixed.tla": []
+  },
+  "brokenProperties": []
+}
