@@ -1565,7 +1565,7 @@ mod tests {
         timeline.start_body(1);
         timeline.append_body("Latest answer").unwrap();
         timeline.flush();
-        timeline.finish(false);
+        timeline.finish(crate::timeline::Settle::Done);
 
         // Storage commits the turn the live builder just settled.
         timeline.publish_history(project_history(&[

@@ -1806,9 +1806,19 @@
   "en": "Disk"
  },
  {
-  "key": "hud_link",
-  "zh": "链路",
-  "en": "link"
+  "key": "hud_detail_title",
+  "zh": "本机状态",
+  "en": "This machine"
+ },
+ {
+  "key": "hud_read",
+  "zh": "读",
+  "en": "R"
+ },
+ {
+  "key": "hud_write",
+  "zh": "写",
+  "en": "W"
  },
  {
   "key": "hud_cores",
@@ -2376,6 +2386,21 @@
   "key": "ws_expand_threads",
   "zh": "展开工作区线程",
   "en": "Expand workspace threads"
+ },
+ {
+  "key": "rs_stopped_terminated",
+  "zh": "已终止",
+  "en": "Terminated"
+ },
+ {
+  "key": "rs_stopped_cancelled",
+  "zh": "已取消",
+  "en": "Cancelled"
+ },
+ {
+  "key": "rs_stopped_aborted",
+  "zh": "已中断",
+  "en": "Interrupted"
  },
  {
   "key": "ed_total_legend",

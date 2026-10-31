@@ -27,14 +27,27 @@ pub const KIND_GROUP: i32 = 4;
 pub const KIND_SUBAGENT: i32 = 5;
 pub const KIND_PROCESS: i32 = 6;
 pub const KIND_FOOTER: i32 = 7;
-/// Status kinds: 0 done, 1 running, 2 failed.
+/// Status kinds: 0 done, 1 running, 2 failed, 3 stopped by the user.
 pub const STATUS_DONE: i32 = 0;
 pub const STATUS_RUNNING: i32 = 1;
 pub const STATUS_FAILED: i32 = 2;
+/// Terminal, but at the user's request. Neither a success mark nor a failure
+/// mark tells the truth about a turn the user stopped.
+pub const STATUS_STOPPED: i32 = 3;
 /// A row outside any tool batch.
 pub const NO_GROUP: i32 = -1;
 /// A row outside the work-process fold: the turn's newest answer block.
 pub const NO_PROCESS: i32 = -1;
+
+/// How a settled turn ended. The three outcomes are distinct on purpose: a
+/// user stop is neither a success nor a failure, and conflating it with the
+/// failure path is what painted stopped turns red.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Settle {
+    Done,
+    Failed,
+    Stopped,
+}
 
 /// Shared by live and durable projections: child runs keep their own cards,
 /// and only the newest answer remains outside the turn's work process.
@@ -1382,7 +1395,8 @@ impl Timeline {
     }
 
     /// Settle the turn: the last block freezes and the tail stops spinning.
-    pub fn finish(&mut self, failed: bool) {
+    pub fn finish(&mut self, settle: Settle) {
+        let failed = settle == Settle::Failed;
         self.close_thinking(failed);
         self.close_body();
         self.close_batch();
@@ -1398,7 +1412,11 @@ impl Timeline {
         }
         self.refresh_process_bar();
         self.patch(self.process_bar, |row| {
-            row.status_kind = if failed { STATUS_FAILED } else { STATUS_DONE }
+            row.status_kind = match settle {
+                Settle::Done => STATUS_DONE,
+                Settle::Failed => STATUS_FAILED,
+                Settle::Stopped => STATUS_STOPPED,
+            }
         });
         if failed {
             self.patch(self.process_bar, |row| row.summary = "错误".into());
@@ -2069,7 +2087,7 @@ mod tests {
                 .key,
             "status-stopped"
         );
-        timeline.finish(false);
+        timeline.finish(Settle::Done);
         timeline.begin_turn("fixture-next", "Fixture next input");
         timeline.set_turn_status("requesting", 2);
         assert_eq!(
@@ -2119,7 +2137,7 @@ mod tests {
         timeline.set_turn_stats(stat_metrics(&crate::turn_stats::metrics(
             &serde_json::json!({"toolCalls":0}),
         )));
-        timeline.finish(true);
+        timeline.finish(Settle::Failed);
         timeline.set_turn_status("已停止", 57);
         let row = timeline.model.row_data(timeline.footer.get()).unwrap();
         assert_eq!(row.stats.row_data(0).unwrap().key, "status-stopped");
@@ -2163,7 +2181,7 @@ mod tests {
             .unwrap();
         assert!(process.visible);
         assert_eq!(process.summary, crate::timeline_text::thought_running());
-        timeline.finish(false);
+        timeline.finish(Settle::Done);
         let process = timeline
             .model()
             .iter()
@@ -2210,7 +2228,9 @@ mod tests {
         timeline.append_reasoning("First thought").unwrap();
         timeline.flush();
         let bar = timeline.process_bar;
-        timeline.toggle(bar as i32);
+        // First reveal unfolds the bar by default and its `open` is the fold's
+        // single source of truth, so the live model already carries the
+        // expanded choice the refresh below must preserve.
         let reason = timeline.thinking.as_ref().unwrap().index;
         timeline.toggle(reason as i32);
         let children = timeline.model.row_data(bar).unwrap().process_entries;
@@ -2226,7 +2246,7 @@ mod tests {
         snapshot[bar].open = false;
         snapshot[reason].open = false;
         snapshot[bar].process_entries = ModelRc::default();
-        timeline.finish(false);
+        timeline.finish(Settle::Done);
         timeline.publish_history(snapshot);
         assert!(timeline.model.row_data(bar).unwrap().open);
         assert!(children.row_data(0).unwrap().open);
@@ -2259,7 +2279,7 @@ mod tests {
             children.iter().map(|entry| entry.kind).collect::<Vec<_>>(),
             vec![KIND_BODY, KIND_TOOL]
         );
-        timeline.finish(true);
+        timeline.finish(Settle::Failed);
         assert_eq!(children.row_data(1).unwrap().status_kind, STATUS_FAILED);
     }
 
@@ -2291,7 +2311,7 @@ mod tests {
         let body = timeline.model.row_data(timeline.last_body).unwrap();
         assert_eq!(body.process_idx, bar.process_idx);
 
-        timeline.finish(false);
+        timeline.finish(Settle::Done);
         let bar = timeline.model.row_data(timeline.process_bar).unwrap();
         assert_eq!(bar.process_entries.row_count(), 1);
         assert_eq!(bar.process_entries.row_data(0).unwrap().kind, KIND_TOOL);
@@ -2499,7 +2519,7 @@ mod tests {
             .unwrap();
         assert!(row.detail.len() <= 32768);
         assert!(row.detail.ends_with("fixture tail"));
-        timeline.finish(false);
+        timeline.finish(Settle::Done);
         let row = timeline
             .model()
             .iter()
@@ -2749,6 +2769,12 @@ mod tests {
             .iter()
             .filter(|row| row.kind == KIND_GROUP)
             .all(|row| !row.visible));
+        assert!(
+            timeline.model.row_data(first).unwrap().process_open,
+            "first reveal unfolds the fold and its rows mirror it"
+        );
+        timeline.toggle(process as i32);
+        assert!(!timeline.model.row_data(first).unwrap().process_open);
         timeline.toggle(process as i32);
         assert!(timeline.model.row_data(first).unwrap().process_open);
 
@@ -2786,7 +2812,13 @@ mod tests {
         timeline.publish_history(durable_rows(3));
         let bar = timeline.process_bar;
         assert_eq!(timeline.model.row_data(bar).unwrap().kind, KIND_PROCESS);
+        // The fold survives the rebase already unfolded; the toggle must reach
+        // it through the rebased handle in both directions.
+        assert!(timeline.model.row_data(bar).unwrap().open);
         timeline.toggle(bar as i32);
+        assert!(!timeline.model.row_data(bar).unwrap().open);
+        timeline.toggle(bar as i32);
+        assert!(timeline.model.row_data(bar).unwrap().open);
         timeline.close_segments();
         timeline.start_body(2);
         timeline.append_body("Final answer").unwrap();
@@ -2894,7 +2926,7 @@ mod tests {
         timeline.start_body(1);
         timeline.append_body("答案").unwrap();
         timeline.flush();
-        timeline.finish(false);
+        timeline.finish(Settle::Done);
 
         // Storage carries that very turn, under its own root id.
         let mut settled = durable_rows(1);

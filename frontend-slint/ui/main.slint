@@ -538,6 +538,11 @@ export component MainWindow inherits Window {
     in-out property <string> host-net-text: "—";
     in-out property <string> host-disk-text: "—";
     in-out property <string> host-link: "";
+    // 实时速率（不含单位后缀），详情面板里拼成 ↓1.2M/s。
+    in-out property <string> host-net-rx: "";
+    in-out property <string> host-net-tx: "";
+    in-out property <string> host-disk-read: "";
+    in-out property <string> host-disk-write: "";
     in-out property <string> host-memory-used: "—";
     in-out property <string> host-memory-total: "—";
     in-out property <int> host-cores: 0;
@@ -1285,6 +1290,8 @@ export component MainWindow inherits Window {
                             host-cpu-text: root.host-cpu-text; host-memory-text: root.host-memory-text;
                             host-net-text: root.host-net-text; host-disk-text: root.host-disk-text;
                             host-link: root.host-link;
+                            host-net-rx: root.host-net-rx; host-net-tx: root.host-net-tx;
+                            host-disk-read: root.host-disk-read; host-disk-write: root.host-disk-write;
                             host-memory-used: root.host-memory-used; host-memory-total: root.host-memory-total;
                             host-cores: root.host-cores;
                             running-tasks: root.running-tasks;

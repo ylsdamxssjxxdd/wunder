@@ -1140,10 +1140,13 @@ impl NativeDesktop {
                 .as_ref()
                 .map(|stats| stats.model_request_count)
                 .unwrap_or(0),
+            // A thread this process holds no statistics for carries no status:
+            // calling it "done" made every row look finished on start-up and
+            // every desktop pet celebrate a run nobody had watched.
             runtime_status: overview
                 .as_ref()
                 .map(|stats| stats.status.clone())
-                .unwrap_or_else(|| "done".into()),
+                .unwrap_or_else(|| "idle".into()),
             origin: record
                 .spawned_by
                 .as_deref()

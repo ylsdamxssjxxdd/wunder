@@ -1352,8 +1352,9 @@ export component Composer inherits Rectangle {
     in property <string> branch-name: "";
     // ---- 本机硬件状态网格 (HostHud) ----
     // 采样在后台线程（wunder-desktop::native_host_hud），这里只承接最近一次
-    // 快照的投影。格子里只画图标（按占用做液位填充），精确读数走悬停提示；文本由
-    // Rust 预格式化，渲染路径不做单位换算，也不会因为语言或小数格式让格子宽度跳动。
+    // 快照的投影。格子里只画 CPU / 内存两个液位图标，网络与磁盘的读数在悬停展开的
+    // 详情面板里；文本由 Rust 预格式化，渲染路径不做单位换算，也不会因为语言或
+    // 小数格式让格子宽度跳动。
     in property <float> host-cpu: 0.0;
     in property <float> host-memory: 0.0;
     in property <float> host-net: 0.0;
@@ -1364,6 +1365,11 @@ export component Composer inherits Rectangle {
     in property <string> host-disk-text: "—";
     // 网络链路速率（"1.0G" / "100M"），空串表示未知，提示里就不出现「链路」。
     in property <string> host-link: "";
+    // 实时速率（不含单位后缀），详情面板里拼成 ↓1.2M/s。
+    in property <string> host-net-rx: "";
+    in property <string> host-net-tx: "";
+    in property <string> host-disk-read: "";
+    in property <string> host-disk-write: "";
     in property <string> host-memory-used: "—";
     in property <string> host-memory-total: "—";
     in property <int> host-cores: 0;
@@ -1877,13 +1883,18 @@ export component Composer inherits Rectangle {
                     memory: root.host-memory;
                     net: root.host-net;
                     disk: root.host-disk;
-                    cpu-hint: I18n.hud_cpu + " " + root.host-cpu-text
-                        + (root.host-cores > 0 ? " · " + I18n.hud_cores(root.host-cores) : "");
-                    memory-hint: I18n.hud_memory + " " + root.host-memory-text + " · "
-                        + root.host-memory-used + " / " + root.host-memory-total;
-                    net-hint: I18n.hud_network + " " + root.host-net-text
-                        + (root.host-link == "" ? "" : " · " + I18n.hud_link + " " + root.host-link);
-                    disk-hint: I18n.hud_disk + " " + root.host-disk-text;
+                    cpu-text: root.host-cpu-text;
+                    memory-text: root.host-memory-text;
+                    net-text: root.host-net-text;
+                    disk-text: root.host-disk-text;
+                    cores: root.host-cores;
+                    memory-used: root.host-memory-used;
+                    memory-total: root.host-memory-total;
+                    link: root.host-link;
+                    net-rx: root.host-net-rx;
+                    net-tx: root.host-net-tx;
+                    disk-read: root.host-disk-read;
+                    disk-write: root.host-disk-write;
                     tasks: root.running-tasks;
                     task-count: root.running-task-count;
                     task-hidden: max(root.running-task-count - root.running-tasks.length, 0);

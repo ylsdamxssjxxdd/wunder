@@ -27,8 +27,13 @@ pub enum Phase {
     Inquiry = 3,
     /// Settled with an answer.
     Done = 4,
-    /// Settled without an answer (failure, stop, rejection).
+    /// Settled without an answer because something broke (failure, timeout,
+    /// rejection).
     Error = 5,
+    /// Settled because the user ended it: stop, cancel, interrupt. The work did
+    /// not fail, so this must never borrow the failure colour or the pet's sad
+    /// face — that made every "stop" look like a crash.
+    Stopped = 6,
 }
 
 impl Phase {
@@ -43,6 +48,7 @@ impl Phase {
             3 => Phase::Inquiry,
             4 => Phase::Done,
             5 => Phase::Error,
+            6 => Phase::Stopped,
             _ => Phase::Idle,
         }
     }
@@ -75,12 +81,16 @@ impl Phase {
             | "approval_pending"
             | "question"
             | "asking" => return Phase::Inquiry,
-            "running" | "streaming" | "executing" | "processing" | "in_progress" | "active" => {
-                return Phase::Running
+            "running" | "streaming" | "executing" | "processing" | "in_progress" | "active"
+            | "cancelling" => return Phase::Running,
+            "done" | "finished" | "completed" | "success" | "completed_ok" | "complete"
+            | "finish" | "succeeded" => return Phase::Done,
+            // A stop is a deliberate end, not a fault: the engine's own
+            // `cancelled`/`interrupted` turn status lands here too.
+            "stopped" | "cancelled" | "canceled" | "aborted" | "terminated" | "interrupted" => {
+                return Phase::Stopped
             }
-            "done" | "finished" | "completed" | "success" | "completed_ok" => return Phase::Done,
-            "error" | "failed" | "failure" | "system_error" | "rejected" | "timeout"
-            | "aborted" | "terminated" | "cancelled" | "canceled" | "stopped" | "interrupted" => {
+            "error" | "failed" | "failure" | "system_error" | "rejected" | "timeout" => {
                 return Phase::Error
             }
             _ => {}
@@ -91,6 +101,9 @@ impl Phase {
             || value.starts_with("等待回答")
             || value.starts_with("等待确认")
             || value.starts_with("等待审批")
+            || value.contains("确认")
+            || value.contains("审批")
+            || value.contains("提问")
         {
             return Phase::Inquiry;
         }
@@ -101,13 +114,26 @@ impl Phase {
         {
             return Phase::Done;
         }
+        // A stop phrase must be classified before the failure family: `已停止`
+        // and `已取消` are the phrases a user-initiated stop writes, and the
+        // old table filed them under 失败, which painted the thread red and
+        // froze the pet on its failed frame.
+        if value.starts_with("已停止")
+            || value.starts_with("已终止")
+            || value.starts_with("已取消")
+            || value.starts_with("已中断")
+            || value.contains("停止")
+            || value.contains("终止")
+            || value.contains("中止")
+            || value.contains("取消")
+            || value.contains("中断")
+        {
+            return Phase::Stopped;
+        }
         if value.starts_with("执行失败")
             || value.contains("失败")
             || value.contains("错误")
             || value.contains("超时")
-            || value.contains("中断")
-            || value.contains("取消")
-            || value.contains("已停止")
         {
             return Phase::Error;
         }
@@ -169,9 +195,24 @@ mod tests {
         assert_eq!(Phase::of("任务完成"), Phase::Done);
         assert_eq!(Phase::of("输出已结束"), Phase::Done);
         assert_eq!(Phase::of("执行失败"), Phase::Error);
-        assert_eq!(Phase::of("已停止"), Phase::Error);
         assert_eq!(Phase::of(""), Phase::Idle);
         assert_eq!(Phase::of("idle"), Phase::Idle);
+    }
+
+    /// A stop the user asked for is a settled end of its own. Filing it under
+    /// `Error` painted the thread badge red and left the desktop pet on its
+    /// failed frame long after the user had moved on.
+    #[test]
+    fn a_user_stop_is_stopped_not_failed() {
+        for phrase in ["已停止", "已取消", "已终止", "已中断", "cancelled", "stopped"] {
+            let phase = Phase::of(phrase);
+            assert_eq!(phase, Phase::Stopped, "{phrase} must not read as a failure");
+            assert!(!phase.live(), "{phrase} is terminal");
+        }
+        // Genuine faults keep the failure phase.
+        assert_eq!(Phase::of("执行失败"), Phase::Error);
+        assert_eq!(Phase::of("模型响应超时"), Phase::Error);
+        assert_eq!(Phase::of("timeout"), Phase::Error);
     }
 
     #[test]

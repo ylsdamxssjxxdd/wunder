@@ -80,6 +80,8 @@ component StatusDot inherits Rectangle {
     private property <bool> approval: status == "waiting_approval"
         || status.starts-with("等待确认") || status.starts-with("等待审批");
     private property <string> state: RuntimeStatus.state-of(root.phase, root.status);
+    // Stopped is terminal but neutral: the user ended the run on purpose, so it
+    // paints muted with the stop glyph instead of the red failure triangle.
     private property <color> tint: root.inquiry ? Theme.accent-ink : root.approval || root.state == "pending" ? Theme.warning
         : root.state == "error" ? Theme.danger : root.state == "done" ? Theme.success
         : root.state == "running" ? Theme.accent-ink : Theme.muted;
@@ -90,6 +92,7 @@ component StatusDot inherits Rectangle {
             : root.state == "pending" ? @image-url("../assets/icons/status-clock.svg")
             : root.state == "done" ? @image-url("../assets/icons/status-check.svg")
             : root.state == "error" ? @image-url("../assets/icons/status-error.svg")
+            : root.state == "stopped" ? @image-url("../assets/icons/stop.svg")
             : @image-url("../assets/icons/status-pause.svg");
     }
     if root.state == "running" : spinner := Rectangle {
@@ -103,7 +106,8 @@ component StatusDot inherits Rectangle {
     }
     Tooltip { text: root.inquiry ? @markdown("等待回答") : root.approval ? @markdown("等待确认")
         : root.state == "pending" ? @markdown("排队中") : root.state == "done" ? @markdown("已完成")
-        : root.state == "error" ? @markdown("错误") : root.state == "running" ? @markdown("运行中") : @markdown("空闲"); }
+        : root.state == "error" ? @markdown("错误") : root.state == "stopped" ? @markdown("已停止")
+        : root.state == "running" ? @markdown("运行中") : @markdown("空闲"); }
 }
 
 // The row owns the standard context menu. Child TouchAreas explicitly forward

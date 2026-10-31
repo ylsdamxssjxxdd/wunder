@@ -101,6 +101,14 @@ import { loadUserAppearance, saveUserAppearance } from '@/views/messenger/userAp
 // Deferred realtime-pulse start handle shared by the lifecycle installers.
 let desktopRealtimePulseStartTimer: number | null = null;
 
+/**
+ * How long one completion stays on screen before the agent retires to idle.
+ * A finish is news, not a state: both the aggregate poll and the durable
+ * session status keep answering `completed` long after the run ended, so
+ * without a hold-and-retire every restart re-celebrated an old finish.
+ */
+const AGENT_COMPLETION_HOLD_MS = 6000;
+
 function installPart0(ctx: any): void {
 // Store wiring, mutable refs, runtime handles, cache state, and performance tracing.
 
@@ -12460,6 +12468,72 @@ function installMessengerControllerAgentRuntimeSignals(ctx: MessengerControllerC
       ctx.triggerRealtimePulseRefresh?.('runtime-override');
   };
 
+  /**
+   * A completion is news, not a state.
+   *
+   * Two sources keep claiming `done` long after the run ended: the aggregate
+   * poll answers `done` for its own TTL, and the durable session runtime stays
+   * `completed` for the rest of the thread's life. Both made the agent badge
+   * and the desktop pet celebrate a finish nobody was waiting for — every
+   * restart, and again on every read. So a completion this page watched is
+   * shown for a beat and then retired to `idle`; a completion already finished
+   * when the page first looked is history and opens idle.
+   */
+  const AGENT_DONE_HOLD_MS = AGENT_COMPLETION_HOLD_MS;
+  const doneHoldTimers = new Map<string, number>();
+  const retiredCompletions = new Set<string>();
+
+  const clearDoneHold = (agentId: string) => {
+      const timer = doneHoldTimers.get(agentId);
+      if (timer !== undefined) {
+          window.clearTimeout(timer);
+          doneHoldTimers.delete(agentId);
+      }
+      retiredCompletions.delete(agentId);
+  };
+
+  const retireCompletion = (agentId: string) => {
+      doneHoldTimers.delete(agentId);
+      retiredCompletions.add(agentId);
+      if (ctx.agentRuntimeStateMap.value.get(agentId) !== 'done') {
+          return;
+      }
+      const next = new Map(ctx.agentRuntimeStateMap.value);
+      next.set(agentId, 'idle');
+      ctx.agentRuntimeStateSnapshot = new Map(next);
+      ctx.agentRuntimeStateMap.value = next;
+  };
+
+  const holdCompletion = (agentId: string) => {
+      if (doneHoldTimers.has(agentId)) {
+          return;
+      }
+      doneHoldTimers.set(agentId, window.setTimeout(() => retireCompletion(agentId), AGENT_DONE_HOLD_MS));
+  };
+
+  /** Collapse stale completions before the map reaches any view. */
+  const applyCompletionFreshness = (stateMap: Map<string, AgentRuntimeState>, hydrated: boolean) => {
+      stateMap.forEach((state, agentId) => {
+          // Local streaming is proof of a new run, so any retirement recorded
+          // for the previous finish must not suppress this one.
+          const live = ctx.streamingAgentIdSet.value.has(agentId)
+              || Boolean(ctx.waitingAgentIdSet?.value?.has(agentId));
+          if (live) {
+              clearDoneHold(agentId);
+          }
+          if (state !== 'done') {
+              clearDoneHold(agentId);
+              return;
+          }
+          if (!hydrated || retiredCompletions.has(agentId)) {
+              retiredCompletions.add(agentId);
+              stateMap.set(agentId, 'idle');
+              return;
+          }
+          holdCompletion(agentId);
+      });
+  };
+
   ctx.resolveAgentRuntimeState = (agentId: unknown): AgentRuntimeState => {
       const key = ctx.normalizeAgentId(agentId);
       const inquiryAgentId = ctx.activeAgentInquiryPanel.value
@@ -12649,6 +12723,7 @@ function installMessengerControllerAgentRuntimeSignals(ctx: MessengerControllerC
                   return;
           });
       }
+      applyCompletionFreshness(reconciledStateMap, ctx.agentRuntimeStateHydrated);
       ctx.agentRuntimeStateSnapshot = new Map(reconciledStateMap);
       ctx.agentRuntimeStateHydrated = true;
       ctx.agentRuntimeStateMap.value = reconciledStateMap;
@@ -13763,7 +13838,9 @@ function installMessengerControllerAgentMessageCommands(ctx: MessengerController
           }
       }
       const targetAgentId = ctx.normalizeAgentId(ctx.activeAgentId.value || ctx.selectedAgentId.value);
-      ctx.setRuntimeStateOverride(targetAgentId, 'done', 20000);
+      // A stop settles like a finish: held long enough to be noticed, then back
+      // to idle — 20s of celebration after the user stopped the run was noise.
+      ctx.setRuntimeStateOverride(targetAgentId, 'done', AGENT_COMPLETION_HOLD_MS);
       try {
           const stopped = await ctx.chatStore.stopSessionActivity(targetSessionId, { terminateSubagents: true });
           chatDebugLog('messenger.send', 'manual-stop-finish', {

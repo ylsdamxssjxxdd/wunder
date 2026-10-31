@@ -55,7 +55,8 @@ fn kind_of(phase: Phase) -> &'static str {
     match phase {
         Phase::Done => "done",
         Phase::Pending | Phase::Running | Phase::Inquiry => "hot",
-        Phase::Idle | Phase::Error => "other",
+        // A user stop is terminal but not a completion, so it settles silently.
+        Phase::Idle | Phase::Error | Phase::Stopped => "other",
     }
 }
 

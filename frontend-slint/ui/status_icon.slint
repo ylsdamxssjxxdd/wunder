@@ -21,6 +21,11 @@ export component ProcessStatusIcon inherits Rectangle {
             commands: "M 2 2 L 6 6 M 6 2 L 2 6";
             fill: transparent; stroke: Theme.danger; stroke-width: 1px; stroke-line-cap: round;
         }
+        // Stopped by the user: a neutral square, neither a check nor a cross.
+        if root.status == 3 : Rectangle {
+            x: 3px; y: 3px; width: 6px; height: 6px; border-radius: 1px;
+            background: Theme.muted;
+        }
     }
     if root.status == 1 : Path {
         x: 0px; y: 0px; width: 12px; height: 12px;

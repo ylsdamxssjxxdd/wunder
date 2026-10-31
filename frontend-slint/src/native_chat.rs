@@ -107,6 +107,18 @@ impl TurnOutput {
         self.settlement_failed || self.phase == Phase::Error
     }
 
+    /// How the turn settled. A user stop is its own outcome: the timeline must
+    /// not stamp it with the success check or the failure cross.
+    fn settle(&self) -> crate::timeline::Settle {
+        if self.failed() {
+            crate::timeline::Settle::Failed
+        } else if self.phase == Phase::Stopped {
+            crate::timeline::Settle::Stopped
+        } else {
+            crate::timeline::Settle::Done
+        }
+    }
+
     /// Move the turn to a status. The phase is mandatory: a new phrase cannot
     /// compile without saying what it means, and the debug build rejects a
     /// phrase that the shared table would read differently.
@@ -1579,30 +1591,45 @@ fn reconcile_catalogue_statuses(
     read_revision: u64,
     local_statuses: &[(String, String)],
 ) {
+    let now = Instant::now();
+    let mut holds_completion = false;
     for row in rows.iter_mut() {
         let local_status = local_statuses
             .iter()
             .find(|(session, _)| session == row.id.as_str())
             .map(|(_, status)| status.as_str());
-        let (status, accepted) = SESSION_STATUSES.with(|slot| {
+        let reconciled = SESSION_STATUSES.with(|slot| {
             slot.borrow_mut().reconcile(
                 row.id.as_str(),
                 row.runtime_status.as_str(),
                 read_revision,
                 local_status,
+                now,
             )
         });
-        row.runtime_status = status.into();
+        row.runtime_status = reconciled.status.into();
         // A durable phrase reaches this process as text; classify it once here
         // so every view keeps reading the phase.
         row.runtime_phase = Phase::of(row.runtime_status.as_str()).code();
-        if accepted {
+        if reconciled.accepted {
             crate::completion_notice::observe_status(
                 app,
                 row.id.as_str(),
                 Phase::from_code(row.runtime_phase),
             );
         }
+        // The catalogue reports "completed" for the rest of the thread's life.
+        // Once the finish is no longer news the row presents as idle, so a
+        // restart or a poll cannot restart yesterday's celebration.
+        if reconciled.retired {
+            row.runtime_status = "".into();
+            row.runtime_phase = Phase::Idle.code();
+        } else if Phase::from_code(row.runtime_phase) == Phase::Done {
+            holds_completion = true;
+        }
+    }
+    if holds_completion {
+        schedule_done_decay(app);
     }
     SESSION_STATUSES.with(|slot| {
         slot.borrow_mut().retain(|session| {
@@ -2985,7 +3012,37 @@ fn bind_queue(app: &MainWindow, state: Rc<RefCell<State>>) {
 
 // Mutate just the matching thread row. Runtime state must not wait for catalogue polling.
 fn set_session_status(app: &MainWindow, session: &str, status: &str, phase: Phase) {
-    SESSION_STATUSES.with(|slot| slot.borrow_mut().record_local(session, status));
+    let now = Instant::now();
+    let retired = SESSION_STATUSES.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        slot.record_local(session, status, now);
+        slot.should_retire(session, now)
+    });
+    if retired {
+        // A finish nobody is waiting for presents as idle, and the local record
+        // is dropped: fencing an aged-out completion would keep this client
+        // from ever adopting the next run's status.
+        retire_session_status(app, session);
+        return;
+    }
+    write_session_row(app, session, status, phase);
+    // The hot→done completion gate must see every report, including repeated
+    // ones, so it sits outside the row-change branch.
+    crate::completion_notice::observe_status(app, session, phase);
+    if phase == Phase::Done {
+        schedule_done_decay(app);
+    }
+}
+
+/// Present one session as idle and forget what this client knew about its
+/// finish, so the next catalogue read can adopt whatever the thread does next.
+fn retire_session_status(app: &MainWindow, session: &str) {
+    SESSION_STATUSES.with(|slot| slot.borrow_mut().forget(session));
+    write_session_row(app, session, "", Phase::Idle);
+    crate::completion_notice::observe_status(app, session, Phase::Idle);
+}
+
+fn write_session_row(app: &MainWindow, session: &str, status: &str, phase: Phase) {
     let rows = app.get_conversations();
     if let Some(index) = rows.iter().position(|row| row.id == session) {
         if let Some(mut row) = rows.row_data(index) {
@@ -3003,9 +3060,53 @@ fn set_session_status(app: &MainWindow, session: &str, status: &str, phase: Phas
     // point update; the periodic catalogue poll is only a backstop, not the
     // path a live transition should wait for.
     crate::navigation_ui::update_thread_status(app, session, status, phase);
-    // The hot→done completion gate must see every report, including repeated
-    // ones, so it sits outside the row-change branch above.
-    crate::completion_notice::observe_status(app, session, phase);
+}
+
+/// Completion marks are retired on a tick rather than at read time: the durable
+/// catalogue keeps answering "completed" forever, so nothing else would ever
+/// take the mark down. The timer only runs while a row still carries one.
+const DONE_DECAY_TICK: Duration = Duration::from_millis(500);
+
+thread_local! {
+    static DONE_DECAY: Timer = Timer::default();
+}
+
+fn schedule_done_decay(app: &MainWindow) {
+    let weak = app.as_weak();
+    DONE_DECAY.with(|timer| {
+        if timer.running() {
+            return;
+        }
+        timer.start(TimerMode::Repeated, DONE_DECAY_TICK, move || {
+            let Some(app) = weak.upgrade() else {
+                return;
+            };
+            let now = Instant::now();
+            let due: Vec<String> = app
+                .get_conversations()
+                .iter()
+                .filter(|row| Phase::from_code(row.runtime_phase) == Phase::Done)
+                .map(|row| row.id.to_string())
+                .filter(|session| {
+                    SESSION_STATUSES.with(|slot| slot.borrow().should_retire(session, now))
+                })
+                .collect();
+            for session in &due {
+                retire_session_status(&app, session);
+            }
+            if !due.is_empty() {
+                crate::companion_pet::sync(&app);
+            }
+            // Nothing left to retire: an idle app owns no timer.
+            let pending = app
+                .get_conversations()
+                .iter()
+                .any(|row| Phase::from_code(row.runtime_phase) == Phase::Done);
+            if !pending {
+                DONE_DECAY.with(|timer| timer.stop());
+            }
+        });
+    });
 }
 
 // Keep the work-dock activity control in sync without inspecting message text.
@@ -3088,7 +3189,7 @@ fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
             if let Some(active) = current.active.as_mut() {
                 app.set_stopping(true);
                 active.stream.cancel();
-                active.set_state("已停止", Phase::Error);
+                active.set_state("已停止", Phase::Stopped);
                 active.timeline.borrow_mut().flush();
                 stopped = Some((
                     active.session.clone(),
@@ -3105,7 +3206,7 @@ fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
             if stopped_submission {
                 app.set_busy(false);
                 app.set_activity_running(false);
-                set_session_status(&app, &session, "已停止", Phase::Error);
+                set_session_status(&app, &session, "已停止", Phase::Stopped);
             }
             let desktop = state.borrow().desktop.clone();
             let cancel_session = session.clone();
@@ -3584,11 +3685,11 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 if active.state() == "正在生成…" {
                     active.set_state("输出已结束", Phase::Done);
                 }
-                let failed = active.failed();
+                let settle = active.settle();
                 // Markdown is intentionally parsed once, after the terminal
                 // event; the frozen block keeps its parsed form from here on.
                 let mut live = timeline.borrow_mut();
-                live.finish(failed);
+                live.finish(settle);
                 live.set_turn_status(active.state(), active.user_round);
                 live.flush();
                 publish_timeline(&app, &live);
@@ -3668,7 +3769,9 @@ fn apply_event(
     {
         return Ok(false);
     }
-    if active.phase == Phase::Error
+    // A turn that settled badly — failed or stopped by the user — freezes its
+    // tail: nothing, not even a late `final`, may reopen it.
+    if matches!(active.phase, Phase::Error | Phase::Stopped)
         || (active.terminal
             && kind != "native_execution_started"
             && (active.failed() || kind != "final"))
@@ -3775,7 +3878,7 @@ fn apply_event(
             let (text, phase) = match data["status"].as_str() {
                 Some("queued") => ("正在排队", Phase::Pending),
                 Some("running") => ("请求中", Phase::Running),
-                Some("cancelled" | "interrupted") => ("已停止", Phase::Error),
+                Some("cancelled" | "interrupted") => ("已停止", Phase::Stopped),
                 Some("failed") => ("执行失败", Phase::Error),
                 Some("waiting_input" | "waiting_user_input") => ("等待用户输入", Phase::Inquiry),
                 _ => ("目标继续执行…", Phase::Running),
@@ -3879,7 +3982,7 @@ fn apply_event(
             }
             let (text, phase) = match data["status"].as_str() {
                 Some("cancelled" | "canceled" | "interrupted" | "stopped") => {
-                    ("已停止", Phase::Error)
+                    ("已停止", Phase::Stopped)
                 }
                 Some("failed" | "error" | "rejected") => ("执行失败", Phase::Error),
                 Some("waiting_input" | "waiting_user_input") => ("等待用户输入", Phase::Inquiry),
@@ -4353,7 +4456,7 @@ mod turn_tests {
             }),
         )
         .unwrap();
-        live.finish(output.failed());
+        live.finish(output.settle());
         live.set_turn_status(output.state(), 1);
         let rows: Vec<_> = live.model().iter().collect();
         assert_eq!(output.state(), "已停止");
@@ -4424,7 +4527,7 @@ mod turn_tests {
             }),
         )
         .unwrap();
-        live.finish(output.failed());
+        live.finish(output.settle());
         assert!(live
             .model()
             .iter()
@@ -5025,7 +5128,7 @@ mod turn_tests {
         .unwrap());
         assert_eq!(live.row_count(), before);
         live.flush();
-        live.finish(true);
+        live.finish(crate::timeline::Settle::Failed);
         let rows: Vec<_> = live.model().iter().collect();
         assert!(
             rows.iter().any(|row| row.kind == crate::timeline::KIND_TOOL

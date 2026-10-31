@@ -107,7 +107,10 @@ ENTRIES = [
     # 网络与磁盘只报占用率（读数在悬停提示里），单位与速率不再进格子。
     ("hud_network", "网络", "Network"),
     ("hud_disk", "磁盘", "Disk"),
-    ("hud_link", "链路", "link"),
+    # 详情面板：四项读数（CPU / 内存 / 网络 / 磁盘）一次列全。
+    ("hud_detail_title", "本机状态", "This machine"),
+    ("hud_read", "读", "R"),
+    ("hud_write", "写", "W"),
     ("hud_cores", "{} 核", "{} cores", ["cores"]),
     ("hud_tasks_title", "后台任务", "Running tasks"),
     ("hud_tasks_count", "{} 个运行中", "{} running", ["count"]),
