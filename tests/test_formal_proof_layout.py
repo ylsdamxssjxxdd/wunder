@@ -17,6 +17,7 @@ PROOFS = ROOT / "docs" / "形式化证明"
 RUNNERS = (
     ("check_cron_formal", "cron/models", "CronLifecycle", 2),
     ("check_service_history_formal", "service-history-20261027", "ServiceHistory", 10),
+    ("check_thread_history_replay_formal", "thread-history-replay/models", "ThreadHistoryReplay", 10),
     ("check_postgres_io_formal", "postgres-io/models", "PostgresIo", 6),
 )
 

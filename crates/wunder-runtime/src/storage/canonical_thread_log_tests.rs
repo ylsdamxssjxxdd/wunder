@@ -1392,4 +1392,56 @@ async fn trimmed_active_window_replays_earliest_chat_and_process_from_rollout() 
         assert!(!user.is_empty(), "round {round} lost its user message");
         assert!(!assistant.is_empty(), "round {round} lost its answer");
     }
+
+    // Anchors are only an optimisation, never a correctness condition: after
+    // deleting every sparse anchor, the same reads must still resolve through
+    // each turn's own start record inside the scan budget.
+    history
+        .execute("DELETE FROM thread_item_anchors", [])
+        .unwrap();
+    let hints: i64 = history
+        .query_row(
+            "SELECT COUNT(*) FROM thread_turns
+             WHERE start_rollout_byte_offset IS NOT NULL AND start_ordinal IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(hints, user_rounds as i64, "every turn keeps its start hint");
+    let mut before = None;
+    let mut guards = 0;
+    let mut replayed = 0;
+    loop {
+        let page = db
+            .thread_view_page(USER, THREAD, "chat", before, 12)
+            .unwrap();
+        for row in &page.chat {
+            assert!(
+                !row.user.content.is_empty(),
+                "anchor-free round {} lost its user message",
+                row.user_round
+            );
+            assert!(
+                !row.assistant.content.is_empty(),
+                "anchor-free round {} lost its answer",
+                row.user_round
+            );
+            replayed += 1;
+        }
+        guards += 1;
+        assert!(guards <= 10, "anchor-free chat pagination must terminate");
+        match (page.has_more, page.next_before) {
+            (true, Some(next)) => before = Some(next),
+            _ => break,
+        }
+    }
+    assert_eq!(replayed, user_rounds as usize);
+    let anchor_free = db
+        .get_thread_turn_page(USER, THREAD, middle_turn, None, None, 10, false)
+        .unwrap()
+        .expect("owned turn exists");
+    assert!(
+        !anchor_free["items"].as_array().unwrap().is_empty(),
+        "anchor-free process page below the window must not be empty"
+    );
 }
