@@ -38,6 +38,9 @@ use tokio::sync::RwLock;
 use tracing::info;
 #[cfg(any(feature = "sqlite-storage", test))]
 use tracing::warn;
+// `SqliteStorage` is concrete here, so `ensure_initialized` resolves only with
+// the trait in scope; `dyn StorageBackend` reaches it through its supertrait.
+use wunder_core::storage_backend::StorageLifecycle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
