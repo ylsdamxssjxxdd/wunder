@@ -184,6 +184,11 @@ pub struct NativeSession {
     /// Remote origin of the thread (`cloud` / `device:<id>`), from the
     /// session row's `spawned_by`; `None` for locally created threads.
     pub origin: Option<String>,
+    /// A thread that has never admitted a durable user turn, i.e. safe to reuse
+    /// as the "new thread" target. Derived from durable history rather than the
+    /// process-local monitor stats, which read as zero for every thread this
+    /// process has never watched and so misclassified old threads as drafts.
+    pub draft: bool,
 }
 
 /// One bounded thread-open snapshot. `change_cursor` is the history page's
@@ -1061,6 +1066,19 @@ impl NativeDesktop {
                 .collect::<Vec<_>>(),
         )?;
         let workspaces = self.workspace_lookup();
+        // Durable draft truth for reuse: a session with any committed user turn
+        // is not a draft. Process-local monitor stats read as zero for threads
+        // this process never watched, which made old threads look untouched and
+        // let a "new thread" click silently reopen one instead of creating one.
+        let session_ids = records
+            .iter()
+            .map(|record| record.session_id.clone())
+            .collect::<Vec<_>>();
+        let turn_tails = self
+            .state()
+            .storage
+            .thread_turn_tails(self.user_id(), &session_ids)
+            .ok();
         Ok(records
             .into_iter()
             .map(|record| {
@@ -1068,6 +1086,17 @@ impl NativeDesktop {
                     .iter()
                     .find(|goal| goal.session_id == record.session_id);
                 let mut session = self.session_with_stats(record, &workspaces);
+                // Durable and authoritative: the thread log records admitted
+                // user turns. A row with no tail has never run a turn and is the
+                // reusable draft. Timestamps are deliberately NOT consulted —
+                // opening or selecting a thread touches them, which made a
+                // draft look "used" and turned "new thread" into a walk over
+                // the leftover empty drafts. On a log error we prefer "no
+                // draft" (create) over reusing a possibly-used thread.
+                session.draft = turn_tails
+                    .as_ref()
+                    .map(|tails| !tails.contains_key(&session.id))
+                    .unwrap_or(false);
                 if let Some(goal) = goal {
                     let activation = self
                         .state()
@@ -1109,6 +1138,11 @@ impl NativeDesktop {
         workspaces: &std::collections::HashMap<String, wunder_server::storage::WorkspaceRecord>,
     ) -> NativeSession {
         let session_id = record.session_id.clone();
+        // Draft heuristic: `create_session` stamps `created_at` and
+        // `last_message_at` together, and the shared chat preparation touches
+        // `last_message_at` on every admitted user turn. The catalogue list
+        // later overrides this with durable per-thread turn tails.
+        let draft = is_draft_session(false, record.last_message_at, record.created_at);
         let overview = self
             .desktop
             .state
@@ -1131,6 +1165,7 @@ impl NativeDesktop {
         NativeSession {
             goal: NativeGoal::default(),
             id: session_id.clone(),
+            draft,
             title: record.title,
             updated_at: record.updated_at,
             agent_id: record.agent_id,
@@ -1784,6 +1819,68 @@ mod thread_switch_tests {
             "the current delayed close releases an idle thread after the grace window"
         );
     }
+
+    #[test]
+    fn a_used_thread_is_never_reused_as_a_new_thread_draft() {
+        // Fresh, turn-less rows are drafts: repeated "new thread" clicks reuse
+        // the single empty thread instead of stacking empty sessions.
+        assert!(is_draft_session(false, 0.0, 0.0));
+        assert!(is_draft_session(false, 100.0, 100.0));
+        // A durable user turn, or a message timestamp past creation, means the
+        // thread was used; the next click must create a new one.
+        assert!(!is_draft_session(true, 100.0, 100.0));
+        assert!(!is_draft_session(false, 101.0, 100.0));
+    }
+
+    #[test]
+    fn merely_touching_a_thread_does_not_consume_its_draft() {
+        let desktop = Arc::new(start_isolated());
+        let fresh = desktop.create_session(None).expect("fresh session");
+        // Touching the row is what opening/selecting a thread does. The durable
+        // thread log, not the timestamp, decides a draft: a mere touch must not
+        // turn the empty draft into a used one and send "new thread" walking
+        // through the leftover empties.
+        desktop
+            .state()
+            .storage
+            .touch_chat_session(desktop.user_id(), &fresh.id, 1.0e9, 1.0e9)
+            .expect("touch");
+        let listed = desktop.list_sessions(None).expect("list sessions");
+        let row = listed
+            .iter()
+            .find(|session| session.id == fresh.id)
+            .expect("fresh thread in catalogue");
+        assert!(
+            row.draft,
+            "an empty draft stays reusable after a mere touch"
+        );
+    }
+
+    #[test]
+    fn the_catalogue_keeps_a_turn_less_thread_a_draft() {
+        let desktop = Arc::new(start_isolated());
+        let fresh = desktop.create_session(None).expect("fresh session");
+        assert!(fresh.draft, "a freshly created thread must be a draft");
+        let listed = desktop.list_sessions(None).expect("list sessions");
+        let row = listed
+            .iter()
+            .find(|session| session.id == fresh.id)
+            .expect("fresh thread in catalogue");
+        assert!(
+            row.draft,
+            "a turn-less thread stays a reusable draft in the catalogue"
+        );
+    }
+}
+
+/// A thread row is a reusable "draft" only when the durable thread log records
+/// no admitted user turn and the session row has not been touched by one. The
+/// log tail (checked by the catalogue) is authoritative; the timestamp
+/// comparison is the fallback for rows the log has not indexed yet. Relying on
+/// process-local token/tool counters misread every thread the process had never
+/// watched as untouched.
+fn is_draft_session(has_durable_turn: bool, last_message_at: f64, created_at: f64) -> bool {
+    !has_durable_turn && last_message_at <= created_at
 }
 
 fn message_from_value(value: Value) -> Option<NativeMessage> {

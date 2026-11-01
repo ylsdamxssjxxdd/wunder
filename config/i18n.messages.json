@@ -480,8 +480,8 @@
     "zh-CN": "默认管理员账号不可删除"
   },
   "error.user_session_busy": {
-    "en-US": "This user already has an active session running",
-    "zh-CN": "该用户已有会话正在执行"
+    "en-US": "This thread is still running. Wait for it to finish or stop it first.",
+    "zh-CN": "该线程正在执行，请等待完成或先停止它。"
   },
   "error.user_quota_exceeded": {
     "en-US": "Daily quota reached. Please try again tomorrow or contact an administrator.",

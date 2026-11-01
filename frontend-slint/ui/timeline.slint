@@ -208,53 +208,59 @@ component TimelineGutter inherits Rectangle {
 }
 
 // ---- user bubble (§7.2): right aligned, no avatar ----
-component UserBubble inherits HorizontalLayout {
+component UserBubble inherits Rectangle {
     in property <TimelineRow> data;
     callback copy-text(string);
     callback open-resource(string);
-    padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding; padding-top: 10px; padding-bottom: 4px;
-    Rectangle { horizontal-stretch: 1; }
-    // The user bubble has no turn footer, so its copy affordance hangs left
-    // of the bubble itself, mirroring the assistant footer button. Copy always
-    // carries the original text, never the display projection.
-    Rectangle {
-        width: 22px;
-        copy-button := Rectangle {
-            y: parent.height - 26px;
-            width: 22px; height: 22px; border-radius: Theme.radius-tag;
-            accessible-role: button; accessible-label: I18n.common_copy;
-            accessible-action-default => { root.copy-text(root.data.text); }
-            forward-focus: copy-focus;
-            background: copy-area.has-hover ? Theme.selected : transparent;
-            Image {
-                x: 5px; y: 5px; width: 12px; height: 12px;
-                source: @image-url("../assets/icons/copy.svg"); colorize: Theme.muted;
-            }
-            copy-focus := FocusScope {
-                key-pressed(event) => {
-                    if event.text == " " || event.text == Key.Return { root.copy-text(root.data.text); return accept; }
-                    return reject;
+    height: bubble-column.preferred-height;
+    bubble-column := VerticalLayout {
+        spacing: 2px;
+        bubble-row := HorizontalLayout {
+            padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding; padding-top: 10px;
+            Rectangle { horizontal-stretch: 1; }
+            bubble := Rectangle {
+                width: min(parent.width * 0.7, bubble-body.preferred-width + 24px);
+                height: bubble-body.preferred-height + 16px;
+                border-radius: Theme.radius-lg; background: Theme.timeline-bubble;
+                bubble-body := VerticalLayout {
+                    x: 12px; y: 8px; width: parent.width - 24px;
+                    spacing: 6px;
+                    if root.data.blocks.length == 0 && root.data.text != "" : TextInput {
+                        text: root.data.text; color: Theme.text; font-size: Theme.font-lg;
+                        read-only: true; wrap: word-wrap;
+                    }
+                    for block in root.data.blocks : MarkdownBlock {
+                        block: block;
+                        copy-code(text) => { root.copy-text(text); }
+                        open-resource(path) => { root.open-resource(path); }
+                    }
                 }
             }
-            copy-area := TouchArea { mouse-cursor: pointer; clicked => { copy-focus.focus(); root.copy-text(root.data.text); } }
-            Tooltip { text: @markdown("\{I18n.common_copy}"); }
         }
-    }
-    bubble := Rectangle {
-        width: min(parent.width * 0.7, bubble-body.preferred-width + 24px);
-        height: bubble-body.preferred-height + 16px;
-        border-radius: Theme.radius-lg; background: Theme.timeline-bubble;
-        bubble-body := VerticalLayout {
-            x: 12px; y: 8px; width: parent.width - 24px;
-            spacing: 6px;
-            if root.data.blocks.length == 0 && root.data.text != "" : TextInput {
-                text: root.data.text; color: Theme.text; font-size: Theme.font-lg;
-                read-only: true; wrap: word-wrap;
-            }
-            for block in root.data.blocks : MarkdownBlock {
-                block: block;
-                copy-code(text) => { root.copy-text(text); }
-                open-resource(path) => { root.open-resource(path); }
+        // The copy affordance hangs below the bubble's right edge, matching the
+        // assistant footer button. Copy always carries the original text, never
+        // the display projection.
+        HorizontalLayout {
+            padding-right: Theme.timeline-padding; padding-bottom: 4px;
+            Rectangle { horizontal-stretch: 1; }
+            copy-button := Rectangle {
+                width: 22px; height: 22px; border-radius: Theme.radius-tag;
+                accessible-role: button; accessible-label: I18n.common_copy;
+                accessible-action-default => { root.copy-text(root.data.text); }
+                forward-focus: copy-focus;
+                background: copy-area.has-hover ? Theme.selected : transparent;
+                Image {
+                    x: 5px; y: 5px; width: 12px; height: 12px;
+                    source: @image-url("../assets/icons/copy.svg"); colorize: Theme.muted;
+                }
+                copy-focus := FocusScope {
+                    key-pressed(event) => {
+                        if event.text == " " || event.text == Key.Return { root.copy-text(root.data.text); return accept; }
+                        return reject;
+                    }
+                }
+                copy-area := TouchArea { mouse-cursor: pointer; clicked => { copy-focus.focus(); root.copy-text(root.data.text); } }
+                Tooltip { text: @markdown("\{I18n.common_copy}"); }
             }
         }
     }

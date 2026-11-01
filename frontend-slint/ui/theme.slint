@@ -2,7 +2,7 @@
 // every page keeps importing Theme (and the data structs) from theme.slint.
 import { Theme } from "design_tokens.slint";
 export { Theme }
-export struct Conversation { id: string, agent-id: string, workspace-id: string, workspace-name: string, workspace-color: string, title: string, preview: string, time: string, consumed-tokens: string, tool-calls: string, quota-used: string, runtime-status: string, runtime-phase: int, locked: bool, goal-active: bool, goal-visible: bool, goal-objective: string, goal-phase: string, goal-activation: string, goal-rounds: string, goal-seconds: int, goal-paused: bool, origin: string }
+export struct Conversation { id: string, agent-id: string, workspace-id: string, workspace-name: string, workspace-color: string, title: string, preview: string, time: string, consumed-tokens: string, tool-calls: string, quota-used: string, runtime-status: string, runtime-phase: int, locked: bool, goal-active: bool, goal-visible: bool, goal-objective: string, goal-phase: string, goal-activation: string, goal-rounds: string, goal-seconds: int, goal-paused: bool, origin: string, draft: bool }
 // One bound user folder in the sidebar tree. `expanded`/`selected` are pure
 // view state owned by the workspace projection, not persisted.
 export struct WorkspaceCard { workspace-id: string, name: string, icon: string, color: string, root-path: string, thread-count: int, expanded: bool, selected: bool }
