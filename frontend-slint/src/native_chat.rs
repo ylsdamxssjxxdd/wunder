@@ -498,6 +498,12 @@ struct State {
     /// Ordinary refreshes (including archive completion) must leave the user's
     /// current workspace and empty state untouched.
     initial_auto_open: bool,
+    /// Watchdog stamps for the loading flags. A flag wedged past its bound (a
+    /// worker that never returned, an event-loop callback that never ran) must
+    /// not silently swallow every later click; the stamp lets the new-thread
+    /// entry point self-heal a stale flag instead of returning with no feedback.
+    creating_since: Option<std::time::Instant>,
+    session_loading_since: Option<std::time::Instant>,
     /// Session-scoped plan state (explanation + steps) so the plan card
     /// survives turn boundaries within a thread.
     plans: std::collections::HashMap<String, (String, Vec<(String, String)>)>,
@@ -737,6 +743,8 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         recording: None,
         list_inflight: Arc::new(AtomicBool::new(false)),
         initial_auto_open: true,
+        creating_since: None,
+        session_loading_since: None,
         plans: std::collections::HashMap::new(),
         plan_sig: String::new(),
         inquiries: std::collections::HashMap::new(),
@@ -1483,6 +1491,7 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                                 runtime_phase: Phase::of(item.runtime_status.as_str()).code(),
                                 runtime_status: item.runtime_status.into(),
                                 locked: item.locked,
+                                draft: item.draft,
                                 goal_active,
                                 goal_visible,
                                 goal_objective: goal.objective.into(),
@@ -1760,6 +1769,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         reset_context_usage(&app);
         app.set_active_session_id(id.clone().into());
         app.set_session_loading(true);
+        state.borrow_mut().session_loading_since = Some(std::time::Instant::now());
         app.set_status("正在打开线程，读取历史记录…".into());
         if !previous_session.is_empty() && previous_session != id {
             // The selected predecessor should not keep an open lease forever
@@ -1862,6 +1872,11 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                     }
                     Err(error) => {
                         app.set_session_loading(false);
+                        CHAT_STATE.with(|slot| {
+                            if let Some(state) = slot.borrow().upgrade() {
+                                state.borrow_mut().session_loading_since = None;
+                            }
+                        });
                         // This id has no established lease or observer. Clear
                         // it before the next observer tick so it cannot attach
                         // through the "already opened" watcher variant after
@@ -1945,18 +1960,17 @@ fn bind_history_paging(app: &MainWindow, state: Rc<RefCell<State>>) {
     });
 }
 
-// A thread counts as an untouched new one while it has seen no model work:
-// zero tokens, zero tool calls and no queued or running status. Scoped to the
-// workspace a new task would open in.
+// A thread is the reusable "new thread" target only when it is a durable draft
+// that has admitted no user turn yet, and it is scoped to the workspace a new
+// task would open in. The old token/tool counters read as zero for every thread
+// this process has never watched, so after a restart an old thread looked
+// untouched and a new-thread click silently reopened it instead of creating one.
 fn is_untouched_thread(row: &Conversation, workspace_id: Option<&str>) -> bool {
     let in_scope = match workspace_id {
         Some(workspace) => row.workspace_id.as_str() == workspace,
         None => false,
     };
-    in_scope
-        && row.consumed_tokens == "0"
-        && row.tool_calls == "0"
-        && !Phase::of(row.runtime_status.as_str()).live()
+    in_scope && row.draft && !Phase::of(row.runtime_status.as_str()).live()
 }
 
 // The workspace's single draft thread, derived from the list itself instead of
@@ -1979,7 +1993,36 @@ fn bind_new_thread(app: &MainWindow, state: Rc<RefCell<State>>) {
             app.invoke_cloud_new_thread();
             return;
         }
-        if app.get_creating_session() || app.get_session_loading() || app.get_chat_loading() {
+        // Loading flags must not silently swallow the click: a genuinely
+        // in-flight operation is reported, and a flag wedged past its watchdog
+        // bound is cleared as stale so the click still lands.
+        {
+            let mut current = state.borrow_mut();
+            if app.get_creating_session()
+                && current
+                    .creating_since
+                    .map(|since| since.elapsed() > LOADING_STALE)
+                    .unwrap_or(true)
+            {
+                current.creating_since = None;
+                app.set_creating_session(false);
+            }
+            if app.get_session_loading()
+                && current
+                    .session_loading_since
+                    .map(|since| since.elapsed() > LOADING_STALE)
+                    .unwrap_or(true)
+            {
+                current.session_loading_since = None;
+                app.set_session_loading(false);
+            }
+        }
+        if app.get_creating_session() {
+            app.set_status("正在创建新线程，请稍候…".into());
+            return;
+        }
+        if app.get_session_loading() || app.get_chat_loading() {
+            app.set_status("正在加载线程，请稍候…".into());
             return;
         }
         let workspace = app
@@ -1997,12 +2040,18 @@ fn bind_new_thread(app: &MainWindow, state: Rc<RefCell<State>>) {
             return;
         }
         app.set_creating_session(true);
+        state.borrow_mut().creating_since = Some(std::time::Instant::now());
         let desktop = state.borrow().desktop.clone();
         let weak = app.as_weak();
         std::thread::spawn(move || {
             let result = desktop.create_session(workspace.as_deref());
             let _ = weak.upgrade_in_event_loop(move |app| {
                 app.set_creating_session(false);
+                CHAT_STATE.with(|slot| {
+                    if let Some(state) = slot.borrow().upgrade() {
+                        state.borrow_mut().creating_since = None;
+                    }
+                });
                 match result {
                     Ok(session) => {
                         // Pin the new thread above older activity before the
@@ -2020,6 +2069,7 @@ fn bind_new_thread(app: &MainWindow, state: Rc<RefCell<State>>) {
                             runtime_phase: Phase::of(session.runtime_status.as_str()).code(),
                             runtime_status: session.runtime_status.into(),
                             locked: session.locked,
+                            draft: session.draft,
                             ..Default::default()
                         };
                         let mut rows = app.get_conversations().iter().collect::<Vec<_>>();
@@ -3070,6 +3120,10 @@ fn write_session_row(app: &MainWindow, session: &str, status: &str, phase: Phase
 /// is covered, so a stop square or a failure triangle ages out exactly like a
 /// completion. The timer only runs while a row still carries one.
 const SETTLE_DECAY_TICK: Duration = Duration::from_millis(500);
+/// Upper bound on any single loading flag. A flag wedged past this (a worker
+/// that never returned, an event-loop callback that never ran) is treated as
+/// stale so the next interaction self-heals instead of being silently eaten.
+const LOADING_STALE: Duration = Duration::from_secs(30);
 
 thread_local! {
     static SETTLE_DECAY: Timer = Timer::default();

@@ -27,9 +27,9 @@
       <text x="108" y="714" class="t-dim">› 工具 read notes/sample.txt → 完成 · 0.2 s</text>
       <text x="108" y="746" class="t-dim">• 已更新计划 · 完成 1/3</text><text x="108" y="772" class="t-dim">　□ 汇总要点　□ 校验遗漏　✔ 收集资料</text>
       <text x="108" y="810" class="t-fg">初步结果已生成，继续补充复核说明。</text>
-      <text x="108" y="850" class="t-dim">（转写区向上滚动；底部停留时跟随最新内容）</text>
       <text x="108" y="896" class="t-cy" font-weight="bold">•</text><text x="128" y="896" class="t-dim">正在汇总记录… · 耗时 4.20 s</text>
     </g>
+    <text x="88" y="1042" class="tiny">转写区向上滚动；底部停留时跟随最新内容。</text>
     <rect x="88" y="908" width="1424" height="116" fill="#182430"/>
     <text x="104" y="932" class="mono" font-size="13" fill="#D7A65F" font-weight="bold">云端连接失败 · 等待重试</text>
     <text x="104" y="956" class="mono" font-size="13" fill="#D7A65F" font-weight="bold">3 项警告</text><text x="186" y="956" class="mono" font-size="13" fill="#6E7A8A"> · 查看并处理后再继续</text>

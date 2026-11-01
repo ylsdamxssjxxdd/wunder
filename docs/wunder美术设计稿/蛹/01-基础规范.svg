@@ -95,15 +95,16 @@
     <rect x="64" y="1472" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="1489" text-anchor="middle" class="chip">04</text><text x="104" y="1490" class="sect">窗口布局基线</text>
     <rect x="64" y="1514" width="1472" height="194" rx="12" class="card"/>
     <rect x="88" y="1538" width="660" height="138" fill="#FBFAF8" stroke="#B9B2A7"/>
-    <rect x="88" y="1538" width="660" height="28" fill="#F6F5F3"/><text x="100" y="1557" class="ui11">28px 标题栏</text>
-    <rect x="88" y="1566" width="150" height="110" fill="#F6F5F3"/><text x="100" y="1592" class="ui11">侧栏 240px</text><text x="100" y="1612" class="tiny">170–420 可拖</text>
-    <rect x="270" y="1578" width="440" height="58" rx="8" fill="#FFF" stroke="#E8E6E3"/><text x="282" y="1602" class="ui11 muted">居中的阅读列与输入带</text><text x="282" y="1622" class="mono tiny">min(可用宽度, 1000px)</text>
+    <rect x="88" y="1538" width="660" height="28" fill="#F6F5F3"/>
+    <rect x="88" y="1566" width="150" height="110" fill="#F6F5F3"/>
+    <rect x="270" y="1578" width="440" height="58" rx="8" fill="#FFF" stroke="#E8E6E3"/>
     <line x1="238" y1="1566" x2="238" y2="1676" stroke="#F58A24" stroke-dasharray="3 3"/>
+    <text x="88" y="1698" class="tiny">窗口结构示意：标题栏 / 侧栏 / 居中阅读列与输入带；全部数值见右侧尺寸契约。</text>
     <text x="784" y="1552" class="card-t">尺寸契约</text>
     <text x="784" y="1582" class="note">preferred 1180×740　·　min 1024×700</text>
-    <text x="784" y="1610" class="note">阅读列内边距 24；时间线与输入带共用列宽。</text>
-    <text x="784" y="1638" class="note">输入带 8 + 100 + 6 + 30 + 10 = 154px。</text>
-    <text x="784" y="1666" class="tiny">附件 +36；分支 +22；队列按可见行数增加，均有界。</text>
+    <text x="784" y="1610" class="note">标题栏 28；侧栏 240，170–420 可拖。</text>
+    <text x="784" y="1638" class="note">阅读列 min(可用宽度, 1000px)，内边距 24。</text>
+    <text x="784" y="1666" class="tiny">时间线与输入带共用列宽；输入带 8+100+6+30+10 = 154px；附件 +36；分支 +22；队列有界。</text>
   </g>
   <g id="footer"><line x1="64" y1="1730" x2="1536" y2="1730" stroke="#D8D5D0"/><text x="64" y="1750" class="tiny">唯一变量来源：frontend-slint/ui/design_tokens.slint；稿面底色 #F5F3EF 仅用于文档，不是产品 token。</text><text x="1536" y="1750" text-anchor="end" class="mono tiny">01 / 09 · 2026-10-31</text></g>
 </svg>

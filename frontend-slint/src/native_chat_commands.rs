@@ -6,7 +6,18 @@ pub(super) fn dispatch(app: &MainWindow, state: &Rc<RefCell<State>>, content: &s
         return false;
     };
     app.set_command_feedback("".into());
-    if app.get_command_pending() || app.get_session_loading() || app.get_creating_session() {
+    if app.get_command_pending() {
+        app.set_command_feedback("正在处理上一条命令，请稍候…".into());
+        return true;
+    }
+    // `/new` must never be silently eaten by a loading flag: the new-thread
+    // entry point reports its own progress and self-heals a wedged flag.
+    if matches!(command, NativeChatCommand::New) {
+        app.invoke_new_thread();
+        return true;
+    }
+    if app.get_session_loading() || app.get_creating_session() {
+        app.set_command_feedback("正在加载线程，请稍候…".into());
         return true;
     }
     match command {

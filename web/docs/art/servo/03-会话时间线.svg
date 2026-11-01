@@ -27,13 +27,14 @@
 
   <g id="code-diff">
     <rect x="64" y="934" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="951" text-anchor="middle" class="chip">03</text><text x="104" y="952" class="sect">代码与差异 · 行头、新增、删除是三种不同表面</text>
-    <rect x="64" y="976" width="1472" height="230" rx="12" class="card"/>
+    <rect x="64" y="976" width="1472" height="244" rx="12" class="card"/>
     <rect x="88" y="1000" width="1424" height="182" rx="6" class="term"/>
     <text x="108" y="1028" class="mono ui13 t-dim">text · 代码块保持缩进，语言高亮不改变布局</text>
     <rect x="108" y="1042" width="1384" height="26" fill="#161E32"/><text x="120" y="1061" class="mono ui13 t-cy" font-weight="bold">@@</text><text x="160" y="1061" class="mono ui13 t-dim">示例上下文 · hunk 行头 Rgb(22,30,50)</text>
     <rect x="108" y="1074" width="1384" height="26" fill="#12301F"/><text x="120" y="1093" class="mono ui13" fill="#9DE6BC" font-weight="bold">+</text><text x="144" y="1093" class="mono ui13" fill="#9DE6BC">新增行 · 前景 Rgb(157,230,188)，底 Rgb(18,48,31)</text>
     <rect x="108" y="1106" width="1384" height="26" fill="#3A1818"/><text x="120" y="1125" class="mono ui13" fill="#FFB6B6" font-weight="bold">−</text><text x="144" y="1125" class="mono ui13" fill="#FFB6B6">删除行 · 前景 Rgb(255,182,182)，底 Rgb(58,24,24)</text>
-    <text x="108" y="1162" class="mono ui13 t-dim">　上下文行 · 前缀列保持 DIM；NO_COLOR 时 Rgb 表面落回 Reset，修饰保留</text>
+    <text x="108" y="1162" class="mono ui13 t-dim">　上下文行 · 前缀列保持 DIM</text>
+    <text x="88" y="1204" class="tiny">NO_COLOR 时 Rgb 表面落回 Reset，修饰保留。</text>
   </g>
 
   <g id="expanded-selection">
