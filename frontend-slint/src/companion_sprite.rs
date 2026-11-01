@@ -151,8 +151,11 @@ pub fn decode_idle_frames(bytes: &[u8]) -> Option<Vec<SharedPixelBuffer<slint::R
 
 thread_local! {
     // Idle frames as textures, bounded to the companions actually on screen
-    // (dialog preview + selected agent avatars).
-    static FRAME_CACHE: RefCell<HashMap<String, Vec<Image>>> = RefCell::new(HashMap::new());
+    // (library page + dialog preview + selected agent avatars). Entries carry
+    // a sequence number so an over-budget cache evicts the least recently
+    // used companion instead of dropping everything at once.
+    static FRAME_CACHE: RefCell<HashMap<String, (u64, Vec<Image>)>> = RefCell::new(HashMap::new());
+    static FRAME_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     // Decoded sheets for the floating pets, with their insertion sequence so an
     // over-budget cache can drop the oldest idle one. One sheet is the whole
     // animation set (about 11 MB RGBA for an 8x9 sheet).
@@ -162,23 +165,33 @@ thread_local! {
     static SHEET_LOAD_MARKS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
 }
 
-const FRAME_CACHE_CAP: usize = 4;
+const FRAME_CACHE_CAP: usize = 12;
 const SHEET_CACHE_CAP: usize = 4;
+
+fn next_frame_seq() -> u64 {
+    FRAME_SEQ.with(|seq| {
+        let value = seq.get();
+        seq.set(value + 1);
+        value
+    })
+}
 
 pub fn has_idle_frames(id: &str) -> bool {
     FRAME_CACHE.with(|cache| cache.borrow().contains_key(id))
 }
 
 /// One frame by index; the cache holds `Vec<Image>` so a single clone is the
-/// only copy a projection or an animation tick has to pay for.
+/// only copy a projection or an animation tick has to pay for. A hit refreshes
+/// the entry's sequence, keeping animated previews out of eviction.
 pub fn idle_frame(id: &str, frame: usize) -> Image {
     FRAME_CACHE.with(|cache| {
-        let cache = cache.borrow();
-        cache
-            .get(id)
-            .and_then(|frames| frames.get(frame))
-            .cloned()
-            .unwrap_or_default()
+        let mut cache = cache.borrow_mut();
+        if let Some((sequence, frames)) = cache.get_mut(id) {
+            *sequence = next_frame_seq();
+            frames.get(frame).cloned().unwrap_or_default()
+        } else {
+            Image::default()
+        }
     })
 }
 
@@ -186,26 +199,40 @@ pub fn idle_frame_count(id: &str) -> usize {
     FRAME_CACHE.with(|slot| {
         slot.borrow()
             .get(id)
-            .map(|frames| frames.len())
+            .map(|(_, frames)| frames.len())
             .unwrap_or_default()
     })
 }
 
 /// Store converted frames on the UI thread. Returns true when the cache
-/// changed (so callers can re-project avatar visuals).
+/// changed (so callers can re-project avatar visuals). An over-budget cache
+/// evicts the least recently used entry; the victim's load mark is cleared so
+/// a later projection can schedule its decode again.
 pub fn store_idle_frames(id: &str, frames: Vec<SharedPixelBuffer<slint::Rgba8Pixel>>) -> bool {
     if frames.is_empty() {
         return false;
     }
     FRAME_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
-        if cache.len() >= FRAME_CACHE_CAP && !cache.contains_key(id) {
-            // Simple bound: drop the whole cache rather than tracking LRU for
-            // at most four companions.
-            cache.clear();
+        cache.insert(
+            id.to_string(),
+            (
+                next_frame_seq(),
+                frames.into_iter().map(Image::from_rgba8).collect(),
+            ),
+        );
+        while cache.len() > FRAME_CACHE_CAP {
+            let victim = cache
+                .iter()
+                .filter(|(key, _)| key.as_str() != id)
+                .min_by_key(|(_, (sequence, _))| *sequence)
+                .map(|(key, _)| key.clone());
+            let Some(victim) = victim else { break };
+            cache.remove(&victim);
+            LOAD_MARKS.with(|marks| {
+                marks.borrow_mut().remove(&victim);
+            });
         }
-        let images: Vec<Image> = frames.into_iter().map(Image::from_rgba8).collect();
-        cache.insert(id.to_string(), images);
         true
     })
 }

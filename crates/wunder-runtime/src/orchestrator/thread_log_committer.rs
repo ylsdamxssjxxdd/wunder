@@ -128,6 +128,29 @@ impl ThreadLogCommitter {
         })
         .await
     }
+
+    /// 附件持久化完成后，把受理正文里的原始 data URL 附件替换为已落盘的
+    /// 公共路径形态。受理正文在轮次首次落盘时物化为用户消息项，必须在此之前
+    /// 完成刷新，历史里冻结的才是可渲染路径而不是内联数据。
+    pub(crate) async fn refresh_turn_input_attachments(
+        &self,
+        user: &str,
+        session: &str,
+        turn: &str,
+        attachments: Value,
+    ) -> Result<()> {
+        let _gate = self.gate(session).await?;
+        let admissions = self.threads.admission_store()?;
+        let owner = user.to_owned();
+        let thread = session.to_owned();
+        let id = turn.to_owned();
+        blocking::run_db("thread_store.refresh_input_attachments", move || {
+            admissions.check_owner(&owner, &thread)?;
+            admissions.refresh_pending_input_attachments(&thread, &id, attachments)
+        })
+        .await?;
+        Ok(())
+    }
     pub(crate) async fn freeze_session(
         &self,
         user: &str,

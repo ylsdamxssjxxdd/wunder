@@ -252,6 +252,31 @@ impl Orchestrator {
                         user_id, session_id, err
                     );
                 }
+                // The admitted queue body materializes into the durable
+                // `<turn>:user` item at this turn's first commit. Refresh it
+                // while it is still pending, or that item freezes the raw
+                // composer data URLs without their persisted public paths and
+                // every later projection renders the attachment as unlabeled
+                // text.
+                if let (Some(turn_id), Some(value)) =
+                    (prepared.thread_turn_id, super::tool_exec::build_history_attachments(attachments))
+                {
+                    if let Err(err) = self
+                        .committer
+                        .refresh_turn_input_attachments(
+                            &user_id,
+                            &session_id,
+                            &turn_id.to_string(),
+                            value,
+                        )
+                        .await
+                    {
+                        warn!(
+                            "refresh admitted attachments failed for user {} session {}: {}",
+                            user_id, session_id, err
+                        );
+                    }
+                }
             }
 
             // Stream events are durable across rounds; never clear them from the

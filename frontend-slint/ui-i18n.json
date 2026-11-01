@@ -4891,12 +4891,12 @@
  },
  {
   "key": "stc_pet",
-  "zh": "桌宠",
+  "zh": "伙伴",
   "en": "Companion"
  },
  {
   "key": "stc_pet_note",
-  "zh": "桌宠形象、缩放与气泡提示",
+  "zh": "伙伴形象、缩放与气泡提示",
   "en": "Companion avatar, scale and bubble hints"
  },
  {
@@ -5211,7 +5211,7 @@
  },
  {
   "key": "pet_behavior",
-  "zh": "桌宠行为",
+  "zh": "伙伴行为",
   "en": "Companion behavior"
  },
  {
@@ -5246,7 +5246,7 @@
  },
  {
   "key": "pet_scale_note",
-  "zh": "拖动滑块调整桌宠大小，范围 0.5–1.6。",
+  "zh": "拖动滑块调整伙伴大小，范围 0.5–1.6。",
   "en": "Drag to resize the pet; range 0.5–1.6."
  },
  {
@@ -5901,6 +5901,11 @@
   "key": "st_upd_not_installed",
   "zh": "未安装",
   "en": "not installed"
+ },
+ {
+  "key": "st_upd_local_prefix",
+  "zh": "（本地 ",
+  "en": "(local "
  },
  {
   "key": "st_stress_title",

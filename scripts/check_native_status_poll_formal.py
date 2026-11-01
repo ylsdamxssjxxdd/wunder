@@ -31,7 +31,7 @@ def main():
     )
     config = (scratch / (MODEL + ".cfg")).read_text(encoding="utf-8")
     (scratch / (MODEL + "Fixed.cfg")).write_text(
-        config.replace("Fixed = FALSE", "Fixed = TRUE"), encoding="utf-8"
+        config.replace("Scoped = FALSE", "Scoped = TRUE"), encoding="utf-8"
     )
     output = args.out.resolve() if args.out else scratch / "report"
     if repository == output or repository in output.parents:

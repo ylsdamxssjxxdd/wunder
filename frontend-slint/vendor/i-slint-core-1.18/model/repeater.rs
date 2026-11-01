@@ -143,7 +143,11 @@ pub struct RepeaterLayoutState {
     /// The content_y value from the previous layout pass.
     /// It is used to detect if we are scrolling up or down
     pub previous_content_y: Coord,
-    /// The y position of the item at `offset`.
+    /// The content-space y of the item at `offset`: the running sum of the
+    /// actual row heights above the window. Updated incrementally with the
+    /// measured heights of the rows the window moves past, so mixed row
+    /// heights scroll without the shifts a uniform average would produce.
+    /// Only a seek past unmeasured rows must fall back to an estimate.
     pub anchor_y: Coord,
 }
 
@@ -318,6 +322,10 @@ fn update_visible_instances(
 
     if state.offset >= row_count {
         state.offset = row_count - 1;
+        // The window pointed past the (shrunken) model. The heights of the
+        // rows above the clamped offset are unknown in the new content, so
+        // the anchor can only be re-estimated here; scrolling on is exact.
+        state.anchor_y = element_height * state.offset as Coord;
     }
 
     let one_and_a_half_screen = listview_height * 3 as Coord / 2 as Coord;
@@ -328,14 +336,18 @@ fn update_visible_instances(
         > -content_y_value + one_and_a_half_screen
         || (props.computes_content_height() && last_item_bottom + element_height < -content_y_value)
     {
-        // Jumping more than 1.5 screens: random seek.
+        // Jumping more than 1.5 screens: random seek. The heights of the
+        // skipped rows are unknown, so the anchor starts from an estimate;
+        // contiguous scrolling from here is exact again.
         ops.splice(0, ops.len(), 0);
         state.offset = ((-content_y_value / element_height).floor() as usize).min(row_count - 1);
+        state.anchor_y = element_height * state.offset as Coord;
         (state.offset, 0 as Coord)
     } else if content_y_value < state.previous_content_y {
         // Scrolled down: find the new offset by walking existing instances.
         let mut it_y = first_item_y + content_y_value;
         let mut new_off = state.offset;
+        let mut walked = 0 as Coord;
         for i in 0..ops.len() {
             changed |= ops.ensure_updated(i, new_off);
             let h = ops.height(i).unwrap_or(0 as Coord);
@@ -343,8 +355,13 @@ fn update_visible_instances(
                 break;
             }
             it_y += h;
+            walked += h;
             new_off += 1;
         }
+        // The rows the window advanced past join the anchor prefix with
+        // their measured heights, so the next pass keeps the content exactly
+        // where the previous one put it regardless of mixed row heights.
+        state.anchor_y = first_item_y + walked;
         (new_off, it_y)
     } else {
         // Scrolled up: will instantiate items before offset in the loop below.
@@ -356,7 +373,9 @@ fn update_visible_instances(
         // Fill gap before new_offset using already-instantiated items.
         while new_offset > state.offset && new_offset_y > 0 as Coord {
             new_offset -= 1;
-            new_offset_y -= ops.height(new_offset - state.offset).unwrap_or(0 as Coord);
+            let h = ops.height(new_offset - state.offset).unwrap_or(0 as Coord);
+            new_offset_y -= h;
+            state.anchor_y -= h;
         }
         // If there is still a gap, create new instances before the current ones.
         let mut prepend_count = 0;
@@ -364,7 +383,9 @@ fn update_visible_instances(
             new_offset -= 1;
             ops.splice(0, 0, 1);
             changed |= ops.ensure_updated(0, new_offset);
-            new_offset_y -= ops.height(0).unwrap_or(0 as Coord);
+            let h = ops.height(0).unwrap_or(0 as Coord);
+            new_offset_y -= h;
+            state.anchor_y -= h;
             prepend_count += 1;
         }
         if prepend_count > 0 {
@@ -420,10 +441,15 @@ fn update_visible_instances(
             break;
         }
 
-        // Recompute coordinates for the scrollbar.
+        // Recompute coordinates for the scrollbar. The anchor already holds
+        // the exact sum of the heights above the window; compose the total
+        // from that sum, the laid-out window and an estimate for the rows
+        // below it, so the end of the model sits at the true bottom.
         state.cached_item_height = (y - new_offset_y) / ops.len() as Coord;
-        state.anchor_y = state.cached_item_height * state.offset as Coord;
-        props.content_height_set(LogicalLength::new(state.cached_item_height * row_count as Coord));
+        let remaining_rows = row_count.saturating_sub(idx);
+        props.content_height_set(LogicalLength::new(
+            state.anchor_y + (y - new_offset_y) + element_height * remaining_rows as Coord,
+        ));
         props.content_width_set(LogicalLength::new(content_width_value));
         let new_content_y = -state.anchor_y + new_offset_y;
         // Important: Use get_internal here, the content_y may have a binding on it (especially
@@ -550,8 +576,12 @@ impl<T: RepeatedItemTree> ModelChangeListener for RepeaterTracker<T> {
         let mut inner = self.inner.borrow_mut();
         if index < inner.layout_state.offset {
             if index + count <= inner.layout_state.offset {
-                // Entirely before the visible range: shift the offset.
+                // Entirely before the visible range: shift the offset. The
+                // inserted heights are unknown, so the anchor grows by the
+                // estimate until the rows are measured.
                 inner.layout_state.offset += count;
+                inner.layout_state.anchor_y +=
+                    inner.layout_state.cached_item_height * count as Coord;
                 self.is_dirty.set(true);
                 for c in inner.instances.iter_mut() {
                     c.0 = RepeatedInstanceState::Dirty;
@@ -581,16 +611,25 @@ impl<T: RepeatedItemTree> ModelChangeListener for RepeaterTracker<T> {
         let mut inner = self.inner.borrow_mut();
         if index < inner.layout_state.offset {
             if index + count <= inner.layout_state.offset {
-                // Entirely before the visible range: shift the offset.
+                // Entirely before the visible range: shift the offset. The
+                // removed heights are unknown, so the anchor shrinks by the
+                // estimate until the surrounding rows are re-measured.
                 inner.layout_state.offset -= count;
+                inner.layout_state.anchor_y = (inner.layout_state.anchor_y
+                    - inner.layout_state.cached_item_height * count as Coord)
+                    .max(0 as Coord);
                 self.is_dirty.set(true);
                 for c in inner.instances.iter_mut() {
                     c.0 = RepeatedInstanceState::Dirty;
                 }
                 return;
             }
-            count -= inner.layout_state.offset - index;
+            let removed_before = inner.layout_state.offset - index;
+            count -= removed_before;
             inner.layout_state.offset = index;
+            inner.layout_state.anchor_y = (inner.layout_state.anchor_y
+                - inner.layout_state.cached_item_height * removed_before as Coord)
+                .max(0 as Coord);
             index = 0;
         } else {
             index -= inner.layout_state.offset;

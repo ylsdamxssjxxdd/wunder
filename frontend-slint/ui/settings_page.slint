@@ -512,7 +512,7 @@ export component SettingsPage inherits Rectangle {
         root.update-phase != "available" ? ""
         : root.update-target == "cli" && root.update-local-version == "" ? "（" + I18n.st_upd_not_installed + "）"
         : root.update-local-version == "" || root.update-target == "desktop" ? ""
-        : "（本地 " + root.update-local-version + "）";
+        : I18n.st_upd_local_prefix + root.update-local-version + "）";
     // Status line copy per phase; the failed phase keeps the native error
     // tail. The not-logged-in hint only shows while nothing else happened.
     property <string> update-status-text: root.update-error != "" ? I18n.st_upd_failed_prefix + root.update-error
@@ -978,8 +978,8 @@ export component SettingsPage inherits Rectangle {
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[3];
-                            // 与输入区模型选择器同款脑形，建立同一语义的视觉锚点。
-                            icon: @image-url("../assets/icons/brain.svg");
+                            // 空心脑形与导航其余 lucide 图标同风格。
+                            icon: @image-url("../assets/icons/lc-brain.svg");
                             title: I18n.stc_models;
                             selected: root.settings-tab == 1;
                             clicked => { root.settings-tab = 1; root.refresh(); }

@@ -91,7 +91,10 @@ impl StatusProjection {
         } else if let Some(current) = self.sessions.get(session) {
             if current.revision > read_revision {
                 (current.status.clone(), false)
-            } else if current.local && !catalogue_matches_local(current.status.as_str(), status) {
+            } else if current.local
+                && !catalogue_matches_local(current.status.as_str(), status)
+                && (Phase::of(current.status.as_str()).terminal() || !Phase::of(status).terminal())
+            {
                 (current.status.clone(), false)
             } else {
                 (status.to_string(), true)
@@ -109,6 +112,11 @@ impl StatusProjection {
                 completion: Completion::None,
             });
         if accepted {
+            // An adopted catalogue read supersedes the local authorship: the
+            // fence is a guard around a live local claim, not a permanent brand.
+            // Without this a locally settled mark keeps every later catalogue
+            // read out of the session for good.
+            current.local = false;
             // A catalogue read is history unless this process watched the
             // thread become busy first; `note` makes that call.
             note(current, status.as_str(), now);
@@ -407,5 +415,43 @@ mod tests {
             .retired);
         projection.record_local("fixture-session", "请求中", at);
         assert!(!projection.should_retire("fixture-session", at));
+    }
+
+    /// A run this process started locally and then stopped driving (the user
+    /// switched away) can settle on the backend while it is not selected. The
+    /// catalogue's terminal must still reach the row: a leftover local "hot"
+    /// mark must not fence it for good, or the sidebar keeps claiming the old
+    /// run and its completion never raises the toast until it is reopened.
+    #[test]
+    fn an_abandoned_local_run_does_not_fence_a_background_settle() {
+        let at = now();
+        let mut projection = StatusProjection::default();
+        projection.record_local("fixture-session", "请求中", at);
+        let read_revision = projection.revision();
+        // The owner has moved on: no local override for this session any more.
+        let reconciled =
+            projection.reconcile("fixture-session", "completed", read_revision, None, at);
+        assert!(reconciled.accepted, "the background settle must land");
+        assert_eq!(reconciled.status, "completed");
+        assert!(
+            !reconciled.retired,
+            "a settle this process watched go hot is fresh news"
+        );
+    }
+
+    /// Once a catalogue read is adopted the local authorship is spent, so a run
+    /// later started by another client is not fenced by a settled local mark.
+    #[test]
+    fn an_adopted_read_lets_a_later_remote_run_through() {
+        let at = now();
+        let mut projection = StatusProjection::default();
+        projection.record_local("fixture-session", "任务完成", at);
+        let read_revision = projection.revision();
+        assert!(projection
+            .reconcile("fixture-session", "completed", read_revision, None, at)
+            .accepted);
+        let reconciled = projection.reconcile("fixture-session", "running", read_revision, None, at);
+        assert!(reconciled.accepted, "a new remote run must not be fenced");
+        assert_eq!(reconciled.status, "running");
     }
 }

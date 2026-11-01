@@ -64,6 +64,10 @@
                 <i class="fa-solid fa-code-branch"></i>
                 <span data-i18n="panel.users">线程管理</span>
               </button>
+              <button id="navUpdates" class="nav-btn">
+                <i class="fa-solid fa-cloud-arrow-down"></i>
+                <span data-i18n="panel.updates">在线更新</span>
+              </button>
             </div>
           </div>
           <div class="nav-group is-collapsed" data-group="agent">
@@ -2062,6 +2066,103 @@
                 </div>
                 <div class="settings-hint" data-i18n="settings.hint.firecrawl">
                   These settings only control Wunder's Firecrawl connection; they do not start or stop the Docker service.
+                </div>
+              </div>
+            </div>
+          </div>
+        </section><section id="updatesPanel" class="panel">
+          <div class="list-header">
+            <h1 data-i18n="updates.title">在线更新</h1>
+            <div class="header-actions">
+              <button id="updatesRefreshBtn" class="secondary btn-with-icon">
+                <i class="fa-solid fa-arrows-rotate"></i>
+                <span data-i18n="common.refresh">刷新</span>
+              </button>
+              <button id="updatesPublishBtn" class="btn-with-icon">
+                <i class="fa-solid fa-paper-plane"></i>
+                <span data-i18n="updates.action.publish">发布清单</span>
+              </button>
+            </div>
+          </div>
+          <div class="tips" data-i18n="updates.tip">
+            上传更新包并发布版本清单，蛹、舵机与补充包经此获取在线更新；发布即生效，无需重启服务。
+          </div>
+          <div class="settings-layout">
+            <div class="settings-card">
+              <div class="settings-card-title">
+                <i class="fa-solid fa-boxes-stacked"></i>
+                <span data-i18n="updates.card.catalog">发布目录</span>
+              </div>
+              <div class="settings-card-body">
+                <div class="form-row">
+                  <label data-i18n="updates.label.releasesDir">发布目录</label>
+                  <span id="updatesDirText" class="updates-path">-</span>
+                </div>
+                <table class="monitor-table updates-table">
+                  <thead>
+                    <tr>
+                      <th data-i18n="updates.table.file">文件</th>
+                      <th data-i18n="updates.table.size">大小</th>
+                      <th data-i18n="updates.table.state">状态</th>
+                      <th data-i18n="updates.table.actions">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="updatesFilesBody">
+                    <tr><td colspan="4" class="updates-empty" data-i18n="updates.empty.files">暂无更新包</td></tr>
+                  </tbody>
+                </table>
+                <div class="updates-upload-row">
+                  <input id="updatesFileInput" type="file" />
+                  <button id="updatesUploadBtn" class="btn-with-icon" type="button">
+                    <i class="fa-solid fa-upload"></i>
+                    <span data-i18n="updates.action.upload">上传更新包</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="settings-card">
+              <div class="settings-card-title">
+                <i class="fa-solid fa-list-check"></i>
+                <span data-i18n="updates.card.releases">已发布版本</span>
+              </div>
+              <div class="settings-card-body">
+                <table class="monitor-table updates-table">
+                  <thead>
+                    <tr>
+                      <th data-i18n="updates.table.version">版本</th>
+                      <th data-i18n="updates.table.publishedAt">发布时间</th>
+                      <th data-i18n="updates.table.assets">更新对象</th>
+                      <th data-i18n="updates.table.actions">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="updatesReleasesBody">
+                    <tr><td colspan="4" class="updates-empty" data-i18n="updates.empty.releases">尚未发布任何版本</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="settings-card">
+              <div class="settings-card-title">
+                <i class="fa-solid fa-plus"></i>
+                <span data-i18n="updates.card.builder">新增版本条目</span>
+              </div>
+              <div class="settings-card-body">
+                <div class="updates-builder-grid">
+                  <div class="form-row">
+                    <label for="updatesVersionInput" data-i18n="updates.label.version">版本号</label>
+                    <input id="updatesVersionInput" type="text" placeholder="0.3.0" />
+                  </div>
+                </div>
+                <div id="updatesAssetRows"></div>
+                <div class="updates-builder-actions">
+                  <button id="updatesAddAssetBtn" class="secondary btn-with-icon" type="button">
+                    <i class="fa-solid fa-plus"></i>
+                    <span data-i18n="updates.action.addAsset">添加更新对象</span>
+                  </button>
+                  <button id="updatesAppendReleaseBtn" class="btn-with-icon" type="button">
+                    <i class="fa-solid fa-check"></i>
+                    <span data-i18n="updates.action.appendRelease">加入清单</span>
+                  </button>
                 </div>
               </div>
             </div>

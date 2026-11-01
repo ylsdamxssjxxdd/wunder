@@ -64,6 +64,7 @@ import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?
 import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20260923-04";
 
 import { initSettingsPanel, loadAdminDefaults } from "./modules/settings.js?v=20260602-01";
+import { initUpdatesPanel, loadUpdatesPanel } from "./modules/updates.js?v=20261101-01";
 
 import { initApiDocsPanel } from "./modules/api-docs.js?v=20260215-01";
 import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20261012-01";
@@ -156,6 +157,8 @@ const panelMap = {
   llm: { panel: elements.llmPanel, nav: elements.navLlm },
 
   settings: { panel: elements.settingsPanel, nav: elements.navSettings },
+
+  updates: { panel: elements.updatesPanel, nav: elements.navUpdates },
 
   builtin: { panel: elements.builtinPanel, nav: elements.navBuiltin },
 
@@ -507,6 +510,11 @@ const bindNavigation = () => {
       }
     });
   }
+
+  elements.navUpdates.addEventListener("click", async () => {
+    switchPanel("updates");
+    await loadUpdatesPanel();
+  });
 
   elements.navDebug.addEventListener("click", () => switchPanel("debug"));
 
@@ -1091,6 +1099,7 @@ const bootstrap = async () => {
   initMultimodalDebugPanel();
 
   initSettingsPanel();
+  initUpdatesPanel();
   initApiDocsPanel();
   bindNavigation();
   bindNavGroupToggles();
