@@ -804,6 +804,56 @@ impl TurnAdmissions {
         self.connect()?.query_row("SELECT input_json FROM canonical_turn_admissions WHERE thread_id=?1 AND turn_id=?2",params![thread,turn],|r|r.get::<_,Option<String>>(0)).optional()?.flatten().map(|s|serde_json::from_str(&s).map_err(Into::into)).transpose()
     }
 
+    /// 用执行期得到的最终附件形态（已落盘的公共路径）刷新仍挂着的受理正文。
+    /// 受理正文在首次落盘确认时物化为 `<turn>:user` 用户消息项，而附件持久化
+    /// 发生在受理之后、物化之前；不刷新就会把携带 data URL、缺少 public_path
+    /// 的原始正文冻进历史。仅非终态且仍保留正文的受理会被更新，其余为幂等空操作。
+    pub fn refresh_pending_input_attachments(
+        &self,
+        thread: &str,
+        turn: &str,
+        attachments: Value,
+    ) -> Result<bool> {
+        let mut conn = self.connect()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        Self::check_mutation(&tx, thread)?;
+        let row: Option<(String, Option<String>)> = tx
+            .query_row(
+                "SELECT status,input_json FROM canonical_turn_admissions WHERE thread_id=?1 AND turn_id=?2",
+                params![thread, turn],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((status, input)) = row else {
+            return Ok(false);
+        };
+        if !Self::can_transition(&status, "running") {
+            return Ok(false);
+        }
+        let Some(input) = input else {
+            return Ok(false);
+        };
+        let mut body: Value = serde_json::from_str(&input)?;
+        match body.as_object_mut() {
+            Some(fields) => {
+                fields.insert("attachments".into(), attachments);
+            }
+            None => return Ok(false),
+        }
+        let updated = tx.execute(
+            "UPDATE canonical_turn_admissions SET input_json=?3,updated_at_ms=?4
+             WHERE thread_id=?1 AND turn_id=?2 AND input_json IS NOT NULL",
+            params![
+                thread,
+                turn,
+                serde_json::to_string(&body)?,
+                chrono::Utc::now().timestamp_millis()
+            ],
+        )? > 0;
+        tx.commit()?;
+        Ok(updated)
+    }
+
     /// Lifecycle is monotonic: completed admissions are immutable and a stale
     /// queue notification cannot reclaim an execution that has started.
     pub(crate) fn can_transition(previous: &str, next: &str) -> bool {
@@ -1042,6 +1092,58 @@ mod tests {
                 .is_err());
         }
         assert_eq!(admissions.latest_round("fixture-thread").unwrap(), 1);
+    }
+
+    #[test]
+    fn pending_input_refresh_swaps_raw_attachments_for_persisted_paths() {
+        let raw = serde_json::json!({
+            "role":"user",
+            "content":"fixture question",
+            "attachments":[{"name":"fixture.png","content_type":"image/png",
+                "content":"data:image/png;base64,AAAA"}]
+        });
+        let root = tempfile::tempdir().unwrap();
+        let admissions = TurnAdmissions::open(root.path()).unwrap();
+        let accepted = admissions
+            .accept("fixture-user", "fixture-thread", &raw)
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap().to_string();
+
+        let persisted = serde_json::json!([
+            {"name":"fixture.png","content_type":"image/png",
+             "public_path":"/workspaces/fixture/chat_attachments/fixture.png"}
+        ]);
+        assert!(admissions
+            .refresh_pending_input_attachments("fixture-thread", &turn, persisted)
+            .unwrap());
+        let body = admissions.pending("fixture-thread", &turn).unwrap().unwrap();
+        let attachments = &body["attachments"];
+        assert_eq!(attachments[0]["public_path"], "/workspaces/fixture/chat_attachments/fixture.png");
+        assert!(
+            attachments[0]["content"].is_null(),
+            "the raw inline payload must not survive the refresh"
+        );
+
+        // 终态受理不再被刷新：物化之后的历史已经离开队列正文。
+        admissions
+            .update("fixture-thread", &turn, "completed", true)
+            .unwrap();
+        assert!(!admissions
+            .refresh_pending_input_attachments(
+                "fixture-thread",
+                &turn,
+                serde_json::json!([])
+            )
+            .unwrap());
+
+        // 未知轮次是幂等空操作。
+        assert!(!admissions
+            .refresh_pending_input_attachments(
+                "fixture-thread",
+                "fixture-missing-turn",
+                serde_json::json!([])
+            )
+            .unwrap());
     }
 
     #[test]

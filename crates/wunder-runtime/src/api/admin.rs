@@ -30,6 +30,7 @@ mod monitor_admin;
 mod queue_admin;
 mod resource_admin;
 mod throughput_admin;
+mod update_admin;
 
 pub(crate) use integration_admin::{
     ensure_admin_skill_editable, is_admin_skill_editable, resolve_admin_skill_root,
@@ -55,6 +56,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(knowledge_admin::router())
         .merge(identity_admin::router())
         .merge(resource_admin::router())
+        .merge(update_admin::router())
         .route(
             "/wunder/admin/llm",
             get(admin_llm_get).post(admin_llm_update),

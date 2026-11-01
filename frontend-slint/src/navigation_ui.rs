@@ -536,9 +536,66 @@ fn rebuild_rows(app: &MainWindow) {
         .filter(|row| row.kind == 1 && row.archivable)
         .count() as i32;
     stamp_group_spans(app, &mut rows);
-    app.set_sidebar_rows(ModelRc::new(VecModel::from(rows)));
+    commit_sidebar_rows(app, rows);
     app.set_sidebar_archivable_count(archivable_count);
     app.set_sidebar_selected_count(THREAD_SELECTION.with(|slot| slot.borrow().len()) as i32);
+}
+
+/// Commit a rebuilt tree into the sidebar model without replacing it.
+///
+/// The tree's ListView virtualizes rows around a scroll anchor the runtime
+/// keeps per model instance; assigning a fresh `ModelRc` discards that state
+/// and the list visibly snaps — worst at the bottom of a long tree, which is
+/// exactly where a thread click used to land. Diffing into the one persistent
+/// `VecModel` keeps the anchor: an unchanged tree (a thread selection only
+/// flips two rows) emits no notifications at all, and structural changes
+/// reach the repeater as plain row insert/remove notifications.
+fn commit_sidebar_rows(app: &MainWindow, rows: Vec<SidebarRow>) {
+    let model = app.get_sidebar_rows();
+    let Some(vecmodel) = model.as_any().downcast_ref::<VecModel<SidebarRow>>() else {
+        // First projection (or a foreign model such as the demo's): take
+        // ownership of the tree property.
+        app.set_sidebar_rows(ModelRc::new(VecModel::from(rows)));
+        return;
+    };
+    apply_row_diff(vecmodel, rows);
+}
+
+/// Diff `rows` into `model` with the least row notifications: trim the common
+/// prefix and suffix, patch the changed rows of the overlapping middle, then
+/// append or drop the tail difference. Callers rely on this keeping the model
+/// instance itself, so the tree's scroll anchor survives every rebuild.
+fn apply_row_diff(model: &VecModel<SidebarRow>, rows: Vec<SidebarRow>) {
+    let old_count = model.row_count();
+    let new_count = rows.len();
+    let common = old_count.min(new_count);
+    let mut start = 0;
+    while start < common && model.row_data(start).is_some_and(|old| old == rows[start]) {
+        start += 1;
+    }
+    let mut end_old = old_count;
+    let mut end_new = new_count;
+    while end_old > start
+        && end_new > start
+        && model.row_data(end_old - 1).is_some_and(|old| old == rows[end_new - 1])
+    {
+        end_old -= 1;
+        end_new -= 1;
+    }
+    for index in start..end_old.min(end_new) {
+        if model.row_data(index).is_some_and(|old| old != rows[index]) {
+            model.set_row_data(index, rows[index].clone());
+        }
+    }
+    if end_new > end_old {
+        for (offset, row) in rows[end_old..end_new].iter().enumerate() {
+            model.insert(end_old + offset, row.clone());
+        }
+    } else if end_old > end_new {
+        for _ in end_new..end_old {
+            model.remove(end_new);
+        }
+    }
 }
 
 /// Record each row's owning group's content-space span (header cell top
@@ -1243,6 +1300,44 @@ mod tests {
         // A repeated or unknown update changes nothing and reports so.
         assert!(!patch_thread_status(&rows, "a", "正在生成…", running));
         assert!(!patch_thread_status(&rows, "gone", "正在生成…", running));
+    }
+
+    /// The diff commit lands the rebuilt tree in the model instance itself:
+    /// every projection must converge to exactly `rows`, because the tree's
+    /// scroll anchor only survives while the model is never replaced.
+    #[test]
+    fn row_diff_converges_to_the_projected_tree() {
+        let mut current = vec![thread_row("a", "idle"), thread_row("b", "idle")];
+        let model = VecModel::from(current.clone());
+        // An identical rebuild changes nothing observable.
+        apply_row_diff(&model, current.clone());
+        assert_eq!(model.row_count(), 2);
+        assert_eq!(model.row_data(1), Some(thread_row("b", "idle")));
+        // A selection flips rows in place.
+        current[1].active = true;
+        apply_row_diff(&model, current.clone());
+        assert!(model.row_data(1).unwrap().active);
+        // Expanding a workspace inserts a run of rows after its header.
+        current.insert(1, thread_row("c", "idle"));
+        current.push(thread_row("d", "idle"));
+        apply_row_diff(&model, current.clone());
+        assert_eq!(model.row_count(), 4);
+        assert_eq!(model.row_data(1), Some(thread_row("c", "idle")));
+        assert_eq!(model.row_data(3), Some(thread_row("d", "idle")));
+        // Collapsing drops the middle run and shrinks the tail.
+        current.remove(1);
+        current.truncate(3);
+        apply_row_diff(&model, current.clone());
+        assert_eq!(model.row_count(), 3);
+        let ids: Vec<String> =
+            (0..model.row_count()).map(|i| model.row_data(i).unwrap().thread_id.into()).collect();
+        assert_eq!(ids, ["a", "b", "d"]);
+        // A full swap (device switch) still converges.
+        let swapped = vec![thread_row("x", "idle"), thread_row("y", "idle"), thread_row("z", "idle")];
+        apply_row_diff(&model, swapped.clone());
+        let ids: Vec<String> =
+            (0..model.row_count()).map(|i| model.row_data(i).unwrap().thread_id.into()).collect();
+        assert_eq!(ids, ["x", "y", "z"]);
     }
 
     #[test]

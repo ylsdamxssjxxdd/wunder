@@ -226,6 +226,15 @@ thread_local! {
 /// meant to have. It stays quiet while the window is hidden (tray / minimised)
 /// or the cloud surface owns the list: a window nobody is looking at must not
 /// wake the runtime for nothing.
+/// Whether any sidebar row is still live (running, queued, parked). A thread
+/// running in the background can settle at any moment, so while one exists the
+/// catalogue poll must use the fast cadence rather than the idle backstop.
+fn any_live_row(app: &MainWindow) -> bool {
+    app.get_conversations()
+        .iter()
+        .any(|row| crate::runtime_phase::Phase::from_code(row.runtime_phase).live())
+}
+
 fn start_status_poll(app: &MainWindow) {
     let weak = app.as_weak();
     STATUS_POLL.with(|timer| {
@@ -238,7 +247,11 @@ fn start_status_poll(app: &MainWindow) {
             }
             // A live local turn changes the sidebar several times per second;
             // an idle window only needs the slow backstop.
-            let interval = if app.get_busy() { POLL_BUSY } else { POLL_IDLE };
+            let interval = if app.get_busy() || any_live_row(&app) {
+                POLL_BUSY
+            } else {
+                POLL_IDLE
+            };
             let due = STATUS_POLL_LAST.with(|slot| {
                 let mut slot = slot.borrow_mut();
                 let due = slot.is_none_or(|last: Instant| last.elapsed() >= interval);
@@ -277,7 +290,10 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
         // per second. Keep the catalogue as a bounded backstop at a
         // faster cadence while work is active; the direct event
         // projection remains the primary path for the selected row.
-        let refresh_interval = if current.active.is_some() || !current.parked.is_empty() {
+        let refresh_interval = if current.active.is_some()
+            || !current.parked.is_empty()
+            || any_live_row(&app)
+        {
             Duration::from_millis(500)
         } else {
             Duration::from_secs(3)

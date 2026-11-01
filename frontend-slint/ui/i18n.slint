@@ -971,8 +971,8 @@ export global I18n {
     out property <string> stc_tools_note: zh ? "内置工具、MCP、知识库与资源" : "Built-in tools, MCP, knowledge bases and resources";
     out property <string> stc_agent: zh ? "智能体设置" : "Agent";
     out property <string> stc_agent_note: zh ? "内置智能体的提示词与工具" : "Built-in agent prompt and tools";
-    out property <string> stc_pet: zh ? "桌宠" : "Companion";
-    out property <string> stc_pet_note: zh ? "桌宠形象、缩放与气泡提示" : "Companion avatar, scale and bubble hints";
+    out property <string> stc_pet: zh ? "伙伴" : "Companion";
+    out property <string> stc_pet_note: zh ? "伙伴形象、缩放与气泡提示" : "Companion avatar, scale and bubble hints";
     out property <string> stc_cron: zh ? "定时任务" : "Scheduled tasks";
     out property <string> stc_cron_note: zh ? "按计划触发的任务与运行记录" : "Scheduled jobs and their runs";
     out property <string> stc_memory: zh ? "记忆碎片" : "Memories";
@@ -1035,14 +1035,14 @@ export global I18n {
     out property <string> stc_runs_duration: zh ? "累计运行" : "Total runtime";
     out property <string> stc_runs_tokens: zh ? "累计令牌" : "Total tokens";
     out property <string> stc_runs_calls: zh ? "工具调用" : "Tool calls";
-    out property <string> pet_behavior: zh ? "桌宠行为" : "Companion behavior";
+    out property <string> pet_behavior: zh ? "伙伴行为" : "Companion behavior";
     out property <string> pet_behavior_note: zh ? "开关即时保存，动画随线程运行状态联动。" : "Changes save instantly; animation follows thread state.";
     out property <string> pet_show: zh ? "动画形象" : "Companion avatar";
     out property <string> pet_show_note: zh ? "在桌面显示已选形象。" : "Show the selected companion on the desktop.";
     out property <string> pet_hints: zh ? "形象消息提示" : "Message hints";
     out property <string> pet_hints_note: zh ? "让形象显示必要的简短状态信息。" : "Let the companion show brief status hints.";
     out property <string> pet_scale: zh ? "大小" : "Size";
-    out property <string> pet_scale_note: zh ? "拖动滑块调整桌宠大小，范围 0.5–1.6。" : "Drag to resize the pet; range 0.5–1.6.";
+    out property <string> pet_scale_note: zh ? "拖动滑块调整伙伴大小，范围 0.5–1.6。" : "Drag to resize the pet; range 0.5–1.6.";
     out property <string> pet_library_title: zh ? "形象库" : "Library";
     public pure function pet_library_subtitle(count: string) -> string { return zh ? "形象库共 " + count + " 个形象。" : "" + count + " companions in the library."; }
     out property <string> pet_library_empty: zh ? "还没有形象包，先导入一个。" : "No packages yet — import one to begin.";
@@ -1173,6 +1173,7 @@ export global I18n {
     out property <string> st_upd_staged_cli: zh ? "新版本已下载完成，应用后生效" : "Update downloaded; apply it to take effect";
     out property <string> st_upd_staged_supplement: zh ? "新补充包已下载完成，导入后生效" : "Supplement downloaded; import it to take effect";
     out property <string> st_upd_not_installed: zh ? "未安装" : "not installed";
+    out property <string> st_upd_local_prefix: zh ? "（本地 " : "(local ";
     out property <string> st_stress_title: zh ? "线程渲染压测" : "Thread render stress";
     out property <string> st_stress_note: zh ? "在本地库生成一条模拟线程，验证消息呈现与长列表性能。" : "Generates one synthetic local thread to verify message rendering and long-list performance.";
     out property <string> st_stress_user_rounds: zh ? "用户轮次" : "User rounds";

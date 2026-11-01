@@ -78,7 +78,7 @@ impl UpdateOffering {
 
 /// Release directory below the configured storage data root. Missing
 /// configuration or a missing directory degrades to "no releases published".
-async fn releases_dir(state: &AppState) -> Option<PathBuf> {
+pub(crate) async fn releases_dir(state: &AppState) -> Option<PathBuf> {
     let config = state.config_store.get().await;
     let root = config.storage.data_root.trim();
     if root.is_empty() {
@@ -87,7 +87,7 @@ async fn releases_dir(state: &AppState) -> Option<PathBuf> {
     Some(PathBuf::from(root).join("releases"))
 }
 
-async fn load_manifest(state: &AppState) -> Result<ReleaseManifest, Response> {
+pub(crate) async fn load_manifest(state: &AppState) -> Result<ReleaseManifest, Response> {
     let Some(dir) = releases_dir(state).await else {
         return Err(unavailable_error());
     };

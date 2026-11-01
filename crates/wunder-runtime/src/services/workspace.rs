@@ -702,7 +702,10 @@ impl WorkspaceManager {
         if self.single_root {
             // 本地形态（CLI/蛹）没有 /workspaces 公共路由，模型引用与前端渲染
             // 都直接使用本地绝对路径，避免云端公共路径形态泄漏到本地会话。
-            return normalized_target.to_string_lossy().replace('\\', "/");
+            // canonicalize 会带出 Windows verbatim 前缀，展示路径必须剥掉，
+            // 否则 `//?/` 开头的来源会被前端分类器当作网络路径拒绝。
+            return strip_windows_verbatim_prefix(&normalized_target.to_string_lossy())
+                .replace('\\', "/");
         }
         let public_physical_root = self.public_physical_root(user_id);
         let normalized_user_root = normalize_target_path(&public_physical_root);
@@ -719,7 +722,7 @@ impl WorkspaceManager {
             }
             return text;
         }
-        normalized_target.to_string_lossy().to_string()
+        strip_windows_verbatim_prefix(&normalized_target.to_string_lossy()).to_string()
     }
 
     pub fn map_public_path(&self, user_id: &str, target: &Path) -> Option<PathBuf> {

@@ -6,7 +6,8 @@ export function state(value) {
   const p = (t) => (value["p" + t] === "live" ? "运行中" : "已完成");
   const sel = value.active === "A" ? "A" : "B";
   const vis = value.observable ? "窗口可见" : "窗口隐藏";
-  return `实际 A ${d("A")}、B ${d("B")}；条目 A ${p("A")}、B ${p("B")}；选中 ${sel}；${vis}`;
+  const fence = value.fB ? "；B 有残留本地标记" : "";
+  return `实际 A ${d("A")}、B ${d("B")}；条目 A ${p("A")}、B ${p("B")}；选中 ${sel}；${vis}${fence}`;
 }
 
 export function step(action) {
@@ -28,7 +29,7 @@ export function step(action) {
 export function cause(value, facts, invariant) {
   return {
     BackgroundSettledIsShown:
-      "B 在后台结束，但目录刷新只由被选中线程的观察器触发，B 的条目停在运行中，直到读者切回 B",
+      "线程 B 在后台结束，但上一轮本地留下的运行中标记仍在栅栏里，目录返回的已完成被拒绝，B 的条目停在运行中，直到读者切回 B",
   }[invariant];
 }
 

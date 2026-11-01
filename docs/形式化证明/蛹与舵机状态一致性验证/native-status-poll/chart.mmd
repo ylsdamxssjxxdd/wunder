@@ -26,52 +26,84 @@ stateDiagram-v2
   class legendWorks works
   class legendFixed fixed
   state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>已完成；选中 A；窗口可见" as s0
-  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>已完成；选中 A；窗口隐藏" as s1
-  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>已完成；选中 B；窗口可见" as s2
-  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>已完成；选中 B；窗口隐藏" as s3
-  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>运行中；选中 A；窗口可见" as s4
-  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>运行中；选中 A；窗口隐藏" as s5
-  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>运行中；选中 B；窗口可见" as s6
-  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>运行中；选中 B；窗口隐藏" as s7
-  state "实际 A 已完成、B 已完成；条目 A 运行中、B<br/>已完成；选中 B；窗口可见" as s8
-  state "实际 A 已完成、B 已完成；条目 A 运行中、B<br/>已完成；选中 B；窗口隐藏" as s9
-  state "实际 A 已完成、B 已完成；条目 A 运行中、B<br/>运行中；选中 B；窗口可见" as s10
-  state "实际 A 已完成、B 已完成；条目 A 运行中、B<br/>运行中；选中 B；窗口隐藏" as s11
-  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 A；窗口可见" as s12
-  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 A；窗口隐藏" as s13
-  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 B；窗口可见" as s14
-  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 B；窗口隐藏" as s15
-  state "实际 A 已完成、B 运行中；条目 A 运行中、B<br/>运行中；选中 B；窗口可见" as s16
-  state "实际 A 已完成、B 运行中；条目 A 运行中、B<br/>运行中；选中 B；窗口隐藏" as s17
-  state "实际 A 运行中、B 运行中；条目 A 运行中、B<br/>运行中；选中 A；窗口可见" as s18
-  state "实际 A 运行中、B 运行中；条目 A 运行中、B<br/>运行中；选中 B；窗口可见" as s19
-  state "实际 A 运行中、B 运行中；条目 A 运行中、B<br/>运行中；选中 B；窗口隐藏" as s20
-  [*] --> s12
-  s12 --> s18 : 向线程 A 发送一条消息
-  s12 --> s14 : 切换到线程 B
-  s12 --> s13 : 窗口失去侧栏（隐藏，或被云端接管）
-  s12 --> s4 : 线程 B 在后台跑完（无本地操作）
-  s18 --> s19 : 切换到线程 B
-  s14 --> s15 : 窗口失去侧栏（隐藏，或被云端接管）
-  s14 --> s6 : 线程 B 在后台跑完（无本地操作）
-  s13 --> s5 : 线程 B 在后台跑完（无本地操作）
-  s19 --> s20 : 窗口失去侧栏（隐藏，或被云端接管）
-  s19 --> s16 : 线程 A 在后台跑完（无本地操作）
-  s15 --> s7 : 线程 B 在后台跑完（无本地操作）
-  s6 --> s2 : B 的观察器把 B 的实际相位写入 B 的条目
-  s20 --> s17 : 线程 A 在后台跑完（无本地操作）
-  s16 --> s10 : 线程 B 在后台跑完（无本地操作）
-  s7 --> s3 : B 的观察器把 B 的实际相位写入 B 的条目
-  s2 --> s0 : 切换到线程 A
-  s17 --> s11 : 线程 B 在后台跑完（无本地操作）
-  s10 --> s8 : B 的观察器把 B 的实际相位写入 B 的条目
-  s3 --> s1 : 切换到线程 A
-  s11 --> s9 : B 的观察器把 B 的实际相位写入 B 的条目
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>已完成；选中 A；窗口可见；B 有残留本地标记" as s1
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>已完成；选中 A；窗口隐藏" as s2
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>已完成；选中 A；窗口隐藏；B 有残留本地标记" as s3
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>已完成；选中 B；窗口可见" as s4
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>已完成；选中 B；窗口可见；B 有残留本地标记" as s5
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>已完成；选中 B；窗口隐藏" as s6
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>已完成；选中 B；窗口隐藏；B 有残留本地标记" as s7
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>运行中；选中 A；窗口可见；B 有残留本地标记" as s8
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>运行中；选中 A；窗口隐藏" as s9
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>运行中；选中 A；窗口隐藏；B 有残留本地标记" as s10
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>运行中；选中 B；窗口可见；B 有残留本地标记" as s11
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>运行中；选中 B；窗口隐藏；B 有残留本地标记" as s12
+  state "实际 A 已完成、B 已完成；条目 A 运行中、B<br/>已完成；选中 B；窗口可见" as s13
+  state "实际 A 已完成、B 已完成；条目 A 运行中、B<br/>已完成；选中 B；窗口可见；B 有残留本地标记" as s14
+  state "实际 A 已完成、B 已完成；条目 A 运行中、B<br/>已完成；选中 B；窗口隐藏" as s15
+  state "实际 A 已完成、B 已完成；条目 A 运行中、B<br/>已完成；选中 B；窗口隐藏；B 有残留本地标记" as s16
+  state "实际 A 已完成、B 已完成；条目 A 运行中、B<br/>运行中；选中 A；窗口可见；B 有残留本地标记" as s17
+  state "实际 A 已完成、B 已完成；条目 A 运行中、B<br/>运行中；选中 A；窗口隐藏；B 有残留本地标记" as s18
+  state "实际 A 已完成、B 已完成；条目 A 运行中、B<br/>运行中；选中 B；窗口可见；B 有残留本地标记" as s19
+  state "实际 A 已完成、B 已完成；条目 A 运行中、B<br/>运行中；选中 B；窗口隐藏；B 有残留本地标记" as s20
+  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 A；窗口可见" as s21
+  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 A；窗口可见；B 有残留本地标记" as s22
+  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 A；窗口隐藏" as s23
+  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 A；窗口隐藏；B 有残留本地标记" as s24
+  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 B；窗口可见" as s25
+  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 B；窗口可见；B 有残留本地标记" as s26
+  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 B；窗口隐藏；B 有残留本地标记" as s27
+  state "实际 A 已完成、B 运行中；条目 A 运行中、B<br/>运行中；选中 A；窗口可见；B 有残留本地标记" as s28
+  state "实际 A 已完成、B 运行中；条目 A 运行中、B<br/>运行中；选中 A；窗口隐藏；B 有残留本地标记" as s29
+  state "实际 A 已完成、B 运行中；条目 A 运行中、B<br/>运行中；选中 B；窗口可见；B 有残留本地标记" as s30
+  state "实际 A 已完成、B 运行中；条目 A 运行中、B<br/>运行中；选中 B；窗口隐藏；B 有残留本地标记" as s31
+  state "实际 A 运行中、B 运行中；条目 A 运行中、B<br/>运行中；选中 A；窗口可见；B 有残留本地标记" as s32
+  state "实际 A 运行中、B 运行中；条目 A 运行中、B<br/>运行中；选中 A；窗口隐藏；B 有残留本地标记" as s33
+  state "实际 A 运行中、B 运行中；条目 A 运行中、B<br/>运行中；选中 B；窗口可见" as s34
+  state "实际 A 运行中、B 运行中；条目 A 运行中、B<br/>运行中；选中 B；窗口可见；B 有残留本地标记" as s35
+  state "实际 A 运行中、B 运行中；条目 A 运行中、B<br/>运行中；选中 B；窗口隐藏；B 有残留本地标记" as s36
+  [*] --> s22
+  s22 --> s32 : 向线程 A 发送一条消息
+  s22 --> s25 : 切换到线程 B
+  s22 --> s24 : 窗口失去侧栏（隐藏，或被云端接管）
+  s22 --> s8 : 线程 B 在后台跑完（无本地操作）
+  s32 --> s34 : 切换到线程 B
+  s32 --> s33 : 窗口失去侧栏（隐藏，或被云端接管）
+  s32 --> s28 : 线程 A 在后台跑完（无本地操作）
+  s25 --> s26 : 向线程 B 发送一条消息
+  s25 --> s21 : 切换到线程 A
+  s24 --> s10 : 线程 B 在后台跑完（无本地操作）
+  s8 --> s4 : 切换到线程 B
+  s34 --> s35 : 向线程 B 发送一条消息
+  s33 --> s29 : 线程 A 在后台跑完（无本地操作）
+  s28 --> s17 : 线程 B 在后台跑完（无本地操作）
+  s26 --> s27 : 窗口失去侧栏（隐藏，或被云端接管）
+  s26 --> s11 : 线程 B 在后台跑完（无本地操作）
+  s21 --> s23 : 窗口失去侧栏（隐藏，或被云端接管）
+  s10 --> s6 : 切换到线程 B
+  s4 --> s0 : 切换到线程 A
+  s35 --> s36 : 窗口失去侧栏（隐藏，或被云端接管）
+  s35 --> s30 : 线程 A 在后台跑完（无本地操作）
+  s29 --> s18 : 线程 B 在后台跑完（无本地操作）
+  s17 --> s13 : 切换到线程 B
+  s27 --> s12 : 线程 B 在后台跑完（无本地操作）
+  s11 --> s5 : B 的观察器把 B 的实际相位写入 B 的条目
+  s23 --> s9 : 线程 B 在后台跑完（无本地操作）
+  s6 --> s2 : 切换到线程 A
+  s36 --> s31 : 线程 A 在后台跑完（无本地操作）
+  s30 --> s19 : 线程 B 在后台跑完（无本地操作）
+  s18 --> s15 : 切换到线程 B
+  s12 --> s7 : B 的观察器把 B 的实际相位写入 B 的条目
+  s5 --> s1 : 切换到线程 A
+  s31 --> s20 : 线程 B 在后台跑完（无本地操作）
+  s19 --> s14 : B 的观察器把 B 的实际相位写入 B 的条目
+  s7 --> s3 : 切换到线程 A
+  s20 --> s16 : B 的观察器把 B 的实际相位写入 B 的条目
   class s0 works
   class s1 works
   class s2 works
   class s3 works
-  class s4 fixed
+  class s4 works
   class s5 works
   class s6 works
   class s7 works
@@ -80,11 +112,27 @@ stateDiagram-v2
   class s10 works
   class s11 works
   class s12 works
-  class s13 works
-  class s14 works
+  class s13 fixed
+  class s14 fixed
   class s15 works
   class s16 works
   class s17 works
   class s18 works
   class s19 works
   class s20 works
+  class s21 works
+  class s22 works
+  class s23 works
+  class s24 works
+  class s25 works
+  class s26 works
+  class s27 works
+  class s28 works
+  class s29 works
+  class s30 works
+  class s31 works
+  class s32 works
+  class s33 works
+  class s34 works
+  class s35 works
+  class s36 works

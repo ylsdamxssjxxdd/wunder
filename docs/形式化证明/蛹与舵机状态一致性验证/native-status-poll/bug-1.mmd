@@ -25,8 +25,8 @@ stateDiagram-v2
   }
   class legendWorks works
   class legendFixed fixed
-  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>运行中；选中 A；窗口可见" as s0
-  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 A；窗口可见" as s1
+  state "实际 A 已完成、B 已完成；条目 A 已完成、B<br/>运行中；选中 A；窗口可见；B 有残留本地标记" as s0
+  state "实际 A 已完成、B 运行中；条目 A 已完成、B<br/>运行中；选中 A；窗口可见；B 有残留本地标记" as s1
   [*] --> s1
   s1 --> s0 : 1. 线程 B 在后台跑完（无本地操作）
   class s0 fixedPath

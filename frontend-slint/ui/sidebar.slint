@@ -139,12 +139,6 @@ component ThreadRow inherits ContextMenuArea {
         background: data.active ? Theme.selected : transparent;
     }
 
-    // Tree connector line linking the thread to its workspace row: 掉在工作区
-    // 图标中心（行内距 + 半个图标底）上，与工作区行的图标列同一条竖线。
-    Rectangle {
-        x: SidebarMetrics.row-padding + SidebarMetrics.icon-tile / 2;
-        y: 0px; width: 1px; height: parent.height; background: Theme.border;
-    }
     HorizontalLayout {
         // 只缩进一格：状态点落在 28px（28-12=16 行内坐标），标题接上工作区标题列；
         // 多选时让开 15px 勾选框。

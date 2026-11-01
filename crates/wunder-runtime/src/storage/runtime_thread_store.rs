@@ -257,6 +257,13 @@ impl RuntimeAdmissions {
             Self::Postgres(a) => a.pending(t, id),
         }
     }
+    pub fn refresh_pending_input_attachments(&self, t: &str, id: &str, a: Value) -> Result<bool> {
+        match self {
+            Self::Local(store) => store.refresh_pending_input_attachments(t, id, a),
+            #[cfg(feature = "postgres-storage")]
+            Self::Postgres(store) => store.refresh_pending_input_attachments(t, id, a),
+        }
+    }
     pub fn update_with_control(
         &self,
         t: &str,

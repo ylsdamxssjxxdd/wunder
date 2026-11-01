@@ -453,6 +453,52 @@ impl PostgresAdmissionStore {
         .transpose()
     }
 
+    /// 附件持久化完成后刷新仍挂着的受理正文（与本地 TurnAdmissions 同语义），
+    /// 让物化的用户消息项携带已落盘的公共路径而不是内联数据。
+    pub(crate) fn refresh_pending_input_attachments(
+        &self,
+        thread: &str,
+        turn: &str,
+        attachments: Value,
+    ) -> Result<bool> {
+        let mut c = self.conn()?;
+        let mut tx = c.transaction()?;
+        Self::lock_thread(&mut tx, thread)?;
+        let row = tx.query_opt(
+            "SELECT status,input_json FROM service_thread_admissions WHERE thread_id=$1 AND turn_id=$2 FOR UPDATE",
+            &[&thread, &turn],
+        )?;
+        let Some(row) = row else {
+            return Ok(false);
+        };
+        let status: String = row.get(0);
+        if !TurnAdmissions::can_transition(&status, "running") {
+            return Ok(false);
+        }
+        let Some(raw) = row.get::<_, Option<String>>(1) else {
+            return Ok(false);
+        };
+        let mut body: Value = serde_json::from_str(&raw)?;
+        let Some(fields) = body.as_object_mut() else {
+            return Ok(false);
+        };
+        fields.insert("attachments".into(), attachments);
+        let updated = tx
+            .execute(
+                "UPDATE service_thread_admissions SET input_json=$3,updated_at_ms=$4
+                 WHERE thread_id=$1 AND turn_id=$2 AND input_json IS NOT NULL",
+                &[
+                    &thread,
+                    &turn,
+                    &serde_json::to_string(&body)?,
+                    &chrono::Utc::now().timestamp_millis(),
+                ],
+            )?
+            > 0;
+        tx.commit()?;
+        Ok(updated)
+    }
+
     pub(crate) fn find_turn(&self, thread: &str, round: i64) -> Result<Option<String>> {
         let mut c = self.conn()?;
         Ok(c.query_opt("SELECT turn_id FROM service_thread_admissions WHERE thread_id=$1 AND user_round=$2 AND turn_id=root_turn_id", &[&thread,&round])?.map(|row|row.get(0)))

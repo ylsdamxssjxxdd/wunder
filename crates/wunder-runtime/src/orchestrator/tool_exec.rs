@@ -1175,7 +1175,7 @@ impl Orchestrator {
     }
 }
 
-fn build_history_attachments(attachments: &[AttachmentPayload]) -> Option<Value> {
+pub(super) fn build_history_attachments(attachments: &[AttachmentPayload]) -> Option<Value> {
     if attachments.is_empty() {
         return None;
     }

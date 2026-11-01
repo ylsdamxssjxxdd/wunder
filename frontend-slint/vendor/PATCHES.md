@@ -67,6 +67,20 @@ Ported from the 1.17.1 patch set with these upstream changes:
   run `cargo update -p const-field-offset` after upgrading.
 - 1.18 deprecates the `viewport-*` Flickable/ListView properties in favour of
   `content-*`. The workbench UI has been renamed to `content-*` throughout.
+- `i-slint-core` `model/repeater.rs` ListView virtualization: the scroll
+  anchor (`RepeaterLayoutState::anchor_y`) is now the exact running sum of
+  the row heights above the window, maintained incrementally with the
+  measured heights of the rows the window moves past (walk-down, prepend)
+  instead of being rewritten every pass as `cached_item_height × offset`,
+  and `content-height` composes the exact prefix plus window plus an
+  estimate for the rows below. A uniform average over the mixed row pitch
+  of the workbench trees (32 px threads vs 36 px group headers) shifted the
+  content by `Δaverage × offset` on every pass — invisible under ~30 rows
+  and a visible jump beyond ~50 — and overestimated totals made the
+  end-of-model "scroll up" correction snap the bottom of the list upward.
+  Seeks past unmeasured rows and row insert/remove notifications above the
+  window still estimate with `cached_item_height`, then stay exact while
+  scrolling contiguously.
 
 The remaining 1.17 patch intents (gb2312 tiered embedding, bitmap-strike
 embedding preference, ASCII subpixel packing, 1bpp packed glyphs + LRU,
