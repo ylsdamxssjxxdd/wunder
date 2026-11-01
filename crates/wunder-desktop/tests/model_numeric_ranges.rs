@@ -4,7 +4,32 @@
 //! what actually enforces it. These cases pin the bounds so a panel that starts
 //! accepting an out-of-range value fails here instead of at run time.
 
+use std::sync::{Mutex, OnceLock};
 use wunder_desktop::ModelEdit;
+
+/// One runtime per home at a time: the second initializer in the same home
+/// races the default-user seed.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Config, settings and the database all live under `WUNDER_HOME`; point it at
+/// a throw-away directory so a model save never edits the developer's real
+/// model list.
+fn isolated_home() -> &'static std::path::Path {
+    static HOME: OnceLock<std::path::PathBuf> = OnceLock::new();
+    HOME.get_or_init(|| {
+        let directory = tempfile::tempdir().expect("temp home");
+        let path = directory.path().to_path_buf();
+        std::env::set_var("WUNDER_HOME", &path);
+        std::mem::forget(directory);
+        path
+    })
+}
 
 fn edit<'a>(temperature: &'a str, timeout_s: &'a str, image_steps: &'a str) -> ModelEdit<'a> {
     ModelEdit {
@@ -22,28 +47,28 @@ fn edit<'a>(temperature: &'a str, timeout_s: &'a str, image_steps: &'a str) -> M
 }
 
 fn save(edit: ModelEdit<'_>) -> anyhow::Result<wunder_desktop::DesktopSettings> {
-    let directory = tempfile::tempdir()?;
-    let config = directory.path().join("runtime/config");
+    let home = isolated_home();
+    let config = home.join("config");
     std::fs::create_dir_all(&config)?;
     std::fs::write(config.join("wunder.yaml"), "{}\n")?;
+    let settings = serde_json::json!({
+        "workspace_root": "", "desktop_token": "", "updated_at": 0,
+        "lan_mesh": {"enabled": false}
+    });
     std::fs::write(
         config.join("desktop.settings.json"),
-        serde_json::to_vec(&serde_json::json!({
-            "workspace_root": "", "desktop_token": "", "updated_at": 0,
-            "lan_mesh": {"enabled": false},
-            "llm": {"default": "test-model", "models": {}}
-        }))?,
+        serde_json::to_vec(&settings)?,
     )?;
     let mut args = wunder_desktop::args::DesktopArgs::native_defaults();
-    args.temp_root = Some(directory.path().join("runtime").canonicalize()?);
-    args.workspace = Some(directory.path().join("workspace"));
-    std::mem::forget(directory);
+    args.temp_root = Some(home.join("temp"));
+    args.workspace = Some(home.join("workspace"));
     let runtime = wunder_desktop::NativeDesktop::start_with_args(args)?;
     runtime.save_model(edit)
 }
 
 #[test]
 fn temperature_outside_zero_to_two_is_refused() {
+    let _serial = serial();
     let refused = save(edit("3.5", "", ""));
     assert!(
         refused.is_err(),
@@ -57,6 +82,7 @@ fn temperature_outside_zero_to_two_is_refused() {
 
 #[test]
 fn a_non_numeric_numeric_field_is_refused() {
+    let _serial = serial();
     assert!(
         save(edit("", "soon", "")).is_err(),
         "timeout must be numeric"
@@ -69,6 +95,7 @@ fn a_non_numeric_numeric_field_is_refused() {
 
 #[test]
 fn an_empty_numeric_field_keeps_the_model_default() {
+    let _serial = serial();
     let settings = save(edit("", "", "")).expect("blank fields mean 'use the model default'");
     let saved = settings
         .models

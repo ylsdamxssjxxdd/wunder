@@ -3,23 +3,44 @@
 //! behaviour the web API provides, independent of the chat streaming smoke.
 
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 use wunder_desktop::{
     args::DesktopArgs, NativeChannelAccountEdit, NativeChannelBindingEdit, NativeDesktop,
 };
 
+/// One runtime per home at a time: the second initializer in the same home
+/// races the default-user seed.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Config, settings and the database all live under `WUNDER_HOME`; point it at
+/// a throw-away directory so these tests never touch the developer's real
+/// home.
+fn isolated_home() -> &'static std::path::Path {
+    static HOME: OnceLock<std::path::PathBuf> = OnceLock::new();
+    HOME.get_or_init(|| {
+        let directory = tempfile::tempdir().expect("temp home");
+        let path = directory.path().to_path_buf();
+        std::env::set_var("WUNDER_HOME", &path);
+        std::mem::forget(directory);
+        path
+    })
+}
+
 fn prepare_runtime(directory: &Path) -> std::io::Result<()> {
-    let config = directory.join("runtime/config");
+    let config = directory.join("config");
     std::fs::create_dir_all(&config)?;
     std::fs::write(config.join("wunder.yaml"), "{}\n")?;
     let settings = serde_json::json!({
         "workspace_root": "",
         "desktop_token": "",
         "updated_at": 0,
-        "lan_mesh": {"enabled": false},
-        "llm": {"default": "test-model", "models": {
-            "test-model": {"provider": "openai", "model": "test-model", "model_type": "llm",
-                           "base_url": "http://127.0.0.1:9/v1", "timeout_s": 5,
-                           "support_vision": false}}}
+        "lan_mesh": {"enabled": false}
     });
     std::fs::write(
         config.join("desktop.settings.json"),
@@ -29,16 +50,12 @@ fn prepare_runtime(directory: &Path) -> std::io::Result<()> {
 }
 
 fn start_isolated() -> Result<NativeDesktop, Box<dyn std::error::Error>> {
-    let directory = tempfile::tempdir()?;
-    prepare_runtime(directory.path())?;
+    let home = isolated_home();
+    prepare_runtime(home)?;
     let mut args = DesktopArgs::native_defaults();
-    args.temp_root = Some(directory.path().join("runtime").canonicalize()?);
-    args.workspace = Some(directory.path().join("workspace"));
-    let runtime = NativeDesktop::start_with_args(args)?;
-    // Keep the tempdir alive for the whole test by leaking it; the isolated
-    // runtime owns open files inside it.
-    std::mem::forget(directory);
-    Ok(runtime)
+    args.temp_root = Some(home.join("temp"));
+    args.workspace = Some(home.join("workspace"));
+    Ok(NativeDesktop::start_with_args(args)?)
 }
 
 const TEST_SECRET: &str = "contract-secret-value-do-not-leak";
@@ -68,6 +85,7 @@ fn find_account<'a>(
 
 #[test]
 fn channel_account_roundtrip_keeps_secrets_write_only() {
+    let _serial = serial();
     let runtime = start_isolated().expect("isolated runtime");
 
     // Unsupported channels are rejected at the service boundary.
@@ -148,6 +166,7 @@ fn channel_account_roundtrip_keeps_secrets_write_only() {
 
 #[test]
 fn channel_toggle_and_binding_roundtrip() {
+    let _serial = serial();
     let runtime = start_isolated().expect("isolated runtime");
     let created = runtime
         .save_channel_account(&feishu_edit())
@@ -211,6 +230,7 @@ fn channel_toggle_and_binding_roundtrip() {
 
 #[test]
 fn channel_config_json_path_supports_schema_less_channels() {
+    let _serial = serial();
     let runtime = start_isolated().expect("isolated runtime");
     let edit = NativeChannelAccountEdit {
         channel: "qqbot".into(),
@@ -249,6 +269,7 @@ fn channel_config_json_path_supports_schema_less_channels() {
 
 #[test]
 fn weixin_qr_wait_rejects_unknown_session_offline() {
+    let _serial = serial();
     let runtime = start_isolated().expect("isolated runtime");
     let error = runtime
         .wait_weixin_qr_login("no-such-qr-session", 1_000)
@@ -262,6 +283,7 @@ fn weixin_qr_wait_rejects_unknown_session_offline() {
 
 #[test]
 fn weixin_qr_png_renders_locally_without_network() {
+    let _serial = serial();
     let runtime = start_isolated().expect("isolated runtime");
     let data_uri = runtime
         .weixin_qr_png_data_uri("wxqr_contract_payload")

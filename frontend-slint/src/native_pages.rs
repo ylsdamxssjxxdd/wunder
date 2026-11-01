@@ -146,10 +146,11 @@ fn bind_preferences_and_prompts(app: &MainWindow, api: Arc<NativeDesktop>) {
         let theme = app.get_runtime_theme().trim().to_string();
         let send_key = app.get_runtime_send_key().trim().to_string();
         let font_size = app.get_runtime_font_size().round() as i32;
+        let update_source = app.get_update_source().trim().to_string();
         let weak = app.as_weak();
         let api = prefs_api.clone();
         run_background(move || {
-            let result = api.save_preferences(&theme, &send_key, font_size);
+            let result = api.save_preferences(&theme, &send_key, font_size, &update_source);
             let _ = weak.upgrade_in_event_loop(move |app| {
                 app.set_saving(false);
                 match result {
@@ -821,22 +822,44 @@ fn profile_glyph(username: &str) -> String {
     }
 }
 
+/// Toggle one name inside the backing `VecModel` in place, keeping the model
+/// identity so repeaters and snapshots see a row change instead of a list
+/// swap. Returns `false` when the model is not a `VecModel` and the caller
+/// must rebuild it.
+fn toggle_name_in_model(selection: &ModelRc<slint::SharedString>, name: &str) -> bool {
+    let Some(names) = selection.as_any().downcast_ref::<VecModel<slint::SharedString>>() else {
+        return false;
+    };
+    if let Some(position) = names.iter().position(|value| value.as_str() == name) {
+        names.remove(position);
+    } else {
+        names.push(name.into());
+    }
+    true
+}
+
+/// Add or remove one tool name from the agent's selection model in place.
+fn toggle_agent_tool_selection(app: &MainWindow, name: &str) {
+    let selection = app.get_selected_agent_tool_names();
+    if toggle_name_in_model(&selection, name) {
+        return;
+    }
+    let mut names = selection.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+    if let Some(position) = names.iter().position(|value| value == name) {
+        names.remove(position);
+    } else {
+        names.push(name.to_string());
+    }
+    app.set_selected_agent_tool_names(string_model(names));
+}
+
 fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     app.on_toggle_agent_tool(move |name| {
         let Some(app) = weak.upgrade() else { return };
-        let mut names = app
-            .get_selected_agent_tool_names()
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>();
-        if let Some(pos) = names.iter().position(|value| value == name.as_str()) {
-            names.remove(pos);
-        } else {
-            names.push(name.to_string());
-        }
-        app.set_selected_agent_tool_names(string_model(names));
+        toggle_agent_tool_selection(&app, name.as_str());
         crate::entity_state::sync_tool_selection(&app);
+        crate::agent_editor::refresh_agent_dirty(&app);
         app.invoke_queue_agent_save();
     });
     let weak = app.as_weak();
@@ -870,17 +893,13 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
             }
         }
     });
-    // §9.3 agent form: the tool switches hand back a tool name, and the
-    // settings search box re-projects the tool list because Slint 1.18 strings
-    // have no substring test.
+    // §9.3 agent form: the tool switches hand back a tool name. All selection
+    // bookkeeping (model, enabled flags, dirty flag, live-save queue) lives in
+    // `toggle-agent-tool`; this entry only forwards.
     let weak = app.as_weak();
     app.on_toggle_agent_tool_option(move |name| {
         let Some(app) = weak.upgrade() else { return };
-        // The toggle owns the selection set; `sync_tool_selection` re-projects
-        // the card picker's enabled flags from it.
         app.invoke_toggle_agent_tool(name);
-        app.invoke_refresh_agent_dirty();
-        app.invoke_queue_agent_save();
     });
     let weak = app.as_weak();
     let refresh_api = api.clone();
@@ -1307,6 +1326,7 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     crate::help_browser::sync_language(&app);
     app.set_runtime_theme(settings.theme.clone().into());
     app.set_runtime_send_key(settings.send_key.into());
+    app.set_update_source(settings.update_source.into());
     app.set_runtime_font_size(settings.font_size as f32);
     // Theme tokens are bindings over the palette/font-scale globals, so the
     // whole shell re-renders in the new accent and chat font scale at once.
@@ -1576,11 +1596,45 @@ pub(crate) fn show_toast(app: &MainWindow, message: String, kind: i32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_palette, profile_brush, profile_glyph};
+    use super::{normalize_palette, profile_brush, profile_glyph, toggle_name_in_model};
 
     /// The backend default (`DEFAULT_AVATAR_COLOR` in `wunder-desktop`), which
     /// every unreadable preference falls back to.
     const DEFAULT_BRUSH: slint::Color = slint::Color::from_rgb_u8(0x3b, 0x82, 0xf6);
+
+    #[test]
+    fn tool_toggle_mutates_the_backing_vecmodel_instead_of_swapping_it() {
+        use slint::{Model, ModelExt, ModelRc, SharedString, VecModel};
+        let selection = ModelRc::new(VecModel::from(vec![
+            SharedString::from("read_file"),
+            SharedString::from("run_shell"),
+        ]));
+        let identity = selection.clone();
+        assert!(toggle_name_in_model(&selection, "web_search"));
+        assert!(toggle_name_in_model(&selection, "read_file"));
+        assert_eq!(
+            selection.iter().map(|v| v.to_string()).collect::<Vec<_>>(),
+            vec!["run_shell".to_string(), "web_search".to_string()]
+        );
+        // The model keeps its identity: a repeater bound to it must see row
+        // changes, never a list swap. `ModelRc` equality is pointer equality.
+        assert_eq!(selection, identity);
+        // Removing an existing name also happens in place; the result reports
+        // "mutated in place", not "the name is present".
+        assert!(toggle_name_in_model(&selection, "run_shell"));
+        assert_eq!(
+            selection.iter().map(|v| v.to_string()).collect::<Vec<_>>(),
+            vec!["web_search".to_string()]
+        );
+        // A non-VecModel cannot be mutated in place and asks for a rebuild.
+        let filtered = slint::ModelRc::new(
+            slint::VecModel::from(vec![SharedString::from("read_file")]).filter(
+                Box::new(|v: &SharedString| v.as_str() != "run_shell")
+                    as Box<dyn Fn(&SharedString) -> bool>,
+            ),
+        );
+        assert!(!toggle_name_in_model(&filtered, "web_search"));
+    }
 
     #[test]
     fn composer_catalogue_includes_nondefault_llms_and_excludes_drafts_and_disabled_models() {

@@ -300,7 +300,7 @@ pub enum AdmissionDecision {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-struct CloudIdentity {
+pub(crate) struct CloudIdentity {
     user_id: String,
     is_admin: bool,
     family_id: Option<String>,
@@ -311,7 +311,7 @@ fn is_local_scope(scope: &str) -> bool {
     scope == SCOPE_LOCAL_DESKTOP || scope == SCOPE_LOCAL_CLI
 }
 
-async fn authenticate_cloud(
+pub(crate) async fn authenticate_cloud(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<CloudIdentity, Response> {
@@ -360,7 +360,7 @@ async fn authenticate_cloud_with_registration(
     })
 }
 
-async fn require_cloud_enabled(state: &AppState) -> Result<(), Response> {
+pub(crate) async fn require_cloud_enabled(state: &AppState) -> Result<(), Response> {
     let config = state.config_store.get().await;
     if config.cloud.enabled {
         return Ok(());

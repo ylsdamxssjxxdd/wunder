@@ -55,7 +55,7 @@ export const SETTINGS_CATEGORY_IDS: SettingsCategoryId[] = [
 
 const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
   general: {
-    icon: 'fa-solid fa-gear',
+    icon: 'svg:sliders-horizontal',
     titleKey: 'messenger.settingsPage.cat.general.title',
     keywords: [
       '常规',
@@ -87,7 +87,7 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
     ]
   },
   account: {
-    icon: 'fa-solid fa-id-card',
+    icon: 'svg:circle-user-round',
     titleKey: 'messenger.settingsPage.cat.account.title',
     keywords: [
       '账号',
@@ -112,22 +112,22 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
     ]
   },
   tools: {
-    icon: 'fa-solid fa-screwdriver-wrench',
+    icon: 'svg:tools',
     titleKey: 'messenger.settingsPage.cat.tools.title',
     keywords: ['工具', '技能', '知识库', '脚本', 'tool', 'skill', 'knowledge', 'mcp']
   },
   agent: {
-    icon: 'fa-solid fa-robot',
+    icon: 'svg:bot',
     titleKey: 'messenger.settingsPage.cat.agent.title',
     keywords: ['智能体', '提示词', '欢迎语', '审批', '行为', 'agent', 'prompt', 'approval']
   },
   companion: {
-    icon: 'fa-solid fa-paw',
+    icon: 'svg:paw-print',
     titleKey: 'messenger.settingsPage.cat.companion.title',
-    keywords: ['桌宠', '形象', '动画', '缩放', '气泡', 'companion', 'avatar', 'sprite', 'pet']
+    keywords: ['伙伴', '桌宠', '形象', '动画', '缩放', '气泡', 'companion', 'avatar', 'sprite', 'pet']
   },
   cron: {
-    icon: 'fa-solid fa-clock',
+    icon: 'svg:clock',
     titleKey: 'messenger.settingsPage.cat.cron.title',
     keywords: ['定时', '计划', '任务', 'cron', 'schedule']
   },
@@ -137,12 +137,12 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
     keywords: ['记忆', '碎片', 'memory']
   },
   channels: {
-    icon: 'fa-solid fa-plug',
+    icon: 'svg:plug',
     titleKey: 'messenger.settingsPage.cat.channels.title',
     keywords: ['渠道', '扫码', '绑定', '重连', 'channel', 'qr', 'bind']
   },
   devices: {
-    icon: 'fa-solid fa-satellite-dish',
+    icon: 'svg:satellite-dish',
     titleKey: 'messenger.settingsPage.cat.devices.title',
     keywords: [
       '设备',
@@ -158,12 +158,12 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
     ]
   },
   prompts: {
-    icon: 'fa-solid fa-file-lines',
+    icon: 'svg:file-text',
     titleKey: 'messenger.settingsPage.cat.prompts.title',
     keywords: ['提示词包', '分段', 'prompt pack', 'prompts']
   },
   archived: {
-    icon: 'fa-solid fa-box-archive',
+    icon: 'svg:archive',
     titleKey: 'messenger.settingsPage.cat.archived.title',
     keywords: ['归档', '线程', '恢复', 'archive', 'thread']
   }

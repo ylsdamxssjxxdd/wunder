@@ -5,29 +5,56 @@
 //! must report every one of them back. A façade that cannot persist one of
 //! these fields leaves the settings form silently lossy.
 
+use std::sync::{Mutex, OnceLock};
 use wunder_desktop::{args::DesktopArgs, NativeDesktop};
 
+/// One runtime per home at a time: the second initializer in the same home
+/// races the default-user seed.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Config, settings and the database all live under `WUNDER_HOME`; point it at
+/// a throw-away directory so these tests never touch the developer's real
+/// home. The engine config file is the source of truth for the model
+/// catalogue; JSON is valid YAML so the fixture keeps a single document.
+fn isolated_home() -> &'static std::path::Path {
+    static HOME: OnceLock<std::path::PathBuf> = OnceLock::new();
+    HOME.get_or_init(|| {
+        let directory = tempfile::tempdir().expect("temp home");
+        let path = directory.path().to_path_buf();
+        std::env::set_var("WUNDER_HOME", &path);
+        std::mem::forget(directory);
+        path
+    })
+}
+
 fn start_isolated() -> Result<NativeDesktop, Box<dyn std::error::Error>> {
-    let directory = tempfile::tempdir()?;
-    let config = directory.path().join("runtime/config");
+    let home = isolated_home();
+    let config = home.join("config");
     std::fs::create_dir_all(&config)?;
-    std::fs::write(config.join("wunder.yaml"), "{}\n")?;
-    let settings = serde_json::json!({
-        "workspace_root": "", "desktop_token": "", "updated_at": 0,
-        "lan_mesh": {"enabled": false},
+    let engine_config = serde_json::json!({
         "llm": {"default": "test-model", "models": {
             "test-model": {"provider": "openai", "model": "test-model", "model_type": "llm",
                            "base_url": "http://127.0.0.1:9/v1", "timeout_s": 5,
                            "support_vision": false}}}
+    });
+    std::fs::write(config.join("wunder.yaml"), serde_json::to_vec(&engine_config)?)?;
+    let settings = serde_json::json!({
+        "workspace_root": "", "desktop_token": "", "updated_at": 0,
+        "lan_mesh": {"enabled": false}
     });
     std::fs::write(
         config.join("desktop.settings.json"),
         serde_json::to_vec(&settings)?,
     )?;
     let mut args = DesktopArgs::native_defaults();
-    args.temp_root = Some(directory.path().join("runtime").canonicalize()?);
-    args.workspace = Some(directory.path().join("workspace"));
-    std::mem::forget(directory);
+    args.temp_root = Some(home.join("temp"));
+    args.workspace = Some(home.join("workspace"));
     Ok(NativeDesktop::start_with_args(args)?)
 }
 
@@ -52,6 +79,7 @@ fn page_payload(tool_names: Vec<String>) -> wunder_desktop::AgentSettingsEdit {
 
 #[test]
 fn every_agent_form_field_survives_the_facade_round_trip() {
+    let _serial = serial();
     let runtime = start_isolated().expect("isolated runtime");
     let names = runtime
         .list_tools()
@@ -97,6 +125,7 @@ fn every_agent_form_field_survives_the_facade_round_trip() {
 
 #[test]
 fn an_empty_tool_selection_clears_the_set_instead_of_falling_back() {
+    let _serial = serial();
     let runtime = start_isolated().expect("isolated runtime");
     let names = runtime
         .list_tools()

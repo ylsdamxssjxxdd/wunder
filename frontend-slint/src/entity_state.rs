@@ -314,7 +314,11 @@ pub fn restore_model(app: &MainWindow, key: &str) {
     }
 }
 
-fn apply_agent(app: &MainWindow, agent: AgentCard) {
+/// Project an agent record over the editor drafts. Equal-value writes are
+/// no-ops for Slint, so re-applying the saved record after a live-save never
+/// repaints the form; only genuinely normalized fields update. The callers
+/// are `select-agent` and the save handler's in-place projection.
+pub(crate) fn apply_agent(app: &MainWindow, agent: AgentCard) {
     app.set_selected_agent_name(agent.name);
     app.set_selected_agent_description(agent.description);
     app.set_selected_agent_model(agent.model);

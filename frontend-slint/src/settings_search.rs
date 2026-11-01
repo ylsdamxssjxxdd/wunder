@@ -14,19 +14,19 @@
 /// navigation order: general, account, models, tools, agent, companion, cron,
 /// memory, channels, prompts and archived threads. Help is not a category — it
 /// opens from a button on the general page.
-const SETTINGS_CATEGORY_LABELS: [[&str; 3]; 12] = [
-    ["常规", "常规设置", "general"],
-    ["本地运行时", "运行时", "runtime"],
-    ["账号", "个人资料 眺望心舰", "account 3d wunder"],
-    ["模型设置", "模型配置", "models"],
-    ["工具管理", "工具", "tools"],
-    ["智能体设置", "智能体", "agent"],
-    ["桌宠", "形象库", "companion"],
-    ["定时任务", "计划任务", "scheduled"],
-    ["记忆碎片", "记忆", "memories"],
-    ["渠道设置", "渠道", "channels"],
-    ["提示词包", "提示词", "prompts"],
-    ["归档线程", "归档", "archived"],
+const SETTINGS_CATEGORY_LABELS: &[&[&str]] = &[
+    &["常规", "常规设置", "general"],
+    &["本地运行时", "运行时", "runtime"],
+    &["账号", "个人资料 眺望心舰", "account 3d wunder"],
+    &["模型设置", "模型配置", "models"],
+    &["工具管理", "工具", "tools"],
+    &["智能体设置", "智能体", "agent"],
+    &["伙伴", "桌宠", "形象库", "companion"],
+    &["定时任务", "计划任务", "scheduled"],
+    &["记忆碎片", "记忆", "memories"],
+    &["渠道设置", "渠道", "channels"],
+    &["提示词包", "提示词", "prompts"],
+    &["归档线程", "归档", "archived"],
 ];
 
 /// How many categories the navigation defines. The shell's initial flag list has

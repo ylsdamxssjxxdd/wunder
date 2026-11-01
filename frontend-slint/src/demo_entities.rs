@@ -179,22 +179,32 @@ pub fn install(app: &MainWindow) {
     let weak = app.as_weak();
     app.on_toggle_agent_tool(move |name| {
         if let Some(app) = weak.upgrade() {
-            let mut names = app
-                .get_selected_agent_tool_names()
-                .iter()
-                .map(|v| v.to_string())
-                .collect::<Vec<_>>();
-            if let Some(index) = names.iter().position(|value| value == name.as_str()) {
-                names.remove(index);
+            // Same in-place toggle as the native build: mutating the backing
+            // VecModel keeps the selection model's identity.
+            let selection = app.get_selected_agent_tool_names();
+            if let Some(names) =
+                selection.as_any().downcast_ref::<VecModel<slint::SharedString>>()
+            {
+                if let Some(index) = names.iter().position(|value| value.as_str() == name.as_str())
+                {
+                    names.remove(index);
+                } else {
+                    names.push(name.into());
+                }
             } else {
-                names.push(name.to_string());
+                let mut names = selection
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>();
+                if let Some(index) = names.iter().position(|value| value == name.as_str()) {
+                    names.remove(index);
+                } else {
+                    names.push(name.to_string());
+                }
+                app.set_selected_agent_tool_names(ModelRc::new(VecModel::from(
+                    names.into_iter().map(Into::into).collect::<Vec<slint::SharedString>>(),
+                )));
             }
-            app.set_selected_agent_tool_names(ModelRc::new(VecModel::from(
-                names
-                    .into_iter()
-                    .map(Into::into)
-                    .collect::<Vec<slint::SharedString>>(),
-            )));
             crate::entity_state::sync_tool_selection(&app);
         }
     });

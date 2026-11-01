@@ -31,6 +31,7 @@ pub mod interlink_ws;
 pub mod onlyoffice;
 pub(crate) mod skill_fs;
 pub mod temp_dir;
+pub mod updates;
 pub mod user_agents;
 pub mod user_channel_logs;
 pub mod user_channels;
@@ -69,6 +70,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(interlink_ws::router())
         .merge(interlink_remote::router())
         .merge(temp_dir::router())
+        .merge(updates::router())
         .merge(drawio::router())
         .merge(onlyoffice::router())
         .merge(workspace::router())

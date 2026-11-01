@@ -52,6 +52,7 @@ mod thread_trajectory;
 mod timeline;
 mod timeline_text;
 mod tool_icons;
+mod update_ui;
 mod tools_ui;
 mod touch_keyboard;
 mod tray;
@@ -61,6 +62,26 @@ mod workspace_ui;
 
 static STARTUP_BOOT: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
+/// Claim the single-instance slot. A relaunch after an in-place update
+/// (`WUNDER_UPDATE_RELAUNCH`) retries briefly: the previous process may still
+/// be shutting down while the replacement binary starts, and that handover
+/// must not be mistaken for a duplicate launch.
+fn claim_for_launch() -> std::io::Result<single_instance::Launch> {
+    let relaunch =
+        std::env::var(wunder_desktop::UPDATE_RELAUNCH_ENV).ok().as_deref() == Some("1");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match single_instance::claim()? {
+            single_instance::Launch::Activated
+                if relaunch && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+            launch => return Ok(launch),
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args_os().skip(1);
     let first_argument = arguments.next();
@@ -68,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         first_argument.as_deref().and_then(std::ffi::OsStr::to_str),
         None | Some("--native" | "--demo")
     ) {
-        match single_instance::claim()? {
+        match claim_for_launch()? {
             single_instance::Launch::Primary(instance) => Some(instance),
             single_instance::Launch::Activated => return Ok(()),
         }

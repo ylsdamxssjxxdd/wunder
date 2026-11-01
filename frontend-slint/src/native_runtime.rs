@@ -36,6 +36,7 @@ pub fn install(app: &crate::MainWindow) {
 pub fn install_ready(app: &crate::MainWindow, runtime: Arc<NativeDesktop>) {
     crate::native_chat::install(app, runtime.clone());
     crate::native_pages::install(app, runtime.clone());
+    crate::update_ui::install(app, runtime.clone());
     crate::activity_ui::install(app, runtime.clone());
     // 输入区「后台任务」格：读本线程的命令会话表，支撑悬停面板与单条终止。
     crate::command_tasks::install(app, runtime.clone());
@@ -49,5 +50,6 @@ pub fn install_ready_without_pets(app: &crate::MainWindow, runtime: Arc<NativeDe
     crate::completion_notice::set_enabled(false);
     crate::native_chat::install(app, runtime.clone());
     crate::native_pages::install(app, runtime.clone());
+    crate::update_ui::install(app, runtime.clone());
     crate::activity_ui::install(app, runtime);
 }

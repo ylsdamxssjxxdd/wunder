@@ -114,6 +114,8 @@ mod prompts;
 mod settings;
 #[path = "native_supplement.rs"]
 mod supplement;
+#[path = "native_update.rs"]
+mod update;
 #[path = "native_workspace.rs"]
 mod workspace;
 pub use catalog::{AgentRecord, AgentSettingsEdit, ToolRecord, DEFAULT_AGENT_ID};
@@ -123,6 +125,10 @@ pub use channels::{
     WeixinQrLoginStatus,
 };
 pub use cloud::{validate_cloud_password, CloudStatusView};
+pub use update::{
+    UpdateStateView, CURRENT_VERSION, RELAUNCH_ENV as UPDATE_RELAUNCH_ENV, TARGET_CLI,
+    TARGET_DESKTOP, TARGET_SUPPLEMENT, UPDATE_GITHUB_REPO,
+};
 pub use cron::{CronRecord, CronRunRecord, NativeCronJobEdit};
 pub use profile::NativeProfile;
 pub use prompts::{PromptPackInfo, PromptSegmentContent};
@@ -451,6 +457,9 @@ pub struct NativeDesktop {
     /// Only submitted local turns keep a lease alive. A selected idle thread
     /// is a read-only view and must not wake an old disk every few seconds.
     lease_heartbeat: Arc<(Mutex<LeaseHeartbeatState>, Condvar)>,
+    /// Online self-update state machine (check / download / apply). The
+    /// download worker shares the progress counter through this handle.
+    update: Arc<Mutex<update::UpdateState>>,
 }
 
 #[derive(Clone, Copy)]
@@ -642,7 +651,7 @@ impl NativeDesktop {
                 }
             })
             .ok();
-        Ok(Self {
+        let desktop = Self {
             runtime,
             desktop,
             settings_lock: std::sync::Mutex::new(()),
@@ -655,7 +664,12 @@ impl NativeDesktop {
             lease_reapers,
             lease_operations,
             lease_heartbeat,
-        })
+            update: Arc::new(Mutex::new(update::UpdateState::new())),
+        };
+        // Rotation leftovers from a previous update must go before any UI
+        // binding reads the update state; cheap local file operations only.
+        desktop.update_cleanup();
+        Ok(desktop)
     }
 
     /// 打开线程成功后顺手结算崩溃孤儿受理（无存活锁与任务的非终态受理落
@@ -1689,12 +1703,7 @@ mod thread_switch_tests {
         std::fs::write(config.join("wunder.yaml"), "{}\n").expect("runtime config");
         let settings = serde_json::json!({
             "workspace_root": "", "desktop_token": "", "updated_at": 0,
-            "lan_mesh": {"enabled": false},
-            "llm": {"default": "test-model", "models": {
-                "test-model": {"provider": "openai", "model": "test-model", "model_type": "llm",
-                               "base_url": "http://127.0.0.1:9/v1", "timeout_s": 5,
-                               "support_vision": false}
-            }}
+            "lan_mesh": {"enabled": false}
         });
         std::fs::write(
             config.join("desktop.settings.json"),

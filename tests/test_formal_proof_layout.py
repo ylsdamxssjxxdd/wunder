@@ -21,6 +21,7 @@ RUNNERS = (
     ("check_thread_history_replay_formal", "thread-history-replay/models", "ThreadHistoryReplay", 10),
     ("check_context_cache_prefix_formal", "context-cache-prefix/models", "PrefixStability", 6),
     ("check_postgres_io_formal", "postgres-io/models", "PostgresIo", 6),
+    ("check_self_update_formal", "self-update-20261101/models", "SelfUpdate", 12),
 )
 
 
