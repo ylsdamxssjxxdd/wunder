@@ -331,7 +331,10 @@ jobs:
             bash "$build_script"
           asset="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
           test -n "$asset"
-          tar -tzf "$asset" | grep -qx './AppRun'
+          # Consume the complete listing before deciding: an early `grep -q`
+          # exit SIGPIPEs tar under pipefail and fails the step even when the
+          # archive is valid.
+          tar -tzf "$asset" | awk '$0 == "./AppRun" { found = 1 } END { exit found ? 0 : 1 }'
       - name: Package portable
         shell: bash
         run: |

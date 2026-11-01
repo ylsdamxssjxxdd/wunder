@@ -8,8 +8,11 @@
 //! region, which is what keeps a region capture from silently dropping the
 //! bottom (or right) of the monitor.
 
-/// Desktop rectangle covered by a capture, in physical pixels.
+/// Desktop rectangle covered by a capture, in physical pixels. Only the GDI
+/// capture path constructs and measures it, so on non-Windows builds it is
+/// declared but unused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub struct MonitorRect {
     pub left: i32,
     pub top: i32,
@@ -17,6 +20,7 @@ pub struct MonitorRect {
     pub bottom: i32,
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 impl MonitorRect {
     pub fn width(&self) -> i32 {
         self.right - self.left

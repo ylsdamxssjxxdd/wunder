@@ -875,7 +875,14 @@ export component MainWindow inherits Window {
     callback select-thread-model(string);
     callback copy-raw(string);
     copy-buffer := TextInput { width: 0px; height: 0px; }
-    copy-raw(raw) => { copy-buffer.text = raw; copy-buffer.select-all(); copy-buffer.copy(); copy-buffer.text = ""; }
+    copy-raw(raw) => {
+        copy-buffer.text = raw; copy-buffer.select-all(); copy-buffer.copy(); copy-buffer.text = "";
+        // Every timeline copy lands here, so the toast is the one shared
+        // acknowledgement; the plain info shape keeps the moment quiet.
+        ToastState.message = I18n.zh ? "已复制" : "Copied";
+        ToastState.kind = 1;
+        ToastState.revision += 1;
+    }
     callback send-message();
     // ---- 发送队列 (§发送队列) ----
     callback queue-interject(string);

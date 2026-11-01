@@ -132,6 +132,32 @@ pub fn is_patch_tool(tool: &str) -> bool {
     )
 }
 
+/// Compact wall-clock label ("HH:MM") for a unix-seconds stamp; empty when the
+/// stamp is unusable. The user bubble shows it beside the copy button.
+pub fn clock_hhmm(secs: f64) -> String {
+    if !secs.is_finite() || secs <= 0.0 {
+        return String::new();
+    }
+    match chrono::DateTime::from_timestamp(secs as i64, 0) {
+        Some(stamp) => stamp
+            .with_timezone(&chrono::Local)
+            .format("%H:%M")
+            .to_string(),
+        None => String::new(),
+    }
+}
+
+/// The same label for "now", used by the provisional live user row until the
+/// durable record replaces it.
+pub fn clock_hhmm_now() -> String {
+    clock_hhmm(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_secs_f64())
+            .unwrap_or(0.0),
+    )
+}
+
 /// Flat text of a tool result, kept for the copy affordance of the detail view.
 pub fn copy_text(items: &[NativeWorkflowSection], fallback: &str) -> slint::SharedString {
     if !fallback.is_empty() {

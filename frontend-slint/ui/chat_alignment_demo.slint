@@ -28,7 +28,7 @@ export component ChatAlignmentDemo inherits Window {
         follow-output: false;
         spinning: root.running;
         rows: [
-            {kind: 0, id: "fixture-user", visible: true, group-idx: -1, process-idx: -1, text: "Check sample.txt and report the result."},
+            {kind: 0, id: "fixture-user", visible: true, group-idx: -1, process-idx: -1, text: "Check sample.txt and report the result.", time: "14:05"},
             {kind: 6, id: "fixture-process", visible: true, group-idx: -1, process-idx: 1,
                 text: "Work process - 3 steps", summary: root.running ? "Running" : "Completed", payload: 1, open: root.process-open,
                 process-paged: root.paged, process-older: root.older, process-newer: root.newer, process-error: root.failed,

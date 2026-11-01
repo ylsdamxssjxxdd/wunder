@@ -1025,6 +1025,7 @@ fn turn_stats(
 fn history_user(message: &wunder_desktop::NativeMessage) -> TimelineRow {
     let mut row = blank_row(crate::timeline::KIND_USER, String::new());
     row.text = message.text.as_str().into();
+    row.time = crate::timeline_text::clock_hhmm(message.created_at).into();
     row.blocks = crate::message_blocks::from_text(&user_display_source(message));
     row.foldable = false;
     row
@@ -1066,6 +1067,7 @@ fn blank_row(kind: i32, id: String) -> TimelineRow {
         id: id.into(),
         visible: true,
         text: Default::default(),
+        time: Default::default(),
         blocks: ModelRc::default(),
         summary: Default::default(),
         tool_name: Default::default(),

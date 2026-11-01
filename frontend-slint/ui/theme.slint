@@ -129,6 +129,10 @@ export struct TimelineRow {
     id: string,
     visible: bool,
     text: string,
+    // Wall-clock "HH:MM" of the user message, shown beside the bubble's copy
+    // button. Local threads fill it from the durable record; cloud rows carry
+    // no wall clock and stay empty (the label hides).
+    time: string,
     blocks: [TextBlock],
     summary: string,
     tool-name: string,
