@@ -25,7 +25,7 @@ use crate::skills::{load_skills, SkillRegistry};
 use crate::storage::sqlite_state_database_path;
 #[cfg(any(feature = "sqlite-storage", test))]
 use crate::storage::SqliteStorage;
-use crate::storage::{build_storage, StorageBackend, StorageLifecycle};
+use crate::storage::{build_storage, StorageBackend};
 use crate::throughput::ThroughputManager;
 use crate::user_store::UserStore;
 use crate::user_tools::{UserToolManager, UserToolStore};

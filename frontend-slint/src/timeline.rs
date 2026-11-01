@@ -175,6 +175,7 @@ fn blank(kind: i32, id: String) -> TimelineRow {
         id: id.into(),
         visible: true,
         text: slint::SharedString::default(),
+        time: slint::SharedString::default(),
         blocks: ModelRc::default(),
         summary: slint::SharedString::default(),
         tool_name: slint::SharedString::default(),
@@ -704,6 +705,7 @@ impl Timeline {
         let mut user = blank(KIND_USER, format!("user-turn-{root}"));
         user.text = text.into();
         user.blocks = crate::message_blocks::from_text(text);
+        user.time = crate::timeline_text::clock_hhmm_now().into();
         let index = self.push(user);
         self.active_user_row = index;
         self.open_process(root);
@@ -1056,6 +1058,9 @@ impl Timeline {
     }
 
     /// Append a reasoning delta, opening a thinking entry for this segment.
+    /// Test fixture convenience; production reducers call
+    /// [`Timeline::append_reasoning_item`] with the row id directly.
+    #[cfg(test)]
     pub fn append_reasoning(&mut self, delta: &str) -> Result<(), String> {
         self.append_reasoning_item("", delta)
     }

@@ -11,7 +11,6 @@ use crate::tools::resolve_tool_name;
 use crate::user_store::build_default_agent_record_from_storage;
 use anyhow::{anyhow, Result};
 use std::collections::HashSet;
-use wunder_core::storage_backend::ChatSessionStore;
 
 #[derive(Clone, Copy)]
 pub(crate) enum ChildSessionToolMode {

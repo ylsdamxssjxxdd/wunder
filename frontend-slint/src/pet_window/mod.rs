@@ -10,8 +10,12 @@ use crate::companion_sprite::Sheet;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
+// The types below form the command/event vocabulary shared with the Win32
+// overlay backend, which is compiled only on Windows; on other platforms the
+// controller still builds them but nothing reads them back.
 /// One animation cycle source: the decoded sheet, its row and its tempo.
 #[derive(Clone)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub struct PetAnim {
     pub sheet: Arc<Sheet>,
     pub row: usize,
@@ -27,6 +31,7 @@ pub enum BubbleTone {
 }
 
 #[derive(Clone)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub struct PetBubble {
     pub text: String,
     pub tone: BubbleTone,
@@ -34,6 +39,7 @@ pub struct PetBubble {
 
 /// Everything the overlay draws for one pet. Sizes are logical pixels; the
 /// overlay multiplies them by the monitor scale factor itself.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub struct PetVisual {
     /// Sprite box size in logical pixels (192 x 208 at scale 1).
     pub width: f64,
@@ -47,6 +53,7 @@ pub struct PetVisual {
     pub bubble: Option<PetBubble>,
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 pub struct PetMenuItem {
     pub code: u16,
     pub label: String,
@@ -54,6 +61,7 @@ pub struct PetMenuItem {
     pub separator: bool,
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 pub enum PetCommand {
     /// Create the window, or replace the visual of an existing one.
     Present {
@@ -85,6 +93,7 @@ pub enum PetCommand {
     Shutdown,
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 pub enum PetEvent {
     /// Pressed and released without moving.
     Clicked {
