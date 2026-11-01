@@ -1850,7 +1850,9 @@ export component SettingsPage inherits Rectangle {
                                 // 形象库网格：蜂巢同款 3 列卡片。绝对定位取 parent.width，
                                 // 不走布局约束，避免子项宽度反向依赖容器形成回路。
                                 if PetSettingsState.companions.length > 0 : Rectangle {
-                                    height: ((PetSettingsState.companions.length + 2) / 3) * 186px;
+                                    // Slint 的 int/int 是浮点除法，必须显式取整，
+                                    // 否则 2.667 行的容器在网格下方留出大片空白。
+                                    height: Math.floor((PetSettingsState.companions.length + 2) / 3) * 186px;
                                     property <length> card-width: (self.width - 24px) / 3;
                                     for companion[index] in PetSettingsState.companions : Rectangle {
                                         x: Math.mod(index, 3) * (parent.card-width + 12px);
