@@ -34,6 +34,7 @@
 | 蛹与舵机投影 | [蛹与舵机状态一致性验证](./蛹与舵机状态一致性验证/README.md) | 终态、过程分页与线程状态 |
 | 舵机 stream 轮次边界 | [tui-stream-epoch-20261027](./tui-stream-epoch-20261027/README.md) | 传输事件编号去重与新 stream 重置 |
 | 舵机中断报错 | [tui-terminal-20261028](./tui-terminal-20261028/README.md) | 错误、取消终态、关闭与下一轮重置 |
+| 蛹在线更新 | [self-update-20261101](./self-update-20261101/README.md) | 多目标更新分发、下载哈希闸、改名轮换与暂存恢复 |
 
 ## 后续存放规则
 
@@ -55,6 +56,7 @@ python scripts/check_service_history_formal.py --statechart <statechart-skill>/s
 python scripts/check_thread_history_replay_formal.py --statechart <statechart-skill>/scripts/statechart.mjs --out <external-scratch>/thread-history-replay
 python scripts/check_postgres_io_formal.py --statechart <statechart-skill>/scripts/statechart.mjs --out <external-scratch>/postgres-io
 python scripts/check_work_process_formal.py --statechart <statechart-skill>/scripts/statechart.mjs --out <external-scratch>/work-process
+python scripts/check_self_update_formal.py --statechart <statechart-skill>/scripts/statechart.mjs --out <external-scratch>/self-update
 ```
 
 其他主题按各自 README 的命令在仓库外复验；迁移和路径检查本身不构成重新运行全部 TLC 证明。

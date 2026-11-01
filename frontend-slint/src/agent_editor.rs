@@ -253,18 +253,33 @@ pub fn install_save_handler(app: &MainWindow, api: Arc<NativeDesktop>) {
                 app.set_saving(false);
                 match result {
                     Ok(agent) => {
-                        let selected = app
-                            .get_agents()
-                            .row_data(0)
-                            .map(|agent| agent.id.to_string())
-                            .unwrap_or_default();
                         let card = crate::native_pages::agent_record_to_card(agent);
-                        crate::native_pages::replace_agents(&app, vec![card]);
-                        crate::entity_state::restore_agent(&app, &selected);
-                        // The projection above re-enters `select-agent`, which
-                        // rebases the snapshot; re-assert it so the editor is
-                        // unambiguously clean after a successful save.
-                        refresh_agent_snapshot(&app);
+                        // Update the catalogue row in place. The former
+                        // `replace_agents` + `restore_agent` re-entry reset
+                        // every repeater on the page after each live-save,
+                        // which the user reads as the whole settings form
+                        // refreshing.
+                        let agents = app.get_agents();
+                        let index = (0..agents.row_count())
+                            .find(|&i| agents.row_data(i).is_some_and(|row| row.id == card.id));
+                        match index {
+                            Some(index) => agents.set_row_data(index, card.clone()),
+                            // First save before the catalogue exists: install
+                            // the list and select the record the old way.
+                            None if agents.row_count() == 0 => {
+                                let id = card.id.to_string();
+                                crate::native_pages::replace_agents(&app, vec![card.clone()]);
+                                crate::entity_state::restore_agent(&app, &id);
+                            }
+                            None => {}
+                        }
+                        // Project the saved record back over the editor only
+                        // when nothing was edited while the save was in flight;
+                        // a dirty form keeps its newer drafts and the queued
+                        // live-save converges on the next round.
+                        if agents.row_count() > 0 && !app.get_agent_dirty() {
+                            crate::entity_state::apply_agent(&app, card);
+                        }
                         app.set_status("智能体设置已保存".into());
                     }
                     Err(error) => crate::native_pages::show_error(
@@ -324,14 +339,14 @@ pub fn install(app: &MainWindow) {
     });
     // Keep the desktop editor's local/offline semantics while matching the
     // web panel's live-save interaction. Slint owns the 500ms debounce timer;
-    // this callback only marks a dirty form as pending and never saves while a
-    // record is being projected from the backend.
+    // this callback only marks a dirty form as pending. Queuing is allowed
+    // while a save is in flight: the timer retries once it settles, so an
+    // edit made during a save is never dropped.
     let weak = app.as_weak();
     app.on_queue_agent_save(move || {
         let Some(app) = weak.upgrade() else { return };
         if app.get_selected_agent() >= 0
             && app.get_agent_dirty()
-            && !app.get_saving()
             && !app.get_agents_loading()
             && !app.get_settings_loading()
         {

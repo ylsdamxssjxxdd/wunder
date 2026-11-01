@@ -1738,7 +1738,7 @@ export component Composer inherits Rectangle {
                                 height: 34px; border-radius: Theme.radius-sm;
                                 background: root.preset-open || preset-row-touch.has-hover ? Theme.hover : transparent;
                                 accessible-role: list-item; accessible-label: I18n.ag_preset_questions;
-                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/wand-magic-sparkles.svg"); colorize: Theme.text-secondary; image-fit: contain; }
+                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/lc-wand-sparkles.svg"); colorize: Theme.text-secondary; image-fit: contain; }
                                 Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.ag_preset_questions; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
                                 Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
                                 preset-row-touch := TouchArea {
@@ -1765,7 +1765,7 @@ export component Composer inherits Rectangle {
                                 height: 34px; border-radius: Theme.radius-sm;
                                 background: root.permission-open || perm-row-touch.has-hover ? Theme.hover : transparent;
                                 accessible-role: list-item; accessible-label: I18n.cp_permission;
-                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/shield.svg"); colorize: root.permission-mode == "full_auto" ? Theme.muted : Theme.accent-ink; image-fit: contain; }
+                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/lc-shield.svg"); colorize: root.permission-mode == "full_auto" ? Theme.muted : Theme.accent-ink; image-fit: contain; }
                                 Text { x: 32px; width: parent.width - 110px; height: parent.height; text: I18n.cp_permission; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
                                 Text {
                                     x: parent.width - 78px; width: 56px; height: parent.height;
@@ -1804,7 +1804,7 @@ export component Composer inherits Rectangle {
                                 accessible-role: list-item; accessible-label: I18n.cp_voice_input;
                                 Image {
                                     x: 8px; y: 9px; width: 16px; height: 16px;
-                                    source: root.recording ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/microphone.svg");
+                                    source: root.recording ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/lc-mic.svg");
                                     colorize: root.recording ? Theme.danger : Theme.text-secondary;
                                     image-fit: contain;
                                 }
@@ -1832,7 +1832,7 @@ export component Composer inherits Rectangle {
                                 height: 34px; border-radius: Theme.radius-sm;
                                 background: root.screenshot-open || shot-row-touch.has-hover ? Theme.hover : transparent;
                                 accessible-role: list-item; accessible-label: I18n.cp_screenshot;
-                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/camera.svg"); colorize: Theme.text-secondary; image-fit: contain; }
+                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/lc-camera.svg"); colorize: Theme.text-secondary; image-fit: contain; }
                                 Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.cp_screenshot; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
                                 Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
                                 shot-row-touch := TouchArea {

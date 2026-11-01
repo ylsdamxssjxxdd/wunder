@@ -480,6 +480,52 @@ export component SettingsPage inherits Rectangle {
     callback cloud-refresh-account();
     callback open-wunder-model();
     callback cloud-toggle-sync(bool);
+    // ---- software updates (general tab) ----
+    // The native side owns the update state machine and pushes snapshots;
+    // the card renders phases and fires one-shot requests back.
+    in-out property <string> update-current-version;
+    // Update source: `cloud` (the signed-in server) or `github` (public
+    // releases). Persisted with the other preferences.
+    in-out property <string> update-source: "cloud";
+    // Update target: `desktop` | `cli` | `supplement`. A session-level
+    // choice; switching it resets the local status until the next check.
+    in-out property <string> update-target: "desktop";
+    // Locally detected version of the target; empty when unknown.
+    in-out property <string> update-local-version;
+    // idle | checking | up_to_date | available | downloading | staged |
+    // applying | applied | failed
+    in-out property <string> update-phase: "idle";
+    in-out property <string> update-latest-version;
+    in-out property <string> update-notes;
+    in-out property <bool> update-mandatory: false;
+    in-out property <string> update-error;
+    in-out property <float> update-progress: 0;
+    // Preformatted natively ("3.2 MB / 48.1 MB (12%)") so the UI never
+    // formats numbers.
+    in-out property <string> update-progress-text;
+    callback check-updates(string, string);
+    callback download-update();
+    callback apply-update();
+    // Parenthetical after the offering version in the available status: what
+    // the target currently is, when that is knowable.
+    property <string> update-version-note:
+        root.update-phase != "available" ? ""
+        : root.update-target == "cli" && root.update-local-version == "" ? "（" + I18n.st_upd_not_installed + "）"
+        : root.update-local-version == "" || root.update-target == "desktop" ? ""
+        : "（本地 " + root.update-local-version + "）";
+    // Status line copy per phase; the failed phase keeps the native error
+    // tail. The not-logged-in hint only shows while nothing else happened.
+    property <string> update-status-text: root.update-error != "" ? I18n.st_upd_failed_prefix + root.update-error
+        : root.update-phase == "checking" ? I18n.st_upd_checking
+        : root.update-phase == "up_to_date" ? I18n.st_upd_up_to_date
+        : root.update-phase == "available" ? I18n.st_upd_available_prefix + root.update-latest-version + root.update-version-note
+        : root.update-phase == "downloading" ? root.update-progress-text
+        : root.update-phase == "staged" ? (root.update-target == "supplement" ? I18n.st_upd_staged_supplement : root.update-target == "cli" ? I18n.st_upd_staged_cli : I18n.st_upd_staged)
+        : root.update-phase == "applying" ? I18n.st_upd_applying
+        : root.update-phase == "applied" ? I18n.st_upd_applied
+        : !root.cloud-logged-in ? I18n.st_upd_need_login
+        : "";
+    property <bool> update-busy: root.update-phase == "checking" || root.update-phase == "downloading" || root.update-phase == "applying";
     // Engine-managed cloud entries (`cloud/<id>`): the editor locks them and
     // removes the delete shortcut; logout clears them in one go. Guards
     // against the new-model draft inheriting a previously selected cloud key.
@@ -814,14 +860,23 @@ export component SettingsPage inherits Rectangle {
     // actually dirty, so loading an agent never writes it back accidentally.
     callback queue-agent-save();
     in-out property <bool> agent-save-pending: false;
+    // The dirty flag lives on the shell; the live-save timer reads it to skip
+    // ticking a form that a projection already rebaselined.
+    in-out property <bool> agent-dirty: false;
     live-save-timer := Timer {
         interval: 500ms;
         running: root.agent-save-pending;
         triggered => {
+            // Retry semantics: an in-flight save or a backend projection may
+            // still hold the form when the interval elapses. Clearing the flag
+            // here would silently drop the queued edits, so leave it set and
+            // let the next tick take over.
+            if root.saving || root.loading || root.agents-loading { return; }
             root.agent-save-pending = false;
-            if !root.saving && !root.loading && !root.selected-agent-name.is-empty {
-                root.save-agent-form();
-            }
+            // A projection or a discarded edit can rebaseline the form before
+            // this tick runs; saving then would write an unchanged record.
+            if !root.agent-dirty || root.selected-agent-name.is-empty { return; }
+            root.save-agent-form();
         }
     }
     // Editing the prompt, description and questions all discard pending work, so
@@ -923,15 +978,16 @@ export component SettingsPage inherits Rectangle {
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[3];
-                            icon: @image-url("../assets/icons/lc-cpu.svg");
+                            // 与输入区模型选择器同款脑形，建立同一语义的视觉锚点。
+                            icon: @image-url("../assets/icons/brain.svg");
                             title: I18n.stc_models;
                             selected: root.settings-tab == 1;
                             clicked => { root.settings-tab = 1; root.refresh(); }
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[4];
-                            // Same glyph the 蜂巢 tools category uses.
-                            icon: @image-url("../assets/icons/screwdriver-wrench.svg");
+                            // 空心螺丝刀+扳手，蜂巢 tools 分类同款意象。
+                            icon: @image-url("../assets/icons/tools-outline.svg");
                             title: I18n.stc_tools;
                             selected: root.settings-tab == 2;
                             clicked => { root.settings-tab = 2; root.refresh(); }
@@ -1078,6 +1134,42 @@ export component SettingsPage inherits Rectangle {
                                 Rectangle { height: 10px; }
                                 HorizontalLayout { height: 34px; spacing: 10px;
                                     Action { width: 140px; label: I18n.st_help_open; show-label: true; primary: true; enabled: !root.loading; clicked => { root.open-help(); } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                            }
+                            // 软件更新：按更新源与更新对象手动检测、下载并应用；
+                            // 状态机在原生侧，这里只渲染阶段并回传一次性请求。
+                            SettingsCard {
+                                SettingsCardHeader { title: I18n.st_upd_title; subtitle: I18n.st_upd_subtitle; }
+                                Rectangle { height: 8px; }
+                                SettingRow { label: I18n.st_upd_source; note: I18n.st_upd_source_note;
+                                    ComboBox { width: 150px; height: 38px; model: [I18n.st_upd_source_cloud, I18n.st_upd_source_github]; current-index: root.update-source == "github" ? 1 : 0; enabled: !root.update-busy;
+                                        selected(_) => { root.update-source = self.current-index == 1 ? "github" : "cloud"; root.save-preferences(); } }
+                                }
+                                SettingRow { label: I18n.st_upd_target; note: I18n.st_upd_target_note;
+                                    ComboBox { width: 150px; height: 38px; model: [I18n.st_upd_target_desktop, I18n.st_upd_target_cli, I18n.st_upd_target_supplement]; current-index: root.update-target == "supplement" ? 2 : root.update-target == "cli" ? 1 : 0; enabled: !root.update-busy;
+                                        selected(_) => {
+                                            root.update-target = self.current-index == 2 ? "supplement" : self.current-index == 1 ? "cli" : "desktop";
+                                            // The settled status belonged to the previous target.
+                                            root.update-phase = "idle";
+                                            root.update-error = "";
+                                        } }
+                                }
+                                SettingRow { label: I18n.st_upd_current;
+                                    HorizontalLayout { spacing: 10px; alignment: end;
+                                        Text { text: root.update-current-version; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; horizontal-alignment: right; }
+                                        Action { width: 110px; label: root.update-phase == "checking" ? I18n.st_upd_checking : I18n.st_upd_check; show-label: true; enabled: !root.update-busy && (root.update-source == "github" || root.cloud-logged-in); clicked => { root.check-updates(root.update-source, root.update-target); } }
+                                    }
+                                }
+                                if root.update-status-text != "" : Text { height: 18px; text: root.update-status-text; color: root.update-error != "" ? Theme.danger : root.update-phase == "staged" || root.update-phase == "available" || root.update-phase == "applied" ? Theme.text : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                if root.update-phase == "downloading" || root.update-phase == "available" : Rectangle { height: 4px; border-radius: 2px; background: Theme.border;
+                                    Rectangle { x: 0; y: 0; width: parent.width * root.update-progress; height: parent.height; border-radius: 2px; background: Theme.accent; }
+                                }
+                                if root.update-phase == "available" && root.update-mandatory : Text { height: 18px; text: I18n.st_upd_mandatory_note; color: Theme.warning; font-size: Theme.font-xs; overflow: elide; }
+                                if root.update-notes != "" && (root.update-phase == "available" || root.update-phase == "staged" || root.update-phase == "applied") : Text { height: 18px; text: root.update-notes; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                if root.update-phase == "available" || root.update-phase == "staged" : HorizontalLayout { height: 34px; spacing: 10px;
+                                    if root.update-phase == "available" : Action { width: 130px; label: I18n.st_upd_download; show-label: true; primary: true; enabled: !root.update-busy; clicked => { root.download-update(); } }
+                                    if root.update-phase == "staged" : Action { width: 130px; label: root.update-target == "supplement" ? I18n.st_upd_import : root.update-target == "cli" ? I18n.st_upd_apply : I18n.st_upd_restart; show-label: true; primary: true; enabled: !root.update-busy; clicked => { root.apply-update(); } }
                                     Rectangle { horizontal-stretch: 1; }
                                 }
                             }
@@ -1579,20 +1671,19 @@ export component SettingsPage inherits Rectangle {
                                 placeholder: I18n.stc_agent_greeting_hint;
                                 strong-label: true;
                                 text <=> root.selected-agent-description;
-                                read-only: root.saving;
                             }
                             VerticalLayout { spacing: 7px;
                                 Text { height: 18px; text: I18n.stc_agent_extra_prompt; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; }
                                 Rectangle {
                                     height: 176px; border-radius: Theme.radius-sm;
-                                    background: root.saving ? Theme.input-readonly-bg : Theme.input-bg;
-                                    border-width: 1px; border-color: prompt-edit.has-focus ? Theme.accent-ink : root.saving ? Theme.input-readonly-border : Theme.input-border;
+                                    background: Theme.input-bg;
+                                    border-width: 1px; border-color: prompt-edit.has-focus ? Theme.accent-ink : Theme.input-border;
                                     prompt-edit := TextEditBase {
                                         x: 1px; y: 1px; width: parent.width - 2px; height: parent.height - 2px;
                                         text <=> root.selected-agent-system-prompt;
                                         placeholder-text: I18n.stc_agent_extra_prompt_hint;
                                         placeholder-color: Theme.muted;
-                                        enabled: !root.saving; wrap: word-wrap;
+                                        wrap: word-wrap;
                                         foreground: Theme.text; font-size: Theme.font-sm;
                                         background: transparent; border-width: 0px;
                                         scroll-view-padding: 10px;
@@ -1644,7 +1735,6 @@ export component SettingsPage inherits Rectangle {
                                 Rectangle { height: 12px; }
                                 ExpertToolPicker {
                                     groups: root.expert-tool-groups;
-                                    enabled: !root.saving;
                                     toggle(name) => { root.toggle-agent-tool-option(name); }
                                     toggle-group(title) => { root.toggle-expert-tool-group(title); }
                                 }
@@ -1669,7 +1759,6 @@ export component SettingsPage inherits Rectangle {
                                     Action {
                                         x: parent.width - 30px; y: 4px; width: 30px; height: 30px;
                                         icon: @image-url("../assets/icons/xmark.svg"); label: I18n.common_delete;
-                                        enabled: !root.saving;
                                         clicked => { root.remove-agent-question(index); }
                                     }
                                     Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
@@ -1678,11 +1767,9 @@ export component SettingsPage inherits Rectangle {
                                 HorizontalLayout { spacing: 8px;
                                     Rectangle {
                                         horizontal-stretch: 1; height: 36px; border-radius: Theme.radius-sm;
-                                        background: root.saving ? Theme.input-readonly-bg : Theme.input-bg;
-                                        border-width: 1px; border-color: question-input.has-focus ? Theme.accent-ink : root.saving ? Theme.input-readonly-border : Theme.input-border;
+                                        background: Theme.input-bg;
+                                        border-width: 1px; border-color: question-input.has-focus ? Theme.accent-ink : Theme.input-border;
                                         TextFieldMenu {
-                                            enabled: !root.saving;
-                                            read-only: root.saving;
                                             text: question-input.text;
                                             cut() => { question-input.cut(); }
                                             copy() => { question-input.copy(); }
@@ -1691,7 +1778,7 @@ export component SettingsPage inherits Rectangle {
                                             question-input := TextInput {
                                                 x: 10px; y: 0px; width: parent.width - 20px; height: parent.height;
                                                 text <=> root.agent-question-draft;
-                                                single-line: true; enabled: !root.saving;
+                                                single-line: true;
                                                 font-size: Theme.font-sm; color: Theme.text; vertical-alignment: center;
                                                 accepted => { root.add-agent-question(); }
                                                 changed has-focus => {
@@ -1708,7 +1795,7 @@ export component SettingsPage inherits Rectangle {
                                     Action {
                                         width: 30px; height: 30px; icon: @image-url("../assets/icons/plus.svg");
                                         label: I18n.stc_agent_question_add; primary: true;
-                                        enabled: !root.saving && !root.agent-question-draft.is-empty;
+                                        enabled: !root.agent-question-draft.is-empty;
                                         clicked => { root.add-agent-question(); }
                                     }
                                 }

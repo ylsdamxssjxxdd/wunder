@@ -1,0 +1,25 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 81 and seed -8636149395651484818 with 1 worker on 1 cores with 14484MB heap and 64MB offheap memory [pid: 10476] (Windows 11 10.0 amd64, Eclipse Adoptium 25.0.5 x86_64, MemFPSet, DiskStateQueue).
+Parsing file scratch\statechart-618Liy\tlc\fixed\SelfUpdateFixed_rules.tla
+Parsing file scratch\statechart-inputs-mCFlNdscratch\SelfUpdateFixed.tla
+Parsing file scratch\tlc-STNvxw\tmp\Naturals.tla
+Parsing file scratch\tlc-STNvxw\tmp\TLC.tla
+Parsing file scratch\tlc-STNvxw\tmp\Sequences.tla
+Parsing file scratch\tlc-STNvxw\tmp\FiniteSets.tla
+Semantic processing of module Naturals
+Semantic processing of module SelfUpdateFixed
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module SelfUpdateFixed_rules
+Starting... (2026-11-01 13:36:10)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-01 13:36:10.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 2.1E-14
+1439 states generated, 367 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 24.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 4 and the 95th percentile is 3).
+Finished in 00s at (2026-11-01 13:36:10)

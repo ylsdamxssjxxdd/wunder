@@ -1,0 +1,218 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 52 and seed -7800301953662236152 with 1 worker on 1 cores with 14484MB heap and 64MB offheap memory [pid: 17240] (Windows 11 10.0 amd64, Eclipse Adoptium 25.0.5 x86_64, MemFPSet, DiskStateQueue).
+Parsing file scratch\statechart-inputs-mCFlNdscratch\SelfUpdate.tla
+Parsing file scratch\tlc-d03wK9\tmp\Naturals.tla
+Semantic processing of module Naturals
+Semantic processing of module SelfUpdate
+Starting... (2026-11-01 13:36:00)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-11-01 13:36:00.
+Error: Invariant StagedAlwaysVerified is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ applying = "none"
+/\ staged_verified = FALSE
+/\ staged_target = "desktop"
+/\ exe_new = "absent"
+/\ exe_old = FALSE
+/\ target = "desktop"
+/\ staged = "none"
+/\ staged_version = 0
+/\ exe_version = 5
+/\ phase = "idle"
+/\ exe_state = "present"
+
+State 2: <Check line 60, col 5 to line 65, col 70 of module SelfUpdate>
+/\ applying = "none"
+/\ staged_verified = FALSE
+/\ staged_target = "desktop"
+/\ exe_new = "absent"
+/\ exe_old = FALSE
+/\ target = "desktop"
+/\ staged = "none"
+/\ staged_version = 0
+/\ exe_version = 5
+/\ phase = "checking"
+/\ exe_state = "present"
+
+State 3: <OfferNewer line 70, col 5 to line 76, col 36 of module SelfUpdate>
+/\ applying = "none"
+/\ staged_verified = FALSE
+/\ staged_target = "desktop"
+/\ exe_new = "absent"
+/\ exe_old = FALSE
+/\ target = "desktop"
+/\ staged = "none"
+/\ staged_version = 0
+/\ exe_version = 5
+/\ phase = "available"
+/\ exe_state = "present"
+
+State 4: <Download line 99, col 5 to line 103, col 36 of module SelfUpdate>
+/\ applying = "none"
+/\ staged_verified = FALSE
+/\ staged_target = "desktop"
+/\ exe_new = "absent"
+/\ exe_old = FALSE
+/\ target = "desktop"
+/\ staged = "none"
+/\ staged_version = 0
+/\ exe_version = 5
+/\ phase = "downloading"
+/\ exe_state = "present"
+
+State 5: <DownloadVerify line 109, col 5 to line 116, col 36 of module SelfUpdate>
+/\ applying = "none"
+/\ staged_verified = FALSE
+/\ staged_target = "desktop"
+/\ exe_new = "absent"
+/\ exe_old = FALSE
+/\ target = "desktop"
+/\ staged = "pkg"
+/\ staged_version = 6
+/\ exe_version = 5
+/\ phase = "staged"
+/\ exe_state = "present"
+
+Error: Invariant StagedAlwaysVerified is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ applying = "none"
+/\ staged_verified = FALSE
+/\ staged_target = "desktop"
+/\ exe_new = "absent"
+/\ exe_old = FALSE
+/\ target = "desktop"
+/\ staged = "none"
+/\ staged_version = 0
+/\ exe_version = 5
+/\ phase = "idle"
+/\ exe_state = "present"
+
+State 2: <Check line 60, col 5 to line 65, col 70 of module SelfUpdate>
+/\ applying = "none"
+/\ staged_verified = FALSE
+/\ staged_target = "desktop"
+/\ exe_new = "absent"
+/\ exe_old = FALSE
+/\ target = "cli"
+/\ staged = "none"
+/\ staged_version = 0
+/\ exe_version = 5
+/\ phase = "checking"
+/\ exe_state = "present"
+
+State 3: <OfferNewer line 70, col 5 to line 76, col 36 of module SelfUpdate>
+/\ applying = "none"
+/\ staged_verified = FALSE
+/\ staged_target = "desktop"
+/\ exe_new = "absent"
+/\ exe_old = FALSE
+/\ target = "cli"
+/\ staged = "none"
+/\ staged_version = 0
+/\ exe_version = 5
+/\ phase = "available"
+/\ exe_state = "present"
+
+State 4: <Download line 99, col 5 to line 103, col 36 of module SelfUpdate>
+/\ applying = "none"
+/\ staged_verified = FALSE
+/\ staged_target = "desktop"
+/\ exe_new = "absent"
+/\ exe_old = FALSE
+/\ target = "cli"
+/\ staged = "none"
+/\ staged_version = 0
+/\ exe_version = 5
+/\ phase = "downloading"
+/\ exe_state = "present"
+
+State 5: <DownloadVerify line 109, col 5 to line 116, col 36 of module SelfUpdate>
+/\ applying = "none"
+/\ staged_verified = FALSE
+/\ staged_target = "cli"
+/\ exe_new = "absent"
+/\ exe_old = FALSE
+/\ target = "cli"
+/\ staged = "pkg"
+/\ staged_version = 6
+/\ exe_version = 5
+/\ phase = "staged"
+/\ exe_state = "present"
+
+Error: Invariant StagedAlwaysVerified is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ applying = "none"
+/\ staged_verified = FALSE
+/\ staged_target = "desktop"
+/\ exe_new = "absent"
+/\ exe_old = FALSE
+/\ target = "desktop"
+/\ staged = "none"
+/\ staged_version = 0
+/\ exe_version = 5
+/\ phase = "idle"
+/\ exe_state = "present"
+
+State 2: <Check line 60, col 5 to line 65, col 70 of module SelfUpdate>
+/\ applying = "none"
+/\ staged_verified = FALSE
+/\ staged_target = "desktop"
+/\ exe_new = "absent"
+/\ exe_old = FALSE
+/\ target = "supplement"
+/\ staged = "none"
+/\ staged_version = 0
+/\ exe_version = 5
+/\ phase = "checking"
+/\ exe_state = "present"
+
+State 3: <OfferNewer line 70, col 5 to line 76, col 36 of module SelfUpdate>
+/\ applying = "none"
+/\ staged_verified = FALSE
+/\ staged_target = "desktop"
+/\ exe_new = "absent"
+/\ exe_old = FALSE
+/\ target = "supplement"
+/\ staged = "none"
+/\ staged_version = 0
+/\ exe_version = 5
+/\ phase = "available"
+/\ exe_state = "present"
+
+State 4: <Download line 99, col 5 to line 103, col 36 of module SelfUpdate>
+/\ applying = "none"
+/\ staged_verified = FALSE
+/\ staged_target = "desktop"
+/\ exe_new = "absent"
+/\ exe_old = FALSE
+/\ target = "supplement"
+/\ staged = "none"
+/\ staged_version = 0
+/\ exe_version = 5
+/\ phase = "downloading"
+/\ exe_state = "present"
+
+State 5: <DownloadVerify line 109, col 5 to line 116, col 36 of module SelfUpdate>
+/\ applying = "none"
+/\ staged_verified = FALSE
+/\ staged_target = "supplement"
+/\ exe_new = "absent"
+/\ exe_old = FALSE
+/\ target = "supplement"
+/\ staged = "pkg"
+/\ staged_version = 6
+/\ exe_version = 5
+/\ phase = "staged"
+/\ exe_state = "present"
+
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 5.1E-17
+70 states generated, 18 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 5.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 3 and the 95th percentile is 3).
+Finished in 00s at (2026-11-01 13:36:00)

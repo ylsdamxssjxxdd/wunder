@@ -163,6 +163,9 @@
   padding: 0 var(--mz-sidebar-padding);
 }
 
+/* 设备选择器是控件不是树行，但整宽描边白盒在侧栏灰底上像座孤岛，
+   所以用「切换器行」结构：图标徽章 + 半粗标题 + 副标签 + 箭头直接坐在
+   侧栏底色上；悬停/展开沿用行的填充语法，层级靠徽章与字重区分。 */
 .messenger-sidebar-device {
   display: flex;
   flex: 1;
@@ -171,29 +174,38 @@
   min-width: 0;
   height: var(--mz-group-title-height);
   padding: 0 var(--mz-row-padding);
-  border: 1px solid var(--mz-border);
+  border: 0;
   border-radius: var(--mz-row-radius);
-  background: var(--mz-surface);
+  background: transparent;
   color: var(--mz-text);
   font: inherit;
+  /* button 的 UA 默认居中对齐会被撑开的标题继承，必须显式回左。 */
+  text-align: left;
   cursor: pointer;
 }
 
 .messenger-sidebar-device:hover,
 .messenger-sidebar-device[aria-expanded='true'] {
-  background: var(--mz-surface);
-  border-color: var(--mz-border-strong);
+  background: var(--mz-hover);
 }
 
 .messenger-sidebar-device-icon {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 20px;
-  color: var(--mz-primary);
-  font-size: var(--mz-row-icon);
+  height: 20px;
+  border-radius: 6px;
+  background: var(--mz-border, #e8e6e3);
+  color: var(--mz-text-muted);
+  font-size: 11px;
   text-align: center;
 }
 
 .messenger-sidebar-device-label {
+  /* 吃掉剩余宽度：种类标签与箭头才能贴到行右缘（蛹同行语法），不挤在名称后。 */
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   color: var(--mz-text);

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -61,14 +62,30 @@ def main() -> int:
 
     # These manifest files still require static versions for packaging/update metadata,
     # so we sync them from the single source of truth in config/app_version.json.
+    # Standalone crates carry their own lock entry and need a re-pin after a bump.
     sync_targets = [
-        ROOT / "Cargo.toml",
-        ROOT / "crates" / "wunder-desktop" / "Cargo.toml",
-        ROOT / "frontend-slint" / "Cargo.toml",
+        (ROOT / "Cargo.toml", ["-w"]),
+        (ROOT / "crates" / "wunder-desktop" / "Cargo.toml", None),
+        (ROOT / "frontend-slint" / "Cargo.toml", ["-p", "wunder-frontend-slint"]),
     ]
-    for target in sync_targets:
+    lock_jobs = []
+    for target, repin_args in sync_targets:
         if replace_toml_package_version(target, version):
             changed_files.append(str(target.relative_to(ROOT)))
+            if repin_args is not None:
+                lock_jobs.append((target.parent, repin_args))
+
+    # Release builders run `cargo metadata --locked`, so a stale lock file
+    # fails the build right after every version bump. The update here only
+    # re-pins local package versions; dependency pins stay untouched.
+    for directory, repin_args in lock_jobs:
+        repin = subprocess.run(
+            ["cargo", "update", *repin_args, "--offline",
+             "--manifest-path", str(directory / "Cargo.toml")],
+            capture_output=True, text=True,
+        )
+        if repin.returncode != 0:
+            raise SystemExit(f"failed to re-pin lock in {directory}: {repin.stderr.strip()}")
 
     json_targets = [
         ROOT / "frontend" / "package.json",

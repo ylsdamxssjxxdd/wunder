@@ -7,6 +7,7 @@ pub mod reporter;
 pub mod service;
 pub mod session;
 mod thread_watch;
+pub mod update;
 pub use thread_watch::{CloudThreadCancellation, CloudThreadEvent, CloudThreadWatch};
 
 pub(crate) use service::network_error_summary;

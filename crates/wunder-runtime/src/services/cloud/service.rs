@@ -131,7 +131,7 @@ pub struct CloudStatus {
 }
 
 pub struct CloudService {
-    http: reqwest::Client,
+    pub(crate) http: reqwest::Client,
     state: Mutex<CloudServiceState>,
     reporter: Mutex<Option<Arc<LogReporter>>>,
     session_base_override: Mutex<Option<std::path::PathBuf>>,
@@ -573,6 +573,19 @@ impl CloudService {
         &self,
         build: impl Fn(&CloudSessionFile) -> reqwest::RequestBuilder,
     ) -> Result<reqwest::Response> {
+        self.authed_send_with_timeout(build, Some(Duration::from_secs(REQUEST_TIMEOUT_SECS)))
+            .await
+    }
+
+    /// Same contract as [`Self::authed_send`] with a caller-owned per-request
+    /// timeout. Large transfers (update package downloads) pass `None` — the
+    /// 20s API budget would truncate them mid-body — and enforce their own
+    /// idle watchdog between body chunks.
+    pub async fn authed_send_with_timeout(
+        &self,
+        build: impl Fn(&CloudSessionFile) -> reqwest::RequestBuilder,
+        timeout: Option<Duration>,
+    ) -> Result<reqwest::Response> {
         if self.session().is_none() {
             self.adopt_shared_login().await?;
         }
@@ -586,9 +599,8 @@ impl CloudService {
             session.logged_in_at,
         );
         let stale_token = session.token.clone();
-        let attempt = build(&session)
+        let attempt = apply_request_timeout(build(&session), timeout)
             .header("x-wunder-device-id", &session.device_id)
-            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .send()
             .await;
         match attempt {
@@ -623,9 +635,8 @@ impl CloudService {
                 "cloud session changed; retry the operation explicitly"
             ));
         }
-        let attempt = build(&session)
+        let attempt = apply_request_timeout(build(&session), timeout)
             .header("x-wunder-device-id", &session.device_id)
-            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
             .send()
             .await;
         match attempt {
@@ -651,7 +662,6 @@ impl CloudService {
             self.mark_online();
         }
     }
-
     /// Heartbeat: empty log batch. The server touches the device after auth
     /// and device validation regardless of the batch content, so an empty
     /// POST keeps `last_seen_at` fresh while idle. Drives the connection
@@ -2026,6 +2036,19 @@ async fn session_keeper_loop() {
 // Helpers
 // ----------------------------------------------------------------------
 
+/// Apply a per-request timeout only when the caller provides one; `None`
+/// (long stream transfers) leaves the request unbounded and lets the caller
+/// enforce its own chunk-idle watchdog.
+fn apply_request_timeout(
+    builder: reqwest::RequestBuilder,
+    timeout: Option<Duration>,
+) -> reqwest::RequestBuilder {
+    match timeout {
+        Some(timeout) => builder.timeout(timeout),
+        None => builder,
+    }
+}
+
 async fn read_json(response: reqwest::Response) -> Value {
     match response.text().await {
         Ok(text) => serde_json::from_str(&text).unwrap_or(Value::Null),
@@ -2064,7 +2087,7 @@ fn parse_account_snapshot(body: &Value) -> Result<CloudAccountSnapshot> {
     })
 }
 
-fn error_message(body: &Value) -> String {
+pub(crate) fn error_message(body: &Value) -> String {
     body["error"]["message"]
         .as_str()
         .or_else(|| body["message"].as_str())

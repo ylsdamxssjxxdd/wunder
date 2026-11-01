@@ -614,6 +614,24 @@ export component MainWindow inherits Window {
     in-out property <bool> cloud-logged-in: false;
     in-out property <bool> cloud-inbound-enabled: false;
     in-out property <bool> cloud-full-shadow: false;
+    // ---- software updates ----
+    // Update state machine snapshots are pushed natively; the shell forwards
+    // them into the settings card and relays the one-shot requests back.
+    in-out property <string> update-current-version;
+    in-out property <string> update-source: "cloud";
+    // Update target: `desktop` | `cli` | `supplement`; a session-level choice.
+    in-out property <string> update-target: "desktop";
+    in-out property <string> update-local-version;
+    in-out property <string> update-phase: "idle";
+    in-out property <string> update-latest-version;
+    in-out property <string> update-notes;
+    in-out property <bool> update-mandatory: false;
+    in-out property <string> update-error;
+    in-out property <float> update-progress: 0;
+    in-out property <string> update-progress-text;
+    callback check-updates(string, string);
+    callback download-update();
+    callback apply-update();
     callback cloud-toggle-sharing(bool, bool);
     in-out property <bool> cloud-expired: false;
     in-out property <string> cloud-username;
@@ -995,12 +1013,15 @@ export component MainWindow inherits Window {
     // Logical-pixel centre of the sidebar's settings button and of the settings
     // window's close button. The native smoke check drives real pointer events,
     // and a real click needs the layout's own numbers rather than a repeated
-    // guess about where the overlay lands.
+    // guess about where the overlay lands. Both surfaces start below the
+    // window's title strip, so every y carries the titlebar offset.
     out property <length> settings-button-x: root.sidebar-width / 2;
-    out property <length> settings-button-y: sidebar_view.height - 20px;
+    out property <length> settings-button-y: Theme.titlebar-height + sidebar_view.height - 20px;
     out property <length> settings-back-x: (root.width - min(1080px, root.width - 72px)) / 2
         + min(1080px, root.width - 72px) - 22px;
-    out property <length> settings-back-y: 22px;
+    out property <length> settings-back-y: Theme.titlebar-height
+        + (root.height - Theme.titlebar-height - min(720px, root.height - 56px)) / 2
+        + 22px;
     // §8.4 permission mode preference; the backend remains the authority.
     in-out property <string> permission-mode: "full_auto";
     callback save-permission-mode(string);
@@ -1460,6 +1481,20 @@ export component MainWindow inherits Window {
         cloud-login => { root.cloud-login(); }
         cloud-logout => { root.cloud-logout(); }
         cloud-refresh-account => { root.cloud-refresh-account(); }
+        update-current-version <=> root.update-current-version;
+        update-source <=> root.update-source;
+        update-target <=> root.update-target;
+        update-local-version <=> root.update-local-version;
+        update-phase <=> root.update-phase;
+        update-latest-version <=> root.update-latest-version;
+        update-notes <=> root.update-notes;
+        update-mandatory <=> root.update-mandatory;
+        update-error <=> root.update-error;
+        update-progress <=> root.update-progress;
+        update-progress-text <=> root.update-progress-text;
+        check-updates(source, target) => { root.check-updates(source, target); }
+        download-update => { root.download-update(); }
+        apply-update => { root.apply-update(); }
         open-wunder-model => { root.open-wunder-model(); }
         cloud-toggle-sync(enabled) => { root.cloud-toggle-sync(enabled); }
         model-creating <=> root.model-creating;
@@ -1667,6 +1702,7 @@ export component MainWindow inherits Window {
         remove-agent-question(index) => { root.remove-agent-question(index); }
         save-agent-form => { root.save-agent-form(); }
         agent-save-pending <=> root.agent-save-pending;
+        agent-dirty <=> root.agent-dirty;
         queue-agent-save => { root.queue-agent-save(); }
         refresh-agent-dirty => { root.refresh-agent-dirty(); }
         open-info(title, text) => { root.open-info(title, text); }

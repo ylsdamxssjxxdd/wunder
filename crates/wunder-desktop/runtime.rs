@@ -49,6 +49,10 @@ pub struct DesktopRuntime {
 pub struct DesktopSettings {
     pub workspace_root: String,
     pub desktop_token: String,
+    /// Update source chosen on the settings page: `cloud` (default) or
+    /// `github`. Empty values from older settings files read as `cloud`.
+    #[serde(default)]
+    pub update_source: String,
     #[serde(default)]
     pub python_path: String,
     #[serde(default)]
@@ -107,6 +111,7 @@ impl Default for DesktopSettings {
         Self {
             workspace_root: String::new(),
             desktop_token: uuid::Uuid::new_v4().simple().to_string(),
+            update_source: String::new(),
             python_path: String::new(),
             pip_path: String::new(),
             git_path: String::new(),

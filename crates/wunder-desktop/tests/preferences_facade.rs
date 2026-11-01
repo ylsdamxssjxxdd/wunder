@@ -1,34 +1,62 @@
 //! Preferences, prompt-pack, diagnostics and work-state reset contract tests
 //! against an isolated SQLite runtime (desktop N5 gates).
 
+use std::sync::{Mutex, OnceLock};
 use wunder_desktop::{args::DesktopArgs, NativeDesktop};
 
+/// One runtime per home at a time: the second initializer in the same home
+/// races the default-user seed.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Config, settings and the database all live under `WUNDER_HOME`; point it at
+/// a throw-away directory so these tests never touch the developer's real
+/// home. The engine config file is the source of truth for the model
+/// catalogue; JSON is valid YAML so the fixture keeps a single document.
+fn isolated_home() -> &'static std::path::Path {
+    static HOME: OnceLock<std::path::PathBuf> = OnceLock::new();
+    HOME.get_or_init(|| {
+        let directory = tempfile::tempdir().expect("temp home");
+        let path = directory.path().to_path_buf();
+        std::env::set_var("WUNDER_HOME", &path);
+        std::mem::forget(directory);
+        path
+    })
+}
+
 fn start_isolated() -> Result<NativeDesktop, Box<dyn std::error::Error>> {
-    let directory = tempfile::tempdir()?;
-    let config = directory.path().join("runtime/config");
+    let home = isolated_home();
+    let config = home.join("config");
     std::fs::create_dir_all(&config)?;
-    std::fs::write(config.join("wunder.yaml"), "{}\n")?;
-    let settings = serde_json::json!({
-        "workspace_root": "", "desktop_token": "", "updated_at": 0,
-        "lan_mesh": {"enabled": false},
+    let engine_config = serde_json::json!({
         "llm": {"default": "test-model", "models": {
             "test-model": {"provider": "openai", "model": "test-model", "model_type": "llm",
                            "base_url": "http://127.0.0.1:9/v1", "timeout_s": 5,
                            "support_vision": false, "api_key": "contract-secret"}}}
+    });
+    std::fs::write(config.join("wunder.yaml"), serde_json::to_vec(&engine_config)?)?;
+    let settings = serde_json::json!({
+        "workspace_root": "", "desktop_token": "", "updated_at": 0,
+        "lan_mesh": {"enabled": false}
     });
     std::fs::write(
         config.join("desktop.settings.json"),
         serde_json::to_vec(&settings)?,
     )?;
     let mut args = DesktopArgs::native_defaults();
-    args.temp_root = Some(directory.path().join("runtime").canonicalize()?);
-    args.workspace = Some(directory.path().join("workspace"));
-    std::mem::forget(directory);
+    args.temp_root = Some(home.join("temp"));
+    args.workspace = Some(home.join("workspace"));
     Ok(NativeDesktop::start_with_args(args)?)
 }
 
 #[test]
 fn prompt_pack_lifecycle_roundtrip() {
+    let _serial = serial();
     let runtime = start_isolated().expect("isolated runtime");
     let (active, packs, segments) = runtime.list_prompt_packs().expect("list");
     assert!(!active.is_empty());
@@ -101,30 +129,32 @@ fn prompt_pack_lifecycle_roundtrip() {
 
 #[test]
 fn preferences_validate_and_persist() {
+    let _serial = serial();
     let runtime = start_isolated().expect("isolated runtime");
     assert!(
-        runtime.save_preferences("dark", "enter", 14).is_err(),
+        runtime.save_preferences("dark", "enter", 14, "cloud").is_err(),
         "unknown theme"
     );
     assert!(
-        runtime.save_preferences("light", "space", 14).is_err(),
+        runtime.save_preferences("light", "space", 14, "cloud").is_err(),
         "unknown send key"
     );
     assert!(
-        runtime.save_preferences("light", "enter", 9).is_err(),
+        runtime.save_preferences("light", "enter", 9, "cloud").is_err(),
         "font size out of range"
     );
     let settings = runtime
-        .save_preferences("hula-green", "none", 18)
+        .save_preferences("hula-green", "none", 18, "github")
         .expect("save");
     assert_eq!(settings.theme, "hula-green");
     assert_eq!(settings.send_key, "none");
     assert_eq!(settings.font_size, 18);
+    assert_eq!(settings.update_source, "github");
     // The 蛹 theme card writes these four ids; a rejected save leaves the
     // accent applied live but lost on the next start.
     for theme in ["terracotta", "forest", "honey"] {
         let saved = runtime
-            .save_preferences(theme, "none", 18)
+            .save_preferences(theme, "none", 18, "cloud")
             .unwrap_or_else(|error| panic!("save {theme}: {error}"));
         assert_eq!(saved.theme, theme);
         assert_eq!(runtime.get_desktop_settings().expect("reload").theme, theme);
@@ -132,10 +162,21 @@ fn preferences_validate_and_persist() {
     let reloaded = runtime.get_desktop_settings().expect("reload");
     assert_eq!(reloaded.send_key, "none");
     assert_eq!(reloaded.font_size, 18);
+    assert_eq!(reloaded.update_source, "cloud", "last save wins");
+    // Unknown values normalize to the cloud default instead of poisoning the
+    // settings file.
+    runtime
+        .save_preferences("honey", "enter", 14, "  ")
+        .expect("blank source save");
+    assert_eq!(
+        runtime.get_desktop_settings().expect("reload").update_source,
+        "cloud"
+    );
 }
 
 #[test]
 fn session_reasoning_effort_persists_through_the_native_facade() {
+    let _serial = serial();
     let runtime = start_isolated().expect("isolated runtime");
     let session = runtime.create_session(None).expect("create session");
 
@@ -160,6 +201,7 @@ fn session_reasoning_effort_persists_through_the_native_facade() {
 
 #[test]
 fn session_model_override_persists_through_the_native_facade() {
+    let _serial = serial();
     let runtime = start_isolated().expect("isolated runtime");
     let session = runtime.create_session(None).expect("create session");
 
@@ -199,6 +241,7 @@ fn session_model_override_persists_through_the_native_facade() {
 
 #[test]
 fn diagnostics_export_is_secret_free() {
+    let _serial = serial();
     let runtime = start_isolated().expect("isolated runtime");
     let directory = tempfile::tempdir().expect("tempdir");
     let path = runtime
@@ -217,6 +260,7 @@ fn diagnostics_export_is_secret_free() {
 
 #[test]
 fn reset_work_state_preserves_assets_and_reports_summary() {
+    let _serial = serial();
     let runtime = start_isolated().expect("isolated runtime");
     let summary = runtime.reset_work_state().expect("reset");
     assert_eq!(summary.cancelled_sessions, 0);

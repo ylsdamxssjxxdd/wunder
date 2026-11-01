@@ -65,6 +65,8 @@ pub struct DesktopSettings {
     pub theme: String,
     pub send_key: String,
     pub font_size: i32,
+    /// `cloud` (default) or `github`; empty persisted values read as `cloud`.
+    pub update_source: String,
     pub python_path: String,
     pub git_path: String,
     pub rg_path: String,
@@ -249,6 +251,7 @@ impl NativeDesktop {
         theme: &str,
         send_key: &str,
         font_size: i32,
+        update_source: &str,
     ) -> Result<DesktopSettings> {
         let theme = theme.trim();
         // A profile saved before the neutral base stopped following the theme
@@ -271,6 +274,10 @@ impl NativeDesktop {
         if !(12..=20).contains(&font_size) {
             bail!("字体大小必须在 12 到 20 之间");
         }
+        let update_source = match update_source.trim() {
+            "github" => "github",
+            _ => "cloud",
+        };
         let _guard = self
             .settings_lock
             .lock()
@@ -279,6 +286,7 @@ impl NativeDesktop {
         settings.theme = theme.to_string();
         settings.send_key = send_key.to_string();
         settings.font_size = font_size;
+        settings.update_source = update_source.to_string();
         settings.updated_at = super::now_ts();
         save_desktop_settings(&self.desktop.settings_path, &settings)?;
         // Release the settings lock before re-reading through the façade:
@@ -1170,6 +1178,10 @@ fn project(
         theme: preferences.0.to_string(),
         send_key: preferences.1.to_string(),
         font_size: persisted.font_size.clamp(12, 20),
+        update_source: match persisted.update_source.trim() {
+            "github" => "github".to_string(),
+            _ => "cloud".to_string(),
+        },
         python_path: persisted.python_path.clone(),
         git_path: persisted.git_path.clone(),
         rg_path: persisted.rg_path.clone(),

@@ -79,7 +79,7 @@
   gap: 10px;
   box-sizing: border-box;
   width: 100%;
-  height: 36px;
+  height: 48px;
   padding: 0 10px 0 12px;
   border: 0;
   border-radius: var(--mz-radius-btn);
@@ -112,7 +112,7 @@
 
 .messenger-settings-frame-nav-icon {
   flex-shrink: 0;
-  width: 16px;
+  width: 18px;
   color: var(--mz-text-muted);
   text-align: center;
 }
@@ -125,7 +125,7 @@
    用 mask + 背景色跟随导航的 muted/primary 状态，方案同 AbilityIconBadge
    的 fa-bee；每个图标用 `-svg-<name>` 规则提供 mask-image。 */
 .messenger-settings-frame-nav-icon-svg {
-  height: 16px;
+  height: 18px;
   background-color: var(--mz-text-muted);
   -webkit-mask: center / contain no-repeat;
   mask: center / contain no-repeat;
@@ -138,6 +138,57 @@
 .messenger-settings-frame-nav-icon-svg-brain {
   -webkit-mask-image: url('../../assets/fluent-brain.svg');
   mask-image: url('../../assets/fluent-brain.svg');
+}
+
+/* 分类图标与蛹设置导航同一套描边源（lucide / tabler，文件同名）。 */
+.messenger-settings-frame-nav-icon-svg-sliders-horizontal {
+  -webkit-mask-image: url('../../assets/lc-sliders-horizontal.svg');
+  mask-image: url('../../assets/lc-sliders-horizontal.svg');
+}
+
+.messenger-settings-frame-nav-icon-svg-circle-user-round {
+  -webkit-mask-image: url('../../assets/lc-circle-user-round.svg');
+  mask-image: url('../../assets/lc-circle-user-round.svg');
+}
+
+.messenger-settings-frame-nav-icon-svg-tools {
+  -webkit-mask-image: url('../../assets/tools-outline.svg');
+  mask-image: url('../../assets/tools-outline.svg');
+}
+
+.messenger-settings-frame-nav-icon-svg-bot {
+  -webkit-mask-image: url('../../assets/lc-bot.svg');
+  mask-image: url('../../assets/lc-bot.svg');
+}
+
+.messenger-settings-frame-nav-icon-svg-paw-print {
+  -webkit-mask-image: url('../../assets/lc-paw-print.svg');
+  mask-image: url('../../assets/lc-paw-print.svg');
+}
+
+.messenger-settings-frame-nav-icon-svg-clock {
+  -webkit-mask-image: url('../../assets/lc-clock.svg');
+  mask-image: url('../../assets/lc-clock.svg');
+}
+
+.messenger-settings-frame-nav-icon-svg-plug {
+  -webkit-mask-image: url('../../assets/lc-plug.svg');
+  mask-image: url('../../assets/lc-plug.svg');
+}
+
+.messenger-settings-frame-nav-icon-svg-satellite-dish {
+  -webkit-mask-image: url('../../assets/lc-satellite-dish.svg');
+  mask-image: url('../../assets/lc-satellite-dish.svg');
+}
+
+.messenger-settings-frame-nav-icon-svg-file-text {
+  -webkit-mask-image: url('../../assets/lc-file-text.svg');
+  mask-image: url('../../assets/lc-file-text.svg');
+}
+
+.messenger-settings-frame-nav-icon-svg-archive {
+  -webkit-mask-image: url('../../assets/lc-archive.svg');
+  mask-image: url('../../assets/lc-archive.svg');
 }
 
 /* 单行条目：分类摘要已从导航里移除，标题自己吃掉剩余宽度并省略。 */

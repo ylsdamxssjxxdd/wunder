@@ -113,9 +113,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     app.on_toggle_expert_tool_group(move |category| {
         let Some(app) = weak.upgrade() else { return };
-        if app.get_saving() {
-            return;
-        }
+        // A live-save may legitimately be in flight when the group button is
+        // clicked: toggling only dirties the form, and the pending-save timer
+        // retries after the save settles, so there is no guard here.
         let Some(group) = app
             .get_expert_tool_groups()
             .iter()
@@ -126,19 +126,33 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let mut names = app
             .get_selected_agent_tool_names()
             .iter()
+            .map(|n| n.to_string())
             .collect::<Vec<_>>();
         for tool in group.tools.iter() {
+            let name = tool.name.as_str();
             if group.all_selected {
-                names.retain(|n| n != &tool.name);
-            } else if !names.contains(&tool.name) {
-                names.push(tool.name);
+                names.retain(|n| n.as_str() != name);
+            } else if !names.iter().any(|n| n.as_str() == name) {
+                names.push(name.to_string());
             }
         }
-        app.set_selected_agent_tool_names(model(names));
+        // `set_vec` rewrites the backing model in place: the selection keeps
+        // its identity instead of swapping the list under any binding.
+        let names = names.into_iter().map(SharedString::from).collect::<Vec<_>>();
+        match app
+            .get_selected_agent_tool_names()
+            .as_any()
+            .downcast_ref::<VecModel<SharedString>>()
+        {
+            Some(selection) => selection.set_vec(names),
+            None => app.set_selected_agent_tool_names(model(names)),
+        }
         crate::entity_state::sync_tool_selection(&app);
         // The group toggle rewrites the selection model in place, which no
-        // property-change hook would see.
+        // property-change hook would see; recompute the flag and queue the
+        // live-save the same way a single switch does.
         crate::agent_editor::refresh_agent_dirty(&app);
+        app.invoke_queue_agent_save();
     });
     let weak = app.as_weak();
     app.on_edit_agent_question(move |index, text| {

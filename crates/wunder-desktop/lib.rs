@@ -25,7 +25,9 @@ pub use native::{
     NativeThreadUpdate, NativeThreadWatch, NativeThreadWatchCancel, NativeWorkflowEntry,
     NativeWorkflowLine, NativeWorkflowSection, NativeWorkspace, PromptPackInfo,
     PromptSegmentContent, RuntimeToolStatus, ToolRecord, WorkspaceDeleteSummary, WorkspaceEdit,
-    WorkspacePathReport, DEFAULT_AGENT_ID, WORKSPACE_COLORS, WORKSPACE_ICONS,
+    WorkspacePathReport, CURRENT_VERSION, DEFAULT_AGENT_ID, TARGET_CLI, TARGET_DESKTOP,
+    TARGET_SUPPLEMENT, UPDATE_GITHUB_REPO, UPDATE_RELAUNCH_ENV, UpdateStateView,
+    WORKSPACE_COLORS, WORKSPACE_ICONS,
 };
 pub use runtime::DesktopRuntime;
 
