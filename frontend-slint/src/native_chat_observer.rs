@@ -1210,6 +1210,26 @@ mod tests {
             kinds.contains(&crate::message_blocks::KIND_IMAGE),
             "kinds: {kinds:?}"
         );
+        // 蛹的本地单根形态下持久化路径是本地绝对路径；它必须同样投影成图片块，
+        // 否则气泡退回贴路径文本。
+        let local = wunder_desktop::NativeMessage {
+            attachments: vec![wunder_desktop::NativeMessageAttachment {
+                name: "fixture.png".into(),
+                content_type: "image/png".into(),
+                public_path: "C:/sample-data/workspaces/local_user/chat_attachments/s1/fixture.png"
+                    .into(),
+            }],
+            ..message.clone()
+        };
+        let row = history_user(&local);
+        let kinds = (0..row.blocks.row_count())
+            .filter_map(|index| row.blocks.row_data(index))
+            .map(|block| block.kind)
+            .collect::<Vec<_>>();
+        assert!(
+            kinds.contains(&crate::message_blocks::KIND_IMAGE),
+            "local absolute attachment path must stay an image block, kinds: {kinds:?}"
+        );
         // An attachment without a stored path degrades to a labeled text row.
         let orphan = wunder_desktop::NativeMessage {
             attachments: vec![wunder_desktop::NativeMessageAttachment {
