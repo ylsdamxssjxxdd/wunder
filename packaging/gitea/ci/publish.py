@@ -39,9 +39,10 @@ def main():
         try:
             release = api("POST", prefix + "/releases", {
                 "tag_name": tag, "target_commitish": commit,
-                "name": "Offline Linux build " + run + " (" + commit[:12] + ")",
-                "body": "Automatic offline ARM64/amd64 desktop and CLI build. "
-                        "Architecture jobs attach their outputs independently; check Actions for completion.",
+                "name": "Offline build " + run + " (" + commit[:12] + ")",
+                "body": "离线套件自动构建：三个桌面程序（Win7 x86 exe、Ubuntu 18.04 x86_64 与 ARM64 桌面归档）"
+                        "与两组 Linux 安装包（.portable、.run），与 GitHub nightly 的交付同形。"
+                        "各任务独立上传附件，完成与否以 Actions 任务状态为准。",
                 "draft": False, "prerelease": True})
         except HTTPError as conflict:
             if conflict.code not in (409, 422):

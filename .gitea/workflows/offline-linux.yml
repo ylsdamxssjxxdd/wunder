@@ -15,8 +15,8 @@ permissions:
 # 任务容器自己按 uname -m 判断能不能干这活，不能就打印跳过原因并成功退出。
 jobs:
   linux:
-    # wunder-offline 任务镜像里有 /opt/offline-ci/checkout.py；检出后一律改用仓库内脚本，
-    # 这样补充包任务（镜像里没有 baked 脚本）也能走同一套流程。
+    # wunder-offline 任务镜像里有 /opt/offline-ci/checkout.py；检出后一律改用仓库内脚本。
+    # 桌面、CLI、.portable 与 .run 都在同一个任务的工作区里产出，补充包直接取套件预置包。
     runs-on: wunder-offline
     timeout-minutes: 1440
     strategy:
@@ -32,7 +32,7 @@ jobs:
           CI_REF: ${{ github.ref }}
           CI_TOKEN: ${{ github.token }}
         run: python3 /opt/offline-ci/checkout.py
-      - name: Build offline Linux desktop and CLI
+      - name: Build offline Linux desktop, CLI and installer
         env:
           ARCH: ${{ matrix.arch }}
           CI_REPOSITORY: ${{ github.repository }}
@@ -78,41 +78,6 @@ jobs:
           set -euo pipefail
           if find release-assets -maxdepth 1 -type f | grep -q .; then
             python3 packaging/gitea/ci/publish.py release-assets
-          else
-            echo 'nothing to publish from this worker'
-          fi
-
-  supplement:
-    # 补充包是预制的：离线端只校验完整性并复用，不在任务容器里编译 python/git，
-    # 所以这一步跑在通用构建镜像上，两种架构的包都能在任一 worker 上发布。
-    runs-on: wunder-offline
-    timeout-minutes: 1440
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [arm64, amd64]
-    steps:
-      - name: Checkout from local Gitea
-        env:
-          CI_REPOSITORY: ${{ github.repository }}
-          CI_COMMIT: ${{ github.sha }}
-          CI_REF: ${{ github.ref }}
-          CI_TOKEN: ${{ github.token }}
-        run: python3 /opt/offline-ci/checkout.py
-      - name: Build supplement pack from the bundled cache
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: bash packaging/gitea/ci/build-supplement.sh
-      - name: Publish supplement to local Releases
-        env:
-          ARCH: ${{ matrix.arch }}
-          CI_REPOSITORY: ${{ github.repository }}
-          CI_COMMIT: ${{ github.sha }}
-          CI_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if find supplement-dist -maxdepth 1 -type f | grep -q .; then
-            python3 packaging/gitea/ci/publish.py supplement-dist
           else
             echo 'nothing to publish from this worker'
           fi

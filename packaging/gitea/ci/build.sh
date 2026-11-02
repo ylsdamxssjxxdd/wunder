@@ -54,6 +54,35 @@ fi
 # win7 构建会把 PE 导入门禁的审计转储写进输出目录；留档但不该进 Release 附件。
 mv -f release-assets/imports.txt "$cache/imports-$ARCH.txt" 2>/dev/null || true
 
-python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/verify.py" release-assets "$ARCH"
+if [[ "$ARCH" != win7-x86 ]]; then
+    # 与 GitHub 发布同形：Linux 每架构交桌面归档 + .portable + .run 三件，
+    # 裸 CLI 与组包留下的校验件不进 Release（GitHub 的产物通配也收不到它们）。
+    # 补充包是 .run 的必需输入，离线端只复用套件预置包，先复核 SHA256 再用。
+    pack="$WUNDER_OFFLINE_ROOT/supplement-prebuilt/$ARCH/wunder-supplement-linux-$ARCH.tar.gz"
+    [[ -s "$pack" && -s "$pack.sha256" ]] || {
+        echo "套件预置补充包缺失: $pack（在准备机重产并重新导出套件）" >&2
+        exit 2
+    }
+    ( cd "$(dirname "$pack")" && sha256sum --check --strict "$(basename "$pack").sha256" )
+    desktop="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-$ARCH.tar.gz" -print -quit)"
+    cli="$(find release-assets -maxdepth 1 -name "wunder-cli-*-linux-$ARCH" -print -quit)"
+    [[ -n "$desktop" && -n "$cli" ]] || { echo "桌面归档或 CLI 缺失: desktop=$desktop cli=$cli" >&2; exit 2; }
+    bash builders/pack-portable.sh -a "linux-$ARCH" --desktop-archive "$desktop" --output-dir release-assets
+    bash builders/pack.sh -a "linux-$ARCH" --desktop-archive "$desktop" --cli "$cli" \
+        --supplement "$pack" --output-dir release-assets
+    sample="$cache/wunder-cli-$ARCH.bin"
+    mv -f -- "$cli" "$sample"
+    # 组包脚本会就地留下 .sha256 与 .manifest.json，一并转存到缓存卷，避免混进附件。
+    find release-assets -maxdepth 1 -type f \( -name '*.sha256' -o -name '*.manifest.json' \) \
+        -exec mv -f -- {} "$cache/" \;
+else
+    sample="$cache/wunder-cli-win7-x86.exe"
+    cli="$(find release-assets -maxdepth 1 -name 'wunder-cli-*-win7-x86.exe' -print -quit)"
+    if [[ -n "$cli" ]]; then
+        mv -f -- "$cli" "$sample"
+    fi
+fi
+
+python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/verify.py" release-assets "$ARCH" "$sample"
 (cd release-assets; find . -maxdepth 1 -type f ! -name 'SHA256SUMS-*' -print0 | sort -z | xargs -0 sha256sum > "SHA256SUMS-$ARCH.txt")
 printf '\nArtifacts ready for %s (host %s)\n' "$ARCH" "$host_arch"

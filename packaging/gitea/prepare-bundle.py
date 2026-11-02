@@ -52,8 +52,15 @@ PROFILES = {
     },
 }
 
-SUPPLEMENT_ARCHES = ("amd64", "arm64")
-SUPPLEMENT_PACK = "wunder-supplement-linux-{}.tar.gz"
+# 预置补充包：离线端不复建（要在目标 libc 上编译 git、铺 Python 运行时），随套件导出直接复用。
+# Linux 两包是 .run 安装包的必需输入；win7-ia32 那包是 Windows 安装器（Inno Setup）的输入，
+# Linux 侧组不了安装包，但仍然带进套件，交付到离线机后可由 Windows 端直接取用。
+SUPPLEMENT_PACKS = {
+    "amd64": "wunder-supplement-linux-amd64.tar.gz",
+    "arm64": "wunder-supplement-linux-arm64.tar.gz",
+    "win7-ia32": "wunder-supplement-win7-ia32-common.zip",
+}
+SUPPLEMENT_REQUIRED = ("amd64", "arm64")
 
 
 def sha256(path):
@@ -137,18 +144,20 @@ def stage_supplement_prebuilt(source_dir, sdk_directory):
     """Collect the prebuilt supplement packs into the SDK-relative layout.
 
     离线端不复建补充包（要在目标 libc 上编译 git、铺 Python 运行时），所以补充包在联网准备机上
-    用 cache/offline_build.sh <arch> 产好后随套件导出；导出前先复核 SHA256，避免把坏包固化进套件。
+    产好后随套件导出；导出前先复核 SHA256，避免把坏包固化进套件。
     """
     staging = sdk_directory / ".supplement-stage"
     if staging.exists():
         shutil.rmtree(staging)
     target = staging / "supplement-prebuilt"
     members = []
-    for architecture in SUPPLEMENT_ARCHES:
-        pack_name = SUPPLEMENT_PACK.format(architecture)
+    for architecture, pack_name in SUPPLEMENT_PACKS.items():
         pack = source_dir / pack_name
         checksum = source_dir / (pack_name + ".sha256")
         if not pack.is_file():
+            if architecture in SUPPLEMENT_REQUIRED:
+                raise RuntimeError("prebuilt supplement pack is missing: " + pack_name)
+            print("跳过补充包预置（文件不存在）: " + pack_name, flush=True)
             continue
         if not checksum.is_file():
             raise RuntimeError("prebuilt supplement pack has no .sha256 beside it: " + pack_name)
@@ -159,8 +168,6 @@ def stage_supplement_prebuilt(source_dir, sdk_directory):
         shutil.copy2(pack, arch_target / pack_name)
         shutil.copy2(checksum, arch_target / (pack_name + ".sha256"))
         members.append(architecture)
-    if not members:
-        raise RuntimeError("no prebuilt supplement pack found for amd64/arm64")
     archive = sdk_directory / "supplement-prebuilt.tar.gz"
     export_stream(["tar", "-C", str(staging), "-cf", "-", "supplement-prebuilt"], archive)
     shutil.rmtree(staging)
@@ -172,7 +179,7 @@ def main():
     parser.add_argument("--arch", choices=sorted(PROFILES), required=True)
     parser.add_argument("--sdk", type=Path, required=True)
     parser.add_argument("--supplement-prebuilt", type=Path, required=True,
-                        help="directory with wunder-supplement-linux-<arch>.tar.gz and its .sha256")
+                        help="directory with the prebuilt supplement packs and their .sha256 sidecars")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--reuse-sdk-archive", action="store_true")
