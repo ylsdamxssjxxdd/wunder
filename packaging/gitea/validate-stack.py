@@ -46,7 +46,7 @@ permissions:
   contents: write
 jobs:
   probe:
-    runs-on: linux-offline-arm64
+    runs-on: wunder-offline
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -73,11 +73,10 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
         run: |
-          if [[ "$ARCH" == arm64 ]]; then
+          if [[ "$ARCH" == arm64 && "$(uname -m)" == aarch64 ]]; then
             ./release-assets/wunder-cli-0.0.0-linux-arm64
-            tar -tzf ./release-assets/wunder-slint-0.0.0-linux-arm64.tar.gz | grep -qx './AppRun'
-            test -f ./release-assets/wunder-0.0.0-arm64.portable
           fi
+          tar -tzf ./release-assets/wunder-slint-0.0.0-linux-$ARCH.tar.gz | grep -qx './AppRun'
       - name: Local release upload
         env:
           ARCH: ${{ matrix.arch }}
@@ -90,16 +89,22 @@ jobs:
 set -euo pipefail
 test ! -S /var/run/docker.sock
 test ! -e /bootstrap
-test -x "$WUNDER_OFFLINE_ROOT/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu/bin/rustc"
+case "$(uname -m)" in
+  x86_64) host_triple=x86_64-unknown-linux-gnu ;;
+  *) host_triple=aarch64-unknown-linux-gnu ;;
+esac
+toolchain="$WUNDER_OFFLINE_ROOT/rust/toolchains/1.92.0-$host_triple/bin"
+test -x "$toolchain/rustc"
 if touch "$WUNDER_OFFLINE_ROOT/.ci-readonly-probe" 2>/dev/null; then
   rm -f "$WUNDER_OFFLINE_ROOT/.ci-readonly-probe"
   echo 'SDK must be mounted read-only' >&2
   exit 2
 fi
 if curl --connect-timeout 2 --max-time 3 -s http://1.1.1.1 >/dev/null; then exit 2; fi
-rustc --version
+PATH="$toolchain:$PATH" rustc --version
 """, encoding="utf-8")
-    for relative in ("packaging/gitea/ci/build.sh", "builders/build-linux-arm64-desktop.sh",
+    for relative in ("packaging/gitea/ci/build.sh", "packaging/gitea/ci/verify.py",
+                     "builders/build-linux-arm64-desktop.sh",
                      "builders/build-linux-amd64-desktop.sh", "builders/build-linux-amd64-offline.sh",
                      "builders/build-cli-linux-arm64-offline.sh", "builders/build-cli-linux-amd64-offline.sh",
                      "builders/linux_arm64_sysroot_cc.sh", "builders/linux-amd64-cross-cc.sh",
@@ -154,11 +159,8 @@ version = "0.0.0"
             assets = {asset["name"] for asset in releases[0]["assets"]}
             expected = {"wunder-slint-0.0.0-linux-" + architecture + ".tar.gz"
                         for architecture in ("arm64", "amd64")}
-            expected.update("wunder-0.0.0-" + label + suffix
-                            for label in ("x64", "arm64")
-                            for suffix in (".run", ".portable"))
             expected.update("wunder-cli-0.0.0-linux-" + architecture for architecture in ("arm64", "amd64"))
-            expected.update("SHA256SUMS-linux-" + architecture + ".txt" for architecture in ("arm64", "amd64"))
+            expected.update("SHA256SUMS-" + architecture + ".txt" for architecture in ("arm64", "amd64"))
             if not expected.issubset(assets):
                 raise RuntimeError("both architecture outputs were not published")
             print("PASS: authenticated checkout, push-triggered matrix, ARM64 native/AMD64 cross Rust, "

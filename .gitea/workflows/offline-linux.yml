@@ -11,13 +11,17 @@ on:
 permissions:
   contents: write
 
+# Gitea 的表达式引擎没有 runner 上下文，架构门禁一律放进脚本：
+# 任务容器自己按 uname -m 判断能不能干这活，不能就打印跳过原因并成功退出。
 jobs:
   linux:
-    runs-on: linux-offline-arm64
+    # wunder-offline 任务镜像里有 /opt/offline-ci/checkout.py；检出后一律改用仓库内脚本，
+    # 这样补充包任务（镜像里没有 baked 脚本）也能走同一套流程。
+    runs-on: wunder-offline
     timeout-minutes: 1440
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 3
       matrix:
         arch: [arm64, amd64]
     steps:
@@ -39,4 +43,76 @@ jobs:
           CI_REPOSITORY: ${{ github.repository }}
           CI_COMMIT: ${{ github.sha }}
           CI_TOKEN: ${{ github.token }}
-        run: python3 /opt/offline-ci/publish.py release-assets
+        run: |
+          set -euo pipefail
+          if find release-assets -maxdepth 1 -type f | grep -q .; then
+            python3 packaging/gitea/ci/publish.py release-assets
+          else
+            echo 'nothing to publish from this worker'
+          fi
+
+  win7:
+    # Win7 32 位由 x86_64 宿主的 kylin-x86 MinGW 交叉构建；ARM64 worker 上脚本自行跳过。
+    runs-on: wunder-offline
+    timeout-minutes: 1440
+    steps:
+      - name: Checkout from local Gitea
+        env:
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_REF: ${{ github.ref }}
+          CI_TOKEN: ${{ github.token }}
+        run: python3 /opt/offline-ci/checkout.py
+      - name: Build offline Win7 x86 desktop and CLI
+        env:
+          ARCH: win7-x86
+          CI_REPOSITORY: ${{ github.repository }}
+        run: bash packaging/gitea/ci/build.sh
+      - name: Publish build outputs to local Releases
+        env:
+          ARCH: win7-x86
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if find release-assets -maxdepth 1 -type f | grep -q .; then
+            python3 packaging/gitea/ci/publish.py release-assets
+          else
+            echo 'nothing to publish from this worker'
+          fi
+
+  supplement:
+    # 补充包是预制的：离线端只校验完整性并复用，不在任务容器里编译 python/git，
+    # 所以这一步跑在通用构建镜像上，两种架构的包都能在任一 worker 上发布。
+    runs-on: wunder-offline
+    timeout-minutes: 1440
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, amd64]
+    steps:
+      - name: Checkout from local Gitea
+        env:
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_REF: ${{ github.ref }}
+          CI_TOKEN: ${{ github.token }}
+        run: python3 /opt/offline-ci/checkout.py
+      - name: Build supplement pack from the bundled cache
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: bash packaging/gitea/ci/build-supplement.sh
+      - name: Publish supplement to local Releases
+        env:
+          ARCH: ${{ matrix.arch }}
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if find supplement-dist -maxdepth 1 -type f | grep -q .; then
+            python3 packaging/gitea/ci/publish.py supplement-dist
+          else
+            echo 'nothing to publish from this worker'
+          fi

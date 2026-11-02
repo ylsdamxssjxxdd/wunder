@@ -1,26 +1,30 @@
+# Runner 配置模板：@TOKEN@ 由 packaging/gitea/prepare-bundle.py 按目标架构渲染，
+# 套件里拿到的是已渲染的真实值（capacity 渲染为整数，其余为字符串）。
+# 标签与卷名必须和 compose.yaml/.env 同源，否则任务容器挂不上 SDK 或工作流排不到 runner。
 log:
   level: info
 runner:
   file: /data/.runner
-  capacity: 1
+  capacity: "@RUNNER_CAPACITY@"
   timeout: 24h
   envs:
     CI_SERVER_URL: http://gitea:3000
     WUNDER_OFFLINE_ROOT: /opt/offline-sdk
-    WUNDER_BUILD_JOBS: "4"
-    CARGO_BUILD_JOBS: "4"
-    WUNDER_SQUASHFS_PROCESSORS: "2"
+    WUNDER_BUILD_JOBS: "@WUNDER_BUILD_JOBS@"
+    CARGO_BUILD_JOBS: "@WUNDER_BUILD_JOBS@"
+    WUNDER_SQUASHFS_PROCESSORS: "@WUNDER_SQUASHFS_PROCESSORS@"
   labels:
-    - linux-offline-arm64:docker://wunder-offline-builder:20261027-arm64-mounted
+    - "@BUILDER_LABEL@"
+    - "@RCHO_LABEL@"
 cache:
   enabled: false
 container:
-  network: offline-gitea-ci
+  network: "@STACK_PREFIX@-ci"
   privileged: false
-  options: --volume offline-gitea-build-cache:/ci-cache --volume offline-gitea-sdk:/opt/offline-sdk:ro
+  options: "--volume @STACK_PREFIX@-build-cache:/ci-cache --volume @STACK_PREFIX@-sdk:/opt/offline-sdk:ro"
   valid_volumes:
-    - offline-gitea-build-cache
-    - offline-gitea-sdk
+    - "@STACK_PREFIX@-build-cache"
+    - "@STACK_PREFIX@-sdk"
   docker_host: "-"
   force_pull: false
   force_rebuild: false

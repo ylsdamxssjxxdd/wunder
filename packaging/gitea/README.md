@@ -1,89 +1,109 @@
-# ARM64 离线 Gitea 与双架构 CI
+# 离线 Gitea 与双架构 CI（arm64 / x86_64 剖面）
 
-本包面向已有 Docker Engine 与 Docker Compose v2 的 ARM64 Linux 服务器。蛹是本地 AI 工作台，默认 CI 构建蛹 Linux AppImage 和舵机独立可执行文件，均提供 arm64、amd64 两种架构，保持 Ubuntu 18.04/glibc 2.27 基线。AMD64 使用 ARM64 原生 Rust 交叉编译，不依赖整机 x86 仿真。
+本包面向已有 Docker Engine 与 Docker Compose v2 的 Linux 服务器，一套脚本按 `--arch` 导出两种剖面：
+`arm64`（ARM64 宿主，amd64 目标靠原生交叉）与 `amd64`（x86_64 宿主，arm64 与 Win7 32 位靠 SDK 内交叉工具链）。
+两者都不需要 QEMU，都保持 Ubuntu 18.04 / glibc 2.27 基线。蛹（wunder）默认构建 Linux 桌面归档与舵机（wunder-cli）可执行文件，
+x86_64 剖面额外构建 Win7 32 位与补充包。
 
 ## 启动
 
-1. 把整个目录复制到服务器的可写目录，保留 `compose.yaml`、`images/` 等相对位置。
-2. 执行 `bash load-images.sh`，校验并加载三个 ARM64 镜像，然后校验、解压独立的 `rust-builder/offline-sdk.tar.gz`，自动记录 SDK 的宿主机绝对路径。不需要手动修改 Runner 挂载路径。
-3. 加载脚本会在不存在时复制 `.env.example` 为 `.env`。编辑 `.env`，将 `GITEA_PUBLIC_URL` 改为浏览器可访问的服务器地址，例如 `http://<服务器地址>:3000/`；`GITEA_SSH_HOST` 只填主机名或地址，不带协议。HTTP/SSH 端口默认 3000/2222。
-4. 执行 `docker compose up -d`。镜像策略为 `never`，不会访问外部镜像仓库。初始化、管理员创建和 Runner 注册自动完成。
-5. 在服务器本地执行 `sudo cat data/bootstrap/admin-password` 获取随机初始密码，使用 `.env` 中的管理员用户名登录。首次登录必须修改密码，不要把密码文件发送给他人。
-
-查看状态：
+1. 把整个目录复制到服务器的可写目录，保留 `compose.yaml`、`images/`、`rust-builder/` 的相对位置。
+2. 执行 `bash load-images.sh`。它先按 `.env` 的 `CI_PLATFORM` 校验宿主架构（x86_64 套件不能在 ARM 机上装，反之亦然），
+   再校验并加载三个镜像，然后校验、解压 `rust-builder/offline-sdk.tar.gz` 与 `rust-builder/supplement-prebuilt.tar.gz`，
+   自动把 SDK 的宿主机绝对路径记进 `.env`。不需要手工改 Runner 挂载路径。
+3. 编辑 `.env`，把 `GITEA_PUBLIC_URL` 改成浏览器可访问的地址（如 `http://<服务器地址>:3000/`）；
+   `GITEA_SSH_HOST` 只填主机名或地址。HTTP/SSH 端口默认 3000/2222。
+4. `docker compose up -d`。镜像策略为 `never`，不会访问外部镜像仓库；初始化、管理员创建、Runner 注册自动完成。
+5. `sudo cat data/bootstrap/admin-password` 取初始密码登录，首次登录必须改密码。
 
 ```bash
 docker compose ps -a
 docker compose logs --tail=100 gitea bootstrap runner
 ```
 
-默认关闭自助注册与外部头像，私有仓库需登录。HTTP 不加密，仅用于可信隔离内网；跨不可信网络请自行配置 HTTPS。管理员密码和 Runner 注册信息由部署时随机生成，不预置在镜像或本包中。
+默认关闭自助注册与外部头像，私有仓库需登录。HTTP 不加密，仅用于可信内网。
 
-## SDK 只读挂载
+## 剖面、标签与挂载
 
-离线包不放入任何镜像。目录结构为：
+`.env` 里由导出脚本写入的剖面参数：`CI_PLATFORM`、`SDK_PROFILE`（kylin-arm / kylin-x86）、
+`STACK_PREFIX`（卷与网络前缀，arm64 为 `offline-gitea`，x86_64 为 `offline-gitea-x86`，两套可在同一台机器并存）、
+`GITEA_IMAGE`、`RUNNER_IMAGE`、`BUILDER_IMAGE`、`RUNNER_LABELS`，以及 `GITEA_DISABLE_REGISTRATION`/
+`GITEA_REQUIRE_SIGNIN_VIEW`（套件默认关闭自助注册并要求登录，个人机器可置 false 放开）。
 
-```text
-compose.yaml
-images/                         Gitea、Runner、轻量构建镜像
-rust-builder/offline-sdk.tar.gz  独立 Rust-builder 离线包
-rust-builder/offline/            首次部署时解压，后续直接使用
-data/                           启动后生成的代码、账户、运行数据
-```
+Runner 注册两个标签，都指向同一个任务镜像，只是给两个仓库各留一条路由：
 
-构建镜像仅包含 Ubuntu 18.04 系统构建依赖和 CI 辅助脚本。`offline-gitea-sdk` 是绑定到宿主目录的命名卷：Runner 与它创建的每个任务容器都将此卷只读挂到 `/opt/offline-sdk`，不只是给 Runner 自身挂载。编译输出和 Cargo 配置写到独立的 `offline-gitea-build-cache`，不会污染 SDK。
+- `wunder-offline` → 任务镜像（Ubuntu 18.04 + Rust/Slint 交叉工具链 + git + `/opt/offline-ci`），构建 Linux 桌面/CLI、Win7 32 位交叉，并复用预制补充包。
+- `rcho-offline` → 同一个镜像，供 rcho 的离线流水线使用。rcho 仓库自带 `.gitea/workflows/offline.yml` 与 `packaging/gitea/ci/`，推到同一实例即可构建 Linux amd64/arm64 与 Win7 x86；检出前只能调用镜像里烘焙的 `/opt/offline-ci/checkout.py`，检出后一律改用仓库内脚本。因为 rcho 的构建器会往 SDK 的 `cargo-home-*` 写配置，它的 `prepare-view.sh` 把只读 SDK 组织成 `/ci-cache` 下的可写视图（只读内容用符号链接引用），任何情况下都不向 `/opt/offline-sdk` 写入。
 
-已有离线目录可复用，先执行 `WUNDER_SDK_PATH=/srv/build-sdk/offline bash prepare-sdk.sh`，再设置服务地址并 `docker compose up -d`。这里的路径必须是 Docker daemon 所在宿主机的绝对路径，不能写成只存在于 Runner 容器内的路径。
+`runner.yaml` 是模板，`@TOKEN@` 由 `prepare-bundle.py` 渲染，套件里拿到的是已渲染值；标签与卷名必须和 `.env`/`compose.yaml` 同源。
+`<STACK_PREFIX>-sdk` 卷把离线目录只读挂到 `/opt/offline-sdk`，Runner 与它创建的每个任务容器都带这个挂载；
+编译输出与 Cargo 配置写入 `<STACK_PREFIX>-build-cache`，不污染 SDK。
 
-本包保留 ARM 离线包中的稳定版与 nightly Rust、Cargo vendor、双架构 Linux sysroot、AppImage runtime、MinGW 和 WASM 工具，不依赖原准备机的 Cargo home、登录信息或编译缓存。默认工作流仍仅构建 Linux arm64/amd64；保留 Win7/WASM 工具不等于已配置和验证相应发布任务。
-
-更新 SDK 无需重建镜像：停止 Runner 和正在执行的任务后，更换同一路径下的离线目录，再启动 Runner。若改成另一个绝对路径，先 `docker compose down`，再仅移除 `docker volume rm offline-gitea-sdk`，执行上述 `prepare-sdk.sh` 后重新启动，避免 Docker 复用旧卷的绑定路径。该卷只绑定 SDK，不包含仓库数据库；不要使用 `down -v`。移动整个部署目录时同样需要重新记录路径并重建此绑定卷。
+已有离线目录可复用：`WUNDER_SDK_PATH=/srv/build-sdk/offline bash prepare-sdk.sh`。路径必须是 Docker 宿主机绝对路径。
+换 SDK 不必重建镜像：停 Runner 与在跑任务，替换同路径目录，再启 Runner；改了绝对路径则 `docker compose down` 后
+`docker volume rm <STACK_PREFIX>-sdk`，重跑 `prepare-sdk.sh`。不要 `down -v`。
 
 ## 推送后自动构建
 
-在 Gitea 创建空仓库，不初始化 README。本项目已提供 `.gitea/workflows/offline-linux.yml`，必须先由仓库所有者把该文件与 `packaging/gitea/ci/` 纳入提交，然后推送：
+仓库需包含 `.gitea/workflows/offline-linux.yml` 与 `packaging/gitea/ci/`，然后推送：
 
 ```bash
 git remote add gitea http://<服务器地址>:3000/<用户名>/<仓库名>.git
 git push gitea main
-git push gitea --tags
 ```
 
-新仓库默认开启 Actions；已有仓库请在「设置 → 仓库 → 单元」确认启用 Actions。进入 Actions 页面查看 `Offline Linux Release`：每次分支推送、`v*` 标签推送或手工触发串行执行 ARM64、AMD64 构建，实际先后顺序由调度器决定。运行日志保留在 Gitea；产物通过该次运行的短期令牌自动上传至仓库 Releases，无需长期 PAT。
+`Offline Linux Release` 在每次分支推送、`v*` 标签推送或手工触发时执行：
 
-仓库里原来的 `.gitea/workflows/ci.yml` 在线手工流水线已由离线工作流替代，不再要求安装 Rust 或访问 GitHub Actions。普通 `git push` 只上传 Git 历史；若仓库还使用 Git LFS，迁移时需由客户端把相应 LFS 对象另外推送到新远程。当前默认构建不依赖 GLB 模型等 LFS 资源，不自动下载子模块或外部资源。
+- `linux`：矩阵 arm64/amd64，产出 `wunder-slint-<版本>-linux-<arch>.tar.gz`（AppDir 归档）与 `wunder-cli-<版本>-linux-<arch>`，
+  附 `SHA256SUMS-<arch>.txt`；`verify.py` 校验 ELF 架构、AppDir 布局与 CLI 的 glibc ≤ 2.27。
+- `win7`（仅 x86_64 runner）：`wunder-frontend-slint-<版本>-win7-x86.exe` 与 `wunder-cli-<版本>-win7-x86.exe`，`verify.py` 校验 PE i386 头。
+- `supplement`：不构建，只做完整性校验并从 `supplement-prebuilt/<arch>/` 复用 `wunder-supplement-linux-<arch>.tar.gz`。
 
-每次运行创建独立预发布版，标签形如 `ci-<提交短哈希>-<运行编号>`。两个架构完成后包含：
+检出后的步骤一律使用仓库内 `packaging/gitea/ci/` 脚本，只有检出本身用镜像内 `/opt/offline-ci/checkout.py`
+（补充包镜像同样带该副本）。产物由该次运行的短期令牌上传到 Releases，标签形如 `ci-<提交短哈希>-<运行编号>`。
+某个架构失败不影响其他任务；Release 有附件不代表全部成功，以 Actions 任务状态为准。
 
-- `wunder-slint-<版本>-linux-arm64.AppImage` 与 `wunder-slint-<版本>-linux-amd64.AppImage`。
-- `wunder-cli-<版本>-linux-arm64` 与 `wunder-cli-<版本>-linux-amd64`。
-- 每架构 SHA256 清单，以及 amd64 原生 ELF（沿用项目构建脚本）。
-
-某个架构失败时另一架构可继续；Release 已有附件不代表全部成功，应以 Actions 两项构建状态为准。这里不重新生成或捆绑浏览器/Python 等补充包，不包含 Windows/Win7 安装器，也不替代 `.github/workflows/` 的在线发布流水线。
+`.run` 安装包与便携包不在离线流水线里组装：`pack` 需要桌面、CLI、补充包三件产物同地，当前跨任务传递未接入。
+需要时在开发机用 `bash build.sh pack -a linux-<arch>` 本地组包。
 
 ## 离线边界与资源
 
-- Rust crate vendor、Rust ARM64 工具链、amd64 标准库、双架构 Ubuntu 18.04 sysroot、AppImage runtime 由独立 SDK 目录只读挂载，未嵌入构建镜像。流程不使用在线 `actions/checkout`、`upload-artifact`、`rustup`、`apt` 或 `npm install`。
-- 构建容器仅加入 Compose 内部网络，只能与本地服务通讯；Gitea 另有入口网络供浏览器和 Git 客户端访问。仅 Runner 持有 Docker socket，构建容器不挂载 socket，也不挂载管理员/Runner 凭证目录。
-- 仍然只允许可信仓库执行 CI。Docker socket 等价宿主机高权限；同 Runner 的项目共享可写缓存，不提供不可信多租户隔离。不要给陌生项目启用此 Runner。
-- 默认单个任务、两个架构串行、每次 Cargo 4 线程。建议至少 8 核、16 GB 内存、100 GB 可用存储；首次 Rust release 构建耗时明显，之后复用 `offline-gitea-build-cache` 命名卷。按硬件可调整 `runner.yaml` 中的 `WUNDER_BUILD_JOBS`、`CARGO_BUILD_JOBS`，不要盲目提高并发。
-- 新增/升级依赖超出 SDK 中的 vendor 时，离线构建会明确失败，需在联网准备机更新离线包并替换挂载目录；仅更新 Rust/vendor/sysroot 不必重建镜像，只有系统构建依赖变化时才需更新镜像。不可能自动获取离线环境中不存在的依赖。
-- 本包不包含 Docker Engine、Compose 插件或宿主内核安装包，服务器须事先具备 ARM64 Docker 和 Compose v2。固定的网络与缓存卷名称供 Runner 定位，默认只支持同一 Docker 主机部署一套本包，避免与其他同名部署混用。
-- 构建结果、源码、SQLite 数据库随 `data/gitea/` 持久化；Runner 注册存储在 `data/runner/`，启动凭证在 `data/bootstrap/`。备份时先 `docker compose stop` 再备份整个 `data/`，完成后 `docker compose up -d`。不要删除 Runner 注册文件或 bootstrap 凭证。
-- 删除旧 Release 附件、按需停机清理缓存卷，可控制长期磁盘增长；不要运行 `docker compose down -v`，除非确实要删除缓存。镜像与卷保留策略不会自动删除代码或发布产物。
+- Rust crate vendor、双架构工具链与 sysroot、MinGW、AppImage runtime 由 SDK 目录只读挂载。
+  补充包（opt/python、opt/git、opt/rg、opt/ffmpeg、opt/browser）**不在离线端构建**：它要在目标 libc 上编译
+  git 并铺 Python 运行时，离线机没有这些上游归档与 wheel 索引，所以补充包在联网准备机上产好后随套件导出，
+  放在 `supplement-prebuilt/<arch>/`（含逐包 `.sha256`）。CI 每次校验 SHA256 与包内组件结构，通过才发布。
+  准备方法与目录说明见 `cache/`（准备机侧，不进套件）。
+- 流程不使用 `actions/checkout`、`upload-artifact`、`rustup`、`apt`、`npm install` 或任何公网源。
+  任务容器只加入 `internal` 网络，无外网出口；仅 Runner 持有 Docker socket。
+- 新增/升级依赖超出 vendor 或 wheel 索引时离线构建会明确失败，需在联网准备机刷新
+  在准备机上重产补充包（`cache/offline_build.sh <arch>`）并用 `--supplement-prebuilt` 重新导出套件。
+- 补充包依赖（requirements-linux-common.txt）或工具链变化后同样要重产重导。x86_64 剖面默认 3 个并行任务、每任务 6 线程（建议 ≥16 核、32 GB 内存、200 GB 可用存储）；
+  arm64 剖面默认 1 并行、4 线程。改 `prepare-bundle.py` 的 `runner_capacity`/`build_jobs` 后重新导出。
+- 数据在 `data/gitea/`（仓库、账号、SQLite、Release 附件），Runner 注册在 `data/runner/`，
+  启动凭据在 `data/bootstrap/`。备份先 `docker compose stop` 再拷 `data/`。旧 Release 需定期清理，
+  仓库工作流可用 `KEEP_CI_RELEASES` 之类的留存策略，本包不自动删除发布。
 
-## 其他项目与维护
+## 导出与维护
 
-`examples/` 包含工作流和构建脚本模板。本包针对本项目 Rust/Slint 构建，并非能离线构建任意依赖的通用 GitHub 托管执行器。其他项目应按实际依赖制作专用构建镜像。
+在联网开发机导出（两种剖面同一条命令，只差 `--arch` 与 SDK 目录）：
 
-在联网开发机重建与导出本包：
-
-```powershell
-python packaging/gitea/prepare-bundle.py --sdk ../Rust-builder/kylin-arm/offline --output <输出目录>
+```bash
+python3 packaging/gitea/prepare-bundle.py --arch amd64 \
+    --sdk ../Rust-builder/kylin-x86/offline \
+    --supplement-prebuilt /path/to/prebuilt \
+    --output /media/<disk>/gitea-x86
+python3 packaging/gitea/prepare-bundle.py --arch arm64 \
+    --sdk ../Rust-builder/kylin-arm/offline \
+    --supplement-prebuilt /path/to/prebuilt \
+    --output /media/<disk>/gitea-arm64
 ```
 
-需要准备机现有 `wunder-slint-arm64-ubuntu18:latest` 和完整 ARM64 离线 SDK；脚本通过 Linux tar 单独归档 SDK，保留符号链接与执行权限，不再把 SDK 导入或复制到镜像。导出采用 gzip 流式压缩，不在内存中装载整个镜像。镜像版本与 ID、压缩文件大小和 SHA256 记录在 `images/manifest.json`，SDK 校验和单独保存在 `rust-builder/SHA256SUMS`。仅更新配置/镜像时可增加 `--reuse-sdk-archive` 复用已校验的 SDK 归档；该参数不会重新收集 SDK 修改。
+`--supplement-prebuilt` 目录需含 `wunder-supplement-linux-<arch>.tar.gz` 与同名 `.sha256`（导出时逐包复核，
+不匹配直接拒绝），准备方法见 `VALIDATION.md` 与 `cache/README.md`。脚本按剖面校验 SDK 必需目录、构建任务镜像、
+流式 gzip 导出镜像与 SDK 归档，
+镜像版本/ID/大小/SHA256 记在 `images/manifest.json`，SDK 与补充包缓存校验和记在 `rust-builder/SHA256SUMS`。
+仅更新配置或镜像时可加 `--reuse-sdk-archive` 复用已校验的归档（不会重新收集 SDK 变更）。
 
-官方参考：Gitea Docker 安装、Gitea Runner Docker 安装、Runner 配置、Gitea Actions 文档。此包固定 Gitea 28.2.0 与 Gitea Runner 5.2.3，不使用漂移的 latest 标签。
-
-已完成的验证和未验证边界见同目录 `VALIDATION.md`。离线 CI 基础链路与小型双架构编译验证通过，不等于本项目完整 Release 已构建成功；完整项目首次构建请以 Actions 实际状态为准。
+固定 Gitea 28.2.0 与 Gitea Runner 5.2.3，不使用漂移的 latest 标签。
+`examples/` 是工作流与 CI 脚本副本；其他项目应按自身依赖制作专用任务镜像。
+已验证范围与未验证边界见同目录 `VALIDATION.md`。
