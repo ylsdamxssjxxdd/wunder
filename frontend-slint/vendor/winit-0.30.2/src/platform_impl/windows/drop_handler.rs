@@ -5,7 +5,8 @@ use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use windows_sys::core::{IUnknown, GUID, HRESULT};
-use windows_sys::Win32::Foundation::{DV_E_FORMATETC, HWND, POINTL, S_OK};
+use windows_sys::Win32::Foundation::{DV_E_FORMATETC, HWND, POINT, POINTL, S_OK};
+use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
 use windows_sys::Win32::System::Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL};
 use windows_sys::Win32::System::Ole::{CF_HDROP, DROPEFFECT_COPY, DROPEFFECT_NONE};
 use windows_sys::Win32::UI::Shell::{DragFinish, DragQueryFileW, HDROP};
@@ -80,11 +81,15 @@ impl FileDropHandler {
         this: *mut IDropTarget,
         pDataObj: *const IDataObject,
         _grfKeyState: u32,
-        _pt: *const POINTL,
+        pt: *const POINTL,
         pdwEffect: *mut u32,
     ) -> HRESULT {
         use crate::event::WindowEvent::HoveredFile;
         let drop_handler = unsafe { Self::from_interface(this) };
+        // Report the entry point before the file list: the hover event that
+        // follows builds its drag payload at the cursor position, so the
+        // position has to be current first.
+        unsafe { Self::report_position(drop_handler, pt) };
         let hdrop = unsafe {
             Self::iterate_filenames(pDataObj, |filename| {
                 drop_handler.send_event(Event::WindowEvent {
@@ -106,10 +111,11 @@ impl FileDropHandler {
     pub unsafe extern "system" fn DragOver(
         this: *mut IDropTarget,
         _grfKeyState: u32,
-        _pt: *const POINTL,
+        pt: *const POINTL,
         pdwEffect: *mut u32,
     ) -> HRESULT {
         let drop_handler = unsafe { Self::from_interface(this) };
+        unsafe { Self::report_position(drop_handler, pt) };
         unsafe {
             *pdwEffect = drop_handler.cursor_effect;
         }
@@ -134,11 +140,14 @@ impl FileDropHandler {
         this: *mut IDropTarget,
         pDataObj: *const IDataObject,
         _grfKeyState: u32,
-        _pt: *const POINTL,
+        pt: *const POINTL,
         _pdwEffect: *mut u32,
     ) -> HRESULT {
         use crate::event::WindowEvent::DroppedFile;
         let drop_handler = unsafe { Self::from_interface(this) };
+        // The drop is addressed at the cursor position too; keep it exact even
+        // when the last DragOver was a few pixels away.
+        unsafe { Self::report_position(drop_handler, pt) };
         let hdrop = unsafe {
             Self::iterate_filenames(pDataObj, |filename| {
                 drop_handler.send_event(Event::WindowEvent {
@@ -152,6 +161,37 @@ impl FileDropHandler {
         }
 
         S_OK
+    }
+
+    /// Keep the pointer position of an in-flight foreign drag current.
+    ///
+    /// While an OLE drag runs, the source owns the mouse: the window never sees
+    /// `WM_MOUSEMOVE`, so the only pointer samples are the `pt` arguments of the
+    /// drop target callbacks, in screen coordinates. Re-emitting them as
+    /// `CursorMoved` puts the position back into the normal input path — the
+    /// backend then addresses its drag move at the drop area actually under the
+    /// pointer instead of the last place the cursor was before the drag began
+    /// (which is usually another window, so no drop area is ever hit and the
+    /// release is silently swallowed).
+    unsafe fn report_position(drop_handler: &FileDropHandlerData, pt: *const POINTL) {
+        use crate::dpi::PhysicalPosition;
+        use crate::event::{DeviceId, WindowEvent::CursorMoved};
+        let Some(pt) = (unsafe { pt.as_ref() }) else {
+            return;
+        };
+        let mut client = POINT { x: pt.x, y: pt.y };
+        if unsafe { ScreenToClient(drop_handler.window, &mut client) } == 0 {
+            return;
+        }
+        drop_handler.send_event(Event::WindowEvent {
+            window_id: RootWindowId(WindowId(drop_handler.window)),
+            event: CursorMoved {
+                // Synthetic motion is not tied to a device; no consumer of this
+                // event reads the id beyond comparing it with itself.
+                device_id: unsafe { DeviceId::dummy() },
+                position: PhysicalPosition::new(client.x as f64, client.y as f64),
+            },
+        });
     }
 
     unsafe fn from_interface<'a, InterfaceT>(this: *mut InterfaceT) -> &'a mut FileDropHandlerData {

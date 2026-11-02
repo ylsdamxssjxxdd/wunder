@@ -432,6 +432,10 @@ export component Sidebar inherits Rectangle {
     // string→color cast.
     in property <string> user-initial;
     in property <color> user-color;
+    /// False until the shell has projected the signed-in profile. The avatar
+    /// then holds a neutral placeholder instead of the shared "me" glyph,
+    /// which read as a real identity that had simply failed to load.
+    in property <bool> user-ready: true;
     in property <bool> busy;
     // Device selector: this 蛹 is the local device; the signed-in account is
     // the cloud device. Only the selected device's workspace tree is shown.
@@ -626,9 +630,10 @@ export component Sidebar inherits Rectangle {
             wrap: word-wrap;
         }
         // Workspace/thread tree. Rows drag-reorder among neighbours of the
-        // same kind via `move-row`, which reports pointer travel in pixels;
-        // the row pitch comes from SidebarMetrics so the native resolver and
-        // this layout cannot disagree.
+        // same kind via `move-row`, which reports the pointer offset from the
+        // grabbed row's cell top (the origin the native resolver walks rows
+        // from); the row pitch comes from SidebarMetrics so the two cannot
+        // disagree.
         tree-frame := Rectangle {
             min-height: 0px; preferred-height: 0px;
             vertical-stretch: clamp(root.split-ratio, 0.3, 0.8);
@@ -1009,7 +1014,7 @@ export component Sidebar inherits Rectangle {
                             accessible-label: I18n.profile_title;
                             Text {
                                 width: 100%; height: 100%;
-                                text: root.user-initial != "" ? root.user-initial : I18n.common_me;
+                                text: !root.user-ready ? "…" : (root.user-initial != "" ? root.user-initial : I18n.common_me);
                                 color: white; font-size: 11px; font-weight: 700;
                                 horizontal-alignment: center; vertical-alignment: center;
                             }

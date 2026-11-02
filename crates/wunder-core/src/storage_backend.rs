@@ -1033,6 +1033,23 @@ pub trait ChatSessionStore {
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;
     fn list_chat_session_agent_ids(&self, user_id: &str) -> Result<Vec<String>>;
+    /// Cheap activity rollup for one user's active threads.
+    ///
+    /// The desktop profile card shows a thread count, a seven-day count and the
+    /// last activity stamp. Reading the whole session table to derive three
+    /// numbers made the profile load scale with accumulated history; backends
+    /// that can aggregate in SQL should override this.
+    fn chat_thread_activity(&self, user_id: &str, since: f64) -> Result<ChatThreadActivity> {
+        let (records, total) = self.list_chat_sessions_by_status(
+            user_id,
+            None,
+            None,
+            Some("active"),
+            0,
+            0,
+        )?;
+        Ok(ChatThreadActivity::from_records(&records, total, since))
+    }
     fn update_chat_session_title(
         &self,
         user_id: &str,

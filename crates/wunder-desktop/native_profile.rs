@@ -79,32 +79,21 @@ impl NativeDesktop {
             .user_store
             .get_user_by_id(self.user_id())?
             .ok_or_else(|| anyhow!("用户不存在"))?;
-        let (sessions, total) = self.state().storage.list_chat_sessions_by_status(
-            self.user_id(),
-            None,
-            None,
-            Some("active"),
-            0,
-            0,
-        )?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|value| value.as_secs_f64())
             .unwrap_or_default();
         let week_ago = now - 7.0 * 86_400.0;
-        let sessions_last_7d = sessions
-            .iter()
-            .filter(|item| {
-                item.last_message_at
-                    .max(item.updated_at)
-                    .max(item.created_at)
-                    >= week_ago
-            })
-            .count() as i64;
-        let last_active_at = sessions
-            .iter()
-            .map(|item| item.last_message_at.max(item.updated_at))
-            .fold(0.0, f64::max);
+        // The card needs three numbers, not the thread table. Materializing
+        // every row (and decoding each row's tool overrides JSON) made signing
+        // in and later profile refreshes scale with accumulated history.
+        let activity = self
+            .state()
+            .storage
+            .chat_thread_activity(self.user_id(), week_ago)?;
+        let sessions = activity.total;
+        let sessions_last_7d = activity.recent;
+        let last_active_at = activity.last_active_at;
         let usage = self.state().workspace.get_user_usage_stats();
         let tool_calls = usage
             .get(self.user_id())
@@ -131,7 +120,7 @@ impl NativeDesktop {
             email: user.email.unwrap_or_default(),
             unit,
             unit_id: user.unit_id.unwrap_or_default(),
-            sessions: total.max(0),
+            sessions: sessions.max(0),
             sessions_last_7d,
             tool_calls,
             consumed_tokens: self

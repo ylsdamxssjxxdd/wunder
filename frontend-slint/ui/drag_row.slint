@@ -39,6 +39,30 @@ export global DragPreview {
     in-out property <string> source-label: "";
 }
 
+// Drag gestures cannot be driven by the pointer event stream alone.
+//
+// 32 位 Win7 实测：按住之后事件流会在几个像素内断掉。窗口在抓取被系统改写时
+// 会补一条合成的松开/取消，Slint 随即清掉按下态，之后的移动不再送到被拖的
+// 行（线程行只闪一下、侧栏宽度拖一点就冻住，而拖动窗口边缘的原生尺寸手势
+// 反而丝滑，说明问题在事件流而不在鼠标）。所以拖拽期间另开一条不依赖事件流
+// 的通道：Rust 按帧读真实光标位置与主键状态，位置回灌这里由 Slint 纯绑定
+// 消费，手势收尾则用序列号通知。
+export global PointerChase {
+    // 只在 Windows 打开；其它平台保持纯事件流路径。
+    in-out property <bool> enabled: false;
+    // 手势进行中：Rust 侧据此决定是否继续追指针。
+    in-out property <bool> holding: false;
+    in-out property <length> pointer-x: 0px;
+    in-out property <length> pointer-y: 0px;
+    // 追踪通道发现主键已经真的松开时递增，用作收尾信号。
+    in-out property <int> finish-serial: 0;
+    // 现在主键是否还按着。必须直接问系统：事件流里的松开可能是合成的，
+    // 只有这个答案是权威的。
+    callback primary-held() -> bool;
+    // 请 Rust 开始按帧追指针。
+    callback begin();
+}
+
 export component DragRow inherits Rectangle {
     in property <string> label;
     in property <bool> enabled: true;
@@ -60,6 +84,9 @@ export component DragRow inherits Rectangle {
     out property <bool> hover: touch.has-hover;
     callback activate();
     callback move-by(int);
+    // 这一行实例是否是当前手势的发起者（吸顶副本与真实行共用 row-index，
+    // 只靠行号无法区分两者，收尾必须认发起者）。
+    private property <bool> owns-gesture: false;
     private property <bool> dragging: DragPreview.active && DragPreview.source-index == root.row-index;
     // Workspace headers (local and cloud) form one drag group. Threads stay
     // in their own kind and never leave the workspace they are listed under.
@@ -80,6 +107,55 @@ export component DragRow inherits Rectangle {
     opacity: root.dragging ? 0.45 : 1;
     accessible-role: button; accessible-label: root.label;
     accessible-action-default => { if root.enabled { root.activate(); } }
+    // 事件流里的「松开/取消」不一定是用户松手：Win7 在抓取被系统改写时会补
+    // 一条合成的松开。主键还按着就说明这次手势没结束，别把它掐断。
+    function release-is-real() -> bool {
+        return !PointerChase.enabled || !PointerChase.primary-held();
+    }
+    // 收尾：松手时按位移落位（不足阈值则当作点击）。吸顶副本与真实行共用
+    // 同一个 row-index，所以只能由真正按下那次手势的那一个实例收尾。
+    function finish-gesture() {
+        if !root.owns-gesture || DragPreview.source-index != root.row-index {
+            return;
+        }
+        if DragPreview.active {
+            // 位移从「被抓行格的顶缘」量起，而不是从按下点量起：原生侧按
+            // SidebarMetrics 逐行累加解析落点，行格顶缘才是那套几何的原点。
+            // 用按下点会把「按在行内哪个位置」当成已经走过的距离，短距离
+            // 拖拽整格落空（插入缝线画在一处、松手却回到原位）。
+            root.move-by(round((DragPreview.pointer-y - DragPreview.source-y) / 1px));
+        } else {
+            root.activate();
+        }
+        root.clear-gesture();
+    }
+    function clear-gesture() {
+        root.owns-gesture = false;
+        DragPreview.active = false;
+        DragPreview.source-index = -1;
+        DragPreview.source-kind = -1;
+        DragPreview.source-workspace = "";
+        DragPreview.source-label = "";
+        DragPreview.source-y = -1px;
+        PointerChase.holding = false;
+    }
+    // 追踪通道喂位置：事件流断掉之后，靠它继续把指针位置与激活阈值推进。
+    // 全局属性不能直接 `changed`，先绑到本地再观察。
+    private property <length> chase-y: PointerChase.pointer-y;
+    private property <int> chase-finish: PointerChase.finish-serial;
+    changed chase-y => {
+        if root.owns-gesture && DragPreview.source-index == root.row-index {
+            DragPreview.pointer-y = PointerChase.pointer-y;
+            if !DragPreview.active
+                && abs(DragPreview.pointer-y - DragPreview.anchor-y) > 6px {
+                DragPreview.active = true;
+            }
+        }
+    }
+    // 追踪通道发现主键真的松开（事件流没送来那条松开）时收尾。
+    changed chase-finish => {
+        root.finish-gesture();
+    }
     forward-focus: focus;
     focus := FocusScope {
         enabled: root.enabled;
@@ -100,41 +176,37 @@ export component DragRow inherits Rectangle {
             if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                 DragPreview.anchor-y = root.absolute-position.y + self.mouse-y;
                 DragPreview.pointer-y = DragPreview.anchor-y;
-                DragPreview.source-y = root.absolute-position.y;
+                // 被抓住那一「行格」的顶缘：组头行在格内还让出 4px 气口，
+                // 落点算法是从行格顶缘起算的，这里必须减去这层内缩，否则
+                // 参照系跟着按下点漂移。
+                DragPreview.source-y = root.absolute-position.y - root.y;
                 DragPreview.source-index = root.row-index;
                 DragPreview.source-kind = root.row-kind;
                 DragPreview.source-workspace = root.workspace-id;
                 DragPreview.source-label = root.label;
                 DragPreview.active = false;
+                root.owns-gesture = true;
+                // 手指确实按住了：开一条不依赖事件流的追踪通道，后面事件流
+                // 就算断了，位置与松手也还有来源。
+                PointerChase.holding = PointerChase.enabled;
+                PointerChase.begin();
                 focus.focus();
             }
             if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
-                if DragPreview.active {
-                    // Travel in px, not rows: the tree mixes taller group rows
-                    // with thread rows, so only the native side can turn
-                    // the travel into the row the pointer actually sits in.
-                    root.move-by(round((DragPreview.pointer-y - DragPreview.anchor-y) / 1px));
-                } else {
-                    root.activate();
+                if root.release-is-real() {
+                    root.finish-gesture();
                 }
-                DragPreview.active = false;
-                DragPreview.source-index = -1;
-                DragPreview.source-kind = -1;
-                DragPreview.source-workspace = "";
-                DragPreview.source-label = "";
-                DragPreview.source-y = -1px;
             }
             if event.kind == PointerEventKind.cancel {
-                DragPreview.active = false;
-                DragPreview.source-index = -1;
-                DragPreview.source-kind = -1;
-                DragPreview.source-workspace = "";
-                DragPreview.source-label = "";
-                DragPreview.source-y = -1px;
+                if root.release-is-real() {
+                    root.clear-gesture();
+                }
             }
         }
         // While a button is down Slint keeps sending the moves to this area,
-        // so `pointer-y` follows the cursor across the whole list.
+        // so `pointer-y` follows the cursor across the whole list. This is the
+        // fast path; the chase feed below keeps it correct when the stream
+        // stops mid-gesture.
         moved => {
             DragPreview.pointer-y = root.absolute-position.y + self.mouse-y;
             if self.pressed && abs(DragPreview.pointer-y - DragPreview.anchor-y) > 6px {

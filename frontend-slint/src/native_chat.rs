@@ -1545,6 +1545,15 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                     if !app.get_conversations().iter().eq(rows.iter().cloned()) {
                         app.set_conversations(ModelRc::new(VecModel::from(rows)));
                     }
+                    // The list is on screen; the shell may now let the user
+                    // pick a thread. Set before the automatic first open below
+                    // so that open is not mistaken for an early click. The
+                    // idle poll refreshes this list every few seconds, so the
+                    // startup milestone is recorded once.
+                    if !app.get_threads_ready() {
+                        app.set_threads_ready(true);
+                        crate::startup_point("sessions_ready");
+                    }
                     // This callback is running back on Slint's event loop.
                     // Look up the UI-owned state here rather than capturing
                     // its Rc in the list worker (Rc is deliberately !Send).
@@ -1588,7 +1597,12 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                         }
                     }
                 }
-                Err(error) => app.set_status(format!("无法读取会话：{error}").into()),
+                // A failed list read still ends the startup gate: the banner
+                // must not stay up forever, and the status line carries why.
+                Err(error) => {
+                    app.set_threads_ready(true);
+                    app.set_status(format!("无法读取会话：{error}").into());
+                }
             }
         });
     });
@@ -1885,7 +1899,21 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                         app.set_active_session_id("".into());
                         app.set_queue_turns(ModelRc::default());
                         app.set_queue_overflow(0);
-                        app.set_status(format!("无法打开线程：{error}").into());
+                        // A lock or busy verdict during startup is transient:
+                        // say so instead of showing a raw storage error that
+                        // reads like a permanent failure.
+                        let text = error.to_string();
+                        let busy = text.contains("database is locked")
+                            || text.contains("SQLITE_BUSY")
+                            || text.contains("busy");
+                        app.set_status(
+                            if busy {
+                                "本地数据正忙，请稍候再打开该线程".to_string()
+                            } else {
+                                format!("无法打开线程：{text}")
+                            }
+                            .into(),
+                        );
                     }
                 }
             });

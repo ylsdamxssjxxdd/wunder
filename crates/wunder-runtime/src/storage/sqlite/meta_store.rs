@@ -91,7 +91,7 @@ impl SqliteMetaStorage for SqliteStorage {
         if cleaned.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let pattern = format!("{cleaned}%");
         let mut stmt = conn.prepare(
             "SELECT key, value FROM meta WHERE key LIKE ? ORDER BY updated_time DESC, key ASC",

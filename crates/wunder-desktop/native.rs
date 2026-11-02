@@ -751,18 +751,37 @@ impl NativeDesktop {
                 activity.remove(session_id);
             }
         }
+        use wunder_server::storage::ThreadOpenLeaseStatus;
+        // The lease is a write. Startup background work can hold the single
+        // SQLite writer for a moment, and a first click that lands in that
+        // window used to fail with a raw "database is locked" and no way back.
+        // One short retry rides out a maintenance commit; a genuine second
+        // owner still reports Busy immediately.
+        let mut status = None;
+        for attempt in 0..3u32 {
+            match self.state().storage.try_acquire_thread_open_lease(
+                session_id,
+                self.user_id(),
+                &self.instance_id,
+                "desktop",
+                LOCAL_THREAD_LEASE_TTL.as_secs_f64(),
+            ) {
+                Ok(acquired) => {
+                    status = Some(acquired);
+                    break;
+                }
+                Err(error) if attempt < 2 && lease_error_is_transient(&error) => {
+                    thread::sleep(Duration::from_millis(60 * u64::from(attempt + 1)));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        let status = status.ok_or_else(|| anyhow!("线程租约获取失败"))?;
         let mut leases = self
             .open_threads
             .lock()
             .map_err(|_| anyhow!("thread lease state unavailable"))?;
-        use wunder_server::storage::ThreadOpenLeaseStatus;
-        match self.state().storage.try_acquire_thread_open_lease(
-            session_id,
-            self.user_id(),
-            &self.instance_id,
-            "desktop",
-            LOCAL_THREAD_LEASE_TTL.as_secs_f64(),
-        )? {
+        match status {
             ThreadOpenLeaseStatus::Acquired { fencing_token } => {
                 leases.insert(session_id.to_string(), fencing_token);
                 drop(leases);
@@ -1978,6 +1997,16 @@ fn now_ts() -> f64 {
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_secs_f64())
         .unwrap_or_default()
+}
+
+/// A SQLite writer contention verdict, as opposed to a real storage failure.
+/// Retrying these is safe because the corresponding statement is idempotent.
+fn lease_error_is_transient(error: &anyhow::Error) -> bool {
+    let text = error.to_string().to_ascii_lowercase();
+    text.contains("database is locked")
+        || text.contains("database table is locked")
+        || text.contains("sqlite_busy")
+        || text.contains("busy")
 }
 
 /// Compose the environment inherited by an interactive terminal. Supplement

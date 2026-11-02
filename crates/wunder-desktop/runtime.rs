@@ -24,6 +24,11 @@ const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
 const ADMIN_CUSTOM_SKILLS_ROOT_ENV: &str = "WUNDER_ADMIN_CUSTOM_SKILLS_ROOT";
 const DESKTOP_APPROVAL_MODE_MIGRATION_VERSION: &str = "full_auto_v1";
 const DESKTOP_WORKSPACE_IDENTITY_MIGRATION_VERSION: &str = "path_identity_v1";
+/// Orphan threads (rows with no workspace) were re-bound by walking the whole
+/// session table on every launch. The walk is a one-time repair, so it now
+/// carries a marker: repeated full-table scans turned startup time into a
+/// function of how much history the user had accumulated.
+const DESKTOP_ORPHAN_WORKSPACE_MIGRATION_VERSION: &str = "orphan_binding_v1";
 /// Name of the workspace created on first run; migrated legacy threads land
 /// here. Mirrored by the workspace façade's docs, never user-configurable.
 const DEFAULT_WORKSPACE_NAME: &str = "默认工作区";
@@ -1806,6 +1811,19 @@ fn desktop_token_matches_identity(
 /// on every startup; existing bindings are repaired once.
 fn migrate_local_workspaces(state: &AppState, user_id: &str, legacy_root: &Path) -> Result<()> {
     let storage = state.storage.as_ref();
+    // Every launch used to page through the user's entire thread table looking
+    // for rows without a workspace, and paid a COUNT(*) plus one write per
+    // matched row. With thousands of threads that alone was a visible part of
+    // the wait before the shell answered. The repair is complete once it has
+    // run, so the marker keeps later launches at one metadata read.
+    let migrated_key = format!(
+        "desktop_orphan_workspace_migration:{DESKTOP_ORPHAN_WORKSPACE_MIGRATION_VERSION}:{user_id}"
+    );
+    let already_migrated = state
+        .user_store
+        .get_meta(&migrated_key)?
+        .as_deref()
+        .is_some_and(|value| value.trim() == "1");
     let records = storage.list_workspaces(user_id)?;
     // The working directory lives inside the user directory, mirroring the
     // cloud form's `用户目录/workspace` split.
@@ -1867,9 +1885,10 @@ fn migrate_local_workspaces(state: &AppState, user_id: &str, legacy_root: &Path)
         }
     };
     // Reattach orphan threads page by page, then rescan from the top: bound
-    // rows no longer count as orphans, so the scan strictly shrinks.
+    // rows no longer count as orphans, so the scan strictly shrinks. Skip the
+    // walk entirely once a previous launch completed it.
     const PAGE: i64 = 200;
-    loop {
+    while !already_migrated {
         let mut orphans = Vec::new();
         let mut offset = 0i64;
         loop {
@@ -1897,6 +1916,9 @@ fn migrate_local_workspaces(state: &AppState, user_id: &str, legacy_root: &Path)
             record.updated_at = now;
             state.storage.upsert_chat_session(&record)?;
         }
+    }
+    if !already_migrated {
+        state.user_store.set_meta(&migrated_key, "1")?;
     }
     Ok(())
 }
@@ -2088,21 +2110,52 @@ fn log_startup_segment(
     if !enabled {
         return;
     }
-    info!(
+    record_startup_line(&format!(
         "[startup][{scope}] segment={segment} elapsed_ms={:.1} total_ms={:.1}",
         startup_elapsed_ms(started),
         startup_elapsed_ms(startup_boot),
-    );
+    ));
 }
 
 fn log_startup_point(enabled: bool, scope: &str, point: &str, startup_boot: Instant) {
     if !enabled {
         return;
     }
-    info!(
+    record_startup_line(&format!(
         "[startup][{scope}] point={point} total_ms={:.1}",
         startup_elapsed_ms(startup_boot),
-    );
+    ));
+}
+
+/// 蛹 是 GUI 进程，`info!` 在桌面形态没有 subscriber、`eprintln!` 也没有控制台，
+/// 启动耗时因此无从查看——用户只能体感"很久"。这里把桌面启动里程碑同时写进
+/// `<home>/logs/startup.log`（按大小轮换，单次启动几十行），报障时直接取该文件。
+fn record_startup_line(line: &str) {
+    info!("{line}");
+    eprintln!("{line}");
+    use std::io::Write;
+    static LOG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let Ok(_guard) = LOG_LOCK.lock() else {
+        return;
+    };
+    let home = wunder_server::local_bootstrap::resolve_home_from_env_or_user();
+    let dir = home.join("logs");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let path = dir.join("startup.log");
+    // 单文件上限避免长期积累；只保留上一轮，足够定位一次启动。
+    if std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0) > 512 * 1024 {
+        let _ = std::fs::rename(&path, dir.join("startup.prev.log"));
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let stamp = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f");
+        let _ = writeln!(file, "{stamp} {line}");
+    }
 }
 
 fn now_ts() -> f64 {

@@ -17,8 +17,10 @@ import { TimelineView } from "timeline.slint";
 import { ActivityMonth, ActivityWeek } from "activity_card.slint";
 export { ActivityMonth, ActivityWeek }
 import { Sidebar, WorkspaceVisual } from "sidebar.slint";
-import { SidebarMetrics } from "drag_row.slint";
-export { SidebarMetrics }
+import { SidebarMetrics, PointerChase } from "drag_row.slint";
+// `PointerChase` is reached from Rust (`pointer_chase.rs`), so it has to be
+// re-exported here; only exported globals exist in the generated bindings.
+export { SidebarMetrics, PointerChase }
 import { SettingsPage } from "settings_page.slint";
 import { ModelPresets } from "model_presets.slint";
 import { I18n } from "i18n.slint";
@@ -290,6 +292,13 @@ export component MainWindow inherits Window {
     // populated conversation. Demo and smoke modes explicitly clear it.
     in-out property <bool> chat-loading: true;
     in-out property <bool> session-loading: false;
+    // Startup visibility: the runtime thread, the profile projection and the
+    // first thread list each finish at a different time. Until both shell
+    // pieces are on screen the workbench must say so, instead of painting an
+    // empty avatar and failing the first click with an internal error.
+    in-out property <bool> profile-ready: false;
+    in-out property <bool> threads-ready: false;
+    in-out property <string> startup-note: "";
     in-out property <bool> creating-session: false;
     // New-thread activity heatmap: sparse day buckets projected natively into
     // weekly columns, plus the month axis and the selected series tab.
@@ -727,6 +736,11 @@ export component MainWindow inherits Window {
     callback ws-file-menu(int, int);
     callback ws-file-drag(int);
     callback ws-file-drop(DropEvent);
+    // 侧栏宽度：以窗口坐标为准（追踪通道给的是真实光标位置），起点由按下时
+    // 记录，因此拖多远就宽多少，不受布局反馈滞后影响。
+    function apply-sidebar-width(start-width: length, start-x: length) {
+        root.sidebar-width = clamp(start-width + (PointerChase.pointer-x - start-x), 170px, 420px);
+    }
     // The working-directory prompt dialog (rename / new dir / new file /
     // delete / cloud-approval confirm), driven by the native controller.
     in-out property <bool> ws-prompt-open: false;
@@ -1063,6 +1077,29 @@ export component MainWindow inherits Window {
     function open-info(title: string, text: string) {
         root.dialog-title = title; root.dialog-text = text; root.dialog-open = true;
     }
+    // Startup banner: the shell is interactive before the runtime, the profile
+    // projection and the first thread list have all landed. Without a visible
+    // marker a fresh launch looked like a finished, empty workbench whose
+    // threads refused to open, so the state now reads at the top of the window
+    // until both shell pieces are present.
+    if !(root.profile-ready && root.threads-ready) : Rectangle {
+        y: Theme.titlebar-height;
+        width: parent.width;
+        height: 26px;
+        z: 260;
+        background: Theme.accent-soft;
+        clip: true;
+        Text {
+            x: 14px;
+            width: parent.width - 28px;
+            height: parent.height;
+            text: root.startup-note != "" ? root.startup-note : I18n.st_runtime_loading;
+            color: Theme.accent-ink;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
     Rectangle {
         y: Theme.titlebar-height;
         width: parent.width; height: max(0px, parent.height - Theme.titlebar-height);
@@ -1076,6 +1113,10 @@ export component MainWindow inherits Window {
                 // sidebar never owns a second copy of the avatar state.
                 user-initial: root.profile.avatar-glyph;
                 user-color: root.profile.avatar-brush;
+                // The avatar stays a placeholder until the profile projection
+                // lands, so a fresh launch never shows an identity it does not
+                // know yet.
+                user-ready: root.profile-ready;
                 // Cloud quota badge (§6.1): blank hides the pill, warn marks
                 // a balance at or below 10% of the daily grant.
                 cloud-quota-text: root.cloud-logged-in ? root.cloud-balance : "";
@@ -1177,18 +1218,51 @@ export component MainWindow inherits Window {
                     // handle itself, so using it as the drag origin feeds the
                     // new sidebar width back into the next delta and makes the
                     // divider shake. Track the window-relative pointer instead.
+                    // Windows 上这个窗口坐标改由追踪通道（真实光标位置）提供：
+                    // 事件流会在按住几像素后断掉，`absolute-position` 又滞后一
+                    // 帧，两者叠加的表现就是「拖一点就停、宽度追不上光标」。
                     property <length> start-absolute-x;
                     property <length> start-width;
+                    property <bool> dragging-width: false;
+                    // 追踪通道的全局属性不能直接 `changed`，先绑到本地再观察。
+                    property <length> chase-x: PointerChase.pointer-x;
+                    property <int> chase-finish: PointerChase.finish-serial;
                     pointer-event(event) => {
                         if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                             root.sidebar-width = clamp(root.sidebar-width, 170px, 420px);
                             start-width = root.sidebar-width;
                             start-absolute-x = self.absolute-position.x + self.mouse-x;
+                            PointerChase.pointer-x = start-absolute-x;
+                            dragging-width = true;
+                            PointerChase.holding = PointerChase.enabled;
+                            PointerChase.begin();
+                        }
+                        if (event.kind == PointerEventKind.up && event.button == PointerEventButton.left)
+                            || event.kind == PointerEventKind.cancel {
+                            // 主键还按着说明这条松开是合成的（Win7 抢抓取时会
+                            // 补一条），宽度继续跟手，等追踪通道报真正的松手。
+                            if !PointerChase.enabled || !PointerChase.primary-held() {
+                                dragging-width = false;
+                                PointerChase.holding = false;
+                            }
                         }
                     }
                     moved => {
-                        if self.pressed {
-                            root.sidebar-width = clamp(start-width + (self.absolute-position.x + self.mouse-x - start-absolute-x), 170px, 420px);
+                        // 非 Windows 保持原来的几何路径；Windows 交给追踪通道，
+                        // 免得鼠标位置与滞后一帧的布局坐标互相拉扯。
+                        if !PointerChase.enabled && self.pressed {
+                            root.apply-sidebar-width(start-width, start-absolute-x);
+                        }
+                    }
+                    changed chase-x => {
+                        if dragging-width {
+                            root.apply-sidebar-width(start-width, start-absolute-x);
+                        }
+                    }
+                    changed chase-finish => {
+                        if dragging-width {
+                            dragging-width = false;
+                            PointerChase.holding = false;
                         }
                     }
                 }
@@ -1212,10 +1286,10 @@ export component MainWindow inherits Window {
                         timeline_view := TimelineView {
                             visible: true;
                             rows: root.timeline;
-                            loading: root.chat-loading || root.session-loading
+                            loading: root.chat-loading || root.session-loading || !root.threads-ready
                                 || (root.cloud-chat-active && root.cloud-thread-busy);
                             loading-text: root.session-loading ? (I18n.zh ? "正在打开线程，读取历史记录…" : "Opening thread and reading history…")
-                                : root.chat-loading ? I18n.st_runtime_loading
+                                : root.chat-loading || !root.threads-ready ? (root.startup-note != "" ? root.startup-note : I18n.st_runtime_loading)
                                 : root.cloud-chat-active && root.cloud-thread-busy ? (I18n.zh ? "正在打开线程，读取历史记录…" : "Opening thread and reading history…")
                                 : I18n.st_runtime_loading;
                             greeting: root.cloud-chat-active ? root.cloud-greeting
@@ -1223,6 +1297,7 @@ export component MainWindow inherits Window {
                             greeting-loading: root.prompt-preview-loading;
                             preview-prompt => { root.open-prompt-preview(); }
                             show-activity: root.timeline.length == 0 && !root.chat-loading
+                                && root.threads-ready
                                 && !root.session-loading && !root.cloud-thread-busy;
                             activity-sessions: root.activity-sessions;
                             activity-credits: root.activity-credits;

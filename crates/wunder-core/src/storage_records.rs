@@ -287,6 +287,36 @@ pub struct ChatSessionRecord {
     pub spawned_by: Option<String>,
 }
 
+/// Rolled-up activity of one user's active threads: how many exist, how many
+/// moved inside a window, and when the newest one was touched. Derived in one
+/// aggregate instead of materializing every session row.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ChatThreadActivity {
+    pub total: i64,
+    pub recent: i64,
+    pub last_active_at: f64,
+}
+
+impl ChatThreadActivity {
+    /// Fallback rollup for backends without a native aggregate.
+    pub fn from_records(records: &[ChatSessionRecord], total: i64, since: f64) -> Self {
+        let mut recent = 0i64;
+        let mut last_active_at = 0.0f64;
+        for item in records {
+            let touched = item.last_message_at.max(item.updated_at);
+            last_active_at = last_active_at.max(touched);
+            if touched.max(item.created_at) >= since {
+                recent += 1;
+            }
+        }
+        Self {
+            total: total.max(0),
+            recent,
+            last_active_at,
+        }
+    }
+}
+
 /// One desktop workspace: a user-chosen real host folder plus presentation
 /// metadata. The folder is read/written in place - no copy, no sandbox mapping.
 #[derive(Debug, Clone)]

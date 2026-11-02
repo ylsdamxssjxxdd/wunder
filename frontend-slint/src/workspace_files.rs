@@ -103,7 +103,9 @@ thread_local! {
     static GENERATION: Cell<u64> = const { Cell::new(0) };
     /// The prompt currently on screen, if any; drives both dialog stages.
     static PROMPT: RefCell<Option<PromptOp>> = const { RefCell::new(None) };
-    /// One OS drag at a time: DoDragDrop is modal on its worker thread.
+    /// One OS drag at a time, from the pointer crossing the drag threshold to
+    /// the shell gesture settling; the cloud branch also spans the staging
+    /// round trip that has to happen before the gesture can start.
     static DRAG_OUT: Cell<bool> = const { Cell::new(false) };
     /// Multi-select working set, in pick order; the row flags project it.
     static SELECTED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
@@ -525,8 +527,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
     });
 
-    // Drag-out: a cloud file leaves the tree as a local OS copy drag. The
-    // staged pull happens on the worker; the gesture itself is modal there.
+    // Drag-out: a file leaves the tree as a real OS copy drag. The OLE gesture
+    // is modal and must run on this thread (see `begin_os_drag`), so only the
+    // cloud staging round trip is ever handed to a worker.
     let weak = app.as_weak();
     let drag_api = api.clone();
     app.on_ws_file_drag(move |index| {
@@ -542,23 +545,47 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         if DRAG_OUT.get() {
             return;
         }
-        DRAG_OUT.set(true);
         let path = row.path.to_string();
         let name = row.name.to_string();
-        let weak = app.as_weak();
-        let worker_api = drag_api.clone();
-        let target = current_target();
-        let request = generation();
-        std::thread::spawn(move || {
-            let outcome = drag_out(&worker_api, &target, &path, &name);
-            let _ = weak.upgrade_in_event_loop(move |_app| {
-                DRAG_OUT.set(false);
-                if !is_current(request) {
-                    return;
-                }
-                let _ = outcome;
-            });
-        });
+        match current_target() {
+            // A local workspace folder resolves to a path with a couple of
+            // stat calls, cheap enough to stay on this thread and keep the
+            // gesture inside the press it belongs to.
+            Target::Local(root) => match drag_api.workspace_local_resolve(&root, &path) {
+                Ok(local) => begin_os_drag(&app, &local, &name),
+                Err(error) => app.set_status(format!("无法拖出 {name}：{error}").into()),
+            },
+            // Cloud files have to be staged first — a network pull that must
+            // not stall the UI thread. The gesture is picked up afterwards if
+            // the button is still held; otherwise the copy is already on disk
+            // and the user is told so instead of a ghost drop at the cursor.
+            Target::Cloud => {
+                DRAG_OUT.set(true);
+                let weak = app.as_weak();
+                let worker_api = drag_api.clone();
+                std::thread::spawn(move || {
+                    let staged = worker_api.interlink_cloud_stage(&path);
+                    let _ = weak.upgrade_in_event_loop(move |app| {
+                        match staged {
+                            Ok(local) if crate::os_drag::pointer_button_held() => {
+                                begin_os_drag(&app, &local, &name);
+                            }
+                            Ok(_) => {
+                                DRAG_OUT.set(false);
+                                app.set_status(
+                                    format!("{name} 已拉取到本地工作区，按住再拖一次即可移出")
+                                        .into(),
+                                );
+                            }
+                            Err(error) => {
+                                DRAG_OUT.set(false);
+                                app.set_status(format!("无法拖出 {name}：{error}").into());
+                            }
+                        }
+                    });
+                });
+            }
+        }
     });
 
     // Drag-in: Explorer drops land inside the active target — text uploads
@@ -1548,24 +1575,35 @@ fn open_prompt(app: &MainWindow, kind: PromptKind, path: String, name: String) {
     app.set_ws_prompt_busy(false);
 }
 
-/// Drag-out on a worker thread: a local file leaves straight off the disk; a
-/// cloud file is staged first (a fresh pull, so the handed-out copy is
-/// current), then the modal OLE gesture runs.
-fn drag_out(
-    api: &Arc<NativeDesktop>,
-    target: &Target,
-    path: &str,
-    name: &str,
-) -> Result<bool, String> {
-    let local = match target {
-        Target::Local(root) => api
-            .workspace_local_resolve(&root, path)
-            .map_err(|error| format!("定位 {name} 失败：{error}"))?,
-        Target::Cloud => api
-            .interlink_cloud_stage(path)
-            .map_err(|error| format!("暂存 {name} 失败：{error}"))?,
-    };
-    crate::os_drag::drag_file(&local)
+/// Start the shell copy drag for one local file. Blocks inside OLE's modal
+/// loop until the user releases, which is why it runs here and not on the
+/// pointer-move worker: `DoDragDrop` only installs its pointer tracking on the
+/// calling thread's input queue, and a worker thread owns no window to receive
+/// mouse messages through — the gesture then neither follows the pointer nor
+/// reports the release. On this thread the loop pumps the window messages the
+/// shell drag needs and leaves the UI responsive for its whole duration.
+fn begin_os_drag(app: &MainWindow, local: &std::path::Path, name: &str) {
+    DRAG_OUT.set(true);
+    let outcome = crate::os_drag::drag_file(local);
+    DRAG_OUT.set(false);
+    // OLE's loop consumes the button release that ends the gesture, so the row
+    // it started from would stay pressed (and its hover band lit) until the
+    // next click. Hand the input path a release to settle it; the row's own
+    // drag guard keeps it from being read as a click.
+    release_pointer(app);
+    if let Err(error) = outcome {
+        app.set_status(format!("无法拖出 {name}：{error}").into());
+    }
+}
+
+/// Settle the pointer state after a gesture the shell took over, at a position
+/// no item contains so nothing is activated by it.
+fn release_pointer(app: &MainWindow) {
+    app.window()
+        .dispatch_event(slint::platform::WindowEvent::PointerReleased {
+            position: slint::LogicalPosition { x: -1.0, y: -1.0 },
+            button: slint::platform::PointerEventButton::Left,
+        });
 }
 
 /// Drop-in uploads: read each staged file as text (binary and oversized

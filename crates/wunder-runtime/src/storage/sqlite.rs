@@ -96,9 +96,19 @@ use user_world_store::SqliteUserWorldStorage;
 use vector_document_store::SqliteVectorDocumentStorage;
 use workspace_store::SqliteWorkspaceStorage;
 
+/// Writes wait for the single SQLite writer instead of failing on the first
+/// concurrent touch. Parallel child runs and startup maintenance both write.
+const WRITE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
 pub struct SqliteStorage {
     db_path: PathBuf,
     initialized: AtomicBool,
+    /// Set once this process has proven the database accepts a write lock and
+    /// carries the WAL header. Later connections then skip the probe: it only
+    /// heals the first-connection `-shm` downgrade, and paying for it on every
+    /// write put a durable write-lock round trip (plus PRAGMA and sidecar work)
+    /// on the startup and thread-open paths.
+    write_ready: AtomicBool,
     init_guard: Mutex<()>,
     // Readers are checked out without holding this mutex during any SQL.
     read_connections: Mutex<Vec<Connection>>,
@@ -128,6 +138,7 @@ impl SqliteStorage {
         Self {
             db_path: path,
             initialized: AtomicBool::new(false),
+            write_ready: AtomicBool::new(false),
             init_guard: Mutex::new(()),
             wal_anchor: Mutex::new(None),
             read_connections: Mutex::new(Vec::new()),
@@ -180,6 +191,25 @@ impl SqliteStorage {
 
     fn open(&self) -> Result<Connection> {
         self.ensure_db_dir()?;
+        // Steady state: the WAL header is durable and the shared `-shm` node
+        // already exists, so a fresh connection needs neither PRAGMA work nor a
+        // write-lock probe. Every write used to repeat both, which on a slow
+        // laptop disk turned a burst of small startup writes into a queue that
+        // blocked thread opening. The probe still runs for the first connection
+        // of the process, where the downgrade it heals can actually happen.
+        if self.write_ready.load(Ordering::Acquire) {
+            if let Ok(conn) = self.open_connection_fast() {
+                conn.busy_timeout(WRITE_BUSY_TIMEOUT).ok();
+                // `synchronous` is per connection, not per database. Without
+                // this every fast-path write falls back to the default FULL
+                // mode and pays an extra flush on each commit — the opposite of
+                // what this path exists for. The PRAGMA itself is I/O free.
+                conn.pragma_update(None, "synchronous", "NORMAL").ok();
+                return Ok(conn);
+            }
+            // A failed fast open already cleared `write_ready`; fall through so
+            // the healing probe gets its chance before this write gives up.
+        }
         // Take a write lock right away and self-heal the one failure mode that
         // has no in-process remedy otherwise: the first connection to a WAL
         // database creates the `-shm` wal-index, and when a real-time scanner
@@ -190,16 +220,19 @@ impl SqliteStorage {
         // writable. Dropping the connection releases the node (when no other
         // connection shares it), the backoff lets the scanner finish, and the
         // next open rebuilds the node read-write.
-        for attempt in 0..6u32 {
+        for attempt in 0..3u32 {
             let conn = self.open_connection()?;
             match conn.execute_batch("BEGIN IMMEDIATE; ROLLBACK") {
-                Ok(()) => return Ok(conn),
+                Ok(()) => {
+                    self.write_ready.store(true, Ordering::Release);
+                    return Ok(conn);
+                }
                 Err(err) => {
                     // probe catches genuine read-only files too; those fail all
-                    // six attempts and surface here with the file named.
-                    if attempt == 5 {
+                    // attempts and surface here with the file named.
+                    if attempt == 2 {
                         return Err(anyhow::anyhow!(
-                            "{} rejected a write lock right after open, 6 attempts: {err}",
+                            "{} rejected a write lock right after open, 3 attempts: {err}",
                             self.db_path.display()
                         ));
                     }
@@ -209,6 +242,30 @@ impl SqliteStorage {
             }
         }
         unreachable!("the loop returns or errors on its last iteration")
+    }
+
+    /// Connection for callers that already hold a proven-writable database:
+    /// open, verify no silent read-only downgrade, and hand it back. No PRAGMA
+    /// round trips and no write-lock probe.
+    fn open_connection_fast(&self) -> Result<Connection> {
+        let conn = Connection::open_with_flags(
+            &self.db_path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_CREATE
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        let downgraded =
+            unsafe { rusqlite::ffi::sqlite3_db_readonly(conn.handle(), b"main\0".as_ptr().cast()) };
+        if downgraded == 1 {
+            // The process-wide shm node went read-only behind our back; fall
+            // back to the healing path instead of failing this write.
+            self.write_ready.store(false, Ordering::Release);
+            anyhow::bail!(
+                "{} cannot be opened for writing; reopening through the WAL probe",
+                self.db_path.display()
+            );
+        }
+        Ok(conn)
     }
 
     /// One plain connection attempt: open, verify no silent read-only
@@ -241,7 +298,7 @@ impl SqliteStorage {
             );
         }
         // Parallel child runs can briefly contend on SQLite writes.
-        conn.busy_timeout(Duration::from_secs(5)).ok();
+        conn.busy_timeout(WRITE_BUSY_TIMEOUT).ok();
         // The header must be set before WAL creates the first database page.
         if !self.initialized.load(Ordering::Acquire) {
             self.apply_auto_vacuum(&conn);

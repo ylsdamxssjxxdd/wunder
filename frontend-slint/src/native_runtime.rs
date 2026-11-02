@@ -9,6 +9,7 @@ pub fn install(app: &crate::MainWindow) {
     app.set_tools(slint::ModelRc::default());
     app.set_models(slint::ModelRc::default());
     app.set_chat_loading(true);
+    app.set_startup_note("正在准备本地运行环境…".into());
     app.set_status("正在启动内嵌运行时…".into());
     let weak = app.as_weak();
     crate::startup_point("runtime_begin");
@@ -27,13 +28,21 @@ pub fn install(app: &crate::MainWindow) {
                     install_ready(&app, runtime);
                     crate::startup_point("runtime_ui_ready");
                 }
-                Err(error) => app.set_status(format!("无法启动内嵌运行时：{error}").into()),
+                Err(error) => {
+                    // Retire the startup gate so the failure is readable in the
+                    // status line instead of sitting behind a preparation banner
+                    // that can never finish.
+                    app.set_profile_ready(true);
+                    app.set_threads_ready(true);
+                    app.set_status(format!("无法启动内嵌运行时：{error}").into());
+                }
             }
         });
     });
 }
 
 pub fn install_ready(app: &crate::MainWindow, runtime: Arc<NativeDesktop>) {
+    app.set_startup_note("正在载入工作台…".into());
     crate::native_chat::install(app, runtime.clone());
     crate::native_pages::install(app, runtime.clone());
     crate::update_ui::install(app, runtime.clone());
