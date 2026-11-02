@@ -508,17 +508,20 @@ export component HostHud inherits Rectangle {
             icon: @image-url("../assets/icons/fa-memory.svg");
             ratio: root.memory;
         }
-        task-cell := TaskCell {
-            count: root.task-count;
-            hint: root.task-hint;
-        }
-        subagent-cell := SubagentDock {
-            items: root.subagent-items;
-            count: root.subagent-count;
-            hidden: root.subagent-hidden;
-            hint: root.subagent-hint;
-            open(id) => { root.open-subagent(id); }
-            stop(id) => { root.stop-subagent(id); }
+        HorizontalLayout {
+            spacing: 6px;
+            task-cell := TaskCell {
+                count: root.task-count;
+                hint: root.task-hint;
+            }
+            subagent-cell := SubagentDock {
+                items: root.subagent-items;
+                count: root.subagent-count;
+                hidden: root.subagent-hidden;
+                hint: root.subagent-hint;
+                open(id) => { root.open-subagent(id); }
+                stop(id) => { root.stop-subagent(id); }
+            }
         }
     }
 

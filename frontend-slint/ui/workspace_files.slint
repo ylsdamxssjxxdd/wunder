@@ -6,7 +6,7 @@
 // drag-and-drop, folders leave through the context menu. The upload tile stays
 // only in the skill/knowledge file area, where it is the single upload entry.
 import { Theme, WorkspaceFileRow } from "theme.slint";
-import { SidebarMetrics } from "drag_row.slint";
+import { SidebarMetrics, PointerChase } from "drag_row.slint";
 import { I18n } from "i18n.slint";
 import { ListView, Button } from "std-widgets.slint";
 import { ModalDialog, Action, InlineInput } from "components.slint";
@@ -309,15 +309,66 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                     property <length> press-x;
                                     property <length> press-y;
                                     property <bool> drag-out;
+                                    property <bool> owns-gesture;
+                                    property <length> chase-x: PointerChase.pointer-x;
+                                    property <length> chase-y: PointerChase.pointer-y;
+                                    property <int> chase-finish: PointerChase.finish-serial;
                                     pointer-event(event) => {
                                         if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
-                                            self.press-x = self.mouse-x; self.press-y = self.mouse-y; self.drag-out = false;
+                                            self.press-x = self.absolute-position.x + self.mouse-x;
+                                            self.press-y = self.absolute-position.y + self.mouse-y;
+                                            self.drag-out = false;
+                                            self.owns-gesture = !root.resource-mode && row.kind == 0;
+                                            if self.owns-gesture {
+                                                PointerChase.pointer-x = self.press-x;
+                                                PointerChase.pointer-y = self.press-y;
+                                                PointerChase.holding = PointerChase.enabled;
+                                                PointerChase.begin();
+                                            }
                                             keyboard.focus();
+                                        }
+                                        if (event.kind == PointerEventKind.up && event.button == PointerEventButton.left) || event.kind == PointerEventKind.cancel {
+                                            if !PointerChase.enabled || !PointerChase.primary-held() {
+                                                self.owns-gesture = false;
+                                                PointerChase.holding = false;
+                                            }
                                         }
                                     }
                                     moved => {
-                                        if !root.resource-mode && row.kind == 0 && self.pressed && !self.drag-out && (abs(self.mouse-x - self.press-x) > 5px || abs(self.mouse-y - self.press-y) > 5px) {
-                                            self.drag-out = true; root.drag-row(index);
+                                        if self.owns-gesture && self.pressed && !self.drag-out
+                                            && (abs(self.absolute-position.x + self.mouse-x - self.press-x) > 5px
+                                                || abs(self.absolute-position.y + self.mouse-y - self.press-y) > 5px) {
+                                            self.drag-out = true;
+                                            self.owns-gesture = false;
+                                            PointerChase.holding = false;
+                                            root.drag-row(index);
+                                        }
+                                    }
+                                    // 与线程行共用真实指针通道；事件流断掉或按下态被合成松开清除后仍能启动拖出。
+                                    changed chase-x => {
+                                        if self.owns-gesture && !self.drag-out
+                                            && (abs(PointerChase.pointer-x - self.press-x) > 5px
+                                                || abs(PointerChase.pointer-y - self.press-y) > 5px) {
+                                            self.drag-out = true;
+                                            self.owns-gesture = false;
+                                            PointerChase.holding = false;
+                                            root.drag-row(index);
+                                        }
+                                    }
+                                    changed chase-y => {
+                                        if self.owns-gesture && !self.drag-out
+                                            && (abs(PointerChase.pointer-x - self.press-x) > 5px
+                                                || abs(PointerChase.pointer-y - self.press-y) > 5px) {
+                                            self.drag-out = true;
+                                            self.owns-gesture = false;
+                                            PointerChase.holding = false;
+                                            root.drag-row(index);
+                                        }
+                                    }
+                                    changed chase-finish => {
+                                        if self.owns-gesture {
+                                            self.owns-gesture = false;
+                                            PointerChase.holding = false;
                                         }
                                     }
                                     clicked => { if !self.drag-out { root.toggle(index); } }

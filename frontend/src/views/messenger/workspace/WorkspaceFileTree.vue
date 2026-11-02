@@ -334,8 +334,8 @@ const handleRowDragStart = (event: DragEvent, row: WorkspaceVisibleRow) => {
     return;
   }
   draggingPaths.value = paths;
-  // 工作区内部是移动语义；拖到输入框引用文件时，接收方只读路径。
-  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+  // 工作区内部是移动语义；拖到输入框引用文件时使用复制，两种投放都要允许。
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copyMove';
 };
 
 const handleRowDragEnd = () => {
