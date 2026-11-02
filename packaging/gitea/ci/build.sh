@@ -95,11 +95,13 @@ else
     fi
     # 交接给安装包任务：Inno Setup 组包要在同一缓存卷里拿到两个 i386 PE（桌面与 CLI），
     # 那个任务跑在带 Wine 的独立镜像里，不共享本次任务的工作区。
+    # 交接目录每次重建，只留本次运行的输入，避免上一轮的版本混进组包。
+    rm -rf "$cache/installer-inputs"
     mkdir -p "$cache/installer-inputs"
     find release-assets -maxdepth 1 -name 'wunder-frontend-slint-*-win7-x86.exe' \
         -exec cp -f -- {} "$cache/installer-inputs/" \;
     if [[ -f "$sample" ]]; then
-        cp -f -- "$sample" "$cache/installer-inputs/"
+        cp -f -- "$sample" "$cache/installer-inputs/wunder-cli-win7-x86.exe"
     fi
 fi
 

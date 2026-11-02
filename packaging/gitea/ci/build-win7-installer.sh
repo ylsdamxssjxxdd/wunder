@@ -24,12 +24,11 @@ inputs="$cache/installer-inputs"
 export WUNDER_OFFLINE_ROOT="${WUNDER_OFFLINE_ROOT:-/opt/offline-sdk}"
 
 desktop="$(find "$inputs" -maxdepth 1 -name 'wunder-frontend-slint-*-win7-x86.exe' -print -quit 2>/dev/null)"
-cli="$(find "$inputs" -maxdepth 1 -name 'wunder-cli-*-win7-x86.exe' -print -quit 2>/dev/null)"
+cli="$(find "$inputs" -maxdepth 1 -name 'wunder-cli-*win7-x86.exe' -print -quit 2>/dev/null)"
 pack="$WUNDER_OFFLINE_ROOT/supplement-prebuilt/win7-ia32/wunder-supplement-win7-ia32-common.zip"
-[[ -n "$desktop" && -n "$cli" ]] || {
-    echo "交接目录缺少 win7 输入: $inputs（win7 构建任务未产出或缓存被清理）" >&2
-    exit 2
-}
+[[ -d "$inputs" ]] || { echo "交接目录不存在: $inputs（win7 构建任务未产出或缓存卷被清理）" >&2; exit 2; }
+[[ -n "$desktop" ]] || { echo "交接目录缺少桌面 exe: $inputs" >&2; exit 2; }
+[[ -n "$cli" ]] || { echo "交接目录缺少 CLI exe: $inputs" >&2; exit 2; }
 [[ -s "$pack" && -s "$pack.sha256" ]] || {
     echo "套件预置的 win7 补充包缺失: $pack" >&2
     exit 2
