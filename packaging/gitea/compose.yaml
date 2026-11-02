@@ -1,9 +1,9 @@
-name: offline-gitea
+name: ${STACK_PREFIX:-offline-gitea}
 
 services:
   gitea:
-    image: docker.gitea.com/gitea:28.2.0
-    platform: linux/arm64
+    image: ${GITEA_IMAGE:-docker.gitea.com/gitea:28.2.0}
+    platform: ${CI_PLATFORM:-linux/arm64}
     pull_policy: never
     restart: unless-stopped
     environment:
@@ -16,8 +16,8 @@ services:
       GITEA__server__SSH_DOMAIN: ${GITEA_SSH_HOST:-localhost}
       GITEA__server__SSH_PORT: ${GITEA_SSH_PORT:-2222}
       GITEA__server__OFFLINE_MODE: "true"
-      GITEA__service__DISABLE_REGISTRATION: "true"
-      GITEA__service__REQUIRE_SIGNIN_VIEW: "true"
+      GITEA__service__DISABLE_REGISTRATION: ${GITEA_DISABLE_REGISTRATION:-true}
+      GITEA__service__REQUIRE_SIGNIN_VIEW: ${GITEA_REQUIRE_SIGNIN_VIEW:-true}
       GITEA__actions__ENABLED: "true"
       GITEA__actions__DEFAULT_ACTIONS_URL: self
       GITEA__actions__ENDLESS_TASK_TIMEOUT: 24h
@@ -46,8 +46,8 @@ services:
         max-file: "3"
 
   bootstrap:
-    image: docker.gitea.com/gitea:28.2.0
-    platform: linux/arm64
+    image: ${GITEA_IMAGE:-docker.gitea.com/gitea:28.2.0}
+    platform: ${CI_PLATFORM:-linux/arm64}
     pull_policy: never
     restart: on-failure
     entrypoint: ["/bin/sh", "/bundle/bootstrap.sh"]
@@ -65,15 +65,15 @@ services:
       - ci
 
   runner:
-    image: docker.gitea.com/runner:5.2.3
-    platform: linux/arm64
+    image: ${RUNNER_IMAGE:-docker.gitea.com/runner:5.2.3}
+    platform: ${CI_PLATFORM:-linux/arm64}
     pull_policy: never
     restart: unless-stopped
     environment:
       GITEA_INSTANCE_URL: http://gitea:3000/
-      GITEA_RUNNER_NAME: offline-linux-arm64
+      GITEA_RUNNER_NAME: ${RUNNER_NAME:-offline-linux}
       GITEA_RUNNER_REGISTRATION_TOKEN_FILE: /bootstrap/runner-token
-      GITEA_RUNNER_LABELS: linux-offline-arm64:docker://wunder-offline-builder:20261027-arm64-mounted
+      GITEA_RUNNER_LABELS: ${RUNNER_LABELS:?prepare-bundle.py 未在 .env 里写入 RUNNER_LABELS}
       CONFIG_FILE: /etc/runner/config.yaml
     volumes:
       - ./data/runner:/data
@@ -95,18 +95,18 @@ services:
 
 networks:
   ingress:
-    name: offline-gitea-ingress
+    name: ${STACK_PREFIX:-offline-gitea}-ingress
   ci:
-    name: offline-gitea-ci
+    name: ${STACK_PREFIX:-offline-gitea}-ci
     internal: true
 
 volumes:
   offline-sdk:
-    name: offline-gitea-sdk
+    name: ${STACK_PREFIX:-offline-gitea}-sdk
     driver: local
     driver_opts:
       type: none
       o: bind
       device: ${WUNDER_SDK_PATH:?Run bash load-images.sh to prepare the SDK mount}
   build-cache:
-    name: offline-gitea-build-cache
+    name: ${STACK_PREFIX:-offline-gitea}-build-cache

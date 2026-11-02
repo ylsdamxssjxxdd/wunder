@@ -1,0 +1,19 @@
+# x86_64 宿主的离线 CI 任务镜像：在 rcho/wunder 共用的 kylin-x86 SDK 构建镜像上
+# 补齐 CI 需要的 git 与套件脚本，供 act_runner 按 wunder-offline 标签直接起容器。
+# 与 Dockerfile.builder-arm64 对应；两者的差异只有宿主工具链架构与 PATH 里的工具链名。
+FROM wunder-rust-builder-kylin-x86:ubuntu18
+
+ENV DEBIAN_FRONTEND=noninteractive
+# 基镜像的 sources.list 已指向清华 bionic 源，这里只补 git。
+RUN apt-get -o Acquire::Retries=3 update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY ci /opt/offline-ci
+RUN mkdir -p /opt/offline-sdk /ci-cache /workspace
+
+ENV WUNDER_OFFLINE_ROOT=/opt/offline-sdk \
+    CARGO_NET_OFFLINE=true \
+    PATH=/opt/offline-sdk/rust/toolchains/1.92.0-x86_64-unknown-linux-gnu/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WORKDIR /workspace
+CMD ["bash"]
