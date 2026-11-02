@@ -68,6 +68,12 @@ git push gitea main
 产物由该次运行的短期令牌上传到 Releases，标签形如 `ci-<提交短哈希>-<运行编号>`。
 某个任务失败不影响其他任务；Release 有附件不代表全部成功，以 Actions 任务状态为准。
 
+这个版本的 Gitea 没有工作流 `concurrency`（二进制里找不到 `cancel-in-progress` 的实现），服务端也不会
+替新提交取消旧运行，所以连续推送会排着队各跑一遍。改由任务自己判：`ci/is-latest.py` 用本次的短期令牌
+`git ls-remote` 取分支头，头已经不是本次提交就打印「已被取代」并让任务立刻成功退出（不构建、不发布）。
+标签推送与手工触发不受影响；查询失败一律放行，宁可多跑一次也不把流水线卡死。注意它只能让**还没开始**的
+任务让路，已经在编译中的任务不会被打断。
+
 ## 离线边界与资源
 
 - Rust crate vendor、双架构工具链与 sysroot、MinGW、AppImage runtime 由 SDK 目录只读挂载。
