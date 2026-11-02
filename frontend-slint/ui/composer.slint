@@ -1395,6 +1395,7 @@ export component Composer inherits Rectangle {
     callback record-voice();
     callback launch-cli();
     callback screenshot(bool, bool);
+    callback file-drop(DropEvent);
     // ---- 发送队列 (§发送队列) ----
     // Parked turns come straight from the engine's queue projection; the strip
     // never keeps its own copy, so a reorder or a withdraw that raced with a
@@ -1653,6 +1654,11 @@ export component Composer inherits Rectangle {
                         font-size: Theme.font-xs; vertical-alignment: center;
                     }
                 }
+            }
+            DropArea {
+                x: 0px; y: 0px; width: 100%; height: 100%;
+                can-drop(event) => { return DragAction.copy; }
+                dropped(event) => { root.file-drop(event); return DragAction.copy; }
             }
         }
         // ---- action row (§8.2), 对齐蜂巢 composer-action-row: the bordered

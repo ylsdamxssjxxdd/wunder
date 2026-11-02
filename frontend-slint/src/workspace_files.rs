@@ -244,6 +244,16 @@ fn read_error() -> &'static str {
     }
 }
 
+fn append_chat_reference(app: &MainWindow, reference: &str) {
+    let draft = app.get_draft();
+    let separator = if draft.is_empty() || draft.ends_with(char::is_whitespace) {
+        ""
+    } else {
+        "\n"
+    };
+    app.set_draft(format!("{draft}{separator}@\"{reference}\" ").into());
+}
+
 fn with_panel<R>(run: impl FnOnce(&mut Panel) -> R) -> Option<R> {
     PANEL.with(|slot| {
         let mut slot = slot.borrow_mut();
@@ -460,7 +470,6 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             MENU_REFERENCE => {
                 if let Some(row) = row {
                     // 引用到聊天：把路径追加进草稿，模型可按路径取用。
-                    let draft = app.get_draft();
                     let reference = match current_target() {
                         Target::Local(root) => std::path::Path::new(&root)
                             .join(row.path.as_str())
@@ -468,12 +477,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                             .into_owned(),
                         Target::Cloud => row.path.to_string(),
                     };
-                    let separator = if draft.is_empty() || draft.ends_with(char::is_whitespace) {
-                        ""
-                    } else {
-                        "\n"
-                    };
-                    app.set_draft(format!("{draft}{separator}@\"{reference}\" ").into());
+                    append_chat_reference(&app, &reference);
                 }
             }
             MENU_NEW_DIR => {
@@ -638,6 +642,21 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             return;
         }
         start_transfer(&app, drop_api.clone(), paths);
+    });
+
+    // Files dropped on the composer become ordinary editable path references;
+    // this covers both workspace drag-out and files arriving from Explorer.
+    let weak = app.as_weak();
+    app.on_composer_file_drop(move |event| {
+        let Some(app) = weak.upgrade() else {
+            return;
+        };
+        let Ok(paths) = event.data.file_paths() else {
+            return;
+        };
+        for path in paths.take(MAX_DROP_FILES) {
+            append_chat_reference(&app, &path.to_string_lossy());
+        }
     });
 
     // Prompt dialog: one callback serves both stages (issue the cloud write,

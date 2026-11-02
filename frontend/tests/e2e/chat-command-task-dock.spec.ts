@@ -22,6 +22,21 @@ test('background task dock expands output and terminates one command', async ({ 
 
     const trigger = page.getByTestId('composer-background-tasks');
     await expect(trigger).toHaveText('1');
+    const geometry = await page.locator('.composer-status-trigger').evaluateAll(buttons =>
+      buttons.map(button => {
+        const bounds = button.getBoundingClientRect();
+        const icon = button.querySelector('.composer-status-icon')!.getBoundingClientRect();
+        const count = button.querySelector('span')!.getBoundingClientRect();
+        return {
+          iconX: icon.left - bounds.left, iconY: icon.top - bounds.top,
+          iconWidth: icon.width, iconHeight: icon.height, countX: count.left - bounds.left
+        };
+      })
+    );
+    expect(geometry).toEqual([
+      { iconX: 5, iconY: 5, iconWidth: 16, iconHeight: 16, countX: 26 },
+      { iconX: 5, iconY: 5, iconWidth: 16, iconHeight: 16, countX: 26 }
+    ]);
     await trigger.hover();
     const panel = page.getByTestId('composer-background-task-panel');
     await expect(panel).toBeVisible();

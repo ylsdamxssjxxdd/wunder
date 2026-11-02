@@ -737,6 +737,7 @@ export component MainWindow inherits Window {
     callback ws-file-menu(int, int);
     callback ws-file-drag(int);
     callback ws-file-drop(DropEvent);
+    callback composer-file-drop(DropEvent);
     // 侧栏宽度：以窗口坐标为准（追踪通道给的是真实光标位置），起点由按下时
     // 记录，因此拖多远就宽多少，不受布局反馈滞后影响。
     function apply-sidebar-width(start-width: length, start-x: length) {
@@ -1422,6 +1423,7 @@ export component MainWindow inherits Window {
                             recording: root.recording; transcribing: root.transcribing; recording-elapsed: root.recording-elapsed; recording-pulse: root.recording-pulse;
                             send => { root.send-message(); }
                             screenshot(hide-window, region) => { root.capture-screenshot(hide-window, region); }
+                            file-drop(event) => { root.composer-file-drop(event); }
                             record-voice => { root.record-voice(); }
                             reasoning-effort-changed(value) => { root.save-session-reasoning-effort(value); }
                             remove-attachment(index) => { root.remove-attachment(index); }

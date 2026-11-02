@@ -82,7 +82,7 @@
         :aria-expanded="subagentPanelVisible"
         @click.stop="toggleDock('subagents')"
       >
-        <i class="fa-solid fa-robot composer-status-icon composer-status-icon--robot" aria-hidden="true"></i>
+        <i class="fa-solid fa-robot composer-status-icon" aria-hidden="true"></i>
         <span>{{ compactCount(subagents.length) }}</span>
       </button>
       <div
@@ -295,11 +295,12 @@ onBeforeUnmount(() => {
 .composer-status-trigger {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  box-sizing: border-box;
   gap: 5px;
   width: 40px;
   height: 26px;
-  padding: 0;
+  padding: 0 5px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -321,7 +322,6 @@ onBeforeUnmount(() => {
   font-size: 16px;
   line-height: 16px;
 }
-.composer-status-icon--robot { font-size: 18px; }
 .composer-status-panel {
   position: absolute;
   z-index: 40;
