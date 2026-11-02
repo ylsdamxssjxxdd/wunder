@@ -16,6 +16,7 @@ runner:
   labels:
     - "@BUILDER_LABEL@"
     - "@RCHO_LABEL@"
+    - "@INSTALLER_LABEL@"
 cache:
   enabled: false
 container:

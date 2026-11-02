@@ -52,27 +52,34 @@ git remote add gitea http://<服务器地址>:3000/<用户名>/<仓库名>.git
 git push gitea main
 ```
 
-`Offline Linux Release` 在每次分支推送、`v*` 标签推送或手工触发时执行：
+`Offline Linux Release` 在每次分支推送、`v*` 标签推送或手工触发时执行，交付物与 GitHub 的
+`nightly` 发布同形——三个桌面程序 + 三个安装包，补充包不进 Release：
 
-- `linux`：矩阵 arm64/amd64，产出 `wunder-slint-<版本>-linux-<arch>.tar.gz`（AppDir 归档）与 `wunder-cli-<版本>-linux-<arch>`，
-  附 `SHA256SUMS-<arch>.txt`；`verify.py` 校验 ELF 架构、AppDir 布局与 CLI 的 glibc ≤ 2.27。
-- `win7`（仅 x86_64 runner）：`wunder-frontend-slint-<版本>-win7-x86.exe` 与 `wunder-cli-<版本>-win7-x86.exe`，`verify.py` 校验 PE i386 头。
-- `supplement`：不构建，只做完整性校验并从 `supplement-prebuilt/<arch>/` 复用 `wunder-supplement-linux-<arch>.tar.gz`。
+- `linux`：矩阵 arm64/amd64。桌面 `wunder-slint-<版本>-linux-<arch>.tar.gz`、便携包 `wunder-<版本>-<x64|arm64>.portable`、
+  安装包 `wunder-<版本>-<x64|arm64>.run`；裸 CLI 只作架构与 glibc 门禁的样本，组完包转存到缓存卷，不当附件发布。
+  `verify.py` 校验 ELF 架构、AppDir 布局、桌面二进制的 glibc ≤ 2.27，以及两个自解压件的头部标记与 gzip 载荷。
+- `win7`（仅 x86_64 worker 上真构建）：`wunder-frontend-slint-<版本>-win7-x86.exe`，`verify.py` 校验 PE i386 头；
+  同时把桌面与 CLI 两个 PE 写进 `/ci-cache/<仓库键>/win7-x86/installer-inputs/` 交给下一个任务。
+- `win7-installer`（`needs: win7`）：在带 Wine + Inno Setup 的第四个镜像里跑 `ISCC.exe`，用交接 PE 与预置的
+  `wunder-supplement-win7-ia32-common.zip` 组出 `wunder-<版本>-win7-x86-setup.exe`。ARM worker 上没有可用的
+  i386 Wine，脚本按 `uname -m` 打印 SKIP 并成功退出（所以 arm64 剖面把该标签指向构建镜像本身，不留空标签）。
 
-检出后的步骤一律使用仓库内 `packaging/gitea/ci/` 脚本，只有检出本身用镜像内 `/opt/offline-ci/checkout.py`
-（补充包镜像同样带该副本）。产物由该次运行的短期令牌上传到 Releases，标签形如 `ci-<提交短哈希>-<运行编号>`。
-某个架构失败不影响其他任务；Release 有附件不代表全部成功，以 Actions 任务状态为准。
-
-`.run` 安装包与便携包不在离线流水线里组装：`pack` 需要桌面、CLI、补充包三件产物同地，当前跨任务传递未接入。
-需要时在开发机用 `bash build.sh pack -a linux-<arch>` 本地组包。
+检出后的步骤一律使用仓库内 `packaging/gitea/ci/` 脚本，只有检出本身用镜像内 `/opt/offline-ci/checkout.py`。
+产物由该次运行的短期令牌上传到 Releases，标签形如 `ci-<提交短哈希>-<运行编号>`。
+某个任务失败不影响其他任务；Release 有附件不代表全部成功，以 Actions 任务状态为准。
 
 ## 离线边界与资源
 
 - Rust crate vendor、双架构工具链与 sysroot、MinGW、AppImage runtime 由 SDK 目录只读挂载。
-  补充包（opt/python、opt/git、opt/rg、opt/ffmpeg、opt/browser）**不在离线端构建**：它要在目标 libc 上编译
-  git 并铺 Python 运行时，离线机没有这些上游归档与 wheel 索引，所以补充包在联网准备机上产好后随套件导出，
-  放在 `supplement-prebuilt/<arch>/`（含逐包 `.sha256`）。CI 每次校验 SHA256 与包内组件结构，通过才发布。
+  补充包（Linux 的 opt/python、opt/git、opt/rg、opt/ffmpeg、opt/browser 与 Win7 的 ia32 同名组件）
+  **不在离线端构建**：它要在目标 libc 上编译 git 并铺 Python 运行时，离线机没有这些上游归档与 wheel 索引，
+  所以在联网准备机上产好后随套件导出，放在 `supplement-prebuilt/<arch>/`（`amd64`、`arm64`、`win7-ia32` 三份，
+  各带 `.sha256`）。离线端只把它们当输入：Linux 的 `.run` 用对应架构的 tar.gz，Win7 安装包用那份 zip；
+  用前先复核 SHA256，不匹配就失败，补充包本身不作为 Release 附件。
   准备方法与目录说明见 `cache/`（准备机侧，不进套件）。
+- Win7 安装包的镜像是套件里唯一的非 18.04 基线镜像（Ubuntu 22.04 + Wine + Inno Setup 6.7.3）：它不编译 Rust，
+  只跑 `ISCC.exe`，所以可以用新发行版；bionic 自带的 Wine 3.0 跑不动 Inno Setup 6.7。Inno 的下载版本与
+  SHA256 和 `build_win7_installer.ps1` 固定一致，镜像在准备机上构建、以离线归档交付。
 - 流程不使用 `actions/checkout`、`upload-artifact`、`rustup`、`apt`、`npm install` 或任何公网源。
   任务容器只加入 `internal` 网络，无外网出口；仅 Runner 持有 Docker socket。
 - 新增/升级依赖超出 vendor 或 wheel 索引时离线构建会明确失败，需在联网准备机刷新

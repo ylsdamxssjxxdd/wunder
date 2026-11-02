@@ -72,6 +72,9 @@ if [[ "$ARCH" != win7-x86 ]]; then
         --supplement "$pack" --output-dir release-assets
     sample="$cache/wunder-cli-$ARCH.bin"
     mv -f -- "$cli" "$sample"
+    # 桌面构建会同时留下裸 ELF 与 AppDir 归档；GitHub 只收归档，松散二进制一并转存缓存卷。
+    find release-assets -maxdepth 1 -type f -name "wunder-frontend-slint-*-linux-$ARCH" \
+        -exec mv -f -- {} "$cache/" \;
     # 组包脚本会就地留下 .sha256 与 .manifest.json，一并转存到缓存卷，避免混进附件。
     find release-assets -maxdepth 1 -type f \( -name '*.sha256' -o -name '*.manifest.json' \) \
         -exec mv -f -- {} "$cache/" \;
@@ -80,6 +83,14 @@ else
     cli="$(find release-assets -maxdepth 1 -name 'wunder-cli-*-win7-x86.exe' -print -quit)"
     if [[ -n "$cli" ]]; then
         mv -f -- "$cli" "$sample"
+    fi
+    # 交接给安装包任务：Inno Setup 组包要在同一缓存卷里拿到两个 i386 PE（桌面与 CLI），
+    # 那个任务跑在带 Wine 的独立镜像里，不共享本次任务的工作区。
+    mkdir -p "$cache/installer-inputs"
+    find release-assets -maxdepth 1 -name 'wunder-frontend-slint-*-win7-x86.exe' \
+        -exec cp -f -- {} "$cache/installer-inputs/" \;
+    if [[ -f "$sample" ]]; then
+        cp -f -- "$sample" "$cache/installer-inputs/"
     fi
 fi
 

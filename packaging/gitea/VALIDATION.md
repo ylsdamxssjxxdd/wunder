@@ -54,10 +54,30 @@ ARM64 剖面同日未在 ARM 机器上重跑，见文末边界。
   Linux arm64 由 x86_64 宿主交叉 3 分 52 秒（无 QEMU），门禁为 ELF 机器码 + 自解压载荷布局 +
   glibc ≤ 2.27 与 Win7 的 PE 导入/头校验。这轮复跑还暴露并修好一个残留产物问题（见下）。
 
+发布物与 GitHub 同形这一轮（2026-11-03）：
+
+- rcho 的流水线已在真实 Actions 里跑完：同一运行里 amd64、arm64、win7-x86 三个任务全部成功，
+  Release `ci-<提交短哈希>-<运行号>` 收到 `rcho-0.2.0-amd64.appimage`、`rcho-0.2.0-arm64.appimage`
+  与两份校验清单，说明 `publish.py` 的任务级令牌链路在离线实例上成立。
+- Linux 侧改为桌面归档 + `.portable` + `.run` 三件：`builders/pack-portable.sh` 与 `builders/pack.sh`
+  都在同一任务的工作区里跑，补充包直接取套件预置包（先 `sha256sum --check --strict`）；
+  裸 CLI 转存进缓存卷，只作架构与 glibc 样本，不再当附件。
+- Win7 安装包用第四个镜像（Ubuntu 22.04 + Wine + Inno Setup 6.7.3，版本与校验和同
+  `build_win7_installer.ps1` 一致）。`packaging/windows/scripts/build_win7_installer_linux.py` 按
+  PowerShell 版逐条复刻 [Tasks]/[Files]/ISCC 参数；实测在套件镜像里以 root 跑完整包：
+  六个组件全部识别（python/git/rg/ffmpeg/powershell/browser），21 秒组出
+  `wunder-0.3.0-win7-x86-setup.exe`（335,613,621 字节），`verify.py` 判为 i386 PE + Inno 载荷。
+  另用小样本做了一次静默安装烟测：装完落出 `bin/wunder-desktop.exe`、`bin/wunder-cli.exe`、
+  `.wunder-home`、卸载器与 `desktop.cmd`，未勾选的组件按预期不安装。
+- win7 任务把桌面与 CLI 的 PE 写进 `/ci-cache/<仓库键>/win7-x86/installer-inputs/` 交给安装包任务，
+  两个任务不共享工作区，靠同一个缓存卷交接。
+
 ## 边界与未验证
 
-- `.run` 安装包与便携包不在离线流水线里组装（`pack` 需要桌面、CLI、补充包同地，跨任务传递未接入），
-  README 已注明用 `bash build.sh pack -a linux-<arch>` 在准备机上组包。
+- Wine 组出的 setup.exe 没有在真实 Windows 7/10 机器上装过（本机无 Windows 宿主），证据只有
+  PE 头、Inno 载荷标记与 Wine 下的静默安装；对外正式交付仍以 GitHub 的 Windows runner 产物为准。
+  ARM worker 上没有可用的 i386 Wine，`win7-installer` 任务在该类机器上打印 SKIP 后成功退出，
+  所以 arm64 剖面把该标签指向构建镜像本身，不留未注册的标签。
 - `kit-arm64` 仍是 10-28 导出的上一代套件：单一 `linux-offline-arm64` 标签、无补充包任务、脚本早于本轮改动。
   要在 ARM 机器上用本轮设计，需 `prepare-bundle.py --arch arm64` 重新导出，并先确认 arm64 剖面的
   SDK 必需目录与 host-tools 短路条件成立。

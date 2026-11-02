@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+env:
+  # 一次运行要写 1GB 量级的附件，只留最近的若干次 ci-* 发布；手工 v* 标签不受影响。
+  KEEP_CI_RELEASES: "5"
+
 # Gitea 的表达式引擎没有 runner 上下文，架构门禁一律放进脚本：
 # 任务容器自己按 uname -m 判断能不能干这活，不能就打印跳过原因并成功退出。
 jobs:
@@ -47,6 +51,7 @@ jobs:
           set -euo pipefail
           if find release-assets -maxdepth 1 -type f | grep -q .; then
             python3 packaging/gitea/ci/publish.py release-assets
+            python3 packaging/gitea/ci/prune.py
           else
             echo 'nothing to publish from this worker'
           fi
@@ -78,6 +83,40 @@ jobs:
           set -euo pipefail
           if find release-assets -maxdepth 1 -type f | grep -q .; then
             python3 packaging/gitea/ci/publish.py release-assets
+            python3 packaging/gitea/ci/prune.py
+          else
+            echo 'nothing to publish from this worker'
+          fi
+
+  win7-installer:
+    # Win7 安装包用 Inno Setup 组，Linux 宿主上靠 Wine 跑 ISCC.exe，所以是独立的第四个任务镜像。
+    # 输入（桌面与 CLI 的 i386 PE）由 win7 任务写进 /ci-cache 的交接目录，必须等它完成；
+    # ARM worker 上没有可用的 i386 Wine，脚本按 uname 判定后打印 SKIP 并成功退出。
+    needs: win7
+    runs-on: wunder-offline-installer
+    timeout-minutes: 360
+    steps:
+      - name: Checkout from local Gitea
+        env:
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_REF: ${{ github.ref }}
+          CI_TOKEN: ${{ github.token }}
+        run: python3 /opt/offline-ci/checkout.py
+      - name: Assemble Win7 installer offline
+        env:
+          CI_REPOSITORY: ${{ github.repository }}
+        run: bash packaging/gitea/ci/build-win7-installer.sh
+      - name: Publish installer to local Releases
+        env:
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if find release-assets -maxdepth 1 -type f | grep -q .; then
+            python3 packaging/gitea/ci/publish.py release-assets
+            python3 packaging/gitea/ci/prune.py
           else
             echo 'nothing to publish from this worker'
           fi

@@ -23,6 +23,10 @@ PROFILES = {
         "stack_prefix": "offline-gitea",
         "builder_dockerfile": "Dockerfile.builder-arm64",
         "builder_tag": "wunder-offline-builder:20261027-arm64-mounted",
+        # ARM 宿主没有可用的 i386 Wine，Win7 安装包任务在该剖面上按架构跳过，
+        # 因此标签仍指向构建镜像本身，不留空标签导致任务永久排队。
+        "installer_dockerfile": None,
+        "installer_tag": None,
         "sdk_required": ["rust/toolchains", "cargo-vendor-slint", "linux-arm64-ubuntu18/root",
                          "linux-amd64-ubuntu18/root", "appimage-runtime",
                          "mingw-i686-windows-gnu", "web-wasm"],
@@ -40,6 +44,9 @@ PROFILES = {
         # 已带 gcc/cmake/ninja/nasm/clang 与交叉工具链，套件只补 git 和 CI 脚本。
         "builder_dockerfile": "Dockerfile.builder-amd64",
         "builder_tag": "wunder-offline-builder:20261102-amd64-mounted",
+        # Win7 安装包要在 Wine 下跑 ISCC.exe 组，交给独立的第四个镜像（Ubuntu 22.04 基线）。
+        "installer_dockerfile": "Dockerfile.installer-amd64",
+        "installer_tag": "wunder-offline-installer:20261103-amd64-wine",
         # host-tools-amd64 带 .complete 标记与已解压的 aarch64 交叉编译器，
         # rcho 的 prepare_x86_cross_toolchain.sh 会直接短路，不必再带 1.4G 的 archives 归档。
         "sdk_required": ["rust/toolchains", "cargo-vendor-slint", "linux-amd64-ubuntu18/root",
@@ -107,11 +114,13 @@ def render_runner(source, profile, labels):
         "@WUNDER_SQUASHFS_PROCESSORS@": profile["squashfs_processors"],
         "@BUILDER_LABEL@": labels["builder"],
         "@RCHO_LABEL@": labels["rcho"],
+        "@INSTALLER_LABEL@": labels["installer"],
         "@STACK_PREFIX@": profile["stack_prefix"],
     }
     for token, value in replacements.items():
         text = text.replace(token, value)
-    if any(token in text for token in ("@RUNNER_CAPACITY@", "@STACK_PREFIX@", "@BUILDER_LABEL@", "@RCHO_LABEL@")):
+    if any(token in text for token in ("@RUNNER_CAPACITY@", "@STACK_PREFIX@", "@BUILDER_LABEL@",
+                                       "@RCHO_LABEL@", "@INSTALLER_LABEL@")):
         raise RuntimeError("runner.yaml has an unrendered token")
     return text
 
@@ -121,7 +130,7 @@ def write_env(source, profile, labels):
     for line in (source / ".env.example").read_text(encoding="utf-8").splitlines():
         key = line.split("=", 1)[0].strip() if "=" in line and not line.startswith("#") else ""
         if key in {"CI_PLATFORM", "STACK_PREFIX", "SDK_PROFILE", "GITEA_IMAGE", "RUNNER_IMAGE",
-                   "BUILDER_IMAGE", "RUNNER_LABELS", "RUNNER_NAME", "WUNDER_BUILD_JOBS"}:
+                   "BUILDER_IMAGE", "INSTALLER_IMAGE", "RUNNER_LABELS", "RUNNER_NAME", "WUNDER_BUILD_JOBS"}:
             continue
         lines.append(line)
     values = {
@@ -131,7 +140,8 @@ def write_env(source, profile, labels):
         "GITEA_IMAGE": GITEA,
         "RUNNER_IMAGE": RUNNER,
         "BUILDER_IMAGE": profile["builder_tag"],
-        "RUNNER_LABELS": ",".join((labels["builder"], labels["rcho"])),
+        "INSTALLER_IMAGE": profile["installer_tag"] or profile["builder_tag"],
+        "RUNNER_LABELS": ",".join((labels["builder"], labels["rcho"], labels["installer"])),
         "RUNNER_NAME": "offline-linux-" + profile["architecture"],
         "WUNDER_BUILD_JOBS": profile["build_jobs"],
     }
@@ -196,16 +206,21 @@ def main():
         "builder": "wunder-offline:docker://" + profile["builder_tag"],
         # 舵机与蛹共用同一套 Rust 任务镜像，只是路由标签不同；rcho 的离线流水线用这个标签。
         "rcho": "rcho-offline:docker://" + profile["builder_tag"],
+        "installer": "docker://" + (profile["installer_tag"] or profile["builder_tag"]),
     }
 
     for name in (GITEA, RUNNER):
         # 准备机可能已经从上一版套件 docker load 过这些镜像，有本地副本就不必再依赖网络。
         if not has_image(name):
             run("docker", "pull", "--platform", platform, name)
+    task_images = [profile["builder_tag"]]
     if not args.skip_build:
         run("docker", "build", "--platform", platform,
             "-f", str(source / profile["builder_dockerfile"]), "-t", profile["builder_tag"], str(source))
-    for name in (profile["builder_tag"],):
+        if profile["installer_dockerfile"]:
+            run("docker", "build", "--platform", platform,
+                "-f", str(source / profile["installer_dockerfile"]), "-t", profile["installer_tag"], str(source))
+    for name in task_images:
         if not has_image(name):
             raise RuntimeError("任务镜像缺失，去掉 --skip-build 或先准备基镜像: " + name)
 
@@ -253,9 +268,15 @@ def main():
 
     manifest = []
     checksums = []
-    for image, filename in ((GITEA, "gitea-" + profile["architecture"] + ".tar.gz"),
-                            (RUNNER, "runner-" + profile["architecture"] + ".tar.gz"),
-                            (profile["builder_tag"], "builder-" + profile["architecture"] + ".tar.gz")):
+    archives = [(GITEA, "gitea-" + profile["architecture"] + ".tar.gz"),
+                (RUNNER, "runner-" + profile["architecture"] + ".tar.gz"),
+                (profile["builder_tag"], "builder-" + profile["architecture"] + ".tar.gz")]
+    if profile["installer_tag"] and profile["installer_tag"] != profile["builder_tag"]:
+        if not has_image(profile["installer_tag"]):
+            raise RuntimeError("安装包镜像缺失: " + profile["installer_tag"])
+        archives.append((profile["installer_tag"],
+                         "installer-" + profile["architecture"] + ".tar.gz"))
+    for image, filename in archives:
         archive = images / filename
         inspection = json.loads(subprocess.check_output(
             ["docker", "image", "inspect", "--platform", platform, image]))[0]
