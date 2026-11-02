@@ -1,0 +1,34 @@
+# Win7 安装包的离线任务镜像：Inno Setup 的编译器 ISCC.exe 只有 Windows 版，
+# 这里用 Wine 的控制台模式跑它，配合交叉构建好的 i386 PE 与预置补充包组出 setup.exe。
+# 基镜像必须是 Ubuntu 22.04：bionic 自带的 Wine 3.0 无法运行 Inno Setup 6.7，
+# 而这个镜像不编译 Rust，不参与 glibc 2.27 基线，所以可以用新发行版。
+FROM docker.io/library/ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive WINEDEBUG=-all WINEPREFIX=/opt/wine
+RUN dpkg --add-architecture i386 \
+    && apt-get -o Acquire::Retries=3 update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates curl git python3 unzip xz-utils xvfb wine wine32 wine64 \
+    && rm -rf /var/lib/apt/lists/*
+
+# 前缀由这条安装命令自己创建：单独先跑 wineboot --init 会留下半成品前缀，
+# 后续 wine 直接静默退出（镜像构建里表现为 xvfb-run 一行命令无任何输出）。
+# 与 packaging/windows/scripts/build_win7_installer.ps1 固定同一版本与校验和。
+ARG INNO_VERSION=6.7.3
+ARG INNO_SHA256=9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732
+RUN set -eux; \
+    curl -fsSL --retry 3 -o /tmp/innosetup.exe \
+        "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-${INNO_VERSION}.exe"; \
+    echo "${INNO_SHA256}  /tmp/innosetup.exe" | sha256sum --check --strict -; \
+    xvfb-run -a wine /tmp/innosetup.exe /CURRENTUSER /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- "/DIR=C:\InnoSetup"; \
+    wineserver -w || true; \
+    ls -l /opt/wine/drive_c/InnoSetup/ISCC.exe; \
+    rm -f /tmp/innosetup.exe
+
+COPY ci /opt/offline-ci
+RUN mkdir -p /opt/offline-sdk /ci-cache /workspace
+
+ENV WUNDER_ISCC="C:\InnoSetup\ISCC.exe" \
+    WUNDER_OFFLINE_ROOT=/opt/offline-sdk
+WORKDIR /workspace
+CMD ["bash"]

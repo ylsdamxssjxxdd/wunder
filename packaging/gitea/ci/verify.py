@@ -6,6 +6,7 @@
 """
 
 from pathlib import Path
+import fnmatch
 import re
 import struct
 import subprocess
@@ -101,17 +102,42 @@ def check_self_extractor(path, architecture):
         raise RuntimeError("artifact name does not carry the " + label + " label: " + path.name)
 
 
+def reject_unexpected(directory, patterns):
+    """Release 附件必须是确定的那几件，多出来的文件（裸二进制、组包中间件）一律判失败。"""
+    allowed = list(patterns) + ["SHA256SUMS-*.txt"]
+    unexpected = sorted(path.name for path in directory.iterdir()
+                        if path.is_file() and not any(fnmatch.fnmatch(path.name, rule) for rule in allowed))
+    if unexpected:
+        raise RuntimeError("unexpected files in the release asset set: " + ", ".join(unexpected))
+
+
+def check_inno_payload(path):
+    """ISCC appends its setup-data block near the end of the stub."""
+    size = path.stat().st_size
+    with path.open("rb") as stream:
+        stream.seek(max(0, size - 8 * 1024 * 1024))
+        tail = stream.read()
+    if b"Inno Setup Setup Data" not in tail:
+        raise RuntimeError("not an Inno Setup installer (setup-data block missing): " + path.name)
+
+
 def main():
     directory = Path(sys.argv[1])
     architecture = sys.argv[2]
     extra = Path(sys.argv[3]) if len(sys.argv) > 3 else None
+    if architecture == "win7-installer":
+        installer = find_single(directory, "wunder-*-win7-x86-setup.exe", "Win7 installer")
+        check_pe_i386(installer)
+        check_inno_payload(installer)
+        reject_unexpected(directory, ["wunder-*-win7-x86-setup.exe"])
+        print("PASS: win7-x86 setup installer is an i386 PE with an Inno Setup payload")
+        return
     if architecture == "win7-x86":
         desktop = find_single(directory, "wunder-frontend-slint-*-win7-x86.exe", "Win32 desktop executable")
         check_pe_i386(desktop)
         if extra is not None and extra.is_file():
             check_pe_i386(extra)
-        if list(directory.glob("wunder-supplement-*")) or list(directory.glob("wunder-*.run")):
-            raise RuntimeError("supplement or Linux installer leaked into the win7 asset set")
+        reject_unexpected(directory, ["wunder-frontend-slint-*-win7-x86.exe"])
         print("PASS: win7-x86 PE headers (i386)")
         return
     desktop = find_single(directory, "wunder-slint-*-linux-" + architecture + ".tar.gz", "desktop archive")
@@ -123,8 +149,8 @@ def main():
     if extra is not None and extra.is_file():
         check_elf(extra, LINUX_MACHINES[architecture])
         check_glibc(extra)
-    if list(directory.glob("wunder-cli-*")) or list(directory.glob("wunder-supplement-*")):
-        raise RuntimeError("raw CLI or supplement leaked into the release asset set")
+    reject_unexpected(directory, ["wunder-slint-*-linux-" + architecture + ".tar.gz",
+                                  "wunder-*-*.portable", "wunder-*-*.run"])
     print("PASS: " + architecture + " desktop archive, portable and installer payloads, ELF and glibc gates")
 
 
