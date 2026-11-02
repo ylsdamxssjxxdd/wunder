@@ -4,7 +4,7 @@
 
 import { elements } from "./elements.js?v=20261016-01";
 import { getAuthHeaders } from "./admin-auth.js?v=20261011-01";
-import { getCurrentLanguage, t } from "./i18n.js?v=20261030-03";
+import { getCurrentLanguage, t } from "./i18n.js?v=20261016-01";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
 import { normalizeMarkdownForWebPreview, enhanceRenderedMarkdown } from "./markdown-preview.js";
@@ -27,7 +27,7 @@ import {
   requestIdentity,
   timelineFocusIndexes,
   trajectoryDiagnosticRows,
-} from "./trajectory-model.js?v=20261030-03";
+} from "./trajectory-model.js?v=20261102-01";
 
 const OVERSCAN_PX = 360;
 const VIRTUAL_THRESHOLD = 100;
@@ -247,7 +247,8 @@ export function createTrajectoryView(host, options = {}) {
     loading: true,
     loadError: false,
     showDuration: true,
-    showTokens: true,
+    // 消耗直方图两种状态："total" 展示每步全部消耗，"delta" 展示新增占用。
+    tokenMode: "total",
     showTurns: false,
     showCalls: false,
     searchQuery: "",
@@ -330,7 +331,7 @@ export function createTrajectoryView(host, options = {}) {
   };
 
   const durationToggle = mkToggle("clock", modelT("duration"));
-  const tokensToggle = mkToggle("bars", modelT("tokenUsage"));
+  const tokensToggle = mkToggle("bars", modelT("consumption"));
   const turnsToggle = mkToggle("⊞", modelT("turns"));
   const callsToggle = mkToggle("⊟", modelT("calls"));
   toolbar.appendChild(durationToggle);
@@ -620,13 +621,16 @@ export function createTrajectoryView(host, options = {}) {
   const renderToolbar = () => {
     durationToggle.classList.toggle("tt-toggle-active", st.showDuration);
     durationToggle.setAttribute("aria-pressed", st.showDuration ? "true" : "false");
-    tokensToggle.classList.toggle("tt-toggle-active", st.showTokens);
-    tokensToggle.setAttribute("aria-pressed", st.showTokens ? "true" : "false");
+    tokensToggle.classList.toggle("tt-toggle-active", st.tokenMode === "total");
+    tokensToggle.setAttribute("aria-pressed", st.tokenMode === "total" ? "true" : "false");
     turnsToggle.classList.toggle("tt-toggle-active", st.showTurns);
     turnsToggle.setAttribute("aria-pressed", st.showTurns ? "true" : "false");
     callsToggle.classList.toggle("tt-toggle-active", st.showCalls);
     callsToggle.setAttribute("aria-pressed", st.showCalls ? "true" : "false");
     const zh = getCurrentLanguage().startsWith("zh");
+    tokensToggle.title = zh
+      ? (st.tokenMode === "total" ? "当前：全部消耗，点击切换为新增占用" : "当前：新增占用，点击切换为全部消耗")
+      : (st.tokenMode === "total" ? "Showing total usage; click for new tokens" : "Showing new tokens; click for total usage");
     turnsToggle.title = zh ? (st.showTurns ? "展开全部用户轮次" : "收起全部用户轮次") : (st.showTurns ? "Expand all turns" : "Collapse all turns");
     callsToggle.title = zh ? (st.showCalls ? "展开全部工具调用" : "收起全部工具调用") : (st.showCalls ? "Expand all calls" : "Collapse all calls");
     turnsToggle.querySelector(".tt-toggle-glyph").textContent = st.showTurns ? "⊞" : "⊟";
@@ -747,14 +751,17 @@ export function createTrajectoryView(host, options = {}) {
 
   const renderTokenbars = (requests, matched) => {
     const usage = buildStepUsageBars(requests);
+    const totalMode = st.tokenMode === "total";
     const needle = st.searchQuery.trim().toLowerCase();
-    const visible = st.showTokens && usage.bars.length > 0;
+    const visible = usage.bars.length > 0;
     tokenbarsEl.style.display = visible ? "" : "none";
     if (!visible) return;
-    tokenbarsLabel.textContent = modelT("tokenUsage");
+    tokenbarsLabel.textContent = modelT(totalMode ? "consumptionTotal" : "tokenUsage");
     tokenbarsSummary.textContent =
       usage.reportedCount > 0
-        ? modelT("tokenTotal", { value: `${formatCompactTokens(usage.totalSum)} tok` })
+        ? modelT("tokenTotal", {
+            value: `${formatCompactTokens(totalMode ? usage.totalGross : usage.totalSum)} tok`,
+          })
         : "";
     tokenbarsTrack.textContent = "";
     for (const bar of usage.bars) {
@@ -763,9 +770,11 @@ export function createTrajectoryView(host, options = {}) {
         node.classList.add("tt-tokenbar-empty");
         node.style.height = "2px";
       } else {
-        const ratio = usage.max > 0 ? bar.delta / usage.max : 0;
+        const scaleMax = totalMode ? usage.maxTotal : usage.max;
+        const value = totalMode ? bar.total : bar.delta;
+        const ratio = scaleMax > 0 ? value / scaleMax : 0;
         node.style.height = `${Math.max(4, Math.round(ratio * 100))}%`;
-        if (bar.delta === usage.max && bar.delta > 0) node.classList.add("tt-tokenbar-max");
+        if (value === scaleMax && value > 0) node.classList.add("tt-tokenbar-max");
       }
       if (needle && !matched.has(bar.assistantIndex)) node.classList.add("tt-tokenbar-dimmed");
       if (st.selectedIndex !== null && st.selectedIndex === bar.assistantIndex) node.classList.add("tt-tokenbar-selected");
@@ -791,12 +800,13 @@ export function createTrajectoryView(host, options = {}) {
         bar.turn !== null ? `${modelT("turnTitle", { turn: bar.turn })} · ${stepText}` : stepText,
       ];
       if (bar.reported) {
-        lines.push(modelT("usageDelta", {
+        const deltaLine = modelT("usageDelta", {
           value: modelT("tokens", { value: formatCompactTokens(bar.delta) }),
-        }));
-        lines.push(modelT("usageStepTotal", {
+        });
+        const totalLine = modelT("usageStepTotal", {
           value: modelT("tokens", { value: formatCompactTokens(bar.total) }),
-        }));
+        });
+        lines.push(...(st.tokenMode === "total" ? [totalLine, deltaLine] : [deltaLine, totalLine]));
         const parts = [
           modelT("usageInput", { value: formatCompactTokens(bar.input) }),
           modelT("usageOutput", { value: formatCompactTokens(bar.output) }),
@@ -1768,7 +1778,7 @@ export function createTrajectoryView(host, options = {}) {
     scheduleRender();
   });
   tokensToggle.addEventListener("click", () => {
-    st.showTokens = !st.showTokens;
+    st.tokenMode = st.tokenMode === "total" ? "delta" : "total";
     scheduleRender();
   });
   turnsToggle.addEventListener("click", () => {
@@ -1872,7 +1882,7 @@ export function createTrajectoryView(host, options = {}) {
       ?.replaceChildren(document.createTextNode(modelT("duration")));
     tokensToggle
       .querySelector(".tt-toggle-label")
-      ?.replaceChildren(document.createTextNode(modelT("tokenUsage")));
+      ?.replaceChildren(document.createTextNode(modelT("consumption")));
     turnsToggle
       .querySelector(".tt-toggle-label")
       ?.replaceChildren(document.createTextNode(modelT("turns")));

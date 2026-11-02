@@ -78,7 +78,7 @@ fn trajectory_timeline_respects_time_gaps_and_model_lane() {
     assert!((v.domain().1 - v.domain().0 - 47.5).abs() < 0.01);
 }
 #[test]
-fn trajectory_step_token_deltas_track_increment() {
+fn trajectory_step_token_bars_track_total_and_increment() {
     let usage_row = |seq: i64, stats: Option<serde_json::Value>| TrajectoryViewRow {
         item_id: format!("fixture-usage-{seq}"),
         root_turn_id: "root-0".into(),
@@ -107,13 +107,27 @@ fn trajectory_step_token_deltas_track_increment() {
             ..usage_row(5, Some(json!({"input_tokens": 99999})))
         },
     ];
-    let (bars, total) = view::step_token_deltas(&v);
-    let deltas: Vec<Option<f64>> = bars.iter().map(|(_, delta)| *delta).collect();
+    let steps = view::step_token_bars(&v);
+    let deltas: Vec<Option<f64>> = steps
+        .bars
+        .iter()
+        .map(|(_, bar)| bar.map(|(_, delta)| delta))
+        .collect();
+    let totals: Vec<Option<f64>> = steps
+        .bars
+        .iter()
+        .map(|(_, bar)| bar.map(|(total, _)| total))
+        .collect();
     assert_eq!(
         deltas,
         vec![Some(3680.0), Some(3320.0), None, Some(0.0), Some(4200.0)]
     );
-    assert!((total - 11200.0).abs() < 1e-9);
+    assert_eq!(
+        totals,
+        vec![Some(3680.0), Some(7000.0), None, Some(2200.0), Some(6400.0)]
+    );
+    assert!((steps.delta_sum - 11200.0).abs() < 1e-9);
+    assert!((steps.total_sum - 19280.0).abs() < 1e-9);
 }
 #[tokio::test]
 async fn trajectory_tokenbars_render_and_toggle() {
@@ -135,15 +149,17 @@ async fn trajectory_tokenbars_render_and_toggle() {
     };
     let mut v = TrajectoryView::new("fixture-thread".into());
     v.rows = vec![usage_row(0, 3200, 480), usage_row(1, 5400, 1600)];
-    v.tokens = true;
     app.trajectory_view = Some(v);
-    let with_bars = render(&mut app, 120, 30);
-    // 火花线块字符仅消耗带使用：第一根柱为峰值 3,680 → '█'。
-    assert!(with_bars.contains('█'), "{with_bars}");
+    // 默认全部消耗：柱值取本步总量（峰值 7,000 → '█'），汇总为各步总量之和。
+    let total_view = render(&mut app, 120, 30);
+    assert!(total_view.contains('█'), "{total_view}");
+    assert!(total_view.contains("10.7k tok"), "{total_view}");
     key(&mut app, KeyCode::Char('x')).await;
-    assert!(!app.trajectory_view.as_ref().unwrap().tokens);
-    let without_bars = render(&mut app, 120, 30);
-    assert!(!without_bars.contains('▁'), "{without_bars}");
+    assert!(!app.trajectory_view.as_ref().unwrap().token_total);
+    // 切换为新增占用：柱值取相对上一步的增量（峰值 3,680 → '█'），汇总为增量之和。
+    let delta_view = render(&mut app, 120, 30);
+    assert!(delta_view.contains('█'), "{delta_view}");
+    assert!(delta_view.contains("7.0k tok"), "{delta_view}");
 }
 #[test]
 fn trajectory_folding_keeps_turn_anchor_and_context_records() {

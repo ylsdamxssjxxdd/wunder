@@ -341,7 +341,11 @@ jobs:
           set -euo pipefail
           # The installer needs the CLI built below; only the portable file is
           # produced here.
-          bash builders/pack-portable.sh -a "linux-${{ matrix.arch }}" --output-dir release-assets
+          desktop="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
+          test -n "$desktop"
+          bash builders/pack-portable.sh -a "linux-${{ matrix.arch }}" \
+            --desktop-archive "$desktop" \
+            --output-dir release-assets
           test -n "$(find release-assets -maxdepth 1 -name 'wunder-*.portable' -print -quit)"
       - name: Build Linux CLI
         shell: bash

@@ -356,6 +356,17 @@ Most hunks are self-contained (new files like `passes/gb2312_table.rs` and
 `pack_mono_1bpp` never conflict); the expected touch points are
 `passes/embed_glyphs.rs` and `fonts.rs::register_bitmap_font`.
 
+## Shared arboard Win7 fork
+
+`arboard` is pinned through `[patch.crates-io]` to the workspace-wide fork at
+`crates/wunder-egui/vendor/arboard-3.7.0-win7` (see its `PATCH.md`), not a
+copy in `vendor/`. It carries the Win7 replacement for the Windows 8
+`PathCchStripPrefix` static import and the widened clipboard-open retry window
+(25 attempts x 20ms): a clipboard monitor briefly holding the clipboard open
+defeats upstream's ~25ms window, the failure is swallowed by Slint's
+`.ok()`, and paste silently does nothing. When upgrading Slint, keep this pin;
+`clipboard-win` stays a normal crates.io dependency.
+
 ## Mandatory Win7 import audit
 
 Windows 7 does not ship `combase.dll`. A startup error naming that DLL means a

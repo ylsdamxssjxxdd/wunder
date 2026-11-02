@@ -268,6 +268,8 @@ struct State {
     selected: i32,
     tab: i32,
     show_duration: bool,
+    /// 消耗直方图模式：true 展示每步全部消耗，false 展示新增占用。
+    token_total: bool,
     query: String,
     search_generation: u64,
     search_hits: Vec<SearchHit>,
@@ -282,6 +284,7 @@ struct State {
 impl State {
     fn reset(&mut self, session: String) {
         let show_duration = self.show_duration;
+        let token_total = self.token_total;
         let detail_generation = self.detail_generation.wrapping_add(1);
         let generation = self.generation.wrapping_add(1);
         let search_generation = self.search_generation.wrapping_add(1);
@@ -289,6 +292,7 @@ impl State {
         *self = State {
             session,
             show_duration,
+            token_total,
             view_width: 1.0,
             selected: -1,
             detail_generation,
@@ -3022,15 +3026,17 @@ fn compact_tokens(value: f64) -> String {
     }
 }
 
-/// 逐步 token 直方图投影：每一步（模型请求）一根柱。模型请求的输入包含累积
-/// 上下文，直接画总量会单调递增、掩盖真正膨胀的步骤，因此柱值取相对上一步的
-/// 新增量：delta = max(0, 本步总量 − 上一步总量)，总量 = 输入 + 缓存读 + 缓存写
-/// + 输出；压缩上下文后总量回落的步增量为 0。未上报用量的步画基线刻度，
-/// 不参与增量链。tooltip 文本随柱一起预投影，Slint 只负责定位展示。
-fn project_token_bars(app: &MainWindow, model: &SnapshotModel, texts: &Texts) {
+/// 逐步 token 直方图投影：每一步（模型请求）一根柱。每根柱带两个可选值：
+/// 全部消耗 = 输入 + 缓存读 + 缓存写 + 输出；新增占用为相对上一步的增量
+/// delta = max(0, 本步总量 − 上一步总量)。模型请求的输入包含累积上下文，
+/// 直接画总量会单调递增、掩盖真正膨胀的步骤，因此新增占用视图取增量；
+/// 压缩上下文后总量回落的步增量为 0。未上报用量的步画基线刻度，不参与
+/// 增量链。tooltip 文本随柱一起预投影，Slint 只负责定位展示。
+fn project_token_bars(app: &MainWindow, model: &SnapshotModel, texts: &Texts, token_total: bool) {
     struct BarInfo {
         record: i32,
         reported: bool,
+        total: f64,
         delta: f64,
         tooltip: String,
     }
@@ -3038,7 +3044,9 @@ fn project_token_bars(app: &MainWindow, model: &SnapshotModel, texts: &Texts) {
     let mut infos: Vec<BarInfo> = Vec::with_capacity(model.requests.len());
     let mut previous_total: Option<f64> = None;
     let mut max_delta = 0.0_f64;
+    let mut max_total = 0.0_f64;
     let mut total_sum = 0.0_f64;
+    let mut delta_sum = 0.0_f64;
     for request in &model.requests {
         let Some(cell) = model.cells.get(request.assistant_index) else {
             continue;
@@ -3068,6 +3076,7 @@ fn project_token_bars(app: &MainWindow, model: &SnapshotModel, texts: &Texts) {
             infos.push(BarInfo {
                 record: record_index,
                 reported: false,
+                total: 0.0,
                 delta: 0.0,
                 tooltip: lines.join("\n"),
             });
@@ -3079,20 +3088,32 @@ fn project_token_bars(app: &MainWindow, model: &SnapshotModel, texts: &Texts) {
             + usage.output.unwrap_or(0.0);
         let delta = previous_total.map_or(total, |prev| (total - prev).max(0.0));
         previous_total = Some(total);
-        total_sum += delta;
+        delta_sum += delta;
+        total_sum += total;
         if delta > max_delta {
             max_delta = delta;
         }
-        lines.push(if zh {
+        if total > max_total {
+            max_total = total;
+        }
+        let delta_line = if zh {
             format!("新增 {} tok", compact_tokens(delta))
         } else {
             format!("+{} tok new", compact_tokens(delta))
-        });
-        lines.push(if zh {
+        };
+        let total_line = if zh {
             format!("本步共 {} tok", compact_tokens(total))
         } else {
             format!("{} tok this step", compact_tokens(total))
-        });
+        };
+        // 当前模式的数值放在前面，另一维度紧随其后。
+        if token_total {
+            lines.push(total_line);
+            lines.push(delta_line);
+        } else {
+            lines.push(delta_line);
+            lines.push(total_line);
+        }
         let mut parts = vec![
             format!(
                 "{} {}",
@@ -3135,31 +3156,41 @@ fn project_token_bars(app: &MainWindow, model: &SnapshotModel, texts: &Texts) {
         infos.push(BarInfo {
             record: record_index,
             reported: true,
+            total,
             delta,
             tooltip: lines.join("\n"),
         });
     }
+    // 全部消耗视图按本步总量归一，新增占用视图按增量归一。
+    let (scale_max, sum) = if token_total {
+        (max_total, total_sum)
+    } else {
+        (max_delta, delta_sum)
+    };
     let bars: Vec<TrajTokenBar> = infos
         .iter()
-        .map(|info| TrajTokenBar {
-            index: info.record,
-            ratio: if info.reported && max_delta > 0.0 {
-                (info.delta / max_delta) as f32
-            } else {
-                0.0
-            },
-            reported: info.reported,
-            peak: info.reported && info.delta > 0.0 && info.delta == max_delta,
-            tooltip: info.tooltip.clone().into(),
+        .map(|info| {
+            let value = if token_total { info.total } else { info.delta };
+            TrajTokenBar {
+                index: info.record,
+                ratio: if info.reported && scale_max > 0.0 {
+                    (value / scale_max) as f32
+                } else {
+                    0.0
+                },
+                reported: info.reported,
+                peak: info.reported && value > 0.0 && value == scale_max,
+                tooltip: info.tooltip.clone().into(),
+            }
         })
         .collect();
     app.set_traj_token_bars(to_model(bars));
-    app.set_traj_token_total(
-        if total_sum > 0.0 {
+    app.set_traj_token_summary(
+        if sum > 0.0 {
             if zh {
-                format!("共 {} tok", compact_tokens(total_sum))
+                format!("共 {} tok", compact_tokens(sum))
             } else {
-                format!("{} tok total", compact_tokens(total_sum))
+                format!("{} tok total", compact_tokens(sum))
             }
         } else {
             String::new()
@@ -3176,7 +3207,7 @@ fn apply_model(app: &MainWindow, state: &State) {
     app.set_traj_failed(false);
     project_rows(app, state, snapshot, &texts);
     project_timeline(app, state, snapshot, &texts);
-    project_token_bars(app, snapshot, &texts);
+    project_token_bars(app, snapshot, &texts, state.token_total);
     project_details(app, state, snapshot, &texts);
     project_search(app, state);
 }
@@ -3346,6 +3377,7 @@ fn hydrate_selected(app: &MainWindow, current: &Rc<RefCell<State>>, backend: &Ar
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let state = Rc::new(RefCell::new(State {
         show_duration: app.get_traj_show_duration(),
+        token_total: app.get_traj_token_total(),
         view_width: 1.0,
         selected: -1,
         ..State::default()
@@ -3775,6 +3807,17 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             s.view_start = 0.0;
             s.view_width = 1.0;
             app.set_traj_show_duration(s.show_duration);
+        }
+        apply_model(&app, &current.borrow());
+    });
+
+    let (weak, current) = (app.as_weak(), state.clone());
+    app.on_traj_toggle_tokens(move || {
+        let Some(app) = weak.upgrade() else { return };
+        {
+            let mut s = current.borrow_mut();
+            s.token_total = !s.token_total;
+            app.set_traj_token_total(s.token_total);
         }
         apply_model(&app, &current.borrow());
     });

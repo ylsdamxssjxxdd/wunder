@@ -530,7 +530,14 @@ struct OpenClipboard<'clipboard> {
 }
 
 impl Clipboard {
-	const DEFAULT_OPEN_ATTEMPTS: usize = 5;
+	// Upstream keeps a ~25ms window (5 attempts x 5ms). A clipboard monitor
+	// that briefly holds the clipboard open defeats it, and the failure is
+	// then swallowed by the caller, so paste silently does nothing. The
+	// system edit controls keep retrying for noticeably longer and win in
+	// exactly those cases, so persist for roughly half a second. The sleep
+	// runs on the caller's thread per user-initiated get/set, not in a loop.
+	const OPEN_ATTEMPTS: usize = 25;
+	const OPEN_RETRY_SLEEP_MS: u64 = 20;
 
 	pub(crate) fn new() -> Result<Self, Error> {
 		Ok(Self(()))
@@ -545,18 +552,24 @@ impl Clipboard {
 		//
 		// Note: This does not use `Clipboard::new_attempts` because its implementation sleeps for `0ms`, which can
 		// cause race conditions between closing/opening the clipboard in single-threaded apps.
-		let mut attempts = Self::DEFAULT_OPEN_ATTEMPTS;
+		let mut attempts = Self::OPEN_ATTEMPTS;
 		let clipboard = loop {
 			match clipboard_win::Clipboard::new() {
 				Ok(this) => break Ok(this),
 				Err(err) => match attempts {
-					0 => break Err(err),
+					0 => {
+						log::warn!(
+							"Windows clipboard stayed occupied after {} attempts",
+							Self::OPEN_ATTEMPTS
+						);
+						break Err(err);
+					}
 					_ => attempts -= 1,
 				},
 			}
 
 			// The default value matches Chromium's implementation, but could be tweaked later.
-			thread::sleep(Duration::from_millis(5));
+			thread::sleep(Duration::from_millis(Self::OPEN_RETRY_SLEEP_MS));
 		}
 		.map_err(|_| Error::ClipboardOccupied)?;
 

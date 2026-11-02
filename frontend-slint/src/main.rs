@@ -14,6 +14,7 @@ mod command_tasks;
 mod companion_pet;
 mod companion_sprite;
 mod completion_notice;
+mod crash_log;
 mod cron_ui;
 mod demo;
 mod demo_entities;
@@ -83,6 +84,9 @@ fn claim_for_launch() -> std::io::Result<single_instance::Launch> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 必须最先安装：发布版 panic=abort，任何后续初始化的 panic 都要求
+    // 先有崩溃日志落点，闪退才能事后定位。
+    crash_log::install();
     let mut arguments = std::env::args_os().skip(1);
     let first_argument = arguments.next();
     let mut instance = if matches!(
