@@ -6,7 +6,9 @@ import { Theme } from "theme.slint";
 // 侧栏统一的排版规则（蜂巢的 messenger-shell.css 用同一组数值）：
 // - 行高空出可点击余量：导航行 32px；分组行再留 4px 组间气口（chip 仍 32px）。
 // - 两侧留白一致：行盒左右各让出 12px，行内再补 8px，文字从 20px 起排。
-// - 图标字号（13px）不大于正文字号，落 20px 圆角底上，图文间距固定 8px。
+// - 行首图标直接落在底色上，不套底板：工作区／设备这些 24 网格描边图标自带
+//   留白，缩在 13px 里只剩十来个像素，再垫一层 20px 圆角底就成了「小图标装
+//   在大框里」。现在按 20px 画，墨迹才和 14px 正文等量，文字列仍是 48px。
 // - 所有行、行内动作按钮共用 8px 圆角；浮层（设备菜单、拖拽浮标）10px。
 // - 线程行只缩进一格：状态点列起于 28px，标题恰好接到工作区标题列（48px）。
 export global SidebarMetrics {
@@ -17,8 +19,11 @@ export global SidebarMetrics {
     in-out property <length> gutter: 12px;
     in-out property <length> row-padding: 8px;
     in-out property <length> row-radius: 8px;
+    // 行内动作按钮（重命名/轨迹/归档/加号…）的字形。
     in-out property <length> icon-glyph: 13px;
-    in-out property <length> icon-tile: 20px;
+    // 行首图标（工作区、设备）的方框：24 网格的描边图标留白约占四成，画到
+    // 20px 时墨迹约 11~14px，正文字号 14px，视觉才配得上。
+    in-out property <length> leading-icon: 20px;
     in-out property <length> icon-gap: 8px;
     // 线程行内容列（状态点左缘）距侧栏左缘。28 = 12 行盒内缩 + 16 行内距，
     // 加上 11px 状态点与 8px 图文间距后标题落在 47px，压着工作区标题的 48px。

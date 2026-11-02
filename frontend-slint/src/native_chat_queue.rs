@@ -43,6 +43,9 @@ pub struct ParkedTurn {
     /// The id this window submitted with; it is the only key that ties an
     /// engine queue row back to the subscriber that owns it.
     pub client_message_id: String,
+    /// Composer image attachments kept for the bubble's local echo when the
+    /// turn is promoted: (name, data URL) pairs.
+    pub images: Vec<(String, String)>,
     /// Events taken out of the stream before the entry could take the live
     /// slot; the pump replays them in order so the handover never loses a token.
     pub prelude: Vec<NativeChatEvent>,
@@ -54,12 +57,14 @@ impl ParkedTurn {
         session: String,
         content: String,
         client_message_id: String,
+        images: Vec<(String, String)>,
     ) -> Self {
         Self {
             stream,
             session,
             content,
             client_message_id,
+            images,
             prelude: Vec::new(),
         }
     }

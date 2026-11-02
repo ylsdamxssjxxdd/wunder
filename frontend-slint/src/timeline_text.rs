@@ -128,7 +128,14 @@ fn short(value: &str, limit: usize) -> String {
 pub fn is_patch_tool(tool: &str) -> bool {
     matches!(
         tool,
-        "apply_patch" | "应用补丁" | "edit_file" | "edit_file2" | "文本编辑"
+        "apply_patch"
+            | "应用补丁"
+            | "edit_file"
+            | "edit_file2"
+            | "文本编辑"
+            | "text_edit"
+            | "str_replace_editor"
+            | "str_replace_based_edit_tool"
     )
 }
 

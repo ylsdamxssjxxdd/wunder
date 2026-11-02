@@ -487,8 +487,8 @@ export component SettingsPage inherits Rectangle {
     // Update source: `cloud` (the signed-in server) or `github` (public
     // releases). Persisted with the other preferences.
     in-out property <string> update-source: "cloud";
-    // Update target: `desktop` | `cli` | `supplement`. A session-level
-    // choice; switching it resets the local status until the next check.
+    // Current target the native auto-check settled on (`desktop` | `cli` |
+    // `supplement`); the reader no longer picks it.
     in-out property <string> update-target: "desktop";
     // Locally detected version of the target; empty when unknown.
     in-out property <string> update-local-version;
@@ -503,9 +503,8 @@ export component SettingsPage inherits Rectangle {
     // Preformatted natively ("3.2 MB / 48.1 MB (12%)") so the UI never
     // formats numbers.
     in-out property <string> update-progress-text;
-    callback check-updates(string, string);
-    callback download-update();
-    callback apply-update();
+    callback check-updates(string);
+    callback run-update();
     // Parenthetical after the offering version in the available status: what
     // the target currently is, when that is knowable.
     property <string> update-version-note:
@@ -1137,8 +1136,9 @@ export component SettingsPage inherits Rectangle {
                                     Rectangle { horizontal-stretch: 1; }
                                 }
                             }
-                            // 软件更新：按更新源与更新对象手动检测、下载并应用；
-                            // 状态机在原生侧，这里只渲染阶段并回传一次性请求。
+                            // 软件更新：选定更新源后一键检测并更新全部有新版本的组件
+                            // （蛹本体、舵机与补充包）；状态机在原生侧，这里只渲染阶段
+                            // 并回传一次性请求。
                             SettingsCard {
                                 SettingsCardHeader { title: I18n.st_upd_title; subtitle: I18n.st_upd_subtitle; }
                                 Rectangle { height: 8px; }
@@ -1146,19 +1146,10 @@ export component SettingsPage inherits Rectangle {
                                     ComboBox { width: 150px; height: 38px; model: [I18n.st_upd_source_cloud, I18n.st_upd_source_github]; current-index: root.update-source == "github" ? 1 : 0; enabled: !root.update-busy;
                                         selected(_) => { root.update-source = self.current-index == 1 ? "github" : "cloud"; root.save-preferences(); } }
                                 }
-                                SettingRow { label: I18n.st_upd_target; note: I18n.st_upd_target_note;
-                                    ComboBox { width: 150px; height: 38px; model: [I18n.st_upd_target_desktop, I18n.st_upd_target_cli, I18n.st_upd_target_supplement]; current-index: root.update-target == "supplement" ? 2 : root.update-target == "cli" ? 1 : 0; enabled: !root.update-busy;
-                                        selected(_) => {
-                                            root.update-target = self.current-index == 2 ? "supplement" : self.current-index == 1 ? "cli" : "desktop";
-                                            // The settled status belonged to the previous target.
-                                            root.update-phase = "idle";
-                                            root.update-error = "";
-                                        } }
-                                }
                                 SettingRow { label: I18n.st_upd_current;
                                     HorizontalLayout { spacing: 10px; alignment: end;
                                         Text { text: root.update-current-version; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; horizontal-alignment: right; }
-                                        Action { width: 110px; label: root.update-phase == "checking" ? I18n.st_upd_checking : I18n.st_upd_check; show-label: true; enabled: !root.update-busy && (root.update-source == "github" || root.cloud-logged-in); clicked => { root.check-updates(root.update-source, root.update-target); } }
+                                        Action { width: 110px; label: root.update-phase == "checking" ? I18n.st_upd_checking : I18n.st_upd_check; show-label: true; enabled: !root.update-busy && (root.update-source == "github" || root.cloud-logged-in); clicked => { root.check-updates(root.update-source); } }
                                     }
                                 }
                                 if root.update-status-text != "" : Text { height: 18px; text: root.update-status-text; color: root.update-error != "" ? Theme.danger : root.update-phase == "staged" || root.update-phase == "available" || root.update-phase == "applied" ? Theme.text : Theme.muted; font-size: Theme.font-xs; overflow: elide; }
@@ -1168,8 +1159,8 @@ export component SettingsPage inherits Rectangle {
                                 if root.update-phase == "available" && root.update-mandatory : Text { height: 18px; text: I18n.st_upd_mandatory_note; color: Theme.warning; font-size: Theme.font-xs; overflow: elide; }
                                 if root.update-notes != "" && (root.update-phase == "available" || root.update-phase == "staged" || root.update-phase == "applied") : Text { height: 18px; text: root.update-notes; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                 if root.update-phase == "available" || root.update-phase == "staged" : HorizontalLayout { height: 34px; spacing: 10px;
-                                    if root.update-phase == "available" : Action { width: 130px; label: I18n.st_upd_download; show-label: true; primary: true; enabled: !root.update-busy; clicked => { root.download-update(); } }
-                                    if root.update-phase == "staged" : Action { width: 130px; label: root.update-target == "supplement" ? I18n.st_upd_import : root.update-target == "cli" ? I18n.st_upd_apply : I18n.st_upd_restart; show-label: true; primary: true; enabled: !root.update-busy; clicked => { root.apply-update(); } }
+                                    // 一键更新：自动把每个有新版本/已暂存的组件依次下载并应用。
+                                    Action { width: 130px; label: root.update-phase == "staged" && root.update-target == "desktop" ? I18n.st_upd_restart : I18n.st_upd_update; show-label: true; primary: true; enabled: !root.update-busy; clicked => { root.run-update(); } }
                                     Rectangle { horizontal-stretch: 1; }
                                 }
                             }

@@ -2331,6 +2331,19 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                 content_type: attachment.mime_type.to_string(),
             })
             .collect::<Vec<_>>();
+        // The composer's own data URLs echo into the live bubble at once, so
+        // a screenshot is visible the moment it is sent instead of appearing
+        // only when the durable turn publishes its stored path.
+        let preview_images = pending_attachments
+            .iter()
+            .filter(|attachment| attachment.mime_type.starts_with("image/"))
+            .map(|attachment| {
+                (
+                    attachment.name.to_string(),
+                    attachment.data_url.to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
         if session.is_empty() {
             // No live thread selected (usually a failed startup projection):
             // say so instead of swallowing the send.
@@ -2398,10 +2411,21 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             .map(|row| (row.runtime_status.to_string(), row.runtime_phase))
             .unwrap_or_default();
         if optimistic {
-            let timeline = state.borrow().timeline.clone();
+            let (timeline, desktop) = {
+                let st = state.borrow();
+                (st.timeline.clone(), st.desktop.clone())
+            };
             let mut live = timeline.borrow_mut();
             live.set_highlight(true);
-            live.begin_turn(&client_message_id, &display_content);
+            let row = live.begin_turn(&client_message_id, &display_content);
+            echo_image_attachments(
+                &app,
+                &desktop,
+                &mut live,
+                row,
+                &display_content,
+                &preview_images,
+            );
             live.set_turn_status("请求中", 0);
             publish_timeline(&app, &live);
             app.set_busy(true);
@@ -2589,6 +2613,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                             session.clone(),
                             display_content.clone(),
                             client_message_id,
+                            preview_images.clone(),
                         ));
                         refresh_queue_async(&app, &state, &session);
                         queue::schedule_due(
@@ -2603,9 +2628,18 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                     // returns, preserving a running turn's live projection.
                     let timeline = state.borrow().timeline.clone();
                     if !optimistic_visible {
+                        let desktop = state.borrow().desktop.clone();
                         let mut live = timeline.borrow_mut();
                         live.set_highlight(true);
-                        live.begin_turn(&client_message_id, &display_content);
+                        let row = live.begin_turn(&client_message_id, &display_content);
+                        echo_image_attachments(
+                            &app,
+                            &desktop,
+                            &mut live,
+                            row,
+                            &display_content,
+                            &preview_images,
+                        );
                         live.set_turn_status("请求中", 0);
                         publish_timeline(&app, &live);
                         app.set_busy(true);
@@ -2643,6 +2677,26 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             });
         });
     });
+}
+
+/// Local echo for image attachments: paint the bubble's cards from the
+/// composer's data URLs and let the shared loader decode them off the UI
+/// thread. The durable projection later swaps in the stored paths, and the
+/// handoff carries the already decoded pixels over.
+fn echo_image_attachments(
+    app: &MainWindow,
+    desktop: &Arc<NativeDesktop>,
+    live: &mut crate::timeline::Timeline,
+    row: usize,
+    display: &str,
+    images: &[(String, String)],
+) {
+    if images.is_empty() {
+        return;
+    }
+    let blocks = crate::message_blocks::with_image_cards(display, images);
+    live.set_user_blocks(row, blocks.clone());
+    crate::native_markdown::hydrate_model(blocks, desktop.clone(), markdown_root(app));
 }
 
 fn bind_attachments(app: &MainWindow) {
@@ -3561,7 +3615,15 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 {
                     let mut live = timeline.borrow_mut();
                     live.set_highlight(true);
-                    live.begin_turn(&entry.client_message_id, &content);
+                    let row = live.begin_turn(&entry.client_message_id, &content);
+                    echo_image_attachments(
+                        &app,
+                        &desktop,
+                        &mut live,
+                        row,
+                        &content,
+                        &entry.images,
+                    );
                     live.set_turn_status("请求中", 0);
                     publish_timeline(&app, &live);
                 }
@@ -4022,7 +4084,15 @@ fn apply_event(
             return Ok(changed);
         }
         "llm_output" | "final" => {
-            if let Some(text) = data["answer"].as_str().or_else(|| data["content"].as_str()) {
+            // A tool-only round still emits llm_output with empty content.
+            // Materializing it opened a body block that stayed empty, and the
+            // work process rendered that placeholder as a blank entry under
+            // the round's thought. Empty rounds simply have no answer block.
+            if let Some(text) = data["answer"]
+                .as_str()
+                .or_else(|| data["content"].as_str())
+                .filter(|text| !text.is_empty())
+            {
                 if active.round != active.body_round {
                     timeline.start_body(active.round);
                     active.body_round = active.round;
@@ -4978,6 +5048,70 @@ mod turn_tests {
                 ("coins".into(), "--".into())
             ]
         );
+    }
+
+    /// A tool-only round ends with an llm_output whose content is empty. That
+    /// frame must not leave an empty body block behind: the work process used
+    /// to adopt the placeholder and render it as a blank entry under the
+    /// round's thought.
+    #[test]
+    fn empty_tool_round_output_leaves_no_blank_process_entry() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        timeline
+            .borrow_mut()
+            .begin_turn("fixture-root", "Fixture input");
+        let reduce = |output: &mut TurnOutput, event: Value| {
+            let mut live = timeline.borrow_mut();
+            apply_event(output, &mut live, &event).unwrap()
+        };
+        reduce(
+            &mut output,
+            json!({"event":"llm_request","data":{"turn_id":"fixture-root","model_round":1}}),
+        );
+        reduce(
+            &mut output,
+            json!({"event":"reasoning_delta","data":{"model_round":1,"delta":"Fixture thinking"}}),
+        );
+        reduce(
+            &mut output,
+            json!({"event":"llm_output","data":{"model_round":1,"content":""}}),
+        );
+        reduce(
+            &mut output,
+            json!({"event":"tool_call","data":{"tool_call_id":"fixture-tool","tool":"read_file","args":{"path":"example.txt"}}}),
+        );
+        reduce(
+            &mut output,
+            json!({"event":"tool_result","data":{"tool_call_id":"fixture-tool","tool":"read_file","args":{"path":"example.txt"},"result":{"ok":true,"data":{"content":"Fixture output"}}}}),
+        );
+        reduce(
+            &mut output,
+            json!({"event":"llm_request","data":{"turn_id":"fixture-root","model_round":2}}),
+        );
+        reduce(
+            &mut output,
+            json!({"event":"llm_output_delta","data":{"model_round":2,"delta":"Fixture answer"}}),
+        );
+        timeline.borrow_mut().flush();
+        let live = timeline.borrow();
+        let rows: Vec<_> = live.model().iter().collect();
+        assert!(
+            rows.iter()
+                .all(|row| row.kind != crate::timeline::KIND_BODY || !row.text.is_empty()),
+            "an empty round has no empty body block"
+        );
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == crate::timeline::KIND_PROCESS)
+            .unwrap();
+        assert!(
+            bar.process_entries
+                .iter()
+                .all(|entry| entry.kind != crate::timeline::KIND_BODY || !entry.text.is_empty()),
+            "the fold never shows a blank entry"
+        );
+        assert_eq!(bar.text, crate::timeline_text::process_label(2));
     }
 
     /// One runtime round: admission, one reasoning segment, one tool, one

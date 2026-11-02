@@ -5759,8 +5759,8 @@
  },
  {
   "key": "st_upd_subtitle",
-  "zh": "选择更新源，手动检测并更新蛹本体、舵机与补充包",
-  "en": "Pick a source, then check and update the desktop app, the CLI and the supplement pack"
+  "zh": "选择更新源，一键检测并更新全部有新版本的组件（蛹本体、舵机与补充包）",
+  "en": "Pick a source, then check and update every component that has a newer version (the desktop app, the CLI and the supplement pack)"
  },
  {
   "key": "st_upd_current",
@@ -5788,9 +5788,9 @@
   "en": "New version available: "
  },
  {
-  "key": "st_upd_download",
-  "zh": "下载更新",
-  "en": "Download update"
+  "key": "st_upd_update",
+  "zh": "更新",
+  "en": "Update"
  },
  {
   "key": "st_upd_downloading",
@@ -5847,41 +5847,7 @@
   "zh": "此版本为重要更新",
   "en": "This is a mandatory update"
  },
- {
-  "key": "st_upd_target",
-  "zh": "更新对象",
-  "en": "Update target"
- },
- {
-  "key": "st_upd_target_note",
-  "zh": "每个对象独立检测、下载与应用",
-  "en": "Check, download and apply each target on its own"
- },
- {
-  "key": "st_upd_target_desktop",
-  "zh": "蛹本体",
-  "en": "Desktop app"
- },
- {
-  "key": "st_upd_target_cli",
-  "zh": "舵机",
-  "en": "CLI"
- },
- {
-  "key": "st_upd_target_supplement",
-  "zh": "补充包",
-  "en": "Supplement pack"
- },
- {
-  "key": "st_upd_apply",
-  "zh": "应用更新",
-  "en": "Apply update"
- },
- {
-  "key": "st_upd_import",
-  "zh": "下载并导入",
-  "en": "Download and import"
- },
+ 
  {
   "key": "st_upd_applied",
   "zh": "更新完成，已立即生效",

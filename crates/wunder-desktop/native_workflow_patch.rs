@@ -112,7 +112,7 @@ pub(super) fn project(tool: &str, payload: &Value, args: &Value) -> Vec<NativePa
             return cards;
         }
     }
-    // Before the result arrives the submitted patch is the only structured
+    // Before the result arrives the submitted call is the only structured
     // source; it has no line numbers, so the card carries a preview action.
     let patch: String = args["patch"]
         .as_str()
@@ -121,7 +121,94 @@ pub(super) fn project(tool: &str, payload: &Value, args: &Value) -> Vec<NativePa
         .chars()
         .take(MAX_PREVIEW_BYTES)
         .collect();
-    preview(&patch)
+    if !patch.trim().is_empty() {
+        return preview(&patch);
+    }
+    edit_preview(tool, args)
+}
+
+/// Args may arrive as one JSON string; parsing is bounded because it only
+/// feeds a preview card.
+const MAX_EDIT_ARGS_BYTES: usize = 512 * 1024;
+/// Each side of an edit preview keeps its own character budget.
+const MAX_EDIT_SIDE_CHARS: usize = 16 * 1024;
+
+fn string_arg<'a>(args: &'a Value, keys: &[&str]) -> &'a str {
+    keys.iter()
+        .find_map(|key| args[*key].as_str())
+        .unwrap_or_default()
+}
+
+/// The literal-edit family carries old/new text in the call instead of patch
+/// syntax. Fold it into the same card shape the web timeline builds from the
+/// same arguments: old lines delete, new lines add.
+fn edit_preview(tool: &str, args: &Value) -> Vec<NativePatchFile> {
+    if !is_edit_tool(tool) {
+        return Vec::new();
+    }
+    let parsed = args
+        .as_str()
+        .filter(|value| value.len() <= MAX_EDIT_ARGS_BYTES)
+        .and_then(|value| serde_json::from_str::<Value>(value).ok());
+    let args = parsed.as_ref().unwrap_or(args);
+    let path = string_arg(args, &["file_path", "path", "filename", "file"]).trim();
+    let command = args["command"]
+        .as_str()
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    let (old, new): (&str, &str) = match command.as_str() {
+        // A read-only view has no diff to preview.
+        "view" => return Vec::new(),
+        "create" => ("", string_arg(args, &["file_text", "content", "text"])),
+        "insert" => (
+            "",
+            string_arg(args, &["new_str", "new_string", "insert_text", "text"]),
+        ),
+        _ => (
+            string_arg(args, &["old_string", "old_str"]),
+            string_arg(args, &["new_string", "new_str"]),
+        ),
+    };
+    if path.is_empty() || (old.is_empty() && new.is_empty()) {
+        return Vec::new();
+    }
+    if old == new {
+        return Vec::new();
+    }
+    let bounded = |text: &str| -> String { text.chars().take(MAX_EDIT_SIDE_CHARS).collect() };
+    let old = bounded(old);
+    let new = bounded(new);
+    let mut card = NativePatchFile {
+        path: path.into(),
+        action: "preview".into(),
+        added: count_lines(&new).to_string(),
+        deleted: count_lines(&old).to_string(),
+        lines: Vec::new().into(),
+    };
+    let mut lines = Vec::new();
+    for (text, kind) in [(&old, "delete"), (&new, "add")] {
+        for value in text.lines() {
+            if lines.len() >= MAX_LINES {
+                break;
+            }
+            lines.push(NativePatchLine {
+                text: value.chars().take(2048).collect(),
+                kind: kind.into(),
+                number: String::new(),
+            });
+        }
+    }
+    card.lines = lines.into();
+    if card.lines.is_empty() {
+        return Vec::new();
+    }
+    vec![card]
+}
+
+/// `str::lines` already ignores a trailing newline, matching the web counter.
+fn count_lines(text: &str) -> usize {
+    text.lines().count()
 }
 
 fn preview(patch: &str) -> Vec<NativePatchFile> {
@@ -178,7 +265,22 @@ fn preview(patch: &str) -> Vec<NativePatchFile> {
 
 /// Only the tools that actually produce file diffs get a card.
 pub(super) fn is_patch_tool(tool: &str) -> bool {
-    matches!(tool, "apply_patch" | "应用补丁" | "write_file" | "写入文件")
+    matches!(tool, "apply_patch" | "应用补丁" | "write_file" | "写入文件") || is_edit_tool(tool)
+}
+
+/// The unified literal-edit tool and the aliases a call frame may still carry.
+/// Its result already returns the same `files[]`/`diff_blocks[]` structure as
+/// `apply_patch`, so one projection serves both.
+pub(super) fn is_edit_tool(tool: &str) -> bool {
+    matches!(
+        tool,
+        "文本编辑"
+            | "edit_file"
+            | "edit_file2"
+            | "text_edit"
+            | "str_replace_editor"
+            | "str_replace_based_edit_tool"
+    )
 }
 
 #[cfg(test)]
@@ -228,5 +330,75 @@ mod tests {
             &Value::Null
         )
         .is_empty());
+    }
+
+    #[test]
+    fn edit_result_uses_the_same_files_projection_as_apply_patch() {
+        let payload = json!({"result":{"data":{
+            "path": "sample.txt", "replacements": 1, "changed_files": 1,
+            "files": [{
+                "path": "sample.txt", "action": "update", "added_lines": 1, "deleted_lines": 1,
+                "diff_blocks": [{"header": "@@ -3 +3 @@", "lines": [
+                    {"kind": "context", "old_line": 2, "new_line": 2, "text": "before"},
+                    {"kind": "delete", "old_line": 3, "text": "old"},
+                    {"kind": "add", "new_line": 3, "text": "new"},
+                ]}]
+            }]
+        }}});
+        for tool in ["文本编辑", "edit_file", "str_replace_editor"] {
+            let cards = project(tool, &payload, &Value::Null);
+            assert_eq!(cards.len(), 1, "{tool}");
+            assert_eq!(cards[0].action, "update");
+            assert_eq!((cards[0].added.as_str(), cards[0].deleted.as_str()), ("1", "1"));
+            assert_eq!(cards[0].lines[2].kind, "delete");
+            assert_eq!(cards[0].lines[3].number, "3");
+        }
+    }
+
+    #[test]
+    fn pending_edit_folds_old_and_new_strings_into_a_preview_card() {
+        let args = json!({"file_path":"sample.txt","old_string":"old one\nold two","new_string":"new one\nnew two\nnew three"});
+        for tool in ["文本编辑", "edit_file"] {
+            let cards = project(tool, &json!({}), &args);
+            assert_eq!(cards.len(), 1, "{tool}");
+            assert_eq!(cards[0].path, "sample.txt");
+            assert_eq!(cards[0].action, "preview");
+            assert_eq!((cards[0].added.as_str(), cards[0].deleted.as_str()), ("3", "2"));
+            let kinds: Vec<_> = cards[0].lines.iter().map(|line| line.kind.as_str()).collect();
+            assert_eq!(kinds, ["delete", "delete", "add", "add", "add"]);
+            assert!(cards[0].lines.iter().all(|line| line.number.is_empty()));
+        }
+        // Args may also arrive as one JSON string.
+        let cards = project("文本编辑", &json!({}), &Value::String(args.to_string()));
+        assert_eq!(cards.len(), 1);
+        // String args beyond the parse budget degrade to no preview instead
+        // of a partial read.
+        let oversized = format!("{{\"file_path\":\"x\",\"old_string\":\"{}\"}}", "a".repeat(600 * 1024));
+        assert!(project("文本编辑", &json!({}), &Value::String(oversized)).is_empty());
+    }
+
+    #[test]
+    fn edit_preview_skips_view_and_identical_text() {
+        assert!(project(
+            "文本编辑",
+            &json!({}),
+            &json!({"command":"view","file_path":"sample.txt"})
+        )
+        .is_empty());
+        assert!(project(
+            "文本编辑",
+            &json!({}),
+            &json!({"file_path":"sample.txt","old_string":"same","new_string":"same"})
+        )
+        .is_empty());
+        let created = project(
+            "str_replace_editor",
+            &json!({}),
+            &json!({"command":"create","file_path":"sample.txt","file_text":"first\nsecond"})
+        );
+        assert_eq!(created.len(), 1);
+        assert_eq!(created[0].added, "2");
+        assert_eq!(created[0].deleted, "0");
+        assert!(created[0].lines.iter().all(|line| line.kind == "add"));
     }
 }

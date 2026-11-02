@@ -50,6 +50,40 @@ component ToolButton inherits Rectangle {
     Tooltip { text: @markdown("\{root.tip}"); }
 }
 
+// 文件夹展开指示：一个描边 chevron，展开时转向下方 90°。
+// 这里画而不是贴图，有两个原因。一是原来那对 SVG 宽高比不同（chevron-right
+// 是 320x512、chevron-down 是 512x512），塞进同一个方框时一个被横向拉宽、
+// 一个被压扁，两种状态的笔画粗细对不上，看着就「糊」。二是本应用跑在软件
+// 渲染器上（`supports_transformations()` 返回 false），`transform-rotation`
+// 不会生效——直接旋转会画出未旋转的图形（runtime_status.slint 的转圈也是
+// 因此自己算点）。所以三个点用 cos/sin 自己转：矢量路径在任何 DPI 下都清楚，
+// 两种状态共用同一套笔画。
+component TreeDisclosure inherits Rectangle {
+    in property <bool> expanded: false;
+    // 行被悬停／选中时加深一档：图标本身不喧哗，但指针在哪儿一眼可见。
+    in property <bool> strong: false;
+    width: 10px;
+    height: 10px;
+    // 收起 0°、展开 90°。动画只在落定时跑，平时不产生帧。
+    private property <angle> turn: root.expanded ? 90deg : 0deg;
+    animate turn { duration: 130ms; easing: ease-out; }
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 10;
+        viewbox-height: 10;
+        fill: transparent;
+        stroke: root.strong ? Theme.text-secondary : Theme.muted;
+        stroke-width: 1.5px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        // 45° 的 V：两臂等长，转到哪个角度都还是同一条 V，不会一边长一边短。
+        MoveTo { x: 5 - 2 * cos(root.turn) + 3.3 * sin(root.turn); y: 5 - 2 * sin(root.turn) - 3.3 * cos(root.turn); }
+        LineTo { x: 5 + 1.2 * cos(root.turn); y: 5 + 1.2 * sin(root.turn); }
+        LineTo { x: 5 - 2 * cos(root.turn) - 3.3 * sin(root.turn); y: 5 - 2 * sin(root.turn) + 3.3 * cos(root.turn); }
+    }
+}
+
 export component WorkspaceFilesPanel inherits Rectangle {
     in property <bool> resource-mode;
     in property <bool> read-only;
@@ -336,18 +370,31 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                                     clicked => { root.check(index); }
                                                 }
                                             }
+                                            // 行首簇：展开指示与文件/文件夹图标放在一个普通 Rectangle
+                                            // 里手工排，不再套一层布局。原因不是布局不认 `y:`（它认），
+                                            // 而是布局里没写 `y` 的固定尺寸项会被顶对齐，而布局的
+                                            // `alignment: center` 只管可拉伸项、不替你居中；套一层布局
+                                            // 反而多一层要维护的对齐语义。写死的行高 28 里，一切直接
+                                            // 按 `y` 摆最省事，也不怕以后换布局参数。
+                                            // 26 = 10 槽 + 2 间隙 + 14 图标；槽 10 加间隙 2 正好等于
+                                            // 每级 12px 的缩进步长，各级 chevron 因此落在一条竖阶梯上。
                                             Rectangle {
-                                                width: 14px;
+                                                width: row.kind == 2 ? 10px : 26px;
+                                                height: 28px;
+                                                if row.kind == 1 : TreeDisclosure {
+                                                    x: 0; y: 9px;
+                                                    expanded: row.expanded;
+                                                    strong: row-touch.has-hover;
+                                                }
                                                 if row.kind == 1 : Image {
-                                                    x: 1px; y: 8px; width: 12px; height: 12px;
-                                                    source: row.expanded ? @image-url("../assets/icons/chevron-down.svg") : @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted;
+                                                    x: 12px; y: 7px; width: 14px; height: 14px;
+                                                    source: row.expanded ? @image-url("../assets/icons/folder-open.svg") : @image-url("../assets/icons/workspace/folder.svg"); colorize: Theme.warning;
+                                                }
+                                                if row.kind == 0 : Image {
+                                                    x: 12px; y: 7px; width: 14px; height: 14px;
+                                                    source: row.icon; image-fit: contain;
                                                 }
                                             }
-                                            if row.kind == 1 : Image {
-                                                y: 7px; width: 14px; height: 14px;
-                                                source: row.expanded ? @image-url("../assets/icons/folder-open.svg") : @image-url("../assets/icons/workspace/folder.svg"); colorize: Theme.warning;
-                                            }
-                                            if row.kind == 0 : Image { y: 7px; width: 14px; height: 14px; source: row.icon; image-fit: contain; }
                                             Text { text: row.name; color: row.kind == 2 ? Theme.muted : Theme.text-secondary; font-size: row.kind == 2 ? Theme.font-sm : Theme.font-md; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                                             if row.loading && row.remaining >= 0 : Text { text: I18n.wf_loading_dir; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; }
                                             if !row-touch.has-hover && row.kind == 0 : Text { text: row.size-text; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; }
@@ -413,18 +460,21 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                         padding-left: SidebarMetrics.row-padding + row.depth * 12px;
                                         padding-right: SidebarMetrics.row-padding;
                                         spacing: SidebarMetrics.icon-gap;
+                                        // 与真实行共用同一套行首几何（手工定位，原因见上面的
+                                        // 注释），钉住的行才不会和下面的行错位。
                                         Rectangle {
-                                            width: 14px;
-                                            Image {
-                                                x: 1px; y: 8px; width: 12px; height: 12px;
-                                                source: @image-url("../assets/icons/chevron-down.svg");
-                                                colorize: Theme.muted;
+                                            width: 26px;
+                                            height: 28px;
+                                            TreeDisclosure {
+                                                x: 0; y: 9px;
+                                                expanded: true;
+                                                strong: pin-touch.has-hover;
                                             }
-                                        }
-                                        Image {
-                                            y: 7px; width: 14px; height: 14px;
-                                            source: @image-url("../assets/icons/folder-open.svg");
-                                            colorize: Theme.warning;
+                                            Image {
+                                                x: 12px; y: 7px; width: 14px; height: 14px;
+                                                source: @image-url("../assets/icons/folder-open.svg");
+                                                colorize: Theme.warning;
+                                            }
                                         }
                                         Text {
                                             text: row.name;

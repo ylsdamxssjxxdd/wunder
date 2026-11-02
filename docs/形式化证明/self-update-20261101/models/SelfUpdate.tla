@@ -55,7 +55,9 @@ Init ==
     /\ exe_new = "absent"
 
 \* The reader clicks 检查更新; the card refuses a second operation while
-\* one is in flight, and the click carries the selected target.
+\* one is in flight, and the auto-check settles on a target in turn (the card
+\* no longer carries a hand-picked target).  Check still picks one target
+\* nondeterministically, matching the per-target loop in update_check_auto.
 Check ==
     /\ phase \in {"idle", "up_to_date", "available", "staged", "applied", "failed"}
                                           \* crates/wunder-desktop/native_update.rs:346-347

@@ -120,12 +120,14 @@ mkdir -p "$output_dir"
 if ! sed "s|@VERSION@|$version|g; s/\r$//" "$header" > "$temporary"; then
   fail "could not render the portable header"
 fi
+LC_ALL=C grep -qxF -- "$marker" "$temporary" || fail "rendered header lost the payload marker"
+payload_offset="$(stat -c '%s' "$temporary")"
 cat -- "$desktop_archive" >> "$temporary"
 
-# The bytes right after the marker line must be a gzip member.
-payload_line="$(LC_ALL=C awk -v m="$marker" '$0 == m { print NR + 1; exit 0 }' "$temporary")"
-[[ -n "$payload_line" ]] || fail "rendered header lost the payload marker"
-magic="$(tail -n +"$payload_line" "$temporary" | head -c 2 | od -An -tx1 | tr -d ' \n')"
+# The bytes right after the rendered header must be a gzip member. Read them
+# with od's own skip/limit: a `tail | head -c 2` peek lets head exit first and
+# SIGPIPEs tail, which pipefail turns into a failure on a valid file.
+magic="$(od -An -tx1 -N2 -j "$payload_offset" "$temporary" | tr -d ' \n')"
 [[ "$magic" == "1f8b" ]] || fail "payload is not gzip data (magic: $magic)"
 
 chmod 0755 "$temporary"

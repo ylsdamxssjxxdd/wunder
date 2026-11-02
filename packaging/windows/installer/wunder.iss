@@ -50,9 +50,14 @@ WizardStyle=classic light
 ; 100 is the smallest Inno Setup allows (valid range 100-150); keeps the
 ; wizard as compact as possible.
 WizardSizePercent=100,100
-; No big left banner on the welcome/completed pages; the pupa mark lives in
-; the header's upper right corner (WizardSmallImageFile above).
-WizardImageFile=
+; Brand panel on the left of the Setup Completed page (the Welcome page is off
+; by default). 328x628 keeps the 164:314 ratio Inno enforces for the image area
+; and stays sharp down to 202x386 at 96 DPI; regenerate with
+; scripts/generate_installer_banner.py.
+WizardImageFile=wizard-banner.png
+; "none" rather than the default "window": a rounding gap between the panel and
+; the image area then shows the page itself instead of a white seam.
+WizardImageBackColor=none
 MinVersion=6.1sp1
 ArchitecturesAllowed=x86compatible
 CloseApplications=yes

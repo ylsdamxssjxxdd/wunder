@@ -47,6 +47,10 @@ pub const TARGET_DESKTOP: &str = "desktop";
 pub const TARGET_CLI: &str = "cli";
 pub const TARGET_SUPPLEMENT: &str = "supplement";
 
+/// 自动更新的遍历顺序：先做就地生效的舵机与补充包，最后做应用时会重启进程的
+/// 蛹本体。
+const AUTO_TARGETS: [&str; 3] = [TARGET_CLI, TARGET_SUPPLEMENT, TARGET_DESKTOP];
+
 /// The CLI binary rides in the same program directory as the desktop exe on
 /// every supported layout (portable root `bin/`).
 fn cli_binary_path() -> Option<PathBuf> {
@@ -398,6 +402,73 @@ impl NativeDesktop {
             "failed" => Err(anyhow!(state.error.clone())),
             _ => Ok(()),
         }
+    }
+
+    /// 自动检查：用户不再选择更新对象。按 [`AUTO_TARGETS`] 顺序逐一探测三个
+    /// 组件，命中第一个有新版本（或已有待应用包）的组件即停，把卡片投影到该
+    /// 对象上；三个组件都最新时收束为「已是最新」。舵机/补充包本地未安装时
+    /// 不主动安装，跳过交给下一个目标。
+    pub fn update_check_auto(&self, source: &str) -> Result<()> {
+        for target in AUTO_TARGETS {
+            self.update_check(source, target)?;
+            let (phase, local_version) = {
+                let state = self.lock_update();
+                (state.phase.clone(), state.local_version.clone())
+            };
+            match phase.as_str() {
+                "available" if local_version.is_empty() && target != TARGET_DESKTOP => continue,
+                "available" | "staged" => return Ok(()),
+                "up_to_date" => continue,
+                _ => return Ok(()),
+            }
+        }
+        let mut state = self.lock_update();
+        state.phase = "up_to_date".into();
+        state.error.clear();
+        Ok(())
+    }
+
+    /// 一键更新：自动把每个有新版本（或已暂存）的组件依次走完「下载 → 应用」，
+    /// 直到没有可更新项。蛹本体排最后，因为它的应用会重启进程——返回后调用方
+    /// 需要退出当前进程完成替换。
+    pub fn update_run(&self, source: &str) -> Result<()> {
+        // 每轮至少推进一个组件的状态，上限为组件数加一轮收尾。
+        for _round in 0..=AUTO_TARGETS.len() {
+            self.update_check_auto(source)?;
+            let (phase, staged_target) = {
+                let state = self.lock_update();
+                (state.phase.clone(), state.staged_target.clone())
+            };
+            match phase.as_str() {
+                "available" => {
+                    self.update_download()?;
+                    let (downloaded, staged_target) = {
+                        let state = self.lock_update();
+                        (state.phase.clone(), state.staged_target.clone())
+                    };
+                    if downloaded != "staged" {
+                        return Ok(());
+                    }
+                    self.update_apply()?;
+                    if staged_target == TARGET_DESKTOP {
+                        return Ok(());
+                    }
+                }
+                "staged" => {
+                    self.update_apply()?;
+                    if staged_target == TARGET_DESKTOP {
+                        return Ok(());
+                    }
+                }
+                "failed" => {
+                    let error = self.lock_update().error.clone();
+                    bail!("{error}");
+                }
+                // idle / up_to_date / applied：没有更多可更新项。
+                _ => return Ok(()),
+            }
+        }
+        Ok(())
     }
 
     /// Download the offered package into staging, verifying sha256 while

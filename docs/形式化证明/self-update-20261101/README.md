@@ -34,7 +34,7 @@
 
 | 状态/动作 | 实现 |
 | --- | --- |
-| `Check` | `native_update.rs:340` 的 `update_check`：进行中拒绝重入（346-347），`normalize_target` 携带选中目标（341、125）。 |
+| `Check` | `native_update.rs:340` 的 `update_check`：进行中拒绝重入（346-347）；`update_check_auto` 依次对三个目标调用它并停在第一个有新版本者（341、125），抽象为 `target' \in Targets` 的非确定选择。 |
 | `OfferNewer` / `OfferNone` / `OfferStaged` | `finish_check`（198）：暂存有效性与"暂存包不被新供给击败"在 205-213；候选闸 214-219（蛹本体按编译期版本，舵机/补充包本地未知则总是候选）；三个去向分别在 220-221、222-231、232-234。 |
 | `Download` / `DownloadVerify` / `DownloadFail` | `update_download`（406）：仅 `available` 可下载（409-410）；流式下载的哈希与大小核对在 455-470；暂存元数据与状态落位在 487-506。 |
 | `ApplyDispatch` | `update_apply`（514）：`staged`/`failed` 且包在盘上才可应用（517-526，失败态不锁死暂存包），按包自身目标分发到 `apply_staged_by_target`（564-581）。 |
