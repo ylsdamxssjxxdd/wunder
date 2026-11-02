@@ -145,7 +145,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
     in property <[TrajRow]> rows;
     in property <[TrajSpan]> spans;
     in property <[TrajTokenBar]> token-bars;
-    in property <string> token-total;
+    in property <string> token-summary;
     in property <[TrajTick]> ticks;
     in property <[TrajBoundary]> boundaries;
     in property <float> view-start: 0.0;
@@ -171,7 +171,9 @@ export component ThreadTrajectoryDialog inherits Rectangle {
     in property <int> ledger-scroll-seq: 0;
     // Toolbar state.
     in property <bool> show-duration: true;
-    in-out property <bool> show-tokens: true;
+    // 消耗直方图状态：true 展示每步全部消耗，false 展示相对上一步的新增占用。
+    // 柱值与汇总由 Rust 侧按该模式预投影，切换需回调触发重投影。
+    in property <bool> token-total: true;
     in-out property <bool> show-turns: false;
     in-out property <bool> show-calls: false;
     in-out property <string> query;
@@ -191,6 +193,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
 
     callback close();
     callback toggle-duration();
+    callback toggle-tokens();
     callback toggle-turns();
     callback toggle-calls();
     callback export();
@@ -278,10 +281,10 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                 toggle => { root.toggle-duration(); }
             }
             TrajToggle {
-                label: I18n.traj_token_usage;
+                label: I18n.traj_consumption;
                 bars: true;
-                on: root.show-tokens;
-                toggle => { root.show-tokens = !root.show-tokens; }
+                on: root.token-total;
+                toggle => { root.toggle-tokens(); }
             }
             TrajToggle {
                 label: I18n.traj_turns;
@@ -579,8 +582,8 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                 }
             }
         }
-        // ---- 消耗直方图：每一步（模型请求）一根柱，柱高为相对上一步的新增 token ----
-        if root.show-tokens && root.token-bars.length > 0 : Rectangle {
+        // ---- 消耗直方图：每一步（模型请求）一根柱，柱高随模式取全部消耗或新增占用 ----
+        if root.token-bars.length > 0 : Rectangle {
             height: 48px;
             clip: true;
             HorizontalLayout {
@@ -591,7 +594,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     TrajText {
                         x: 0px; width: 41px; height: parent.height;
                         vertical-alignment: center; horizontal-alignment: right;
-                        text: I18n.traj_token_usage;
+                        text: root.token-total ? I18n.traj_consumption_total : I18n.traj_token_usage;
                         color: TrajTokens.text-3; font-size: 10px;
                     }
                 }
@@ -646,10 +649,10 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     }
                 }
                 Rectangle {
-                    width: token-total-label.preferred-width + 12px;
-                    token-total-label := TrajText {
+                    width: token-summary-label.preferred-width + 12px;
+                    token-summary-label := TrajText {
                         x: 4px; height: parent.height;
-                        text: root.token-total;
+                        text: root.token-summary;
                         color: TrajTokens.text-3;
                         font-family: Theme.font-mono;
                         font-size: 10px;

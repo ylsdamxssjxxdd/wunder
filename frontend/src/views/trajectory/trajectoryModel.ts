@@ -1164,20 +1164,25 @@ export interface StepUsageBars {
   bars: StepUsageBar[]
   max: number
   totalSum: number
+  maxTotal: number
+  totalGross: number
   reportedCount: number
 }
 
 /**
  * 把请求编号列表投影成逐步用量直方图：每一步（模型请求）一根柱。
+ * 每根柱带两个可选值：total 为该步全部消耗（输入 + 缓存读 + 缓存写 + 输出），
+ * delta 为相对上一步的新增占用 delta = max(0, 本步总量 − 上一步总量)。
  * 模型请求的输入包含累积上下文，直接画总量会单调递增、掩盖真正膨胀的
- * 步骤，因此柱值取相对上一步的新增量：delta = max(0, 本步总量 − 上一步总量)，
- * 总量 = 输入 + 缓存读 + 缓存写 + 输出。压缩上下文后总量回落的步增量为 0。
+ * 步骤，因此新增占用视图取增量；压缩上下文后总量回落的步增量为 0。
  * 未上报用量的步以 reported=false 标出，由视图降级显示，不参与增量链。
  */
 export function buildStepUsageBars(requests: readonly TrajRequestNumber[]): StepUsageBars {
   const bars: StepUsageBar[] = []
   let max = 0
   let totalSum = 0
+  let maxTotal = 0
+  let totalGross = 0
   let reportedCount = 0
   let previousTotal: number | null = null
   for (const request of requests) {
@@ -1199,6 +1204,8 @@ export function buildStepUsageBars(requests: readonly TrajRequestNumber[]): Step
       previousTotal = total
       totalSum += delta
       if (delta > max) max = delta
+      totalGross += total
+      if (total > maxTotal) maxTotal = total
     }
     bars.push({
       requestNumber: request.number,
@@ -1216,7 +1223,7 @@ export function buildStepUsageBars(requests: readonly TrajRequestNumber[]): Step
       delta,
     })
   }
-  return { bars, max, totalSum, reportedCount }
+  return { bars, max, totalSum, maxTotal, totalGross, reportedCount }
 }
 
 /* ------------------------------------------------------------------ */

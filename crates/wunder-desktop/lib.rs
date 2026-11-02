@@ -37,3 +37,12 @@ pub use runtime::DesktopRuntime;
 pub fn install_local_home_env() {
     wunder_server::local_bootstrap::install_local_home_env();
 }
+
+/// Shared writable logs directory of the local form, resolved from the same
+/// home the runtime uses. Crash reports and other diagnostics land here.
+pub fn local_logs_dir() -> std::path::PathBuf {
+    wunder_server::local_bootstrap::LocalHomeLayout::from_home(
+        wunder_server::local_bootstrap::resolve_home_from_env_or_user(),
+    )
+    .logs
+}

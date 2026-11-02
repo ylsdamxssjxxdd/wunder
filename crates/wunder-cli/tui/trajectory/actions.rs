@@ -299,7 +299,7 @@ impl TuiApp {
             KeyCode::Char('?') => v.help = true,
             KeyCode::Char('/') | KeyCode::F(3) => v.searching = true,
             KeyCode::Char('d') => v.duration = !v.duration,
-            KeyCode::Char('x') => v.tokens = !v.tokens,
+            KeyCode::Char('x') => v.token_total = !v.token_total,
             KeyCode::Char('+') | KeyCode::Char('=') => v.zoom = v.zoom.saturating_add(1).min(8),
             KeyCode::Char('-') => v.zoom = v.zoom.saturating_sub(1),
             KeyCode::Char('0') => v.zoom = 0,

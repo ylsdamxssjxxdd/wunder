@@ -350,7 +350,7 @@ export component MainWindow inherits Window {
     in-out property <[TrajRow]> traj-rows;
     in-out property <[TrajSpan]> traj-spans;
     in-out property <[TrajTokenBar]> traj-token-bars;
-    in-out property <string> traj-token-total;
+    in-out property <string> traj-token-summary;
     in-out property <[TrajTick]> traj-ticks;
     in-out property <[TrajBoundary]> traj-boundaries;
     in-out property <float> traj-view-start: 0.0;
@@ -373,6 +373,8 @@ export component MainWindow inherits Window {
     in-out property <int> traj-hover: -1;
     in-out property <string> traj-tooltip;
     in-out property <bool> traj-show-duration: true;
+    // 消耗直方图模式：true 展示每步全部消耗，false 展示新增占用。
+    in-out property <bool> traj-token-total: true;
     in-out property <bool> traj-show-turns: false;
     in-out property <bool> traj-show-calls: false;
     in-out property <string> traj-query;
@@ -389,6 +391,7 @@ export component MainWindow inherits Window {
     callback traj-hover-span(int);
     callback traj-leave();
     callback traj-toggle-duration();
+    callback traj-toggle-tokens();
     callback traj-toggle-turns();
     callback traj-toggle-calls();
     callback traj-export();
@@ -1748,7 +1751,7 @@ export component MainWindow inherits Window {
         y: Theme.titlebar-height;
         height: max(0px, parent.height - Theme.titlebar-height);
         rows: root.traj-rows; spans: root.traj-spans; ticks: root.traj-ticks; boundaries: root.traj-boundaries;
-        token-bars: root.traj-token-bars; token-total: root.traj-token-total;
+        token-bars: root.traj-token-bars; token-summary: root.traj-token-summary;
         view-start: root.traj-view-start; view-width: root.traj-view-width;
         selection-active: root.traj-selection-active; selection-start: root.traj-selection-start; selection-end: root.traj-selection-end;
         detail-header: root.traj-detail-header; detail-badge: root.traj-detail-badge; detail-kind: root.traj-detail-kind;
@@ -1757,7 +1760,7 @@ export component MainWindow inherits Window {
         raw-text: root.traj-raw; selected-index: root.traj-selected; hover-index: root.traj-hover;
         ledger-scroll: root.traj-ledger-scroll; ledger-scroll-seq: root.traj-ledger-scroll-seq;
         tooltip-text: root.traj-tooltip;
-        show-duration: root.traj-show-duration; show-turns <=> root.traj-show-turns; show-calls <=> root.traj-show-calls;
+        show-duration: root.traj-show-duration; token-total: root.traj-token-total; show-turns <=> root.traj-show-turns; show-calls <=> root.traj-show-calls;
         query <=> root.traj-query;
         search-hint: root.traj-search-hint;
         search-hits: root.traj-search-hits;
@@ -1766,6 +1769,7 @@ export component MainWindow inherits Window {
         history-hint: root.traj-history-hint;
         close => { root.traj-open = false; }
         toggle-duration => { root.traj-toggle-duration(); }
+        toggle-tokens => { root.traj-toggle-tokens(); }
         toggle-turns => { root.traj-toggle-turns(); }
          toggle-calls => { root.traj-toggle-calls(); }
          export => { root.traj-export(); }

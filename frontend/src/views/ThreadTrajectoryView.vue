@@ -28,16 +28,17 @@
       <button
         class="tt-toggle"
         type="button"
-        :class="{ 'tt-toggle-active': showTokens }"
-        :aria-pressed="showTokens"
-        @click="showTokens = !showTokens"
+        :class="{ 'tt-toggle-active': tokenTotal }"
+        :aria-pressed="tokenTotal"
+        :title="t(tokenTotal ? 'messenger.trajectory.consumptionToDelta' : 'messenger.trajectory.consumptionToTotal')"
+        @click="tokenTotal = !tokenTotal"
       >
         <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
           <rect x="3" y="8" width="2.4" height="5" rx="0.6" fill="currentColor" />
           <rect x="7" y="5" width="2.4" height="8" rx="0.6" fill="currentColor" />
           <rect x="11" y="9.5" width="2.4" height="3.5" rx="0.6" fill="currentColor" />
         </svg>
-        <span>{{ t('messenger.trajectory.tokenUsage') }}</span>
+        <span>{{ t('messenger.trajectory.consumption') }}</span>
       </button>
       <button
         class="tt-toggle"
@@ -181,8 +182,8 @@
       </div>
     </div>
 
-    <div v-if="showTokens && stepUsage.bars.length > 0" class="tt-tokenbars">
-      <span class="tt-tokenbars-label">{{ t('messenger.trajectory.tokenUsage') }}</span>
+    <div v-if="stepUsage.bars.length > 0" class="tt-tokenbars">
+      <span class="tt-tokenbars-label">{{ t(tokenTotal ? 'messenger.trajectory.consumptionTotal' : 'messenger.trajectory.tokenUsage') }}</span>
       <div class="tt-tokenbars-track">
         <span
           v-for="bar in stepUsage.bars"
@@ -197,7 +198,7 @@
       </div>
       <span class="tt-tokenbars-summary">{{
         stepUsage.reportedCount > 0
-          ? t('messenger.trajectory.tokenTotal', { value: `${formatCompactTokens(stepUsage.totalSum)} tok` })
+          ? t('messenger.trajectory.tokenTotal', { value: `${formatCompactTokens(tokenTotal ? stepUsage.totalGross : stepUsage.totalSum)} tok` })
           : ''
       }}</span>
     </div>
@@ -606,7 +607,8 @@ let loadAbort: AbortController | null = null
 
 const showDuration = ref(true)
 const showTime = ref(false)
-const showTokens = ref(true)
+// 消耗直方图两种状态：true 展示每步全部消耗，false 展示新增占用。
+const tokenTotal = ref(true)
 const searchQuery = ref('')
 
 const searchHits=shallowRef<any[]>([]),searchLoading=ref(false),searchError=ref(false),searchMore=ref(false),searchText=ref('')
@@ -2224,14 +2226,19 @@ function formatCompactTokens(value: number): string {
 
 function tokenBarHeight(bar: StepUsageBar): string {
   if (!bar.reported) return '2px'
-  const ratio = stepUsage.value.max > 0 ? (bar.delta ?? 0) / stepUsage.value.max : 0
+  // 全部消耗视图按本步总量归一，新增占用视图按相对上一步的增量归一。
+  const scaleMax = tokenTotal.value ? stepUsage.value.maxTotal : stepUsage.value.max
+  const value = tokenTotal.value ? bar.total : (bar.delta ?? 0)
+  const ratio = scaleMax > 0 ? value / scaleMax : 0
   return `${Math.max(4, Math.round(ratio * 100))}%`
 }
 
 function tokenBarClasses(bar: StepUsageBar): Record<string, boolean> {
+  const value = tokenTotal.value ? bar.total : (bar.delta ?? 0)
+  const scaleMax = tokenTotal.value ? stepUsage.value.maxTotal : stepUsage.value.max
   return {
     'tt-tokenbar-empty': !bar.reported,
-    'tt-tokenbar-max': bar.reported && bar.delta !== null && bar.delta === stepUsage.value.max && bar.delta > 0,
+    'tt-tokenbar-max': bar.reported && value === scaleMax && value > 0,
     'tt-tokenbar-selected': selectedIndex.value !== null && selectedIndex.value === bar.assistantIndex,
   }
 }
@@ -2246,12 +2253,14 @@ function onTokenBarEnter(bar: StepUsageBar, event: PointerEvent): void {
       bar.turn !== null ? `${modelT('trajectory.turnTitle', { turn: bar.turn })} · ${stepText}` : stepText,
     ]
     if (bar.reported) {
-      lines.push(modelT('trajectory.usageDelta', {
+      const deltaLine = modelT('trajectory.usageDelta', {
         value: modelT('trajectory.tokens', { value: formatCompactTokens(bar.delta ?? 0) }),
-      }))
-      lines.push(modelT('trajectory.usageStepTotal', {
+      })
+      const totalLine = modelT('trajectory.usageStepTotal', {
         value: modelT('trajectory.tokens', { value: formatCompactTokens(bar.total) }),
-      }))
+      })
+      // 当前模式的数值放在前面，另一维度紧随其后。
+      lines.push(...(tokenTotal.value ? [totalLine, deltaLine] : [deltaLine, totalLine]))
       const parts = [
         modelT('trajectory.usageInput', { value: formatCompactTokens(bar.input) }),
         modelT('trajectory.usageOutput', { value: formatCompactTokens(bar.output) }),

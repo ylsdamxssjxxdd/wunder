@@ -57,9 +57,9 @@ export struct TrajSpan {
 }
 export struct TrajTokenBar {
     index: int,          // logical record index to focus on click, -1 = none
-    ratio: float,        // 0..1 bar height vs. the largest step delta
+    ratio: float,        // 0..1 bar height vs. the largest step (total or delta by mode)
     reported: bool,      // false = usage missing, render a baseline tick
-    peak: bool,          // largest delta in the thread
+    peak: bool,          // largest step value in the thread (by mode)
     tooltip: string,     // pre-formatted localized tooltip lines
 }
 export struct TrajSearchHit { item-id: string, body-id: string, revision: string, cursor: string, snippet: string }

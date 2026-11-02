@@ -184,15 +184,24 @@ fn usage_total(row: &TrajectoryViewRow) -> Option<f64> {
     any.then_some(total)
 }
 /**
- * 逐步 token 直方图数据：每个模型请求一根柱。模型请求的输入包含累积上下文，
- * 直接画总量会单调递增、掩盖真正膨胀的步骤，因此柱值取相对上一步的新增量
- * delta = max(0, 本步总量 − 上一步总量)；未上报的步为 None，不参与增量链。
- * 返回 (bar 列表（行索引, delta), 增量总和)。
+ * 逐步 token 直方图数据：每个模型请求一根柱。每根柱带两个可选值：
+ * 全部消耗 = 输入 + 缓存读 + 缓存写 + 输出；新增占用为相对上一步的增量
+ * delta = max(0, 本步总量 − 上一步总量)。模型请求的输入包含累积上下文，
+ * 直接画总量会单调递增、掩盖真正膨胀的步骤，因此新增占用视图取增量；
+ * 压缩上下文后总量回落的步增量为 0。未上报的步为 None，不参与增量链。
  */
-pub(super) fn step_token_deltas(v: &TrajectoryView) -> (Vec<(usize, Option<f64>)>, f64) {
+pub(super) struct TokenSteps {
+    /// (行索引, (本步全部消耗, 新增占用))。
+    pub bars: Vec<(usize, Option<(f64, f64)>)>,
+    pub total_sum: f64,
+    pub delta_sum: f64,
+}
+
+pub(super) fn step_token_bars(v: &TrajectoryView) -> TokenSteps {
     let mut bars = Vec::new();
     let mut previous: Option<f64> = None;
     let mut total_sum = 0.0;
+    let mut delta_sum = 0.0;
     for (index, row) in v.active_rows().iter().enumerate() {
         if row.kind != "assistant_message" {
             continue;
@@ -200,13 +209,18 @@ pub(super) fn step_token_deltas(v: &TrajectoryView) -> (Vec<(usize, Option<f64>)
         if let Some(total) = usage_total(row) {
             let delta = previous.map_or(total, |prev| (total - prev).max(0.0));
             previous = Some(total);
-            total_sum += delta;
-            bars.push((index, Some(delta)));
+            delta_sum += delta;
+            total_sum += total;
+            bars.push((index, Some((total, delta))));
         } else {
             bars.push((index, None));
         }
     }
-    (bars, total_sum)
+    TokenSteps {
+        bars,
+        total_sum,
+        delta_sum,
+    }
 }
 /** 直方图与汇总的紧凑 token 数：12,345 → 12.3k。 */
 fn compact_tokens(value: f64) -> String {
@@ -221,12 +235,31 @@ fn compact_tokens(value: f64) -> String {
         format!("{}", value.round() as i64)
     }
 }
-/** 消耗带左侧「新增占用」标签的列宽：pad(8) + 1 空格。 */
+/** 消耗带左侧标签的列宽：pad(8) + 1 空格。标签最长为 4 个中文字符。 */
 pub(super) const TOKENBARS_LABEL_COLS: u16 = 9;
-fn draw_tokenbars(frame: &mut Frame, area: Rect, v: &mut TrajectoryView, steps: &(Vec<(usize, Option<f64>)>, f64), zh: bool) {
-    let (bars, total_sum) = steps;
+fn draw_tokenbars(
+    frame: &mut Frame,
+    area: Rect,
+    v: &mut TrajectoryView,
+    steps: &TokenSteps,
+    token_total: bool,
+    zh: bool,
+) {
+    let bars = &steps.bars;
     const LEVELS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-    let summary = format!("{} {} tok", tr(zh, "共", "total"), compact_tokens(*total_sum));
+    // 全部消耗视图取本步总量，新增占用视图取相对上一步的增量。
+    let value = |bar: &(f64, f64)| if token_total { bar.0 } else { bar.1 };
+    let label = if token_total {
+        tr(zh, "全部消耗", "All tok")
+    } else {
+        tr(zh, "新增占用", "New tok")
+    };
+    let sum = if token_total {
+        steps.total_sum
+    } else {
+        steps.delta_sum
+    };
+    let summary = format!("{} {} tok", tr(zh, "共", "total"), compact_tokens(sum));
     let width = (area.width as usize)
         .saturating_sub(TOKENBARS_LABEL_COLS as usize + 1 + summary.width() + 1);
     if width == 0 || bars.is_empty() {
@@ -235,32 +268,37 @@ fn draw_tokenbars(frame: &mut Frame, area: Rect, v: &mut TrajectoryView, steps: 
     v.tokenbars_area = area;
     let max = bars
         .iter()
-        .filter_map(|(_, delta)| *delta)
+        .filter_map(|(_, bar)| bar.as_ref().map(&value))
         .fold(0.0_f64, f64::max);
     let count = bars.len();
     let mut spans = vec![Span::styled(
-        format!("{} ", pad(tr(zh, "新增占用", "New tok"), 8)),
+        format!("{} ", pad(label, 8)),
         theme::secondary_text(),
     )];
     v.tokenbar_hits.clear();
     for x in 0..width {
-        // 步数多于列宽时按桶取最大增量，保证峰值始终可见。
+        // 步数多于列宽时按桶取最大值，保证峰值始终可见。
         let lo = x * count / width;
         let hi = ((x + 1) * count / width).max(lo + 1).min(count);
         let bucket = &bars[lo..hi];
-        let delta = bucket.iter().filter_map(|(_, delta)| *delta).fold(None, |best: Option<f64>, d| {
-            Some(best.map_or(d, |b| b.max(d)))
-        });
+        let peak = bucket
+            .iter()
+            .filter_map(|(_, bar)| bar.as_ref().map(&value))
+            .fold(None, |best: Option<f64>, d| {
+                Some(best.map_or(d, |b| b.max(d)))
+            });
         let selected = bucket.iter().any(|(index, _)| *index == v.selected);
-        // 点击命中与显示取同一根柱：桶内增量最大者，均无上报则取首根。
+        // 点击命中与显示取同一根柱：桶内取值最大者，均无上报则取首根。
         let hit = bucket
             .iter()
-            .filter(|(_, delta)| delta.is_some())
-            .max_by(|(_, a), (_, b)| a.unwrap().total_cmp(&b.unwrap()))
+            .filter(|(_, bar)| bar.is_some())
+            .max_by(|(_, a), (_, b)| {
+                value(a.as_ref().unwrap()).total_cmp(&value(b.as_ref().unwrap()))
+            })
             .or(bucket.first())
             .map(|(index, _)| *index);
         v.tokenbar_hits.push(hit);
-        let (symbol, base_style) = match delta {
+        let (symbol, base_style) = match peak {
             Some(d) if max > 0.0 => {
                 let level = ((d / max) * 7.0).round().clamp(0.0, 7.0) as usize;
                 (
@@ -365,8 +403,8 @@ pub(crate) fn draw(frame: &mut Frame, area: Rect, app: &mut TuiApp, zh: bool) {
         return;
     };
     frame.render_widget(Clear, area);
-    let token_steps = step_token_deltas(v);
-    let show_tokens = v.tokens && token_steps.1 > 0.0 && area.height >= 14;
+    let token_steps = step_token_bars(v);
+    let show_tokens = token_steps.bars.iter().any(|(_, bar)| bar.is_some()) && area.height >= 14;
     let bands = Layout::default()
         .direction(LayoutDirection::Vertical)
         .constraints([
@@ -397,14 +435,17 @@ pub(crate) fn draw(frame: &mut Frame, area: Rect, app: &mut TuiApp, zh: bool) {
         state
     );
     let toolbar = format!(
-        "[d] {}   [x] {} {}   [t] {} {}   [c] {} {}   [+/-] {}×   [e] {}   [?] {}",
+        "[d] {}   [x] {}   [t] {} {}   [c] {} {}   [+/-] {}×   [e] {}   [?] {}",
         if v.duration {
             tr(zh, "耗时", "Duration")
         } else {
             tr(zh, "顺序", "Sequence")
         },
-        tr(zh, "新增占用", "New tok"),
-        if v.tokens { "▾" } else { "▸" },
+        if v.token_total {
+            tr(zh, "全部消耗", "Total usage")
+        } else {
+            tr(zh, "新增占用", "New tok")
+        },
         tr(zh, "轮次", "Turns"),
         if v.fold_turns { "▸" } else { "▾" },
         tr(zh, "调用", "Calls"),
@@ -453,7 +494,7 @@ pub(crate) fn draw(frame: &mut Frame, area: Rect, app: &mut TuiApp, zh: bool) {
     v.tokenbars_area = Rect::default();
     v.tokenbar_hits.clear();
     if show_tokens {
-        draw_tokenbars(frame, bands[2], v, &token_steps, zh);
+        draw_tokenbars(frame, bands[2], v, &token_steps, v.token_total, zh);
     }
     let wide = bands[3].width >= 100;
     v.ledger_area = Rect::default();
@@ -505,8 +546,8 @@ pub(crate) fn draw(frame: &mut Frame, area: Rect, app: &mut TuiApp, zh: bool) {
     if v.help {
         frame.render_widget(Clear, area);
         frame.render_widget(Paragraph::new(tr(zh,
-            "轨迹日志\n\n↑↓ / j k：选择记录；PageUp / PageDown：翻页（边缘自动读取）\nEnter：进入当前用户轮次；Esc：依次返回列表、全局与会话\ni / →：切换详情焦点；窄终端显示独立详情页\nTab / Shift+Tab：切换详情页签；详情焦点内 ↑↓ / PgUp PgDn 滚动，h / l 平移长行\nd：顺序 / 真实耗时；x：逐步新增占用直方图；+ / -：围绕选中条目缩放；0：复位\nt：全部轮次折叠；空格：当前轮次折叠；c：同模型轮次工具折叠\n/：全文搜索（Enter 提交，最多 20 个命中；缩小词组可继续定位）\nf：切换实时跟随；手动浏览暂停跟随；r：刷新或重试\ny：复制当前详情页签；e：导出完整 JSONL 到启动目录\n鼠标：台账点击选择，时间线或消耗带点击定位已载入记录，滚轮浏览\n\nEsc / ? 返回",
-            "Trajectory log\n\n↑↓ / j k: select; PageUp / PageDown: page (load at either edge)\nEnter: inspect user turn; Esc: return through details, overview, conversation\ni / →: focus details; narrow terminals show a separate detail page\nTab / Shift+Tab: detail tabs; focused ↑↓ / PgUp PgDn: scroll details; h / l: pan long lines\nd: sequence / elapsed time; x: per-step new-usage histogram; + / -: zoom around selection; 0: reset\nt: fold all turns; Space: fold selected turn; c: fold tool groups\n/: full-text search (Enter submits, up to 20 hits; refine for more)\nf: toggle live follow; browsing pauses follow; r: refresh or retry\ny: copy current detail tab; e: export full JSONL to launch directory\nMouse: click ledger, timeline or token-band record; wheel to browse\n\nEsc / ? returns")), area);
+            "轨迹日志\n\n↑↓ / j k：选择记录；PageUp / PageDown：翻页（边缘自动读取）\nEnter：进入当前用户轮次；Esc：依次返回列表、全局与会话\ni / →：切换详情焦点；窄终端显示独立详情页\nTab / Shift+Tab：切换详情页签；详情焦点内 ↑↓ / PgUp PgDn 滚动，h / l 平移长行\nd：顺序 / 真实耗时；x：全部消耗 / 新增占用直方图；+ / -：围绕选中条目缩放；0：复位\nt：全部轮次折叠；空格：当前轮次折叠；c：同模型轮次工具折叠\n/：全文搜索（Enter 提交，最多 20 个命中；缩小词组可继续定位）\nf：切换实时跟随；手动浏览暂停跟随；r：刷新或重试\ny：复制当前详情页签；e：导出完整 JSONL 到启动目录\n鼠标：台账点击选择，时间线或消耗带点击定位已载入记录，滚轮浏览\n\nEsc / ? 返回",
+            "Trajectory log\n\n↑↓ / j k: select; PageUp / PageDown: page (load at either edge)\nEnter: inspect user turn; Esc: return through details, overview, conversation\ni / →: focus details; narrow terminals show a separate detail page\nTab / Shift+Tab: detail tabs; focused ↑↓ / PgUp PgDn: scroll details; h / l: pan long lines\nd: sequence / elapsed time; x: total / new usage histogram; + / -: zoom around selection; 0: reset\nt: fold all turns; Space: fold selected turn; c: fold tool groups\n/: full-text search (Enter submits, up to 20 hits; refine for more)\nf: toggle live follow; browsing pauses follow; r: refresh or retry\ny: copy current detail tab; e: export full JSONL to launch directory\nMouse: click ledger, timeline or token-band record; wheel to browse\n\nEsc / ? returns")), area);
     }
 }
 fn draw_timeline(frame: &mut Frame, area: Rect, v: &mut TrajectoryView, zh: bool) {
