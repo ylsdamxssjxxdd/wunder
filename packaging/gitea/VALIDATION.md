@@ -74,6 +74,8 @@ ARM64 剖面同日未在 ARM 机器上重跑，见文末边界。
 
 ## 边界与未验证
 
+- 旧的排队运行只靠任务自查让路（`ci/is-latest.py`），已经在跑的任务不会被打断；这个版本没有
+  `concurrency`，也没有可脚本化的取消接口，界面上的 Cancel 仍是唯一的手动收口。
 - Wine 组出的 setup.exe 没有在真实 Windows 7/10 机器上装过（本机无 Windows 宿主），证据只有
   PE 头、Inno 载荷标记与 Wine 下的静默安装；对外正式交付仍以 GitHub 的 Windows runner 产物为准。
   ARM worker 上没有可用的 i386 Wine，`win7-installer` 任务在该类机器上打印 SKIP 后成功退出，

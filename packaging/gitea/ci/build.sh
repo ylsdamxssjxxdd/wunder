@@ -3,6 +3,8 @@ set -euo pipefail
 
 # 在套件的任务容器里离线构建蛹（wunder）的 Linux 桌面/命令行与 Win7 32 位产物。
 # 宿主可以是 x86_64 或 ARM64：交叉目标由 SDK 里的交叉工具链完成，不需要 QEMU。
+ci_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 case "${ARCH:?ARCH is required}" in
     arm64|amd64|win7-x86) ;;
     *) echo 'Only arm64, amd64 and win7-x86 are supported.' >&2; exit 2 ;;
@@ -33,6 +35,13 @@ mkdir -p "$cache/desktop" "$cache/cli" "$cache/desktop-home" "$cache/cli-home" r
 # 工作区按任务复用且不删未跟踪文件：不清掉上一轮的产物，旧版本会被当作本次产物上传，
 # verify 的重名门禁也会误报。
 find release-assets -maxdepth 1 -type f -delete
+
+# 分支头已经推进到别的提交，说明这一轮被更新的提交取代：立刻结束，别占着 runner 名额。
+if ! python3 "$ci_dir/is-latest.py"; then
+    echo "SKIP: 本次运行已被更新的提交取代，不再构建产物。"
+    exit 0
+fi
+
 export WUNDER_OUTPUT_DIR="$PWD/release-assets"
 export WUNDER_CLI_OUTPUT_DIR="$PWD/release-assets"
 export CARGO_BUILD_JOBS="${WUNDER_BUILD_JOBS:-4}"
@@ -94,6 +103,6 @@ else
     fi
 fi
 
-python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/verify.py" release-assets "$ARCH" "$sample"
+python3 "$ci_dir/verify.py" release-assets "$ARCH" "$sample"
 (cd release-assets; find . -maxdepth 1 -type f ! -name 'SHA256SUMS-*' -print0 | sort -z | xargs -0 sha256sum > "SHA256SUMS-$ARCH.txt")
 printf '\nArtifacts ready for %s (host %s)\n' "$ARCH" "$host_arch"

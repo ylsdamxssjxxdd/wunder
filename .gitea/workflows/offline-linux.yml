@@ -40,6 +40,9 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_REF: ${{ github.ref }}
+          CI_TOKEN: ${{ github.token }}
         run: bash packaging/gitea/ci/build.sh
       - name: Publish build outputs to local Releases
         env:
@@ -72,6 +75,9 @@ jobs:
         env:
           ARCH: win7-x86
           CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_REF: ${{ github.ref }}
+          CI_TOKEN: ${{ github.token }}
         run: bash packaging/gitea/ci/build.sh
       - name: Publish build outputs to local Releases
         env:
@@ -106,6 +112,9 @@ jobs:
       - name: Assemble Win7 installer offline
         env:
           CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_REF: ${{ github.ref }}
+          CI_TOKEN: ${{ github.token }}
         run: bash packaging/gitea/ci/build-win7-installer.sh
       - name: Publish installer to local Releases
         env:

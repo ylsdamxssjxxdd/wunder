@@ -12,6 +12,12 @@ if [[ "$host_arch" != x86_64 ]]; then
     exit 0
 fi
 
+# 同 build.sh：被更新的提交取代就不再占 runner 名额。
+if ! python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/is-latest.py"; then
+    echo "SKIP: 本次运行已被更新的提交取代，不再组安装包。"
+    exit 0
+fi
+
 cache_key="$(printf '%s' "${CI_REPOSITORY:?CI_REPOSITORY is required}" | sha256sum | cut -c 1-32)"
 cache="/ci-cache/$cache_key/win7-x86"
 inputs="$cache/installer-inputs"
