@@ -3,21 +3,33 @@
 //! local copy to the shell as an OLE drag with a `CF_HDROP` data object, so
 //! the desktop or Explorer receives a plain copy gesture.
 //!
-//! The drag loop is modal on the calling thread, so the entry point blocks
-//! for the whole gesture and must run on a worker thread. Everything here is
+//! The drag loop is modal on the calling thread and must run on the UI thread
+//! that owns the window: OLE tracks the pointer through the calling thread's
+//! input queue, so the gesture started anywhere else never follows the cursor
+//! and never sees the release. The loop pumps window messages itself, so the
+//! window stays painted for the duration of the gesture. Everything here is
 //! self-contained: the data object, format enumerator and drop source are
 //! small hand-rolled COM objects declared through raw `#[link]` externs, so
 //! the drag path adds no windows-sys feature beyond what the shell dialog
 //! already pulls in.
 
 #[cfg(windows)]
-pub use imp::drag_file;
+pub use imp::{drag_file, pointer_button_held};
 
 /// Non-Windows fallback: the tree still reports an honest error instead of
 /// pretending the gesture happened.
 #[cfg(not(windows))]
 pub fn drag_file(_path: &std::path::Path) -> Result<bool, String> {
     Err("当前系统不支持拖出到桌面".to_string())
+}
+
+/// Whether the primary mouse button is still held. A cloud file has to be
+/// staged before the shell can carry it, and that round trip outlives the
+/// press that started the gesture; only the caller that still sees a held
+/// button may hand the file to OLE.
+#[cfg(not(windows))]
+pub fn pointer_button_held() -> bool {
+    false
 }
 
 #[cfg(windows)]
@@ -209,6 +221,19 @@ mod imp {
         fn GlobalSize(block: *mut c_void) -> usize;
     }
 
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetAsyncKeyState(key: i32) -> i16;
+    }
+
+    /// `VK_LBUTTON`: the primary button as the shell drag loop reads it.
+    const VK_LBUTTON: i32 = 0x01;
+
+    /// See [`super::pointer_button_held`].
+    pub fn pointer_button_held() -> bool {
+        (unsafe { GetAsyncKeyState(VK_LBUTTON) } as u16) & 0x8000 != 0
+    }
+
     /// Drag one local file out. Blocks until the gesture completes, so run it
     /// on a worker thread. Returns `true` when the target accepted a copy.
     pub fn drag_file(path: &Path) -> Result<bool, String> {
@@ -217,7 +242,12 @@ mod imp {
             return Err(format!("OLE 初始化失败（0x{hr:08X}）"));
         }
         let result = drag_file_impl(path);
-        unsafe { CoUninitialize() };
+        // Only undo what this call added: on the UI thread OLE is already
+        // initialized by the window backend, and balancing that reference away
+        // would tear the apartment down under the running app.
+        if hr == S_OK {
+            unsafe { CoUninitialize() };
+        }
         result
     }
 

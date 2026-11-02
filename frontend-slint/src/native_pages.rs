@@ -7,6 +7,11 @@ use wunder_desktop::{
 };
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
+    // The signed-in identity is the first thing the shell shows (sidebar
+    // avatar, settings row), so its projection starts before the panels an
+    // idle user does not need yet.
+    bind_profile(app, api.clone());
+    app.invoke_refresh_profile();
     crate::agent_editor::install(app);
     crate::agent_editor::install_save_handler(app, api.clone());
     crate::entity_state::bind_selection(app);
@@ -18,7 +23,6 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     crate::tools_ui::install(app, api.clone());
     bind_settings(app, api.clone());
     bind_cloud(app, api.clone());
-    bind_profile(app, api.clone());
     crate::native_interlink::install(app, api.clone());
     crate::cloud_threads::install(app, api.clone());
     crate::cron_ui::install(app, api.clone());
@@ -28,10 +32,6 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     app.invoke_refresh_agents();
     app.invoke_refresh_tools();
     app.invoke_refresh_settings();
-    // The profile owns the signed-in avatar the sidebar settings button shows,
-    // so it loads with the rest of the shell instead of staying at its default
-    // until some panel happens to refresh it.
-    app.invoke_refresh_profile();
 }
 
 fn bind_model_probes(app: &MainWindow, api: Arc<NativeDesktop>) {
@@ -727,7 +727,13 @@ fn bind_profile(app: &MainWindow, api: Arc<NativeDesktop>) {
                 app.set_profile_loading(false);
                 match result {
                     Ok(profile) => apply_profile(&app, profile),
-                    Err(error) => show_error(&app, format!("无法读取个人概况：{error}")),
+                    Err(error) => {
+                        // Keep the startup gate from staying closed: the avatar
+                        // shows an empty identity and the status line explains
+                        // the failure instead.
+                        app.set_profile_ready(true);
+                        show_error(&app, format!("无法读取个人概况：{error}"))
+                    }
                 }
             });
         });
@@ -792,6 +798,10 @@ fn apply_profile(app: &MainWindow, profile: NativeProfile) {
         avatar_color: profile.avatar_color.into(),
         avatar_brush,
     });
+    // The sidebar avatar and the settings row now hold a real identity; until
+    // this point they show a neutral placeholder rather than a wrong glyph.
+    app.set_profile_ready(true);
+    crate::startup_point("profile_ready");
 }
 
 // `avatar_color` is a `#rrggbb` preference string and Slint has no string→color
@@ -813,8 +823,9 @@ fn profile_brush(color: &str) -> slint::Color {
 // image set has no desktop counterpart, and the Unicode symbols the old mapping
 // chose (✦ ◉ ❖) are absent from the bundled Microsoft YaHei (`assets/fonts/
 // msyh.ttc`), so they rendered as tofu. The signed-in name's first character is
-// the one mark that always draws; an empty name leaves the bubble to the shared
-// "me" label on the Slint side.
+// the one mark that always draws; an empty name leaves the bubble to the Slint
+// side, which shows a neutral placeholder until the profile has loaded and the
+// shared "me" label only once an identity is actually known.
 fn profile_glyph(username: &str) -> String {
     match username.trim().chars().next() {
         Some(first) => first.to_uppercase().collect(),

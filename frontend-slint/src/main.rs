@@ -40,6 +40,7 @@ mod navigation_ui;
 mod os_drag;
 mod pet_settings;
 mod pet_window;
+mod pointer_chase;
 mod runtime_phase;
 mod runtime_settings;
 mod screen_capture;
@@ -129,6 +130,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     install_window_chrome(&app);
+    // 拖拽手势的指针追踪通道（见 pointer_chase）：事件流在 32 位 Win7 上会
+    // 中途断掉，行/宽度拖拽要有第二条位置来源。
+    pointer_chase::install(&app);
     if first_argument.as_deref() == Some(std::ffi::OsStr::new("--smoke-check")) {
         demo::install(&app);
         let directory = arguments
@@ -420,10 +424,26 @@ fn startup_timing_enabled() -> bool {
 
 fn startup_log(point: &str, boot: std::time::Instant) {
     if startup_timing_enabled() {
-        eprintln!(
+        let line = format!(
             "[startup][desktop-ui] point={point} total_ms={:.1}",
             boot.elapsed().as_secs_f64() * 1000.0
         );
+        eprintln!("{line}");
+        // 蛹 是 GUI 进程：没有控制台，stderr 会随进程一起消失。启动里程碑同时
+        // 落到 <home>/logs/startup.log，报障时只需提供这一个文件。
+        use std::io::Write;
+        let path = wunder_desktop::local_logs_dir().join("startup.log");
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let stamp = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f");
+            let _ = writeln!(file, "{stamp} {line}");
+        }
     }
 }
 

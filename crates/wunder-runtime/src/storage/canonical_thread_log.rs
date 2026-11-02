@@ -1636,31 +1636,174 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
         }
         Ok(output)
     }
+    /// Turn tails for a whole page of threads in a bounded number of reads.
+    ///
+    /// The per-thread version opened a queue connection for every ownership
+    /// check and then rebuilt each thread's newest turn as a full JSON view:
+    /// roughly eight statements per row, so a hundred-row thread list cost
+    /// hundreds of round trips and dominated first paint on a hard disk. The
+    /// three queries below reproduce exactly the same fields — owner gate,
+    /// newest input round and status, newest execution head, change watermark —
+    /// for every requested thread at once.
     fn thread_turn_tails(
         &self,
         u: &str,
         sessions: &[String],
     ) -> Result<HashMap<String, ThreadTurnTail>> {
-        let mut output = HashMap::new();
+        let mut ids: Vec<String> = sessions
+            .iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .take(1000)
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
         let conn = self.connection(None)?;
-        for s in sessions.iter().take(1000) {
-            if self.check(u, s).is_err() {
+        // One shared expression for the durable status of an admission row; it
+        // must stay in step with `Self::turn`, which reads the same columns.
+        const STATUS: &str = "CASE WHEN t.status='aborted' THEN COALESCE(json_extract(t.error_json,'$.status'),a.status,'aborted') \
+             WHEN t.status IN ('completed','failed') THEN t.status ELSE a.status END";
+        let mut output: HashMap<String, ThreadTurnTail> = HashMap::new();
+        for chunk in ids.chunks(150) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            // Ownership gate: the old loop skipped a thread whose recorded
+            // owner was somebody else. A thread with no owner row at all also
+            // produced nothing (its turns are absent), so filtering on a
+            // conflicting owner keeps the visible result identical.
+            let sql = format!(
+                "SELECT thread_id FROM queue.canonical_thread_owners \
+                 WHERE thread_id IN ({placeholders}) AND user_id<>?"
+            );
+            let mut params: Vec<&dyn rusqlite::ToSql> =
+                chunk.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+            params.push(&u);
+            let mut statement = conn.prepare(&sql)?;
+            let mut denied = std::collections::HashSet::new();
+            for row in statement.query_map(rusqlite::params_from_iter(params), |row| {
+                row.get::<_, String>(0)
+            })? {
+                denied.insert(row?);
+            }
+            // `check_owner` also rejects a thread that exists but lost its
+            // owner row; keep that verdict so a corrupt directory cannot leak
+            // through the bulk read.
+            let sql = format!(
+                "SELECT thread_id FROM queue.canonical_thread_owners WHERE thread_id IN ({placeholders})"
+            );
+            let mut statement = conn.prepare(&sql)?;
+            let mut owned = std::collections::HashSet::new();
+            for row in statement.query_map(
+                rusqlite::params_from_iter(chunk.iter().map(|id| id.as_str())),
+                |row| row.get::<_, String>(0),
+            )? {
+                owned.insert(row?);
+            }
+            let orphans: Vec<&String> = chunk
+                .iter()
+                .filter(|id| !owned.contains(*id) && !denied.contains(*id))
+                .collect();
+            if !orphans.is_empty() {
+                let sql = format!(
+                    "SELECT thread_id FROM state.canonical_threads WHERE thread_id IN ({})",
+                    vec!["?"; orphans.len()].join(",")
+                );
+                let mut statement = conn.prepare(&sql)?;
+                for row in statement.query_map(
+                    rusqlite::params_from_iter(orphans.iter().map(|id| id.as_str())),
+                    |row| row.get::<_, String>(0),
+                )? {
+                    denied.insert(row?);
+                }
+            }
+            let readable: Vec<&String> = chunk
+                .iter()
+                .filter(|id| !denied.contains(*id))
+                .collect();
+            if readable.is_empty() {
                 continue;
             }
-            if let Some(turn) = Self::turns(&conn, s, None, None, 1)?.pop() {
-                let rollout = Self::rollout(&conn, s)?;
-                let seq = Self::position(&conn, rollout.as_deref())?;
+            let placeholders = vec!["?"; readable.len()].join(",");
+            // Newest input round per thread, with its durable status and the
+            // change watermark of the same thread's rollout.
+            let sql = format!(
+                "SELECT a.thread_id, a.user_round, {STATUS}, COALESCE(p.next_rollout_ordinal, 0) \
+                 FROM queue.canonical_turn_admissions a \
+                 LEFT JOIN state.canonical_threads d ON d.thread_id=a.thread_id \
+                 LEFT JOIN thread_turns t ON t.rollout_id=d.rollout_id AND t.turn_id=a.turn_id \
+                 LEFT JOIN thread_history_projection_state p ON p.rollout_id=d.rollout_id \
+                 WHERE a.thread_id IN ({placeholders}) AND a.turn_id=a.root_turn_id \
+                   AND a.user_round=(SELECT MAX(b.user_round) FROM queue.canonical_turn_admissions b \
+                                     WHERE b.thread_id=a.thread_id AND b.turn_id=b.root_turn_id)"
+            );
+            let mut statement = conn.prepare(&sql)?;
+            let rows = statement.query_map(
+                rusqlite::params_from_iter(readable.iter().map(|id| id.as_str())),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )?;
+            let mut found = 0usize;
+            for row in rows {
+                let (session, round, status, seq) = row?;
+                found += 1;
                 output.insert(
-                    s.clone(),
+                    session.clone(),
                     ThreadTurnTail {
-                        session_id: s.clone(),
-                        user_round: turn["user_turn_index"].as_i64().unwrap_or(0),
-                        turn_status: turn["status"].as_str().unwrap_or("").into(),
+                        session_id: session,
+                        user_round: round,
+                        turn_status: status,
                         change_seq: seq,
-                        runtime_head: Self::execution_head(&conn, s, seq)?,
                         ..Default::default()
                     },
                 );
+            }
+            if found == 0 {
+                continue;
+            }
+            // Newest execution head per thread: the most recent admission row
+            // of any kind, matching `Self::execution_head`.
+            let sql = format!(
+                "SELECT thread_id, turn_id, status FROM ( \
+                   SELECT a.thread_id AS thread_id, a.turn_id AS turn_id, {STATUS} AS status, \
+                          ROW_NUMBER() OVER (PARTITION BY a.thread_id \
+                                             ORDER BY a.created_at_ms DESC, a.rowid DESC) AS rn \
+                   FROM queue.canonical_turn_admissions a \
+                   LEFT JOIN state.canonical_threads d ON d.thread_id=a.thread_id \
+                   LEFT JOIN thread_turns t ON t.rollout_id=d.rollout_id AND t.turn_id=a.turn_id \
+                   WHERE a.thread_id IN ({placeholders}) \
+                 ) WHERE rn=1"
+            );
+            let mut statement = conn.prepare(&sql)?;
+            let rows = statement.query_map(
+                rusqlite::params_from_iter(readable.iter().map(|id| id.as_str())),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )?;
+            for row in rows {
+                let (session, turn_id, status) = row?;
+                if let Some(tail) = output.get_mut(&session) {
+                    let running = super::thread_view_projection::is_running(&status) != 0;
+                    tail.runtime_head = Some(ThreadExecutionHead {
+                        active_turn_id: if running { turn_id.clone() } else { String::new() },
+                        status_turn_id: turn_id,
+                        runtime_status: status,
+                        epoch: 1,
+                        view_seq: tail.change_seq,
+                    });
+                }
             }
         }
         Ok(output)

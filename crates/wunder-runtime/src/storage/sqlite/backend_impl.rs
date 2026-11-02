@@ -1328,6 +1328,13 @@ impl ChatSessionStore for SqliteStorage {
     fn list_chat_session_agent_ids(&self, user_id: &str) -> Result<Vec<String>> {
         self.list_chat_session_agent_ids_impl(user_id)
     }
+    fn chat_thread_activity(
+        &self,
+        user_id: &str,
+        since: f64,
+    ) -> Result<crate::storage::ChatThreadActivity> {
+        self.chat_thread_activity_impl(user_id, since)
+    }
     fn list_chat_sessions_by_workspace(
         &self,
         user_id: &str,

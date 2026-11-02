@@ -58,6 +58,11 @@ pub(super) trait SqliteChatSessionStorage {
         work_catalog: bool,
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;
     fn list_chat_session_agent_ids_impl(&self, user_id: &str) -> Result<Vec<String>>;
+    fn chat_thread_activity_impl(
+        &self,
+        user_id: &str,
+        since: f64,
+    ) -> Result<crate::storage::ChatThreadActivity>;
     fn update_chat_session_title_impl(
         &self,
         user_id: &str,
@@ -105,7 +110,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
             return Ok(HashMap::new());
         }
         self.ensure_initialized()?;
-        let connection = self.open()?;
+        let connection = self.read_connection()?;
         let mut result = HashMap::new();
         for chunk in session_owners.chunks(100) {
             let values = vec!["(?,?)"; chunk.len()].join(",");
@@ -146,7 +151,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
             return Ok(Vec::new());
         }
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let mut result = Vec::new();
         // Chunk bind parameters to stay within SQLite limits on every distribution.
         for chunk in session_ids.chunks(100) {
@@ -164,7 +169,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
 
     fn upsert_chat_session_impl(&self, record: &ChatSessionRecord) -> Result<()> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let tool_overrides = if record.tool_overrides.is_empty() {
             None
         } else {
@@ -211,7 +216,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
 
     fn insert_chat_session_if_absent_impl(&self, record: &ChatSessionRecord) -> Result<bool> {
         self.ensure_initialized()?;
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let tool_overrides = if record.tool_overrides.is_empty() {
             None
         } else {
@@ -328,7 +333,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
         if cleaned_user.is_empty() || parents.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let placeholders = parents
             .iter()
             .map(|_| "?".to_string())
@@ -369,7 +374,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
         if cleaned_user.is_empty() {
             return Ok((Vec::new(), 0));
         }
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let agent_id = agent_id.map(|value| value.trim());
         let (agent_clause, agent_params) = match agent_id {
             None => ("".to_string(), Vec::new()),
@@ -464,7 +469,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
         if cleaned_user.is_empty() {
             return Ok((Vec::new(), 0));
         }
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let normalized_status = status
             .map(str::trim)
             .map(str::to_lowercase)
@@ -523,7 +528,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
         if cleaned_user.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let mut stmt = conn.prepare(
             "SELECT workspace_id, COUNT(*) FROM chat_sessions \
              WHERE user_id = ? AND (status IS NULL OR status = '' OR status = 'active') \
@@ -550,7 +555,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
         if cleaned_user.is_empty() || !since_at.is_finite() || since_at <= 0.0 {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let mut stmt = conn.prepare(
             "SELECT strftime('%Y-%m-%d', created_at, 'unixepoch', 'localtime'), COUNT(*) \
              FROM chat_sessions \
@@ -600,7 +605,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
         if cleaned_user.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.open()?;
+        let conn = self.read_connection()?;
         let mut stmt = conn.prepare(
             "SELECT DISTINCT agent_id FROM chat_sessions \
                  WHERE user_id = ? AND (status IS NULL OR status = '' OR status = 'active')",
@@ -612,6 +617,36 @@ impl SqliteChatSessionStorage for SqliteStorage {
             agent_ids.push(agent_id);
         }
         Ok(agent_ids)
+    }
+
+    fn chat_thread_activity_impl(
+        &self,
+        user_id: &str,
+        since: f64,
+    ) -> Result<crate::storage::ChatThreadActivity> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok(Default::default());
+        }
+        let conn = self.read_connection()?;
+        // `max(a,b,c)` with several arguments is SQLite's scalar form, so it
+        // stays valid inside the aggregate and reproduces the per-row
+        // expression the caller used to evaluate over the whole result set.
+        let (total, recent, last_active_at): (i64, i64, f64) = conn.query_row(
+            "SELECT COUNT(*), \
+                    COALESCE(SUM(CASE WHEN MAX(last_message_at, updated_at, created_at) >= ?2 THEN 1 ELSE 0 END), 0), \
+                    COALESCE(MAX(CASE WHEN last_message_at > updated_at THEN last_message_at ELSE updated_at END), 0) \
+             FROM chat_sessions \
+             WHERE user_id = ?1 AND (status IS NULL OR status = '' OR status = 'active')",
+            params![cleaned_user, since],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        Ok(crate::storage::ChatThreadActivity {
+            total,
+            recent,
+            last_active_at,
+        })
     }
 
     fn update_chat_session_title_impl(
