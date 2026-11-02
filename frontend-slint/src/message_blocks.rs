@@ -196,6 +196,20 @@ pub fn from_text(text: &str) -> ModelRc<TextBlock> {
     ModelRc::from(blocks.model)
 }
 
+/// The user bubble's local echo: the message text plus one image card per
+/// composer attachment, sourced from its data URL. The durable projection
+/// replaces these cards with the stored paths once the turn publishes.
+pub fn with_image_cards(text: &str, images: &[(String, String)]) -> ModelRc<TextBlock> {
+    let blocks = from_text(text);
+    let Some(model) = blocks.as_any().downcast_ref::<VecModel<TextBlock>>() else {
+        return blocks;
+    };
+    for (name, source) in images {
+        model.push(image_block(name, source));
+    }
+    blocks
+}
+
 /// Classify supported image references without reading the filesystem.
 pub fn workspace_image_source(source: &str) -> Option<&str> {
     let path = source.split(['?', '#']).next()?.trim();
@@ -933,6 +947,23 @@ mod tests {
             blocks[1].image_source,
             "/workspaces/scope/workspace/report.docx"
         );
+    }
+
+    #[test]
+    fn with_image_cards_appends_local_echo_cards_after_the_text() {
+        let model = with_image_cards(
+            "Fixture question",
+            &[("shot.png".into(), "data:image/png;base64,AAAA".into())],
+        );
+        let kinds = (0..model.row_count())
+            .filter_map(|index| model.row_data(index))
+            .map(|block| block.kind)
+            .collect::<Vec<_>>();
+        assert_eq!(kinds.last(), Some(&KIND_IMAGE));
+        let card = model.row_data(model.row_count() - 1).unwrap();
+        assert_eq!(card.text, "shot.png");
+        assert_eq!(card.image_source, "data:image/png;base64,AAAA");
+        assert_eq!(card.image.size().width, 0);
     }
 
     #[test]

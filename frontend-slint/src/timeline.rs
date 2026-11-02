@@ -712,6 +712,16 @@ impl Timeline {
         index
     }
 
+    /// Repaint the live turn's user bubble, e.g. with the composer's local
+    /// attachment cards, until the durable projection takes the row over.
+    pub fn set_user_blocks(&self, index: usize, blocks: ModelRc<TextBlock>) {
+        self.patch(index, |row| {
+            if row.kind == KIND_USER {
+                row.blocks = blocks;
+            }
+        });
+    }
+
     /// Remove a provisional live turn when the backend rejects submission.
     /// Only the current turn can own the provisional suffix. An older send's
     /// failure must never remove a newer submission or a durable replacement.
@@ -797,6 +807,12 @@ impl Timeline {
             let Some(row) = self.model.row_data(index) else {
                 continue;
             };
+            // A body block without text is a round that never printed; it is
+            // not a step and must never occupy a fold entry, or the process
+            // shows a blank row in its place.
+            if row.kind == KIND_BODY && row.text.is_empty() {
+                continue;
+            }
             // A body that was already emitted before a tool call is marked as
             // a process item immediately by `include_active_body_in_process`.
             // Its position is preserved even though it is still `last_body`
@@ -1548,7 +1564,7 @@ impl Timeline {
     /// moment the snapshot carries that bubble. Replacing the whole model
     /// instead is what made a finished answer drop its thinking and tool
     /// entries before the durable rows arrived for them.
-    pub fn publish_history(&mut self, rows: Vec<TimelineRow>) {
+    pub fn publish_history(&mut self, mut rows: Vec<TimelineRow>) {
         let anchor = self
             .turn
             .as_ref()
@@ -1573,7 +1589,10 @@ impl Timeline {
             || (self.settled && self.snapshot_moved_past(rows.as_slice(), start))
         {
             // The snapshot carries this turn's own rows: the live builder is
-            // done with it and its copy goes with them.
+            // done with it and its copy goes with them. The bubble's locally
+            // echoed attachment pixels move to their durable cards first, so
+            // the handoff never flashes the unloaded label.
+            self.carry_user_image_pixels(&mut rows, start);
             self.forget_turn();
             self.replace_rows(rows);
             self.sync_fold_ids();
@@ -1640,9 +1659,81 @@ impl Timeline {
                 self.model.set_row_data(index, row);
             }
         } else {
+            // A full swap would otherwise rebuild every row's block model with
+            // empty images and reparse styling. Rows whose identity and text
+            // survived keep their decoded blocks, so a topology change never
+            // blinks a picture back to its label.
+            let previous: std::collections::HashMap<
+                (slint::SharedString, slint::SharedString),
+                ModelRc<TextBlock>,
+            > = self
+                .model
+                .iter()
+                .filter(|row| row.blocks.row_count() > 0)
+                .map(|row| ((row.id.clone(), row.text.clone()), row.blocks.clone()))
+                .collect();
+            if !previous.is_empty() {
+                for row in rows.iter_mut() {
+                    if row.blocks.row_count() == 0 {
+                        continue;
+                    }
+                    if let Some(blocks) = previous.get(&(row.id.clone(), row.text.clone())) {
+                        row.blocks = blocks.clone();
+                    }
+                }
+            }
             self.model.set_vec(rows);
         }
         self.sync_turn_marks();
+    }
+
+    /// Move the live bubble's already decoded attachment pixels onto the
+    /// durable user row that replaces it. The local echo loads the composer's
+    /// data URLs, so without this transfer the handoff blanked every card
+    /// until the stored paths decoded. The durable twin is the user row with
+    /// a fresh id and the same text; older bubbles keep their ids across
+    /// every refresh, which rules out pairing with a repeated message.
+    fn carry_user_image_pixels(&self, rows: &mut [TimelineRow], start: usize) {
+        let Some(old) = self
+            .model
+            .row_data(start)
+            .filter(|row| row.kind == KIND_USER)
+        else {
+            return;
+        };
+        let pixels: Vec<slint::Image> = old
+            .blocks
+            .iter()
+            .filter(|block| block.kind == crate::message_blocks::KIND_IMAGE)
+            .map(|block| block.image)
+            .collect();
+        if pixels.is_empty() || pixels.iter().all(|image| image.size().width == 0) {
+            return;
+        }
+        let Some(target) = rows.iter().rposition(|row| {
+            row.kind == KIND_USER
+                && row.text == old.text
+                && !self.model.iter().any(|held| held.id == row.id)
+        }) else {
+            return;
+        };
+        let blocks = rows[target].blocks.clone();
+        let mut image_index = 0usize;
+        for index in 0..blocks.row_count() {
+            let Some(mut block) = blocks.row_data(index) else {
+                continue;
+            };
+            if block.kind != crate::message_blocks::KIND_IMAGE {
+                continue;
+            }
+            if let Some(image) = pixels.get(image_index) {
+                if image.size().width > 0 {
+                    block.image = image.clone();
+                }
+            }
+            image_index += 1;
+            blocks.set_row_data(index, block);
+        }
     }
 
     /// Whether the snapshot's tail is no longer the durable tail the model
@@ -2286,6 +2377,35 @@ mod tests {
         );
         timeline.finish(Settle::Failed);
         assert_eq!(children.row_data(1).unwrap().status_kind, STATUS_FAILED);
+    }
+
+    #[test]
+    fn empty_body_block_is_never_a_process_step() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-empty", "Fixture input");
+        timeline.append_reasoning("Fixture thought").unwrap();
+        // A round that never prints can still leave its opened block behind;
+        // the fold must skip it instead of showing a blank entry.
+        timeline.start_body(1);
+        timeline.upsert_tool(&NativeWorkflowEntry::from_payload(
+            "fixture-empty-tool",
+            "read_file",
+            "Fixture result".into(),
+            "completed",
+            &serde_json::json!({"args":{"path":"sample.txt"}}),
+        ));
+        timeline.start_body(2);
+        timeline.append_body("Fixture answer").unwrap();
+        timeline.flush();
+        timeline.finish(Settle::Done);
+        let bar = timeline.model.row_data(timeline.process_bar).unwrap();
+        assert!(
+            bar.process_entries
+                .iter()
+                .all(|entry| entry.kind != KIND_BODY || !entry.text.is_empty()),
+            "an empty block is not a fold entry"
+        );
+        assert_eq!(bar.text, crate::timeline_text::process_label(2));
     }
 
     #[test]
@@ -3020,6 +3140,63 @@ mod tests {
                 .filter(|row| row.group_idx == group)
                 .all(|row| row.group_open),
             "reopening restores the batch"
+        );
+    }
+
+    #[test]
+    fn durable_handoff_keeps_the_live_bubbles_decoded_attachment_pixels() {
+        use slint::Model;
+        let pixels = slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(
+            &[255, 0, 0, 255],
+            1,
+            1,
+        ));
+        let mut timeline = Timeline::new();
+        let row = timeline.begin_turn("fixture-client", "Fixture input");
+        let echo = crate::message_blocks::with_image_cards(
+            "Fixture input",
+            &[("shot.png".into(), "data:image/png;base64,AAAA".into())],
+        );
+        // The composer echo decodes the data URL into the card; emulate the
+        // loaded state the handoff must preserve.
+        let held = echo.as_any().downcast_ref::<VecModel<TextBlock>>().unwrap();
+        let mut card = held.row_data(held.row_count() - 1).unwrap();
+        card.image = pixels.clone();
+        held.set_row_data(held.row_count() - 1, card);
+        timeline.set_user_blocks(row, echo);
+        timeline.finish(Settle::Done);
+
+        // The settled snapshot carries the same message under its durable id
+        // and its attachment card waits on the stored path's decode.
+        let mut durable_user = blank(KIND_USER, "user-turn-fixture-root".into());
+        durable_user.text = "Fixture input".into();
+        durable_user.blocks = crate::message_blocks::with_image_cards(
+            "Fixture input",
+            &[(
+                "shot.png".into(),
+                "workspaces/fixture/chat_attachments/shot.png".into(),
+            )],
+        );
+        timeline.publish_history(vec![durable_user]);
+
+        let model = timeline.model();
+        let bubble = model
+            .iter()
+            .find(|row| row.id == "user-turn-fixture-root")
+            .expect("durable bubble published");
+        let card = bubble
+            .blocks
+            .iter()
+            .find(|block| block.kind == crate::message_blocks::KIND_IMAGE)
+            .expect("attachment card");
+        assert_eq!(
+            card.image.size().width,
+            1,
+            "the handoff keeps the decoded pixels instead of blanking the card"
+        );
+        assert_eq!(
+            card.image_source, "workspaces/fixture/chat_attachments/shot.png",
+            "the durable card keeps its own stored source"
         );
     }
 }

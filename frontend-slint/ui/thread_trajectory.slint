@@ -465,8 +465,14 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                             root.press-start = root.view-start;
                         }
                         if event.kind == PointerEventKind.up { root.timeline-pressed = false; }
+                        // `moved` 只在按住拖拽时触发；悬停需走 move 分支，才能在
+                        // 空白间隙里持续更新十字线与最近记录提示。
+                        if event.kind == PointerEventKind.move {
+                            root.handle-track-move(self.mouse-x);
+                            root.hover-mx = self.mouse-x;
+                            root.hover-my = 20px + self.mouse-y;
+                        }
                     }
-                    moved => { root.handle-track-move(self.mouse-x); }
                     changed has-hover => {
                         if self.has-hover {
                             root.track-hovered = true;
@@ -509,12 +515,14 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                 root.press-start = root.view-start;
                             }
                             if event.kind == PointerEventKind.up { root.timeline-pressed = false; }
-                        }
-                        moved => {
-                            root.handle-track-move(sp.x + self.mouse-x);
-                            root.hover-span(span.index);
-                            root.hover-mx = sp.x + self.mouse-x;
-                            root.hover-my = 20px + sp.y + self.mouse-y;
+                            // Slint 的 `moved` 只在按住拖拽时触发，纯悬停不会调用，
+                            // 悬停提示与十字线因此必须走 pointer-event 的 move 分支。
+                            if event.kind == PointerEventKind.move {
+                                root.handle-track-move(sp.x + self.mouse-x);
+                                root.hover-span(span.index);
+                                root.hover-mx = sp.x + self.mouse-x;
+                                root.hover-my = 20px + sp.y + self.mouse-y;
+                            }
                         }
                         clicked => {
                             if !root.drag-moved && !root.press-pan {
@@ -522,9 +530,9 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                 else { root.select-span(span.index); }
                             }
                         }
-                        changed has-hover => {
-                            if !self.has-hover { root.track-hovered = false; root.leave-span(); }
-                        }
+                        // 提示清除统一交给整条轨道（track-touch）处理：相邻 span
+                        // 之间移动时旧 span 会收到 Exit，若在此清理会把新 span
+                        // 刚设好的提示一起清掉，因此这里不再做 leave 处理。
                     scroll-event(event) => {
                             root.zoom(event.delta-y < 0px ? 0.8 : 1.25, (sp.x + self.mouse-x) / track.width);
                             return accept;
@@ -633,10 +641,14 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                             }
                             bar-touch := TouchArea {
                                 mouse-cursor: bar.index >= 0 ? pointer : default;
-                                moved => {
-                                    root.bar-hover = i;
-                                    root.bar-tip-x = 48px + bar-cell.x + self.mouse-x;
-                                    root.bar-tip-y = 114px + self.mouse-y;
+                                pointer-event(event) => {
+                                    // 同 track：悬停不会触发 `moved`，须用 move 事件，
+                                    // 否则柱子悬停时不会有任何提示。
+                                    if event.kind == PointerEventKind.move {
+                                        root.bar-hover = i;
+                                        root.bar-tip-x = 48px + bar-cell.x + self.mouse-x;
+                                        root.bar-tip-y = 114px + self.mouse-y;
+                                    }
                                 }
                                 changed has-hover => {
                                     if !self.has-hover && root.bar-hover == i { root.bar-hover = -1; }

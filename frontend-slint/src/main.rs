@@ -470,6 +470,20 @@ fn install_first_frame_probe(boot: std::time::Instant) {
     });
 }
 
+/// Workbench floor and the size it opens at, in logical pixels.
+///
+/// `MIN_WINDOW_*` must stay equal to `Theme.min-window-width/height`
+/// (design_tokens.slint): Slint's `min-width` is only advisory to the
+/// platform, winit enforces the real floor through `with_min_inner_size`, and
+/// the fit below clamps against the same pair. `OPEN_WINDOW_MAX_*` is the
+/// ceiling of the automatic open size: the first frame should read as a small
+/// workbench, so a large monitor never gets a canvas-sized window. Both are
+/// ceilings, not requests — the user can still drag the window wider.
+const MIN_WINDOW_W: f64 = 880.0;
+const MIN_WINDOW_H: f64 = 700.0;
+const OPEN_WINDOW_MAX_W: f64 = 960.0;
+const OPEN_WINDOW_MAX_H: f64 = 780.0;
+
 /// Fit the workbench to a compact size and center it on the active monitor.
 ///
 /// Slint creates the window before the monitor work area is known, and some
@@ -518,10 +532,10 @@ fn fit_and_center_main_window(app: &MainWindow) {
                             if area_w <= 0 || area_h <= 0 {
                                 return false;
                             }
-                            let min_w = (1024.0 * scale).round() as i32;
-                            let min_h = (700.0 * scale).round() as i32;
-                            let max_w = (1280.0 * scale).round() as i32;
-                            let max_h = (820.0 * scale).round() as i32;
+                            let min_w = (MIN_WINDOW_W * scale).round() as i32;
+                            let min_h = (MIN_WINDOW_H * scale).round() as i32;
+                            let max_w = (OPEN_WINDOW_MAX_W * scale).round() as i32;
+                            let max_h = (OPEN_WINDOW_MAX_H * scale).round() as i32;
                             let target_w = ((area_w as f64 * 0.8).round() as i32)
                                 .min(max_w)
                                 .max(min_w)
@@ -662,7 +676,10 @@ fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
                 let frameless =
                     frameless_first_window.swap(false, std::sync::atomic::Ordering::AcqRel);
                 let attributes = attributes
-                    .with_min_inner_size(winit::dpi::LogicalSize::new(1024.0, 700.0))
+                    .with_min_inner_size(winit::dpi::LogicalSize::new(
+                        MIN_WINDOW_W,
+                        MIN_WINDOW_H,
+                    ))
                     .with_title("蛹")
                     .with_decorations(!frameless)
                     // A frameless window owns its caption buttons in client

@@ -72,7 +72,8 @@ pub(super) fn project(tool: &str, payload: &Value, state: &str, fallback: &str) 
     let mut sections = structured::project(tool, data, args);
     if !sections.is_empty() {
         // Structured groups already preserve the tool's readable result.
-    } else if tool == "apply_patch" || tool.contains("应用补丁") {
+    } else if tool == "apply_patch" || tool.contains("应用补丁") || super::patch::is_edit_tool(tool)
+    {
         // The structured patch cards are projected once in the shared module;
         // this view renders the same files as readable sections.
         for file in super::patch::project(tool, payload, args).iter().take(8) {

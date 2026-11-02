@@ -1,3 +1,4 @@
+# AI生成
 # -*- coding: utf-8 -*-
 # Settings page (general / runtime / LAN / models / prompts / diagnostics / help)
 # and files page.
@@ -230,13 +231,13 @@ ENTRIES = [
     ("st_help_open", "打开帮助手册", "Open help"),
     # ---- software updates (general tab; cloud-channel distribution) ----
     ("st_upd_title", "软件更新", "Software updates"),
-    ("st_upd_subtitle", "选择更新源，手动检测并更新蛹本体、舵机与补充包", "Pick a source, then check and update the desktop app, the CLI and the supplement pack"),
+    ("st_upd_subtitle", "选择更新源，一键检测并更新全部有新版本的组件（蛹本体、舵机与补充包）", "Pick a source, then check and update every component that has a newer version (the desktop app, the CLI and the supplement pack)"),
     ("st_upd_current", "当前版本", "Current version"),
     ("st_upd_check", "检查更新", "Check for updates"),
     ("st_upd_checking", "正在检查更新…", "Checking for updates…"),
     ("st_upd_up_to_date", "已是最新版本", "Up to date"),
     ("st_upd_available_prefix", "发现新版本：", "New version available: "),
-    ("st_upd_download", "下载更新", "Download update"),
+    ("st_upd_update", "更新", "Update"),
     ("st_upd_downloading", "正在下载更新…", "Downloading update…"),
     ("st_upd_staged", "新版本已下载完成，重启应用后生效", "Update downloaded; restart the app to apply"),
     ("st_upd_restart", "重启并更新", "Restart to update"),
@@ -248,13 +249,6 @@ ENTRIES = [
     ("st_upd_source_github", "GitHub", "GitHub"),
     ("st_upd_failed_prefix", "更新失败：", "Update failed: "),
     ("st_upd_mandatory_note", "此版本为重要更新", "This is a mandatory update"),
-    ("st_upd_target", "更新对象", "Update target"),
-    ("st_upd_target_note", "每个对象独立检测、下载与应用", "Check, download and apply each target on its own"),
-    ("st_upd_target_desktop", "蛹本体", "Desktop app"),
-    ("st_upd_target_cli", "舵机", "CLI"),
-    ("st_upd_target_supplement", "补充包", "Supplement pack"),
-    ("st_upd_apply", "应用更新", "Apply update"),
-    ("st_upd_import", "下载并导入", "Download and import"),
     ("st_upd_applied", "更新完成，已立即生效", "Update applied"),
     ("st_upd_staged_cli", "新版本已下载完成，应用后生效", "Update downloaded; apply it to take effect"),
     ("st_upd_staged_supplement", "新补充包已下载完成，导入后生效", "Supplement downloaded; import it to take effect"),

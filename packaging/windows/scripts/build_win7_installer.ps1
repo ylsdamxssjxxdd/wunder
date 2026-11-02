@@ -399,6 +399,7 @@ Copy-Item -LiteralPath (Join-Path $installerRoot "wunder.iss") -Destination (Joi
 Copy-Item -LiteralPath (Join-Path $installerRoot "ChineseSimplified.isl") -Destination (Join-Path $stageRoot "ChineseSimplified.isl") -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "images\pupa.ico") -Destination (Join-Path $stageRoot "pupa.ico") -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "images\pupa.png") -Destination (Join-Path $stageRoot "pupa.png") -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "images\wizard-banner.png") -Destination (Join-Path $stageRoot "wizard-banner.png") -Force
 
 $isccPath = Ensure-Iscc $Iscc (-not $NoDownload)
 Write-Host "[wunder-pack] Inno Setup compiler: $isccPath"

@@ -2140,6 +2140,15 @@ fn format_started_at(ms: f64) -> String {
         .unwrap_or_default()
 }
 
+/// HH:MM:SS.mmm（本地时区），与蜂巢 formatClock 对齐，用于轨迹悬停提示。
+fn format_clock(ms: f64) -> String {
+    Local
+        .timestamp_millis_opt(ms.round() as i64)
+        .single()
+        .map(|time| time.format("%H:%M:%S%.3f").to_string())
+        .unwrap_or_default()
+}
+
 /// 时间轴刻度标签：从时间线起点计的偏移。
 fn format_offset(ms: f64) -> String {
     let abs = ms.abs();
@@ -2996,7 +3005,29 @@ fn tooltip_for(model: &SnapshotModel, texts: &Texts, record_index: i32) -> Strin
         lines.push(texts.request_label(number));
     }
     lines.push(texts.kind(cell.kind).to_string());
+    // 与蜂巢一致：先给该记录的墙钟区间（本地时区）。
+    if let (Some(start), Some(seconds)) = (cell.started_at, cell.time_seconds) {
+        lines.push(format!(
+            "{} → {}",
+            format_clock(start),
+            format_clock(start + seconds * 1000.0)
+        ));
+    }
     lines.push(texts.seconds(cell.time_seconds));
+    // 与蜂巢一致：存在指标时补充首字延迟与解码耗时。
+    if let Some(metrics) = &cell.metrics {
+        if let (Some(step_start), Some(first_token), Some(completed)) =
+            (metrics.step_start, metrics.first_token, metrics.completed)
+        {
+            lines.push(format!(
+                "{} {} · {} {}",
+                label(zh, "首字", "ttft"),
+                texts.millis((first_token - step_start).max(0.0)),
+                label(zh, "解码", "decode"),
+                texts.millis((completed - first_token).max(0.0))
+            ));
+        }
+    }
     if let Some(usage) = cell.usage {
         if let Some(output) = usage.output {
             lines.push(format!(

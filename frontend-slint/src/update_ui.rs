@@ -24,7 +24,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
 
     let weak = app.as_weak();
     let check_api = api.clone();
-    app.on_check_updates(move |source, target| {
+    app.on_check_updates(move |source| {
         let Some(app) = weak.upgrade() else { return };
         let phase = app.get_update_phase().to_string();
         if matches!(phase.as_str(), "checking" | "downloading" | "applying") {
@@ -34,9 +34,8 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let api = check_api.clone();
         let weak = weak.clone();
         let source = source.trim().to_string();
-        let target = target.trim().to_string();
         crate::native_pages::run_background(move || {
-            let result = api.update_check(&source, &target);
+            let result = api.update_check_auto(&source);
             let _ = weak.upgrade_in_event_loop(move |app| {
                 if let Err(error) = result {
                     // The state machine already recorded in-flight failures;
@@ -55,48 +54,26 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     });
 
     let weak = app.as_weak();
-    let download_api = api.clone();
-    app.on_download_update(move || {
-        let Some(app) = weak.upgrade() else { return };
-        if app.get_update_phase() != "available" {
-            return;
-        }
-        start_polling(&app, &download_api);
-        let api = download_api.clone();
-        let weak = weak.clone();
-        crate::native_pages::run_background(move || {
-            let result = api.update_download();
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                match result {
-                    Ok(()) => app.set_status("更新包下载完成".into()),
-                    Err(error) => app.set_status(format!("更新下载失败：{error}").into()),
-                }
-                let view = api.update_view();
-                project(&app, &view);
-                if !is_active(&view.phase) {
-                    POLL_TIMER.with(|timer| timer.stop());
-                }
-            });
-        });
-    });
-
-    let weak = app.as_weak();
-    let apply_api = api.clone();
-    app.on_apply_update(move || {
+    let run_api = api.clone();
+    app.on_run_update(move || {
         let Some(app) = weak.upgrade() else { return };
         let phase = app.get_update_phase().to_string();
-        if !matches!(phase.as_str(), "staged" | "failed") {
+        if matches!(phase.as_str(), "checking" | "downloading" | "applying") {
             return;
         }
-        start_polling(&app, &apply_api);
-        let api = apply_api.clone();
+        start_polling(&app, &run_api);
+        let api = run_api.clone();
         let weak = weak.clone();
+        let source = app.get_update_source().to_string();
         crate::native_pages::run_background(move || {
-            let result = api.update_apply();
+            let result = api.update_run(&source);
             let _ = weak.upgrade_in_event_loop(move |app| {
+                let view = api.update_view();
+                project(&app, &view);
+                POLL_TIMER.with(|timer| timer.stop());
                 match result {
                     Ok(()) => {
-                        if app.get_update_target() == TARGET_DESKTOP {
+                        if view.target == TARGET_DESKTOP && view.phase == "applying" {
                             app.set_status("更新已应用，正在重启…".into());
                             // The replacement binary is already running with the
                             // handover flag; terminate is the only reliable
@@ -104,19 +81,13 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                             // shutdown.rs).
                             crate::shutdown::request_exit();
                         } else {
-                            // CLI and supplement targets finish in place; the
-                            // state machine already recorded the summary.
+                            // The remaining targets finished in place; the state
+                            // machine already recorded the summary.
                             app.set_status("更新完成".into());
-                            let view = api.update_view();
-                            project(&app, &view);
-                            POLL_TIMER.with(|timer| timer.stop());
                         }
                     }
                     Err(error) => {
-                        app.set_status(format!("应用更新失败：{error}").into());
-                        let view = api.update_view();
-                        project(&app, &view);
-                        POLL_TIMER.with(|timer| timer.stop());
+                        app.set_status(format!("更新失败：{error}").into());
                     }
                 }
             });

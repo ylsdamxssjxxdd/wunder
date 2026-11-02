@@ -265,7 +265,7 @@ pub(crate) fn new_model_card(key: String) -> ModelCard {
         history_compaction_ratio: "0.9".into(),
         reasoning_effort: "".into(),
         simulation_speed: "fast".into(),
-        support_vision: false,
+        support_vision: true,
         support_hearing: false,
         stream_include_usage: true,
         tool_call_mode: "function_call".into(),
@@ -448,7 +448,7 @@ mod tests {
         assert_eq!(card.video_seconds.as_str(), "4");
         assert_eq!(card.video_fps.as_str(), "24");
         assert!(card.stream_include_usage);
-        assert!(!card.support_vision);
+        assert!(card.support_vision);
         assert!(!card.support_hearing);
     }
 }

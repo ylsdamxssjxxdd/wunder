@@ -62,6 +62,11 @@ fn bind_model_probes(app: &MainWindow, api: Arc<NativeDesktop>) {
             };
             let _ = weak.upgrade_in_event_loop(move |app| match result {
                 Ok(outcome) => {
+                    // 探测成功时把上下文长度直接写回编辑草稿，免得用户再手动抄写；
+                    // 对已存在的模型，写入草稿会触发 model-edited 自动保存，从而落库。
+                    if let Some(value) = outcome.max_context {
+                        app.set_model_max_context_draft(value.to_string().into());
+                    }
                     app.set_status(outcome.message.clone().into());
                     show_toast(&app, outcome.message, 1);
                 }

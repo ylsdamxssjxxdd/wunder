@@ -188,11 +188,12 @@ export component MainWindow inherits Window {
         : I18n.app_window_title + " · " + I18n.wm_status_idle;
     // Open as a compact workbench centered on the active monitor. The native
     // bootstrap fits it to the monitor work area after mapping and keeps the
-    // chrome maximize button available.
+    // chrome maximize button available. The preferred size is already the
+    // compact target, so the first frame does not have to shrink into place.
     maximized: false;
     no-frame: true;
     resize-border-width: 6px;
-    preferred-width: 1180px; preferred-height: 740px;
+    preferred-width: 960px; preferred-height: 780px;
     min-width: Theme.min-window-width; min-height: Theme.min-window-height;
     default-font-family: "Microsoft YaHei"; default-font-size: Theme.font-md;
     icon: @image-url("../assets/app-icon.png");
@@ -631,7 +632,8 @@ export component MainWindow inherits Window {
     // them into the settings card and relays the one-shot requests back.
     in-out property <string> update-current-version;
     in-out property <string> update-source: "cloud";
-    // Update target: `desktop` | `cli` | `supplement`; a session-level choice.
+    // Current target the native auto-check settled on (`desktop` | `cli` |
+    // `supplement`); the reader no longer picks it.
     in-out property <string> update-target: "desktop";
     in-out property <string> update-local-version;
     in-out property <string> update-phase: "idle";
@@ -641,9 +643,8 @@ export component MainWindow inherits Window {
     in-out property <string> update-error;
     in-out property <float> update-progress: 0;
     in-out property <string> update-progress-text;
-    callback check-updates(string, string);
-    callback download-update();
-    callback apply-update();
+    callback check-updates(string);
+    callback run-update();
     callback cloud-toggle-sharing(bool, bool);
     in-out property <bool> cloud-expired: false;
     in-out property <string> cloud-username;
@@ -1577,9 +1578,8 @@ export component MainWindow inherits Window {
         update-error <=> root.update-error;
         update-progress <=> root.update-progress;
         update-progress-text <=> root.update-progress-text;
-        check-updates(source, target) => { root.check-updates(source, target); }
-        download-update => { root.download-update(); }
-        apply-update => { root.apply-update(); }
+        check-updates(source) => { root.check-updates(source); }
+        run-update => { root.run-update(); }
         open-wunder-model => { root.open-wunder-model(); }
         cloud-toggle-sync(enabled) => { root.cloud-toggle-sync(enabled); }
         model-creating <=> root.model-creating;

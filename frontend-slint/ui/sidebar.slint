@@ -310,25 +310,23 @@ component GroupHeaderRow inherits DragRow {
         padding-right: 32px;
         spacing: SidebarMetrics.icon-gap;
         Rectangle {
-            y: (parent.height - SidebarMetrics.icon-tile) / 2;
-            width: SidebarMetrics.icon-tile; height: SidebarMetrics.icon-tile;
-            border-radius: Theme.radius-tag;
-            // No separate chevron: the glyph itself is the fold switch.
-            // Expanded = solid workspace colour, the threads below are open;
-            // collapsed = hollow (muted) glyph. The cloud row keeps the
-            // accent tint instead of a workspace colour.
-            background: data.kind == 2
-                ? (data.expanded ? Theme.accent.transparentize(0.87) : Theme.hover)
-                : (data.expanded ? WorkspaceVisual.color(data.color).transparentize(0.87) : Theme.hover);
+            y: (parent.height - SidebarMetrics.leading-icon) / 2;
+            width: SidebarMetrics.leading-icon; height: SidebarMetrics.leading-icon;
+            // 不再垫 20px 圆角底板：底板比字形大一圈，24 网格的描边图标本身
+            // 还自带留白，两者叠起来就成了「小图标装在大框里」。展开/收起
+            // 的状态改由字形颜色承担——展开是工作区本色，收起是灰。
             Image {
-                x: (parent.width - SidebarMetrics.icon-glyph) / 2;
-                y: (parent.height - SidebarMetrics.icon-glyph) / 2;
-                width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
+                width: parent.width; height: parent.height;
                 source: data.kind == 2 ? WorkspaceVisual.icon("cloud") : WorkspaceVisual.icon(data.icon);
                 image-fit: contain;
                 colorize: data.kind == 2
                     ? (data.expanded ? Theme.accent-ink : Theme.muted)
-                    : (data.expanded ? WorkspaceVisual.color(data.color) : Theme.muted);
+                    // 底色去掉后，展开与否只剩字形颜色这一条线索：有颜色的
+                    // 工作区用本色，收起用灰；没选颜色的工作区本色就是灰，
+                    // 会和收起重样，所以展开时抬到正文色。
+                    : !data.expanded ? Theme.muted
+                    : data.color == "" || data.color == "gray" ? Theme.text-secondary
+                    : WorkspaceVisual.color(data.color);
             }
         }
         Text {
@@ -555,15 +553,14 @@ export component Sidebar inherits Rectangle {
                     padding-right: SidebarMetrics.row-padding;
                     spacing: SidebarMetrics.icon-gap;
                     Rectangle {
-                        y: (parent.height - SidebarMetrics.icon-tile) / 2;
-                        width: SidebarMetrics.icon-tile; height: SidebarMetrics.icon-tile;
-                        border-radius: Theme.radius-tag;
-                        background: Theme.border;
+                        y: (parent.height - SidebarMetrics.leading-icon) / 2;
+                        width: SidebarMetrics.leading-icon; height: SidebarMetrics.leading-icon;
+                        // 与工作区行同一套解剖：图标直接落在侧栏底色上，
+                        // 不套灰底方块（原来的 Theme.border 底板让字形显小）。
                         Image {
-                            x: (parent.width - SidebarMetrics.icon-glyph) / 2;
-                            y: (parent.height - SidebarMetrics.icon-glyph) / 2;
-                            width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
+                            width: parent.width; height: parent.height;
                             source: WorkspaceVisual.icon(root.cloud-active ? "cloud" : "monitor");
+                            image-fit: contain;
                             colorize: root.cloud-active ? Theme.accent-ink : Theme.muted;
                         }
                     }
@@ -1077,9 +1074,10 @@ export component Sidebar inherits Rectangle {
                     padding-left: SidebarMetrics.row-padding; padding-right: SidebarMetrics.row-padding;
                     spacing: SidebarMetrics.icon-gap;
                     Image {
-                        y: (parent.height - SidebarMetrics.icon-glyph) / 2;
-                        width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
+                        y: (parent.height - SidebarMetrics.leading-icon) / 2;
+                        width: SidebarMetrics.leading-icon; height: SidebarMetrics.leading-icon;
                         source: WorkspaceVisual.icon("monitor");
+                        image-fit: contain;
                         colorize: root.local-workspace-count > 0 ? Theme.muted : Theme.border-strong;
                     }
                     Text {
@@ -1125,9 +1123,10 @@ export component Sidebar inherits Rectangle {
                     padding-left: SidebarMetrics.row-padding; padding-right: SidebarMetrics.row-padding;
                     spacing: SidebarMetrics.icon-gap;
                     Image {
-                        y: (parent.height - SidebarMetrics.icon-glyph) / 2;
-                        width: SidebarMetrics.icon-glyph; height: SidebarMetrics.icon-glyph;
+                        y: (parent.height - SidebarMetrics.leading-icon) / 2;
+                        width: SidebarMetrics.leading-icon; height: SidebarMetrics.leading-icon;
                         source: WorkspaceVisual.icon("cloud");
+                        image-fit: contain;
                         colorize: Theme.accent-ink;
                     }
                     Text {
