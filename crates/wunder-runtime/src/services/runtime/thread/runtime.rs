@@ -377,6 +377,11 @@ impl ThreadRuntime {
         } else {
             None
         };
+        // An inquiry answer releases the thread from its waiting state. The
+        // monitor still reports `waiting` for the unanswered panel, but that is
+        // not a busy thread: no session lock is held, and queueing the answer
+        // would delay the very turn the user just supplied.
+        let inquiry_answer = inquiry_turn_id.is_some();
         let input = json!({
             "role": "user", "content": request.question,
             "client_message_id": request.client_message_id, "attachments": request.attachments,
@@ -438,7 +443,7 @@ impl ThreadRuntime {
                 // point of view: it owns a fresh turn before any execution
                 // may start, and can never be attached to the active turn.
                 if force_runtime_queue
-                    || self.should_queue(&user_id, Some(session_id)).await
+                    || self.should_queue(&user_id, Some(session_id), inquiry_answer).await
                     || self.count_all_pending_tasks().await > 0
                     || self.orchestrator.scheduling.suspended_count() > 0
                 {
@@ -961,7 +966,12 @@ impl ThreadRuntime {
         create_task_session_id_with(&self.user_store, user_id, agent_id)
     }
 
-    async fn should_queue(&self, user_id: &str, session_id: Option<&str>) -> bool {
+    async fn should_queue(
+        &self,
+        user_id: &str,
+        session_id: Option<&str>,
+        allow_waiting: bool,
+    ) -> bool {
         let Some(session_id) = session_id else {
             return false;
         };
@@ -970,7 +980,7 @@ impl ThreadRuntime {
             return false;
         }
         !self
-            .is_session_available_for_submit(user_id, session_id)
+            .session_available_for_submit(user_id, session_id, allow_waiting)
             .await
     }
 
@@ -1342,6 +1352,19 @@ impl ThreadRuntime {
     }
 
     pub async fn is_session_available_for_submit(&self, user_id: &str, session_id: &str) -> bool {
+        self.session_available_for_submit(user_id, session_id, false)
+            .await
+    }
+
+    /// `allow_waiting` lets the caller treat a `waiting` monitor row as idle.
+    /// An inquiry answer is that user action: the session holds no execution
+    /// lock, so the answer must run instead of waiting behind a queue slot.
+    async fn session_available_for_submit(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        allow_waiting: bool,
+    ) -> bool {
         let cleaned_user = user_id.trim();
         let cleaned_session = session_id.trim();
         if cleaned_user.is_empty() || cleaned_session.is_empty() {
@@ -1359,7 +1382,7 @@ impl ThreadRuntime {
             let status = record.get("status").and_then(Value::as_str).unwrap_or("");
             // queued/waiting 合法地不持有会话锁，仍按监控记录判忙。
             if status == crate::monitor::MonitorState::STATUS_QUEUED
-                || status == crate::monitor::MonitorState::STATUS_WAITING
+                || (!allow_waiting && status == crate::monitor::MonitorState::STATUS_WAITING)
             {
                 return false;
             }
@@ -2970,5 +2993,19 @@ mod tests {
         state.storage.force_release_session_lock(session).unwrap();
         assert!(runtime.is_session_available_for_submit(user, session).await);
         assert!(runtime.is_session_idle(user, session).await);
+        // 问询面板把线程标成 waiting，但执行锁已经释放。普通后台提交仍按忙
+        // 处理；带解答标记的提交必须视为空闲，否则用户刚给出的回答会先进入
+        // 持久队列，首字延迟至少一个轮询周期。
+        state
+            .monitor
+            .register(session, user, "fixture-agent", "", false);
+        state.monitor.mark_question_panel(session);
+        assert!(!runtime.is_session_available_for_submit(user, session).await);
+        assert!(
+            runtime
+                .session_available_for_submit(user, session, true)
+                .await,
+            "等待回答的线程没有执行锁，解答必须可以直接开始"
+        );
     }
 }

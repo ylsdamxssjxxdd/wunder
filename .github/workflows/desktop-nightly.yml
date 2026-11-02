@@ -441,10 +441,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-linux-${{ matrix.arch }}
-          path: |
-            release-assets/wunder-slint-*-linux-${{ matrix.arch }}.tar.gz
-            release-assets/wunder-*.portable
-            release-assets/wunder-*.run
+          # Only the published program: the AppDir tar.gz is a packager input
+          # and the .run installer ships through installer-linux-<arch>.
+          path: release-assets/wunder-*.portable
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@v4
@@ -480,12 +479,24 @@ jobs:
           set -euo pipefail
           mapfile -t desktops < <(find desktop-assets -type f -maxdepth 2 | sort)
           mapfile -t installers < <(find installer-assets -type f -maxdepth 2 | sort)
+          # List before asserting: a bare exit 1 cannot say which form drifted.
+          printf 'desktop programs (%d):\n' "${#desktops[@]}"
+          printf '%s\n' "${desktops[@]}"
+          printf 'installers (%d):\n' "${#installers[@]}"
+          printf '%s\n' "${installers[@]}"
+          # 3+3 = one Windows program and setup, plus the portable and the .run
+          # for each Linux arch. Pin every slot by name, not just the totals, so
+          # an extra or missing form fails with the slot it belongs to.
           test "${#desktops[@]}" -eq 3
           test "${#installers[@]}" -eq 3
-          printf 'desktop programs:\n'
-          printf '%s\n' "${desktops[@]}"
-          printf 'installers:\n'
-          printf '%s\n' "${installers[@]}"
+          mapfile -t win_desktop < <(find desktop-assets -maxdepth 1 -type f -name 'wunder-frontend-slint-*-win7-x86.exe')
+          mapfile -t portables < <(find desktop-assets -maxdepth 1 -type f -name 'wunder-*.portable')
+          mapfile -t win_setup < <(find installer-assets -maxdepth 1 -type f -name 'wunder-*-win7-x86-setup.exe')
+          mapfile -t linux_runs < <(find installer-assets -maxdepth 1 -type f -name 'wunder-*.run')
+          test "${#win_desktop[@]}" -eq 1
+          test "${#portables[@]}" -eq 2
+          test "${#win_setup[@]}" -eq 1
+          test "${#linux_runs[@]}" -eq 2
       - name: Reset nightly release
         shell: bash
         env:

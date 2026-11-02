@@ -1,5 +1,5 @@
 import { I18n } from "i18n.slint";
-import { Theme, ChatAttachment, CommandTask, ModelCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall } from "theme.slint";
+import { Theme, ChatAttachment, CommandTask, SubagentItem, ModelCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall } from "theme.slint";
 import { Action } from "components.slint";
 import { HostHud } from "host_hud.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
@@ -1379,6 +1379,10 @@ export component Composer inherits Rectangle {
     in property <int> running-task-count: 0;
     callback toggle-task(string);
     callback terminate-task(string);
+    in property <[SubagentItem]> subagent-items: [];
+    in property <int> subagent-count: 0;
+    callback open-subagent(string);
+    callback stop-subagent(string);
     // §8.4 permission mode: a plain preference string, reported by the runtime
     // sheet; enforcement itself stays in the backend.
     // §8.4 permission mode, named after the runtime's `approval_mode` values
@@ -1902,6 +1906,13 @@ export component Composer inherits Rectangle {
                         ? I18n.hud_tasks_hint(root.running-task-count) : I18n.hud_tasks_empty;
                     toggle-task(id) => { root.toggle-task(id); }
                     terminate-task(id) => { root.terminate-task(id); }
+                    subagent-items: root.subagent-items;
+                    subagent-count: root.subagent-count;
+                    subagent-hidden: max(root.subagent-count - root.subagent-items.length, 0);
+                    subagent-hint: root.subagent-count > 0
+                        ? I18n.hud_subagents_hint(root.subagent-count) : I18n.hud_subagents_empty;
+                    open-subagent(id) => { root.open-subagent(id); }
+                    stop-subagent(id) => { root.stop-subagent(id); }
                 }
             }
             // Slack absorber, not decoration: without one stretchable item the

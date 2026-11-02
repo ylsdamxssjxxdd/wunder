@@ -515,7 +515,17 @@ export const applyChatThreadServerEvent = (
   if (CONTROL_EVENT.test(eventType)||eventType==='final'||eventType==='transport_final') return false;
   // An uncommitted window entry must not shadow the durable transcript either:
   // the frames below are the only producer of it until the page commits.
-  if(threadViewCommitted(key))return true;
+  if (threadViewCommitted(key)) {
+    // The display window owns rendering, but durable child-run changes still
+    // own list-cache invalidation. Forward only this accepted side effect; the
+    // uncommitted durable path below publishes it through the same hook.
+    if (normalizedThreadChange?.event === 'thread_change' &&
+        normalizedThreadChange.change_type === 'item_upsert' &&
+        normalizedThreadChange.data.kind === 'subagent_run') {
+      hooks.onChangesApplied?.([normalizedThreadChange]);
+    }
+    return true;
+  }
   const entry = ensureChatThreadRuntime(key);
   if (eventType === 'thread_snapshot_required') {
     dispatchSnapshotRequired(store, key, payload, hooks);

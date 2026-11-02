@@ -655,6 +655,64 @@ impl<'a> CanonicalThreadLog<'a> {
             })
             .collect()
     }
+    /// The timeline is a bounded timing rail independent of ledger pagination:
+    /// the newest 1024 visible items, metadata only, re-sorted ascending. The
+    /// row count cap is the byte bound; previews already carry the small timing
+    /// scalars verbatim.
+    fn fill_trajectory_timeline(
+        conn: &Connection,
+        rollout: Option<&str>,
+        root: Option<&str>,
+        page: &mut ThreadViewPage,
+    ) -> Result<()> {
+        let Some(rollout) = rollout else {
+            return Ok(());
+        };
+        let mut stmt = conn.prepare(
+            "SELECT rollout_ordinal, preview_json FROM thread_items \
+             WHERE rollout_id=?1 AND (?2 IS NULL OR COALESCE(root_turn_id,turn_id)=?2) \
+             AND visible=1 ORDER BY rollout_ordinal DESC LIMIT 1025",
+        )?;
+        let rows = stmt
+            .query_map(params![rollout, root], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        page.timeline_has_more = rows.len() > 1024;
+        for (ordinal, preview) in rows.into_iter().take(1024) {
+            let preview: Value = serde_json::from_str(&preview)?;
+            let wrapped = preview["payload"].get("item_id").is_some()
+                && preview["payload"].get("payload").is_some_and(Value::is_object);
+            let payload = if wrapped {
+                &preview["payload"]["payload"]
+            } else {
+                &preview["payload"]
+            };
+            let timing = |keys: &[&str]| {
+                keys.iter()
+                    .find_map(|key| payload.get(*key).and_then(Value::as_f64))
+            };
+            page.timeline.push(TrajectoryTimelineRow {
+                created_seq: ordinal + 1,
+                kind: payload
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .or_else(|| preview.get("kind").and_then(Value::as_str))
+                    .unwrap_or("configuration")
+                    .to_owned(),
+                status: payload
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("completed")
+                    .to_owned(),
+                started_at: timing(&["started_at", "start_time", "created_at"]).unwrap_or(0.0),
+                completed_at: timing(&["completed_at", "end_time", "finished_at"]),
+            });
+        }
+        page.timeline.reverse();
+        Ok(())
+    }
+
     fn chat_row(
         &self,
         snapshot: &HistorySnapshot,
@@ -683,6 +741,12 @@ impl<'a> CanonicalThreadLog<'a> {
         let head = head.as_ref().unwrap_or(turn);
         row.status = head["status"].as_str().unwrap_or("").into();
         row.execution_turn_id = head["turn_id"].as_str().unwrap_or(root).into();
+        // The executor settles a failure by writing its code and sentence into
+        // the turn record. Project both so a restored failed turn can explain
+        // itself instead of only reading "执行失败".
+        if matches!(row.status.as_str(), "failed" | "rejected") {
+            row.assistant.failure = ThreadFailureView::from_payload(&head["payload"]);
+        }
         let control:Option<String>=conn.query_row("SELECT control_json FROM queue.canonical_turn_admissions WHERE thread_id=?1 AND turn_id=?2",params![session,row.execution_turn_id],|r|r.get(0)).optional()?.flatten();
         if let Some(control) = control {
             let control: Value = serde_json::from_str(&control)?;
@@ -1068,6 +1132,7 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
             page.trajectory.sort_by_key(|r| r.item_index);
             page.next_before = page.trajectory.first().map(|r| r.item_index);
             page.next_after = page.trajectory.last().map(|r| r.item_index);
+            Self::fill_trajectory_timeline(&conn, rollout.as_deref(), root, &mut page)?;
         }
         Ok(page)
     }

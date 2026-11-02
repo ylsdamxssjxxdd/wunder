@@ -49,6 +49,9 @@ pub struct ParkedTurn {
     /// Events taken out of the stream before the entry could take the live
     /// slot; the pump replays them in order so the handover never loses a token.
     pub prelude: Vec<NativeChatEvent>,
+    /// This submission answers a waiting 问询面板. Its promotion is the moment
+    /// the old waiting bubble can be settled.
+    pub settles_inquiry: bool,
 }
 
 impl ParkedTurn {
@@ -58,6 +61,7 @@ impl ParkedTurn {
         content: String,
         client_message_id: String,
         images: Vec<(String, String)>,
+        settles_inquiry: bool,
     ) -> Self {
         Self {
             stream,
@@ -66,6 +70,7 @@ impl ParkedTurn {
             client_message_id,
             images,
             prelude: Vec::new(),
+            settles_inquiry,
         }
     }
 }

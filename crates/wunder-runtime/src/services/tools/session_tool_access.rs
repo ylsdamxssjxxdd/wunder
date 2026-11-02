@@ -303,6 +303,7 @@ pub(crate) fn is_default_agent_alias_value(raw: &str) -> bool {
 mod tests {
     use super::*;
     use crate::storage::SqliteStorage;
+    use wunder_core::storage_backend::ChatSessionStore;
     use wunder_core::storage_backend::StorageLifecycle;
 
     fn storage() -> (tempfile::TempDir, SqliteStorage) {

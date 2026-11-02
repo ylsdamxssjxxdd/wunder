@@ -270,6 +270,23 @@ deltas).
   caption boxes while retaining `WS_SIZEBOX`; Winit's default concealed
   caption is susceptible to appearing after a Win7 frame refresh and stealing
   the first click from the custom title bar.
+- `winit` 0.30.2's Win32 `IDropTarget` callbacks now take `POINTL pt` by value,
+  matching the OLE IDL and stdcall stack contract. The upstream pointer
+  declaration dereferenced screen coordinates as an address and under-cleaned
+  the x86 stack, crashing external and same-process OLE drags. Its previously
+  unimplemented `QueryInterface` now handles `IID_IUnknown`/`IID_IDropTarget`
+  with the required reference counting and returns `E_NOINTERFACE` for other
+  interfaces, so a same-process drag cannot panic across the COM boundary.
+- `winit` 0.30.2 `capture_mouse` now drops the `WindowState` mutex guard
+  before calling `SetCapture()`, mirroring the guard `release_mouse` already
+  had for `ReleaseCapture()`. `SetCapture` synchronously sends
+  `WM_CAPTURECHANGED` to the window losing capture — the same window when a
+  second mouse button is pressed while another is still held (e.g. fast
+  left+right clicks in a text field) — and the re-entered wndproc locks
+  `window_state` again in the keyboard callback's IME check. `std::sync::Mutex`
+  is not reentrant, so the UI thread self-deadlocked with zero CPU and no
+  panic (nothing for the crash hook to log). Still unfixed upstream in
+  0.30.13.
 - Frameless Winit windows now acknowledge `WM_NCACTIVATE` themselves after
   updating their active state and return handled for `WM_ERASEBKGND`. This
   prevents User32 from briefly drawing or erasing a native non-client edge

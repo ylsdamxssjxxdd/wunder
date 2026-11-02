@@ -687,7 +687,13 @@ pub(super) fn write_system_clipboard_text(text: &str) -> Result<()> {
         std::fs::write(&path, text.as_bytes())
             .map_err(|error| anyhow!("write clipboard payload failed: {error}"))?;
         let script = format!(
-            "$ErrorActionPreference='Stop'; $t = [IO.File]::ReadAllText('{}', [Text.Encoding]::UTF8); Set-Clipboard -Value $t",
+            "$ErrorActionPreference='Stop'; $t = [IO.File]::ReadAllText('{}', [Text.Encoding]::UTF8); \
+             $ok = $false; \
+             for ($i = 0; $i -lt 12 -and -not $ok; $i++) {{ \
+                 try {{ Set-Clipboard -Value $t -ErrorAction Stop; $ok = $true }} \
+                 catch {{ Start-Sleep -Milliseconds 50 }} \
+             }}; \
+             if (-not $ok) {{ throw 'clipboard is busy' }}",
             path.to_string_lossy().replace('\'', "''")
         );
         let output = Command::new("powershell")

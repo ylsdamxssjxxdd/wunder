@@ -14,6 +14,7 @@ export class ChatMockService {
   blocks = new Map<string, Row>();
   subscriptions: Subscription[] = [];
   requests: Row[] = [];
+  commandTasks: Row[] = [];
   connections = 0;
   goal: Row | null = null;
   updateGoal(goal: Row | null) {
@@ -566,6 +567,24 @@ export class ChatMockService {
       else if (path === `/chat/sessions/${MOCK_SESSION}`) data = { ...session, messages: [], transcript: [], thread_change_cursor: this.changes.length };
       else if (path.endsWith('/events')) data = { events: [], items: [], running: Boolean(this.active),
         runtime: { status: this.active ? 'running' : 'idle' } };
+      else if (path === `/chat/sessions/${MOCK_SESSION}/subagents`) data = {
+        items: [...this.items.values()].filter(item => item.kind === 'subagent_run').map(item => ({
+          ...structuredClone(item.runtime), item_id: item.item_id,
+          parent_user_round: this.turns.find(turn => turn.turn_id === item.turn_id)?.user_round
+        }))
+      };
+      else if (path === `/chat/sessions/${MOCK_SESSION}/command-sessions`) data = {
+        session_id: MOCK_SESSION, items: structuredClone(this.commandTasks)
+      };
+      else if (path.includes('/command-sessions/')) {
+        const id = decodeURIComponent(path.slice(path.lastIndexOf('/') + 1));
+        const task = this.commandTasks.find(item => item.command_session_id === id);
+        if (request.method() === 'DELETE' && task) {
+          task.status = 'exited';
+          task.ended_at = new Date().toISOString();
+          data = { terminated: true };
+        } else data = { item: task ?? null };
+      }
       else if (path.endsWith('/cancel')) { this.cancel(); data = { cancelled: true }; }
       else if (path.endsWith('/compaction')) data = this.accept('/compact', payload?.client_message_id);
       else if (path.endsWith('/goal')) {

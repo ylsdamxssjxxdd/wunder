@@ -1023,19 +1023,37 @@ fn render_patch_diff_block(
         .lines
         .iter()
         .any(|line| line.old_line.is_some() || line.new_line.is_some());
-    let body = block
-        .lines
-        .iter()
-        .enumerate()
-        .flat_map(|(index, line)| {
-            let nested_prefix = if hide_header && index == 0 {
-                tree_item_prefix(is_last)
-            } else {
-                tree_item_continuation_prefix(is_last)
-            };
-            render_patch_diff_line(line, nested_prefix, width, has_gutter)
-        })
-        .collect();
+    // codex never prints the `@@` header itself: the first hunk starts straight at
+    // its rows, and only later hunks get a `⋮` separator. The parsed Hunk lines stay
+    // in the model (they seed the line-number gutter) but never reach the screen.
+    let mut body = Vec::new();
+    let mut seen_first_hunk = false;
+    for line in &block.lines {
+        if line.kind == PatchDiffLineKind::Hunk {
+            if seen_first_hunk {
+                let separator = PatchDiffLine {
+                    kind: PatchDiffLineKind::Note,
+                    text: String::new(),
+                    old_line: None,
+                    new_line: None,
+                };
+                let nested_prefix = if hide_header && body.is_empty() {
+                    tree_item_prefix(is_last)
+                } else {
+                    tree_item_continuation_prefix(is_last)
+                };
+                body.extend(render_patch_diff_line(&separator, nested_prefix, width, has_gutter));
+            }
+            seen_first_hunk = true;
+            continue;
+        }
+        let nested_prefix = if hide_header && body.is_empty() {
+            tree_item_prefix(is_last)
+        } else {
+            tree_item_continuation_prefix(is_last)
+        };
+        body.extend(render_patch_diff_line(line, nested_prefix, width, has_gutter));
+    }
     PatchBodyBlock { header, body }
 }
 
@@ -1760,7 +1778,15 @@ pub(super) fn build_pending_patch_log(args: &Value, is_zh: bool) -> Option<Speci
         (!preview.is_empty()).then_some(preview)
     };
     let mut files = collect_patch_preview_rows(patch, 12, is_zh);
-    let mut header = if is_zh {
+    let mut header = if files.len() > 1 {
+        // codex uses one header for pending and applied patches alike; the card's
+        // status icon carries the progress, not the verb.
+        if is_zh {
+            format!("已修改 {} 个文件", files.len())
+        } else {
+            format!("Edited {} files", files.len())
+        }
+    } else if is_zh {
         "\u{5e94}\u{7528}\u{8865}\u{4e01}".to_string()
     } else {
         "Applying patch".to_string()
@@ -1769,7 +1795,7 @@ pub(super) fn build_pending_patch_log(args: &Value, is_zh: bool) -> Option<Speci
     let mut header_names_file = false;
     if let [file] = files.as_slice() {
         if file.marker != '\u{2026}' {
-            header = format!("{header} {}", file.text);
+            header = single_file_patch_header(file, is_zh);
             summary = file.meta.clone().or(summary);
             files.clear();
             header_names_file = true;
@@ -2513,7 +2539,7 @@ mod tests {
         else {
             panic!("expected patch log");
         };
-        assert!(entry.header.contains("Applying patch src/main.rs"));
+        assert!(entry.header.contains("Edited src/main.rs"));
         assert_eq!(entry.files.len(), 0);
         assert!(entry
             .summary
@@ -2919,7 +2945,7 @@ mod tests {
                     .collect::<String>()
             })
             .collect::<Vec<_>>();
-        assert!(rendered[0].contains("Applying patch src/main.rs"));
+        assert!(rendered[0].contains("Edited src/main.rs"));
         assert!(rendered[0].contains("+1"));
         assert!(rendered[0].contains("-1"));
         assert!(rendered.iter().all(|line| !line.contains("M src/main.rs")));
@@ -2946,7 +2972,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(rendered
             .iter()
-            .any(|line| line.contains("Applying patch src/main.rs")));
+            .any(|line| line.contains("Edited src/main.rs")));
         // One file, one path: the header names it, so the body does not repeat it the way a
         // multi-file card has to.
         assert!(
@@ -2955,7 +2981,8 @@ mod tests {
                 .any(|line| line.contains("diff src/main.rs")),
             "{rendered:?}"
         );
-        assert!(rendered.iter().any(|line| line.contains("@@")));
+        // codex keeps the `@@` header itself off screen; only the rows carry content.
+        assert!(!rendered.iter().any(|line| line.contains("@@")));
         assert!(rendered.iter().any(|line| line.contains("- old")));
         assert!(rendered.iter().any(|line| line.contains("+ new")));
     }
@@ -2981,14 +3008,34 @@ mod tests {
             "an added row is numbered from the new file, before its sign: {rows:?}"
         );
         assert!(
-            rows.iter().any(|row| row.contains("@@ -10,3")),
-            "a hunk row is a marker, not a numbered line, so it takes no gutter: {rows:?}"
+            !rows.iter().any(|row| row.contains("@@")),
+            "the hunk header seeds the gutter but never reaches the screen: {rows:?}"
         );
         // The preview keeps three rows per file, so the fourth only reads on an open card.
         let opened = flat_patch_lines(&entry, 80, true);
         assert!(
             opened.iter().any(|row| row.contains("13   ctx")),
             "context carries the new position with an empty sign: {opened:?}"
+        );
+    }
+
+    #[test]
+    fn later_hunks_show_a_ellipsis_separator_not_the_header() {
+        let args = serde_json::json!({
+            "input": "*** Begin Patch\n*** Update File: src/lib.rs\n@@ -1,1 +1,1 @@\n-a\n+b\n@@ -10,1 +10,1 @@\n-c\n+d\n*** End Patch"
+        });
+        let SpecialLogEntry::Patch(entry) = build_pending_patch_log(&args, false).expect("patch")
+        else {
+            panic!("expected patch log");
+        };
+        let rows = flat_patch_lines(&entry, 80, true);
+        assert!(
+            !rows.iter().any(|row| row.contains("@@")),
+            "no hunk header is ever printed: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.trim_start().starts_with('⋮')),
+            "the second hunk opens with the codex separator: {rows:?}"
         );
     }
 
@@ -3092,8 +3139,8 @@ mod tests {
             "and the body does not say the path again: {rows:?}"
         );
         assert!(
-            rows.iter().any(|row| row.contains("-10,1 +12,2")),
-            "the hunk row is built from the engine's own range: {rows:?}"
+            !rows.iter().any(|row| row.contains("@@")),
+            "the engine's hunk header seeds the gutter but stays off screen: {rows:?}"
         );
         assert!(
             rows.iter().any(|row| row.contains("let b = 3;")),

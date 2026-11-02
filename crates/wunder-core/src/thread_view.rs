@@ -42,13 +42,55 @@ pub struct ViewMessage {
     pub tail: String,
     #[serde(default)]
     pub tail_offset: usize,
+    /// Why this execution settled as a failure. The runtime writes the code and
+    /// its own sentence into the turn record; surfaces classify the code instead
+    /// of re-parsing the sentence, so a failed turn reads the same live and in
+    /// restored history.
     #[serde(default)]
-    pub failure: String,
+    pub failure: Option<ThreadFailureView>,
     #[serde(default)]
     pub attachments: Vec<Value>,
     /// Bounded interactive metadata, independent of lazy body/process reads.
     #[serde(default)]
     pub question_panel: Option<ThreadQuestionPanel>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct ThreadFailureView {
+    /// Runtime error code (`LLM_UNAVAILABLE`, `CONTEXT_WINDOW_EXCEEDED`, ...).
+    #[serde(default)]
+    pub code: String,
+    /// The human sentence the runtime produced for that code.
+    #[serde(default)]
+    pub message: String,
+}
+
+impl ThreadFailureView {
+    /// Project a settled failure from a turn record's payload. The executor
+    /// commits its error object flat (`{code, message, error_meta, ...}`);
+    /// imported or older records may nest it under `error` or only carry a
+    /// plain reason. A payload without a sentence is not a failure description.
+    pub fn from_payload(payload: &Value) -> Option<Self> {
+        let nested = payload.get("error").filter(|error| error.is_object());
+        let source = nested.unwrap_or(payload);
+        let message = source
+            .get("message")
+            .and_then(Value::as_str)
+            .or_else(|| payload.get("error").and_then(Value::as_str))
+            .or_else(|| source.get("reason").and_then(Value::as_str))?
+            .trim();
+        if message.is_empty() {
+            return None;
+        }
+        Some(Self {
+            code: source
+                .get("code")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            message: message.to_owned(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -400,5 +442,32 @@ mod tests {
         assert!(message_content_text(&serde_json::json!(["a", "b"])).is_none());
         assert!(message_content_text(&serde_json::json!(42)).is_none());
         assert!(message_content_text(&serde_json::json!({"text": "x"})).is_none());
+    }
+
+    #[test]
+    fn failure_view_reads_the_flat_turn_payload() {
+        let payload = serde_json::json!({
+            "code": "LLM_UNAVAILABLE",
+            "message": "请检查模型配置",
+            "status": "failed"
+        });
+        let failure = ThreadFailureView::from_payload(&payload).expect("failure");
+        assert_eq!(failure.code, "LLM_UNAVAILABLE");
+        assert_eq!(failure.message, "请检查模型配置");
+    }
+
+    #[test]
+    fn failure_view_reads_nested_and_reason_shapes() {
+        let nested = serde_json::json!({"error": {"code": "INVALID_REQUEST", "message": "拒绝"}});
+        assert_eq!(
+            ThreadFailureView::from_payload(&nested).map(|failure| failure.message),
+            Some("拒绝".into())
+        );
+        let reason = serde_json::json!({"reason": " 执行失败 "});
+        assert_eq!(
+            ThreadFailureView::from_payload(&reason).map(|failure| failure.message),
+            Some("执行失败".into())
+        );
+        assert!(ThreadFailureView::from_payload(&serde_json::json!({})).is_none());
     }
 }

@@ -94,8 +94,10 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             // 取消是异步生效的：这一帧先按「即将消失」刷新，下一帧由运行时收尾。
             bridge.expanded.remove(id.as_str());
             bridge.details.remove(id.as_str());
-            tick(&mut bridge);
         }
+        // 即使后端回答「已不在运行」也刷新一次：陈旧条目借这次投影消失，
+        // 而不是停在面板上等下一秒。
+        tick(&mut bridge);
     });
 
     let weak = Rc::downgrade(&bridge);
@@ -162,6 +164,7 @@ impl Bridge {
                 CommandTask {
                     id: task.id.as_str().into(),
                     command: command_line(&task.command).into(),
+                    full_command: full_command_text(&task.command).into(),
                     cwd: task.cwd.as_str().into(),
                     elapsed: elapsed(task.elapsed_ms).into(),
                     expanded,
@@ -199,9 +202,20 @@ fn publish(bridge: &mut Bridge, rows: Vec<CommandTask>) {
     bridge.rows = rows;
 }
 
+/// 悬停提示里的完整命令：保留换行（多行脚本更可读），只按字符预算兜底截断，
+/// 避免面板模型被超长 heredoc 撑大。
+fn full_command_text(command: &str) -> String {
+    const MAX_CHARS: usize = 800;
+    let trimmed = command.trim();
+    if trimmed.chars().count() <= MAX_CHARS {
+        return trimmed.to_string();
+    }
+    let head: String = trimmed.chars().take(MAX_CHARS - 1).collect();
+    format!("{head}…")
+}
+
 /// 命令行本身可能带换行（heredoc、多行脚本），面板里压成一行再截断。
-fn command_line(command: &str) -> String {
-    let mut line = String::with_capacity(command.len().min(160));
+fn command_line(command: &str) -> String {    let mut line = String::with_capacity(command.len().min(160));
     for (index, part) in command
         .split(['\n', '\r'])
         .map(str::trim)
@@ -349,6 +363,14 @@ mod tests {
         );
         let long = command_line(&"a".repeat(400));
         assert_eq!(long.chars().count(), 160);
+        assert!(long.ends_with('…'));
+    }
+
+    #[test]
+    fn full_command_keeps_line_breaks_and_bounds_the_budget() {
+        assert_eq!(full_command_text("  line1\nline2  "), "line1\nline2");
+        let long = full_command_text(&"a".repeat(2000));
+        assert_eq!(long.chars().count(), 800);
         assert!(long.ends_with('…'));
     }
 

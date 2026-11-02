@@ -8,7 +8,7 @@ import { I18n } from "i18n.slint";
 // the root file get a public wrapper. The fields report focus through
 // components.slint / textedit-base.slint.
 export { TextFieldActivation } from "text_field.slint";
-import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow, CommandTask } from "theme.slint";
+import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow, CommandTask, SubagentItem } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 export { ToastState }
 import { ProcessEntry } from "theme.slint";
@@ -431,10 +431,9 @@ export component MainWindow inherits Window {
     callback subagent-interrupt();
     callback subagent-toggle(int);
     callback subagent-open-resource(string);
-    // A timeline card click and its interrupt action; the controller resolves
-    // the parent thread from the active session.
-    callback timeline-open-subagent(string);
-    callback timeline-stop-subagent(string);
+    // 输入区子智能体浮层的详情与中断动作；父线程取当前活动线程。
+    callback dock-open-subagent(string);
+    callback dock-stop-subagent(string);
     in-out property <bool> more-open: false;
     // Read-only mirror of the timeline viewport offset; the native smoke checks
     // use it to prove the view does not jump while the user reads back.
@@ -565,6 +564,9 @@ export component MainWindow inherits Window {
     in-out property <int> running-task-count: 0;
     callback toggle-task(string);
     callback terminate-task(string);
+    // 当前线程的子智能体，包含已结束的线程以便回看详情。
+    in-out property <[SubagentItem]> subagent-items: [];
+    in-out property <int> subagent-count: 0;
     in-out property <string> selected-agent-name;
     in-out property <string> selected-agent-description;
     in-out property <string> selected-agent-model;
@@ -715,10 +717,9 @@ export component MainWindow inherits Window {
     in-out property <bool> ws-file-local: false;
     callback ws-file-toggle(int);
     callback ws-file-refresh();
-    // Working-directory head toolbar: upload / search / download /
-    // multi-select. The search head state and the selection mode round-trip
-    // so the native controller can close both when the target switches.
-    callback ws-file-upload();
+    // Working-directory head search / multi-select. The search head state and
+    // the selection mode round-trip so the native controller can close both
+    // when the target switches.
     in-out property <bool> ws-file-search-open: false;
     in-out property <string> ws-file-search-query;
     in-out property <bool> ws-file-search-busy: false;
@@ -726,7 +727,6 @@ export component MainWindow inherits Window {
     callback ws-file-search-edit(string);
     callback ws-file-search-accept(string);
     callback ws-file-search-cancel();
-    callback ws-file-download();
     in-out property <bool> ws-file-selecting: false;
     in-out property <int> ws-file-selected-count: 0;
     callback ws-file-select();
@@ -1181,8 +1181,6 @@ export component MainWindow inherits Window {
                 file-toggle(index) => { root.ws-file-toggle(index); }
                 file-check(index) => { root.ws-file-check(index); }
                 file-refresh => { root.ws-file-refresh(); }
-                file-upload => { root.ws-file-upload(); }
-                file-download => { root.ws-file-download(); }
                 file-select => { root.ws-file-select(); }
                 file-selection-action(action) => { root.ws-file-selection-action(action); }
                 file-search-edit(text) => { root.ws-file-search-edit(text); }
@@ -1314,8 +1312,6 @@ export component MainWindow inherits Window {
                             copy-text(text) => { root.copy-raw(text); }
                             copy-original(id) => { root.cloud-copy-original(id); }
                             open-resource(id) => { root.timeline-open(id); }
-                            open-subagent(id) => { root.timeline-open-subagent(id); }
-                            stop-subagent(id) => { root.timeline-stop-subagent(id); }
                         }
                     }
                     // Status dock: the plan capsule sits between the timeline
@@ -1405,6 +1401,10 @@ export component MainWindow inherits Window {
                             running-task-count: root.running-task-count;
                             toggle-task(id) => { root.toggle-task(id); }
                             terminate-task(id) => { root.terminate-task(id); }
+                            subagent-items: root.subagent-items;
+                            subagent-count: root.subagent-count;
+                            open-subagent(id) => { root.dock-open-subagent(id); }
+                            stop-subagent(id) => { root.dock-stop-subagent(id); }
                             permission-mode <=> root.permission-mode;
                             permission-changed(value) => { root.save-permission-mode(value); }
                             attachments: root.pending-attachments;
@@ -1775,6 +1775,7 @@ export component MainWindow inherits Window {
         selected-agent-name <=> root.selected-agent-name;
         selected-agent-description <=> root.selected-agent-description;
         selected-agent-system-prompt <=> root.selected-agent-system-prompt;
+        selected-agent-preset-questions <=> root.selected-agent-preset-questions;
         expert-tool-groups: root.expert-tool-groups;
         expert-tool-keyword <=> root.expert-tool-keyword;
         agents-loading: root.agents-loading;

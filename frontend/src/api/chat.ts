@@ -145,6 +145,8 @@ export const getSessionCommandSession = (
   commandSessionId: string,
   options: { signal?: AbortSignal } = {}
 ) => api.get(`/chat/sessions/${sessionId}/command-sessions/${commandSessionId}`, options);
+export const terminateSessionCommandSession = (sessionId: string, commandSessionId: string) =>
+  api.delete(`/chat/sessions/${sessionId}/command-sessions/${encodeURIComponent(commandSessionId)}`);
 export const getSessionHistoryPage = (id: string, params: QueryParams = {}) =>
   api.get(`/chat/sessions/${id}/thread-log/messages`, { params: sanitizeQueryParams(params) });
 export const getSessionThreadItem = (

@@ -499,14 +499,16 @@ export component Sidebar inherits Rectangle {
     in-out property <float> split-ratio: 0.6;
     callback layout-changed();
     private property <length> split-track: max(1px, root.height - 89px - (root.selection-mode ? 70px : 0px));
+    // 两段高度先算成值再钉死：ListView 的内容最小高度会把「首选高度」顶开，
+    // 只写 height 时布局仍按最小高度分配，工作目录面板被压到只剩头部、设置行
+    // 被挤出窗口。min/max 同时钉住才是固定高度。
+    private property <length> tree-height: max(1px, min(root.split-track - 1px, root.split-track * clamp(root.split-ratio, 0.3, 0.8)));
     callback file-toggle(int);
     callback file-refresh();
     callback file-connect();
-    // Head toolbar of the working-directory region: upload, search (the head
-    // swaps to the field while open), download, multi-select and refresh.
-    // The query and the two mode flags round-trip so the controller can
-    // close a search or a selection when the target switches.
-    callback file-upload();
+    // Head search of the working-directory region (the head swaps to the field
+    // while open). The query and the mode flags round-trip so the controller
+    // can close a search or a selection when the target switches.
     in-out property <bool> file-search-open;
     in-out property <string> file-search-query;
     in property <bool> file-search-busy;
@@ -514,7 +516,6 @@ export component Sidebar inherits Rectangle {
     callback file-search-edit(string);
     callback file-search-accept(string);
     callback file-search-cancel();
-    callback file-download();
     in-out property <bool> file-selecting;
     in property <int> file-selected-count: 0;
     callback file-select();
@@ -632,8 +633,10 @@ export component Sidebar inherits Rectangle {
         // from); the row pitch comes from SidebarMetrics so the two cannot
         // disagree.
         tree-frame := Rectangle {
-            min-height: 0px; preferred-height: 0px;
-            vertical-stretch: clamp(root.split-ratio, 0.3, 0.8);
+            // 高度显式钉死（见 tree-height 的说明）：只写 height 时 ListView
+            // 的内容最小高度仍会把它撑满整列，把下面的工作目录面板挤扁。
+            min-height: root.tree-height;
+            max-height: root.tree-height;
             // The sticky header replica below is a sibling of the tree and
             // slides out above its top edge when the next group arrives; the
             // frame must clip it so it never paints over the device row.
@@ -945,8 +948,8 @@ export component Sidebar inherits Rectangle {
         // Working-directory region: the cloud workspace tree. Actions flow
         // through to the window shell like every other sidebar callback.
         WorkspaceFilesPanel {
-            min-height: 0px; preferred-height: 0px;
-            vertical-stretch: 1 - clamp(root.split-ratio, 0.3, 0.8);
+            min-height: root.split-track - root.tree-height;
+            max-height: root.split-track - root.tree-height;
             rows: root.file-rows;
             loading: root.file-loading;
             error: root.file-error;
@@ -963,8 +966,6 @@ export component Sidebar inherits Rectangle {
             menu(index, action) => { root.file-menu(index, action); }
             drag-row(index) => { root.file-drag(index); }
             drop(event) => { root.file-drop(event); }
-            upload => { root.file-upload(); }
-            download => { root.file-download(); }
             select => { root.file-select(); }
             selection-action(action) => { root.file-selection-action(action); }
             search-edit(text) => { root.file-search-edit(text); }

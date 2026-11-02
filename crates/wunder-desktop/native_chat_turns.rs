@@ -32,6 +32,45 @@ pub struct NativeChatTurn {
     /// metadata, independent of the reply body, so reopening a thread restores
     /// it exactly as it was published.
     pub question_panel: Option<Value>,
+    /// Why the execution settled as a failure, when the runtime recorded one.
+    /// Restored history renders the same error card the live stream showed.
+    pub failure: Option<NativeChatFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NativeChatFailure {
+    /// Runtime error code; surfaces classify it instead of parsing the text.
+    pub code: String,
+    pub message: String,
+}
+
+impl NativeChatFailure {
+    fn from_view(view: &Option<wunder_server::stable_core::thread_view::ThreadFailureView>) -> Option<Self> {
+        let view = view.as_ref()?;
+        let message = view.message.trim();
+        if message.is_empty() {
+            return None;
+        }
+        Some(Self {
+            code: view.code.clone(),
+            message: message.to_owned(),
+        })
+    }
+
+    /// A detailed turn carries the raw turn record, whose `payload` is the
+    /// failure the executor committed when the execution settled.
+    fn from_turn(status: &Value, root: &Value) -> Option<Self> {
+        if !matches!(status.as_str(), Some("failed" | "rejected")) {
+            return None;
+        }
+        let failure = wunder_server::stable_core::thread_view::ThreadFailureView::from_payload(
+            &root["payload"],
+        )?;
+        Some(Self {
+            code: failure.code,
+            message: failure.message,
+        })
+    }
 }
 
 /// Bounded plan projection of one user turn: the same explanation and tri-state
@@ -198,6 +237,28 @@ pub(super) fn load_turn(
             }
         }
     }
+    if !items
+        .iter()
+        .any(|item| item["kind"] == "user_message" && item["turn_id"] == id)
+    {
+        // Accepted input stays queue control state until execution commits it.
+        // The chat row already projects that pending body, so a queued turn (or
+        // one that failed before its first commit) still shows its message.
+        if let Some(chat) = &chat {
+            if !chat.user.item_id.is_empty() {
+                items.push(json!({
+                    "kind": "user_message",
+                    "turn_id": id,
+                    "item_id": chat.user.item_id,
+                    "status": "completed",
+                    "payload": {
+                        "content": chat.user.content,
+                        "attachments": chat.user.attachments,
+                    },
+                }));
+            }
+        }
+    }
     sort_process_items(&mut items, |item| item);
     // A stop can land before an assistant item is committed, leaving that round
     // with an empty payload while its streamed text is already durable as
@@ -327,6 +388,7 @@ fn load_turn_header(
             .unwrap_or(chat.workflow_count + chat.reasoning_count),
         plan: chat.plan.as_ref().map(NativePlanView::from_payload),
         question_panel: pending_question_panel(chat),
+        failure: NativeChatFailure::from_view(&chat.assistant.failure),
     })
 }
 
@@ -592,6 +654,7 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
         process_steps: 0,
         plan: None,
         question_panel: None,
+        failure: NativeChatFailure::from_turn(status, root),
     })
 }
 

@@ -849,10 +849,12 @@ export const normalizeMessageSubagent = (payload): MessageSubagentItem | null =>
     normalizedDetail.assistant_message,
     source.assistant_message,
     source.result,
+    source.latest_message,
+    source.latestMessage,
     agentState.message
   );
   const summary = String(
-    source.summary ?? assistantMessage ?? normalizedDetail.error ?? source.error ?? ''
+    source.summary || assistantMessage || normalizedDetail.error || source.error || ''
   ).trim();
   const updatedAtMs = normalizeInteractionTimestamp(
     source.updated_time ??
@@ -889,6 +891,10 @@ export const normalizeMessageSubagent = (payload): MessageSubagentItem | null =>
     parent_model_round: normalizeStreamRound(
       source.parent_model_round ?? source.parentModelRound
     ),
+    latest_message: assistantMessage,
+    metrics: source.metrics && typeof source.metrics === 'object' && !Array.isArray(source.metrics)
+      ? (source.metrics as Record<string, unknown>)
+      : {},
     detail: normalizedDetail,
     agent_state: {
       status: agentStateStatus,

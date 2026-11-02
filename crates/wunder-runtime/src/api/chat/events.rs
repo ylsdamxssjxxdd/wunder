@@ -60,7 +60,7 @@ pub(super) fn router() -> Router<Arc<AppState>> {
         )
         .route(
             "/wunder/chat/sessions/{session_id}/command-sessions/{command_session_id}",
-            get(get_session_command_session),
+            get(get_session_command_session).delete(terminate_session_command_session),
         )
 }
 
@@ -414,6 +414,33 @@ async fn get_session_command_session(
             "item": snapshot
         }
     })))
+}
+
+async fn terminate_session_command_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath((session_id, command_session_id)): AxumPath<(String, String)>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    let command_session_id = command_session_id.trim().to_string();
+    if session_id.is_empty() || command_session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let _record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let terminated = state.control.command_sessions.terminate_task(
+        &resolved.user.user_id,
+        &session_id,
+        &command_session_id,
+    );
+    Ok(Json(json!({ "data": { "terminated": terminated } })))
 }
 
 fn normalize_session_events_limit(raw: Option<i64>) -> i64 {

@@ -1750,9 +1750,32 @@ impl Drop for NativeDesktop {
 mod thread_switch_tests {
     use super::*;
 
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        SERIAL
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Config, settings and the database all live under `WUNDER_HOME`; point it
+    /// at a throw-away directory so these tests never touch the developer's
+    /// real home. The home (and its database) is shared across the module, so
+    /// every test that starts a desktop must hold `serial()` for its whole body.
+    fn isolated_home() -> &'static std::path::Path {
+        static HOME: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+        HOME.get_or_init(|| {
+            let directory = tempfile::tempdir().expect("temp home");
+            let path = directory.path().to_path_buf();
+            std::env::set_var("WUNDER_HOME", &path);
+            std::mem::forget(directory);
+            path
+        })
+    }
+
     fn start_isolated() -> NativeDesktop {
-        let directory = tempfile::tempdir().expect("temporary desktop root");
-        let config = directory.path().join("runtime/config");
+        let home = isolated_home();
+        let config = home.join("config");
         std::fs::create_dir_all(&config).expect("config directory");
         std::fs::write(config.join("wunder.yaml"), "{}\n").expect("runtime config");
         let settings = serde_json::json!({
@@ -1764,22 +1787,17 @@ mod thread_switch_tests {
             serde_json::to_vec(&settings).expect("settings json"),
         )
         .expect("desktop settings");
+        let temp = home.join("temp");
+        std::fs::create_dir_all(&temp).expect("temp directory");
         let mut args = DesktopArgs::native_defaults();
-        args.temp_root = Some(
-            directory
-                .path()
-                .join("runtime")
-                .canonicalize()
-                .expect("runtime root"),
-        );
-        args.workspace = Some(directory.path().join("workspace"));
-        // The runtime keeps SQLite alive after this helper returns.
-        std::mem::forget(directory);
+        args.temp_root = Some(temp.canonicalize().expect("runtime root"));
+        args.workspace = Some(home.join("workspace"));
         NativeDesktop::start_with_args(args).expect("isolated desktop")
     }
 
     #[test]
     fn open_thread_lease_stays_fresh_without_a_live_stream() {
+        let _serial = serial();
         let desktop = Arc::new(start_isolated());
         let session = desktop.create_session(None).expect("session");
         desktop.open_chat_snapshot(&session.id).expect("open");
@@ -1811,6 +1829,7 @@ mod thread_switch_tests {
 
     #[test]
     fn reopened_local_thread_reuses_lease_and_header_snapshot() {
+        let _serial = serial();
         let desktop = Arc::new(start_isolated());
         let session = desktop.create_session(None).expect("session");
         let first = desktop.open_chat_snapshot(&session.id).expect("first open");
@@ -1853,6 +1872,7 @@ mod thread_switch_tests {
 
     #[test]
     fn merely_touching_a_thread_does_not_consume_its_draft() {
+        let _serial = serial();
         let desktop = Arc::new(start_isolated());
         let fresh = desktop.create_session(None).expect("fresh session");
         // Touching the row is what opening/selecting a thread does. The durable
@@ -1877,6 +1897,7 @@ mod thread_switch_tests {
 
     #[test]
     fn the_catalogue_keeps_a_turn_less_thread_a_draft() {
+        let _serial = serial();
         let desktop = Arc::new(start_isolated());
         let fresh = desktop.create_session(None).expect("fresh session");
         assert!(fresh.draft, "a freshly created thread must be a draft");

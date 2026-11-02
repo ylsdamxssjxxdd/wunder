@@ -660,7 +660,7 @@ fn assert_no_partial_compaction_prefix(messages: &[Value]) {
     }
 }
 
-fn assert_replacement_history_keeps_edge_rounds(
+fn assert_replacement_history_keeps_rounds(
     replacement_history: &[Value],
     expected_markers: &[&str],
 ) {
@@ -672,6 +672,22 @@ fn assert_replacement_history_keeps_edge_rounds(
         assert!(
             texts.iter().any(|text| text.contains(marker)),
             "expected replacement_history to retain marker {marker}, got {texts:?}"
+        );
+    }
+}
+
+fn assert_replacement_history_drops_rounds(
+    replacement_history: &[Value],
+    dropped_markers: &[&str],
+) {
+    let texts = replacement_history
+        .iter()
+        .filter_map(|message| message.get("content").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    for marker in dropped_markers {
+        assert!(
+            !texts.iter().any(|text| text.contains(marker)),
+            "early round {marker} must be replaced by the summary, got {texts:?}"
         );
     }
 }
@@ -935,12 +951,18 @@ async fn compaction_replay_uses_committed_summary_in_next_request() {
         "manual compaction should commit replacement_history snapshot"
     );
     assert_compaction_history_is_semantically_clean(&replacement_history);
-    assert_replacement_history_keeps_edge_rounds(
+    assert_replacement_history_keeps_rounds(
+        &replacement_history,
+        &[
+            "[mindie-overflow-regression] round=5",
+            "[mindie-overflow-regression] round=6",
+        ],
+    );
+    assert_replacement_history_drops_rounds(
         &replacement_history,
         &[
             "[mindie-overflow-regression] round=1",
             "[mindie-overflow-regression] round=2",
-            "[mindie-overflow-regression] round=5",
         ],
     );
 
@@ -1014,7 +1036,7 @@ async fn compaction_replay_uses_committed_summary_in_next_request() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn manual_compaction_keeps_first_and_recent_two_turns() {
+async fn manual_compaction_keeps_recent_two_turns_and_drops_early_rounds() {
     let context = build_test_context_with_compaction_and_mock_limit(
         "mindie_manual_compaction_edge_turns",
         65_536,
@@ -1063,19 +1085,30 @@ async fn manual_compaction_keeps_first_and_recent_two_turns() {
         "manual compaction should commit replacement_history snapshot"
     );
     assert_compaction_history_is_semantically_clean(&replacement_history);
-    assert_replacement_history_keeps_edge_rounds(
+    assert!(
+        replacement_history
+            .first()
+            .is_some_and(HistoryManager::is_compaction_summary_item),
+        "compacted replacement_history should lead with the summary covering dropped early rounds"
+    );
+    assert_replacement_history_keeps_rounds(
+        &replacement_history,
+        &[
+            "[mindie-overflow-regression] round=5",
+            "[mindie-overflow-regression] round=6",
+        ],
+    );
+    assert_replacement_history_drops_rounds(
         &replacement_history,
         &[
             "[mindie-overflow-regression] round=1",
             "[mindie-overflow-regression] round=2",
-            "[mindie-overflow-regression] round=5",
-            "[mindie-overflow-regression] round=6",
         ],
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn manual_compaction_low_budget_keeps_retained_edge_message_when_budget_allows() {
+async fn manual_compaction_low_budget_keeps_retained_tail_message_when_budget_allows() {
     let context = build_test_context_with_compaction_and_mock_limit(
         "mindie_manual_compaction_low_budget_edges",
         32_768,
@@ -1099,7 +1132,11 @@ async fn manual_compaction_low_budget_keeps_retained_edge_message_when_budget_al
         "low-budget compaction should keep at least one retained interaction beyond the summary"
     );
     assert_no_partial_compaction_prefix(&replacement_history);
-    assert_replacement_history_keeps_edge_rounds(
+    assert_replacement_history_keeps_rounds(
+        &replacement_history,
+        &["[mindie-overflow-regression] round=6"],
+    );
+    assert_replacement_history_drops_rounds(
         &replacement_history,
         &["[mindie-overflow-regression] round=1"],
     );
@@ -1128,9 +1165,9 @@ async fn manual_compaction_low_budget_keeps_retained_edge_message_when_budget_al
             message
                 .get("content")
                 .and_then(Value::as_str)
-                .is_some_and(|content| content.contains("[mindie-overflow-regression] round=1"))
+                .is_some_and(|content| content.contains("[mindie-overflow-regression] round=6"))
         }),
-        "next request should still carry the retained edge interaction when budget allows it"
+        "next request should still carry the retained tail interaction when budget allows it"
     );
     let request_summary = request_messages
         .iter()
@@ -1145,7 +1182,7 @@ async fn manual_compaction_low_budget_keeps_retained_edge_message_when_budget_al
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn auto_loop_compaction_keeps_first_and_recent_two_turns_after_manual_baseline() {
+async fn auto_loop_compaction_keeps_recent_turns_after_manual_baseline() {
     let context = build_test_context_with_compaction_and_mock_limit(
         "mindie_auto_loop_edge_turns",
         8_000,
@@ -1231,13 +1268,19 @@ async fn auto_loop_compaction_keeps_first_and_recent_two_turns_after_manual_base
         "auto_loop compaction should commit replacement_history snapshot"
     );
     assert_compaction_history_is_semantically_clean(&replacement_history);
-    assert_replacement_history_keeps_edge_rounds(
+    assert_replacement_history_keeps_rounds(
+        &replacement_history,
+        &[
+            "[mindie-overflow-regression] round=6",
+            "[mindie-overflow-regression] round=7",
+        ],
+    );
+    assert_replacement_history_drops_rounds(
         &replacement_history,
         &[
             "[mindie-overflow-regression] round=1",
             "[mindie-overflow-regression] round=2",
-            "[mindie-overflow-regression] round=6",
-            "[mindie-overflow-regression] round=7",
+            "[mindie-overflow-regression] round=5",
         ],
     );
 

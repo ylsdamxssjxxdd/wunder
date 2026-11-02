@@ -713,6 +713,10 @@ pub struct TuiApp {
 #[derive(Debug, Clone, Copy)]
 struct CopyFeedback {
     characters: usize,
+    /// A failed write reports through the same transient gap row instead of the
+    /// transcript: one mouse gesture can attempt several copies, and an error log
+    /// per attempt floods the scrollback with red lines.
+    failed: bool,
     expires_at: Option<Instant>,
 }
 
@@ -3669,6 +3673,17 @@ impl TuiApp {
             .saturating_add(window.start_entry)
             .min(mutable_start)
             .min(self.logs.len());
+        // A cut exactly on an entry boundary would leave zero scrollable rows behind
+        // (remaining == viewport), and PgUp would look broken right after the archive.
+        // Keep the previous entry live so one scrollable page always survives.
+        let archive_end = if window.local_scroll == 0 && archive_end > archived {
+            archive_end.saturating_sub(1)
+        } else {
+            archive_end
+        };
+        if archive_end <= archived {
+            return;
+        }
         let mut lines = Vec::new();
         let render_width = self.transcript_viewport_width.max(1);
         for index in archived..archive_end {
@@ -3782,18 +3797,25 @@ impl TuiApp {
             self.copy_feedback = None;
         }
         if let Some(feedback) = self.copy_feedback {
-            let count = feedback.characters.to_string();
-            let ladder: &[(&str, &[(&str, &str)])] = &[
-                ("gap_copied", &[("count", count.as_str())]),
-                ("gap_copied_short", &[("count", count.as_str())]),
-                ("gap_copied_min", &[]),
-            ];
-            if let Some(text) = ladder
-                .iter()
-                .map(|(key, args)| crate::locale::ui_text(is_zh, key, args))
-                .find(|text| UnicodeWidthStr::width(text.as_str()) <= usize::from(width))
-            {
-                return Some(Line::from(Span::styled(text, super::theme::accent_text())));
+            if feedback.failed {
+                let text = crate::locale::ui_text(is_zh, "gap_copy_failed", &[]);
+                if UnicodeWidthStr::width(text.as_str()) <= usize::from(width) {
+                    return Some(Line::from(Span::styled(text, super::theme::warning_text())));
+                }
+            } else {
+                let count = feedback.characters.to_string();
+                let ladder: &[(&str, &[(&str, &str)])] = &[
+                    ("gap_copied", &[("count", count.as_str())]),
+                    ("gap_copied_short", &[("count", count.as_str())]),
+                    ("gap_copied_min", &[]),
+                ];
+                if let Some(text) = ladder
+                    .iter()
+                    .map(|(key, args)| crate::locale::ui_text(is_zh, key, args))
+                    .find(|text| UnicodeWidthStr::width(text.as_str()) <= usize::from(width))
+                {
+                    return Some(Line::from(Span::styled(text, super::theme::accent_text())));
+                }
             }
             // Even the shortest result does not fit: the band yields to what comes next.
         }
@@ -3881,6 +3903,15 @@ impl TuiApp {
     fn show_copy_feedback(&mut self, characters: usize) {
         self.copy_feedback = Some(CopyFeedback {
             characters,
+            failed: false,
+            expires_at: Some(Instant::now() + COPY_FEEDBACK_TTL),
+        });
+    }
+
+    fn show_copy_failure(&mut self) {
+        self.copy_feedback = Some(CopyFeedback {
+            characters: 0,
+            failed: true,
             expires_at: Some(Instant::now() + COPY_FEEDBACK_TTL),
         });
     }
@@ -4022,17 +4053,6 @@ impl TuiApp {
         if self.raw_output {
             return raw_entry_lines(self.logs[index].text.as_str()).len();
         }
-        if kind == LogKind::Reasoning && !self.card_is_expanded(index) {
-            let hint = if self.is_zh_language() {
-                "  + 展开思考 (enter)"
-            } else {
-                "  + Show thinking (enter)"
-            };
-            return Paragraph::new(hint)
-                .wrap(Wrap { trim: false })
-                .line_count(width.max(1) as u16)
-                + transcript_entry_spacing_before(index);
-        }
         let expanded = self.card_is_expanded(index);
         let streaming = self.entry_is_streaming(kind, index);
         let Some(entry) = self.logs.get_mut(index) else {
@@ -4082,25 +4102,6 @@ impl TuiApp {
         selected: bool,
         width: u16,
     ) -> Vec<Line<'static>> {
-        if self
-            .logs
-            .get(index)
-            .is_some_and(|entry| entry.kind == LogKind::Reasoning)
-            && !self.card_is_expanded(index)
-        {
-            let mut lines = vec![Line::from(Span::styled(
-                if self.is_zh_language() {
-                    "  + 展开思考 (enter)"
-                } else {
-                    "  + Show thinking (enter)"
-                },
-                super::theme::secondary_text(),
-            ))];
-            if index > 0 {
-                lines.insert(0, Line::default());
-            }
-            return lines;
-        }
         let Some(kind) = self.logs.get(index).map(|entry| entry.kind) else {
             return Vec::new();
         };
@@ -4149,6 +4150,20 @@ impl TuiApp {
         } else {
             render_plain_lines(entry.kind, entry.text.as_str(), base_style, width)
         };
+
+        // Codex keeps thinking visible as a dim, italic margin note rather than a
+        // second voice in the transcript: patch every span (markdown included) so
+        // no heading or bold fragment can reclaim the reader's attention.
+        if entry.kind == LogKind::Reasoning {
+            for line in &mut lines {
+                for span in &mut line.spans {
+                    span.style = span
+                        .style
+                        .add_modifier(ratatui::style::Modifier::DIM)
+                        .add_modifier(ratatui::style::Modifier::ITALIC);
+                }
+            }
+        }
 
         // A finished thinking block is background noise in the transcript: keep its head,
         // let Enter open the rest, and never fold a block that is still arriving.
@@ -6879,14 +6894,7 @@ impl TuiApp {
             // but the gap row above the draft carries the character count for a moment, so
             // a copy that never reached the terminal is distinguishable from a silent one.
             Ok(()) => self.show_copy_feedback(text.chars().count()),
-            Err(error) => {
-                let hint = crate::locale::tr(
-                    self.display_language.as_str(),
-                    "复制到剪贴板失败",
-                    "clipboard copy failed",
-                );
-                self.push_log(LogKind::Error, format!("{hint}: {error}"));
-            }
+            Err(_) => self.show_copy_failure(),
         }
         self.request_redraw();
     }

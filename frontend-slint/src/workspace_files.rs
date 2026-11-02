@@ -29,8 +29,8 @@ const MAX_CACHED_ENTRIES: usize = 8000;
 
 /// Context-menu action codes shared with the .slint side (aligned with the
 /// web left-rail menu: open/preview, download, rename, delete, reference,
-/// new dir, new file, download-as-zip, clear; refresh is wired inside the
-/// panel header itself).
+/// new dir, new file, download-as-zip, clear, reveal; refresh is wired inside
+/// the panel header itself).
 const MENU_OPEN: i32 = 0;
 const MENU_DOWNLOAD: i32 = 1;
 const MENU_RENAME: i32 = 2;
@@ -42,6 +42,9 @@ const MENU_NEW_FILE: i32 = 6;
 const MENU_ARCHIVE: i32 = 7;
 /// 清空: drop everything under the shown root (blank area only).
 const MENU_CLEAR: i32 = 8;
+/// 打开文件所在位置 / 打开目录所在位置: hand the row's host path to the file
+/// manager (local workspace only — cloud rows have no host directory).
+const MENU_REVEAL: i32 = 10;
 
 /// Drag-in uploads: one drop stages at most this many text files, each
 /// bounded by the interlink inline cap (1 MiB, binary rejected).
@@ -273,7 +276,6 @@ fn drop_dir_cache(path: &str) {
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let model = with_panel(|panel| panel.model.clone()).expect("panel model");
     app.set_ws_file_rows(ModelRc::from(model));
-    let toolbar_api = api.clone();
     let search_api = api.clone();
     let select_api = api.clone();
 
@@ -372,8 +374,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         settle(&app, refresh_api.clone());
     });
 
-    // ---- head toolbar: upload / search / download / multi-select ----
-    install_toolbar(app, toolbar_api);
+    // ---- head toolbar: search / multi-select ----
     install_search(app, search_api);
     install_selection(app, select_api);
 
@@ -507,6 +508,23 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 }
                 if row.is_none() {
                     open_prompt(&app, PromptKind::Clear, String::new(), String::new());
+                }
+            }
+            MENU_REVEAL => {
+                // 与「打开本地工作区」同族：文件管理器是系统能力，放在工作线程
+                // 上跑，失败只落状态条，不弹层。
+                if let (Some(row), Target::Local(root)) = (row, current_target()) {
+                    let api = menu_api.clone();
+                    let weak = app.as_weak();
+                    let path = row.path.to_string();
+                    std::thread::spawn(move || {
+                        let result = api.reveal_workspace_resource(&root, &path);
+                        let _ = weak.upgrade_in_event_loop(move |app| {
+                            if let Err(error) = result {
+                                app.set_status(format!("打开失败：{error}").into());
+                            }
+                        });
+                    });
                 }
             }
             9 => {
@@ -877,78 +895,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     });
 }
 
-// ---------------------------------------------------------------- toolbar
-
-/// The head toolbar actions: the upload button opens the OS multi-file
-/// picker and funnels the picks through the shared transfer; the download
-/// button zips the current directory (cloud) or copies it out to a
-/// user-picked folder (local). Both run on workers and report through the
-/// status bar.
-fn install_toolbar(app: &MainWindow, api: Arc<NativeDesktop>) {
-    let weak = app.as_weak();
-    let upload_api = api.clone();
-    app.on_ws_file_upload(move || {
-        let Some(app) = weak.upgrade() else {
-            return;
-        };
-        if app.get_ws_file_busy() || (is_cloud_target() && app.get_ws_file_offline()) {
-            return;
-        }
-        let weak = weak.clone();
-        let upload_api = upload_api.clone();
-        std::thread::spawn(move || {
-            // The native picker blocks; off the UI thread like the composer's
-            // attachment flow.
-            let picked = crate::file_dialog::pick_attachments();
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                let paths = match picked {
-                    Ok(paths) if !paths.is_empty() => paths,
-                    _ => return,
-                };
-                let paths: Vec<PathBuf> = paths
-                    .into_iter()
-                    .take(MAX_DROP_FILES)
-                    .map(PathBuf::from)
-                    .collect();
-                start_transfer(&app, upload_api, paths);
-            });
-        });
-    });
-
-    let weak = app.as_weak();
-    let download_api = api.clone();
-    app.on_ws_file_download(move || {
-        let Some(app) = weak.upgrade() else {
-            return;
-        };
-        if app.get_ws_file_busy() || (is_cloud_target() && app.get_ws_file_offline()) {
-            return;
-        }
-        match current_target() {
-            Target::Cloud => {
-                let directory = active_directory(&app);
-                let name = file_tail_name(&directory);
-                archive_dir(&app, download_api.clone(), directory, name);
-            }
-            Target::Local(_) => {
-                let weak = weak.clone();
-                let download_api = download_api.clone();
-                std::thread::spawn(move || {
-                    let picked = crate::file_dialog::pick_directory("选择导出位置");
-                    let _ = weak.upgrade_in_event_loop(move |app| {
-                        if let Some(destination) = picked {
-                            export_current(&app, download_api, destination);
-                        }
-                    });
-                });
-            }
-        }
-    });
-}
+// ---------------------------------------------------------------- transfer
 
 /// One bounded copy/upload fan-out into the active directory — the drop
-/// gesture and the head upload button share it. The file work runs on a
-/// worker; the panel settles and reports once it lands.
+/// gesture and the skill file area's upload tile share it. The file work runs
+/// on a worker; the panel settles and reports once it lands.
 fn start_transfer(app: &MainWindow, api: Arc<NativeDesktop>, paths: Vec<PathBuf>) {
     let Some(request) = begin_busy(app) else {
         app.set_status("操作正在处理中，请稍后重试".into());
@@ -986,37 +937,6 @@ fn start_transfer(app: &MainWindow, api: Arc<NativeDesktop>, paths: Vec<PathBuf>
                 message.push_str(&format!("；失败：{}", failed.join("；")));
             }
             app.set_status(message.into());
-        });
-    });
-}
-
-/// Copy the current directory of the local workspace out to `destination`
-/// (the head download for a bound folder: a plain host copy, no archive).
-fn export_current(app: &MainWindow, api: Arc<NativeDesktop>, destination: String) {
-    if app.get_ws_file_busy() {
-        return;
-    }
-    let Target::Local(root) = current_target() else {
-        return;
-    };
-    let Some(request) = begin_busy(app) else {
-        app.set_status("操作正在处理中，请稍后重试".into());
-        return;
-    };
-    let directory = active_directory(app);
-    app.set_status("正在导出…".into());
-    let weak = app.as_weak();
-    std::thread::spawn(move || {
-        let result = api.workspace_local_export(&root, &directory, &destination);
-        let _ = weak.upgrade_in_event_loop(move |app| {
-            end_busy(&app, api, request);
-            if !is_current(request) {
-                return;
-            }
-            match result {
-                Ok(copied) => app.set_status(format!("已导出 {copied} 项").into()),
-                Err(error) => app.set_status(format!("导出失败：{error}").into()),
-            }
         });
     });
 }

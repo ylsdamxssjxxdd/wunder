@@ -330,6 +330,8 @@ export component InlineInput inherits Rectangle {
     in property <bool> multiline: false;
     in property <length> font-size: Theme.font-sm;
     callback edited();
+    // Enter commits the field, matching FormField's accepted -> committed path.
+    callback accepted();
     min-height: 30px;
     border-radius: Theme.radius-sm; border-width: 1px;
     border-color: root.read-only || !root.enabled ? Theme.input-readonly-border : editor.has-focus ? Theme.accent-ink : Theme.input-border;
@@ -362,6 +364,7 @@ export component InlineInput inherits Rectangle {
             selection-background-color: Theme.accent-soft; selection-foreground-color: Theme.text;
             accessible-role: text-input; accessible-label: root.placeholder-text;
             edited => { root.edited(); }
+            accepted => { root.accepted(); }
             changed has-focus => {
                 if editor.has-focus && !editor.read-only && editor.enabled { TextFieldActivation.activated(); }
             }

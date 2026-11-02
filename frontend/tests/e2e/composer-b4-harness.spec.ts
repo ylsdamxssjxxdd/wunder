@@ -94,12 +94,13 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   await expect(sendButton).toBeEnabled();
   await textarea.fill('');
 
-  // §8.5 工具栏左组：「+」菜单 → 工作目录 chip → 审批；占用统计归到右组的模型触发器。
+  // §8.5 工具栏左组：「+」菜单 → 后台任务 / 子智能体；工作目录名称不再占位。
   const statusBar = page.locator('.composer-status-bar').first();
   await expect(statusBar).toBeVisible();
   expect(await statusBar.evaluate((el) => getComputedStyle(el).fontSize)).toBe('12px');
-  await expect(statusBar.locator('[data-testid="composer-workspace-name"]')).toBeVisible();
-  // 工作目录 chip 内不得有占用图标/百分比。
+  await expect(statusBar.locator('[data-testid="composer-workspace-name"]')).toHaveCount(0);
+  await expect(statusBar.locator('[data-testid="composer-background-tasks"]')).toHaveText('0');
+  await expect(statusBar.locator('[data-testid="composer-subagents"]')).toHaveText('0');
   await expect(statusBar.locator('.context-usage-icon')).toHaveCount(0);
   await expect(statusBar).not.toContainText(/%/);
 

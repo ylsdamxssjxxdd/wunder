@@ -1360,20 +1360,31 @@ mod tests {
                 &json!({}),
             )
             .unwrap();
+        // Write the active goal row directly: the follower's settlement tracks
+        // the durable phase plus published updates. Going through
+        // GoalService::create would also notify the round driver, which submits
+        // a continuation that this runtime-less fixture cannot execute and
+        // then blocks the goal, settling the follower early for the wrong
+        // reason.
+        let goal_record = wunder_server::storage::SessionGoalRecord {
+            goal_id: "fixture-goal".into(),
+            session_id: "fixture-thread".into(),
+            user_id: "owner".into(),
+            revision: 1,
+            objective: "sample objective".into(),
+            phase: "active".into(),
+            blocked_code: None,
+            blocked_message: None,
+            max_goal_rounds: 8,
+            rounds_started: 0,
+            created_at: 1.0,
+            updated_at: 1.0,
+        };
+        state.storage.upsert_session_goal(&goal_record).unwrap();
         let goal_service = state.kernel.orchestrator.goal_handle();
-        let goal = goal_service
-            .create(
-                state.storage.clone(),
-                "owner",
-                thread.as_str(),
-                "sample objective",
-                Some(8),
-            )
-            .await
-            .unwrap();
         let reference = GoalRef {
-            goal_id: goal.record.goal_id,
-            revision: goal.record.revision,
+            goal_id: goal_record.goal_id.clone(),
+            revision: goal_record.revision,
         };
         let (output, mut receiver) = mpsc::channel(32);
         let cancel = CancellationToken::new();
@@ -1409,10 +1420,26 @@ mod tests {
         })
         .await
         .unwrap();
-        assert!(
-            !task.is_finished(),
-            "active goal retains the completed follower"
-        );
+        if task.is_finished() {
+            let outcome = task.await;
+            while let Ok(Some(NativeChatEvent::Event(event))) =
+                tokio::time::timeout(Duration::from_millis(50), receiver.recv()).await
+            {
+                events.push(event);
+            }
+            panic!(
+                "active goal retains the completed follower; follow exited early: {outcome:?}; events: {}",
+                events
+                    .iter()
+                    .map(|event| format!(
+                        "{}/{}",
+                        event["event"].as_str().unwrap_or("?"),
+                        event["data"]["status"].as_str().unwrap_or("-")
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
         assert!(
             tokio::time::timeout(Duration::from_millis(150), receiver.recv())
                 .await

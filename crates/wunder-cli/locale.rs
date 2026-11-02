@@ -44,6 +44,7 @@ pub const UI_TEXT_KEYS: &[&str] = &[
     "gap_copied",
     "gap_copied_short",
     "gap_copied_min",
+    "gap_copy_failed",
     "search_query",
     "search_count",
 ];
@@ -72,6 +73,7 @@ pub fn ui_pair(key: &str) -> Option<(&'static str, &'static str)> {
         "gap_copied" => Some(("已复制 {count} 个字符", "Copied {count} characters")),
         "gap_copied_short" => Some(("已复制 {count} 字", "Copied {count} chars")),
         "gap_copied_min" => Some(("已复制", "Copied")),
+        "gap_copy_failed" => Some(("复制到剪贴板失败", "Clipboard copy failed")),
         // Transcript search, in the same gap row: the query the reader is typing and where
         // they stand in the hits. The second rung is what survives a narrow frame, so the
         // counts alone still read as a search state.

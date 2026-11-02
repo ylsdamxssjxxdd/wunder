@@ -1,5 +1,5 @@
 //! Subagent detail dialog: the child thread rendered by the same timeline
-//! projection the main chat uses. Opening a card resolves the child's own
+//! projection the main chat uses. Opening a dock row resolves the child's own
 //! turns through `load_chat_turns`, projects them with `project_history`, and
 //! hands the rows to the dialog's `TimelineView` — one rendering path, no
 //! parallel one. While the dialog is open a bounded timer refreshes the rows
@@ -18,7 +18,7 @@ const REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
 struct State {
     /// The child thread the dialog shows.
     child: String,
-    /// The parent thread the card belongs to; the header card and interrupt
+    /// The parent thread the dock row belongs to; the header and interrupt
     /// resolve through it.
     parent: String,
     model: Rc<VecModel<crate::TimelineRow>>,
@@ -34,9 +34,9 @@ pub fn install(app: &crate::MainWindow, api: Arc<NativeDesktop>) {
     }));
     let weak = app.as_weak();
 
-    // A card click opens the dialog on the child thread it carries.
+    // A dock row opens the dialog on the child thread it carries.
     let (open_weak, open_state, open_api) = (weak.clone(), state.clone(), api.clone());
-    app.on_timeline_open_subagent(move |child| {
+    app.on_dock_open_subagent(move |child| {
         let child = child.trim().to_string();
         if child.is_empty() {
             return;
@@ -73,13 +73,8 @@ pub fn install(app: &crate::MainWindow, api: Arc<NativeDesktop>) {
             .start(slint::TimerMode::Repeated, REFRESH_INTERVAL, tick);
     });
 
-    // Interrupt from the card or from the dialog header: the runtime settles
-    // the child; the card and the header pick the new state up on their own
-    // feeds (the durable reload and the refresh clock). Either way the parent
-    // is the thread the user is looking at — the card lives in the active
-    // timeline and the dialog overlays it — so the active session is the
-    // parent identity, not the dialog's stored one (a card can be stopped
-    // before the dialog has ever been opened).
+    // Interrupt from the dock or dialog header. Both act on the active parent
+    // thread; the dock and dialog refresh their own projections afterwards.
     let stop_api = api.clone();
     let stop = move |app: &crate::MainWindow, child: String| {
         let parent = app.get_active_session_id().trim().to_string();
@@ -96,12 +91,12 @@ pub fn install(app: &crate::MainWindow, api: Arc<NativeDesktop>) {
             }
         });
     };
-    let (card_weak, card_stop) = (weak.clone(), stop.clone());
-    app.on_timeline_stop_subagent(move |child| {
-        let Some(app) = card_weak.upgrade() else {
+    let (dock_weak, dock_stop) = (weak.clone(), stop.clone());
+    app.on_dock_stop_subagent(move |child| {
+        let Some(app) = dock_weak.upgrade() else {
             return;
         };
-        card_stop(&app, child.trim().to_string());
+        dock_stop(&app, child.trim().to_string());
     });
     let (head_weak, head_stop, head_state) = (weak.clone(), stop.clone(), state.clone());
     app.on_subagent_interrupt(move || {

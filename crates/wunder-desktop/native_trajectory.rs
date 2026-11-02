@@ -249,6 +249,48 @@ mod tests {
             )
             .unwrap();
         let turn = accepted["turn_id"].as_str().unwrap();
+        // A durable history append requires the immutable session metadata a
+        // real executor freezes before its first write.
+        {
+            use wunder_server::stable_core::thread_store::{
+                CreateThreadRequest, RolloutId, SessionMeta, ThreadId, ThreadMetadata,
+                ThreadMetadataStore, ThreadStatus,
+            };
+            let thread_store =
+                wunder_server::storage::thread_store::LocalThreadStore::open(directory.path())
+                    .unwrap();
+            let thread = ThreadId::new("fixture-thread").unwrap();
+            let rollout = RolloutId::new("fixture-rollout").unwrap();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime
+                .block_on(thread_store.create_thread(CreateThreadRequest {
+                    metadata: ThreadMetadata {
+                        thread_id: thread.clone(),
+                        current_rollout_id: rollout.clone(),
+                        status: ThreadStatus::Active,
+                        created_at_ms: 1,
+                        updated_at_ms: 1,
+                        title: None,
+                        workspace_id: None,
+                        pinned: false,
+                    },
+                    session_meta: SessionMeta {
+                        thread_id: thread,
+                        rollout_id: rollout,
+                        created_at_ms: 1,
+                        source: "fixture".into(),
+                        initial_system_prompt: "fixture instructions".into(),
+                        initial_memory: None,
+                        parent_thread_id: None,
+                        history_base: None,
+                        capabilities: serde_json::Value::Null,
+                    },
+                }))
+                .unwrap();
+        }
         let summary = "Fixture retained context.\n".repeat(2400);
         storage
             .append_thread_item(
@@ -264,6 +306,16 @@ mod tests {
             .thread_view_trajectory_page("fixture-user", "fixture-thread", None, None, 20)
             .unwrap();
         assert!(!page.timeline.is_empty());
+        assert!(
+            page.timeline
+                .windows(2)
+                .all(|rows| rows[0].created_seq < rows[1].created_seq),
+            "timeline rows stay in ascending commit order"
+        );
+        assert!(
+            page.timeline.iter().any(|row| row.kind == "compaction"),
+            "the committed compaction owns a timeline row"
+        );
         let body = page
             .trajectory
             .iter()

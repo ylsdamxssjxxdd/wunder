@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { ChatMockService, MOCK_SESSION } from '../support/chatMockService';
 
-test('subagent cards update below the owning bubble and survive reload', async ({ page }) => {
+test('subagent dock updates from the composer and survives reload', async ({ page }) => {
   const service = new ChatMockService();
   const turn_id = 'fixture-parent';
   service.turns.push({ turn_id, user_round: 1, status: 'completed', content: 'Fixture task' });
@@ -31,6 +31,9 @@ test('subagent cards update below the owning bubble and survive reload', async (
     await page.locator('button[type="submit"]').click();
     await page.waitForURL('**/app/**');
     await page.goto(`/app/chat?session_id=${MOCK_SESSION}`);
+    const trigger = page.getByTestId('composer-subagents');
+    await expect(trigger).toHaveText('1');
+    await trigger.hover();
     const card = page.locator('.subagent-panel__item');
     await expect(card).toHaveCount(1);
     await expect(card).toContainText('Working on fixture');
@@ -49,6 +52,9 @@ test('subagent cards update below the owning bubble and survive reload', async (
     service.changes.push(progress);
     for (const sub of service.subscriptions) sub.socket.send(JSON.stringify({ type: 'event',
       request_id: sub.request, payload: { event: 'thread_change', data: { session_id: MOCK_SESSION, ...progress } } }));
+    await expect.poll(() => service.requests.filter(request =>
+      request.method === 'GET' && String(request.path).endsWith('/subagents')
+    ).length).toBeGreaterThan(1);
     await expect(card).toContainText('More fixture progress');
     await expect(card).toContainText('工具 3 次');
     await expect(card).toContainText('额度 4');
@@ -67,6 +73,8 @@ test('subagent cards update below the owning bubble and survive reload', async (
       request_id: sub.request, payload: { event: 'thread_change', data: { session_id: MOCK_SESSION, ...change } } }));
     for (let attempt = 0; attempt < 2; attempt++) {
       if (attempt) await page.reload();
+      await expect(trigger).toHaveText('1');
+      await trigger.hover();
       await expect(card).toHaveCount(1);
       await expect(card).toContainText('Fixture completed');
       await expect(card).toContainText('工具 4 次');
