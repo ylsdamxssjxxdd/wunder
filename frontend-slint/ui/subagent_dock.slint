@@ -1,0 +1,190 @@
+import { Theme, SubagentItem } from "theme.slint";
+import { I18n } from "i18n.slint";
+
+component SubagentRow inherits Rectangle {
+    in property <SubagentItem> item;
+    callback open(string);
+    callback stop(string);
+
+    height: 44px;
+    background: transparent;
+
+    open-touch := TouchArea {
+        x: 0px; y: 0px;
+        width: parent.width - (root.item.stoppable ? 22px : 0px);
+        height: parent.height;
+        mouse-cursor: pointer;
+        clicked => { root.open(root.item.id); }
+        Tooltip { text: @markdown("\{I18n.hud_subagents_open}"); }
+    }
+    Rectangle {
+        x: 0px; y: 8px; width: 5px; height: 5px;
+        border-radius: 2.5px;
+        background: root.item.status-kind == 1 ? Theme.accent
+            : root.item.status-kind == 2 ? Theme.danger : Theme.success;
+    }
+    Text {
+        x: 12px; y: 0px;
+        width: parent.width - 12px - status.preferred-width - 8px - (root.item.stoppable ? 22px : 0px);
+        height: 22px;
+        text: root.item.title;
+        color: Theme.text;
+        font-size: Theme.font-xs;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    status := Text {
+        x: parent.width - self.preferred-width - (root.item.stoppable ? 22px : 0px);
+        y: 0px;
+        width: self.preferred-width;
+        height: 22px;
+        text: root.item.status-kind == 1 ? I18n.sub_status_running
+            : root.item.status-kind == 2 ? I18n.sub_status_failed : I18n.sub_status_done;
+        color: root.item.status-kind == 1 ? Theme.accent-ink
+            : root.item.status-kind == 2 ? Theme.danger : Theme.muted;
+        font-size: Theme.font-2xs;
+        vertical-alignment: center;
+    }
+    Text {
+        x: 12px; y: 22px;
+        width: parent.width - 12px - (root.item.stoppable ? 22px : 0px);
+        height: 20px;
+        text: root.item.summary;
+        color: Theme.muted;
+        font-size: Theme.font-2xs;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    if root.item.stoppable : Rectangle {
+        x: parent.width - 20px; y: 12px; width: 20px; height: 20px;
+        border-radius: Theme.radius-tag;
+        background: stop-touch.has-hover ? Theme.danger-bg : transparent;
+        Image {
+            x: 5px; y: 5px; width: 10px; height: 10px;
+            source: @image-url("../assets/icons/xmark.svg");
+            colorize: stop-touch.has-hover ? Theme.danger : Theme.muted;
+            image-fit: contain;
+        }
+        stop-touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.stop(root.item.id); }
+            Tooltip { text: @markdown("\{I18n.hud_subagents_stop}"); }
+        }
+    }
+}
+
+export component SubagentPanel inherits Rectangle {
+    in property <[SubagentItem]> items;
+    in property <int> count: 0;
+    in property <int> hidden: 0;
+    out property <bool> hovered: hover.has-hover;
+    callback open(string);
+    callback stop(string);
+
+    width: 380px;
+    height: card.height + 6px;
+    background: transparent;
+
+    hover := TouchArea {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        card := Rectangle {
+            y: 0px; width: parent.width; height: body.preferred-height + 16px;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-color: #00000024;
+            drop-shadow-blur: 16px;
+            drop-shadow-offset-y: 4px;
+            body := VerticalLayout {
+                x: 8px; y: 8px; width: parent.width - 16px;
+                spacing: 2px;
+                HorizontalLayout {
+                    height: 18px; spacing: 6px;
+                    Text {
+                        text: I18n.hud_subagents_title;
+                        color: Theme.text;
+                        font-size: Theme.font-xs;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text {
+                        text: I18n.hud_subagents_count(root.count);
+                        color: Theme.muted;
+                        font-size: Theme.font-2xs;
+                        vertical-alignment: center;
+                    }
+                }
+                for item in root.items : SubagentRow {
+                    item: item;
+                    open(id) => { root.open(id); }
+                    stop(id) => { root.stop(id); }
+                }
+                if root.hidden > 0 : Text {
+                    height: 16px;
+                    text: I18n.hud_subagents_more(root.hidden);
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+export component SubagentDock inherits Rectangle {
+    in property <[SubagentItem]> items: [];
+    in property <int> count: 0;
+    in property <int> hidden: 0;
+    in property <string> hint: "";
+    out property <bool> hovering: cell.has-hover || panel.hovered;
+    callback open(string);
+    callback stop(string);
+
+    private property <bool> lingering: false;
+    private property <bool> panel-open: root.count > 0 && (root.hovering || root.lingering);
+
+    width: 40px;
+    height: 26px;
+    background: transparent;
+
+    cell := TouchArea {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        if root.count == 0 : Tooltip { text: @markdown("\{root.hint}"); }
+    }
+    Image {
+        // 机器人字形较扁，放大 2px 与终端图标保持相同的视觉高度。
+        x: 4px; y: 4px; width: 18px; height: 18px;
+        source: @image-url("../assets/icons/robot.svg");
+        colorize: root.count > 0 ? Theme.accent-ink : Theme.muted;
+        image-fit: contain;
+    }
+    Text {
+        x: 23px; y: 0px; width: parent.width - 23px; height: 26px;
+        text: root.count > 9 ? "9+" : "\{root.count}";
+        color: root.count > 0 ? Theme.accent-ink : Theme.muted;
+        font-size: Theme.font-xs;
+        font-weight: 600;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    changed hovering => {
+        if !root.hovering { root.lingering = true; }
+    }
+    Timer {
+        interval: 200ms;
+        running: root.lingering;
+        triggered => { root.lingering = false; }
+    }
+    panel := SubagentPanel {
+        visible: root.panel-open;
+        x: -92px;
+        y: -self.height;
+        items: root.items;
+        count: root.count;
+        hidden: root.hidden;
+        open(id) => { root.open(id); }
+        stop(id) => { root.stop(id); }
+    }
+}

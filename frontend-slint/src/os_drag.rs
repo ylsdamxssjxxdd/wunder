@@ -64,7 +64,6 @@ mod imp {
     const GMEM_MOVEABLE: u32 = 0x0002;
     const GMEM_ZEROINIT: u32 = 0x0040;
     const GMEM_DDESHARE: u32 = 0x2000;
-    const COINIT_APARTMENTTHREADED: u32 = 0x2;
 
     #[repr(C)]
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -99,13 +98,17 @@ mod imp {
         f_wide: i32,
     }
 
+    /// Real `FORMATETC` layout: `ptd` sits between the format and the aspect,
+    /// so reading the aspect right after a u16 reads pointer bytes instead —
+    /// the old layout made every `GetData` miss and every canonical copy
+    /// write short.
     #[repr(C)]
     struct FormatEtc {
         cf_format: u16,
+        ptd: *mut c_void,
         dw_aspect: u32,
         l_index: i32,
         tymed: u32,
-        p_unk: *mut c_void,
     }
 
     #[repr(C)]
@@ -202,8 +205,8 @@ mod imp {
 
     #[link(name = "ole32")]
     extern "system" {
-        fn CoInitializeEx(reserved: *const c_void, model: u32) -> i32;
-        fn CoUninitialize();
+        fn OleInitialize(reserved: *const c_void) -> i32;
+        fn OleUninitialize();
         fn DoDragDrop(
             data: *mut c_void,
             source: *mut c_void,
@@ -234,20 +237,19 @@ mod imp {
         (unsafe { GetAsyncKeyState(VK_LBUTTON) } as u16) & 0x8000 != 0
     }
 
-    /// Drag one local file out. Blocks until the gesture completes, so run it
-    /// on a worker thread. Returns `true` when the target accepted a copy.
+    /// Drag one local file out. Blocks on the calling UI thread until the
+    /// gesture completes. Returns `true` when the target accepted a copy.
     pub fn drag_file(path: &Path) -> Result<bool, String> {
-        let hr = unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED) };
+        // DoDragDrop requires OLE, not merely a COM apartment: CoInitializeEx
+        // alone makes it fail with CO_E_NOTINITIALIZED (0x800401F0).
+        let hr = unsafe { OleInitialize(std::ptr::null()) };
         if hr != S_OK && hr != S_FALSE {
             return Err(format!("OLE 初始化失败（0x{hr:08X}）"));
         }
         let result = drag_file_impl(path);
-        // Only undo what this call added: on the UI thread OLE is already
-        // initialized by the window backend, and balancing that reference away
-        // would tear the apartment down under the running app.
-        if hr == S_OK {
-            unsafe { CoUninitialize() };
-        }
+        // Every successful OleInitialize call, including S_FALSE, is balanced.
+        // An existing backend reference keeps the apartment alive afterwards.
+        unsafe { OleUninitialize() };
         result
     }
 
@@ -276,10 +278,13 @@ mod imp {
         // DoDragDrop balanced its own references; drop our initial ones.
         unsafe { do_release(data as *mut c_void) };
         unsafe { ds_release(source as *mut c_void) };
-        match hr {
-            DRAGDROP_S_DROP => Ok(effect & DROPEFFECT_COPY != 0),
-            DRAGDROP_S_CANCEL => Ok(false),
-            other => Err(format!("拖拽失败（0x{other:08X}）")),
+        // DoDragDrop can also return another success code after the feedback
+        // callback (for example DRAGDROP_S_USEDEFAULTCURSORS). Only negative
+        // HRESULTs are errors; the final effect says whether a copy landed.
+        if hr >= 0 {
+            Ok(hr != DRAGDROP_S_CANCEL && effect & DROPEFFECT_COPY != 0)
+        } else {
+            Err(format!("拖拽失败（0x{hr:08X}）"))
         }
     }
 
@@ -440,7 +445,7 @@ mod imp {
             return E_INVALIDARG;
         }
         std::ptr::copy_nonoverlapping(format, out, 1);
-        (*out).p_unk = std::ptr::null_mut();
+        (*out).ptd = std::ptr::null_mut();
         DATA_S_SAMEFORMATETC
     }
 
@@ -616,10 +621,10 @@ mod imp {
     fn single_format() -> FormatEtc {
         FormatEtc {
             cf_format: CF_HDROP,
+            ptd: std::ptr::null_mut(),
             dw_aspect: DVASPECT_CONTENT,
             l_index: -1,
             tymed: TYMED_HGLOBAL,
-            p_unk: std::ptr::null_mut(),
         }
     }
 
@@ -683,4 +688,40 @@ mod imp {
         reset: ef_reset,
         clone: ef_clone,
     };
+
+    #[cfg(test)]
+    mod layout_tests {
+        use super::FormatEtc;
+
+        /// A wrong field offset here made every `GetData` miss and corrupted
+        /// the canonical copy; pin the layout against the real `FORMATETC`.
+        #[test]
+        fn format_etc_matches_the_win32_layout() {
+            let layout = std::mem::MaybeUninit::<FormatEtc>::uninit();
+            let base = layout.as_ptr() as usize;
+            let offset_of = |field: *const u8| field as usize - base;
+            unsafe {
+                let ptd = std::ptr::addr_of!((*layout.as_ptr()).ptd) as *const u8;
+                let aspect = std::ptr::addr_of!((*layout.as_ptr()).dw_aspect) as *const u8;
+                let lindex = std::ptr::addr_of!((*layout.as_ptr()).l_index) as *const u8;
+                let tymed = std::ptr::addr_of!((*layout.as_ptr()).tymed) as *const u8;
+                #[cfg(target_pointer_width = "64")]
+                {
+                    assert_eq!(offset_of(ptd), 8);
+                    assert_eq!(offset_of(aspect), 16);
+                    assert_eq!(offset_of(lindex), 20);
+                    assert_eq!(offset_of(tymed), 24);
+                    assert_eq!(std::mem::size_of::<FormatEtc>(), 32);
+                }
+                #[cfg(target_pointer_width = "32")]
+                {
+                    assert_eq!(offset_of(ptd), 4);
+                    assert_eq!(offset_of(aspect), 8);
+                    assert_eq!(offset_of(lindex), 12);
+                    assert_eq!(offset_of(tymed), 16);
+                    assert_eq!(std::mem::size_of::<FormatEtc>(), 20);
+                }
+            }
+        }
+    }
 }

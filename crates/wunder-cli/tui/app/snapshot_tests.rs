@@ -371,7 +371,7 @@ fn draw_rows(app: &mut TuiApp, width: u16, height: u16) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn live_reasoning_is_transcript_only_and_never_floods_the_main_frame() {
+async fn live_reasoning_streams_inline_and_stays_available_in_the_transcript() {
     let root = TempRoot::new("reasoning_projection");
     let mut app = fixture_app(root.path()).await;
     app.logs.clear();
@@ -386,16 +386,14 @@ async fn live_reasoning_is_transcript_only_and_never_floods_the_main_frame() {
             }),
             10102 + index,
         );
-        let frame = draw_rows(&mut app, 60, 18).join("\n");
-        assert!(
-            !frame.contains("private-thought-"),
-            "reasoning leaked: {frame}"
-        );
-        assert!(!app
-            .drain_pending_scrollback_lines()
-            .iter()
-            .any(|line| line.to_string().contains("private-thought-")));
     }
+    // Codex shows the thought inline instead of hiding the whole block behind a
+    // disclosure; a long stream still folds instead of flooding the frame.
+    let frame = draw_rows(&mut app, 60, 18).join("\n");
+    assert!(
+        frame.contains("private-thought-000"),
+        "the live thought is on screen: {frame}"
+    );
     app.finalize_all_markdown_streams();
     assert!(app.handle_transcript_view_key(ctrl(KeyCode::Char('t'))));
     let transcript = app
@@ -647,6 +645,49 @@ async fn the_frame_composes_every_card_at_forty_eighty_and_one_hundred_twenty_co
         !frame.contains("reasoning line 5"),
         "and keeps only the head: {frame}"
     );
+}
+
+/// Codex keeps thinking visible inline: a folded block shows its head as a dim italic
+/// margin note, not a bare disclosure line that hides the whole thought.
+#[tokio::test]
+async fn folded_thinking_shows_its_head_in_dim_italic() {
+    use ratatui::style::Modifier;
+
+    let root = TempRoot::new("reasoning_inline");
+    let mut app = fixture_app(root.path()).await;
+    let index = app
+        .logs
+        .iter()
+        .position(|entry| entry.kind == LogKind::Reasoning)
+        .expect("reasoning entry");
+    let lines = app.render_entry_lines(index, false, 80);
+    let text = |line: &ratatui::text::Line<'_>| {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    };
+    let rendered = lines.iter().map(text).collect::<Vec<_>>();
+    assert!(
+        rendered.iter().any(|line| line.contains("reasoning line 1")),
+        "the folded head stays visible: {rendered:?}"
+    );
+    assert!(
+        !rendered.iter().any(|line| line.contains("reasoning line 12")),
+        "the tail stays folded: {rendered:?}"
+    );
+    for line in &lines {
+        let content = text(line);
+        if content.contains("reasoning line") {
+            for span in &line.spans {
+                assert!(
+                    span.style.add_modifier.contains(Modifier::DIM)
+                        && span.style.add_modifier.contains(Modifier::ITALIC),
+                    "thinking reads as a margin note: {span:?}"
+                );
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -4574,6 +4615,56 @@ async fn a_copy_shows_its_count_in_the_band_then_yields_the_row() {
     );
 }
 
+/// A failed write reports through the same transient band, never as a transcript error:
+/// one gesture can attempt several copies, and an error log per attempt floods the
+/// scrollback with red lines.
+#[tokio::test]
+async fn a_failed_copy_reports_in_the_band_not_the_transcript() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    fn fail_write(_: &str) -> anyhow::Result<()> {
+        Err(anyhow::anyhow!("clipboard is busy"))
+    }
+
+    let root = TempRoot::new("gap_copy_failed");
+    let mut app = fixture_app(root.path()).await;
+    let _clipboard_turn = ClipboardSeam::arm();
+    *CLIPBOARD_WRITER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(fail_write);
+    let before = draw_rows(&mut app, 80, 24);
+    let start = before
+        .iter()
+        .position(|row| row.contains("Ran cargo test"))
+        .expect("the command card is on screen");
+
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), start, 2);
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        start + 1,
+        40,
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        start + 1,
+        40,
+    );
+
+    let text = gap_text(&mut app, 80, 24).expect("the failure answers in the band");
+    assert!(
+        text.contains("Clipboard copy failed"),
+        "the band carries the failure: {text:?}"
+    );
+    let rows = draw_rows(&mut app, 80, 24);
+    let mentions = rows
+        .iter()
+        .filter(|row| row.contains("Clipboard copy failed"))
+        .count();
+    assert_eq!(mentions, 1, "the failure never reaches the transcript: {rows:?}");
+}
+
 /// An empty draft plus a detached tail is a request to come back, not a send.
 #[tokio::test]
 async fn an_empty_enter_from_a_detached_tail_returns_to_latest() {
@@ -6161,3 +6252,5 @@ async fn model_add_registers_without_hijacking_a_working_default() {
         "config.toml describes the default model's endpoint only: {user_toml}"
     );
 }
+
+

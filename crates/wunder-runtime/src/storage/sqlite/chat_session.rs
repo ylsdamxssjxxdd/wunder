@@ -169,7 +169,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
 
     fn upsert_chat_session_impl(&self, record: &ChatSessionRecord) -> Result<()> {
         self.ensure_initialized()?;
-        let conn = self.read_connection()?;
+        let conn = self.open()?;
         let tool_overrides = if record.tool_overrides.is_empty() {
             None
         } else {
@@ -216,7 +216,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
 
     fn insert_chat_session_if_absent_impl(&self, record: &ChatSessionRecord) -> Result<bool> {
         self.ensure_initialized()?;
-        let conn = self.read_connection()?;
+        let conn = self.open()?;
         let tool_overrides = if record.tool_overrides.is_empty() {
             None
         } else {

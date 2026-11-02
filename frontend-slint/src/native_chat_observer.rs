@@ -628,7 +628,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
         // Header snapshots intentionally defer completed process details. The
         // process bar remains an actionable lightweight row; its first open
         // requests the normal keyset page in `chat_process`.
-        if turn.rounds.is_empty() {
+        if turn.rounds.is_empty() && !failure_repeats(turn, &turn.assistant.text) {
             let mut answer = blank_row(
                 crate::timeline::KIND_BODY,
                 format!("answer-{}", turn.root_id),
@@ -644,7 +644,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             let activity = !round.reasoning.is_empty() || tools > 0;
             if !activity {
                 // A plain-text round has no batch: the answer alone carries it.
-                if !round.text.is_empty() {
+                if !round.text.is_empty() && !failure_repeats(turn, &round.text) {
                     let mut body = blank_row(
                         crate::timeline::KIND_BODY,
                         format!("body-{}-{}", round.execution, round.round),
@@ -706,7 +706,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 reason.foldable = true;
                 rows.push(reason);
             }
-            if !round.text.is_empty() {
+            if !round.text.is_empty() && !failure_repeats(turn, &round.text) {
                 let mut body = blank_row(
                     crate::timeline::KIND_BODY,
                     format!("body-{}-{}", round.execution, round.round),
@@ -752,15 +752,29 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             }
             rows[group_bar_at].summary = latest;
         }
-        // Child runs render as cards at the turn's tail, the same place the web
-        // messenger parks its subagent panel. The projection is shared with the
-        // live reducer, so a card looks and behaves identically in both paths.
+        // Child runs keep zero-height status markers for turn accounting; their
+        // visible list and detail entry live in the composer dock.
         for card in &turn.subagents {
             if card.session_id.is_empty() {
                 continue;
             }
             let mut row = crate::timeline::subagent_row(card);
             row.payload = rows.len() as i32;
+            rows.push(row);
+        }
+        // The failure card sits where the answer would have been, right before
+        // the footer. A stopped or rejected turn may have no answer at all.
+        if let Some(failure) = &turn.failure {
+            let card = crate::error_card::from_failure(&failure.code, &failure.message);
+            let mut row = blank_row(
+                crate::timeline::KIND_ERROR,
+                format!("error-{}", turn.root_id),
+            );
+            row.status_kind = crate::timeline::STATUS_FAILED;
+            row.error_title = card.title.as_str().into();
+            row.text = card.message.as_str().into();
+            row.detail = card.detail.as_str().into();
+            row.error_hint = card.hint.as_str().into();
             rows.push(row);
         }
         // The footer stays outside the process, including reasoning-only turns.
@@ -951,6 +965,15 @@ fn is_queue_only_turn(turn: &NativeChatTurn) -> bool {
         && turn.subagents.is_empty()
 }
 
+/// The executor persists a failed turn's sentence as its assistant body, so
+/// that exact text would appear twice (body and card). The card owns it; any
+/// partial answer written before the failure is still shown.
+fn failure_repeats(turn: &NativeChatTurn, text: &str) -> bool {
+    turn.failure
+        .as_ref()
+        .is_some_and(|failure| text.trim() == failure.message.trim())
+}
+
 /// Apply the same single process fold as the live reducer, including actions
 /// after the newest answer. A stopped turn need not have an answer at all.
 fn fold_history_process(
@@ -1100,8 +1123,8 @@ fn blank_row(kind: i32, id: String) -> TimelineRow {
         payload: 0,
         patch: ModelRc::default(),
         stats: ModelRc::default(),
-        subagent_id: Default::default(),
-        subagent_stoppable: false,
+        error_title: Default::default(),
+        error_hint: Default::default(),
     }
 }
 
@@ -1282,6 +1305,7 @@ mod tests {
             process_steps: 0,
             plan: None,
             question_panel: None,
+            failure: None,
         }
     }
 

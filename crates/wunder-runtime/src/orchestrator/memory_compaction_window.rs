@@ -515,119 +515,29 @@ pub(super) fn collect_interaction_turns_with_budget(
     selected_turns
 }
 
-#[cfg(test)]
-pub(super) fn collect_retained_interaction_messages_for_compaction(
-    messages: &[Value],
-    retained_turn_count: usize,
-    head_token_limit: i64,
-    tail_token_limit: i64,
-) -> Vec<Value> {
-    let (head_messages, tail_messages) = collect_retained_interaction_segments_for_compaction(
-        messages,
-        retained_turn_count,
-        head_token_limit,
-        tail_token_limit,
-    );
-    head_messages.into_iter().chain(tail_messages).collect()
-}
-
-#[allow(dead_code)]
-pub(super) fn collect_retained_interaction_segments_for_compaction(
-    messages: &[Value],
-    retained_turn_count: usize,
-    head_token_limit: i64,
-    tail_token_limit: i64,
-) -> (Vec<Value>, Vec<Value>) {
-    let segments = collect_retained_interaction_segments_with_indexes_for_compaction(
-        messages,
-        None,
-        retained_turn_count,
-        head_token_limit,
-        tail_token_limit,
-    );
-    (segments.head_messages, segments.tail_messages)
-}
-
-pub(super) struct RetainedInteractionSegments {
-    pub(super) head_messages: Vec<Value>,
-    pub(super) tail_messages: Vec<Value>,
-}
-
-pub(super) fn collect_retained_interaction_segments_with_indexes_for_compaction(
+pub(super) fn collect_retained_tail_interaction_messages_for_compaction(
     messages: &[Value],
     boundary_index: Option<usize>,
     retained_turn_count: usize,
-    head_token_limit: i64,
     tail_token_limit: i64,
-) -> RetainedInteractionSegments {
+) -> Vec<Value> {
     if retained_turn_count == 0 {
-        return RetainedInteractionSegments {
-            head_messages: Vec::new(),
-            tail_messages: Vec::new(),
-        };
+        return Vec::new();
     }
-
     if split_messages_into_interaction_turns_with_boundary(messages, boundary_index).is_empty() {
-        return RetainedInteractionSegments {
-            head_messages: Vec::new(),
-            tail_messages: Vec::new(),
-        };
+        return Vec::new();
     }
     let normalized_turns =
         collect_normalized_interaction_blocks_with_boundary(messages, boundary_index);
     if normalized_turns.is_empty() {
-        return RetainedInteractionSegments {
-            head_messages: Vec::new(),
-            tail_messages: Vec::new(),
-        };
+        return Vec::new();
     }
-
     let turn_count = normalized_turns.len();
-    let head_len = retained_turn_count.min(turn_count);
-    let tail_start = turn_count.saturating_sub(retained_turn_count).max(head_len);
-    let head_messages = collect_interaction_turns_with_budget(
-        &normalized_turns[..head_len],
-        head_token_limit,
-        false,
-    );
-    let tail_messages = if tail_start >= turn_count {
-        Vec::new()
-    } else {
-        collect_interaction_turns_with_budget(
-            &normalized_turns[tail_start..],
-            tail_token_limit,
-            true,
-        )
-    };
-    RetainedInteractionSegments {
-        head_messages: head_messages
-            .into_iter()
-            .map(|block| block.message)
-            .collect(),
-        tail_messages: tail_messages
-            .into_iter()
-            .map(|block| block.message)
-            .collect(),
-    }
-}
-
-#[allow(dead_code)]
-pub(super) fn collect_retained_interaction_messages_from_window(
-    messages: &[Value],
-    token_limit: i64,
-    from_end: bool,
-) -> Vec<Value> {
-    if token_limit <= 0 || messages.is_empty() {
+    let tail_start = turn_count.saturating_sub(retained_turn_count);
+    if tail_start >= turn_count {
         return Vec::new();
     }
-    if split_messages_into_interaction_turns(messages).is_empty() {
-        return Vec::new();
-    }
-    let normalized_turns = collect_normalized_interaction_blocks(messages);
-    if normalized_turns.is_empty() {
-        return Vec::new();
-    }
-    collect_interaction_turns_with_budget(&normalized_turns, token_limit, from_end)
+    collect_interaction_turns_with_budget(&normalized_turns[tail_start..], tail_token_limit, true)
         .into_iter()
         .map(|block| block.message)
         .collect()

@@ -1011,8 +1011,15 @@ fn insert_event_target_window_data(
 
 /// Capture mouse input, allowing `window` to receive mouse events when the cursor is outside of
 /// the window.
-unsafe fn capture_mouse(window: HWND, window_state: &mut WindowState) {
+unsafe fn capture_mouse(window: HWND, mut window_state: MutexGuard<'_, WindowState>) {
     window_state.mouse.capture_count += 1;
+    // SetCapture() synchronously sends WM_CAPTURECHANGED to the window losing
+    // capture, which is this very window when a second button is pressed while
+    // another is still held. The re-entered handler locks window_state again
+    // (e.g. the keyboard callback's IME check), and std's mutex is not
+    // reentrant, so holding the guard across SetCapture() deadlocks the UI
+    // thread. Drop it first, mirroring release_mouse() below.
+    drop(window_state);
     unsafe { SetCapture(window) };
 }
 
@@ -1814,7 +1821,7 @@ unsafe fn public_window_callback_inner(
             use crate::event::MouseButton::Left;
             use crate::event::WindowEvent::MouseInput;
 
-            unsafe { capture_mouse(window, &mut userdata.window_state_lock()) };
+            unsafe { capture_mouse(window, userdata.window_state_lock()) };
 
             update_modifiers(window, userdata);
 
@@ -1846,7 +1853,7 @@ unsafe fn public_window_callback_inner(
             use crate::event::MouseButton::Right;
             use crate::event::WindowEvent::MouseInput;
 
-            unsafe { capture_mouse(window, &mut userdata.window_state_lock()) };
+            unsafe { capture_mouse(window, userdata.window_state_lock()) };
 
             update_modifiers(window, userdata);
 
@@ -1878,7 +1885,7 @@ unsafe fn public_window_callback_inner(
             use crate::event::MouseButton::Middle;
             use crate::event::WindowEvent::MouseInput;
 
-            unsafe { capture_mouse(window, &mut userdata.window_state_lock()) };
+            unsafe { capture_mouse(window, userdata.window_state_lock()) };
 
             update_modifiers(window, userdata);
 
@@ -1911,7 +1918,7 @@ unsafe fn public_window_callback_inner(
             use crate::event::WindowEvent::MouseInput;
             let xbutton = super::get_xbutton_wparam(wparam as u32);
 
-            unsafe { capture_mouse(window, &mut userdata.window_state_lock()) };
+            unsafe { capture_mouse(window, userdata.window_state_lock()) };
 
             update_modifiers(window, userdata);
 

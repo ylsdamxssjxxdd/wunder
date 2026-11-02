@@ -929,7 +929,7 @@ fn test_locate_compaction_summary_message_index_prefers_prefixed_summary() {
 }
 
 #[test]
-fn test_collect_retained_interaction_messages_for_compaction_keeps_first_and_recent_blocks() {
+fn test_collect_retained_tail_interaction_messages_for_compaction_keeps_recent_blocks_only() {
     let messages = vec![
         json!({ "role": "user", "content": "round-1 user" }),
         json!({ "role": "assistant", "content": "round-1 assistant" }),
@@ -943,10 +943,10 @@ fn test_collect_retained_interaction_messages_for_compaction_keeps_first_and_rec
         json!({ "role": "assistant", "content": "round-5 assistant" }),
     ];
 
-    let retained = collect_retained_interaction_messages_for_compaction(
+    let retained = collect_retained_tail_interaction_messages_for_compaction(
         &messages,
-        COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE,
-        COMPACTION_RETAINED_HEAD_INTERACTION_TOKENS,
+        None,
+        COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT,
         COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS,
     );
     let contents = retained
@@ -957,10 +957,6 @@ fn test_collect_retained_interaction_messages_for_compaction_keeps_first_and_rec
     assert_eq!(
         contents,
         vec![
-            "round-1 user".to_string(),
-            "round-1 assistant".to_string(),
-            "round-2 user".to_string(),
-            "round-2 assistant".to_string(),
             "round-4 user".to_string(),
             "round-4 assistant".to_string(),
             "round-5 user".to_string(),
@@ -970,7 +966,7 @@ fn test_collect_retained_interaction_messages_for_compaction_keeps_first_and_rec
 }
 
 #[test]
-fn test_collect_retained_interaction_messages_for_compaction_keeps_oldest_and_latest_task_blocks() {
+fn test_collect_retained_tail_interaction_messages_for_compaction_keeps_latest_task_blocks() {
     let messages = vec![
         json!({ "role": "user", "content": "[SWARM_CONTEXT]\\nolder task" }),
         json!({ "role": "assistant", "content": "older answer" }),
@@ -986,10 +982,10 @@ fn test_collect_retained_interaction_messages_for_compaction_keeps_oldest_and_la
         json!({ "role": "assistant", "content": "reading current task files" }),
     ];
 
-    let retained = collect_retained_interaction_messages_for_compaction(
+    let retained = collect_retained_tail_interaction_messages_for_compaction(
         &messages,
-        COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE,
-        COMPACTION_RETAINED_HEAD_INTERACTION_TOKENS,
+        None,
+        COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT,
         COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS,
     );
     let roles = retained
@@ -1008,15 +1004,11 @@ fn test_collect_retained_interaction_messages_for_compaction_keeps_oldest_and_la
             "assistant".to_string(),
             "user".to_string(),
             "assistant".to_string(),
-            "user".to_string(),
-            "assistant".to_string(),
         ]
     );
     assert_eq!(
         contents,
         vec![
-            "[SWARM_CONTEXT]\\nolder task".to_string(),
-            "older answer".to_string(),
             "current question".to_string(),
             "searching current task".to_string(),
             "Tool observation (search_content): success\n11 hits".to_string(),
@@ -1105,49 +1097,7 @@ fn test_split_messages_into_interaction_turns_respects_boundary_index() {
 }
 
 #[test]
-fn test_collect_retained_interaction_segments_for_compaction_avoids_overlap_duplication() {
-    let messages = vec![
-        json!({ "role": "user", "content": "round-1 user" }),
-        json!({ "role": "assistant", "content": "round-1 assistant" }),
-        json!({ "role": "user", "content": "round-2 user" }),
-        json!({ "role": "assistant", "content": "round-2 assistant" }),
-        json!({ "role": "user", "content": "round-3 user" }),
-        json!({ "role": "assistant", "content": "round-3 assistant" }),
-    ];
-
-    let (head, tail) = collect_retained_interaction_segments_for_compaction(
-        &messages,
-        COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE,
-        COMPACTION_RETAINED_HEAD_INTERACTION_TOKENS,
-        COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS,
-    );
-
-    let head_contents = head
-        .iter()
-        .map(|message| message["content"].as_str().unwrap_or("").to_string())
-        .collect::<Vec<_>>();
-    let tail_contents = tail
-        .iter()
-        .map(|message| message["content"].as_str().unwrap_or("").to_string())
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        head_contents,
-        vec![
-            "round-1 user".to_string(),
-            "round-1 assistant".to_string(),
-            "round-2 user".to_string(),
-            "round-2 assistant".to_string(),
-        ]
-    );
-    assert_eq!(
-        tail_contents,
-        vec!["round-3 user".to_string(), "round-3 assistant".to_string(),]
-    );
-}
-
-#[test]
-fn test_collect_retained_interaction_messages_for_compaction_trims_large_block_to_budget() {
+fn test_collect_retained_tail_interaction_messages_for_compaction_trims_large_block_to_budget() {
     let large_assistant = "assistant detail ".repeat(8_000);
     let messages = vec![
         json!({ "role": "user", "content": "round-1 user" }),
@@ -1156,13 +1106,17 @@ fn test_collect_retained_interaction_messages_for_compaction_trims_large_block_t
         json!({ "role": "assistant", "content": "round-2 assistant" }),
     ];
 
-    let retained = collect_retained_interaction_messages_for_compaction(&messages, 2, 256, 256);
-    assert_eq!(retained.len(), 4);
-    assert_eq!(retained[0]["content"], json!("round-1 user"));
-    assert_eq!(retained[2]["content"], json!("round-2 user"));
-    assert_eq!(retained[3]["content"], json!("round-2 assistant"));
-    assert!(estimate_message_tokens(&retained[1]) <= 256);
-    assert_ne!(retained[1]["content"], json!(large_assistant));
+    let retained = collect_retained_tail_interaction_messages_for_compaction(
+        &messages,
+        None,
+        3,
+        256,
+    );
+    assert_eq!(retained.len(), 3);
+    assert!(estimate_message_tokens(&retained[0]) <= 256);
+    assert_ne!(retained[0]["content"], json!(large_assistant));
+    assert_eq!(retained[1]["content"], json!("round-2 user"));
+    assert_eq!(retained[2]["content"], json!("round-2 assistant"));
 }
 
 #[test]

@@ -2519,10 +2519,11 @@ impl WorkspaceManager {
             Ok(path) => path,
             Err(_) => return i18n::t("workspace.tree.empty"),
         };
-        let tree = if Handle::try_current().is_ok() {
-            tokio::task::block_in_place(|| build_workspace_tree(&root, 2))
-        } else {
-            build_workspace_tree(&root, 2)
+        let tree = match Handle::try_current() {
+            Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(|| build_workspace_tree(&root, 2))
+            }
+            _ => build_workspace_tree(&root, 2),
         };
         let now = now_ts();
         let safe_id = self.safe_user_id(user_id);

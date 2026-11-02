@@ -30,7 +30,8 @@ ENTRIES = [
 # load-more and pull-open are desktop-specific.
 ENTRIES.extend([
     ("wf_title", "工作目录", "Working directory"),
-    # Header toolbar: upload / search / download / multi-select / refresh.
+    # Header toolbar: search / multi-select / refresh (the upload tile only
+    # appears in the skill and knowledge file areas).
     ("wf_upload", "上传文件", "Upload files"),
     ("wf_search", "搜索文件", "Search files"),
     ("wf_search_placeholder", "搜索文件名", "Search file names"),
@@ -58,6 +59,8 @@ ENTRIES.extend([
     ("wf_menu_new_file", "新建文件", "New file"),
     ("wf_menu_refresh", "刷新", "Refresh"),
     ("wf_menu_open_ws", "打开本地工作区", "Open local workspace"),
+    ("wf_menu_reveal_file", "打开文件所在位置", "Open File Location"),
+    ("wf_menu_reveal_dir", "打开目录所在位置", "Open Folder Location"),
     ("wf_menu_preview", "预览", "Preview"),
     ("wf_menu_archive", "打包下载", "Download as zip"),
     ("wf_menu_archive_root", "下载当前目录", "Download this folder"),

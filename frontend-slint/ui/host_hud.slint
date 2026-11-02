@@ -1,19 +1,18 @@
 // 输入区底部「本机硬件状态」读数行（HostHud）。
 //
-// 三格直接排在动作行最左侧（紧跟加号，替代了原来的工作区名称位），不套底色也不
-// 描边——它读起来是输入区的一部分，而不是贴在底部的一条独立状态条：前两格是 CPU
-// 与内存占用（液位字形：图标从底部按占用比例着色填满，与模型触发器里那个大脑图标
-// 同一套逻辑），末格是后台任务计数。
+// 状态格直接排在动作行最左侧（紧跟加号，替代了原来的工作区名称位），不套底色也不
+// 描边——前两格是 CPU 与内存占用，后两格依次是后台任务与子智能体计数。
 //
 // 网络与磁盘不再单独占格。四项指标都塞进一行会让读数行宽到压住模型触发器，也让
 // 「一眼扫过」变成「逐个辨认」；现在鼠标移到 CPU 或内存上，就在读数行上方展开详情
 // 面板，四项一次列全（含百分比、核心数、绝对内存、上下行速率、读写速率）。格子只
 // 保留最需要一眼看到的两个压力项。
 //
-// 高度 26px（与动作行里 24~28px 的控件同处一条中线），宽度按内容取（约 128px）。
+// 高度 26px（与动作行里 24~28px 的控件同处一条中线），宽度按内容取。
 
-import { Theme, CommandTask } from "theme.slint";
+import { Theme, CommandTask, SubagentItem } from "theme.slint";
 import { I18n } from "i18n.slint";
+import { SubagentDock } from "subagent_dock.slint";
 
 // 占用率到颜色的映射。液位填充与详情面板里的百分比共用一套，同一份数据不会在两处
 // 显示成两种颜色。特意不用 Theme.warning(#C98A2B)：那种赭黄夹在橙与红之间会读成
@@ -248,7 +247,40 @@ component TaskRow inherits Rectangle {
         x: 0px; y: 0px; width: parent.width - 22px; height: 30px;
         mouse-cursor: pointer;
         clicked => { root.toggle(root.task.id); }
-        Tooltip { text: root.task.expanded ? @markdown("\{I18n.hud_tasks_collapse}") : @markdown("\{I18n.hud_tasks_expand}"); }
+        // 悬停给出完整命令：行内只显示单行截断版，长命令从这里读全。
+        // 用自绘内容而不是文本模式——@markdown 会把命令里的 `*`、反引号
+        // 当成标记符吃掉，原文必须按纯文本展示。
+        Tooltip {
+            Rectangle {
+                width: cmd-box.width + 18px;
+                height: cmd-box.height + hint.preferred-height + 16px;
+                border-radius: 6px;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border;
+                drop-shadow-color: #00000024; drop-shadow-blur: 12px; drop-shadow-offset-y: 2px;
+                cmd-box := Rectangle {
+                    x: 9px; y: 6px;
+                    // 超过 420px 的命令折行展示；短命令保持一行。
+                    width: min(cmd-text.preferred-width, 420px);
+                    height: cmd-text.preferred-height;
+                    cmd-text := Text {
+                        width: parent.width;
+                        text: root.task.full-command;
+                        color: Theme.text;
+                        font-size: Theme.font-2xs;
+                        font-family: Theme.font-mono;
+                        wrap: word-wrap;
+                    }
+                }
+                hint := Text {
+                    x: 9px; y: cmd-box.y + cmd-box.height + 4px;
+                    text: root.task.expanded ? I18n.hud_tasks_collapse : I18n.hud_tasks_expand;
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                }
+            }
+        }
     }
     Rectangle {
         x: 0px; y: 13px; width: 5px; height: 5px;
@@ -415,30 +447,31 @@ export component HostHud inherits Rectangle {
     in property <string> disk-read: "";
     in property <string> disk-write: "";
     in property <int> cores: 0;
-    // 后台任务
+    // 后台任务与子智能体
     in property <int> task-count: 0;
     in property <int> task-hidden: 0;
     in property <[CommandTask]> tasks: [];
     in property <string> task-hint: "";
+    in property <[SubagentItem]> subagent-items: [];
+    in property <int> subagent-count: 0;
+    in property <int> subagent-hidden: 0;
+    in property <string> subagent-hint: "";
     callback toggle-task(string);
     callback terminate-task(string);
+    callback open-subagent(string);
+    callback stop-subagent(string);
 
-    // 两个面板都只在指针真的离开后延迟 200ms 收起：真实鼠标轨迹并不保证每帧都落在
-    // 连续像素上，快速斜向移动时中间可能空出一帧，立刻收起会让指针再也追不上。
-    // 详情面板跟 CPU / 内存格，任务面板跟任务格。
+    // 面板只在指针真的离开后延迟 200ms 收起，并彼此互斥，避免快速横移时叠层。
     private property <bool> info-hovering: cpu-cell.hovered || mem-cell.hovered
         || info-panel.hovered;
     private property <bool> info-lingering: false;
     private property <bool> task-hovering: task-cell.hovered || panel.hovered;
     private property <bool> task-lingering: false;
-
-    // 两个面板都排在读数行左缘上方，同一时刻只能出现一个：指针从 CPU 格移到任务格
-    // 时详情面板的 200ms 宽限还在，不互斥就会有两张卡片叠在一起闪一下。
     private property <bool> info-open: (root.info-hovering || root.info-lingering)
-        && !root.task-hovering;
+        && !root.task-hovering && !subagent-cell.hovering;
     private property <bool> panel-open: root.task-count > 0
         && (root.task-hovering || root.task-lingering)
-        && !root.info-hovering;
+        && !root.info-hovering && !subagent-cell.hovering;
 
     changed info-hovering => {
         if (!root.info-hovering) {
@@ -459,17 +492,12 @@ export component HostHud inherits Rectangle {
         }
     }
 
-    // 无底色、无描边：这组读数直接长在动作行上，不再自成一格「底部状态条」，
-    // 免得和输入卡之间出现一条硬边。留白交给格内居中与行内的 spacing。
+    // 无底色、无描边：这组读数直接长在动作行上，不再自成一格「底部状态条」。
     width: body.preferred-width;
     height: 26px;
     background: transparent;
 
     body := HorizontalLayout {
-        // 没有卡片之后，分隔线会变成没有归属的短刻度，分组交给间距本身：
-        // 12px 的留白足够把三个读数分开，又不至于散成三个孤立图标。
-        // 左侧 10px 是补上加号那一段：格的字形在 26px 格里居中，天然内缩 5px，
-        // 不补的话首个图标离加号只有 11px，和后面 22px 的节奏对不上。
         padding-left: 10px;
         spacing: 12px;
         cpu-cell := GaugeCell {
@@ -483,6 +511,14 @@ export component HostHud inherits Rectangle {
         task-cell := TaskCell {
             count: root.task-count;
             hint: root.task-hint;
+        }
+        subagent-cell := SubagentDock {
+            items: root.subagent-items;
+            count: root.subagent-count;
+            hidden: root.subagent-hidden;
+            hint: root.subagent-hint;
+            open(id) => { root.open-subagent(id); }
+            stop(id) => { root.stop-subagent(id); }
         }
     }
 

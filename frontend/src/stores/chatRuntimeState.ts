@@ -1833,6 +1833,18 @@ const isSubagentCanonicalEvent = (eventType: string): boolean =>
 const isTeamCanonicalEvent = (eventType: string): boolean =>
   eventType.startsWith('team_');
 
+const isSubagentThreadChange = (
+  eventType: string,
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>
+): boolean => {
+  if (eventType !== 'thread_change') return false;
+  return [data.payload, payload.payload, data.item, payload.item].some(item =>
+    Boolean(item && typeof item === 'object' &&
+      String((item as Record<string, unknown>).kind || '') === 'subagent_run')
+  );
+};
+
 const isSubagentControlToolResultEvent = (
   eventType: string,
   payload: Record<string, unknown>,
@@ -1867,7 +1879,8 @@ const applyCollaborationCanonicalSideEffect = (
       .map((value) => String(value || '').trim())
       .filter(Boolean)
   );
-  if (isSubagentCanonicalEvent(eventType) || isSubagentControlToolResultEvent(eventType, payload, data)) {
+  if (isSubagentCanonicalEvent(eventType) || isSubagentControlToolResultEvent(eventType, payload, data) ||
+      isSubagentThreadChange(eventType, payload, data)) {
     const key = resolveSessionKey(sessionId);
     if (key) {
       sessionSubagentsCache.delete(key);
@@ -2010,7 +2023,8 @@ export const applyCanonicalStreamSideEffects = (
       data
     );
   }
-  if (isSubagentCanonicalEvent(normalizedEventType) || isTeamCanonicalEvent(normalizedEventType) || normalizedEventType === 'tool_result') {
+  if (isSubagentCanonicalEvent(normalizedEventType) || isTeamCanonicalEvent(normalizedEventType) ||
+      normalizedEventType === 'tool_result' || isSubagentThreadChange(normalizedEventType, payload, data)) {
     applyCollaborationCanonicalSideEffect(sessionId, normalizedEventType, payload, data);
   }
 };

@@ -223,12 +223,6 @@
       </button>
     </div>
 
-    <div
-      v-if="subagents.length > 0"
-      class="messenger-workflow-scope chat-shell timeline-subagent-scope"
-    >
-      <MessageSubagentPanel :session-id="activeSessionId" :items="subagents" />
-    </div>
   </div>
 </template>
 
@@ -237,7 +231,6 @@ import { computed, onBeforeUnmount, ref, triggerRef, watch } from 'vue';
 
 import MessageMarkdownBody from '@/components/chat/MessageMarkdownBody.vue';
 import MessageStats from '@/components/chat/MessageStats.vue';
-import MessageSubagentPanel from '@/components/chat/MessageSubagentPanel.vue';
 import MessageTimelineBlocks from '@/components/chat/MessageTimelineBlocks.vue';
 import MessageTimelineTurnProcess from '@/components/chat/MessageTimelineTurnProcess.vue';
 import { resolveRuntimeMessageContentSource, resolveRuntimeMessageContentSubscriptionIds } from '@/components/chat/messageRuntimeContent';
@@ -255,7 +248,7 @@ import { buildAssistantDisplayContent } from '@/utils/assistantFailureNotice';
  * 内容）→ 正文块（**全宽、无气泡**，左右内边距 24px、上下 6px，hover 底 `hover`
  * 45%）与工具批次（折叠条 + 每条目 20px 沟槽：1px 连接线 + 6px 节点圆点）按到达
  * 顺序交错铺开 → 轮次统计行（高 22px、间距 12px、图标 12px + 数值 11px muted，
- * 右侧仅复制）→ 子智能体面板。
+ * 右侧仅复制）。子智能体统一由输入区的状态入口展示。
  *
  * 性能：
  * - 工具投影走 `createToolWorkflowRenderBatcher` 按帧合并（33ms），
@@ -494,14 +487,6 @@ const transformBodyText = (text: string, isLast: boolean): string =>
 const legacyBodyId = (): string =>
   String(resolveAgentMessageKey?.(message.value, props.item.sourceIndex) || props.item.key);
 
-const subagents = computed<Record<string, unknown>[]>(() => {
-  // 子智能体进度是 `item_upsert` 原地写进行对象的，同样必须订阅内容时钟，
-  // 否则卡片只在首帧渲染一次、后续 revision 不再更新（与正文门禁同一坑）。
-  void runtimeContentVersion.value;
-  const items = controller.resolveAgentWorkflowSubagents?.(message.value);
-  return Array.isArray(items) ? (items as Record<string, unknown>[]) : [];
-});
-
 watch(
   () => props.item.key,
   (key, previousKey) => {
@@ -676,7 +661,4 @@ watch(
   color: var(--mz-text-secondary, #3d3d3d);
 }
 
-.timeline-subagent-scope {
-  width: 100%;
-}
 </style>

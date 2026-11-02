@@ -83,6 +83,96 @@ async fn local_command_timeout_preserves_side_effect_and_requires_verification()
     assert_eq!(remote["data"]["execution_outcome"], "unknown");
 }
 
+#[tokio::test]
+#[cfg(feature = "sqlite-storage")]
+async fn foreground_command_can_be_terminated_from_the_task_panel() {
+    let root = tempfile::tempdir().unwrap();
+    let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+        root.path()
+            .join("state.sqlite3")
+            .to_string_lossy()
+            .into_owned(),
+    ));
+    storage.ensure_initialized().unwrap();
+    let workspace = Arc::new(WorkspaceManager::new(
+        root.path().join("workspace").to_string_lossy().as_ref(),
+        storage.clone(),
+        0,
+        &HashMap::new(),
+    ));
+    let lsp_manager = LspManager::new(workspace.clone());
+    let mut config = Config::default();
+    config.server.mode = "cli".into();
+    config.security.allow_commands = vec!["*".into()];
+    let skills = SkillRegistry::default();
+    let http = reqwest::Client::new();
+    let broker = Arc::new(CommandSessionBroker::new());
+    let context = ToolContext {
+        user_id: "fixture-user",
+        session_id: "fixture-thread",
+        workspace_id: "fixture-user",
+        agent_id: None,
+        user_round: None,
+        model_round: None,
+        is_admin: true,
+        storage,
+        orchestrator: None,
+        monitor: None,
+        workspace: workspace.clone(),
+        lsp_manager,
+        config: &config,
+        skills: &skills,
+        gateway: None,
+        user_world: None,
+        cron_wake_signal: None,
+        user_tool_manager: None,
+        user_tool_bindings: None,
+        user_tool_store: None,
+        request_config_overrides: None,
+        allow_roots: None,
+        read_roots: None,
+        command_sessions: Some(broker.clone()),
+        event_emitter: None,
+        http: &http,
+    };
+    let command = if cfg!(windows) {
+        "powershell -NoProfile -Command \"Start-Sleep -Seconds 30\""
+    } else {
+        "sh -c 'sleep 30'"
+    };
+    let canceller = async {
+        // 等到面板（running_tasks）里出现这条命令，再走与终止按钮相同的路径。
+        // 会话登记早于取消令牌登记，窄窗口内终止会落空，重试直到生效。
+        for _ in 0..500 {
+            let tasks = broker.running_tasks("fixture-user", "fixture-thread");
+            if let Some(task) = tasks.first() {
+                if broker.terminate_task("fixture-user", "fixture-thread", &task.id) {
+                    return;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("command session never appeared in running tasks");
+    };
+    let args = json!({"content": command, "timeout_s": 60, "run_in_background": false});
+    let runner = execute_command(&context, &args);
+    let (result, _) = tokio::time::timeout(Duration::from_secs(20), async {
+        tokio::join!(runner, canceller)
+    })
+    .await
+    .expect("cancellation must not hang");
+    let result = result.unwrap();
+    assert_eq!(result["ok"], false, "{result}");
+    let stderr = result["data"]["stderr"].as_str().unwrap_or("");
+    assert!(stderr.contains("command cancelled"), "{result}");
+    // 会话已收尾，面板不再列出这条任务。
+    assert!(
+        broker
+            .running_tasks("fixture-user", "fixture-thread")
+            .is_empty()
+    );
+}
+
 #[test]
 fn model_sandbox_poll_contains_each_output_once() {
     let result = compact_sandbox_poll_result(json!({

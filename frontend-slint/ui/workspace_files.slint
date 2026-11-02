@@ -1,13 +1,15 @@
 // Native working-directory tree: select files on click and open on double
 // click. Virtual rows, lazy folder pages and native menus share one controller.
-// The head mirrors the web left-rail: one icon toolbar (upload / search /
-// download / multi-select / refresh) that swaps to the search field while
-// querying, and a selection bar while picking rows for batch actions.
+// The head is one icon toolbar (search / multi-select / refresh) that swaps to
+// the search field while querying, plus a selection bar while picking rows for
+// batch actions. The working directory has no transfer tiles: files come in by
+// drag-and-drop, folders leave through the context menu. The upload tile stays
+// only in the skill/knowledge file area, where it is the single upload entry.
 import { Theme, WorkspaceFileRow } from "theme.slint";
 import { SidebarMetrics } from "drag_row.slint";
 import { I18n } from "i18n.slint";
-import { ListView, Button, LineEdit } from "std-widgets.slint";
-import { ModalDialog, Action } from "components.slint";
+import { ListView, Button } from "std-widgets.slint";
+import { ModalDialog, Action, InlineInput } from "components.slint";
 import { TextFieldActivation, TextFieldMenu } from "text_field.slint";
 
 component DirectoryBlankMenu inherits ContextMenuArea {
@@ -112,7 +114,6 @@ export component WorkspaceFilesPanel inherits Rectangle {
     callback search-edit(string);
     callback search-accept(string);
     callback search-cancel();
-    callback download();
     callback select();
     callback selection-action(int);
     callback toggle(int);
@@ -141,10 +142,7 @@ export component WorkspaceFilesPanel inherits Rectangle {
                     text: root.title; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; overflow: elide; min-width: 0px;
                 }
                 if !root.search-open : Rectangle { horizontal-stretch: 1; min-width: 0px; }
-                if !root.search-open && !root.read-only : ToolButton {
-                    // Same glyph as the cloud left rail's upload action
-                    // (fa-arrow-up-from-bracket), not fa-upload: the two read
-                    // differently at 14px and the rail must match the web.
+                if !root.search-open && root.resource-mode && !root.read-only : ToolButton {
                     glyph: @image-url("../assets/icons/fa-arrow-up-from-bracket.svg");
                     tip: I18n.wf_upload;
                     actionable: root.writeable;
@@ -155,12 +153,6 @@ export component WorkspaceFilesPanel inherits Rectangle {
                     tip: I18n.wf_search;
                     actionable: root.local || !root.offline;
                     clicked => { root.search-open = true; }
-                }
-                if !root.search-open && !root.resource-mode : ToolButton {
-                    glyph: @image-url("../assets/icons/file-zipper.svg");
-                    tip: I18n.wf_menu_archive_root;
-                    actionable: root.writeable;
-                    clicked => { root.download(); }
                 }
                 if !root.search-open && !root.resource-mode : ToolButton {
                     glyph: @image-url("../assets/icons/list-check.svg");
@@ -292,11 +284,6 @@ export component WorkspaceFilesPanel inherits Rectangle {
                         HorizontalLayout { alignment: center; Image { width: 24px; height: 24px; source: @image-url("../assets/icons/folder-open.svg"); colorize: Theme.border-strong; } }
                         Text { text: I18n.wf_empty; color: Theme.muted; font-size: Theme.font-xs; horizontal-alignment: center; }
                         if !root.resource-mode : Text { text: I18n.wf_empty_hint; color: Theme.muted; font-size: Theme.font-2xs; horizontal-alignment: center; wrap: word-wrap; }
-                        if !root.resource-mode && !root.read-only : HorizontalLayout {
-                            alignment: center; spacing: 8px;
-                            Button { text: I18n.wf_menu_new_dir; enabled: !root.busy; clicked => { root.menu(-1, 5); } Tooltip { text: @markdown("\{I18n.wf_menu_new_dir}"); } }
-                            Button { text: I18n.wf_menu_new_file; enabled: !root.busy; clicked => { root.menu(-1, 6); } Tooltip { text: @markdown("\{I18n.wf_menu_new_file}"); } }
-                        }
                     }
                     // Keep the same ListView alive during refreshes, preserving
                     // the user's scroll position and the active row.
@@ -340,6 +327,9 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                             MenuItem { title: I18n.wf_menu_refresh; activated => { root.refresh(); } }
                                             MenuSeparator {}
                                             MenuItem { title: root.local ? I18n.wf_menu_open : I18n.wf_menu_preview; activated => { root.menu(index, 0); } }
+                                            // 所在位置只在本地工作区有意义：云端行没有对应的宿主目录。
+                                            if !root.resource-mode && root.local && row.kind == 0 : MenuItem { title: I18n.wf_menu_reveal_file; activated => { root.menu(index, 10); } }
+                                            if !root.resource-mode && root.local && row.kind == 1 : MenuItem { title: I18n.wf_menu_reveal_dir; activated => { root.menu(index, 10); } }
                                             if !root.resource-mode && !root.local && row.kind == 0 : MenuItem { title: I18n.wf_menu_download; activated => { root.menu(index, 1); } }
                                             if !root.resource-mode && !root.local && row.kind == 1 : MenuItem { title: I18n.wf_menu_archive; activated => { root.menu(index, 7); } }
                                             if !root.resource-mode && row.kind == 1 : MenuItem { title: I18n.wf_menu_new_dir; enabled: root.writeable; activated => { root.menu(index, 5); } }
@@ -525,26 +515,25 @@ export component WorkspacePromptDialog inherits ModalDialog {
     dismissed => { root.canceled(); }
     VerticalLayout {
         Text {
+            height: 22px;
             text: root.prompt-title; color: Theme.text;
-            font-size: Theme.font-lg; font-weight: 700;
+            font-size: Theme.font-md; font-weight: 700;
         }
         if root.prompt-body != "" : Text {
             text: root.prompt-body; color: Theme.muted; font-size: Theme.font-sm;
             wrap: word-wrap;
         }
-        if root.input-visible : LineEdit {
+        if root.input-visible : InlineInput {
+            height: 32px;
             enabled: !root.busy;
             text <=> root.prompt-value;
-            changed has-focus => {
-                if self.has-focus && !self.read-only && self.enabled { TextFieldActivation.activated(); }
-            }
             accepted => { if !root.busy { root.accepted(root.prompt-value); } }
         }
         Rectangle { vertical-stretch: 1; }
         HorizontalLayout {
-            height: 30px; spacing: 8px; alignment: end;
-            Button { text: I18n.common_cancel; enabled: !root.busy; clicked => { root.canceled(); } }
-            Button { text: root.confirm-label; enabled: !root.busy; primary: true; clicked => { root.accepted(root.prompt-value); } }
+            height: 32px; spacing: Theme.space-2; alignment: end;
+            Action { width: 72px; label: I18n.common_cancel; show-label: true; enabled: !root.busy; clicked => { root.canceled(); } }
+            Action { width: 96px; label: root.confirm-label; show-label: true; danger: root.danger; primary: !root.danger; enabled: !root.busy; clicked => { root.accepted(root.prompt-value); } }
         }
     }
 }

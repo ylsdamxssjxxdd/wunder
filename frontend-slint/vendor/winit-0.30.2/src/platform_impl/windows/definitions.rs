@@ -68,17 +68,23 @@ pub struct IDataObjectVtbl {
 #[repr(C)]
 pub struct IDropTargetVtbl {
     pub parent: IUnknownVtbl,
+    // `pt` is a by-value `POINTL`, not a pointer: OLE pushes the two `LONG`
+    // members as separate argument slots (6 dwords for `DragEnter`, 5 for
+    // `DragOver`). Declaring it as `*const POINTL` makes the callee read `pt.x`
+    // as an address — a screen coordinate dereferenced as memory, i.e. a
+    // guaranteed access violation — and leaves the stdcall cleanup off by one
+    // slot, drifting the caller's stack on every callback.
     pub DragEnter: unsafe extern "system" fn(
         This: *mut IDropTarget,
         pDataObj: *const IDataObject,
         grfKeyState: u32,
-        pt: *const POINTL,
+        pt: POINTL,
         pdwEffect: *mut u32,
     ) -> HRESULT,
     pub DragOver: unsafe extern "system" fn(
         This: *mut IDropTarget,
         grfKeyState: u32,
-        pt: *const POINTL,
+        pt: POINTL,
         pdwEffect: *mut u32,
     ) -> HRESULT,
     pub DragLeave: unsafe extern "system" fn(This: *mut IDropTarget) -> HRESULT,
@@ -86,7 +92,7 @@ pub struct IDropTargetVtbl {
         This: *mut IDropTarget,
         pDataObj: *const IDataObject,
         grfKeyState: u32,
-        pt: *const POINTL,
+        pt: POINTL,
         pdwEffect: *mut u32,
     ) -> HRESULT,
 }

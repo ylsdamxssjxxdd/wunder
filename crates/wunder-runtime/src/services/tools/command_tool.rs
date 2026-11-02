@@ -35,6 +35,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::process::Child;
+use tokio_util::sync::CancellationToken;
 #[cfg(test)]
 #[path = "command_tool_tests.rs"]
 mod tests;
@@ -539,6 +540,36 @@ struct CommandRunResult {
     running: bool,
 }
 
+/// 会话级取消令牌的登记守卫。前台阻塞命令在执行期间把令牌挂到 broker 上，
+/// 「后台任务」面板的终止按钮由此能取消它；函数返回（含 `?` 提前返回）时
+/// 摘除，令牌不会残留到同一线程的下一条命令上。
+struct SessionCancelGuard {
+    broker: Arc<super::command_sessions::CommandSessionBroker>,
+    id: String,
+}
+
+impl SessionCancelGuard {
+    fn register(
+        broker: &Arc<super::command_sessions::CommandSessionBroker>,
+        command_session_id: &str,
+    ) -> (Self, CancellationToken) {
+        let token = broker.register_cancel(command_session_id);
+        (
+            Self {
+                broker: Arc::clone(broker),
+                id: command_session_id.to_string(),
+            },
+            token,
+        )
+    }
+}
+
+impl Drop for SessionCancelGuard {
+    fn drop(&mut self) {
+        self.broker.unregister_cancel(&self.id);
+    }
+}
+
 pub(crate) fn compact_command_result_for_model(item: &Value) -> Value {
     let output_meta = item.get("output_meta").and_then(Value::as_object);
     let mut compacted = json!({
@@ -727,6 +758,7 @@ async fn run_spawned_child_streaming(
     stdout_policy: CommandOutputPolicy,
     stderr_policy: CommandOutputPolicy,
     command_session: Option<CommandSessionTracker>,
+    cancel: Option<CancellationToken>,
 ) -> Result<CommandRunResult> {
     let chunk_size = resolve_stream_chunk_size(context.config);
     let stdout = child.stdout.take();
@@ -773,27 +805,46 @@ async fn run_spawned_child_streaming(
 
     let result = async {
         let mut timed_out = false;
-        let status = if let Some(timeout) = timeout {
-            match tokio::time::timeout(timeout, child.wait()).await {
-                Ok(result) => Some(result?),
-                Err(_) => {
-                    timed_out = true;
-                    let _ = child.kill().await;
-                    let _ = child.wait().await;
-                    None
-                }
+        let mut cancelled = false;
+        // 与 detached watcher 同一张选票：取消信号一到就杀子进程并收尾，
+        // 不等超时也不等自然退出。无令牌一侧退化为永不就绪的等待。
+        let cancel_wait = async {
+            match cancel.as_ref() {
+                Some(token) => token.cancelled().await,
+                None => std::future::pending::<()>().await,
             }
-        } else {
-            Some(child.wait().await?)
+        };
+        let status = tokio::select! {
+            _ = cancel_wait => {
+                cancelled = true;
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                None
+            }
+            result = async {
+                if let Some(timeout) = timeout {
+                    match tokio::time::timeout(timeout, child.wait()).await {
+                        Ok(result) => Ok::<_, anyhow::Error>(Some(result?)),
+                        Err(_) => {
+                            timed_out = true;
+                            let _ = child.kill().await;
+                            let _ = child.wait().await;
+                            Ok(None)
+                        }
+                    }
+                } else {
+                    Ok(Some(child.wait().await?))
+                }
+            } => result?,
         };
 
         let stdout_capture = join_output_task(stdout_task).await?;
         let stderr_capture = join_output_task(stderr_task).await?;
-        Ok::<_, anyhow::Error>((status, timed_out, stdout_capture, stderr_capture))
+        Ok::<_, anyhow::Error>((status, timed_out, cancelled, stdout_capture, stderr_capture))
     }
     .await;
 
-    let (status, timed_out, stdout_capture, stderr_capture) = match result {
+    let (status, timed_out, cancelled, stdout_capture, stderr_capture) = match result {
         Ok(value) => value,
         Err(err) => {
             if let Some(command_session) = command_session.as_ref() {
@@ -803,11 +854,21 @@ async fn run_spawned_child_streaming(
         }
     };
     let stdout = render_command_output(&stdout_capture, decode_command_output);
-    let stderr = render_command_output(&stderr_capture, decode_command_output);
+    let mut stderr = render_command_output(&stderr_capture, decode_command_output);
+    if cancelled {
+        if !stderr.is_empty() && !stderr.ends_with('\n') {
+            stderr.push('\n');
+        }
+        stderr.push_str("command cancelled");
+    }
     let exit_code = status.and_then(|value| value.code());
     let returncode = exit_code.unwrap_or(-1);
     if let Some(command_session) = command_session.as_ref() {
-        command_session.emit_exit(exit_code, timed_out, None);
+        command_session.emit_exit(
+            exit_code,
+            timed_out,
+            cancelled.then(|| "command cancelled".to_string()),
+        );
     }
 
     Ok(CommandRunResult {
@@ -943,13 +1004,20 @@ async fn complete_detachable_child(
     stdout_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
     stderr_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
     command_session: CommandSessionTracker,
+    exit_error: Option<String>,
 ) -> Result<CommandRunResult> {
     let stdout_capture = join_output_task(stdout_task).await?;
     let stderr_capture = join_output_task(stderr_task).await?;
     let stdout = render_command_output(&stdout_capture, decode_command_output);
-    let stderr = render_command_output(&stderr_capture, decode_command_output);
+    let mut stderr = render_command_output(&stderr_capture, decode_command_output);
+    if let Some(error) = exit_error.as_deref() {
+        if !stderr.is_empty() && !stderr.ends_with('\n') {
+            stderr.push('\n');
+        }
+        stderr.push_str(error);
+    }
     let exit_code = status.and_then(|value| value.code());
-    command_session.emit_exit(exit_code, timed_out, None);
+    command_session.emit_exit(exit_code, timed_out, exit_error);
     Ok(CommandRunResult {
         returncode: exit_code.unwrap_or(-1),
         stdout,
@@ -1092,9 +1160,17 @@ async fn run_command_streaming(
             stdout_policy,
             stderr_policy,
             None,
+            None,
         )
         .await;
     };
+    // 前台命令在执行期间登记一枚会话级取消令牌，面板的「终止」由此取消它；
+    // 守卫在函数返回时摘除（detached 之后由进程句柄接管终止）。
+    let (_cancel_guard, session_cancel) = context
+        .command_sessions
+        .as_ref()
+        .map(|broker| SessionCancelGuard::register(broker, command_session.command_session_id()))
+        .unzip();
     let Some(wait) = yield_time.filter(|wait| *wait > Duration::ZERO) else {
         return run_spawned_child_streaming(
             context,
@@ -1105,6 +1181,7 @@ async fn run_command_streaming(
             stdout_policy,
             stderr_policy,
             Some(command_session),
+            session_cancel,
         )
         .await;
     };
@@ -1119,7 +1196,28 @@ async fn run_command_streaming(
         stderr_policy,
         command_session.clone(),
     );
-    tokio::time::sleep(wait).await;
+    let cancelled_during_wait = if let Some(cancel) = session_cancel.as_ref() {
+        tokio::select! {
+            _ = tokio::time::sleep(wait) => false,
+            _ = cancel.cancelled() => true,
+        }
+    } else {
+        tokio::time::sleep(wait).await;
+        false
+    };
+    if cancelled_during_wait {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        return complete_detachable_child(
+            None,
+            false,
+            stdout_task,
+            stderr_task,
+            command_session,
+            Some("command cancelled".to_string()),
+        )
+        .await;
+    }
     if let Some(status) = child.try_wait()? {
         return complete_detachable_child(
             Some(status),
@@ -1127,6 +1225,7 @@ async fn run_command_streaming(
             stdout_task,
             stderr_task,
             command_session,
+            None,
         )
         .await;
     }
@@ -1149,6 +1248,7 @@ async fn run_command_streaming(
             stdout_task,
             stderr_task,
             command_session,
+            None,
         )
         .await;
     };
@@ -1443,6 +1543,7 @@ async fn run_ptc_python_script_streaming(
                     STDOUT_CAPTURE_POLICY,
                     STDERR_CAPTURE_POLICY,
                     None,
+                    None,
                 )
                 .await;
             }
@@ -1484,6 +1585,7 @@ async fn run_ptc_python_script_streaming(
                     timeout,
                     STDOUT_CAPTURE_POLICY,
                     STDERR_CAPTURE_POLICY,
+                    None,
                     None,
                 )
                 .await;

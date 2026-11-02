@@ -1,7 +1,44 @@
-diff --git "a/C:\\Users\\sjxx\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\winit-0.30.2/src/platform/x11.rs" "b/frontend-slint\\vendor\\winit-0.30.2/src/platform/x11.rs"
+diff --git a/winit-0.30.2/.cargo-ok b/winit-0.30.2/.cargo-ok
+new file mode 100644
+index 0000000..5f8b795
+--- /dev/null
++++ b/winit-0.30.2/.cargo-ok
+@@ -0,0 +1 @@
++{"v":1}
+\ No newline at end of file
+diff --git a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform/windows.rs b/winit-0.30.2/src/platform/windows.rs
+index 5b79771..d5b12de 100644
+--- a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform/windows.rs
++++ b/winit-0.30.2/src/platform/windows.rs
+@@ -499,6 +499,11 @@ pub trait WindowAttributesExtWindows {
+     /// Whether show or hide the window icon in the taskbar.
+     fn with_skip_taskbar(self, skip: bool) -> Self;
+ 
++    /// Sets `WS_EX_NOACTIVATE`: the window never becomes the foreground window,
++    /// not even when shown with `SW_SHOW` or clicked. Used for notification
++    /// overlays that must not take focus from whatever the user is doing.
++    fn with_no_activate(self, no_activate: bool) -> Self;
++
+     /// Customize the window class name.
+     fn with_class_name<S: Into<String>>(self, class_name: S) -> Self;
+ 
+@@ -574,6 +579,12 @@ impl WindowAttributesExtWindows for WindowAttributes {
+         self
+     }
+ 
++    #[inline]
++    fn with_no_activate(mut self, no_activate: bool) -> Self {
++        self.platform_specific.no_activate = no_activate;
++        self
++    }
++
+     #[inline]
+     fn with_class_name<S: Into<String>>(mut self, class_name: S) -> Self {
+         self.platform_specific.class_name = class_name.into();
+diff --git a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform/x11.rs b/winit-0.30.2/src/platform/x11.rs
 index 749c400..4ab900c 100644
---- "a/C:\\Users\\sjxx\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\winit-0.30.2/src/platform/x11.rs"
-+++ "b/frontend-slint\\vendor\\winit-0.30.2/src/platform/x11.rs"
+--- a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform/x11.rs
++++ b/winit-0.30.2/src/platform/x11.rs
 @@ -81,9 +81,7 @@ pub type XWindow = u32;
  #[inline]
  pub fn register_xlib_error_hook(hook: XlibErrorHook) {
@@ -13,10 +50,10 @@ index 749c400..4ab900c 100644
  }
  
  /// Additional methods on [`ActiveEventLoop`] that are specific to X11.
-diff --git "a/C:\\Users\\sjxx\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\winit-0.30.2/src/platform_impl/linux/mod.rs" "b/frontend-slint\\vendor\\winit-0.30.2/src/platform_impl/linux/mod.rs"
+diff --git a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/linux/mod.rs b/winit-0.30.2/src/platform_impl/linux/mod.rs
 index 776689f..6f1f5e3 100644
---- "a/C:\\Users\\sjxx\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\winit-0.30.2/src/platform_impl/linux/mod.rs"
-+++ "b/frontend-slint\\vendor\\winit-0.30.2/src/platform_impl/linux/mod.rs"
+--- a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/linux/mod.rs
++++ b/winit-0.30.2/src/platform_impl/linux/mod.rs
 @@ -643,7 +643,12 @@ pub(crate) enum PlatformCustomCursor {
  
  /// Hooks for X11 errors.
@@ -40,10 +77,10 @@ index 776689f..6f1f5e3 100644
              error_handled |= hook(display as *mut _, event as *mut _);
          }
  
-diff --git "a/C:\\Users\\sjxx\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs" "b/frontend-slint\\vendor\\winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs"
+diff --git a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs b/winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs
 index aa046af..3710d6d 100644
---- "a/C:\\Users\\sjxx\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs"
-+++ "b/frontend-slint\\vendor\\winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs"
+--- a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs
++++ b/winit-0.30.2/src/platform_impl/linux/x11/ime/context.rs
 @@ -158,7 +158,13 @@ struct PreeditCallbacks {
  impl PreeditCallbacks {
      pub fn new(client_data: ffi::XPointer) -> PreeditCallbacks {
@@ -59,10 +96,219 @@ index aa046af..3710d6d 100644
                  preedit_start_callback as usize,
              )
          });
-diff --git "a/C:\\Users\\sjxx\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\winit-0.30.2/src/platform_impl/windows/event_loop.rs" "b/frontend-slint\\vendor\\winit-0.30.2/src/platform_impl/windows/event_loop.rs"
-index 4fc3155..5f519f1 100644
---- "a/C:\\Users\\sjxx\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\winit-0.30.2/src/platform_impl/windows/event_loop.rs"
-+++ "b/frontend-slint\\vendor\\winit-0.30.2/src/platform_impl/windows/event_loop.rs"
+diff --git a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/windows/definitions.rs b/winit-0.30.2/src/platform_impl/windows/definitions.rs
+index c015ffc..7e23409 100644
+--- a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/windows/definitions.rs
++++ b/winit-0.30.2/src/platform_impl/windows/definitions.rs
+@@ -68,17 +68,23 @@ pub struct IDataObjectVtbl {
+ #[repr(C)]
+ pub struct IDropTargetVtbl {
+     pub parent: IUnknownVtbl,
++    // `pt` is a by-value `POINTL`, not a pointer: OLE pushes the two `LONG`
++    // members as separate argument slots (6 dwords for `DragEnter`, 5 for
++    // `DragOver`). Declaring it as `*const POINTL` makes the callee read `pt.x`
++    // as an address — a screen coordinate dereferenced as memory, i.e. a
++    // guaranteed access violation — and leaves the stdcall cleanup off by one
++    // slot, drifting the caller's stack on every callback.
+     pub DragEnter: unsafe extern "system" fn(
+         This: *mut IDropTarget,
+         pDataObj: *const IDataObject,
+         grfKeyState: u32,
+-        pt: *const POINTL,
++        pt: POINTL,
+         pdwEffect: *mut u32,
+     ) -> HRESULT,
+     pub DragOver: unsafe extern "system" fn(
+         This: *mut IDropTarget,
+         grfKeyState: u32,
+-        pt: *const POINTL,
++        pt: POINTL,
+         pdwEffect: *mut u32,
+     ) -> HRESULT,
+     pub DragLeave: unsafe extern "system" fn(This: *mut IDropTarget) -> HRESULT,
+@@ -86,7 +92,7 @@ pub struct IDropTargetVtbl {
+         This: *mut IDropTarget,
+         pDataObj: *const IDataObject,
+         grfKeyState: u32,
+-        pt: *const POINTL,
++        pt: POINTL,
+         pdwEffect: *mut u32,
+     ) -> HRESULT,
+ }
+diff --git a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/windows/drop_handler.rs b/winit-0.30.2/src/platform_impl/windows/drop_handler.rs
+index 38cb5c5..9d8ccb1 100644
+--- a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/windows/drop_handler.rs
++++ b/winit-0.30.2/src/platform_impl/windows/drop_handler.rs
+@@ -5,7 +5,8 @@ use std::ptr;
+ use std::sync::atomic::{AtomicUsize, Ordering};
+ 
+ use windows_sys::core::{IUnknown, GUID, HRESULT};
+-use windows_sys::Win32::Foundation::{DV_E_FORMATETC, HWND, POINTL, S_OK};
++use windows_sys::Win32::Foundation::{DV_E_FORMATETC, E_NOINTERFACE, E_POINTER, HWND, POINT, POINTL, S_OK};
++use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
+ use windows_sys::Win32::System::Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL};
+ use windows_sys::Win32::System::Ole::{CF_HDROP, DROPEFFECT_COPY, DROPEFFECT_NONE};
+ use windows_sys::Win32::UI::Shell::{DragFinish, DragQueryFileW, HDROP};
+@@ -20,6 +21,26 @@ use crate::platform_impl::platform::WindowId;
+ use crate::event::Event;
+ use crate::window::WindowId as RootWindowId;
+ 
++/// COM identities the drop target answers to; the canonical trailing bytes
++/// are the IUnknown family signature.
++const IID_IUNKNOWN: GUID = GUID {
++    data1: 0x0000_0000,
++    data2: 0x0000,
++    data3: 0x0000,
++    data4: [0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46],
++};
++const IID_IDROPTARGET: GUID = GUID {
++    data1: 0x0000_0122,
++    data2: 0x0000,
++    data3: 0x0000,
++    data4: [0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46],
++};
++
++/// windows-sys 0.52's `GUID` carries no `PartialEq`; compare the four fields.
++fn guid_eq(a: &GUID, b: &GUID) -> bool {
++    a.data1 == b.data1 && a.data2 == b.data2 && a.data3 == b.data3 && a.data4 == b.data4
++}
++
+ #[repr(C)]
+ pub struct FileDropHandlerData {
+     pub interface: IDropTarget,
+@@ -51,13 +72,28 @@ impl FileDropHandler {
+ 
+     // Implement IUnknown
+     pub unsafe extern "system" fn QueryInterface(
+-        _this: *mut IUnknown,
+-        _riid: *const GUID,
+-        _ppvObject: *mut *mut c_void,
++        this: *mut IUnknown,
++        riid: *const GUID,
++        ppvObject: *mut *mut c_void,
+     ) -> HRESULT {
+-        // This function doesn't appear to be required for an `IDropTarget`.
+-        // An implementation would be nice however.
+-        unimplemented!();
++        // OLE queries the registered target whenever the drag source lives in
++        // this same process — dragging a file out of the workspace tree while
++        // the cursor is still over the app's own window hits exactly that.
++        // The stock `unimplemented!()` turned the query into a panic, and the
++        // release profile's `panic = "abort"` made it an instant exit.
++        let Some(riid) = (unsafe { riid.as_ref() }) else {
++            return E_POINTER;
++        };
++        if ppvObject.is_null() {
++            return E_POINTER;
++        }
++        if guid_eq(riid, &IID_IUNKNOWN) || guid_eq(riid, &IID_IDROPTARGET) {
++            unsafe { *ppvObject = this.cast() };
++            unsafe { Self::AddRef(this) };
++            return S_OK;
++        }
++        unsafe { *ppvObject = ptr::null_mut() };
++        E_NOINTERFACE
+     }
+ 
+     pub unsafe extern "system" fn AddRef(this: *mut IUnknown) -> u32 {
+@@ -80,11 +116,15 @@ impl FileDropHandler {
+         this: *mut IDropTarget,
+         pDataObj: *const IDataObject,
+         _grfKeyState: u32,
+-        _pt: *const POINTL,
++        pt: POINTL,
+         pdwEffect: *mut u32,
+     ) -> HRESULT {
+         use crate::event::WindowEvent::HoveredFile;
+         let drop_handler = unsafe { Self::from_interface(this) };
++        // Report the entry point before the file list: the hover event that
++        // follows builds its drag payload at the cursor position, so the
++        // position has to be current first.
++        unsafe { Self::report_position(drop_handler, pt) };
+         let hdrop = unsafe {
+             Self::iterate_filenames(pDataObj, |filename| {
+                 drop_handler.send_event(Event::WindowEvent {
+@@ -93,6 +133,12 @@ impl FileDropHandler {
+                 });
+             })
+         };
++        // GetData transfers the medium to us; `Drop` already releases it the
++        // same way, and with a working source (e.g. our own drag-out) the
++        // handle is real, not a miss.
++        if let Some(hdrop) = hdrop {
++            unsafe { DragFinish(hdrop) };
++        }
+         drop_handler.hovered_is_valid = hdrop.is_some();
+         drop_handler.cursor_effect =
+             if drop_handler.hovered_is_valid { DROPEFFECT_COPY } else { DROPEFFECT_NONE };
+@@ -106,10 +152,11 @@ impl FileDropHandler {
+     pub unsafe extern "system" fn DragOver(
+         this: *mut IDropTarget,
+         _grfKeyState: u32,
+-        _pt: *const POINTL,
++        pt: POINTL,
+         pdwEffect: *mut u32,
+     ) -> HRESULT {
+         let drop_handler = unsafe { Self::from_interface(this) };
++        unsafe { Self::report_position(drop_handler, pt) };
+         unsafe {
+             *pdwEffect = drop_handler.cursor_effect;
+         }
+@@ -134,11 +181,14 @@ impl FileDropHandler {
+         this: *mut IDropTarget,
+         pDataObj: *const IDataObject,
+         _grfKeyState: u32,
+-        _pt: *const POINTL,
++        pt: POINTL,
+         _pdwEffect: *mut u32,
+     ) -> HRESULT {
+         use crate::event::WindowEvent::DroppedFile;
+         let drop_handler = unsafe { Self::from_interface(this) };
++        // The drop is addressed at the cursor position too; keep it exact even
++        // when the last DragOver was a few pixels away.
++        unsafe { Self::report_position(drop_handler, pt) };
+         let hdrop = unsafe {
+             Self::iterate_filenames(pDataObj, |filename| {
+                 drop_handler.send_event(Event::WindowEvent {
+@@ -154,6 +204,34 @@ impl FileDropHandler {
+         S_OK
+     }
+ 
++    /// Keep the pointer position of an in-flight foreign drag current.
++    ///
++    /// While an OLE drag runs, the source owns the mouse: the window never sees
++    /// `WM_MOUSEMOVE`, so the only pointer samples are the `pt` arguments of the
++    /// drop target callbacks, in screen coordinates. Re-emitting them as
++    /// `CursorMoved` puts the position back into the normal input path — the
++    /// backend then addresses its drag move at the drop area actually under the
++    /// pointer instead of the last place the cursor was before the drag began
++    /// (which is usually another window, so no drop area is ever hit and the
++    /// release is silently swallowed).
++    unsafe fn report_position(drop_handler: &FileDropHandlerData, pt: POINTL) {
++        use crate::dpi::PhysicalPosition;
++        use crate::event::{DeviceId, WindowEvent::CursorMoved};
++        let mut client = POINT { x: pt.x, y: pt.y };
++        if unsafe { ScreenToClient(drop_handler.window, &mut client) } == 0 {
++            return;
++        }
++        drop_handler.send_event(Event::WindowEvent {
++            window_id: RootWindowId(WindowId(drop_handler.window)),
++            event: CursorMoved {
++                // Synthetic motion is not tied to a device; no consumer of this
++                // event reads the id beyond comparing it with itself.
++                device_id: unsafe { DeviceId::dummy() },
++                position: PhysicalPosition::new(client.x as f64, client.y as f64),
++            },
++        });
++    }
++
+     unsafe fn from_interface<'a, InterfaceT>(this: *mut InterfaceT) -> &'a mut FileDropHandlerData {
+         unsafe { &mut *(this as *mut _) }
+     }
+diff --git a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/windows/event_loop.rs b/winit-0.30.2/src/platform_impl/windows/event_loop.rs
+index 4fc3155..e42500d 100644
+--- a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/windows/event_loop.rs
++++ b/winit-0.30.2/src/platform_impl/windows/event_loop.rs
 @@ -2,7 +2,7 @@
  
  mod runner;
@@ -221,7 +467,24 @@ index 4fc3155..5f519f1 100644
  }
  
  struct ThreadMsgTargetData {
-@@ -1037,6 +1158,10 @@ unsafe fn public_window_callback_inner(
+@@ -890,8 +1011,15 @@ fn insert_event_target_window_data(
+ 
+ /// Capture mouse input, allowing `window` to receive mouse events when the cursor is outside of
+ /// the window.
+-unsafe fn capture_mouse(window: HWND, window_state: &mut WindowState) {
++unsafe fn capture_mouse(window: HWND, mut window_state: MutexGuard<'_, WindowState>) {
+     window_state.mouse.capture_count += 1;
++    // SetCapture() synchronously sends WM_CAPTURECHANGED to the window losing
++    // capture, which is this very window when a second button is pressed while
++    // another is still held. The re-entered handler locks window_state again
++    // (e.g. the keyboard callback's IME check), and std's mutex is not
++    // reentrant, so holding the guard across SetCapture() deadlocks the UI
++    // thread. Drop it first, mirroring release_mouse() below.
++    drop(window_state);
+     unsafe { SetCapture(window) };
+ }
+ 
+@@ -1037,6 +1165,10 @@ unsafe fn public_window_callback_inner(
  ) -> LRESULT {
      let mut result = ProcResult::DefWindowProc(wparam);
  
@@ -232,7 +495,7 @@ index 4fc3155..5f519f1 100644
      // Send new modifiers before sending key events.
      let mods_changed_callback = || match msg {
          WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP => {
-@@ -1054,7 +1179,21 @@ unsafe fn public_window_callback_inner(
+@@ -1054,7 +1186,21 @@ unsafe fn public_window_callback_inner(
          use crate::event::WindowEvent::KeyboardInput;
          let events =
              userdata.key_event_builder.process_message(window, msg, wparam, lparam, &mut result);
@@ -254,7 +517,7 @@ index 4fc3155..5f519f1 100644
              userdata.send_event(Event::WindowEvent {
                  window_id: RootWindowId(WindowId(window)),
                  event: KeyboardInput {
-@@ -1403,6 +1542,7 @@ unsafe fn public_window_callback_inner(
+@@ -1403,6 +1549,7 @@ unsafe fn public_window_callback_inner(
          WM_IME_STARTCOMPOSITION => {
              let ime_allowed = userdata.window_state_lock().ime_allowed;
              if ime_allowed {
@@ -262,7 +525,7 @@ index 4fc3155..5f519f1 100644
                  userdata.window_state_lock().ime_state = ImeState::Enabled;
  
                  userdata.send_event(Event::WindowEvent {
-@@ -1436,15 +1576,16 @@ unsafe fn public_window_callback_inner(
+@@ -1436,15 +1583,16 @@ unsafe fn public_window_callback_inner(
                  if (lparam as u32 & GCS_RESULTSTR) != 0 {
                      if let Some(text) = unsafe { ime_context.get_composed_text() } {
                          userdata.window_state_lock().ime_state = ImeState::Enabled;
@@ -283,7 +546,7 @@ index 4fc3155..5f519f1 100644
                      }
                  }
  
-@@ -1474,19 +1615,19 @@ unsafe fn public_window_callback_inner(
+@@ -1474,19 +1622,19 @@ unsafe fn public_window_callback_inner(
                  w.ime_allowed || w.ime_state != ImeState::Disabled
              };
              if ime_allowed_or_composing {
@@ -310,7 +573,7 @@ index 4fc3155..5f519f1 100644
                      }
                  }
  
-@@ -1502,9 +1643,9 @@ unsafe fn public_window_callback_inner(
+@@ -1502,9 +1650,9 @@ unsafe fn public_window_callback_inner(
          },
  
          WM_IME_SETCONTEXT => {
@@ -323,7 +586,43 @@ index 4fc3155..5f519f1 100644
          },
  
          // this is necessary for us to maintain minimize/restore state
-@@ -2021,7 +2162,12 @@ unsafe fn public_window_callback_inner(
+@@ -1673,7 +1821,7 @@ unsafe fn public_window_callback_inner(
+             use crate::event::MouseButton::Left;
+             use crate::event::WindowEvent::MouseInput;
+ 
+-            unsafe { capture_mouse(window, &mut userdata.window_state_lock()) };
++            unsafe { capture_mouse(window, userdata.window_state_lock()) };
+ 
+             update_modifiers(window, userdata);
+ 
+@@ -1705,7 +1853,7 @@ unsafe fn public_window_callback_inner(
+             use crate::event::MouseButton::Right;
+             use crate::event::WindowEvent::MouseInput;
+ 
+-            unsafe { capture_mouse(window, &mut userdata.window_state_lock()) };
++            unsafe { capture_mouse(window, userdata.window_state_lock()) };
+ 
+             update_modifiers(window, userdata);
+ 
+@@ -1737,7 +1885,7 @@ unsafe fn public_window_callback_inner(
+             use crate::event::MouseButton::Middle;
+             use crate::event::WindowEvent::MouseInput;
+ 
+-            unsafe { capture_mouse(window, &mut userdata.window_state_lock()) };
++            unsafe { capture_mouse(window, userdata.window_state_lock()) };
+ 
+             update_modifiers(window, userdata);
+ 
+@@ -1770,7 +1918,7 @@ unsafe fn public_window_callback_inner(
+             use crate::event::WindowEvent::MouseInput;
+             let xbutton = super::get_xbutton_wparam(wparam as u32);
+ 
+-            unsafe { capture_mouse(window, &mut userdata.window_state_lock()) };
++            unsafe { capture_mouse(window, userdata.window_state_lock()) };
+ 
+             update_modifiers(window, userdata);
+ 
+@@ -2021,7 +2169,12 @@ unsafe fn public_window_callback_inner(
  
          WM_NCACTIVATE => {
              let is_active = wparam != false.into();
@@ -337,7 +636,7 @@ index 4fc3155..5f519f1 100644
              if active_focus_changed {
                  if is_active {
                      unsafe { gain_active_focus(window, userdata) };
-@@ -2029,7 +2175,28 @@ unsafe fn public_window_callback_inner(
+@@ -2029,7 +2182,28 @@ unsafe fn public_window_callback_inner(
                      unsafe { lose_active_focus(window, userdata) };
                  }
              }
@@ -367,7 +666,7 @@ index 4fc3155..5f519f1 100644
          },
  
          WM_SETFOCUS => {
-@@ -2083,6 +2250,38 @@ unsafe fn public_window_callback_inner(
+@@ -2083,6 +2257,38 @@ unsafe fn public_window_callback_inner(
              let window_state = userdata.window_state_lock();
              let window_flags = window_state.window_flags;
  
@@ -406,7 +705,7 @@ index 4fc3155..5f519f1 100644
              if window_state.min_size.is_some() || window_state.max_size.is_some() {
                  if let Some(min_size) = window_state.min_size {
                      let min_size = min_size.to_physical(window_state.scale_factor);
-@@ -2362,6 +2561,172 @@ unsafe fn public_window_callback_inner(
+@@ -2362,6 +2568,172 @@ unsafe fn public_window_callback_inner(
      }
  }
  
@@ -579,7 +878,7 @@ index 4fc3155..5f519f1 100644
  unsafe extern "system" fn thread_event_target_callback(
      window: HWND,
      msg: u32,
-@@ -2441,7 +2806,7 @@ unsafe extern "system" fn thread_event_target_callback(
+@@ -2441,7 +2813,7 @@ unsafe extern "system" fn thread_event_target_callback(
      if userdata_removed {
          drop(userdata);
      } else {
@@ -588,10 +887,10 @@ index 4fc3155..5f519f1 100644
      }
      result
  }
-diff --git "a/C:\Users\sjxx\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winit-0.30.2/src/platform_impl/windows/ime.rs" "b/frontend-slint\vendor\winit-0.30.2/src/platform_impl/windows/ime.rs"
+diff --git a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/windows/ime.rs b/winit-0.30.2/src/platform_impl/windows/ime.rs
 index 6761487..37685a0 100644
---- "a/C:\Users\sjxx\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\winit-0.30.2/src/platform_impl/windows/ime.rs"
-+++ "b/frontend-slint\vendor\winit-0.30.2/src/platform_impl/windows/ime.rs"
+--- a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/windows/ime.rs
++++ b/winit-0.30.2/src/platform_impl/windows/ime.rs
 @@ -29,6 +29,12 @@ impl ImeContext {
      pub unsafe fn get_composing_text_and_cursor(
          &self,
@@ -644,10 +943,30 @@ index 6761487..37685a0 100644
 +        pub static STRINGS: RefCell<Option<Strings>> = const { RefCell::new(None) };
 +    }
 +}
-diff --git "a/C:\\Users\\sjxx\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\winit-0.30.2/src/platform_impl/windows/util.rs" "b/frontend-slint\\vendor\\winit-0.30.2/src/platform_impl/windows/util.rs"
+diff --git a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/windows/mod.rs b/winit-0.30.2/src/platform_impl/windows/mod.rs
+index 15051f0..bba7610 100644
+--- a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/windows/mod.rs
++++ b/winit-0.30.2/src/platform_impl/windows/mod.rs
+@@ -29,6 +29,7 @@ pub struct PlatformSpecificWindowAttributes {
+     pub no_redirection_bitmap: bool,
+     pub drag_and_drop: bool,
+     pub skip_taskbar: bool,
++    pub no_activate: bool,
+     pub class_name: String,
+     pub decoration_shadow: bool,
+     pub backdrop_type: BackdropType,
+@@ -48,6 +49,7 @@ impl Default for PlatformSpecificWindowAttributes {
+             no_redirection_bitmap: false,
+             drag_and_drop: true,
+             skip_taskbar: false,
++            no_activate: false,
+             class_name: "Window Class".to_string(),
+             decoration_shadow: false,
+             backdrop_type: BackdropType::default(),
+diff --git a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/windows/util.rs b/winit-0.30.2/src/platform_impl/windows/util.rs
 index 87bcbd4..f55eef0 100644
---- "a/C:\\Users\\sjxx\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\winit-0.30.2/src/platform_impl/windows/util.rs"
-+++ "b/frontend-slint\\vendor\\winit-0.30.2/src/platform_impl/windows/util.rs"
+--- a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/windows/util.rs
++++ b/winit-0.30.2/src/platform_impl/windows/util.rs
 @@ -219,6 +219,7 @@ pub type GetDpiForMonitor = unsafe extern "system" fn(
      dpi_y: *mut u32,
  ) -> HRESULT;
@@ -685,10 +1004,10 @@ index 87bcbd4..f55eef0 100644
  pub type GetPointerPenInfo =
      unsafe extern "system" fn(pointId: u32, penInfo: *mut POINTER_PEN_INFO) -> BOOL;
  
-diff --git "a/C:\\Users\\sjxx\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\winit-0.30.2/src/platform_impl/windows/window.rs" "b/frontend-slint\\vendor\\winit-0.30.2/src/platform_impl/windows/window.rs"
-index 23fec32..7d73645 100644
---- "a/C:\\Users\\sjxx\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\winit-0.30.2/src/platform_impl/windows/window.rs"
-+++ "b/frontend-slint\\vendor\\winit-0.30.2/src/platform_impl/windows/window.rs"
+diff --git a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/windows/window.rs b/winit-0.30.2/src/platform_impl/windows/window.rs
+index 23fec32..779b35b 100644
+--- a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/windows/window.rs
++++ b/winit-0.30.2/src/platform_impl/windows/window.rs
 @@ -1206,6 +1206,7 @@ impl<'a> InitData<'a> {
              window_state: win.window_state.clone(),
              event_loop_runner: self.event_loop.runner_shared.clone(),
@@ -697,11 +1016,75 @@ index 23fec32..7d73645 100644
              _file_drop_handler: file_drop_handler,
              userdata_removed: Cell::new(false),
              recurse_depth: Cell::new(0),
-diff --git "a/C:\\Users\\sjxx\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\winit-0.30.2/src/platform_impl/windows/window_state.rs" "b/frontend-slint\\vendor\\winit-0.30.2/src/platform_impl/windows/window_state.rs"
-index 911467b..fd4de84 100644
---- "a/C:\\Users\\sjxx\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\winit-0.30.2/src/platform_impl/windows/window_state.rs"
-+++ "b/frontend-slint\\vendor\\winit-0.30.2/src/platform_impl/windows/window_state.rs"
-@@ -309,6 +309,19 @@ impl WindowFlags {
+@@ -1327,6 +1328,14 @@ unsafe fn init(
+     window_flags
+         .set(WindowFlags::NO_BACK_BUFFER, attributes.platform_specific.no_redirection_bitmap);
+     window_flags.set(WindowFlags::MARKER_ACTIVATE, attributes.active);
++    window_flags.set(
++        WindowFlags::SKIP_TASKBAR,
++        attributes.platform_specific.skip_taskbar,
++    );
++    window_flags.set(
++        WindowFlags::NO_ACTIVATE,
++        attributes.platform_specific.no_activate,
++    );
+     window_flags.set(WindowFlags::TRANSPARENT, attributes.transparent);
+     // WindowFlags::VISIBLE and MAXIMIZED are set down below after the window has been configured.
+     window_flags.set(WindowFlags::RESIZABLE, attributes.resizable);
+diff --git a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/windows/window_state.rs b/winit-0.30.2/src/platform_impl/windows/window_state.rs
+index 911467b..bf802cc 100644
+--- a/D:/proj/wunder/temp_dir/winit-pristine/winit-0.30.2/src/platform_impl/windows/window_state.rs
++++ b/winit-0.30.2/src/platform_impl/windows/window_state.rs
+@@ -15,8 +15,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
+     SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOREPOSITION, SWP_NOSIZE, SWP_NOZORDER,
+     SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, WINDOWPLACEMENT,
+     WINDOW_EX_STYLE, WINDOW_STYLE, WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN,
+-    WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOREDIRECTIONBITMAP,
+-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_EX_WINDOWEDGE, WS_MAXIMIZE, WS_MAXIMIZEBOX, WS_MINIMIZE,
++    WS_CLIPSIBLINGS, WS_EX_ACCEPTFILES, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
++    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_EX_WINDOWEDGE,
++    WS_MAXIMIZE, WS_MAXIMIZEBOX, WS_MINIMIZE,
+     WS_MINIMIZEBOX, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_SIZEBOX, WS_SYSMENU, WS_VISIBLE,
+ };
+ 
+@@ -123,6 +124,19 @@ bitflags! {
+ 
+         const CLIP_CHILDREN = 1 << 22;
+ 
++        /// A tool window: never in the taskbar or Alt+Tab. Winit's usual
++        /// approach — `ITaskbarList::DeleteTab` after creation — only removes a
++        /// button that already exists, so a window that is created hidden and
++        /// shown later still gets one. The style bit is the only thing the
++        /// shell honours from the very first show.
++        const SKIP_TASKBAR = 1 << 23;
++
++        /// Never the foreground window (`WS_EX_NOACTIVATE`). The bit has to
++        /// live in the flags and not be poked in afterwards: every state diff
++        /// rebuilds `GWL_EXSTYLE` from this set, and a later show uses
++        /// `SW_SHOW`, which would otherwise activate a notification overlay.
++        const NO_ACTIVATE = 1 << 24;
++
+         const EXCLUSIVE_FULLSCREEN_OR_MASK = WindowFlags::ALWAYS_ON_TOP.bits();
+     }
+ }
+@@ -269,9 +283,15 @@ impl WindowFlags {
+         if self.contains(WindowFlags::VISIBLE) {
+             style |= WS_VISIBLE;
+         }
+-        if self.contains(WindowFlags::ON_TASKBAR) {
++        if self.contains(WindowFlags::ON_TASKBAR) && !self.contains(WindowFlags::SKIP_TASKBAR) {
+             style_ex |= WS_EX_APPWINDOW;
+         }
++        if self.contains(WindowFlags::SKIP_TASKBAR) {
++            style_ex |= WS_EX_TOOLWINDOW;
++        }
++        if self.contains(WindowFlags::NO_ACTIVATE) {
++            style_ex |= WS_EX_NOACTIVATE;
++        }
+         if self.contains(WindowFlags::ALWAYS_ON_TOP) {
+             style_ex |= WS_EX_TOPMOST;
+         }
+@@ -309,6 +329,19 @@ impl WindowFlags {
              style &= !WS_OVERLAPPEDWINDOW;
          }
  
@@ -721,7 +1104,7 @@ index 911467b..fd4de84 100644
          (style, style_ex)
      }
  
-@@ -427,12 +440,21 @@ impl WindowFlags {
+@@ -427,12 +460,21 @@ impl WindowFlags {
      pub fn adjust_rect(self, hwnd: HWND, mut rect: RECT) -> Result<RECT, io::Error> {
          unsafe {
              let mut style = GetWindowLongW(hwnd, GWL_STYLE) as u32;

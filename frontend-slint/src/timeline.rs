@@ -27,6 +27,8 @@ pub const KIND_GROUP: i32 = 4;
 pub const KIND_SUBAGENT: i32 = 5;
 pub const KIND_PROCESS: i32 = 6;
 pub const KIND_FOOTER: i32 = 7;
+/// The turn's failure card, rendered in the assistant's place.
+pub const KIND_ERROR: i32 = 8;
 /// Status kinds: 0 done, 1 running, 2 failed, 3 stopped by the user.
 pub const STATUS_DONE: i32 = 0;
 pub const STATUS_RUNNING: i32 = 1;
@@ -118,9 +120,8 @@ pub fn stat_metrics(metrics: &[crate::turn_stats::Metric]) -> Vec<crate::TurnSta
         .collect()
 }
 
-/// One child-run card to its timeline row. Shared by the live reducer and the
-/// history projection so a card reads identically in both paths; the reducer
-/// only re-stamps the row index.
+/// One child run to its zero-height status marker. The marker feeds turn
+/// status accounting; child details are presented by the composer dock.
 pub fn subagent_row(card: &NativeSubagentCard) -> TimelineRow {
     let status = if card.failed || matches!(card.status.as_str(), "failed" | "error") {
         STATUS_FAILED
@@ -164,8 +165,6 @@ pub fn subagent_row(card: &NativeSubagentCard) -> TimelineRow {
     row.summary = summary.as_str().into();
     row.tool_icon = crate::tool_icons::workflow_icon("subagent_control").into();
     row.status_kind = status;
-    row.subagent_id = card.session_id.as_str().into();
-    row.subagent_stoppable = card.can_terminate && status == STATUS_RUNNING;
     row
 }
 
@@ -209,8 +208,8 @@ fn blank(kind: i32, id: String) -> TimelineRow {
         payload: 0,
         patch: ModelRc::default(),
         stats: ModelRc::default(),
-        subagent_id: slint::SharedString::default(),
-        subagent_stoppable: false,
+        error_title: slint::SharedString::default(),
+        error_hint: slint::SharedString::default(),
     }
 }
 
@@ -1368,9 +1367,8 @@ impl Timeline {
         self.group = NO_GROUP;
     }
 
-    /// Append one child-run card, or update the card of an already seen item.
-    /// A child run outlives the tool call that spawned it, so the card is its
-    /// own row outside any batch; progress revisions patch it in place.
+    /// Append one child-run status marker, or update the already seen marker.
+    /// Progress revisions patch it in place so turn-level status stays live.
     pub fn upsert_subagent(&mut self, card: &NativeSubagentCard) {
         if card.session_id.is_empty() {
             return;
@@ -1386,8 +1384,6 @@ impl Timeline {
                 existing.text = row.text.clone();
                 existing.summary = row.summary.clone();
                 existing.status_kind = row.status_kind;
-                existing.subagent_id = row.subagent_id.clone();
-                existing.subagent_stoppable = row.subagent_stoppable;
             });
             return;
         }
@@ -1442,6 +1438,37 @@ impl Timeline {
         if failed {
             self.patch(self.process_bar, |row| row.summary = "错误".into());
         }
+    }
+
+    /// Put the turn's failure in the assistant's place. The runtime reports at
+    /// most one terminal failure per turn and a retry updates the same reason,
+    /// so the card is inserted once (before the footer) and patched afterwards.
+    pub fn upsert_error(&mut self, card: &crate::error_card::ErrorCard) {
+        let Some(root) = self.turn.clone() else {
+            return;
+        };
+        let id = format!("error-{root}");
+        let existing = (0..self.model.row_count()).find(|index| {
+            self.model
+                .row_data(*index)
+                .is_some_and(|row| row.kind == KIND_ERROR && row.id == id)
+        });
+        let index = match existing {
+            Some(index) => index,
+            None => {
+                let mut row = blank(KIND_ERROR, id);
+                row.status_kind = STATUS_FAILED;
+                self.push(row)
+            }
+        };
+        self.patch(index, |row| {
+            row.error_title = card.title.as_str().into();
+            row.text = card.message.as_str().into();
+            row.detail = card.detail.as_str().into();
+            row.error_hint = card.hint.as_str().into();
+            row.visible = true;
+            row.status_kind = STATUS_FAILED;
+        });
     }
 
     /// A settled turn must never leave an unreported entry spinning: every row
@@ -1920,6 +1947,62 @@ impl Timeline {
         Some(index)
     }
 
+    /// Settle the waiting 问询面板 bubble the user just answered.
+    ///
+    /// The answer is admitted as a new turn, so the durable watcher cannot
+    /// install the old turn's completed rows while that new turn owns the live
+    /// tail: its snapshot would put the new turn's own bubble in front of the
+    /// optimistic one. The old bubble must therefore be settled here, at the
+    /// moment the answer leaves the composer, or it keeps claiming the thread
+    /// waits for input through the whole next turn.
+    ///
+    /// Returns whether a waiting bubble was found. A failed submission is
+    /// restored lazily by the durable projection, which still holds the
+    /// unanswered turn.
+    pub fn settle_answered_inquiry(&mut self) -> bool {
+        let count = self.model.row_count();
+        let Some(bar) = (0..count).rev().find(|index| {
+            self.model.row_data(*index).is_some_and(|row| {
+                row.kind == KIND_PROCESS
+                    && matches!(
+                        row.summary.as_str(),
+                        "等待用户输入" | "等待回答" | "等待确认" | "waiting_input"
+                    )
+            })
+        }) else {
+            return false;
+        };
+        self.patch(bar, |row| {
+            row.summary = "已完成".into();
+            row.status_kind = STATUS_DONE;
+        });
+        // The same turn's footer still carries the waiting status metric. Drop
+        // it exactly as the durable projection does for a completed turn, so
+        // the settled bubble cannot contradict its own tail.
+        for index in bar + 1..count {
+            let Some(row) = self.model.row_data(index) else {
+                continue;
+            };
+            if row.kind == KIND_USER {
+                break;
+            }
+            if row.kind != KIND_FOOTER {
+                continue;
+            }
+            let stats: Vec<crate::TurnStatMetric> = row
+                .stats
+                .iter()
+                .filter(|metric| !metric.key.starts_with("status-"))
+                .collect();
+            self.patch(index, move |row| {
+                row.stats = ModelRc::new(VecModel::from(stats));
+            });
+            break;
+        }
+        self.marks_dirty.set(true);
+        true
+    }
+
     pub fn set_turn_status(&mut self, state: &str, round: i64) {
         let Some(index) = self.ensure_footer() else {
             return;
@@ -1997,6 +2080,55 @@ fn highlight_code(blocks: &mut crate::message_blocks::Blocks) -> ModelRc<TextBlo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn answered_inquiry_settles_the_previous_waiting_bubble() {
+        let mut timeline = Timeline::new();
+        let mut user = blank(KIND_USER, "user-turn-ask".into());
+        user.text = "Fixture question".into();
+        let mut bar = blank(KIND_PROCESS, "process-ask".into());
+        bar.summary = "等待用户输入".into();
+        bar.status_kind = STATUS_RUNNING;
+        bar.visible = true;
+        let mut footer = blank(KIND_FOOTER, "footer-ask".into());
+        footer.stats = ModelRc::new(VecModel::from(vec![
+            crate::TurnStatMetric {
+                key: "status-waiting".into(),
+                value: "等待确认".into(),
+            },
+            crate::TurnStatMetric {
+                key: "stopwatch".into(),
+                value: "1.2s".into(),
+            },
+        ]));
+        timeline.push(user);
+        timeline.push(bar);
+        timeline.push(footer);
+
+        assert!(timeline.settle_answered_inquiry());
+        let bar = timeline
+            .model
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .unwrap();
+        assert_eq!(bar.summary, "已完成");
+        assert_eq!(bar.status_kind, STATUS_DONE);
+        let footer = timeline
+            .model
+            .iter()
+            .find(|row| row.kind == KIND_FOOTER)
+            .unwrap();
+        assert_eq!(
+            footer
+                .stats
+                .iter()
+                .map(|metric| metric.key.to_string())
+                .collect::<Vec<_>>(),
+            vec!["stopwatch".to_string()],
+            "the waiting status metric must not survive the answer"
+        );
+        assert!(!timeline.settle_answered_inquiry());
+    }
 
     #[test]
     fn rejected_older_submission_cannot_remove_the_new_live_turn() {

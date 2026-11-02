@@ -220,6 +220,8 @@ export type MessageSubagentItem = {
   label: string;
   status: string;
   summary: string;
+  latest_message: string;
+  metrics: Record<string, unknown>;
   terminal: boolean;
   failed: boolean;
   canTerminate: boolean;

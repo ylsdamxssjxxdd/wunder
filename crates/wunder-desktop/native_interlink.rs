@@ -620,6 +620,7 @@ fn validate_local_rel(raw: &str) -> Result<String> {
                 }
                 parts.push(text);
             }
+            Component::CurDir => {}
             _ => bail!("本地保存路径必须在工作区内：{raw}"),
         }
     }
@@ -673,7 +674,9 @@ fn cloud_path(raw: &str) -> String {
 fn cloud_op_outcome(record: &Value) -> CloudOpOutcome {
     if clean(record.get("status")) == "succeeded" {
         let result = payload_with(record, "path");
-        CloudOpOutcome::Done(clean(result.get("path")))
+        let path = clean(result.get("path"));
+        let path = if path.is_empty() { path } else { cloud_path(&path) };
+        CloudOpOutcome::Done(path)
     } else {
         let code = clean(record.get("error_code"));
         let summary = clean(record.get("error_summary"));

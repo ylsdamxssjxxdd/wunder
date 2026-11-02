@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
@@ -727,7 +728,11 @@ fn desktop_settings_backup_path(path: &Path) -> PathBuf {
 }
 
 fn desktop_settings_temp_path(path: &Path) -> PathBuf {
-    path.with_extension("json.tmp")
+    // Concurrent writers (desktop, CLI, tests) share one settings file; a
+    // fixed temp name lets one writer's rename steal another's temp file.
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    path.with_extension(format!("json.{}.{}.tmp", std::process::id(), sequence))
 }
 
 fn desktop_settings_invalid_path(path: &Path) -> PathBuf {
@@ -2718,14 +2723,35 @@ mod tests {
             "my-git"
         });
         let rg_bin = root.join(if cfg!(windows) { "my-rg.exe" } else { "my-rg" });
+        let ffmpeg_bin = root.join(if cfg!(windows) {
+            "my-ffmpeg.exe"
+        } else {
+            "my-ffmpeg"
+        });
+        let browser_bin = root.join(if cfg!(windows) {
+            "my-browser.exe"
+        } else {
+            "my-browser"
+        });
+        let shell_bin = root.join(if cfg!(windows) {
+            "my-shell.exe"
+        } else {
+            "my-shell"
+        });
         fs::write(&python_bin, "").expect("create python stub");
         fs::write(&git_bin, "").expect("create git stub");
         fs::write(&rg_bin, "").expect("create rg stub");
+        fs::write(&ffmpeg_bin, "").expect("create ffmpeg stub");
+        fs::write(&browser_bin, "").expect("create browser stub");
+        fs::write(&shell_bin, "").expect("create shell stub");
 
         let mut settings = DesktopSettings::default();
         settings.python_path = python_bin.to_string_lossy().into_owned();
         settings.git_path = git_bin.to_string_lossy().into_owned();
         settings.rg_path = rg_bin.to_string_lossy().into_owned();
+        settings.ffmpeg_path = ffmpeg_bin.to_string_lossy().into_owned();
+        settings.browser_path = browser_bin.to_string_lossy().into_owned();
+        settings.shell_path = shell_bin.to_string_lossy().into_owned();
         let statuses = runtime_tool_statuses(&settings, &app_dir);
         for entry in &statuses {
             assert_eq!(

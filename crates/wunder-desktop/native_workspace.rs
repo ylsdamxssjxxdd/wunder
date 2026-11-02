@@ -17,6 +17,8 @@ use std::{
 use wunder_server::interlink::client::shadow::Sections;
 use wunder_server::storage::{WorkspaceRecord, USER_PRIVATE_CONTAINER_ID};
 
+#[cfg(windows)]
+use std::ffi::OsStr;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command;
 
@@ -476,6 +478,20 @@ impl NativeDesktop {
     /// relative to the workspace root and cannot escape it. Persisted chat
     /// attachments resolve to the controlled private workspace instead.
     pub fn open_workspace_resource(&self, root_path: &str, relative: &str) -> Result<()> {
+        open_in_os(&self.workspace_open_target(root_path, relative)?)
+    }
+
+    /// Show one workspace entry where it lives on disk. Windows selects the
+    /// entry inside its parent folder; Linux and macOS open the parent folder
+    /// because there is no portable "select this item" request. Same path
+    /// resolution and containment rules as `open_workspace_resource`.
+    pub fn reveal_workspace_resource(&self, root_path: &str, relative: &str) -> Result<()> {
+        reveal_in_os(&self.workspace_open_target(root_path, relative)?)
+    }
+
+    /// Resolve a menu entry to its host file, rejecting anything outside the
+    /// bound root and entries that no longer exist on disk.
+    fn workspace_open_target(&self, root_path: &str, relative: &str) -> Result<PathBuf> {
         let target = if let Some(target) = self.chat_attachment_target(relative)? {
             target
         } else {
@@ -491,45 +507,7 @@ impl NativeDesktop {
         if !target.exists() {
             bail!("文件不存在");
         }
-        #[cfg(windows)]
-        {
-            use std::os::windows::ffi::OsStrExt;
-            #[link(name = "shell32")]
-            unsafe extern "system" {
-                fn ShellExecuteW(
-                    window: isize,
-                    operation: *const u16,
-                    file: *const u16,
-                    parameters: *const u16,
-                    directory: *const u16,
-                    show: i32,
-                ) -> isize;
-            }
-            let file: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
-            let operation: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
-            let result = unsafe {
-                ShellExecuteW(
-                    0,
-                    operation.as_ptr(),
-                    file.as_ptr(),
-                    std::ptr::null(),
-                    std::ptr::null(),
-                    1,
-                )
-            };
-            if result <= 32 {
-                bail!("系统程序无法打开文件（错误码 {result}）");
-            }
-        }
-        #[cfg(target_os = "linux")]
-        {
-            Command::new("xdg-open").arg(&target).spawn()?;
-        }
-        #[cfg(target_os = "macos")]
-        {
-            Command::new("open").arg(&target).spawn()?;
-        }
-        Ok(())
+        Ok(target)
     }
 
     /// Resolve one workspace-relative path to its absolute host file for the
@@ -1059,6 +1037,96 @@ fn workspace_contains(root: &Path, target: &Path) -> bool {
     wunder_server::path_utils::is_within_root(root, target)
 }
 
+#[cfg(windows)]
+#[link(name = "shell32")]
+unsafe extern "system" {
+    fn ShellExecuteW(
+        window: isize,
+        operation: *const u16,
+        file: *const u16,
+        parameters: *const u16,
+        directory: *const u16,
+        show: i32,
+    ) -> isize;
+}
+
+/// One ShellExecuteW request. `parameters` reaches the target process on the
+/// raw command line, so the caller owns its quoting.
+#[cfg(windows)]
+fn shell_execute(operation: &str, file: &OsStr, parameters: Option<&OsStr>) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    let encode = |text: &OsStr| text.encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+    let operation = encode(OsStr::new(operation));
+    let file = encode(file);
+    let parameters = parameters.map(encode);
+    let result = unsafe {
+        ShellExecuteW(
+            0,
+            operation.as_ptr(),
+            file.as_ptr(),
+            parameters
+                .as_deref()
+                .map_or(std::ptr::null(), <[u16]>::as_ptr),
+            std::ptr::null(),
+            1,
+        )
+    };
+    if result <= 32 {
+        bail!("系统程序无法打开该项（错误码 {result}）");
+    }
+    Ok(())
+}
+
+/// The `/select` argument Explorer accepts. The path has to carry its own
+/// quotes: `Command` would wrap the whole `/select,…` blob instead, and
+/// Explorer then reads the blob as a path and falls back to a default folder.
+/// NTFS forbids `"` inside names, so this quoting cannot be escaped out of.
+#[cfg(windows)]
+fn explorer_select_argument(target: &Path) -> String {
+    format!("/select,\"{}\"", target.display())
+}
+
+/// The folder to open when a platform cannot select an item inside it.
+#[cfg(target_os = "linux")]
+fn parent_folder(target: &Path) -> &Path {
+    target
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(target)
+}
+
+/// Hand a resolved host path to the OS default application.
+fn open_in_os(target: &Path) -> Result<()> {
+    #[cfg(windows)]
+    shell_execute("open", target.as_os_str(), None)?;
+    #[cfg(target_os = "linux")]
+    Command::new("xdg-open").arg(target).spawn()?;
+    #[cfg(target_os = "macos")]
+    Command::new("open").arg(target).spawn()?;
+    Ok(())
+}
+
+/// Show a resolved host path where it lives: Windows highlights the item in
+/// its parent folder, macOS asks `open` to reveal it, Linux can only open the
+/// parent folder.
+fn reveal_in_os(target: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        let explorer = std::env::var_os("WINDIR")
+            .map(|windir| Path::new(&windir).join("Explorer.exe"))
+            .unwrap_or_else(|| PathBuf::from("Explorer.exe"));
+        let select = explorer_select_argument(target);
+        shell_execute("open", explorer.as_os_str(), Some(OsStr::new(&select)))?;
+    }
+    #[cfg(target_os = "linux")]
+    Command::new("xdg-open")
+        .arg(parent_folder(target))
+        .spawn()?;
+    #[cfg(target_os = "macos")]
+    Command::new("open").arg("-R").arg(target).spawn()?;
+    Ok(())
+}
+
 /// Resolve a workspace-relative resource path (Markdown image source) to a
 /// canonical file inside `root`. Rejects parent traversal, absolute paths
 /// outside the root and remote URLs.
@@ -1263,6 +1331,18 @@ fn workspace_new_entry_target(root: &Path, relative: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn explorer_select_argument_keeps_the_path_inside_its_own_quotes() {
+        // Spaces are the failure case: a blob quoted as a whole reads as a
+        // path and Explorer opens a default folder instead of the target.
+        let target = Path::new(r"C:\Users\demo\workspace\notes dir\report.txt");
+        assert_eq!(
+            explorer_select_argument(target),
+            r#"/select,"C:\Users\demo\workspace\notes dir\report.txt""#
+        );
+    }
 
     #[test]
     fn image_paths_are_confined_for_relative_absolute_file_and_url_forms() {

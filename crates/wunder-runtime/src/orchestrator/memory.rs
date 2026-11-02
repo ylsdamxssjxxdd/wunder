@@ -687,26 +687,16 @@ impl Orchestrator {
             .collect::<Vec<_>>();
         let source_interaction_block_count = source_interaction_messages.len();
         let source_interaction_tokens = estimate_messages_tokens(&source_interaction_messages);
-        let retained_segments = collect_retained_interaction_segments_with_indexes_for_compaction(
+        let retained_tail_messages = collect_retained_tail_interaction_messages_for_compaction(
             &source_messages,
             current_user_index,
-            COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE,
-            COMPACTION_RETAINED_HEAD_INTERACTION_TOKENS,
+            COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT,
             COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS,
         );
-        let retained_head_messages = retained_segments.head_messages;
-        let retained_tail_messages = retained_segments.tail_messages;
-        let retained_head_message_count = retained_head_messages.len();
         let retained_tail_message_count = retained_tail_messages.len();
-        let mut retained_head_messages_for_rebuilt = retained_head_messages.clone();
-        mark_retained_interaction_messages(&mut retained_head_messages_for_rebuilt);
         let mut retained_tail_messages_for_rebuilt = retained_tail_messages.clone();
         mark_retained_interaction_messages(&mut retained_tail_messages_for_rebuilt);
-        let mut retained_replay_messages = retained_head_messages
-            .iter()
-            .cloned()
-            .chain(retained_tail_messages.iter().cloned())
-            .collect::<Vec<_>>();
+        let mut retained_replay_messages = retained_tail_messages.clone();
         clear_compaction_inflight_markers(&mut retained_replay_messages);
         mark_retained_interaction_messages(&mut retained_replay_messages);
         let retained_interaction_message_count = retained_replay_messages.len();
@@ -736,7 +726,6 @@ impl Orchestrator {
         if let Some(system_message) = replay_system_message.clone() {
             base_messages.push(system_message);
         }
-        base_messages.extend(retained_head_messages.iter().cloned());
         base_messages.extend(retained_tail_messages.iter().cloned());
         if let Some(current_turn_replay_message) = current_user_replay.message.clone() {
             base_messages.push(current_turn_replay_message);
@@ -786,7 +775,6 @@ impl Orchestrator {
         if let Some(system_message) = replay_system_message {
             rebuilt.push(system_message);
         }
-        rebuilt.extend(retained_head_messages_for_rebuilt);
         rebuilt.push(json!({ "role": "user", "content": summary_text }));
         rebuilt.extend(retained_tail_messages_for_rebuilt);
         if let Some(current_turn_replay_message) = current_user_replay.message {
@@ -918,10 +906,6 @@ impl Orchestrator {
             json!(retained_interaction_message_count),
         );
         compaction_payload_map.insert(
-            "retained_head_message_count".to_string(),
-            json!(retained_head_message_count),
-        );
-        compaction_payload_map.insert(
             "retained_tail_message_count".to_string(),
             json!(retained_tail_message_count),
         );
@@ -944,32 +928,18 @@ impl Orchestrator {
             )),
         );
         compaction_payload_map.insert(
-            "retained_head_messages_debug".to_string(),
-            Value::Array(build_compaction_message_debug_entries(
-                &retained_head_messages,
-            )),
-        );
-        compaction_payload_map.insert(
             "retained_tail_messages_debug".to_string(),
             Value::Array(build_compaction_message_debug_entries(
                 &retained_tail_messages,
             )),
         );
         compaction_payload_map.insert(
-            "retained_head_block_count_target".to_string(),
-            json!(COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE),
-        );
-        compaction_payload_map.insert(
             "retained_tail_block_count_target".to_string(),
-            json!(COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE),
-        );
-        compaction_payload_map.insert(
-            "retained_head_exchange_count_target".to_string(),
-            json!(COMPACTION_RETAINED_INTERACTION_EXCHANGE_COUNT_PER_SIDE),
+            json!(COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT),
         );
         compaction_payload_map.insert(
             "retained_tail_exchange_count_target".to_string(),
-            json!(COMPACTION_RETAINED_INTERACTION_EXCHANGE_COUNT_PER_SIDE),
+            json!(COMPACTION_RETAINED_INTERACTION_EXCHANGE_COUNT),
         );
         compaction_payload_map.insert(
             "summary_tokens".to_string(),

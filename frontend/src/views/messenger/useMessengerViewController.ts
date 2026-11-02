@@ -39,7 +39,6 @@ import {
   InquiryPanel,
   MessageFeedbackActions,
   MessageKnowledgeCitation,
-  MessageSubagentPanel,
   MessageThinking,
   ToolApprovalComposer,
   WorkspacePanel
@@ -269,7 +268,6 @@ export function useMessengerViewController(): Record<string, any> {
     loadUserToolsSummaryCache,
     MessageFeedbackActions,
     MessageKnowledgeCitation,
-    MessageSubagentPanel,
     MessageThinking,
     MessageToolWorkflow,
     MESSENGER_RIGHT_DOCK_WIDTH_STORAGE_KEY,

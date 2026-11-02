@@ -81,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import SubagentRunDetail from './SubagentRunDetail.vue';
 import {
@@ -114,6 +114,12 @@ const detailVisible = ref(false);
 const activeKey = ref('');
 const activeItem = computed(() => items.value.find(item => item.key === activeKey.value) ?? null);
 const terminatingKeys = ref<Set<string>>(new Set());
+
+watch(() => props.sessionId, () => {
+  detailVisible.value = false;
+  activeKey.value = '';
+  terminatingKeys.value = new Set();
+});
 
 const items = computed<SubagentPanelItem[]>(() =>
   Array.isArray(props.items)

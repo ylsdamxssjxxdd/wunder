@@ -255,6 +255,9 @@ impl CommandSessionRecord {
 pub struct CommandSessionBroker {
     sessions: DashMap<String, Arc<Mutex<CommandSessionRecord>>>,
     processes: DashMap<String, Arc<CommandProcessHandle>>,
+    /// 前台（阻塞式）命令的会话级取消令牌。detached 命令有自己的进程句柄，
+    /// 前台命令没有，「终止这一条」就落到这张表上，由执行中的命令循环消费。
+    cancels: DashMap<String, CancellationToken>,
     ring_buffer_bytes: usize,
     active_processes: AtomicUsize,
     events: tokio::sync::broadcast::Sender<CommandSessionEvent>,
@@ -306,6 +309,7 @@ impl CommandSessionBroker {
         Self {
             sessions: DashMap::new(),
             processes: DashMap::new(),
+            cancels: DashMap::new(),
             ring_buffer_bytes: DEFAULT_SESSION_RING_BUFFER_BYTES,
             active_processes: AtomicUsize::new(0),
             events: tokio::sync::broadcast::channel(256).0,
@@ -521,6 +525,21 @@ impl CommandSessionBroker {
         }
     }
 
+    /// 为一条仍在运行的会话登记取消令牌。与 `processes` 表不同，这里不占
+    /// detached 进程名额：前台阻塞命令每个线程同一时刻至多一条，由调用方在
+    /// 执行返回时用 `unregister_cancel` 摘除，令牌不会跨命令残留。
+    pub(crate) fn register_cancel(&self, command_session_id: &str) -> CancellationToken {
+        let token = CancellationToken::new();
+        if let Some(stale) = self.cancels.insert(command_session_id.to_string(), token.clone()) {
+            stale.cancel();
+        }
+        token
+    }
+
+    pub(crate) fn unregister_cancel(&self, command_session_id: &str) {
+        self.cancels.remove(command_session_id);
+    }
+
     pub(crate) async fn write_stdin(
         &self,
         user_id: &str,
@@ -718,9 +737,10 @@ impl CommandSessionBroker {
         Some(record.snapshot().task_detail())
     }
 
-    /// 终止单条命令任务。只取消这一条的 CancellationToken，其余任务与线程
-    /// 本身不受影响；进程回收仍由原来的 watcher 完成，名额在进程真正退出后
-    /// 才释放（与 `terminate_scope` 同一约束）。
+    /// 终止单条命令任务。detached 命令取消它自己的进程句柄令牌；前台阻塞命令
+    /// 没有进程句柄，取消落到执行时登记的会话级令牌上。两种情况都只影响这一
+    /// 条，其余任务与线程本身不受影响；进程回收仍由原来的执行路径完成，
+    /// detached 名额在进程真正退出后才释放（与 `terminate_scope` 同一约束）。
     pub fn terminate_task(
         &self,
         user_id: &str,
@@ -740,18 +760,21 @@ impl CommandSessionBroker {
         if !in_scope {
             return false;
         }
-        match self
+        if let Some(process) = self
             .processes
             .get(command_session_id)
             .map(|entry| Arc::clone(entry.value()))
         {
-            Some(process) => {
-                process.cancel();
-                true
-            }
-            // 没有进程句柄说明它还没真正拉起或已经在退出，交给 watcher 收尾。
-            None => false,
+            process.cancel();
+            return true;
         }
+        if let Some(cancel) = self.cancels.get(command_session_id) {
+            cancel.cancel();
+            return true;
+        }
+        // 既没拉起进程也没登记令牌（例如还没真正拉起或已经在退出），
+        // 交给原有的收尾路径。
+        false
     }
 
     pub(crate) fn list_session_snapshots(
@@ -1104,8 +1127,22 @@ mod tests {
     }
 
     #[test]
-    fn terminate_scope_only_cancels_matching_live_processes() {
+    fn terminate_task_falls_back_to_the_session_cancel_token() {
         let broker = CommandSessionBroker::new();
+        broker.start_session(build_start_spec());
+        // 前台阻塞命令没有 detached 进程句柄：登记令牌前无法终止，登记后可以。
+        assert!(!broker.terminate_task("user_a", "sess_1", "cmd_test"));
+        let token = broker.register_cancel("cmd_test");
+        assert!(broker.terminate_task("user_a", "sess_1", "cmd_test"));
+        assert!(token.is_cancelled());
+        // 摘除令牌后回落到「不可终止」；跨线程作用域依旧拒绝。
+        broker.unregister_cancel("cmd_test");
+        assert!(!broker.terminate_task("user_a", "sess_1", "cmd_test"));
+        assert!(!broker.terminate_task("user_b", "sess_1", "cmd_test"));
+    }
+
+    #[test]
+    fn terminate_scope_only_cancels_matching_live_processes() {        let broker = CommandSessionBroker::new();
         broker.start_session(build_start_spec());
         broker.start_session(CommandSessionStartSpec {
             command_session_id: Some("cmd_other".to_string()),

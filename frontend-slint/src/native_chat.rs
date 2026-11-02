@@ -2394,6 +2394,11 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         // it cannot overwrite another live reducer's timeline state.
         let idle_before_submit = state.borrow().active.is_none();
         let optimistic = answered.is_some() && idle_before_submit;
+        // The answer is admitted as a new turn. Settle the waiting bubble here:
+        // while the new turn owns the live tail the durable history cannot
+        // replace the old turn's rows, and the old process bar would otherwise
+        // keep showing「等待用户输入」until the new turn ends.
+        let settles_inquiry = answered.is_some();
         let submission_cancelled = Arc::new(AtomicBool::new(false));
         if idle_before_submit {
             state.borrow_mut().submitting = Some(PendingSubmission {
@@ -2417,6 +2422,9 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             };
             let mut live = timeline.borrow_mut();
             live.set_highlight(true);
+            if settles_inquiry {
+                live.settle_answered_inquiry();
+            }
             let row = live.begin_turn(&client_message_id, &display_content);
             echo_image_attachments(
                 &app,
@@ -2614,6 +2622,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                             display_content.clone(),
                             client_message_id,
                             preview_images.clone(),
+                            settles_inquiry,
                         ));
                         refresh_queue_async(&app, &state, &session);
                         queue::schedule_due(
@@ -2631,6 +2640,9 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                         let desktop = state.borrow().desktop.clone();
                         let mut live = timeline.borrow_mut();
                         live.set_highlight(true);
+                        if settles_inquiry {
+                            live.settle_answered_inquiry();
+                        }
                         let row = live.begin_turn(&client_message_id, &display_content);
                         echo_image_attachments(
                             &app,
@@ -3615,6 +3627,9 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 {
                     let mut live = timeline.borrow_mut();
                     live.set_highlight(true);
+                    if entry.settles_inquiry {
+                        live.settle_answered_inquiry();
+                    }
                     let row = live.begin_turn(&entry.client_message_id, &content);
                     echo_image_attachments(
                         &app,
@@ -3793,7 +3808,12 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                         queue::schedule_due(&mut state.queue_due, Duration::from_millis(0));
                     }
                     NativeChatEvent::Failed(error) => {
-                        app.set_status(error.into());
+                        app.set_status(error.clone().into());
+                        // The stream failed outside the structured event path,
+                        // so the sentence is the only diagnosis there is.
+                        timeline
+                            .borrow_mut()
+                            .upsert_error(&crate::error_card::generic(&error));
                         active.set_state("执行失败", Phase::Error);
                         active.settlement_failed = true;
                         done = true;
@@ -4144,6 +4164,16 @@ fn apply_event(
                 Some("waiting_input" | "waiting_user_input") => ("等待用户输入", Phase::Inquiry),
                 _ => ("任务完成", Phase::Done),
             };
+            if active.settlement_failed {
+                // The terminal frame carries the runtime's own payload, so the
+                // card can name what failed instead of only settling the
+                // status line. A frame without a payload still gets the plain
+                // explanation rather than nothing.
+                let card = crate::error_card::from_payload(&data["error"]).unwrap_or_else(|| {
+                    crate::error_card::generic(data["error"].as_str().unwrap_or_default())
+                });
+                timeline.upsert_error(&card);
+            }
             active.set_state(text, phase);
         }
         "queued" | "queue_update" => {
@@ -4380,6 +4410,13 @@ fn apply_event(
             } else {
                 ("正在重试…", Phase::Running)
             };
+            // A retry only ticks the status line; the final failure is the one
+            // that belongs in the assistant's place.
+            if active.settlement_failed {
+                if let Some(card) = crate::error_card::from_payload(data) {
+                    timeline.upsert_error(&card);
+                }
+            }
             active.set_state(text, phase);
         }
         _ => return Ok(false),
@@ -4543,6 +4580,7 @@ mod turn_tests {
             process_steps: 0,
             plan: None,
             question_panel: panel,
+            failure: None,
         }
     }
 

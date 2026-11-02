@@ -8,10 +8,12 @@ use super::memory_compaction_budget::rebalance_retained_interaction_context;
 pub(super) use super::memory_compaction_window::*;
 
 pub(super) const COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS: i64 = 64;
-pub(super) const COMPACTION_RETAINED_INTERACTION_EXCHANGE_COUNT_PER_SIDE: usize = 2;
-pub(super) const COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE: usize =
-    COMPACTION_RETAINED_INTERACTION_EXCHANGE_COUNT_PER_SIDE * 2;
-pub(super) const COMPACTION_RETAINED_HEAD_INTERACTION_TOKENS: i64 = 8_192;
+pub(super) const COMPACTION_RETAINED_INTERACTION_EXCHANGE_COUNT: usize = 2;
+pub(super) const COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT: usize =
+    COMPACTION_RETAINED_INTERACTION_EXCHANGE_COUNT * 2;
+// Only the latest interactions are replayed verbatim after compaction. Earlier
+// rounds live exclusively in the summary so a stale first request cannot keep
+// steering the agent after the task has moved on.
 pub(super) const COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS: i64 = 16_384;
 pub(super) const COMPACTION_RETAINED_INTERACTION_MESSAGE_MAX_TOKENS: i64 = 5_120;
 pub(super) const COMPACTION_RETAINED_INTERACTION_TURN_MAX_CHARS: usize = 20_000;

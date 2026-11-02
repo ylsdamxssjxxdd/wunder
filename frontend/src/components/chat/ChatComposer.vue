@@ -142,8 +142,7 @@
 
     <div class="composer-action-row">
       <div class="composer-action-group">
-        <!-- 命令 / 预设问题 / 录音 收进「+」：常驻行只留工作目录与审批模式。
-             输入 `/` 仍就地展开命令列表；面板内三段各自开合，互不遮挡。 -->
+        <!-- 命令 / 预设问题 / 录音 / 审批收进「+」；常驻状态格只列后台任务与子智能体。 -->
         <div ref="plusMenuAnchorRef" class="composer-anchor">
           <button
             class="composer-plus-btn"
@@ -289,7 +288,7 @@
           </div>
         </div>
 
-        <ComposerStatusBar :workspace-name="workspaceName" />
+        <ComposerStatusBar />
       </div>
 
         <div class="composer-action-group composer-action-group--end">
@@ -713,9 +712,6 @@ const contextUsageTitle = computed(() => {
   const counts = String(contextUsage.value.counts || '').trim();
   return counts ? `${t('profile.stats.contextTokens')} ${counts}` : t('profile.stats.contextTokens');
 });
-// 输入卡的状态面只剩「这次消息发到哪个工作目录」；在线与占用都不再单独占一行。
-const workspaceName = computed(() => t('messenger.workspace.defaultName'));
-
 const hasInquirySelection = computed(
   () => Array.isArray(props.inquirySelection) && props.inquirySelection.length > 0
 );
@@ -734,7 +730,7 @@ const reasoningEffortOptions = computed(() =>
     label: t(`desktop.system.reasoningEffort.${value}`)
   }))
 );
-// 输入框不再放占位文字：发送目标已经由工具栏左组的工作目录 chip 说明。
+// 普通输入保持无占位文字；问询轮次只显示当前问题的输入提示。
 const inputPlaceholder = computed(() =>
   props.inquiryActive ? t('chat.input.inquiryPlaceholder') : ''
 );

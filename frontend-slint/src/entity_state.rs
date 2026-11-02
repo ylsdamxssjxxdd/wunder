@@ -258,8 +258,8 @@ pub(crate) fn new_model_card(key: String) -> ModelCard {
         is_cloud: false,
         temperature: "0.7".into(),
         timeout_s: "120".into(),
-        max_output: "8192".into(),
-        thinking_token_budget: "2048".into(),
+        max_output: "32768".into(),
+        thinking_token_budget: "4096".into(),
         max_rounds: "1000".into(),
         max_context: "128000".into(),
         history_compaction_ratio: "0.9".into(),
@@ -428,15 +428,15 @@ mod tests {
     use super::new_model_card;
 
     #[test]
-    fn new_model_card_uses_engine_defaults() {
+    fn new_model_card_uses_editor_defaults() {
         let card = new_model_card("新模型".into());
         assert_eq!(card.provider.as_str(), "openai_compatible");
         assert_eq!(card.model_type.as_str(), "llm");
         assert_eq!(card.tool_call_mode.as_str(), "function_call");
         assert_eq!(card.temperature.as_str(), "0.7");
         assert_eq!(card.timeout_s.as_str(), "120");
-        assert_eq!(card.max_output.as_str(), "8192");
-        assert_eq!(card.thinking_token_budget.as_str(), "2048");
+        assert_eq!(card.max_output.as_str(), "32768");
+        assert_eq!(card.thinking_token_budget.as_str(), "4096");
         assert_eq!(card.max_rounds.as_str(), "1000");
         assert_eq!(card.max_context.as_str(), "128000");
         assert_eq!(card.history_compaction_ratio.as_str(), "0.9");
