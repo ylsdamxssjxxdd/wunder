@@ -1051,8 +1051,8 @@ button.messenger-sidebar-workspace-row {
 
 /* 吸顶祖先链：滚动时顶行所属的目录链钉在滚动区顶端（外层在上），
    让深层列表不丢路径上下文。容器零高 sticky 钉在视口顶缘，钉住的
-   行绝对定位到各自槽位；整条链 pointer-events 放行，点击穿透到底下
-   继续滚动的行。背景用滚动区自己的 surface 遮住从下方滚过的行。 */
+   行绝对定位到各自槽位；行本身可交互（点击展开/收起、Ctrl/Shift 多选），
+   背景用滚动区自己的 surface 遮住从下方滚过的行。 */
 .workspace-files-sticky {
   position: sticky;
   top: 0;
@@ -1065,7 +1065,23 @@ button.messenger-sidebar-workspace-row {
   position: absolute;
   left: 0;
   right: 0;
-  background: var(--mz-surface);
+  /* 必须是不透明背景：吸顶行盖住下方滚过的真实行，透明会让两层文字叠在一起。 */
+  background: var(--mz-surface, #ffffff);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.workspace-files-sticky .workspace-file-row.is-sticky-pin:hover {
+  background: var(--mz-hover);
+}
+
+.workspace-files-sticky .workspace-file-row.is-sticky-pin.is-active,
+.workspace-files-sticky .workspace-file-row.is-sticky-pin.is-selected {
+  background: var(--mz-selected);
+}
+
+.workspace-files-sticky .workspace-file-row.is-sticky-pin.is-highlighted {
+  background: var(--mz-primary-tint);
 }
 
 .workspace-files-sticky-edge {
@@ -1094,6 +1110,10 @@ button.messenger-sidebar-workspace-row {
 }
 
 .workspace-file-row.is-active {
+  background: var(--mz-selected);
+}
+
+.workspace-file-row.is-selected {
   background: var(--mz-selected);
 }
 
@@ -1336,6 +1356,8 @@ button.messenger-sidebar-workspace-row {
 
 .workspace-files-uploads {
   flex-shrink: 0;
+  max-height: 168px;
+  overflow-y: auto;
   margin: 4px var(--mz-sidebar-padding) 0;
   padding: 4px 6px;
   border: 1px solid var(--mz-border);

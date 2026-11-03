@@ -44,7 +44,8 @@ export type WorkspaceUploadQueueOptions = {
 };
 
 const UPLOAD_MAX_CONCURRENCY = 2;
-const UPLOAD_MAX_QUEUE = 24;
+// 与单次拖放/选择的上限（200）对齐，否则整目录拖入时超出部分会被拒收。
+const UPLOAD_MAX_QUEUE = 200;
 
 type InternalTask = WorkspaceUploadTask & {
   file: File;

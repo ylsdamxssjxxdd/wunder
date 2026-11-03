@@ -209,8 +209,8 @@ fn render_gap(frame: &mut Frame, app: &mut TuiApp, area: Rect, line: Line<'stati
         width,
         height: 1,
     };
-    // Hover is reversed video plus weight: under `NO_COLOR` every hue degrades to Reset,
-    // so the state a pointer leaves behind has to be carried by the modifier alone.
+    // Hover wears the shared selection surface; under `NO_COLOR` that surface falls back
+    // to reversed video, so the state a pointer leaves behind still reads without colour.
     let style = if app.gap_hovered(target) {
         theme::selection_mark().add_modifier(Modifier::BOLD)
     } else {
@@ -552,8 +552,6 @@ mod tests {
 
     #[test]
     fn the_projection_keeps_a_selection_mark_on_its_own_run() {
-        use ratatui::style::Modifier;
-
         // The draft line arrives with the mark already on the selected bytes: the projection
         // may not flatten the spans, or the selection the reader dragged out disappears.
         let line = Line::from(vec![
@@ -565,10 +563,16 @@ mod tests {
             Span::raw(" tail"),
         ]);
         let projected = project_input_line(&line, &[]);
+        let carries_mark = |span: &Span<'static>| {
+            crate::tui::theme::carries_selection_mark(
+                span.style.bg.unwrap_or(ratatui::style::Color::Reset),
+                span.style.add_modifier,
+            )
+        };
         let marked = projected
             .spans
             .iter()
-            .filter(|span| span.style.add_modifier.contains(Modifier::REVERSED))
+            .filter(|span| carries_mark(span))
             .collect::<Vec<_>>();
         assert_eq!(marked.len(), 1, "exactly the marked run carries the style");
         let text = marked[0].content.as_ref();
@@ -581,10 +585,7 @@ mod tests {
             "and the tab inside it was projected like every other cell: {text:?}"
         );
         assert!(
-            !projected.spans[0]
-                .style
-                .add_modifier
-                .contains(Modifier::REVERSED),
+            !carries_mark(&projected.spans[0]),
             "the run before it stays unmarked"
         );
     }

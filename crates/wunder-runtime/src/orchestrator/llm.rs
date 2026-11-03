@@ -1062,8 +1062,11 @@ impl Orchestrator {
                 let timing_snapshot = Arc::clone(&output_timing);
                 let activity = StreamActivity::new();
                 let callback_activity = activity.clone();
+                // 提供方可能忽略思考预算字段，这里在输出回调上按增量硬裁剪。
+                let mut reasoning_cap = client.reasoning_budget_cap();
                 let on_delta = move |delta: String, reasoning_delta: String| {
                     callback_activity.touch();
+                    let reasoning_delta = reasoning_cap.cap_delta(reasoning_delta);
                     let emitter = emitter_snapshot.clone();
                     let timing = Arc::clone(&timing_snapshot);
                     async move {

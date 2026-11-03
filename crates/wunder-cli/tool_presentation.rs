@@ -37,10 +37,6 @@ pub(crate) enum ToolAccess {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ToolPresentation {
     pub(crate) access: ToolAccess,
-    /// Reads a file, a directory listing or a search over the local workspace. Only these
-    /// collapse into an `Exploring` group; web and knowledge reads keep their own card
-    /// because their result is the point of the call.
-    pub(crate) workspace_read: bool,
     zh: &'static str,
     en: &'static str,
     /// What the card reads once the call settles, when the settled state is a
@@ -71,7 +67,6 @@ impl ToolPresentation {
 const fn call(access: ToolAccess, zh: &'static str, en: &'static str) -> ToolPresentation {
     ToolPresentation {
         access,
-        workspace_read: false,
         zh,
         en,
         zh_done: None,
@@ -89,26 +84,10 @@ const fn call_done(
 ) -> ToolPresentation {
     ToolPresentation {
         access,
-        workspace_read: false,
         zh,
         en,
         zh_done: Some(zh_done),
         en_done: Some(en_done),
-    }
-}
-
-const fn workspace_call(
-    access: ToolAccess,
-    zh: &'static str,
-    en: &'static str,
-) -> ToolPresentation {
-    ToolPresentation {
-        access,
-        workspace_read: true,
-        zh,
-        en,
-        zh_done: None,
-        en_done: None,
     }
 }
 
@@ -117,7 +96,6 @@ const fn workspace_call(
 // the engine's own table before matching.
 const CANONICAL_PATCH: &str = "文本编辑";
 const CANONICAL_WRITE: &str = "写入文件";
-const CANONICAL_READ: &str = "读取文件";
 const CANONICAL_COMMAND: &str = "执行命令";
 const CANONICAL_COMMAND_SESSION: &str = "命令会话";
 const CANONICAL_WEB_SEARCH: &str = "网页搜索";
@@ -185,14 +163,6 @@ pub(crate) fn is_patch_tool_name(name: &str) -> bool {
 /// True for `写入文件`, including the `write_file` alias.
 pub(crate) fn is_write_tool_name(name: &str) -> bool {
     matches_canonical(name, CANONICAL_WRITE, &["write_file"])
-}
-
-/// True for `读取文件`, including the `read_file` alias. Only this family collapses into one
-/// name list inside an exploring card; a listing or a search answers a different question,
-/// so it keeps its own row.
-pub(crate) fn is_file_read_tool_name(name: &str) -> bool {
-    let _ = name;
-    false
 }
 
 /// True for `执行命令` — one-shot command execution, including `execute_command`.
@@ -372,13 +342,13 @@ pub(crate) fn present(tool_name: &str) -> ToolPresentation {
 /// already localized, so both spellings are keys here.
 fn classify(name: &str) -> Option<ToolPresentation> {
     let presentation = match name {
-        // Workspace reads — the only calls that collapse into the `Exploring` group.
-        "读取文件" => workspace_call(ToolAccess::Explore, "读取", "Read"),
-        "列出文件" => workspace_call(ToolAccess::Explore, "列出", "List"),
-        "搜索内容" => workspace_call(ToolAccess::Explore, "搜索", "Search"),
-        CANONICAL_GLOB => workspace_call(ToolAccess::Explore, "匹配文件", "Find files"),
+        // Workspace reads remain individual timeline entries.
+        "读取文件" => call(ToolAccess::Explore, "读取", "Read"),
+        "列出文件" => call(ToolAccess::Explore, "列出", "List"),
+        "搜索内容" => call(ToolAccess::Explore, "搜索", "Search"),
+        CANONICAL_GLOB => call(ToolAccess::Explore, "匹配文件", "Find files"),
         CANONICAL_READ_IMAGE | "查看图片" => {
-            workspace_call(ToolAccess::Explore, "查看图片", "View image")
+            call(ToolAccess::Explore, "查看图片", "View image")
         }
         // Web and knowledge reads: exploring without changing anything, but their own
         // result is the point of the call, so they keep their own card.
@@ -448,136 +418,59 @@ fn unknown_named(name: &str) -> ToolPresentation {
 mod tests {
     use super::*;
 
-    /// Every canonical name in `services/tools/dispatch.rs` with the card it must
-    /// produce: access, zh verb, en verb, workspace_read.
-    const ENGINE_CANONICALS: &[(&str, ToolAccess, &str, &str, bool)] = &[
-        ("读取文件", ToolAccess::Explore, "读取", "Read", true),
-        ("列出文件", ToolAccess::Explore, "列出", "List", true),
-        ("搜索内容", ToolAccess::Explore, "搜索", "Search", true),
-        (
-            "文件名匹配",
-            ToolAccess::Explore,
-            "匹配文件",
-            "Find files",
-            true,
-        ),
-        (
-            "读图工具",
-            ToolAccess::Explore,
-            "查看图片",
-            "View image",
-            true,
-        ),
-        (
-            "网页搜索",
-            ToolAccess::Explore,
-            "联网搜索",
-            "Web search",
-            false,
-        ),
-        (
-            "网页抓取",
-            ToolAccess::Explore,
-            "获取网页",
-            "Fetch page",
-            false,
-        ),
-        ("写入文件", ToolAccess::Mutate, "写入", "Write", false),
-        ("文本编辑", ToolAccess::Mutate, "编辑", "Edit", false),
-        ("执行命令", ToolAccess::Execute, "运行", "Ran", false),
+    /// Every canonical name in `services/tools/dispatch.rs` with its access and verbs.
+    const ENGINE_CANONICALS: &[(&str, ToolAccess, &str, &str)] = &[
+        ("读取文件", ToolAccess::Explore, "读取", "Read"),
+        ("列出文件", ToolAccess::Explore, "列出", "List"),
+        ("搜索内容", ToolAccess::Explore, "搜索", "Search"),
+        ("文件名匹配", ToolAccess::Explore, "匹配文件", "Find files"),
+        ("读图工具", ToolAccess::Explore, "查看图片", "View image"),
+        ("网页搜索", ToolAccess::Explore, "联网搜索", "Web search"),
+        ("网页抓取", ToolAccess::Explore, "获取网页", "Fetch page"),
+        ("写入文件", ToolAccess::Mutate, "写入", "Write"),
+        ("文本编辑", ToolAccess::Mutate, "编辑", "Edit"),
+        ("执行命令", ToolAccess::Execute, "运行", "Ran"),
         (
             "命令会话",
             ToolAccess::Execute,
             "命令会话",
             "Command session",
-            false,
         ),
-        ("浏览器", ToolAccess::Execute, "浏览网页", "Browse", false),
-        (
-            "桌面控制",
-            ToolAccess::Execute,
-            "桌面控制",
-            "Desktop",
-            false,
-        ),
-        (
-            "技能调用",
-            ToolAccess::Delegate,
-            "调用技能",
-            "Run skill",
-            false,
-        ),
-        (
-            "子智能体控制",
-            ToolAccess::Delegate,
-            "子智能体",
-            "Subagent",
-            false,
-        ),
+        ("浏览器", ToolAccess::Execute, "浏览网页", "Browse"),
+        ("桌面控制", ToolAccess::Execute, "桌面控制", "Desktop"),
+        ("技能调用", ToolAccess::Delegate, "调用技能", "Run skill"),
+        ("子智能体控制", ToolAccess::Delegate, "子智能体", "Subagent"),
         (
             "会话线程控制",
             ToolAccess::Delegate,
             "会话线程控制",
             "Thread control",
-            false,
         ),
         (
             "会话让出",
             ToolAccess::Delegate,
             "让出会话",
             "Yield session",
-            false,
         ),
-        (
-            "计划面板",
-            ToolAccess::Other,
-            "更新计划",
-            "Update plan",
-            false,
-        ),
-        ("问询面板", ToolAccess::Other, "问询", "Ask", false),
-        (
-            "定时任务",
-            ToolAccess::Other,
-            "定时任务",
-            "Schedule task",
-            false,
-        ),
-        ("记忆管理", ToolAccess::Other, "记忆管理", "Memory", false),
-        ("自我状态", ToolAccess::Explore, "读取状态", "Status", false),
-        ("goal", ToolAccess::Other, "管理目标", "Manage goal", false),
-        (
-            "语音生成",
-            ToolAccess::Other,
-            "生成语音",
-            "Generate speech",
-            false,
-        ),
-        ("声转文", ToolAccess::Other, "语音转写", "Transcribe", false),
-        (
-            "图像生成",
-            ToolAccess::Other,
-            "生成图像",
-            "Generate image",
-            false,
-        ),
-        (
-            "视频生成",
-            ToolAccess::Other,
-            "生成视频",
-            "Generate video",
-            false,
-        ),
+        ("计划面板", ToolAccess::Other, "更新计划", "Update plan"),
+        ("问询面板", ToolAccess::Other, "问询", "Ask"),
+        ("定时任务", ToolAccess::Other, "定时任务", "Schedule task"),
+        ("记忆管理", ToolAccess::Other, "记忆管理", "Memory"),
+        ("自我状态", ToolAccess::Explore, "读取状态", "Status"),
+        ("goal", ToolAccess::Other, "管理目标", "Manage goal"),
+        ("语音生成", ToolAccess::Other, "生成语音", "Generate speech"),
+        ("声转文", ToolAccess::Other, "语音转写", "Transcribe"),
+        ("图像生成", ToolAccess::Other, "生成图像", "Generate image"),
+        ("视频生成", ToolAccess::Other, "生成视频", "Generate video"),
     ];
 
     #[test]
     fn every_engine_canonical_gets_its_own_card() {
-        for (name, access, zh, en, workspace_read) in ENGINE_CANONICALS {
+        for (name, access, zh, en) in ENGINE_CANONICALS {
             let presentation = present(name);
             assert_eq!(presentation.access, *access, "{name} access");
             assert_eq!(presentation.verb(true), *zh, "{name} zh verb");
             assert_eq!(presentation.verb(false), *en, "{name} en verb");
-            assert_eq!(presentation.workspace_read, *workspace_read, "{name} group");
         }
     }
 
@@ -755,28 +648,6 @@ mod tests {
         assert_eq!(presentation.verb(true), "使用");
         assert_eq!(presentation.verb(false), "Using");
         assert_eq!(present("").verb(false), "Using");
-    }
-
-    #[test]
-    fn only_workspace_reads_join_the_exploring_group() {
-        assert!(present("read_file").workspace_read);
-        assert!(present("搜索内容").workspace_read);
-        assert!(present("list_files").workspace_read);
-        // Image reads and glob patterns are exploring, same as the reference cards.
-        assert!(present("读图工具").workspace_read);
-        assert!(present("read_image").workspace_read);
-        assert!(present("文件名匹配").workspace_read);
-        assert!(present("glob").workspace_read);
-        // Web and knowledge reads keep their own card; their result is the point.
-        assert!(!present("web_search").workspace_read);
-        assert!(!present("网页搜索").workspace_read);
-        assert!(!present("knowledge").workspace_read);
-        assert!(!present("knowledge_search").workspace_read);
-        assert!(!present("知识库").workspace_read);
-        assert!(!present("execute_command").workspace_read);
-        assert!(!present("write_file").workspace_read);
-        assert!(!present("文本编辑").workspace_read);
-        assert!(!present("crm@lookup").workspace_read);
     }
 
     #[test]

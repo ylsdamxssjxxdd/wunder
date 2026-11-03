@@ -7,7 +7,6 @@ use ratatui::layout::Position;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Wrap};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
@@ -79,7 +78,6 @@ const PASTE_BURST_ACTIVE_IDLE_TIMEOUT: Duration = Duration::from_millis(8);
 const PASTE_BURST_ACTIVE_IDLE_TIMEOUT: Duration = Duration::from_millis(60);
 const SUPPRESSED_CLIPBOARD_PASTE_TIMEOUT: Duration = Duration::from_millis(1200);
 mod commands;
-mod exploring_group;
 mod input_placeholders;
 mod input_selection;
 mod plan_panel;
@@ -167,6 +165,7 @@ struct StreamedMarkdownState {
     index: usize,
     wrap_width: usize,
     collector: super::markdown_stream::MarkdownStreamCollector,
+    preview_lines: Vec<Line<'static>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -597,6 +596,7 @@ pub struct TuiApp {
     stream_saw_final: bool,
     stream_received_content_delta: bool,
     stream_tool_markup_open: bool,
+    reasoning_status_header: String,
     turn_final_answer: String,
     turn_final_stop_reason: Option<String>,
     transcript_offset_from_bottom: usize,
@@ -807,6 +807,7 @@ impl TuiApp {
             stream_saw_final: false,
             stream_received_content_delta: false,
             stream_tool_markup_open: false,
+            reasoning_status_header: String::new(),
             turn_final_answer: String::new(),
             turn_final_stop_reason: None,
             transcript_offset_from_bottom: 0,
@@ -1170,6 +1171,10 @@ impl TuiApp {
                     .max(Duration::from_millis(50)),
             );
         }
+        if self.transcript_selection_autoscroll_active() {
+            self.frame_requester
+                .schedule_frame_in(super::activity_indicator::RUNNING_ANIMATION_FRAME);
+        }
         if self.thread_is_running(self.session_id.as_str()) {
             self.frame_requester
                 .schedule_frame_in(super::activity_indicator::RUNNING_ANIMATION_FRAME);
@@ -1274,6 +1279,8 @@ impl TuiApp {
                 elapsed_secs,
                 self.stream_catchup_mode,
                 self.terminal_focused,
+                Some(self.reasoning_status_header.as_str())
+                    .filter(|header| !header.trim().is_empty()),
             );
         }
 
@@ -2959,15 +2966,26 @@ impl TuiApp {
         }
         let incoming = source.as_deref().unwrap_or(delta);
         state.collector.push_delta(incoming);
-        if !incoming.contains('\n') {
-            return false;
+        let newly_completed = if incoming.contains('\n') {
+            state.collector.commit_complete_lines()
+        } else {
+            Vec::new()
+        };
+        let preview = state.collector.pending_preview();
+        let changed = !newly_completed.is_empty() || !preview.is_empty();
+        if !newly_completed.is_empty() {
+            self.append_stream_lines(kind, index, newly_completed);
         }
-        let newly_completed = state.collector.commit_complete_lines();
-        if newly_completed.is_empty() {
-            return false;
+        let add_prefix = self
+            .logs
+            .get(index)
+            .and_then(|entry| entry.markdown_cache.as_ref())
+            .is_none_or(|cache| cache.lines.is_empty());
+        let preview = style_markdown_lines(kind, preview, add_prefix);
+        if let Some(state) = self.ensure_markdown_stream_state(kind, index) {
+            state.preview_lines = preview;
         }
-        self.append_stream_lines(kind, index, newly_completed);
-        true
+        changed
     }
 
     fn ensure_markdown_stream_state(
@@ -2989,6 +3007,7 @@ impl TuiApp {
                         collector: super::markdown_stream::MarkdownStreamCollector::new(Some(
                             wrap_width,
                         )),
+                        preview_lines: Vec::new(),
                     });
                 }
                 self.assistant_markdown_stream.as_mut()
@@ -3005,6 +3024,7 @@ impl TuiApp {
                         collector: super::markdown_stream::MarkdownStreamCollector::new(Some(
                             wrap_width,
                         )),
+                        preview_lines: Vec::new(),
                     });
                 }
                 self.reasoning_markdown_stream.as_mut()
@@ -3832,6 +3852,7 @@ impl TuiApp {
         self.gap_hit_area = area;
     }
 
+    #[cfg(test)]
     pub(crate) fn gap_hit_area(&self) -> Rect {
         self.gap_hit_area
     }
@@ -4055,6 +4076,7 @@ impl TuiApp {
         }
         let expanded = self.card_is_expanded(index);
         let streaming = self.entry_is_streaming(kind, index);
+        let preview_rows = self.markdown_stream_preview(kind, index).len();
         let Some(entry) = self.logs.get_mut(index) else {
             return 1;
         };
@@ -4064,11 +4086,12 @@ impl TuiApp {
         }
         if matches!(kind, LogKind::Assistant | LogKind::Reasoning) {
             let rows = if streaming {
-                entry
+                (entry
                     .markdown_cache
                     .as_ref()
                     .map(|cache| cache.lines.len())
-                    .unwrap_or(1)
+                    .unwrap_or(0)
+                    + preview_rows)
                     .max(1)
             } else {
                 ensure_markdown_cache(entry, width as u16);
@@ -4107,6 +4130,7 @@ impl TuiApp {
         };
         let expanded = self.card_is_expanded(index);
         let streaming = self.entry_is_streaming(kind, index);
+        let stream_preview = self.markdown_stream_preview(kind, index).to_vec();
         let fold_is_zh = self.is_zh_language();
         let Some(entry) = self.logs.get_mut(index) else {
             return Vec::new();
@@ -4132,10 +4156,14 @@ impl TuiApp {
                     .as_ref()
                     .map(|cache| cache.lines.clone())
                     .unwrap_or_else(|| {
-                        vec![Line::from(Span::styled(
-                            log_prefix(entry.kind).to_string(),
-                            base_style,
-                        ))]
+                        if stream_preview.is_empty() {
+                            vec![Line::from(Span::styled(
+                                log_prefix(entry.kind).to_string(),
+                                base_style,
+                            ))]
+                        } else {
+                            Vec::new()
+                        }
                     })
             } else {
                 ensure_markdown_cache(entry, width);
@@ -4150,6 +4178,7 @@ impl TuiApp {
         } else {
             render_plain_lines(entry.kind, entry.text.as_str(), base_style, width)
         };
+        lines.extend(stream_preview);
 
         // Codex keeps thinking visible as a dim, italic margin note rather than a
         // second voice in the transcript: patch every span (markdown included) so
@@ -4207,6 +4236,18 @@ impl TuiApp {
                 .is_some_and(|state| state.index == index),
             _ => false,
         }
+    }
+
+    fn markdown_stream_preview(&self, kind: LogKind, index: usize) -> &[Line<'static>] {
+        let state = match kind {
+            LogKind::Assistant => self.assistant_markdown_stream.as_ref(),
+            LogKind::Reasoning => self.reasoning_markdown_stream.as_ref(),
+            _ => None,
+        };
+        state
+            .filter(|state| state.index == index)
+            .map(|state| state.preview_lines.as_slice())
+            .unwrap_or_default()
     }
 
     pub fn popup_view(&mut self) -> PopupView {
@@ -6043,6 +6084,7 @@ impl TuiApp {
         self.invalidate_transcript_metrics();
         self.active_assistant = None;
         self.active_reasoning = None;
+        self.reasoning_status_header.clear();
         self.transcript_offset_from_bottom = 0;
         self.transcript_selected = None;
     }
@@ -6636,6 +6678,12 @@ impl TuiApp {
         if self.handle_gap_mouse(&mouse) {
             return;
         }
+        if matches!(
+            mouse.kind,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        ) {
+            self.pause_transcript_selection_autoscroll();
+        }
 
         match mouse.kind {
             // The wheel moves the window, never the mark: a selection is booked against
@@ -6752,6 +6800,7 @@ impl TuiApp {
         }
         let clicks = self.count_pointer_click(point);
         self.begin_selection_at(point, clicks);
+        self.note_transcript_selection_pointer(mouse);
         self.request_redraw();
     }
 
@@ -6804,6 +6853,12 @@ impl TuiApp {
             .as_ref()
             .is_some_and(|selection| selection.dragging)
         {
+            self.note_transcript_selection_pointer(mouse);
+            if self.transcript_selection_autoscroll_active() {
+                self.tick_transcript_selection_autoscroll();
+                self.request_redraw();
+                return;
+            }
             let Some(point) = self.transcript_point(mouse) else {
                 return;
             };
@@ -6829,6 +6884,7 @@ impl TuiApp {
         if let Some(selection) = self.transcript_selection.as_mut() {
             if selection.dragging {
                 selection.dragging = false;
+                selection.pointer = None;
                 let stationary_character_click = selection.unit == SelectionUnit::Character
                     && selection.anchor == selection.head;
                 if !stationary_character_click {
@@ -8294,6 +8350,7 @@ impl TuiApp {
                 self.session_stats.model_calls = self.session_stats.model_calls.saturating_add(1);
                 self.active_assistant = None;
                 self.active_reasoning = None;
+                self.reasoning_status_header.clear();
                 self.stream_received_content_delta = false;
                 self.stream_tool_markup_open = false;
                 self.tool_phase_notice_emitted = false;
@@ -8359,21 +8416,15 @@ impl TuiApp {
                 let args = payload.get("args").unwrap_or(&Value::Null);
                 let tool_call_key = ToolCallKey::from_payload(payload);
                 if is_apply_patch_tool_name(tool) {
-                    if !self.push_patch_call_log(args, tool_call_key) {
-                        self.push_log(
-                            LogKind::Tool,
-                            format_tool_call_line(tool, args, self.is_zh_language()),
-                        );
+                    if !self.push_patch_call_log(args, tool_call_key.clone()) {
+                        self.push_generic_tool_call_log(tool, args, tool_call_key);
                     }
                 } else if is_execute_command_tool_name(tool) {
                     let update = self.command_sessions.register_tool_call(payload);
                     if let Some(update) = update {
                         self.upsert_command_session_log(&update);
-                    } else if !self.push_command_call_log(args, tool_call_key) {
-                        self.push_log(
-                            LogKind::Tool,
-                            format_tool_call_line(tool, args, self.is_zh_language()),
-                        );
+                    } else if !self.push_command_call_log(args, tool_call_key.clone()) {
+                        self.push_generic_tool_call_log(tool, args, tool_call_key);
                     }
                 } else {
                     self.push_generic_tool_call_log(tool, args, tool_call_key);
@@ -8752,6 +8803,13 @@ impl TuiApp {
         let Some(appended) = appended else {
             return;
         };
+        if let Some(header) = self
+            .logs
+            .get(index)
+            .and_then(|entry| latest_reasoning_header(entry.text.as_str()))
+        {
+            self.reasoning_status_header = header;
+        }
         self.stream_markdown_delta(LogKind::Reasoning, index, appended.as_str());
         self.invalidate_transcript_metrics();
     }
@@ -9049,22 +9107,6 @@ impl TuiApp {
     }
 
     fn push_generic_tool_call_log(&mut self, tool: &str, args: &Value, key: Option<ToolCallKey>) {
-        let presentation = crate::tool_presentation::present(tool);
-        if presentation.workspace_read {
-            let child = exploring_group::ExploringChild::new(tool, args, key.clone(), presentation);
-            let index = match self.append_exploring_child(child.clone()) {
-                Some(index) => index,
-                None => {
-                    let special = SpecialLogEntry::Exploring(
-                        exploring_group::ExploringGroupEntry::new(child, self.is_zh_language()),
-                    );
-                    let text = special.summary_text();
-                    self.push_special_log(LogKind::Tool, text, special)
-                }
-            };
-            self.register_created_tool_card(key, TempToolKind::Generic(tool.to_string()), index);
-            return;
-        }
         let special = build_pending_tool_log(tool, args, self.is_zh_language());
         let text = special.summary_text();
         let index = self.push_special_log(LogKind::Tool, text, special);
@@ -9098,57 +9140,6 @@ impl TuiApp {
         self.push_special_log(LogKind::Plan, text, special);
     }
 
-    /// A workspace read joins the group at the tail of the transcript, the way Codex keeps a
-    /// run of exploration in one card. Anything that lands after the group closes it, and a
-    /// full group starts a new card instead of growing without bound.
-    fn append_exploring_child(&mut self, child: exploring_group::ExploringChild) -> Option<usize> {
-        let index = self.logs.len().checked_sub(1)?;
-        let entry = self.logs.get_mut(index)?;
-        let Some(SpecialLogEntry::Exploring(group)) = &mut entry.special else {
-            return None;
-        };
-        if !group.push_child(child) {
-            return None;
-        }
-        let text = group.summary_text();
-        entry.text = text;
-        self.invalidate_transcript_metrics();
-        Some(index)
-    }
-
-    fn exploring_group_at(&self, index: usize) -> bool {
-        self.logs
-            .get(index)
-            .and_then(|entry| entry.special.as_ref())
-            .is_some_and(|special| matches!(special, SpecialLogEntry::Exploring(_)))
-    }
-
-    /// Fold a result into its own child row. A group whose children are all settled no
-    /// longer accepts results, so an orphaned end still becomes its own card.
-    fn apply_exploring_result(
-        &mut self,
-        index: usize,
-        tool: &str,
-        key: Option<&ToolCallKey>,
-        payload: &Value,
-    ) -> bool {
-        let is_zh = self.is_zh_language();
-        let Some(entry) = self.logs.get_mut(index) else {
-            return false;
-        };
-        let Some(SpecialLogEntry::Exploring(group)) = &mut entry.special else {
-            return false;
-        };
-        let (ok, note) = exploring_result_note(payload, is_zh);
-        if !group.apply_result(tool, key, ok, note) {
-            return false;
-        }
-        let text = group.summary_text();
-        entry.text = text;
-        self.invalidate_transcript_metrics();
-        true
-    }
-
     fn register_created_tool_card(
         &mut self,
         key: Option<ToolCallKey>,
@@ -9172,7 +9163,7 @@ impl TuiApp {
         if let Some(index) = self.resolve_pending_tool_cell("", key.as_ref()) {
             let previous_special = self.logs.get(index).and_then(|entry| entry.special.clone());
             if let Some(previous_special) = previous_special.as_ref() {
-                special.inherit_patch_preview_from(previous_special);
+                special.inherit_pending_context_from(previous_special);
             }
             self.write_completed_tool_cell(index, special);
             return;
@@ -9197,18 +9188,18 @@ impl TuiApp {
     fn complete_generic_tool_log(&mut self, tool: &str, payload: &Value) {
         let key = ToolCallKey::from_payload(payload);
         if let Some(index) = self.resolve_pending_tool_cell(tool, key.as_ref()) {
-            if self.exploring_group_at(index) {
-                if self.apply_exploring_result(index, tool, key.as_ref(), payload) {
-                    return;
-                }
-                let special = build_completed_tool_log(tool, payload, self.is_zh_language(), None);
-                self.push_special_log(LogKind::Tool, special.summary_text(), special);
-                return;
-            }
             // The pending card already resolved its verb, and a settled sub-agent
             // call reads differently ("Waiting for" becomes "Finished waiting").
             let inherited = self.presentation_at(index);
-            let special = build_completed_tool_log(tool, payload, self.is_zh_language(), inherited);
+            let mut special =
+                build_completed_tool_log(tool, payload, self.is_zh_language(), inherited);
+            if let Some(previous) = self
+                .logs
+                .get(index)
+                .and_then(|entry| entry.special.as_ref())
+            {
+                special.inherit_pending_context_from(previous);
+            }
             self.write_completed_tool_cell(index, special);
             return;
         }
@@ -9725,14 +9716,43 @@ fn current_activity_elapsed_secs(started_at: Option<Instant>, settled_secs: f64)
     live_secs.max(0.0).round() as u64
 }
 
+fn latest_reasoning_header(text: &str) -> Option<String> {
+    text.lines().rev().find_map(|line| {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with("<!--") {
+            return None;
+        }
+        let line = line.trim_start_matches('#').trim();
+        let line = line
+            .strip_prefix("**")
+            .and_then(|rest| rest.split_once("**"))
+            .map(|(bold, trailing)| format!("{bold}{trailing}"))
+            .unwrap_or_else(|| line.to_string());
+        (!line.is_empty()).then_some(line)
+    })
+}
+
 fn format_busy_activity_line(
     is_zh: bool,
     elapsed_secs: u64,
     stream_catchup_mode: bool,
     terminal_focused: bool,
+    reasoning_header: Option<&str>,
 ) -> String {
     let elapsed = fmt_elapsed_compact(elapsed_secs);
-    let mut parts = vec![if is_zh {
+    let header = reasoning_header
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let mut parts = vec![if let Some(header) = header {
+        format!(
+            "• {header} ({elapsed} · {})",
+            if is_zh {
+                "Esc 可中断"
+            } else {
+                "esc to interrupt"
+            }
+        )
+    } else if is_zh {
         format!("• 运行中 ({elapsed} · Esc 可中断)")
     } else {
         format!("• Working ({elapsed} · esc to interrupt)")
@@ -9814,6 +9834,6 @@ fn format_footer_context_summary(
 }
 
 #[cfg(test)]
-mod snapshot_tests;
+pub(crate) mod snapshot_tests;
 #[cfg(test)]
 mod tests;

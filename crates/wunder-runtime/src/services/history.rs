@@ -5,7 +5,7 @@ use crate::i18n;
 use crate::orchestrator_constants::{
     ARTIFACT_INDEX_MAX_ITEMS, COMPACTION_META_TYPE, COMPACTION_OUTPUT_RESERVE, COMPACTION_RATIO,
     COMPACTION_REPLACEMENT_HISTORY_META_KEY, COMPACTION_SAFETY_MARGIN, DEFAULT_MAX_OUTPUT_TOKENS,
-    MICROCOMPACTION_META_TYPE, OBSERVATION_PREFIX,
+    OBSERVATION_PREFIX,
 };
 use crate::prompting::read_prompt_template;
 use crate::tools::resolve_tool_name;
@@ -840,7 +840,7 @@ fn materialize_history_items(history: &[Value]) -> Vec<Value> {
             .and_then(Value::as_object)
             .and_then(|meta| meta.get("type"))
             .and_then(Value::as_str)
-            == Some(MICROCOMPACTION_META_TYPE)
+            == Some("microcompaction")
         {
             if let Some(replacement_history) = extract_compaction_replacement_history(Some(item)) {
                 active_items = replacement_history;
@@ -1722,7 +1722,7 @@ mod tests {
                 json!({"role":"user","content":"earlier input"}),
                 json!({"role":"assistant","content":"earlier output"}),
                 json!({"role":"system","content":"sample summary","meta":{
-                "type":MICROCOMPACTION_META_TYPE,"hidden":true,
+                "type":"microcompaction","hidden":true,
                 COMPACTION_REPLACEMENT_HISTORY_META_KEY:[{"role":"user","content":"retained input"},
                     {"role":"assistant","content":"retained output"}]}}),
                 json!({"role":"user","content":"latest input"}),
@@ -1838,7 +1838,7 @@ mod tests {
                 "role": "system",
                 "content": "",
                 "meta": {
-                    "type": MICROCOMPACTION_META_TYPE,
+                    "type": "microcompaction",
                     "hidden": true,
                     COMPACTION_REPLACEMENT_HISTORY_META_KEY: [
                         { "role": "user", "content": "reduced question" },

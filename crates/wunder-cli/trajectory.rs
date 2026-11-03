@@ -209,7 +209,7 @@ pub(crate) fn public_item_row(
         .then(|| item["updated_time"].as_f64())
         .flatten(),
         detail: Some(BodyRef {
-            body_id: format!("{id}|source_detail"),
+            body_id: format!("{id}|detail"),
             revision,
             bytes: 0,
         }),

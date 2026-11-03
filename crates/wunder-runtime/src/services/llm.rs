@@ -246,14 +246,6 @@ fn should_emit_vllm_chat_template_kwargs(config: &LlmModelConfig) -> bool {
     )
 }
 
-fn should_emit_thinking_token_budget(config: &LlmModelConfig) -> bool {
-    is_llm_model(config)
-        && !matches!(
-            normalize_provider(config.provider.as_deref()).as_str(),
-            "anthropic"
-        )
-}
-
 fn resolved_max_output(config: &LlmModelConfig) -> u32 {
     config
         .max_output
@@ -262,7 +254,7 @@ fn resolved_max_output(config: &LlmModelConfig) -> u32 {
 }
 
 fn resolved_thinking_token_budget(config: &LlmModelConfig) -> Option<u32> {
-    if disable_thinking_requested(config) || !should_emit_thinking_token_budget(config) {
+    if disable_thinking_requested(config) || !is_llm_model(config) {
         return None;
     }
     Some(
@@ -271,6 +263,119 @@ fn resolved_thinking_token_budget(config: &LlmModelConfig) -> Option<u32> {
             .filter(|value| *value > 0)
             .unwrap_or(DEFAULT_THINKING_TOKEN_BUDGET),
     )
+}
+
+/// 用户显式设置的思考预算。只有这种情况才在客户端做硬上限：未设置时把
+/// 预算交给提供方默认值，避免擅自截断本来依赖长思考的任务。
+fn explicit_thinking_token_budget(config: &LlmModelConfig) -> Option<u32> {
+    if disable_thinking_requested(config) || !is_llm_model(config) {
+        return None;
+    }
+    config.thinking_token_budget.filter(|value| *value > 0)
+}
+
+/// 把思考预算写进提供方认识的字段。此前统一向所有非 Anthropic 提供方发送
+/// `thinking_token_budget`/`thinking_budget_tokens`，OpenAI、DeepSeek 等不识别
+/// 的提供方会直接忽略，预算形同虚设；vLLM 只认前者，llama.cpp 只认后者，
+/// DashScope/SiliconFlow 认 `thinking_budget`，OpenRouter 认 `reasoning.max_tokens`。
+fn apply_thinking_budget(payload: &mut Value, config: &LlmModelConfig) {
+    let Some(budget) = resolved_thinking_token_budget(config) else {
+        return;
+    };
+    match normalize_provider(config.provider.as_deref()).as_str() {
+        // vLLM 的 `thinking_token_budget` 与 llama.cpp 的 `thinking_budget_tokens`
+        // 都是顶层字段，服务端会忽略自己不认识的扩展。
+        "openai_compatible" | "vllm" | "vllm_ascend" | "vllm_omni" | "wunder_cloud" => {
+            payload["thinking_token_budget"] = json!(budget);
+            payload["thinking_budget_tokens"] = json!(budget);
+        }
+        // DashScope 与 SiliconFlow 的 OpenAI 兼容接口使用顶层 `thinking_budget`。
+        "qwen" | "siliconflow" => {
+            payload["enable_thinking"] = Value::Bool(true);
+            payload["thinking_budget"] = json!(budget);
+        }
+        // OpenRouter 把预算归一化到 reasoning 对象里。
+        "openrouter" => {
+            let mut reasoning = payload
+                .get("reasoning")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            reasoning.insert("max_tokens".to_string(), json!(budget));
+            payload["reasoning"] = Value::Object(reasoning);
+        }
+        // OpenAI、DeepSeek、Moonshot 等没有预算字段，发送未知参数只会被拒绝
+        // 或忽略；这类提供方由客户端硬上限兜底。
+        _ => {}
+    }
+}
+
+/// Anthropic 的思考预算在 `thinking` 对象里，且要求 budget ≥ 1024、
+/// max_tokens > budget；开启扩展思考时 temperature 必须为 1。
+fn apply_anthropic_thinking(payload: &mut Value, config: &LlmModelConfig) {
+    if disable_thinking_requested(config) {
+        return;
+    }
+    let Some(requested) = explicit_thinking_token_budget(config) else {
+        return;
+    };
+    let max_tokens = resolved_max_output(config);
+    let budget = requested.max(1024).min(max_tokens.saturating_sub(1));
+    if budget < 1024 {
+        return;
+    }
+    payload["thinking"] = json!({ "type": "enabled", "budget_tokens": budget });
+    payload["temperature"] = json!(1.0);
+}
+
+/// 客户端思考预算硬上限。部分提供方不识别预算字段（OpenAI、DeepSeek 等），
+/// 模型仍可能继续思考；这里按流式增量累计，超出预算后不再把后续思考文本
+/// 交给上层，并在最终响应里裁剪，保证线程记录不超过用户设置。
+pub(crate) struct ReasoningBudgetCap {
+    budget_tokens: Option<u32>,
+    remaining_bytes: Option<usize>,
+}
+
+impl ReasoningBudgetCap {
+    fn new(config: &LlmModelConfig) -> Self {
+        let budget_tokens = explicit_thinking_token_budget(config);
+        Self {
+            budget_tokens,
+            // 与 token_utils::approx_token_count 的 4 字节估算保持一致。
+            remaining_bytes: budget_tokens.map(|budget| (budget as usize).saturating_mul(4)),
+        }
+    }
+
+    pub(crate) fn cap_delta(&mut self, delta: String) -> String {
+        let Some(remaining) = self.remaining_bytes.as_mut() else {
+            return delta;
+        };
+        if delta.is_empty() {
+            return delta;
+        }
+        if *remaining == 0 {
+            return String::new();
+        }
+        if delta.len() <= *remaining {
+            *remaining -= delta.len();
+            return delta;
+        }
+        let mut end = *remaining;
+        while end > 0 && !delta.is_char_boundary(end) {
+            end -= 1;
+        }
+        *remaining = 0;
+        delta[..end].to_string()
+    }
+
+    fn trim(&self, reasoning: String) -> String {
+        match self.budget_tokens {
+            Some(budget) => {
+                crate::token_utils::trim_text_to_tokens(&reasoning, i64::from(budget), "")
+            }
+            None => reasoning,
+        }
+    }
 }
 
 fn insert_chat_template_kwarg(payload: &mut Value, key: &str, value: Value) {
@@ -743,6 +848,12 @@ impl LlmClient {
         self
     }
 
+    /// 客户端思考预算守卫。流式调用方在输出回调里使用它按增量裁剪，
+    /// 避免提供方忽略预算字段时继续向上层输出超限思考。
+    pub(crate) fn reasoning_budget_cap(&self) -> ReasoningBudgetCap {
+        ReasoningBudgetCap::new(&self.config)
+    }
+
     fn is_cloud_channel(&self) -> bool {
         normalize_provider(self.config.provider.as_deref()) == CLOUD_PROVIDER
     }
@@ -1041,7 +1152,7 @@ impl LlmClient {
         Ok(LlmResponse {
             finish_reason: output::finish_reason(&body),
             content,
-            reasoning,
+            reasoning: ReasoningBudgetCap::new(&self.config).trim(reasoning),
             usage,
             tool_calls,
         })
@@ -1203,7 +1314,7 @@ impl LlmClient {
             return Ok(LlmResponse {
                 finish_reason: final_response_preview.finish_reason,
                 content: combined,
-                reasoning: reasoning_combined,
+                reasoning: ReasoningBudgetCap::new(&self.config).trim(reasoning_combined),
                 usage,
                 tool_calls,
             });
@@ -1325,6 +1436,7 @@ impl LlmClient {
         if let Some(temperature) = self.config.temperature {
             payload["temperature"] = json!(round_f32(temperature));
         }
+        apply_anthropic_thinking(&mut payload, &self.config);
         if let Some(stop) = &self.config.stop {
             if !stop.is_empty() {
                 payload["stop_sequences"] = json!(stop);
@@ -1380,10 +1492,7 @@ impl LlmClient {
             payload["stream_options"] = json!({ "include_usage": true });
         }
         payload["max_tokens"] = json!(resolved_max_output(&self.config));
-        if let Some(thinking_token_budget) = resolved_thinking_token_budget(&self.config) {
-            payload["thinking_token_budget"] = json!(thinking_token_budget);
-            payload["thinking_budget_tokens"] = json!(thinking_token_budget);
-        }
+        apply_thinking_budget(&mut payload, &self.config);
         if let Some(stop) = &self.config.stop {
             if !stop.is_empty() {
                 payload["stop"] = json!(stop);
@@ -1432,10 +1541,7 @@ impl LlmClient {
             payload["stream_options"] = json!({ "include_usage": true });
         }
         payload["max_output_tokens"] = json!(resolved_max_output(&self.config));
-        if let Some(thinking_token_budget) = resolved_thinking_token_budget(&self.config) {
-            payload["thinking_token_budget"] = json!(thinking_token_budget);
-            payload["thinking_budget_tokens"] = json!(thinking_token_budget);
-        }
+        apply_thinking_budget(&mut payload, &self.config);
         if let Some(stop) = &self.config.stop {
             if !stop.is_empty() {
                 payload["stop"] = json!(stop);
@@ -2317,6 +2423,19 @@ fn truncate_text(text: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn thinking_budget_config(provider: &str, api_mode: &str) -> LlmModelConfig {
+        LlmModelConfig {
+            enable: Some(true),
+            provider: Some(provider.to_string()),
+            api_mode: Some(api_mode.to_string()),
+            model: Some("test-model".to_string()),
+            max_output: Some(4_096),
+            thinking_token_budget: Some(2_048),
+            model_type: Some("llm".to_string()),
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn take_next_sse_event_handles_crlf_and_lf_delimiters() {
@@ -3232,7 +3351,10 @@ mod tests {
         assert!(!done);
 
         assert_eq!(tool_calls.len(), 1);
-        assert_eq!(tool_calls[0].name_snapshot.as_deref(), Some("execute_command"));
+        assert_eq!(
+            tool_calls[0].name_snapshot.as_deref(),
+            Some("execute_command")
+        );
         assert_eq!(
             tool_calls[0].arguments_snapshot.as_deref(),
             Some("{}{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}")
@@ -4100,6 +4222,80 @@ mod tests {
     }
 
     #[test]
+    fn thinking_budget_uses_provider_specific_fields() {
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: Value::String("hello".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let vllm = LlmClient::new(
+            Client::new(),
+            thinking_budget_config("vllm", "chat_completions"),
+        )
+        .build_request_payload(&messages, false);
+        assert_eq!(vllm["thinking_token_budget"], 2_048);
+        assert_eq!(vllm["thinking_budget_tokens"], 2_048);
+
+        let qwen = LlmClient::new(
+            Client::new(),
+            thinking_budget_config("qwen", "chat_completions"),
+        )
+        .build_request_payload(&messages, false);
+        assert_eq!(qwen["enable_thinking"], true);
+        assert_eq!(qwen["thinking_budget"], 2_048);
+
+        let openrouter = LlmClient::new(
+            Client::new(),
+            thinking_budget_config("openrouter", "chat_completions"),
+        )
+        .build_request_payload(&messages, false);
+        assert_eq!(openrouter["reasoning"]["max_tokens"], 2_048);
+    }
+
+    #[test]
+    fn anthropic_thinking_budget_clamps_and_forces_temperature() {
+        let config = LlmModelConfig {
+            temperature: Some(0.7),
+            thinking_token_budget: Some(512),
+            ..thinking_budget_config("anthropic", "chat_completions")
+        };
+        let payload = LlmClient::new(Client::new(), config).build_request_payload(
+            &[ChatMessage {
+                role: "user".to_string(),
+                content: Value::String("hello".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            false,
+        );
+        assert_eq!(payload["thinking"]["type"], "enabled");
+        // Anthropic 要求思考预算至少 1024，且开启思考时 temperature 必须为 1。
+        assert_eq!(payload["thinking"]["budget_tokens"], 1_024);
+        assert_eq!(payload["temperature"], 1.0);
+    }
+
+    #[test]
+    fn reasoning_budget_cap_truncates_stream_and_final_text() {
+        let config = thinking_budget_config("deepseek", "chat_completions");
+        let mut cap = ReasoningBudgetCap::new(&config);
+        // 预算 2048 token ≈ 8192 字节。
+        let first = cap.cap_delta("a".repeat(4_000));
+        let second = cap.cap_delta("b".repeat(4_000));
+        let third = cap.cap_delta("c".repeat(4_000));
+        assert_eq!(first.len(), 4_000);
+        assert_eq!(second.len(), 4_000);
+        assert_eq!(third.len(), 192);
+        assert!(cap.cap_delta("d".repeat(4_000)).is_empty());
+
+        let trimmed = ReasoningBudgetCap::new(&config).trim("x".repeat(10_000));
+        assert_eq!(trimmed.len(), 8_192);
+    }
+
+    #[test]
     fn build_chat_payload_includes_reasoning_effort_when_configured() {
         let config = LlmModelConfig {
             enable: Some(true),
@@ -4142,8 +4338,9 @@ mod tests {
             Some(&Value::String("xhigh".to_string()))
         );
         assert_eq!(payload["max_tokens"], 256);
-        assert_eq!(payload["thinking_token_budget"], 2_048);
-        assert_eq!(payload["thinking_budget_tokens"], 2_048);
+        // DeepSeek 不识别思考预算字段，预算由客户端的流式硬上限兜底。
+        assert!(payload.get("thinking_token_budget").is_none());
+        assert!(payload.get("thinking_budget_tokens").is_none());
     }
 
     #[test]
@@ -4440,8 +4637,9 @@ mod tests {
         );
         assert_eq!(payload["reasoning"]["effort"], "high");
         assert_eq!(payload["max_output_tokens"], 256);
-        assert_eq!(payload["thinking_token_budget"], 2_048);
-        assert_eq!(payload["thinking_budget_tokens"], 2_048);
+        // OpenAI Responses 没有思考预算参数，预算由客户端硬上限兜底。
+        assert!(payload.get("thinking_token_budget").is_none());
+        assert!(payload.get("thinking_budget_tokens").is_none());
     }
 
     #[test]

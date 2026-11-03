@@ -130,7 +130,12 @@ fn usage(row: &TrajectoryViewRow) -> String {
 fn usage_total(row: &TrajectoryViewRow) -> Option<f64> {
     let stats = row.stats.as_ref()?;
     let groups: [&[&str]; 4] = [
-        &["input_tokens", "prompt_tokens", "inputTokens", "promptTokens"],
+        &[
+            "input_tokens",
+            "prompt_tokens",
+            "inputTokens",
+            "promptTokens",
+        ],
         &[
             "cached_input_tokens",
             "cache_read_input_tokens",
@@ -315,7 +320,11 @@ fn draw_tokenbars(
         };
         spans.push(Span::styled(
             symbol.to_string(),
-            if selected { theme::modal_selected() } else { base_style },
+            if selected {
+                theme::modal_selected()
+            } else {
+                base_style
+            },
         ));
     }
     spans.push(Span::styled(format!(" {summary}"), theme::secondary_text()));

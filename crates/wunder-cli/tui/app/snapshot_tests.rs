@@ -257,6 +257,94 @@ async fn live_acceptance_delta_frames_preserve_whitespace_and_repeated_tokens() 
 }
 
 #[tokio::test]
+async fn live_acceptance_incomplete_reasoning_and_answer_deltas_are_visible_without_duplication() {
+    let root = TempRoot::new("stream_pending_preview");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    app.reset_scrollback_archive();
+    app.set_transcript_viewport(80, 20);
+    feed_stream_event(&mut app, "llm_request", json!({}), 10070);
+    app.active_stream_sessions.insert(app.session_id.clone());
+
+    app.merge_reasoning_delta("Checking");
+    let reasoning = app.active_reasoning.expect("reasoning entry");
+    let reasoning_lines = app.render_entry_lines(reasoning, false, 80);
+    assert!(reasoning_lines
+        .iter()
+        .any(|line| line.to_string().contains("Checking")));
+    assert_eq!(
+        reasoning_lines.len(),
+        app.entry_visual_line_count(reasoning, 80)
+    );
+    assert!(app.activity_line().contains("Checking"));
+
+    app.merge_assistant_delta("Hello");
+    let assistant = app.active_assistant.expect("assistant entry");
+    assert!(app
+        .render_entry_lines(assistant, false, 80)
+        .iter()
+        .any(|line| line.to_string().contains("Hello")));
+    app.merge_assistant_delta(" world\n");
+    let live = app
+        .render_entry_lines(assistant, false, 80)
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(live.matches("Hello world").count(), 1, "{live}");
+
+    app.finalize_all_markdown_streams();
+    let actual = app
+        .render_entry_lines(assistant, false, 80)
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    let mut expected = render_markdown_lines(LogKind::Assistant, "Hello world\n", 80)
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    if assistant > 0 {
+        expected.insert(0, String::new());
+    }
+    assert_eq!(actual, expected);
+}
+
+#[tokio::test]
+async fn malformed_patch_arguments_use_one_tool_card_without_a_duplicate_marker() {
+    let root = TempRoot::new("tool_fallback_card");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    app.reset_scrollback_archive();
+    feed_stream_event(
+        &mut app,
+        "tool_call",
+        json!({"tool": "文本编辑", "args": {}, "tool_call_id": "call-invalid", "turn_id": "turn-invalid"}),
+        10080,
+    );
+    assert_eq!(app.logs.len(), 1);
+    let pending = app
+        .render_entry_lines(0, false, 80)
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!pending.contains("• •"), "{pending}");
+    assert!(app.logs[0].special.is_some());
+
+    feed_stream_event(
+        &mut app,
+        "tool_result",
+        json!({"tool": "文本编辑", "tool_call_id": "call-invalid", "turn_id": "turn-invalid", "result": {"ok": false, "error": "missing file_path"}}),
+        10081,
+    );
+    assert_eq!(app.logs.len(), 1, "the result settles the same card");
+    assert!(app.logs[0]
+        .special
+        .as_ref()
+        .is_some_and(|entry| !entry.is_pending()));
+}
+
+#[tokio::test]
 async fn live_acceptance_new_thread_owns_a_lease_before_accepting_commands() {
     let root = TempRoot::new("new_thread_lease");
     let mut app = fixture_app(root.path()).await;
@@ -607,8 +695,8 @@ async fn the_frame_composes_every_card_at_forty_eighty_and_one_hundred_twenty_co
         // composer. Older entries scroll out, which is the transcript's job.
         assert!(frame.contains("Ran cargo test"), "command head: {frame}");
         assert!(
-            frame.contains("test result: ok"),
-            "command output tail: {frame}"
+            frame.contains("running 3 tests"),
+            "command output head: {frame}"
         );
         assert!(frame.contains("src/demo.rs"), "patch head: {frame}");
         assert!(
@@ -669,11 +757,15 @@ async fn folded_thinking_shows_its_head_in_dim_italic() {
     };
     let rendered = lines.iter().map(text).collect::<Vec<_>>();
     assert!(
-        rendered.iter().any(|line| line.contains("reasoning line 1")),
+        rendered
+            .iter()
+            .any(|line| line.contains("reasoning line 1")),
         "the folded head stays visible: {rendered:?}"
     );
     assert!(
-        !rendered.iter().any(|line| line.contains("reasoning line 12")),
+        !rendered
+            .iter()
+            .any(|line| line.contains("reasoning line 12")),
         "the tail stays folded: {rendered:?}"
     );
     for line in &lines {
@@ -933,12 +1025,11 @@ fn plain_lines(app: &mut TuiApp, index: usize, width: u16) -> String {
         .join("\n")
 }
 
-/// The event path, not just the card model: reads join the group at the tail, anything
-/// else closes it, and a result still finds its own child after the group stopped being
-/// the newest entry.
+/// Every call owns one timeline entry, and a result settles that same entry even
+/// after later calls have arrived.
 #[tokio::test]
-async fn a_run_of_workspace_reads_shares_one_exploring_card() {
-    let root = TempRoot::new("exploring");
+async fn workspace_reads_stay_individual_timeline_entries() {
+    let root = TempRoot::new("tool_timeline");
     let mut app = fixture_app(root.path()).await;
 
     feed_stream_event(
@@ -947,7 +1038,7 @@ async fn a_run_of_workspace_reads_shares_one_exploring_card() {
         json!({"tool": "read_file", "args": {"path": "src/alpha.rs"}, "tool_call_id": "call-1", "turn_id": "turn-1"}),
         101,
     );
-    let group_index = app.logs.len() - 1;
+    let read_index = app.logs.len() - 1;
     let base = app.logs.len();
 
     feed_stream_event(
@@ -956,7 +1047,7 @@ async fn a_run_of_workspace_reads_shares_one_exploring_card() {
         json!({"tool": "list_files", "args": {"path": "src"}, "tool_call_id": "call-2", "turn_id": "turn-1"}),
         102,
     );
-    assert_eq!(app.logs.len(), base, "two reads share one card");
+    assert_eq!(app.logs.len(), base + 1, "each read has its own entry");
 
     feed_stream_event(
         &mut app,
@@ -971,11 +1062,8 @@ async fn a_run_of_workspace_reads_shares_one_exploring_card() {
         json!({"tool": "write_file", "args": {"path": "src/gamma.rs"}, "tool_call_id": "call-3", "turn_id": "turn-1"}),
         104,
     );
-    assert_eq!(app.logs.len(), base + 1, "a write is not a read");
-    assert!(
-        plain_lines(&mut app, base, 80).contains("src/gamma.rs"),
-        "the write keeps its own card"
-    );
+    assert_eq!(app.logs.len(), base + 2, "the write appends a third entry");
+    assert!(plain_lines(&mut app, base + 1, 80).contains("src/gamma.rs"));
 
     feed_stream_event(
         &mut app,
@@ -985,27 +1073,18 @@ async fn a_run_of_workspace_reads_shares_one_exploring_card() {
         105,
     );
 
-    let group = plain_lines(&mut app, group_index, 80);
-    assert!(
-        group.contains("Explored · 1 failed"),
-        "the header names how many calls broke: {group}"
-    );
-    assert!(
-        group.contains("Read src/alpha.rs failed · file is too large to read"),
-        "the result lands on its own child: {group}"
-    );
-    assert!(group.contains("List src"), "{group}");
-    assert!(
-        !plain_lines(&mut app, base, 80).contains("too large"),
-        "and never on its sibling"
-    );
+    let read = plain_lines(&mut app, read_index, 80);
+    assert!(read.contains("Read src/alpha.rs"), "{read}");
+    assert!(read.contains("file is too large to read"), "{read}");
+    assert!(plain_lines(&mut app, base, 80).contains("List src"));
+    assert!(!plain_lines(&mut app, base, 80).contains("too large"));
 
     let frame = draw_rows(&mut app, 80, 40).join("\n");
     assert!(
-        frame.contains("Explored · 1 failed"),
-        "the counted header reaches the frame: {frame}"
+        !frame.contains("Explored"),
+        "no synthetic group header: {frame}"
     );
-    assert!(frame.contains("└ Read"), "{frame}");
+    assert!(frame.contains("• Read"), "{frame}");
 }
 #[tokio::test]
 async fn the_warning_notice_and_its_panel_reach_the_frame() {
@@ -1275,7 +1354,7 @@ async fn the_acceptance_sample_composes_the_documented_template() {
         }}}),
         false,
     );
-    edited.inherit_patch_preview_from(&patch);
+    edited.inherit_pending_context_from(&patch);
     app.push_special_log(LogKind::Tool, edited.summary_text(), edited);
 
     app.push_log(
@@ -1370,7 +1449,7 @@ async fn a_diff_row_keeps_its_tint_across_the_number_column() {
         }}}),
         false,
     );
-    completed.inherit_patch_preview_from(&pending);
+    completed.inherit_pending_context_from(&pending);
     app.push_special_log(LogKind::Tool, completed.summary_text(), completed);
 
     // A folded card previews three rows of the file, which is not enough to hold both signs;
@@ -1639,7 +1718,7 @@ fn conversation_texts(app: &TuiApp) -> Vec<String> {
         .collect()
 }
 
-async fn freeze_fixture_instructions(app: &TuiApp) {
+pub(crate) async fn freeze_fixture_instructions(app: &TuiApp) {
     use wunder_server::stable_core::thread_store::{
         CreateThreadRequest, RolloutId, SessionMeta, ThreadId, ThreadMetadata, ThreadMetadataStore,
         ThreadStatus,
@@ -2311,11 +2390,10 @@ async fn canonical_tool_names_open_the_card_their_kind_promises() {
     );
 }
 
-/// A tool card is a disclosure subject like any other: it previews the head of its result
-/// and holds the overflow — and a remote call's arguments — behind the same row.
+/// Tool results share Codex's three-row preview; full output and arguments live in Ctrl+T.
 #[tokio::test]
-async fn a_tool_card_previews_its_rows_and_holds_the_rest_behind_the_disclosure() {
-    let root = TempRoot::new("tool_fold");
+async fn a_tool_card_previews_three_rows_and_opens_the_full_result_in_the_transcript() {
+    let root = TempRoot::new("tool_preview");
     let mut app = fixture_app(root.path()).await;
     app.logs.clear();
     let content = (1..=5)
@@ -2332,43 +2410,48 @@ async fn a_tool_card_previews_its_rows_and_holds_the_rest_behind_the_disclosure(
     let summary = card.summary_text();
     app.push_special_log(LogKind::Tool, summary, card);
 
-    let folded = draw_rows(&mut app, 60, 16);
+    let preview = draw_rows(&mut app, 60, 16);
     assert!(
-        folded.iter().any(|row| row.contains("row 1")),
-        "a result is readable without asking for it: {folded:?}"
+        preview.iter().any(|row| row.contains("row 1")),
+        "{preview:?}"
     );
     assert!(
-        !folded.iter().any(|row| row.contains("row 5")),
-        "the overflow stays folded: {folded:?}"
+        preview.iter().any(|row| row.contains("row 3")),
+        "{preview:?}"
     );
     assert!(
-        folded
+        !preview.iter().any(|row| row.contains("row 4")),
+        "{preview:?}"
+    );
+    assert!(
+        preview
             .iter()
-            .any(|row| row.contains("+2 lines (enter to expand)")),
-        "the row counts exactly what Enter adds: {folded:?}"
+            .any(|row| row.contains("+2 lines (ctrl+t to view transcript)")),
+        "{preview:?}"
     );
     assert!(
-        !folded.iter().any(|row| row.contains("Arguments:")),
-        "the arguments wait for the open card: {folded:?}"
+        !preview.iter().any(|row| row.contains("Arguments:")),
+        "{preview:?}"
     );
 
     app.transcript_selected = Some(app.logs.len() - 1);
     assert!(
-        app.toggle_selected_card(),
-        "Enter has something to reveal on this card"
+        !app.toggle_selected_card(),
+        "ordinary tools have no Enter fold"
+    );
+    assert!(
+        app.handle_transcript_view_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL,))
     );
     let opened = draw_rows(&mut app, 60, 16);
+    assert!(opened.iter().any(|row| row.contains("row 5")), "{opened:?}");
     assert!(
-        opened.iter().any(|row| row.contains("row 5")),
-        "Enter revealed the overflow: {opened:?}"
+        opened.iter().any(|row| row.contains("Arguments:"))
+            && opened.iter().any(|row| row.contains("customer")),
+        "{opened:?}"
     );
     assert!(
-        opened.iter().any(|row| row.contains("customer")),
-        "and the remote call's arguments: {opened:?}"
-    );
-    assert!(
-        opened.iter().any(|row| row.contains("\u{2212} Show less")),
-        "and the open card can close itself: {opened:?}"
+        !opened.iter().any(|row| row.contains("Show less")),
+        "{opened:?}"
     );
 }
 
@@ -2500,7 +2583,6 @@ fn mouse(app: &mut TuiApp, kind: crossterm::event::MouseEventKind, row: usize, c
 #[tokio::test]
 async fn a_drag_across_the_transcript_marks_rows_and_the_release_copies_them() {
     use crossterm::event::{MouseButton, MouseEventKind};
-    use ratatui::style::Modifier;
 
     let root = TempRoot::new("drag_selection");
     let mut app = fixture_app(root.path()).await;
@@ -2529,8 +2611,10 @@ async fn a_drag_across_the_transcript_marks_rows_and_the_release_copies_them() {
         .expect("draw");
     let buffer = terminal.backend().buffer().clone();
     assert!(
-        (0..24u16).any(|row| (0..80u16)
-            .any(|column| buffer[(column, row)].modifier.contains(Modifier::REVERSED))),
+        (0..24u16).any(|row| (0..80u16).any(|column| {
+            let cell = &buffer[(column, row)];
+            crate::tui::theme::carries_selection_mark(cell.bg, cell.modifier)
+        })),
         "the drag left a visible mark"
     );
 
@@ -2750,12 +2834,11 @@ fn raw_single_line_cards(app: &mut TuiApp, texts: &[impl AsRef<str>]) {
     app.transcript_selected = None;
 }
 
-/// The screen rows carrying the selection mark — the reversed video `theme::selection_mark`
-/// puts on the picked run — with the text drawn on them. Naming a mark by its text is what
-/// lets a test say "the same text is still marked" across a scroll that moved the rows.
+/// The screen rows carrying the selection mark — the fill `theme::selection_mark` puts on
+/// the picked run, or its reversed-video fallback — with the text drawn on them. Naming a
+/// mark by its text is what lets a test say "the same text is still marked" across a scroll
+/// that moved the rows.
 fn marked_rows(app: &mut TuiApp, width: u16, height: u16) -> Vec<(usize, String)> {
-    use ratatui::style::Modifier;
-
     let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
     terminal
         .draw(|frame| crate::tui::ui::draw(frame, app))
@@ -2768,8 +2851,10 @@ fn marked_rows(app: &mut TuiApp, width: u16, height: u16) -> Vec<(usize, String)
                 .collect::<String>()
                 .trim_end()
                 .to_string();
-            let marked = (0..width)
-                .any(|column| buffer[(column, row)].modifier.contains(Modifier::REVERSED));
+            let marked = (0..width).any(|column| {
+                let cell = &buffer[(column, row)];
+                crate::tui::theme::carries_selection_mark(cell.bg, cell.modifier)
+            });
             marked.then_some((usize::from(row), text))
         })
         .collect()
@@ -2898,6 +2983,71 @@ async fn a_mark_survives_scrolling_away_and_back_to_the_same_text() {
         Some(first_copy.as_str()),
         "the copy after a scroll reads exactly as it did before"
     );
+}
+
+#[tokio::test]
+async fn a_vertical_drag_autoscrolls_at_both_edges_and_the_wheel_pauses_it() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("selection_autoscroll");
+    let mut app = fixture_app(root.path()).await;
+    let body = (1..=40)
+        .map(|line| format!("item-{line:02}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    raw_single_line_cards(&mut app, &[body]);
+    draw_rows(&mut app, 60, 16);
+    let area = app.transcript_mouse_region;
+    let middle = usize::from(area.y + 2);
+    let _clipboard_turn = ClipboardSeam::arm();
+
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), middle, 4);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), middle, 8);
+    assert!(!app.transcript_selection_autoscroll_active());
+    assert!(!app.tick_transcript_selection_autoscroll());
+
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        usize::from(area.y),
+        8,
+    );
+    assert!(app.transcript_selection_autoscroll_active());
+    let before = app.transcript_offset_from_bottom;
+    assert!(app.tick_transcript_selection_autoscroll());
+    assert!(app.transcript_offset_from_bottom > before);
+
+    draw_rows(&mut app, 60, 16);
+    mouse(
+        &mut app,
+        MouseEventKind::ScrollDown,
+        usize::from(area.y + 1),
+        8,
+    );
+    assert!(!app.tick_transcript_selection_autoscroll());
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        usize::from(area.y),
+        8,
+    );
+    assert!(app.tick_transcript_selection_autoscroll());
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        usize::from(area.y),
+        8,
+    );
+
+    app.scroll_transcript_to_top();
+    draw_rows(&mut app, 60, 16);
+    let middle = usize::from(app.transcript_mouse_region.y + 2);
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), middle, 4);
+    let bottom = usize::from(app.transcript_mouse_region.bottom() - 1);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), bottom, 8);
+    let before = app.transcript_offset_from_bottom;
+    assert!(app.tick_transcript_selection_autoscroll());
+    assert!(app.transcript_offset_from_bottom < before);
 }
 
 /// The tail growing while a mark is open — a streamed answer, a new card — neither drops
@@ -4662,7 +4812,10 @@ async fn a_failed_copy_reports_in_the_band_not_the_transcript() {
         .iter()
         .filter(|row| row.contains("Clipboard copy failed"))
         .count();
-    assert_eq!(mentions, 1, "the failure never reaches the transcript: {rows:?}");
+    assert_eq!(
+        mentions, 1,
+        "the failure never reaches the transcript: {rows:?}"
+    );
 }
 
 /// An empty draft plus a detached tail is a request to come back, not a send.
@@ -4730,7 +4883,8 @@ async fn the_gap_band_stays_inside_the_frame_at_every_sampled_width() {
 }
 
 /// What the band says and when it says it is decided by text and by the mark of a
-/// rectangle, never by a hue: under a colourless terminal the state still reads.
+/// rectangle. The resting row stays uncoloured; the hover borrows the same selection
+/// surface every other mark uses, and without colour that degrades to reversed video.
 #[tokio::test]
 async fn the_gap_carries_its_state_without_color() {
     use crossterm::event::MouseEventKind;
@@ -4757,12 +4911,15 @@ async fn the_gap_carries_its_state_without_color() {
     let area = app.gap_hit_area();
     let row = usize::from(area.y);
 
-    // The hover state itself: reversed video and weight only, so it survives a terminal
-    // where every colour degrades to Reset.
+    // The hover state wears the shared selection surface, so the band reads the same way
+    // every other mark on this frame reads; without colour it degrades to reversed video.
     let patch = crate::tui::theme::selection_mark().add_modifier(Modifier::BOLD);
     assert!(
-        patch.fg.is_none() && patch.bg.is_none(),
-        "the hover patch is a modifier, not a colour: {patch:?}"
+        crate::tui::theme::carries_selection_mark(
+            patch.bg.unwrap_or(ratatui::style::Color::Reset),
+            patch.add_modifier
+        ),
+        "the hover patch is the selection mark, not an unrelated colour: {patch:?}"
     );
     mouse(&mut app, MouseEventKind::Moved, row, area.x + 1);
     let hovered = draw_rows(&mut app, 80, 24);
@@ -5379,7 +5536,10 @@ impl Frame {
                         let cell = &buffer[(column, row)];
                         FrameCell {
                             symbol: cell.symbol().to_string(),
-                            marked: cell.modifier.contains(Modifier::REVERSED),
+                            marked: crate::tui::theme::carries_selection_mark(
+                                cell.bg,
+                                cell.modifier,
+                            ),
                             heavy: cell.modifier.contains(Modifier::BOLD),
                         }
                     })
@@ -5524,8 +5684,8 @@ fn folded_thinking_card(app: &mut TuiApp) {
 }
 
 /// The frame marks every run the query covers, and the run the reader stepped to carries more
-/// weight: reversed video everywhere, bold on the accepted hit only, and the weight moves when
-/// Enter moves. A mark never moves a character, and leaving the search paints nothing.
+/// weight: the selection fill everywhere, bold on the accepted hit only, and the weight moves
+/// when Enter moves. A mark never moves a character, and leaving the search paints nothing.
 #[tokio::test]
 async fn the_frame_marks_every_hit_and_the_accepted_one_carries_more_weight() {
     let root = TempRoot::new("search_mark_weight");
@@ -5620,10 +5780,9 @@ async fn the_frame_marks_every_hit_and_the_accepted_one_carries_more_weight() {
     assert_eq!(after.card_rows(), plain_rows, "the frame reads as it did");
 }
 
-/// An open pointer selection owns the text it covers: a hit inside it shows the selection's
-/// mark and none of the search's weight, because the selection is what the reader copies. The
-/// copy is the same text with a search up as with none, and a hit the selection never reaches
-/// still shows.
+/// An open pointer selection owns the text it covers: a hit inside it wears the selection's
+/// own surface, because the selection is what the reader copies. The copy is the same text
+/// with a search up as with none, and a hit the selection never reaches still shows.
 #[tokio::test]
 async fn an_open_selection_paints_over_a_hit_and_copies_the_same_text() {
     let root = TempRoot::new("search_mark_selection");
@@ -5668,9 +5827,9 @@ async fn an_open_selection_paints_over_a_hit_and_copies_the_same_text() {
         runs[0].2
     );
     assert!(
-        runs[0].2.iter().all(|(_, heavy)| !heavy),
-        "and the selection is the only weight on it — the mark that wins is the one the \
-         reader copies: {:?}",
+        runs[0].2.iter().all(|(_, heavy)| *heavy),
+        "and the picked-up text carries the selection's own weight — the mark that wins is \
+         the one the reader copies: {:?}",
         runs[0].2
     );
     assert!(
@@ -6252,5 +6411,3 @@ async fn model_add_registers_without_hijacking_a_working_default() {
         "config.toml describes the default model's endpoint only: {user_toml}"
     );
 }
-
-

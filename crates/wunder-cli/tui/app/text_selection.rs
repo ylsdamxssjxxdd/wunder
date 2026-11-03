@@ -231,6 +231,9 @@ pub(super) struct TranscriptSelection {
     pub head: SelectionPoint,
     pub dragging: bool,
     pub unit: SelectionUnit,
+    pub pointer: Option<ratatui::layout::Position>,
+    pub pointer_origin_row: u16,
+    pub moved_vertically: bool,
 }
 
 /// A resolved selection: a run of window lines with optional column bounds at each end.
@@ -335,6 +338,9 @@ impl TuiApp {
             head,
             dragging: true,
             unit,
+            pointer: None,
+            pointer_origin_row: 0,
+            moved_vertically: false,
         });
         true
     }
@@ -344,26 +350,85 @@ impl TuiApp {
     /// the moving end takes the bound that keeps the range whole, so shifting backwards
     /// lands on the near side of a word.
     pub(super) fn extend_selection_at(&mut self, point: WindowPoint) -> bool {
-        let Some(selection) = self.transcript_selection else {
+        let Some(mut selection) = self.transcript_selection else {
             return false;
         };
-        let unit = selection.unit;
         let anchor = selection.anchor;
-        let Some((low, high)) = self.pick(point, unit) else {
+        let Some((low, high)) = self.pick(point, selection.unit) else {
             return false;
         };
-        let head = if low.order_key() < anchor.order_key() {
+        selection.head = if low.order_key() < anchor.order_key() {
             low
         } else {
             high
         };
-        self.transcript_selection = Some(TranscriptSelection {
-            anchor,
-            head,
-            dragging: true,
-            unit,
-        });
+        selection.dragging = true;
+        self.transcript_selection = Some(selection);
         true
+    }
+
+    pub(super) fn note_transcript_selection_pointer(
+        &mut self,
+        mouse: &crossterm::event::MouseEvent,
+    ) {
+        let Some(selection) = self.transcript_selection.as_mut() else {
+            return;
+        };
+        if selection.pointer.is_none() && selection.pointer_origin_row == 0 {
+            selection.pointer_origin_row = mouse.row;
+        }
+        selection.moved_vertically |= mouse.row != selection.pointer_origin_row;
+        selection.pointer = Some(ratatui::layout::Position::new(mouse.column, mouse.row));
+    }
+
+    pub(super) fn pause_transcript_selection_autoscroll(&mut self) {
+        if let Some(selection) = self.transcript_selection.as_mut() {
+            selection.pointer = None;
+        }
+    }
+
+    pub(super) fn transcript_selection_autoscroll_active(&self) -> bool {
+        let area = self.transcript_mouse_region;
+        self.transcript_selection.as_ref().is_some_and(|selection| {
+            selection.dragging
+                && selection.moved_vertically
+                && selection.pointer.is_some_and(|pointer| {
+                    pointer.y <= area.top() || pointer.y >= area.bottom().saturating_sub(1)
+                })
+        })
+    }
+
+    pub(crate) fn tick_transcript_selection_autoscroll(&mut self) -> bool {
+        if !self.transcript_selection_autoscroll_active() {
+            return false;
+        }
+        let Some(pointer) = self
+            .transcript_selection
+            .as_ref()
+            .and_then(|selection| selection.pointer)
+        else {
+            return false;
+        };
+        let mouse = crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Moved,
+            column: pointer.x,
+            row: pointer.y,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        if let Some(point) = self.transcript_point(&mouse) {
+            self.extend_selection_at(point);
+        }
+        let previous = self.transcript_offset_from_bottom;
+        if pointer.y <= self.transcript_mouse_region.top() {
+            self.scroll_transcript_up(1);
+        } else {
+            self.scroll_transcript_down(1);
+        }
+        let changed = self.transcript_offset_from_bottom != previous;
+        if changed {
+            self.invalidate_transcript_metrics();
+        }
+        changed
     }
 
     /// codex's `has_selection_range`: a pointer-down anchor alone is not selected text,

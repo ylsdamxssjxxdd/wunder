@@ -94,6 +94,7 @@
   @toggle-dir="handleCompactTreeToggle"
   @load-more="handleCompactTreeLoadMore"
   @activate="handleCompactTreeActivate"
+  @select="handleCompactTreeSelect"
   @open="handleCompactTreeOpen"
   @toggle-select="toggleWorkspaceSelection"
   @exit-selection="resetWorkspaceSelection"
@@ -1411,6 +1412,37 @@ const handleCompactTreeOpen = (row: WorkspaceVisibleRow) => {
   if (!entry) return;
   setWorkspaceSelection([row.path], row.path);
   handleWorkspaceItemDoubleClick(entry);
+};
+/** 紧凑文件树的 Ctrl/⌘ 点选与 Shift 区间选择，与下方完整列表保持同一套语义。 */
+const handleCompactTreeSelect = (payload: {
+  row: WorkspaceVisibleRow;
+  additive: boolean;
+  range: boolean;
+}) => {
+  const path = payload.row.path;
+  if (!path) return;
+  const flat = workspaceFileTreeRows.value.filter((item) => item.kind !== 'more');
+  if (payload.range) {
+    const startIndex = flat.findIndex((item) => item.path === state.lastSelectedPath);
+    const endIndex = flat.findIndex((item) => item.path === path);
+    if (startIndex !== -1 && endIndex !== -1) {
+      const [from, to] = startIndex < endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
+      const rangePaths = flat.slice(from, to + 1).map((item) => item.path);
+      if (payload.additive) {
+        rangePaths.forEach((rangePath) => state.selectedPaths.add(rangePath));
+        state.selected = compactTreeEntry(path);
+        state.lastSelectedPath = path;
+      } else {
+        setWorkspaceSelection(rangePaths, path);
+      }
+      return;
+    }
+  }
+  if (payload.additive) {
+    toggleWorkspaceSelection(path);
+    return;
+  }
+  setWorkspaceSelection([path], path);
 };
 const handleCompactTreeCommand = async (command: string, row: WorkspaceVisibleRow | null) => {
   const entry = row ? compactTreeEntry(row.path) : null;

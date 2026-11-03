@@ -1340,66 +1340,6 @@ pub(super) fn is_equivalent_text(left: &str, right: &str) -> bool {
     compact_text_for_compare(left) == compact_text_for_compare(right)
 }
 
-pub(super) fn format_tool_call_line(tool: &str, args: &Value, is_zh: bool) -> String {
-    let mut lines = Vec::new();
-    let tool_is_zh = is_zh;
-    if is_execute_command_tool_name(tool) {
-        if let Some(command) = args
-            .get("content")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            // codex puts the command on the header line; the backticked
-            // second row was a wunder-only detour from that.
-            lines.push(if tool_is_zh {
-                format!("• 运行 {}", clip_command(command))
-            } else {
-                format!("• Ran {}", clip_command(command))
-            });
-            return lines.join("\n");
-        }
-    }
-
-    if is_apply_patch_tool_name(tool) {
-        lines.push(if tool_is_zh {
-            format!("• 调用 {tool}")
-        } else {
-            format!("• Called {tool}")
-        });
-        if let Some(patch) = extract_patch_input(args)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            let summary = summarize_patch_input(patch);
-            if !summary.is_empty() {
-                lines.push(format!("  └ {summary}"));
-            }
-            let preview_lines = extract_patch_preview_lines(patch, 8, tool_is_zh);
-            for line in preview_lines {
-                push_tree_line(&mut lines, line);
-            }
-        }
-        return lines.join("\n");
-    }
-
-    if args.is_null() {
-        return if tool_is_zh {
-            format!("• 调用 {tool}\n  └ {{}}")
-        } else {
-            format!("• Called {tool}\n  └ {{}}")
-        };
-    }
-
-    lines.push(if tool_is_zh {
-        format!("• 调用 {tool}")
-    } else {
-        format!("• Called {tool}")
-    });
-    lines.push(format!("  └ {}", summarize_tool_args(args)));
-    lines.join("\n")
-}
-
 pub(super) fn is_apply_patch_tool_name(tool: &str) -> bool {
     crate::tool_presentation::is_patch_tool_name(tool)
 }
@@ -1506,53 +1446,6 @@ pub(super) fn format_apply_patch_approval_lines(args: &Value, is_zh: bool) -> Op
     });
     lines.extend(preview_lines.into_iter().map(|line| format!("  {line}")));
     Some(lines)
-}
-
-/// One command on one header line: a runaway command would push the rest of the
-/// card off screen, so the tail is cut rather than wrapped.
-fn clip_command(command: &str) -> String {
-    const MAX_COMMAND_CHARS: usize = 160;
-    let single = command.lines().next().unwrap_or_default().trim();
-    if single.chars().count() <= MAX_COMMAND_CHARS {
-        return single.to_string();
-    }
-    let mut output = String::new();
-    for (index, ch) in single.chars().enumerate() {
-        if index >= MAX_COMMAND_CHARS {
-            break;
-        }
-        output.push(ch);
-    }
-    output.push('…');
-    output
-}
-
-fn summarize_tool_args(args: &Value) -> String {
-    if let Some(object) = args.as_object() {
-        for key in [
-            "path",
-            "file_path",
-            "filePath",
-            "query",
-            "q",
-            "url",
-            "location",
-            "ticker",
-            "command",
-            "content",
-            "text",
-            "prompt",
-            "name",
-        ] {
-            if let Some(value) = object.get(key).and_then(Value::as_str) {
-                let cleaned = value.trim();
-                if !cleaned.is_empty() {
-                    return format!("{key}={cleaned}");
-                }
-            }
-        }
-    }
-    compact_json(args)
 }
 
 fn extract_tool_result_object(payload: &Value) -> &Value {
