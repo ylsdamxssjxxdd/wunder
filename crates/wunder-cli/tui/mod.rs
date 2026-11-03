@@ -171,6 +171,7 @@ async fn run_loop(
         app.poll_tunnel();
 
         sync_mouse_mode(terminal, app, &mut mouse_capture_enabled)?;
+        app.tick_transcript_selection_autoscroll();
 
         render_frame(terminal, app)?;
         if first_frame_pending {

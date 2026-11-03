@@ -244,12 +244,16 @@ fn transcript_entry_spacing_is_only_added_after_first_item() {
 #[test]
 fn busy_activity_line_uses_codex_like_status_copy() {
     assert_eq!(
-        format_busy_activity_line(false, 3, false, true),
+        format_busy_activity_line(false, 3, false, true, None),
         "\u{2022} Working (3s \u{00b7} esc to interrupt)"
     );
     assert_eq!(
-        format_busy_activity_line(true, 113, false, true),
+        format_busy_activity_line(true, 113, false, true, None),
         "\u{2022} 运行中 (1m 53s \u{00b7} Esc 可中断)"
+    );
+    assert_eq!(
+        format_busy_activity_line(false, 3, false, true, Some("Checking the input")),
+        "\u{2022} Checking the input (3s \u{00b7} esc to interrupt)"
     );
 }
 

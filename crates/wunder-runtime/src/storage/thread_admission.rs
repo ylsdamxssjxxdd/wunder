@@ -575,7 +575,12 @@ impl TurnAdmissions {
         Self::check_mutation(&tx, thread)?;
         // 受理新输入前先结算本线程的崩溃孤儿（同一 Immediate 事务原子生效）：
         // 重放命中孤儿行时客户端收到的 created:false 对应一个已终态化的轮次。
-        Self::settle_orphaned_turns_in_tx(&tx, thread, chrono::Utc::now().timestamp_millis())?;
+        Self::settle_orphaned_turns_in_tx(
+            &tx,
+            thread,
+            chrono::Utc::now().timestamp_millis(),
+            false,
+        )?;
         if let Some(lease) = input
             .get("local_open_lease")
             .filter(|value| !value.is_null())
@@ -693,12 +698,14 @@ impl TurnAdmissions {
         conn: &Connection,
         thread: &str,
         now_ms: i64,
+        restart: bool,
     ) -> Result<usize> {
         if thread.trim().is_empty() {
             return Ok(0);
         }
         let now_s = now_ms as f64 / 1000.0;
-        if Self::queue_table_exists(conn, "session_locks")?
+        if !restart
+            && Self::queue_table_exists(conn, "session_locks")?
             && conn.query_row(
                 "SELECT EXISTS(SELECT 1 FROM session_locks WHERE session_id=?1 AND expires_at>?2)",
                 params![thread, now_s],
@@ -708,7 +715,14 @@ impl TurnAdmissions {
             // 有存活会话锁的线程仍有执行在推进，不是孤儿。
             return Ok(0);
         }
-        let stale_before_ms = now_ms - ORPHAN_SETTLE_MARGIN_MS;
+        // 重启收敛路径下，上一进程遗留的会话锁只是尚未到期的心跳，
+        // 不能继续挡住结算；调用方已确认没有其它存活客户端持有该线程。
+        // 仍保留 agent_tasks 的存活判断，避免误伤正在派发的任务。
+        let stale_before_ms = if restart {
+            now_ms
+        } else {
+            now_ms - ORPHAN_SETTLE_MARGIN_MS
+        };
         let task_fresh_s = now_s - ORPHAN_SETTLE_MARGIN_MS as f64 / 1000.0;
         let has_tasks = Self::queue_table_exists(conn, "agent_tasks")?;
         let candidates = {
@@ -761,8 +775,28 @@ impl TurnAdmissions {
     pub fn settle_orphaned_turns(&self, thread: &str) -> Result<usize> {
         let mut conn = self.connect()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let settled =
-            Self::settle_orphaned_turns_in_tx(&tx, thread, chrono::Utc::now().timestamp_millis())?;
+        let settled = Self::settle_orphaned_turns_in_tx(
+            &tx,
+            thread,
+            chrono::Utc::now().timestamp_millis(),
+            false,
+        )?;
+        tx.commit()?;
+        Ok(settled)
+    }
+
+    /// 进程重启收敛入口：本地嵌入式形态启动时，上一进程留下的会话锁
+    /// 只是过期前尚未清理的心跳，不能让它把线程永久钉在“运行中”。
+    /// 调用方必须先确认没有其它存活客户端持有该线程。
+    pub fn settle_orphaned_turns_for_restart(&self, thread: &str) -> Result<usize> {
+        let mut conn = self.connect()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let settled = Self::settle_orphaned_turns_in_tx(
+            &tx,
+            thread,
+            chrono::Utc::now().timestamp_millis(),
+            true,
+        )?;
         tx.commit()?;
         Ok(settled)
     }
@@ -1808,5 +1842,71 @@ mod tests {
             .unwrap();
         assert_eq!(replay["created"], false);
         assert_eq!(replay["user_turn_index"], 1);
+    }
+
+    /// 进程重启收敛：上一进程留下的会话锁只是尚未过期的心跳，不能像
+    /// `settle_orphaned_turns` 那样继续把线程钉在运行中；但待派发任务仍会
+    /// 驱动该轮，必须保留。
+    #[test]
+    fn restart_settle_ignores_stale_process_lock_but_keeps_live_tasks() {
+        let root = tempfile::tempdir().unwrap();
+        let admissions = TurnAdmissions::open(root.path()).unwrap();
+        let accepted = admissions
+            .accept(
+                "fixture-user",
+                "fixture-thread",
+                &serde_json::json!({"content":"sample","client_message_id":"msg-restart"}),
+            )
+            .unwrap();
+        let turn = accepted["turn_id"].as_str().unwrap().to_string();
+        backdate_admission(root.path(), "fixture-thread", &turn, 60_000);
+        // 上一进程被关闭后锁行仍在 TTL 内，普通结算因此放弃。
+        insert_session_lock(root.path(), "fixture-thread", 120.0);
+        assert_eq!(
+            admissions.settle_orphaned_turns("fixture-thread").unwrap(),
+            0
+        );
+        // 重启收敛路径不再被旧锁挡住。
+        assert_eq!(
+            admissions
+                .settle_orphaned_turns_for_restart("fixture-thread")
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            admissions.turn("fixture-thread", &turn).unwrap().unwrap()["status"],
+            "interrupted"
+        );
+        // 新一轮仍有 pending 任务时，重启收敛也不误结算。
+        let next = admissions
+            .accept(
+                "fixture-user",
+                "fixture-thread",
+                &serde_json::json!({"content":"next","client_message_id":"msg-restart-live"}),
+            )
+            .unwrap();
+        let next_turn = next["turn_id"].as_str().unwrap().to_string();
+        backdate_admission(root.path(), "fixture-thread", &next_turn, 60_000);
+        insert_agent_task(
+            root.path(),
+            "task-restart-live",
+            "fixture-thread",
+            &next_turn,
+            "pending",
+            60.0,
+        );
+        assert_eq!(
+            admissions
+                .settle_orphaned_turns_for_restart("fixture-thread")
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            admissions
+                .turn("fixture-thread", &next_turn)
+                .unwrap()
+                .unwrap()["status"],
+            "accepted"
+        );
     }
 }

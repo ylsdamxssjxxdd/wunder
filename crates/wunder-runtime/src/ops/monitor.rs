@@ -1663,6 +1663,45 @@ impl MonitorState {
         })
     }
 
+    /// 嵌入式进程重启后的显示收敛：上一进程已结束，但把它当时的
+    /// running/cancelling/queued 写进了持久缓存。若不修正，目录和重新打开的
+    /// 线程会永久显示为“运行中”。调用方须先确认该会话没有被其它存活的本地
+    /// 客户端持有；这里只改诊断缓存，不触碰会话锁、任务或线程日志。
+    pub fn settle_restarted_session(&self, session_id: &str) -> bool {
+        let cleaned = session_id.trim().to_string();
+        if cleaned.is_empty() {
+            return false;
+        }
+        self.run_guarded("monitor.settle_restarted_session", || false, || {
+            if self.sessions.lock().contains_key(&cleaned) {
+                // 本进程内有同一会话的活动记录时不覆盖。
+                return false;
+            }
+            let Some(mut record) = self.hydrate_session_record_for_register(&cleaned) else {
+                return false;
+            };
+            if !matches!(
+                record.status.as_str(),
+                Self::STATUS_RUNNING | Self::STATUS_CANCELLING | Self::STATUS_QUEUED
+            ) {
+                return false;
+            }
+            record.status = Self::STATUS_CANCELLED.to_string();
+            record.stage = Self::STATUS_CANCELLED.to_string();
+            record.summary = i18n::t("monitor.summary.restarted");
+            record.cancel_requested = false;
+            record.cancel_source = None;
+            record.ended_time = Some(record.updated_time);
+            record.dirty = false;
+            let payload = self.build_persisted_record_payload(&record);
+            if let Err(error) = self.storage.upsert_monitor_record(&payload) {
+                warn!("monitor restart settle failed for session {cleaned}: {error}");
+                return false;
+            }
+            true
+        })
+    }
+
     pub fn sum_consumed_tokens_by_user(&self, user_id: &str) -> i64 {
         let cleaned = user_id.trim().to_string();
         if cleaned.is_empty() {
@@ -3514,6 +3553,57 @@ mod tests {
             "{}",
             json!({"monitor_metadata":{"retained_events":500,"incoming_body_bytes":input["content"].as_str().unwrap().len(),"response_bytes":serde_json::to_vec(&record).unwrap().len(),"samples":100,"p50_ms":samples[49],"p95_ms":samples[94]}})
         );
+    }
+
+    /// 进程重启后监控缓存仍记着上一进程的 running。嵌入式形态没有 warm
+    /// history，若不收敛，目录和重新打开的线程会永久显示“运行中”。
+    #[test]
+    fn restart_settle_demotes_persisted_running_record() {
+        let root = tempdir().unwrap();
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            root.path().join("sample.db").to_string_lossy().into(),
+        ));
+        let updated_time = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
+        storage
+            .upsert_monitor_record(&json!({
+                "session_id":"sample-thread",
+                "user_id":"sample-owner",
+                "agent_id":"sample-agent",
+                "status":"running",
+                "stage":"running",
+                "updated_time":updated_time,
+            }))
+            .unwrap();
+        // 新进程没有任何内存记录，冷读取会原样返回上一进程的 running。
+        let restarted = MonitorState::new(
+            storage.clone(),
+            ObservabilityConfig::default(),
+            root.path().to_string_lossy().into(),
+        );
+        assert_eq!(
+            restarted
+                .get_session_stats("sample-thread")
+                .unwrap()
+                .status,
+            "running"
+        );
+        assert!(restarted.settle_restarted_session("sample-thread"));
+        assert_eq!(
+            restarted
+                .get_session_stats("sample-thread")
+                .unwrap()
+                .status,
+            "cancelled"
+        );
+        assert_eq!(
+            storage
+                .get_monitor_record("sample-thread")
+                .unwrap()
+                .unwrap()["status"],
+            "cancelled"
+        );
+        // 已落终态后重复收敛是幂等空操作。
+        assert!(!restarted.settle_restarted_session("sample-thread"));
     }
 
     #[test]

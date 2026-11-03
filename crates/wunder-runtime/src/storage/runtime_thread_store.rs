@@ -215,6 +215,12 @@ impl RuntimeThreadStore {
             }
         }
     }
+
+    /// 本地嵌入式进程重启后的孤儿受理收敛：上一进程遗留的会话锁
+    /// 不应继续挡住结算。调用方须先确认没有其它存活客户端持有该线程。
+    pub fn settle_orphaned_turns_for_restart(&self, t: &str) -> Result<usize> {
+        self.admission_store()?.settle_orphaned_turns_for_restart(t)
+    }
 }
 pub(crate) enum RuntimeAdmissions {
     Local(crate::storage::thread_admission::TurnAdmissions),
@@ -288,6 +294,16 @@ impl RuntimeAdmissions {
     pub fn settle_orphaned_turns(&self, t: &str) -> Result<usize> {
         match self {
             Self::Local(a) => a.settle_orphaned_turns(t),
+            #[cfg(feature = "postgres-storage")]
+            Self::Postgres(a) => a.settle_orphaned_turns(t),
+        }
+    }
+
+    /// 仅本地嵌入式形态使用：进程重启后，上一进程遗留的会话锁不应
+    /// 再挡住孤儿受理结算。服务形态沿用普通结算，保留锁仲裁。
+    pub fn settle_orphaned_turns_for_restart(&self, t: &str) -> Result<usize> {
+        match self {
+            Self::Local(a) => a.settle_orphaned_turns_for_restart(t),
             #[cfg(feature = "postgres-storage")]
             Self::Postgres(a) => a.settle_orphaned_turns(t),
         }

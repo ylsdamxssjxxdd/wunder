@@ -34,18 +34,41 @@
     </div>
 
     <div v-else class="workspace-files-rows" :style="rowsStyle">
-      <!-- 吸顶祖先链：钉住的目录行是纯投影（无输入处理），点击穿透到
-           底下继续滚动的行；底部细线标记整条链的结束位置。 -->
-      <div v-if="stickyRows.length" class="workspace-files-sticky" aria-hidden="true">
+      <!-- 吸顶祖先链：钉住的目录行直接复用真实行的交互与状态（不是纯视觉副本，
+           否则点击会穿透到底下滚过来的文件行，表现为「点吸顶目录收不起来」）。
+           底部细线标记整条链的结束位置。 -->
+      <div v-if="stickyRows.length" class="workspace-files-sticky" role="presentation">
         <div
           v-for="pin in stickyRows"
           :key="`sticky-${pin.row.path}`"
-          class="workspace-file-row is-sticky-pin"
+          class="workspace-file-row is-sticky-pin is-dir"
+          :class="{
+            'is-active': pin.row.path === activePath,
+            'is-selected': selectedSet.has(pin.row.path),
+            'is-highlighted': pin.row.path === highlightedPath,
+            'is-drop-target': pin.row.path === dragOverPath
+          }"
           :style="{
             top: `${pin.slot * WORKSPACE_ROW_HEIGHT}px`,
             paddingLeft: `${6 + pin.row.depth * 12}px`
           }"
+          :title="resolveRowTitle(pin.row)"
+          :data-path="pin.row.path"
+          :data-kind="pin.row.kind"
+          role="treeitem"
+          :aria-expanded="pin.row.expanded"
+          @click.stop="handlePinnedClick($event, pin.row)"
+          @contextmenu.prevent.stop="openMenu(pin.row, $event)"
         >
+          <input
+            v-if="selectionMode"
+            class="workspace-file-check"
+            type="checkbox"
+            :checked="selectedSet.has(pin.row.path)"
+            :aria-label="pin.row.name"
+            tabindex="-1"
+            @click.stop="emit('toggle-select', pin.row.path)"
+          />
           <span class="workspace-file-twisty" aria-hidden="true">
             <i class="fa-solid fa-chevron-down"></i>
           </span>
@@ -91,7 +114,7 @@
           :data-kind="row.kind"
           :aria-expanded="row.kind === 'dir' ? row.expanded : undefined"
           :draggable="canDragWorkspacePath(row)"
-          @click.stop="emit('activate', row)"
+          @click.stop="handleRowClick($event, row)"
           @dblclick.stop="emit('open', row)"
           @contextmenu.prevent.stop="openMenu(row, $event)"
           @dragstart="handleRowDragStart($event, row)"
@@ -219,6 +242,8 @@ const emit = defineEmits<{
   'toggle-dir': [path: string];
   'load-more': [path: string];
   activate: [row: WorkspaceVisibleRow];
+  /** Ctrl/⌘ 或 Shift 点击：宿主决定是切换单项还是按可见行序扩选区间。 */
+  select: [payload: { row: WorkspaceVisibleRow; additive: boolean; range: boolean }];
   open: [row: WorkspaceVisibleRow];
   'toggle-select': [path: string];
   'exit-selection': [];
@@ -309,6 +334,42 @@ const stickyRows = computed(() => {
 
 const canDragWorkspacePath = (row: WorkspaceVisibleRow): boolean =>
   !props.readOnly && !props.remote && row.kind !== 'more' && Boolean(row.path);
+
+/** 普通点击＝激活（展开目录 / 定位文件）；带 Ctrl/⌘/Shift 或已在多选态＝交给宿主。 */
+const handleRowClick = (event: MouseEvent, row: WorkspaceVisibleRow) => {
+  const additive = event.ctrlKey || event.metaKey;
+  const range = event.shiftKey;
+  if (props.selectionMode || additive || range) {
+    emit('select', { row, additive, range });
+    return;
+  }
+  emit('activate', row);
+};
+
+/**
+ * 吸顶行是滚动中的真实目录：先把它的真实行滚回视口顶端再激活，
+ * 收起后目录本身仍在视野里，不会因为列表变短而跳到别处。
+ */
+const handlePinnedClick = (event: MouseEvent, row: WorkspaceVisibleRow) => {
+  const additive = event.ctrlKey || event.metaKey;
+  const range = event.shiftKey;
+  if (!props.selectionMode && !additive && !range) {
+    const index = props.rows.findIndex((item) => item.path === row.path);
+    const element = scrollerRef.value;
+    if (element && index >= 0) {
+      const top = index * WORKSPACE_ROW_HEIGHT;
+      if (Math.abs(element.scrollTop - top) > 1) {
+        element.scrollTop = top;
+        scrollTop.value = element.scrollTop;
+      }
+    }
+  }
+  if (props.selectionMode || additive || range) {
+    emit('select', { row, additive, range });
+    return;
+  }
+  emit('activate', row);
+};
 
 /**
  * 本次拖拽的源路径。`dataTransfer` 在 dragover 阶段处于保护模式（getData 返回空），

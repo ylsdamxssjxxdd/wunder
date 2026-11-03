@@ -141,8 +141,9 @@
       @toggle-dir="handleToggleDirectory"
       @load-more="handleLoadMore"
       @activate="handleActivateRow"
+      @select="handleRowSelect"
       @open="handleOpenRow"
-      @toggle-select="toggleSelection"
+      @toggle-select="handleToggleSelect"
       @exit-selection="handleExitSelection"
       @retry="handleRetry"
       @command="handleRowCommand"
@@ -769,7 +770,15 @@ const uploadQueue = createWorkspaceUploadQueue({
     }
   }
 });
-const uploadTasks = computed(() => uploadQueue.tasks);
+// 整目录拖入可能一次排队上百个文件；侧栏只展示未完成项（外加最近完成项），
+// 避免上传条把文件树挤没，总数量仍由标题行展示。
+const UPLOAD_VISIBLE_TASKS = 12;
+const uploadTasks = computed(() => {
+  const tasks = uploadQueue.tasks;
+  const pending = tasks.filter((task) => task.status !== 'done');
+  if (pending.length >= UPLOAD_VISIBLE_TASKS) return pending.slice(0, UPLOAD_VISIBLE_TASKS);
+  return [...pending, ...tasks.filter((task) => task.status === 'done').slice(-2)];
+});
 
 const uploadPercent = (task: WorkspaceUploadTask): number => {
   if (task.status === 'done') return 100;
@@ -780,30 +789,56 @@ const uploadPercent = (task: WorkspaceUploadTask): number => {
 const handleUploadFinished = async (task: WorkspaceUploadTask) => {
   const uploadedPaths = task.uploadedPaths.length
     ? task.uploadedPaths
-    : [joinWorkspacePath(task.targetPath, task.name)];
+    : [joinWorkspacePath(task.targetPath, task.relativePath || task.name)];
+  const targetPath = normalizeWorkspaceRelativePath(task.targetPath);
   const directoriesToRefresh = new Set<string>();
-  uploadedPaths.forEach((path) => directoriesToRefresh.add(workspaceParentPath(path)));
-  for (const directory of directoriesToRefresh) {
-    await refreshDirectory(directory);
-  }
+  // 目录拖入时文件落在 target/目录名/... 之下，必须刷新落点本身才能让新目录行出现；
+  // 更深层的父目录只在已经展开时刷新，避免为未展开的目录多发请求。
+  directoriesToRefresh.add(targetPath);
+  uploadedPaths.forEach((path) => {
+    const parent = workspaceParentPath(path);
+    if (parent === targetPath || tree.isExpanded(parent)) directoriesToRefresh.add(parent);
+  });
+  // 整目录上传会连续结算多个任务，走合并刷新避免每个文件都重建一次目录。
+  await directoryRefresh.request({
+    paths: Array.from(directoriesToRefresh),
+    forceTree: true
+  });
   const first = uploadedPaths[0];
   if (first) {
-    highlightedPath.value = first;
+    // 高亮落在落点下的第一层条目：拖入目录时高亮目录本身，而不是其中某个深层文件。
+    const highlight = resolveTopLevelUploadPath(first, targetPath);
+    highlightedPath.value = highlight;
     window.setTimeout(() => {
-      if (highlightedPath.value === first) highlightedPath.value = '';
+      if (highlightedPath.value === highlight) highlightedPath.value = '';
     }, 2400);
   }
 };
 
-const enqueueFiles = (files: File[], targetPath: string) => {
-  if (!files.length) return;
+/** 取上传结果在落点下的第一层路径，用于在树里定位并高亮新出现的条目。 */
+const resolveTopLevelUploadPath = (path: string, targetPath: string): string => {
+  const normalized = normalizeWorkspaceRelativePath(path);
+  const target = normalizeWorkspaceRelativePath(targetPath);
+  if (!target) {
+    const head = normalized.split('/')[0] || '';
+    return head || path;
+  }
+  if (normalized === target) return target;
+  const prefix = `${target}/`;
+  if (!normalized.startsWith(prefix)) return path;
+  const rest = normalized.slice(prefix.length);
+  const head = rest.split('/')[0] || '';
+  return head ? joinWorkspacePath(target, head) : path;
+};
+
+type WorkspaceUploadItem = { file: File; relativePath?: string };
+
+const enqueueFiles = (items: WorkspaceUploadItem[], targetPath: string) => {
+  if (!items.length) return;
   // A new batch starts from a clean slate; finished rows from the last batch
   // would otherwise pile up in a 240px-wide column.
   uploadQueue.clearSettled();
-  const result = uploadQueue.enqueue(
-    files.map((file) => ({ file })),
-    targetPath
-  );
+  const result = uploadQueue.enqueue(items, targetPath);
   if (result.rejected > 0) {
     ElMessage.warning(t('messenger.filesArea.uploadQueueFull', { count: result.rejected }));
   }
@@ -820,7 +855,10 @@ const handleUploadInputChange = (event: Event) => {
   // Clear the input before queueing so retrying the same local file opens a
   // new upload request instead of being ignored by the browser change event.
   if (input) input.value = '';
-  enqueueFiles(files.slice(0, UPLOAD_MAX_FILES_PER_DROP), uploadTarget.value);
+  enqueueFiles(
+    files.slice(0, UPLOAD_MAX_FILES_PER_DROP).map((file) => ({ file })),
+    uploadTarget.value
+  );
 };
 
 const handleDragEnter = (event: DragEvent) => {
@@ -858,10 +896,11 @@ const handleDrop = async (event: DragEvent) => {
   // 工作区内部拖拽是「移动条目」，不是上传。树上的 drop 已 stopPropagation，
   // 这里再兜一层：拖起的条目松手在面板空白处时，不能被当成文件落盘。
   if (hasWorkspaceDragPaths(transfer)) return;
-  const collected: File[] = [];
+  const collected: WorkspaceUploadItem[] = [];
   let sawDirectory = false;
 
   type DroppedEntry = {
+    name?: string;
     isDirectory: boolean;
     isFile: boolean;
     file?: (callback: (file: File) => void) => void;
@@ -873,11 +912,17 @@ const handleDrop = async (event: DragEvent) => {
     .filter(Boolean) as unknown as DroppedEntry[];
 
   if (entries.length) {
-    await collectDroppedEntries(entries, collected, 0, () => {
+    await collectDroppedEntries(entries, collected, 0, '', () => {
       sawDirectory = true;
     });
   } else {
-    collected.push(...Array.from(transfer.files || []));
+    // 没有 FileSystemEntry 通道时退回扁平文件列表，尽量保留浏览器给出的相对路径。
+    Array.from(transfer.files || []).forEach((file) => {
+      const relative = String(
+        (file as File & { webkitRelativePath?: string }).webkitRelativePath || ''
+      );
+      collected.push({ file, relativePath: relative });
+    });
   }
 
   if (!collected.length && sawDirectory) {
@@ -887,40 +932,61 @@ const handleDrop = async (event: DragEvent) => {
   enqueueFiles(collected.slice(0, UPLOAD_MAX_FILES_PER_DROP), uploadTarget.value);
 };
 
-/** Bounded depth-first walk over a dropped directory tree. */
+/**
+ * 有界深度优先遍历拖入的目录树，并为每个文件带上包含目录名的相对路径。
+ * 后端按 relative_paths 还原目录层级，拖入的目录因此不会只剩散开的文件。
+ */
 const collectDroppedEntries = async (
   entries: Array<{
+    name?: string;
     isDirectory: boolean;
     isFile: boolean;
     file?: (callback: (file: File) => void) => void;
     createReader?: () => { readEntries: (callback: (items: unknown[]) => void) => void };
   }>,
-  output: File[],
+  output: WorkspaceUploadItem[],
   depth: number,
+  prefix: string,
   markDirectory: () => void
 ): Promise<void> => {
   if (depth > 6 || output.length >= UPLOAD_MAX_FILES_PER_DROP) return;
   for (const entry of entries) {
     if (output.length >= UPLOAD_MAX_FILES_PER_DROP) return;
+    const name = String(entry.name || '');
     if (entry.isFile && entry.file) {
       const file = await new Promise<File | null>((resolve) => {
         entry.file?.((value) => resolve(value || null));
       });
-      if (file) output.push(file);
+      if (file) {
+        output.push({
+          file,
+          relativePath: prefix ? `${prefix}/${name || file.name}` : ''
+        });
+      }
       continue;
     }
     if (entry.isDirectory) {
       markDirectory();
+      if (!name) continue;
+      const nextPrefix = prefix ? `${prefix}/${name}` : name;
       const reader = entry.createReader?.();
       if (!reader) continue;
-      const children = await new Promise<unknown[]>((resolve) => {
-        reader.readEntries((items) => resolve(items || []));
-      });
+      // readEntries 每次最多返回约 100 项，必须循环读到空，否则大目录会漏文件。
+      const children: unknown[] = [];
+      const entryBudget = UPLOAD_MAX_FILES_PER_DROP * 4;
+      while (children.length < entryBudget) {
+        const batch = await new Promise<unknown[]>((resolve) => {
+          reader.readEntries((items) => resolve(items || []));
+        });
+        if (!batch.length) break;
+        children.push(...batch);
+      }
       if (children.length) {
         await collectDroppedEntries(
           children as Parameters<typeof collectDroppedEntries>[0],
           output,
           depth + 1,
+          nextPrefix,
           markDirectory
         );
       }
@@ -1021,6 +1087,71 @@ const enterSelectionMode = () => {
   if (remoteInterlinkActive.value) return;
   tree.clearSelection();
   selectionMode.value = true;
+};
+
+/** Shift 扩选的锚点：最近一次点选的行；行列变化后按路径重新定位。 */
+const selectionAnchorPath = ref('');
+watch(selectionMode, (value) => {
+  if (!value) selectionAnchorPath.value = '';
+});
+
+const applySelection = (paths: string[], additive: boolean) => {
+  if (!additive) {
+    tree.setSelection(paths);
+    return;
+  }
+  const next = new Set(selectedList.value);
+  paths.forEach((path) => next.add(path));
+  tree.setSelection(Array.from(next));
+};
+
+/**
+ * 行点击的多选语义：普通点击在多选态下切换单项；Ctrl/⌘ 切换并重置锚点；
+ * Shift 以锚点为起点按当前可见行序扩选区间。未进入多选态时，任意修饰键点击
+ * 都会就地进入多选态，避免「先点多选按钮才能选」的额外一步。
+ */
+const handleRowSelect = (payload: { row: WorkspaceVisibleRow; additive: boolean; range: boolean }) => {
+  if (remoteInterlinkActive.value || searchActive.value) {
+    handleActivateRow(payload.row);
+    return;
+  }
+  const target = normalizeWorkspaceRelativePath(payload.row.path);
+  if (!target) return;
+  if (!selectionMode.value) {
+    selectionMode.value = true;
+    selectionAnchorPath.value = target;
+    tree.setSelection([target]);
+    return;
+  }
+  if (payload.range) {
+    const rows = visibleFileRows.value.filter((row) => row.kind !== 'more');
+    const targetIndex = rows.findIndex(
+      (row) => normalizeWorkspaceRelativePath(row.path) === target
+    );
+    const anchor = normalizeWorkspaceRelativePath(selectionAnchorPath.value);
+    const anchorIndex = anchor
+      ? rows.findIndex((row) => normalizeWorkspaceRelativePath(row.path) === anchor)
+      : -1;
+    if (targetIndex >= 0 && anchorIndex >= 0) {
+      const start = Math.min(anchorIndex, targetIndex);
+      const end = Math.max(anchorIndex, targetIndex);
+      applySelection(
+        rows.slice(start, end + 1).map((row) => row.path),
+        payload.additive
+      );
+      return;
+    }
+    selectionAnchorPath.value = target;
+    applySelection([target], payload.additive);
+    return;
+  }
+  tree.toggleSelection(target);
+  selectionAnchorPath.value = target;
+};
+
+const handleToggleSelect = (path: string) => {
+  selectionAnchorPath.value = normalizeWorkspaceRelativePath(path);
+  toggleSelection(path);
 };
 
 const archiveDirectoryName = (path: string): string =>

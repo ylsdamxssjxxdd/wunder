@@ -35,8 +35,8 @@
 //! no OSC 8 change, and the match ceiling and the per-frame budget are unchanged.
 //!
 //! Two things a hit needs to be *readable* rather than merely counted, both in this slice: the
-//! frame marks the hit's own display columns (reversed video, plus bold on the one the reader
-//! stepped to), and a hit inside a card that is currently folded opens that card — in the
+//! frame marks the hit's own display columns (the selection fill, plus bold on the one the
+//! reader stepped to), and a hit inside a card that is currently folded opens that card — in the
 //! search's own ledger, never in the reader's, and the fold state is part of what a scan result
 //! is valid for because unfolding renumbers the card's lines.
 
@@ -234,11 +234,11 @@ fn fold_query(query: &str) -> String {
     query.chars().flat_map(char::to_lowercase).collect()
 }
 
-/// The weight a search mark carries: the selection's own reversed video for a hit, and that
-/// plus bold for the one hit the reader stepped to. Never a colour, so `NO_COLOR` cannot take
-/// the distinction away, and the run keeps the fg and bg its card gave it.
+/// The surface a search mark carries: the selection's own fill for a hit, and that plus
+/// bold for the one hit the reader stepped to. The base mark sheds its weight so the
+/// accepted hit is the heavier one, and `NO_COLOR` still degrades both to reversed video.
 fn search_mark_style(current: bool) -> Style {
-    let mark = theme::selection_mark();
+    let mark = theme::selection_mark().remove_modifier(Modifier::BOLD);
     if current {
         mark.add_modifier(Modifier::BOLD)
     } else {
@@ -643,16 +643,15 @@ impl TuiApp {
 
     /// Mark this frame's hits, on the lines the frame is about to paint.
     ///
-    /// Weight, not colour: every hit takes `theme::selection_mark()` — reversed video, no fg,
-    /// no bg, so the run keeps whatever colour its own card gave it and the mark still reads
-    /// in a monochrome terminal — and the hit the reader stepped to takes bold on top of that.
-    /// The one accepted hit is therefore heavier than the rest without a second colour, which
-    /// is how a reader finds their place in a page full of matches.
+    /// Every hit wears `theme::selection_mark()` — the shared light-blue fill — and the
+    /// hit the reader stepped to takes bold on top of that. The one accepted hit is therefore
+    /// heavier than the rest, which is how a reader finds their place in a page full of matches;
+    /// `NO_COLOR` turns both into reversed video so the distinction survives without colour.
     ///
     /// **Drawing order: the pointer selection paints after this and wins.** A search mark is
     /// paint only; the text a reader copies is the selection's, so a hit the live selection
-    /// reaches into yields its own mark entirely: the reversed video on the text they picked up
-    /// is the reversed video they copy, with no extra weight pretending to be part of it. Where
+    /// reaches into yields its own mark entirely: the surface on the text they picked up is
+    /// the surface they copy, with no extra search weight pretending to be part of it. Where
     /// the two never touch, both show. Painting the other way round — marks over the selection
     /// — would leave text that looks copied and is not in the clipboard, the one thing a
     /// highlight must never do.
@@ -956,32 +955,29 @@ mod tests {
         assert_eq!(search.resume, None);
     }
 
-    /// The mark is a weight, not a colour: reversed video on a hit, bold on the accepted one,
-    /// and nothing on either that paints a colour, so the same reading holds with `NO_COLOR`
-    /// set and without it.
+    /// The mark wears the selection surface on every hit, and the accepted one adds weight on
+    /// top. Without colour the same rule degrades to reversed video, so `NO_COLOR` keeps the
+    /// distinction instead of taking it away.
     #[test]
-    fn a_mark_carries_weight_and_never_a_colour() {
+    fn a_mark_carries_the_selection_surface_and_the_accepted_one_adds_weight() {
         for current in [false, true] {
             let style = search_mark_style(current);
             assert!(
-                style.add_modifier.contains(Modifier::REVERSED),
-                "a hit always takes the selection's own mark"
+                theme::carries_selection_mark(
+                    style.bg.unwrap_or(ratatui::style::Color::Reset),
+                    style.add_modifier
+                ),
+                "a hit always takes the selection's own surface"
             );
             assert_eq!(
                 style.add_modifier.contains(Modifier::BOLD),
                 current,
                 "only the accepted hit takes the extra weight"
             );
-            assert_eq!(
-                (style.fg, style.bg),
-                (None, None),
-                "a colour would be the only thing a monochrome terminal keeps"
-            );
         }
-        assert!(
-            search_mark_style(true)
-                .add_modifier
-                .contains(Modifier::REVERSED),
+        assert_eq!(
+            (search_mark_style(true).fg, search_mark_style(true).bg),
+            (search_mark_style(false).fg, search_mark_style(false).bg),
             "the accepted hit is the plain mark plus weight, never a replacement"
         );
     }

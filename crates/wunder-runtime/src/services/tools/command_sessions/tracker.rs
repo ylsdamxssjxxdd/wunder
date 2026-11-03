@@ -16,6 +16,32 @@ pub(crate) struct CommandSessionTracker {
     fallback_seq: Arc<AtomicU64>,
     command: String,
     cwd: String,
+    _finish_guard: Option<Arc<CommandSessionFinishGuard>>,
+}
+
+/// 最后一份 tracker 被丢弃时仍在运行，说明执行路径在半路退出（工具超时、
+/// 线程取消或被丢弃的 future）。子进程会由 `kill_on_drop` 回收，但命令会话
+/// 不会自己变成 exited，后台任务面板会留下永远无法移除的僵尸条目。这里让
+/// 最后一份 tracker 负责补一次收尾；正常退出时状态已是 Exited，不会重复。
+struct CommandSessionFinishGuard {
+    broker: Arc<CommandSessionBroker>,
+    emitter: Option<ToolEventEmitter>,
+    command_session_id: String,
+}
+
+impl Drop for CommandSessionFinishGuard {
+    fn drop(&mut self) {
+        let Some(snapshot) = self.broker.finish_session_if_running(
+            &self.command_session_id,
+            "command session ended without completion",
+        ) else {
+            return;
+        };
+        if let Some(emitter) = self.emitter.as_ref() {
+            emitter.emit("command_session_exit", snapshot.exit_event_payload());
+            emitter.emit("command_session_summary", snapshot.summary_event_payload());
+        }
+    }
 }
 
 impl CommandSessionTracker {
@@ -135,6 +161,13 @@ impl CommandSessionTracker {
                 emitter.emit("command_session_start", snapshot.start_event_payload());
             }
         }
+        let finish_guard = broker.as_ref().map(|broker| {
+            Arc::new(CommandSessionFinishGuard {
+                broker: Arc::clone(broker),
+                emitter: emitter.clone(),
+                command_session_id: snapshot.command_session_id.clone(),
+            })
+        });
         Some(Self {
             broker,
             emitter,
@@ -143,6 +176,7 @@ impl CommandSessionTracker {
             fallback_seq: Arc::new(AtomicU64::new(snapshot.seq)),
             command: snapshot.command,
             cwd: snapshot.cwd,
+            _finish_guard: finish_guard,
         })
     }
 

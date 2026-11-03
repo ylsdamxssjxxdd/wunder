@@ -15,7 +15,8 @@ type RequestConfig = {
 
 const uploadWorkspaceFiles = (formData: FormData, config: RequestConfig = {}) => {
   const headers = { 'Content-Type': 'multipart/form-data', ...(config.headers || {}) };
-  return api.post('/workspace/upload', formData, { ...config, headers });
+  // 大文件上传耗时长，禁用全局 30s 超时，进度由 onUploadProgress 反馈。
+  return api.post('/workspace/upload', formData, { ...config, headers, timeout: 0 });
 };
 
 export const listWorkspaceEntries = (params: QueryParams) => api.get('/workspace', { params });

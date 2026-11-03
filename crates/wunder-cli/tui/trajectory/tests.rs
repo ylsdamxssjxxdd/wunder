@@ -95,7 +95,10 @@ fn trajectory_step_token_bars_track_total_and_increment() {
     v.rows = vec![
         usage_row(0, Some(json!({"input_tokens": 3200, "output_tokens": 480}))),
         // 输入含累积上下文：本步新增 = 7,000 − 3,680 = 3,320
-        usage_row(1, Some(json!({"input_tokens": 5400, "output_tokens": 1600}))),
+        usage_row(
+            1,
+            Some(json!({"input_tokens": 5400, "output_tokens": 1600})),
+        ),
         // 未上报：画基线，不参与增量链
         usage_row(2, None),
         // 压缩后总量回落：增量钳为 0
@@ -233,6 +236,7 @@ async fn trajectory_storage_keyboard_search_detail_export_and_frames() {
     let turn = store
         .accept_thread_turn(&user, &session, &json!({"content":"fixture request"}))
         .unwrap();
+    crate::tui::app::snapshot_tests::freeze_fixture_instructions(&app).await;
     let turn_id = turn["turn_id"].as_str().unwrap();
     let content = format!("{}\nneedle-final", "fixture line\n".repeat(1400));
     store.append_thread_item(&user, &json!({"session_id":session,"turn_id":turn_id,"item_id":"fixture-answer", "kind":"assistant_message","status":"completed","content":content})).unwrap();
@@ -309,6 +313,7 @@ async fn trajectory_reads_completed_content_and_exports_without_private_fields()
     let turn = store
         .accept_thread_turn(user, session, &json!({"content":"fixture request"}))
         .unwrap();
+    crate::tui::app::snapshot_tests::freeze_fixture_instructions(&app).await;
     store.append_thread_item(user, &json!({"session_id":session,"turn_id":turn["turn_id"],"item_id":"fixture-blocked-answer","kind":"assistant_message","status":"completed","content":"streamed fixture answer","reasoning":"streamed fixture reasoning","model_content":"fixture-private-field"})).unwrap();
     let row =
         crate::trajectory::public_item_row(store.as_ref(), user, session, "fixture-blocked-answer")
@@ -338,6 +343,7 @@ async fn trajectory_refresh_catches_every_page_and_recovers_revisions() {
     let turn = store
         .accept_thread_turn(&owner, &session, &json!({"content":"fixture request"}))
         .unwrap();
+    crate::tui::app::snapshot_tests::freeze_fixture_instructions(&app).await;
     let turn_id = turn["turn_id"].as_str().unwrap();
     store.append_thread_item(&owner, &json!({"session_id":session,"turn_id":turn_id,"item_id":"fixture-running","kind":"assistant_message","status":"running","content":"partial"})).unwrap();
     app.open_trajectory_view(None).await.unwrap();

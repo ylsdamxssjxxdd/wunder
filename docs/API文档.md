@@ -3381,11 +3381,11 @@ wunder 是一个**多形态的智能体工作台**：蛹（desktop）是本地 A
 - `llm_stream_retry` 进入统一持久化事件流，沿用会话归属、轮次、稳定事件序号和 replay 机制；刷新或重连可恢复重试状态。`bad_tool_call_retry` 仅作为历史兼容事件保留，不再由当前 native 参数校验路径产生。仅上线后的普通模型重试新增持久化，既有日志不回填。
 - `progress.stage=invalid_tool_call_reroute/empty_final_answer_reroute` 表示模型正在修复不可执行的调用或空回复，前端将其投影为恢复状态，跨随后的 `llm_request` 保留，直到有效输出、工具执行或终态到达。恢复不是整轮失败，不得据此提前终止会话；终态后的迟到重试不能重新激活消息。
 
-### 上下文本地精简事件
+### 上下文压缩检查点
 
-自动压缩达到原有供应商实测用量阈值后，可先尝试本地精简旧的读取、搜索和列表结果。成功时发送 `progress`，`stage=microcompaction`、`strategy=old_tool_preview`，包含 `observed_context_tokens`、`estimated_tokens_before/after/saved`、`reduced_messages`、`kept_recent_tool_groups` 及轮次字段。`estimated_*` 仅用于诊断，不计入配额，也不冒充供应商实测用量。
+独立 microcompaction 已移除，不再产生 `stage=microcompaction` 或 `strategy=old_tool_preview` 事件，也不再把旧读取缩成固定预览。上下文达到压缩条件后统一走完整 compaction：由模型生成摘要，以当前初始上下文、真实用户消息和摘要构成替换历史，并在检查点提交成功后切换模型输入。
 
-该路径不调用摘要模型，不生成摘要分隔线；模型上下文通过既有统一存储替换并完成写队列同步后继续，聊天记录不改写。后续请求重新由供应商报告真实占用。手动压缩、强制修复及空间不足仍走原有摘要流程。
+旧线程中已经存在的 `type=microcompaction` hidden marker 仅保留只读回放兼容，不再产生新记录。原始聊天与工具参数继续保存在审计历史中；后续请求由供应商重新报告真实占用。
 
 ## 子智能体池与级联中断（2026-09-23）
 

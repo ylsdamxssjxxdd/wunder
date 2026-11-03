@@ -219,25 +219,6 @@ impl Orchestrator {
         if !should_compact {
             return Ok(CompactionResult::unchanged(messages));
         }
-        if !force && run_mode == CompactionRunMode::AutoLoop {
-            if let Some(result) = self
-                .try_microcompact_messages(
-                    &messages,
-                    user_id,
-                    session_id,
-                    emitter,
-                    round_info,
-                    persisted_context_tokens,
-                    history_threshold
-                        .unwrap_or(limit)
-                        .min(limit)
-                        .min(compaction_decision.presampling_limit),
-                )
-                .await
-            {
-                return Ok(result);
-            }
-        }
         let compaction_id = new_compaction_id(compaction_profile.run_mode);
         let compaction_id_ref = Some(compaction_id.as_str());
 

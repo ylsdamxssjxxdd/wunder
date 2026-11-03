@@ -185,10 +185,32 @@ pub(crate) fn picker_selected() -> Style {
     )
 }
 
-/// The block a pointer drag leaves behind. Reversed video rather than a hue, because a
-/// colourless terminal must still see the selection it can copy.
+/// The fill Codex's selection surface paints. `None` when the terminal disables
+/// colour, so the mark falls back to reversed video instead.
+pub(crate) fn selection_fill() -> Option<Color> {
+    (!colorless()).then_some(Color::Rgb(99, 168, 248))
+}
+
+/// Codex's selection surface: a light-blue fill with dark text. Terminals that
+/// explicitly disable color keep a reversed, non-dim mark instead.
 pub(crate) fn selection_mark() -> Style {
-    Style::default().add_modifier(Modifier::REVERSED)
+    let Some(fill) = selection_fill() else {
+        return Style::default()
+            .add_modifier(Modifier::REVERSED | Modifier::BOLD)
+            .remove_modifier(Modifier::DIM);
+    };
+    Style::default()
+        .fg(Color::Rgb(0, 0, 46))
+        .bg(fill)
+        .add_modifier(Modifier::BOLD)
+        .remove_modifier(Modifier::DIM | Modifier::REVERSED)
+}
+
+/// Whether a cell carries the selection mark: the fill in a colour terminal,
+/// reversed video where colour is off. The painter and its tests name one rule.
+#[cfg(test)]
+pub(crate) fn carries_selection_mark(bg: Color, modifier: Modifier) -> bool {
+    modifier.contains(Modifier::REVERSED) || selection_fill().is_some_and(|fill| bg == fill)
 }
 
 pub(crate) fn transcript_selection(base: Style) -> Style {

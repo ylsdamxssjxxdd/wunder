@@ -41,10 +41,9 @@
 //! * No port of `markdown_text_merge`: the source-offset machinery exists there
 //!   for TeX math and inline directives. The CLI has neither, so offset
 //!   bookkeeping would be dead weight.
-//! * No `Range`-returning API: the caller appends lines to a cache and cannot
-//!   revise a line it already received, so the collector may only hand out lines
-//!   that are final (or provably stable), unlike codex, whose stream controller
-//!   owns a replaceable pending cell.
+//! * Stable lines remain append-only. The caller additionally owns a replaceable
+//!   preview for the incomplete trailing line, matching codex's stable/tail split
+//!   without allowing a preview to enter terminal scrollback.
 //! * No renderer side channel: `markdown_render.rs` is owned by another
 //!   pipeline. Incrementality is achieved by slicing source at a safe boundary
 //!   and feeding the existing `append_markdown`. The gap this leaves versus a
@@ -112,6 +111,32 @@ impl MarkdownStreamCollector {
 
     pub fn push_delta(&mut self, delta: &str) {
         self.buffer.push_str(delta);
+    }
+
+    /// Render the not-yet-committed open block as a replaceable preview. This
+    /// includes completed prose lines held back by the stable-line gate, so a
+    /// newline never makes the visible answer disappear.
+    pub fn pending_preview(&mut self) -> Vec<Line<'static>> {
+        let pending = &self.buffer[self.frozen_source_len..];
+        let Some(source) = prose_preview_source(pending).map(str::to_string) else {
+            return Vec::new();
+        };
+        let truncated = source.len() != pending.len();
+        let committed = self
+            .committed_line_count
+            .saturating_sub(self.frozen_lines.len());
+        if truncated && committed > 0 {
+            return Vec::new();
+        }
+        let mut rendered = Vec::new();
+        self.render(source.as_str(), &mut rendered);
+        let base = self.frozen_lines.len();
+        let mut view = Vec::with_capacity(rendered.len() + 1);
+        if base > 0 {
+            view.push(Line::default());
+        }
+        view.extend(rendered);
+        view.into_iter().skip(committed).collect()
     }
 
     /// Freeze every block that is provably closed inside the newline-terminated
@@ -239,6 +264,25 @@ impl MarkdownStreamCollector {
     fn rerender_stats(&self) -> (usize, usize) {
         (self.rerender_calls, self.rerender_chars)
     }
+}
+
+const MAX_PREVIEW_BYTES: usize = 8192;
+
+fn prose_preview_source(pending: &str) -> Option<&str> {
+    if pending.is_empty()
+        || pending.contains('|')
+        || pending.starts_with([' ', '\t', '>'])
+        || pending.starts_with("```")
+        || pending.starts_with("~~~")
+        || matches!(pending, "`" | "``" | "~" | "~~")
+    {
+        return None;
+    }
+    let mut start = pending.len().saturating_sub(MAX_PREVIEW_BYTES);
+    while !pending.is_char_boundary(start) {
+        start = start.saturating_add(1);
+    }
+    Some(&pending[start..])
 }
 
 /// Block boundary analysis over raw markdown source.
@@ -527,6 +571,56 @@ mod tests {
         let mut out = Vec::new();
         markdown::append_markdown(source, Some(WIDTH), &mut out);
         out
+    }
+
+    #[test]
+    fn incomplete_prose_has_a_replaceable_preview_before_any_newline() {
+        let mut collector = MarkdownStreamCollector::new(Some(WIDTH));
+        collector.push_delta("hello");
+        assert_eq!(
+            collector
+                .pending_preview()
+                .iter()
+                .map(Line::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+            "hello"
+        );
+        collector.push_delta(" world");
+        assert_eq!(
+            collector
+                .pending_preview()
+                .iter()
+                .map(Line::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+            "hello world"
+        );
+        assert!(collector.commit_complete_lines().is_empty());
+    }
+
+    #[test]
+    fn structural_tails_wait_while_open_prose_survives_a_newline() {
+        let mut collector = MarkdownStreamCollector::new(Some(WIDTH));
+        collector.push_delta("column |");
+        assert!(collector.pending_preview().is_empty());
+        collector.clear();
+        collector.push_delta("visible tail");
+        assert!(!collector.pending_preview().is_empty());
+        collector.push_delta("\n");
+        let preview = collector.pending_preview();
+        assert!(preview
+            .iter()
+            .any(|line| line.to_string() == "visible tail"));
+        let finalized = collector.finalize_and_drain();
+        assert_eq!(
+            finalized
+                .iter()
+                .map(Line::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+            "visible tail"
+        );
     }
 
     /// Feed `source` as deltas cut at `splits`, commit on every delta holding a

@@ -25,10 +25,9 @@ pub fn tr(language: &str, zh: &str, en: &str) -> String {
     }
 }
 
-/// Every copy key the progress and tool-result renderers can ask for. Both the
-/// headless renderer (`render.rs`) and the TUI (`tui/app/helpers.rs`) read their
-/// wording from this table, so a sentence is spelled once for both languages and a
-/// display language can never pick up the other language's fixed string.
+/// Every copy key the progress and tool-result renderers can ask for, pinned here so
+/// the table tests can prove each key has both languages and matching placeholders.
+#[cfg(test)]
 pub const UI_TEXT_KEYS: &[&str] = &[
     "patch_apply_failed",
     "changed_files_one",

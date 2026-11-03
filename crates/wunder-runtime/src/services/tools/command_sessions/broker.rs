@@ -457,8 +457,22 @@ impl CommandSessionBroker {
         timed_out: bool,
         error: Option<String>,
     ) -> Option<CommandSessionSnapshot> {
+        self.finish_session_with(command_session_id, exit_code, timed_out, error, false)
+    }
+
+    fn finish_session_with(
+        &self,
+        command_session_id: &str,
+        exit_code: Option<i32>,
+        timed_out: bool,
+        error: Option<String>,
+        only_if_running: bool,
+    ) -> Option<CommandSessionSnapshot> {
         let entry = self.sessions.get(command_session_id)?;
         let mut record = entry.value().lock();
+        if only_if_running && record.status != CommandSessionStatus::Running {
+            return None;
+        }
         record.seq = record.seq.saturating_add(1);
         record.status = CommandSessionStatus::Exited;
         record.updated_at = Utc::now();
@@ -477,6 +491,16 @@ impl CommandSessionBroker {
             data: snapshot.exit_event_payload(),
         });
         Some(snapshot)
+    }
+
+    /// 仅当会话仍处于运行中时补一次收尾。用于执行生命周期守卫与终止兜底，
+    /// 重复调用不会覆盖已有的退出码或产生重复事件。
+    pub(crate) fn finish_session_if_running(
+        &self,
+        command_session_id: &str,
+        error: impl Into<String>,
+    ) -> Option<CommandSessionSnapshot> {
+        self.finish_session_with(command_session_id, None, false, Some(error.into()), true)
     }
 
     pub(crate) fn register_process(
@@ -530,7 +554,10 @@ impl CommandSessionBroker {
     /// 执行返回时用 `unregister_cancel` 摘除，令牌不会跨命令残留。
     pub(crate) fn register_cancel(&self, command_session_id: &str) -> CancellationToken {
         let token = CancellationToken::new();
-        if let Some(stale) = self.cancels.insert(command_session_id.to_string(), token.clone()) {
+        if let Some(stale) = self
+            .cancels
+            .insert(command_session_id.to_string(), token.clone())
+        {
             stale.cancel();
         }
         token
@@ -650,6 +677,17 @@ impl CommandSessionBroker {
                 // process exit. Removing it here would permit a short-lived
                 // oversubscription while the operating system reaps the child.
                 process.cancel();
+                cancelled += 1;
+            } else if let Some(cancel) = self.cancels.get(&id).map(|entry| entry.value().clone()) {
+                // 前台阻塞命令没有进程句柄，靠会话级令牌让执行路径自行
+                // 终止子进程并走到正常的 emit_exit。
+                cancel.cancel();
+                cancelled += 1;
+            } else {
+                // 既无进程也无取消令牌：执行路径已不在（超时、线程取消），
+                // 子进程由 kill_on_drop 回收，这里把运行中的会话收尾，
+                // 避免残留僵尸任务。
+                self.finish_session_if_running(&id, "command cancelled");
                 cancelled += 1;
             }
         }
@@ -772,9 +810,11 @@ impl CommandSessionBroker {
             cancel.cancel();
             return true;
         }
-        // 既没拉起进程也没登记令牌（例如还没真正拉起或已经在退出），
-        // 交给原有的收尾路径。
-        false
+        // 没有进程句柄也没有取消令牌，说明执行路径已经不在（工具超时、线程
+        // 取消或被丢弃的 future）。子进程会由 kill_on_drop 回收，这里直接把
+        // 运行中的会话收尾，避免面板里留下永远无法移除的僵尸任务。
+        self.finish_session_if_running(command_session_id, "command cancelled")
+            .is_some()
     }
 
     pub(crate) fn list_session_snapshots(
@@ -1130,19 +1170,23 @@ mod tests {
     fn terminate_task_falls_back_to_the_session_cancel_token() {
         let broker = CommandSessionBroker::new();
         broker.start_session(build_start_spec());
-        // 前台阻塞命令没有 detached 进程句柄：登记令牌前无法终止，登记后可以。
-        assert!(!broker.terminate_task("user_a", "sess_1", "cmd_test"));
-        let token = broker.register_cancel("cmd_test");
+        // 既没有进程句柄也没有取消令牌时直接收尾，避免面板残留僵尸任务。
         assert!(broker.terminate_task("user_a", "sess_1", "cmd_test"));
+        assert!(broker.running_tasks("user_a", "sess_1").is_empty());
+
+        let mut spec = build_start_spec();
+        spec.command_session_id = Some("cmd_token".to_string());
+        broker.start_session(spec);
+        let token = broker.register_cancel("cmd_token");
+        assert!(broker.terminate_task("user_a", "sess_1", "cmd_token"));
         assert!(token.is_cancelled());
-        // 摘除令牌后回落到「不可终止」；跨线程作用域依旧拒绝。
-        broker.unregister_cancel("cmd_test");
-        assert!(!broker.terminate_task("user_a", "sess_1", "cmd_test"));
-        assert!(!broker.terminate_task("user_b", "sess_1", "cmd_test"));
+        // 跨线程作用域依旧拒绝。
+        assert!(!broker.terminate_task("user_b", "sess_1", "cmd_token"));
     }
 
     #[test]
-    fn terminate_scope_only_cancels_matching_live_processes() {        let broker = CommandSessionBroker::new();
+    fn terminate_scope_only_cancels_matching_live_processes() {
+        let broker = CommandSessionBroker::new();
         broker.start_session(build_start_spec());
         broker.start_session(CommandSessionStartSpec {
             command_session_id: Some("cmd_other".to_string()),
@@ -1166,6 +1210,38 @@ mod tests {
         assert_eq!(broker.terminate_scope("user_a", "sess_1"), 1);
         assert!(own.cancellation_token().is_cancelled());
         assert!(!other.cancellation_token().is_cancelled());
+    }
+
+    #[test]
+    fn terminate_scope_cancels_foreground_session_tokens() {
+        let broker = CommandSessionBroker::new();
+        broker.start_session(build_start_spec());
+        let token = broker.register_cancel("cmd_test");
+        assert_eq!(broker.terminate_scope("user_a", "sess_1"), 1);
+        assert!(token.is_cancelled());
+    }
+
+    #[test]
+    fn terminate_task_finishes_session_without_execution_handle() {
+        let broker = CommandSessionBroker::new();
+        broker.start_session(build_start_spec());
+        // 工具 future 被丢弃后既没有进程句柄也没有取消令牌，终止应直接收尾。
+        assert!(broker.terminate_task("user_a", "sess_1", "cmd_test"));
+        let snapshot = broker.snapshot("cmd_test").expect("session snapshot");
+        assert_eq!(snapshot.status, CommandSessionStatus::Exited);
+        assert!(broker.running_tasks("user_a", "sess_1").is_empty());
+    }
+
+    #[test]
+    fn finish_session_if_running_is_idempotent() {
+        let broker = CommandSessionBroker::new();
+        broker.start_session(build_start_spec());
+        assert!(broker
+            .finish_session_if_running("cmd_test", "ended without completion")
+            .is_some());
+        assert!(broker
+            .finish_session_if_running("cmd_test", "ended without completion")
+            .is_none());
     }
 
     #[test]

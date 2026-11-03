@@ -9,6 +9,7 @@ use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -508,6 +509,80 @@ impl Drop for ThreadLeaseHeartbeat {
     }
 }
 
+/// 本地进程重启后的状态收敛。上一进程被关闭时不会有机会把运行中的线程
+/// 落成终态，监视缓存和受理表因此会把它们永久标成运行中。启动时结算
+/// 这些孤儿，并跳过仍被其它存活客户端（舵机）持有的线程。
+fn recover_restarted_threads(desktop: &DesktopRuntime, instance_id: &str) -> usize {
+    let user = desktop.user_id.trim();
+    if user.is_empty() {
+        return 0;
+    }
+    let storage = &desktop.state.storage;
+    let records = desktop.state.monitor.load_records_by_user(
+        user,
+        Some(&["running", "cancelling", "queued"]),
+        None,
+        128,
+    );
+    let mut candidates: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for payload in &records {
+        let Some(session_id) = payload.get("session_id").and_then(Value::as_str) else {
+            continue;
+        };
+        let session_id = session_id.trim();
+        if session_id.is_empty() || !seen.insert(session_id.to_string()) {
+            continue;
+        }
+        candidates.push(session_id.to_string());
+    }
+    let mut settled = 0usize;
+    for session_id in &candidates {
+        match storage.get_thread_open_lease(session_id, user) {
+            // 其它客户端仍在操作该线程，保留它的运行状态。
+            Ok(Some(lease)) if lease.client_kind != "desktop" => continue,
+            // 单实例桌面：同客户端的旧租约只能来自已退出的上一进程。
+            Ok(Some(lease)) if lease.owner_instance_id != instance_id => {
+                let _ = storage.release_thread_open_lease(
+                    session_id,
+                    &lease.owner_instance_id,
+                    lease.fencing_token,
+                );
+            }
+            // 租约读失败时宁可保留运行状态，也不能误结算仍被其它客户端执行
+            // 的线程；下一次启动还会再尝试。
+            Err(error) => {
+                tracing::warn!(%error, session_id, "skip restarted thread settle: lease unreadable");
+                continue;
+            }
+            Ok(_) => {}
+        }
+        if let Err(error) = desktop
+            .state
+            .thread_store
+            .settle_orphaned_turns_for_restart(session_id)
+        {
+            tracing::warn!(%error, session_id, "settle restarted thread failed");
+            continue;
+        }
+        let tails = storage
+            .thread_turn_tails(user, std::slice::from_ref(session_id))
+            .unwrap_or_default();
+        let still_active = tails
+            .get(session_id)
+            .map(|tail| matches!(tail.turn_status.as_str(), "accepted" | "queued" | "running"))
+            .unwrap_or(false);
+        if still_active {
+            // 待派发任务会继续执行，保留监视状态。
+            continue;
+        }
+        if desktop.state.monitor.settle_restarted_session(session_id) {
+            settled += 1;
+        }
+    }
+    settled
+}
+
 impl NativeDesktop {
     pub fn start() -> Result<Self> {
         Self::start_with_args(DesktopArgs::native_defaults())
@@ -559,6 +634,13 @@ impl NativeDesktop {
             });
         }
         let instance_id = uuid::Uuid::new_v4().simple().to_string();
+        // 本地进程重启后，上一进程来不及收尾的运行痕迹会残留在监视缓存
+        // 与受理表里；启动时收敛一次，避免线程目录和已停止的线程永久
+        // 显示“运行中”。
+        let recovered = recover_restarted_threads(&desktop, &instance_id);
+        if recovered > 0 {
+            tracing::info!(recovered, "settled restarted thread status");
+        }
         let open_threads: Arc<Mutex<HashMap<String, u64>>> = Arc::new(Mutex::new(HashMap::new()));
         let chat_snapshot_cache = Arc::new(Mutex::new(HashMap::new()));
         let lease_activity = Arc::new(Mutex::new(HashMap::new()));
