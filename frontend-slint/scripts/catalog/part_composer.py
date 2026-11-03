@@ -22,7 +22,7 @@ ENTRIES = [
     ("cp_image_prefix", "图片 · ", "Images · "),
     ("cp_remove_attachment", "移除附件", "Remove attachment"),
     ("cp_input_placeholder", "输入消息，开始新的对话…", "Type a message to start…"),
-    ("cp_input_placeholder_workspace", "给 {} 发送消息…（长按语音）", "Message {}… (hold to talk)", ["workspace"]),
+    ("cp_input_placeholder_workspace", "给 {} 发送消息…", "Message {}…", ["workspace"]),
     ("cp_preset_questions", "预设问题", "Preset questions"),
     ("cp_preset_q1", "你好，请介绍一下你的能力。", "Hi, please introduce your capabilities."),
     ("cp_preset_q2", "请帮我整理当前内容。", "Please organize the current content."),

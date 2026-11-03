@@ -153,15 +153,23 @@ component StatusDot inherits ProcessStatusIcon {
     in property <int> phase;
 }
 
-// Disclosure arrow: 0 collapsed, 90 expanded.
+// Disclosure control, the bordered square the reference header uses: the
+// chevron points right while folded and down while open. The direction swaps
+// between two icons — transform rotation is unreliable on the software
+// renderer path this window ships with.
 component FoldCaret inherits Rectangle {
     in property <bool> open: false;
-    width: 12px; height: 12px;
+    in property <bool> hover: false;
+    width: 16px; height: 16px;
+    border-radius: 5px;
+    background: root.hover ? Theme.hover : Theme.surface;
+    border-width: 1px;
+    border-color: root.hover ? Theme.border-strong : Theme.border;
     Image {
-        width: parent.width; height: parent.height;
-        source: @image-url("../assets/icons/disclosure.svg");
+        x: 3px; y: 3px; width: 10px; height: 10px;
+        source: root.open ? @image-url("../assets/icons/chevron-down.svg")
+                          : @image-url("../assets/icons/chevron-right.svg");
         colorize: Theme.muted; image-fit: contain;
-        transform-rotation: root.open ? 90deg : 0deg;
     }
 }
 
@@ -187,13 +195,14 @@ component TimelineGutter inherits Rectangle {
     in property <int> status: 0;
     in property <bool> caret: false;
     in property <bool> caret-open: false;
+    in property <bool> caret-hover: false;
     width: TimelineMetrics.gutter;
     Rectangle {
         visible: root.line;
         x: (TimelineMetrics.gutter - 1px) / 2;
-        y: root.caret ? parent.height / 2 + 7px : 0px;
+        y: root.caret ? parent.height / 2 + 9px : 0px;
         width: 1px;
-        height: root.caret ? parent.height / 2 - 7px : parent.height;
+        height: root.caret ? parent.height / 2 - 9px : parent.height;
         background: Theme.timeline-line;
     }
     StatusDot {
@@ -202,9 +211,10 @@ component TimelineGutter inherits Rectangle {
         status: root.status;
     }
     if root.caret : FoldCaret {
-        x: (TimelineMetrics.gutter - 12px) / 2;
-        y: (parent.height - 12px) / 2;
+        x: (TimelineMetrics.gutter - 16px) / 2;
+        y: (parent.height - 16px) / 2;
         open: root.caret-open;
+        hover: root.caret-hover;
     }
 }
 
@@ -587,8 +597,8 @@ component GroupBar inherits Rectangle {
     border-radius: Theme.radius-tag;
     background: bar-touch.has-hover ? Theme.hover : transparent;
     bar-touch := TouchArea {
-        x: Theme.timeline-padding; y: 0px;
-        width: parent.width - Theme.timeline-padding * 2;
+        x: 0px; y: 0px;
+        width: parent.width;
         height: parent.height;
         mouse-cursor: pointer;
         clicked => { root.toggle(root.data.payload); }
@@ -596,7 +606,7 @@ component GroupBar inherits Rectangle {
     HorizontalLayout {
         padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding;
         spacing: 0px;
-        TimelineGutter { line: root.data.open; caret: true; caret-open: root.data.open; }
+        TimelineGutter { line: root.data.open; caret: true; caret-open: root.data.open; caret-hover: bar-touch.has-hover; }
         bar-row := HorizontalLayout {
             height: parent.height; spacing: 8px;
             Text {
@@ -663,18 +673,11 @@ component ProcessBar inherits Rectangle {
         spacing: 0px;
         process-gutter := Rectangle {
             width: 22px; height: parent.height;
-            Rectangle {
-                x: 1px; y: 8px; width: 16px; height: 16px;
-                border-radius: 8px; border-width: 1px;
-                border-color: process-hit.has-hover ? Theme.border-strong : Theme.border;
-                background: process-hit.has-hover ? Theme.hover : Theme.surface;
-            }
-            Image {
-                x: 4px; y: (parent.height - 12px) / 2;
-                width: 12px; height: 12px;
-                source: @image-url("../assets/icons/disclosure.svg");
-                colorize: Theme.muted; image-fit: contain;
-                transform-rotation: root.data.open ? 90deg : 0deg;
+            FoldCaret {
+                x: (parent.width - self.width) / 2;
+                y: (34px - self.height) / 2;
+                open: root.data.open;
+                hover: process-hit.has-hover;
             }
             process-hit := TouchArea {
                 mouse-cursor: pointer;
@@ -1050,13 +1053,17 @@ export component TimelineView inherits Rectangle {
         }
     }
     // ---- fade-in edge buttons: jump to the very top / back to the live tail.
+    // Rounded square on a solid surface with a hairline border and a soft
+    // shadow, matching the reference scroll button.
     edge-top := Rectangle {
         visible: root.rows.length > 0 && rows-scroll.content-y < -8px;
         x: (parent.width - self.width) / 2; y: 6px;
-        width: 30px; height: 30px; border-radius: 15px;
-        background: edge-top-touch.has-hover ? Theme.surface : Theme.surface.transparentize(0.4);
-        border-width: 1px; border-color: Theme.border;
-        opacity: edge-top-touch.has-hover ? 1.0 : 0.72;
+        width: 30px; height: 30px; border-radius: 8px;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: edge-top-touch.has-hover ? Theme.border-strong : Theme.border;
+        drop-shadow-color: #0F17291A;
+        drop-shadow-blur: 8px; drop-shadow-offset-y: 2px;
         Image {
             x: 8px; y: 8px; width: 14px; height: 14px;
             source: @image-url("../assets/icons/arrow-up.svg");
@@ -1068,10 +1075,12 @@ export component TimelineView inherits Rectangle {
         visible: !root.follow-output && root.rows.length > 0
             && rows-scroll.content-y > rows-scroll.visible-height - rows-scroll.content-height + 40px;
         x: (parent.width - self.width) / 2; y: parent.height - self.height - 6px;
-        width: 30px; height: 30px; border-radius: 15px;
-        background: edge-bottom-touch.has-hover ? Theme.surface : Theme.surface.transparentize(0.4);
-        border-width: 1px; border-color: Theme.border;
-        opacity: edge-bottom-touch.has-hover ? 1.0 : 0.72;
+        width: 30px; height: 30px; border-radius: 8px;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: edge-bottom-touch.has-hover ? Theme.border-strong : Theme.border;
+        drop-shadow-color: #0F17291A;
+        drop-shadow-blur: 8px; drop-shadow-offset-y: 2px;
         Image {
             x: 8px; y: 8px; width: 14px; height: 14px;
             source: @image-url("../assets/icons/log-down.svg");

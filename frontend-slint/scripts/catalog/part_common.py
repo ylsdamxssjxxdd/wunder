@@ -25,6 +25,8 @@ ENTRIES = [
     ("common_confirm_delete", "确认删除", "Delete"),
     ("common_refresh", "刷新", "Refresh"),
     ("common_close", "关闭", "Close"),
+    ("pet_menu_open_chat", "打开会话", "Open session"),
+    ("pet_menu_hide", "隐藏", "Hide"),
     ("common_create", "创建", "Create"),
     ("common_creating", "创建中", "Creating…"),
     ("common_edit", "编辑", "Edit"),

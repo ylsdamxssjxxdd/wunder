@@ -566,6 +566,16 @@
   "en": "Close"
  },
  {
+  "key": "pet_menu_open_chat",
+  "zh": "打开会话",
+  "en": "Open session"
+ },
+ {
+  "key": "pet_menu_hide",
+  "zh": "隐藏",
+  "en": "Hide"
+ },
+ {
   "key": "common_create",
   "zh": "创建",
   "en": "Create"
@@ -1423,8 +1433,8 @@
  },
  {
   "key": "cp_input_placeholder_workspace",
-  "zh": "给 {} 发送消息…（长按语音）",
-  "en": "Message {}… (hold to talk)",
+  "zh": "给 {} 发送消息…",
+  "en": "Message {}…",
   "params": [
    "workspace"
   ]
@@ -5872,7 +5882,6 @@
   "zh": "此版本为重要更新",
   "en": "This is a mandatory update"
  },
- 
  {
   "key": "st_upd_applied",
   "zh": "更新完成，已立即生效",
@@ -6583,6 +6592,50 @@
   "key": "sub_detail_loading",
   "zh": "正在加载子线程…",
   "en": "Loading the child thread…"
+ },
+ {
+  "key": "hud_subagents_title",
+  "zh": "子智能体",
+  "en": "Subagents"
+ },
+ {
+  "key": "hud_subagents_count",
+  "zh": "{} 个",
+  "en": "{} total",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "hud_subagents_empty",
+  "zh": "当前线程还没有子智能体",
+  "en": "No subagents in this thread"
+ },
+ {
+  "key": "hud_subagents_more",
+  "zh": "还有 {} 条未显示",
+  "en": "{} more not shown",
+  "params": [
+   "count"
+  ]
+ },
+ {
+  "key": "hud_subagents_stop",
+  "zh": "终止子智能体",
+  "en": "Interrupt subagent"
+ },
+ {
+  "key": "hud_subagents_open",
+  "zh": "查看详情",
+  "en": "View details"
+ },
+ {
+  "key": "hud_subagents_hint",
+  "zh": "子智能体：{} 个",
+  "en": "Subagents: {}",
+  "params": [
+   "count"
+  ]
  },
  {
   "key": "tl_status_waiting",
@@ -7467,6 +7520,16 @@
   "en": "First token {} · decoding {}"
  },
  {
+  "key": "traj_consumption",
+  "zh": "消耗",
+  "en": "Usage"
+ },
+ {
+  "key": "traj_consumption_total",
+  "zh": "全部消耗",
+  "en": "Total usage"
+ },
+ {
   "key": "ws_dlg_new",
   "zh": "新建工作区",
   "en": "New workspace"
@@ -7701,6 +7764,16 @@
   "key": "wf_menu_open_ws",
   "zh": "打开本地工作区",
   "en": "Open local workspace"
+ },
+ {
+  "key": "wf_menu_reveal_file",
+  "zh": "打开文件所在位置",
+  "en": "Open File Location"
+ },
+ {
+  "key": "wf_menu_reveal_dir",
+  "zh": "打开目录所在位置",
+  "en": "Open Folder Location"
  },
  {
   "key": "wf_menu_preview",
