@@ -177,7 +177,7 @@ WUNDER_BUILD_JOBS=$(nproc) bash builders/build-cli-win7-x86-offline.sh
 `_Unwind_Resume`，所以 rust-target/lib 里放 mingw-builds 7.3.0 posix-dwarf 的
 `libgcc_eh.a`/`libgcc.a`，`portable-bin` 用重定位包装器（`-B` 前缀 + 捆绑
 libisl/libmpc/libmpfr/libgmp）剔除 `-lgcc_eh/-lgcc` 后追加 DW2 存档和
-`-lwinpthread`。`libsynchronization.a` 是空存档：winapi 0.3.9 的 synchapi 特性在
+`-Wl,-Bstatic -lwinpthread -Wl,-Bdynamic`——**winpthread 必须静态**：portable 包是 7.3-**posix** 线程模型，裸 `-lwinpthread` 会解析到 `libwinpthread.dll.a`，产物因此在 Win7 上报「缺少 libwinpthread-1.dll」（开发机用的 winlibs 是 win32 线程模型，没有这个依赖，所以只有离线交叉的产物会中招）。`libsynchronization.a` 是空存档：winapi 0.3.9 的 synchapi 特性在
 GNU 目标会请求它，Win7 下相关符号由 kernel32 提供，空存档即可通过链接且不引入
 `api-ms-win-*` 导入。产物仍需通过 PE 导入表门禁。
 

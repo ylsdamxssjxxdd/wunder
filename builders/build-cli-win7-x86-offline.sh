@@ -87,9 +87,8 @@ require_file "$exe"
 i686-w64-mingw32-objdump -f "$exe" > "$target_dir/pe-headers.txt"
 grep -q 'pei-i386' "$target_dir/pe-headers.txt" || fail 'expected a 32-bit Windows PE'
 imports="$(i686-w64-mingw32-objdump -p "$exe")"
-if printf '%s\n' "$imports" | grep -Eiq 'combase\.dll|api-ms-win-|ext-ms-win-|GetDpiForWindow|WaitOnAddress|WakeByAddress|SetThreadDescription'; then
-  fail 'Win7 cross output imports Win7-incompatible DLLs or symbols'
-fi
+blocked="$(printf '%s\n' "$imports" | grep -Ei 'libwinpthread[-_.0-9a-zA-Z]*\.dll|libgcc_s[-_.0-9a-zA-Z]*\.dll|libstdc\+\+[-_.0-9a-zA-Z]*\.dll|combase\.dll|api-ms-win-|ext-ms-win-|GetDpiForWindow|WaitOnAddress|WakeByAddress|SetThreadDescription' | sort -u || true)"
+[[ -z "$blocked" ]] || fail "Win7 产物引入了 MinGW 运行库 DLL 或 Win8+ 符号: $(printf '%s' "$blocked" | tr '\n' ' ')"
 i686-w64-mingw32-strip --strip-all "$exe"
 version="$(grep -m1 '^version *=' "$manifest" | cut -d'"' -f2)"
 [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]] || fail 'could not read a safe workspace version'
