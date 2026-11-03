@@ -215,7 +215,14 @@ mod tests {
     /// failed frame long after the user had moved on.
     #[test]
     fn a_user_stop_is_stopped_not_failed() {
-        for phrase in ["已停止", "已取消", "已终止", "已中断", "cancelled", "stopped"] {
+        for phrase in [
+            "已停止",
+            "已取消",
+            "已终止",
+            "已中断",
+            "cancelled",
+            "stopped",
+        ] {
             let phase = Phase::of(phrase);
             assert_eq!(phase, Phase::Stopped, "{phrase} must not read as a failure");
             assert!(!phase.live(), "{phrase} is terminal");

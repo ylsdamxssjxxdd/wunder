@@ -290,14 +290,12 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
         // per second. Keep the catalogue as a bounded backstop at a
         // faster cadence while work is active; the direct event
         // projection remains the primary path for the selected row.
-        let refresh_interval = if current.active.is_some()
-            || !current.parked.is_empty()
-            || any_live_row(&app)
-        {
-            Duration::from_millis(500)
-        } else {
-            Duration::from_secs(3)
-        };
+        let refresh_interval =
+            if current.active.is_some() || !current.parked.is_empty() || any_live_row(&app) {
+                Duration::from_millis(500)
+            } else {
+                Duration::from_secs(3)
+            };
         let refresh = current
             .observation
             .list_refreshed

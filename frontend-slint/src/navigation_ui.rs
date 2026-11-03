@@ -39,6 +39,11 @@ thread_local! {
     /// Monotonic guard for asynchronous workspace catalogue reads. A stale
     /// SQLite result must never replace a newer catalogue result.
     static WORKSPACE_REFRESH_GENERATION: Cell<u64> = const { Cell::new(0) };
+    /// A workspace created or opened before the catalogue read that contains
+    /// it has landed. The refresh commit consumes it, so focus still happens
+    /// even when the caller only held the id (the new row is not in the model
+    /// yet).
+    static PENDING_WORKSPACE_FOCUS: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 fn next_workspace_refresh_generation() -> u64 {
@@ -290,6 +295,7 @@ pub(crate) fn project_sidebar(app: &MainWindow, desktop: Option<Arc<NativeDeskto
         // Workspace counting opens SQLite too. Rendering a refreshed session
         // catalogue must not make the Slint event loop wait for that I/O.
         let request = next_workspace_refresh_generation();
+        let focus_api = desktop.clone();
         let weak = app.as_weak();
         std::thread::spawn(move || {
             let result = desktop.list_workspaces();
@@ -328,6 +334,14 @@ pub(crate) fn project_sidebar(app: &MainWindow, desktop: Option<Arc<NativeDeskto
                             crate::workspace_files::is_cloud_target(),
                         ));
                         rebuild_rows(&app);
+                        // A create/open queued while this read was in flight
+                        // only knew the workspace id; now that the fresh cards
+                        // are in the model, land the focus.
+                        if let Some(id) =
+                            PENDING_WORKSPACE_FOCUS.with(|slot| slot.borrow_mut().take())
+                        {
+                            focus_workspace_card(&app, focus_api, &id);
+                        }
                     }
                     Err(error) => app.set_status(format!("无法读取工作区：{error}").into()),
                 }
@@ -802,6 +816,17 @@ pub(crate) fn focus_workspace_of(
     let Some(workspace_id) = workspace_id else {
         return;
     };
+    if focus_workspace_card(app, api, workspace_id) {
+        PENDING_WORKSPACE_FOCUS.with(|slot| slot.borrow_mut().take());
+        return;
+    }
+    // The row is not in the model yet (a create or a thread opened right after
+    // a catalogue read). Defer it to the next refresh commit instead of
+    // silently doing nothing.
+    PENDING_WORKSPACE_FOCUS.with(|slot| *slot.borrow_mut() = Some(workspace_id.to_string()));
+}
+
+fn focus_workspace_card(app: &MainWindow, api: Arc<NativeDesktop>, workspace_id: &str) -> bool {
     for (index, card) in app.get_workspaces().iter().enumerate() {
         if card.workspace_id.as_str() == workspace_id {
             app.set_selected_workspace(index as i32);
@@ -821,9 +846,10 @@ pub(crate) fn focus_workspace_of(
                 );
             }
             project_sidebar(app, None);
-            return;
+            return true;
         }
     }
+    false
 }
 
 /// Sidebar interactions and the workspace entry points on the window.

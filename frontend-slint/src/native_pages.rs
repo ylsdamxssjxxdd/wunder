@@ -2,9 +2,7 @@
 use crate::{AgentCard, MainWindow};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{rc::Rc, sync::Arc};
-use wunder_desktop::{
-    AgentRecord, CloudStatusView, DesktopSettings, NativeDesktop, NativeProfile, RuntimeToolStatus,
-};
+use wunder_desktop::{AgentRecord, CloudStatusView, DesktopSettings, NativeDesktop, NativeProfile};
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     // The signed-in identity is the first thing the shell shows (sidebar
@@ -1381,12 +1379,15 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     app.set_runtime_ffmpeg_effective(effective("ffmpeg").into());
     app.set_runtime_browser_effective(effective("browser").into());
     app.set_runtime_shell_effective(effective("powershell").into());
+    // Status codes rather than pre-localized text: the settings page maps
+    // "custom"/"embedded"/"system"/"invalid"/"missing" through I18n, so the
+    // hint follows the UI language like every other label.
     let status = |tool: &str| {
         settings
             .tool_status
             .iter()
             .find(|entry| entry.tool == tool)
-            .map(tool_status_text)
+            .map(|entry| entry.source.clone())
             .unwrap_or_default()
     };
     app.set_runtime_python_status(status("python").into());
@@ -1498,19 +1499,6 @@ fn normalize_palette(theme: &str) -> &'static str {
         "minimal" => "minimal",
         "tech-blue" => "tech-blue",
         _ => "terracotta",
-    }
-}
-
-/// User-facing one-line status for a configured runtime tool path. A warning
-/// mark keeps an invalid configured path visible instead of silently falling
-/// back to the system interpreter.
-fn tool_status_text(status: &RuntimeToolStatus) -> String {
-    match status.source.as_str() {
-        "custom" => "✓ 自定义路径已生效".to_string(),
-        "embedded" => "✓ 内置运行时已就绪".to_string(),
-        "invalid" => "⚠ 配置路径无效，已回退系统环境".to_string(),
-        "system" => "✓ 使用系统 PATH".to_string(),
-        _ => "⚠ 未找到可用的 Python 运行时，需要配置或安装补充包".to_string(),
     }
 }
 

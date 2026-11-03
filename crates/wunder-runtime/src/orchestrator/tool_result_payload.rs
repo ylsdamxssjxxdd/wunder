@@ -634,7 +634,10 @@ pub(super) fn default_observation_token_budget(tool_name: &str) -> i64 {
         // Use the document cap as the safe default before that response exists.
         "browser" => OBSERVATION_DOCUMENT_TOKEN_BUDGET,
         "自身状态" | "自我状态" | "self_status" | "写入文件" | "write_file" | "apply_patch"
-        | "应用补丁" | "编辑" | "文本编辑" => OBSERVATION_STATUS_TOKEN_BUDGET,
+        | "应用补丁" => OBSERVATION_STATUS_TOKEN_BUDGET,
+        // `command=view` shares the edit tool but returns line-numbered file
+        // content; give it the same room as a document read.
+        "编辑" | "文本编辑" => OBSERVATION_DOCUMENT_TOKEN_BUDGET,
         "列出文件" | "list_files" | "文件名匹配" | "glob" | "搜索内容" | "search_content" => {
             OBSERVATION_LIST_TOKEN_BUDGET
         }
@@ -1791,6 +1794,42 @@ fn project_browser_wait(data: &Value) -> Option<Value> {
 fn project_browser_batch(data: &Value) -> Option<Value> {
     let map = data.as_object()?;
     let mut projected = pick_non_empty_fields(map, &["completed_steps", "failed_step", "url"]);
+    if let Some(results) = map.get("results").and_then(Value::as_array) {
+        let mut budget = OBSERVATION_BROWSER_TEXT_CHARS;
+        let mut compacted = Vec::new();
+        for result in results {
+            let Some(item) = result.as_object() else {
+                continue;
+            };
+            let mut step = pick_non_empty_fields(
+                item,
+                &[
+                    "kind",
+                    "target_id",
+                    "url",
+                    "truncated",
+                    "has_more",
+                    "next_cursor",
+                ],
+            );
+            if let Some(content) = item.get("content").and_then(Value::as_str) {
+                let limit = budget.max(1);
+                let (text, omitted) = truncate_text_head(content, limit);
+                budget = budget.saturating_sub(text.chars().count());
+                step.insert("text".to_string(), Value::String(text));
+                if omitted > 0 {
+                    step.insert("truncated".to_string(), Value::Bool(true));
+                    step.insert("text_omitted_chars".to_string(), json!(omitted));
+                }
+            }
+            if !step.is_empty() {
+                compacted.push(Value::Object(step));
+            }
+        }
+        if !compacted.is_empty() {
+            projected.insert("results".to_string(), Value::Array(compacted));
+        }
+    }
     if let Some(snapshot) = map.get("snapshot").and_then(Value::as_str) {
         let (snapshot, omitted) = truncate_text_head(snapshot, OBSERVATION_BROWSER_TEXT_CHARS);
         projected.insert("snapshot".to_string(), Value::String(snapshot));
@@ -2349,6 +2388,14 @@ fn project_command_row(row: &Map<String, Value>) -> Value {
 
 fn project_file_write_success(data: &Value) -> Option<Value> {
     let map = model_tool_result_data_map(data)?;
+    // `command=view` reads a file or directory without mutating anything. Its
+    // content is the observation the model asked for, so it must survive the
+    // write-tool projection instead of collapsing to `changed`.
+    if let Some(content) = map.get("content").and_then(Value::as_str) {
+        let mut projected = pick_non_empty_fields(map, &["path", "kind"]);
+        projected.insert("content".to_string(), Value::String(content.to_string()));
+        return Some(Value::Object(projected));
+    }
     let mut projected = pick_non_empty_fields(
         map,
         &[

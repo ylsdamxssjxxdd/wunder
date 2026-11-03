@@ -1443,6 +1443,52 @@ fn schedule_memory_and_question_projection_unwrap_model_carrier() {
 }
 
 #[test]
+fn browser_batch_evidence_results_survive_projection() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {
+            "action": "batch",
+            "completed_steps": 2,
+            "url": "https://example.invalid/done",
+            "results": [
+                {"kind": "click", "target_id": "tab-1", "url": "https://example.invalid/1"},
+                {"kind": "observe_text", "target_id": "tab-1", "url": "https://example.invalid/done",
+                 "content": "result: ok", "has_more": false}
+            ]
+        }
+    }));
+    let observation = result.to_compact_payload("browser");
+    assert_eq!(
+        observation["data"]["results"][0],
+        json!({"kind": "click", "target_id": "tab-1", "url": "https://example.invalid/1"})
+    );
+    assert_eq!(
+        observation["data"]["results"][1],
+        json!({"kind": "observe_text", "target_id": "tab-1", "url": "https://example.invalid/done",
+               "has_more": false, "text": "result: ok"})
+    );
+}
+
+#[test]
+fn edit_view_keeps_line_numbered_content_in_model_observation() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "action": "view",
+        "state": "completed",
+        "summary": "Viewed file.",
+        "data": {"path": "src/main.rs", "kind": "file", "content": "     1\tfn main() {}"}
+    }));
+    let observation = result.to_compact_payload("文本编辑");
+    assert_eq!(observation["data"]["path"], json!("src/main.rs"));
+    assert_eq!(observation["data"]["kind"], json!("file"));
+    assert_eq!(
+        observation["data"]["content"],
+        json!("     1\tfn main() {}")
+    );
+    assert!(observation["data"].get("changed").is_none());
+}
+
+#[test]
 fn memory_detail_and_browser_batch_projection_bound_large_text() {
     let long_content = "x".repeat(OBSERVATION_MEMORY_CONTENT_CHARS + 100);
     let memory = ToolResultPayload::from_value(json!({

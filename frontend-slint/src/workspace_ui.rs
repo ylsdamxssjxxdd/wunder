@@ -5,7 +5,7 @@
 //! land through the event loop, so the UI thread never blocks on IO.
 
 use crate::{MainWindow, WorkspaceDialogState};
-use slint::{ComponentHandle, Model};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::cell::Cell;
 use std::sync::Arc;
 use wunder_desktop::{NativeDesktop, WorkspaceEdit, WORKSPACE_COLORS, WORKSPACE_ICONS};
@@ -357,18 +357,55 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                     Ok(_) => {
                         state.set_open(false);
                         invalidate_dialog();
-                        let deleted_selected = usize::try_from(app.get_selected_workspace())
-                            .ok()
-                            .and_then(|index| app.get_workspaces().row_data(index))
-                            .is_some_and(|card| card.workspace_id == workspace_id);
-                        crate::navigation_ui::project_sidebar(&app, Some(api.clone()));
+                        // Drop the deleted row from the projection right away.
+                        // The old flow waited for an asynchronous catalogue
+                        // read, and any focus/target switch started in between
+                        // invalidated that read, leaving a workspace on screen
+                        // that no longer existed in SQLite.
+                        let selected = usize::try_from(app.get_selected_workspace()).ok();
+                        let deleted_index = app
+                            .get_workspaces()
+                            .iter()
+                            .position(|card| card.workspace_id == workspace_id);
+                        let deleted_selected = selected
+                            .and_then(|index| deleted_index.map(|d| index == d))
+                            == Some(true);
+                        let mut cards = Vec::new();
+                        for card in app.get_workspaces().iter() {
+                            if card.workspace_id != workspace_id {
+                                cards.push(card);
+                            }
+                        }
+                        let remaining = cards.len();
+                        let next_selected = if deleted_selected {
+                            if remaining == 0 {
+                                -1
+                            } else {
+                                deleted_index.unwrap_or(0).min(remaining - 1) as i32
+                            }
+                        } else if let (Some(index), Some(deleted)) = (selected, deleted_index) {
+                            if index > deleted {
+                                (index - 1) as i32
+                            } else {
+                                index as i32
+                            }
+                        } else {
+                            app.get_selected_workspace()
+                        };
+                        app.set_workspaces(ModelRc::new(VecModel::from(cards)));
+                        app.set_selected_workspace(next_selected);
+                        crate::navigation_ui::project_sidebar(&app, None);
                         if deleted_selected {
-                            if let Some(card) = app.get_workspaces().row_data(0) {
-                                crate::navigation_ui::focus_workspace_of(
-                                    &app,
-                                    api.clone(),
-                                    Some(card.workspace_id.as_str()),
-                                );
+                            if next_selected >= 0 {
+                                if let Some(card) =
+                                    app.get_workspaces().row_data(next_selected as usize)
+                                {
+                                    crate::navigation_ui::focus_workspace_of(
+                                        &app,
+                                        api.clone(),
+                                        Some(card.workspace_id.as_str()),
+                                    );
+                                }
                             } else {
                                 crate::workspace_files::set_target(
                                     &app,
@@ -378,6 +415,10 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                             }
                             app.set_active_session_id("".into());
                         }
+                        // Refresh the catalogue counts last: focus already
+                        // applied its direct projection, so this read can land
+                        // without being superseded.
+                        crate::navigation_ui::project_sidebar(&app, Some(api.clone()));
                         app.invoke_refresh_chat();
                     }
                     Err(error) => app.set_status(format!("无法删除工作区：{error}").into()),

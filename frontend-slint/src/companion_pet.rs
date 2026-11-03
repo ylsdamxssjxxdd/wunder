@@ -1040,7 +1040,14 @@ mod tests {
         ] {
             assert_eq!(classify_runtime(phrase), Runtime::Done, "{phrase}");
         }
-        for phrase in ["error", "failed", "timeout", "执行失败", "模型调用错误", "请求超时"] {
+        for phrase in [
+            "error",
+            "failed",
+            "timeout",
+            "执行失败",
+            "模型调用错误",
+            "请求超时",
+        ] {
             assert_eq!(classify_runtime(phrase), Runtime::Error, "{phrase}");
         }
     }

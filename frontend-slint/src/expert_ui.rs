@@ -138,7 +138,10 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
         // `set_vec` rewrites the backing model in place: the selection keeps
         // its identity instead of swapping the list under any binding.
-        let names = names.into_iter().map(SharedString::from).collect::<Vec<_>>();
+        let names = names
+            .into_iter()
+            .map(SharedString::from)
+            .collect::<Vec<_>>();
         match app
             .get_selected_agent_tool_names()
             .as_any()

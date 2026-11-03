@@ -95,6 +95,7 @@
   @load-more="handleCompactTreeLoadMore"
   @activate="handleCompactTreeActivate"
   @select="handleCompactTreeSelect"
+  @context="handleCompactTreeContext"
   @open="handleCompactTreeOpen"
   @toggle-select="toggleWorkspaceSelection"
   @exit-selection="resetWorkspaceSelection"
@@ -1444,9 +1445,16 @@ const handleCompactTreeSelect = (payload: {
   }
   setWorkspaceSelection([path], path);
 };
+const handleCompactTreeContext = (row: WorkspaceVisibleRow | null) => {
+  if (!row?.path) return;
+  // 与完整文件树一致：右键目标在多选集合里保留整批，否则收敛成单选。
+  if (!state.selectedPaths.has(row.path)) setWorkspaceSelection([row.path], row.path);
+  else state.lastSelectedPath = row.path;
+};
 const handleCompactTreeCommand = async (command: string, row: WorkspaceVisibleRow | null) => {
   const entry = row ? compactTreeEntry(row.path) : null;
-  if (entry) setWorkspaceSelection([entry.path], entry.path);
+  // 选择集合已在 handleCompactTreeContext 对齐；这里只记录锚点供 Shift 扩选。
+  if (entry) state.lastSelectedPath = entry.path;
   switch (command) {
     case 'toggle':
       if (entry) await toggleWorkspaceDirectory(entry);

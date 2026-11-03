@@ -33,7 +33,9 @@ fn write_report(info: &std::panic::PanicHookInfo<'_>) {
     let now = chrono::Local::now();
     let file_name = format!(
         "{FILE_PREFIX}{}.log",
-        now.format("%Y%m%d-%H%M%S%.3f").to_string().replace('.', "-")
+        now.format("%Y%m%d-%H%M%S%.3f")
+            .to_string()
+            .replace('.', "-")
     );
     let mut file = match std::fs::OpenOptions::new()
         .create(true)
@@ -56,7 +58,14 @@ fn write_report(info: &std::panic::PanicHookInfo<'_>) {
     };
     let location = info
         .location()
-        .map(|location| format!("{}:{}:{}", location.file(), location.line(), location.column()))
+        .map(|location| {
+            format!(
+                "{}:{}:{}",
+                location.file(),
+                location.line(),
+                location.column()
+            )
+        })
         .unwrap_or_else(|| "<未知位置>".to_string());
 
     use std::io::Write;
@@ -76,7 +85,11 @@ fn write_report(info: &std::panic::PanicHookInfo<'_>) {
     let _ = writeln!(file, "信息: {payload}");
     let _ = writeln!(file, "位置: {location}");
     let _ = writeln!(file, "说明: 发布版 panic 即终止进程；以下回溯供事后定位。");
-    let _ = writeln!(file, "回溯:\n{:?}", std::backtrace::Backtrace::force_capture());
+    let _ = writeln!(
+        file,
+        "回溯:\n{:?}",
+        std::backtrace::Backtrace::force_capture()
+    );
 }
 
 fn prune_old_reports(dir: &std::path::Path) {
@@ -108,7 +121,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "wunder-crash-log-{tag}-{}-{}",
             std::process::id(),
-            chrono::Local::now().timestamp_nanos_opt().unwrap_or_default()
+            chrono::Local::now()
+                .timestamp_nanos_opt()
+                .unwrap_or_default()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -132,7 +147,11 @@ mod tests {
             .filter_map(|entry| entry.file_name().into_string().ok())
             .collect();
         remaining.sort();
-        assert_eq!(remaining.len(), 11, "12 份报告应只剩最新 10 份加 1 个无关文件");
+        assert_eq!(
+            remaining.len(),
+            11,
+            "12 份报告应只剩最新 10 份加 1 个无关文件"
+        );
         assert!(remaining.contains(&"unrelated.txt".to_string()));
         assert!(
             remaining.contains(&"crash-20260112-000000-000.log".to_string()),
@@ -150,7 +169,9 @@ mod tests {
         let now = chrono::Local::now();
         let name = format!(
             "{FILE_PREFIX}{}.log",
-            now.format("%Y%m%d-%H%M%S%.3f").to_string().replace('.', "-")
+            now.format("%Y%m%d-%H%M%S%.3f")
+                .to_string()
+                .replace('.', "-")
         );
         assert!(name.starts_with(FILE_PREFIX));
         assert!(name.ends_with(FILE_SUFFIX));

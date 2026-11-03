@@ -2318,6 +2318,31 @@
   "en": "Browser path"
  },
  {
+  "key": "st_runtime_status_custom",
+  "zh": "✓ 自定义路径已生效",
+  "en": "✓ Custom path active"
+ },
+ {
+  "key": "st_runtime_status_embedded",
+  "zh": "✓ 内置运行时已就绪",
+  "en": "✓ Bundled runtime ready"
+ },
+ {
+  "key": "st_runtime_status_invalid",
+  "zh": "⚠ 配置路径无效，已回退系统环境",
+  "en": "⚠ Invalid path; system fallback active"
+ },
+ {
+  "key": "st_runtime_status_system",
+  "zh": "✓ 使用系统环境",
+  "en": "✓ Using system runtime"
+ },
+ {
+  "key": "st_runtime_status_missing",
+  "zh": "⚠ 未找到可用的运行时，需要配置或安装补充包",
+  "en": "⚠ Runtime not found; configure a path or import a supplement"
+ },
+ {
   "key": "st_ffmpeg_path",
   "zh": "ffmpeg 路径",
   "en": "ffmpeg path"

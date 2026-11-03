@@ -108,6 +108,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     startup_log("process_begin", startup_boot);
     install_slint_platform()?;
     startup_log("slint_platform_ready", startup_boot);
+    // Wayland/X11 任务栏按 app_id 匹配 .desktop 文件；不设置时只能拿到默认
+    // 程序图标，即使窗口自带的 icon 属性正常。
+    #[cfg(target_os = "linux")]
+    if let Err(error) = slint::set_xdg_app_id("wunder") {
+        startup_log(&format!("xdg_app_id_failed: {error}"), startup_boot);
+    }
     register_bundled_font()?;
     startup_log("font_ready", startup_boot);
 
@@ -674,6 +680,23 @@ fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
                         .with_title("蛹")
                         .with_decorations(false)
                         .with_active(false);
+                }
+                if crate::pet_window::take_overlay_window() {
+                    // A pet overlay: frameless, never activated, and on X11 a
+                    // Utility window so it stays out of the taskbar and pager.
+                    let attributes = attributes
+                        .with_title("蛹")
+                        .with_decorations(false)
+                        .with_active(false)
+                        .with_resizable(false);
+                    #[cfg(target_os = "linux")]
+                    {
+                        use winit::platform::x11::WindowAttributesExtX11 as _;
+                        return attributes
+                            .with_x11_window_type(vec![winit::platform::x11::WindowType::Utility]);
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    return attributes;
                 }
                 let frameless =
                     frameless_first_window.swap(false, std::sync::atomic::Ordering::AcqRel);

@@ -274,7 +274,11 @@ impl BrowserControlService {
     async fn focus(&self, scope: &BrowserSessionScope, args: &Value) -> Result<Value> {
         self.ensure_available()?;
         let session_key = scope.session_key()?;
-        let target_id = required_string(args, "target_id")?;
+        let target_id = optional_string(args, "target_id");
+        let index = optional_u64(args, "index");
+        if target_id.is_none() && index.is_none() {
+            return Err(anyhow!("Missing browser parameter 'target_id' or 'index'"));
+        }
         let response = self
             .command(
                 &session_key,
@@ -283,6 +287,7 @@ impl BrowserControlService {
                 json!({
                     "action": "focus",
                     "target_id": target_id,
+                    "index": index,
                 }),
             )
             .await?;
@@ -290,12 +295,16 @@ impl BrowserControlService {
     }
 
     async fn close(&self, scope: &BrowserSessionScope, args: &Value) -> Result<Value> {
-        if args.get("target_id").is_none() && args.get("request").is_none() {
+        if args.get("target_id").is_none()
+            && args.get("index").is_none()
+            && args.get("request").is_none()
+        {
             return self.stop(scope).await;
         }
         self.ensure_available()?;
         let session_key = scope.session_key()?;
         let target_id = optional_string(args, "target_id").map(ToString::to_string);
+        let index = optional_u64(args, "index");
         let response = self
             .command(
                 &session_key,
@@ -304,6 +313,7 @@ impl BrowserControlService {
                 json!({
                     "action": "close",
                     "target_id": target_id,
+                    "index": index,
                 }),
             )
             .await?;

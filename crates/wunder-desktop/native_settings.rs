@@ -827,6 +827,9 @@ impl NativeDesktop {
             .set_container_roots(config.workspace.container_roots.clone());
         let lan = self.read_lan_settings();
         let persisted = load_desktop_settings(&self.desktop.settings_path).unwrap_or_default();
+        // Apply new tool paths to running processes now, not only after the
+        // next launch (e.g. browser/shell picks in the local runtime tab).
+        crate::runtime::refresh_runtime_tool_env(&persisted, &self.desktop.app_dir);
         Ok(self.ordered_project(
             &config,
             lan,

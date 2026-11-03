@@ -147,6 +147,7 @@
       @exit-selection="handleExitSelection"
       @retry="handleRetry"
       @command="handleRowCommand"
+      @context="handleContextTarget"
       @blank-activate="handleBlankActivate"
       @move="handleTreeMove"
     />
@@ -516,6 +517,7 @@ const {
   revealPath,
   removePaths,
   setActivePath,
+  clearSelection,
   toggleSelection,
   exitSelectionMode
 } = tree;
@@ -693,7 +695,12 @@ const handleExitSelection = () => {
     exitSearch();
     return;
   }
-  exitSelectionMode();
+  if (selectionMode.value) {
+    exitSelectionMode();
+    return;
+  }
+  // 快捷多选没有多选模式，Esc 只清选择集合。
+  if (selectedList.value.length) clearSelection();
 };
 
 const handleRetry = () => {
@@ -1024,6 +1031,14 @@ const handleActivateRow = (row: WorkspaceVisibleRow) => {
   // 选中的行同时决定「新建 / 上传」的落点：目录落到自己，文件落到它所在的目录。
   // 放在搜索分支之前，搜索结果里的行也照样能作为落点。
   uploadTarget.value = row.kind === 'dir' ? row.path : workspaceParentPath(row.path);
+  // 普通点击把快捷多选收敛到这一行，后续 Ctrl/Shift 直接从这里扩选。
+  if (!searchActive.value && !remoteInterlinkActive.value) {
+    const key = normalizeWorkspaceRelativePath(row.path);
+    if (key) {
+      tree.setSelection([key]);
+      selectionAnchorPath.value = key;
+    }
+  }
   // 搜索结果平铺，点选只记高亮，不展开目录。
   if (searchActive.value) return;
   if (row.kind === 'dir') void toggleDirectoryPath(row.path);
@@ -1034,6 +1049,9 @@ const handleBlankActivate = () => {
   if (busy.value) return;
   setActivePath('');
   uploadTarget.value = '';
+  // 快捷多选与锚点一并复位；多选模式的开关本身保留，交给工具栏或 Esc 退出。
+  if (selectedList.value.length) clearSelection();
+  selectionAnchorPath.value = '';
 };
 
 const handleOpenRow = (row: WorkspaceVisibleRow) => {
@@ -1106,9 +1124,8 @@ const applySelection = (paths: string[], additive: boolean) => {
 };
 
 /**
- * 行点击的多选语义：普通点击在多选态下切换单项；Ctrl/⌘ 切换并重置锚点；
- * Shift 以锚点为起点按当前可见行序扩选区间。未进入多选态时，任意修饰键点击
- * 都会就地进入多选态，避免「先点多选按钮才能选」的额外一步。
+ * 行点击的多选语义：Ctrl/⌘ 切换单项；Shift 以锚点为起点按当前可见行序扩选区间。
+ * 两者都只改选择集合，不进入带复选框与批量操作条的多选模式——那由工具栏按钮显式开启。
  */
 const handleRowSelect = (payload: { row: WorkspaceVisibleRow; additive: boolean; range: boolean }) => {
   if (remoteInterlinkActive.value || searchActive.value) {
@@ -1117,12 +1134,6 @@ const handleRowSelect = (payload: { row: WorkspaceVisibleRow; additive: boolean;
   }
   const target = normalizeWorkspaceRelativePath(payload.row.path);
   if (!target) return;
-  if (!selectionMode.value) {
-    selectionMode.value = true;
-    selectionAnchorPath.value = target;
-    tree.setSelection([target]);
-    return;
-  }
   if (payload.range) {
     const rows = visibleFileRows.value.filter((row) => row.kind !== 'more');
     const targetIndex = rows.findIndex(
@@ -1147,6 +1158,27 @@ const handleRowSelect = (payload: { row: WorkspaceVisibleRow; additive: boolean;
   }
   tree.toggleSelection(target);
   selectionAnchorPath.value = target;
+};
+
+/**
+ * 右键/⋯ 菜单目标：不在选择集合里就收敛成单选；已在集合里则保留整批，
+ * 菜单里的删除、下载等操作按整批生效。
+ */
+const handleContextTarget = (row: WorkspaceVisibleRow | null) => {
+  if (!row || remoteInterlinkActive.value || searchActive.value) return;
+  const key = normalizeWorkspaceRelativePath(row.path);
+  if (!key) return;
+  if (!selectedList.value.includes(key)) tree.setSelection([key]);
+  selectionAnchorPath.value = key;
+};
+
+/** 需要按整批执行的菜单动作：右键行属于当前多选时返回整批，否则只作用于该行。 */
+const commandSelectionPaths = (row: WorkspaceVisibleRow): string[] => {
+  const key = normalizeWorkspaceRelativePath(row.path);
+  if (key && selectedList.value.length > 1 && selectedList.value.includes(key)) {
+    return selectedList.value.slice();
+  }
+  return [row.path];
 };
 
 const handleToggleSelect = (path: string) => {
@@ -1341,21 +1373,30 @@ const runRowCommand = async (command: string, row: WorkspaceVisibleRow | null) =
     case 'preview':
       await openPreview(row.path, row.name, row.size);
       return;
-    case 'download':
-      await runAction(() => downloadWorkspacePath(row.path), t('messenger.filesArea.downloadFailed'));
+    case 'download': {
+      const paths = commandSelectionPaths(row);
+      if (paths.length > 1) await downloadSelectionPaths(paths);
+      else await runAction(() => downloadWorkspacePath(row.path), t('messenger.filesArea.downloadFailed'));
       return;
-    case 'archive':
-      await archiveDirectory(row.path, t('messenger.filesArea.menu.archive'));
+    }
+    case 'archive': {
+      const paths = commandSelectionPaths(row);
+      if (paths.length > 1) await downloadSelectionPaths(paths);
+      else await archiveDirectory(row.path, t('messenger.filesArea.menu.archive'));
       return;
+    }
     case 'rename':
       await renameEntry(row);
       return;
     case 'quote':
       quoteEntryToChat(row);
       return;
-    case 'delete':
-      await deleteEntry(row);
+    case 'delete': {
+      const paths = commandSelectionPaths(row);
+      if (paths.length > 1) await deleteSelection(paths);
+      else await deleteEntry(row);
       return;
+    }
     default:
       return;
   }
@@ -1486,15 +1527,29 @@ const deleteEntry = async (row: WorkspaceVisibleRow) => {
   }
 };
 
-const handleBatchDelete = async () => {
-  const paths = selectedList.value.slice();
+/** 批量删除：多选模式的批量条与右键多选菜单共用。 */
+const deleteSelection = async (paths: string[]) => {
   if (!paths.length) return;
   if (!(await confirmDelete(paths.length))) return;
   busy.value = true;
   try {
-    const outcome = await deleteWorkspacePaths(paths);
+    let outcome = { ok: true, succeeded: paths.length, failed: 0 };
+    if (remoteInterlinkActive.value) {
+      let failed = 0;
+      for (const path of paths) {
+        try {
+          await remoteMutation('workspace.delete', { path });
+        } catch {
+          failed += 1;
+        }
+      }
+      outcome = { ok: failed === 0, succeeded: paths.length - failed, failed };
+    } else {
+      outcome = await deleteWorkspacePaths(paths);
+    }
     removePaths(paths);
-    exitSelectionMode();
+    if (selectionMode.value) exitSelectionMode();
+    else clearSelection();
     const directories = new Set(paths.map((path) => workspaceParentPath(path)));
     for (const directory of directories) {
       await refreshDirectory(directory);
@@ -1511,6 +1566,10 @@ const handleBatchDelete = async () => {
   } finally {
     busy.value = false;
   }
+};
+
+const handleBatchDelete = async () => {
+  await deleteSelection(selectedList.value.slice());
 };
 
 /** Bounded download fan-out (plan §6.6: download concurrency <= 3). */
@@ -1543,8 +1602,8 @@ const downloadSelection = async (paths: string[]) => {
   return done;
 };
 
-const handleBatchArchive = async () => {
-  const paths = selectedList.value.slice();
+/** 批量下载：多选模式的批量条与右键多选菜单共用。 */
+const downloadSelectionPaths = async (paths: string[]) => {
   if (!paths.length) return;
   busy.value = true;
   try {
@@ -1557,6 +1616,10 @@ const handleBatchArchive = async () => {
   } finally {
     busy.value = false;
   }
+};
+
+const handleBatchArchive = async () => {
+  await downloadSelectionPaths(selectedList.value.slice());
 };
 
 const quoteEntryToChat = (row: WorkspaceVisibleRow) => {
@@ -1926,7 +1989,11 @@ const handleWindowKeydown = (event: KeyboardEvent) => {
     exitSearch();
     return;
   }
-  if (selectionMode.value) exitSelectionMode();
+  if (selectionMode.value) {
+    exitSelectionMode();
+    return;
+  }
+  if (selectedList.value.length) clearSelection();
 };
 
 // Timeline / patch labels (B3) can ask the file area to reveal a path.

@@ -157,6 +157,33 @@ class BrowserBridgeTests(unittest.TestCase):
             self.assertFalse(result["success"])
             self.assertEqual(self.page.locator("#field").input_value(), "")
 
+    def test_batch_can_capture_evidence_after_actions(self):
+        result = self.act({"kind": "batch", "steps": [
+            {"kind": "click", "selector": "#send"},
+            {"kind": "wait", "text": "Complete", "timeout_ms": 1000},
+            {"kind": "observe_text", "max_chars": 200},
+        ]})
+        self.assertTrue(result["success"])
+        evidence = result["data"]["results"][-1]
+        self.assertEqual(evidence["kind"], "observe_text")
+        self.assertIn("Complete", evidence["content"])
+
+    def test_tabs_select_and_close_accept_index(self):
+        opened = self.session.open_tab()
+        self.assertTrue(opened["success"])
+        opened_id = opened["data"]["target_id"]
+        tabs = self.session._tabs_state()
+        index = next(i for i, tab in enumerate(tabs) if tab["target_id"] == opened_id)
+        focused = self.session.handle({"action": "focus", "index": index})
+        self.assertTrue(focused["success"])
+        self.assertEqual(focused["data"]["target_id"], opened_id)
+        out_of_range = self.session.handle({"action": "focus", "index": len(tabs) + 10})
+        self.assertFalse(out_of_range["success"])
+        self.assertIn("out of range", out_of_range["error"])
+        closed = self.session.handle({"action": "close", "index": index})
+        self.assertTrue(closed["success"])
+        self.assertNotIn(opened_id, self.session.pages)
+
     def test_text_budgets_include_frames_and_unicode(self):
         self.page.set_content("<h1>Sample heading</h1><p>" + "文😀sample " * 1000 + "</p><iframe srcdoc='<p>nested text</p>'></iframe>")
         for budget in (1, 3, 50, 300, 512, 16000):

@@ -26,12 +26,7 @@ pub struct ErrorCard {
 const DETAIL_LIMIT: usize = 600;
 
 impl ErrorCard {
-    fn new(
-        title: &str,
-        message: &str,
-        detail: &str,
-        hint: &str,
-    ) -> Self {
+    fn new(title: &str, message: &str, detail: &str, hint: &str) -> Self {
         let detail = bound(detail);
         Self {
             title: title.into(),
@@ -140,9 +135,7 @@ pub fn from_parts(code: &str, message: &str) -> Option<ErrorCard> {
                 "充值、换用其他模型账户后再试。",
             )
         }
-        "LLM_REQUEST_REJECTED"
-            if has(&["rate_limit", "429", "too many requests", "频繁"]) =>
-        {
+        "LLM_REQUEST_REJECTED" if has(&["rate_limit", "429", "too many requests", "频繁"]) => {
             ErrorCard::new(
                 "请求过于频繁",
                 "模型服务正在限流，本次请求没有完成。",
