@@ -44,7 +44,7 @@ command -v wine >/dev/null || { echo "任务镜像里没有 wine" >&2; exit 2; }
 
 python3 packaging/windows/scripts/build_win7_installer_linux.py \
     --desktop "$desktop" --cli "$cli" --supplement "$pack" \
-    --output-dir release-assets --compression "${WUNDER_INNO_COMPRESSION:-lzma2/fast}"
+    --output-dir release-assets --compression "${WUNDER_INNO_COMPRESSION:-lzma2/normal}"
 
 python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/verify.py" release-assets win7-installer
 (cd release-assets; find . -maxdepth 1 -type f ! -name 'SHA256SUMS-*' -print0 | sort -z | xargs -0 sha256sum > "SHA256SUMS-win7-x86-setup.txt")

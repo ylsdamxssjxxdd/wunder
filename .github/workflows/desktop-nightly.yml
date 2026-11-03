@@ -268,7 +268,7 @@ jobs:
             -Cli $cli.FullName `
             -Supplement $supplement.FullName `
             -OutputDir $out `
-            -Compression lzma2/fast
+            -Compression lzma2/normal
           if ($LASTEXITCODE -ne 0) { throw "Windows installer pack failed: $LASTEXITCODE" }
           $installer = Get-ChildItem -LiteralPath $out -Filter 'wunder-*-win7-x86-setup.exe' | Select-Object -First 1
           if (-not $installer) { throw 'Windows installer was not produced' }
