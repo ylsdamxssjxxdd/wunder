@@ -70,7 +70,15 @@ ARM64 剖面同日未在 ARM 机器上重跑，见文末边界。
   另用小样本做了一次静默安装烟测：装完落出 `bin/wunder-desktop.exe`、`bin/wunder-cli.exe`、
   `.wunder-home`、卸载器与 `desktop.cmd`，未勾选的组件按预期不安装。
 - win7 任务把桌面与 CLI 的 PE 写进 `/ci-cache/<仓库键>/win7-x86/installer-inputs/` 交给安装包任务，
-  两个任务不共享工作区，靠同一个缓存卷交接。
+  两个任务不共享工作区，靠同一个缓存卷交接。交接目录每次写入前 `rm -rf` 重建，只留本次运行的输入；
+  CLI 用不带版本号的固定名交接，接收方的通配要能容忍空掉的那一段（写成 `wunder-cli-*-win7-x86.exe`
+  就永远匹配不上 `wunder-cli-win7-x86.exe`，而合并判据又把它报成「目录里没有 win7 输入」，看起来像
+  缓存卷没挂上）。修好后在同一缓存卷上离线复跑安装包任务，用真实交接的两个 PE 组包，
+  `verify.py` 判为 i386 PE + Inno 载荷，脚本 0 退出。
+- 安装包压缩档与 Windows 侧统一为 `lzma2/normal`（`packaging/windows/installer/wunder.iss` 的
+  `PackCompression` 与 `builders/pack.ps1` 默认都是它）：同一份输入在套件镜像里 38.7 秒
+  （CPU 3m54s，多块线程）组出 335,619,418 字节；此前 CI 与 GitHub 工作流里硬写的 `lzma2/fast`
+  产物是 403,226,495 字节（大 67 MB）且与项目常规档不一致，两处都已改回。
 
 ## ARM64 剖面重导出（2026-11-03）
 
