@@ -15,4 +15,11 @@ ENTRIES = [
     ("sub_detail_empty", "子线程暂无内容", "The child thread has no content yet"),
     ("sub_detail_load_failed", "子线程加载失败", "Failed to load the child thread"),
     ("sub_detail_loading", "正在加载子线程…", "Loading the child thread…"),
+    ("hud_subagents_title", "子智能体", "Subagents"),
+    ("hud_subagents_count", "{} 个", "{} total", ["count"]),
+    ("hud_subagents_empty", "当前线程还没有子智能体", "No subagents in this thread"),
+    ("hud_subagents_more", "还有 {} 条未显示", "{} more not shown", ["count"]),
+    ("hud_subagents_stop", "终止子智能体", "Interrupt subagent"),
+    ("hud_subagents_open", "查看详情", "View details"),
+    ("hud_subagents_hint", "子智能体：{} 个", "Subagents: {}", ["count"]),
 ]

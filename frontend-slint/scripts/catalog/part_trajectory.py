@@ -68,4 +68,6 @@ ENTRIES = [
     ("traj_no_output", "无输出", "No output"),
     ("traj_schema_unavailable", "Schema 不可用", "Schema unavailable"),
     ("traj_tooltip_ttft", "首 token {} · 解码 {}", "First token {} · decoding {}"),
+    ("traj_consumption", "消耗", "Usage"),
+    ("traj_consumption_total", "全部消耗", "Total usage"),
 ]

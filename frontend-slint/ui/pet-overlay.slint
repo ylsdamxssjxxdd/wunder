@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { I18n } from "i18n.slint";
 
 // Linux 桌面伙伴浮窗，由 src/pet_window/linux.rs 驱动（src/pet_window/win32.rs
 // 的对等物）。X11 上窗口以 32 位 ARGB 视觉创建，软件渲染器把 alpha 写入
@@ -36,8 +37,8 @@ export component PetOverlay inherits Window {
         height: root.height;
 
         Menu {
-            MenuItem { title: "打开会话"; activated => { root.menu-open-chat(); } }
-            MenuItem { title: "隐藏"; activated => { root.menu-hide(); } }
+            MenuItem { title: I18n.pet_menu_open_chat; activated => { root.menu-open-chat(); } }
+            MenuItem { title: I18n.pet_menu_hide; activated => { root.menu-hide(); } }
         }
 
         body := VerticalLayout {
