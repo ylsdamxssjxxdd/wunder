@@ -37,7 +37,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | 定时任务 | `schedule_task` | 创建与管理定时 / 周期任务 | 系统与记忆 |
 | `goal` | `action=get|create|edit|pause|resume|complete|blocked` | Goal-state tool, auto-injected per session by the runtime; not selectable on desktop | 目标态 |
 
-`网页搜索` and `ptc` are retained in code but currently **temporarily delisted** — invisible to the model and to the user (see `default_tool_profile.rs`); they are not removed. Removed entirely: channel tools, user-world tools, `a2a_*` tools, `final_response`, `a2ui`, LSP query tools.
+`网页搜索` is retained in code but currently **temporarily delisted** — invisible to the model and to the user (see `default_tool_profile.rs`). Removed entirely: `ptc`, channel tools, user-world tools, `a2a_*` tools, `final_response`, `a2ui`, LSP query tools.
 
 ## Situations and tools
 

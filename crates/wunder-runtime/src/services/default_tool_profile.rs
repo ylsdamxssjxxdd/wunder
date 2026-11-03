@@ -166,9 +166,9 @@ pub fn is_desktop_hidden_tool_name(name: &str) -> bool {
     !cleaned.is_empty() && DESKTOP_HIDDEN_TOOL_NAMES.contains(&cleaned)
 }
 
-/// 产品侧临时下架的工具：暂不对智能体与用户可见（网页搜索与 ptc）。
+/// 产品侧临时下架的工具：暂不对智能体与用户可见（网页搜索）。
 /// 属临时隐藏，恢复时移除对应条目即可。按规范名匹配，别名先归一化。
-const TEMPORARILY_HIDDEN_TOOL_NAMES: &[&str] = &["网页搜索", "ptc"];
+const TEMPORARILY_HIDDEN_TOOL_NAMES: &[&str] = &["网页搜索"];
 
 /// 判断工具是否处于"临时隐藏"状态：无论配置是否启用，智能体与用户都不可见。
 pub fn is_temporarily_hidden_tool_name(name: &str) -> bool {
@@ -195,7 +195,6 @@ mod tests {
                 "sample_mcp@tool",
                 "sample_skill",
                 "sample_knowledge",
-                "ptc",
                 "goal",
             ]
             .into_iter()
@@ -218,7 +217,6 @@ mod tests {
             "sample_mcp@tool",
             "sample_skill",
             "sample_knowledge",
-            "ptc",
             "goal",
         ] {
             assert!(!selected.iter().any(|selected| selected == name));
@@ -280,8 +278,8 @@ mod tests {
     }
 
     #[test]
-    fn temporarily_hidden_tools_cover_web_search_and_ptc() {
-        for name in ["网页搜索", "web_search", "ptc", "programmatic_tool_call"] {
+    fn temporarily_hidden_tools_cover_web_search() {
+        for name in ["网页搜索", "web_search"] {
             assert!(is_temporarily_hidden_tool_name(name));
         }
         assert!(!is_temporarily_hidden_tool_name("读取文件"));

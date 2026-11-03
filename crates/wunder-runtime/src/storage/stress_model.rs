@@ -332,11 +332,6 @@ const TOOL_PROFILES: &[ToolProfile] = &[
         cost_ms: (80, 900),
     },
     ToolProfile {
-        name: "ptc",
-        function_name: "execute_ptc",
-        cost_ms: (200, 6_000),
-    },
-    ToolProfile {
         name: "列出文件",
         function_name: "list_files",
         cost_ms: (10, 300),
@@ -625,7 +620,6 @@ pub(crate) fn build_tool_args(rng: &mut Rng, profile: &ToolProfile, turn_index: 
         "命令会话" => {
             json!({ "action": rng.pick_str(&["create", "exec", "close"]), "command": pick_command(rng) })
         }
-        "ptc" => json!({ "code": "return items.filter(i => i.ok).length;" }),
         "列出文件" => json!({ "path": ".", "depth": rng.int(1, 3) }),
         "文件名匹配" => json!({ "pattern": "**/*.rs", "path": "src" }),
         "搜索内容" => {
@@ -699,7 +693,7 @@ pub(crate) fn build_tool_result(
         ]) })
     } else {
         match profile.name {
-            "执行命令" | "命令会话" | "ptc" => json!({
+            "执行命令" | "命令会话" => json!({
                 "exit_code": 0,
                 "stdout": rng.pick_str(&[
                     "Finished dev [unoptimized + debuginfo] target(s)",

@@ -58,12 +58,11 @@ fn resolve_exec_policy_tool_kind(tool_name: &str) -> Option<ExecPolicyToolKind> 
         };
     }
     let exec_tool_name = resolve_tool_name("execute_command");
-    let ptc_tool_name = resolve_tool_name("ptc");
     let write_tool_name = resolve_tool_name("write_file");
     let patch_tool_name = resolve_tool_name("apply_patch");
     let desktop_control_tool_name = resolve_tool_name("desktop_control");
 
-    if tool_name == exec_tool_name || tool_name == ptc_tool_name {
+    if tool_name == exec_tool_name {
         Some(ExecPolicyToolKind::Exec)
     } else if tool_name == write_tool_name || tool_name == patch_tool_name {
         Some(ExecPolicyToolKind::Write)

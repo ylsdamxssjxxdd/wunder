@@ -361,7 +361,7 @@ fn tool_profile(name: &str) -> ToolProfile {
         | "写入文件" | "文本编辑" | "计划面板" | "问询面板" | "技能调用" => {
             ToolProfile::Minimal
         }
-        "子智能体控制" | "ptc" => ToolProfile::Development,
+        "子智能体控制" => ToolProfile::Development,
         "网页抓取" | "网页搜索" => ToolProfile::Research,
         "读取图片" | "读图工具" | "语音生成" | "声转文" | "图像生成" | "视频生成" => {
             ToolProfile::Media
@@ -380,7 +380,7 @@ fn tool_effect(name: &str) -> ToolEffect {
         | "技能调用" | "网页抓取" | "网页搜索" | "self_status" => ToolEffect::Read,
         "goal" => ToolEffect::Mixed,
         "写入文件" | "文本编辑" | "计划面板" => ToolEffect::Write,
-        "执行命令" | "命令会话" | "ptc" => ToolEffect::Execute,
+        "执行命令" | "命令会话" => ToolEffect::Execute,
         "桌面控制" | "问询面板" => ToolEffect::Interactive,
         "browser" => ToolEffect::Interactive,
         _ => ToolEffect::Mixed,

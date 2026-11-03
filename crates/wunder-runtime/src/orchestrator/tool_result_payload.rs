@@ -1912,7 +1912,7 @@ fn project_desktop_control(data: &Value) -> Option<Value> {
 }
 
 fn project_command_success(data: &Value) -> Option<Value> {
-    let map = data.as_object()?;
+    let map = model_tool_result_data_map(data)?;
     let mut projected = Map::new();
     if let Some(session_id) = map
         .get("session_id")
@@ -1936,7 +1936,15 @@ fn project_command_success(data: &Value) -> Option<Value> {
                 .next()
                 .and_then(|row| row.as_object().cloned())
             {
-                for key in ["exit_code", "stdout", "stderr", "session_id", "truncated"] {
+                for key in [
+                    "exit_code",
+                    "stdout",
+                    "stderr",
+                    "stdout_summary",
+                    "stderr_summary",
+                    "session_id",
+                    "truncated",
+                ] {
                     if let Some(value) = row.get(key) {
                         projected.insert(key.to_string(), value.clone());
                     }
@@ -2263,6 +2271,47 @@ fn compact_subagent_message(value: &Value) -> Value {
     Value::Object(projected)
 }
 
+const COMMAND_MODEL_OUTPUT_MAX_BYTES: usize = 2 * 1024;
+
+fn project_command_stream(
+    row: &Map<String, Value>,
+    projected: &mut Map<String, Value>,
+    stream: &str,
+) -> bool {
+    let Some(text) = row.get(stream).and_then(Value::as_str) else {
+        return false;
+    };
+    if text.is_empty() {
+        return false;
+    }
+    let stream_meta = row
+        .get("output_meta")
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get(stream))
+        .and_then(Value::as_object);
+    let source_truncated = stream_meta
+        .and_then(|meta| meta.get("truncated"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if text.len() <= COMMAND_MODEL_OUTPUT_MAX_BYTES && !source_truncated {
+        projected.insert(stream.to_string(), Value::String(text.to_string()));
+        return false;
+    }
+    let total_bytes = stream_meta
+        .and_then(|meta| meta.get("total_bytes"))
+        .and_then(Value::as_u64)
+        .unwrap_or(text.len() as u64);
+    projected.insert(
+        format!("{stream}_summary"),
+        json!({
+            "bytes": total_bytes,
+            "captured_lines": text.lines().count(),
+            "omitted": true,
+        }),
+    );
+    true
+}
+
 fn project_command_row(row: &Map<String, Value>) -> Value {
     let mut projected = Map::new();
     copy_first_present(
@@ -2277,7 +2326,9 @@ fn project_command_row(row: &Map<String, Value>) -> Value {
         row,
         &["session_id", "command_session_id"],
     );
-    for key in ["stdout", "stderr", "truncated", "status"] {
+    let stdout_omitted = project_command_stream(row, &mut projected, "stdout");
+    let stderr_omitted = project_command_stream(row, &mut projected, "stderr");
+    for key in ["truncated", "status"] {
         if let Some(value) = row
             .get(key)
             .filter(|value| !value.is_null() && !is_empty_string(value))
@@ -2285,15 +2336,24 @@ fn project_command_row(row: &Map<String, Value>) -> Value {
             projected.insert(key.to_string(), value.clone());
         }
     }
+    let source_truncated = row
+        .get("output_meta")
+        .and_then(|meta| meta.get("truncated"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if stdout_omitted || stderr_omitted || source_truncated {
+        projected.insert("truncated".to_string(), Value::Bool(true));
+    }
     Value::Object(projected)
 }
 
 fn project_file_write_success(data: &Value) -> Option<Value> {
-    let map = data.as_object()?;
+    let map = model_tool_result_data_map(data)?;
     let mut projected = pick_non_empty_fields(
         map,
         &[
             "path",
+            "bytes",
             "changed",
             "dry_run",
             "added_lines",
@@ -2587,7 +2647,7 @@ fn strip_compact_payload_noise(value: &mut Value, tool_name: &str) {
     let canonical = crate::services::tools::resolve_tool_name(tool_name);
     if !matches!(
         canonical.as_str(),
-        "读取文件" | "搜索内容" | "列出文件" | "写入文件" | "执行命令" | "ptc"
+        "读取文件" | "搜索内容" | "列出文件" | "写入文件" | "执行命令"
     ) {
         return;
     }
@@ -2838,6 +2898,11 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
         "read_output_omitted_bytes",
         "continuation_required",
         "continuation_hint",
+        "read_lines",
+        "total_lines",
+        "returned_bytes",
+        "output_budget_hit",
+        "output_budget_omitted_bytes",
     ] {
         if let Some(value) = map.get(key).filter(|value| !value.is_null()) {
             compacted.insert(key.to_string(), value.clone());
@@ -2856,8 +2921,22 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
                 continue;
             };
             let mut item = Map::new();
-            for key in ["path", "read_lines", "total_lines", "complete"] {
-                if let Some(value) = file_obj.get(key) {
+            for key in [
+                "path",
+                "mode",
+                "effective_ranges",
+                "pattern",
+                "match_count",
+                "matches_truncated",
+                "outline_entries",
+                "outline_truncated",
+                "read_lines",
+                "total_lines",
+                "request_satisfied",
+                "complete",
+                "truncated_by_size",
+            ] {
+                if let Some(value) = file_obj.get(key).filter(|value| !value.is_null()) {
                     item.insert(key.to_string(), value.clone());
                 }
             }

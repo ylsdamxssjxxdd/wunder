@@ -100,7 +100,7 @@ fn success_progress_fingerprint(
     let canonical = resolve_tool_name(tool_name);
     if !matches!(
         canonical.as_str(),
-        "执行命令" | "execute_command" | "ptc" | "程序化工具调用"
+        "执行命令" | "execute_command"
     ) {
         return None;
     }
@@ -430,10 +430,10 @@ mod tests {
             })),
         };
         for _ in 0..(MAX_SAME_NON_RETRYABLE_FAILURES - 1) {
-            assert!(governor.record_failure("ptc", &payload).is_none());
+            assert!(governor.record_failure("execute_command", &payload).is_none());
         }
         let stop = governor
-            .record_failure("ptc", &payload)
+            .record_failure("execute_command", &payload)
             .expect("should stop when same non-retryable failures reach the default threshold");
         assert_eq!(stop.reason, "same_non_retryable_failure");
         assert_eq!(stop.threshold, MAX_SAME_NON_RETRYABLE_FAILURES);

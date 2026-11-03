@@ -32,7 +32,6 @@ wunder 是一个**多形态的智能体工作台**：蛹（desktop）是本地 A
 - 沙盒命令流：`POST /sandboxes/execute_command_stream` 返回 NDJSON（`command_start`、`delta`、`command_exit`、`final`）；`WUNDER_SANDBOX_TIMEOUT_S` 覆盖连接、响应头与响应体读取，执行端也限制整次流的生命周期。客户端断开时取消执行并回收直接子进程与输出读取任务。
 - 沙盒重试：仅连接建立失败或命令流路由明确返回 404/405 时允许候选地址切换/非流式兼容回退；请求可能已执行后的超时、断流、非法响应或服务端错误返回 `data.error_meta.code=SANDBOX_EXECUTION_INTERRUPTED`、`retryable=false`、`outcome_unknown=true`，不自动重放。执行端总超时使用 `SANDBOX_COMMAND_TIMEOUT`。调用方应先核对工作区结果再决定是否重新执行。
 - 沙盒文件工具：存储在受控阻塞池中单次初始化，失败后短暂退避再重试；上下文按容器根、工作区根和工作区标识隔离，最多缓存 128 项，访问时回收空闲超过 300 秒的项。文件工具复用相同运行时实现，不额外启动存储写线程和 LSP 清理任务。
-- `ptc` 已移除（对智能体与用户不可见）。其历史脚本保存路径为 `ptc_temp/<invocation_id>/<filename>`，本地与沙盒一致；每次调用使用独立目录避免同名脚本覆盖，实际路径以返回的 `path` 为准，`workdir` 语义保持不变。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑：`tool_call/freeform_call` 模式会注入工具协议片段，`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
 - 智能体线程首次解析出的 `tool_call_mode` 会随线程冻结，后续轮次不会因模型配置变更在 `function_call/tool_call/freeform_call` 之间静默切换；旧线程若已有冻结 system prompt，会先从该 prompt 推断原工具模式。`function_call` 仍尊重用户显式配置，但在本地 llama.cpp 类服务中，native `tools` 可能由服务端 chat template 注入到非消息前缀位置，调试事件的 `context_cache_probe.tool_transport= native_tools` 会标记这一缓存风险。
 - 当 `tool_call_mode=freeform_call` 且模型走 OpenAI Responses API 时，服务端会把 `apply_patch` 这类语法工具下发为原生 `type=custom` 工具（携带 `format={type:grammar,syntax:lark,definition}`），普通 JSON 工具继续走 `type=function`；工具结果会按 `custom_tool_call_output/function_call_output` 回填历史，避免仅靠 XML 提示词驱动。
@@ -916,7 +915,7 @@ wunder 是一个**多形态的智能体工作台**：蛹（desktop）是本地 A
 - 说明：管理员开放工具与用户自建工具已拆分为独立区域。舰体/云端模式下管理员开放工具是否可见由管理员配置决定；用户自建 MCP/技能/知识库只要已配置就会进入对应区域，不再依赖用户侧额外“启用”开关。
 - 说明：`items[]` 是目录接口的统一能力视图：`group` 用于前端分组展示，`kind` 用于区分工具/技能；旧字段继续保留用于兼容。
 - 说明：desktop 本地模式下，`builtin_tools/admin_builtin_tools` 默认返回全部内置工具（按运行能力过滤），不再依赖 `tools.builtin.enabled` 白名单。
-- 说明：`default_agent_tool_names` 当前固定收敛为默认画像：`定时任务/记忆管理/执行命令/命令会话/列出文件/文件名匹配/搜索内容/读取文件/网页抓取/技能调用/写入文件/文本编辑`，以及默认技能 `技能创建器`；MCP/知识库默认不勾选。`最终回复`/`ptc`/`网页搜索`/`渠道工具`/`a2a观察`/`a2a等待`/`应用补丁` 已移除（其中 `应用补丁` 并入 `文本编辑`）。`execute_command` 默认阻塞返回结果，设置 `run_in_background=true` 转后台后必须使用 `命令会话` 轮询。
+- 说明：`default_agent_tool_names` 当前固定收敛为默认画像：`定时任务/记忆管理/执行命令/命令会话/列出文件/文件名匹配/搜索内容/读取文件/网页抓取/技能调用/写入文件/文本编辑`，以及默认技能 `技能创建器`；MCP/知识库默认不勾选。`最终回复`/`ptc`/`渠道工具`/`a2a观察`/`a2a等待` 已移除，`应用补丁` 并入 `文本编辑`，`网页搜索` 仍为临时下架。`execute_command` 默认阻塞返回结果，设置 `run_in_background=true` 转后台后必须使用 `命令会话` 轮询。
 
 ### 4.1.2.22 `/wunder/user_tools/shared_tools`
 

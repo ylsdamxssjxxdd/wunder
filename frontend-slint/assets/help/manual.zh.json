@@ -9110,20 +9110,6 @@
               "href": ""
             },
             {
-              "text": " 与 ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "ptc",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
               "text": " 属代码保留、当前",
               "bold": false,
               "code": false,
@@ -9152,7 +9138,21 @@
               "href": ""
             },
             {
-              "text": "），不是已移除。已彻底移除：渠道工具、用户世界工具、",
+              "text": "）。已彻底移除：",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "ptc",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "、渠道工具、用户世界工具、",
               "bold": false,
               "code": false,
               "kbd": false,

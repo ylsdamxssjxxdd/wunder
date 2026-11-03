@@ -1345,10 +1345,10 @@ mod tests {
     #[test]
     fn test_parse_tool_call_prefixed_name_without_close() {
         let content =
-            r#"<tool_call>ptc{"content":"print('ok')","filename":"demo.py","workdir":"."}</think>"#;
+            r#"<tool_call>execute_command{"content":"print('ok')","filename":"demo.py","workdir":"."}</think>"#;
         let calls = parse_tool_calls_from_text(content);
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].name, "ptc");
+        assert_eq!(calls[0].name, "execute_command");
         assert_eq!(
             calls[0].arguments.get("filename").and_then(Value::as_str),
             Some("demo.py")
@@ -1357,10 +1357,10 @@ mod tests {
 
     #[test]
     fn test_parse_tool_call_tool_field_with_tag_prefix() {
-        let content = r#"{"tool":"tool_call>ptc","args":{"filename":"demo.py"}}"#;
+        let content = r#"{"tool":"tool_call>execute_command","args":{"filename":"demo.py"}}"#;
         let calls = parse_tool_calls_from_text(content);
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].name, "ptc");
+        assert_eq!(calls[0].name, "execute_command");
         assert_eq!(
             calls[0].arguments.get("filename").and_then(Value::as_str),
             Some("demo.py")

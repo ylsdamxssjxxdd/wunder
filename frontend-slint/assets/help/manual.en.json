@@ -9222,21 +9222,7 @@
               "href": ""
             },
             {
-              "text": " and ",
-              "bold": false,
-              "code": false,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": "ptc",
-              "bold": false,
-              "code": true,
-              "kbd": false,
-              "href": ""
-            },
-            {
-              "text": " are retained in code but currently ",
+              "text": " is retained in code but currently ",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -9264,7 +9250,21 @@
               "href": ""
             },
             {
-              "text": "); they are not removed. Removed entirely: channel tools, user-world tools, ",
+              "text": "). Removed entirely: ",
+              "bold": false,
+              "code": false,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": "ptc",
+              "bold": false,
+              "code": true,
+              "kbd": false,
+              "href": ""
+            },
+            {
+              "text": ", channel tools, user-world tools, ",
               "bold": false,
               "code": false,
               "kbd": false,

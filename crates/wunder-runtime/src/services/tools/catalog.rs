@@ -562,20 +562,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             ]),
         },
         ToolSpec {
-            name: "ptc".to_string(),
-            title: None,
-            description: t("tool.spec.ptc.description"),
-            input_schema: super::schema::object(vec![
-                super::schema::string("filename")
-                    .desc(t("tool.spec.ptc.args.filename")),
-                super::schema::string("workdir")
-                    .desc(t("tool.spec.ptc.args.workdir"))
-                    .optional(),
-                super::schema::string("content")
-                    .desc(t("tool.spec.ptc.args.content")),
-            ]),
-        },
-        ToolSpec {
             name: "列出文件".to_string(),
             title: None,
             description: t("tool.spec.list.description"),
@@ -680,19 +666,71 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 super::schema::integer("end_line")
                     .desc(t("tool.spec.read.args.end_line"))
                     .optional(),
+                super::schema::string("mode")
+                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
+                        "读取模式：slice 默认按范围返回裸行；indentation 按 start_line 读取缩进代码块；outline 只返回 Markdown 标题和常见代码声明及源行号，用于先定位再读取。"
+                    } else {
+                        "Read mode: slice returns raw lines by range (default); indentation reads the indentation block at start_line; outline returns Markdown headings and common code declarations with source line numbers for targeted follow-up reads."
+                    })
+                    .enums(vec!["slice", "indentation", "outline"])
+                    .default_value(json!("slice"))
+                    .optional(),
+                super::schema::string("pattern")
+                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
+                        "仅 slice 模式：在文件内按 regex 定位并直接返回命中前后文，不能与行范围混用；默认最多 16 处命中、总计 500 行。固定字符串匹配请设 query_mode=literal。"
+                    } else {
+                        "Slice mode only: locate regex matches in this file and return their surrounding lines in one call; cannot be combined with line ranges. Returns at most 16 matches and 500 lines by default. Use query_mode=literal for fixed-string matching."
+                    })
+                    .min_len(1)
+                    .max_len(512)
+                    .optional(),
+                super::schema::string("query_mode")
+                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
+                        "pattern 的匹配方式：regex（默认）或 literal。"
+                    } else {
+                        "Matching mode for pattern: regex (default) or literal."
+                    })
+                    .enums(vec!["regex", "literal"])
+                    .optional(),
+                super::schema::boolean("case_sensitive")
+                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
+                        "pattern 是否区分大小写，默认 false。"
+                    } else {
+                        "Whether pattern matching is case-sensitive; default false."
+                    })
+                    .optional(),
+                super::schema::integer("context")
+                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
+                        "pattern 每处命中前后各返回多少行，默认 3，范围 0..500；重叠上下文自动合并，单次总计最多 500 行。"
+                    } else {
+                        "Lines returned before and after each pattern match, default 3, range 0..500; overlapping context is merged and capped at 500 lines per call."
+                    })
+                    .min(0)
+                    .max(500)
+                    .optional(),
+                super::schema::integer("output_budget_bytes")
+                    .desc(if language.to_ascii_lowercase().starts_with("zh") {
+                        "普通文件单次返回字节预算，默认 16384，范围 1024..2097152；超出时明确标记截断，请用 pattern 或更窄范围续读。"
+                    } else {
+                        "Byte budget for ordinary file output, default 16384, range 1024..2097152. Overflow is explicitly marked; continue with pattern or a narrower range."
+                    })
+                    .min(1024)
+                    .max(2097152)
+                    .default_value(json!(16384))
+                    .optional(),
                 super::schema::integer("offset")
                     .desc(if language.to_ascii_lowercase().starts_with("zh") {
-                        "仅用于 tool-result: 句柄：从 0 开始的 UTF-8 字节偏移，默认 0；续读使用返回的 next_offset。"
+                        "普通文件为从 1 开始的行偏移；tool-result: 句柄为从 0 开始的 UTF-8 字节偏移，续读使用 next_offset。"
                     } else {
-                        "For tool-result: handles only: zero-based UTF-8 byte offset, default 0. Use the returned next_offset to continue."
+                        "For files, a 1-based line offset; for tool-result: handles, a zero-based UTF-8 byte offset. Continue saved results with next_offset."
                     })
                     .min(0)
                     .optional(),
                 super::schema::integer("limit")
                     .desc(if language.to_ascii_lowercase().starts_with("zh") {
-                        "仅用于 tool-result: 句柄：本次返回内容的字节预算，默认 8192，范围 1..16384。"
+                        "普通文件为返回行数，默认且最大 500；tool-result: 句柄为字节预算，默认 8192、最大 16384。"
                     } else {
-                        "For tool-result: handles only: byte budget for returned content, default 8192, range 1..16384."
+                        "For files, the line count (default and maximum 500); for tool-result: handles, the byte budget (default 8192, maximum 16384)."
                     })
                     .min(1)
                     .max(16384)
@@ -1252,7 +1290,6 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("execute_command".to_string(), "执行命令".to_string());
     map.insert("command_session".to_string(), "命令会话".to_string());
     map.insert("write_command_stdin".to_string(), "命令会话".to_string());
-    map.insert("programmatic_tool_call".to_string(), "ptc".to_string());
     map.insert("list_files".to_string(), "列出文件".to_string());
     map.insert("glob".to_string(), "文件名匹配".to_string());
     map.insert("search_content".to_string(), "搜索内容".to_string());
@@ -1400,7 +1437,7 @@ fn is_local_mode(config: &Config) -> bool {
 }
 
 fn runtime_builtin_tool_allowed(config: &Config, canonical: &str) -> bool {
-    // 临时下架（网页搜索 / ptc）：无论配置是否启用，都不对智能体与用户暴露。
+    // 临时下架（网页搜索）：无论配置是否启用，都不对智能体与用户暴露。
     if crate::services::default_tool_profile::is_temporarily_hidden_tool_name(canonical) {
         return false;
     }
@@ -2695,22 +2732,22 @@ mod tests {
             .find(|spec| spec.name == "读取文件")
             .expect("read_file spec");
         assert!(spec.description.contains("plain-text"));
-        assert!(spec.description.contains("cat"));
+        assert!(spec.description.contains("500 raw lines"));
         assert!(spec.description.contains("read_image"));
-        assert!(spec.description.contains(">>> path"));
-        assert!(spec.description.contains("apply_patch"));
+        assert!(spec.description.contains("pattern"));
         let path_description = spec.input_schema["properties"]["path"]["description"]
             .as_str()
             .expect("path description");
         assert!(path_description.contains("plain-text"));
         assert!(path_description.contains("read_image"));
-        assert!(path_description.contains(">>> path"));
-        assert!(path_description.contains("N: "));
+        assert!(path_description.contains("raw file lines"));
         assert!(spec.input_schema["properties"]["start_line"].is_object());
         assert!(spec.input_schema["properties"]["end_line"].is_object());
         assert!(spec.input_schema["properties"]["files"].is_null());
         assert!(spec.input_schema["properties"]["line_ranges"].is_null());
-        assert!(spec.input_schema["properties"]["mode"].is_null());
+        assert!(spec.input_schema["properties"]["mode"].is_object());
+        assert!(spec.input_schema["properties"]["pattern"].is_object());
+        assert!(spec.input_schema["properties"]["output_budget_bytes"].is_object());
         assert!(spec.input_schema["properties"]["indentation"].is_null());
         assert!(spec.input_schema["properties"]["file_path"].is_null());
         assert!(spec.input_schema["properties"]["dry_run"].is_null());
@@ -2869,7 +2906,7 @@ mod tests {
             .find(|spec| spec.name == "读取文件")
             .expect("read_file spec");
         assert!(spec.description.contains("纯文本"));
-        assert!(spec.description.contains("cat"));
+        assert!(spec.description.contains("500 行裸文本"));
         assert!(spec.description.contains("read_image"));
         let path_description = spec.input_schema["properties"]["path"]["description"]
             .as_str()
@@ -2880,7 +2917,8 @@ mod tests {
         assert!(spec.input_schema["properties"]["end_line"].is_object());
         assert!(spec.input_schema["properties"]["files"].is_null());
         assert!(spec.input_schema["properties"]["line_ranges"].is_null());
-        assert!(spec.input_schema["properties"]["mode"].is_null());
+        assert!(spec.input_schema["properties"]["mode"].is_object());
+        assert!(spec.input_schema["properties"]["pattern"].is_object());
         assert!(spec.input_schema["properties"]["indentation"].is_null());
         assert!(spec.input_schema["properties"]["file_path"].is_null());
         assert!(spec.input_schema["properties"]["dry_run"].is_null());
@@ -3270,21 +3308,20 @@ mod tests {
         config.tools.builtin.enabled = vec![
             "网页搜索".to_string(),
             "web_search".to_string(),
-            "ptc".to_string(),
             "读取文件".to_string(),
         ];
         config.tools.web.search.enabled = true;
         config.tools.web.search.provider = "firecrawl".to_string();
 
         let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
-        for hidden in ["网页搜索", "web_search", "ptc"] {
+        for hidden in ["网页搜索", "web_search"] {
             assert!(!available.contains(hidden), "{hidden} should stay hidden");
         }
         assert!(available.contains("读取文件"));
 
         let enabled =
             collect_enabled_tool_names_for_catalog(&config, &SkillRegistry::default(), None);
-        for hidden in ["网页搜索", "web_search", "ptc"] {
+        for hidden in ["网页搜索", "web_search"] {
             assert!(
                 !enabled.contains(hidden),
                 "{hidden} should stay hidden in catalog"

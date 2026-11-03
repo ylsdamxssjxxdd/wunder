@@ -32,10 +32,10 @@ mod memory_manager_tool;
 mod multimodal_generation_tool;
 mod panel_tools;
 pub(crate) mod pipeline;
-pub(crate) mod ptc_script;
 mod read_file_guard;
 mod read_image_tool;
 mod read_indentation;
+mod read_outline;
 pub(crate) mod registry;
 mod schedule_task_tool;
 mod schema;
@@ -143,9 +143,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const MAX_READ_BYTES: usize = 1024 * 1024;
-const MAX_READ_LINES: usize = 2000;
+const MAX_READ_LINES: usize = 500;
 const DEFAULT_START_LINE_WINDOW: usize = 200;
 const MAX_READ_BUDGET_FILES: usize = 20;
+const DEFAULT_READ_OUTPUT_BUDGET_BYTES: usize = 16 * 1024;
 const MIN_READ_OUTPUT_BUDGET_BYTES: usize = 1024;
 const MAX_READ_OUTPUT_BUDGET_BYTES: usize = 2 * 1024 * 1024;
 const MAX_READ_TIME_BUDGET_MS: u64 = 10 * 60 * 1000;
@@ -157,8 +158,6 @@ const MAX_SEARCH_MATCHES: usize = 200;
 const MAX_SESSION_LIST_ITEMS: i64 = 200;
 const MAX_SESSION_HISTORY_ITEMS: i64 = 500;
 const MAX_SESSION_MESSAGE_ITEMS: i64 = 50;
-const LOCAL_PTC_TIMEOUT_S: u64 = 60;
-const LOCAL_PTC_DIR_NAME: &str = "ptc_temp";
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 
 pub(crate) fn build_model_tool_success(

@@ -406,7 +406,7 @@ pub async fn execute_tool(
     } else {
         json!({ "raw": args })
     };
-    if matches!(tool, "执行命令" | "ptc") {
+    if tool == "执行命令" {
         if let Value::Object(ref mut map) = mapped_args {
             if let Some(Value::String(workdir)) = map.get("workdir").cloned() {
                 let trimmed = workdir.trim();
@@ -807,7 +807,7 @@ fn rewrite_sandbox_paths(
         replace_paths_in_value(&mut data, container_root, public_root);
         return data;
     }
-    if tool != "ptc" && tool != "执行命令" && !is_sandbox_file_tool_name(tool) {
+    if tool != "执行命令" && !is_sandbox_file_tool_name(tool) {
         return data;
     }
     replace_paths_in_value(&mut data, container_root, public_root);

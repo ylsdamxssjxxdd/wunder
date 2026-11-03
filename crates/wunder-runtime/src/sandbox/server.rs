@@ -35,7 +35,7 @@ use crate::services::tools::command_options::{
 };
 use crate::services::tools::command_output_guard::{
     derive_capture_policies, render_command_output, CommandOutputCapture, CommandOutputCaptureMeta,
-    CommandOutputCollector, CommandOutputPolicy, STDERR_CAPTURE_POLICY, STDOUT_CAPTURE_POLICY,
+    CommandOutputCollector, CommandOutputPolicy,
 };
 use crate::services::tools::tool_error::{
     build_execute_command_failure_data, build_execute_command_failure_message, with_error_meta,
@@ -50,8 +50,6 @@ mod file_runtime;
 use file_runtime::execute_builtin_file_tool;
 
 const DEFAULT_COMMAND_TIMEOUT_S: f64 = 120.0;
-const PTC_TIMEOUT_S: u64 = 60;
-const PTC_DIR_NAME: &str = "ptc_temp";
 const RULES_CACHE_CAPACITY: usize = 512;
 const RULES_CACHE_TTL: Duration = Duration::from_secs(600);
 const STREAM_READ_CHUNK_SIZE: usize = 4096;
@@ -957,7 +955,6 @@ async fn handle_execute_tool(request: SandboxToolRequest) -> SandboxToolResponse
 
     let result = match request.tool.as_str() {
         "执行命令" => execute_command(&context, &args).await,
-        "ptc" => execute_ptc(&context, &args).await,
         tool if super::is_sandbox_file_tool_name(tool) => {
             execute_builtin_file_tool(&request, &context, &args).await
         }
@@ -1690,147 +1687,6 @@ async fn execute_command_streaming(
     }
 }
 
-async fn execute_ptc(context: &SandboxContext, args: &Value) -> ToolResult {
-    let args = recover_tool_args_value(args);
-    let filename = args
-        .get("filename")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    let workdir = args
-        .get("workdir")
-        .and_then(Value::as_str)
-        .unwrap_or(".")
-        .trim()
-        .to_string();
-    let content = args.get("content").and_then(Value::as_str).unwrap_or("");
-
-    if filename.is_empty() {
-        return ToolResult {
-            ok: false,
-            data: json!({}),
-            error: i18n::t("tool.ptc.filename_required"),
-        };
-    }
-    if content.trim().is_empty() {
-        return ToolResult {
-            ok: false,
-            data: json!({}),
-            error: i18n::t("tool.ptc.content_required"),
-        };
-    }
-
-    let mut script_name = PathBuf::from(&filename);
-    if script_name.file_name().and_then(|name| name.to_str()) != Some(&filename) {
-        return ToolResult {
-            ok: false,
-            data: json!({}),
-            error: i18n::t("tool.ptc.filename_invalid"),
-        };
-    }
-    if script_name.extension().is_none() {
-        script_name.set_extension("py");
-    }
-    if script_name
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_lowercase())
-        != Some("py".to_string())
-    {
-        return ToolResult {
-            ok: false,
-            data: json!({}),
-            error: i18n::t("tool.ptc.ext_invalid"),
-        };
-    }
-
-    let workdir_path = match resolve_path(context, &workdir) {
-        Ok(path) => path,
-        Err(error) => {
-            return ToolResult {
-                ok: false,
-                data: json!({}),
-                error,
-            };
-        }
-    };
-    let ptc_root = match resolve_path(context, PTC_DIR_NAME) {
-        Ok(path) => path,
-        Err(error) => {
-            return ToolResult {
-                ok: false,
-                data: json!({}),
-                error,
-            };
-        }
-    };
-
-    if let Err(err) = tokio::fs::create_dir_all(&workdir_path).await {
-        return ToolResult {
-            ok: false,
-            data: json!({}),
-            error: i18n::t_with_params(
-                "tool.ptc.exec_error",
-                &std::collections::HashMap::from([("detail".to_string(), err.to_string())]),
-            ),
-        };
-    }
-    let script_path =
-        match crate::services::tools::ptc_script::save_script(&ptc_root, &script_name, content)
-            .await
-        {
-            Ok(path) => path,
-            Err(err) => {
-                return ToolResult {
-                    ok: false,
-                    data: json!({}),
-                    error: i18n::t_with_params(
-                        "tool.ptc.exec_error",
-                        &HashMap::from([("detail".to_string(), err.to_string())]),
-                    ),
-                }
-            }
-        };
-
-    let output = run_python_script(&script_path, &workdir_path, PTC_TIMEOUT_S).await;
-    let output = match output {
-        Ok(output) => output,
-        Err(detail) => {
-            return ToolResult {
-                ok: false,
-                data: json!({}),
-                error: i18n::t_with_params(
-                    "tool.ptc.exec_error",
-                    &std::collections::HashMap::from([("detail".to_string(), detail)]),
-                ),
-            };
-        }
-    };
-
-    let data = json!({
-        "path": script_path.to_string_lossy().to_string(),
-        "workdir": workdir_path.to_string_lossy().to_string(),
-        "returncode": output.returncode,
-        "stdout": output.stdout,
-        "stderr": output.stderr,
-    });
-
-    if output.returncode != 0 {
-        return ToolResult {
-            ok: false,
-            data,
-            error: i18n::t("tool.ptc.exec_failed"),
-        };
-    }
-
-    ToolResult {
-        ok: true,
-        data,
-        error: String::new(),
-    }
-}
-
 struct CommandOutput {
     returncode: i32,
     stdout: String,
@@ -1986,37 +1842,6 @@ fn apply_streaming_command_env(cmd: &mut Command) {
     cmd.env("PYTHONUNBUFFERED", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONLEGACYWINDOWSSTDIO", "utf-8");
-}
-
-async fn run_python_script(
-    script_path: &Path,
-    workdir: &Path,
-    timeout_s: u64,
-) -> Result<CommandOutput, String> {
-    let runtime = python_runtime::resolve_python_runtime();
-    let python_bin = runtime
-        .as_ref()
-        .map(|value| value.bin.to_string_lossy().to_string())
-        .unwrap_or_else(|| "python3".to_string());
-    let mut cmd = Command::new(python_bin);
-    cmd.arg(script_path);
-    cmd.current_dir(workdir);
-    cmd.env("PYTHONIOENCODING", "utf-8");
-    if let Some(runtime) = runtime.as_ref() {
-        python_runtime::apply_python_env(&mut cmd, runtime);
-    } else {
-        python_runtime::apply_system_python_env_if_configured(&mut cmd);
-    }
-    command_utils::apply_platform_spawn_options(&mut cmd);
-    run_command_output(
-        cmd,
-        timeout_s as f64,
-        STDOUT_CAPTURE_POLICY,
-        STDERR_CAPTURE_POLICY,
-        None,
-    )
-    .await
-    .map_err(|err| err.detail)
 }
 
 async fn run_command_output(
