@@ -79,6 +79,21 @@ ARM64 剖面同日未在 ARM 机器上重跑，见文末边界。
   `PackCompression` 与 `builders/pack.ps1` 默认都是它）：同一份输入在套件镜像里 38.7 秒
   （CPU 3m54s，多块线程）组出 335,619,418 字节；此前 CI 与 GitHub 工作流里硬写的 `lzma2/fast`
   产物是 403,226,495 字节（大 67 MB）且与项目常规档不一致，两处都已改回。
+- **Win7 运行库依赖回归**：离线交叉的 win7 产物曾导入 `libwinpthread-1.dll`，在 Win7 真机上报
+  「缺少 libwinpthread-1.dll」，而开发机自己编的没有这问题（winlibs 是 win32 线程模型）。portable MinGW
+  是 `7.3-posix`，裸 `-lwinpthread` 解析到 `libwinpthread.dll.a`。修在 SDK 的
+  `i686-w64-mingw32-rust-gcc` 包装器（rcho 侧的生成器 `win32_mingw_tool.sh` 与已安装副本同改）：
+  链接行末尾用 `-Wl,--start-group -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic -lkernel32 -luuid -ladvapi32
+  -lmoldname -lmingwex -lmsvcrt -Wl,--end-group` 静态链入并带上它的提供者——只在 RUSTFLAGS 里放
+  `-Wl,-Bstatic -lwinpthread` 会因为提供者已扫过而报一堆 `undefined reference to '_imp__*'`。
+  两套 SDK 归档随之重打（`rust-builder/offline-sdk.tar.gz` 校验和已更新）。
+  门禁也补死：四个 win7 builder（两仓库 × 两宿主）的 PE 导入检查现在拒绝
+  `libwinpthread*` / `libgcc_s*` / `libstdc++*`，并把命中的行打进失败信息。
+  实测（`--network none`）：rcho win7 断网重编 2 分 35 秒通过，导入表只剩 Win7 自带 DLL
+  （msvcrt/kernel32/user32/…，winpthread 消失）；wunder win7 全量 13 分 45 秒通过，
+  桌面与 CLI 两个 PE 的运行库 DLL 残留计数为 0。
+- 顺带修的一处「只有离线产物不同」：`crates/wunder-cli/build.rs` 只找 `windres(.exe)`，
+  而离线包只提供三元组前缀名，导致 CI 出的 CLI 没有 `.rsrc`（图标没嵌进去）；现在两种命名都试。
 
 ## ARM64 剖面重导出（2026-11-03）
 

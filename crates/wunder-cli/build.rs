@@ -58,21 +58,26 @@ fn embed_windows_icon() {
 }
 
 fn find_windres(target: &str) -> Option<PathBuf> {
-    let arch_override = if target.contains("i686") {
-        "WUNDER_WIN7_IA32_MINGW_BIN"
+    let (arch_override, prefix) = if target.contains("i686") {
+        ("WUNDER_WIN7_IA32_MINGW_BIN", "i686-w64-mingw32")
     } else {
-        "WUNDER_WIN7_X64_MINGW_BIN"
+        ("WUNDER_WIN7_X64_MINGW_BIN", "x86_64-w64-mingw32")
     };
+    // 开发机上的 MinGW 直接叫 windres(.exe)，离线交叉的 portable 包只暴露三元组前缀名。
+    let names = [
+        format!("{prefix}-windres.exe"),
+        format!("{prefix}-windres"),
+        "windres.exe".to_string(),
+        "windres".to_string(),
+    ];
     let mut candidates = Vec::new();
     for variable in [arch_override, "WUNDER_WIN7_MINGW_BIN"] {
         if let Some(bin) = std::env::var_os(variable) {
             let bin = Path::new(&bin);
-            candidates.push(bin.join("windres.exe"));
-            candidates.push(bin.join("windres"));
+            candidates.extend(names.iter().map(|name| bin.join(name)));
         }
     }
-    candidates.push(PathBuf::from("windres.exe"));
-    candidates.push(PathBuf::from("windres"));
+    candidates.extend(names.iter().map(PathBuf::from));
 
     candidates.into_iter().find(|candidate| {
         Command::new(candidate)

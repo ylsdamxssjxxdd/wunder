@@ -40,7 +40,7 @@ done
 exec i686-w64-mingw32-gcc "${args[@]}" \
   /sdk/offline/mingw-i686-windows-gnu/rust-target/lib/libgcc_eh.a \
   /sdk/offline/mingw-i686-windows-gnu/rust-target/lib/libgcc.a \
-  -lwinpthread
+  -Wl,--start-group -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic -lkernel32 -luuid -ladvapi32 -lmoldname -lmingwex -lmsvcrt -Wl,--end-group
 EOF
 chmod +x rust-gcc
 cat > cargo-home/config.toml <<EOF
