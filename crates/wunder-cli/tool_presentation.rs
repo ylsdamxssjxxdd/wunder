@@ -393,7 +393,6 @@ fn classify(name: &str) -> Option<ToolPresentation> {
         // Processes and the machine.
         CANONICAL_COMMAND => call(ToolAccess::Execute, "运行", "Ran"),
         CANONICAL_COMMAND_SESSION => call(ToolAccess::Execute, "命令会话", "Command session"),
-        "ptc" => call(ToolAccess::Execute, "脚本调用", "Scripted call"),
         // Browser: the aggregate entry and its one model-facing `browser` action tool.
         other if is_browser_group_name(other) || is_browser_tool_name(other) => {
             call(ToolAccess::Execute, "浏览网页", "Browse")
@@ -491,13 +490,6 @@ mod tests {
             ToolAccess::Execute,
             "命令会话",
             "Command session",
-            false,
-        ),
-        (
-            "ptc",
-            ToolAccess::Execute,
-            "脚本调用",
-            "Scripted call",
             false,
         ),
         ("浏览器", ToolAccess::Execute, "浏览网页", "Browse", false),
@@ -652,7 +644,6 @@ mod tests {
             ("write_file", "写入文件"),
             ("execute_command", "执行命令"),
             ("command_session", "命令会话"),
-            ("programmatic_tool_call", "ptc"),
             ("skill_call", "技能调用"),
             ("subagent_control", "子智能体控制"),
             ("thread_control", "会话线程控制"),

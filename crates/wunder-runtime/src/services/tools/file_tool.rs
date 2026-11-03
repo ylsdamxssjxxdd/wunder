@@ -1,19 +1,14 @@
-use super::line_diff::{
-    diff_added_file, diff_replaced, diff_source_too_large, insert_diff_fields, LineDiff,
-    DIFF_UNAVAILABLE_BINARY, DIFF_UNAVAILABLE_OVERSIZE, DIFF_UNAVAILABLE_UNREADABLE,
-    MAX_DIFF_SOURCE_BYTES,
-};
 use super::{
     build_model_tool_success, build_model_tool_success_with_hint, collect_allow_roots,
     collect_read_roots,
     command_options::parse_dry_run,
-    execute_in_sandbox, read_file_guard, read_image_tool, read_indentation,
+    execute_in_sandbox, read_file_guard, read_image_tool, read_indentation, read_outline,
     recover_tool_args_value, resolve_tool_path, roots_allow_any_path,
     tool_error::{build_failed_tool_result, ToolErrorMeta},
     touch_lsp_file, ToolContext, DEFAULT_LIST_DEPTH, DEFAULT_LIST_PAGE_LIMIT,
-    DEFAULT_START_LINE_WINDOW, MAX_LIST_ITEMS, MAX_RANGE_SPAN, MAX_READ_BUDGET_FILES,
-    MAX_READ_BYTES, MAX_READ_LINES, MAX_READ_OUTPUT_BUDGET_BYTES, MAX_READ_TIME_BUDGET_MS,
-    MIN_READ_OUTPUT_BUDGET_BYTES,
+    DEFAULT_READ_OUTPUT_BUDGET_BYTES, DEFAULT_START_LINE_WINDOW, MAX_LIST_ITEMS, MAX_RANGE_SPAN,
+    MAX_READ_BUDGET_FILES, MAX_READ_BYTES, MAX_READ_LINES, MAX_READ_OUTPUT_BUDGET_BYTES,
+    MAX_READ_TIME_BUDGET_MS, MIN_READ_OUTPUT_BUDGET_BYTES,
 };
 use crate::core::atomic_write::atomic_write_text;
 use crate::core::blocking;
@@ -24,9 +19,7 @@ use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use walkdir::WalkDir;
 pub(crate) async fn list_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -243,19 +236,34 @@ pub(crate) struct ReadFileSpec {
     pub(crate) used_default_range: bool,
     pub(crate) mode: ReadFileMode,
     pub(crate) indentation: read_indentation::IndentationReadOptions,
+    pub(crate) pattern: Option<String>,
+    pub(crate) pattern_literal: bool,
+    pub(crate) pattern_case_sensitive: bool,
+    pub(crate) context_lines: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ReadFileMode {
     Slice,
     Indentation,
+    Outline,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct ReadBudget {
     pub(crate) time_budget_ms: Option<u64>,
     pub(crate) output_budget_bytes: Option<usize>,
     pub(crate) max_files: Option<usize>,
+}
+
+impl Default for ReadBudget {
+    fn default() -> Self {
+        Self {
+            time_budget_ms: None,
+            output_budget_bytes: Some(DEFAULT_READ_OUTPUT_BUDGET_BYTES),
+            max_files: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -372,6 +380,10 @@ pub(crate) fn parse_read_file_specs(
                 used_default_range: true,
                 mode: ReadFileMode::Slice,
                 indentation: read_indentation::IndentationReadOptions::default(),
+                pattern: None,
+                pattern_literal: false,
+                pattern_case_sensitive: false,
+                context_lines: 3,
             });
         }
     }
@@ -436,19 +448,56 @@ fn parse_read_file_spec_object(
             .get("limit")
             .and_then(parse_line_number)
             .unwrap_or(MAX_READ_LINES)
-            .max(1);
+            .clamp(1, MAX_READ_LINES);
         let end = offset.saturating_add(limit.saturating_sub(1));
         requested_ranges.push((offset, end));
         ranges.push(normalize_range(offset, end));
     }
 
-    let used_default_range = ranges.is_empty();
-    if ranges.is_empty() {
+    let mode = parse_read_mode(obj);
+    let pattern = obj
+        .get("pattern")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    if let Some(pattern) = pattern.as_deref() {
+        if pattern.len() > 512 {
+            return Err(ReadSpecParseError::invalid_args(
+                "pattern 最多 512 个 UTF-8 字节。".to_string(),
+            ));
+        }
+        if !ranges.is_empty() || mode != ReadFileMode::Slice {
+            return Err(ReadSpecParseError::invalid_args(
+                "pattern 仅用于 slice 模式，不能与行范围或 outline/indentation 模式混用。"
+                    .to_string(),
+            ));
+        }
+        let pattern_literal = obj
+            .get("query_mode")
+            .and_then(Value::as_str)
+            .is_some_and(|mode| mode.eq_ignore_ascii_case("literal"));
+        let expression = if pattern_literal {
+            regex::escape(pattern)
+        } else {
+            pattern.to_string()
+        };
+        regex::RegexBuilder::new(&expression)
+            .case_insensitive(
+                !obj.get("case_sensitive")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            )
+            .build()
+            .map_err(|error| ReadSpecParseError::invalid_args(format!("pattern 无效：{error}")))?;
+    }
+    let used_default_range =
+        ranges.is_empty() && pattern.is_none() && mode != ReadFileMode::Outline;
+    if ranges.is_empty() && pattern.is_none() && mode != ReadFileMode::Outline {
         requested_ranges.push((1, MAX_READ_LINES));
         ranges.push((1, MAX_READ_LINES));
     }
     ranges = merge_read_ranges(ranges);
-    let mode = parse_read_mode(obj);
     let mut indentation = parse_indentation_options(obj);
     if indentation.anchor_line.is_none() {
         indentation.anchor_line = ranges.first().map(|(start, _)| *start);
@@ -460,6 +509,20 @@ fn parse_read_file_spec_object(
         used_default_range,
         mode,
         indentation,
+        pattern,
+        pattern_literal: obj
+            .get("query_mode")
+            .and_then(Value::as_str)
+            .is_some_and(|mode| mode.eq_ignore_ascii_case("literal")),
+        pattern_case_sensitive: obj
+            .get("case_sensitive")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        context_lines: obj
+            .get("context")
+            .and_then(parse_line_number)
+            .unwrap_or(3)
+            .min(MAX_READ_LINES),
     }))
 }
 
@@ -472,6 +535,7 @@ fn parse_read_mode(obj: &serde_json::Map<String, Value>) -> ReadFileMode {
         .to_ascii_lowercase();
     match raw.as_str() {
         "indentation" | "indent" | "block" => ReadFileMode::Indentation,
+        "outline" | "symbols" | "structure" => ReadFileMode::Outline,
         _ => ReadFileMode::Slice,
     }
 }
@@ -479,7 +543,10 @@ fn parse_read_mode(obj: &serde_json::Map<String, Value>) -> ReadFileMode {
 fn parse_indentation_options(
     obj: &serde_json::Map<String, Value>,
 ) -> read_indentation::IndentationReadOptions {
-    let mut options = read_indentation::IndentationReadOptions::default();
+    let mut options = read_indentation::IndentationReadOptions {
+        max_lines: Some(MAX_READ_LINES),
+        ..Default::default()
+    };
     let Some(indentation) = obj.get("indentation").and_then(Value::as_object) else {
         return options;
     };
@@ -496,7 +563,11 @@ fn parse_indentation_options(
         .get("include_header")
         .and_then(Value::as_bool)
         .unwrap_or(options.include_header);
-    options.max_lines = indentation.get("max_lines").and_then(parse_line_number);
+    options.max_lines = indentation
+        .get("max_lines")
+        .and_then(parse_line_number)
+        .map(|value| value.clamp(1, MAX_READ_LINES))
+        .or(Some(MAX_READ_LINES));
     options
 }
 
@@ -514,7 +585,8 @@ pub(crate) fn parse_read_budget(args: &Value) -> ReadBudget {
         .and_then(|value| value.get("output_budget_bytes"))
         .or_else(|| obj.get("output_budget_bytes"))
         .and_then(parse_optional_positive_usize)
-        .map(|value| value.clamp(MIN_READ_OUTPUT_BUDGET_BYTES, MAX_READ_OUTPUT_BUDGET_BYTES));
+        .map(|value| value.clamp(MIN_READ_OUTPUT_BUDGET_BYTES, MAX_READ_OUTPUT_BUDGET_BYTES))
+        .or(Some(DEFAULT_READ_OUTPUT_BUDGET_BYTES));
     let max_files = budget_obj
         .and_then(|value| value.get("max_files"))
         .or_else(|| obj.get("max_files"))
@@ -679,8 +751,14 @@ fn can_merge_read_specs(left: &ReadFileSpec, right: &ReadFileSpec) -> bool {
     left.path == right.path
         && left.mode == right.mode
         && match left.mode {
-            ReadFileMode::Slice => true,
+            ReadFileMode::Slice => {
+                left.pattern == right.pattern
+                    && left.pattern_literal == right.pattern_literal
+                    && left.pattern_case_sensitive == right.pattern_case_sensitive
+                    && left.context_lines == right.context_lines
+            }
             ReadFileMode::Indentation => left.indentation == right.indentation,
+            ReadFileMode::Outline => true,
         }
 }
 
@@ -765,6 +843,134 @@ fn slice_request_satisfied(ranges: &[(usize, usize)], total_lines: usize) -> boo
         .all(|(start, end)| *start <= total_lines && *end <= total_lines)
 }
 
+fn pattern_read_ranges(
+    lines: &[&str],
+    spec: &ReadFileSpec,
+) -> Result<(Vec<(usize, usize)>, usize, bool)> {
+    let Some(pattern) = spec.pattern.as_deref() else {
+        return Ok((spec.ranges.clone(), 0, false));
+    };
+    let expression = if spec.pattern_literal {
+        regex::escape(pattern)
+    } else {
+        pattern.to_string()
+    };
+    let matcher = regex::RegexBuilder::new(&expression)
+        .case_insensitive(!spec.pattern_case_sensitive)
+        .build()?;
+    const MAX_PATTERN_MATCHES: usize = 16;
+    let mut match_count = 0usize;
+    let mut ranges = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if !matcher.is_match(line) {
+            continue;
+        }
+        match_count += 1;
+        if ranges.len() < MAX_PATTERN_MATCHES {
+            let line = index + 1;
+            ranges.push((
+                line.saturating_sub(spec.context_lines).max(1),
+                line.saturating_add(spec.context_lines).min(lines.len()),
+            ));
+        }
+    }
+    ranges = merge_read_ranges(ranges);
+    let uncapped = ranges.clone();
+    let mut remaining = MAX_READ_LINES;
+    let mut capped = Vec::new();
+    for (start, end) in ranges {
+        if remaining == 0 {
+            break;
+        }
+        let span = end.saturating_sub(start).saturating_add(1);
+        let kept_end = if span > remaining {
+            start.saturating_add(remaining).saturating_sub(1)
+        } else {
+            end
+        };
+        capped.push((start, kept_end));
+        remaining = remaining.saturating_sub(kept_end.saturating_sub(start).saturating_add(1));
+    }
+    let matches_truncated = match_count > MAX_PATTERN_MATCHES || capped != uncapped;
+    Ok((capped, match_count, matches_truncated))
+}
+
+fn cap_ranges_by_bytes(
+    lines: &[&str],
+    ranges: &[(usize, usize)],
+    budget: Option<usize>,
+) -> (Vec<(usize, usize)>, usize) {
+    let Some(budget) = budget else {
+        return (ranges.to_vec(), 0);
+    };
+    let total = ranges
+        .iter()
+        .filter_map(|(start, end)| {
+            let last = (*end).min(lines.len());
+            (*start <= last).then_some((*start, last))
+        })
+        .flat_map(|(start, end)| start..=end)
+        .map(|line| lines[line - 1].len().saturating_add(1))
+        .sum::<usize>();
+    let mut capped = Vec::new();
+    let mut used = 0usize;
+    'ranges: for (start, end) in ranges {
+        let last = (*end).min(lines.len());
+        if *start > last {
+            continue;
+        }
+        let mut kept_end = None;
+        for line_number in *start..=last {
+            let cost = lines[line_number - 1].len().saturating_add(1);
+            if used.saturating_add(cost) > budget {
+                break;
+            }
+            used = used.saturating_add(cost);
+            kept_end = Some(line_number);
+        }
+        if let Some(kept_end) = kept_end {
+            capped.push((*start, kept_end));
+            if kept_end < last {
+                break 'ranges;
+            }
+        } else {
+            break 'ranges;
+        }
+    }
+    (capped, total.saturating_sub(used))
+}
+
+fn cap_selected_by_bytes(
+    selected: Vec<(usize, String)>,
+    budget: Option<usize>,
+    with_line_numbers: bool,
+) -> (Vec<(usize, String)>, usize) {
+    let Some(budget) = budget else {
+        return (selected, 0);
+    };
+    let cost = |(line, text): &(usize, String)| {
+        text.len()
+            .saturating_add(1)
+            .saturating_add(if with_line_numbers {
+                line.to_string().len().saturating_add(2)
+            } else {
+                0
+            })
+    };
+    let total = selected.iter().map(cost).sum::<usize>();
+    let mut used = 0usize;
+    let mut kept = Vec::new();
+    for item in selected {
+        let item_cost = cost(&item);
+        if used.saturating_add(item_cost) > budget {
+            break;
+        }
+        used = used.saturating_add(item_cost);
+        kept.push(item);
+    }
+    (kept, total.saturating_sub(used))
+}
+
 fn summary_requires_read_continuation(summary: &Value) -> bool {
     let Some(obj) = summary.as_object() else {
         return false;
@@ -773,6 +979,14 @@ fn summary_requires_read_continuation(summary: &Value) -> bool {
         .get("truncated_by_size")
         .and_then(Value::as_bool)
         .unwrap_or(false)
+        || obj
+            .get("outline_truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        || obj
+            .get("matches_truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
     {
         return true;
     }
@@ -792,6 +1006,11 @@ fn compact_read_file_summary_for_model(summary: &Value) -> Value {
         "requested_ranges": summary.get("requested_ranges").cloned().unwrap_or(Value::Null),
         "effective_ranges": summary.get("effective_ranges").cloned().unwrap_or(Value::Null),
         "used_default_range": summary.get("used_default_range").cloned().unwrap_or(Value::Null),
+        "pattern": summary.get("pattern").cloned().unwrap_or(Value::Null),
+        "match_count": summary.get("match_count").cloned().unwrap_or(Value::Null),
+        "matches_truncated": summary.get("matches_truncated").cloned().unwrap_or(Value::Null),
+        "outline_entries": summary.get("outline_entries").cloned().unwrap_or(Value::Null),
+        "outline_truncated": summary.get("outline_truncated").cloned().unwrap_or(Value::Null),
         "exists": summary.get("exists").cloned().unwrap_or(Value::Null),
         "binary": summary.get("binary").cloned().unwrap_or(Value::Null),
         "mime_type": summary.get("mime_type").cloned().unwrap_or(Value::Null),
@@ -856,6 +1075,11 @@ fn parse_saved_result_read_args(args: &Value) -> Result<Option<SavedResultReadAr
         "line_ranges",
         "mode",
         "indentation",
+        "pattern",
+        "query_mode",
+        "case_sensitive",
+        "context",
+        "output_budget_bytes",
         "dry_run",
     ] {
         if args.get(field).is_some() {
@@ -1041,6 +1265,7 @@ pub(crate) fn read_files_inner(
     let mut timeout_hit = false;
     let mut output_budget_hit = false;
     let mut output_budget_omitted_bytes = 0usize;
+    let mut remaining_output_budget = budget.output_budget_bytes;
     for spec in specs {
         if let Some(limit_ms) = budget.time_budget_ms {
             if started_at.elapsed() >= Duration::from_millis(limit_ms) {
@@ -1049,6 +1274,8 @@ pub(crate) fn read_files_inner(
             }
         }
         let raw_path = spec.path.as_str();
+        let file_output_budget = remaining_output_budget
+            .map(|remaining| remaining.saturating_sub(raw_path.len().saturating_add(16)));
         let requested_ranges = spec.requested_ranges.clone();
         let effective_ranges = spec.ranges.clone();
         let range_args_normalized = requested_ranges != effective_ranges;
@@ -1110,6 +1337,7 @@ pub(crate) fn read_files_inner(
                     Value::String(match spec.mode {
                         ReadFileMode::Slice => "slice".to_string(),
                         ReadFileMode::Indentation => "indentation".to_string(),
+                        ReadFileMode::Outline => "outline".to_string(),
                     }),
                 );
             }
@@ -1120,6 +1348,7 @@ pub(crate) fn read_files_inner(
                 match spec.mode {
                     ReadFileMode::Slice => "slice",
                     ReadFileMode::Indentation => "indentation",
+                    ReadFileMode::Outline => "outline",
                 }
             ));
             successful_reads += 1;
@@ -1169,18 +1398,41 @@ pub(crate) fn read_files_inner(
                 );
             }
         }
-        match spec.mode {
+        let rendered_output = match spec.mode {
             ReadFileMode::Slice => {
-                let (read_lines, mut complete) = summarize_read_ranges(&spec.ranges, loaded_lines);
-                let request_satisfied = slice_request_satisfied(&spec.ranges, loaded_lines);
-                let (hit_eof, range_reaches_eof) = if source_truncated_by_size {
+                let (effective_ranges, match_count, mut matches_truncated) =
+                    pattern_read_ranges(&lines, &spec)?;
+                let slice_budget = file_output_budget.map(|budget| {
+                    budget
+                        .saturating_sub(effective_ranges.len().saturating_mul(24))
+                        .saturating_sub(if source_truncated_by_size { 256 } else { 0 })
+                });
+                let (effective_ranges, omitted_bytes) =
+                    cap_ranges_by_bytes(&lines, &effective_ranges, slice_budget);
+                if omitted_bytes > 0 {
+                    output_budget_hit = true;
+                    output_budget_omitted_bytes =
+                        output_budget_omitted_bytes.saturating_add(omitted_bytes);
+                    matches_truncated = true;
+                }
+                let (read_lines, mut complete) =
+                    summarize_read_ranges(&effective_ranges, loaded_lines);
+                let request_satisfied = omitted_bytes == 0
+                    && if spec.pattern.is_some() {
+                        !matches_truncated && !source_truncated_by_size
+                    } else {
+                        slice_request_satisfied(&effective_ranges, loaded_lines)
+                    };
+                let (hit_eof, range_reaches_eof) = if source_truncated_by_size || omitted_bytes > 0
+                {
                     complete = false;
                     (false, false)
                 } else {
-                    summarize_slice_eof(&spec.ranges, loaded_lines)
+                    summarize_slice_eof(&effective_ranges, loaded_lines)
                 };
                 if let Value::Object(ref mut map) = summary {
                     map.insert("mode".to_string(), Value::String("slice".to_string()));
+                    map.insert("effective_ranges".to_string(), json!(effective_ranges));
                     map.insert("read_lines".to_string(), Value::from(read_lines as u64));
                     map.insert("total_lines".to_string(), Value::from(loaded_lines as u64));
                     map.insert(
@@ -1193,13 +1445,18 @@ pub(crate) fn read_files_inner(
                         "range_reaches_eof".to_string(),
                         Value::Bool(range_reaches_eof),
                     );
+                    if let Some(pattern) = spec.pattern.as_deref() {
+                        map.insert("pattern".to_string(), json!(pattern));
+                        map.insert("match_count".to_string(), json!(match_count));
+                        map.insert("matches_truncated".to_string(), json!(matches_truncated));
+                    }
                 }
                 let mut file_output = Vec::new();
                 if source_truncated_by_size {
                     file_output.push(i18n::t("tool.read.truncated_prefix"));
                 }
-                let show_range_headers = spec.ranges.len() > 1;
-                for (start, end) in spec.ranges {
+                let show_range_headers = effective_ranges.len() > 1;
+                for (start, end) in effective_ranges {
                     if lines.is_empty() {
                         file_output.push(i18n::t("tool.read.empty_file"));
                         continue;
@@ -1231,8 +1488,8 @@ pub(crate) fn read_files_inner(
                     if show_range_headers {
                         slice_lines.push(format!("[lines {start}-{last}]"));
                     }
-                    for (idx, line) in lines.iter().enumerate().take(last).skip(start - 1) {
-                        slice_lines.push(format!("{}: {}", idx + 1, line));
+                    for line in lines.iter().take(last).skip(start - 1) {
+                        slice_lines.push((*line).to_string());
                     }
                     file_output.push(slice_lines.join("\n"));
                     if source_truncated_by_size && end > lines.len() {
@@ -1248,12 +1505,20 @@ pub(crate) fn read_files_inner(
                     }
                 }
                 let joined = file_output.join("\n---\n");
-                outputs.push(format!(">>> {}\n{}", raw_path, joined));
+                format!(">>> {}\n{}", raw_path, joined)
             }
             ReadFileMode::Indentation => {
                 let selected = read_indentation::read_block(&content, &spec.indentation);
+                let (selected, omitted_bytes) =
+                    cap_selected_by_bytes(selected, file_output_budget, false);
+                if omitted_bytes > 0 {
+                    output_budget_hit = true;
+                    output_budget_omitted_bytes =
+                        output_budget_omitted_bytes.saturating_add(omitted_bytes);
+                }
                 let read_lines = selected.len();
-                let complete = !source_truncated_by_size && loaded_lines == read_lines;
+                let complete =
+                    omitted_bytes == 0 && !source_truncated_by_size && loaded_lines == read_lines;
                 if let Value::Object(ref mut map) = summary {
                     map.insert("mode".to_string(), Value::String("indentation".to_string()));
                     map.insert("read_lines".to_string(), Value::from(read_lines as u64));
@@ -1269,14 +1534,56 @@ pub(crate) fn read_files_inner(
                 } else {
                     let formatted = selected
                         .into_iter()
-                        .map(|(line, text)| format!("{line}: {text}"))
+                        .map(|(_, text)| text)
                         .collect::<Vec<_>>()
                         .join("\n");
                     parts.push(formatted);
                 }
-                outputs.push(format!(">>> {}\n{}", raw_path, parts.join("\n")));
+                format!(">>> {}\n{}", raw_path, parts.join("\n"))
             }
+            ReadFileMode::Outline => {
+                let (selected, outline_entries) =
+                    read_outline::read_outline(&content, MAX_READ_LINES);
+                let (selected, omitted_bytes) =
+                    cap_selected_by_bytes(selected, file_output_budget, true);
+                if omitted_bytes > 0 {
+                    output_budget_hit = true;
+                    output_budget_omitted_bytes =
+                        output_budget_omitted_bytes.saturating_add(omitted_bytes);
+                }
+                let read_lines = selected.len();
+                let outline_truncated =
+                    omitted_bytes > 0 || outline_entries > read_lines || source_truncated_by_size;
+                if let Value::Object(ref mut map) = summary {
+                    map.insert("mode".to_string(), Value::String("outline".to_string()));
+                    map.insert("read_lines".to_string(), Value::from(read_lines as u64));
+                    map.insert("total_lines".to_string(), Value::from(loaded_lines as u64));
+                    map.insert("outline_entries".to_string(), json!(outline_entries));
+                    map.insert("outline_truncated".to_string(), json!(outline_truncated));
+                    map.insert("complete".to_string(), Value::Bool(!outline_truncated));
+                }
+                let mut parts = Vec::new();
+                if source_truncated_by_size {
+                    parts.push(i18n::t("tool.read.truncated_prefix"));
+                }
+                if selected.is_empty() {
+                    parts.push(i18n::t("tool.read.empty_file"));
+                } else {
+                    parts.push(
+                        selected
+                            .into_iter()
+                            .map(|(line, text)| format!("{line}: {text}"))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    );
+                }
+                format!(">>> {}\n{}", raw_path, parts.join("\n"))
+            }
+        };
+        if let Some(remaining) = remaining_output_budget.as_mut() {
+            *remaining = remaining.saturating_sub(rendered_output.len());
         }
+        outputs.push(rendered_output);
         summaries.push(summary);
     }
     let mut result = if outputs.is_empty() {
@@ -1284,20 +1591,32 @@ pub(crate) fn read_files_inner(
     } else {
         outputs.join("\n\n")
     };
-    let bytes_before_budget = result.len();
+    let bytes_before_budget = result.len().saturating_add(output_budget_omitted_bytes);
     if let Some(output_budget_bytes) = budget.output_budget_bytes {
         let (truncated, omitted) = truncate_utf8_output(result.as_str(), output_budget_bytes);
         if omitted > 0 {
             output_budget_hit = true;
-            output_budget_omitted_bytes = omitted;
+            output_budget_omitted_bytes = output_budget_omitted_bytes.saturating_add(omitted);
         }
         result = truncated;
     }
     let continuation_required =
         output_budget_hit || summaries.iter().any(summary_requires_read_continuation);
     let processed_files = summaries.len();
+    let read_lines = summaries
+        .iter()
+        .filter_map(|summary| summary.get("read_lines").and_then(Value::as_u64))
+        .sum::<u64>();
+    let total_lines = summaries
+        .iter()
+        .filter_map(|summary| summary.get("total_lines").and_then(Value::as_u64))
+        .sum::<u64>();
+    let returned_bytes = result.len();
     let mut data = json!({
         "content": result,
+        "read_lines": read_lines,
+        "total_lines": total_lines,
+        "returned_bytes": returned_bytes,
         "files": summaries
             .iter()
             .map(compact_read_file_summary_for_model)
@@ -1341,7 +1660,7 @@ pub(crate) fn read_files_inner(
         if dry_run {
             format!("Validated {processed_files} file read targets without reading content.")
         } else {
-            format!("Read {processed_files} files.")
+            format!("Read {read_lines} of {total_lines} lines from {processed_files} files.")
         },
         data,
         continuation_required.then(|| i18n::t("tool.read.continuation_hint")),
@@ -1501,82 +1820,6 @@ struct WriteFileOutcome {
     target: PathBuf,
     existed: bool,
     previous_bytes: u64,
-    diff: WriteDiff,
-}
-
-/// 覆盖写前的旧内容，只为 diff 服务；读不到或过大时降级为「只有计数」。
-enum PreviousContent {
-    /// 目标原本不存在（新建）。
-    Absent,
-    /// 有界读出的 UTF-8 文本。
-    Text(String),
-    /// 放弃 diff 的短原因串，直接进 `data.diff_unavailable`。
-    Skipped(&'static str),
-}
-
-/// 写入结果的 diff 载荷：动作词沿用补丁家族的 `add`/`update`。
-struct WriteDiff {
-    action: &'static str,
-    diff: LineDiff,
-    unavailable: Option<&'static str>,
-}
-
-/// 有界读取旧内容：先按 metadata 长度判上限，最多读 `MAX_DIFF_SOURCE_BYTES + 1`
-/// 字节；非 UTF-8 视为二进制。任何一步都只降级，不阻断写入。
-fn read_previous_for_diff(target: &Path, size: u64) -> PreviousContent {
-    if usize::try_from(size)
-        .map(|size| size > MAX_DIFF_SOURCE_BYTES)
-        .unwrap_or(true)
-    {
-        return PreviousContent::Skipped(DIFF_UNAVAILABLE_OVERSIZE);
-    }
-    let read = File::open(target).and_then(|file| {
-        let mut buffer = Vec::new();
-        file.take((MAX_DIFF_SOURCE_BYTES + 1) as u64)
-            .read_to_end(&mut buffer)
-            .map(|_| buffer)
-    });
-    match read {
-        Err(_) => PreviousContent::Skipped(DIFF_UNAVAILABLE_UNREADABLE),
-        Ok(buffer) if buffer.len() > MAX_DIFF_SOURCE_BYTES => {
-            PreviousContent::Skipped(DIFF_UNAVAILABLE_OVERSIZE)
-        }
-        Ok(buffer) => match String::from_utf8(buffer) {
-            Ok(text) => PreviousContent::Text(text),
-            Err(_) => PreviousContent::Skipped(DIFF_UNAVAILABLE_BINARY),
-        },
-    }
-}
-
-/// 新文件走整份新增（热路径：不读盘、只扫一遍新内容）；覆盖写只在旧内容有界
-/// 且为 UTF-8 时给真实块，否则只给计数与 `diff_unavailable` 原因。
-fn build_write_diff(existed: bool, previous: &PreviousContent, content: &str) -> WriteDiff {
-    if !existed {
-        return WriteDiff {
-            action: "add",
-            diff: diff_added_file(content),
-            unavailable: None,
-        };
-    }
-    let skipped = |unavailable: &'static str| WriteDiff {
-        action: "update",
-        diff: LineDiff::default(),
-        unavailable: Some(unavailable),
-    };
-    let previous_text = match previous {
-        PreviousContent::Text(text) => text.as_str(),
-        PreviousContent::Skipped(reason) => return skipped(reason),
-        // 判定存在却读不到内容：按不可 diff 处理，不谎报为新建。
-        PreviousContent::Absent => return skipped(DIFF_UNAVAILABLE_UNREADABLE),
-    };
-    if diff_source_too_large(previous_text, content) {
-        return skipped(DIFF_UNAVAILABLE_OVERSIZE);
-    }
-    WriteDiff {
-        action: "update",
-        diff: diff_replaced(previous_text, content),
-        unavailable: None,
-    }
 }
 
 /// Validate the small, model-facing part of `write_file` before sandbox or
@@ -1664,12 +1907,6 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         } else {
             0
         };
-        // 旧内容必须在落盘前取，且有硬上限；失败只降级为「只有计数」。
-        let previous = if existed {
-            read_previous_for_diff(&target, previous_bytes)
-        } else {
-            PreviousContent::Absent
-        };
         if !dry_run {
             let workspace_root = workspace.workspace_root(&user_id);
             let default_workspace_target = workspace.resolve_path(&user_id, &path_for_write)?;
@@ -1685,13 +1922,10 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
                 atomic_write_text(&target, &content)?;
             }
         }
-        // dry_run 也给预览 diff，与 apply_patch 的 dry_run 语义一致。
-        let diff = build_write_diff(existed, &previous, &content);
         Ok::<WriteFileOutcome, anyhow::Error>(WriteFileOutcome {
             target,
             existed,
             previous_bytes,
-            diff,
         })
     })
     .await;
@@ -1726,7 +1960,6 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
         write_outcome.existed,
         write_outcome.previous_bytes,
         lsp_info,
-        &write_outcome.diff,
     );
     Ok(build_model_tool_success(
         "write_file",
@@ -1742,8 +1975,6 @@ pub(crate) async fn write_file(context: &ToolContext<'_>, args: &Value) -> Resul
     ))
 }
 
-/// 组装写入结果 `data`：既有字段保持不变，补丁家族的 diff 键由其一并给出，
-/// 保证「模型看到的」「事件里带的」「测试断言的」是同一份构造。
 fn build_write_data(
     path: &str,
     bytes: usize,
@@ -1751,25 +1982,15 @@ fn build_write_data(
     existed: bool,
     previous_bytes: u64,
     lsp: Value,
-    diff: &WriteDiff,
 ) -> Value {
-    let mut diff_fields = Map::<String, Value>::new();
-    insert_diff_fields(&mut diff_fields, diff.action, path, &diff.diff);
-    if let Some(reason) = diff.unavailable {
-        diff_fields.insert("diff_unavailable".to_string(), json!(reason));
-    }
-    let mut data = json!({
+    json!({
         "path": path,
         "bytes": bytes,
         "dry_run": dry_run,
         "existed": existed,
         "previous_bytes": previous_bytes,
         "lsp": lsp
-    });
-    if let Some(map) = data.as_object_mut() {
-        map.extend(diff_fields);
-    }
-    data
+    })
 }
 
 #[cfg(test)]
@@ -1836,6 +2057,11 @@ mod saved_result_read_tests {
             "line_ranges",
             "mode",
             "indentation",
+            "pattern",
+            "query_mode",
+            "case_sensitive",
+            "context",
+            "output_budget_bytes",
             "dry_run",
         ] {
             let mut args = json!({ "path": "tool-result:sample" });
@@ -1854,180 +2080,88 @@ mod saved_result_read_tests {
 }
 
 #[cfg(test)]
-mod write_diff_tests {
+mod read_behavior_tests {
     use super::*;
-    use std::fs;
-    use std::io::Write;
-
-    /// 走生产路径同一份构造函数，只换输入。
-    fn write_data(existed: bool, previous: PreviousContent, content: &str) -> Value {
-        let diff = build_write_diff(existed, &previous, content);
-        build_write_data(
-            "sample.txt",
-            content.len(),
-            false,
-            existed,
-            0,
-            Value::Null,
-            &diff,
-        )
-    }
-
-    fn sorted_keys(value: &Value) -> Vec<String> {
-        let mut keys: Vec<String> = value.as_object().expect("object").keys().cloned().collect();
-        keys.sort();
-        keys
-    }
 
     #[test]
-    fn new_file_write_reports_all_added_lines() {
-        let data = write_data(false, PreviousContent::Absent, "one\ntwo\nthree\n");
-        assert_eq!(data["added_lines"], json!(3));
-        assert_eq!(data["deleted_lines"], json!(0));
-        assert_eq!(data["changed_files"], json!(1));
-        assert_eq!(data["added"], json!(1));
-        assert_eq!(data["updated"], json!(0));
-        assert_eq!(data["existed"], json!(false));
-        let file = &data["files"][0];
-        assert_eq!(file["action"], json!("add"));
-        assert_eq!(file["path"], json!("sample.txt"));
-        assert_eq!(file["hunks"], json!(1));
-        let block = &file["diff_blocks"][0];
-        assert_eq!(block["header"], json!("new file"));
-        assert_eq!(block["start_line_before"], json!(0));
-        assert_eq!(block["start_line_after"], json!(1));
-        assert_eq!(block["end_line_after"], json!(3));
+    fn default_read_is_bounded_to_500_lines_and_16_kib() {
+        let specs = parse_read_file_specs(&json!({"path": "sample.txt"})).expect("read spec");
+        assert_eq!(specs[0].ranges, vec![(1, 500)]);
+        assert!(specs[0].used_default_range);
+        let budget = parse_read_budget(&json!({}));
         assert_eq!(
-            block["lines"]
-                .as_array()
-                .expect("rows")
-                .iter()
-                .map(|row| row["kind"].as_str().expect("kind"))
-                .collect::<Vec<_>>(),
-            vec!["add", "add", "add"]
+            budget.output_budget_bytes,
+            Some(DEFAULT_READ_OUTPUT_BUDGET_BYTES)
         );
-        assert_eq!(block["lines"][1]["text"], json!("two"));
-        assert_eq!(block["lines"][1]["new_line"], json!(2));
-        assert!(block["lines"][1]["old_line"].is_null());
-        assert!(data.get("diff_unavailable").is_none());
+        let specs = parse_read_file_specs(&json!({"path": "sample.txt", "limit": 900}))
+            .expect("limited read spec");
+        assert_eq!(specs[0].ranges, vec![(1, 500)]);
+        let indentation = parse_read_file_specs(&json!({
+            "path": "sample.py", "mode": "indentation", "start_line": 8
+        }))
+        .expect("indentation read spec");
+        assert_eq!(indentation[0].indentation.max_lines, Some(500));
     }
 
     #[test]
-    fn overwrite_write_diffs_middle_with_both_line_numbers() {
-        let data = write_data(
-            true,
-            PreviousContent::Text("a\nb\nc\nd\n".to_string()),
-            "a\nb\nX\nY\nd\n",
-        );
-        assert_eq!(data["added_lines"], json!(2));
-        assert_eq!(data["deleted_lines"], json!(1));
-        assert_eq!(data["updated"], json!(1));
-        assert_eq!(data["added"], json!(0));
-        let file = &data["files"][0];
-        assert_eq!(file["action"], json!("update"));
-        let block = &file["diff_blocks"][0];
-        assert_eq!(block["header"], json!("@@ -3,1 +3,2 @@"));
-        assert_eq!(block["lines"][0]["kind"], json!("delete"));
-        assert_eq!(block["lines"][0]["old_line"], json!(3));
-        assert!(block["lines"][0]["new_line"].is_null());
-        assert_eq!(block["lines"][1]["new_line"], json!(3));
-        assert_eq!(block["lines"][2]["new_line"], json!(4));
+    fn pattern_read_merges_context_and_outline_skips_default_range() {
+        let specs = parse_read_file_specs(&json!({
+            "path": "sample.py",
+            "pattern": "needle",
+            "query_mode": "literal",
+            "context": 1
+        }))
+        .expect("pattern read spec");
+        let lines = vec![
+            "alpha",
+            "needle beta",
+            "gamma",
+            "filler",
+            "needle delta",
+            "omega",
+        ];
+        let (ranges, matches, truncated) = pattern_read_ranges(&lines, &specs[0]).expect("ranges");
+        assert_eq!(ranges, vec![(1, 6)]);
+        assert_eq!(matches, 2);
+        assert!(!truncated);
+
+        let outline = parse_read_file_specs(&json!({"path": "sample.py", "mode": "outline"}))
+            .expect("outline spec");
+        assert_eq!(outline[0].mode, ReadFileMode::Outline);
+        assert!(outline[0].ranges.is_empty());
+        assert!(!outline[0].used_default_range);
     }
 
     #[test]
-    fn guard_cases_emit_counts_only() {
-        for reason in [
-            DIFF_UNAVAILABLE_OVERSIZE,
-            DIFF_UNAVAILABLE_BINARY,
-            DIFF_UNAVAILABLE_UNREADABLE,
-        ] {
-            let data = write_data(true, PreviousContent::Skipped(reason), "a\nb\n");
-            assert_eq!(data["diff_unavailable"], json!(reason));
-            assert!(data["files"][0]["diff_blocks"]
-                .as_array()
-                .expect("array")
-                .is_empty());
-            assert_eq!(data["added_lines"], json!(0));
-            assert_eq!(data["changed_files"], json!(1));
-        }
-        // 旧内容本身过界也只在读取阶段降级，不影响写入。
-        let oversized = build_write_diff(
-            true,
-            &PreviousContent::Text("x".repeat(MAX_DIFF_SOURCE_BYTES + 1)),
-            "y\n",
-        );
-        assert_eq!(oversized.unavailable, Some(DIFF_UNAVAILABLE_OVERSIZE));
-        let data = build_write_data(
-            "sample.txt",
-            2,
-            false,
-            true,
-            (MAX_DIFF_SOURCE_BYTES + 1) as u64,
-            Value::Null,
-            &oversized,
-        );
-        assert_eq!(data["diff_unavailable"], json!("oversize"));
-        assert!(data["files"][0]["diff_blocks"]
-            .as_array()
-            .expect("array")
-            .is_empty());
+    fn pattern_rejects_ambiguous_ranges_and_invalid_regex() {
+        assert!(parse_read_file_specs(&json!({
+            "path": "sample.txt", "pattern": "x", "start_line": 2
+        }))
+        .is_err());
+        assert!(parse_read_file_specs(&json!({"path": "sample.txt", "pattern": "("})).is_err());
     }
+}
+
+#[cfg(test)]
+mod write_result_tests {
+    use super::*;
 
     #[test]
-    fn bounded_read_classifies_oversize_and_binary() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let big = dir.path().join("big.txt");
-        {
-            let mut file = File::create(&big).expect("create");
-            file.write_all(&[b'x'; 1024]).expect("write chunk");
-            for _ in 0..(MAX_DIFF_SOURCE_BYTES / 1024 + 1) {
-                file.write_all(&[b'x'; 1024]).expect("write fill");
-            }
-        }
-        let size = big.metadata().expect("meta").len();
-        assert!(matches!(
-            read_previous_for_diff(&big, size),
-            PreviousContent::Skipped(DIFF_UNAVAILABLE_OVERSIZE)
-        ));
-
-        let binary = dir.path().join("binary.bin");
-        fs::write(&binary, [0u8, 1, 2, 255, 254]).expect("write binary");
-        assert!(matches!(
-            read_previous_for_diff(&binary, 5),
-            PreviousContent::Skipped(DIFF_UNAVAILABLE_BINARY)
-        ));
-
-        let text = dir.path().join("text.txt");
-        fs::write(&text, "a\nb\n").expect("write text");
-        assert!(matches!(
-            read_previous_for_diff(&text, 4),
-            PreviousContent::Text(content) if content == "a\nb\n"
-        ));
-    }
-
-    #[test]
-    fn write_data_key_set_matches_the_contract() {
-        let data = write_data(true, PreviousContent::Text("a\n".to_string()), "b\n");
+    fn write_result_contains_status_without_content_or_diff_echo() {
+        let data = build_write_data("sample.txt", 12, false, true, 8, Value::Null);
         assert_eq!(
-            sorted_keys(&data),
-            vec![
-                "added",
-                "added_lines",
-                "bytes",
-                "changed_files",
-                "deleted",
-                "deleted_lines",
-                "diff_lines_omitted",
-                "dry_run",
-                "existed",
-                "files",
-                "hunks_applied",
-                "lsp",
-                "moved",
-                "path",
-                "previous_bytes",
-                "updated",
-            ]
+            data,
+            json!({
+                "path": "sample.txt",
+                "bytes": 12,
+                "dry_run": false,
+                "existed": true,
+                "previous_bytes": 8,
+                "lsp": null
+            })
         );
+        assert!(data.get("content").is_none());
+        assert!(data.get("files").is_none());
+        assert!(data.get("diff_blocks").is_none());
     }
 }

@@ -1139,30 +1139,6 @@
     "en-US": "Path not found.",
     "zh-CN": "路径不存在。"
   },
-  "tool.ptc.content_required": {
-    "en-US": "Script content is required.",
-    "zh-CN": "脚本内容不能为空。"
-  },
-  "tool.ptc.exec_error": {
-    "en-US": "Script execution error: {detail}",
-    "zh-CN": "脚本执行异常: {detail}"
-  },
-  "tool.ptc.exec_failed": {
-    "en-US": "Script execution failed.",
-    "zh-CN": "脚本执行失败。"
-  },
-  "tool.ptc.ext_invalid": {
-    "en-US": "Only .py scripts are supported.",
-    "zh-CN": "仅支持 .py 脚本文件。"
-  },
-  "tool.ptc.filename_invalid": {
-    "en-US": "Script filename cannot include paths.",
-    "zh-CN": "脚本文件名不能包含路径。"
-  },
-  "tool.ptc.filename_required": {
-    "en-US": "Script filename is required.",
-    "zh-CN": "脚本文件名不能为空。"
-  },
   "tool.read.empty_file": {
     "en-US": "(empty file)",
     "zh-CN": "（空文件）"
@@ -1172,8 +1148,8 @@
     "zh-CN": "无可读取文件"
   },
   "tool.read.patch_usage_hint": {
-    "en-US": "This output is display-formatted for reading. Do not copy the leading \">>> path\" header or \"N: \" line numbers into apply_patch; use only the original file content.",
-    "zh-CN": "该输出是便于阅读的展示格式。生成 apply_patch 时，不要复制前导的 \">>> 路径\" 文件头或 \"N: \" 行号，只使用文件原始内容。"
+    "en-US": "Slice and indentation content is raw file text. Only \">>> path\" separators and outline source line numbers are display metadata; do not copy them into apply_patch.",
+    "zh-CN": "slice 与 indentation 返回文件原始行。仅 \">>> 路径\" 分隔头和大纲源行号属于展示元数据，生成 apply_patch 时不要复制。"
   },
   "tool.read.no_path": {
     "en-US": "No file path provided.",
@@ -1228,12 +1204,12 @@
     "zh-CN": "无效的行号范围：start_line {start} 必须小于等于 end_line {end}。"
   },
   "tool.read.invalid_reversed_range_hint": {
-    "en-US": "Use an ascending inclusive line window. For long files, locate the relevant heading with search_content first, then read a narrower range.",
-    "zh-CN": "请使用升序的包含式行号窗口；长文档应先用 search_content 定位相关标题，再读取更窄的范围。"
+    "en-US": "Use an ascending inclusive line window. For long files, use mode=outline or pattern to locate the relevant section before reading a narrower range.",
+    "zh-CN": "请使用升序的包含式行号窗口；长文件先用 mode=outline 或 pattern 定位相关部分，再读取更窄范围。"
   },
   "tool.read.continuation_hint": {
-    "en-US": "This read returned only part of the available text. Do NOT continue by fixed-step paging on the same file. First use search_content to locate relevant headings/keywords, then read one narrower window (for example hit_line-20 to hit_line+40). If repeated calls produce no new evidence, stop and report the gap.",
-    "zh-CN": "本次读取只返回了部分可用文本。禁止在同一文件上按固定步长连续翻页；请先用 search_content 定位标题或关键词，再读取更窄窗口（例如命中行前 20 到后 40）。若连续调用没有新增依据，应停止重复读取并说明缺口。"
+    "en-US": "This read returned only part of the available text. Do NOT continue by fixed-step paging on the same file. Use mode=outline for structure or pattern for keywords, then read one narrower window (for example hit_line-20 to hit_line+40). If repeated calls produce no new evidence, stop and report the gap.",
+    "zh-CN": "本次读取只返回了部分可用文本。禁止在同一文件上按固定步长连续翻页；请用 mode=outline 查看结构或 pattern 定位关键词，再读取一个更窄窗口（例如命中行前 20 到后 40）。若连续调用没有新增依据，应停止重复读取并说明缺口。"
   },
   "tool.read.truncated_prefix": {
     "en-US": "(file is large; returning a safe truncated prefix, so the content may be incomplete)",
@@ -1760,8 +1736,8 @@
     "zh-CN": "可选安全校验。old_text 出现次数必须等于该值；大于 1 时会替换全部匹配。"
   },
   "tool.spec.edit2.description": {
-    "en-US": "Replace exact text in one text file. Use this for one small, obvious replacement after reading the current file: provide only path, old_text, and new_text. The tool tolerates accidental read_file line numbers and line-ending differences, and treats a unique already-applied replacement as success. If old_text matches multiple places, make old_text longer or set expected_count intentionally. For multi-step edits, conditional replacements, regex, marker-based changes, or anything hard to express as one exact replacement, use programmatic_tool_call with a small Python script instead.",
-    "zh-CN": "在一个文本文件里只做一次精确替换。适合 read_file 后的小范围明确替换：只提供 path、old_text、new_text。工具会容忍误带 read_file 行号、换行符差异，并把唯一的已完成替换视为成功。old_text 匹配多处时，请扩大 old_text 上下文，或明确设置 expected_count。多步骤修改、条件替换、正则替换、标记间替换或任何难以写成一次精确替换的情况，请改用 programmatic_tool_call 写一个小 Python 脚本。"
+    "en-US": "Replace exact text in one text file. Use this for one small, obvious replacement after reading the current file: provide only path, old_text, and new_text. The tool tolerates accidental read_file line numbers and line-ending differences, and treats a unique already-applied replacement as success. If old_text matches multiple places, make old_text longer or set expected_count intentionally. For multi-step edits, conditional replacements, regex, marker-based changes, or anything hard to express as one exact replacement, use execute_command with a small Python script instead.",
+    "zh-CN": "在一个文本文件里只做一次精确替换。适合 read_file 后的小范围明确替换：只提供 path、old_text、new_text。工具会容忍误带 read_file 行号、换行符差异，并把唯一的已完成替换视为成功。old_text 匹配多处时，请扩大 old_text 上下文，或明确设置 expected_count。多步骤修改、条件替换、正则替换、标记间替换或任何难以写成一次精确替换的情况，请改用 execute_command 写一个小 Python 脚本。"
   },
   "tool.spec.command_session.description": {
     "en-US": "Wait for a background command or write its stdin. The runtime continuously streams output to the UI without model polling. Poll defaults to wait_for=exit and yield_time_ms=60000, returning once on exit or at the wait deadline. Use wait_for=output only when intermediate output is needed. Output is incremental; pass the last returned seq as after_seq, or omit it to automatically resume. Confirm exit before reporting completion; never sleep to wait.",
@@ -1840,8 +1816,8 @@
     "zh-CN": "可选，工作目录仅支持工作区内相对路径（不允许绝对路径）。"
   },
   "tool.spec.exec.description": {
-    "en-US": "Run CLI commands in the workspace and return stdout/stderr. Each call runs in a fresh shell; pass workdir instead of using cd. Blocks by default until the command exits or timeout_s (default 120s) is reached, returning the full output; set run_in_background=true only for long-running commands, which returns a command_session_id to poll with the command_session tool. Provide `description` (5-10 words) before `content` in the arguments. Never use a bare sleep command to idle-wait. workdir accepts only a workspace-relative subdirectory.",
-    "zh-CN": "在工作区内执行 CLI 命令并返回 stdout/stderr。每次调用都在全新 shell 中执行；用 workdir 指定目录而非 cd。默认阻塞等待命令结束或达到 timeout_s（默认 120 秒），返回完整输出；仅对长时间运行的命令设置 run_in_background=true，此时返回 command_session_id，用命令会话工具轮询。请先提供 description（命令做什么，5–10 个词），再提供 content。不要用单独的 sleep 命令空等。workdir 仅接受工作区内的相对子目录。"
+    "en-US": "Run CLI commands in the workspace. Small stdout/stderr is returned directly; large output is reduced to byte summaries and preserved as a tool-result handle when available, which can be paged or searched with read_file instead of rerunning the command. Each call runs in a fresh shell; pass workdir instead of using cd. Blocks by default until the command exits or timeout_s (default 120s) is reached; set run_in_background=true only for long-running commands, which returns a command_session_id to poll with the command_session tool. Provide `description` (5-10 words) before `content` in the arguments. Never use a bare sleep command to idle-wait. workdir accepts only a workspace-relative subdirectory.",
+    "zh-CN": "在工作区内执行 CLI 命令。较小的 stdout/stderr 直接返回；大输出只返回字节摘要，并在可用时保存为 tool-result 句柄，可用 read_file 分页或检索，无需重跑命令。每次调用都在全新 shell 中执行；用 workdir 指定目录而非 cd。默认阻塞等待命令结束或达到 timeout_s（默认 120 秒）；仅对长时间运行的命令设置 run_in_background=true，此时返回 command_session_id，用命令会话工具轮询。请先提供 description（命令做什么，5–10 个词），再提供 content。不要用单独的 sleep 命令空等。workdir 仅接受工作区内的相对子目录。"
   },
   "tool.spec.exec.shell_bash": {
     "en-US": "Shell environment: POSIX bash. Write POSIX commands: pipes, &&, ;, grep, sed, awk, find, ssh, ls, cat, head, tail, tar, curl, etc. On Windows use /c/... or forward-slash C:/... paths (avoid backslashes) and invoke cmd as `cmd //c ...`. Output is UTF-8. Do not use cmd or PowerShell syntax (e.g. dir, type, copy, del, set, %VAR%).",
@@ -2419,25 +2395,9 @@
     "en-US": "List order: desc (latest first) or asc.",
     "zh-CN": "list 排序：desc（新到旧）或 asc。"
   },
-  "tool.spec.ptc.args.content": {
-    "en-US": "Full Python script content.",
-    "zh-CN": "完整的 Python 脚本内容。"
-  },
-  "tool.spec.ptc.args.filename": {
-    "en-US": "Python script filename, e.g., helper.py.",
-    "zh-CN": "Python 脚本文件名，例如 helper.py。"
-  },
-  "tool.spec.ptc.args.workdir": {
-    "en-US": "Working directory relative to the workspace; use . for root.",
-    "zh-CN": "相对工作区的工作目录，使用 . 表示根目录。"
-  },
-  "tool.spec.ptc.description": {
-    "en-US": "Write and run a temporary Python script in the workspace and return its stdout/stderr. Use it when CLI commands are too many or fragile, or when structured processing is needed.",
-    "zh-CN": "在工作区写入并运行临时 Python 脚本，返回 stdout/stderr。当 CLI 命令过多、解析脆弱或需要结构化处理时使用。"
-  },
   "tool.spec.read.description": {
-    "en-US": "Read a local plain-text UTF-8 file, similar to cat, and return line-numbered content. Use path (required; file_path is also accepted); page with offset (1-based) and limit (about 200 lines per call, max 2000), or use start_line/end_line ranges. Text files only (.txt/.md/.py, code, config, logs); docx/xlsx are unsupported and images must go through read_image. Relative paths resolve against the current working directory; absolute paths and /workspaces/... public paths are accepted. Output is display-formatted with a >>> path header and N: line numbers; never copy those display markers into apply_patch. If the file location is uncertain, use list_files or search_content first.",
-    "zh-CN": "读取本地纯文本 UTF-8 文件（类似 cat）并返回带行号的内容。path 必填（也接受 file_path）；可用 offset（从 1 开始）与 limit（单次约 200 行，最大 2000）分页，或使用 start_line/end_line 行范围。仅限文本文件（.txt/.md/.py、代码、配置、日志）；不支持 docx/xlsx，图片请用 read_image。相对路径按当前工作目录解释；也支持绝对路径与 /workspaces/... 公共路径。输出为展示格式，含 >>> 路径头与 N: 行号；生成 apply_patch 时不要复制这些展示标记。文件位置不确定时先用 list_files 或 search_content。"
+    "en-US": "Read a local plain-text UTF-8 file with bounded, task-focused output. path is required (file_path is also accepted). Default slice mode returns at most 500 raw lines and 16 KiB, with explicit read_lines/total_lines size signals; use offset/limit or start_line/end_line for a targeted window. Use pattern to locate keywords and return merged surrounding context in the same call instead of search_content plus a second read. Use mode=outline for Markdown headings and common code declarations before selecting a range; mode=indentation reads the block at start_line. Ordinary slice/indentation content has no added line-number prefixes; only outline retains source line numbers for navigation. Text files only; docx/xlsx are unsupported and images must use read_image. Relative, absolute, and /workspaces/... paths are accepted.",
+    "zh-CN": "以有界、面向任务的方式读取本地纯文本 UTF-8 文件。path 必填（也接受 file_path）。默认 slice 模式最多返回 500 行裸文本和 16 KiB，并显式给出 read_lines/total_lines 尺寸信号；用 offset/limit 或 start_line/end_line 指定窗口。pattern 可在同一次调用中定位关键词并返回合并后的前后文，替代 search_content 加二次读取。mode=outline 先返回 Markdown 标题与常见代码声明以选择范围；mode=indentation 读取 start_line 所在缩进块。普通 slice/indentation 内容不添加行号前缀，仅大纲保留导航所需的源行号。仅限文本文件；不支持 docx/xlsx，图片请用 read_image。支持相对、绝对与 /workspaces/... 路径。"
   },
   "tool.spec.read_image.args.path": {
     "en-US": "Local visual media path, relative to workspace or an allowed absolute path.",
@@ -2936,8 +2896,8 @@
     "zh-CN": "输出详情级别：basic 或 full；full 仅管理员诊断使用。"
   },
   "tool.spec.read.args.path": {
-    "en-US": "Path to a local plain-text file. Only for text files (code, config, logs, markdown). For images use read_image. The returned text is display-formatted, so if you later build apply_patch, do not copy the \">>> path\" header or \"N: \" line numbers.",
-    "zh-CN": "本地纯文本文件路径。仅限文本文件（代码、配置、日志、Markdown）。图片请用 read_image。返回文本是展示格式；如果后续要生成 apply_patch，不要复制 \">>> 路径\" 文件头或 \"N: \" 行号。"
+    "en-US": "Path to a local plain-text file (code, config, logs, markdown); use read_image for images. Slice and indentation return raw file lines. Only \">>> path\" separators and outline source line numbers are display metadata, not file content.",
+    "zh-CN": "本地纯文本文件路径（代码、配置、日志、Markdown），图片请用 read_image。slice 与 indentation 返回文件裸行；仅 \">>> 路径\" 分隔头和大纲源行号属于展示元数据，不是文件内容。"
   },
   "tool.spec.read.args.start_line": {
     "en-US": "Start line (inclusive, 1-based). Omit to read from line 1.",
@@ -3132,8 +3092,8 @@
     "zh-CN": "沙盒执行"
   },
   "settings.option.sandboxEnabled": {
-    "en-US": "Use sandbox for exec/ptc",
-    "zh-CN": "启用沙盒（执行命令/ptc）"
+    "en-US": "Use sandbox for command execution",
+    "zh-CN": "启用沙盒（执行命令）"
   },
   "settings.tip": {
     "en-US": "Settings are mostly stored in this browser; max concurrency and sandbox execution are saved on the server and take effect immediately.",
@@ -3178,10 +3138,6 @@
   "tool.spec.search.args.include": {
     "en-US": "Optional rg-style alias of glob, aligned with dsh include. A single glob to narrow files, e.g. *.rs or src/**/*.ts.",
     "zh-CN": "可选的 rg 风格别名，等价于 glob，与 dsh 的 include 对齐。用单个 glob 收窄文件，例如 *.rs 或 src/**/*.ts。"
-  },
-  "tool.title.ptc": {
-    "en-US": "Programmatic Tool Call",
-    "zh-CN": "程序化工具调用"
   },
   "tool.title.文件名匹配": {
     "en-US": "File Glob Match",

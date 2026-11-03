@@ -129,6 +129,9 @@ async fn common_developer_tools_complete_a_real_workspace_workflow() {
     assert_eq!(read["ok"], true);
     assert!(read["data"]["content"]
         .as_str()
+        .is_some_and(|content| content.contains("\nneedle beta\n")));
+    assert!(!read["data"]["content"]
+        .as_str()
         .is_some_and(|content| content.contains("2: needle beta")));
 
     let search = invoke(
@@ -270,6 +273,99 @@ async fn patch_dry_run_rejects_mismatched_context_without_mutating_the_workspace
         "current\n"
     );
     assert!(!fixture.workspace_path("staged.txt").exists());
+}
+
+#[tokio::test]
+async fn read_file_defaults_pattern_and_outline_share_one_bounded_workflow() {
+    let fixture = ToolFixture::new();
+    let mut content = (1..=600)
+        .map(|line| format!("line {line}\n"))
+        .collect::<String>();
+    content.push_str("needle target\n");
+    let write = invoke(
+        &fixture,
+        "write_file",
+        json!({"path": "large.txt", "content": content}),
+    )
+    .await;
+    assert_eq!(write["ok"], true);
+
+    let read = invoke(&fixture, "read_file", json!({"path": "large.txt"})).await;
+    assert_eq!(read["ok"], true);
+    assert_eq!(read["data"]["read_lines"], 500);
+    assert_eq!(read["data"]["total_lines"], 601);
+    assert_eq!(read["data"]["files"][0]["read_lines"], 500);
+    assert_eq!(read["data"]["files"][0]["total_lines"], 601);
+    assert_eq!(read["data"]["budget"]["output_budget_bytes"], 16384);
+    assert_eq!(read["data"]["continuation_required"], true);
+    let text = read["data"]["content"].as_str().expect("raw read content");
+    assert!(text.ends_with("line 500"));
+    assert!(!text.contains("500: line 500"));
+
+    let long_lines = (1..=100)
+        .map(|line| format!("{line}: {}\n", "x".repeat(400)))
+        .collect::<String>();
+    let write = invoke(
+        &fixture,
+        "write_file",
+        json!({"path": "long-lines.txt", "content": long_lines}),
+    )
+    .await;
+    assert_eq!(write["ok"], true);
+    let bounded = invoke(&fixture, "read_file", json!({"path": "long-lines.txt"})).await;
+    assert_eq!(bounded["ok"], true);
+    assert_eq!(bounded["data"]["output_budget_hit"], true);
+    assert_eq!(bounded["data"]["total_lines"], 100);
+    let read_lines = bounded["data"]["read_lines"].as_u64().expect("read lines");
+    assert!(read_lines > 0 && read_lines < 100);
+    let text = bounded["data"]["content"]
+        .as_str()
+        .expect("bounded content");
+    assert_eq!(text.lines().count().saturating_sub(1) as u64, read_lines);
+    assert!(text.len() <= 16384);
+
+    let matched = invoke(
+        &fixture,
+        "read_file",
+        json!({"path": "large.txt", "pattern": "needle", "query_mode": "literal", "context": 2}),
+    )
+    .await;
+    assert_eq!(matched["ok"], true);
+    assert_eq!(matched["data"]["files"][0]["match_count"], 1);
+    assert_eq!(matched["data"]["files"][0]["read_lines"], 3);
+    assert_eq!(
+        matched["data"]["files"][0]["effective_ranges"],
+        json!([[599, 601]])
+    );
+    let text = matched["data"]["content"]
+        .as_str()
+        .expect("pattern content");
+    assert!(text.contains("needle target"));
+    assert!(!text.contains("601: needle target"));
+
+    let write = invoke(
+        &fixture,
+        "write_file",
+        json!({"path": "outline.md", "content": "# Guide\nfn main() {}\ntext\nclass Example:\n"}),
+    )
+    .await;
+    assert_eq!(write["ok"], true);
+    let outline = invoke(
+        &fixture,
+        "read_file",
+        json!({"path": "outline.md", "mode": "outline"}),
+    )
+    .await;
+    assert_eq!(outline["ok"], true);
+    assert_eq!(outline["data"]["files"][0]["outline_entries"], 3);
+    assert_eq!(outline["data"]["files"][0]["read_lines"], 3);
+    assert_eq!(outline["data"]["files"][0]["total_lines"], 4);
+    let text = outline["data"]["content"]
+        .as_str()
+        .expect("outline content");
+    assert!(text.contains("1: # Guide"));
+    assert!(text.contains("2: fn main() {}"));
+    assert!(text.contains("4: class Example:"));
 }
 
 #[tokio::test]

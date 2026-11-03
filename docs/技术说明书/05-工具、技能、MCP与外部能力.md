@@ -9,7 +9,7 @@
 模型看到的工具名**大多是中文规范名**，不是英文函数名。每个规范名可挂多个英文别名，全部经 `resolve_tool_name`（`crates/wunder-runtime/src/services/tools/catalog.rs`）归一到规范名后再进分发。
 
 - 规范名是**唯一的注册键与治理键**：工具画像、审批分档、能力门、前端展示名都按规范名匹配。
-- 别名只做兼容解析，不保证出现在工具面（模型看不到别名）。例：`programmatic_tool_call` → `ptc`。
+- 别名只做兼容解析，不保证出现在工具面（模型看不到别名）。例：`write_command_stdin` → `命令会话`。
 - MCP 工具与打包 MCP 用 `server@tool` 形式，`server` 段来自配置里的服务器名（见 §7）。
 - 知识库按库名动态注册，**库名本身就是工具名**（取代旧的单一 `knowledge` 工具）。
 - 用户工具的别名进 `UserToolBindings.alias_map`，`dispatch.rs:29-33` 最优先按别名路由，命中即绕过内建解析（见 §9）。
@@ -29,7 +29,6 @@
 | `记忆管理` | `memory_manager` / `memory_manage` | 长期记忆条目读写 |
 | `执行命令` | `execute_command` | 执行 shell 命令 |
 | `命令会话` | `command_session` / `write_command_stdin` | 长驻命令会话轮询与 stdin 写入 |
-| `ptc` | `programmatic_tool_call` | 程序化工具调用脚本 |
 | `列出文件` | `list_files` | 工作区目录列举 |
 | `glob` | — | 文件名与路径模式匹配 |
 | `搜索内容` | `search_content` | 关键字 / 正则内容搜索 |
@@ -94,16 +93,14 @@ services/tools/dispatch.rs:27  真正分发到实现
 
 | 常量 | 位置 | 内容 | 语义 |
 | --- | --- | --- | --- |
-| `DEFAULT_BUILTIN_TOOL_NAMES` | `:4-18` | `定时任务`、`记忆管理`、`执行命令`、`命令会话`、`ptc`、`列出文件`、`glob`、`搜索内容`、`读取文件`、`网页抓取`、`技能调用`、`写入文件`、`文本编辑` | 新建智能体的初始勾选集合；另带默认技能 `技能创建器`、`公文写作`、`文稿校对`、`3D网页` |
+| `DEFAULT_BUILTIN_TOOL_NAMES` | `:4-18` | `定时任务`、`记忆管理`、`执行命令`、`命令会话`、`列出文件`、`glob`、`搜索内容`、`读取文件`、`网页抓取`、`技能调用`、`写入文件`、`文本编辑` | 新建智能体的初始勾选集合；另带默认技能 `技能创建器`、`公文写作`、`文稿校对`、`3D网页` |
 | `DESKTOP_HIDDEN_TOOL_NAMES` | `:23-29` | `goal`、`会话线程控制`、`会话让出` | 桌面端不可选也不默认启用；goal 工具由运行时按会话自动注入 |
 | `DESKTOP_EXTRA_TOOL_NAMES` | `:32-34` | `读图工具`、`桌面控制`、`子智能体控制` | 桌面端额外默认启用 |
-| `TEMPORARILY_HIDDEN_TOOL_NAMES` | `:75` 附近 | `网页搜索`、`ptc` | **临时下架，不是已移除** |
+| `TEMPORARILY_HIDDEN_TOOL_NAMES` | `:75` 附近 | `网页搜索` | **临时下架，不是已移除** |
 
 ### 3.1 临时下架要说清楚
 
-`网页搜索` 与 `ptc` 在 `TEMPORARILY_HIDDEN_TOOL_NAMES` 里，源码注释明写「属临时隐藏，恢复时移除对应条目即可」。同时 `catalog.rs:983` 仍注册 `网页搜索`，`dispatch.rs:90` 仍有 `ptc` 分支，`ptc` 也仍在 `DEFAULT_BUILTIN_TOOL_NAMES` 中。
-
-正确表述：**代码保留、当前临时下架、对模型与用户不可见**。把它写成「已移除」是错的（现网 zh-CN/en 的 `tools/index.md`、`tools/web-fetch.md` 在这一条上需要纠正）。恢复方式是从隐藏名单里删掉对应条目，不需要动 catalog 或 dispatch。
+只有 `网页搜索` 仍在 `TEMPORARILY_HIDDEN_TOOL_NAMES` 中，源码注释明写「属临时隐藏，恢复时移除对应条目即可」，catalog 与 dispatch 代码保留。正确表述是：**代码保留、当前临时下架、对模型与用户不可见**。`ptc` 已全链路移除，不能再写成临时下架。
 
 ### 3.2 可用性门槛
 
@@ -269,7 +266,7 @@ services/tools/dispatch.rs:27  真正分发到实现
 | 执行策略 | Allow / Audit / Enforce 三态 + 高危名单 | `wunder-core/src/exec_policy.rs` |
 | 互通远端执行 | `tool.exec` 属 L3 风险；默认设备能力集不含 L3，win7 构建不声明 `CAP_TOOL_EXEC`；越集命令本地 preflight 直接拒绝；L3 审批不可记忆 | `wunder-core/src/interlink.rs` |
 
-沙盒侧限额（`sandbox/mod.rs:17-24`）：并发命令会话 16、会话保留 5min、增量 256KB、规则缓存 512/600s、命令超时 120s、PTC 60s。
+沙盒侧限额（`sandbox/mod.rs:17-24`）：并发命令会话 16、会话保留 5min、增量 256KB、规则缓存 512/600s、命令超时 120s。
 
 ## 10. 新增一个工具的正确落点
 
@@ -300,7 +297,7 @@ services/tools/dispatch.rs:27  真正分发到实现
 | 工具被判需审批或被拒 | `approval_registry.rs`、`exec_policy.rs` | 档位选高；Enforce 模式；命中高危名单；互通侧 L3 越集在本地 preflight 拒绝 |
 | 结果被裁 / 模型说看不到 | 先看 `finalize_tool_result`（`execute_tools.rs:741`）与 `model_observation`，再看 `tool_result_display.rs` | 混淆两条通道（§5.5）；只有展示被裁时模型数据其实是完整的 |
 | 一批调用串行变慢 | `tool_parallel.rs:6-45`、`execute_tools.rs:784-804` | 独占工具混进并行批次抢写锁；并行度上限 4 |
-| 超时 | `constants.rs` 的 `DEFAULT_TOOL_TIMEOUT_S`（120s） | 沙盒侧另有命令 120s / PTC 60s 更内层的限制 |
+| 超时 | `constants.rs` 的 `DEFAULT_TOOL_TIMEOUT_S`（120s） | 沙盒侧另有命令 120s 更内层的限制 |
 | MCP 工具接不上 | `config.mcp.servers` 与 `catalog.rs:63-118` 命名 | 名字带 `server@` 前缀或冲突哈希后缀；`packaged: true` 时只有 `__mcp_pack__` 一个工具；stdio 未实现 |
 | `/wunder/mcp` 返回 501 | cargo feature `mcp` 未开启（`services/mcp.rs:22-32`） | 构建产物不含该 feature |
 | 参数解析失败 | `wunder-core/src/tool_args.rs`、`services/llm/llm.rs:305-319` | provider 的调用模式与预期不符；freeform 语法只覆盖 `文本编辑` |

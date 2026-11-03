@@ -70,7 +70,7 @@ The Pupa and the Helm do not depend on the Hull and can run and ship on their ow
 ## Limits
 
 - **"Several agents can form a swarm and collaborate"** — they cannot. The only collaborative form is the **subagent**: a temporary work unit the main agent creates and reclaims when the task ends. Swarm orchestration (swarm tools, hives, orchestration mode, team runs, swarm packs) has been removed from the engine and the scheduling surface; a few terminal strings and UI labels still carry the old wording, but that is leftover to clean up, not a capability.
-- **"Every listed tool is usable"** — it is not. The default usable set is a fixed tier, and `网页搜索` and `ptc` are currently **temporarily withdrawn** (code kept, invisible to model and user), not deleted.
+- **"Every listed tool is usable"** — it is not. The default usable set is a fixed tier, and `网页搜索` is currently **temporarily withdrawn** (code kept, invisible to model and user); `ptc` has been removed entirely.
 - **"Editing the prompt affects the current conversation at once"** — it does not. Once a thread first fixes its system prompt, it is frozen.
 - **"What the UI shows is the back-end truth"** — the UI consumes a bounded view (pagination plus a byte budget), not the full history. When the content looks wrong, trust the thread ledger.
 - **"Stopping maintenance of the front-end shell stops the Pupa back end"** — they are two different things. The Pupa runs the local native UI with in-process native calls by default, and its execution, tools, and storage semantics still reuse the engine.

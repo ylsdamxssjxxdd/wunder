@@ -261,6 +261,48 @@ fn self_status_and_command_success_drop_runtime_details() {
 }
 
 #[test]
+fn large_command_output_is_a_summary_with_saved_result_recovery() {
+    let stdout = "output-line\n".repeat(400);
+    let stderr = "warning-line\n".repeat(300);
+    let handle = "tool-result:0123456789abcdef0123456789abcdef";
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "action": "execute_command",
+        "state": "completed",
+        "summary": "Executed 1 commands.",
+        "data": {
+            "results": [{
+                "command": "generate",
+                "returncode": 0,
+                "stdout": stdout,
+                "stderr": stderr,
+                "output_meta": {
+                    "truncated": false,
+                    "stdout": {"truncated": false, "total_bytes": 4800},
+                    "stderr": {"truncated": false, "total_bytes": 3900}
+                }
+            }]
+        },
+        "meta": {"saved_result": {"handle": handle, "bytes": 9000, "expires_at": 2000000000}}
+    }));
+    let observation = result.to_compact_payload("execute_command");
+    assert_eq!(observation["data"]["exit_code"], 0);
+    assert_eq!(observation["data"]["truncated"], true);
+    assert_eq!(
+        observation["data"]["stdout_summary"],
+        json!({"bytes": 4800, "captured_lines": 400, "omitted": true})
+    );
+    assert_eq!(
+        observation["data"]["stderr_summary"],
+        json!({"bytes": 3900, "captured_lines": 300, "omitted": true})
+    );
+    assert!(observation["data"].get("stdout").is_none());
+    assert!(observation["data"].get("stderr").is_none());
+    assert_eq!(observation["result_handle"], handle);
+    assert!(!observation.to_string().contains("output-line"));
+}
+
+#[test]
 fn event_payload_keeps_projection_source_for_audit() {
     let result = ToolResultPayload::from_value(json!({
         "ok": true,
@@ -272,7 +314,7 @@ fn event_payload_keeps_projection_source_for_audit() {
     assert_eq!(event["data"]["previous_bytes"], 4);
     assert_eq!(event["meta"]["trace_id"], "trace");
     let model = result.to_compact_payload("write_file");
-    assert!(model["data"].get("bytes").is_none());
+    assert_eq!(model["data"]["bytes"], 9);
     assert!(model.get("meta").is_none());
 }
 
@@ -505,7 +547,7 @@ fn test_observation_payload_keeps_compact_preflight_rewrite_summary() {
         })),
     };
 
-    let compacted = payload.to_compact_payload("ptc");
+    let compacted = payload.to_compact_payload("sample_tool");
     let preflight = compacted
         .get("preflight")
         .and_then(Value::as_object)
@@ -535,7 +577,7 @@ fn test_failed_observation_payload_drops_data_and_preflight_noise() {
     let payload = ToolResultPayload {
         ok: false,
         data: json!({
-            "tool": "ptc",
+            "tool": "sample_tool",
             "preflight": {
                 "status": "reject",
                 "code": "PRECHECK_PYTHON_INDENTATION",
@@ -570,7 +612,7 @@ fn test_failed_observation_payload_drops_data_and_preflight_noise() {
         })),
     };
 
-    let compacted = payload.to_compact_payload("ptc");
+    let compacted = payload.to_compact_payload("sample_tool");
     assert!(compacted.get("data").is_none());
     assert!(compacted.get("preflight").is_none());
     assert!(compacted.get("sandbox").is_none());
@@ -1462,9 +1504,33 @@ fn test_compact_observation_payload_write_file_keeps_change_summary_only() {
     );
     assert_eq!(data.get("changed"), Some(&json!(true)));
     assert_eq!(data.get("dry_run"), Some(&json!(false)));
-    assert!(data.get("bytes").is_none());
+    assert_eq!(data.get("bytes"), Some(&json!(9297)));
     assert!(data.get("existed").is_none());
     assert!(data.get("previous_bytes").is_none());
+}
+
+#[test]
+fn write_carrier_never_replays_content_or_diff_to_the_model() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "action": "write_file",
+        "state": "completed",
+        "summary": "Created file sample.txt.",
+        "data": {
+            "path": "sample.txt",
+            "bytes": 24,
+            "dry_run": false,
+            "existed": false,
+            "previous_bytes": 0,
+            "files": [{"path": "sample.txt", "diff_blocks": [{"lines": [{"kind": "add", "text": "secret echo"}]}]}]
+        }
+    }));
+    let observation = result.to_compact_payload("write_file");
+    assert_eq!(
+        observation["data"],
+        json!({"path": "sample.txt", "bytes": 24, "dry_run": false, "changed": true})
+    );
+    assert!(!observation.to_string().contains("secret echo"));
 }
 
 #[test]

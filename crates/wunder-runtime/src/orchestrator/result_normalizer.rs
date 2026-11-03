@@ -460,7 +460,7 @@ mod tests {
             timestamp: Utc::now(),
             meta: None,
         };
-        let normalized = normalize_tool_result_payload("ptc", payload);
+        let normalized = normalize_tool_result_payload("execute_command", payload);
         assert!(normalized.ok);
         assert!(normalized.error.trim().is_empty());
         let meta = normalized.meta.expect("meta");
@@ -490,7 +490,7 @@ mod tests {
                 }
             })),
         };
-        let normalized = normalize_tool_result_payload("ptc", payload);
+        let normalized = normalize_tool_result_payload("execute_command", payload);
         assert!(normalized.ok);
         let meta = normalized.meta.expect("meta");
         assert_eq!(

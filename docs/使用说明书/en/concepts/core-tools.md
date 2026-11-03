@@ -27,7 +27,7 @@ Most of the tool names the model sees are Chinese canonical names, with English 
 | --- | --- | --- | --- |
 | `执行命令` | `execute_command` | `读取文件` | `read_file` |
 | `命令会话` | `command_session`, `write_command_stdin` | `写入文件` | `write_file` |
-| `ptc` | `programmatic_tool_call` | `文本编辑` | `edit`, `patch`, `apply_patch`, `应用补丁` |
+| `网页搜索` | `web_search` | `文本编辑` | `edit`, `patch`, `apply_patch`, `应用补丁` |
 | `列出文件` | `list_files` | `搜索内容` | `search_content` |
 | `glob` | — | `技能调用` | `skill_call`, `skill_get` |
 | `计划面板` | `update_plan` | `问询面板` | `question_panel`, `ask_panel` |
@@ -56,12 +56,12 @@ Default tool sets, the desktop hidden set, and the desktop extra set all have a 
 
 | Set | Contents |
 | --- | --- |
-| Default built-ins (13) | `定时任务`, `记忆管理`, `执行命令`, `命令会话`, `ptc`, `列出文件`, `glob`, `搜索内容`, `读取文件`, `网页抓取`, `技能调用`, `写入文件`, `文本编辑` |
+| Default built-ins (12) | `定时任务`, `记忆管理`, `执行命令`, `命令会话`, `列出文件`, `glob`, `搜索内容`, `读取文件`, `网页抓取`, `技能调用`, `写入文件`, `文本编辑` |
 | Default skills | `技能创建器`, `公文写作`, `文稿校对`, `3D网页`, `视频制作` |
 | Desktop hidden (neither selectable nor on by default) | `goal` (`action=get|create|edit|pause|resume|complete|blocked`, injected automatically by the runtime per session), `会话线程控制`, `会话让出` |
 | Desktop extras, on by default | `读图工具`, `桌面控制`, `子智能体控制` |
 
-`网页搜索` and `ptc` are **temporarily withdrawn, not deleted**: the code is kept and dispatch still recognizes them, but the availability check returns unavailable for both, so neither the model nor the user can see them. To restore them, remove the matching entries from the withdrawal list.
+`网页搜索` is **temporarily withdrawn, not deleted**: the code is kept and dispatch still recognizes it, but the availability check returns unavailable, so neither the model nor the user can see it. `ptc` has been removed entirely.
 
 Visibility also runs through a few real gates.
 

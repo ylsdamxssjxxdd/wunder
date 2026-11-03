@@ -256,7 +256,7 @@ fn test_build_compaction_summary_input_keeps_instruction_last() {
         json!({
             "role": "user",
             "content": format!("{OBSERVATION_PREFIX}{}", json!({
-                "tool": "ptc",
+                "tool": "execute_command",
                 "ok": false,
                 "error_code": "TOOL_EXEC_FAILED",
                 "error": "script failed",
@@ -295,7 +295,7 @@ fn test_prepare_compaction_summary_messages_preserves_final_instruction_after_tr
         json!({
             "role": "user",
             "content": format!("{OBSERVATION_PREFIX}{}", json!({
-                "tool": "ptc",
+                "tool": "execute_command",
                 "ok": false,
                 "error_code": "TOOL_EXEC_FAILED",
                 "error": "failure detail ".repeat(1200),
@@ -317,7 +317,7 @@ fn test_prepare_compaction_summary_messages_preserves_final_instruction_after_tr
         .get("content")
         .and_then(Value::as_str)
         .unwrap_or_default()
-        .contains("Tool observation (ptc): failed")));
+        .contains("Tool observation (execute_command): failed")));
 }
 
 #[test]
@@ -329,7 +329,7 @@ fn test_current_turn_replay_uses_tool_success_continuation_after_successful_tool
         json!({
             "role": "user",
             "content": format!("{OBSERVATION_PREFIX}{}", json!({
-                "tool": "ptc",
+                "tool": "execute_command",
                 "ok": true,
                 "data": { "path": "/workspaces/u/item.png" },
             })),
@@ -412,11 +412,11 @@ fn test_current_turn_replay_uses_final_continuation_when_summary_has_no_todo() {
         json!({
             "role": "user",
             "content": format!("{OBSERVATION_PREFIX}{}", json!({
-                "tool": "ptc",
+                "tool": "execute_command",
                 "ok": true,
                 "data": {
-                    "path": "/workspaces/admin__c__1/ptc_temp/nailong_armor.py",
-                    "stderr": "/workspaces/admin__c__1/ptc_temp/nailong_armor.py:153: saved to /workspaces/admin__c__1/nailong_armor.png",
+                    "path": "/workspaces/admin__c__1/execute_command_temp/nailong_armor.py",
+                    "stderr": "/workspaces/admin__c__1/execute_command_temp/nailong_armor.py:153: saved to /workspaces/admin__c__1/nailong_armor.png",
                     "stdout": "Done",
                 },
             })),

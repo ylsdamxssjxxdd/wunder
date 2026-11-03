@@ -871,45 +871,6 @@ impl Orchestrator {
             return entries;
         }
 
-        if tool_name == "ptc" {
-            let mut script_path = String::new();
-            if let Value::Object(data) = &result.data {
-                script_path = data
-                    .get("path")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-            }
-            if script_path.is_empty() {
-                script_path = args
-                    .get("filename")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-            }
-            if script_path.is_empty() {
-                return entries;
-            }
-            let returncode = match &result.data {
-                Value::Object(data) => data.get("returncode").cloned(),
-                _ => None,
-            };
-            let ok = match returncode.as_ref().and_then(Value::as_i64) {
-                Some(code) => code == 0,
-                None => result.ok,
-            };
-            entries.push(json!({
-                "kind": "script",
-                "action": "run",
-                "name": script_path,
-                "ok": ok,
-                "meta": { "returncode": returncode.unwrap_or(Value::Null) }
-            }));
-            return entries;
-        }
-
         entries
     }
 

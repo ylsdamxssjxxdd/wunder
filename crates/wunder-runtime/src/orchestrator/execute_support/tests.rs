@@ -486,19 +486,19 @@ fn terminal_final_response_keeps_usable_content_and_leaves_executable_calls() {
 
 #[test]
 fn build_planned_tool_calls_reports_unknown_tool_call() {
-    let allowed = HashSet::from([resolve_tool_name("programmatic_tool_call")]);
+    let allowed = HashSet::from([resolve_tool_name("sample_tool")]);
     let calls = vec![ToolCall {
         id: None,
-        name: "programmatic_tool_calls".to_string(),
+        name: "sample_tools".to_string(),
         function_name: None,
-        arguments: json!({ "raw": "{\"calls\":[name\":\"programmatic_tool_call\"}" }),
+        arguments: json!({ "raw": "{\"calls\":[name\":\"sample_tool\"}" }),
     }];
 
     let result = build_planned_tool_calls(calls, &allowed);
 
     assert!(result.planned.is_empty());
     assert_eq!(result.rejected.len(), 1);
-    assert_eq!(result.rejected[0].name, "programmatic_tool_calls");
+    assert_eq!(result.rejected[0].name, "sample_tools");
     assert_eq!(result.rejected[0].reason, "tool_not_allowed_or_unknown");
     assert!(result.rejected[0].arguments_preview.contains("calls"));
 }
@@ -507,11 +507,11 @@ fn build_planned_tool_calls_reports_unknown_tool_call() {
 fn invalid_tool_call_notice_instructs_repair_or_final_response() {
     let allowed = HashSet::from([
         resolve_tool_name("final_response"),
-        resolve_tool_name("programmatic_tool_call"),
+        resolve_tool_name("sample_tool"),
     ]);
     let rejected = vec![RejectedToolCall {
-        name: "programmatic_tool_calls".to_string(),
-        resolved_name: "programmatic_tool_calls".to_string(),
+        name: "sample_tools".to_string(),
+        resolved_name: "sample_tools".to_string(),
         reason: "tool_not_allowed_or_unknown",
         arguments_preview: "{\"raw\":\"bad\"}".to_string(),
     }];
@@ -764,10 +764,6 @@ fn persisted_message_stats_merge_keeps_existing_message_metadata() {
 fn approval_kind_for_tool_routes_exec_control_and_patch_tools() {
     assert_eq!(
         approval_kind_for_tool(&resolve_tool_name("execute_command")),
-        ApprovalRequestKind::Exec
-    );
-    assert_eq!(
-        approval_kind_for_tool(&resolve_tool_name("ptc")),
         ApprovalRequestKind::Exec
     );
     assert_eq!(

@@ -2895,7 +2895,7 @@ mod tests {
                 "tool_calls": [{
                     "index": 0,
                     "function": {
-                        "name": "ptc",
+                        "name": "execute_command",
                         "arguments": "{\"content\":\"import "
                     }
                 }]
@@ -2925,7 +2925,7 @@ mod tests {
         );
 
         let finalized = finalize_stream_tool_calls(&acc).expect("tool calls should exist");
-        assert_eq!(finalized[0]["function"]["name"], "ptc");
+        assert_eq!(finalized[0]["function"]["name"], "execute_command");
         assert_eq!(
             finalized[0]["function"]["arguments"],
             "{\"content\":\"import json\\nfrom datetime import datetime, timedelta\"}"
@@ -2955,7 +2955,7 @@ mod tests {
         {
             let mut function = json!({ "arguments": fragment });
             if index == 0 {
-                function["name"] = json!("programmatic_tool_call");
+                function["name"] = json!("sample_tool");
             }
             update_stream_tool_calls_delta(
                 &mut acc,
@@ -2969,7 +2969,7 @@ mod tests {
         }
 
         let finalized = finalize_stream_tool_calls(&acc).expect("tool calls should exist");
-        assert_eq!(finalized[0]["function"]["name"], "programmatic_tool_call");
+        assert_eq!(finalized[0]["function"]["name"], "sample_tool");
         assert_eq!(
             finalized[0]["function"]["arguments"],
             "{\"content\":\"for i in range(12):\\n    print(i)\",\"filename\":\"script.py\"}"
@@ -3118,7 +3118,7 @@ mod tests {
                 "index": 0,
                 "id": "call_1",
                 "function": {
-                    "name": "ptc",
+                    "name": "execute_command",
                     "arguments": "{}"
                 }
             }),
@@ -3138,7 +3138,7 @@ mod tests {
         assert_eq!(acc.len(), 1);
         assert_eq!(
             resolve_stream_tool_call_name(&acc[0]).as_deref(),
-            Some("ptc")
+            Some("execute_command")
         );
         assert_eq!(
             resolve_stream_tool_call_arguments(&acc[0]),
@@ -3155,7 +3155,7 @@ mod tests {
                 "index": 0,
                 "id": "call_1",
                 "function": {
-                    "name": "ptc",
+                    "name": "execute_command",
                     "arguments": "{}"
                 }
             }),
@@ -3191,7 +3191,7 @@ mod tests {
         assert_eq!(acc.len(), 1);
         assert_eq!(
             resolve_stream_tool_call_name(&acc[0]).as_deref(),
-            Some("ptc")
+            Some("execute_command")
         );
         assert_eq!(
             resolve_stream_tool_call_arguments(&acc[0]),
@@ -3208,7 +3208,7 @@ mod tests {
         let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
 
         let done = process_sse_event_block(
-            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"call_1\",\"name\":\"ptc\",\"input\":{}}}",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"call_1\",\"name\":\"execute_command\",\"input\":{}}}",
             &mut combined,
             &mut reasoning,
             &mut usage,
@@ -3232,7 +3232,7 @@ mod tests {
         assert!(!done);
 
         assert_eq!(tool_calls.len(), 1);
-        assert_eq!(tool_calls[0].name_snapshot.as_deref(), Some("ptc"));
+        assert_eq!(tool_calls[0].name_snapshot.as_deref(), Some("execute_command"));
         assert_eq!(
             tool_calls[0].arguments_snapshot.as_deref(),
             Some("{}{\"filename\":\"draw_heart.py\",\"content\":\"print('ok')\"}")

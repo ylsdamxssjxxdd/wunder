@@ -39,7 +39,7 @@ updated_at: 2026-10-16
 | 定时任务 | `schedule_task` | 创建与管理定时 / 周期任务 | 系统与记忆 |
 | `goal` | `action=get|create|edit|pause|resume|complete|blocked` | 目标态工具，由运行时按会话自动注入，不对桌面端开放选择 | 目标态 |
 
-`网页搜索` 与 `ptc` 属代码保留、当前**临时下架**（对模型与用户不可见，见 `default_tool_profile.rs`），不是已移除。已彻底移除：渠道工具、用户世界工具、`a2a_*` 工具、`final_response`、`a2ui`、LSP 查询类工具。
+`网页搜索` 属代码保留、当前**临时下架**（对模型与用户不可见，见 `default_tool_profile.rs`）。已彻底移除：`ptc`、渠道工具、用户世界工具、`a2a_*` 工具、`final_response`、`a2ui`、LSP 查询类工具。
 
 ## 场景与工具
 

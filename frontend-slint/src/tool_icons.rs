@@ -165,7 +165,6 @@ const TOOL_RULES: &[(&[&str], &str)] = &[
         ],
         "terminal",
     ),
-    (&["ptc", "programmatic_tool_call"], "code"),
     (
         &[
             "定时任务",
@@ -367,7 +366,6 @@ const ABILITY_RULES: &[(&[&str], &str, &str)] = &[
         "terminal",
         "terminal",
     ),
-    (&["programmatic_tool_call", "ptc"], "code", "file"),
     (
         &[
             "skill",

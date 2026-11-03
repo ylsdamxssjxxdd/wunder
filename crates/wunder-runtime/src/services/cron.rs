@@ -2733,7 +2733,7 @@ mod tests {
         config.storage.data_root = dir.path().join("data").to_string_lossy().into_owned();
         config.workspace.root = dir.path().join("workspace").to_string_lossy().into_owned();
         config.agent_queue.enabled = true;
-        config.tools.builtin.enabled = ["execute_command", "ptc", "read_file"]
+        config.tools.builtin.enabled = ["execute_command", "read_file"]
             .into_iter()
             .map(crate::tools::resolve_tool_name)
             .collect();

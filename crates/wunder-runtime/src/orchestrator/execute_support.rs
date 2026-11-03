@@ -1244,9 +1244,8 @@ pub(super) fn extract_container_id_from_workspace_id(workspace_id: &str) -> i32 
 
 pub(super) fn approval_kind_for_tool(tool_name: &str) -> ApprovalRequestKind {
     let exec_tool = resolve_tool_name("execute_command");
-    let ptc_tool = resolve_tool_name("ptc");
     let desktop_control_tool = resolve_tool_name("desktop_control");
-    if tool_name == exec_tool || tool_name == ptc_tool {
+    if tool_name == exec_tool {
         ApprovalRequestKind::Exec
     } else if tool_name == desktop_control_tool {
         ApprovalRequestKind::Control

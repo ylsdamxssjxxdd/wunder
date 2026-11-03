@@ -1,4 +1,5 @@
 use super::*;
+use crate::services::tools::command_output_guard::STDOUT_CAPTURE_POLICY;
 #[cfg(unix)]
 use futures::StreamExt;
 

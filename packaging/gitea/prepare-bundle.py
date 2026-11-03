@@ -258,6 +258,12 @@ def main():
         for relative in profile["sdk_required"]:
             if not (sdk / relative).exists():
                 raise RuntimeError("required SDK directory is missing: " + relative)
+        # 链接包装必须自带静态 winpthread 组：posix-threads 版 MinGW 一旦被裸 -lwinpthread 链接，
+        # 产出的 exe 在 Win7 上缺 libwinpthread-1.dll，而 CI 的 PE 门禁要到构建时才发现。
+        # 导出这里先断一次，旧 SDK 打不进套件。
+        wrapper = sdk / "mingw-i686-windows-gnu/portable-bin/i686-w64-mingw32-rust-gcc"
+        if "--start-group" not in (wrapper.read_text(encoding="utf-8", errors="replace") if wrapper.is_file() else ""):
+            raise RuntimeError("SDK 的 MinGW 链接包装缺少静态 winpthread 组，先刷新 SDK: " + str(wrapper))
         print("Exporting separate Rust-builder archive (SDK is not part of any image)", flush=True)
         export_stream(["docker", "run", "--rm", "--platform", platform, "--network", "none",
                        "-v", str(sdk) + ":/payload/offline:ro", "--entrypoint", "tar", profile["builder_tag"],

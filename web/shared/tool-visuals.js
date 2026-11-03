@@ -29,7 +29,6 @@ const TOOL_ICON_RULES = [
   { keywords: ["应用补丁", "apply patch", "apply_patch"], icon: "fa-pen-to-square" },
   { keywords: ["命令会话", "command_session", "command session", "write_command_stdin"], icon: "fa-terminal" },
   { keywords: ["执行命令", "运行命令", "run command", "execute command", "execute_command", "shell"], icon: "fa-terminal" },
-  { keywords: ["ptc", "programmatic_tool_call"], icon: "fa-code" },
   { keywords: ["定时任务", "计划任务", "cron", "schedule", "scheduled", "timer", "schedule_task"], icon: "fa-clock" },
   { keywords: ["搜索内容", "search_content", "search content"], icon: "fa-magnifying-glass" },
   { keywords: ["知识", "knowledge", "rag", "vector", "embedding", "document", "kb"], icon: "fa-database" },
