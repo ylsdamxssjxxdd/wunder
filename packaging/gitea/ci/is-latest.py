@@ -7,6 +7,7 @@ Gitea 这个版本没有工作流 `concurrency`（二进制里找不到 cancel-i
 """
 
 import base64
+import io
 import os
 import re
 import shlex
@@ -15,13 +16,25 @@ import sys
 from urllib.parse import quote
 
 
+def force_utf8(stream):
+    """任务容器里没有 LANG/LC_ALL 时 Python 3.6 会把 stdout 当 ASCII，中文直接抛异常。"""
+    try:
+        return io.TextIOWrapper(stream.buffer, encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        return stream
+
+
 def main():
-    repository = os.environ["CI_REPOSITORY"]
-    commit = os.environ["CI_COMMIT"]
+    sys.stdout = force_utf8(sys.stdout)
+    sys.stderr = force_utf8(sys.stderr)
+    repository = os.environ.get("CI_REPOSITORY", "")
+    commit = os.environ.get("CI_COMMIT", "")
     reference = os.environ.get("CI_REF", "")
     token = os.environ.get("CI_TOKEN", "")
     server = os.environ.get("CI_SERVER_URL", "http://gitea:3000").rstrip("/")
-    if not reference.startswith("refs/heads/") or not token:
+    # 缺上下文时绝不能判成「已被取代」：本地复跑与调试运行常常没有 CI_COMMIT/CI_TOKEN，
+    # 一旦误判就整条流水线什么都不构建，而且看起来像成功。
+    if not repository or not commit or not reference.startswith("refs/heads/") or not token:
         print("非分支推送或缺少令牌，照常构建")
         return 0
     branch = reference[len("refs/heads/"):]
@@ -48,4 +61,10 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        code = main()
+    except Exception as error:
+        # 这个判据只用来让路，任何时候都不能因为自己出错而把整条构建判成「已被取代」。
+        print("判定失败，照常构建: " + repr(error), file=sys.stderr)
+        code = 0
+    sys.exit(code)

@@ -70,10 +70,34 @@ validate_sdk() {
     else
         for executable in rust/toolchains/1.92.0-aarch64-unknown-linux-gnu/bin/rustc \
             rust/toolchains/1.92.0-aarch64-unknown-linux-gnu/bin/cargo \
+            rust/toolchains/nightly-2026-03-14-aarch64-unknown-linux-gnu/bin/rustc \
+            rust/toolchains/nightly-2026-03-14-aarch64-unknown-linux-gnu/bin/cargo \
             linux-arm64-ubuntu18/root/usr/lib/gcc/aarch64-linux-gnu/7/cc1 \
-            linux-amd64-ubuntu18/root/usr/bin/x86_64-linux-gnu-gcc-7; do
+            linux-amd64-ubuntu18/root/usr/bin/x86_64-linux-gnu-gcc-7 \
+            mingw-i686-windows-gnu/portable-bin/i686-w64-mingw32-gcc \
+            mingw-i686-windows-gnu/portable-bin/i686-w64-mingw32-windres \
+            mingw-i686-windows-gnu/portable-bin/i686-w64-mingw32-rust-gcc; do
             [[ -x "$directory/$executable" ]] || { echo "SDK executable is missing: $executable" >&2; return 2; }
         done
+        # ARM 宿主的 win7 通道同为 Tier 3：build-std 要在 aarch64 nightly 里找到 rust-src，
+        # MinGW 便携包必须是 aarch64 宿主版，PE 门禁用的是包内自带的 llvm-readobj。
+        [[ -d "$directory/rust/toolchains/nightly-2026-03-14-aarch64-unknown-linux-gnu/lib/rustlib/src/rust" ]] \
+            || { echo 'SDK rust-src component is missing (aarch64 nightly).' >&2; return 2; }
+        # 稳定版工具链里要装 x86_64 目标 std：ARM 宿主交叉出 linux amd64 产物靠它，
+        # 缺了会在 cargo 阶段报 can't find linker / target not installed。
+        [[ -d "$directory/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib" ]] \
+            || { echo 'SDK is missing the x86_64 target std inside the aarch64 toolchain.' >&2; return 2; }
+        [[ -f "$directory/mingw-i686-windows-gnu/rust-target/lib/libgcc_eh.a" ]] \
+            || { echo 'SDK MinGW DW2 unwinder archive is missing.' >&2; return 2; }
+        [[ -x "$directory/mingw-i686-windows-gnu/llvm-tools/bin/llvm-readobj" ]] \
+            || { echo 'SDK MinGW llvm-readobj is missing (win7 PE gate needs it).' >&2; return 2; }
+        case "$(< "$directory/mingw-i686-windows-gnu/sdk-version")" in
+            wunder-win32-arm64-portable-v2|rcho-win32-arm64-portable-v2) ;;
+            *) echo 'SDK MinGW kit is not the aarch64 portable layout.' >&2; return 2 ;;
+        esac
+        # rcho 的只读视图要把 cargo-home-* 换成可写目录，SDK 里必须留着这些名字。
+        [[ -d "$directory/cargo-home-slint" ]] \
+            || { echo 'SDK is missing cargo-home-* directories (rcho SDK view needs them).' >&2; return 2; }
     fi
     [[ -d "$directory/cargo-vendor-slint" && -s "$directory/appimage-runtime/runtime-aarch64" \
         && -s "$directory/appimage-runtime/runtime-x86_64" ]] || { echo 'SDK is incomplete.' >&2; return 2; }

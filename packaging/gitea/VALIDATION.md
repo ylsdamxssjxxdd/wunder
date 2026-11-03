@@ -72,6 +72,31 @@ ARM64 剖面同日未在 ARM 机器上重跑，见文末边界。
 - win7 任务把桌面与 CLI 的 PE 写进 `/ci-cache/<仓库键>/win7-x86/installer-inputs/` 交给安装包任务，
   两个任务不共享工作区，靠同一个缓存卷交接。
 
+## ARM64 剖面重导出（2026-11-03）
+
+- arm64 剖面按本轮代际重新导出：三个标签（`wunder-offline`、`rcho-offline`、`wunder-offline-installer`
+  指回构建镜像）、四个 CI 脚本齐备（含 `is-latest.py`、`prune.py`、`build-win7-installer.sh`）、
+  `supplement-prebuilt.tar.gz` 随套件导出（amd64/arm64/win7-ia32 三份，导出前逐包复核 SHA256）。
+- 老 Docker 的兼容件保留并回到仓库里成为模板：`compose.v1.yaml`（`version: "2.4"` + 卷与网络 `external: true`，
+  前缀由导出脚本渲染成真实键名）、`upgrade-docker.sh`（麒麟 V10 静态二进制升级，带 `--check`/`--rollback`）、
+  Runner 固定 `gitea/act_runner:0.2.11`（客户端下限 API 1.24），`.env` 新增 `RUNNER_MIN_DOCKER_API`
+  并由 `load-images.sh` 在载入前拦截低于下限的 daemon。`load-images.sh` 现在两种 Compose 都能用，
+  载入后逐镜像核对架构，并预建 `<前缀>-sdk/-build-cache/-ci/-ingress`。
+- arm64 的 SDK 归档**未改动**（SHA256 仍是 10-28 那份），因此任务镜像只补了一层 `COPY ci /opt/offline-ci`
+  重新种一个新 tag；构建时用 `--platform linux/arm64 --provenance=false`，避免 attestation 清单
+  把导出变成多平台索引（`docker save/inspect --platform` 与老 daemon 都会出问题）。
+- ARM 侧的构建能力是逐项查出来的，不是照抄 x86：aarch64 稳定版工具链里带着 `rustlib/x86_64-unknown-linux-gnu`
+  （amd64 目标 std 齐备），`linux-amd64-ubuntu18/root/usr/bin/x86_64-linux-gnu-gcc-7` 实测是 aarch64 宿主 ELF
+  并带 `strip/readelf/ar`，amd64 sysroot 里有 `libasound.so`；win7 走仓库既有的 ARM 通道
+  （`build-win7-arm64-offline.sh` + `nightly-2026-03-14-aarch64` 的 rust-src + stamp
+  `rcho-win32-arm64-portable-v2` 的 MinGW 便携包 + `llvm-readobj` 门禁）。wunder 当前 `Cargo.lock`
+  需要的 crate 在 arm SDK 的 vendor 里齐全（该 vendor 1928 项，比 x86 SDK 的 1181 项还多）。
+- CI 分派用桩 builder 复跑过：把宿主伪装成 aarch64 后 `build.sh` 选中 `build-win7-arm64-offline.sh` 与
+  `build-cli-win7-arm64-offline.sh`，用真实 i386 PE 走完整链，`PASS: win7-x86 PE headers (i386)`，
+  交接目录里同时落下桌面与 CLI 两个 exe。`prepare-sdk.sh` 的 kylin-arm 分支（新增 nightly rust-src、
+  x86_64 目标 std、MinGW stamp、llvm-readobj、libgcc_eh.a、cargo-home-* 检查）对着真机 SDK 跑通，
+  补充包解出到 `offline/supplement-prebuilt/`。
+
 ## 边界与未验证
 
 - 旧的排队运行只靠任务自查让路（`ci/is-latest.py`），已经在跑的任务不会被打断；这个版本没有
@@ -80,9 +105,14 @@ ARM64 剖面同日未在 ARM 机器上重跑，见文末边界。
   PE 头、Inno 载荷标记与 Wine 下的静默安装；对外正式交付仍以 GitHub 的 Windows runner 产物为准。
   ARM worker 上没有可用的 i386 Wine，`win7-installer` 任务在该类机器上打印 SKIP 后成功退出，
   所以 arm64 剖面把该标签指向构建镜像本身，不留未注册的标签。
-- `kit-arm64` 仍是 10-28 导出的上一代套件：单一 `linux-offline-arm64` 标签、无补充包任务、脚本早于本轮改动。
-  要在 ARM 机器上用本轮设计，需 `prepare-bundle.py --arch arm64` 重新导出，并先确认 arm64 剖面的
-  SDK 必需目录与 host-tools 短路条件成立。
+- arm64 剖面的**真机验收还没做**：本机是 x86_64，arm64 容器只能靠 qemu-user 执行，而 qemu-user 下
+  `uname -m` 返回宿主架构（aarch64 的判定会失真），所以架构分派只能用桩 `uname` 复现，全量 cargo 构建、
+  `-Z build-std` 与 AppDir 组包的真实耗时必须在 ARM 服务器上看 Actions 状态。
+- `gitea/act_runner:0.2.11` 跑本轮工作流（matrix + needs + 任务级令牌发布 + `prune.py`）尚未在真实运行里验证；
+  它跑过的是上一代 rcho 三目标矩阵。老 runner 会把带表达式的步骤名显示成 `%!t(string=...)`，只影响显示。
+- ARM 侧的 Release 比 x86_64 侧少一个 `wunder-<版本>-win7-x86-setup.exe`：Inno Setup 要在 Wine 里跑 i386
+  的 `ISCC.exe`，aarch64 宿主没有可用的 i386 Wine，`win7-installer` 任务按架构打印 SKIP（成功退出，不影响
+  其余任务）。桌面上线要出这个安装包，仍以 x86_64 那一侧的运行为准。
 - rcho 的三目标结论来自 `--network none` 的容器实测，还不是真实 Actions 运行：它的 `publish.py`/`prune.py`
   依赖任务级短期令牌，只有推送后在 Gitea 里才拿得到，因此发布与留存链路尚未在本机验证过；
   三个矩阵任务共用 `runner_capacity` 的真实并发调度也未实测。

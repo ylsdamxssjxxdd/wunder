@@ -11,6 +11,8 @@ import subprocess
 
 GITEA = "docker.gitea.com/gitea:28.2.0"
 RUNNER = "docker.gitea.com/runner:5.2.3"
+# 老 Docker（18.09 / API 1.39）上的 Runner：0.2.11 的内置客户端下限是 API 1.24。
+LEGACY_RUNNER = "gitea/act_runner:0.2.11"
 
 # 每个剖面是一套可移植套件：任务镜像、SDK 必需目录、卷名前缀都不同，
 # 但工作流与 CI 脚本完全共用（标签里的架构由 runner 注册时决定）。
@@ -21,15 +23,24 @@ PROFILES = {
         "host_uname": "aarch64",
         "sdk_profile": "kylin-arm",
         "stack_prefix": "offline-gitea",
+        # 目标机是麒麟 V10 一类只有老 Docker Engine 的 ARM 服务器，Runner 固定在 0.2.11，
+        # 镜像清单、compose v1/v2 与 load-images.sh 的下限校验都以它为准。
+        "runner_image": LEGACY_RUNNER,
+        "runner_min_api": "1.24",
         "builder_dockerfile": "Dockerfile.builder-arm64",
-        "builder_tag": "wunder-offline-builder:20261027-arm64-mounted",
-        # ARM 宿主没有可用的 i386 Wine，Win7 安装包任务在该剖面上按架构跳过，
-        # 因此标签仍指向构建镜像本身，不留空标签导致任务永久排队。
+        "builder_tag": "wunder-offline-builder:20261103-arm64-mounted",
+        # ARM 宿主没有可用的 i386 Wine：win7 的桌面与 CLI 仍然在 ARM 上原生交叉
+        # （build-std + SDK 内的 aarch64 版 MinGW 便携包），只有 Inno Setup 安装包组不了，
+        # 所以该标签仍指向构建镜像，任务按 uname 判定后打印 SKIP 并成功退出。
         "installer_dockerfile": None,
         "installer_tag": None,
+        # cargo-home-* 要留在归档里：rcho 的只读 SDK 视图靠把这几个名字换成可写目录来绕开 :ro，
+        # 一个都不带的话 prepare-view.sh 会直接报「SDK 布局里没有可转换的目录」。
         "sdk_required": ["rust/toolchains", "cargo-vendor-slint", "linux-arm64-ubuntu18/root",
                          "linux-amd64-ubuntu18/root", "appimage-runtime",
-                         "mingw-i686-windows-gnu", "web-wasm"],
+                         "mingw-i686-windows-gnu", "web-wasm",
+                         "cargo-home-slint", "cargo-home-slint-amd64",
+                         "cargo-home-slint-win7", "cargo-home-slint-win32"],
         "squashfs_processors": "2",
         "runner_capacity": "1",
         "build_jobs": "4",
@@ -40,6 +51,8 @@ PROFILES = {
         "host_uname": "x86_64",
         "sdk_profile": "kylin-x86",
         "stack_prefix": "offline-gitea-x86",
+        "runner_image": RUNNER,
+        "runner_min_api": "1.40",
         # 基镜像是 builders/build-kylin-x86-sdk-docker.sh 产出的 x86_64 SDK 镜像，
         # 已带 gcc/cmake/ninja/nasm/clang 与交叉工具链，套件只补 git 和 CI 脚本。
         "builder_dockerfile": "Dockerfile.builder-amd64",
@@ -106,9 +119,8 @@ def has_image(reference):
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
 
-def render_runner(source, profile, labels):
-    text = (source / "runner.yaml").read_text(encoding="utf-8")
-    replacements = {
+def token_replacements(profile, labels):
+    return {
         '"@RUNNER_CAPACITY@"': profile["runner_capacity"],
         "@WUNDER_BUILD_JOBS@": profile["build_jobs"],
         "@WUNDER_SQUASHFS_PROCESSORS@": profile["squashfs_processors"],
@@ -117,12 +129,22 @@ def render_runner(source, profile, labels):
         "@INSTALLER_LABEL@": labels["installer"],
         "@STACK_PREFIX@": profile["stack_prefix"],
     }
-    for token, value in replacements.items():
+
+
+def render_text(source_text, profile, labels):
+    text = source_text
+    for token, value in token_replacements(profile, labels).items():
         text = text.replace(token, value)
-    if any(token in text for token in ("@RUNNER_CAPACITY@", "@STACK_PREFIX@", "@BUILDER_LABEL@",
-                                       "@RCHO_LABEL@", "@INSTALLER_LABEL@")):
-        raise RuntimeError("runner.yaml has an unrendered token")
+    leftover = [token for token in ("@RUNNER_CAPACITY@", "@STACK_PREFIX@", "@BUILDER_LABEL@",
+                                    "@RCHO_LABEL@", "@INSTALLER_LABEL@", "@WUNDER_BUILD_JOBS@",
+                                    "@WUNDER_SQUASHFS_PROCESSORS@") if token in text]
+    if leftover:
+        raise RuntimeError("模板里还有未渲染的占位符: " + ", ".join(leftover))
     return text
+
+
+def render_runner(source, profile, labels):
+    return render_text((source / "runner.yaml").read_text(encoding="utf-8"), profile, labels)
 
 
 def write_env(source, profile, labels):
@@ -130,7 +152,8 @@ def write_env(source, profile, labels):
     for line in (source / ".env.example").read_text(encoding="utf-8").splitlines():
         key = line.split("=", 1)[0].strip() if "=" in line and not line.startswith("#") else ""
         if key in {"CI_PLATFORM", "STACK_PREFIX", "SDK_PROFILE", "GITEA_IMAGE", "RUNNER_IMAGE",
-                   "BUILDER_IMAGE", "INSTALLER_IMAGE", "RUNNER_LABELS", "RUNNER_NAME", "WUNDER_BUILD_JOBS"}:
+                   "RUNNER_MIN_DOCKER_API", "BUILDER_IMAGE", "INSTALLER_IMAGE", "RUNNER_LABELS",
+                   "RUNNER_NAME", "WUNDER_BUILD_JOBS"}:
             continue
         lines.append(line)
     values = {
@@ -138,7 +161,8 @@ def write_env(source, profile, labels):
         "STACK_PREFIX": profile["stack_prefix"],
         "SDK_PROFILE": profile["sdk_profile"],
         "GITEA_IMAGE": GITEA,
-        "RUNNER_IMAGE": RUNNER,
+        "RUNNER_IMAGE": profile["runner_image"],
+        "RUNNER_MIN_DOCKER_API": profile["runner_min_api"],
         "BUILDER_IMAGE": profile["builder_tag"],
         "INSTALLER_IMAGE": profile["installer_tag"] or profile["builder_tag"],
         "RUNNER_LABELS": ",".join((labels["builder"], labels["rcho"], labels["installer"])),
@@ -206,10 +230,12 @@ def main():
         "builder": "wunder-offline:docker://" + profile["builder_tag"],
         # 舵机与蛹共用同一套 Rust 任务镜像，只是路由标签不同；rcho 的离线流水线用这个标签。
         "rcho": "rcho-offline:docker://" + profile["builder_tag"],
-        "installer": "docker://" + (profile["installer_tag"] or profile["builder_tag"]),
+        # 安装包标签名固定，值随剖面走：x86_64 指向 Wine 镜像，arm64 指回构建镜像（任务自行跳过）。
+        # 少了冒号前的名字，compose 注册出来的就是没有名字的畸形标签，工作流排不到任何 runner。
+        "installer": "wunder-offline-installer:docker://" + (profile["installer_tag"] or profile["builder_tag"]),
     }
 
-    for name in (GITEA, RUNNER):
+    for name in (GITEA, profile["runner_image"]):
         # 准备机可能已经从上一版套件 docker load 过这些镜像，有本地副本就不必再依赖网络。
         if not has_image(name):
             run("docker", "pull", "--platform", platform, name)
@@ -252,8 +278,13 @@ def main():
 
     (output / "runner.yaml").write_text(render_runner(source, profile, labels), encoding="utf-8")
     (output / ".env").write_text(write_env(source, profile, labels), encoding="utf-8")
-    for name in ("compose.yaml", "bootstrap.sh", "load-images.sh", "prepare-sdk.sh", ".env.example", "README.md"):
+    for name in ("compose.yaml", "bootstrap.sh", "load-images.sh",
+                 "prepare-sdk.sh", "upgrade-docker.sh", ".env.example", "README.md"):
         shutil.copy2(source / name, output / name)
+    # Compose v1 的卷名与网络名写在键上，键不能用 ${VAR} 插值，所以这里按剖面渲染真实前缀。
+    (output / "compose.v1.yaml").write_text(
+        render_text((source / "compose.v1.yaml").read_text(encoding="utf-8"), profile, labels),
+        encoding="utf-8")
     for name in ("VALIDATION.md",):
         if (source / name).is_file():
             shutil.copy2(source / name, output / name)
@@ -269,7 +300,7 @@ def main():
     manifest = []
     checksums = []
     archives = [(GITEA, "gitea-" + profile["architecture"] + ".tar.gz"),
-                (RUNNER, "runner-" + profile["architecture"] + ".tar.gz"),
+                (profile["runner_image"], "runner-" + profile["architecture"] + ".tar.gz"),
                 (profile["builder_tag"], "builder-" + profile["architecture"] + ".tar.gz")]
     if profile["installer_tag"] and profile["installer_tag"] != profile["builder_tag"]:
         if not has_image(profile["installer_tag"]):
@@ -278,12 +309,14 @@ def main():
                          "installer-" + profile["architecture"] + ".tar.gz"))
     for image, filename in archives:
         archive = images / filename
-        inspection = json.loads(subprocess.check_output(
-            ["docker", "image", "inspect", "--platform", platform, image]))[0]
+        # 这里不用 --platform：交付用的镜像都是本地已存在的单架构副本（老套件 docker load 回来的
+        # 也是单架构），加了平台断言反而会被 containerd 存储判成「不提供该平台」；
+        # 架构直接读镜像配置，与剖面对不上就停，避免把跨架构镜像写进套件。
+        inspection = json.loads(subprocess.check_output(["docker", "image", "inspect", image]))[0]
         if inspection["Architecture"] != profile["architecture"]:
             raise RuntimeError("image architecture is not " + profile["architecture"] + ": " + image)
         print("Exporting " + image, flush=True)
-        export_stream(["docker", "save", "--platform", platform, image], archive)
+        export_stream(["docker", "save", image], archive)
         digest = sha256(archive)
         checksums.append(digest + "  images/" + filename)
         manifest.append({"image": image, "id": inspection["Id"], "architecture": profile["architecture"],

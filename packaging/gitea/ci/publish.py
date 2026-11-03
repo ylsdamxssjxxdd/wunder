@@ -1,6 +1,7 @@
 """Publish artifacts with the short-lived Gitea workflow token."""
 
 import http.client
+import io
 import json
 import mimetypes
 import os
@@ -12,8 +13,24 @@ from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 
+def force_utf8(stream):
+    """任务容器里没有 LANG/LC_ALL 时 Python 3.6 会把 stdout 当 ASCII，中文直接抛异常。"""
+    try:
+        return io.TextIOWrapper(stream.buffer, encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        return stream
+
+
 def main():
+    sys.stdout = force_utf8(sys.stdout)
+    sys.stderr = force_utf8(sys.stderr)
     directory = Path(sys.argv[1])
+    files = [path for path in directory.glob("*") if path.is_file()] if directory.is_dir() else []
+    if not files:
+        # 任务被更新的提交取代时会先清空产物目录再退出；这时不能再建一个空 Release，
+        # 否则留存策略会把「什么都没产出」的一次运行当成有效发布留着。
+        print("release-assets 为空，跳过发布（不创建 Release）")
+        return 0
     server = os.environ.get("CI_SERVER_URL", "http://gitea:3000").rstrip("/")
     repository = os.environ["CI_REPOSITORY"]
     commit = os.environ["CI_COMMIT"]
