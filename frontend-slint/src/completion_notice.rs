@@ -267,37 +267,159 @@ fn position_via_winit(notice: &CompletionNotice) {
 /// position is the shell's own and deterministic; clicking it (the default
 /// action or the 打开 button) opens the notified session. Returns `false` when
 /// no daemon could be reached, letting the caller fall back to the toast
-/// window. The wait runs on its own short-lived thread and ends when the
-/// daemon reports the notice closed.
+/// window. Signal listening lives in one app-wide thread (see
+/// [`daemon::PENDING`]) — per-notice wait threads would pile up on shells that
+/// keep notifications resident after the banner expires and never send
+/// `NotificationClosed`.
 #[cfg(target_os = "linux")]
 fn show_system_notice(title: &str, body: &str, app: &MainWindow, session: &str) -> bool {
-    let weak = app.as_weak();
-    let session = session.to_string();
-    let handle = notify_rust::Notification::new()
-        .appname("蛹")
-        .summary(title)
-        .body(body)
-        .timeout(notify_rust::Timeout::Milliseconds(
-            SHOW_DURATION.as_millis() as u32,
-        ))
-        .action("default", "打开")
-        .show();
-    match handle {
-        Ok(handle) => {
-            std::thread::spawn(move || {
-                handle.wait_for_action(|action| {
-                    if action == "default" {
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(app) = weak.upgrade() {
-                                open_session(&app, &session);
+    daemon::show(title, body, app.as_weak(), session)
+}
+
+/// Session-bus plumbing for the notification-daemon notice. One shared
+/// connection, one listener thread, and the single pending notice whose
+/// actions are honoured — a newer notice simply replaces it, mirroring the
+/// way the window toast collapses into the newest entry.
+#[cfg(target_os = "linux")]
+mod daemon {
+    use super::{open_session, MainWindow, SHOW_DURATION};
+    use slint::Weak;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    struct Pending {
+        id: u32,
+        session: String,
+        weak: Weak<MainWindow>,
+    }
+
+    /// The daemon connection, created once. `None` marks a session bus that
+    /// was unreachable, so later notices skip straight to the window fallback.
+    static CONNECTION: OnceLock<Option<zbus::blocking::Connection>> = OnceLock::new();
+    static PENDING: Mutex<Option<Pending>> = Mutex::new(None);
+
+    fn connection() -> Option<&'static zbus::blocking::Connection> {
+        let started = CONNECTION.get_or_init(|| {
+            let Ok(conn) = zbus::blocking::Connection::session() else {
+                return None;
+            };
+            start_listener(conn.clone());
+            Some(conn)
+        });
+        started.as_ref()
+    }
+
+    /// Route daemon signals to the pending notice. The iterator blocks for the
+    /// lifetime of the process, which is exactly the bound a singleton needs.
+    fn start_listener(conn: zbus::blocking::Connection) {
+        std::thread::spawn(move || {
+            let Ok(rule) = zbus::MatchRule::builder()
+                .msg_type(zbus::message::Type::Signal)
+                .sender("org.freedesktop.Notifications")
+                .and_then(|rule| rule.interface("org.freedesktop.Notifications"))
+                .and_then(|rule| Ok(rule.build()))
+            else {
+                return;
+            };
+            let Ok(messages) = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, None)
+            else {
+                return;
+            };
+            for message in messages {
+                let Ok(message) = message else { continue };
+                let member = message
+                    .header()
+                    .member()
+                    .map(|name| name.as_str().to_string())
+                    .unwrap_or_default();
+                match member.as_str() {
+                    "ActionInvoked" => {
+                        let Ok((id, action)) = message.body().deserialize::<(u32, String)>() else {
+                            continue;
+                        };
+                        if action != "default" && action != "打开" {
+                            continue;
+                        }
+                        let invoked = PENDING.lock().ok().and_then(|guard| {
+                            let pending = guard.as_ref()?;
+                            (pending.id == id).then(|| {
+                                (pending.session.clone(), pending.weak.clone())
+                            })
+                        });
+                        if let Some((session, weak)) = invoked {
+                            PENDING.lock().ok().and_then(|mut guard| {
+                                match guard.as_ref() {
+                                    Some(pending) if pending.id == id => *guard = None,
+                                    _ => {}
+                                }
+                                Some(())
+                            });
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(app) = weak.upgrade() {
+                                    open_session(&app, &session);
+                                }
+                            });
+                        }
+                    }
+                    "NotificationClosed" => {
+                        let Ok((id, _reason)) = message.body().deserialize::<(u32, u32)>() else {
+                            continue;
+                        };
+                        PENDING.lock().ok().and_then(|mut guard| {
+                            match guard.as_ref() {
+                                Some(pending) if pending.id == id => *guard = None,
+                                _ => {}
                             }
+                            Some(())
                         });
                     }
-                });
+                    _ => {}
+                }
+            }
+        });
+    }
+
+    /// Post the notice and mark it as the one whose clicks are honoured.
+    pub(super) fn show(title: &str, body: &str, weak: Weak<MainWindow>, session: &str) -> bool {
+        let Some(conn) = connection() else {
+            return false;
+        };
+        let Ok(proxy) = zbus::blocking::Proxy::new(
+            conn,
+            "org.freedesktop.Notifications",
+            "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications",
+        ) else {
+            return false;
+        };
+        // "default" is what the shell fires when the banner body is clicked;
+        // the labelled entry covers shells that render the actions as buttons.
+        let actions: &[&str] = &["default", "打开"];
+        let hints = HashMap::<&str, zbus::zvariant::Value>::new();
+        let id: u32 = match proxy.call(
+            "Notify",
+            &(
+                "蛹",
+                0u32,
+                "",
+                title,
+                body,
+                actions,
+                hints,
+                SHOW_DURATION.as_millis() as i32,
+            ),
+        ) {
+            Ok(id) => id,
+            Err(_) => return false,
+        };
+        if let Ok(mut guard) = PENDING.lock() {
+            *guard = Some(Pending {
+                id,
+                session: session.to_string(),
+                weak,
             });
-            true
         }
-        Err(_) => false,
+        true
     }
 }
 
