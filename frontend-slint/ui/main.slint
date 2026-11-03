@@ -49,6 +49,7 @@ export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThrea
 export { AppTray } from "tray.slint";
 export { TrayNotice } from "tray-notice.slint";
 export { CompletionNotice } from "completion-notice.slint";
+export { PetOverlay } from "pet-overlay.slint";
 export { HelpWindow } from "help_window.slint";
 export { ScreenshotOverlay } from "screenshot_overlay.slint";
 
@@ -740,8 +741,8 @@ export component MainWindow inherits Window {
     callback composer-file-drop(DropEvent);
     // 侧栏宽度：以窗口坐标为准（追踪通道给的是真实光标位置），起点由按下时
     // 记录，因此拖多远就宽多少，不受布局反馈滞后影响。
-    function apply-sidebar-width(start-width: length, start-x: length) {
-        root.sidebar-width = clamp(start-width + (PointerChase.pointer-x - start-x), 170px, 420px);
+    function apply-sidebar-width(start-width: length, start-x: length, current-x: length) {
+        root.sidebar-width = clamp(start-width + (current-x - start-x), 170px, 420px);
     }
     // The working-directory prompt dialog (rename / new dir / new file /
     // delete / cloud-approval confirm), driven by the native controller.
@@ -1237,6 +1238,15 @@ export component MainWindow inherits Window {
                             PointerChase.holding = PointerChase.enabled;
                             PointerChase.begin();
                         }
+                        if event.kind == PointerEventKind.move && dragging-width && !PointerChase.enabled {
+                            // 按住期间指针可能移出 6px 把手，捕获的 move 事件
+                            // 仍然可靠；与 `moved` 一起兜住 Linux 上的拖动。
+                            root.apply-sidebar-width(
+                                start-width,
+                                start-absolute-x,
+                                self.absolute-position.x + self.mouse-x,
+                            );
+                        }
                         if (event.kind == PointerEventKind.up && event.button == PointerEventButton.left)
                             || event.kind == PointerEventKind.cancel {
                             // 主键还按着说明这条松开是合成的（Win7 抢抓取时会
@@ -1251,12 +1261,19 @@ export component MainWindow inherits Window {
                         // 非 Windows 保持原来的几何路径；Windows 交给追踪通道，
                         // 免得鼠标位置与滞后一帧的布局坐标互相拉扯。
                         if !PointerChase.enabled && self.pressed {
-                            root.apply-sidebar-width(start-width, start-absolute-x);
+                            // Linux 等平台没有光标追踪通道，必须从事件流本身
+                            // 取当前窗口坐标；否则 pointer-x 停留在按下时的
+                            // 起点，宽度只会被夹到最小值。
+                            root.apply-sidebar-width(
+                                start-width,
+                                start-absolute-x,
+                                self.absolute-position.x + self.mouse-x,
+                            );
                         }
                     }
                     changed chase-x => {
                         if dragging-width {
-                            root.apply-sidebar-width(start-width, start-absolute-x);
+                            root.apply-sidebar-width(start-width, start-absolute-x, PointerChase.pointer-x);
                         }
                     }
                     changed chase-finish => {

@@ -443,6 +443,16 @@ export component SettingsPage inherits Rectangle {
     callback pick-ffmpeg-path();
     callback pick-browser-path();
     callback pick-shell-path();
+    // Backend statuses are stable codes ("custom"/"embedded"/...) so the hint
+    // follows the UI language instead of shipping Chinese text from Rust.
+    pure function runtime-status-text(code: string) -> string {
+        if code == "custom" { return I18n.st_runtime_status_custom; }
+        if code == "embedded" { return I18n.st_runtime_status_embedded; }
+        if code == "invalid" { return I18n.st_runtime_status_invalid; }
+        if code == "system" { return I18n.st_runtime_status_system; }
+        if code == "missing" { return I18n.st_runtime_status_missing; }
+        return "";
+    }
     // ---- 线程渲染压测：用户手动触发，写入本地库模拟线程 ----
     in-out property <bool> stress-running: false;
     in-out property <string> stress-user-rounds: "1000";
@@ -1203,11 +1213,23 @@ export component SettingsPage inherits Rectangle {
                                         PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-browser-path(); } }
                                     }
                                 }
+                                if root.browser-status != "" : Text {
+                                    height: 16px;
+                                    text: root.runtime-status-text(root.browser-status);
+                                    color: root.browser-status == "invalid" || root.browser-status == "missing" ? Theme.danger : Theme.muted;
+                                    font-size: Theme.font-xs; overflow: elide;
+                                }
                                 HorizontalLayout { height: 62px; spacing: 10px;
                                     FormField { horizontal-stretch: 1; label: I18n.st_shell_path; text <=> root.shell-path; read-only: root.saving || root.loading; edited => { root.save-runtime(); } }
                                     VerticalLayout { width: 92px; alignment: end; padding-bottom: 5px;
                                         PathBrowseButton { enabled: !root.saving && !root.loading; clicked => { root.pick-shell-path(); } }
                                     }
+                                }
+                                if root.shell-status != "" : Text {
+                                    height: 16px;
+                                    text: root.runtime-status-text(root.shell-status);
+                                    color: root.shell-status == "invalid" || root.shell-status == "missing" ? Theme.danger : Theme.muted;
+                                    font-size: Theme.font-xs; overflow: elide;
                                 }
                                 Rectangle { height: 8px; }
                                 HorizontalLayout { height: 34px;

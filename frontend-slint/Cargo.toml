@@ -42,6 +42,10 @@ serde = { version = "1", default-features = false, features = ["std", "derive"] 
 # The native screenshot path uses XGetImage on Linux. Keep this optional from
 # Windows builds so the Win7 dependency graph stays unchanged.
 x11-dl = "=2.21.0"
+# Task-completion notices on Wayland: the compositor forbids top-level
+# positioning, so there the toast goes through the desktop notification
+# daemon instead. zbus ^5 already ships in the graph via the Slint backend.
+notify-rust = { version = "=4.18.2", default-features = false, features = ["z"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

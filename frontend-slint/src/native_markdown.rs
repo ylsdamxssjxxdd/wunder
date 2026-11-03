@@ -229,7 +229,9 @@ fn send(job: Job, rx: mpsc::Receiver<Vec<(String, Option<Pixels>)>>, attempt: u3
             // subscribers so the next hydration can retry instead of waiting
             // on a decode that never starts.
             let sources = match error {
-                mpsc::TrySendError::Full(job) | mpsc::TrySendError::Disconnected(job) => job.sources,
+                mpsc::TrySendError::Full(job) | mpsc::TrySendError::Disconnected(job) => {
+                    job.sources
+                }
             };
             release(&sources);
         }

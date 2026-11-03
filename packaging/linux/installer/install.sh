@@ -68,6 +68,7 @@ write_wunder_desktop_file() {
 Type=Application
 Name=蛹
 Comment=本地 AI 工作台
+StartupWMClass=wunder
 Exec="$escaped_exec" %U
 Icon=$icon
 Terminal=false

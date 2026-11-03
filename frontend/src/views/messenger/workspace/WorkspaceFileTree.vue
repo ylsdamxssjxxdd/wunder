@@ -249,6 +249,8 @@ const emit = defineEmits<{
   'exit-selection': [];
   retry: [];
   command: [command: string, row: WorkspaceVisibleRow | null];
+  /** 打开行菜单前通知宿主：宿主据此把选择集合与右键目标对齐。 */
+  context: [row: WorkspaceVisibleRow | null];
   /** 内部拖拽落到目录行：把这些路径移动到目标目录。 */
   move: [payload: { paths: string[]; targetDir: string }];
   /** 点击空白区（没有宿主行）：回到根目录，清选中。 */
@@ -383,9 +385,8 @@ const handleRowDragStart = (event: DragEvent, row: WorkspaceVisibleRow) => {
     event.preventDefault();
     return;
   }
-  // 多选状态下拖动已选中的行，整批一起移动。
-  const draggingSelection =
-    props.selectionMode && selectedSet.value.has(row.path) && props.selectedPaths.length > 0;
+  // 拖动已选中的行时整批一起移动；快捷多选（Ctrl/Shift）同样算选择，不必进入多选模式。
+  const draggingSelection = selectedSet.value.has(row.path) && props.selectedPaths.length > 0;
   const paths = setWorkspaceDragPaths(
     event.dataTransfer,
     draggingSelection ? props.selectedPaths : [row.path]
@@ -588,6 +589,8 @@ const handleMenuKeydown = (event: KeyboardEvent) => {
 
 const openMenu = (row: WorkspaceVisibleRow | null, event: MouseEvent | Event) => {
   if (row?.kind === 'more') return;
+  // 右键目标先与宿主的选择集合对齐，菜单里的删除/下载才能按整批生效。
+  emit('context', row);
   const source = event as MouseEvent;
   const x = Number.isFinite(source.clientX) && source.clientX > 0 ? source.clientX : 24;
   const y = Number.isFinite(source.clientY) && source.clientY > 0 ? source.clientY : 24;
@@ -639,6 +642,8 @@ const menuItems = computed<MenuItem[]>(() => {
   } else {
     items.push({ command: 'preview', label: t('messenger.filesArea.menu.preview'), icon: 'fa-eye' });
     items.push({ command: 'download', label: t('common.download'), icon: 'fa-download' });
+    // 文件行同样给出新建入口：列表铺满、没有空白区时靠它新建到所在目录。
+    items.push(...createItems());
   }
   // 根层的条目没有上一层，只有不在根层时才给这个动作。
   if (isWritableTree.value && workspaceParentPath(row.path)) {
@@ -657,8 +662,7 @@ const resolveMoveUpPayload = (
   const parent = workspaceParentPath(row.path);
   if (!parent) return null;
   const targetDir = workspaceParentPath(parent);
-  const selection =
-    props.selectionMode && selectedSet.value.has(row.path) ? props.selectedPaths : [];
+  const selection = selectedSet.value.has(row.path) ? props.selectedPaths : [];
   const sameLevel = selection.filter((path) => workspaceParentPath(path) === parent);
   return { paths: sameLevel.length > 1 ? sameLevel : [row.path], targetDir };
 };

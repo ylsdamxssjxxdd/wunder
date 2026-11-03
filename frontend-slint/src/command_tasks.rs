@@ -215,7 +215,8 @@ fn full_command_text(command: &str) -> String {
 }
 
 /// 命令行本身可能带换行（heredoc、多行脚本），面板里压成一行再截断。
-fn command_line(command: &str) -> String {    let mut line = String::with_capacity(command.len().min(160));
+fn command_line(command: &str) -> String {
+    let mut line = String::with_capacity(command.len().min(160));
     for (index, part) in command
         .split(['\n', '\r'])
         .map(str::trim)

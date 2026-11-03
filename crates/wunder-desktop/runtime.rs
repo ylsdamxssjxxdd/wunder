@@ -911,8 +911,9 @@ pub fn runtime_tool_statuses(settings: &DesktopSettings, app_dir: &Path) -> Vec<
             search_path_for("rg")
         });
     // ffmpeg / browser / shell follow the same precedence: configured path wins,
-    // then the bundled supplement, then the host PATH. Chromium has no PATH arm
-    // because it only ever ships in the supplement, never system-wide.
+    // then the bundled supplement, then the host. Chromium is normally only
+    // shipped in the supplement, but a system Chrome/Chromium installation is
+    // usable too, and on Linux the shell is always the system bash.
     let (ffmpeg_resolved, ffmpeg_auto_label) = resolve_tool_auto(
         &settings.ffmpeg_path,
         app_dir,
@@ -923,13 +924,13 @@ pub fn runtime_tool_statuses(settings: &DesktopSettings, app_dir: &Path) -> Vec<
         &settings.browser_path,
         app_dir,
         resolve_embedded_browser_bin,
-        || None::<PathBuf>,
+        system_browser_bin,
     );
     let (shell_resolved, shell_auto_label) = resolve_tool_auto(
         &settings.shell_path,
         app_dir,
         resolve_embedded_powershell_bin,
-        || search_path_for("powershell"),
+        system_shell_bin,
     );
     vec![
         tool_status(
@@ -1079,20 +1080,44 @@ pub(crate) fn refresh_runtime_tool_env(settings: &DesktopSettings, app_dir: &Pat
             set_env_path_if_exists("WUNDER_FFPROBE_BIN", &probe);
         }
     }
-    if let Some(browser_bin) = resolve_desktop_tool_bin(&settings.browser_path, app_dir) {
+    // Publish the same browser the settings tab reports: custom pick, then the
+    // supplement copy, then the system Chrome/Chromium. Otherwise the UI could
+    // say "system" while the bridge silently launched Playwright's copy.
+    let browser_override = resolve_desktop_tool_bin(&settings.browser_path, app_dir)
+        .or_else(|| resolve_embedded_browser_bin(app_dir))
+        .or_else(system_browser_bin);
+    if let Some(browser_bin) = browser_override {
         set_env_path_if_exists("WUNDER_BROWSER_BIN", &browser_bin);
     }
+    #[cfg(windows)]
     if let Some(shell_bin) = resolve_desktop_tool_bin(&settings.shell_path, app_dir) {
         // cmd.exe cannot take the PowerShell switches the command tool passes,
-        // so a cmd pick stays a `shell_mode` decision instead of a host override.
+        // so a cmd pick stays a `shell_mode` decision instead of a host
+        // override.
         let is_cmd = shell_bin
             .file_name()
             .and_then(|name| name.to_str())
             .map(|name| name.eq_ignore_ascii_case("cmd.exe"))
             .unwrap_or(false);
         if !is_cmd {
-            set_env_path_if_exists(wunder_server::command_utils::POWERSHELL_EXE_ENV, &shell_bin);
+            set_env_path_if_exists(
+                wunder_server::command_utils::POWERSHELL_EXE_ENV,
+                &shell_bin,
+            );
             wunder_server::command_utils::reset_powershell_host();
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        // Unix always runs bash, so publish the same binary the settings tab
+        // shows (custom pick first, then the system bash). Clearing the setting
+        // removes the override instead of keeping the previously picked path.
+        let shell_effective = resolve_desktop_tool_bin(&settings.shell_path, app_dir)
+            .or_else(system_shell_bin);
+        if let Some(shell_bin) = shell_effective {
+            set_env_path_if_exists(wunder_server::command_utils::SHELL_BIN_ENV, &shell_bin);
+        } else {
+            std::env::remove_var(wunder_server::command_utils::SHELL_BIN_ENV);
         }
     }
 }
@@ -1242,9 +1267,19 @@ fn resolve_embedded_ffmpeg_bin(app_dir: &Path) -> Option<PathBuf> {
 /// the browser tool enum has no Browser arm, so the roots are searched directly.
 fn resolve_embedded_browser_bin(app_dir: &Path) -> Option<PathBuf> {
     let names: &[&str] = if cfg!(windows) {
-        &["opt/browser/chrome-win/chrome.exe", "opt/browser/chrome.exe"]
+        &[
+            "opt/browser/chrome-win/chrome.exe",
+            "opt/browser/chrome-win64/chrome.exe",
+            "opt/browser/chrome.exe",
+        ]
     } else {
-        &["opt/browser/chrome-linux/chrome", "opt/browser/chrome"]
+        // amd64 supplements stage Chrome for Testing as chrome-linux64, arm64
+        // uses the Playwright archive layout chrome-linux.
+        &[
+            "opt/browser/chrome-linux64/chrome",
+            "opt/browser/chrome-linux/chrome",
+            "opt/browser/chrome",
+        ]
     };
     embedded_supplement_roots_for_env(app_dir)
         .iter()
@@ -1261,6 +1296,80 @@ fn resolve_embedded_powershell_bin(app_dir: &Path) -> Option<PathBuf> {
         &embedded_supplement_roots_for_env(app_dir),
         wunder_server::local_bootstrap::supplement::Tool::PowerShell,
     )
+}
+
+/// Shell the command tool actually runs on this platform. Windows keeps the
+/// PowerShell lookup; Unix always goes through bash, so the UI must report the
+/// system bash instead of leaving the field blank.
+fn system_shell_bin() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        search_path_for("powershell")
+    }
+    #[cfg(not(windows))]
+    {
+        search_path_for("bash").or_else(|| {
+            ["/bin/bash", "/usr/bin/bash"].iter().find_map(|path| {
+                let path = PathBuf::from(path);
+                path.is_file().then_some(path)
+            })
+        })
+    }
+}
+
+/// Chromium-compatible browser installed on the host. The browser bridge can
+/// launch a system Chrome/Chromium through CDP, so a PATH hit is just as usable
+/// as the supplement copy.
+fn system_browser_bin() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let mut candidates = Vec::new();
+        for root in [
+            std::env::var_os("ProgramFiles"),
+            std::env::var_os("ProgramFiles(x86)"),
+            std::env::var_os("LocalAppData"),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let root = PathBuf::from(root);
+            candidates.push(root.join("Google/Chrome/Application/chrome.exe"));
+            candidates.push(root.join("Microsoft/Edge/Application/msedge.exe"));
+        }
+        candidates
+            .into_iter()
+            .find(|path| path.is_file())
+            .or_else(|| search_path_for("chrome").or_else(|| search_path_for("msedge")))
+    }
+    #[cfg(not(windows))]
+    {
+        const NAMES: &[&str] = &[
+            "google-chrome-stable",
+            "google-chrome",
+            "chromium",
+            "chromium-browser",
+            "microsoft-edge-stable",
+            "microsoft-edge",
+        ];
+        NAMES
+            .iter()
+            .find_map(|name| search_path_for(name))
+            .or_else(|| {
+                [
+                    "/usr/bin/google-chrome",
+                    "/usr/bin/google-chrome-stable",
+                    "/usr/bin/chromium",
+                    "/usr/bin/chromium-browser",
+                    "/opt/google/chrome/chrome",
+                    "/snap/bin/chromium",
+                ]
+                .iter()
+                .find_map(|path| {
+                    let path = PathBuf::from(path);
+                    path.is_file().then_some(path)
+                })
+            })
+    }
 }
 
 fn set_env_prompts_root_if_unset(repo_root: &Path) {

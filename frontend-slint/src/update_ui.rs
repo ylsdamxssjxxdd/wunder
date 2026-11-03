@@ -8,7 +8,7 @@ use crate::MainWindow;
 use slint::ComponentHandle;
 use std::sync::Arc;
 use std::time::Duration;
-use wunder_desktop::{NativeDesktop, TARGET_DESKTOP, UpdateStateView};
+use wunder_desktop::{NativeDesktop, UpdateStateView, TARGET_DESKTOP};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 

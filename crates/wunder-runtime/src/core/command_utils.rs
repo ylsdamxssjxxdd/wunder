@@ -1,3 +1,5 @@
+#[cfg(not(windows))]
+use std::env;
 use std::io;
 use std::path::Path;
 #[cfg(not(windows))]
@@ -158,8 +160,11 @@ pub fn build_shell_command_with_shell(command: &str, cwd: &Path, shell: &ShellLa
 
     #[cfg(not(windows))]
     {
-        let _ = shell;
-        let mut cmd = Command::new("bash");
+        let bash_bin = env::var_os(SHELL_BIN_ENV)
+            .map(PathBuf::from)
+            .or_else(|| shell.bash_bin.clone())
+            .unwrap_or_else(|| PathBuf::from("bash"));
+        let mut cmd = Command::new(bash_bin);
         cmd.arg("-lc")
             .arg(bash_command_with_pipefail(command))
             .current_dir(cwd);
@@ -402,6 +407,11 @@ fn prefer_powershell() -> bool {
 /// never satisfy a `powershell.exe` lookup. Publishing the resolved path keeps
 /// shell selection explicit instead of relying on PATH order.
 pub const POWERSHELL_EXE_ENV: &str = "WUNDER_POWERSHELL_EXE";
+
+/// Unix counterpart of the shell override: absolute path of a bash binary.
+/// The desktop settings field is auto-filled with the system bash, so this is
+/// only set when the user picks another bash explicitly.
+pub const SHELL_BIN_ENV: &str = "WUNDER_SHELL_BIN";
 
 /// A PowerShell host that answered its own version query.
 ///

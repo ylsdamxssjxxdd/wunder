@@ -65,14 +65,15 @@ impl StatusProjection {
     pub(super) fn record_local(&mut self, session: &str, status: &str, now: Instant) {
         self.revision = self.revision.saturating_add(1);
         let revision = self.revision;
-        let entry = self.sessions.entry(session.to_string()).or_insert_with(|| {
-            SessionStatus {
+        let entry = self
+            .sessions
+            .entry(session.to_string())
+            .or_insert_with(|| SessionStatus {
                 revision: 0,
                 status: String::new(),
                 local: false,
                 completion: Completion::None,
-            }
-        });
+            });
         entry.revision = revision;
         entry.local = true;
         note(entry, status, now);
@@ -244,7 +245,8 @@ mod tests {
         let mut projection = StatusProjection::default();
         let read_revision = projection.revision();
         projection.record_local("fixture-local", "请求中", at);
-        let reconciled = projection.reconcile("fixture-background", "done", read_revision, None, at);
+        let reconciled =
+            projection.reconcile("fixture-background", "done", read_revision, None, at);
         assert_eq!(reconciled.status, "done");
         assert!(reconciled.accepted);
     }
@@ -271,9 +273,11 @@ mod tests {
         let mut projection = StatusProjection::default();
         projection.record_local("fixture-session", "任务完成", at);
         let read_revision = projection.revision();
-        assert!(projection
-            .reconcile("fixture-session", "done", read_revision, None, at)
-            .accepted);
+        assert!(
+            projection
+                .reconcile("fixture-session", "done", read_revision, None, at)
+                .accepted
+        );
         projection.retain(|_| false);
         assert!(projection.sessions.is_empty());
     }
@@ -290,9 +294,11 @@ mod tests {
                 .status,
             "任务完成".to_string(),
         );
-        assert!(projection
-            .reconcile("fixture-session", "done", read_revision, None, at)
-            .accepted);
+        assert!(
+            projection
+                .reconcile("fixture-session", "done", read_revision, None, at)
+                .accepted
+        );
     }
 
     #[test]
@@ -410,9 +416,11 @@ mod tests {
     fn a_new_run_clears_a_retired_stop() {
         let at = now();
         let mut projection = StatusProjection::default();
-        assert!(projection
-            .reconcile("fixture-session", "cancelled", 0, None, at)
-            .retired);
+        assert!(
+            projection
+                .reconcile("fixture-session", "cancelled", 0, None, at)
+                .retired
+        );
         projection.record_local("fixture-session", "请求中", at);
         assert!(!projection.should_retire("fixture-session", at));
     }
@@ -447,10 +455,13 @@ mod tests {
         let mut projection = StatusProjection::default();
         projection.record_local("fixture-session", "任务完成", at);
         let read_revision = projection.revision();
-        assert!(projection
-            .reconcile("fixture-session", "completed", read_revision, None, at)
-            .accepted);
-        let reconciled = projection.reconcile("fixture-session", "running", read_revision, None, at);
+        assert!(
+            projection
+                .reconcile("fixture-session", "completed", read_revision, None, at)
+                .accepted
+        );
+        let reconciled =
+            projection.reconcile("fixture-session", "running", read_revision, None, at);
         assert!(reconciled.accepted, "a new remote run must not be fenced");
         assert_eq!(reconciled.status, "running");
     }

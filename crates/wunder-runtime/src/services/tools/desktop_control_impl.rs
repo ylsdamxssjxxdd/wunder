@@ -9,7 +9,7 @@ use base64::Engine;
 use image::ImageEncoder;
 use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::hash::Hasher;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tokio::fs;
@@ -242,6 +242,92 @@ struct DesktopScreenshot {
     screen_height: i32,
     size_bytes: usize,
     fingerprint: u64,
+}
+
+/// A screen-space rectangle owned by this process. The agent window itself
+/// continuously repaints while a turn is streaming; comparing those pixels
+/// would report every observation as unsettled even when the controlled
+/// application has finished redrawing.
+#[derive(Clone, Copy, Debug)]
+struct PixelRect {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+impl PixelRect {
+    fn normalized(
+        self,
+        screen_width: i32,
+        screen_height: i32,
+        norm_width: usize,
+        norm_height: usize,
+    ) -> Option<(usize, usize, usize, usize)> {
+        if screen_width <= 0 || screen_height <= 0 || self.width <= 0 || self.height <= 0 {
+            return None;
+        }
+        let left = i64::from(self.x);
+        let top = i64::from(self.y);
+        let right = left + i64::from(self.width);
+        let bottom = top + i64::from(self.height);
+        let left = left.max(0);
+        let top = top.max(0);
+        let right = right.min(i64::from(screen_width));
+        let bottom = bottom.min(i64::from(screen_height));
+        if right <= left || bottom <= top {
+            return None;
+        }
+        let scale_x = |value: i64| {
+            (value * norm_width as i64 / i64::from(screen_width)).clamp(0, norm_width as i64)
+                as usize
+        };
+        let scale_y = |value: i64| {
+            (value * norm_height as i64 / i64::from(screen_height)).clamp(0, norm_height as i64)
+                as usize
+        };
+        let x0 = scale_x(left).saturating_sub(2);
+        let y0 = scale_y(top).saturating_sub(2);
+        let x1 = scale_x(right).saturating_add(2).min(norm_width);
+        let y1 = scale_y(bottom).saturating_add(2).min(norm_height);
+        (x1 > x0 && y1 > y0).then_some((x0, y0, x1, y1))
+    }
+}
+
+fn masked_fingerprint(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    masks: &[(usize, usize, usize, usize)],
+) -> u64 {
+    if width == 0 || height == 0 {
+        return 0;
+    }
+    let inside = |x: usize, y: usize| {
+        masks
+            .iter()
+            .any(|&(x0, y0, x1, y1)| x >= x0 && x < x1 && y >= y0 && y < y1)
+    };
+    // If the agent window covers almost the whole screen there is no reliable
+    // external frame left to compare; fall back to the full frame instead of
+    // reporting a mask-only view as stable.
+    let visible_pixels = (0..height)
+        .flat_map(|y| (0..width).map(move |x| (x, y)))
+        .filter(|&(x, y)| !inside(x, y))
+        .count();
+    let use_masks = visible_pixels * 10 >= width * height;
+    let mut hasher = DefaultHasher::new();
+    for y in 0..height {
+        let row = y * width;
+        for x in 0..width {
+            if use_masks && inside(x, y) {
+                continue;
+            }
+            let offset = (row + x) * 4;
+            hasher.write(&rgba[offset..offset + 4]);
+        }
+    }
+    hasher.finish()
 }
 
 #[derive(Default)]
@@ -883,8 +969,19 @@ fn capture_screenshot_blocking(norm_width: i32, norm_height: i32) -> Result<Desk
             "tool.desktop_control.capture_too_large"
         )));
     }
-    let mut fingerprint = DefaultHasher::new();
-    png.hash(&mut fingerprint);
+    let masks: Vec<_> = own_window_rects()
+        .into_iter()
+        .filter_map(|rect| {
+            rect.normalized(
+                screen_width,
+                screen_height,
+                norm_width as usize,
+                norm_height as usize,
+            )
+        })
+        .collect();
+    let fingerprint =
+        masked_fingerprint(&resized, norm_width as usize, norm_height as usize, &masks);
     let dir = resolve_temp_dir()?.join("desktop_control");
     std::fs::create_dir_all(&dir)
         .map_err(|err| anyhow!(format!("create temp dir failed: {err}")))?;
@@ -901,7 +998,7 @@ fn capture_screenshot_blocking(norm_width: i32, norm_height: i32) -> Result<Desk
         screen_width,
         screen_height,
         size_bytes: png.len(),
-        fingerprint: fingerprint.finish(),
+        fingerprint,
     })
 }
 
@@ -1025,6 +1122,187 @@ fn screen_metrics() -> Result<(i32, i32)> {
     Err(anyhow!(crate::i18n::t(
         "tool.desktop_control.unsupported_platform"
     )))
+}
+
+#[cfg(windows)]
+fn own_window_rects() -> Vec<PixelRect> {
+    crate::core::dpi::init_process_dpi_awareness();
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowRect, GetWindowThreadProcessId, IsWindowVisible,
+    };
+
+    struct Context {
+        pid: u32,
+        rects: Vec<PixelRect>,
+    }
+
+    unsafe extern "system" fn collect(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let context = &mut *(lparam as *mut Context);
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid != context.pid || IsWindowVisible(hwnd) == 0 {
+            return 1;
+        }
+        let mut rect = std::mem::zeroed::<RECT>();
+        if GetWindowRect(hwnd, &mut rect) != 0 {
+            let width = rect.right.saturating_sub(rect.left);
+            let height = rect.bottom.saturating_sub(rect.top);
+            if width > 0 && height > 0 {
+                context.rects.push(PixelRect {
+                    x: rect.left,
+                    y: rect.top,
+                    width,
+                    height,
+                });
+            }
+        }
+        1
+    }
+
+    let mut context = Context {
+        pid: unsafe { GetCurrentProcessId() },
+        rects: Vec::new(),
+    };
+    unsafe {
+        EnumWindows(Some(collect), &mut context as *mut Context as LPARAM);
+    }
+    context.rects
+}
+
+#[cfg(target_os = "linux")]
+fn own_window_rects() -> Vec<PixelRect> {
+    with_x11(|xlib, display, screen| unsafe {
+        let pid = std::process::id() as std::ffi::c_ulong;
+        let pid_atom = (xlib.XInternAtom)(
+            display,
+            b"_NET_WM_PID\0".as_ptr() as *const std::ffi::c_char,
+            0,
+        );
+        if pid_atom == 0 {
+            return Ok(Vec::new());
+        }
+        let root = (xlib.XRootWindow)(display, screen);
+        let mut rects = Vec::new();
+        collect_own_x11_windows(xlib, display, root, root, pid, pid_atom, 0, &mut rects);
+        Ok(rects)
+    })
+    .unwrap_or_default()
+}
+
+/// Walk the X11 window tree and collect visible client windows whose
+/// `_NET_WM_PID` matches this process. Top-level windows are usually WM
+/// frames, so a bounded recursion is required to reach the client window.
+#[cfg(target_os = "linux")]
+unsafe fn collect_own_x11_windows(
+    xlib: &x11_dl::xlib::Xlib,
+    display: *mut x11_dl::xlib::Display,
+    window: x11_dl::xlib::Window,
+    root: x11_dl::xlib::Window,
+    pid: std::ffi::c_ulong,
+    pid_atom: x11_dl::xlib::Atom,
+    depth: u8,
+    rects: &mut Vec<PixelRect>,
+) {
+    let mut actual_type = 0 as x11_dl::xlib::Atom;
+    let mut actual_format = 0i32;
+    let mut item_count = 0 as std::ffi::c_ulong;
+    let mut bytes_after = 0 as std::ffi::c_ulong;
+    let mut property: *mut u8 = std::ptr::null_mut();
+    let status = (xlib.XGetWindowProperty)(
+        display,
+        window,
+        pid_atom,
+        0,
+        1,
+        0,
+        0,
+        &mut actual_type,
+        &mut actual_format,
+        &mut item_count,
+        &mut bytes_after,
+        &mut property,
+    );
+    let mut owned = false;
+    if status == 0
+        && actual_type != 0
+        && actual_format == 32
+        && item_count >= 1
+        && !property.is_null()
+    {
+        owned = *(property as *const std::ffi::c_ulong) == pid;
+    }
+    if !property.is_null() {
+        (xlib.XFree)(property as *mut std::ffi::c_void);
+    }
+    if owned {
+        let mut attributes: x11_dl::xlib::XWindowAttributes = std::mem::zeroed();
+        if (xlib.XGetWindowAttributes)(display, window, &mut attributes) != 0
+            && attributes.map_state == x11_dl::xlib::IsViewable
+            && attributes.width > 0
+            && attributes.height > 0
+        {
+            let mut absolute_x = 0i32;
+            let mut absolute_y = 0i32;
+            let mut child = 0 as x11_dl::xlib::Window;
+            if (xlib.XTranslateCoordinates)(
+                display,
+                window,
+                root,
+                0,
+                0,
+                &mut absolute_x,
+                &mut absolute_y,
+                &mut child,
+            ) != 0
+            {
+                rects.push(PixelRect {
+                    x: absolute_x,
+                    y: absolute_y,
+                    width: attributes.width,
+                    height: attributes.height,
+                });
+            }
+        }
+        return;
+    }
+    if depth >= 4 {
+        return;
+    }
+    let mut root_return = 0 as x11_dl::xlib::Window;
+    let mut parent_return = 0 as x11_dl::xlib::Window;
+    let mut children: *mut x11_dl::xlib::Window = std::ptr::null_mut();
+    let mut child_count = 0u32;
+    if (xlib.XQueryTree)(
+        display,
+        window,
+        &mut root_return,
+        &mut parent_return,
+        &mut children,
+        &mut child_count,
+    ) != 0
+        && !children.is_null()
+    {
+        for index in 0..child_count as usize {
+            collect_own_x11_windows(
+                xlib,
+                display,
+                *children.add(index),
+                root,
+                pid,
+                pid_atom,
+                depth + 1,
+                rects,
+            );
+        }
+        (xlib.XFree)(children as *mut std::ffi::c_void);
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn own_window_rects() -> Vec<PixelRect> {
+    Vec::new()
 }
 
 #[cfg(windows)]
@@ -2085,6 +2363,58 @@ mod tests {
             "action": "left_click"
         }));
         assert!(payload.is_err());
+    }
+
+    #[test]
+    fn masked_fingerprint_ignores_agent_window_repaint() {
+        let width = 8usize;
+        let height = 8usize;
+        let masks = [(0usize, 0usize, 4usize, 4usize)];
+        let mut frame_a = vec![0u8; width * height * 4];
+        let mut frame_b = frame_a.clone();
+        for y in 0..4 {
+            for x in 0..4 {
+                let offset = (y * width + x) * 4;
+                frame_a[offset..offset + 4].copy_from_slice(&[255, 0, 0, 255]);
+                frame_b[offset..offset + 4].copy_from_slice(&[0, 255, 0, 255]);
+            }
+        }
+        assert_eq!(
+            masked_fingerprint(&frame_a, width, height, &masks),
+            masked_fingerprint(&frame_b, width, height, &masks)
+        );
+
+        let offset = (0 * width + 4) * 4;
+        frame_b[offset..offset + 4].copy_from_slice(&[255, 255, 255, 255]);
+        assert_ne!(
+            masked_fingerprint(&frame_a, width, height, &masks),
+            masked_fingerprint(&frame_b, width, height, &masks)
+        );
+    }
+
+    #[test]
+    fn masked_fingerprint_falls_back_when_mask_covers_screen() {
+        let width = 8usize;
+        let height = 8usize;
+        let masks = [(0usize, 0usize, 8usize, 8usize)];
+        let frame_a = vec![0u8; width * height * 4];
+        let mut frame_b = frame_a.clone();
+        frame_b[0..4].copy_from_slice(&[255, 255, 255, 255]);
+        assert_ne!(
+            masked_fingerprint(&frame_a, width, height, &masks),
+            masked_fingerprint(&frame_b, width, height, &masks)
+        );
+    }
+
+    #[test]
+    fn pixel_rect_maps_screen_rect_to_normalized_mask() {
+        let rect = PixelRect {
+            x: 100,
+            y: 50,
+            width: 400,
+            height: 200,
+        };
+        assert_eq!(rect.normalized(1000, 500, 100, 50), Some((8, 3, 52, 27)));
     }
 
     #[test]

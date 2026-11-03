@@ -2337,12 +2337,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         let preview_images = pending_attachments
             .iter()
             .filter(|attachment| attachment.mime_type.starts_with("image/"))
-            .map(|attachment| {
-                (
-                    attachment.name.to_string(),
-                    attachment.data_url.to_string(),
-                )
-            })
+            .map(|attachment| (attachment.name.to_string(), attachment.data_url.to_string()))
             .collect::<Vec<_>>();
         if session.is_empty() {
             // No live thread selected (usually a failed startup projection):
@@ -3631,14 +3626,7 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                         live.settle_answered_inquiry();
                     }
                     let row = live.begin_turn(&entry.client_message_id, &content);
-                    echo_image_attachments(
-                        &app,
-                        &desktop,
-                        &mut live,
-                        row,
-                        &content,
-                        &entry.images,
-                    );
+                    echo_image_attachments(&app, &desktop, &mut live, row, &content, &entry.images);
                     live.set_turn_status("请求中", 0);
                     publish_timeline(&app, &live);
                 }

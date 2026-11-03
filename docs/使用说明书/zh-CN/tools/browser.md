@@ -25,7 +25,7 @@ updated_at: 2026-10-20
 | `screenshot` | 截图 | 可指定工作区相对 `path`；结果为附件引用 |
 | `click` / `type` / `hover` / `select` / `drag` / `press` | 页面交互 | 元素动作提供且只提供一种 `ref` 或 `selector`；`drag` 提供完整来源和目标；type/select/press 有专属必填字段 |
 | `wait` | 等加载、选择器、文本、URL 或有界时间 | 已知成功条件优先于固定等待 |
-| `batch` | 顺序执行 1–10 个依赖步骤 | 每步使用严格 kind schema，不能嵌套 batch |
+| `batch` | 顺序执行 1–10 个依赖步骤 | 每步使用严格 kind schema，不能嵌套 batch；步骤末尾可用 `back` / `observe_text` 直接取证 |
 
 典型流程：`navigate` → `observe_refs` → 交互或 `batch` → `wait` → `observe_text` 验证。导航会使旧 ref 失效；跨页面时重新观察。
 
@@ -37,10 +37,13 @@ updated_at: 2026-10-20
   "steps": [
     {"kind": "type", "ref": "e1", "text": "sample"},
     {"kind": "click", "ref": "e2"},
-    {"kind": "wait", "url": "**/complete", "timeout_ms": 5000}
+    {"kind": "wait", "url": "**/complete", "timeout_ms": 5000},
+    {"kind": "observe_text", "max_chars": 2000}
   ]
 }
 ```
+
+批处理内的 `observe_text` 与顶层同名 action 行为一致，正文按每批 12,000 字符预算返回，并保留 `truncated`、`has_more` 与 `next_cursor`。
 
 ## 结果与限额
 

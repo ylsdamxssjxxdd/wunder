@@ -1,10 +1,12 @@
 //! Task-completion system notice, the desktop counterpart of the web
 //! `notifyAgentTaskCompleted`: when a thread this process observed in flight
 //! (running or pending) settles to a successful terminal state, a compact
-//! frameless toast above the taskbar announces it. Clicking the toast opens
-//! the main window on that session; the toast hides itself after a few
-//! seconds. Errors keep the pet's warning bubble as their channel — the web
-//! predicate only notifies on success.
+//! frameless toast above the taskbar announces it. On Wayland sessions the
+//! floating window cannot be positioned, so there a notification-daemon
+//! banner takes its place. Clicking either opens the main window on that
+//! session; the notice hides itself after a few seconds. Errors keep the
+//! pet's warning bubble as their channel — the web predicate only notifies
+//! on success.
 
 use crate::runtime_phase::Phase;
 use crate::{CompletionNotice, I18n, MainWindow};
@@ -124,6 +126,14 @@ fn show(app: &MainWindow, session: &str, agent_name: &str) {
     let body = i18n
         .invoke_cn_notice_body(slint::SharedString::from(agent_name))
         .to_string();
+    // On Wayland the compositor owns top-level placement: a floating toast
+    // window cannot be positioned at all and pops up wherever the shell
+    // pleases. There the notice goes through the notification daemon, whose
+    // banner position is the shell's own and always the same.
+    #[cfg(target_os = "linux")]
+    if crate::pet_window::wayland_session() && show_system_notice(&title, &body, app, session) {
+        return;
+    }
     let weak = NOTICE.with(|slot| {
         let mut slot = slot.borrow_mut();
         if slot.is_none() {
@@ -204,23 +214,91 @@ fn position_above_taskbar(notice: &CompletionNotice) {
         // silhouette is (re)applied here; `show()` already tried it eagerly to
         // keep the first frames from showing square corners.
         shape_notice(&notice);
-        let Some(area) = crate::pet_window::work_area() else {
+        #[cfg(windows)]
+        {
+            let Some(area) = crate::pet_window::work_area() else {
+                return;
+            };
+            // The work area is logical; the mapped window size is physical, so it
+            // comes back to logical units before the corner math.
+            let size = notice.window().size();
+            let scale = f64::from(notice.window().scale_factor().max(1.0));
+            let width = f64::from(size.width) / scale;
+            let height = f64::from(size.height) / scale;
+            let x = ((area.0 + area.2 - SCREEN_MARGIN - width).max(area.0 + SCREEN_MARGIN)) as f32;
+            let y = ((area.1 + area.3 - SCREEN_MARGIN - height).max(area.1 + SCREEN_MARGIN)) as f32;
+            notice.window().set_position(slint::WindowPosition::Logical(
+                slint::LogicalPosition::new(x, y),
+            ));
+        }
+        #[cfg(not(windows))]
+        position_via_winit(&notice);
+    });
+}
+
+/// Non-Windows counterpart of the work-area math: bottom-right of the monitor
+/// the toast landed on, through winit's physical coordinates. Wayland never
+/// reaches here — the compositor discards top-level positions, so that session
+/// takes the D-Bus notification path in `show_system_notice` instead.
+#[cfg(not(windows))]
+fn position_via_winit(notice: &CompletionNotice) {
+    use slint::winit_030::WinitWindowAccessor;
+    notice.window().with_winit_window(|native| {
+        let Some(monitor) = native.current_monitor() else {
             return;
         };
-        // The work area is logical; the mapped window size is physical, so it
-        // comes back to logical units before the corner math.
-        let size = notice.window().size();
-        let scale = f64::from(notice.window().scale_factor().max(1.0));
-        let width = f64::from(size.width) / scale;
-        let height = f64::from(size.height) / scale;
-        let x = ((area.0 + area.2 - SCREEN_MARGIN - width).max(area.0 + SCREEN_MARGIN)) as f32;
-        let y = ((area.1 + area.3 - SCREEN_MARGIN - height).max(area.1 + SCREEN_MARGIN)) as f32;
-        notice
-            .window()
-            .set_position(slint::WindowPosition::Logical(slint::LogicalPosition::new(
-                x, y,
-            )));
+        let scale = f64::from(native.scale_factor());
+        let origin = monitor.position();
+        let monitor_size = monitor.size();
+        let window_size = native.outer_size();
+        // Right margin keeps the SCREEN_MARGIN look; the deeper bottom margin
+        // clears the tall panels many X11 desktops dock at the screen bottom,
+        // the same clearance the tray notice uses.
+        let margin_x = (SCREEN_MARGIN * scale) as i32;
+        let margin_y = ((SCREEN_MARGIN + 40.0) * scale) as i32;
+        native.set_outer_position(winit::dpi::PhysicalPosition::new(
+            origin.x + monitor_size.width as i32 - window_size.width as i32 - margin_x,
+            origin.y + monitor_size.height as i32 - window_size.height as i32 - margin_y,
+        ));
     });
+}
+
+/// Emit the notice through the desktop notification daemon. The banner's
+/// position is the shell's own and deterministic; clicking it (the default
+/// action or the 打开 button) opens the notified session. Returns `false` when
+/// no daemon could be reached, letting the caller fall back to the toast
+/// window. The wait runs on its own short-lived thread and ends when the
+/// daemon reports the notice closed.
+#[cfg(target_os = "linux")]
+fn show_system_notice(title: &str, body: &str, app: &MainWindow, session: &str) -> bool {
+    let weak = app.as_weak();
+    let session = session.to_string();
+    let handle = notify_rust::Notification::new()
+        .appname("蛹")
+        .summary(title)
+        .body(body)
+        .timeout(notify_rust::Timeout::Milliseconds(
+            SHOW_DURATION.as_millis() as u32,
+        ))
+        .action("default", "打开")
+        .show();
+    match handle {
+        Ok(handle) => {
+            std::thread::spawn(move || {
+                handle.wait_for_action(|action| {
+                    if action == "default" {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(app) = weak.upgrade() {
+                                open_session(&app, &session);
+                            }
+                        });
+                    }
+                });
+            });
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 /// Match the native window silhouette to the card's rounded corners. The

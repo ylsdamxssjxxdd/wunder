@@ -197,7 +197,7 @@ fn playwright_tool_specs() -> Vec<ToolSpec> {
     vec![ToolSpec {
         name: TOOL_BROWSER.to_string(),
         title: None,
-        description: "Browser automation. Select one action; observe refs before element actions. Text cursors require an unchanged page; batch has 1-10 dependent steps.".to_string(),
+        description: "Browser automation. Select one action; observe refs before element actions. Text cursors require an unchanged page; batch has 1-10 dependent steps and may end with back/observe_text to verify the result.".to_string(),
         input_schema: json!({"type":"object","$defs":defs,"oneOf":[
             strict_object_schema(json!({"action":{"const":"navigate"},"url":reference("u"),"target_id":target(),"timeout_ms":reference("m")}), &["action","url"], None),
             strict_object_schema(json!({"action":{"const":"back"},"target_id":target()}), &["action"], None),
@@ -245,6 +245,8 @@ fn batch_step_schema() -> Value {
         strict(select, &["kind","value"], Some(element_target())),
         strict(json!({"kind":{"const":"drag"},"from_ref":reference("r"),"from_selector":reference("s"),"to_ref":reference("r"),"to_selector":reference("s")}), &["kind"], Some(drag_target())),
         strict(json!({"kind":{"const":"press"},"key":reference("x")}), &["kind","key"], None),
+        strict(json!({"kind":{"const":"back"}}), &["kind"], None),
+        strict(json!({"kind":{"const":"observe_text"},"max_chars":reference("h"),"cursor":reference("x")}), &["kind"], None),
         strict(json!({"kind":{"const":"wait"},"wait_ms":reference("n"),"load_state":reference("l"),"text":reference("x"),"selector":reference("s"),"state":reference("q"),"url":reference("u"),"timeout_ms":reference("m")}), &["kind"], None)
     ]})
 }
@@ -481,6 +483,8 @@ fn validate_batch_steps(steps: &Value) -> Result<()> {
             "select" => &["kind", "ref", "selector", "value"],
             "drag" => &["kind", "from_ref", "from_selector", "to_ref", "to_selector"],
             "press" => &["kind", "key"],
+            "back" => &["kind"],
+            "observe_text" => &["kind", "max_chars", "cursor"],
             "wait" => &[
                 "kind",
                 "wait_ms",
@@ -510,9 +514,11 @@ fn validate_batch_steps(steps: &Value) -> Result<()> {
                 "to_ref",
                 "to_selector",
                 "key",
+                "cursor",
             ],
         )?;
         validate_optional_boolean(step, &["double_click", "submit"])?;
+        validate_optional_integer(step, "max_chars", 1, 40_000)?;
         validate_optional_integer(step, "wait_ms", 0, 120_000)?;
         validate_optional_integer(step, "timeout_ms", 1, 120_000)?;
         validate_optional_enum(
@@ -542,7 +548,7 @@ fn validate_batch_steps(steps: &Value) -> Result<()> {
             "press" => {
                 required_str(step, "key")?;
             }
-            "wait" => {}
+            "back" | "observe_text" | "wait" => {}
             _ => unreachable!("batch kind validated"),
         }
     }
@@ -1031,6 +1037,12 @@ mod tests {
             .expect("strict batch variants");
         assert!(steps
             .iter()
+            .any(|step| step["properties"]["kind"]["const"] == "back"));
+        assert!(steps
+            .iter()
+            .any(|step| step["properties"]["kind"]["const"] == "observe_text"));
+        assert!(steps
+            .iter()
             .all(|step| step["additionalProperties"] == false));
         assert_eq!(schema["$defs"]["x"]["type"], json!("string"));
     }
@@ -1131,6 +1143,13 @@ mod tests {
         assert!(
             validate_batch_steps(&json!([{"kind":"type","selector":"#field","text":"x"}])).is_ok()
         );
+        assert!(validate_batch_steps(&json!([{"kind":"back"}])).is_ok());
+        assert!(validate_batch_steps(
+            &json!([{"kind":"observe_text","max_chars":400,"cursor":"c1"}])
+        )
+        .is_ok());
+        assert!(validate_batch_steps(&json!([{"kind":"observe_text","max_chars":0}])).is_err());
+        assert!(validate_batch_steps(&json!([{"kind":"observe_text","cursor":true}])).is_err());
         let many: Vec<_> = (0..11)
             .map(|_| json!({"kind":"wait","wait_ms":1}))
             .collect();

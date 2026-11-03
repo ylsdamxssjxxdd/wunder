@@ -1,12 +1,15 @@
 //! OS-level floating overlay windows for companion pets.
 //!
-//! The desktop build renders Slint with the software backend, which cannot
-//! present a per-pixel-alpha window, so a pet is a native layered window owned
-//! by its own Win32 message-loop thread. That thread also drives the frame
-//! clock and the drag, so an idle chat costs the UI thread a handful of commands
-//! per interaction instead of a per-frame copy.
+//! The desktop build renders Slint with the software backend. Windows presents
+//! a pet through a native layered window owned by its own Win32 message-loop
+//! thread (GDI drops the alpha channel, so a transparent Slint window is not
+//! an option there); Linux uses transparent borderless Slint windows on the
+//! shared winit event loop instead (`linux.rs`), where X11 compositors honor
+//! per-pixel alpha.
 
 use crate::companion_sprite::Sheet;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
@@ -116,9 +119,53 @@ pub enum PetEvent {
     },
 }
 
+thread_local! {
+    /// Set while a pet overlay window is being built. The platform hook reads
+    /// it once, when the window adapter (and with it the native window
+    /// attributes) is created, to mark this window as a taskbar-less,
+    /// non-activating overlay instead of an ordinary top-level.
+    static OVERLAY_WINDOW_PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Claim the pending pet overlay window for the platform hook. Called from the
+/// backend's window-attributes hook, exactly once per created window.
+pub(crate) fn take_overlay_window() -> bool {
+    OVERLAY_WINDOW_PENDING.with(|pending| pending.replace(false))
+}
+
+fn mark_overlay_window() {
+    OVERLAY_WINDOW_PENDING.with(|pending| pending.set(true));
+}
+
 /// Whether this platform can show an overlay window at all.
 pub fn available() -> bool {
-    cfg!(windows)
+    #[cfg(windows)]
+    {
+        true
+    }
+    #[cfg(not(windows))]
+    {
+        #[cfg(target_os = "linux")]
+        {
+            // Wayland compositors forbid application-side top-level
+            // positioning: a pet could not return to its remembered spot or
+            // hug the screen edge, so such sessions stay petless.
+            !wayland_session()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
+        }
+    }
+}
+
+/// Whether the winit backend talks to a Wayland compositor. `WINIT_UNIX_BACKEND`
+/// keeps its documented meaning: an explicit `x11` overrides the environment.
+#[cfg(target_os = "linux")]
+pub(crate) fn wayland_session() -> bool {
+    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
+        || std::env::var_os("WAYLAND_SOCKET").is_some();
+    wayland && !matches!(std::env::var("WINIT_UNIX_BACKEND").as_deref(), Ok("x11"))
 }
 
 /// Logical work area (x, y, width, height) of the primary monitor.
@@ -136,6 +183,10 @@ pub fn work_area() -> Option<(f64, f64, f64, f64)> {
 pub struct PetService {
     #[cfg(windows)]
     thread_id: u32,
+    /// Linux overlay windows live on the shared winit event loop, so the
+    /// controller is applied directly on the (UI) thread that sends commands.
+    #[cfg(not(windows))]
+    controller: Rc<RefCell<linux::Controller>>,
 }
 
 impl PetService {
@@ -148,7 +199,7 @@ impl PetService {
         }
         #[cfg(not(windows))]
         {
-            None
+            linux::spawn()
         }
     }
 
@@ -159,17 +210,19 @@ impl PetService {
         }
         #[cfg(not(windows))]
         {
-            let _ = command;
+            self.controller.borrow_mut().handle(command);
         }
     }
 }
 
 impl Drop for PetService {
     fn drop(&mut self) {
-        // Releasing the controller must not leave layered windows on screen.
+        // Releasing the controller must not leave overlay windows on screen.
         self.send(PetCommand::Shutdown);
     }
 }
 
 #[cfg(windows)]
 mod win32;
+#[cfg(not(windows))]
+mod linux;

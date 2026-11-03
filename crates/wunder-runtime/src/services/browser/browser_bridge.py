@@ -1074,11 +1074,10 @@ class BridgeSession:
         if action in ("open", "open_tab"):
             return self.open_tab(raw.get("url"), raw.get("timeout_ms"))
         if action in ("focus", "focus_tab"):
-            return self.focus_tab(raw.get("target_id"))
+            return self.focus_tab(raw.get("target_id"), raw.get("index"))
         if action in ("close", "close_tab"):
-            target_id = raw.get("target_id")
-            if target_id:
-                return self.close_tab(target_id)
+            if raw.get("target_id") or raw.get("index") is not None:
+                return self.close_tab(raw.get("target_id"), raw.get("index"))
             return {"success": True, "data": {"status": "closing"}}
         if action == "navigate":
             return self.navigate(raw.get("url"), raw.get("target_id"), raw.get("timeout_ms"))
@@ -1157,7 +1156,11 @@ class BridgeSession:
             },
         }
 
-    def focus_tab(self, target_id):
+    def focus_tab(self, target_id=None, index=None):
+        try:
+            target_id = self._resolve_tab_target(target_id, index)
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
         page, target_id = self._resolve_page(target_id)
         self.active_target_id = target_id
         page.bring_to_front()
@@ -1172,7 +1175,11 @@ class BridgeSession:
             },
         }
 
-    def close_tab(self, target_id):
+    def close_tab(self, target_id=None, index=None):
+        try:
+            target_id = self._resolve_tab_target(target_id, index)
+        except ValueError as exc:
+            return {"success": False, "error": str(exc)}
         page, target_id = self._resolve_page(target_id)
         try:
             page.close()
@@ -1419,6 +1426,12 @@ class BridgeSession:
             return {"success": False, "error": "Browser act request missing 'kind'"}
         if kind == "batch":
             return self.batch(request, target_id)
+        if kind == "observe_text":
+            return self.read_page(
+                target_id or request.get("target_id"),
+                max_chars=char_budget(request.get("max_chars")),
+                cursor=request.get("cursor"),
+            )
         page, target_id = self._resolve_page(target_id or request.get("target_id"))
         if kind == "wait":
             return self._wait(page, target_id, request)
@@ -1516,22 +1529,47 @@ class BridgeSession:
                 return {"success": False, "error": "Browser batch steps require an object with 'kind'"}
             if isinstance(step, dict) and str(step.get("kind", "")).strip().lower() == "batch":
                 return {"success": False, "error": "Browser batch steps must not nest batch"}
-            if str(step["kind"]).strip().lower() not in {"type", "fill", "click", "press", "select", "hover", "drag", "wait", "navigate"}:
+            if str(step["kind"]).strip().lower() not in {
+                "type", "fill", "click", "press", "select", "hover", "drag",
+                "wait", "navigate", "back", "observe_text",
+            }:
                 return {"success": False, "error": "Unsupported browser batch step kind"}
         results = []
+        # Evidence text is bounded once for the whole batch so ten read steps
+        # cannot multiply the single-observation budget by ten.
+        text_budget = 12000
         for index, step in enumerate(steps):
+            kind = str(step.get("kind", "")).strip().lower()
+            step_request = step
+            if kind == "observe_text":
+                step_request = dict(step)
+                step_request["max_chars"] = min(
+                    char_budget(step.get("max_chars")),
+                    max(text_budget, 1),
+                )
             try:
-                result = self.act(step, target_id)
+                result = self.act(step_request, target_id)
             except Exception as exc:
                 # Playwright errors can contain locator.fill arguments. Report
                 # the failed operation and type without echoing user inputs.
-                result = {"success": False, "error": "Browser %s failed (%s)" % (step["kind"], type(exc).__name__)}
+                result = {"success": False, "error": "Browser %s failed (%s)" % (kind, type(exc).__name__)}
             if not result.get("success"):
                 return {"success": False, "error": result.get("error", "Batch step failed"),
                         "data": {"completed_steps": len(results), "failed_step": index + 1,
                                  "results": results}}
             data = result.get("data") or {}
-            results.append({key: data[key] for key in ("kind", "target_id", "url") if key in data})
+            entry = {
+                key: data[key]
+                for key in (
+                    "kind", "target_id", "url", "content", "truncated",
+                    "has_more", "next_cursor",
+                )
+                if key in data
+            }
+            entry.setdefault("kind", kind)
+            if kind == "observe_text" and isinstance(entry.get("content"), str):
+                text_budget = max(text_budget - len(entry["content"]), 0)
+            results.append(entry)
         page, resolved = self._resolve_page(target_id)
         return {"success": True, "data": {"target_id": resolved, "completed_steps": len(results),
                                           "results": results, "url": page.url}}
@@ -1707,6 +1745,24 @@ class BridgeSession:
         target_id = next(iter(self.pages))
         self.active_target_id = target_id
         return self.pages[target_id], target_id
+
+    def _resolve_tab_target(self, target_id=None, index=None):
+        if target_id:
+            return target_id
+        if index is not None:
+            try:
+                index = int(index)
+            except (TypeError, ValueError):
+                raise ValueError("Browser tab index must be a non-negative integer")
+            if index < 0:
+                raise ValueError("Browser tab index must be a non-negative integer")
+            tabs = self._tabs_state()
+            if index >= len(tabs):
+                raise ValueError(
+                    "Browser tab index out of range (0-%d)" % max(len(tabs) - 1, 0)
+                )
+            return tabs[index]["target_id"]
+        return None
 
     def _tabs_state(self):
         tabs = []
@@ -2000,7 +2056,11 @@ def main():
                 action = str(command.get("action", "")).strip().lower()
                 result = session.handle(command)
                 respond(result)
-                if action == "close" and not command.get("target_id"):
+                if (
+                    action == "close"
+                    and not command.get("target_id")
+                    and command.get("index") is None
+                ):
                     break
             except SystemExit:
                 break
@@ -2012,7 +2072,11 @@ def main():
                         "traceback": traceback.format_exc(limit=2),
                     }
                 )
-                if action == "close":
+                if (
+                    action == "close"
+                    and not command.get("target_id")
+                    and command.get("index") is None
+                ):
                     break
     finally:
         session.close()

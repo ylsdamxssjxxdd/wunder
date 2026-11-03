@@ -1,0 +1,97 @@
+import { Theme } from "theme.slint";
+
+// Linux 桌面伙伴浮窗，由 src/pet_window/linux.rs 驱动（src/pet_window/win32.rs
+// 的对等物）。X11 上窗口以 32 位 ARGB 视觉创建，软件渲染器把 alpha 写入
+// softbuffer，合成器负责逐像素透明；Wayland 会话不启用浮窗（合成器不允许
+// 应用定位顶层窗口）。精灵逐帧由 Rust 推送，气泡随文本出现使窗口向上生长，
+// 精灵底边保持原位；左键点击/拖拽与右键菜单都在窗口内处理。
+export component PetOverlay inherits Window {
+    no-frame: true;
+    always-on-top: true;
+    background: transparent;
+
+    // 窗口宽度由 Rust 计算（精灵与气泡取宽者），高度跟随内容。
+    in property <length> window-width;
+    in property <image> sprite;
+    in property <length> sprite-width;
+    in property <length> sprite-height;
+    in property <bool> show-bubble;
+    in property <string> bubble-text;
+    in property <int> bubble-tone; // 0 info / 1 success / 2 warning
+
+    callback drag-move(dx: length, dy: length);
+    callback drag-finished();
+    callback menu-open-chat();
+    callback menu-hide();
+
+    // Rust 侧把精灵框坐标（spec.x/y）映射为窗口坐标时需要这个差值：
+    // 窗口顶边在气泡上方，精灵底边贴着窗口底边。
+    out property <length> bubble-band: body.preferred-height - sprite-height;
+
+    width: window-width;
+    height: body.preferred-height;
+
+    menu := ContextMenuArea {
+        width: root.width;
+        height: root.height;
+
+        Menu {
+            MenuItem { title: "打开会话"; activated => { root.menu-open-chat(); } }
+            MenuItem { title: "隐藏"; activated => { root.menu-hide(); } }
+        }
+
+        body := VerticalLayout {
+            padding-top: show-bubble ? Theme.space-1 : 0px;
+            bubble-holder := HorizontalLayout {
+                alignment: center;
+                if show-bubble : bubble-card := Rectangle {
+                    background: root.bubble-tone == 1 ? Theme.success-bg
+                        : root.bubble-tone == 2 ? Theme.warning-bg : Theme.surface;
+                    border-width: 1px;
+                    border-color: root.bubble-tone == 1 ? Theme.success
+                        : root.bubble-tone == 2 ? Theme.warning : Theme.border-strong;
+                    border-radius: Theme.radius-md;
+                    HorizontalLayout {
+                        padding-left: Theme.space-2; padding-right: Theme.space-2;
+                        padding-top: Theme.space-1; padding-bottom: Theme.space-1;
+                        Text {
+                            width: 220px;
+                            text: root.bubble-text;
+                            color: Theme.text;
+                            font-size: Theme.font-sm;
+                            wrap: word-wrap;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+            sprite-band := HorizontalLayout {
+                alignment: center;
+                Image {
+                    width: root.sprite-width;
+                    height: root.sprite-height;
+                    source: root.sprite;
+                    image-fit: contain;
+                }
+            }
+        }
+
+        // 整窗输入区：右键转发给菜单（子元素会先消费按压，参见 sidebar.slint
+        // 的同款处理），左键按压后按相对按压点的偏移驱动拖拽，点击与拖拽的
+        // 区分由 Rust 按位移阈值判定。
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                    menu.show({ x: self.mouse-x, y: self.mouse-y });
+                } else if event.kind == PointerEventKind.move && self.pressed {
+                    root.drag-move(self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y);
+                } else if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+                    root.drag-finished();
+                }
+            }
+        }
+    }
+}

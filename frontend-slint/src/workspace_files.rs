@@ -587,22 +587,19 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 let worker_api = drag_api.clone();
                 std::thread::spawn(move || {
                     let staged = worker_api.interlink_cloud_stage(&path);
-                    let _ = weak.upgrade_in_event_loop(move |app| {
-                        match staged {
-                            Ok(local) if crate::os_drag::pointer_button_held() => {
-                                begin_os_drag(&app, &local, &name);
-                            }
-                            Ok(_) => {
-                                DRAG_OUT.set(false);
-                                app.set_status(
-                                    format!("{name} 已拉取到本地工作区，按住再拖一次即可移出")
-                                        .into(),
-                                );
-                            }
-                            Err(error) => {
-                                DRAG_OUT.set(false);
-                                app.set_status(format!("无法拖出 {name}：{error}").into());
-                            }
+                    let _ = weak.upgrade_in_event_loop(move |app| match staged {
+                        Ok(local) if crate::os_drag::pointer_button_held() => {
+                            begin_os_drag(&app, &local, &name);
+                        }
+                        Ok(_) => {
+                            DRAG_OUT.set(false);
+                            app.set_status(
+                                format!("{name} 已拉取到本地工作区，按住再拖一次即可移出").into(),
+                            );
+                        }
+                        Err(error) => {
+                            DRAG_OUT.set(false);
+                            app.set_status(format!("无法拖出 {name}：{error}").into());
                         }
                     });
                 });
