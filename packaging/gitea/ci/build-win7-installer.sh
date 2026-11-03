@@ -12,10 +12,14 @@ if [[ "$host_arch" != x86_64 ]]; then
     exit 0
 fi
 
-# 同 build.sh：被更新的提交取代就不再占 runner 名额。
-if ! python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/is-latest.py"; then
+# 同 build.sh：只有明确判出「已被更新的提交取代」（退出码 10）才让路，脚本自身出错照常组包。
+supersede=0
+python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/is-latest.py" || supersede=$?
+if [[ "$supersede" -eq 10 ]]; then
     echo "SKIP: 本次运行已被更新的提交取代，不再组安装包。"
     exit 0
+elif [[ "$supersede" -ne 0 ]]; then
+    echo "WARN: is-latest.py 以退出码 $supersede 结束，判不出新旧，照常组包。"
 fi
 
 cache_key="$(printf '%s' "${CI_REPOSITORY:?CI_REPOSITORY is required}" | sha256sum | cut -c 1-32)"

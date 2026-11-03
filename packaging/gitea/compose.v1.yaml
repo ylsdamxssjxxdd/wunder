@@ -1,0 +1,118 @@
+# Compose v1（docker-compose 1.29.x）兼容版本，面向老 Docker 的 ARM64 服务器。
+# 与 compose.yaml 行为一致，差异只在语法：
+#   1) 必须有 version: "2.4"（v1 不支持 3.x 的 depends_on.condition，但 2.4 档位支持）。
+#   2) 2.4 档位不支持顶层 name:，也不支持 networks/volumes 的 name: 键，
+#      所以固定名字的网络与卷写成 external: true，由 load-images.sh 预创建。
+#      这里的 @STACK_PREFIX@ 由 prepare-bundle.py 渲染成真实前缀（键名不能用 ${VAR}）。
+#   3) v1 没有 pull_policy: never，等价行为：镜像已在本地时 up 不会拉取，
+#      镜像缺失才会尝试拉取并在离线环境明确失败，所以 load-images.sh 必须先跑。
+# 用法：
+#   bash load-images.sh
+#   docker-compose -f compose.v1.yaml up -d
+#   docker-compose -f compose.v1.yaml ps -a
+#   docker-compose -f compose.v1.yaml logs --tail=100 gitea bootstrap runner
+version: "2.4"
+
+services:
+  gitea:
+    image: ${GITEA_IMAGE:-docker.gitea.com/gitea:28.2.0}
+    platform: ${CI_PLATFORM:-linux/arm64}
+    restart: unless-stopped
+    environment:
+      USER_UID: "1000"
+      USER_GID: "1000"
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__server__ROOT_URL: ${GITEA_PUBLIC_URL:-http://localhost:3000/}
+      GITEA__server__LOCAL_ROOT_URL: http://gitea:3000/
+      GITEA__server__SSH_DOMAIN: ${GITEA_SSH_HOST:-localhost}
+      GITEA__server__SSH_PORT: ${GITEA_SSH_PORT:-2222}
+      GITEA__server__OFFLINE_MODE: "true"
+      GITEA__service__DISABLE_REGISTRATION: ${GITEA_DISABLE_REGISTRATION:-true}
+      GITEA__service__REQUIRE_SIGNIN_VIEW: ${GITEA_REQUIRE_SIGNIN_VIEW:-true}
+      GITEA__actions__ENABLED: "true"
+      GITEA__actions__DEFAULT_ACTIONS_URL: self
+      GITEA__actions__ENDLESS_TASK_TIMEOUT: 24h
+      GITEA__repository__DEFAULT_PRIVATE: private
+      GITEA__repository__DEFAULT_REPO_UNITS: repo.code,repo.releases,repo.issues,repo.pulls,repo.wiki,repo.projects,repo.packages,repo.actions
+      GITEA__federation__ENABLED: "false"
+      GITEA__log__LEVEL: Info
+    ports:
+      - "${GITEA_BIND_ADDRESS:-0.0.0.0}:${GITEA_HTTP_PORT:-3000}:3000"
+      - "${GITEA_BIND_ADDRESS:-0.0.0.0}:${GITEA_SSH_PORT:-2222}:22"
+    volumes:
+      - ./data/gitea:/data
+    healthcheck:
+      test: ["CMD", "/usr/bin/curl", "--fail", "--silent", "http://localhost:3000/api/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+    networks:
+      - "@STACK_PREFIX@-ci"
+      - "@STACK_PREFIX@-ingress"
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "3"
+
+  bootstrap:
+    image: ${GITEA_IMAGE:-docker.gitea.com/gitea:28.2.0}
+    platform: ${CI_PLATFORM:-linux/arm64}
+    restart: on-failure
+    entrypoint: ["/bin/sh", "/bundle/bootstrap.sh"]
+    environment:
+      GITEA_ADMIN_USER: ${GITEA_ADMIN_USER:-admin}
+      GITEA_ADMIN_EMAIL: ${GITEA_ADMIN_EMAIL:-admin@example.invalid}
+    volumes:
+      - ./data/gitea:/data
+      - ./data/bootstrap:/bootstrap
+      - ./bootstrap.sh:/bundle/bootstrap.sh:ro
+    depends_on:
+      gitea:
+        condition: service_healthy
+    networks:
+      - "@STACK_PREFIX@-ci"
+
+  runner:
+    image: ${RUNNER_IMAGE:-docker.gitea.com/runner:5.2.3}
+    platform: ${CI_PLATFORM:-linux/arm64}
+    restart: unless-stopped
+    environment:
+      GITEA_INSTANCE_URL: http://gitea:3000/
+      GITEA_RUNNER_NAME: ${RUNNER_NAME:-offline-linux}
+      GITEA_RUNNER_REGISTRATION_TOKEN_FILE: /bootstrap/runner-token
+      # 注册标签的唯一来源：runner.yaml 由 prepare-bundle.py 渲染成同样的值，
+      # 两处不同源时任务会永远排队（老套件就在这里踩过）。
+      GITEA_RUNNER_LABELS: ${RUNNER_LABELS:?prepare-bundle.py 未在 .env 里写入 RUNNER_LABELS}
+      CONFIG_FILE: /etc/runner/config.yaml
+    volumes:
+      - ./data/runner:/data
+      - ./data/bootstrap:/bootstrap:ro
+      - ./runner.yaml:/etc/runner/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - "@STACK_PREFIX@-build-cache:/ci-cache"
+      - "@STACK_PREFIX@-sdk:/opt/offline-sdk:ro"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    networks:
+      - "@STACK_PREFIX@-ci"
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "3"
+
+networks:
+  "@STACK_PREFIX@-ingress":
+    external: true
+  "@STACK_PREFIX@-ci":
+    external: true
+
+volumes:
+  "@STACK_PREFIX@-sdk":
+    external: true
+  "@STACK_PREFIX@-build-cache":
+    external: true

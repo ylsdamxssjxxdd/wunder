@@ -15,10 +15,10 @@ case "$host_arch" in
     x86_64) host_toolchain=1.92.0-x86_64-unknown-linux-gnu ;;
     *) echo 'A x86_64 or ARM64 Linux build worker is required.' >&2; exit 2 ;;
 esac
-if [[ "$ARCH" == win7-x86 && "$host_arch" != x86_64 ]]; then
-    # 同一条工作流要服务两种架构的 worker：Gitea 表达式里没有 runner 上下文，
-    # 架构门禁只能放在这里。ARM64 worker 上 win7-x86 无法构建，跳过而不是失败。
-    echo "SKIP: win7-x86 needs an x86_64 worker (kylin-x86 MinGW), this worker is $host_arch."
+if [[ "$ARCH" == win7-x86 && "$host_arch" != x86_64 && "$host_arch" != aarch64 ]]; then
+    # 同一条工作流要服务多种 worker：Gitea 表达式里没有 runner 上下文，架构门禁只能放在这里。
+    # win7 是 Tier 3 目标，两种宿主都靠 SDK 内的 MinGW 便携包 + build-std 交叉，不需要 QEMU。
+    echo "SKIP: win7-x86 需要 x86_64 或 aarch64 worker（SDK 内的 MinGW 便携包），当前 worker 是 $host_arch。"
     mkdir -p release-assets
     find release-assets -maxdepth 1 -type f -delete
     exit 0
@@ -36,10 +36,15 @@ mkdir -p "$cache/desktop" "$cache/cli" "$cache/desktop-home" "$cache/cli-home" r
 # verify 的重名门禁也会误报。
 find release-assets -maxdepth 1 -type f -delete
 
-# 分支头已经推进到别的提交，说明这一轮被更新的提交取代：立刻结束，别占着 runner 名额。
-if ! python3 "$ci_dir/is-latest.py"; then
+# 分支头已经推进到别的提交（退出码 10）才让路；判据脚本自己出错一律照常构建，
+# 否则一个环境问题会变成「整条流水线什么都不产出」，而且看起来像成功。
+supersede=0
+python3 "$ci_dir/is-latest.py" || supersede=$?
+if [[ "$supersede" -eq 10 ]]; then
     echo "SKIP: 本次运行已被更新的提交取代，不再构建产物。"
     exit 0
+elif [[ "$supersede" -ne 0 ]]; then
+    echo "WARN: is-latest.py 以退出码 $supersede 结束，判不出新旧，照常构建。"
 fi
 
 export WUNDER_OUTPUT_DIR="$PWD/release-assets"
@@ -49,10 +54,19 @@ chmod +x builders/linux_arm64_sysroot_cc.sh builders/linux-amd64-cross-cc.sh 2>/
 
 if [[ "$ARCH" == win7-x86 ]]; then
     # Tier 3 目标：Desktop 与 CLI 都用 build-std 从 SDK 内的 rust-src 重建标准库。
+    # 宿主架构决定用哪套 MinGW 便携包与 nightly：x86_64 走 kylin-x86 那套，aarch64 走 arm 便携包，
+    # 两条通道的产物名、imports.txt 与 PE 门禁完全一致。
+    if [[ "$host_arch" == x86_64 ]]; then
+        win7_desktop=build-win7-x86-offline.sh
+        win7_cli=build-cli-win7-x86-offline.sh
+    else
+        win7_desktop=build-win7-arm64-offline.sh
+        win7_cli=build-cli-win7-arm64-offline.sh
+    fi
     CARGO_HOME="$cache/desktop-home" CARGO_TARGET_DIR="$cache/desktop" \
-        bash builders/build-win7-x86-offline.sh
+        bash "builders/$win7_desktop"
     CARGO_HOME="$cache/cli-home" CARGO_TARGET_DIR="$cache/cli" \
-        bash builders/build-cli-win7-x86-offline.sh
+        bash "builders/$win7_cli"
 else
     CARGO_HOME="$cache/desktop-home" CARGO_TARGET_DIR="$cache/desktop" \
         bash "builders/build-linux-$ARCH-desktop.sh"
