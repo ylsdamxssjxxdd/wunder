@@ -121,9 +121,12 @@ Type: filesandordirs; Name: "{app}\opt\remotion"
 #include "payload.generated.iss"
 
 [Code]
-// Keep the component list in sync with build_win7_installer.ps1: the task names
-// below must cover every supplement component that script can emit (currently
-// python, git, rg, ffmpeg, 7zip, powershell, browser).
+// Keep the component list in sync with build_win7_installer.ps1 and
+// build_win7_installer_linux.py: the task names below must cover every
+// supplement component those scripts can emit (currently python, git, rg,
+// ffmpeg, 7zip, powershell, browser). Inno parses these names as expressions,
+// so a component whose directory starts with a digit gets a letter-prefixed
+// task name (7zip -> sevenzip); ComponentDirAt maps it back to the opt dir.
 const
   ComponentCount = 7;
   CComponentsShown = {#ComponentsShown};
@@ -140,7 +143,7 @@ begin
   ComponentTasks[1] := 'git';
   ComponentTasks[2] := 'rg';
   ComponentTasks[3] := 'ffmpeg';
-  ComponentTasks[4] := '7zip';
+  ComponentTasks[4] := 'sevenzip';
   ComponentTasks[5] := 'powershell';
   ComponentTasks[6] := 'browser';
   ComponentLabels[0] := 'Python';
@@ -238,13 +241,27 @@ begin
   end;
 end;
 
+function ComponentDirAt(const Name: String; Index: Integer): String;
+begin
+  if Index = 0 then
+  begin
+    // Task names must be valid identifiers; only 7zip differs from its dir.
+    if CompareText(Name, 'sevenzip') = 0 then
+      Result := '7zip'
+    else
+      Result := Name;
+  end
+  else
+    Result := '';
+end;
+
 function IsKnownComponent(const Name: String): Boolean;
 var
   I: Integer;
 begin
   Result := False;
   for I := 0 to ComponentCount - 1 do
-    if CompareText(Name, ComponentTasks[I]) = 0 then
+    if CompareText(Name, ComponentDirAt(ComponentTasks[I], 0)) = 0 then
     begin
       Result := True;
       Exit;
@@ -269,14 +286,6 @@ begin
   Result := Trim(Value);
   while (Length(Result) > 1) and (Result[Length(Result)] = '\') do
     Delete(Result, Length(Result), 1);
-end;
-
-function ComponentDirAt(const Name: String; Index: Integer): String;
-begin
-  if Index = 0 then
-    Result := Name
-  else
-    Result := '';
 end;
 
 procedure AddAppToUserPath();
@@ -347,7 +356,7 @@ begin
     begin
       if Result <> '' then
         Result := Result + ',';
-      Result := Result + ComponentTasks[I];
+      Result := Result + ComponentDirAt(ComponentTasks[I], 0);
     end;
 end;
 
@@ -424,8 +433,8 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Raw: AnsiString;
   Data: String;
-  Item, Dir: String;
-  I, P: Integer;
+  Item: String;
+  P: Integer;
 begin
   if CurUninstallStep <> usUninstall then
     Exit;
@@ -451,13 +460,8 @@ begin
       Data := Copy(Data, P + 1, Length(Data));
     end;
     Item := Trim(Item);
+    // The installer records opt dir names, never task names.
     if IsKnownComponent(Item) then
-      for I := 0 to ComponentCount - 1 do
-      begin
-        Dir := ComponentDirAt(Item, I);
-        if Dir = '' then
-          Break;
-        DelTree(ExpandConstant('{app}\opt\' + Dir), True, True, True);
-      end;
+      DelTree(ExpandConstant('{app}\opt\' + Item), True, True, True);
   end;
 end;
