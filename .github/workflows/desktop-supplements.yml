@@ -156,7 +156,13 @@ jobs:
           $szPeOffset = [BitConverter]::ToInt32($szBytes, 0x3c)
           $szMachine = [BitConverter]::ToUInt16($szBytes, $szPeOffset + 4)
           if ($szMachine -ne 0x014c) { throw ('7z.exe is not an i386 PE (machine=0x{0:x4})' -f $szMachine) }
-          $sevenZipVersion = & $sevenZipExe i | Select-Object -First 1
+          # `7z i` starts its stdout with a blank line, so taking the first
+          # line yields ''. Capture the full output, then pick the banner line;
+          # also avoid piping a native command straight into Select-Object
+          # -First 1, which can stop it before stdout is captured.
+          $sevenZipOutput = & $sevenZipExe i 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "7z smoke failed (exit $LASTEXITCODE): $sevenZipOutput" }
+          $sevenZipVersion = ($sevenZipOutput | Where-Object { "$_" -match '7-Zip' } | Select-Object -First 1)
           if ("$sevenZipVersion" -notmatch '7-Zip') { throw "7z smoke reported '$sevenZipVersion'" }
           Write-Host "portable 7-Zip smoke ok: $sevenZipVersion"
       - uses: actions/upload-artifact@v4
