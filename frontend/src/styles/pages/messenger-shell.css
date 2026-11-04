@@ -151,9 +151,9 @@
 }
 
 /* 设备选择区：取代原「工作区」组标题，明确 设备 → 工作区 → 线程 的层级。
-   设备条是一个控件（切换器）而不是树条目：白底描边 chip 压在面板灰底上，
-   与下方无边框、灰底悬停的工作区/线程行在解剖上拉开；悬停只加深描边，
-   不像行那样填充灰底。 */
+   设备条是一个控件（切换器）而不是树条目：不带图标、下缘与工作区行留出
+   空隙，靠缩进与字重和下方无边框、灰底悬停的工作区/线程行拉开；悬停像
+   行一样填充灰底。 */
 .messenger-sidebar-device-bar {
   display: flex;
   flex-shrink: 0;
@@ -161,11 +161,13 @@
   box-sizing: border-box;
   height: var(--mz-group-title-height);
   padding: 0 var(--mz-sidebar-padding);
+  /* 与下面的工作区行稍稍隔开：设备是段落控件，工作区才是树条目。 */
+  margin-bottom: 6px;
 }
 
 /* 设备选择器是控件不是树行，但整宽描边白盒在侧栏灰底上像座孤岛，
-   所以用「切换器行」结构：图标徽章 + 半粗标题 + 副标签 + 箭头直接坐在
-   侧栏底色上；悬停/展开沿用行的填充语法，层级靠徽章与字重区分。 */
+   所以用「切换器行」结构：半粗标题 + 副标签 + 箭头直接坐在侧栏底色上，
+   不带前导图标——图标留给下方的工作区行，层级靠缩进与字重区分。 */
 .messenger-sidebar-device {
   display: flex;
   flex: 1;
@@ -187,20 +189,6 @@
 .messenger-sidebar-device:hover,
 .messenger-sidebar-device[aria-expanded='true'] {
   background: var(--mz-hover);
-}
-
-.messenger-sidebar-device-icon {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
-  background: var(--mz-border, #e8e6e3);
-  color: var(--mz-text-muted);
-  font-size: 11px;
-  text-align: center;
 }
 
 .messenger-sidebar-device-label {

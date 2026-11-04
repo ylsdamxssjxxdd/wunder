@@ -89,6 +89,13 @@ struct DirState {
     loading: bool,
 }
 
+/// One internal move drag: the dragged rows with their kinds (the cloud move
+/// needs to know whether a path is a directory to reject nested targets).
+#[derive(Clone)]
+struct DragMove {
+    items: Vec<(String, i32)>,
+}
+
 struct Panel {
     model: Rc<VecModel<WorkspaceFileRow>>,
     /// Page cache keyed by directory path; the root lives under `""`.
@@ -110,10 +117,20 @@ thread_local! {
     /// the shell gesture settling; the cloud branch also spans the staging
     /// round trip that has to happen before the gesture can start.
     static DRAG_OUT: Cell<bool> = const { Cell::new(false) };
-    /// Multi-select working set, in pick order; the row flags project it.
-    static SELECTED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    /// Paths parked for the batch-delete confirmation.
-    static BATCH_PATHS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+/// Multi-select working set, in pick order; the row flags project it.
+static SELECTED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+/// Paths parked for the batch-delete confirmation.
+static BATCH_PATHS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+/// The anchor row of modifier picking: Shift extends a range from here, plain
+/// clicks and picks move it. Stored as a path so a refresh in between cannot
+/// leave the anchor pointing at the wrong row.
+static ANCHOR: RefCell<String> = const { RefCell::new(String::new()) };
+/// The batch an internal move drag carries: (path, row kind) pairs captured
+/// when the gesture crossed the threshold.
+static DRAG_MOVE: RefCell<Option<DragMove>> = const { RefCell::new(None) };
+/// The interlink façade, parked once at install so pointer-driven gestures
+/// (the drag leaving the window) can reach it without extra plumbing.
+static DESKTOP: RefCell<Option<Arc<NativeDesktop>>> = const { RefCell::new(None) };
     /// Search debounce timer plus the serial of the latest issued query;
     /// stale results only land when their serial still matches.
     static SEARCH_TIMER: RefCell<Timer> = RefCell::new(Timer::default());
@@ -199,8 +216,13 @@ fn reflect_target(app: &MainWindow) {
     exit_search(app);
     SELECTED.with(|slot| slot.borrow_mut().clear());
     BATCH_PATHS.with(|slot| slot.borrow_mut().clear());
+    ANCHOR.with(|slot| *slot.borrow_mut() = String::new());
+    DRAG_MOVE.with(|slot| *slot.borrow_mut() = None);
     app.set_ws_file_selecting(false);
     app.set_ws_file_selected_count(0);
+    app.set_ws_file_dragging(false);
+    app.set_ws_file_drop_path("".into());
+    app.set_ws_file_drop_root(false);
     // Drop the cached pages so the next listing starts from a clean root.
     GENERATION.with(|slot| slot.set(slot.get().wrapping_add(1)));
     with_panel(|panel| {
@@ -288,6 +310,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     app.set_ws_file_rows(ModelRc::from(model));
     let search_api = api.clone();
     let select_api = api.clone();
+    DESKTOP.with(|slot| *slot.borrow_mut() = Some(api.clone()));
 
     // Row click: a directory expands or collapses (lazy load on first open),
     // the load-more tail pages its directory, a file becomes selected.
@@ -303,6 +326,8 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let path = row.path.to_string();
         app.set_ws_file_active_path(row.path.clone());
         app.set_ws_file_active_index(index);
+        // 普通点击也推进锚点：Shift 区间从最近一次激活的行起算。
+        ANCHOR.with(|slot| *slot.borrow_mut() = path.clone());
         if search_active(&app) {
             // Flat search results: a directory leaves the result view and
             // reveals itself in the tree, files only take the highlight.
@@ -549,62 +574,41 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
     });
 
-    // Drag-out: a file leaves the tree as a real OS copy drag. The OLE gesture
-    // is modal and must run on this thread (see `begin_os_drag`), so only the
-    // cloud staging round trip is ever handed to a worker.
+    // Modifier picking rides the same working set as the toolbar multi-select:
+    // Ctrl/⌘ toggles one row, Shift extends a range from the anchor.
     let weak = app.as_weak();
-    let drag_api = api.clone();
-    app.on_ws_file_drag(move |index| {
+    app.on_ws_file_pick(move |index, ctrl, shift| {
         let Some(app) = weak.upgrade() else {
             return;
         };
-        let Some(row) = app.get_ws_file_rows().row_data(index as usize) else {
+        pick_row(&app, index, ctrl, shift);
+    });
+
+    // Internal move drag: the row that owns the gesture reports begin (at the
+    // drag threshold), hover (row index under the pointer) and drop (last
+    // hover index, -3 on cancel). See `begin_drag_move` / `drag_hover` /
+    // `commit_drag_drop` for the state machine.
+    let weak = app.as_weak();
+    app.on_ws_file_drag_begin(move |index| {
+        let Some(app) = weak.upgrade() else {
             return;
         };
-        if row.kind != 0 {
+        begin_drag_move(&app, index);
+    });
+    let weak = app.as_weak();
+    app.on_ws_file_drag_hover(move |index| {
+        let Some(app) = weak.upgrade() else {
             return;
-        }
-        if DRAG_OUT.get() {
+        };
+        drag_hover(&app, index);
+    });
+    let weak = app.as_weak();
+    let drop_api = api.clone();
+    app.on_ws_file_drag_drop(move |index| {
+        let Some(app) = weak.upgrade() else {
             return;
-        }
-        let path = row.path.to_string();
-        let name = row.name.to_string();
-        match current_target() {
-            // A local workspace folder resolves to a path with a couple of
-            // stat calls, cheap enough to stay on this thread and keep the
-            // gesture inside the press it belongs to.
-            Target::Local(root) => match drag_api.workspace_local_resolve(&root, &path) {
-                Ok(local) => begin_os_drag(&app, &local, &name),
-                Err(error) => app.set_status(format!("无法拖出 {name}：{error}").into()),
-            },
-            // Cloud files have to be staged first — a network pull that must
-            // not stall the UI thread. The gesture is picked up afterwards if
-            // the button is still held; otherwise the copy is already on disk
-            // and the user is told so instead of a ghost drop at the cursor.
-            Target::Cloud => {
-                DRAG_OUT.set(true);
-                let weak = app.as_weak();
-                let worker_api = drag_api.clone();
-                std::thread::spawn(move || {
-                    let staged = worker_api.interlink_cloud_stage(&path);
-                    let _ = weak.upgrade_in_event_loop(move |app| match staged {
-                        Ok(local) if crate::os_drag::pointer_button_held() => {
-                            begin_os_drag(&app, &local, &name);
-                        }
-                        Ok(_) => {
-                            DRAG_OUT.set(false);
-                            app.set_status(
-                                format!("{name} 已拉取到本地工作区，按住再拖一次即可移出").into(),
-                            );
-                        }
-                        Err(error) => {
-                            DRAG_OUT.set(false);
-                            app.set_status(format!("无法拖出 {name}：{error}").into());
-                        }
-                    });
-                });
-            }
-        }
+        };
+        commit_drag_drop(&app, drop_api.clone(), index);
     });
 
     // Drag-in: Explorer drops land inside the active target — text uploads
@@ -1193,6 +1197,8 @@ fn install_selection(app: &MainWindow, api: Arc<NativeDesktop>) {
             return;
         }
         let path = row.path.to_string();
+        // 勾选同样推进锚点，与蜂巢的多选语义一致。
+        ANCHOR.with(|slot| *slot.borrow_mut() = path.clone());
         let picked = SELECTED.with(|slot| {
             let mut list = slot.borrow_mut();
             if let Some(position) = list.iter().position(|item| item == &path) {
@@ -1260,6 +1266,343 @@ fn sync_selection(app: &MainWindow) {
         if row.selected != wanted {
             row.selected = wanted;
             rows.set_row_data(index, row);
+        }
+    }
+}
+
+/// Modifier picking on a row, matching the web left rail: Ctrl/⌘ toggles the
+/// row in the working set, Shift extends a range from the anchor (with Ctrl
+/// the range joins the existing set, without it the set becomes the range).
+/// Load-more tails are never pickable.
+fn pick_row(app: &MainWindow, index: i32, ctrl: bool, shift: bool) {
+    let Some(row) = app.get_ws_file_rows().row_data(index as usize) else {
+        return;
+    };
+    if row.kind == 2 {
+        return;
+    }
+    let path = row.path.to_string();
+    if shift {
+        let anchor = ANCHOR.with(|slot| slot.borrow().clone());
+        let flat: Vec<String> = app
+            .get_ws_file_rows()
+            .iter()
+            .filter(|row| row.kind != 2)
+            .map(|row| row.path.to_string())
+            .collect();
+        let from = flat.iter().position(|item| item == &anchor);
+        let to = flat.iter().position(|item| item == &path);
+        if let (Some(from), Some(to)) = (from, to) {
+            let (from, to) = if from <= to { (from, to) } else { (to, from) };
+            let range = &flat[from..=to];
+            if range.len() > MAX_SELECTED {
+                app.set_status(format!("一次最多选择 {MAX_SELECTED} 项").into());
+                return;
+            }
+            SELECTED.with(|slot| {
+                let mut list = slot.borrow_mut();
+                if ctrl {
+                    for item in range {
+                        if !list.contains(item) {
+                            list.push(item.clone());
+                        }
+                    }
+                } else {
+                    *list = range.to_vec();
+                }
+            });
+            app.set_ws_file_selecting(true);
+            sync_selection(app);
+            ANCHOR.with(|slot| *slot.borrow_mut() = path);
+            return;
+        }
+        // 锚点行已不在视野里（刷新或收起后）：Shift 退化为单选起点。
+    }
+    if ctrl {
+        let picked = SELECTED.with(|slot| {
+            let mut list = slot.borrow_mut();
+            if let Some(position) = list.iter().position(|item| item == &path) {
+                list.remove(position);
+                true
+            } else if list.len() >= MAX_SELECTED {
+                false
+            } else {
+                list.push(path.clone());
+                true
+            }
+        });
+        if !picked {
+            app.set_status(format!("一次最多选择 {MAX_SELECTED} 项").into());
+        }
+    } else {
+        SELECTED.with(|slot| *slot.borrow_mut() = vec![path.clone()]);
+    }
+    app.set_ws_file_selecting(true);
+    sync_selection(app);
+    ANCHOR.with(|slot| *slot.borrow_mut() = path);
+}
+
+// --------------------------------------------------------------- move drag
+
+/// Begin the internal move drag at a row: the batch is the whole working set
+/// when the row belongs to it, otherwise just this row.
+fn begin_drag_move(app: &MainWindow, index: i32) {
+    if DRAG_OUT.get() {
+        return;
+    }
+    let Some(row) = app.get_ws_file_rows().row_data(index as usize) else {
+        return;
+    };
+    if row.kind == 2 {
+        return;
+    }
+    let path = row.path.to_string();
+    let items = if SELECTED.with(|slot| slot.borrow().iter().any(|item| item == &path)) {
+        let kinds: std::collections::HashMap<String, i32> = app
+            .get_ws_file_rows()
+            .iter()
+            .map(|row| (row.path.to_string(), row.kind))
+            .collect();
+        SELECTED.with(|slot| {
+            slot.borrow()
+                .iter()
+                .map(|selected| {
+                    let kind = kinds.get(selected).copied().unwrap_or(0);
+                    (selected.clone(), kind)
+                })
+                .collect()
+        })
+    } else {
+        vec![(path, row.kind)]
+    };
+    if items.is_empty() {
+        return;
+    }
+    DRAG_MOVE.with(|slot| *slot.borrow_mut() = Some(DragMove { items }));
+    app.set_ws_file_dragging(true);
+    app.set_ws_file_drop_path("".into());
+    app.set_ws_file_drop_root(false);
+}
+
+/// The directory a hovered row resolves to: a directory row is the target, a
+/// file row is its parent (the container the pointer is really over), the
+/// load-more tail is nothing. `-1` (blank space) is the root.
+fn resolve_drop_dir(app: &MainWindow, index: i32) -> Option<String> {
+    match index {
+        -1 => Some(String::new()),
+        index if index >= 0 => {
+            let row = app.get_ws_file_rows().row_data(index as usize)?;
+            match row.kind {
+                1 => Some(row.path.to_string()),
+                0 => Some(parent_cloud_dir(&row.path)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Whether one dragged path can move into the target directory: not itself,
+/// not its own subtree, and not already living there.
+fn movable_to(path: &str, target_dir: &str) -> bool {
+    if path == target_dir || (!target_dir.is_empty() && is_descendant(target_dir, path)) {
+        return false;
+    }
+    parent_cloud_dir(path) != target_dir
+}
+
+fn clear_drag_state(app: &MainWindow) {
+    DRAG_MOVE.with(|slot| *slot.borrow_mut() = None);
+    app.set_ws_file_dragging(false);
+    app.set_ws_file_drop_path("".into());
+    app.set_ws_file_drop_root(false);
+}
+
+/// Hover projection: light up the resolved target only when at least one
+/// dragged path would actually change directory, like the web tree does.
+fn drag_hover(app: &MainWindow, index: i32) {
+    let Some(items) = DRAG_MOVE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|drag| drag.items.clone())
+    }) else {
+        return;
+    };
+    let Some(dir) = resolve_drop_dir(app, index) else {
+        app.set_ws_file_drop_path("".into());
+        app.set_ws_file_drop_root(false);
+        return;
+    };
+    let movable = items
+        .iter()
+        .any(|(path, _)| movable_to(path, &dir));
+    app.set_ws_file_drop_path(if movable && !dir.is_empty() {
+        dir.as_str().into()
+    } else {
+        "".into()
+    });
+    app.set_ws_file_drop_root(movable && dir.is_empty());
+}
+
+/// Release over a target: resolve the directory fresh from the current rows
+/// (a listing may have landed mid-drag and shifted the indices), keep only
+/// the paths that really change directory, and run the move.
+fn commit_drag_drop(app: &MainWindow, api: Arc<NativeDesktop>, index: i32) {
+    let drag = DRAG_MOVE.with(|slot| slot.borrow_mut().take());
+    clear_drag_state(app);
+    let Some(drag) = drag else {
+        return;
+    };
+    if index <= -2 {
+        return;
+    }
+    let Some(target) = resolve_drop_dir(app, index) else {
+        return;
+    };
+    let items: Vec<(String, i32)> = drag
+        .items
+        .into_iter()
+        .filter(|(path, _)| movable_to(path, &target))
+        .collect();
+    if items.is_empty() {
+        return;
+    }
+    perform_move(app, api, items, target);
+}
+
+/// Run one bounded move fan-out into `target_dir` (empty = the root). Local
+/// entries rename straight off the disk; cloud entries ride `workspace.move`
+/// with parked approvals auto-confirmed — the drop gesture is the user's own
+/// decision, matching the drag-in uploads and the batch delete.
+fn perform_move(
+    app: &MainWindow,
+    api: Arc<NativeDesktop>,
+    items: Vec<(String, i32)>,
+    target_dir: String,
+) {
+    if app.get_ws_file_busy() {
+        app.set_status("操作正在处理中，请稍后重试".into());
+        return;
+    }
+    let Some(request) = begin_busy(app) else {
+        app.set_status("操作正在处理中，请稍后重试".into());
+        return;
+    };
+    let total = items.len();
+    app.set_status(format!("正在移动 {total} 项…").into());
+    let weak = app.as_weak();
+    let target = current_target();
+    std::thread::spawn(move || {
+        let mut done = 0usize;
+        let mut failed: Vec<String> = Vec::new();
+        let mut moved: Vec<String> = Vec::new();
+        for (path, kind) in &items {
+            let mut outcome = match &target {
+                Target::Local(root) => api
+                    .workspace_local_move(root, path, &target_dir)
+                    .map(|_| CloudOpOutcome::Done(path.clone())),
+                Target::Cloud => api.interlink_cloud_move(path, *kind == 1, &target_dir),
+            };
+            if let Ok(CloudOpOutcome::NeedsApproval { command_id }) = &outcome {
+                outcome = api.interlink_cloud_confirm(command_id);
+            }
+            match outcome {
+                Ok(CloudOpOutcome::Done(_)) => {
+                    done += 1;
+                    moved.push(path.clone());
+                    // 源目录的缓存列表已过期；目标目录统一在循环后失效。
+                    drop_dir_cache(&parent_cloud_dir(path));
+                }
+                Ok(CloudOpOutcome::NeedsApproval { .. }) => {
+                    failed.push(format!("{path}（云端命令仍待确认）"))
+                }
+                Ok(CloudOpOutcome::Failed(reason)) => failed.push(format!("{path}（{reason}）")),
+                Err(error) => failed.push(format!("{path}（{error}）")),
+            }
+        }
+        if !target_dir.is_empty() {
+            drop_dir_cache(&target_dir);
+        }
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            end_busy(&app, api.clone(), request);
+            if !is_current(request) {
+                return;
+            }
+            if !moved.is_empty() {
+                SELECTED.with(|slot| {
+                    slot.borrow_mut().retain(|item| !moved.contains(item));
+                });
+                if SELECTED.with(|slot| slot.borrow().is_empty()) {
+                    app.set_ws_file_selecting(false);
+                }
+                sync_selection(&app);
+            }
+            let mut message = format!("已移动 {done}/{total} 项");
+            if !failed.is_empty() {
+                message.push_str(&format!("；失败：{}", failed.join("；")));
+            }
+            app.set_status(message.into());
+            settle(&app, api);
+        });
+    });
+}
+
+/// The internal drag left the window (Windows only, reported by the pointer
+/// chase): convert it into an OS copy drag when exactly one file is being
+/// carried — the native file-manager idiom. Batches and directories have no
+/// OS carrier here (batch export lives in the multi-select download), so the
+/// gesture just ends.
+pub(crate) fn drag_left_window(app: &MainWindow) {
+    let Some(drag) = DRAG_MOVE.with(|slot| slot.borrow_mut().take()) else {
+        return;
+    };
+    clear_drag_state(app);
+    let Some(api) = DESKTOP.with(|slot| slot.borrow().clone()) else {
+        return;
+    };
+    if drag.items.len() != 1 || drag.items[0].1 != 0 {
+        app.set_status("拖出窗口仅支持单个文件；整批移动请在目录内拖放".into());
+        return;
+    }
+    let path = drag.items[0].0.clone();
+    let name = path
+        .rsplit_once('/')
+        .map(|(_, tail)| tail)
+        .unwrap_or(&path)
+        .to_string();
+    match current_target() {
+        // A local workspace folder resolves to a path with a couple of stat
+        // calls; the modal OLE gesture must run on this thread (see
+        // `begin_os_drag`).
+        Target::Local(root) => match api.workspace_local_resolve(&root, &path) {
+            Ok(local) => begin_os_drag(app, &local, &name),
+            Err(error) => app.set_status(format!("无法拖出 {name}：{error}").into()),
+        },
+        // Cloud files have to be staged first — a network pull that must not
+        // stall the UI thread. The gesture is picked up afterwards if the
+        // button is still held; otherwise the copy is already on disk and the
+        // user is told so instead of a ghost drop at the cursor.
+        Target::Cloud => {
+            DRAG_OUT.set(true);
+            let weak = app.as_weak();
+            std::thread::spawn(move || {
+                let staged = api.interlink_cloud_stage(&path);
+                let _ = weak.upgrade_in_event_loop(move |app| match staged {
+                    Ok(local) if crate::os_drag::pointer_button_held() => {
+                        begin_os_drag(&app, &local, &name);
+                    }
+                    Ok(_) => {
+                        DRAG_OUT.set(false);
+                        app.set_status(
+                            format!("{name} 已拉取到本地工作区，按住再拖一次即可移出").into(),
+                        );
+                    }
+                    Err(error) => {
+                        DRAG_OUT.set(false);
+                        app.set_status(format!("无法拖出 {name}：{error}").into());
+                    }
+                });
+            });
         }
     }
 }
@@ -2636,6 +2979,74 @@ mod tests {
             selected: false,
             subtree_end: 0,
         }
+    }
+
+    fn list_row(path: &str, kind: i32) -> WorkspaceFileRow {
+        WorkspaceFileRow {
+            path: path.into(),
+            name: "".into(),
+            kind,
+            size_text: "".into(),
+            icon: slint::Image::default(),
+            depth: 0,
+            expanded: false,
+            loading: false,
+            remaining: -1,
+            selected: false,
+            subtree_end: 0,
+        }
+    }
+
+    /// Move target filtering: self, own subtree and already-there are all
+    /// refused; files back to the root and nested dirs out to the root pass.
+    #[test]
+    fn move_targets_reject_self_nested_and_already_there() {
+        assert!(movable_to("a.md", "notes"));
+        assert!(movable_to("notes/a.md", ""));
+        assert!(movable_to("x/notes", ""));
+        assert!(!movable_to("notes", "notes"));
+        assert!(!movable_to("notes", "notes/sub"));
+        assert!(!movable_to("notes/a.md", "notes"));
+        assert!(!movable_to("a.md", ""));
+    }
+
+    /// Modifier picking: Ctrl toggles rows in and out, Shift extends a range
+    /// from the anchor, Ctrl+Shift unions the range into the working set.
+    #[test]
+    fn modifier_pick_ranges_and_toggles_follow_the_anchor() {
+        let _ui = crate::test_support::lock();
+        crate::register_bundled_font().expect("register fixture font");
+        let app = MainWindow::new().unwrap();
+        PANEL.with(|slot| *slot.borrow_mut() = None);
+        let model = with_panel(|panel| panel.model.clone()).unwrap();
+        app.set_ws_file_rows(ModelRc::from(model));
+        with_panel(|panel| {
+            panel.model.set_vec(vec![
+                list_row("a.md", 0),
+                list_row("notes", 1),
+                list_row("notes/b.md", 0),
+                list_row("d.md", 0),
+            ]);
+        });
+        pick_row(&app, 0, true, false);
+        pick_row(&app, 3, true, false);
+        assert!(app.get_ws_file_selecting());
+        assert_eq!(app.get_ws_file_selected_count(), 2);
+        // 锚点在 d.md：Shift 点首行 → 覆盖整段。
+        pick_row(&app, 0, false, true);
+        assert_eq!(app.get_ws_file_selected_count(), 4);
+        assert!(app.get_ws_file_rows().row_data(2).unwrap().selected);
+        // Ctrl 再点 notes：从集合里移除。
+        pick_row(&app, 1, true, false);
+        assert_eq!(app.get_ws_file_selected_count(), 3);
+        // Ctrl+Shift 从锚点 notes 到 d.md：区间并入集合，notes 回来。
+        pick_row(&app, 3, true, true);
+        assert_eq!(app.get_ws_file_selected_count(), 4);
+        assert!(SELECTED.with(|slot| slot.borrow().contains(&"notes".to_string())));
+        SELECTED.with(|slot| slot.borrow_mut().clear());
+        ANCHOR.with(|slot| *slot.borrow_mut() = String::new());
+        app.set_ws_file_selecting(false);
+        PANEL.with(|slot| *slot.borrow_mut() = None);
     }
 
     /// The sticky chain's static geometry: every row carries the index just

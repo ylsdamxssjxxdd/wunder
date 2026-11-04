@@ -6,6 +6,7 @@
 - `opt/git`：给 `git clone`、`git status`、补丁应用与仓库操作使用的内置 Git
 - `opt/rg`：给 `search_content` 与命令行检索使用的内置 ripgrep
 - `opt/ffmpeg`：随包附带的静态 ffmpeg（`opt/ffmpeg/bin` 已由桌面运行时自动接入 `PATH`）
+- `opt/7zip`：随包附带的 7-Zip 25.01 命令行版（`7z.exe` + `7z.dll`），压缩包归档工具（含 `.7z`/`.rar` 解压）由它提供；可用 `-SkipSevenZip` 跳过
 - `opt/powershell`：随包附带的便携 PowerShell 7.1.7（`pwsh.exe`），是 `执行命令` 工具的默认 shell；可用 `-SkipPowerShell` 跳过，详见「版本选择」
 - `opt/browser`：默认内置 Chrome 109 win32 浏览器，供 `browser_*` 工具开箱使用；可用 `-SkipBrowser` 跳过，详见「内置浏览器」
 
@@ -13,14 +14,14 @@
 
 当前约定：
 
-- `build.bat pack -a win7-x86` 生成单文件 `wunder-<版本>-win7-x86-setup.exe`；安装向导把程序本体也作为可勾选项：蛹（桌面端）与舵机（命令行）默认勾选，不勾则不安装对应的 `wunder-desktop.exe`/`wunder-cli.exe`，因此可以只装补充组件。补充组件里只有 PowerShell 7 默认勾选（它是命令工具的默认 shell，缺了会退回系统 PowerShell 2.0），Python/Git/ripgrep/ffmpeg/内置浏览器默认不勾选。勾选蛹即自动创建开始菜单与桌面快捷方式（不再单列“桌面快捷方式”任务）。页面提供“全选（推荐）”一次勾选全部项，任一项取消会自动回退全选状态。
+- `build.bat pack -a win7-x86` 生成单文件 `wunder-<版本>-win7-x86-setup.exe`；安装向导把程序本体也作为可勾选项：蛹（桌面端）与舵机（命令行）默认勾选，不勾则不安装对应的 `wunder-desktop.exe`/`wunder-cli.exe`，因此可以只装补充组件。补充组件里只有 PowerShell 7 默认勾选（它是命令工具的默认 shell，缺了会退回系统 PowerShell 2.0），Python/Git/ripgrep/ffmpeg/7-Zip/内置浏览器默认不勾选。勾选蛹即自动创建开始菜单与桌面快捷方式（不再单列“桌面快捷方式”任务）。页面提供“全选（推荐）”一次勾选全部项，任一项取消会自动回退全选状态。
 - 安装向导允许改安装目录，默认 `%USERPROFILE%\.wunder`。安装根会写入 `.wunder-home`，蛹和舵机启动时以该根作为 `WUNDER_HOME`；显式设置的非空 `WUNDER_HOME` 优先。
 - 安装目录同时保存配置、会话、工作区、日志和 `opt/` 补充组件；迁移时复制整个安装根。
 - 选中已存在的组件时，安装器先清空对应 `opt/<component>`，再写入新版本；`config`、`data`、`workspace`、`logs` 等用户数据不会删除。
 - 勾选舵机时，安装完成后 `{安装根}\bin` 会加入当前用户 `PATH`（重复安装不重复追加，卸载时只移除这一项）。新开终端可直接运行 `wunder-cli`；`desktop` 启动蛹，`wunder-desktop` 也可直接运行。
 - 开始菜单使用形态名称：蛹（桌面程序）与舵机（命令行）；桌面快捷方式随勾选“蛹”自动创建；卸载入口仍为“卸载心舰”。
 - 卸载器移除 `bin`、`.wunder-home`、安装时选择的组件目录和安装器写入的用户 `PATH` 项，保留用户数据。
-- 补充包仍可单独导入：在蛹设置中选择“导入补充包”，或手动解压到 `WUNDER_HOME`。两端自动识别共享 home 中的 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/powershell` 与 `opt/browser`。
+- 补充包仍可单独导入：在蛹设置中选择“导入补充包”，或手动解压到 `WUNDER_HOME`。两端自动识别共享 home 中的 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/7zip`、`opt/powershell` 与 `opt/browser`。
 
 ## 安装后的终端命令
 
@@ -33,6 +34,19 @@ desktop
 
 - `wunder-cli` 是舵机；`desktop` 是蛹的启动器（`wunder-desktop` 等价）。安装器通过用户级 `PATH` 暴露命令，已经打开的终端需要重开，或从系统属性重新加载环境变量。
 - 舵机把启动它的目录登记为工作区；需要指定其他目录时使用 `wunder-cli -C <目录>`。工作区数据仍保存在安装根下。
+
+## 静默安装
+
+安装器基于 Inno Setup，原生支持无人值守模式，脚本化部署示例：
+
+```bat
+wunder-<版本>-win7-x86-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="D:\wunder"
+```
+
+- `/SILENT` 只显示进度，`/VERYSILENT` 完全无界面；两者都会跳过全部向导页。
+- 组件用 `/TASKS=` 指定，任务名与向导勾选项一致（`desktop`、`cli`、`python`、`git`、`rg`、`ffmpeg`、`7zip`、`powershell`、`browser`），例如 `/TASKS="desktop,cli,powershell,7zip"`；不传时按向导默认勾选（蛹、舵机、PowerShell 7）。
+- 检测到已安装组件时的确认弹窗在静默模式下自动跳过（直接按“清空组件目录后继续”执行）；只有组件目录被占用这类致命错误会中止安装（非零退出码），`/SUPPRESSMSGBOXES` 连错误弹窗也不再显示。
+- 卸载器同样支持静默：`unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`。
 
 ## 安装器打包
 
@@ -66,6 +80,11 @@ Windows 安装包优先使用离线 SDK 的 `Rust-builder/win7/offline/tools/inn
   - `14.1.1` 起的官方 Windows 二进制用 Rust 1.78+ 构建，静态导入 `bcryptprimitives.dll`（`ProcessPrng`）和 `api-ms-win-core-synch-l1-2-0.dll`（`WaitOnAddress`），这两个 DLL 从 Windows 8 才提供；在 32 位 Windows 7 上启动即崩溃并报 `Segmentation fault`。
   - `14.1.0` 是最后一个仍能在 Windows 7 运行的官方版本。构建脚本会校验 SHA256、PE 架构和导入表；若以后要升级到 `14.1.1+`，必须用 Rust `<= 1.77.2` 自行重编，否则门禁会直接失败。
   - 代价：`14.1.1` 才修复了正则内层字面量优化可能漏匹配的问题（ripgrep #2884），`14.1.0` 仍带该缺陷；若搜索正确性必须包含该修复，只能用 Rust `<= 1.77.2` 自行重编 `14.1.1`。
+- 7-Zip：`25.01`（官方命令行版，`7z.exe` + `7z.dll`）
+  - 7-Zip 官方至今支持 Windows 7；pin 到 `25.01` 还因为该版本修复了处理压缩包内符号链接的安全漏洞（CVE-2025-55188），而归档解压工具面对的正是外部来源的压缩包。
+  - 固定使用官方安装器资产（本身是 7z SFX），构建机解包后只携带命令行对 `7z.exe` + `7z.dll` 进包；完整版解码器覆盖 `7z/zip/tar/gzip/xz` 与 Rar，`.rar` 无需再装 unrar（`extra` 包里的 `7za.exe` 不含 Rar）。
+  - 入包前对两个文件跑与 ripgrep 相同的 PE 门禁：架构必须匹配目标，且不得静态导入 `bcryptprimitives.dll` / `api-ms-win-core-synch-l1-2-0.dll`（Win8+ 专属，25.01 实测干净）。
+  - 构建机需要 7-Zip 来解开这个 SFX（与浏览器 mini_installer 解包同一依赖），CI 镜像自带；无 7-Zip 的主机可用 `-SkipSevenZip` 跳过该组件。
 - PowerShell：`7.1.7 portable (win-x86 zip)`
   - `7.1.7` 是最后一个能在 Windows 7 上启动的 PowerShell 7：`7.2` 起基于 .NET 6，要求 Windows 8.1+；它也是最后一个提供自包含 win-x86 zip 的版本。
   - zip 自带 .NET 5 运行时、降级版 API-set shim 与 UCRT，解压即用：不写注册表、不需要管理员权限、不需要重启，这决定它（而不是需要系统级安装的 WMF 5.1）成为补充包的默认选择。
@@ -140,6 +159,7 @@ opt/
   git/
   rg/
   ffmpeg/
+  7zip/           （7-Zip 25.01 命令行版，7z.exe + 7z.dll；可用 `-SkipSevenZip` 跳过）
   powershell/     （便携 PowerShell 7.1.7，pwsh.exe；可用 `-SkipPowerShell` 跳过）
   browser/        （默认自动准备 Chrome 109；可用 `-SkipBrowser` 跳过）
 README-win7-supplement.txt
@@ -176,6 +196,7 @@ Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows
    - `opt/git`
    - `opt/rg`
    - `opt/ffmpeg`
+   - `opt/7zip`（若打包时未用 `-SkipSevenZip` 跳过）
    - `opt/powershell`（若打包时未用 `-SkipPowerShell` 跳过）
    - `opt/browser`（若打包时投喂了浏览器）
 4. 重新启动蛹或舵机。
@@ -183,7 +204,7 @@ Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows
 两端启动时会自动：
 
 - 从共享 home 探测补充包，不受程序安装目录和启动目录影响
-- 将共享 home 下的 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/rg`、`opt/rg/bin`、`opt/ffmpeg/bin`、`opt/powershell` 接入 `PATH`，重复导入不会重复累加
+- 将共享 home 下的 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/rg`、`opt/rg/bin`、`opt/ffmpeg/bin`、`opt/7zip`、`opt/powershell` 接入 `PATH`，重复导入不会重复累加
 - 把 `opt/powershell/pwsh.exe` 的绝对路径发布为 `WUNDER_POWERSHELL_EXE`，执行命令工具探测成功后即以它为默认 shell
 
 这样桥接层与智能体工具调用就能优先命中内置 Python / Git / rg / PowerShell。

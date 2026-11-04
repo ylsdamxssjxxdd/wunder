@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Build the Linux Wunder supplement pack (opt/python + opt/git + opt/rg +
-# opt/ffmpeg) for
+# opt/ffmpeg + opt/7zip) for
 # amd64/arm64. The script must run inside an Ubuntu 18.04 container so every
 # binary matches the desktop release baseline (glibc 2.27); the arm64 pack is
 # produced by running the same script in the arm64 variant of the image.
@@ -38,7 +38,7 @@ require_command() { command -v "$1" >/dev/null 2>&1 || fail "required command is
 
 require_file "$manifest_path"
 require_file "$repo_root/config/wunder-example.yaml"
-for tool in python3 curl tar gzip unzip sha256sum make gcc strip file find; do
+for tool in python3 curl tar gzip unzip xz sha256sum make gcc strip file find; do
   require_command "$tool"
 done
 
@@ -67,6 +67,7 @@ emit(
     git=data["git"],
     rg=data["rg"],
     ffmpeg=data["ffmpeg"],
+    sevenzip=data["7zip"],
     browser=data.get("browser", {}),
     fonts=data.get("fonts", []),
     install=data["install"],
@@ -118,6 +119,12 @@ ffmpeg_flavor="$(json_field ffmpeg.flavor)"
 ffmpeg_archive_url="$(json_field "ffmpeg.archives.$arch.url")"
 ffmpeg_archive_file="$(json_field "ffmpeg.archives.$arch.fileName")"
 ffmpeg_archive_sha256="$(json_field "ffmpeg.archives.$arch.sha256")"
+sevenzip_version="$(json_field sevenzip.version)"
+sevenzip_flavor="$(json_field sevenzip.flavor)"
+sevenzip_archive_url="$(json_field "sevenzip.archives.$arch.url")"
+sevenzip_archive_file="$(json_field "sevenzip.archives.$arch.fileName")"
+sevenzip_archive_sha256="$(json_field "sevenzip.archives.$arch.sha256")"
+sevenzip_payload="$(json_field "sevenzip.archives.$arch.executable")"
 browser_enabled="$(json_field browser.install)"
 browser_version="$(json_field browser.version)"
 browser_archive_version="$(json_field "browser.archives.$arch.browserVersion")"
@@ -135,6 +142,8 @@ fi
 [[ -n "$python_archive_url" && "$python_archive_url" != "null" ]] || fail "no python archive for $arch"
 [[ -n "$rg_archive_url" && "$rg_archive_url" != "null" ]] || fail "no ripgrep archive for $arch"
 [[ -n "$ffmpeg_archive_url" && "$ffmpeg_archive_url" != "null" ]] || fail "no ffmpeg archive for $arch"
+[[ -n "$sevenzip_archive_url" && "$sevenzip_archive_url" != "null" ]] || fail "no 7-Zip archive for $arch"
+[[ -n "$sevenzip_payload" && "$sevenzip_payload" != "null" ]] || fail "no 7-Zip payload name for $arch"
 
 default_build_root="$repo_root/$(json_field default_build_root)"
 build_root="${WUNDER_SUPPLEMENT_BUILD_ROOT:-$default_build_root}"
@@ -154,9 +163,10 @@ python_root="$package_root/opt/python"
 git_root="$package_root/opt/git"
 rg_root="$package_root/opt/rg"
 ffmpeg_root="$package_root/opt/ffmpeg"
+sevenzip_root="$package_root/opt/7zip"
 browser_root="$package_root/opt/browser"
 rm -rf "$stage_dir"
-mkdir -p "$python_root" "$git_root" "$rg_root" "$ffmpeg_root"
+mkdir -p "$python_root" "$git_root" "$rg_root" "$ffmpeg_root" "$sevenzip_root"
 
 obtain_file() {
   # obtain_file <url> <destination> <expected-sha256>
@@ -331,6 +341,26 @@ gzip -dc "$downloads_dir/$ffmpeg_archive_file" > "$ffmpeg_bin"
 
 chmod 0755 "$ffmpeg_bin"
 
+# The official statically linked console build (7zzs) keeps archiving free of
+# glibc concerns on both architectures. It is staged as bin/7zz plus a bin/7z
+# symlink: the runtime's archive extractor resolves 7z through PATH first,
+# while the official console name stays available.
+log "staging 7-Zip $sevenzip_version ($sevenzip_flavor)"
+obtain_file "$sevenzip_archive_url" "$downloads_dir/$sevenzip_archive_file" "$sevenzip_archive_sha256"
+sevenzip_extract="$stage_dir/sevenzip-extract"
+mkdir -p "$sevenzip_extract"
+tar -xJf "$downloads_dir/$sevenzip_archive_file" -C "$sevenzip_extract"
+sevenzip_source="$sevenzip_extract/$sevenzip_payload"
+[[ -f "$sevenzip_source" ]] || fail "7-Zip payload not found after extracting $sevenzip_archive_file: $sevenzip_source"
+mkdir -p "$sevenzip_root/bin"
+cp -f "$sevenzip_source" "$sevenzip_root/bin/7zz"
+chmod 0755 "$sevenzip_root/bin/7zz"
+ln -sfn 7zz "$sevenzip_root/bin/7z"
+sevenzip_license="$(find "$sevenzip_extract" -type f -iname 'LICENSE*' -print -quit)"
+[[ -z "$sevenzip_license" ]] || cp -f "$sevenzip_license" "$sevenzip_root/"
+rm -rf "$sevenzip_extract"
+sevenzip_bin="$sevenzip_root/bin/7zz"
+
 # A pinned Chromium-family archive is bundled for every Linux architecture so
 # the browser tools have a deterministic offline browser.
 browser_bundled=false
@@ -375,6 +405,7 @@ Python packages: $(echo "$requirements_entries" | wc -l) pinned requirements (se
 Git: $git_flavor $git_version
 Ripgrep: $rg_flavor $rg_version
 FFmpeg: $ffmpeg_flavor $ffmpeg_version (opt/ffmpeg/bin/ffmpeg)
+7-Zip: $sevenzip_flavor $sevenzip_version (opt/7zip/bin/7zz, 7z symlink)
 Browser: $browser_version at opt/browser/$browser_executable_rel (when bundled)
 Browsers: Playwright Chromium in opt/python/ms-playwright (when bundled)
 
@@ -382,10 +413,10 @@ Usage:
 1. Use Import supplement in the Pupa settings, or close processes using this runtime.
 2. For manual installation, extract into WUNDER_HOME (default: ~/.wunder),
    including when the Pupa is distributed as an AppImage.
-3. Ensure the target now contains opt/python, opt/git, opt/rg, opt/ffmpeg
-   (and opt/browser on amd64).
+3. Ensure the target now contains opt/python, opt/git, opt/rg, opt/ffmpeg,
+   opt/7zip (and opt/browser on amd64).
 4. Start the Pupa or Helm; both prepend the shared opt/python,
-   opt/git, opt/rg and opt/ffmpeg to PATH automatically.
+   opt/git, opt/rg, opt/ffmpeg and opt/7zip to PATH automatically.
 EOF
 
 python3 - "$manifest_json" "$arch" "$build_root" "$python_archive_url" "$git_tarball_url" "$rg_archive_url" "$ffmpeg_archive_url" "$requirements_path" "$package_root/wunder-linux-supplement.json" <<'PYEOF'
@@ -435,6 +466,12 @@ output = {
         "flavor": manifest["ffmpeg"]["flavor"],
         "source": manifest["ffmpeg"]["source"],
         "url": ffmpeg_url,
+    },
+    "7zip": {
+        "version": manifest["sevenzip"]["version"],
+        "flavor": manifest["sevenzip"]["flavor"],
+        "source": manifest["sevenzip"]["source"],
+        "url": manifest["sevenzip"].get("archives", {}).get(arch, {}).get("url", ""),
     },
     "browser": {
         "name": manifest.get("browser", {}).get("name", ""),
@@ -503,8 +540,9 @@ log "validated Python profile imports"
 "$git_bin" --version
 "$rg_root/bin/rg" --version | head -n 1
 "$ffmpeg_bin" -version | head -n 1
+"$sevenzip_bin" i | head -n 1
 
-for staged_binary in "$python_bin" "$git_bin" "$rg_root/bin/rg" "$ffmpeg_bin"; do
+for staged_binary in "$python_bin" "$git_bin" "$rg_root/bin/rg" "$ffmpeg_bin" "$sevenzip_bin"; do
   # -L resolves aliases (opt/python/bin/python3 is a symlink to python3.8);
   # without it file reports "symbolic link to …" and no ELF at all.
   staged_machine="$(file -bL "$staged_binary")"

@@ -145,6 +145,20 @@ jobs:
           $version = & $pwsh -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
           if ("$version".Trim() -ne '7.1.7') { throw "pwsh smoke reported '$version' instead of 7.1.7" }
           Write-Host "portable PowerShell smoke ok: $version"
+          # 便携 7-Zip 门禁：清单声明 bundled、7z.exe 为 32 位 PE、7z.dll 在位，
+          # 且能在构建机上真实运行（x64 runner 可运行 x86 可执行文件）。
+          if ($meta.'7zip'.bundled -ne $true) { throw 'supplement metadata says 7-Zip is not bundled' }
+          if ($meta.'7zip'.version -ne '25.01') { throw "unexpected bundled 7-Zip version: $($meta.'7zip'.version)" }
+          $sevenZipExe = Join-Path $work 'opt\7zip\7z.exe'
+          if (-not (Test-Path -LiteralPath $sevenZipExe -PathType Leaf)) { throw 'opt/7zip/7z.exe missing from the pack' }
+          if (-not (Test-Path -LiteralPath (Join-Path $work 'opt\7zip\7z.dll') -PathType Leaf)) { throw 'opt/7zip/7z.dll missing from the pack' }
+          $szBytes = [IO.File]::ReadAllBytes($sevenZipExe)
+          $szPeOffset = [BitConverter]::ToInt32($szBytes, 0x3c)
+          $szMachine = [BitConverter]::ToUInt16($szBytes, $szPeOffset + 4)
+          if ($szMachine -ne 0x014c) { throw ('7z.exe is not an i386 PE (machine=0x{0:x4})' -f $szMachine) }
+          $sevenZipVersion = & $sevenZipExe i | Select-Object -First 1
+          if ("$sevenZipVersion" -notmatch '7-Zip') { throw "7z smoke reported '$sevenZipVersion'" }
+          Write-Host "portable 7-Zip smoke ok: $sevenZipVersion"
       - uses: actions/upload-artifact@v4
         with:
           name: supplement-win7-ia32
@@ -237,9 +251,13 @@ jobs:
           mkdir -p "$work"
           tar -xzf "$pack" -C "$work"
           test -x "$work/opt/browser/$browser_rel"
+          test -x "$work/opt/7zip/bin/7zz"
+          # bin/7z 是指向 7zz 的符号链接；test -x 跟随链接验证目标可执行。
+          test -x "$work/opt/7zip/bin/7z"
           check_elf "$work/opt/git/bin/git"
           check_elf "$work/opt/rg/bin/rg"
           check_elf "$work/opt/ffmpeg/bin/ffmpeg"
+          check_elf "$work/opt/7zip/bin/7zz"
           check_elf "$work/opt/browser/$browser_rel"
           python3 - "$work/wunder-linux-supplement.json" "$arch" <<'PY'
           import json, sys
@@ -247,12 +265,14 @@ jobs:
           arch = sys.argv[2]
           assert meta['arch'] == arch, meta['arch']
           assert meta['browser']['bundled'] is True
+          assert meta.get('7zip', {}).get('version') == '25.01', meta.get('7zip')
           print('Linux supplement metadata verified:', arch, 'browser', meta['browser']['version'])
           PY
           # 只有宿主架构与补充包一致时才做真实执行冒烟；x64 打包机只跑 amd64 包。
           if [ "$(uname -m)" = "$host_expect" ]; then
             "$work/opt/rg/bin/rg" --version | head -n 1
             "$work/opt/ffmpeg/bin/ffmpeg" -version | head -n 1
+            "$work/opt/7zip/bin/7zz" i | head -n 1
             # Chrome 的 libc 依赖面来自目标机（Ubuntu 18.04），在打包机上跑通与否
             # 不能代表目标机，因此版本只做比对、不作为失败条件。
             browser_pin="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["browser"]["version"])' "$work/wunder-linux-supplement.json")"

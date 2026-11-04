@@ -253,6 +253,176 @@ export component ThemeCheck inherits Rectangle {
     }
 }
 
+// Themed on/off pill. The stock `Switch` paints the Fluent palette — a
+// #005FB8 rail that `accentify()` can darken to near-black on Linux, and a
+// `text-secondary` thumb — and never reads `Theme`, so a settings toggle kept
+// the same colour through every palette change. Same contract as the stock
+// widget: `checked` is bindable (one-way or `<=>`) and `toggled` fires after
+// the flip, so owners that treat a global as the source of truth keep working.
+export component ThemeSwitch inherits Rectangle {
+    in-out property <bool> checked: false;
+    in property <bool> enabled: true;
+    callback toggled();
+    width: 36px; height: 20px;
+    // Disabled is a whole-control state: a greyed thumb alone is
+    // indistinguishable from "off", so the pill dims instead.
+    opacity: root.enabled ? 1 : 0.55;
+    accessible-role: switch;
+    accessible-enabled: root.enabled;
+    accessible-checked: root.checked;
+    accessible-action-default => { if root.enabled { root.toggle-checked(); } }
+    forward-focus: switch-focus;
+    function toggle-checked() {
+        if !root.enabled { return; }
+        root.checked = !root.checked;
+        root.toggled();
+    }
+    rail := Rectangle {
+        x: 0px; y: 0px; width: parent.width; height: parent.height;
+        border-radius: 10px;
+        border-width: root.checked ? 0px : 1px;
+        border-color: Theme.input-border;
+        background: root.checked ? (switch-touch.has-hover ? Theme.accent-deep : Theme.accent)
+            : switch-touch.has-hover ? Theme.border : Theme.hover;
+        animate background { duration: 110ms; easing: ease-out; }
+    }
+    thumb := Rectangle {
+        x: root.checked ? rail.width - self.width - 3px : 3px;
+        y: (rail.height - self.height) / 2;
+        width: 14px; height: 14px;
+        border-radius: 7px;
+        background: root.checked ? Theme.surface : Theme.muted;
+        animate x, background { duration: 110ms; easing: ease-out; }
+    }
+    switch-focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == " " || event.text == "\n" { root.toggle-checked(); return accept; }
+            return reject;
+        }
+    }
+    switch-touch := TouchArea {
+        enabled: root.enabled; mouse-cursor: pointer;
+        clicked => { switch-focus.focus(); root.toggle-checked(); }
+    }
+}
+
+// Themed slider. The stock `Slider` reads FluentPalette — a #005FB8 fill and
+// thumb ring that `accentify()` cannot retint on Linux — so form rows use this
+// token-driven track instead, at the same 4px rail / 14px thumb geometry the
+// 常规 page builds inline for the font-size control. Contract mirrors the
+// stock widget: `value` is bindable (one-way or `<=>`), `changed` carries the
+// new value on drag, click and arrow keys.
+export component ThemeSlider inherits Rectangle {
+    in property <float> minimum: 0;
+    in property <float> maximum: 1;
+    in property <float> step: 0;
+    in property <bool> enabled: true;
+    in-out property <float> value: 0;
+    callback changed(float);
+    width: 160px; height: 24px;
+    // Half a thumb of inset at each end, so the thumb never leaves the track.
+    private property <length> inset: 7px;
+    private property <float> ratio: {
+        let span = root.maximum - root.minimum;
+        return span <= 0.0 ? 0.0 : clamp((root.value - root.minimum) / span, 0.0, 1.0);
+    };
+    accessible-role: slider;
+    accessible-enabled: root.enabled;
+    accessible-value: root.value;
+    accessible-value-minimum: root.minimum;
+    accessible-value-maximum: root.maximum;
+    accessible-value-step: min(root.step, (root.maximum - root.minimum) / 100);
+    accessible-action-set-value(v) => {
+        if v.is-float() {
+            root.value = clamp(v.to-float(), root.minimum, root.maximum);
+            root.changed(root.value);
+        }
+    }
+    accessible-action-increment => { root.nudge(root.key-step()); }
+    accessible-action-decrement => { root.nudge(-root.key-step()); }
+    forward-focus: slider-focus;
+    function key-step() -> float {
+        return root.step > 0.0 ? root.step : (root.maximum - root.minimum) / 20.0;
+    }
+    function nudge(delta: float) {
+        let next = clamp(root.value + delta, root.minimum, root.maximum);
+        if next != root.value {
+            root.value = next;
+            root.changed(next);
+        }
+    }
+    function value-at(x: length) -> float {
+        let span = root.maximum - root.minimum;
+        if span <= 0.0 { return root.minimum; }
+        let t = clamp((x - root.inset) / (root.width - root.inset * 2), 0.0, 1.0);
+        let raw = root.minimum + t * span;
+        let snapped = root.step > 0.0
+            ? root.minimum + round((raw - root.minimum) / root.step) * root.step
+            : raw;
+        return clamp(snapped, root.minimum, root.maximum);
+    }
+    track := Rectangle {
+        x: root.inset; y: (parent.height - 4px) / 2;
+        width: parent.width - root.inset * 2; height: 4px;
+        border-radius: 2px;
+        background: Theme.border;
+        Rectangle {
+            width: parent.width * root.ratio; height: parent.height;
+            border-radius: 2px;
+            background: !root.enabled ? Theme.input-readonly-border
+                : slider-touch.has-hover ? Theme.accent-deep : Theme.accent;
+        }
+    }
+    if slider-focus.has-focus && root.enabled : Rectangle {
+        x: thumb.x - 3px; y: thumb.y - 3px;
+        width: thumb.width + 6px; height: thumb.height + 6px;
+        border-radius: self.width / 2;
+        background: Theme.accent-soft;
+    }
+    thumb := Rectangle {
+        x: root.inset + (root.width - root.inset * 2) * root.ratio - self.width / 2;
+        y: (parent.height - self.height) / 2;
+        width: 14px; height: 14px;
+        border-radius: 7px;
+        background: Theme.surface;
+        border-width: 2px;
+        border-color: root.enabled ? Theme.accent-ink : Theme.input-readonly-border;
+    }
+    slider-focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == Key.LeftArrow { root.nudge(-root.key-step()); return accept; }
+            if event.text == Key.RightArrow { root.nudge(root.key-step()); return accept; }
+            return reject;
+        }
+    }
+    slider-touch := TouchArea {
+        enabled: root.enabled; mouse-cursor: pointer;
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                slider-focus.focus();
+                let next = root.value-at(self.mouse-x);
+                // A click that lands on the current value must not fire
+                // `changed`: owners persist on that callback.
+                if next != root.value {
+                    root.value = next;
+                    root.changed(next);
+                }
+            }
+        }
+        moved => {
+            if self.pressed {
+                let next = root.value-at(self.mouse-x);
+                if next != root.value {
+                    root.value = next;
+                    root.changed(next);
+                }
+            }
+        }
+    }
+}
+
 export component FormField inherits Rectangle {
     in property <string> label;
     in property <string> placeholder;
@@ -403,7 +573,7 @@ export component ModalDialog inherits Rectangle {
     callback dismissed();
     width: 100%; height: 100%;
     background: Theme.overlay;
-    TouchArea { clicked => { if root.dismissable { root.dismissed(); } } }
+    TouchArea { clicked => { if root.dismissable { root.dismissed(); } } scroll-event(event) => { return accept; } }
     Rectangle {
         width: min(root.card-width, root.width - 48px);
         height: min(root.card-height, root.height - 48px);

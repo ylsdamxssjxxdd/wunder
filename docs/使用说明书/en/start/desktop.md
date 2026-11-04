@@ -72,7 +72,7 @@ The main window has two switchable pages, Chat and Settings; everything else han
 
 ### Settings page
 
-**12 categories**: General, Account, Model, Tools, Agents, Personas, Scheduled, Memory, Channels, Prompt packs, Archive, Help.
+**11 categories**: General, Account, Model, Tools, Agents, Personas, Scheduled, Memory, Channels, Archive, Help.
 
 The category navigation supports search filtering. There is **no "device interlink" category**.
 

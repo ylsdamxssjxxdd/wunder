@@ -253,6 +253,13 @@ export component ThreadTrajectoryDialog inherits Rectangle {
 
     background: white;
     border-width: 0px;
+    // A painted background does not consume pointer events in Slint: hit
+    // testing only stops at a TouchArea. Without this blocker the gaps in the
+    // 32px toolbar band (between back / 轮次 / 调用 / search) fall through to
+    // the window items below, so a click next to the turn toggles could still
+    // hit the sidebar's 新建工作区 and 新会话 buttons. Declared first, it is the
+    // lowest layer of this page: every control inside keeps its own hit area.
+    TouchArea { }
 
     VerticalLayout {
         // ---- toolbar (32px): back / toggles / search ----

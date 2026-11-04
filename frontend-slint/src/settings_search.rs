@@ -1,4 +1,4 @@
-//! §9.1 settings search: one place that decides which of the twelve
+//! §9.1 settings search: one place that decides which of the eleven
 //! categories a query keeps.
 //!
 //! The match runs natively because Slint 1.18 strings expose only is-empty /
@@ -12,8 +12,8 @@
 /// Category keywords for the search box. i18n lives on the Slint side, so the
 /// filter keys off the same two languages the shell ships. The order is the
 /// navigation order: general, account, models, tools, agent, companion, cron,
-/// memory, channels, prompts and archived threads. Help is not a category — it
-/// opens from a button on the general page.
+/// memory, channels and archived threads. Help is not a category — it opens
+/// from a button on the general page.
 const SETTINGS_CATEGORY_LABELS: &[&[&str]] = &[
     &["常规", "常规设置", "general"],
     &["本地运行时", "运行时", "runtime"],
@@ -25,7 +25,6 @@ const SETTINGS_CATEGORY_LABELS: &[&[&str]] = &[
     &["定时任务", "计划任务", "scheduled"],
     &["记忆碎片", "记忆", "memories"],
     &["渠道设置", "渠道", "channels"],
-    &["提示词包", "提示词", "prompts"],
     &["归档线程", "归档", "archived"],
 ];
 
@@ -82,6 +81,6 @@ mod tests {
     /// The shell hard-codes the initial flag list, so the count is a contract.
     #[test]
     fn category_count_matches_the_navigation() {
-        assert_eq!(SETTINGS_CATEGORY_COUNT, 12);
+        assert_eq!(SETTINGS_CATEGORY_COUNT, 11);
     }
 }

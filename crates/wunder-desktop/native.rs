@@ -132,7 +132,6 @@ pub use update::{
 };
 pub use cron::{CronRecord, CronRunRecord, NativeCronJobEdit};
 pub use profile::NativeProfile;
-pub use prompts::{PromptPackInfo, PromptSegmentContent};
 pub use settings::{
     DesktopSettings, LanPeerRecord, LanSettings, ModelEdit, ModelProbeOutcome, ModelRecord,
 };

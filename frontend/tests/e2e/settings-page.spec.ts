@@ -24,7 +24,6 @@ const CATEGORY_IDS = [
   'memory',
   'channels',
   'devices',
-  'prompts',
   'archived'
 ] as const;
 

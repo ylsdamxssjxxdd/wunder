@@ -128,7 +128,7 @@ fn prompt_preview_uses_agent_settings_and_preserves_the_frozen_thread_prompt() {
         frozen
     );
     assert!(runtime
-        .preview_system_prompt()
+        .preview_thread_system_prompt(None, None)
         .unwrap()
         .contains("Fixture revised instructions"));
 }

@@ -1,7 +1,7 @@
 import { Theme, AvatarOption, AvatarColorChip, CompanionCard } from "theme.slint";
 import { ExpertButton } from "expert_widgets.slint";
-import { Action } from "components.slint";
-import { ScrollView, Switch, ComboBox } from "std-widgets.slint";
+import { Action, ThemeSwitch } from "components.slint";
+import { ScrollView, ComboBox } from "std-widgets.slint";
 import { I18n } from "i18n.slint";
 
 // Dialog state lives in a global so the controller binds it once and no page
@@ -57,7 +57,7 @@ export component AvatarDialog inherits Rectangle {
 
     if AvatarDialogState.open : Rectangle {
         background: Theme.overlay;
-        TouchArea { clicked => { AvatarDialogState.cancel(); } }
+        TouchArea { clicked => { AvatarDialogState.cancel(); } scroll-event(event) => { return accept; } }
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
@@ -204,11 +204,11 @@ export component AvatarDialog inherits Rectangle {
                             }
                             HorizontalLayout { height: 30px; spacing: 12px;
                                 Text { width: 100px; text: I18n.av_companion_show; color: Theme.text; font-size: 12px; font-weight: 600; vertical-alignment: center; }
-                                Switch { checked <=> AvatarDialogState.companion-show; }
+                                ThemeSwitch { checked <=> AvatarDialogState.companion-show; }
                             }
                             HorizontalLayout { height: 30px; spacing: 12px;
                                 Text { width: 100px; text: I18n.av_companion_hints; color: Theme.text; font-size: 12px; font-weight: 600; vertical-alignment: center; }
-                                Switch { checked <=> AvatarDialogState.companion-hints; }
+                                ThemeSwitch { checked <=> AvatarDialogState.companion-hints; }
                             }
                             HorizontalLayout { height: 32px; spacing: 12px;
                                 Text { width: 100px; text: I18n.av_companion_scale; color: Theme.text; font-size: 12px; font-weight: 600; vertical-alignment: center; }

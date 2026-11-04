@@ -631,6 +631,54 @@ impl NativeDesktop {
         Ok(())
     }
 
+    /// Move one workspace entry (file or directory) into a target directory of
+    /// the same workspace, keeping its name. `target_dir` empty = the root.
+    /// Same-parent moves degrade to the rename above; a directory is refused
+    /// into itself or its own subtree.
+    pub fn workspace_local_move(
+        &self,
+        root_path: &str,
+        relative: &str,
+        target_dir: &str,
+    ) -> Result<()> {
+        let root = normalize_root(root_path)?;
+        if !root.is_dir() {
+            bail!(WORKSPACE_ROOT_MISSING);
+        }
+        let source = workspace_resource_target(&root, relative)?;
+        if paths_equal(&source, &root) {
+            bail!("不能移动工作区根目录");
+        }
+        if !source.exists() {
+            bail!("源文件或目录不存在");
+        }
+        let name = source
+            .file_name()
+            .map(|name| name.to_os_string())
+            .ok_or_else(|| anyhow!("路径超出当前工作区"))?;
+        let destination_dir = if target_dir.is_empty() {
+            root.clone()
+        } else {
+            let dir = workspace_resource_target(&root, target_dir)?;
+            if !dir.is_dir() {
+                bail!("目标目录不存在");
+            }
+            if paths_equal(&dir, &source) || dir.starts_with(&source) {
+                bail!("不能把目录移动到它自己或它的子目录里");
+            }
+            dir
+        };
+        let target = destination_dir.join(&name);
+        if paths_equal(&target, &source) {
+            return Ok(());
+        }
+        if target.exists() {
+            bail!("目标位置已有同名文件或目录");
+        }
+        std::fs::rename(&source, &target).map_err(|error| anyhow!("移动失败：{error}"))?;
+        Ok(())
+    }
+
     /// Delete one workspace entry; directories go with their whole subtree.
     /// The workspace root itself is never deletable.
     pub fn workspace_local_delete(&self, root_path: &str, relative: &str) -> Result<()> {

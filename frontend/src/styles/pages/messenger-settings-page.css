@@ -19,7 +19,9 @@
   flex-direction: column;
   flex-shrink: 0;
   box-sizing: border-box;
-  width: 260px;
+  /* 200px: the widest category label plus the 18px icon still fit, and the
+     content pane gets the reclaimed 60px where the actual work happens. */
+  width: 200px;
   min-height: 0;
   padding: 16px 12px;
   border-right: 1px solid var(--mz-border);
@@ -179,11 +181,6 @@
 .messenger-settings-frame-nav-icon-svg-satellite-dish {
   -webkit-mask-image: url('../../assets/lc-satellite-dish.svg');
   mask-image: url('../../assets/lc-satellite-dish.svg');
-}
-
-.messenger-settings-frame-nav-icon-svg-file-text {
-  -webkit-mask-image: url('../../assets/lc-file-text.svg');
-  mask-image: url('../../assets/lc-file-text.svg');
 }
 
 .messenger-settings-frame-nav-icon-svg-archive {

@@ -64,7 +64,6 @@ With the session queue on, messages sent to a new thread during a run queue up i
 | Scheduled | Entry to scheduled tasks |
 | Memory | Long-term memory management and hits |
 | Channels | Channel binding and status |
-| Prompt packs | Prompt packs available in-app, with language defaults |
 | Archive | Archived thread list |
 | Help | Embedded docs and version number |
 

@@ -97,7 +97,6 @@ const CATEGORY_BY_AGENT_MODE: Record<string, SettingsCategoryId> = {
 };
 
 const categoryByPanelMode = (mode: string): SettingsCategoryId | null => {
-  if (mode === 'prompts') return 'prompts';
   if (mode === 'profile') return 'account';
   if (mode === 'desktop-models') return 'general';
   if (mode === 'general') return 'general';
@@ -132,13 +131,11 @@ const pushControllerState = (category: SettingsCategoryId) => {
     }
   }
   const panelMode =
-    category === 'prompts'
-      ? 'prompts'
-      : category === 'account'
-        ? 'profile'
-        : category === 'general'
-          ? 'general'
-          : '';
+    category === 'account'
+      ? 'profile'
+      : category === 'general'
+        ? 'general'
+        : '';
   if (!panelMode) return;
   lastPushedPanelMode = panelMode;
   if (props.controller.settingsPanelMode) {

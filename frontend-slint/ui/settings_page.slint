@@ -1,13 +1,13 @@
 import { I18n } from "i18n.slint";
-import { Theme, PromptPackCard, ToolCard, ModelCard, ProfileCard, FileCard, WorkspaceFileRow, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard } from "theme.slint";
-import { Action, FormField, MiddleHeader, PageState, PageStateKind, ThemeCheck } from "components.slint";
+import { Theme, ToolCard, ModelCard, ProfileCard, FileCard, WorkspaceFileRow, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard } from "theme.slint";
+import { Action, FormField, MiddleHeader, PageState, PageStateKind, ThemeCheck, ThemeSwitch, ThemeSlider } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { TextFieldActivation, TextFieldMenu } from "text_field.slint";
 import { DragRow } from "drag_row.slint";
 import { ComboBoxBase } from "combo_base.slint";
 import { ModelPresets } from "model_presets.slint";
 import { ExpertToolGroup, ExpertToolPicker } from "expert_widgets.slint";
-import { Button, ComboBox, ScrollView, Slider, Switch } from "std-widgets.slint";
+import { Button, ComboBox, ScrollView } from "std-widgets.slint";
 import { CronPage } from "cron_page.slint";
 import { ChannelsPage } from "channels_page.slint";
 import { ToolsPage, ToolResource } from "tools_page.slint";
@@ -609,45 +609,27 @@ export component SettingsPage inherits Rectangle {
     callback refresh();
     callback save-runtime();
     callback save-preferences();
-    callback refresh-prompt-packs();
-    callback select-prompt-pack(string);
-    callback save-prompt-segment();
-    callback create-prompt-pack();
-    callback delete-prompt-pack();
-    callback set-active-prompt-pack();
-    callback refresh-prompt-preview();
     in-out property <string> theme;
     in-out property <string> send-key;
     in-out property <float> font-size: 14;
-    in property <[PromptPackCard]> prompt-packs;
-    in property <[string]> prompt-pack-names;
-    in property <string> prompt-active;
-    in-out property <string> selected-pack;
-    in-out property <int> selected-segment: 0;
-    in-out property <string> prompt-draft;
-    in property <bool> prompt-readonly;
-    in property <bool> prompt-loading: false;
-    in-out property <string> pack-name-draft;
-    in property <string> prompt-preview;
-    in property <bool> prompt-preview-loading: false;
     in property <string> status;
     // Tab ids are stable labels, not list positions: 0 general, 13 account,
     // 1 models, 2 tools, 3 agent, 4 companion, 5 scheduled tasks, 6 memories,
-    // 7 channels, 9 prompt packs, 10 archived threads. Help lives on a button
-    // in the general category and opens its own window, so it is not a
-    // category. The navigation lists them in the web messenger's category
-    // order: general, account, models, tools, agent, companion, cron, memory,
-    // channels, prompts and archived threads.
+    // 7 channels, 10 archived threads. Help lives on a button in the general
+    // category and opens its own window, so it is not a category. The
+    // navigation lists them in the web messenger's category order: general,
+    // account, models, tools, agent, companion, cron, memory, channels and
+    // archived threads.
     in-out property <int> settings-tab: 0;
     // Category filter typed into the navigation search box. Slint 1.18 strings
     // have no substring test, so the filter runs natively and the matching
     // categories come back as a bit set (bit N = category N).
     in-out property <string> settings-query: "";
-    // One flag per category, in navigation order (12 categories). Slint 1.18 has
+    // One flag per category, in navigation order (11 categories). Slint 1.18 has
     // no bitwise operators, so the native search projection ships booleans rather
     // than a mask; an all-true list means "no query". Index = nav position, not
     // tab id.
-    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true, true];
+    in-out property <[bool]> settings-category-flags: [true, true, true, true, true, true, true, true, true, true, true];
     out property <bool> settings-has-matches: root.count-visible() > 0;
     out property <int> settings-visible-count: root.count-visible();    // How many categories the current query keeps; the empty state and the test
     // projections both read this instead of re-deriving the flags.
@@ -662,8 +644,7 @@ export component SettingsPage inherits Rectangle {
             + (root.settings-category-flags[7] ? 1 : 0)
             + (root.settings-category-flags[8] ? 1 : 0)
             + (root.settings-category-flags[9] ? 1 : 0)
-            + (root.settings-category-flags[10] ? 1 : 0)
-            + (root.settings-category-flags[11] ? 1 : 0);
+            + (root.settings-category-flags[10] ? 1 : 0);
     }
     // Slint cannot test a substring, so the query is projected out and the
     // matching categories come back as a bit set.
@@ -811,9 +792,7 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> memory-edit-title;
     in-out property <string> memory-edit-content;
     in-out property <string> memory-edit-category;
-    in-out property <[string]> expert-agent-names: [I18n.common_default_agent];
     callback refresh-expert();
-    callback replicate-expert-memory(int);
     callback open-expert-memory(int);
     callback save-expert-memory();
     callback delete-expert-memory(string);
@@ -905,9 +884,11 @@ export component SettingsPage inherits Rectangle {
     HorizontalLayout {
         spacing: 0px;
         vertical-stretch: 1;
-        // §9.1 navigation column.
+        // §9.1 navigation column. 200px fits the longest zh/en labels with the
+        // 36px icon badge; every pixel here comes straight out of the content
+        // pane, which the cards need more than the nav does.
         SettingsNav := Rectangle {
-            width: 260px;
+            width: 200px;
             background: Theme.middle;
             Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
             VerticalLayout {
@@ -1021,13 +1002,6 @@ export component SettingsPage inherits Rectangle {
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[10];
-                            icon: @image-url("../assets/icons/lc-file-text.svg");
-                            title: I18n.stc_prompts;
-                            selected: root.settings-tab == 9;
-                            clicked => { root.settings-tab = 9; root.refresh-prompt-packs(); }
-                        }
-                        SettingsNavItem {
-                            visible: root.settings-category-flags[11];
                             icon: @image-url("../assets/icons/lc-archive.svg");
                             title: I18n.stc_archives;
                             selected: root.settings-tab == 10;
@@ -1307,7 +1281,7 @@ export component SettingsPage inherits Rectangle {
                                     label: I18n.st_cl_sync;
                                     note: I18n.st_cl_sync_note;
                                     last: true;
-                                    Switch {
+                                    ThemeSwitch {
                                         checked <=> root.cloud-sync-enabled;
                                         enabled: root.cloud-logged-in && !root.cloud-busy;
                                         toggled => { root.cloud-toggle-sync(root.cloud-sync-enabled); }
@@ -1316,12 +1290,12 @@ export component SettingsPage inherits Rectangle {
                                 SettingRow {
                                     label: I18n.zh ? "允许远程访问本地" : "Allow remote local access";
                                     note: I18n.zh ? "启用设备互通；写入和线程操作仍需本地审批" : "Enable the tunnel; writes and thread actions still require local approval";
-                                    Switch { checked <=> root.cloud-inbound-enabled; enabled: root.cloud-logged-in && !root.cloud-busy; toggled => { root.cloud-toggle-sharing(self.checked, root.cloud-full-shadow); } }
+                                    ThemeSwitch { checked <=> root.cloud-inbound-enabled; enabled: root.cloud-logged-in && !root.cloud-busy; toggled => { root.cloud-toggle-sharing(self.checked, root.cloud-full-shadow); } }
                                 }
                                 SettingRow {
                                     label: I18n.zh ? "共享工作区与线程目录" : "Share workspace and thread catalog";
                                     note: I18n.zh ? "需同时获得舰桥授权；关闭时只共享设备摘要" : "Also requires server grants; otherwise only device summary is shared";
-                                    Switch { checked <=> root.cloud-full-shadow; enabled: root.cloud-inbound-enabled && !root.cloud-busy; toggled => { root.cloud-toggle-sharing(root.cloud-inbound-enabled, self.checked); } }
+                                    ThemeSwitch { checked <=> root.cloud-full-shadow; enabled: root.cloud-inbound-enabled && !root.cloud-busy; toggled => { root.cloud-toggle-sharing(root.cloud-inbound-enabled, self.checked); } }
                                 }
                             }
                             SettingsCard {
@@ -1792,13 +1766,13 @@ export component SettingsPage inherits Rectangle {
                             SettingsCard {
                                 SettingsCardHeader { title: I18n.pet_behavior; subtitle: I18n.pet_behavior_note; }
                                 SettingRow { row-icon: @image-url("../assets/icons/paw.svg"); label: I18n.pet_show; note: I18n.pet_show_note;
-                                    Switch {
+                                    ThemeSwitch {
                                         checked: PetSettingsState.enabled;
                                         toggled => { PetSettingsState.toggle-enabled(self.checked); }
                                     }
                                 }
                                 SettingRow { row-icon: @image-url("../assets/icons/comment-dots.svg"); label: I18n.pet_hints; note: I18n.pet_hints_note;
-                                    Switch {
+                                    ThemeSwitch {
                                         checked: PetSettingsState.hints;
                                         toggled => { PetSettingsState.toggle-hints(self.checked); }
                                     }
@@ -1806,10 +1780,11 @@ export component SettingsPage inherits Rectangle {
                                 SettingRow { row-icon: @image-url("../assets/icons/fa-expand.svg"); label: I18n.pet_scale; note: I18n.pet_scale_note; last: true;
                                     HorizontalLayout { spacing: 10px; alignment: end;
                                         Text { text: PetSettingsState.scale-label; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
-                                        Slider {
-                                            min-width: 150px; max-width: 220px; minimum: 0.1; maximum: 1.6; step: 0.1;
+                                        ThemeSlider {
+                                            width: 180px;
+                                            minimum: 0.1; maximum: 1.6; step: 0.1;
                                             value: PetSettingsState.scale;
-                                            changed => { PetSettingsState.set-scale(self.value); }
+                                            changed(value) => { PetSettingsState.set-scale(value); }
                                         }
                                     }
                                 }
@@ -1921,8 +1896,7 @@ export component SettingsPage inherits Rectangle {
                         editor-open <=> root.memory-editor-open; edit-id <=> root.memory-edit-id;
                         edit-title <=> root.memory-edit-title; edit-content <=> root.memory-edit-content;
                         edit-category <=> root.memory-edit-category;
-                        saving: root.expert-saving; agent-names: root.expert-agent-names;
-                        replicate-memory(index) => { root.replicate-expert-memory(index); }
+                        saving: root.expert-saving;
                         refresh => { root.refresh-expert(); }
                         save-memory => { root.save-expert-memory(); }
                         delete-memory(id) => { root.delete-expert-memory(id); }
@@ -1995,58 +1969,10 @@ export component SettingsPage inherits Rectangle {
                             }
                         }
                     }
-                    if root.settings-tab == 9 : ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
-                        VerticalLayout { padding: 20px; spacing: 14px; vertical-stretch: 1;
-                            Rectangle { horizontal-stretch: 1; border-radius: Theme.radius-md; background: Theme.panel; border-width: 1px; border-color: Theme.border;
-                                VerticalLayout { padding: 14px; spacing: 10px;
-                                    HorizontalLayout { height: 30px; spacing: 8px;
-                                        Text { text: I18n.pm_pack; color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; }
-                                        ComboBox { horizontal-stretch: 1; height: 30px; model: root.prompt-pack-names; selected(value) => { root.select-prompt-pack(value); } }
-                                        Action { label: I18n.pm_set_active; show-label: true; primary: true; enabled: !root.prompt-loading && root.selected-pack != "" && root.selected-pack != root.prompt-active; clicked => { root.set-active-prompt-pack(); } }
-                                        Action { label: I18n.pm_new; show-label: true; enabled: !root.prompt-loading; clicked => { root.create-prompt-pack(); } }
-                                        Action { label: I18n.pm_delete_custom; show-label: true; enabled: !root.prompt-loading && root.selected-pack != "" && !root.prompt-readonly; clicked => { root.delete-prompt-pack(); } }
-                                    }
-                                    HorizontalLayout { spacing: 6px;                                         Rectangle { width: 90px; height: 22px; border-radius: 4px; background: Theme.accent-soft; Text { width: parent.width; height: parent.height; text: I18n.pm_active_tag + root.prompt-active; color: Theme.accent-ink; font-size: Theme.font-2xs; horizontal-alignment: center; vertical-alignment: center; } }
-                                        Rectangle { width: 90px; height: 22px; border-radius: 4px; background: Theme.surface; Text { width: parent.width; height: parent.height; text: I18n.pm_lang_default_tag; color: Theme.muted; font-size: Theme.font-2xs; horizontal-alignment: center; vertical-alignment: center; visible: root.prompt-packs.length > 0 && root.prompt-packs[0].is-lang-default; } }
-                                        Rectangle { width: 120px; height: 22px; border-radius: 4px; background: Theme.surface; Text { width: parent.width; height: parent.height; text: I18n.pm_sync_tag + root.prompt-active; color: Theme.muted; font-size: Theme.font-2xs; horizontal-alignment: center; vertical-alignment: center; visible: root.prompt-readonly; } }
-                                        Rectangle { horizontal-stretch: 1; }
-                                    }
-                                }
-                            }
-                            Rectangle { horizontal-stretch: 1; border-radius: Theme.radius-md; background: Theme.panel; border-width: 1px; border-color: Theme.border;
-                                HorizontalLayout { vertical-stretch: 1; spacing: 10px;
-                                    Rectangle { width: 190px; border-radius: Theme.radius-sm; background: Theme.surface; border-width: 1px; border-color: Theme.border;
-                                        ScrollView { vertical-stretch: 1; horizontal-scrollbar-policy: always-off;
-                                            VerticalLayout { alignment: start; padding: 8px; spacing: 4px;
-                                                for segment[index] in [{key: "role", label: I18n.pm_segment_role}, {key: "engineering", label: I18n.pm_segment_engineering}, {key: "tools_protocol", label: I18n.pm_segment_tool_protocol}, {key: "skills_protocol", label: I18n.pm_segment_skill_protocol}, {key: "memory", label: I18n.pm_segment_memory}, {key: "extra", label: I18n.pm_segment_attach}] : Rectangle { horizontal-stretch: 1; height: 42px; border-radius: Theme.radius-sm; background: root.selected-segment == index ? Theme.accent-soft : transparent; border-width: 1px; border-color: root.selected-segment == index ? Theme.accent-ink : transparent;
-                                                    VerticalLayout { spacing: 1px; Text { text: segment.label; color: root.selected-segment == index ? Theme.accent-deep : Theme.text; font-size: Theme.font-xs; font-weight: 600; } Text { text: segment.key; color: Theme.muted; font-size: 9px; overflow: elide; } }
-                                                    TouchArea { clicked => { root.selected-segment = index; root.select-prompt-pack(root.selected-pack); } }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Rectangle { horizontal-stretch: 1; border-radius: Theme.radius-sm; background: Theme.surface; border-width: 1px; border-color: Theme.border;
-                                        VerticalLayout { padding: 12px; spacing: 8px;
-                                            HorizontalLayout { height: 22px; Text { text: root.selected-pack == "" ? I18n.pm_segment_edit : I18n.pm_segment_edit_prefix + root.selected-pack; color: Theme.text; font-size: 13px; font-weight: 700; overflow: elide; } Rectangle { horizontal-stretch: 1; } Text { text: root.prompt-readonly ? I18n.pm_readonly_hint : I18n.pm_editable_hint; color: root.prompt-readonly ? Theme.muted : Theme.success; font-size: Theme.font-2xs; vertical-alignment: center; } }
-                                            TextEditBase { vertical-stretch: 1; text <=> root.prompt-draft; read-only: root.prompt-readonly || root.prompt-loading; wrap: word-wrap; foreground: root.prompt-readonly || root.prompt-loading ? Theme.input-readonly-text : Theme.text; font-size: Theme.font-sm; background: root.prompt-readonly || root.prompt-loading ? Theme.input-readonly-bg : Theme.input-bg; border-width: 1px; border-color: Theme.input-border; border-radius: Theme.radius-sm; selection-background-color: Theme.accent-ink; selection-foreground-color: white; }
-                                            HorizontalLayout { height: 30px; Rectangle { horizontal-stretch: 1; } Action { width: 96px; label: I18n.pm_save_segment; show-label: true; primary: true; enabled: !root.prompt-readonly && !root.prompt-loading && root.selected-pack != ""; clicked => { root.save-prompt-segment(); } } }
-                                        }
-                                    }
-                                }
-                            }
-                            Rectangle { horizontal-stretch: 1; border-radius: Theme.radius-md; background: Theme.panel; border-width: 1px; border-color: Theme.border;
-                                VerticalLayout { padding: 14px; spacing: 8px;
-                                    HorizontalLayout { height: 22px; Text { text: I18n.pm_preview_title; color: Theme.text; font-size: 13px; font-weight: 700; } Rectangle { horizontal-stretch: 1; } Action { label: I18n.pm_preview_refresh; show-label: true; enabled: !root.prompt-preview-loading; clicked => { root.refresh-prompt-preview(); } } }
-                                    Text { text: I18n.pm_preview_hint; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
-                                    TextEditBase { vertical-stretch: 1; text: root.prompt-preview; read-only: true; wrap: word-wrap; foreground: Theme.text; font-size: Theme.font-xs; background: Theme.input-readonly-bg; border-width: 1px; border-color: Theme.input-readonly-border; border-radius: Theme.radius-sm; scroll-view-padding: 8px; selection-background-color: Theme.accent-ink; selection-foreground-color: white; }
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }
-    if root.model-delete-open : Rectangle { background: Theme.overlay; TouchArea { clicked => { root.model-delete-open = false; } }
+    if root.model-delete-open : Rectangle { background: Theme.overlay; TouchArea { clicked => { root.model-delete-open = false; } scroll-event(event) => { return accept; } }
         Rectangle { width: min(400px, parent.width - 44px); height: 180px; border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border; TouchArea { }
             VerticalLayout { padding: 20px; spacing: 10px;
                 Text { height: 24px; text: I18n.ag_delete_confirm_title; color: Theme.text; font-size: Theme.font-xl; font-weight: 600; }

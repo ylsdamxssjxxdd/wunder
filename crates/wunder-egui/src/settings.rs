@@ -150,12 +150,6 @@ const CATEGORIES: &[Category] = &[
         aliases: &["设备", "互通", "device"],
     },
     Category {
-        id: "prompts",
-        title: "提示词包",
-        desc: "提示词包的启用与分段编辑",
-        aliases: &["提示词包", "分段", "prompts"],
-    },
-    Category {
         id: "archived",
         title: "归档线程",
         desc: "已归档线程的恢复与删除",
@@ -510,7 +504,6 @@ fn draw_content_column(ui: &mut Ui, state: &mut AppState, tokens: Tokens, compac
                         "memory" => page_memory(ui, tokens),
                         "channels" => page_channels(ui, tokens),
                         "devices" => page_devices(ui, state, tokens),
-                        "prompts" => page_prompts(ui, tokens),
                         "archived" => page_archived(ui, state, tokens),
                         _ => page_general(ui, state, tokens),
                     }
@@ -3540,227 +3533,6 @@ fn page_devices(ui: &mut Ui, state: &mut AppState, tokens: Tokens) {
     });
 }
 
-fn page_prompts(ui: &mut Ui, tokens: Tokens) {
-    panel(ui, tokens, 0.0, |ui| {
-        panel_header(
-            ui,
-            tokens,
-            "提示词包",
-            "提示词包的启用、分段编辑与最终提示词预览",
-            |_| {},
-        );
-        // The complete template selector is a fixed-width card; its content
-        // must not choose the width or add widget-spacing to its 121px height.
-        let (template, _) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 121.0), Sense::hover());
-        ui.painter().rect_filled(template, 12.0, tokens.surface);
-        ui.painter().rect_stroke(
-            template,
-            12.0,
-            Stroke::new(1.0, tokens.border),
-            StrokeKind::Inside,
-        );
-        child(
-            ui,
-            Rect::from_min_max(
-                template.min + Vec2::splat(16.0),
-                template.max - Vec2::new(16.0, 15.0),
-            ),
-            "prompt-template-card",
-            |ui| {
-                let bounds = ui.max_rect();
-                ui.painter().text(
-                    bounds.min + Vec2::new(0.0, 2.0),
-                    Align2::LEFT_TOP,
-                    "模板包",
-                    FontId::proportional(12.0),
-                    tokens.text_secondary,
-                );
-                let selector =
-                    Rect::from_min_size(bounds.min + Vec2::new(0.0, 21.0), Vec2::new(180.0, 34.0));
-                ui.painter()
-                    .rect_filled(selector, 10.0, tokens.primary_wash);
-                ui.painter().rect_stroke(
-                    selector,
-                    10.0,
-                    Stroke::new(1.0, tokens.primary_outline),
-                    StrokeKind::Inside,
-                );
-                ui.painter().text(
-                    selector.left_center() + Vec2::new(14.0, 0.0),
-                    Align2::LEFT_CENTER,
-                    "内置中文模板包",
-                    FontId::proportional(13.0),
-                    tokens.text,
-                );
-                icons::paint(
-                    ui.painter(),
-                    Rect::from_center_size(
-                        selector.right_center() - Vec2::new(13.0, 0.0),
-                        Vec2::splat(10.0),
-                    ),
-                    Icon::ChevronDown,
-                    tokens.text_secondary,
-                );
-                for (offset, width, label, enabled, danger) in [
-                    (188.0, 80.0, "设为启用", false, false),
-                    (276.0, 92.0, "新建模板包", true, false),
-                    (376.0, 92.0, "删除模板包", false, true),
-                ] {
-                    fixed_button(
-                        ui,
-                        Rect::from_min_size(
-                            bounds.min + Vec2::new(offset, 21.0),
-                            Vec2::new(width, 34.0),
-                        ),
-                        label,
-                        enabled,
-                        danger,
-                        tokens,
-                    );
-                }
-                let mut x = bounds.left();
-                for label in [
-                    "当前启用：内置中文模板包",
-                    "系统语言默认",
-                    "同步系统模板包：default",
-                ] {
-                    let text = ui.painter().layout_no_wrap(
-                        label.to_owned(),
-                        FontId::proportional(11.0),
-                        tokens.text_muted,
-                    );
-                    let tag = Rect::from_min_size(
-                        Pos2::new(x, bounds.top() + 73.0),
-                        Vec2::new(text.size().x + 12.0, 17.0),
-                    );
-                    ui.painter().rect_filled(tag, 99.0, tokens.chip);
-                    ui.painter()
-                        .galley(tag.center() - text.size() / 2.0, text, tokens.text_muted);
-                    x = tag.right() + 6.0;
-                }
-            },
-        );
-        ui.add_space(2.0);
-        let key = Id::new("prompt-section");
-        let mut selected = ui.ctx().data_mut(|d| d.get_temp::<usize>(key).unwrap_or(0));
-        let sections = [
-            ("角色定位", "role.txt"),
-            ("工程指导", "engineering.txt"),
-            ("工具协议", "tools_protocol.txt"),
-            ("技能协议", "skills_protocol.txt"),
-            ("历史记忆", "memory.txt"),
-            ("额外提示", "extra.txt"),
-        ];
-        // The outer editor starts at y378 in the desktop reference. Its 16px
-        // insets contain a 220px section list and the 352px detail pane.
-        let (editor, _) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 420.0), Sense::hover());
-        ui.painter().rect_filled(editor, 12.0, tokens.surface);
-        ui.painter().rect_stroke(
-            editor,
-            12.0,
-            Stroke::new(1.0, tokens.border),
-            StrokeKind::Inside,
-        );
-        let editor_inner = Rect::from_min_max(
-            editor.min + Vec2::new(17.0, 15.0),
-            editor.max - Vec2::new(17.0, 16.0),
-        );
-        let nav_width = 220.0_f32.min((editor_inner.width() - 10.0) * 0.5);
-        let nav = Rect::from_min_size(editor_inner.min, Vec2::new(nav_width, 389.0));
-        let detail = Rect::from_min_max(
-            Pos2::new(nav.right() + 10.0, editor_inner.top()),
-            editor_inner.max,
-        );
-        for rect in [nav, detail] {
-            ui.painter().rect_stroke(
-                rect,
-                12.0,
-                Stroke::new(1.0, tokens.primary_outline_soft),
-                StrokeKind::Inside,
-            );
-        }
-        child(ui, nav.shrink(8.0), "prompt-sections", |ui| {
-            ui.spacing_mut().item_spacing = Vec2::ZERO;
-            for (index, (name, file)) in sections.iter().enumerate() {
-                let (rect, response) =
-                    ui.allocate_exact_size(Vec2::new(ui.available_width(), 57.0), Sense::click());
-                if index == selected {
-                    let selected_rect = rect.shrink2(Vec2::new(0.0, 3.0));
-                    ui.painter()
-                        .rect_filled(selected_rect, 10.0, tokens.primary_tint);
-                    ui.painter().rect_stroke(
-                        selected_rect,
-                        10.0,
-                        Stroke::new(1.0, tokens.primary_outline_strong),
-                        StrokeKind::Inside,
-                    );
-                }
-                paint_heading(
-                    ui.painter(),
-                    rect.min + Vec2::new(10.0, 9.0),
-                    name,
-                    14.0,
-                    tokens.text,
-                );
-                ui.painter().text(
-                    rect.min + Vec2::new(10.0, 28.0),
-                    Align2::LEFT_TOP,
-                    *file,
-                    FontId::proportional(12.0),
-                    tokens.text_muted,
-                );
-                if response.clicked() {
-                    selected = index;
-                }
-            }
-        });
-        child(ui, detail.shrink(10.0), "prompt-detail", |ui| {
-            // Position each field in the pane. Inherited item spacing used to
-            // push the footer below the clipping boundary despite a 389px pane.
-            let bounds = ui.max_rect();
-            paint_heading(
-                ui.painter(),
-                bounds.min + Vec2::new(0.0, 5.0),
-                sections[selected].0,
-                18.0,
-                tokens.text,
-            );
-            fixed_button(
-                ui,
-                Rect::from_min_size(
-                    Pos2::new(bounds.right() - 54.0, bounds.top()),
-                    Vec2::new(54.0, 34.0),
-                ),
-                "保存",
-                false,
-                false,
-                tokens,
-            );
-            let body = Rect::from_min_size(
-                bounds.min + Vec2::new(0.0, 42.0),
-                Vec2::new(bounds.width(), 297.0),
-            );
-            ui.painter().rect_filled(body, 10.0, tokens.primary_wash);
-            ui.painter().rect_stroke(
-                body,
-                10.0,
-                Stroke::new(1.0, tokens.primary_outline_soft),
-                StrokeKind::Inside,
-            );
-            ui.painter().text(
-                bounds.min + Vec2::new(0.0, 349.0),
-                Align2::LEFT_TOP,
-                "内置模板包只读（同步系统模板包：default）。",
-                FontId::proportional(12.0),
-                tokens.primary,
-            );
-        });
-        ui.ctx().data_mut(|d| d.insert_temp(key, selected));
-    });
-}
-
 fn page_archived(ui: &mut Ui, state: &AppState, tokens: Tokens) {
     let height = page_height(ui);
     panel(ui, tokens, height, |ui| {
@@ -3817,7 +3589,6 @@ fn draw_icon(p: &Painter, center: Pos2, name: &str, size: f32, color: Color32) {
         "memory" => Icon::Brain,
         "channels" => Icon::Plug,
         "devices" => Icon::SatelliteDish,
-        "prompts" => Icon::File,
         "archived" => Icon::Archive,
         "external" => Icon::ExternalLink,
         "refresh" => Icon::Refresh,

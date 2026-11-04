@@ -1950,14 +1950,14 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "12 个分类",
+              "text": "11 个分类",
               "bold": true,
               "code": false,
               "kbd": false,
               "href": ""
             },
             {
-              "text": "：通用、账户、模型、工具、智能体、形象、定时、记忆、渠道、提示词包、归档、帮助。",
+              "text": "：通用、账户、模型、工具、智能体、形象、定时、记忆、渠道、归档、帮助。",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -11108,29 +11108,6 @@
                 [
                   {
                     "text": "渠道绑定与状态",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "提示词包",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "站内可用的提示词包与语言默认",
                     "bold": false,
                     "code": false,
                     "kbd": false,

@@ -84,6 +84,8 @@ pub fn path_entries(roots: &[PathBuf]) -> Vec<PathBuf> {
         "opt/ripgrep/bin",
         "opt/ffmpeg",
         "opt/ffmpeg/bin",
+        "opt/7zip",
+        "opt/7zip/bin",
         "opt/powershell",
         "opt/powershell/bin",
     ];
@@ -196,5 +198,19 @@ mod tests {
         let roots = roots(&home, &home, None);
         assert_eq!(find_tool(&roots, Tool::PowerShell), Some(home.join(pwsh)));
         assert!(path_entries(&roots).contains(&home.join("opt/powershell")));
+    }
+
+    #[test]
+    fn bundled_sevenzip_dir_reaches_path() {
+        // The archive extractor resolves 7z through PATH alone, so both staged
+        // layouts (Windows console pair at the root, Linux 7zz under bin) must
+        // be forwarded into PATH.
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("profile");
+        let exe = if cfg!(windows) { "7z.exe" } else { "7z" };
+        std::fs::create_dir_all(home.join("opt/7zip")).unwrap();
+        std::fs::write(home.join("opt/7zip").join(exe), b"fixture").unwrap();
+        let roots = roots(&home, &home, None);
+        assert!(path_entries(&roots).contains(&home.join("opt/7zip")));
     }
 }

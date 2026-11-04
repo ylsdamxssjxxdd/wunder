@@ -498,7 +498,7 @@ export component Sidebar inherits Rectangle {
     callback file-key(int);
     in-out property <float> split-ratio: 0.6;
     callback layout-changed();
-    private property <length> split-track: max(1px, root.height - 89px - (root.selection-mode ? 70px : 0px));
+    private property <length> split-track: max(1px, root.height - 95px - (root.selection-mode ? 70px : 0px));
     // 两段高度先算成值再钉死：ListView 的内容最小高度会把「首选高度」顶开，
     // 只写 height 时布局仍按最小高度分配，工作目录面板被压到只剩头部、设置行
     // 被挤出窗口。min/max 同时钉住才是固定高度。
@@ -521,29 +521,37 @@ export component Sidebar inherits Rectangle {
     callback file-select();
     callback file-selection-action(int);
     callback file-check(int);
-    // Right-click menu action (row index, action code), drag-out on a row,
-    // and the OS drop upload. The shell owns the handlers; the region and
-    // the shell share the DropEvent type.
+    // Modifier pick and the internal move drag lifecycle, mirrored from the
+    // panel (see workspace_files.slint for the hover index semantics).
+    callback file-pick(int, bool, bool);
+    callback file-drag-begin(int);
+    callback file-drag-hover(int);
+    callback file-drag-drop(int);
+    in property <bool> file-dragging;
+    in property <string> file-drop-path;
+    in property <bool> file-drop-root;
+    // Right-click menu action (row index, action code) and the OS drop
+    // upload. The shell owns the handlers; the region and the shell share
+    // the DropEvent type.
     callback file-menu(int, int);
-    callback file-drag(int);
     callback file-drop(DropEvent);
 
     VerticalLayout {
         spacing: 0px;
-        // 顶部气口 8 + 设备行 32 = 40px 头部块；split-track 的固定 chrome
-        // 记账（height - 89px）跟着这两个数字走。
+        // 顶部气口 8 + 设备行 32 + 设备与工作区间的 6px 空隙 = 46px 头部块；
+        // split-track 的固定 chrome 记账（height - 95px）跟着这些数字走。
         Rectangle { height: 8px; }
         HorizontalLayout {
             height: 32px;
             padding-left: SidebarMetrics.gutter; padding-right: SidebarMetrics.gutter;
             spacing: 4px;
             // Device selector: the current device owns every workspace row
-            // below. It is a control, not a tree entry, but a full-width
-            // boxed chip reads as an island on the panel grey, so the
-            // anatomy is a switcher row instead: icon badge, semibold name,
-            // secondary host and a chevron directly on the sidebar surface.
-            // Hover/open borrow the row fill grammar (selected grey) — the
-            // levels stay distinguishable by badge and weight, not by box.
+            // below. It is a control, not a tree entry: no leading icon, and
+            // a small gap below separates it from the workspace rows — the
+            // icon stays the workspace rows' cue. Anatomy is a switcher row:
+            // semibold name, secondary host and a chevron directly on the
+            // sidebar surface; hover/open borrow the row fill grammar and
+            // the level reads from the indent and the weight.
             Rectangle {
                 height: 32px;
                 horizontal-stretch: 1;
@@ -553,18 +561,6 @@ export component Sidebar inherits Rectangle {
                     padding-left: SidebarMetrics.row-padding;
                     padding-right: SidebarMetrics.row-padding;
                     spacing: SidebarMetrics.icon-gap;
-                    Rectangle {
-                        y: (parent.height - SidebarMetrics.leading-icon) / 2;
-                        width: SidebarMetrics.leading-icon; height: SidebarMetrics.leading-icon;
-                        // 与工作区行同一套解剖：图标直接落在侧栏底色上，
-                        // 不套灰底方块（原来的 Theme.border 底板让字形显小）。
-                        Image {
-                            width: parent.width; height: parent.height;
-                            source: WorkspaceVisual.icon(root.cloud-active ? "cloud" : "monitor");
-                            image-fit: contain;
-                            colorize: root.cloud-active ? Theme.accent-ink : Theme.muted;
-                        }
-                    }
                     Text {
                         height: parent.height;
                         text: root.cloud-active ? I18n.sb_device_cloud : I18n.sb_device_local;
@@ -619,6 +615,9 @@ export component Sidebar inherits Rectangle {
                 }
             }
         }
+        // 设备是段落控件，工作区才是树条目：一小段空隙把两者分开，图标只
+        // 留给下面的工作区行。
+        Rectangle { height: 6px; }
         if root.rows.length == 0 && !root.cloud-active : Text {
             height: 48px;
             text: I18n.sb_device_empty;
@@ -960,11 +959,14 @@ export component Sidebar inherits Rectangle {
             active-index: root.file-active-index;
             key-action(action) => { root.file-key(action); }
             toggle(index) => { root.file-toggle(index); }
+            pick(index, ctrl, shift) => { root.file-pick(index, ctrl, shift); }
             check(index) => { root.file-check(index); }
             refresh => { root.file-refresh(); }
             connect => { root.file-connect(); }
             menu(index, action) => { root.file-menu(index, action); }
-            drag-row(index) => { root.file-drag(index); }
+            drag-begin(index) => { root.file-drag-begin(index); }
+            drag-hover(index) => { root.file-drag-hover(index); }
+            drag-drop(index) => { root.file-drag-drop(index); }
             drop(event) => { root.file-drop(event); }
             select => { root.file-select(); }
             selection-action(action) => { root.file-selection-action(action); }
@@ -977,6 +979,9 @@ export component Sidebar inherits Rectangle {
             search-active: root.file-search-active;
             selecting <=> root.file-selecting;
             selected-count: root.file-selected-count;
+            dragging: root.file-dragging;
+            drop-path: root.file-drop-path;
+            drop-root: root.file-drop-root;
         }
         Rectangle { height: 1px; background: Theme.border; }
         // Settings button: 4px 上气口 + 32px 行 + 4px 下气口，与树里的行同高同留白。

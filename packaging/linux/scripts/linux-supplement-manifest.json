@@ -9,6 +9,7 @@
     "gitRoot": "opt/git",
     "rgRoot": "opt/rg",
     "ffmpegRoot": "opt/ffmpeg",
+    "sevenZipRoot": "opt/7zip",
     "browserRoot": "opt/browser"
   },
   "browser": {
@@ -164,6 +165,31 @@
       }
     }
   },
+  "7zip": {
+    "version": "25.01",
+    "flavor": "official 7-Zip console (static 7zzs)",
+    "source": "ip7z/7zip (mirrors 7-zip.org)",
+    "notes": [
+      "Stages the statically linked 7zzs console build, so archiving adds no glibc dependency and the Ubuntu 18.04 (glibc 2.27) baseline holds on both architectures.",
+      "The binary is staged as bin/7zz with a bin/7z symlink: PATH lookup and the archive extractor resolve 7z first, while the official console name stays available.",
+      "The full-format console build decodes 7z/zip/tar/gzip/xz plus the Rar codecs, so .7z and .rar extraction works offline without p7zip or unrar packages.",
+      "25.01 fixes the archive symlink vulnerability (CVE-2025-55188); the runtime feeds externally supplied archives to this binary."
+    ],
+    "archives": {
+      "amd64": {
+        "fileName": "7z2501-linux-x64.tar.xz",
+        "url": "https://github.com/ip7z/7zip/releases/download/25.01/7z2501-linux-x64.tar.xz",
+        "sha256": "4ca3b7c6f2f67866b92622818b58233dc70367be2f36b498eb0bdeaaa44b53f4",
+        "executable": "7zzs"
+      },
+      "arm64": {
+        "fileName": "7z2501-linux-arm64.tar.xz",
+        "url": "https://github.com/ip7z/7zip/releases/download/25.01/7z2501-linux-arm64.tar.xz",
+        "sha256": "39c5140f02ce4436599303c59a149f654cb1bbc47cdc105a942120d747ae040d",
+        "executable": "7zzs"
+      }
+    }
+  },
   "fonts": [
     "NotoSansSC-VF.ttf",
     "msyh.ttc",
@@ -177,6 +203,7 @@
     "gitRoot": "opt/git",
     "rgRoot": "opt/rg",
     "ffmpegRoot": "opt/ffmpeg",
+    "sevenZipRoot": "opt/7zip",
     "browserRoot": "opt/browser"
   }
 }

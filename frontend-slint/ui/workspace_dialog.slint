@@ -162,8 +162,9 @@ export component WorkspaceDialog inherits Rectangle {
     if WorkspaceDialogState.open : Rectangle {
         width: 100%; height: 100%;
         background: Theme.overlay;
-        // The mask swallows clicks; dismissal runs through cancel/close only.
-        TouchArea { }
+        // The mask swallows clicks and the wheel; dismissal runs through
+        // cancel/close only.
+        TouchArea { scroll-event(event) => { return accept; } }
         Rectangle {
             width: min(480px, parent.width - 48px);
             height: 500px;
@@ -351,7 +352,7 @@ export component WorkspaceDialog inherits Rectangle {
     if WorkspaceDialogState.delete-open : Rectangle {
         width: 100%; height: 100%;
         background: Theme.overlay;
-        TouchArea { }
+        TouchArea { scroll-event(event) => { return accept; } }
         Rectangle {
             width: min(420px, parent.width - 48px);
             height: 300px;

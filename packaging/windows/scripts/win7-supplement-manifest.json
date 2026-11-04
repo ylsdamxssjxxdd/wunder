@@ -9,7 +9,8 @@
     "gitRoot": "opt\\git",
     "rgRoot": "opt\\rg",
     "ffmpegRoot": "opt\\ffmpeg",
-    "powershellRoot": "opt\\powershell"
+    "powershellRoot": "opt\\powershell",
+    "sevenZipRoot": "opt\\7zip"
   },
   "browser": {
     "enabled": true,
@@ -162,6 +163,31 @@
         "fileName": "PowerShell-7.1.7-win-x86.zip",
         "url": "https://github.com/PowerShell/PowerShell/releases/download/v7.1.7/PowerShell-7.1.7-win-x86.zip",
         "sha256": "D10F8EE270E94ABD45892DC56765EA5FA6BF84A2D8E5B37EC40B78D195A8F65F"
+      }
+    }
+  },
+  "7zip": {
+    "version": "25.01",
+    "flavor": "official 7-Zip console (7z.exe + 7z.dll)",
+    "source": "ip7z/7zip (mirrors 7-zip.org)",
+    "dest": "opt\\7zip",
+    "expectedExe": "7z.exe",
+    "notes": [
+      "7-Zip still runs on Windows 7; the pinned 25.01 build also carries the archive symlink vulnerability fix (CVE-2025-55188), which matters because the runtime feeds externally supplied archives to this binary.",
+      "The pinned asset is the official console installer, itself a 7z SFX: the build host unpacks it and stages only the console pair (7z.exe + 7z.dll) into opt/7zip.",
+      "The full pair decodes 7z/zip/tar/gzip/xz plus the Rar codecs, so archive extraction handles .rar without a separate unrar; 7za.exe from the extra package would not.",
+      "Both staged files pass the same PE gates as ripgrep: per-arch machine type plus no Windows 8+-only static imports (bcryptprimitives.dll / api-ms-win-core-synch-l1-2-0.dll)."
+    ],
+    "archives": {
+      "x64": {
+        "fileName": "7z2501-x64.exe",
+        "url": "https://github.com/ip7z/7zip/releases/download/25.01/7z2501-x64.exe",
+        "sha256": "78afa2a1c773caf3cf7edf62f857d2a8a5da55fb0fff5da416074c0d28b2b55f"
+      },
+      "ia32": {
+        "fileName": "7z2501.exe",
+        "url": "https://github.com/ip7z/7zip/releases/download/25.01/7z2501.exe",
+        "sha256": "b96831eec5928384f0543d6b57c1f802952a0f2668e662882c0a785a2b52fb3b"
       }
     }
   },
