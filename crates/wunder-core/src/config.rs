@@ -1291,15 +1291,10 @@ pub struct DesktopControlConfig {
     #[serde(default)]
     #[serde(deserialize_with = "crate::config::deserialize_bool_from_any")]
     pub enabled: bool,
-    /// Longest side of the normalized screenshot space, in pixels. The short
-    /// side follows the screen aspect ratio, so the coordinate space is no
-    /// longer a fixed 1000x1000 square.
-    ///
-    /// Desktop defaults raise values below 1000 back to 1000 (glyph
-    /// recognition needs the resolution), so this behaves as a budget floor
-    /// as well as a ceiling; a configured 768 never takes effect.
-    #[serde(default = "default_desktop_control_max_norm_side")]
-    pub max_norm_side: i32,
+    #[serde(default = "default_desktop_control_norm_width")]
+    pub norm_width: i32,
+    #[serde(default = "default_desktop_control_norm_height")]
+    pub norm_height: i32,
     #[serde(default = "default_desktop_control_max_frames")]
     pub max_frames: usize,
     #[serde(default = "default_desktop_control_capture_timeout_ms")]
@@ -1524,7 +1519,8 @@ impl Default for DesktopControlConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            max_norm_side: default_desktop_control_max_norm_side(),
+            norm_width: default_desktop_control_norm_width(),
+            norm_height: default_desktop_control_norm_height(),
             max_frames: default_desktop_control_max_frames(),
             capture_timeout_ms: default_desktop_control_capture_timeout_ms(),
         }
@@ -1715,7 +1711,11 @@ fn default_browser_docker_downloads_root() -> String {
     "./config/data/browser/downloads".to_string()
 }
 
-fn default_desktop_control_max_norm_side() -> i32 {
+fn default_desktop_control_norm_width() -> i32 {
+    1000
+}
+
+fn default_desktop_control_norm_height() -> i32 {
     1000
 }
 

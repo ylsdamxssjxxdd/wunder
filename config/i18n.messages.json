@@ -1400,8 +1400,8 @@
     "zh-CN": "\n\n（思考已达设定上限，已停止思考并继续生成）"
   },
   "tool.desktop_control.bbox_out_of_range": {
-    "en-US": "Target coordinates are outside the current normalized screenshot space. Coordinates must stay within 0..normalized_width and 0..normalized_height; both follow the screen aspect ratio, so the short side is not a fixed 1000. Re-read normalized_width/normalized_height from the latest screenshot, or call wait first to obtain one.",
-    "zh-CN": "目标坐标超出当前归一化截图范围。坐标必须落在 0..normalized_width 与 0..normalized_height 内；两者随屏幕纵横比变化，短边不是固定 1000。请按最近一次截图返回的 normalized_width/normalized_height 重新给出坐标，尚未截图时可先调用 wait 取一张。"
+    "en-US": "Target coordinates are outside the normalized screenshot space, which is a fixed 1000x1000. Coordinates must stay within 0..1000 on both axes. Re-read normalized_width/normalized_height from the latest screenshot, or call wait first to obtain one.",
+    "zh-CN": "目标坐标超出归一化截图范围，归一化空间固定为 1000x1000，两个坐标轴都必须落在 0..1000 内。请按最近一次截图返回的 normalized_width/normalized_height 重新给出坐标，尚未截图时可先调用 wait 取一张。"
   },
   "tool.desktop_control.screen_changed": {
     "en-US": "The desktop resolution changed while the action was running, so the coordinate mapping is stale. Call wait to capture a fresh screenshot and retry.",
@@ -1984,8 +1984,8 @@
     "zh-CN": "操作并观察本机桌面。用 bbox 配合 action 指定目标与动作；每个动作只接受自己的字段。键盘动作用 key 或 text，滚动用 scroll_steps，拖拽用 to_bbox；action=wait（配合 delay_ms）先等待再返回一张新截图。其他动作至少等待 240 毫秒并最多比较三帧，画面稳定后返回有界的动作后截图；重试相同动作前必须先核对截图。"
   },
   "tool.spec.desktop_control.args.bbox": {
-    "en-US": "Target bbox in the normalized space of the latest screenshot. Format: [x1,y1,x2,y2] or [cx,cy]. Valid range is 0..normalized_width and 0..normalized_height, both of which follow the screen aspect ratio (the short side is not a fixed 1000). Read those two fields from the previous result, or call wait first when no screenshot is available; out-of-range coordinates are rejected.",
-    "zh-CN": "最近一次截图的归一化坐标中的目标框，格式：[x1,y1,x2,y2] 或 [cx,cy]。有效范围是 0..normalized_width 与 0..normalized_height，两者随屏幕纵横比变化，短边不是固定 1000。请从上一次结果里读取这两个字段；尚未截图时先调用 wait，越界坐标会被拒绝。"
+    "en-US": "Target bbox in the normalized space of the latest screenshot. Format: [x1,y1,x2,y2] or [cx,cy]. The normalized space is a fixed 1000x1000, so valid range is 0..1000 on both axes (also reported as normalized_width/normalized_height in each result); out-of-range coordinates are rejected instead of being clamped.",
+    "zh-CN": "最近一次截图的归一化坐标中的目标框，格式：[x1,y1,x2,y2] 或 [cx,cy]。归一化空间固定为 1000x1000，两个坐标轴的有效范围都是 0..1000（结果里也以 normalized_width/normalized_height 报告）；越界坐标会被拒绝而不是钳到边缘。"
   },
   "tool.spec.desktop_control.args.action": {
     "en-US": "Action: left_click/left_double_click/right_click/middle_click/left_hold/right_hold/middle_hold/left_release/right_release/middle_release/scroll_down/scroll_up/press_key/type_text/wait/move_mouse/drag_drop.",
