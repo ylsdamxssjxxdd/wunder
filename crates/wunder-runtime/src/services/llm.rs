@@ -11,6 +11,7 @@ use reqwest::Client;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::warn;
@@ -328,9 +329,21 @@ fn apply_anthropic_thinking(payload: &mut Value, config: &LlmModelConfig) {
     payload["temperature"] = json!(1.0);
 }
 
-/// 客户端思考预算硬上限。部分提供方不识别预算字段（OpenAI、DeepSeek 等），
-/// 模型仍可能继续思考；这里按流式增量累计，超出预算后不再把后续思考文本
-/// 交给上层，并在最终响应里裁剪，保证线程记录不超过用户设置。
+/// 思考预算触顶时注入流式回调的提示，随思考增量展示并落入线程记录。
+pub(crate) const REASONING_BUDGET_NOTICE: &str = "\n\n（思考已达设定上限，已停止思考并继续生成）";
+
+/// 按思考预算裁剪完整思考文本；未设置预算时原样返回。
+pub(crate) fn trim_reasoning_to_budget(reasoning: String, budget_tokens: Option<u32>) -> String {
+    match budget_tokens {
+        Some(budget) => crate::token_utils::trim_text_to_tokens(&reasoning, i64::from(budget), ""),
+        None => reasoning,
+    }
+}
+
+/// 思考预算的增量遮蔽器。部分提供方不识别预算字段（OpenAI、DeepSeek 等），
+/// 模型仍可能继续思考；超出预算的思考文本不再交给上层，保证线程记录不超过
+/// 用户设置。流式请求的"触顶断流并关思考重发"由 `stream_attempt` 的预算
+/// 包装层负责，本结构用于非流式响应与最终落库的裁剪。
 pub(crate) struct ReasoningBudgetCap {
     budget_tokens: Option<u32>,
     remaining_bytes: Option<usize>,
@@ -369,12 +382,69 @@ impl ReasoningBudgetCap {
     }
 
     fn trim(&self, reasoning: String) -> String {
-        match self.budget_tokens {
-            Some(budget) => {
-                crate::token_utils::trim_text_to_tokens(&reasoning, i64::from(budget), "")
-            }
-            None => reasoning,
-        }
+        trim_reasoning_to_budget(reasoning, self.budget_tokens)
+    }
+}
+
+/// 单次流式尝试的结果。`BudgetAborted` 表示思考预算触顶后已主动断流
+/// （响应流被丢弃、连接关闭，提供方随之停止生成），并携带已收到的思考文本。
+enum StreamAttempt {
+    Completed(LlmResponse),
+    BudgetAborted { partial_reasoning: String },
+}
+
+/// 服务端把整个输出预算耗在思考上、正文为空的信号；转关思考重发可以补救，
+/// 否则调用方只会拿到一条空回答。
+fn reasoning_consumed_entire_response(response: &LlmResponse) -> bool {
+    matches!(
+        response.finish_reason.as_deref(),
+        Some("length") | Some("max_tokens")
+    ) && response.content.trim().is_empty()
+        && !response.reasoning.trim().is_empty()
+        && !response
+            .tool_calls
+            .as_ref()
+            .is_some_and(tool_call_payload_has_items)
+}
+
+/// 触顶后的重发结果合成：保留被截断的思考并附提示，正文、工具调用与结束
+/// 原因取关思考重发的响应，用量按两次请求求和。
+fn merge_reasoning_capped_response(
+    base: Option<LlmResponse>,
+    partial_reasoning: String,
+    resent: LlmResponse,
+    budget_tokens: Option<u32>,
+) -> LlmResponse {
+    let mut reasoning = trim_reasoning_to_budget(partial_reasoning, budget_tokens);
+    reasoning.push_str(REASONING_BUDGET_NOTICE);
+    let mut merged = resent;
+    let resent_reasoning = std::mem::take(&mut merged.reasoning);
+    if !resent_reasoning.trim().is_empty() {
+        reasoning.push('\n');
+        reasoning.push_str(&trim_reasoning_to_budget(resent_reasoning, budget_tokens));
+    }
+    merged.reasoning = reasoning;
+    if let Some(base) = base {
+        merged.usage = merge_token_usage(base.usage, merged.usage.take());
+    }
+    merged
+}
+
+fn merge_token_usage(base: Option<TokenUsage>, extra: Option<TokenUsage>) -> Option<TokenUsage> {
+    match (base, extra) {
+        (Some(a), Some(b)) => Some(TokenUsage {
+            input: a.input.saturating_add(b.input),
+            output: a.output.saturating_add(b.output),
+            total: a.total.saturating_add(b.total),
+            reasoning: match (a.reasoning, b.reasoning) {
+                (Some(a), Some(b)) => Some(a.saturating_add(b)),
+                (Some(a), None) => Some(a),
+                (None, b) => b,
+            },
+            estimated: a.estimated || b.estimated,
+        }),
+        (Some(a), None) => Some(a),
+        (None, extra) => extra,
     }
 }
 
@@ -848,12 +918,8 @@ impl LlmClient {
         self
     }
 
-    /// 客户端思考预算守卫。流式调用方在输出回调里使用它按增量裁剪，
-    /// 避免提供方忽略预算字段时继续向上层输出超限思考。
-    pub(crate) fn reasoning_budget_cap(&self) -> ReasoningBudgetCap {
-        ReasoningBudgetCap::new(&self.config)
-    }
-
+    /// 客户端思考预算守卫已内建到流式读取循环：预算触顶会断流并自动关思考
+    /// 重发，见 `stream_attempt`。
     fn is_cloud_channel(&self) -> bool {
         normalize_provider(self.config.provider.as_deref()) == CLOUD_PROVIDER
     }
@@ -1181,6 +1247,78 @@ impl LlmClient {
         F: FnMut(String, String) -> Fut,
         Fut: Future<Output = Result<()>>,
     {
+        // 首次尝试携带用户设置的思考预算：触顶即断流（连接关闭，提供方随之
+        // 停止生成），随后关思考重发一次，让模型直接产出正文，而不是在本地
+        // 遮蔽增量、干等提供方把剩余思考跑完。
+        let budget_tokens = explicit_thinking_token_budget(&self.config);
+        let first = self
+            .stream_attempt(messages, tools, &mut on_delta, budget_tokens, true)
+            .await?;
+        let (partial_reasoning, base) = match first {
+            StreamAttempt::Completed(response) => {
+                if !reasoning_consumed_entire_response(&response) {
+                    return Ok(response);
+                }
+                // 服务端把整个输出预算耗在思考上、正文为空；同样转关思考重发。
+                (response.reasoning.clone(), Some(response))
+            }
+            StreamAttempt::BudgetAborted { partial_reasoning } => (partial_reasoning, None),
+        };
+        warn!("thinking budget exhausted; retrying once with thinking disabled");
+        let resend_client = self.with_reasoning_effort(Some("none".to_string()));
+        match resend_client
+            .stream_attempt(messages, tools, &mut on_delta, budget_tokens, false)
+            .await
+        {
+            Ok(StreamAttempt::Completed(response)) => Ok(merge_reasoning_capped_response(
+                base,
+                partial_reasoning,
+                response,
+                budget_tokens,
+            )),
+            Ok(StreamAttempt::BudgetAborted { .. }) => {
+                unreachable!("mask-mode attempt never aborts on the thinking budget")
+            }
+            Err(resend_err) => {
+                warn!("thinking-disabled resend failed: {resend_err:#}");
+                if let Some(response) = base {
+                    return Ok(response);
+                }
+                // 提供方拒绝禁思考参数时的降级：按原配置重发一次，超限思考
+                // 只在本地遮蔽，保证仍能拿到回答。
+                let fallback = self
+                    .stream_attempt(messages, tools, &mut on_delta, budget_tokens, false)
+                    .await?;
+                match fallback {
+                    StreamAttempt::Completed(response) => Ok(merge_reasoning_capped_response(
+                        None,
+                        partial_reasoning,
+                        response,
+                        budget_tokens,
+                    )),
+                    StreamAttempt::BudgetAborted { .. } => {
+                        unreachable!("mask-mode attempt never aborts on the thinking budget")
+                    }
+                }
+            }
+        }
+    }
+
+    /// 单次流式尝试：建立连接并读取 SSE 直到完成；思考预算触顶时主动断流。
+    /// `abort_on_budget` 为 false 时超限增量仅在本地遮蔽（关思考重发与降级
+    /// 路径使用），保证不会二次触发断流。
+    async fn stream_attempt<F, Fut>(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[Value]>,
+        on_delta: &mut F,
+        budget_tokens: Option<u32>,
+        abort_on_budget: bool,
+    ) -> Result<StreamAttempt>
+    where
+        F: FnMut(String, String) -> Fut,
+        Fut: Future<Output = Result<()>>,
+    {
         let mut include_usage = self.config.stream_include_usage.unwrap_or(true);
         let mut usage_fallback = include_usage;
         loop {
@@ -1205,10 +1343,13 @@ impl LlmClient {
                         "llm stream reasoning_effort {:?} rejected with {status}, retrying with {:?}",
                         self.config.reasoning_effort, next_effort
                     );
-                    return Box::pin(
-                        self.with_reasoning_effort(next_effort)
-                            .stream_complete_with_callback_with_tools(messages, tools, on_delta),
-                    )
+                    return Box::pin(self.with_reasoning_effort(next_effort).stream_attempt(
+                        messages,
+                        tools,
+                        on_delta,
+                        budget_tokens,
+                        abort_on_budget,
+                    ))
                     .await;
                 }
                 if usage_fallback
@@ -1221,7 +1362,7 @@ impl LlmClient {
                     continue;
                 }
                 if should_fallback_stream_failure_to_non_stream(status.as_u16(), &text) {
-                    return self
+                    let response = self
                         .complete_with_tools(messages, tools)
                         .await
                         .with_context(|| {
@@ -1229,10 +1370,58 @@ impl LlmClient {
                                 "LLM stream request failed: {status} {}; fallback request failed",
                                 truncate_text(&text, 2048)
                             )
-                        });
+                        })?;
+                    return Ok(StreamAttempt::Completed(response));
                 }
                 return Err(LlmHttpError::new(status.as_u16(), &text).into());
             }
+            // 思考预算包装层：按增量遮蔽超限思考；断流模式在触顶时向回调注入
+            // 提示并置位触发标志，外层读取循环随即丢弃响应流、关闭连接。
+            let tripped = Arc::new(AtomicBool::new(false));
+            let mut remaining_bytes =
+                budget_tokens.map(|budget| (budget as usize).saturating_mul(4));
+            let mut on_budget_delta = {
+                let tripped = Arc::clone(&tripped);
+                move |delta: String, reasoning_delta: String| {
+                    let mut pass_reasoning = reasoning_delta;
+                    let mut notice = false;
+                    if let Some(remaining) = remaining_bytes.as_mut() {
+                        if !pass_reasoning.is_empty() {
+                            if *remaining == 0 {
+                                pass_reasoning = String::new();
+                                if abort_on_budget && !tripped.swap(true, Ordering::Relaxed) {
+                                    notice = true;
+                                }
+                            } else if pass_reasoning.len() <= *remaining {
+                                *remaining -= pass_reasoning.len();
+                            } else {
+                                let mut end = *remaining;
+                                while end > 0 && !pass_reasoning.is_char_boundary(end) {
+                                    end -= 1;
+                                }
+                                pass_reasoning = pass_reasoning[..end].to_string();
+                                *remaining = 0;
+                                if abort_on_budget && !tripped.swap(true, Ordering::Relaxed) {
+                                    notice = true;
+                                }
+                            }
+                        }
+                    }
+                    let main_fut = on_delta(delta, pass_reasoning);
+                    let notice_fut = if notice {
+                        Some(on_delta(String::new(), REASONING_BUDGET_NOTICE.to_string()))
+                    } else {
+                        None
+                    };
+                    async move {
+                        main_fut.await?;
+                        if let Some(notice_fut) = notice_fut {
+                            notice_fut.await?;
+                        }
+                        Ok(())
+                    }
+                }
+            };
             let mut stream = response.bytes_stream();
             let mut decoder = stream_decode::StreamDecoder::default();
             let mut buffer = String::new();
@@ -1242,7 +1431,7 @@ impl LlmClient {
             let mut tool_calls_accumulator: Vec<StreamToolCall> = Vec::new();
             let mut final_response_preview = StreamOutputState::default();
             let mut saw_done = false;
-            while let Some(item) = stream.next().await {
+            'read: while let Some(item) = stream.next().await {
                 let bytes = item?;
                 decoder.push(&bytes, &mut buffer)?;
 
@@ -1254,18 +1443,29 @@ impl LlmClient {
                         &mut usage,
                         &mut tool_calls_accumulator,
                         &mut final_response_preview,
-                        &mut on_delta,
+                        &mut on_budget_delta,
                     )
                     .await?
                     {
                         saw_done = true;
                         break;
                     }
+                    if tripped.load(Ordering::Relaxed) {
+                        break 'read;
+                    }
                 }
 
                 if saw_done {
                     break;
                 }
+            }
+
+            if tripped.load(Ordering::Relaxed) && !saw_done {
+                // 丢弃响应流即关闭连接，提供方随之停止生成；本次尝试到此为止。
+                // 若完成帧已随触顶块一并到达，流已完整收尾，按正常完成处理。
+                return Ok(StreamAttempt::BudgetAborted {
+                    partial_reasoning: reasoning_combined,
+                });
             }
 
             if !saw_done {
@@ -1282,7 +1482,7 @@ impl LlmClient {
                     &mut usage,
                     &mut tool_calls_accumulator,
                     &mut final_response_preview,
-                    &mut on_delta,
+                    &mut on_budget_delta,
                 )
                 .await?
                 {
@@ -1300,7 +1500,7 @@ impl LlmClient {
                     &mut usage,
                     &mut tool_calls_accumulator,
                     &mut final_response_preview,
-                    &mut on_delta,
+                    &mut on_budget_delta,
                 )
                 .await?
             {
@@ -1311,13 +1511,13 @@ impl LlmClient {
             if !saw_done && final_response_preview.finish_reason.is_none() {
                 return Err(anyhow!("LLM stream ended without a completed response"));
             }
-            return Ok(LlmResponse {
+            return Ok(StreamAttempt::Completed(LlmResponse {
                 finish_reason: final_response_preview.finish_reason,
                 content: combined,
-                reasoning: ReasoningBudgetCap::new(&self.config).trim(reasoning_combined),
+                reasoning: trim_reasoning_to_budget(reasoning_combined, budget_tokens),
                 usage,
                 tool_calls,
-            });
+            }));
         }
     }
     fn api_mode(&self) -> OpenAiApiMode {
@@ -3831,6 +4031,305 @@ mod tests {
 
         assert_eq!(response.content, "tail");
         assert!(response.reasoning.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stream_budget_exhaustion_aborts_and_resends_without_thinking() {
+        use axum::body::Body;
+        use axum::http::StatusCode;
+        use axum::response::Response;
+        use axum::routing::post;
+        use axum::Router;
+        use bytes::Bytes;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Mutex as StdMutex};
+        use tokio::net::TcpListener;
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let payloads: Arc<StdMutex<Vec<Value>>> = Arc::new(StdMutex::new(Vec::new()));
+        let app_hits = Arc::clone(&hits);
+        let app_payloads = Arc::clone(&payloads);
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move |body: Bytes| {
+                let hits = Arc::clone(&app_hits);
+                let payloads = Arc::clone(&app_payloads);
+                async move {
+                    let index = hits.fetch_add(1, Ordering::SeqCst);
+                    payloads
+                        .lock()
+                        .expect("lock payloads")
+                        .push(serde_json::from_slice::<Value>(&body).expect("parse payload"));
+                    let events: Vec<String> = if index == 0 {
+                        vec![
+                            r#"{"choices":[{"delta":{"reasoning_content":"aaaa"}}]}"#.to_string(),
+                            r#"{"choices":[{"delta":{"reasoning_content":"bb"}}]}"#.to_string(),
+                            r#"{"choices":[{"delta":{"reasoning_content":"ccc"}}]}"#.to_string(),
+                            r#"{"choices":[{"delta":{"content":"SHOULD_NOT_READ"},"finish_reason":"stop"}]}"#.to_string(),
+                        ]
+                    } else {
+                        vec![r#"{"choices":[{"delta":{"content":"no-think answer"},"finish_reason":"stop"}]}"#.to_string()]
+                    };
+                    let mut sse = String::new();
+                    for event in events {
+                        sse.push_str("data: ");
+                        sse.push_str(&event);
+                        sse.push_str("\n\n");
+                    }
+                    sse.push_str("data: [DONE]\n\n");
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", "text/event-stream")
+                        .body(Body::from(sse))
+                        .expect("build sse response")
+                }
+            }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai_compatible".to_string()),
+            base_url: Some(format!("http://{addr}/v1")),
+            api_key: Some("test-key".to_string()),
+            model: Some("test-model".to_string()),
+            thinking_token_budget: Some(2),
+            stream: Some(true),
+            stream_include_usage: Some(true),
+            tool_call_mode: Some("tool_call".to_string()),
+            model_type: Some("llm".to_string()),
+            ..Default::default()
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: Value::String("hello".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let response = client
+            .stream_complete_with_callback(&messages, |_delta, _reasoning| async { Ok(()) })
+            .await
+            .expect("stream complete");
+
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+        let stored = payloads.lock().expect("lock payloads");
+        assert_eq!(stored[0]["thinking_token_budget"], 2);
+        assert!(stored[0].get("reasoning_effort").is_none());
+        assert_eq!(stored[1]["reasoning_effort"], "none");
+        assert_eq!(stored[1]["enable_thinking"], false);
+        assert!(stored[1].get("thinking_token_budget").is_none());
+        assert_eq!(response.content, "no-think answer");
+        assert_eq!(
+            response.reasoning,
+            format!("aaaabbcc{}", REASONING_BUDGET_NOTICE)
+        );
+        assert_eq!(response.finish_reason.as_deref(), Some("stop"));
+    }
+
+    #[tokio::test]
+    async fn stream_budget_resend_failure_falls_back_to_masked_retry() {
+        use axum::body::Body;
+        use axum::http::StatusCode;
+        use axum::response::Response;
+        use axum::routing::post;
+        use axum::Router;
+        use bytes::Bytes;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Mutex as StdMutex};
+        use tokio::net::TcpListener;
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let payloads: Arc<StdMutex<Vec<Value>>> = Arc::new(StdMutex::new(Vec::new()));
+        let app_hits = Arc::clone(&hits);
+        let app_payloads = Arc::clone(&payloads);
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move |body: Bytes| {
+                let hits = Arc::clone(&app_hits);
+                let payloads = Arc::clone(&app_payloads);
+                async move {
+                    let index = hits.fetch_add(1, Ordering::SeqCst);
+                    payloads
+                        .lock()
+                        .expect("lock payloads")
+                        .push(serde_json::from_slice::<Value>(&body).expect("parse payload"));
+                    if index == 1 {
+                        return Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(Body::from("reasoning effort none is not supported"))
+                            .expect("build error response");
+                    }
+                    let events: Vec<String> = if index == 0 {
+                        vec![
+                            r#"{"choices":[{"delta":{"reasoning_content":"aaaa"}}]}"#.to_string(),
+                            r#"{"choices":[{"delta":{"reasoning_content":"ccccc"}}]}"#.to_string(),
+                        ]
+                    } else {
+                        vec![r#"{"choices":[{"delta":{"content":"masked answer","reasoning_content":"tail"},"finish_reason":"stop"}]}"#.to_string()]
+                    };
+                    let mut sse = String::new();
+                    for event in events {
+                        sse.push_str("data: ");
+                        sse.push_str(&event);
+                        sse.push_str("\n\n");
+                    }
+                    sse.push_str("data: [DONE]\n\n");
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", "text/event-stream")
+                        .body(Body::from(sse))
+                        .expect("build sse response")
+                }
+            }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai_compatible".to_string()),
+            base_url: Some(format!("http://{addr}/v1")),
+            api_key: Some("test-key".to_string()),
+            model: Some("test-model".to_string()),
+            thinking_token_budget: Some(2),
+            stream: Some(true),
+            stream_include_usage: Some(true),
+            tool_call_mode: Some("tool_call".to_string()),
+            model_type: Some("llm".to_string()),
+            ..Default::default()
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: Value::String("hello".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let response = client
+            .stream_complete_with_callback(&messages, |_delta, _reasoning| async { Ok(()) })
+            .await
+            .expect("stream complete");
+
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
+        let stored = payloads.lock().expect("lock payloads");
+        assert_eq!(stored[1]["reasoning_effort"], "none");
+        assert!(stored[2].get("reasoning_effort").is_none());
+        assert_eq!(response.content, "masked answer");
+        assert_eq!(
+            response.reasoning,
+            format!("aaaacccc{}\ntail", REASONING_BUDGET_NOTICE)
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_thinking_only_length_response_resends_without_thinking() {
+        use axum::body::Body;
+        use axum::http::StatusCode;
+        use axum::response::Response;
+        use axum::routing::post;
+        use axum::Router;
+        use bytes::Bytes;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Mutex as StdMutex};
+        use tokio::net::TcpListener;
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let payloads: Arc<StdMutex<Vec<Value>>> = Arc::new(StdMutex::new(Vec::new()));
+        let app_hits = Arc::clone(&hits);
+        let app_payloads = Arc::clone(&payloads);
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move |body: Bytes| {
+                let hits = Arc::clone(&app_hits);
+                let payloads = Arc::clone(&app_payloads);
+                async move {
+                    let index = hits.fetch_add(1, Ordering::SeqCst);
+                    payloads
+                        .lock()
+                        .expect("lock payloads")
+                        .push(serde_json::from_slice::<Value>(&body).expect("parse payload"));
+                    let events: Vec<String> = if index == 0 {
+                        vec![r#"{"choices":[{"delta":{"reasoning_content":"long think"},"finish_reason":"length"}]}"#.to_string()]
+                    } else {
+                        vec![r#"{"choices":[{"delta":{"content":"rescued answer"},"finish_reason":"stop"}]}"#.to_string()]
+                    };
+                    let mut sse = String::new();
+                    for event in events {
+                        sse.push_str("data: ");
+                        sse.push_str(&event);
+                        sse.push_str("\n\n");
+                    }
+                    sse.push_str("data: [DONE]\n\n");
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", "text/event-stream")
+                        .body(Body::from(sse))
+                        .expect("build sse response")
+                }
+            }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai_compatible".to_string()),
+            base_url: Some(format!("http://{addr}/v1")),
+            api_key: Some("test-key".to_string()),
+            model: Some("test-model".to_string()),
+            stream: Some(true),
+            stream_include_usage: Some(true),
+            tool_call_mode: Some("tool_call".to_string()),
+            model_type: Some("llm".to_string()),
+            ..Default::default()
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: Value::String("hello".to_string()),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let response = client
+            .stream_complete_with_callback(&messages, |_delta, _reasoning| async { Ok(()) })
+            .await
+            .expect("stream complete");
+
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+        let stored = payloads.lock().expect("lock payloads");
+        assert_eq!(stored[1]["reasoning_effort"], "none");
+        assert_eq!(response.content, "rescued answer");
+        assert_eq!(
+            response.reasoning,
+            format!("long think{}", REASONING_BUDGET_NOTICE)
+        );
+        assert_eq!(response.finish_reason.as_deref(), Some("stop"));
     }
 
     #[tokio::test]
