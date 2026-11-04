@@ -160,13 +160,13 @@ component StatusDot inherits ProcessStatusIcon {
 component FoldCaret inherits Rectangle {
     in property <bool> open: false;
     in property <bool> hover: false;
-    width: 16px; height: 16px;
-    border-radius: 5px;
+    width: 18px; height: 18px;
+    border-radius: 6px;
     background: root.hover ? Theme.hover : Theme.surface;
     border-width: 1px;
     border-color: root.hover ? Theme.border-strong : Theme.border;
     Image {
-        x: 3px; y: 3px; width: 10px; height: 10px;
+        x: 3px; y: 3px; width: 12px; height: 12px;
         source: root.open ? @image-url("../assets/icons/chevron-down.svg")
                           : @image-url("../assets/icons/chevron-right.svg");
         colorize: Theme.muted; image-fit: contain;
@@ -200,9 +200,9 @@ component TimelineGutter inherits Rectangle {
     Rectangle {
         visible: root.line;
         x: (TimelineMetrics.gutter - 1px) / 2;
-        y: root.caret ? parent.height / 2 + 9px : 0px;
+        y: root.caret ? parent.height / 2 + 10px : 0px;
         width: 1px;
-        height: root.caret ? parent.height / 2 - 9px : parent.height;
+        height: root.caret ? parent.height / 2 - 10px : parent.height;
         background: Theme.timeline-line;
     }
     StatusDot {
@@ -211,8 +211,8 @@ component TimelineGutter inherits Rectangle {
         status: root.status;
     }
     if root.caret : FoldCaret {
-        x: (TimelineMetrics.gutter - 16px) / 2;
-        y: (parent.height - 16px) / 2;
+        x: (TimelineMetrics.gutter - 18px) / 2;
+        y: (parent.height - 18px) / 2;
         open: root.caret-open;
         hover: root.caret-hover;
     }

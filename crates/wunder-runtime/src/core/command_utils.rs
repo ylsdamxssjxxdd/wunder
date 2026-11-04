@@ -34,7 +34,11 @@ pub fn apply_platform_spawn_options(cmd: &mut Command) {
         cmd.as_std_mut().creation_flags(WINDOWS_CREATE_NO_WINDOW);
     }
     #[cfg(not(windows))]
-    let _ = cmd;
+    {
+        use std::os::unix::process::CommandExt;
+        // 独立进程组让「终止」可以按树 kill(-pgid)，孙进程不再脱管。
+        cmd.as_std_mut().process_group(0);
+    }
 }
 
 pub fn apply_platform_spawn_options_std(cmd: &mut StdCommand) {
@@ -44,7 +48,10 @@ pub fn apply_platform_spawn_options_std(cmd: &mut StdCommand) {
         cmd.creation_flags(WINDOWS_CREATE_NO_WINDOW);
     }
     #[cfg(not(windows))]
-    let _ = cmd;
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +175,7 @@ pub fn build_shell_command_with_shell(command: &str, cwd: &Path, shell: &ShellLa
         cmd.arg("-lc")
             .arg(bash_command_with_pipefail(command))
             .current_dir(cwd);
+        apply_platform_spawn_options(&mut cmd);
         cmd
     }
 }
@@ -569,8 +577,15 @@ fn find_in_path(binary: &str) -> Option<PathBuf> {
 
 /// Ask a candidate for its own major version. `None` means "this binary cannot
 /// run here", not just "unknown version": the caller moves on to the next one.
+///
+/// The probe runs once on a startup path, directly on the calling thread, so it
+/// must carry its own deadline: a PowerShell that hangs at startup (antivirus
+/// scan, broken .NET) would otherwise stall the first command indefinitely.
+/// The version answer is a few bytes and can never fill the pipe buffer, so
+/// poll-then-read cannot deadlock.
 #[cfg(windows)]
 fn probe_powershell_major(exe: &Path) -> Option<u32> {
+    const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
     let mut command = StdCommand::new(exe);
     command
         .args([
@@ -584,11 +599,30 @@ fn probe_powershell_major(exe: &Path) -> Option<u32> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     apply_platform_spawn_options_std(&mut command);
-    let output = command.output().ok()?;
-    if !output.status.success() {
+    let mut child = command.spawn().ok()?;
+    let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(_) => return None,
+        }
+    };
+    let mut stdout = Vec::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        use std::io::Read as _;
+        let _ = pipe.read_to_end(&mut stdout);
+    }
+    if !status.success() {
         return None;
     }
-    String::from_utf8_lossy(&output.stdout)
+    String::from_utf8_lossy(&stdout)
         .trim()
         .parse::<u32>()
         .ok()

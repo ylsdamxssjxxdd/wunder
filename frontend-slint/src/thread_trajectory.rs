@@ -2038,16 +2038,51 @@ impl Texts {
             "Not reported"
         }
     }
-    fn millis(&self, value: f64) -> String {
-        format!(
-            "{} {}",
-            thousands(value),
-            if self.zh { "毫秒" } else { "ms" }
-        )
+    /// 时长按量级落到直观单位：1 秒内用毫秒，1 分钟内用秒（10 秒内保留
+    /// 一位小数），1 小时内用「分 秒」，更长用「小时 分钟」。
+    fn duration(&self, ms: f64) -> String {
+        let ms = ms.max(0.0);
+        if ms < 1_000.0 {
+            return format!("{} {}", thousands(ms), if self.zh { "毫秒" } else { "ms" });
+        }
+        let total = (ms / 1_000.0).round() as u64;
+        let (hours, minutes, seconds) = (total / 3_600, total % 3_600 / 60, total % 60);
+        if hours > 0 {
+            return if minutes > 0 {
+                if self.zh {
+                    format!("{hours} 小时 {minutes} 分钟")
+                } else {
+                    format!("{hours} h {minutes} min")
+                }
+            } else if self.zh {
+                format!("{hours} 小时")
+            } else {
+                format!("{hours} h")
+            };
+        }
+        if total >= 60 {
+            return if seconds > 0 {
+                if self.zh {
+                    format!("{minutes} 分 {seconds} 秒")
+                } else {
+                    format!("{minutes} min {seconds} s")
+                }
+            } else if self.zh {
+                format!("{minutes} 分钟")
+            } else {
+                format!("{minutes} min")
+            };
+        }
+        let value = ms / 1_000.0;
+        if value < 10.0 {
+            format!("{value:.1} {}", if self.zh { "秒" } else { "s" })
+        } else {
+            format!("{} {}", value.round() as u64, if self.zh { "秒" } else { "s" })
+        }
     }
     fn seconds(&self, value: Option<f64>) -> String {
         value
-            .map(|v| self.millis(v * 1000.0))
+            .map(|v| self.duration(v * 1000.0))
             .unwrap_or_else(|| self.not_recorded().to_string())
     }
     fn header(&self, turn: i64, group: &str) -> String {
@@ -2821,13 +2856,13 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
                 {
                     timing.push(TrajTiming {
                         label: label(zh, "首 token 延迟", "First token").into(),
-                        value: texts.millis(first_token - step_start).into(),
+                        value: texts.duration(first_token - step_start).into(),
                     });
                     if let Some(completed) = metrics.completed {
                         let generation = (completed - first_token).max(0.0);
                         timing.push(TrajTiming {
                             label: label(zh, "生成", "Generation").into(),
-                            value: texts.millis(generation).into(),
+                            value: texts.duration(generation).into(),
                         });
                         if let Some(output) = metrics.output_tokens.filter(|_| generation > 0.0) {
                             timing.push(TrajTiming {
@@ -3022,9 +3057,9 @@ fn tooltip_for(model: &SnapshotModel, texts: &Texts, record_index: i32) -> Strin
             lines.push(format!(
                 "{} {} · {} {}",
                 label(zh, "首字", "ttft"),
-                texts.millis((first_token - step_start).max(0.0)),
+                texts.duration((first_token - step_start).max(0.0)),
                 label(zh, "解码", "decode"),
-                texts.millis((completed - first_token).max(0.0))
+                texts.duration((completed - first_token).max(0.0))
             ));
         }
     }
@@ -3181,7 +3216,7 @@ fn project_token_bars(app: &MainWindow, model: &SnapshotModel, texts: &Texts, to
             lines.push(format!(
                 "{} {}",
                 label(zh, "总计", "Total"),
-                texts.millis(duration)
+                texts.duration(duration)
             ));
         }
         infos.push(BarInfo {
@@ -4619,6 +4654,14 @@ mod tests {
         let texts = Texts::new(true);
         assert_eq!(texts.group_label("step:2"), "第 2 步");
         assert_eq!(texts.seconds(None), "未记录");
+        // 时长单位按量级落位：毫秒、秒、分秒、小时分钟。
+        assert_eq!(texts.duration(240.0), "240 毫秒");
+        assert_eq!(texts.duration(1_240.0), "1.2 秒");
+        assert_eq!(texts.duration(45_000.0), "45 秒");
+        assert_eq!(texts.duration(90_000.0), "1 分 30 秒");
+        assert_eq!(texts.duration(120_000.0), "2 分钟");
+        assert_eq!(texts.duration(3_600_000.0), "1 小时");
+        assert_eq!(texts.duration(5_400_000.0), "1 小时 30 分钟");
         assert_eq!(thousands(11049.0), "11,049");
         assert_eq!(
             markdown_preview_text("# 标题\n- 甲 **粗** 乙"),

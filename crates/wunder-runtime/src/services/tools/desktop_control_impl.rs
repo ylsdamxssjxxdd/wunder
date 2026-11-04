@@ -371,10 +371,9 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
     let started_at = Instant::now();
     let config = context.config.tools.desktop_control.clone();
 
-    let norm_width = config.norm_width.max(1);
-    let norm_height = config.norm_height.max(1);
-
     let (screen_width, screen_height) = screen_size()?;
+    let (norm_width, norm_height) =
+        normalized_dims(screen_width, screen_height, config.max_norm_side);
     let screen_max_x = (screen_width - 1).max(0);
     let screen_max_y = (screen_height - 1).max(0);
     let (cx_norm_raw, cy_norm_raw) = payload.bbox.center();
@@ -774,6 +773,28 @@ fn build_followup_prompt(base: String, norm_width: i32, norm_height: i32) -> Str
     }
 }
 
+/// Uniform, downscale-only mapping from the native screen size to the
+/// normalized screenshot space. Aspect ratio is preserved so glyph shapes and
+/// UI geometry stay recognizable on every screen shape; a screen already
+/// within the budget keeps its native pixels instead of being upscaled into
+/// blur. The same mapping must be used for coordinate round-trips at action
+/// time and image capture time so the model's normalized space always matches
+/// the reported screenshot size.
+fn normalized_dims(screen_width: i32, screen_height: i32, max_side: i32) -> (i32, i32) {
+    let max_side = max_side.clamp(1, MAX_NORMALIZED_COORD);
+    let width = screen_width.max(1);
+    let height = screen_height.max(1);
+    let longest = width.max(height);
+    if longest <= max_side {
+        return (width, height);
+    }
+    let scale = |value: i32| {
+        ((i64::from(value) * i64::from(max_side) + i64::from(longest) / 2) / i64::from(longest))
+            .max(1) as i32
+    };
+    (scale(width), scale(height))
+}
+
 fn map_coord(value: i32, src_max: i32, dst_max: i32) -> i32 {
     if dst_max <= 0 {
         return 0;
@@ -791,12 +812,11 @@ async fn capture_screenshot(
     config: &DesktopControlConfig,
     timeout_ms: u64,
 ) -> Result<DesktopScreenshot> {
-    let norm_width = config.norm_width.max(1);
-    let norm_height = config.norm_height.max(1);
+    let max_norm_side = config.max_norm_side;
     let screenshot = match blocking::run_external_with_timeout(
         "tools.desktop_control.capture_screenshot",
         Duration::from_millis(timeout_ms.max(1)),
-        move || capture_screenshot_blocking(norm_width, norm_height).map_err(anyhow::Error::msg),
+        move || capture_screenshot_blocking(max_norm_side).map_err(anyhow::Error::msg),
     )
     .await
     {
@@ -954,8 +974,10 @@ fn cleanup_old_frames(path: &Path, max_frames: usize) {
     }
 }
 
-fn capture_screenshot_blocking(norm_width: i32, norm_height: i32) -> Result<DesktopScreenshot> {
+fn capture_screenshot_blocking(max_norm_side: i32) -> Result<DesktopScreenshot> {
     let (screen_width, screen_height, rgba) = capture_screen_rgba()?;
+    let (norm_width, norm_height) =
+        normalized_dims(screen_width, screen_height, max_norm_side);
     let resized = resize_rgba(
         &rgba,
         screen_width as u32,
@@ -2415,6 +2437,28 @@ mod tests {
             height: 200,
         };
         assert_eq!(rect.normalized(1000, 500, 100, 50), Some((8, 3, 52, 27)));
+    }
+
+    #[test]
+    fn normalized_dims_preserves_aspect_ratio_within_budget() {
+        assert_eq!(normalized_dims(1920, 1080, 1000), (1000, 563));
+        assert_eq!(normalized_dims(1024, 768, 1000), (1000, 750));
+        assert_eq!(normalized_dims(1080, 1920, 1000), (563, 1000));
+        assert_eq!(normalized_dims(2560, 1080, 1000), (1000, 422));
+    }
+
+    #[test]
+    fn normalized_dims_keeps_small_screens_native() {
+        assert_eq!(normalized_dims(800, 600, 1000), (800, 600));
+        assert_eq!(normalized_dims(1000, 1000, 1000), (1000, 1000));
+        assert_eq!(normalized_dims(1024, 768, 1024), (1024, 768));
+    }
+
+    #[test]
+    fn normalized_dims_tolerates_degenerate_input() {
+        assert_eq!(normalized_dims(0, 0, 1000), (1, 1));
+        assert_eq!(normalized_dims(1920, 1080, 0), (1, 1));
+        assert_eq!(normalized_dims(1920, 1080, -5), (1, 1));
     }
 
     #[test]

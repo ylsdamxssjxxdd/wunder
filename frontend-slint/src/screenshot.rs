@@ -286,7 +286,7 @@ const REMAP_FLAGS: u32 = windows_sys::Win32::UI::WindowsAndMessaging::SWP_SHOWWI
 #[cfg(windows)]
 fn restore_hidden_window(app: &slint::Weak<MainWindow>, state: &HideState) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        IsWindowVisible, SetWindowPos, ShowWindow, HWND_TOP, SWP_NOMOVE, SWP_NOSIZE, SW_MAXIMIZE,
+        IsWindowVisible, SetWindowPos, ShowWindow, HWND_TOP, SW_MAXIMIZE,
         SW_SHOW,
     };
     // The hide went straight to the HWND, so Winit's cached WindowFlags still
@@ -306,16 +306,22 @@ fn restore_hidden_window(app: &slint::Weak<MainWindow>, state: &HideState) {
     let height = state.rect.height().max(1);
     unsafe {
         if state.maximized {
-            // A maximized window keeps its own geometry; only remap it and let
-            // Windows restore the maximized rectangle.
+            // The hide parked the HWND off the virtual desktop. Remapping it
+            // in place and maximizing there resolves the monitor through
+            // `MonitorFromRect(MONITOR_DEFAULTTONULL)`, which fails for an
+            // off-screen rect: no work area comes back and the maximized
+            // window lands on the full monitor, hiding the taskbar. Put the
+            // window back on its recorded (on-screen) rectangle first, then
+            // reassert the maximized state so WM_NCCALCSIZE clamps to the
+            // work area again.
             SetWindowPos(
                 state.hwnd,
                 HWND_TOP,
-                0,
-                0,
-                0,
-                0,
-                REMAP_FLAGS | SWP_NOMOVE | SWP_NOSIZE,
+                state.rect.left,
+                state.rect.top,
+                width,
+                height,
+                REMAP_FLAGS,
             );
             ShowWindow(state.hwnd, SW_MAXIMIZE);
         } else {

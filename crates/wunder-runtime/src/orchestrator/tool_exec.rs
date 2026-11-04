@@ -1064,75 +1064,74 @@ impl Orchestrator {
             execution.await
         }
     }
+}
 
-    pub(super) fn resolve_tool_timeout(
-        &self,
-        config: &Config,
-        tool_name: &str,
-        args: &Value,
-    ) -> Option<Duration> {
-        let canonical_tool_name = crate::tools::resolve_tool_name(tool_name);
-        let _ = canonical_tool_name;
-        let mut timeout_s = parse_timeout_secs(args.get("timeout_s")).unwrap_or(0.0);
-        if canonical_tool_name == "执行命令" {
-            let run_in_background = match args.get("run_in_background") {
-                Some(Value::Bool(flag)) => *flag,
-                Some(Value::String(text)) => matches!(
-                    text.trim().to_ascii_lowercase().as_str(),
-                    "true" | "1" | "yes" | "on"
-                ),
-                _ => false,
-            };
-            if !run_in_background {
-                // Blocking mode: the tool waits for the command up to its own
-                // timeout_s (default 120s), so the outer budget must outlast it.
-                let explicit = args.get("timeout_s").is_some();
-                return if explicit && timeout_s <= 0.0 {
-                    None
-                } else {
-                    let effective = if timeout_s > 0.0 { timeout_s } else { 120.0 };
-                    Some(Duration::from_secs_f64(
-                        (effective + 30.0).max(MIN_TOOL_TIMEOUT_S),
-                    ))
-                };
-            }
-            if timeout_s <= 0.0 {
-                timeout_s = DEFAULT_TOOL_TIMEOUT_S;
-            }
-        } else if canonical_tool_name == "命令会话" {
-            // A poll may wait up to 60s server-side before responding.
-            let yield_s = crate::tools::command_options::parse_command_session_wait(args)
-                .yield_time_ms as f64
-                / 1000.0;
-            timeout_s = timeout_s.max(yield_s.min(60.0) + 30.0);
-        } else if tool_name.contains('@') {
-            if timeout_s <= 0.0 {
-                let fallback = DEFAULT_TOOL_TIMEOUT_S;
-                let configured = config.mcp.timeout_s as f64;
-                timeout_s = if configured > 0.0 {
-                    configured.max(fallback)
-                } else {
-                    fallback
-                };
-            }
-        } else if timeout_s <= 0.0 {
+/// 每次工具调用的外层看门狗预算。它不依赖任何实例状态：工具调用必须
+/// 必然返回，一条挂住的命令不允许冻结整条智能体线程。
+pub(super) fn resolve_tool_timeout(
+    config: &Config,
+    tool_name: &str,
+    args: &Value,
+) -> Option<Duration> {
+    let canonical_tool_name = crate::tools::resolve_tool_name(tool_name);
+    let _ = canonical_tool_name;
+    let mut timeout_s = parse_timeout_secs(args.get("timeout_s")).unwrap_or(0.0);
+    if canonical_tool_name == "执行命令" {
+        let run_in_background = match args.get("run_in_background") {
+            Some(Value::Bool(flag)) => *flag,
+            Some(Value::String(text)) => matches!(
+                text.trim().to_ascii_lowercase().as_str(),
+                "true" | "1" | "yes" | "on"
+            ),
+            _ => false,
+        };
+        if !run_in_background {
+            // Blocking mode: the tool waits for the command up to its own
+            // timeout_s (default 120s; 0/negative falls back to that
+            // default), so the outer budget must always exist — a tool
+            // call without a watchdog would freeze the whole agent thread
+            // on one hung command.
+            let effective = if timeout_s > 0.0 { timeout_s } else { 120.0 };
+            return Some(Duration::from_secs_f64(
+                (effective + 30.0).max(MIN_TOOL_TIMEOUT_S),
+            ));
+        }
+        if timeout_s <= 0.0 {
+            timeout_s = DEFAULT_TOOL_TIMEOUT_S;
+        }
+    } else if canonical_tool_name == "命令会话" {
+        // A poll may wait up to 60s server-side before responding.
+        let yield_s = crate::tools::command_options::parse_command_session_wait(args)
+            .yield_time_ms as f64
+            / 1000.0;
+        timeout_s = timeout_s.max(yield_s.min(60.0) + 30.0);
+    } else if tool_name.contains('@') {
+        if timeout_s <= 0.0 {
             let fallback = DEFAULT_TOOL_TIMEOUT_S;
-            let sandbox_timeout = if sandbox::sandbox_enabled(config) {
-                sandbox::sandbox_timeout_seconds() as f64
-            } else {
-                0.0
-            };
-            timeout_s = if sandbox_timeout > 0.0 {
-                sandbox_timeout.max(fallback)
+            let configured = config.mcp.timeout_s as f64;
+            timeout_s = if configured > 0.0 {
+                configured.max(fallback)
             } else {
                 fallback
             };
         }
-        if timeout_s <= 0.0 {
-            None
+    } else if timeout_s <= 0.0 {
+        let fallback = DEFAULT_TOOL_TIMEOUT_S;
+        let sandbox_timeout = if sandbox::sandbox_enabled(config) {
+            sandbox::sandbox_timeout_seconds() as f64
         } else {
-            Some(Duration::from_secs_f64(timeout_s.max(MIN_TOOL_TIMEOUT_S)))
-        }
+            0.0
+        };
+        timeout_s = if sandbox_timeout > 0.0 {
+            sandbox_timeout.max(fallback)
+        } else {
+            fallback
+        };
+    }
+    if timeout_s <= 0.0 {
+        None
+    } else {
+        Some(Duration::from_secs_f64(timeout_s.max(MIN_TOOL_TIMEOUT_S)))
     }
 }
 
@@ -1799,33 +1798,39 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "sqlite-storage")]
-    #[tokio::test]
-    async fn command_session_outer_deadline_outlasts_the_default_exit_wait() {
-        let root = tempfile::tempdir().unwrap();
-        let mut config = Config::default();
-        config.storage.backend = "sqlite".into();
-        config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
-        config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
-        config.server.mode = "desktop".into();
-        let state = crate::state::AppState::new_with_options(
-            ConfigStore::new(root.path().join("config.yaml")),
-            config.clone(),
-            crate::state::AppStateInitOptions::cli_default().with_start_thread_runtime(false),
-        )
-        .unwrap();
-        let orchestrator = &state.kernel.orchestrator;
+    /// 外层看门狗不依赖任何运行时状态，纯函数即可覆盖：阻塞命令无论
+    /// timeout_s 怎么传都必须有预算，命令会话的轮询等待必须被外包住。
+    #[test]
+    fn tool_deadlines_always_exist_for_blocking_commands_and_sessions() {
+        let config = Config::default();
         assert_eq!(
-            orchestrator.resolve_tool_timeout(&config, "command_session", &json!({})),
+            resolve_tool_timeout(&config, "command_session", &json!({})),
             Some(Duration::from_secs(90))
         );
         assert_eq!(
-            orchestrator.resolve_tool_timeout(
-                &config,
-                "command_session",
-                &json!({"action": "write_stdin"})
-            ),
+            resolve_tool_timeout(&config, "command_session", &json!({"action": "write_stdin"})),
             Some(Duration::from_millis(30_500))
+        );
+        assert_eq!(
+            resolve_tool_timeout(&config, "执行命令", &json!({})),
+            Some(Duration::from_secs(150))
+        );
+        // 0/负数不再表示「无限制」：回落到默认预算的看门狗。
+        assert_eq!(
+            resolve_tool_timeout(&config, "执行命令", &json!({"timeout_s": 0})),
+            Some(Duration::from_secs(150))
+        );
+        assert_eq!(
+            resolve_tool_timeout(&config, "执行命令", &json!({"timeout_s": 300})),
+            Some(Duration::from_secs(330))
+        );
+        assert_eq!(
+            resolve_tool_timeout(
+                &config,
+                "执行命令",
+                &json!({"run_in_background": true, "timeout_s": 0})
+            ),
+            Some(Duration::from_secs(120))
         );
     }
 

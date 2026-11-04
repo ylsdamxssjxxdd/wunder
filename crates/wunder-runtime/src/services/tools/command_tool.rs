@@ -22,6 +22,7 @@ use super::{
 use crate::command_utils;
 use crate::config::Config;
 use crate::core::long_task;
+use crate::core::process_tree::{ProcessTree, PIPE_EOF_GRACE};
 use crate::core::python_runtime;
 use crate::i18n;
 use anyhow::{anyhow, Result};
@@ -602,16 +603,51 @@ fn compact_command_results_for_model(items: &[Value]) -> Vec<Value> {
     items.iter().map(compact_command_result_for_model).collect()
 }
 
+/// 按引用收走一个读任务句柄；被 `timeout` 中断后 future 可恢复，句柄
+/// 不会丢失，宽限轮空时仍可 abort。
 async fn join_output_task(
-    handle: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
+    handle: &mut Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
 ) -> Result<CommandOutputCapture> {
-    match handle {
+    match handle.take() {
         Some(handle) => match handle.await {
             Ok(result) => result,
             Err(err) => Err(anyhow!(err.to_string())),
         },
         None => Ok(CommandOutputCapture::empty()),
     }
+}
+
+/// 等两个输出读任务到达 EOF。宽限窗口内读不到 EOF，说明还有进程持有
+/// 管道写端（孙进程在 shell 退出/被杀后幸存）：先树终止强制放行，再给
+/// 一个窗口；仍读不到就丢弃读任务。函数必然在有限时间内返回，管道收尾
+/// 不允许绑架工具调用的返回。
+async fn drain_output_captures(
+    stdout_task: &mut Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
+    stderr_task: &mut Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
+    tree: &ProcessTree,
+) -> Result<(CommandOutputCapture, CommandOutputCapture)> {
+    {
+        let drain = async {
+            let stdout = join_output_task(stdout_task).await?;
+            let stderr = join_output_task(stderr_task).await?;
+            Ok::<_, anyhow::Error>((stdout, stderr))
+        };
+        tokio::pin!(drain);
+        for _ in 0..2 {
+            match tokio::time::timeout(PIPE_EOF_GRACE, drain.as_mut()).await {
+                Ok(result) => return result,
+                Err(_elapsed) => tree.terminate(),
+            }
+        }
+        // drain 与它对句柄的借用在此丢弃，后面的 abort 才能拿到句柄。
+    }
+    if let Some(handle) = stdout_task.take() {
+        handle.abort();
+    }
+    if let Some(handle) = stderr_task.take() {
+        handle.abort();
+    }
+    Ok((CommandOutputCapture::empty(), CommandOutputCapture::empty()))
 }
 
 pub(crate) fn decode_command_output(bytes: &[u8]) -> String {
@@ -759,12 +795,13 @@ async fn run_spawned_child_streaming(
     stderr_policy: CommandOutputPolicy,
     command_session: Option<CommandSessionTracker>,
     cancel: Option<CancellationToken>,
+    tree: ProcessTree,
 ) -> Result<CommandRunResult> {
     let chunk_size = resolve_stream_chunk_size(context.config);
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
-    let stdout_task = stdout.map(|stdout| {
+    let mut stdout_task = stdout.map(|stdout| {
         let emitter = context.event_emitter.clone();
         let tool_name = tool_name.to_string();
         let command_text = command_text.to_string();
@@ -783,7 +820,7 @@ async fn run_spawned_child_streaming(
             .await
         })
     });
-    let stderr_task = stderr.map(|stderr| {
+    let mut stderr_task = stderr.map(|stderr| {
         let emitter = context.event_emitter.clone();
         let tool_name = tool_name.to_string();
         let command_text = command_text.to_string();
@@ -817,6 +854,7 @@ async fn run_spawned_child_streaming(
         let status = tokio::select! {
             _ = cancel_wait => {
                 cancelled = true;
+                tree.terminate();
                 let _ = child.kill().await;
                 let _ = child.wait().await;
                 None
@@ -827,6 +865,7 @@ async fn run_spawned_child_streaming(
                         Ok(result) => Ok::<_, anyhow::Error>(Some(result?)),
                         Err(_) => {
                             timed_out = true;
+                            tree.terminate();
                             let _ = child.kill().await;
                             let _ = child.wait().await;
                             Ok(None)
@@ -838,8 +877,8 @@ async fn run_spawned_child_streaming(
             } => result?,
         };
 
-        let stdout_capture = join_output_task(stdout_task).await?;
-        let stderr_capture = join_output_task(stderr_task).await?;
+        let (stdout_capture, stderr_capture) =
+            drain_output_captures(&mut stdout_task, &mut stderr_task, &tree).await?;
         Ok::<_, anyhow::Error>((status, timed_out, cancelled, stdout_capture, stderr_capture))
     }
     .await;
@@ -885,18 +924,21 @@ async fn run_spawned_child_streaming(
 
 /// Detach a local child after a short initial wait. The process and its bounded
 /// session transcript remain owned by the broker while the model continues.
+#[allow(clippy::too_many_arguments)]
 async fn detach_spawned_child(
     broker: Arc<super::command_sessions::CommandSessionBroker>,
     mut child: Child,
     timeout: Option<Duration>,
     command_session: CommandSessionTracker,
-    stdout_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
-    stderr_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
+    mut stdout_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
+    mut stderr_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
+    tree: ProcessTree,
 ) -> Result<CommandRunResult> {
     let session_id = command_session.command_session_id().to_string();
     let cleanup_session_id = session_id.clone();
     let process = Arc::new(CommandProcessHandle::new(child.stdin.take()));
     if !broker.register_process(&session_id, Arc::clone(&process)) {
+        tree.terminate();
         let _ = child.kill().await;
         let _ = child.wait().await;
         command_session.emit_exit(
@@ -911,24 +953,25 @@ async fn detach_spawned_child(
     long_task::spawn("tools.command.detached", async move {
         let (wait_result, timed_out, error) = if let Some(timeout) = timeout {
             tokio::select! {
-                _ = cancel.cancelled() => { let _ = child.kill().await; let _ = child.wait().await; (None, false, Some("command cancelled".to_string())) }
+                _ = cancel.cancelled() => { tree.terminate(); let _ = child.kill().await; let _ = child.wait().await; (None, false, Some("command cancelled".to_string())) }
                 result = tokio::time::timeout(timeout, child.wait()) => match result {
                     Ok(Ok(status)) => (Some(status), false, None),
                     Ok(Err(error)) => (None, false, Some(error.to_string())),
-                    Err(_) => { let _ = child.kill().await; let _ = child.wait().await; (None, true, None) }
+                    Err(_) => { tree.terminate(); let _ = child.kill().await; let _ = child.wait().await; (None, true, None) }
                 }
             }
         } else {
             tokio::select! {
-                _ = cancel.cancelled() => { let _ = child.kill().await; let _ = child.wait().await; (None, false, Some("command cancelled".to_string())) }
+                _ = cancel.cancelled() => { tree.terminate(); let _ = child.kill().await; let _ = child.wait().await; (None, false, Some("command cancelled".to_string())) }
                 result = child.wait() => match result {
                     Ok(status) => (Some(status), false, None),
                     Err(error) => (None, false, Some(error.to_string()))
                 }
             }
         };
-        let _ = join_output_task(stdout_task).await;
-        let _ = join_output_task(stderr_task).await;
+        // 自然退出也可能留下持有管道的孙进程；宽限内读不到 EOF 就树终止，
+        // 保证 watcher 一定收尾、broker 槽位一定释放。
+        let _ = drain_output_captures(&mut stdout_task, &mut stderr_task, &tree).await;
         let exit_code = wait_result.and_then(|status| status.code());
         tracker.emit_exit(exit_code, timed_out, error);
         broker.remove_process(&cleanup_session_id);
@@ -1001,13 +1044,14 @@ fn start_command_output_readers(
 async fn complete_detachable_child(
     status: Option<std::process::ExitStatus>,
     timed_out: bool,
-    stdout_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
-    stderr_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
+    stdout_task: &mut Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
+    stderr_task: &mut Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
+    tree: &ProcessTree,
     command_session: CommandSessionTracker,
     exit_error: Option<String>,
 ) -> Result<CommandRunResult> {
-    let stdout_capture = join_output_task(stdout_task).await?;
-    let stderr_capture = join_output_task(stderr_task).await?;
+    let (stdout_capture, stderr_capture) =
+        drain_output_captures(stdout_task, stderr_task, tree).await?;
     let stdout = render_command_output(&stdout_capture, decode_command_output);
     let mut stderr = render_command_output(&stderr_capture, decode_command_output);
     if let Some(error) = exit_error.as_deref() {
@@ -1077,10 +1121,18 @@ async fn run_command_streaming(
     };
     let initial_shell_name =
         (!used_direct).then(|| command_utils::shell_display_name(&command_env.shell));
+    // 只有会转后台会话（可 write_stdin）的命令才需要 stdin 管道。前台阻塞
+    // 命令保持管道开着，等 stdin 的程序（凭据询问、input()、交互安装器）
+    // 只能永远挂住——这就是 pwsh「挂死」的常见起点。null 让它们立刻 EOF。
+    let detach_capable = yield_time.is_some() && context.command_sessions.is_some();
     cmd.kill_on_drop(true);
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.stdin(if detach_capable {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
     let (mut child, launch_mode, shell_name) = match cmd.spawn() {
         Ok(child) => (
             child,
@@ -1097,9 +1149,13 @@ async fn run_command_streaming(
             python_runtime::apply_desktop_command_env(&mut cmd, &command_env);
             apply_streaming_command_env(&mut cmd);
             cmd.kill_on_drop(true);
-            cmd.stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
+            cmd.stdin(if detach_capable {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
             let fallback_shell_name = command_utils::shell_display_name(&command_env.shell);
             match cmd.spawn() {
                 Ok(child) => (
@@ -1140,6 +1196,8 @@ async fn run_command_streaming(
             return Err(anyhow!(err));
         }
     };
+    // 树守卫挂得越早，覆盖孙进程越完整（Job 成员随创建继承）。
+    let tree = ProcessTree::attach(&child);
     let command_session = CommandSessionTracker::start(
         context,
         &command_text,
@@ -1161,6 +1219,7 @@ async fn run_command_streaming(
             stderr_policy,
             None,
             None,
+            tree,
         )
         .await;
     };
@@ -1182,12 +1241,13 @@ async fn run_command_streaming(
             stderr_policy,
             Some(command_session),
             session_cancel,
+            tree,
         )
         .await;
     };
     // Start readers before the initial wait so a chatty process cannot block
     // on a full pipe while the model is doing other work.
-    let (stdout_task, stderr_task) = start_command_output_readers(
+    let (mut stdout_task, mut stderr_task) = start_command_output_readers(
         context,
         &mut child,
         tool_name,
@@ -1206,13 +1266,15 @@ async fn run_command_streaming(
         false
     };
     if cancelled_during_wait {
+        tree.terminate();
         let _ = child.kill().await;
         let _ = child.wait().await;
         return complete_detachable_child(
             None,
             false,
-            stdout_task,
-            stderr_task,
+            &mut stdout_task,
+            &mut stderr_task,
+            &tree,
             command_session,
             Some("command cancelled".to_string()),
         )
@@ -1222,8 +1284,9 @@ async fn run_command_streaming(
         return complete_detachable_child(
             Some(status),
             false,
-            stdout_task,
-            stderr_task,
+            &mut stdout_task,
+            &mut stderr_task,
+            &tree,
             command_session,
             None,
         )
@@ -1234,6 +1297,7 @@ async fn run_command_streaming(
             match tokio::time::timeout(timeout, child.wait()).await {
                 Ok(status) => (Some(status?), false),
                 Err(_) => {
+                    tree.terminate();
                     let _ = child.kill().await;
                     let _ = child.wait().await;
                     (None, true)
@@ -1245,8 +1309,9 @@ async fn run_command_streaming(
         return complete_detachable_child(
             status,
             timed_out,
-            stdout_task,
-            stderr_task,
+            &mut stdout_task,
+            &mut stderr_task,
+            &tree,
             command_session,
             None,
         )
@@ -1259,6 +1324,7 @@ async fn run_command_streaming(
         command_session,
         stdout_task,
         stderr_task,
+        tree,
     )
     .await
 }
@@ -1779,7 +1845,14 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
         .map(|value| value.max(0.0))
         .unwrap_or(DEFAULT_COMMAND_TIMEOUT_S);
     let timeout_s = apply_time_budget_secs(timeout_s, &command_budget);
-    let timeout = (timeout_s > 0.0).then(|| Duration::from_secs_f64(timeout_s));
+    // 0/负数不再表示「不限制」：工具调用必须必然返回，无上限只会把整条
+    // 智能体线程冻死在一条挂住的命令上。回落到默认超时。
+    let timeout_s = if timeout_s > 0.0 {
+        timeout_s
+    } else {
+        DEFAULT_COMMAND_TIMEOUT_S
+    };
+    let timeout = Some(Duration::from_secs_f64(timeout_s));
     if crate::sandbox::sandbox_enabled(context.config) && !dry_run && !content.is_empty() {
         if let Some(result) = crate::sandbox::launch_command_session(
             context.config,
