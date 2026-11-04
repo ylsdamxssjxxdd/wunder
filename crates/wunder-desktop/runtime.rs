@@ -33,8 +33,7 @@ const DESKTOP_ORPHAN_WORKSPACE_MIGRATION_VERSION: &str = "orphan_binding_v1";
 /// Name of the workspace created on first run; migrated legacy threads land
 /// here. Mirrored by the workspace façade's docs, never user-configurable.
 const DEFAULT_WORKSPACE_NAME: &str = "默认工作区";
-const DESKTOP_CONTROL_MIN_NORM_WIDTH: i32 = 1000;
-const DESKTOP_CONTROL_MIN_NORM_HEIGHT: i32 = 1000;
+const DESKTOP_CONTROL_MIN_NORM_SIDE: i32 = 1000;
 
 #[derive(Clone)]
 pub struct DesktopRuntime {
@@ -1629,16 +1628,11 @@ fn apply_desktop_defaults(
     }
     ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "计划面板");
     config.tools.desktop_control.enabled = true;
-    config.tools.desktop_control.norm_width = config
+    config.tools.desktop_control.max_norm_side = config
         .tools
         .desktop_control
-        .norm_width
-        .max(DESKTOP_CONTROL_MIN_NORM_WIDTH);
-    config.tools.desktop_control.norm_height = config
-        .tools
-        .desktop_control
-        .norm_height
-        .max(DESKTOP_CONTROL_MIN_NORM_HEIGHT);
+        .max_norm_side
+        .max(DESKTOP_CONTROL_MIN_NORM_SIDE);
     ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "桌面控制");
     config.tools.browser.enabled = true;
     // Browser tools now come from the active provider's native surface and are
@@ -2352,8 +2346,7 @@ mod tests {
     #[test]
     fn apply_desktop_defaults_restores_controller_capture_precision() {
         let mut config = Config::default();
-        config.tools.desktop_control.norm_width = 768;
-        config.tools.desktop_control.norm_height = 768;
+        config.tools.desktop_control.max_norm_side = 768;
         let workspace_root = PathBuf::from("/tmp/wunder-work");
         let temp_root = PathBuf::from("/tmp/wunder-temp");
         let repo_root = PathBuf::from("/tmp/wunder-repo");
@@ -2372,8 +2365,7 @@ mod tests {
             defaults,
         );
 
-        assert_eq!(config.tools.desktop_control.norm_width, 1000);
-        assert_eq!(config.tools.desktop_control.norm_height, 1000);
+        assert_eq!(config.tools.desktop_control.max_norm_side, 1000);
     }
 
     #[test]

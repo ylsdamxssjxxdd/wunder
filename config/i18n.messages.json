@@ -1808,8 +1808,8 @@
     "zh-CN": "可选，默认 false：阻塞等待命令结束（或达到 timeout_s）并返回完整输出。仅对长时间运行的命令设为 true，此时立即返回 command_session_id，需用命令会话工具轮询结果。"
   },
   "tool.spec.exec.args.timeout": {
-    "en-US": "Optional. Command timeout in seconds; on timeout the process is killed and partial output is returned (default 120; pass 0 to disable).",
-    "zh-CN": "可选，命令超时秒数；超时后终止进程并返回已收集的部分输出。默认 120 秒，传 0 表示不限制。"
+    "en-US": "Optional. Command timeout in seconds; on timeout the whole command process tree is killed and partial output is returned (default 120; values <= 0 fall back to the default). Long-running work should use run_in_background instead of raising this.",
+    "zh-CN": "可选，命令超时秒数；超时后终止整棵命令进程树并返回已收集的部分输出。默认 120 秒，传 0 或负数同样按默认处理（不提供无上限模式）。长时间任务请用 run_in_background，而不是加大超时。"
   },
   "tool.spec.exec.args.workdir": {
     "en-US": "Optional. Working directory relative to the current workspace only (no absolute paths).",

@@ -400,7 +400,7 @@ impl Orchestrator {
                 let policy_meta = policy_decision.as_ref().map(|decision| decision.to_value());
                 let started_at = Instant::now();
                 let tool_timeout =
-                    orchestrator.resolve_tool_timeout(scoped_tool_context.config, &name, &args);
+                    super::tool_exec::resolve_tool_timeout(scoped_tool_context.config, &name, &args);
                 let supports_parallel_execution = tool_call_supports_parallel(&name, &args);
                 let pre_tool_decision = if allowed_tool_names.contains(&name) {
                     orchestrator
