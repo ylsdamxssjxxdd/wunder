@@ -242,18 +242,22 @@ fn transcript_entry_spacing_is_only_added_after_first_item() {
 }
 
 #[test]
-fn busy_activity_line_uses_codex_like_status_copy() {
+fn busy_activity_line_names_the_phase_without_repeating_the_thinking_text() {
     assert_eq!(
-        format_busy_activity_line(false, 3, false, true, None),
+        format_busy_activity_line(false, 3, false, true, false),
         "\u{2022} Working (3s \u{00b7} esc to interrupt)"
     );
     assert_eq!(
-        format_busy_activity_line(true, 113, false, true, None),
+        format_busy_activity_line(true, 113, false, true, false),
         "\u{2022} 运行中 (1m 53s \u{00b7} Esc 可中断)"
     );
     assert_eq!(
-        format_busy_activity_line(false, 3, false, true, Some("Checking the input")),
-        "\u{2022} Checking the input (3s \u{00b7} esc to interrupt)"
+        format_busy_activity_line(false, 3, false, true, true),
+        "\u{2022} Thinking (3s \u{00b7} esc to interrupt)"
+    );
+    assert_eq!(
+        format_busy_activity_line(true, 3, false, true, true),
+        "\u{2022} 思考中 (3s \u{00b7} Esc 可中断)"
     );
 }
 
@@ -331,21 +335,24 @@ fn sanitize_assistant_delta_streaming_strips_split_tool_call_block() {
 }
 
 #[test]
-fn merge_stream_text_reuses_snapshot_without_duplicate_append() {
-    let mut output = "hello".to_string();
-    merge_stream_text(&mut output, "hello world");
-    assert_eq!(output, "hello world");
+fn authoritative_thinking_frames_never_append_the_same_block_twice() {
+    use AuthoritativeMerge::*;
+    let streamed = "First step\nSecond step";
+    let full = "First step\nSecond step\nThird step";
 
-    merge_stream_text(&mut output, "world");
-    assert_eq!(output, "hello world");
-}
-
-#[test]
-fn merge_stream_text_appends_non_overlapping_delta_without_newline() {
-    let mut output = "hello".to_string();
-    merge_stream_text(&mut output, " ");
-    merge_stream_text(&mut output, "world");
-    assert_eq!(output, "hello world");
+    // A full frame replaces the delta draft instead of being appended to it.
+    assert_eq!(reconcile_authoritative_text(streamed, full), Replace);
+    // The second full frame (`llm_output` then `final`) is a no-op.
+    assert_eq!(reconcile_authoritative_text(full, full), Keep);
+    // Whitespace/markdown differences keep the fuller spelling only.
+    assert_eq!(reconcile_authoritative_text("A B", "A  B"), Replace);
+    assert_eq!(reconcile_authoritative_text("A  B", "A B"), Keep);
+    // A short summary frame must not rewind a longer live stream.
+    assert_eq!(reconcile_authoritative_text(full, streamed), Keep);
+    // Neither contains the other: the complete frame wins, still no append.
+    assert_eq!(reconcile_authoritative_text("draft fragment", full), Replace);
+    assert_eq!(reconcile_authoritative_text("", full), Replace);
+    assert_eq!(reconcile_authoritative_text(full, "   "), Keep);
 }
 
 #[test]

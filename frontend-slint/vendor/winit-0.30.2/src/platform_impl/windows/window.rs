@@ -931,11 +931,14 @@ impl Window {
     pub fn set_ime_allowed(&self, allowed: bool) {
         let window = self.window;
         let state = self.window_state.clone();
+        // The logical flag is read by the WM_IME_STARTCOMPOSITION handler, so
+        // it must be visible before the next pumped message. Writing it here
+        // performs no IMM32 call and cannot re-enter the IME state machine.
+        state.lock().unwrap().ime_allowed = allowed;
         // Deferred like `set_ime_cursor_area`: `ImmAssociateContextEx` tears
         // down an active composition, which is exactly the work that must not
         // run nested inside the focus or IME message frame that triggered it.
         self.thread_executor.defer_to_thread(move || unsafe {
-            state.lock().unwrap().ime_allowed = allowed;
             ImeContext::set_ime_allowed(window, allowed);
         })
     }

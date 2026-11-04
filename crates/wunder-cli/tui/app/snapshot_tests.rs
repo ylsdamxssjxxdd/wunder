@@ -276,7 +276,14 @@ async fn live_acceptance_incomplete_reasoning_and_answer_deltas_are_visible_with
         reasoning_lines.len(),
         app.entry_visual_line_count(reasoning, 80)
     );
-    assert!(app.activity_line().contains("Checking"));
+    // The status row names the phase; the thinking text lives only in the card.
+    // Echoing it above the card was the duplicate block readers reported.
+    let activity = app.activity_line();
+    assert!(!activity.contains("Checking"), "{activity}");
+    assert!(
+        activity.contains("Thinking") || activity.contains("思考中"),
+        "{activity}"
+    );
 
     app.merge_assistant_delta("Hello");
     let assistant = app.active_assistant.expect("assistant entry");
@@ -307,6 +314,40 @@ async fn live_acceptance_incomplete_reasoning_and_answer_deltas_are_visible_with
         expected.insert(0, String::new());
     }
     assert_eq!(actual, expected);
+}
+
+#[tokio::test]
+async fn complete_reasoning_frames_do_not_duplicate_the_streamed_block() {
+    let root = TempRoot::new("reasoning_full_frame");
+    let mut app = fixture_app(root.path()).await;
+    app.logs.clear();
+    app.reset_scrollback_archive();
+    app.set_transcript_viewport(80, 20);
+
+    app.merge_reasoning_delta("First step\n");
+    app.merge_reasoning_delta("Second step");
+    let index = app.active_reasoning.expect("reasoning entry");
+
+    // A complete frame closes the stream; a second one (llm_output then final)
+    // must be idempotent, not another copy of the whole block.
+    let full = "First step\nSecond step\nThird step";
+    app.merge_reasoning_content(full);
+    app.merge_reasoning_content(full);
+
+    let text = app.logs[index].text.clone();
+    assert_eq!(text, full);
+    assert_eq!(text.matches("First step").count(), 1, "{text}");
+    assert!(!app.entry_is_streaming(LogKind::Reasoning, index));
+
+    // The rendered card must come from the authoritative text alone: no
+    // leftover incremental lines appended under it.
+    let rendered = app
+        .render_entry_lines(index, false, 80)
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(rendered.matches("First step").count(), 1, "{rendered}");
 }
 
 #[tokio::test]

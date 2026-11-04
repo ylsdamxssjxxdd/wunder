@@ -330,12 +330,66 @@ fn apply_anthropic_thinking(payload: &mut Value, config: &LlmModelConfig) {
 }
 
 /// 思考预算触顶时注入流式回调的提示，随思考增量展示并落入线程记录。
-pub(crate) const REASONING_BUDGET_NOTICE: &str = "\n\n（思考已达设定上限，已停止思考并继续生成）";
+/// 走 i18n，避免英文界面被硬编码中文污染。
+pub(crate) fn reasoning_budget_notice() -> String {
+    crate::i18n::t("llm.reasoning_budget_notice")
+}
+
+/// CJK 码点按 1 token 计；其余按全项目统一的 4 字节/token 计。
+///
+/// 扁平按字节估算会把中文思考低估约两倍：用户设 1000 token 预算，实际
+/// 大约 400 个汉字就触顶断流，白白多一次关思考重发。思考预算直接决定
+/// 「是否中断当前响应流」，比上下文裁剪更需要贴近真实 tokenizer，因此
+/// 这里单独用 CJK 感知口径，最终裁剪与增量遮蔽共用同一函数。
+fn is_cjk(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3000..=0x303F
+            | 0x3040..=0x30FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xAC00..=0xD7AF
+            | 0xF900..=0xFAFF
+            | 0xFF00..=0xFFEF
+    )
+}
+
+fn reasoning_token_count(text: &str) -> usize {
+    let mut cjk = 0usize;
+    let mut other_bytes = 0usize;
+    for ch in text.chars() {
+        if is_cjk(ch) {
+            cjk += 1;
+        } else {
+            other_bytes += ch.len_utf8();
+        }
+    }
+    cjk + (other_bytes + 3) / 4
+}
+
+/// 把文本截到 `max` 个思考 token 以内，保持在字符边界上。
+fn truncate_reasoning_to_tokens(text: &str, max: usize) -> &str {
+    let mut cjk = 0usize;
+    let mut other_bytes = 0usize;
+    for (index, ch) in text.char_indices() {
+        let (next_cjk, next_other) = if is_cjk(ch) {
+            (cjk + 1, other_bytes)
+        } else {
+            (cjk, other_bytes + ch.len_utf8())
+        };
+        if next_cjk + (next_other + 3) / 4 > max {
+            return &text[..index];
+        }
+        cjk = next_cjk;
+        other_bytes = next_other;
+    }
+    text
+}
 
 /// 按思考预算裁剪完整思考文本；未设置预算时原样返回。
 pub(crate) fn trim_reasoning_to_budget(reasoning: String, budget_tokens: Option<u32>) -> String {
     match budget_tokens {
-        Some(budget) => crate::token_utils::trim_text_to_tokens(&reasoning, i64::from(budget), ""),
+        Some(budget) => truncate_reasoning_to_tokens(&reasoning, budget as usize).to_string(),
         None => reasoning,
     }
 }
@@ -346,7 +400,7 @@ pub(crate) fn trim_reasoning_to_budget(reasoning: String, budget_tokens: Option<
 /// 包装层负责，本结构用于非流式响应与最终落库的裁剪。
 pub(crate) struct ReasoningBudgetCap {
     budget_tokens: Option<u32>,
-    remaining_bytes: Option<usize>,
+    remaining_tokens: Option<usize>,
 }
 
 impl ReasoningBudgetCap {
@@ -354,13 +408,12 @@ impl ReasoningBudgetCap {
         let budget_tokens = explicit_thinking_token_budget(config);
         Self {
             budget_tokens,
-            // 与 token_utils::approx_token_count 的 4 字节估算保持一致。
-            remaining_bytes: budget_tokens.map(|budget| (budget as usize).saturating_mul(4)),
+            remaining_tokens: budget_tokens.map(|budget| budget as usize),
         }
     }
 
     pub(crate) fn cap_delta(&mut self, delta: String) -> String {
-        let Some(remaining) = self.remaining_bytes.as_mut() else {
+        let Some(remaining) = self.remaining_tokens.as_mut() else {
             return delta;
         };
         if delta.is_empty() {
@@ -369,16 +422,14 @@ impl ReasoningBudgetCap {
         if *remaining == 0 {
             return String::new();
         }
-        if delta.len() <= *remaining {
-            *remaining -= delta.len();
+        let cost = reasoning_token_count(&delta);
+        if cost <= *remaining {
+            *remaining -= cost;
             return delta;
         }
-        let mut end = *remaining;
-        while end > 0 && !delta.is_char_boundary(end) {
-            end -= 1;
-        }
+        let truncated = truncate_reasoning_to_tokens(&delta, *remaining).to_string();
         *remaining = 0;
-        delta[..end].to_string()
+        truncated
     }
 
     fn trim(&self, reasoning: String) -> String {
@@ -387,10 +438,14 @@ impl ReasoningBudgetCap {
 }
 
 /// 单次流式尝试的结果。`BudgetAborted` 表示思考预算触顶后已主动断流
-/// （响应流被丢弃、连接关闭，提供方随之停止生成），并携带已收到的思考文本。
+/// （响应流被丢弃、连接关闭，提供方随之停止生成），并携带已收到的思考文本
+/// 与本次请求已经产生的用量（断流不代表没计费）。
 enum StreamAttempt {
     Completed(LlmResponse),
-    BudgetAborted { partial_reasoning: String },
+    BudgetAborted {
+        partial_reasoning: String,
+        usage: Option<TokenUsage>,
+    },
 }
 
 /// 服务端把整个输出预算耗在思考上、正文为空的信号；转关思考重发可以补救，
@@ -410,13 +465,13 @@ fn reasoning_consumed_entire_response(response: &LlmResponse) -> bool {
 /// 触顶后的重发结果合成：保留被截断的思考并附提示，正文、工具调用与结束
 /// 原因取关思考重发的响应，用量按两次请求求和。
 fn merge_reasoning_capped_response(
-    base: Option<LlmResponse>,
+    base_usage: Option<TokenUsage>,
     partial_reasoning: String,
     resent: LlmResponse,
     budget_tokens: Option<u32>,
 ) -> LlmResponse {
     let mut reasoning = trim_reasoning_to_budget(partial_reasoning, budget_tokens);
-    reasoning.push_str(REASONING_BUDGET_NOTICE);
+    reasoning.push_str(&reasoning_budget_notice());
     let mut merged = resent;
     let resent_reasoning = std::mem::take(&mut merged.reasoning);
     if !resent_reasoning.trim().is_empty() {
@@ -424,9 +479,9 @@ fn merge_reasoning_capped_response(
         reasoning.push_str(&trim_reasoning_to_budget(resent_reasoning, budget_tokens));
     }
     merged.reasoning = reasoning;
-    if let Some(base) = base {
-        merged.usage = merge_token_usage(base.usage, merged.usage.take());
-    }
+    // 断掉的那次请求同样消耗了输入与已生成的思考 token，不能因为流被
+    // 丢弃就从统计里消失。
+    merged.usage = merge_token_usage(base_usage, merged.usage.take());
     merged
 }
 
@@ -1254,15 +1309,19 @@ impl LlmClient {
         let first = self
             .stream_attempt(messages, tools, &mut on_delta, budget_tokens, true)
             .await?;
-        let (partial_reasoning, base) = match first {
+        let (partial_reasoning, base_response, base_usage) = match first {
             StreamAttempt::Completed(response) => {
                 if !reasoning_consumed_entire_response(&response) {
                     return Ok(response);
                 }
                 // 服务端把整个输出预算耗在思考上、正文为空；同样转关思考重发。
-                (response.reasoning.clone(), Some(response))
+                let usage = response.usage.clone();
+                (response.reasoning.clone(), Some(response), usage)
             }
-            StreamAttempt::BudgetAborted { partial_reasoning } => (partial_reasoning, None),
+            StreamAttempt::BudgetAborted {
+                partial_reasoning,
+                usage,
+            } => (partial_reasoning, None, usage),
         };
         warn!("thinking budget exhausted; retrying once with thinking disabled");
         let resend_client = self.with_reasoning_effort(Some("none".to_string()));
@@ -1271,7 +1330,7 @@ impl LlmClient {
             .await
         {
             Ok(StreamAttempt::Completed(response)) => Ok(merge_reasoning_capped_response(
-                base,
+                base_usage,
                 partial_reasoning,
                 response,
                 budget_tokens,
@@ -1281,7 +1340,7 @@ impl LlmClient {
             }
             Err(resend_err) => {
                 warn!("thinking-disabled resend failed: {resend_err:#}");
-                if let Some(response) = base {
+                if let Some(response) = base_response {
                     return Ok(response);
                 }
                 // 提供方拒绝禁思考参数时的降级：按原配置重发一次，超限思考
@@ -1291,7 +1350,7 @@ impl LlmClient {
                     .await?;
                 match fallback {
                     StreamAttempt::Completed(response) => Ok(merge_reasoning_capped_response(
-                        None,
+                        base_usage,
                         partial_reasoning,
                         response,
                         budget_tokens,
@@ -1378,28 +1437,26 @@ impl LlmClient {
             // 思考预算包装层：按增量遮蔽超限思考；断流模式在触顶时向回调注入
             // 提示并置位触发标志，外层读取循环随即丢弃响应流、关闭连接。
             let tripped = Arc::new(AtomicBool::new(false));
-            let mut remaining_bytes =
-                budget_tokens.map(|budget| (budget as usize).saturating_mul(4));
+            let mut remaining_tokens = budget_tokens.map(|budget| budget as usize);
             let mut on_budget_delta = {
                 let tripped = Arc::clone(&tripped);
                 move |delta: String, reasoning_delta: String| {
                     let mut pass_reasoning = reasoning_delta;
                     let mut notice = false;
-                    if let Some(remaining) = remaining_bytes.as_mut() {
+                    if let Some(remaining) = remaining_tokens.as_mut() {
                         if !pass_reasoning.is_empty() {
+                            let cost = reasoning_token_count(&pass_reasoning);
                             if *remaining == 0 {
                                 pass_reasoning = String::new();
                                 if abort_on_budget && !tripped.swap(true, Ordering::Relaxed) {
                                     notice = true;
                                 }
-                            } else if pass_reasoning.len() <= *remaining {
-                                *remaining -= pass_reasoning.len();
+                            } else if cost <= *remaining {
+                                *remaining -= cost;
                             } else {
-                                let mut end = *remaining;
-                                while end > 0 && !pass_reasoning.is_char_boundary(end) {
-                                    end -= 1;
-                                }
-                                pass_reasoning = pass_reasoning[..end].to_string();
+                                pass_reasoning =
+                                    truncate_reasoning_to_tokens(&pass_reasoning, *remaining)
+                                        .to_string();
                                 *remaining = 0;
                                 if abort_on_budget && !tripped.swap(true, Ordering::Relaxed) {
                                     notice = true;
@@ -1409,7 +1466,7 @@ impl LlmClient {
                     }
                     let main_fut = on_delta(delta, pass_reasoning);
                     let notice_fut = if notice {
-                        Some(on_delta(String::new(), REASONING_BUDGET_NOTICE.to_string()))
+                        Some(on_delta(String::new(), reasoning_budget_notice()))
                     } else {
                         None
                     };
@@ -1465,6 +1522,7 @@ impl LlmClient {
                 // 若完成帧已随触顶块一并到达，流已完整收尾，按正常完成处理。
                 return Ok(StreamAttempt::BudgetAborted {
                     partial_reasoning: reasoning_combined,
+                    usage,
                 });
             }
 
@@ -4131,7 +4189,7 @@ mod tests {
         assert_eq!(response.content, "no-think answer");
         assert_eq!(
             response.reasoning,
-            format!("aaaabbcc{}", REASONING_BUDGET_NOTICE)
+            format!("aaaabbcc{}", reasoning_budget_notice())
         );
         assert_eq!(response.finish_reason.as_deref(), Some("stop"));
     }
@@ -4235,7 +4293,7 @@ mod tests {
         assert_eq!(response.content, "masked answer");
         assert_eq!(
             response.reasoning,
-            format!("aaaacccc{}\ntail", REASONING_BUDGET_NOTICE)
+            format!("aaaacccc{}\ntail", reasoning_budget_notice())
         );
     }
 
@@ -4327,7 +4385,7 @@ mod tests {
         assert_eq!(response.content, "rescued answer");
         assert_eq!(
             response.reasoning,
-            format!("long think{}", REASONING_BUDGET_NOTICE)
+            format!("long think{}", reasoning_budget_notice())
         );
         assert_eq!(response.finish_reason.as_deref(), Some("stop"));
     }
@@ -4792,6 +4850,21 @@ mod tests {
 
         let trimmed = ReasoningBudgetCap::new(&config).trim("x".repeat(10_000));
         assert_eq!(trimmed.len(), 8_192);
+    }
+
+    /// 汉字按 1 token 计，不再被 4 字节口径低估：预算 2 时只保留两个汉字，
+    /// 而不是把 8 字节的「思考中」当成不足 2 token 全部放行。
+    #[test]
+    fn reasoning_budget_counts_cjk_as_one_token() {
+        assert_eq!(reasoning_token_count("思考"), 2);
+        assert_eq!(reasoning_token_count("abcd"), 1);
+        assert_eq!(reasoning_token_count(""), 0);
+        assert_eq!(truncate_reasoning_to_tokens("思考中", 2), "思考");
+        assert_eq!(trim_reasoning_to_budget("思考中".to_string(), Some(2)), "思考");
+        assert_eq!(
+            trim_reasoning_to_budget("思考中".to_string(), None),
+            "思考中"
+        );
     }
 
     #[test]

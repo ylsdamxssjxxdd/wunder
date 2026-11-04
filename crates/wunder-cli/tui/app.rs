@@ -34,6 +34,7 @@ use crate::render::FinalEvent;
 use crate::runtime::CliRuntime;
 use crate::slash_command::{self, ParsedSlashCommand, SlashCommand};
 use crate::tui::command_center::{CommandCenterState, ThreadStatusFilter};
+use crate::tui::pointer::{wheel_direction, WheelScroll};
 use crate::tui::thread_registry::ThreadRegistry;
 use crate::tui::ui::centered_picker::{BodyLine, CenteredListSpec, PickerRow, MAX_VISIBLE_ROWS};
 
@@ -384,9 +385,17 @@ struct WrappedInputLine {
     end: usize,
 }
 
-/// Who owns the pointer. `Capture` is the working mode: the app reads clicks and the
-/// wheel, so cards, disclosure rows and the composer respond. `Native` releases mouse
-/// capture to the terminal, which is how a reader gets native selection and copy back.
+/// Who owns the pointer. `Capture` lets the app read clicks and the wheel, so
+/// cards, disclosure rows and the composer respond. `Native` releases mouse
+/// capture to the terminal, which is how a reader gets native selection, copy
+/// and the console's own scrollback wheel back.
+///
+/// The default is a capability decision, not a preference. The main screen is
+/// an inline viewport whose finished rows live in the console scrollback. A
+/// legacy conhost stops scrolling that scrollback the moment mouse input is
+/// captured, and does not reliably deliver wheel records to the app either —
+/// exactly the "the wheel is dead" state. On such a console the pointer stays
+/// native; a console that parses escapes can safely be captured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MouseMode {
     Capture,
@@ -396,6 +405,19 @@ enum MouseMode {
 impl MouseMode {
     fn captures_mouse(self) -> bool {
         matches!(self, Self::Capture)
+    }
+}
+
+fn default_mouse_mode() -> MouseMode {
+    if cfg!(test) {
+        // Pointer behaviour is exercised against a virtual terminal in tests;
+        // it must not depend on the console the test runner happens to use.
+        return MouseMode::Capture;
+    }
+    if cfg!(windows) && !super::console_parses_ansi() {
+        MouseMode::Native
+    } else {
+        MouseMode::Capture
     }
 }
 
@@ -596,13 +618,21 @@ pub struct TuiApp {
     stream_saw_final: bool,
     stream_received_content_delta: bool,
     stream_tool_markup_open: bool,
-    reasoning_status_header: String,
+    /// Whether a reasoning stream has produced anything this round. The status
+    /// row uses it as a phase label, never as a copy of the thinking text:
+    /// repeating the last thought line above the card read as a duplicate block.
+    reasoning_in_progress: bool,
     turn_final_answer: String,
     turn_final_stop_reason: Option<String>,
     transcript_offset_from_bottom: usize,
     session_stats_dirty: bool,
     shortcuts_visible: bool,
     mouse_mode: MouseMode,
+    /// A console once refused capture. Retrying on every overlay would only
+    /// produce the same error and keep flipping console modes.
+    mouse_capture_refused: bool,
+    /// Fractional wheel notches carried between frames.
+    wheel: WheelScroll,
     focus_area: FocusArea,
     transcript_selected: Option<usize>,
     resume_picker: Option<ResumePickerState>,
@@ -807,13 +837,15 @@ impl TuiApp {
             stream_saw_final: false,
             stream_received_content_delta: false,
             stream_tool_markup_open: false,
-            reasoning_status_header: String::new(),
+            reasoning_in_progress: false,
             turn_final_answer: String::new(),
             turn_final_stop_reason: None,
             transcript_offset_from_bottom: 0,
             session_stats_dirty: false,
             shortcuts_visible: false,
-            mouse_mode: MouseMode::Capture,
+            mouse_mode: default_mouse_mode(),
+            mouse_capture_refused: false,
+            wheel: WheelScroll::default(),
             focus_area: FocusArea::Input,
             transcript_selected: None,
             resume_picker: None,
@@ -1279,8 +1311,7 @@ impl TuiApp {
                 elapsed_secs,
                 self.stream_catchup_mode,
                 self.terminal_focused,
-                Some(self.reasoning_status_header.as_str())
-                    .filter(|header| !header.trim().is_empty()),
+                self.reasoning_in_progress,
             );
         }
 
@@ -1637,8 +1668,12 @@ impl TuiApp {
     }
 
     pub fn mouse_capture_enabled(&self) -> bool {
-        // The Ctrl+T view scrolls with the wheel, so it needs capture even when the
-        // terminal is configured to leave the mouse to the console.
+        if self.mouse_capture_refused {
+            return false;
+        }
+        // The Ctrl+T view and the trajectory view paint the whole frame and have
+        // no scrollback of their own, so the app must own their wheel even on a
+        // console that otherwise keeps the pointer native.
         self.mouse_mode.captures_mouse()
             || self.transcript_view_open()
             || self.trajectory_view_open()
@@ -2780,7 +2815,7 @@ impl TuiApp {
                 "Ctrl + O 复制最后回复 · Ctrl + L 清屏开新会话 · Ctrl + C 退出".to_string(),
                 "Ctrl + T 完整转录 · Alt + R 原始输出（纯文本，便于复制）".to_string(),
                 "Esc 中断当前轮次 · 空闲时清空输入草稿".to_string(),
-                "F3 聚焦活动并选中卡片 · Enter 展开或收起 · F2 运行提醒 · F4 切换鼠标".to_string(),
+                "F3 聚焦活动并选中卡片 · Enter 展开或收起 · F2 运行提醒 · F4 切换鼠标（原生滚轮 / 应用点击）".to_string(),
                 "问询面板：↑↓ 或 j/k 选选项 · ←→ PgUp PgDn 切题 · 数字直选".to_string(),
                 "Ctrl + ] 跳过当前问题 · Backspace 清除选择".to_string(),
                 "列表与转录：j/k 移动 · Ctrl + B/F 翻页 · Ctrl + U/D 半页".to_string(),
@@ -2798,7 +2833,7 @@ impl TuiApp {
             "click selects · drag copies · double click takes the word · ctrl+click opens".to_string(),
             "ctrl + t for the full transcript              alt + r for raw, copy-friendly output".to_string(),
             "esc to interrupt a running round              ctrl + c to exit".to_string(),
-            "f3 focuses activity and selects cards         f2 run notices     f4 mouse mode".to_string(),
+            "f3 focuses activity and selects cards         f2 run notices     f4 mouse mode (native wheel / app clicks)".to_string(),
             "questions: up/down or j/k choose              left/right, pgup/pgdn switch question".to_string(),
             "digits pick an option      ctrl + ] skips the question      backspace clears".to_string(),
             "lists: j/k move            ctrl + b/ctrl + f page           ctrl + u/ctrl + d half page".to_string(),
@@ -3115,16 +3150,20 @@ impl TuiApp {
     }
 
     fn set_mouse_mode(&mut self, mode: MouseMode) {
-        if self.mouse_mode == mode {
+        if self.mouse_mode == mode && !self.mouse_capture_refused {
             return;
         }
         self.mouse_mode = mode;
+        // An explicit switch is also an explicit retry: a console may have
+        // refused capture once and accept it after the user changes terminals.
+        self.mouse_capture_refused = false;
+        self.wheel.reset();
         let notice = match mode {
             MouseMode::Capture => {
                 "mouse mode: capture (clicks select cards, open details and place the cursor; the wheel scrolls the transcript)"
             }
             MouseMode::Native => {
-                "mouse mode: native (the terminal keeps its own selection, copy and wheel)"
+                "mouse mode: native (the terminal keeps its own selection, copy and scrollback wheel)"
             }
         };
         self.push_log(LogKind::Info, notice.to_string());
@@ -3141,14 +3180,15 @@ impl TuiApp {
     /// A console that refused the pointer: stay usable by handing it back for good and
     /// say once why the clicks are gone.
     pub fn give_up_mouse_capture(&mut self, reason: String) {
-        if self.mouse_mode == MouseMode::Native {
-            return;
-        }
+        // Mark the refusal even when the default mode is already native: an
+        // overlay that asks for capture would otherwise retry on every open.
+        self.mouse_capture_refused = true;
         self.mouse_mode = MouseMode::Native;
+        self.wheel.reset();
         let hint = crate::locale::tr(
             self.display_language.as_str(),
-            "终端不接受鼠标捕获，点击与滚轮交回终端",
-            "the terminal refused mouse capture; clicks and the wheel are its own again",
+            "终端不接受鼠标捕获，滚轮与选择交回终端原生滚动",
+            "the terminal refused mouse capture; the wheel and selection are the console's own again",
         );
         self.push_log(LogKind::Info, format!("{hint}: {reason}"));
     }
@@ -6084,7 +6124,7 @@ impl TuiApp {
         self.invalidate_transcript_metrics();
         self.active_assistant = None;
         self.active_reasoning = None;
-        self.reasoning_status_header.clear();
+        self.reasoning_in_progress = false;
         self.transcript_offset_from_bottom = 0;
         self.transcript_selected = None;
     }
@@ -6655,14 +6695,41 @@ impl TuiApp {
             return;
         }
 
-        // The Ctrl+T view owns the whole frame, so the transcript region the layout
-        // recorded last is no longer where the wheel points.
-        if self.transcript_view_open() {
-            match mouse.kind {
-                MouseEventKind::ScrollUp => self.scroll_transcript_view(-3),
-                MouseEventKind::ScrollDown => self.scroll_transcript_view(3),
-                _ => {}
+        // One wheel path for the whole app, deliberately not gated on a hit rect.
+        // A gated notch dies when the regions have not been painted yet, when a
+        // popup changed the layout, or when a console reports wheel coordinates
+        // that do not line up with the last frame. With capture enabled that is
+        // fatal: the console has already given up its own scrollback scrolling,
+        // so a dropped notch leaves the reader with a completely dead wheel.
+        // The transcript is the default owner; only a composer that can actually
+        // move its own band takes the notch away from it.
+        if let Some(direction) = wheel_direction(mouse.kind) {
+            let rows = self.wheel.notch(direction);
+            if rows == 0 {
+                return;
             }
+            self.pause_transcript_selection_autoscroll();
+            if self.transcript_view_open() {
+                self.scroll_transcript_view(rows);
+                return;
+            }
+            // Native mode belongs to the console: its scrollback wheel is the
+            // only one reading, so an unexpected event must not double-scroll.
+            if self.mouse_capture_refused || !self.mouse_mode.captures_mouse() {
+                return;
+            }
+            // A one-line draft cannot scroll: fall through to the transcript
+            // instead of swallowing the notch.
+            if self.mouse_in_composer_region(&mouse)
+                && self.scroll_input_at_pointer(rows.signum() as i32)
+            {
+                return;
+            }
+            self.scroll_transcript_by(rows);
+            return;
+        }
+
+        if self.transcript_view_open() {
             return;
         }
 
@@ -6678,34 +6745,24 @@ impl TuiApp {
         if self.handle_gap_mouse(&mouse) {
             return;
         }
-        if matches!(
-            mouse.kind,
-            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-        ) {
-            self.pause_transcript_selection_autoscroll();
-        }
 
         match mouse.kind {
-            // The wheel moves the window, never the mark: a selection is booked against
-            // the card and its line, so it is still there when the reader scrolls back.
-            MouseEventKind::ScrollUp if self.mouse_in_transcript_region(&mouse) => {
-                self.scroll_transcript_up(3)
-            }
-            MouseEventKind::ScrollDown if self.mouse_in_transcript_region(&mouse) => {
-                self.scroll_transcript_down(3)
-            }
-            // Over the draft the wheel scrolls the composer's own band and leaves the caret
-            // on the character it was pointing at; a draft that fits has nothing to scroll.
-            MouseEventKind::ScrollUp if self.mouse_in_composer_region(&mouse) => {
-                self.scroll_input_at_pointer(-1);
-            }
-            MouseEventKind::ScrollDown if self.mouse_in_composer_region(&mouse) => {
-                self.scroll_input_at_pointer(1);
-            }
             MouseEventKind::Down(MouseButton::Left) => self.handle_pointer_press(&mouse),
             MouseEventKind::Drag(MouseButton::Left) => self.handle_pointer_drag(&mouse),
             MouseEventKind::Up(MouseButton::Left) => self.handle_pointer_release(),
             _ => {}
+        }
+    }
+
+    /// Signed wheel delta to a transcript move. The wheel owns a single signed
+    /// row count; turning it into two separate clamped moves here keeps the
+    /// tail-follow boundary identical for mouse and keyboard scrolling.
+    fn scroll_transcript_by(&mut self, rows: isize) {
+        let lines = rows.unsigned_abs().min(usize::from(u16::MAX)) as u16;
+        if rows < 0 {
+            self.scroll_transcript_up(lines);
+        } else {
+            self.scroll_transcript_down(lines);
         }
     }
 
@@ -8350,7 +8407,7 @@ impl TuiApp {
                 self.session_stats.model_calls = self.session_stats.model_calls.saturating_add(1);
                 self.active_assistant = None;
                 self.active_reasoning = None;
-                self.reasoning_status_header.clear();
+                self.reasoning_in_progress = false;
                 self.stream_received_content_delta = false;
                 self.stream_tool_markup_open = false;
                 self.tool_phase_notice_emitted = false;
@@ -8803,13 +8860,10 @@ impl TuiApp {
         let Some(appended) = appended else {
             return;
         };
-        if let Some(header) = self
-            .logs
-            .get(index)
-            .and_then(|entry| latest_reasoning_header(entry.text.as_str()))
-        {
-            self.reasoning_status_header = header;
-        }
+        // Phase only. Extracting the last thought line here used to feed a
+        // second copy of the thinking text into the status row and forced a
+        // status change on every token.
+        self.reasoning_in_progress = true;
         self.stream_markdown_delta(LogKind::Reasoning, index, appended.as_str());
         self.invalidate_transcript_metrics();
     }
@@ -8822,38 +8876,31 @@ impl TuiApp {
 
         let index = self.ensure_reasoning_entry();
         let streaming_active = self.entry_is_streaming(LogKind::Reasoning, index);
-        let mut updated = false;
-        if let Some(entry) = self.logs.get_mut(index) {
-            if is_equivalent_text(entry.text.as_str(), cleaned.as_str()) {
-                if cleaned.chars().count() >= entry.text.chars().count() {
-                    entry.text = cleaned;
-                    entry.markdown_cache = None;
-                    updated = true;
-                }
-            } else if compact_text_for_compare(cleaned.as_str())
-                .starts_with(compact_text_for_compare(entry.text.as_str()).as_str())
-            {
+        let decision = self
+            .logs
+            .get(index)
+            .map(|entry| reconcile_authoritative_text(entry.text.as_str(), cleaned.as_str()))
+            .unwrap_or(AuthoritativeMerge::Replace);
+        let replaced = decision == AuthoritativeMerge::Replace;
+        if replaced {
+            if let Some(entry) = self.logs.get_mut(index) {
                 entry.text = cleaned;
                 entry.markdown_cache = None;
-                updated = true;
-            } else {
-                merge_stream_text(&mut entry.text, cleaned.as_str());
-                entry.markdown_cache = None;
-                updated = true;
             }
         }
-        let mut needs_invalidate = updated;
         if streaming_active {
-            if updated {
-                self.clear_markdown_stream_for(LogKind::Reasoning, index);
-            } else {
-                self.finalize_markdown_stream_for(LogKind::Reasoning, index);
-                needs_invalidate = true;
+            // A complete frame closes the stream. Drop the incremental
+            // collector and its partial cache so the card is rendered from the
+            // one authoritative text, never from "streamed lines + full text".
+            self.clear_markdown_stream_for(LogKind::Reasoning, index);
+            if let Some(entry) = self.logs.get_mut(index) {
+                entry.markdown_cache = None;
             }
-        }
-        if needs_invalidate {
+            self.invalidate_transcript_metrics();
+        } else if replaced {
             self.invalidate_transcript_metrics();
         }
+        self.reasoning_in_progress = true;
     }
 
     fn merge_assistant_content(&mut self, content: &str) {
@@ -9716,20 +9763,45 @@ fn current_activity_elapsed_secs(started_at: Option<Instant>, settled_secs: f64)
     live_secs.max(0.0).round() as u64
 }
 
-fn latest_reasoning_header(text: &str) -> Option<String> {
-    text.lines().rev().find_map(|line| {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with("<!--") {
-            return None;
-        }
-        let line = line.trim_start_matches('#').trim();
-        let line = line
-            .strip_prefix("**")
-            .and_then(|rest| rest.split_once("**"))
-            .map(|(bold, trailing)| format!("{bold}{trailing}"))
-            .unwrap_or_else(|| line.to_string());
-        (!line.is_empty()).then_some(line)
-    })
+/// How a complete ("authoritative") frame reconciles with text accumulated from
+/// live deltas. A full frame is never an append: appending it to the delta text
+/// is what makes a whole thinking block appear twice, and a second full frame
+/// (`llm_output` followed by `final`) then appends it a third time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthoritativeMerge {
+    Keep,
+    Replace,
+}
+
+fn reconcile_authoritative_text(current: &str, incoming: &str) -> AuthoritativeMerge {
+    if incoming.trim().is_empty() {
+        return AuthoritativeMerge::Keep;
+    }
+    let current_compact = compact_text_for_compare(current);
+    let incoming_compact = compact_text_for_compare(incoming);
+    if current_compact.is_empty() {
+        return AuthoritativeMerge::Replace;
+    }
+    if current_compact == incoming_compact {
+        // Prefer the fuller spelling (markdown/whitespace) without changing
+        // what the reader sees.
+        return if incoming.chars().count() > current.chars().count() {
+            AuthoritativeMerge::Replace
+        } else {
+            AuthoritativeMerge::Keep
+        };
+    }
+    if incoming_compact.starts_with(current_compact.as_str()) {
+        // The full frame is the delta text plus its tail: the same block.
+        return AuthoritativeMerge::Replace;
+    }
+    if current_compact.starts_with(incoming_compact.as_str()) {
+        // The live stream already holds more text than this frame; do not rewind.
+        return AuthoritativeMerge::Keep;
+    }
+    // Neither contains the other. One turn owns one thinking block, so the
+    // complete frame wins over the incremental draft. Absolutely no append.
+    AuthoritativeMerge::Replace
 }
 
 fn format_busy_activity_line(
@@ -9737,26 +9809,24 @@ fn format_busy_activity_line(
     elapsed_secs: u64,
     stream_catchup_mode: bool,
     terminal_focused: bool,
-    reasoning_header: Option<&str>,
+    reasoning_active: bool,
 ) -> String {
     let elapsed = fmt_elapsed_compact(elapsed_secs);
-    let header = reasoning_header
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let mut parts = vec![if let Some(header) = header {
-        format!(
-            "• {header} ({elapsed} · {})",
-            if is_zh {
-                "Esc 可中断"
-            } else {
-                "esc to interrupt"
-            }
-        )
-    } else if is_zh {
-        format!("• 运行中 ({elapsed} · Esc 可中断)")
+    // The thinking text lives in the transcript card and nowhere else. The
+    // status row only names the phase: echoing the last thought line here made
+    // the same sentence appear twice and repaint on every reasoning token.
+    let label = match (is_zh, reasoning_active) {
+        (true, true) => "思考中",
+        (true, false) => "运行中",
+        (false, true) => "Thinking",
+        (false, false) => "Working",
+    };
+    let hint = if is_zh {
+        "Esc 可中断"
     } else {
-        format!("• Working ({elapsed} · esc to interrupt)")
-    }];
+        "esc to interrupt"
+    };
+    let mut parts = vec![format!("• {label} ({elapsed} · {hint})")];
     if stream_catchup_mode {
         parts.push(if is_zh {
             "追帧中".to_string()

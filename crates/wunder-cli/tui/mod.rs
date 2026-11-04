@@ -7,6 +7,7 @@ mod line_utils;
 mod markdown;
 mod markdown_render;
 mod markdown_stream;
+mod pointer;
 mod scrollback;
 mod text_tabs;
 mod theme;
@@ -19,7 +20,7 @@ use anyhow::Result;
 use app::TuiApp;
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
-    EventStream, KeyEventKind,
+    EventStream, KeyEventKind, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -30,7 +31,7 @@ use frame_scheduler::FrameNotifications;
 use futures::StreamExt;
 use ratatui::backend::CrosstermBackend;
 use ratatui::{Terminal, TerminalOptions, Viewport};
-use std::io;
+use std::io::{self, Write};
 
 use crate::args::GlobalArgs;
 use crate::runtime::CliRuntime;
@@ -131,11 +132,17 @@ async fn run_loop(
                 let Some(event) = maybe_event else {
                     break;
                 };
+                let mut redraw = true;
                 match event? {
                     Event::Key(key) if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
                         app.on_key(key).await?;
                     }
                     Event::Mouse(mouse) => {
+                        // Capture mode reports every pointer move. A blanket redraw
+                        // here repaints a full frame per move, which is the main
+                        // reason the UI feels sticky under the pointer. Handlers
+                        // that change hover state ask for their own frame.
+                        redraw = !matches!(mouse.kind, MouseEventKind::Moved);
                         app.on_mouse(mouse);
                     }
                     Event::Paste(text) => {
@@ -155,7 +162,9 @@ async fn run_loop(
                     }
                     _ => {}
                 }
-                app.request_redraw();
+                if redraw {
+                    app.request_redraw();
+                }
             }
         }
 
@@ -196,7 +205,7 @@ fn render_frame<B: ratatui::backend::Backend + io::Write>(
 ) -> io::Result<()> {
     // The markers are only an anti-tearing hint; a console without a VT parser
     // would print them as literal text instead of interpreting them.
-    let synchronized = synchronized_update_supported();
+    let synchronized = console_parses_ansi();
     if synchronized {
         execute!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
     }
@@ -217,13 +226,15 @@ fn render_frame<B: ratatui::backend::Backend + io::Write>(
     result.and(finish)
 }
 
-/// Whether this console actually parses the synchronized-update markers
-/// (`ESC[?2026h` / `ESC[?2026l`). Windows 7's conhost has no VT parser and
-/// cannot gain one, yet crossterm always writes these two commands as raw
-/// ANSI on Windows, so every frame would leak a literal `?2026` fragment into
-/// the viewport. `supports_ansi` also tries to enable VT processing first, so
-/// on a console that can interpret the markers they are kept.
-fn synchronized_update_supported() -> bool {
+/// Whether this console actually parses escape sequences. Windows 7's conhost
+/// has no VT parser and cannot gain one, yet crossterm always writes the
+/// synchronized-update markers as raw ANSI on Windows, so every frame would
+/// leak a literal `?2026` fragment into the viewport. The same answer decides
+/// whether an SGR mouse-mode request is safe to send and whether the pointer
+/// can be captured without stealing the console's own wheel scrolling.
+/// `supports_ansi` also tries to enable VT processing first, so on a console
+/// that can interpret the sequences they are kept.
+pub(crate) fn console_parses_ansi() -> bool {
     static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *SUPPORTED.get_or_init(|| {
         #[cfg(windows)]
@@ -287,7 +298,7 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
     disable_raw_mode()?;
     disable_bracketed_paste_if_supported(terminal.backend_mut())?;
     if let Err(error) = execute!(terminal.backend_mut(), DisableMouseCapture) {
-        if !cfg!(windows) || !error.to_string().contains("Initial console modes not set") {
+        if !looks_like_missing_saved_console_mode(&error) {
             return Err(error.into());
         }
     }
@@ -331,22 +342,46 @@ fn sync_mouse_mode(
         return Ok(());
     }
     if mouse_capture_enabled.is_none() && !desired_mouse_capture {
+        // Nothing was ever taken from the console: leave its modes untouched so
+        // its own wheel scrolling and selection stay fully intact.
         *mouse_capture_enabled = Some(false);
         return Ok(());
     }
     if desired_mouse_capture {
         if let Err(error) = execute!(terminal.backend_mut(), EnableMouseCapture) {
-            // A console that refuses capture must not cost the whole session: hand the
-            // pointer back to the terminal and say why the clicks are gone.
+            // A half-applied console mode is the worst outcome: the console has
+            // stopped scrolling its scrollback, but the app is not receiving the
+            // wheel either. Restore the original mode explicitly before giving up.
+            let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
             app.give_up_mouse_capture(error.to_string());
             *mouse_capture_enabled = Some(false);
             return Ok(());
         }
+        // On Windows the capture command goes through Win32, which does not ask
+        // for SGR reports. ConPTY otherwise delivers legacy mouse records as key
+        // events, so the wheel never reaches the event stream. Only write the
+        // escape on a console that parses escapes; a legacy conhost would print
+        // the literal characters into the viewport.
+        if console_parses_ansi() {
+            let backend = terminal.backend_mut();
+            let _ = backend.write_all(b"\x1b[?1006h");
+            let _ = backend.flush();
+        }
     } else {
-        execute!(terminal.backend_mut(), DisableMouseCapture)?;
+        if let Err(error) = execute!(terminal.backend_mut(), DisableMouseCapture) {
+            // A console that never had capture enabled has no saved mode to restore.
+            // That is not a reason to end the session.
+            if !looks_like_missing_saved_console_mode(&error) {
+                return Err(error.into());
+            }
+        }
     }
     *mouse_capture_enabled = Some(desired_mouse_capture);
     Ok(())
+}
+
+fn looks_like_missing_saved_console_mode(error: &io::Error) -> bool {
+    cfg!(windows) && error.to_string().contains("Initial console modes not set")
 }
 
 #[cfg(test)]
