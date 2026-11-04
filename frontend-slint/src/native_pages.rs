@@ -1379,23 +1379,6 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     app.set_runtime_ffmpeg_effective(effective("ffmpeg").into());
     app.set_runtime_browser_effective(effective("browser").into());
     app.set_runtime_shell_effective(effective("powershell").into());
-    // Status codes rather than pre-localized text: the settings page maps
-    // "custom"/"embedded"/"system"/"invalid"/"missing" through I18n, so the
-    // hint follows the UI language like every other label.
-    let status = |tool: &str| {
-        settings
-            .tool_status
-            .iter()
-            .find(|entry| entry.tool == tool)
-            .map(|entry| entry.source.clone())
-            .unwrap_or_default()
-    };
-    app.set_runtime_python_status(status("python").into());
-    app.set_runtime_git_status(status("git").into());
-    app.set_runtime_rg_status(status("rg").into());
-    app.set_runtime_ffmpeg_status(status("ffmpeg").into());
-    app.set_runtime_browser_status(status("browser").into());
-    app.set_runtime_shell_status(status("powershell").into());
     // The catalogue object projects the composer's full model list and mirrors
     // its size for the picker's "empty list" versus "nothing configured" split.
     app.set_virtual_replay_logs(string_model(settings.virtual_replay_logs));
