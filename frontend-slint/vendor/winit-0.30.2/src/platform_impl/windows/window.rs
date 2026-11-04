@@ -917,7 +917,11 @@ impl Window {
     pub fn set_ime_cursor_area(&self, spot: Position, size: Size) {
         let window = self.window;
         let state = self.window_state.clone();
-        self.thread_executor.execute_in_thread(move || unsafe {
+        // Deferred, never inline: Slint reaches this from its synchronous
+        // dispatch inside `WM_IME_*` and commit frames, and the IMM32 writes
+        // below re-enter a legacy IME's own state machine. See
+        // `EventLoopThreadExecutor::defer_to_thread`.
+        self.thread_executor.defer_to_thread(move || unsafe {
             let scale_factor = state.lock().unwrap().scale_factor;
             ImeContext::current(window).set_ime_cursor_area(spot, size, scale_factor);
         });
@@ -927,7 +931,10 @@ impl Window {
     pub fn set_ime_allowed(&self, allowed: bool) {
         let window = self.window;
         let state = self.window_state.clone();
-        self.thread_executor.execute_in_thread(move || unsafe {
+        // Deferred like `set_ime_cursor_area`: `ImmAssociateContextEx` tears
+        // down an active composition, which is exactly the work that must not
+        // run nested inside the focus or IME message frame that triggered it.
+        self.thread_executor.defer_to_thread(move || unsafe {
             state.lock().unwrap().ime_allowed = allowed;
             ImeContext::set_ime_allowed(window, allowed);
         })

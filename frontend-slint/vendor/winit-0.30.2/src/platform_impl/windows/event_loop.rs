@@ -845,6 +845,40 @@ impl EventLoopThreadExecutor {
             }
         }
     }
+
+    /// Posts a function to the event loop thread, always through the message
+    /// queue — even when already on that thread.
+    ///
+    /// `execute_in_thread` runs inline on the event loop thread, so a closure
+    /// called from a window procedure executes nested inside whatever
+    /// `WM_*` frame is active at the call site. The IMM32 write functions
+    /// must never run that way: a legacy IMM32 IME keeps its composition
+    /// state machine (and its UI windows) on the focused thread, and an
+    /// `ImmSet*` issued from inside the IME's own `WM_IME_*` delivery
+    /// re-enters that state machine — a frame the IME does not have to
+    /// survive. The re-entrant composition message the IME then emits
+    /// recurses through the same path until the thread wedges inside the
+    /// IME DLL. Posting defers the call to a clean pump turn: the IME frame
+    /// has unwound, and the same-thread messages the IME sends in response
+    /// take the ordinary, supported re-entry path.
+    ///
+    /// Uses a `FnMut` for the same reason as `execute_in_thread`: the message
+    /// target rebuilds the closure as `Box<Box<dyn FnMut()>>`.
+    pub(super) fn defer_to_thread<F>(&self, function: F)
+    where
+        F: FnMut() + Send + 'static,
+    {
+        // We double-box because the first box is a fat pointer.
+        let boxed: ThreadExecFn = Box::new(Box::new(function));
+        let raw = Box::into_raw(boxed);
+        let res = unsafe { PostMessageW(self.target_window, EXEC_MSG_ID.get(), raw as usize, 0) };
+        if res == false.into() {
+            // Losing one deferred IME update must not escalate into an abort
+            // (the release profile is `panic = "abort"`): reclaim the box and
+            // let the next update re-supply the same data.
+            drop(unsafe { Box::from_raw(raw) });
+        }
+    }
 }
 
 type ThreadExecFn = Box<Box<dyn FnMut()>>;

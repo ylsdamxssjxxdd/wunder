@@ -287,6 +287,25 @@ deltas).
   is not reentrant, so the UI thread self-deadlocked with zero CPU and no
   panic (nothing for the crash hook to log). Still unfixed upstream in
   0.30.13.
+- `winit` 0.30.2 `set_ime_cursor_area` / `set_ime_allowed` now run through a
+  new `EventLoopThreadExecutor::defer_to_thread`, which always posts the
+  closure to the thread message target (`EXEC_MSG_ID`) instead of running it
+  inline when already on the event loop thread. Slint dispatches `Ime` events
+  synchronously inside the window procedure, so the inline path used to call
+  `ImmSetCompositionWindow`/`ImmSetCandidateWindow` (and
+  `ImmAssociateContextEx`) nested inside the IME's own `WM_IME_*` delivery.
+  Legacy IMM32 IMEs keep their composition state machine on the focused
+  thread and do not have to survive that re-entry: the re-entrant composition
+  message the IME emits in response recursed through the same path until the
+  UI thread wedged inside the IME DLL — and because win32k must synchronize
+  with the focused thread to move focus or deactivate the IME, the input
+  method then froze in every application until the process was killed.
+  Deferred, the IMM32 writes run in a clean pump turn and the IME's
+  same-thread replies take the ordinary supported re-entry path; a failed
+  post (full queue) reclaims the closure instead of aborting the
+  `panic = "abort"` process. The read-only `ImmGet*` calls inside the
+  `WM_IME_*` handlers and the initial `create_window` disassociation stay
+  inline: they are the standard response pattern and cannot nest.
 - Frameless Winit windows now acknowledge `WM_NCACTIVATE` themselves after
   updating their active state and return handled for `WM_ERASEBKGND`. This
   prevents User32 from briefly drawing or erasing a native non-client edge
