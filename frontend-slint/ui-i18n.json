@@ -2428,11 +2428,6 @@
   "en": "Organize reusable long-term facts into model-friendly memory indexes."
  },
  {
-  "key": "ed_replicate_desc",
-  "zh": "将当前智能体的记忆复制到目标智能体，覆盖目标已有记忆。",
-  "en": "Copy this agent's memories to a target agent, overwriting existing ones."
- },
- {
   "key": "ed_tool_calls",
   "zh": "工具调用次数",
   "en": "Tool call count"
@@ -2506,11 +2501,6 @@
   "key": "ed_edit_memory",
   "zh": "编辑记忆碎片",
   "en": "Edit memory"
- },
- {
-  "key": "ed_replicate",
-  "zh": "记忆复刻",
-  "en": "Memory replication"
  },
  {
   "key": "ed_duration",
@@ -4525,16 +4515,6 @@
   "en": "Prompt segment saved"
  },
  {
-  "key": "st_prompt_pack_created",
-  "zh": "提示词包已创建：{0}",
-  "en": "Prompt pack created: {0}"
- },
- {
-  "key": "st_prompt_pack_deleted",
-  "zh": "提示词包已删除",
-  "en": "Prompt pack deleted"
- },
- {
   "key": "st_file_saved",
   "zh": "文件已保存",
   "en": "File saved"
@@ -4810,11 +4790,6 @@
   "en": "General"
  },
  {
-  "key": "st_tab_prompts",
-  "zh": "提示词包",
-  "en": "Prompt packs"
- },
- {
   "key": "st_tab_models",
   "zh": "模型配置",
   "en": "Models"
@@ -4948,16 +4923,6 @@
   "key": "stc_runs_note",
   "zh": "累计运行、令牌与工具调用",
   "en": "Total runtime, tokens and tool calls"
- },
- {
-  "key": "stc_prompts",
-  "zh": "提示词包",
-  "en": "Prompt packs"
- },
- {
-  "key": "stc_prompts_note",
-  "zh": "分段编辑与最终提示词预览",
-  "en": "Segment editing and final prompt preview"
  },
  {
   "key": "stc_archives",
@@ -5918,41 +5883,6 @@
   "en": "Generating…"
  },
  {
-  "key": "pm_readonly_builtin",
-  "zh": "内置只读",
-  "en": "Built-in (read-only)"
- },
- {
-  "key": "pm_pack",
-  "zh": "模板包",
-  "en": "Pack"
- },
- {
-  "key": "pm_set_active",
-  "zh": "设为启用",
-  "en": "Set active"
- },
- {
-  "key": "pm_active_tag",
-  "zh": "当前启用：",
-  "en": "Active: "
- },
- {
-  "key": "pm_lang_default_tag",
-  "zh": "系统语言默认",
-  "en": "System language default"
- },
- {
-  "key": "pm_sync_tag",
-  "zh": "同步系统模板包：",
-  "en": "Synced from system pack: "
- },
- {
-  "key": "pm_preview_refresh",
-  "zh": "刷新预览",
-  "en": "Refresh preview"
- },
- {
   "key": "pm_preview_title",
   "zh": "提示词预览",
   "en": "Prompt preview"
@@ -5961,86 +5891,6 @@
   "key": "pm_preview_hint",
   "zh": "按当前配置拼接后的完整系统提示词",
   "en": "The full system prompt assembled from the current configuration"
- },
- {
-  "key": "pm_custom",
-  "zh": "自定义",
-  "en": "Custom"
- },
- {
-  "key": "pm_builtin_lang_pack",
-  "zh": "内置语言包",
-  "en": "Built-in language pack"
- },
- {
-  "key": "pm_empty",
-  "zh": "暂无提示词包",
-  "en": "No prompt packs"
- },
- {
-  "key": "pm_new",
-  "zh": "新建",
-  "en": "New"
- },
- {
-  "key": "pm_delete_custom",
-  "zh": "删除当前自定义包",
-  "en": "Delete the current custom pack"
- },
- {
-  "key": "pm_segment_edit",
-  "zh": "分段编辑",
-  "en": "Segment editor"
- },
- {
-  "key": "pm_segment_edit_prefix",
-  "zh": "分段编辑 · ",
-  "en": "Segment editor · "
- },
- {
-  "key": "pm_readonly_hint",
-  "zh": "只读（内置包）",
-  "en": "Read-only (built-in pack)"
- },
- {
-  "key": "pm_editable_hint",
-  "zh": "可编辑",
-  "en": "Editable"
- },
- {
-  "key": "pm_segment_role",
-  "zh": "角色",
-  "en": "Role"
- },
- {
-  "key": "pm_segment_engineering",
-  "zh": "工程",
-  "en": "Engineering"
- },
- {
-  "key": "pm_segment_tool_protocol",
-  "zh": "工具协议",
-  "en": "Tool protocol"
- },
- {
-  "key": "pm_segment_skill_protocol",
-  "zh": "技能协议",
-  "en": "Skill protocol"
- },
- {
-  "key": "pm_segment_memory",
-  "zh": "记忆",
-  "en": "Memory"
- },
- {
-  "key": "pm_segment_attach",
-  "zh": "附加",
-  "en": "Attachment"
- },
- {
-  "key": "pm_save_segment",
-  "zh": "保存分段",
-  "en": "Save segment"
  },
  {
   "key": "fl_title",

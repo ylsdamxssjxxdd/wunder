@@ -2,9 +2,13 @@
 // click. Virtual rows, lazy folder pages and native menus share one controller.
 // The head is one icon toolbar (search / multi-select / refresh) that swaps to
 // the search field while querying, plus a selection bar while picking rows for
-// batch actions. The working directory has no transfer tiles: files come in by
-// drag-and-drop, folders leave through the context menu. The upload tile stays
-// only in the skill/knowledge file area, where it is the single upload entry.
+// batch actions. Rows pick additively with Ctrl/⌘ and in ranges with Shift,
+// like the web left rail. Dragging a row moves it inside the tree: the
+// hovered directory (or the root over blank space) lights up and release
+// commits the move. The working directory has no transfer tiles: files come
+// in by drag-and-drop, folders leave through the context menu. The upload
+// tile stays only in the skill/knowledge file area, where it is the single
+// upload entry.
 import { Theme, WorkspaceFileRow } from "theme.slint";
 import { SidebarMetrics, PointerChase } from "drag_row.slint";
 import { I18n } from "i18n.slint";
@@ -110,6 +114,12 @@ export component WorkspaceFilesPanel inherits Rectangle {
     // Multi-select state: the bar under the head and the row check tiles.
     in-out property <bool> selecting;
     in property <int> selected-count;
+    // Internal move drag: `dragging` gates the drop highlights, `drop-path` /
+    // `drop-root` name the hovered target (root is `""`, so it needs its own
+    // flag). Hover indexes: -1 = root, -2 = no target, -3 = gesture cancelled.
+    in property <bool> dragging;
+    in property <string> drop-path;
+    in property <bool> drop-root;
     callback upload();
     callback search-edit(string);
     callback search-accept(string);
@@ -117,7 +127,16 @@ export component WorkspaceFilesPanel inherits Rectangle {
     callback select();
     callback selection-action(int);
     callback toggle(int);
+    // Modifier click: ctrl (or meta) toggles the row in the working set,
+    // shift extends a range from the last picked row.
+    callback pick(int, bool, bool);
     callback check(int);
+    // Internal move drag lifecycle, all reported by the row that owns the
+    // gesture: begin at the drag threshold, hover with the row index under
+    // the pointer, drop with the last hover index (-3 cancels).
+    callback drag-begin(int);
+    callback drag-hover(int);
+    callback drag-drop(int);
     callback refresh();
     callback connect();
     callback menu(int, int);
@@ -288,6 +307,10 @@ export component WorkspaceFilesPanel inherits Rectangle {
                     // Keep the same ListView alive during refreshes, preserving
                     // the user's scroll position and the active row.
                     if !root.offline && root.rows.length > 0 : Rectangle {
+                        // 根目录落点没有可描边的行：列表本身就是根，拖拽期间给
+                        // 整个视口一圈细描边，与行级落点用同一强调色。
+                        border-width: root.dragging && root.drop-root ? 1px : 0px;
+                        border-color: Theme.accent-ink;
                         tree := ListView {
                             horizontal-scrollbar-policy: always-off;
                             private property <int> reveal-index: root.active-index;
@@ -300,7 +323,14 @@ export component WorkspaceFilesPanel inherits Rectangle {
                             }
                             for row[index] in root.rows : Rectangle {
                                 height: 28px; width: parent.width;
-                                background: row.path == root.active-path && !root.search-active && row.kind != 2 ? Theme.selected : row-touch.has-hover ? Theme.hover : transparent;
+                                background: row.path == root.active-path && !root.search-active && row.kind != 2 ? Theme.selected
+                                    : row.selected ? Theme.accent-soft
+                                    : root.dragging && row.path == root.drop-path ? Theme.accent-soft
+                                    : row-touch.has-hover ? Theme.hover : transparent;
+                                // 拖拽落点描边：悬停目标一目了然（文件行不是容器，
+                                // 落到它上面高亮的是它所在目录，不会落在这里）。
+                                border-width: root.dragging && row.path == root.drop-path ? 1px : 0px;
+                                border-color: Theme.accent-ink;
                                 row-touch := TouchArea {
                                     mouse-cursor: pointer;
                                     enabled: !root.busy && (row.kind != 2 || !row.loading);
@@ -308,17 +338,67 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                     accessible-action-default => { root.toggle(index); }
                                     property <length> press-x;
                                     property <length> press-y;
+                                    // 按下瞬间的修饰键：点选语义看按下而不是松开。
+                                    property <bool> press-ctrl;
+                                    property <bool> press-shift;
                                     property <bool> drag-out;
                                     property <bool> owns-gesture;
+                                    // 内部移动拖拽进行中：行持续计算悬停行号并在
+                                    // 变化时上报；收尾时用它作为落点。
+                                    property <bool> drag-live;
+                                    property <int> hover-index: -2;
                                     property <length> chase-x: PointerChase.pointer-x;
                                     property <length> chase-y: PointerChase.pointer-y;
                                     property <int> chase-finish: PointerChase.finish-serial;
+                                    // 悬停行号按 28px 等距行距从指针窗口坐标直接算出，
+                                    // 不需要逐行命中测试。越过视口上下沿不算落点；
+                                    // 行尾之后的空白按蜂巢语义归根目录。
+                                    function update-hover(pointer-y: length) {
+                                        if !self.drag-live || root.rows.length == 0 {
+                                            return;
+                                        }
+                                        // 以整个面板的可见范围判界：ListView 的高度
+                                        // 可能只等于内容高度，行尾空白在它之外，
+                                        // 但仍在面板内，仍应落到根目录。
+                                        if pointer-y < root.absolute-position.y
+                                            || pointer-y >= root.absolute-position.y + root.height {
+                                            if self.hover-index != -2 {
+                                                self.hover-index = -2;
+                                                root.drag-hover(-2);
+                                            }
+                                            return;
+                                        }
+                                        let row-index = Math.floor(
+                                            (pointer-y - tree.absolute-position.y - tree.content-y) / 28px);
+                                        let target = row-index < 0 ? -2
+                                            : row-index >= root.rows.length ? -1 : row-index;
+                                        if target != self.hover-index {
+                                            self.hover-index = target;
+                                            root.drag-hover(target);
+                                        }
+                                    }
+                                    function begin-drag() {
+                                        self.drag-out = true;
+                                        self.drag-live = true;
+                                        self.hover-index = -2;
+                                        // 追踪通道保持运行：内部拖动要一直吃真实指针
+                                        // 位置，直到松手（Win7 的事件流靠不住）。
+                                        root.drag-begin(index);
+                                    }
+                                    function end-drag(target: int) {
+                                        self.drag-live = false;
+                                        self.owns-gesture = false;
+                                        PointerChase.holding = false;
+                                        root.drag-drop(target);
+                                    }
                                     pointer-event(event) => {
                                         if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                                             self.press-x = self.absolute-position.x + self.mouse-x;
                                             self.press-y = self.absolute-position.y + self.mouse-y;
+                                            self.press-ctrl = event.modifiers.control || event.modifiers.meta;
+                                            self.press-shift = event.modifiers.shift;
                                             self.drag-out = false;
-                                            self.owns-gesture = !root.resource-mode && row.kind == 0;
+                                            self.owns-gesture = !root.resource-mode && row.kind != 2 && !root.read-only;
                                             if self.owns-gesture {
                                                 PointerChase.pointer-x = self.press-x;
                                                 PointerChase.pointer-y = self.press-y;
@@ -328,7 +408,13 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                             keyboard.focus();
                                         }
                                         if (event.kind == PointerEventKind.up && event.button == PointerEventButton.left) || event.kind == PointerEventKind.cancel {
-                                            if !PointerChase.enabled || !PointerChase.primary-held() {
+                                            if self.drag-live {
+                                                if !PointerChase.enabled {
+                                                    // 纯事件流平台：松开即落位，取消即中止。
+                                                    // Windows 的收尾由追踪通道裁定，这里不抢。
+                                                    self.end-drag(event.kind == PointerEventKind.cancel ? -3 : self.hover-index);
+                                                }
+                                            } else if !PointerChase.enabled || !PointerChase.primary-held() {
                                                 self.owns-gesture = false;
                                                 PointerChase.holding = false;
                                             }
@@ -338,40 +424,43 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                         if self.owns-gesture && self.pressed && !self.drag-out
                                             && (abs(self.absolute-position.x + self.mouse-x - self.press-x) > 5px
                                                 || abs(self.absolute-position.y + self.mouse-y - self.press-y) > 5px) {
-                                            self.drag-out = true;
-                                            self.owns-gesture = false;
-                                            PointerChase.holding = false;
-                                            root.drag-row(index);
+                                            self.begin-drag();
                                         }
+                                        self.update-hover(self.absolute-position.y + self.mouse-y);
                                     }
-                                    // 与线程行共用真实指针通道；事件流断掉或按下态被合成松开清除后仍能启动拖出。
+                                    // 与线程行共用真实指针通道；事件流断掉或按下态被合成松开清除后仍能启动拖拽。
                                     changed chase-x => {
                                         if self.owns-gesture && !self.drag-out
                                             && (abs(PointerChase.pointer-x - self.press-x) > 5px
                                                 || abs(PointerChase.pointer-y - self.press-y) > 5px) {
-                                            self.drag-out = true;
-                                            self.owns-gesture = false;
-                                            PointerChase.holding = false;
-                                            root.drag-row(index);
+                                            self.begin-drag();
                                         }
                                     }
                                     changed chase-y => {
                                         if self.owns-gesture && !self.drag-out
                                             && (abs(PointerChase.pointer-x - self.press-x) > 5px
                                                 || abs(PointerChase.pointer-y - self.press-y) > 5px) {
-                                            self.drag-out = true;
-                                            self.owns-gesture = false;
-                                            PointerChase.holding = false;
-                                            root.drag-row(index);
+                                            self.begin-drag();
                                         }
+                                        self.update-hover(PointerChase.pointer-y);
                                     }
                                     changed chase-finish => {
-                                        if self.owns-gesture {
+                                        if self.drag-live {
+                                            // 追踪通道看到主键真的松开：按最后悬停行落位。
+                                            self.end-drag(self.hover-index);
+                                        } else if self.owns-gesture {
                                             self.owns-gesture = false;
                                             PointerChase.holding = false;
                                         }
                                     }
-                                    clicked => { if !self.drag-out { root.toggle(index); } }
+                                    clicked => {
+                                        if self.drag-out { return; }
+                                        if self.press-ctrl || self.press-shift {
+                                            root.pick(index, self.press-ctrl, self.press-shift);
+                                        } else {
+                                            root.toggle(index);
+                                        }
+                                    }
                                     double-clicked => { if !self.drag-out && row.kind == 0 { root.menu(index, 0); } }
                                     row-menu := ContextMenuArea {
                                         Menu {
@@ -484,7 +573,7 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                 // wrapper 必须显式钉在原点（见 docs/经验教训.md）。
                                 x: 0px; y: 0px;
                                 width: 0px; height: 0px;
-                                if row.kind == 1 && row.expanded
+                                if row.kind == 1 && row.expanded && !root.dragging
                                     && (index * 28px + tree.content-y) < 0px
                                     && (row.subtree-end * 28px + tree.content-y) >= (row.depth + 1) * 28px : Rectangle {
                                     x: 0px;

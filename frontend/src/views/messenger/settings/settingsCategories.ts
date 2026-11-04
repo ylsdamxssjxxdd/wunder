@@ -1,6 +1,6 @@
 // AI生成
 /**
- * 设置页 11 分类注册表（方案 §九.2 + 账号分类拆分 + 互通「我的设备」§5.3；
+ * 设置页 10 分类注册表（方案 §九.2 + 账号分类拆分 + 互通「我的设备」§5.3；
  * 帮助入口已并入常规分类，点击在独立窗口打开文档站；运行记录页已移除，
  * 日运行趋势并入账号分类）。
  *
@@ -21,7 +21,6 @@ export type SettingsCategoryId =
   | 'memory'
   | 'channels'
   | 'devices'
-  | 'prompts'
   | 'archived';
 
 export type SettingsCategoryMeta = {
@@ -49,7 +48,6 @@ export const SETTINGS_CATEGORY_IDS: SettingsCategoryId[] = [
   'memory',
   'channels',
   'devices',
-  'prompts',
   'archived'
 ];
 
@@ -156,11 +154,6 @@ const META: Record<SettingsCategoryId, Omit<SettingsCategoryMeta, 'id'>> = {
       'sync',
       'remote'
     ]
-  },
-  prompts: {
-    icon: 'svg:file-text',
-    titleKey: 'messenger.settingsPage.cat.prompts.title',
-    keywords: ['提示词包', '分段', 'prompt pack', 'prompts']
   },
   archived: {
     icon: 'svg:archive',

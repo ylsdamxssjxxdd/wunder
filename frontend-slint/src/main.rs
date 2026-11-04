@@ -296,6 +296,33 @@ fn install_composer_popover_dismissal(app: &MainWindow) {
             {
                 pointer_for_filter.set(Some((touch.location.x, touch.location.y)));
             }
+            // Escape closes the topmost transient layer: composer popovers
+            // (plus menu, model picker and their cascades) first, then the
+            // settings sheet. Filter level, not a Slint key handler, because
+            // key dispatch starts from the focus item and menu presses move
+            // no focus — Escape would be dropped whenever nothing holds the
+            // caret.
+            winit::event::WindowEvent::KeyboardInput { event: key, .. }
+                if !key.repeat
+                    && key.state == winit::event::ElementState::Pressed
+                    && matches!(
+                        key.logical_key,
+                        winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape)
+                    ) =>
+            {
+                let Some(app) = weak.upgrade() else {
+                    return EventResult::Propagate;
+                };
+                if app.get_composer_popover_open() {
+                    app.invoke_dismiss_composer_popovers();
+                    return EventResult::PreventDefault;
+                }
+                if app.get_settings_open() {
+                    app.set_settings_open(false);
+                    return EventResult::PreventDefault;
+                }
+                return EventResult::Propagate;
+            }
             _ => return EventResult::Propagate,
         }
 

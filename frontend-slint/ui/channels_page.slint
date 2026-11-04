@@ -170,7 +170,7 @@ export component ChannelsPage inherits Rectangle {
     }
 
     if root.editor-open : Rectangle {
-        Rectangle { background: Theme.overlay; TouchArea { clicked => { } } }
+        Rectangle { background: Theme.overlay; TouchArea { clicked => { } scroll-event(event) => { return accept; } } }
         Rectangle {
             x: (parent.width - 480px) / 2; y: 24px; width: 480px; height: parent.height - 48px;
             border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border;
@@ -226,7 +226,7 @@ export component ChannelsPage inherits Rectangle {
     }
 
     if root.qr-open : Rectangle {
-        Rectangle { background: Theme.overlay; TouchArea { clicked => { root.cancel-qr(); } } }
+        Rectangle { background: Theme.overlay; TouchArea { clicked => { root.cancel-qr(); } scroll-event(event) => { return accept; } } }
         Rectangle {
             x: (parent.width - min(360px, parent.width - 40px)) / 2;
             y: (parent.height - 460px) / 2;
@@ -259,7 +259,7 @@ export component ChannelsPage inherits Rectangle {
     }
 
     if root.delete-open : Rectangle {
-        Rectangle { background: Theme.overlay; TouchArea { clicked => { root.cancel-delete(); } } }
+        Rectangle { background: Theme.overlay; TouchArea { clicked => { root.cancel-delete(); } scroll-event(event) => { return accept; } } }
         Rectangle {
             x: (parent.width - 380px) / 2; y: (parent.height - 150px) / 2; width: 380px; height: 150px;
             border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border;

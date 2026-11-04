@@ -20,10 +20,6 @@ export component ExpertData inherits Rectangle {
     in-out property <string> edit-content;
     in-out property <string> edit-category;
     in property <bool> saving;
-    in property <[string]> agent-names;
-    callback replicate-memory(int);
-    private property <bool> replicate-open;
-    private property <int> replicate-target: -1;
     callback refresh();
     callback save-memory();
     callback delete-memory(string);
@@ -36,7 +32,6 @@ export component ExpertData inherits Rectangle {
             VerticalLayout { Text { text: "记忆碎片"; color: Theme.text; font-size: 16px; font-weight: 700; } Text { text: "将可复用的长期事实整理为模型友好的记忆索引与详情。"; color: Theme.muted; font-size: 12px; } }
             Rectangle { horizontal-stretch: 1; }
             ExpertButton { width: 66px; label: "刷新"; icon: @image-url("../assets/icons/rotate-right.svg"); enabled: !root.loading; clicked => { root.refresh(); } }
-            ExpertButton { width: 96px; label: "记忆复刻"; icon: @image-url("../assets/icons/copy.svg"); enabled: !root.saving; clicked => { root.replicate-open = true; } }
             ExpertButton { width: 96px; label: "新建碎片"; icon: @image-url("../assets/icons/plus.svg"); selected: true; clicked => { root.open-memory(-1); } }
         }
         HorizontalLayout { height: 38px; spacing: 12px;
@@ -52,12 +47,15 @@ export component ExpertData inherits Rectangle {
         ScrollView { horizontal-scrollbar-policy: always-off;
             VerticalLayout { alignment: start; spacing: 12px;
                 for row in Math.ceil(root.memories.length / 4) : HorizontalLayout { alignment: start; spacing: 12px;
-                    for col in 4 : Rectangle { property <int> idx: row * 4 + col; property <MemoryCard> item: root.memories[self.idx]; visible: self.idx < root.memories.length; width: (root.width - 60px) / 4; height: 122px; border-radius: 16px; border-width: 1px; border-color: Theme.border; background: #f6f6f8;
-                        VerticalLayout { padding: 12px; spacing: 8px;
-                            HorizontalLayout { Text { text: item.category; color: Theme.text; font-size: 11px; } Rectangle { horizontal-stretch: 1; } Text { text: item.time; color: Theme.muted; font-size: 10px; overflow: elide; } }
-                            Text { text: item.title; color: Theme.text; font-size: 14px; font-weight: 600; overflow: elide; }
-                            Text { text: item.content; color: Theme.text-secondary; font-size: 12px; overflow: elide; }
-                            Text { text: item.source; color: Theme.muted; font-size: 11px; }
+                    for col in 4 : Rectangle { property <int> idx: row * 4 + col; property <MemoryCard> item: root.memories[self.idx]; visible: self.idx < root.memories.length; width: (root.width - 60px) / 4; height: 128px; border-radius: 16px; border-width: 1px; border-color: Theme.border; background: #f6f6f8; clip: true;
+                        // Every line is width- and height-budgeted: a Text's layout
+                        // minimum is its preferred width, so without `min-width: 0px`
+                        // a long category or title pushed the row past the card edge.
+                        VerticalLayout { padding: 12px; spacing: 6px;
+                            HorizontalLayout { height: 15px; Text { text: item.category; color: Theme.text; font-size: 11px; horizontal-stretch: 1; min-width: 0px; overflow: elide; vertical-alignment: center; } Text { text: item.time; color: Theme.muted; font-size: 10px; min-width: 0px; overflow: elide; vertical-alignment: center; } }
+                            Text { height: 20px; text: item.title; color: Theme.text; font-size: 14px; font-weight: 600; min-width: 0px; overflow: elide; vertical-alignment: center; }
+                            Text { vertical-stretch: 1; min-height: 0px; min-width: 0px; text: item.content; color: Theme.text-secondary; font-size: 12px; wrap: word-wrap; max-lines: 2; overflow: elide; vertical-alignment: top; }
+                            Text { height: 15px; text: item.source; color: Theme.muted; font-size: 11px; min-width: 0px; overflow: elide; vertical-alignment: center; }
                         }
                         TouchArea { mouse-cursor: pointer; clicked => { root.open-memory(idx); } }
                     }
@@ -66,7 +64,7 @@ export component ExpertData inherits Rectangle {
             }
         }
     }
-    if root.editor-open : Rectangle { background: Theme.overlay; Rectangle { width: min(520px, parent.width - 40px); height: min(440px, parent.height - 30px); background: white; border-radius: 14px;
+    if root.editor-open : Rectangle { background: Theme.overlay; TouchArea { scroll-event(event) => { return accept; } } Rectangle { width: min(520px, parent.width - 40px); height: min(440px, parent.height - 30px); background: white; border-radius: 14px;
         VerticalLayout { padding: 20px; spacing: 12px;
             Text { text: root.edit-id == "" ? "新建碎片" : "编辑记忆碎片"; color: Theme.text; font-size: 16px; font-weight: 600; }
             if root.error != "" : Text { text: root.error; color: Theme.danger; wrap: word-wrap; }
@@ -76,6 +74,5 @@ export component ExpertData inherits Rectangle {
             HorizontalLayout { height: 30px; if root.edit-id != "" : ExpertButton { label: "删除"; icon: @image-url("../assets/icons/trash.svg"); enabled: !root.saving; clicked => { root.delete-open = true; } } Rectangle { horizontal-stretch: 1; } ExpertButton { label: "取消"; enabled: !root.saving; clicked => { root.editor-open = false; } } ExpertButton { label: "保存"; icon: @image-url("../assets/icons/save.svg"); enabled: !root.saving; selected: true; clicked => { root.save-memory(); } } }
         }
     } }
-    if root.delete-open : Rectangle { background: Theme.overlay; Rectangle { width: 300px; height: 140px; background: white; border-radius: 12px; VerticalLayout { padding: 20px; Text { text: "确定删除此记忆碎片？"; color: Theme.text; } HorizontalLayout { ExpertButton { label: "取消"; clicked => { root.delete-open = false; } } ExpertButton { label: "删除"; clicked => { root.delete-open = false; root.delete-memory(root.edit-id); } } } } } }
-    if root.replicate-open : Rectangle { background: Theme.overlay; Rectangle { width: 360px; height: 210px; background: white; border-radius: 12px; VerticalLayout { padding: 20px; spacing: 12px; Text { text: "记忆复刻"; color: Theme.text; font-size: 16px; } Text { text: "将当前智能体的记忆复制到目标智能体，覆盖目标已有记忆。"; color: Theme.muted; wrap: word-wrap; } ComboBox { model: root.agent-names; current-index <=> root.replicate-target; } HorizontalLayout { ExpertButton { label: "取消"; clicked => { root.replicate-open = false; } } ExpertButton { label: "确认覆盖"; enabled: root.replicate-target >= 0 && !root.saving; clicked => { root.replicate-memory(root.replicate-target); root.replicate-open = false; } } } } } }
+    if root.delete-open : Rectangle { background: Theme.overlay; TouchArea { scroll-event(event) => { return accept; } } Rectangle { width: 300px; height: 140px; background: white; border-radius: 12px; VerticalLayout { padding: 20px; Text { text: "确定删除此记忆碎片？"; color: Theme.text; } HorizontalLayout { ExpertButton { label: "取消"; clicked => { root.delete-open = false; } } ExpertButton { label: "删除"; clicked => { root.delete-open = false; root.delete-memory(root.edit-id); } } } } } }
 }

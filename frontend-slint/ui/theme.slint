@@ -256,7 +256,6 @@ export struct FileCard { name: string, path: string, entry-type: string, size: s
 export struct WorkspaceFileRow { path: string, name: string, kind: int, size-text: string, icon: image, depth: int, expanded: bool, loading: bool, remaining: int, selected: bool, subtree-end: int }
 export struct CronCard { id: string, name: string, enabled: bool, workspace-name: string, message: string, schedule: string, next-run: string, last-status: string, last-error: string }
 export struct CronRunCard { run-id: string, status: string, trigger: string, summary: string, error: string, duration: string, created-at: string }
-export struct PromptPackCard { id: string, readonly: bool, locale: string, is-active: bool, is-lang-default: bool }
 // Avatar dialog models. `AvatarOption.key` is "initial" or "avatar-NNN";
 // empty `image` cells render the agent-initial glyph. `CompanionCard.preview`
 // carries the companion idle frame (empty until the sheet is loaded).

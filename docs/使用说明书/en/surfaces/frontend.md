@@ -56,7 +56,7 @@ The rendering optimization for extremely large threads is a rewritten plan whose
 
 The Beehive's settings hang off the chat page as categories and share the same backend capabilities as the Pupa. They include:
 
-- **General / Account / Models / Agent / Companion / Prompt packs / Help** (the same as the Pupa)
+- **General / Account / Models / Agent / Companion / Help** (the same as the Pupa)
 - **Tools**: four tabs — built-in / MCP / skills / knowledge bases
 - **Memory**: long-term memory management
 - **Channels**: channel binding and status

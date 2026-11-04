@@ -123,14 +123,14 @@ Type: filesandordirs; Name: "{app}\opt\remotion"
 [Code]
 // Keep the component list in sync with build_win7_installer.ps1: the task names
 // below must cover every supplement component that script can emit (currently
-// python, git, rg, ffmpeg, powershell, browser).
+// python, git, rg, ffmpeg, 7zip, powershell, browser).
 const
-  ComponentCount = 6;
+  ComponentCount = 7;
   CComponentsShown = {#ComponentsShown};
 
 var
-  ComponentTasks: array[0..5] of String;
-  ComponentLabels: array[0..5] of String;
+  ComponentTasks: array[0..6] of String;
+  ComponentLabels: array[0..6] of String;
   SelectAllCheckBox: TNewCheckBox;
   UpdatingSelectAll: Boolean;
 
@@ -140,14 +140,16 @@ begin
   ComponentTasks[1] := 'git';
   ComponentTasks[2] := 'rg';
   ComponentTasks[3] := 'ffmpeg';
-  ComponentTasks[4] := 'powershell';
-  ComponentTasks[5] := 'browser';
+  ComponentTasks[4] := '7zip';
+  ComponentTasks[5] := 'powershell';
+  ComponentTasks[6] := 'browser';
   ComponentLabels[0] := 'Python';
   ComponentLabels[1] := 'Git';
   ComponentLabels[2] := 'ripgrep';
   ComponentLabels[3] := 'FFmpeg';
-  ComponentLabels[4] := 'PowerShell';
-  ComponentLabels[5] := '内置浏览器';
+  ComponentLabels[4] := '7-Zip';
+  ComponentLabels[5] := 'PowerShell';
+  ComponentLabels[6] := '内置浏览器';
   Result := True;
 end;
 

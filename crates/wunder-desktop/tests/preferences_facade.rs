@@ -1,4 +1,4 @@
-//! Preferences, prompt-pack, diagnostics and work-state reset contract tests
+//! Preferences, diagnostics and work-state reset contract tests
 //! against an isolated SQLite runtime (desktop N5 gates).
 
 use std::sync::{Mutex, OnceLock};
@@ -52,79 +52,6 @@ fn start_isolated() -> Result<NativeDesktop, Box<dyn std::error::Error>> {
     args.temp_root = Some(home.join("temp"));
     args.workspace = Some(home.join("workspace"));
     Ok(NativeDesktop::start_with_args(args)?)
-}
-
-#[test]
-fn prompt_pack_lifecycle_roundtrip() {
-    let _serial = serial();
-    let runtime = start_isolated().expect("isolated runtime");
-    let (active, packs, segments) = runtime.list_prompt_packs().expect("list");
-    assert!(!active.is_empty());
-    assert!(segments.len() >= 6, "system segments exposed");
-    let builtins: Vec<_> = packs.iter().filter(|pack| pack.builtin).collect();
-    assert!(builtins.len() >= 2);
-    assert!(builtins.iter().all(|pack| pack.readonly));
-
-    // A custom pack starts empty, becomes editable, and can be activated.
-    runtime.create_prompt_pack("contract-pack").expect("create");
-    assert!(
-        runtime.create_prompt_pack("contract-pack").is_err(),
-        "duplicate"
-    );
-    assert!(
-        runtime.create_prompt_pack("default-zh").is_err(),
-        "builtin name"
-    );
-    assert!(
-        runtime.create_prompt_pack("非法/名称").is_err(),
-        "invalid id"
-    );
-
-    // Reading an absent segment falls back to the system pack content.
-    let fallback = runtime
-        .read_prompt_segment("contract-pack", "role")
-        .expect("read fallback");
-    assert!(!fallback.readonly);
-    assert!(!fallback.exists);
-    assert!(
-        !fallback.content.is_empty(),
-        "system fallback provides content"
-    );
-
-    let edited = "合同测试角色提示词。";
-    runtime
-        .write_prompt_segment("contract-pack", "role", edited)
-        .expect("write");
-    let stored = runtime
-        .read_prompt_segment("contract-pack", "role")
-        .expect("read");
-    assert!(stored.exists);
-    assert_eq!(stored.content, edited);
-
-    runtime
-        .set_active_prompt_pack("contract-pack")
-        .expect("activate");
-    let (active, _, _) = runtime.list_prompt_packs().expect("list");
-    assert_eq!(active, "contract-pack");
-    assert!(runtime.set_active_prompt_pack("missing-pack").is_err());
-
-    // Built-in packs reject writes and deletion at the façade boundary.
-    assert!(runtime
-        .write_prompt_segment("default-zh", "role", "x")
-        .is_err());
-    assert!(runtime.delete_prompt_pack("default-zh").is_err());
-    runtime
-        .write_prompt_segment("contract-pack", "role", "")
-        .expect("clear");
-
-    runtime.delete_prompt_pack("contract-pack").expect("delete");
-    let (active, packs, _) = runtime.list_prompt_packs().expect("list");
-    assert!(packs.iter().all(|pack| pack.id != "contract-pack"));
-    let language_default = wunder_server::user_prompt_templates::resolve_default_user_pack_id();
-    assert_eq!(
-        active, language_default,
-        "deleting the active pack falls back to the system language default"
-    );
 }
 
 #[test]

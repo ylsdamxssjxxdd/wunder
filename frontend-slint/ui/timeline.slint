@@ -154,9 +154,14 @@ component StatusDot inherits ProcessStatusIcon {
 }
 
 // Disclosure control, the bordered square the reference header uses: the
-// chevron points right while folded and down while open. The direction swaps
-// between two icons — transform rotation is unreliable on the software
-// renderer path this window ships with.
+// chevron points right while folded and down while open.
+// The two Font Awesome glyphs are gone: their solid arms fill a 12px box and
+// the pair sits on different viewBoxes (512² vs 320×512), so the caret read as
+// a smudge that also jumped sideways when toggling. Both directions now share
+// one 8×8 viewbox with the ink centred at (4,4), so the two states are the
+// same weight and the swap does not shift. Geometry moves directly — the
+// transform rotation path is unreliable on the software renderer this window
+// ships with.
 component FoldCaret inherits Rectangle {
     in property <bool> open: false;
     in property <bool> hover: false;
@@ -165,11 +170,13 @@ component FoldCaret inherits Rectangle {
     background: root.hover ? Theme.hover : Theme.surface;
     border-width: 1px;
     border-color: root.hover ? Theme.border-strong : Theme.border;
-    Image {
-        x: 3px; y: 3px; width: 12px; height: 12px;
-        source: root.open ? @image-url("../assets/icons/chevron-down.svg")
-                          : @image-url("../assets/icons/chevron-right.svg");
-        colorize: Theme.muted; image-fit: contain;
+    Path {
+        x: 5px; y: 5px; width: 8px; height: 8px;
+        viewbox-width: 8; viewbox-height: 8;
+        commands: root.open ? "M 1.5 2.5 L 4 5.5 L 6.5 2.5"
+                            : "M 2.5 1.5 L 5.5 4 L 2.5 6.5";
+        fill: transparent; stroke: Theme.muted; stroke-width: 1.1px;
+        stroke-line-cap: round; stroke-line-join: round;
     }
 }
 

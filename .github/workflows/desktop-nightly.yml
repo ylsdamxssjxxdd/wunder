@@ -211,6 +211,15 @@ jobs:
             if (-not $pwshEntry) {
               throw 'supplement does not contain opt/powershell/pwsh.exe; rebuild the Desktop Supplements release'
             }
+            # 7-Zip 门禁：安装包嵌入的补充包必须带 opt/7zip，旧缓存包直接拒绝。
+            if ($meta.'7zip'.bundled -ne $true) {
+              throw 'supplement does not bundle 7-Zip; rebuild the Desktop Supplements release'
+            }
+            $sevenZipEntry = $zip.GetEntry('opt/7zip/7z.exe')
+            if (-not $sevenZipEntry) { $sevenZipEntry = $zip.GetEntry('opt\7zip\7z.exe') }
+            if (-not $sevenZipEntry) {
+              throw 'supplement does not contain opt/7zip/7z.exe; rebuild the Desktop Supplements release'
+            }
             # 发布前最后一道架构检查：release 上的包可能来自旧构建缓存，而打包脚本
             # 的门禁只保护「本次构建」。任何 32 位包里混入 x64/arm64 的 exe/dll/pyd
             # 都只能在目标机上才炸（capstone.dll 就是这么混进来的）。
@@ -421,6 +430,13 @@ jobs:
             --pattern "wunder-supplement-linux-${{ matrix.arch }}.tar.gz" \
             --dir supplement --clobber
           ls -la supplement
+          # 安装包嵌入的补充包必须带 opt/7zip，旧缓存包直接拒绝。awk 消费完整
+          # 列表再判定：grep -q 提前退出会让 tar 在 pipefail 下吃 SIGPIPE 误报。
+          tar -tzf "supplement/wunder-supplement-linux-${{ matrix.arch }}.tar.gz" |
+            awk '$0 == "opt/7zip/bin/7zz" { found = 1 } END { exit found ? 0 : 1 }' || {
+            echo 'supplement is missing opt/7zip/bin/7zz; rebuild the Desktop Supplements release' >&2
+            exit 1
+          }
       - name: Assemble Linux installer
         shell: bash
         run: |

@@ -62,7 +62,6 @@ pub(crate) fn project_tools(app: &MainWindow) {
         }
     }
     app.set_expert_tool_groups(model(groups));
-    app.set_expert_agent_names(model(app.get_agents().iter().map(|a| a.name).collect()));
 }
 
 /// Toggle-only refresh: updates enabled flags inside the existing
@@ -185,8 +184,6 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         // enabled flags in place and the model must be left untouched.
         if app.get_expert_tool_groups().row_count() == 0 {
             project_tools(&app);
-        } else {
-            app.set_expert_agent_names(model(app.get_agents().iter().map(|a| a.name).collect()));
         }
         // The active settings category is the only view selector now that the
         // expert page's own tab strip is gone: 6 memories, 13 account (runtime
@@ -377,38 +374,6 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         app.set_memory_editor_open(false);
                         app.invoke_refresh_expert();
                     }
-                    Err(e) => app.set_expert_error(e.to_string().into()),
-                }
-            });
-        });
-    });
-    let weak = app.as_weak();
-    let replicate_api = api.clone();
-    app.on_replicate_expert_memory(move |index| {
-        let Some(app) = weak.upgrade() else { return };
-        let Some(agent) = agent_id(&app) else { return };
-        let Some(target) = usize::try_from(index)
-            .ok()
-            .and_then(|i| app.get_agents().row_data(i))
-        else {
-            return;
-        };
-        if app.get_expert_saving() {
-            return;
-        }
-        app.set_expert_saving(true);
-        let api = replicate_api.clone();
-        let weak = app.as_weak();
-        let target = target.id.to_string();
-        std::thread::spawn(move || {
-            let result = api.replicate_expert_memories(&agent, &target);
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                app.set_expert_saving(false);
-                if agent_id(&app).as_deref() != Some(agent.as_str()) {
-                    return;
-                }
-                match result {
-                    Ok(()) => app.set_status("记忆复刻完成".into()),
                     Err(e) => app.set_expert_error(e.to_string().into()),
                 }
             });

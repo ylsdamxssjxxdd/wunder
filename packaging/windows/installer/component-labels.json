@@ -6,6 +6,7 @@
   "rg": "ripgrep {version}",
   "powershell": "PowerShell {version}（命令执行默认 shell）",
   "ffmpeg": "FFmpeg {version}",
+  "7zip": "7-Zip {version}",
   "browser": "内置浏览器 Chrome {version}",
   "approxSize": "（约 {size} MB）"
 }

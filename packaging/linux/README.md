@@ -6,12 +6,13 @@
 - `opt/git`：给 `git clone`、`git status`、补丁应用与仓库操作使用的内置 Git
 - `opt/rg`：给 `search_content` 与命令行检索使用的内置 ripgrep
 - `opt/ffmpeg`：给音视频抽帧、抽音轨与转码使用的内置静态 ffmpeg
+- `opt/7zip`：随包附带的 7-Zip 25.01 官方静态命令行版（`bin/7zz`，`bin/7z` 为其符号链接），压缩包归档工具（含 `.7z`/`.rar` 解压）由它提供
 - `opt/browser`：Linux amd64 内置 Google Chrome for Testing 122.0.6261.111；Linux arm64 内置 Playwright Chromium 120.0.6099.28，供 `browser_*` 工具离线使用
 
 补充包设计目标与 Win7 版一致：**统一安装到 `WUNDER_HOME/opt`，蛹与舵机共用一份运行环境**。
 
 - 推荐在蛹设置中选择“导入补充包”，默认写入 `~/.wunder/opt/`，导入后蛹新启动的工具立即生效。
-- 手动安装时，关闭使用该补充包的进程，将压缩包解压到 `${WUNDER_HOME:-$HOME/.wunder}`，使其下直接出现 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`，再启动蛹或舵机。
+- 手动安装时，关闭使用该补充包的进程，将压缩包解压到 `${WUNDER_HOME:-$HOME/.wunder}`，使其下直接出现 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/7zip`，再启动蛹或舵机。
 - `.run` 安装包与 `-portable` 便携包共用这个可写用户目录；新导入始终写入共享 home，不自动搬迁旧文件。
 
 ## 安装器打包
@@ -56,6 +57,14 @@ Windows 上也可以执行 `build.bat pack -a linux-amd64`；组包器是 Python
   - 与 Win7 补充包同源同版本，保证三端音视频处理行为一致（对齐 Windows）。
    - 上游为自包含静态单文件构建，Ubuntu 18.04（glibc 2.27）与 arm64 包可直接运行；
      当前仅内置 `ffmpeg`（不含 `ffprobe`），与 Win7 包保持一致。
+- 7-Zip：`25.01`（官方静态命令行版 `7zzs`）
+  - 官方 Linux 构建同时带动态链接的 `7zz` 与完全静态链接的 `7zzs`；补充包只取
+    `7zzs`，归档能力不引入任何 glibc 依赖，Ubuntu 18.04 基线在 amd64/arm64 都成立。
+  - 进包时改名为 `bin/7zz` 并建立 `bin/7z` 符号链接：运行时的解压器按 PATH 找 `7z`，
+    官方命令名 `7zz` 同时保留；完整解码器覆盖 `7z/zip/tar/gzip/xz` 与 Rar，
+    `.7z`/`.rar` 解压离线可用，不再依赖系统 p7zip/unrar。
+  - pin 到 `25.01` 还因为该版本修复了处理压缩包内符号链接的安全漏洞
+    （CVE-2025-55188），而归档解压工具面对的正是外部来源的压缩包。
 
 ## Python 依赖
 
@@ -91,8 +100,8 @@ docker run --rm --platform linux/amd64 \
 - `WUNDER_SUPPLEMENT_REQUIREMENTS`：requirements 覆盖
 
 脚本自带 sha256 校验（python-build-standalone 与 ripgrep 取官方 `.sha256`
-sidecar，Git 源码包与 ffmpeg 单文件构建的哈希固定在 manifest 中；ffmpeg
-上游未发布 `.sha256` sidecar），下载缓存在构建根目录的
+sidecar，Git 源码包、ffmpeg 单文件构建与 7-Zip 压缩包的哈希固定在 manifest
+中；ffmpeg 与 7-Zip 上游未发布 `.sha256` sidecar），下载缓存在构建根目录的
 `downloads/` 下，重复执行直接复用。
 
 ## 默认输出
@@ -107,6 +116,7 @@ opt/
   git/
   rg/
   ffmpeg/
+  7zip/                    # bin/7zz（官方静态 7zzs）+ bin/7z 符号链接
   browser/                 # amd64: chrome-linux64/chrome；arm64: chrome-linux/chrome
 README-linux-supplement.txt
 wunder-linux-supplement.json

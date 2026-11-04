@@ -403,6 +403,47 @@ impl NativeDesktop {
             Some((parent, _)) => format!("{parent}/{name}"),
             None => name,
         };
+        self.run_cloud_move(&source, &destination)
+    }
+
+    /// Move one cloud entry (file or directory) into a target directory
+    /// (`workspace.move`, L2), keeping its name. `target_dir` empty = the
+    /// workspace root. A directory is refused into itself or its own subtree;
+    /// a file landing in the directory it already lives in is a no-op.
+    pub fn interlink_cloud_move(
+        &self,
+        source: &str,
+        is_dir: bool,
+        target_dir: &str,
+    ) -> Result<CloudOpOutcome> {
+        let source = cloud_path(source);
+        let name = source
+            .rsplit_once('/')
+            .map(|(_, tail)| tail)
+            .unwrap_or(&source);
+        anyhow::ensure!(!name.is_empty() && name != ".", "路径无效");
+        let target_dir = cloud_path(target_dir);
+        if is_dir {
+            anyhow::ensure!(
+                target_dir != source && !source.starts_with(&format!("{target_dir}/")),
+                "不能把目录移动到它自己或它的子目录里"
+            );
+        }
+        let destination = if target_dir == "." {
+            name.to_string()
+        } else {
+            format!("{target_dir}/{name}")
+        };
+        if destination == source {
+            // 已经在目标目录里：按云端口径返回成功，调用方无需再刷新。
+            return Ok(CloudOpOutcome::Done(source));
+        }
+        self.run_cloud_move(&source, &destination)
+    }
+
+    /// One `workspace.move` cloud command with a validated destination path.
+    fn run_cloud_move(&self, source: &str, destination: &str) -> Result<CloudOpOutcome> {
+        anyhow::ensure!(!destination.contains(".."), "名称不能包含路径穿越");
         self.run_cloud_op(
             "workspace.move",
             serde_json::json!({ "source": source, "destination": destination }),

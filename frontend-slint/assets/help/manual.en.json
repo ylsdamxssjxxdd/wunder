@@ -1922,14 +1922,14 @@
           "kind": "paragraph",
           "spans": [
             {
-              "text": "12 categories",
+              "text": "11 categories",
               "bold": true,
               "code": false,
               "kbd": false,
               "href": ""
             },
             {
-              "text": ": General, Account, Model, Tools, Agents, Personas, Scheduled, Memory, Channels, Prompt packs, Archive, Help.",
+              "text": ": General, Account, Model, Tools, Agents, Personas, Scheduled, Memory, Channels, Archive, Help.",
               "bold": false,
               "code": false,
               "kbd": false,
@@ -11318,29 +11318,6 @@
                 [
                   {
                     "text": "Channel binding and status",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ]
-              ]
-            },
-            {
-              "header": false,
-              "cells": [
-                [
-                  {
-                    "text": "Prompt packs",
-                    "bold": false,
-                    "code": false,
-                    "kbd": false,
-                    "href": ""
-                  }
-                ],
-                [
-                  {
-                    "text": "Prompt packs available in-app, with language defaults",
                     "bold": false,
                     "code": false,
                     "kbd": false,

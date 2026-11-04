@@ -1,7 +1,7 @@
 FROM ubuntu:18.04
 
 # Lean build image for the Linux supplement pack (opt/python, opt/git,
-# opt/rg and opt/ffmpeg).
+# opt/rg, opt/ffmpeg and opt/7zip).
 # Keeping this image on Ubuntu 18.04 preserves the desktop compatibility
 # baseline for the native tools. The arm64 variant is run under QEMU binfmt by
 # CI, so the single Dockerfile covers both architectures through the platform
@@ -47,7 +47,9 @@ RUN set -eux; \
       'Acquire::Retries "5";' \
       'Acquire::http::Pipeline-Depth "0";' \
       > /etc/apt/apt.conf.d/99wunder-build; \
-    packages='build-essential ca-certificates curl file python3 unzip zlib1g-dev libcurl4-openssl-dev libexpat1-dev libssl-dev libnss3 libnspr4 libgbm1 libasound2 libxcb1 libx11-6 libxext6 libxrender1 libfontconfig1 libx11-xcb1 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgtk-3-0'; \
+    # xz-utils: the pinned 7-Zip Linux archives are .tar.xz and GNU tar shells
+    # out to xz for -xJf; the bionic base image cannot be relied on to carry it.
+    packages='build-essential ca-certificates curl file python3 unzip xz-utils zlib1g-dev libcurl4-openssl-dev libexpat1-dev libssl-dev libnss3 libnspr4 libgbm1 libasound2 libxcb1 libx11-6 libxext6 libxrender1 libfontconfig1 libx11-xcb1 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgtk-3-0'; \
     attempt=1; \
     while :; do \
       if apt-get update && apt-get install -y --no-install-recommends ${packages}; then \

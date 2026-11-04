@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Build the Wunder Desktop Windows supplement (bundled Python + Git + ripgrep + ffmpeg).
+Build the Wunder Desktop Windows supplement (bundled Python + Git + ripgrep + ffmpeg + 7-Zip).
 
 .DESCRIPTION
 Windows counterpart of packaging/linux/scripts/build_linux_supplement.sh.
@@ -31,7 +31,7 @@ pip index URL. Defaults to the manifest defaultPackageIndexUrl (Tsinghua Tuna).
 .PARAMETER RefreshDownloads
 Redownload cached archives instead of reusing them.
 
-.PARAMETER PythonArchivePath / GitArchivePath / RgArchivePath / FfmpegArchivePath / BrowserArchivePath / PowerShellArchivePath
+.PARAMETER PythonArchivePath / GitArchivePath / RgArchivePath / FfmpegArchivePath / SevenZipArchivePath / BrowserArchivePath / PowerShellArchivePath
 Use hand-prepared local archives instead of downloading. BrowserArchivePath
 overrides the automatic Chrome 109 cache/download flow and also accepts an
 unpacked browser directory staged into opt/browser.
@@ -86,6 +86,8 @@ param(
 
   [string]$PowerShellArchivePath = '',
 
+  [string]$SevenZipArchivePath = '',
+
   [switch]$SkipPrune,
   [switch]$SkipGitPrune,
 
@@ -96,6 +98,8 @@ param(
   [switch]$SkipBrowser,
 
   [switch]$SkipPowerShell,
+
+  [switch]$SkipSevenZip,
 
   [switch]$BestEffort
 )
@@ -821,6 +825,7 @@ $gitRoot    = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -N
 $rgRoot     = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'rgRoot' -Default 'opt\rg'))
 $ffmpegRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'ffmpegRoot' -Default 'opt\ffmpeg'))
 $powershellRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'powershellRoot' -Default 'opt\powershell'))
+$sevenZipRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'sevenZipRoot' -Default 'opt\7zip'))
 
 Write-Step "repo root : $repoRoot"
 Write-Step "build root: $buildRootEffective"
@@ -1098,6 +1103,54 @@ if (-not $SkipPowerShell) {
   }
 }
 
+# ---------------------------------------------------------------------------
+# 7-Zip console (7z.exe + 7z.dll; full-format archiver incl. the Rar codecs)
+# ---------------------------------------------------------------------------
+# archive_extract resolves 7z through PATH, so the pack must stage the console
+# pair where opt/7zip is prepended to PATH. The pinned asset is the official
+# installer -- itself a 7z SFX, so unpacking it needs a host 7-Zip exactly like
+# the browser mini_installer flow above/below; -SkipSevenZip is the escape
+# hatch for hosts without one.
+$szMeta = Get-PropertyValue -Object $manifest -Name '7zip'
+$szVersion = [string](Get-PropertyValue -Object $szMeta -Name 'version' -Default '')
+$szExeRel = [string](Get-PropertyValue -Object $szMeta -Name 'expectedExe' -Default '7z.exe')
+$szBundled = $false
+if (-not $SkipSevenZip) {
+  $szArchiveMeta = Get-PropertyValue -Object (Get-PropertyValue -Object $szMeta -Name 'archives') -Name $Arch
+  if ($null -ne $szArchiveMeta) {
+    $szArchive = $SevenZipArchivePath
+    if ([string]::IsNullOrWhiteSpace($szArchive)) {
+      $szArchive = Join-Path $downDir ([string](Get-PropertyValue -Object $szArchiveMeta -Name 'fileName' -Default '7z-installer.exe'))
+      Get-DownloadedFile -Url ([string](Get-PropertyValue -Object $szArchiveMeta -Name 'url')) -Destination $szArchive -Force:$RefreshDownloads | Out-Null
+      Assert-FileSha256 -Path $szArchive -Expected ([string](Get-PropertyValue -Object $szArchiveMeta -Name 'sha256' -Default ''))
+    } elseif (-not (Test-Path -LiteralPath $szArchive)) { Fail "7-Zip archive not found: $szArchive" }
+    $sevenZipHost = Resolve-SevenZipExecutable -RepoRoot $repoRoot
+    Write-Step "staging 7-Zip $szVersion into $sevenZipRoot"
+    $szExtractRoot = Join-Path $buildRootEffective 'sevenzip-source'
+    Invoke-SevenZipExtract -Executable $sevenZipHost -Archive $szArchive -Destination $szExtractRoot -Force7z
+    Ensure-Directory $sevenZipRoot
+    foreach ($payloadName in @('7z.exe', '7z.dll', 'License.txt')) {
+      $payloadSource = Join-Path $szExtractRoot $payloadName
+      if (-not (Test-Path -LiteralPath $payloadSource -PathType Leaf)) { Fail "7-Zip installer payload missing ${payloadName}: $szArchive" }
+      Copy-Item -LiteralPath $payloadSource -Destination (Join-Path $sevenZipRoot $payloadName) -Force
+    }
+    Remove-Tree $szExtractRoot
+    $szExe = Join-Path $sevenZipRoot $szExeRel
+    if (-not (Test-Path -LiteralPath $szExe -PathType Leaf)) { Fail "7-Zip executable missing after staging: $szExe" }
+    Assert-PeMachine -Path $szExe -Arch $Arch
+    # A 7z.exe that starts but cannot load its codec DLL fails at first use, so
+    # the DLL gets the same two gates as the executable.
+    Assert-Win7PeImports -Path $szExe
+    Assert-Win7PeImports -Path (Join-Path $sevenZipRoot '7z.dll')
+    $szResult = Invoke-ProcessCapture -FilePath $szExe -Arguments @('i')
+    if ($szResult.ExitCode -ne 0 -or -not ("$($szResult.StdOut)" -match '7-Zip')) {
+      Fail "7-Zip smoke failed: exit=$($szResult.ExitCode) out=$($szResult.StdOut) err=$($szResult.StdErr)"
+    }
+    Write-Step ("7-Zip smoke ok: {0}" -f (@($szResult.StdOut -split "`n") | Select-Object -First 1).Trim())
+    $szBundled = $true
+  }
+}
+
 
 
 # ---------------------------------------------------------------------------
@@ -1199,13 +1252,14 @@ Contents:
   opt/rg       ripgrep __RGVER__
   opt/powershell  PowerShell __PSVER__ portable (pwsh.exe; command tool default shell, __PSSTATE__)
   opt/ffmpeg   ffmpeg __FFVER__ (when bundled)
+  opt/7zip     7-Zip __SZVER__ console (7z.exe + 7z.dll, when bundled)
   opt/browser  Chrome __BROWSERVER__ win32 at __BROWSEREXE__ (when bundled)
 
 Use Import supplement in the Pupa settings to install into WUNDER_HOME.
 For manual installation, close processes using this runtime and unpack into
 WUNDER_HOME (default: .wunder in your user home). The Pupa and Helm share
-opt/python, opt/git, opt/rg, opt/ffmpeg and opt/powershell, and prepend
-their bins to PATH.
+opt/python, opt/git, opt/rg, opt/ffmpeg, opt/powershell and opt/7zip, and
+prepend their bins to PATH.
 
 Shell: when opt/powershell/pwsh.exe starts, the command tool runs it as the
 default shell and falls back to the system Windows PowerShell only if the
@@ -1216,7 +1270,7 @@ working on the system shell instead of failing every command.
 Browsers: __BROWSER__
 '@
 $psState = if ($psBundled) { 'bundled' } else { 'not bundled; the system Windows PowerShell is used' }
-$readmeText = $readmeText.Replace('__ARCH__', $archLabel).Replace('__PROFILE__', $PythonProfile).Replace('__PYVER__', $pyVer).Replace('__GITVER__', $gitVersion).Replace('__RGVER__', $rgVersion).Replace('__FFVER__', $ffVersion).Replace('__PSVER__', $psVersion).Replace('__PSSTATE__', $psState).Replace('__BROWSERVER__', $browserVersion).Replace('__BROWSEREXE__', $browserExeRel).Replace('__BROWSER__', $browserNote)
+$readmeText = $readmeText.Replace('__ARCH__', $archLabel).Replace('__PROFILE__', $PythonProfile).Replace('__PYVER__', $pyVer).Replace('__GITVER__', $gitVersion).Replace('__RGVER__', $rgVersion).Replace('__FFVER__', $ffVersion).Replace('__SZVER__', $szVersion).Replace('__PSVER__', $psVersion).Replace('__PSSTATE__', $psState).Replace('__BROWSERVER__', $browserVersion).Replace('__BROWSEREXE__', $browserExeRel).Replace('__BROWSER__', $browserNote)
 Write-Utf8NoBom -Path (Join-Path $packRoot 'README-win7-supplement.txt') -Content $readmeText
 
 $metaObj = [ordered]@{
@@ -1241,6 +1295,12 @@ $metaObj = [ordered]@{
     source = 'PowerShell/PowerShell 7.1.7 win-x86 portable zip'
   }
   ffmpeg        = [ordered]@{ version = $ffVersion; bundled = $ffmpegBundled }
+  '7zip'        = [ordered]@{
+    version = $szVersion
+    bundled = $szBundled
+    expectedExe = ('opt/7zip/' + $szExeRel)
+    source = '7-Zip 25.01 official console installer (7z.exe + 7z.dll)'
+  }
   browser       = [ordered]@{
     installBrowser = $installBrowser
     installed = $browserInstalled

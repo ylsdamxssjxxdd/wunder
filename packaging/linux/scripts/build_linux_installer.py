@@ -26,7 +26,7 @@ import tarfile
 import time
 from pathlib import Path
 
-KNOWN_COMPONENTS = ("python", "git", "rg", "ffmpeg", "browser")
+KNOWN_COMPONENTS = ("python", "git", "rg", "ffmpeg", "7zip", "browser")
 ELF_MACHINES = {"amd64": 0x3E, "arm64": 0xB7}
 ARCH_LABELS = {"amd64": "x64", "arm64": "arm64"}
 # Path of the desktop binary inside the AppDir, used both for validation and by
@@ -37,6 +37,7 @@ LABELS = {
     "git": "Git {version}",
     "rg": "ripgrep {version}",
     "ffmpeg": "FFmpeg {version}",
+    "7zip": "7-Zip {version}",
     "browser": "内置浏览器 Chrome {version}",
 }
 CHUNK = 4 * 1024 * 1024

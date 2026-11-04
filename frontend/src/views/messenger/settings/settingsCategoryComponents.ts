@@ -43,9 +43,6 @@ export const SettingsChannelsCategory = lazy(
 export const SettingsDevicesCategory = lazy(
   () => import('@/views/messenger/settings/categories/SettingsDevicesCategory.vue')
 );
-export const SettingsPromptsCategory = lazy(
-  () => import('@/views/messenger/settings/categories/SettingsPromptsCategory.vue')
-);
 export const SettingsArchivedCategory = lazy(
   () => import('@/views/messenger/settings/categories/SettingsArchivedCategory.vue')
 );
@@ -60,6 +57,5 @@ export const SETTINGS_CATEGORY_COMPONENTS: Record<SettingsCategoryId, Component>
   memory: SettingsMemoryCategory,
   channels: SettingsChannelsCategory,
   devices: SettingsDevicesCategory,
-  prompts: SettingsPromptsCategory,
   archived: SettingsArchivedCategory
 };

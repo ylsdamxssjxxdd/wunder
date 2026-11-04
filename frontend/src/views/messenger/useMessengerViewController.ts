@@ -51,8 +51,7 @@ import {
   MessengerSettingsPanel,
   preloadAgentSettingsPanels,
   preloadMessengerSettingsPanels,
-  UserChannelSettingsPanel,
-  UserPromptSettingsPanel
+  UserChannelSettingsPanel
 } from '@/views/messenger/lazyPanels';
 import {
   resolveFileContainerLifecycleText,
@@ -341,7 +340,6 @@ export function useMessengerViewController(): Record<string, any> {
     UserChannelSettingsPanel,
     useRoute,
     useRouter,
-    UserPromptSettingsPanel,
     useSessionHubStore,
     useStableMixedConversationOrder,
     useThemeStore,

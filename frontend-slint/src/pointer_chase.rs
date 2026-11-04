@@ -24,6 +24,8 @@ thread_local! {
     static CHASE: Rc<Timer> = Rc::new(Timer::default());
     /// 上一次回灌的位置，避免同一位置重复写属性触发整列行重算。
     static LAST: Cell<Option<(f32, f32)>> = const { Cell::new(None) };
+    /// 光标是否已在窗口外：只在从内到外的那一跳上报，避免每帧重复触发。
+    static OUTSIDE: Cell<bool> = const { Cell::new(false) };
 }
 
 /// 装上追踪通道：声明平台能力，并把 Slint 侧的两个回调接到系统调用上。
@@ -43,6 +45,7 @@ fn start(app: &MainWindow) {
     if !cfg!(windows) {
         return;
     }
+    OUTSIDE.with(|slot| slot.set(false));
     let weak = app.as_weak();
     CHASE.with(|timer| {
         // 手势可能连着下一次按下：无条件重启，让节奏从这次按下重新计。
@@ -69,12 +72,33 @@ fn tick(app: &MainWindow) {
         chase.set_pointer_x(x);
         chase.set_pointer_y(y);
     }
+    // 拖拽把手势带出窗口（原生文件管理器的习惯用法）：只在从内到外的那一跳
+    // 上报，由工作目录面板决定要不要转成 OS 拖出——其它手势（线程行排序、
+    // 侧栏宽度）的转换请求会在面板里因为拖拽状态不匹配而落空。
+    let (width, height) = window_logical_size(app);
+    let outside = x < 0.0 || y < 0.0 || x > width || y > height;
+    if outside && !OUTSIDE.with(Cell::get) {
+        OUTSIDE.with(|slot| slot.set(true));
+        crate::workspace_files::drag_left_window(app);
+    } else if !outside {
+        OUTSIDE.with(|slot| slot.set(false));
+    }
     if !held {
         // 事件流没送来那条松开（或被我们判成合成松开而忽略），这里收尾。
         chase.set_finish_serial(chase.get_finish_serial().wrapping_add(1));
         chase.set_holding(false);
         stop();
     }
+}
+
+/// The window client area in logical pixels, the same space the chase feeds.
+fn window_logical_size(app: &MainWindow) -> (f32, f32) {
+    let scale = f64::from(app.window().scale_factor()).max(0.001);
+    let size = app.window().size();
+    (
+        (f64::from(size.width) / scale) as f32,
+        (f64::from(size.height) / scale) as f32,
+    )
 }
 
 fn stop() {

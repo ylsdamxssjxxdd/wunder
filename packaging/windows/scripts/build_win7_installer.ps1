@@ -20,7 +20,7 @@ $stageRoot = Join-Path $repoRoot "temp_dir\installer\win7-x86"
 # of wunder.iss indexes its ComponentTasks/ComponentLabels arrays in exactly
 # this order, so a component added here must also bump ComponentCount and the
 # array bounds there.
-$ComponentOrder = @("python", "git", "rg", "ffmpeg", "powershell", "browser")
+$ComponentOrder = @("python", "git", "rg", "ffmpeg", "7zip", "powershell", "browser")
 $win7BuilderRoot = if ($env:WUNDER_WIN7_BUILDER_ROOT) {
   $env:WUNDER_WIN7_BUILDER_ROOT
 } elseif ($env:WUNDER_BUILDER_ROOT) {

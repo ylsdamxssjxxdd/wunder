@@ -141,7 +141,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -1189,7 +1188,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -1563,7 +1561,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -2388,7 +2385,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -3343,7 +3339,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -4149,7 +4144,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -4425,9 +4419,7 @@ function installMessengerControllerMessageRoutingPreferences(ctx: MessengerContr
                   ? explicitSettingsPanelMode
                   : panelHint === 'profile'
                               ? 'profile'
-                              : panelHint === 'prompts' || panelHint === 'prompt' || panelHint === 'system-prompt'
-                                  ? 'prompts'
-                                  : 'general';
+                              : 'general';
       }
       // Section-scoped selections are cleared unconditionally: the shell only has
       // the messages/agents/files/more sections, so nothing survives a switch.
@@ -4520,7 +4512,6 @@ function installMessengerControllerMessageRoutingPreferences(ctx: MessengerContr
   ctx.activateSettingsPanel = (panelMode: string) => {
       const nextPanelMode = ctx.normalizeSettingsPanelMode(panelMode);
       const panelHint = nextPanelMode === 'profile' ||
-          nextPanelMode === 'prompts' ||
           nextPanelMode === 'desktop-models' ||
           nextPanelMode === 'desktop-lan'
           ? nextPanelMode
@@ -4742,7 +4733,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -5104,7 +5094,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -6443,7 +6432,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -6783,7 +6771,6 @@ function installMessengerControllerWorkspaceOrderUiActions(ctx: MessengerControl
   ctx.normalizeSettingsPanelMode = (value: unknown): SettingsPanelMode => {
       const normalized = String(value || '').trim().toLowerCase();
       if (normalized === 'profile' ||
-          normalized === 'prompts' ||
           normalized === 'desktop-models' ||
           normalized === 'desktop-lan') {
           return normalized;
@@ -6849,7 +6836,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -7181,7 +7167,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -7504,7 +7489,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -7680,8 +7664,6 @@ function installMessengerControllerPanelSummaries(ctx: MessengerControllerContex
       if (ctx.sessionHub.activeSection === 'more') {
           if (ctx.settingsPanelMode.value === 'profile')
               return ctx.t('user.profile.enter');
-          if (ctx.settingsPanelMode.value === 'prompts')
-              return ctx.t('messenger.prompt.title');
           if (ctx.settingsPanelMode.value === 'desktop-models')
               return ctx.t('desktop.system.llm');
           if (ctx.settingsPanelMode.value === 'desktop-lan')
@@ -7706,8 +7688,6 @@ function installMessengerControllerPanelSummaries(ctx: MessengerControllerContex
       if (ctx.sessionHub.activeSection === 'more') {
           if (ctx.settingsPanelMode.value === 'profile')
               return ctx.currentUsername.value;
-          if (ctx.settingsPanelMode.value === 'prompts')
-              return ctx.t('messenger.prompt.desc');
           if (ctx.settingsPanelMode.value === 'desktop-models')
               return ctx.t('desktop.system.llmHint');
           if (ctx.settingsPanelMode.value === 'desktop-lan')
@@ -7989,7 +7969,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -8905,7 +8884,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -9245,7 +9223,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -9805,7 +9782,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -10277,7 +10253,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -10646,7 +10621,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -11501,7 +11475,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -12328,7 +12301,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -12764,7 +12736,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -13181,7 +13152,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -13893,7 +13863,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -14275,7 +14244,6 @@ type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'a
 type SettingsPanelMode =
   | 'general'
   | 'profile'
-  | 'prompts'
   | 'desktop-models'
   | 'desktop-lan';
 
@@ -14405,9 +14373,6 @@ function installMessengerControllerSharedHelpers(ctx: MessengerControllerContext
       }
       if (panelHint === 'profile') {
           return 'profile';
-      }
-      if (panelHint === 'prompts' || panelHint === 'prompt' || panelHint === 'system-prompt') {
-          return 'prompts';
       }
       if (desktopEnabled && panelHint === 'desktop-models') {
           return 'desktop-models';

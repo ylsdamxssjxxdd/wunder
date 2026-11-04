@@ -28,7 +28,7 @@ Four interfaces map to the four forms. They share one engine but differ in how y
 
 ## Main areas
 
-The **Pupa**'s main window has **only two pages**: chat and settings. Everything else sits in panels and dialogs — sidebar, input area, timeline, terminal view, tools dialog, companion dialog, workspace dialog, working directory, thread trajectory, subagent details, channels page, scheduled page, settings sections, activity card, expert data, patch-diff card, screenshot overlay, and tray and system notifications. The settings navigation has **12 categories**: General, Account, Models, Tools, Agent, Companion, Scheduled, Memory, Channels, Prompt packs, Archive, and Help. There is **no "Device interconnection" category**.
+The **Pupa**'s main window has **only two pages**: chat and settings. Everything else sits in panels and dialogs — sidebar, input area, timeline, terminal view, tools dialog, companion dialog, workspace dialog, working directory, thread trajectory, subagent details, channels page, scheduled page, settings sections, activity card, expert data, patch-diff card, screenshot overlay, and tray and system notifications. The settings navigation has **11 categories**: General, Account, Models, Tools, Agent, Companion, Scheduled, Memory, Channels, Archive, and Help. There is **no "Device interconnection" category**.
 
 The **Beehive** is a single-page app in the browser whose main area is the messenger: left column + timeline + input area, with chat and the working directory joined together. Settings exist as categories, including tools, memory, channels, scheduled tasks, devices, and archive.
 

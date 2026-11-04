@@ -21,7 +21,6 @@
           @click="toggleDeviceMenu"
           @keydown.esc.prevent="closeDeviceMenu"
         >
-          <i class="messenger-sidebar-device-icon" :class="selectedDevice.icon" aria-hidden="true"></i>
           <span class="messenger-sidebar-device-label">{{ selectedDevice.label }}</span>
           <span class="messenger-sidebar-device-kind">{{ selectedDeviceKindLabel }}</span>
           <i

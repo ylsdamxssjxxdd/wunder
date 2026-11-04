@@ -8,7 +8,7 @@ import { I18n } from "i18n.slint";
 // the root file get a public wrapper. The fields report focus through
 // components.slint / textedit-base.slint.
 export { TextFieldActivation } from "text_field.slint";
-import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow, CommandTask, SubagentItem } from "theme.slint";
+import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow, CommandTask, SubagentItem } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 export { ToastState }
 import { ProcessEntry } from "theme.slint";
@@ -45,7 +45,7 @@ export { ModelPresets }
 import { WindowChrome, WindowFrame } from "window_chrome.slint";
 // `TimelineView` is deliberately absent: nothing in Rust names it, and an
 // exported component that does not inherit Window only earns a build warning.
-export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, ProcessEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, PromptPackCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkApproval, WorkspaceFileRow }
+export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, ProcessEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkApproval, WorkspaceFileRow }
 export { AppTray } from "tray.slint";
 export { TrayNotice } from "tray-notice.slint";
 export { CompletionNotice } from "completion-notice.slint";
@@ -159,8 +159,6 @@ export component MainWindow inherits Window {
     in-out property <string> memory-edit-title;
     in-out property <string> memory-edit-content;
     in-out property <string> memory-edit-category;
-    in-out property <[string]> expert-agent-names;
-    callback replicate-expert-memory(int);
     callback open-expert-memory(int);
     callback save-expert-memory();
     callback delete-expert-memory(string);
@@ -435,7 +433,6 @@ export component MainWindow inherits Window {
     // 输入区子智能体浮层的详情与中断动作；父线程取当前活动线程。
     callback dock-open-subagent(string);
     callback dock-stop-subagent(string);
-    in-out property <bool> more-open: false;
     // Read-only mirror of the timeline viewport offset; the native smoke checks
     // use it to prove the view does not jump while the user reads back.
     out property <length> scroll-y: follow_view.scroll-y;
@@ -452,15 +449,6 @@ export component MainWindow inherits Window {
     in-out property <bool> cron-loading: false;
     in-out property <[CronCard]> cron-jobs: [];
     in-out property <int> cron-selected: -1;
-    in-out property <[PromptPackCard]> prompt-packs: [];
-    in-out property <[string]> prompt-pack-names: [];
-    in-out property <string> prompt-active;
-    in-out property <string> prompt-selected-pack;
-    in-out property <int> prompt-selected-segment: 0;
-    in-out property <string> prompt-draft;
-    in-out property <bool> prompt-readonly: false;
-    in-out property <bool> prompt-loading: false;
-    in-out property <string> pack-name-draft;
     in-out property <string> prompt-preview;
     in-out property <bool> prompt-preview-loading: false;
     in-out property <bool> cron-delete-open: false;
@@ -727,10 +715,18 @@ export component MainWindow inherits Window {
     callback ws-file-select();
     callback ws-file-selection-action(int);
     callback ws-file-check(int);
-    // Context menu (row index or -1 for the blank area, action code),
-    // drag-out download on a row, and the Explorer drop upload.
+    // Modifier pick (row index, ctrl, shift) and the internal move drag
+    // lifecycle (begin row, hovered row index, last hover index at release).
+    callback ws-file-pick(int, bool, bool);
+    callback ws-file-drag-begin(int);
+    callback ws-file-drag-hover(int);
+    callback ws-file-drag-drop(int);
+    in-out property <bool> ws-file-dragging: false;
+    in-out property <string> ws-file-drop-path;
+    in-out property <bool> ws-file-drop-root: false;
+    // Context menu (row index or -1 for the blank area, action code)
+    // and the Explorer drop upload.
     callback ws-file-menu(int, int);
-    callback ws-file-drag(int);
     callback ws-file-drop(DropEvent);
     callback composer-file-drop(DropEvent);
     // 侧栏宽度：以窗口坐标为准（追踪通道给的是真实光标位置），起点由按下时
@@ -931,16 +927,8 @@ export component MainWindow inherits Window {
     callback probe-model-context();
     callback probe-model-voices();
     callback save-preferences();
-    callback refresh-prompt-packs();
-    callback select-prompt-pack(string);
-    callback save-prompt-segment();
-    callback create-prompt-pack();
-    callback delete-prompt-pack();
-    callback set-active-prompt-pack();
-    callback refresh-prompt-preview();
     callback open-prompt-preview();
     in-out property <bool> prompt-preview-open: false;
-    callback confirm-delete-prompt-pack();
     // 线程渲染压测：设置页常规卡片的手动入口。
     callback generate-stress-thread();
     in-out property <bool> stress-running: false;
@@ -1160,7 +1148,7 @@ export component MainWindow inherits Window {
                 toggle-selection(index) => { root.sidebar-toggle-selection(index); }
                 select-all-threads => { root.sidebar-select-all(); }
                 archive-selected => { root.sidebar-archive-selected(); }
-                open-settings => { root.more-open = false; root.settings-open = true; root.settings-active-panel = 0; root.refresh-settings(); }
+                open-settings => { root.settings-open = true; root.settings-active-panel = 0; root.refresh-settings(); }
                 // Working-directory region: model and actions live on the
                 // window shell, the sidebar only forwards.
                 file-rows: root.ws-file-rows;
@@ -1175,6 +1163,7 @@ export component MainWindow inherits Window {
                 layout-changed => { root.sidebar-layout-changed(); }
                 file-local: root.ws-file-local;
                 file-toggle(index) => { root.ws-file-toggle(index); }
+                file-pick(index, ctrl, shift) => { root.ws-file-pick(index, ctrl, shift); }
                 file-check(index) => { root.ws-file-check(index); }
                 file-refresh => { root.ws-file-refresh(); }
                 file-select => { root.ws-file-select(); }
@@ -1188,9 +1177,14 @@ export component MainWindow inherits Window {
                 file-search-active: root.ws-file-search-active;
                 file-selecting <=> root.ws-file-selecting;
                 file-selected-count: root.ws-file-selected-count;
-                file-connect => { root.more-open = false; root.settings-open = true; root.settings-active-panel = 13; root.refresh-settings(); }
+                file-connect => { root.settings-open = true; root.settings-active-panel = 13; root.refresh-settings(); }
                 file-menu(index, action) => { root.ws-file-menu(index, action); }
-                file-drag(index) => { root.ws-file-drag(index); }
+                file-drag-begin(index) => { root.ws-file-drag-begin(index); }
+                file-drag-hover(index) => { root.ws-file-drag-hover(index); }
+                file-drag-drop(index) => { root.ws-file-drag-drop(index); }
+                file-dragging: root.ws-file-dragging;
+                file-drop-path: root.ws-file-drop-path;
+                file-drop-root: root.ws-file-drop-root;
                 file-drop(event) => { root.ws-file-drop(event); }
             }
             // Sidebar width drag handle: a 6px hit strip around a hairline
@@ -1474,7 +1468,12 @@ export component MainWindow inherits Window {
         y: Theme.titlebar-height;
         height: parent.height - Theme.titlebar-height;
         background: Theme.overlay;
-        TouchArea { clicked => { root.settings-open = false; } }
+        TouchArea {
+            clicked => { root.settings-open = false; }
+            // Wheel belongs to the overlay: a rejected wheel keeps travelling to the
+            // siblings below and scrolled the page behind a scrim.
+            scroll-event(event) => { return accept; }
+        }
         Rectangle {
             width: min(1080px, root.width - 72px);
             height: min(720px, root.height - 56px);
@@ -1648,25 +1647,7 @@ export component MainWindow inherits Window {
         send-key <=> root.runtime-send-key;
         font-size <=> root.runtime-font-size;
         save-preferences => { root.save-preferences(); }
-        prompt-packs: root.prompt-packs;
-        prompt-pack-names: root.prompt-pack-names;
-        prompt-active: root.prompt-active;
-        selected-pack <=> root.prompt-selected-pack;
-        selected-segment <=> root.prompt-selected-segment;
-        prompt-draft <=> root.prompt-draft;
-        prompt-readonly: root.prompt-readonly;
-        prompt-loading: root.prompt-loading;
         settings-tab <=> root.settings-active-panel;
-        pack-name-draft <=> root.pack-name-draft;
-        prompt-preview: root.prompt-preview;
-        prompt-preview-loading: root.prompt-preview-loading;
-        refresh-prompt-packs => { root.refresh-prompt-packs(); }
-        select-prompt-pack(id) => { root.select-prompt-pack(id); }
-        save-prompt-segment => { root.save-prompt-segment(); }
-        create-prompt-pack => { root.create-prompt-pack(); }
-        delete-prompt-pack => { root.delete-prompt-pack(); }
-        set-active-prompt-pack => { root.set-active-prompt-pack(); }
-        refresh-prompt-preview => { root.refresh-prompt-preview(); }
         // ---- embedded category state (§9.2) ----
         tool-manager-status: root.status;
         tools-loading: root.tools-loading; tools-working: root.tools-working;
@@ -1764,9 +1745,7 @@ export component MainWindow inherits Window {
         memory-editor-open <=> root.memory-editor-open; memory-edit-id <=> root.memory-edit-id;
         memory-edit-title <=> root.memory-edit-title; memory-edit-content <=> root.memory-edit-content;
         memory-edit-category <=> root.memory-edit-category;
-        expert-agent-names: root.expert-agent-names;
         refresh-expert => { root.refresh-expert(); }
-        replicate-expert-memory(index) => { root.replicate-expert-memory(index); }
         open-expert-memory(index) => { root.open-expert-memory(index); }
         save-expert-memory => { root.save-expert-memory(); }
         delete-expert-memory(id) => { root.delete-expert-memory(id); }
@@ -1965,7 +1944,7 @@ export component MainWindow inherits Window {
         y: Theme.titlebar-height;
         height: parent.height - Theme.titlebar-height;
         background: Theme.overlay;
-        TouchArea { clicked => { /* remote asks must be answered, not dismissed */ } }
+        TouchArea { clicked => { /* remote asks must be answered, not dismissed */ } scroll-event(event) => { return accept; } }
         Rectangle {
             width: min(460px, parent.width - 48px);
             height: root.interlink-approval.risk == "high" ? 296px : 240px;
@@ -2003,14 +1982,14 @@ export component MainWindow inherits Window {
         }
     }
     if root.profile-edit-open : Rectangle {
-        z: 250; y: Theme.titlebar-height; height: parent.height - Theme.titlebar-height; background: Theme.overlay; TouchArea { clicked => { root.profile-edit-open = false; } }
+        z: 250; y: Theme.titlebar-height; height: parent.height - Theme.titlebar-height; background: Theme.overlay; TouchArea { clicked => { root.profile-edit-open = false; } scroll-event(event) => { return accept; } }
         Rectangle { width: min(460px, parent.width - 48px); height: 300px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; border-radius: Theme.radius-xl; background: Theme.surface; border-width: 1px; border-color: Theme.border; TouchArea { }
             VerticalLayout { padding: 20px; spacing: 10px; Text { height: 24px; text: I18n.profile_edit_title; color: Theme.text; font-size: 17px; font-weight: 600; } FormField { label: I18n.profile_username; text <=> root.profile-username-draft; } FormField { label: I18n.profile_email; text <=> root.profile-email-draft; } FormField { label: I18n.profile_unit_optional; text <=> root.profile-unit-draft; } Rectangle { vertical-stretch: 1; } HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; } Action { label: I18n.common_cancel; show-label: true; clicked => { root.profile-edit-open = false; } } Action { label: I18n.common_save; show-label: true; primary: true; enabled: root.profile-username-draft != ""; clicked => { root.save-profile(root.profile-username-draft, root.profile-email-draft, root.profile-unit-draft); root.profile-edit-open = false; } } } }
         }
     }
     if root.prompt-preview-open : Rectangle {
         background: #0f172a80; z: 250; y: Theme.titlebar-height; height: parent.height - Theme.titlebar-height;
-        TouchArea { clicked => { root.prompt-preview-open = false; } }
+        TouchArea { clicked => { root.prompt-preview-open = false; } scroll-event(event) => { return accept; } }
         Rectangle {
             x: max(16px, (root.width - 560px) / 2); y: max(16px, (root.height - 420px) / 2);
             width: min(560px, root.width - 32px); height: min(420px, root.height - 32px);

@@ -16,15 +16,11 @@ export const MessengerSettingsPanel = lazy(
 export const UserChannelSettingsPanel = lazy(
   () => import('@/components/channels/UserChannelSettingsPanel.vue')
 );
-export const UserPromptSettingsPanel = lazy(
-  () => import('@/components/messenger/UserPromptSettingsPanel.vue')
-);
 export const AgentMemoryPanel = lazy(() => import('@/components/messenger/memory/AgentMemoryPanel.vue'));
 
 let agentSettingsPanelsPreloadPromise: Promise<unknown> | null = null;
 let secondaryAgentSettingsPanelsScheduled = false;
 let messengerSettingsPanelPreloadPromise: Promise<unknown> | null = null;
-let secondaryMorePanelsScheduled = false;
 
 const scheduleIdleImport = (runner: () => void, timeout = 1200): void => {
   if (typeof window === 'undefined') {
@@ -61,22 +57,9 @@ export const preloadAgentSettingsPanels = () => {
   return agentSettingsPanelsPreloadPromise;
 };
 
-const scheduleSecondaryMorePanelsPreload = (): void => {
-  if (secondaryMorePanelsScheduled || typeof window === 'undefined') {
-    return;
-  }
-  secondaryMorePanelsScheduled = true;
-  scheduleIdleImport(() => {
-    void Promise.allSettled([
-      import('@/components/messenger/UserPromptSettingsPanel.vue')
-    ]);
-  });
-};
-
 export const preloadMessengerSettingsPanels = () => {
   if (!messengerSettingsPanelPreloadPromise) {
     messengerSettingsPanelPreloadPromise = import('@/components/messenger/MessengerSettingsPanel.vue');
   }
-  scheduleSecondaryMorePanelsPreload();
   return messengerSettingsPanelPreloadPromise;
 };
