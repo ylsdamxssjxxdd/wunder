@@ -538,9 +538,12 @@ log "validated Python profile imports"
 
 "$python_bin" --version
 "$git_bin" --version
-"$rg_root/bin/rg" --version | head -n 1
-"$ffmpeg_bin" -version | head -n 1
-"$sevenzip_bin" i | head -n 1
+# Use sed instead of head: this script runs with pipefail, and head closes the
+# pipe early, making rg/ffmpeg/7zz die with SIGPIPE (exit 141). Match the
+# banner line instead of relying on line numbers.
+"$rg_root/bin/rg" --version | sed -n '1p'
+"$ffmpeg_bin" -version | sed -n '1p'
+"$sevenzip_bin" i | sed -n '/7-Zip/p'
 
 for staged_binary in "$python_bin" "$git_bin" "$rg_root/bin/rg" "$ffmpeg_bin" "$sevenzip_bin"; do
   # -L resolves aliases (opt/python/bin/python3 is a symlink to python3.8);
