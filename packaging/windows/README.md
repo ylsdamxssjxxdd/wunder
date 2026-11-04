@@ -44,7 +44,7 @@ wunder-<版本>-win7-x86-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR
 ```
 
 - `/SILENT` 只显示进度，`/VERYSILENT` 完全无界面；两者都会跳过全部向导页。
-- 组件用 `/TASKS=` 指定，任务名与向导勾选项一致（`desktop`、`cli`、`python`、`git`、`rg`、`ffmpeg`、`7zip`、`powershell`、`browser`），例如 `/TASKS="desktop,cli,powershell,7zip"`；不传时按向导默认勾选（蛹、舵机、PowerShell 7）。
+- 组件用 `/TASKS=` 指定，任务名与向导勾选项一致（`desktop`、`cli`、`python`、`git`、`rg`、`ffmpeg`、`sevenzip`、`powershell`、`browser`），例如 `/TASKS="desktop,cli,powershell,sevenzip"`；不传时按向导默认勾选（蛹、舵机、PowerShell 7）。`7zip` 的目录名不能直接当任务名——Inno 把任务名按表达式解析，数字开头会报 `Invalid token '7'`，所以任务名固定为 `sevenzip`，安装目录仍是 `opt/7zip`。
 - 检测到已安装组件时的确认弹窗在静默模式下自动跳过（直接按“清空组件目录后继续”执行）；只有组件目录被占用这类致命错误会中止安装（非零退出码），`/SUPPRESSMSGBOXES` 连错误弹窗也不再显示。
 - 卸载器同样支持静默：`unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`。
 

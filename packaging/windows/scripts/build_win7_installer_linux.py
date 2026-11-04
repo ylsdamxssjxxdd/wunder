@@ -21,9 +21,15 @@ import zipfile
 from pathlib import Path
 
 
-COMPONENT_ORDER = ("python", "git", "rg", "ffmpeg", "powershell", "browser")
+COMPONENT_ORDER = ("python", "git", "rg", "ffmpeg", "7zip", "powershell", "browser")
 DEFAULT_CHECKED = ("powershell",)
 TASK_NAMES = ("desktop", "cli")
+# Inno parses task names as expressions, so a name may not start with a digit.
+COMPONENT_TASK_NAMES = {"7zip": "sevenzip"}
+
+
+def task_name(component):
+    return COMPONENT_TASK_NAMES.get(component, component)
 
 
 def fail(message):
@@ -95,6 +101,7 @@ class Wine(object):
 def supplement_info(archive):
     sizes = dict((name, 0) for name in COMPONENT_ORDER)
     files = dict((name, 0) for name in COMPONENT_ORDER)
+    unknown = set()
     metadata = None
     with zipfile.ZipFile(str(archive)) as stream:
         for entry in stream.infolist():
@@ -102,12 +109,17 @@ def supplement_info(archive):
             if name.startswith("/") or re.search(r"(^|/)\.\.(/|$)", name):
                 fail("supplement archive contains an unsafe path: " + name)
             parts = name.split("/")
-            if len(parts) >= 3 and parts[0] == "opt" and parts[1] in sizes:
+            if len(parts) >= 3 and parts[0] == "opt":
+                if parts[1] not in sizes:
+                    unknown.add(parts[1])
+                    continue
                 if not name.endswith("/"):
                     files[parts[1]] += 1
                 sizes[parts[1]] += entry.file_size
             if name == "wunder-win7-supplement.json":
                 metadata = json.loads(stream.read(entry).decode("utf-8"))
+    if unknown:
+        fail("补充包含有安装器未声明的组件（会静默漏装）: " + ", ".join(sorted(unknown)))
     return sizes, files, metadata
 
 
@@ -157,11 +169,14 @@ def build_generated_iss(labels, core, supplement_root, version, available, sizes
         body = (core / ("wunder-desktop.exe" if name == "desktop" else "wunder-cli.exe")).stat().st_size
         lines.append('Name: "%s"; Description: "%s"' % (name, format_label(labels, name, version, body)))
     for name in available:
+        task = task_name(name)
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", task):
+            fail("Inno 任务名必须以字母或下划线开头，请为组件 %s 配置 COMPONENT_TASK_NAMES" % name)
         label = format_label(labels, name, component_version(metadata, name), sizes[name])
         if name in DEFAULT_CHECKED:
-            lines.append('Name: "%s"; Description: "%s"' % (name, label))
+            lines.append('Name: "%s"; Description: "%s"' % (task, label))
         else:
-            lines.append('Name: "%s"; Description: "%s"; Flags: unchecked' % (name, label))
+            lines.append('Name: "%s"; Description: "%s"; Flags: unchecked' % (task, label))
     lines.append("")
     lines.append("[Files]")
     lines.append('Source: "%s"; DestDir: "{app}\\bin"; DestName: "wunder-desktop.exe"; '
@@ -173,7 +188,7 @@ def build_generated_iss(labels, core, supplement_root, version, available, sizes
     for name in available:
         lines.append('Source: "%s"; DestDir: "{app}\\opt\\%s"; '
                      'Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: %s'
-                     % (wine_path(supplement_root / "opt" / name) + "\\*", name, name))
+                     % (wine_path(supplement_root / "opt" / name) + "\\*", name, task_name(name)))
     return "\r\n".join(lines) + "\r\n"
 
 
@@ -228,6 +243,8 @@ def main():
     (core / ".wunder-home").write_text("portable\r\n", encoding="utf-8")
 
     sizes, files, metadata = supplement_info(args.supplement)
+    if ((metadata or {}).get("7zip") or {}).get("bundled") and files["7zip"] == 0:
+        fail("补充包元数据声明 7-Zip 已打包，但归档里缺少 opt/7zip/7z.exe: " + str(args.supplement))
     available = [name for name in COMPONENT_ORDER if files[name] > 0]
     if not available:
         fail("补充包里没有 opt/<component> 文件: " + str(args.supplement))

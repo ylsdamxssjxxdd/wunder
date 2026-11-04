@@ -21,6 +21,13 @@ $stageRoot = Join-Path $repoRoot "temp_dir\installer\win7-x86"
 # this order, so a component added here must also bump ComponentCount and the
 # array bounds there.
 $ComponentOrder = @("python", "git", "rg", "ffmpeg", "7zip", "powershell", "browser")
+# Inno parses task names as expressions, so a name may not start with a digit.
+$ComponentTaskNames = @{ "7zip" = "sevenzip" }
+
+function Get-TaskName([string]$Component) {
+  if ($ComponentTaskNames.ContainsKey($Component)) { return $ComponentTaskNames[$Component] }
+  return $Component
+}
 $win7BuilderRoot = if ($env:WUNDER_WIN7_BUILDER_ROOT) {
   $env:WUNDER_WIN7_BUILDER_ROOT
 } elseif ($env:WUNDER_BUILDER_ROOT) {
@@ -114,6 +121,7 @@ function Get-ZipSupplementInfo([string]$Path) {
   $known = $ComponentOrder
   $bytes = @{}
   $files = @{}
+  $unknown = @{}
   foreach ($name in $known) { $bytes[$name] = [int64]0; $files[$name] = 0 }
   $meta = $null
   $zip = [IO.Compression.ZipFile]::OpenRead($Path)
@@ -124,7 +132,11 @@ function Get-ZipSupplementInfo([string]$Path) {
         throw "Supplement archive contains an unsafe path: $name"
       }
       $parts = $name.Split('/')
-      if ($parts.Count -ge 3 -and $parts[0] -eq 'opt' -and $known -contains $parts[1]) {
+      if ($parts.Count -ge 3 -and $parts[0] -eq 'opt') {
+        if ($known -notcontains $parts[1]) {
+          $unknown[$parts[1]] = $true
+          continue
+        }
         $component = $parts[1]
         if (-not $name.EndsWith('/')) { $files[$component] += 1 }
         $bytes[$component] += [int64]$entry.Length
@@ -137,6 +149,10 @@ function Get-ZipSupplementInfo([string]$Path) {
   } finally {
     $zip.Dispose()
   }
+  if ($unknown.Count -gt 0) {
+    throw ("Supplement contains components the installer does not declare (they would be skipped silently): " +
+      (($unknown.Keys | Sort-Object) -join ', '))
+  }
   return @{ Bytes = $bytes; Files = $files; Metadata = $meta }
 }
 
@@ -144,6 +160,16 @@ function Get-DirectorySupplementInfo([string]$Path) {
   $known = $ComponentOrder
   $bytes = @{}
   $files = @{}
+  $optRoot = Join-Path $Path "opt"
+  if (Test-Path -LiteralPath $optRoot -PathType Container) {
+    $unknown = @(Get-ChildItem -LiteralPath $optRoot -Directory |
+      Where-Object { $known -notcontains $_.Name } |
+      ForEach-Object { $_.Name } | Sort-Object)
+    if ($unknown.Count -gt 0) {
+      throw ("Supplement contains components the installer does not declare (they would be skipped silently): " +
+        ($unknown -join ', '))
+    }
+  }
   foreach ($name in $known) {
     $bytes[$name] = [int64]0
     $files[$name] = 0
@@ -341,6 +367,11 @@ if (-not $CoreOnly) {
   $componentBytes = $info.Bytes
   $componentFiles = $info.Files
   $metadata = $info.Metadata
+  $sevenZipMeta = $null
+  if ($metadata -and $metadata.PSObject.Properties['7zip']) { $sevenZipMeta = $metadata.'7zip' }
+  if ($sevenZipMeta -and $sevenZipMeta.bundled -eq $true -and $componentFiles['7zip'] -eq 0) {
+    throw "Supplement metadata declares 7-Zip as bundled, but opt\7zip is missing: $supplementPath"
+  }
 }
 
 $labels = Get-Content -LiteralPath (Join-Path $installerRoot "component-labels.json") -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -371,13 +402,17 @@ if (-not $CoreOnly) {
   # opt-in to keep the default install lean.
   $defaultCheckedComponents = @("powershell")
   foreach ($name in $available) {
+    $task = Get-TaskName $name
+    if ($task -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+      throw "Inno task names must start with a letter or underscore; map component '$name' in `$ComponentTaskNames."
+    }
     $versionForLabel = Get-MetadataVersion $metadata $name
     $taskBytes = $componentBytes[$name]
     $label = Format-ComponentLabel $name $versionForLabel $taskBytes
     if ($defaultCheckedComponents -contains $name) {
-      $lines.Add(('Name: "{0}"; Description: "{1}"' -f $name, $label))
+      $lines.Add(('Name: "{0}"; Description: "{1}"' -f $task, $label))
     } else {
-      $lines.Add(('Name: "{0}"; Description: "{1}"; Flags: unchecked' -f $name, $label))
+      $lines.Add(('Name: "{0}"; Description: "{1}"; Flags: unchecked' -f $task, $label))
     }
   }
 }
@@ -389,7 +424,7 @@ $lines.Add(('Source: "{0}"; DestDir: "{{app}}"; DestName: ".wunder-home"; Flags:
 if (-not $CoreOnly) {
   foreach ($name in $available) {
     $source = Join-Path $supplementRoot "opt\$name\*"
-    $lines.Add(('Source: "{0}"; DestDir: "{{app}}\opt\{1}"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: {2}' -f $source, $name, $name))
+    $lines.Add(('Source: "{0}"; DestDir: "{{app}}\opt\{1}"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: {2}' -f $source, $name, (Get-TaskName $name)))
   }
 }
 $generatedPath = Join-Path $stageRoot "payload.generated.iss"
