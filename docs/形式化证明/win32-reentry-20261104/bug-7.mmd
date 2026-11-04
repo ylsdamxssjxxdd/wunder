@@ -1,0 +1,36 @@
+---
+title: "蛹UI线程消息帧重入审计, bug 7"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#eef7ee,stroke:#777c77,color:#1b2631
+  classDef group0Path fill:#eef7ee,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef group1 fill:#eaf2fb,stroke:#75797e,color:#1b2631
+  classDef group1Path fill:#eaf2fb,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef group3 fill:#f8d7d7,stroke:#7c6c6c,color:#1b2631
+  classDef group3Fixed fill:#f8d7d7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  state "Legend" as legend {
+    state "泵轮空闲" as legendGroup0
+    state "单帧处理中" as legendGroup1
+    state "线程已卡死" as legendGroup3
+    state "修复后已消除或新增" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup1 group1
+  class legendGroup3 group3
+  class legendFixed plainFixed
+  state "帧栈 普通消息" as s0
+  state "帧栈 普通消息 → 窗口过程已卡死" as s1
+  state "帧栈空，消息泵轮" as s2
+  [*] --> s2
+  s2 --> s0 : 1. 系统送来普通消息
+  s0 --> s1 : 2. （修复前）持锁调用捕获接口，重入再取锁
+  s0 --> s0 : with the fix,<br/>（修复前）持锁调用捕获接口，重入再取锁 cannot<br/>happen at step 2
+  class s0 group1Path
+  class s1 group3Fixed
+  class s2 group0Path

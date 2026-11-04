@@ -1,0 +1,33 @@
+---
+title: "蛹UI线程消息帧重入审计, bug 5"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#eef7ee,stroke:#777c77,color:#1b2631
+  classDef group0Path fill:#eef7ee,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef group1 fill:#eaf2fb,stroke:#75797e,color:#1b2631
+  classDef group1Fixed fill:#eaf2fb,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group1Path fill:#eaf2fb,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  state "Legend" as legend {
+    state "泵轮空闲" as legendGroup0
+    state "单帧处理中" as legendGroup1
+    state "修复后已消除或新增" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup1 group1
+  class legendFixed plainFixed
+  state "帧栈 输入法消息" as s0
+  state "帧栈 输入法消息 →<br/>输入法消息；刚发生过输入法写，位置：输入法消息帧内" as s1
+  state "帧栈空，消息泵轮" as s2
+  [*] --> s2
+  s2 --> s0 : 1. 输入法送来组合消息
+  s0 --> s1 : 2. （修复前）帧内直接写输入法
+  s0 --> s0 : with the fix, （修复前）帧内直接写输入法<br/>cannot happen at step 2
+  class s0 group1Path
+  class s1 group1Fixed
+  class s2 group0Path
