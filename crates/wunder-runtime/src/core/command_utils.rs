@@ -8,7 +8,7 @@ use std::process::Command as StdCommand;
 #[cfg(windows)]
 use std::process::Stdio;
 #[cfg(windows)]
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 #[cfg(windows)]
 use std::{env, path::PathBuf, sync::OnceLock};
 use tokio::process::Command;
@@ -460,14 +460,25 @@ static POWERSHELL_HOST: RwLock<ShellProbe> = RwLock::new(ShellProbe::Pending);
 /// through to the next candidate instead of failing every command.
 #[cfg(windows)]
 pub fn powershell_host() -> Option<PowerShellHost> {
-    {
-        let guard = POWERSHELL_HOST.read().ok()?;
-        if let ShellProbe::Done(host) = &*guard {
-            return host.clone();
-        }
+    if let Some(host) = cached_powershell_host() {
+        return host;
+    }
+    // Resolve once per process, not once per racing caller. The probe blocks
+    // the calling thread for up to a few seconds per candidate; without this
+    // gate every concurrent first command would each spawn the same probes
+    // and pin another worker thread. The cache is re-checked under the lock
+    // because the winner may have finished while we waited.
+    static PROBE_LOCK: Mutex<()> = Mutex::new(());
+    let _serial = PROBE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(host) = cached_powershell_host() {
+        return host;
     }
     let probed = probe_powershell_host();
-    let mut guard = POWERSHELL_HOST.write().ok()?;
+    let Ok(mut guard) = POWERSHELL_HOST.write() else {
+        return probed;
+    };
     match &*guard {
         // Another thread won the race; keep its answer.
         ShellProbe::Done(host) => host.clone(),
@@ -475,6 +486,17 @@ pub fn powershell_host() -> Option<PowerShellHost> {
             *guard = ShellProbe::Done(probed.clone());
             probed
         }
+    }
+}
+
+/// `Some(host)` when the probe has completed (including "no usable host"),
+/// `None` while it is still pending.
+#[cfg(windows)]
+fn cached_powershell_host() -> Option<Option<PowerShellHost>> {
+    let guard = POWERSHELL_HOST.read().ok()?;
+    match &*guard {
+        ShellProbe::Done(host) => Some(host.clone()),
+        ShellProbe::Pending => None,
     }
 }
 
@@ -494,13 +516,30 @@ pub fn reset_powershell_host() {}
 
 #[cfg(windows)]
 fn probe_powershell_host() -> Option<PowerShellHost> {
-    powershell_candidates().into_iter().find_map(|candidate| {
-        probe_powershell_major(&candidate.exe).map(|major| PowerShellHost {
-            exe: candidate.exe,
-            major,
-            bundled: candidate.bundled,
-        })
-    })
+    // Total budget, not per candidate: a Windows image can expose several
+    // candidates (override, System32, PATH, pwsh) and a broken .NET stack can
+    // make every one of them hang at startup. Eight seconds bounds the first
+    // command's stall; three seconds per candidate keeps a single black hole
+    // from consuming the whole budget.
+    const TOTAL_BUDGET: std::time::Duration = std::time::Duration::from_secs(8);
+    const PER_CANDIDATE: std::time::Duration = std::time::Duration::from_secs(3);
+    let deadline = std::time::Instant::now() + TOTAL_BUDGET;
+    for candidate in powershell_candidates() {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            tracing::warn!("powershell host probe budget exhausted before a host answered");
+            break;
+        }
+        let budget = remaining.min(PER_CANDIDATE);
+        if let Some(major) = probe_powershell_major(&candidate.exe, budget) {
+            return Some(PowerShellHost {
+                exe: candidate.exe,
+                major,
+                bundled: candidate.bundled,
+            });
+        }
+    }
+    None
 }
 
 #[cfg(windows)]
@@ -584,8 +623,7 @@ fn find_in_path(binary: &str) -> Option<PathBuf> {
 /// The version answer is a few bytes and can never fill the pipe buffer, so
 /// poll-then-read cannot deadlock.
 #[cfg(windows)]
-fn probe_powershell_major(exe: &Path) -> Option<u32> {
-    const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+fn probe_powershell_major(exe: &Path, timeout: std::time::Duration) -> Option<u32> {
     let mut command = StdCommand::new(exe);
     command
         .args([
@@ -600,7 +638,7 @@ fn probe_powershell_major(exe: &Path) -> Option<u32> {
         .stderr(Stdio::null());
     apply_platform_spawn_options_std(&mut command);
     let mut child = command.spawn().ok()?;
-    let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
+    let deadline = std::time::Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -853,7 +891,10 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let broken = temp.path().join("pwsh.exe");
         std::fs::write(&broken, b"not a pe image").unwrap();
-        assert_eq!(probe_powershell_major(&broken), None);
+        assert_eq!(
+            probe_powershell_major(&broken, std::time::Duration::from_secs(2)),
+            None
+        );
     }
 
     /// The host probe and the launcher program name must describe the same

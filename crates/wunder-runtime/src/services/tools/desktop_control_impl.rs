@@ -173,6 +173,20 @@ impl BBox {
         }
         ((x1 + x2) / 2, (y1 + y2) / 2)
     }
+
+    /// Normalized space is no longer a fixed 1000x1000 square: the short side
+    /// follows the screen aspect ratio. A coordinate past the current extent
+    /// used to be silently clamped to the edge, which turned a wrong guess
+    /// into a click on the screen border. Reject it instead, so the model can
+    /// re-read `normalized_width`/`normalized_height` and retry.
+    fn out_of_bounds(&self, norm_width: i32, norm_height: i32) -> bool {
+        [self.x1, self.x2]
+            .into_iter()
+            .any(|value| value < 0 || value > norm_width)
+            || [self.y1, self.y2]
+                .into_iter()
+                .any(|value| value < 0 || value > norm_height)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -374,6 +388,22 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
     let (screen_width, screen_height) = screen_size()?;
     let (norm_width, norm_height) =
         normalized_dims(screen_width, screen_height, config.max_norm_side);
+    if payload.bbox.out_of_bounds(norm_width, norm_height) {
+        return Err(anyhow!(format!(
+            "{} (normalized {norm_width}x{norm_height})",
+            crate::i18n::t("tool.desktop_control.bbox_out_of_range")
+        )));
+    }
+    if payload
+        .to_bbox
+        .as_ref()
+        .is_some_and(|target| target.out_of_bounds(norm_width, norm_height))
+    {
+        return Err(anyhow!(format!(
+            "{} (normalized {norm_width}x{norm_height})",
+            crate::i18n::t("tool.desktop_control.bbox_out_of_range")
+        )));
+    }
     let screen_max_x = (screen_width - 1).max(0);
     let screen_max_y = (screen_height - 1).max(0);
     let (cx_norm_raw, cy_norm_raw) = payload.bbox.center();
@@ -472,8 +502,12 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
     // Even an explicit wait may end while the application is still updating.
     // It skips only the initial action delay; the same quiet-window check
     // still prevents a fresh but unsettled frame from being called stable.
-    let (screenshot, observation_settled_ms, observation_stable) =
-        capture_stable_screenshot(&config, !wait_action).await?;
+    let (screenshot, observation_settled_ms, observation_stable) = capture_stable_screenshot(
+        &config,
+        !wait_action,
+        Some((screen_width, screen_height)),
+    )
+    .await?;
     // Intermediate stability probes have already been discarded. The model
     // receives only this latest post-action frame: the preceding frame
     // doubles vision context while making ordinary visual differences look
@@ -811,12 +845,15 @@ fn map_coord(value: i32, src_max: i32, dst_max: i32) -> i32 {
 async fn capture_screenshot(
     config: &DesktopControlConfig,
     timeout_ms: u64,
+    expected_screen: Option<(i32, i32)>,
 ) -> Result<DesktopScreenshot> {
     let max_norm_side = config.max_norm_side;
     let screenshot = match blocking::run_external_with_timeout(
         "tools.desktop_control.capture_screenshot",
         Duration::from_millis(timeout_ms.max(1)),
-        move || capture_screenshot_blocking(max_norm_side).map_err(anyhow::Error::msg),
+        move || {
+            capture_screenshot_blocking(max_norm_side, expected_screen).map_err(anyhow::Error::msg)
+        },
     )
     .await
     {
@@ -838,6 +875,7 @@ async fn capture_screenshot(
 async fn capture_stable_screenshot(
     config: &DesktopControlConfig,
     delay_after_action: bool,
+    expected_screen: Option<(i32, i32)>,
 ) -> Result<(DesktopScreenshot, u64, bool)> {
     let started = Instant::now();
     if delay_after_action {
@@ -847,7 +885,7 @@ async fn capture_stable_screenshot(
     // share one wall-clock budget instead of multiplying capture_timeout_ms
     // by the probe count on a slow desktop.
     let capture_timeout_ms = config.capture_timeout_ms.max(100);
-    let mut previous = capture_screenshot(config, capture_timeout_ms).await?;
+    let mut previous = capture_screenshot(config, capture_timeout_ms, expected_screen).await?;
     let mut tracker = FrameStabilityTracker::default();
     tracker.observe(previous.fingerprint, started.elapsed().as_millis() as u64);
     let mut stable = false;
@@ -860,7 +898,7 @@ async fn capture_stable_screenshot(
         sleep(Duration::from_millis(OBSERVATION_PROBE_INTERVAL_MS)).await;
         let current = match tokio::time::timeout(
             Duration::from_millis(probe_timeout_ms),
-            capture_screenshot(config, probe_timeout_ms),
+            capture_screenshot(config, probe_timeout_ms, expected_screen),
         )
         .await
         {
@@ -974,8 +1012,23 @@ fn cleanup_old_frames(path: &Path, max_frames: usize) {
     }
 }
 
-fn capture_screenshot_blocking(max_norm_side: i32) -> Result<DesktopScreenshot> {
+fn capture_screenshot_blocking(
+    max_norm_side: i32,
+    expected_screen: Option<(i32, i32)>,
+) -> Result<DesktopScreenshot> {
     let (screen_width, screen_height, rgba) = capture_screen_rgba()?;
+    // The action coordinates were mapped against the screen size sampled
+    // before the action. If the desktop changed in between (resolution
+    // switch, monitor hot-plug), that mapping is stale; fail fast instead of
+    // returning a screenshot whose normalized space no longer matches the
+    // click that was just sent.
+    if let Some((expected_width, expected_height)) = expected_screen {
+        if screen_width != expected_width || screen_height != expected_height {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_control.screen_changed"
+            )));
+        }
+    }
     let (norm_width, norm_height) =
         normalized_dims(screen_width, screen_height, max_norm_side);
     let resized = resize_rgba(
@@ -2459,6 +2512,41 @@ mod tests {
         assert_eq!(normalized_dims(0, 0, 1000), (1, 1));
         assert_eq!(normalized_dims(1920, 1080, 0), (1, 1));
         assert_eq!(normalized_dims(1920, 1080, -5), (1, 1));
+    }
+
+    /// 归一化空间不再是固定 1000x1000：短边 563 时，模型按旧习惯报的
+    /// y=800 必须被拒绝，而不是被钳成屏幕底边的一次误点击。
+    #[test]
+    fn bbox_out_of_bounds_rejects_coordinates_past_the_current_extent() {
+        assert!(!BBox {
+            x1: 0,
+            y1: 0,
+            x2: 1000,
+            y2: 563
+        }
+        .out_of_bounds(1000, 563));
+        assert!(BBox {
+            x1: 0,
+            y1: 0,
+            x2: 1000,
+            y2: 564
+        }
+        .out_of_bounds(1000, 563));
+        assert!(BBox {
+            x1: 1001,
+            y1: 0,
+            x2: 1001,
+            y2: 0
+        }
+        .out_of_bounds(1000, 563));
+        // 小屏保持原生尺寸时同样适用。
+        assert!(BBox {
+            x1: 500,
+            y1: 700,
+            x2: 500,
+            y2: 700
+        }
+        .out_of_bounds(800, 600));
     }
 
     #[test]

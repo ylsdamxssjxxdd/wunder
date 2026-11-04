@@ -621,11 +621,17 @@ async fn join_output_task(
 /// 管道写端（孙进程在 shell 退出/被杀后幸存）：先树终止强制放行，再给
 /// 一个窗口；仍读不到就丢弃读任务。函数必然在有限时间内返回，管道收尾
 /// 不允许绑架工具调用的返回。
+///
+/// abort 句柄必须在把 JoinHandle 交进 drain future 之前取出：
+/// `join_output_task` 会 `take()` 走句柄，future 被丢弃时 JoinHandle
+/// 只是 detach（tokio 语义），外层 Option 已经空了，事后拿不到句柄。
 async fn drain_output_captures(
     stdout_task: &mut Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
     stderr_task: &mut Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
     tree: &ProcessTree,
 ) -> Result<(CommandOutputCapture, CommandOutputCapture)> {
+    let stdout_abort = stdout_task.as_ref().map(|handle| handle.abort_handle());
+    let stderr_abort = stderr_task.as_ref().map(|handle| handle.abort_handle());
     {
         let drain = async {
             let stdout = join_output_task(stdout_task).await?;
@@ -639,14 +645,17 @@ async fn drain_output_captures(
                 Err(_elapsed) => tree.terminate(),
             }
         }
-        // drain 与它对句柄的借用在此丢弃，后面的 abort 才能拿到句柄。
+        // drain 与它对句柄的借用在此丢弃；读任务由下面的 abort 句柄收掉。
     }
-    if let Some(handle) = stdout_task.take() {
+    if let Some(handle) = stdout_abort {
         handle.abort();
     }
-    if let Some(handle) = stderr_task.take() {
+    if let Some(handle) = stderr_abort {
         handle.abort();
     }
+    tracing::warn!(
+        "command output pipes did not reach EOF after tree terminate; reader tasks aborted"
+    );
     Ok((CommandOutputCapture::empty(), CommandOutputCapture::empty()))
 }
 
@@ -877,8 +886,11 @@ async fn run_spawned_child_streaming(
             } => result?,
         };
 
-        let (stdout_capture, stderr_capture) =
-            drain_output_captures(&mut stdout_task, &mut stderr_task, &tree).await?;
+        let drained = drain_output_captures(&mut stdout_task, &mut stderr_task, &tree).await;
+        // 进程已退出、输出已收干（或读任务已收掉）：解除 Drop 兜底，
+        // 避免对已经消亡的 pid / 进程组再次终止。
+        tree.disarm();
+        let (stdout_capture, stderr_capture) = drained?;
         Ok::<_, anyhow::Error>((status, timed_out, cancelled, stdout_capture, stderr_capture))
     }
     .await;
@@ -972,6 +984,7 @@ async fn detach_spawned_child(
         // 自然退出也可能留下持有管道的孙进程；宽限内读不到 EOF 就树终止，
         // 保证 watcher 一定收尾、broker 槽位一定释放。
         let _ = drain_output_captures(&mut stdout_task, &mut stderr_task, &tree).await;
+        tree.disarm();
         let exit_code = wait_result.and_then(|status| status.code());
         tracker.emit_exit(exit_code, timed_out, error);
         broker.remove_process(&cleanup_session_id);
@@ -1050,8 +1063,9 @@ async fn complete_detachable_child(
     command_session: CommandSessionTracker,
     exit_error: Option<String>,
 ) -> Result<CommandRunResult> {
-    let (stdout_capture, stderr_capture) =
-        drain_output_captures(stdout_task, stderr_task, tree).await?;
+    let drained = drain_output_captures(stdout_task, stderr_task, tree).await;
+    tree.disarm();
+    let (stdout_capture, stderr_capture) = drained?;
     let stdout = render_command_output(&stdout_capture, decode_command_output);
     let mut stderr = render_command_output(&stderr_capture, decode_command_output);
     if let Some(error) = exit_error.as_deref() {
@@ -1124,7 +1138,10 @@ async fn run_command_streaming(
     // 只有会转后台会话（可 write_stdin）的命令才需要 stdin 管道。前台阻塞
     // 命令保持管道开着，等 stdin 的程序（凭据询问、input()、交互安装器）
     // 只能永远挂住——这就是 pwsh「挂死」的常见起点。null 让它们立刻 EOF。
-    let detach_capable = yield_time.is_some() && context.command_sessions.is_some();
+    // 判定必须与下面的 detach 条件完全一致：yield_time 为 0 时走的是前台
+    // 阻塞路径，不能因为 Some(0) 就留下一个永不关闭的 stdin 写端。
+    let detach_capable =
+        yield_time.is_some_and(|wait| wait > Duration::ZERO) && context.command_sessions.is_some();
     cmd.kill_on_drop(true);
     cmd.stdin(if detach_capable {
         Stdio::piped()

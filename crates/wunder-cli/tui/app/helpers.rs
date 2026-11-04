@@ -1271,35 +1271,6 @@ pub(super) fn strip_streaming_tool_markup(text: &str, in_tool_markup: &mut bool)
     output
 }
 
-pub(super) fn merge_stream_text(existing: &mut String, incoming: &str) {
-    if incoming.is_empty() {
-        return;
-    }
-    if existing.is_empty() {
-        existing.push_str(incoming);
-        return;
-    }
-    if existing == incoming {
-        return;
-    }
-    if incoming.starts_with(existing.as_str()) {
-        *existing = incoming.to_string();
-        return;
-    }
-    if existing.ends_with(incoming) {
-        return;
-    }
-
-    let overlap = longest_suffix_prefix_overlap(existing.as_str(), incoming);
-    if overlap > 0 {
-        existing.push_str(&incoming[overlap..]);
-        return;
-    }
-    // Most streaming providers send raw deltas; when there is no overlap we should
-    // append directly instead of forcing a newline, otherwise output becomes token-per-line.
-    existing.push_str(incoming);
-}
-
 pub(super) fn merge_stream_text_with_delta(
     existing: &mut String,
     incoming: &str,
@@ -1312,21 +1283,6 @@ pub(super) fn merge_stream_text_with_delta(
     // overlap cannot distinguish a repeated event from legitimate content.
     existing.push_str(incoming);
     Some(incoming.to_string())
-}
-
-pub(super) fn longest_suffix_prefix_overlap(left: &str, right: &str) -> usize {
-    let mut len = left.len().min(right.len());
-    while len > 0 {
-        if !left.is_char_boundary(left.len() - len) || !right.is_char_boundary(len) {
-            len = len.saturating_sub(1);
-            continue;
-        }
-        if left[left.len() - len..] == right[..len] {
-            return len;
-        }
-        len = len.saturating_sub(1);
-    }
-    0
 }
 
 pub(super) fn compact_text_for_compare(text: &str) -> String {

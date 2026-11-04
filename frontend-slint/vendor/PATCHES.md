@@ -306,6 +306,12 @@ deltas).
   `panic = "abort"` process. The read-only `ImmGet*` calls inside the
   `WM_IME_*` handlers and the initial `create_window` disassociation stay
   inline: they are the standard response pattern and cannot nest.
+  `set_ime_allowed` still writes the `ime_allowed` flag inline, outside the
+  deferred closure: the `WM_IME_STARTCOMPOSITION` handler reads that flag on
+  the next pumped message, so deferring it would let a composition start
+  against the stale value. The inline part is a plain state write with no
+  IMM32 call, so it cannot re-enter the IME state machine; only
+  `ImmAssociateContextEx` is deferred.
 - Frameless Winit windows now acknowledge `WM_NCACTIVATE` themselves after
   updating their active state and return handled for `WM_ERASEBKGND`. This
   prevents User32 from briefly drawing or erasing a native non-client edge

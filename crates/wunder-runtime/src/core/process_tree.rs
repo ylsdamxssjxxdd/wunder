@@ -12,6 +12,7 @@
 //! 命令正常退出后故意脱离的守护进程（如 `Start-Process` 拉起的服务）
 //! 不受影响。
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::process::Child;
 
@@ -54,7 +55,11 @@ impl Drop for JobHandle {
 
 /// 一条命令子进程的可终止树。`attach` 失败时退化为空守卫，调用方保留
 /// 逐进程 kill 作为兜底（与历史行为一致）。
-#[derive(Default)]
+///
+/// `Drop` 是最后一道保险：外层看门狗超时、会话级取消等路径会直接丢弃
+/// 工具 future，`run_spawned_child_streaming` / detached watcher 的收尾
+/// 代码根本不会执行。只要守卫仍 armed，就整树终止；正常收尾必须先
+/// `disarm`，否则会误杀命令故意脱管的守护进程。
 pub(crate) struct ProcessTree {
     #[cfg(windows)]
     job: Option<JobHandle>,
@@ -62,6 +67,7 @@ pub(crate) struct ProcessTree {
     pgid: Option<i32>,
     #[cfg(not(any(windows, unix)))]
     _private: (),
+    armed: AtomicBool,
 }
 
 impl ProcessTree {
@@ -72,17 +78,26 @@ impl ProcessTree {
         #[cfg(windows)]
         {
             let job = Self::attach_windows_job(child);
-            ProcessTree { job }
+            ProcessTree {
+                job,
+                armed: AtomicBool::new(true),
+            }
         }
         #[cfg(unix)]
         {
             let pgid = child.id().map(|pid| pid as i32);
-            ProcessTree { pgid }
+            ProcessTree {
+                pgid,
+                armed: AtomicBool::new(pgid.is_some()),
+            }
         }
         #[cfg(not(any(windows, unix)))]
         {
             let _ = child;
-            ProcessTree::default()
+            ProcessTree {
+                _private: (),
+                armed: AtomicBool::new(false),
+            }
         }
     }
 
@@ -91,20 +106,35 @@ impl ProcessTree {
         unsafe {
             let job = ffi::CreateJobObjectW(core::ptr::null(), core::ptr::null());
             if job.is_null() {
+                tracing::warn!(
+                    "process tree: CreateJobObject failed; falling back to single-process kill"
+                );
                 return None;
             }
             let handle = JobHandle(job);
             // 蛹自身若已处于别的 Job（Win7 单 Job 限制），指派会失败；
-            // 此时退回逐进程 kill，不视为致命。
-            let assigned = child.raw_handle().is_some_and(|process| {
-                ffi::AssignProcessToJobObject(handle.0, process) != 0
-            });
-            assigned.then_some(handle)
+            // 此时退回逐进程 kill，不视为致命，但必须留下痕迹：树终止会
+            // 静默退化为只杀 shell，孙进程仍然存活。
+            let Some(process) = child.raw_handle() else {
+                tracing::warn!("process tree: child handle unavailable; tree kill disabled");
+                return None;
+            };
+            if ffi::AssignProcessToJobObject(handle.0, process) == 0 {
+                tracing::warn!(
+                    "process tree: AssignProcessToJobObject failed (parent may already own a job); grandchildren will not be tree-killed"
+                );
+                return None;
+            }
+            Some(handle)
         }
     }
 
     /// 终止整棵命令树（含孙进程）。进程已退出或守卫为空时是无害的空操作。
     pub(crate) fn terminate(&self) {
+        // 只生效一次：正常退出后的收尾不该再对复用 pid / 新进程组动手。
+        if !self.armed.swap(false, Ordering::Relaxed) {
+            return;
+        }
         #[cfg(windows)]
         {
             if let Some(job) = self.job.as_ref() {
@@ -116,6 +146,22 @@ impl ProcessTree {
             if let Some(pgid) = self.pgid {
                 unsafe { kill(-pgid, SIGKILL) };
             }
+        }
+    }
+
+    /// 正常收尾后解除兜底。调用方确认子进程已退出、输出已收干时调用，
+    /// 避免 Drop 对已经消亡的 pid / 进程组再次终止。
+    pub(crate) fn disarm(&self) {
+        self.armed.store(false, Ordering::Relaxed);
+    }
+}
+
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        if self.armed.load(Ordering::Relaxed) {
+            // 收尾代码没有跑到（超时、取消、panic、future 被丢弃）：
+            // 整树终止，避免孙进程带着管道写端继续存活。
+            self.terminate();
         }
     }
 }
@@ -157,6 +203,46 @@ mod tests {
         tokio::time::timeout(PIPE_EOF_GRACE, stdout.read_to_end(&mut tail))
             .await
             .expect("pipe must reach EOF after tree terminate")
+            .unwrap();
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+    use std::process::Stdio;
+
+    /// Job Object 路径必须连孙进程一起收掉：`cmd.exe` 退出后，`start /b`
+    /// 拉起的 ping 仍持有 stdout 写端，只杀 shell 会让 join EOF 永久悬挂。
+    #[tokio::test]
+    async fn windows_job_terminate_kills_grandchildren() {
+        use tokio::io::AsyncReadExt;
+        let mut cmd = tokio::process::Command::new("cmd.exe");
+        cmd.arg("/D")
+            .arg("/C")
+            .arg("start /b ping -n 30 127.0.0.1 & echo started");
+        cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        let mut child = cmd.spawn().unwrap();
+        let tree = ProcessTree::attach(&child);
+        if tree.job.is_none() {
+            // 宿主自己可能已经在一个 Job 里（Win7 单 Job 限制），此时树终止
+            // 本来就退化为逐进程 kill，不是本用例要验证的路径。
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return;
+        }
+        let mut stdout = child.stdout.take().unwrap();
+        let mut buffer = [0u8; 64];
+        let read = stdout.read(&mut buffer).await.unwrap();
+        assert!(read > 0);
+        tree.terminate();
+        let mut tail = Vec::new();
+        tokio::time::timeout(PIPE_EOF_GRACE, stdout.read_to_end(&mut tail))
+            .await
+            .expect("pipe must reach EOF after job terminate")
             .unwrap();
         let _ = child.kill().await;
         let _ = child.wait().await;
