@@ -22,7 +22,6 @@ from pathlib import Path
 
 
 COMPONENT_ORDER = ("python", "git", "rg", "ffmpeg", "7zip", "powershell", "browser")
-DEFAULT_CHECKED = ("powershell",)
 TASK_NAMES = ("desktop", "cli")
 # Inno parses task names as expressions, so a name may not start with a digit.
 COMPONENT_TASK_NAMES = {"7zip": "sevenzip"}
@@ -173,10 +172,7 @@ def build_generated_iss(labels, core, supplement_root, version, available, sizes
         if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", task):
             fail("Inno 任务名必须以字母或下划线开头，请为组件 %s 配置 COMPONENT_TASK_NAMES" % name)
         label = format_label(labels, name, component_version(metadata, name), sizes[name])
-        if name in DEFAULT_CHECKED:
-            lines.append('Name: "%s"; Description: "%s"' % (task, label))
-        else:
-            lines.append('Name: "%s"; Description: "%s"; Flags: unchecked' % (task, label))
+        lines.append('Name: "%s"; Description: "%s"' % (task, label))
     lines.append("")
     lines.append("[Files]")
     lines.append('Source: "%s"; DestDir: "{app}\\bin"; DestName: "wunder-desktop.exe"; '

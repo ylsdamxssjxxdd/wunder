@@ -30,18 +30,18 @@ usage() {
   cat <<'EOF'
 用法: wunder-<版本>-linux-<架构>.run [选项]
 
-直接运行即可：默认装到 ${WUNDER_HOME:-$HOME/.wunder}，只安装蛹和舵机。
-交互模式只有一屏：勾选补充组件后回车即开始安装。
+直接运行即可：默认装到 ${WUNDER_HOME:-$HOME/.wunder}，蛹、舵机与全部补充组件默认全选。
+交互模式只有一屏：取消不需要的补充组件后回车即开始安装。
 
-  -y, --yes                不询问确认
+  -y, --yes                不询问确认，按当前选择（默认全选）安装
       --components=LIST    只安装列出的补充组件，逗号分隔；例如 python,git
-      --all                安装全部补充组件
+      --all                安装全部补充组件（与默认行为一致，保留给脚本显式表达）
       --home=PATH          安装目录，同时保存用户数据，默认 ${WUNDER_HOME:-$HOME/.wunder}
       --no-desktop-entry   不创建应用菜单项
       --no-desktop-icon    不在桌面创建启动图标
   -h, --help               显示帮助
 
-不指定 --components/--all 时默认不安装任何补充组件。
+--components 缩小安装范围；交互界面里数字键切换勾选，n 清空后回车则只装蛹和舵机。
 EOF
 }
 
@@ -161,13 +161,22 @@ fi
 HOME_DIR=${HOME_DIR%/}
 
 [ -f "$COMPONENTS_FILE" ] || die "安装包缺少组件清单。"
-: > "$SELECTED_FILE"
+
+# Components start fully selected: a plain run installs a complete
+# workstation. --components narrows the set, the interactive screen and `n`
+# clear it, and --all stays as the explicit non-interactive shortcut.
+select_all_components() {
+  cut -d'|' -f1 "$COMPONENTS_FILE" | while IFS= read -r key; do
+    [ -n "$key" ] && printf '%s\n' "$key"
+  done
+}
 
 if [ "$COMPONENTS_GIVEN" -eq 1 ] && [ "$SELECT_ALL" -eq 1 ]; then
   die "--components 与 --all 不能同时使用"
 fi
 
 if [ "$COMPONENTS_GIVEN" -eq 1 ]; then
+  : > "$SELECTED_FILE"
   old_ifs=$IFS
   IFS=,
   for key in $COMPONENTS_ARG; do
@@ -181,57 +190,54 @@ if [ "$COMPONENTS_GIVEN" -eq 1 ]; then
   done
   IFS=$old_ifs
 elif [ "$SELECT_ALL" -eq 1 ]; then
-  cut -d'|' -f1 "$COMPONENTS_FILE" | while IFS= read -r key; do
-    [ -n "$key" ] && printf '%s\n' "$key"
-  done > "$SELECTED_FILE"
-elif [ "$ASSUME_YES" -eq 0 ]; then
-  [ -t 0 ] || die "非交互环境请使用 --yes --components=... 或 --all"
-  # One screen, one decision: the menu shows the target directory and the
-  # current selection, and Enter starts the install. There is no second
-  # summary and no extra confirmation for a first install.
-  if [ -s "$COMPONENTS_FILE" ]; then
-    printf '\n心舰 Wunder %s · %s\n' "$VERSION" "$ARCH"
-    printf '安装到 %s（配置、会话和工作区也在这里；--home=PATH 可改）\n' "$HOME_DIR"
-    while :; do
-      printf '\n'
-      index=0
-      while IFS='|' read -r key label path version bytes files; do
-        [ -n "$key" ] || continue
-        index=$((index + 1))
-        mark=' '
-        is_selected "$key" && mark='x'
-        printf '  %2d) [%s] %s  %s\n' "$index" "$mark" "$label" "$(human_size "$bytes")"
-      done < "$COMPONENTS_FILE"
-      printf '\n数字切换，a 全选，n 清空，回车开始安装，q 退出\n> '
-      if ! IFS= read -r answer; then
-        answer=q
-      fi
-      case "$answer" in
-        '') break ;;
-        q|Q) echo "已取消。"; exit 0 ;;
-        a|A)
-          cut -d'|' -f1 "$COMPONENTS_FILE" | while IFS= read -r key; do
-            [ -n "$key" ] && printf '%s\n' "$key"
-          done > "$SELECTED_FILE"
-          ;;
-        n|N) : > "$SELECTED_FILE" ;;
-        *)
-          case "$answer" in
-            *[!0-9]*) ;;
-            *)
-              key=$(awk -F'|' -v n="$answer" 'NF { i++; if (i == n) { print $1; exit } }' "$COMPONENTS_FILE")
-              if [ -n "$key" ]; then
-                if is_selected "$key"; then
-                  unselect_one "$key"
-                else
-                  select_one "$key"
+  select_all_components > "$SELECTED_FILE"
+else
+  select_all_components > "$SELECTED_FILE"
+  if [ "$ASSUME_YES" -eq 0 ]; then
+    [ -t 0 ] || die "非交互环境请使用 --yes --components=... 或 --all"
+    # One screen, one decision: the menu shows the target directory and the
+    # current selection (everything, by default), and Enter starts the install.
+    # There is no second summary and no extra confirmation for a first install.
+    if [ -s "$COMPONENTS_FILE" ]; then
+      printf '\n心舰 Wunder %s · %s\n' "$VERSION" "$ARCH"
+      printf '安装到 %s（配置、会话和工作区也在这里；--home=PATH 可改）\n' "$HOME_DIR"
+      while :; do
+        printf '\n'
+        index=0
+        while IFS='|' read -r key label path version bytes files; do
+          [ -n "$key" ] || continue
+          index=$((index + 1))
+          mark=' '
+          is_selected "$key" && mark='x'
+          printf '  %2d) [%s] %s  %s\n' "$index" "$mark" "$label" "$(human_size "$bytes")"
+        done < "$COMPONENTS_FILE"
+        printf '\n数字切换，a 全选，n 清空，回车开始安装，q 退出\n> '
+        if ! IFS= read -r answer; then
+          answer=q
+        fi
+        case "$answer" in
+          '') break ;;
+          q|Q) echo "已取消。"; exit 0 ;;
+          a|A) select_all_components > "$SELECTED_FILE" ;;
+          n|N) : > "$SELECTED_FILE" ;;
+          *)
+            case "$answer" in
+              *[!0-9]*) ;;
+              *)
+                key=$(awk -F'|' -v n="$answer" 'NF { i++; if (i == n) { print $1; exit } }' "$COMPONENTS_FILE")
+                if [ -n "$key" ]; then
+                  if is_selected "$key"; then
+                    unselect_one "$key"
+                  else
+                    select_one "$key"
+                  fi
                 fi
-              fi
-              ;;
-          esac
-          ;;
-      esac
-    done
+                ;;
+            esac
+            ;;
+        esac
+      done
+    fi
   fi
 fi
 

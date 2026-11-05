@@ -75,7 +75,7 @@ Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 WelcomeLabel1=欢迎安装 [name]
 WelcomeLabel2=本向导将引导您完成 [name/ver] 的安装。
 WizardSelectTasks=选择安装内容
-SelectTasksDesc=勾选蛹或舵机安装程序本体（勾选蛹会自动创建桌面快捷方式），组件按需勾选。
+SelectTasksDesc=已默认全选：蛹与舵机是程序本体（勾选蛹会自动创建桌面快捷方式），补充组件默认随装，可按需取消勾选。
 SelectTasksLabel2=
 SelectDirDesc=请选择心舰的安装目录，该目录也是用户数据目录。
 SelectDirLabel3=
@@ -208,7 +208,9 @@ begin
 
   SelectAllCheckBox := TNewCheckBox.Create(WizardForm);
   SelectAllCheckBox.Parent := WizardForm.TasksList.Parent;
-  SelectAllCheckBox.Caption := '全选（推荐）';
+  // Everything starts checked, so this is a restore/reset control rather than
+  // a recommendation; its state syncs with the rows on page entry.
+  SelectAllCheckBox.Caption := '全选';
   SelectAllCheckBox.Left := WizardForm.TasksList.Left;
   SelectAllCheckBox.Width := WizardForm.TasksList.Width;
   SelectAllCheckBox.Height := ScaleY(20);

@@ -387,7 +387,7 @@ def build_payload(
                 "version": info.get("version", ""),
                 "bytes": info["bytes"],
                 "files": info["files"],
-                "defaultSelected": False,
+                "defaultSelected": True,
             }
             for key, info in components.items()
         ],
@@ -601,7 +601,7 @@ def main():
                 "version": info.get("version", ""),
                 "bytes": info["bytes"],
                 "files": info["files"],
-                "defaultSelected": False,
+                "defaultSelected": True,
             }
             for key, info in components.items()
         ],
