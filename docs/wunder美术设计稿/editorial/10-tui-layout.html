@@ -1,0 +1,170 @@
+<!-- AI生成 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>舵机 · 终端布局栈</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #FBFAF8;
+      --color-ink:     #1F2329;
+      --color-muted:   #5C6470;
+      --color-soft:    #636B76;
+      --color-accent:  #B4531A;
+      --font-sans:     'Geist', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif', 'Noto Serif SC', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1320px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .eyebrow {
+      font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500;
+      letter-spacing: 0.18em; text-transform: uppercase; color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif); font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400; letter-spacing: -0.01em; line-height: 1.2;
+      color: var(--color-ink); margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 1280px; display: block; }
+    .foot {
+      margin-top: 1rem; font-family: var(--font-mono); font-size: 0.66rem;
+      letter-spacing: 0.04em; color: var(--color-soft);
+    }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Layer stack · 舵机 / 终端</p>
+    <h1>终端布局栈：四段固定与一段弹性</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1280 780" xmlns="http://www.w3.org/2000/svg" role="img"
+           aria-labelledby="tui-layout-title tui-layout-desc"
+           font-family="'Geist', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+        <title id="tui-layout-title">终端布局栈：横幅、转写、弹层、活动行与输入区</title>
+        <desc id="tui-layout-desc">终端界面自上而下为横幅 1 行、转写弹性区、弹层、活动行 1 行、输入区固定 5 行；转写区是唯一的弹性段，弹层以浮层方式覆盖其上。</desc>
+
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5C6470"/></marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#B4531A"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2E5AA8"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#FBFAF8"/>
+        <text x="40" y="44" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">MAIN LAYOUT FIXED COST 14 LINES · INPUT 5 · ACTIVE 1 · BANNER 1</text>
+
+        <!-- 左侧抽象方向 -->
+        <text x="60" y="124" fill="#5C6470" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">TIME ↓</text>
+        <path d="M 140 160 V 200" fill="none" stroke="#5C6470" stroke-width="1.2" marker-end="url(#arrow)" stroke-dasharray="4,3"/>
+
+        <!-- L1 横幅 -->
+        <rect x="200" y="136" width="880" height="56" fill="#F3F1ED"/>
+        <text x="216" y="160" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L1</text>
+        <text x="264" y="166" fill="#1F2329" font-size="14" font-weight="600">横幅</text>
+        <text x="264" y="182" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">MODEL · CWD · SHORTCUTS</text>
+        <text x="1064" y="170" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">1 行</text>
+        <line x1="200" y1="192" x2="1080" y2="192" stroke="rgba(31,35,41,0.12)" stroke-width="1"/>
+
+        <!-- L2 转写（焦点，弹性） -->
+        <rect x="200" y="192" width="880" height="128" fill="rgba(180,83,26,0.06)"/>
+        <rect x="200" y="192" width="880" height="128" fill="none" stroke="#B4531A" stroke-width="1.2"/>
+        <text x="216" y="216" fill="#B4531A" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L2</text>
+        <text x="264" y="222" fill="#B4531A" font-size="14" font-weight="600">转写区</text>
+        <text x="264" y="240" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">FLEX · FLOOR 8 LINES</text>
+        <!-- 转写内容示意 -->
+        <g fill="#5C6470" font-family="'Geist Mono', ui-monospace, monospace" font-size="9">
+          <text x="520" y="222">&gt; 用户输入</text>
+          <text x="520" y="242">● 工具 · 读取 3 个文件</text>
+          <text x="520" y="262">● 工具 · 写入 1 个文件</text>
+          <text x="520" y="282">▸ 助手正文 · markdown</text>
+          <text x="520" y="302">▸ 助手正文 · 代码块</text>
+        </g>
+        <text x="1064" y="240" fill="#B4531A" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">8 行地板</text>
+        <text x="1064" y="258" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">弹层时 6 行</text>
+        <line x1="200" y1="320" x2="1080" y2="320" stroke="rgba(31,35,41,0.12)" stroke-width="1"/>
+
+        <!-- L3 弹层（浮层） -->
+        <rect x="200" y="320" width="880" height="56" fill="#FBFAF8"/>
+        <rect x="208" y="324" width="864" height="48" fill="rgba(31,35,41,0.02)" stroke="rgba(31,35,41,0.30)" stroke-width="1" stroke-dasharray="4,3"/>
+        <text x="216" y="344" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L3</text>
+        <text x="264" y="350" fill="#1F2329" font-size="14" font-weight="600">弹层（浮层）</text>
+        <text x="264" y="366" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">OVERLAYS L2 · ABOVE INPUT</text>
+        <text x="1064" y="354" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">min(n,7) + 1</text>
+        <line x1="200" y1="376" x2="1080" y2="376" stroke="rgba(31,35,41,0.12)" stroke-width="1"/>
+
+        <!-- L4 活动行 -->
+        <rect x="200" y="376" width="880" height="56" fill="#F3F1ED"/>
+        <text x="216" y="400" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L4</text>
+        <text x="264" y="406" fill="#1F2329" font-size="14" font-weight="600">活动行</text>
+        <text x="264" y="422" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">SPINNER · PHASE · ELAPSED</text>
+        <text x="1064" y="410" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">1 行</text>
+        <line x1="200" y1="432" x2="1080" y2="432" stroke="rgba(31,35,41,0.12)" stroke-width="1"/>
+
+        <!-- L5 输入区 -->
+        <rect x="200" y="432" width="880" height="56" fill="#FBFAF8"/>
+        <text x="216" y="456" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L5</text>
+        <text x="264" y="462" fill="#1F2329" font-size="14" font-weight="600">输入区</text>
+        <text x="264" y="478" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">FIXED 5 · MULTILINE BUFFER</text>
+        <g>
+          <rect x="620" y="448" width="12" height="24" fill="rgba(31,35,41,0.30)"/>
+          <rect x="638" y="448" width="12" height="24" fill="rgba(31,35,41,0.30)"/>
+          <rect x="656" y="448" width="12" height="24" fill="rgba(31,35,41,0.30)"/>
+          <rect x="674" y="448" width="12" height="24" fill="rgba(31,35,41,0.30)"/>
+          <rect x="692" y="448" width="12" height="24" fill="rgba(31,35,41,0.30)"/>
+        </g>
+        <text x="1064" y="466" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">5 行</text>
+
+        <!-- 轮廓 -->
+        <rect x="200" y="136" width="880" height="352" rx="8" fill="none" stroke="#1F2329" stroke-width="1.2"/>
+
+        <!-- 右侧说明 -->
+        <text x="1096" y="226" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">唯一弹性段</text>
+        <text x="1096" y="246" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace">NEGOTIATES</text>
+        <text x="1096" y="260" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace">BEFORE PAINT</text>
+
+        <!-- 行预算小表 -->
+        <rect x="200" y="512" width="880" height="96" rx="6" fill="rgba(31,35,41,0.015)" stroke="rgba(31,35,41,0.10)" stroke-width="1"/>
+        <text x="216" y="536" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.12em">ROW BUDGET · 14 LINES FIXED OVERHEAD</text>
+        <text x="216" y="562" fill="#1F2329" font-size="12">输入区 5 + 活动行 1 + 横幅 1 = 7 行，另加边框与气口共 14 行固定开销。</text>
+        <text x="216" y="584" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">REMAINDER → TRANSCRIPT · FLOOR 8 (6 WITH OVERLAY)</text>
+
+        <!-- 编辑注记 -->
+        <text x="200" y="644" fill="#5C6470" font-size="12" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', 'Noto Serif SC', serif">窗口再矮，先压转写区到地板，再压弹层到 2 项，最后才允许输入区滚动；输入区永远不低于 5 行。</text>
+
+        <!-- 图例 -->
+        <line x1="40" y1="700" x2="1240" y2="700" stroke="rgba(31,35,41,0.10)" stroke-width="0.8"/>
+        <text x="40" y="716" fill="#5C6470" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">LEGEND</text>
+
+        <rect x="108" y="708" width="12" height="12" rx="2" fill="#F3F1ED"/>
+        <text x="128" y="718" fill="#5C6470" font-size="12">固定段</text>
+
+        <rect x="248" y="708" width="12" height="12" rx="2" fill="rgba(180,83,26,0.06)" stroke="#B4531A" stroke-width="1.2"/>
+        <text x="268" y="718" fill="#5C6470" font-size="12">弹性段（焦点）</text>
+
+        <rect x="428" y="708" width="12" height="12" rx="2" fill="#FBFAF8" stroke="rgba(31,35,41,0.30)" stroke-width="1" stroke-dasharray="3,2"/>
+        <text x="448" y="718" fill="#5C6470" font-size="12">浮层</text>
+
+        <rect x="548" y="708" width="12" height="12" rx="2" fill="#FBFAF8" stroke="#1F2329" stroke-width="1.2"/>
+        <text x="568" y="718" fill="#5C6470" font-size="12">外框</text>
+
+        <text x="108" y="748" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.06em">LEGEND ONLY MARKS STRUCTURE — COLOUR COMES FROM THE NAMED PALETTE (SEE 11)</text>
+      </svg>
+    </div>
+
+    <p class="foot">FACT BASE · crates/wunder-cli 布局常量 · 主布局固定开销 14 行 · 转写地板 8 行（弹层时 6 行）</p>
+  </div>
+</body>
+</html>

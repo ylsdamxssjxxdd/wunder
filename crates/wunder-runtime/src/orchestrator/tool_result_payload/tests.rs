@@ -1865,3 +1865,137 @@ fn observation_array_preview_requires_rereading_the_current_page() {
         .unwrap()
         .contains("next_page_skips"));
 }
+
+#[test]
+fn list_files_projection_keeps_directories_first_when_truncated() {
+    let mut items = Vec::new();
+    for index in 0..60 {
+        items.push(json!(format!("file-{index:02}.txt")));
+        if index < 4 {
+            items.push(json!(format!("module-{index}/")));
+        }
+    }
+    let raw = json!({
+        "action": "列出文件",
+        "state": "completed",
+        "summary": "Listed entries.",
+        "data": {"items": items, "has_more": false}
+    });
+    let projected = project_list_files_success(&raw).expect("list projection");
+    let entries = projected["items"].as_array().expect("projected items");
+    assert!(entries.len() <= OBSERVATION_MAX_ARRAY_ITEMS);
+    for entry in entries.iter().take(4) {
+        assert!(entry.as_str().is_some_and(|text| text.ends_with('/')));
+    }
+    let marker = entries.last().expect("omission marker");
+    assert_eq!(marker["__truncated"], true);
+    assert_eq!(marker["omitted_dirs"], 0);
+    assert!(marker["omitted_files"].as_u64().unwrap_or(0) > 0);
+    assert!(projected["hint"]
+        .as_str()
+        .is_some_and(|hint| hint.contains("top_level_only")));
+}
+
+#[test]
+fn top_level_listing_returns_every_entry_inline_in_one_call() {
+    let mut items = Vec::new();
+    for index in 0..12 {
+        items.push(json!(format!("module-{index:02}/")));
+    }
+    for index in 0..32 {
+        items.push(json!(format!("file-{index:02}.txt")));
+    }
+    assert_eq!(items.len(), 44);
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {
+            "action": "列出文件",
+            "state": "completed",
+            "summary": "Listed 44 entries.",
+            "data": {
+                "path": ".",
+                "items": items,
+                "returned": 44,
+                "has_more": false,
+                "top_level_only": true,
+                "folders_first": true
+            }
+        }
+    }));
+    let payload = result.to_compact_payload("list_files");
+    let data = &payload["data"];
+    let entries = data["items"].as_array().expect("inline items");
+    assert_eq!(entries.len(), 44, "all direct children must be inline");
+    assert_eq!(entries[0], json!("module-00/"));
+    assert_eq!(entries[43], json!("file-31.txt"));
+    assert!(entries
+        .iter()
+        .all(|entry| entry.get("__truncated").is_none()));
+    assert!(data.get("hint").is_none());
+    assert!(data.get("omitted_files").is_none());
+    assert_ne!(data["truncated"], json!(true));
+    assert_ne!(payload["truncated"], json!(true));
+}
+
+#[test]
+fn top_level_listing_over_inline_limit_stays_bounded_and_recoverable() {
+    let items: Vec<Value> = (0..300)
+        .map(|index| json!(format!("file-{index:03}.txt")))
+        .collect();
+    let raw = json!({
+        "action": "列出文件",
+        "state": "completed",
+        "summary": "Listed 300 entries.",
+        "data": {
+            "items": items,
+            "returned": 300,
+            "has_more": false,
+            "top_level_only": true
+        }
+    });
+    let projected = project_list_files_success(&raw).expect("list projection");
+    let entries = projected["items"].as_array().expect("projected items");
+    assert_eq!(entries.len(), TOP_LEVEL_LIST_INLINE_MAX_ITEMS);
+    let marker = entries.last().expect("omission marker");
+    assert_eq!(marker["__truncated"], true);
+    assert_eq!(
+        marker["omitted_files"],
+        json!(300 - (TOP_LEVEL_LIST_INLINE_MAX_ITEMS - 1))
+    );
+    let hint = projected["hint"].as_str().expect("recovery hint");
+    assert!(hint.contains("result_handle"));
+    assert!(!hint.contains("pass top_level_only=true"));
+}
+
+#[test]
+fn read_file_projection_reports_one_truncation_reason() {
+    let data = json!({
+        "content": "line 1\nline 2\n",
+        "files": [{
+            "path": "sample.txt",
+            "mode": "slice",
+            "read_lines": 488,
+            "total_lines": 676,
+            "truncated_by_size": false,
+            "complete": false
+        }],
+        "read_lines": 488,
+        "total_lines": 676,
+        "returned_bytes": 16300,
+        "output_budget_hit": true,
+        "output_budget_omitted_bytes": 342,
+        "truncation_reason": "output_budget",
+        "has_more": true,
+        "next_line": 489,
+        "continuation_required": true,
+        "continuation_hint": "read a narrower window"
+    });
+    let compacted =
+        compact_read_file_observation_data(data.as_object().expect("data object")).unwrap();
+    assert_eq!(compacted["truncation_reason"], "output_budget");
+    assert!(compacted.get("output_budget_hit").is_none());
+    assert!(compacted["files"][0].get("truncated_by_size").is_none());
+    assert_eq!(compacted["has_more"], true);
+    assert_eq!(compacted["continuation_required"], true);
+    assert_eq!(compacted["continuation_hint"], "read a narrower window");
+}

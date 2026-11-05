@@ -75,7 +75,7 @@ Load the selected `type-*.md`. Override the grammar only when the content disagr
 
 1. Write the self-contained HTML.
 2. Run the SKILL.md §9 taste gate and [`output-spec.md` §6](output-spec.md) checklist.
-3. Export SVG/PNG only when requested, following [`export.md`](export.md).
+3. Export the PNG as part of the delivery (default `scale=2`) and hand it to the user; add SVG only when explicitly requested — see [`export.md`](export.md).
 4. Report the fidelity ledger: source count, drawn count, and every merge, collapse, or drop.
 
 ---

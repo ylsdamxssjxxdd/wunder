@@ -957,6 +957,11 @@ fn build_prompt_key(prompt: Option<&str>) -> String {
 }
 
 fn render_tool_spec(spec: &ToolSpec, freeform_mode: bool) -> String {
+    // Text protocols pay for every tool definition in the system prompt, so
+    // render the reduced model-facing surface instead of the authoritative
+    // schema. Execution still validates against the full backend schema.
+    let projected = crate::tools::prompt_tool_spec(spec, &i18n::get_language());
+    let spec = &projected;
     // serde_json 默认会按 key 排序输出，这里手动控制字段顺序，确保 name 在最前面便于模型检索。
     let name = serde_json::to_string(&spec.name).unwrap_or_else(|_| "\"\"".to_string());
     let description =
@@ -1339,5 +1344,90 @@ mod tests {
         assert!(en.contains("the first tool call must be the skill tool"));
         assert!(en.contains("do not call file listing, search"));
         assert!(en.contains("the task intent matches a skill's Frontmatter"));
+    }
+
+    /// First-turn fixed cost = system templates + the model-facing tool
+    /// catalogue. Function-call mode bills the API `tools` array; text
+    /// protocols bill the same catalogue inside the tools-protocol block.
+    /// The estimate is deliberately conservative (3.2 ASCII chars/token for
+    /// JSON-heavy prompts, 1.6 for CJK) plus a reserve for the user turn,
+    /// mounted-skill index, workspace tree and message framing.
+    #[test]
+    fn first_turn_prompt_budget_stays_under_10k_tokens() {
+        const RESERVE_TOKENS: usize = 1_200;
+        fn estimate(text: &str) -> usize {
+            let units: f64 = text
+                .chars()
+                .map(|ch| if ch.is_ascii() { 1.0 / 3.2 } else { 1.0 / 1.6 })
+                .sum();
+            units.ceil() as usize
+        }
+        let config = Config::default();
+        let skills = SkillRegistry::default();
+        // Worst case: every built-in tool is authorized. Config::default() does
+        // not enable any tool, so derive the name set from the catalogue itself.
+        let allowed: HashSet<String> = crate::tools::builtin_tool_specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect();
+        assert!(allowed.len() >= 20, "catalog must expose the built-in tools");
+        for (locale, function_call) in [("en", true), ("zh", false)] {
+            let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../config/prompts")
+                .join(locale)
+                .join("system");
+            let mut static_text = String::new();
+            for name in [
+                "role.txt",
+                "engineering.txt",
+                "inner_visible_protocol.txt",
+                "skills_protocol.txt",
+                "memory.txt",
+                "extra.txt",
+            ] {
+                static_text.push_str(&std::fs::read_to_string(root.join(name)).expect("template"));
+            }
+            if !function_call {
+                static_text.push_str(
+                    &std::fs::read_to_string(root.join("tools_protocol.txt"))
+                        .expect("tools protocol"),
+                );
+            }
+            let language = if locale == "en" { "en-US" } else { "zh-CN" };
+            let specs = crate::tools::collect_prompt_tool_specs_with_language(
+                &config, &skills, &allowed, None, language,
+            );
+            let tools: Vec<Value> = specs
+                .iter()
+                .map(|spec| {
+                    let projected = crate::tools::prompt_tool_spec(spec, language);
+                    json!({
+                        "type": "function",
+                        "function": {
+                            "name": projected.name,
+                            "description": projected.description,
+                            "parameters": crate::core::json_schema::normalize_tool_input_schema(
+                                Some(&projected.input_schema)
+                            )
+                        }
+                    })
+                })
+                .collect();
+            let tools_text = serde_json::to_string(&tools).expect("tools json");
+            let static_tokens = estimate(&static_text);
+            let tools_tokens = estimate(&tools_text);
+            let total = static_tokens + tools_tokens + RESERVE_TOKENS;
+            println!(
+                "FIRST_TURN_BUDGET locale={locale} mode={} tools={} static_chars={} tools_chars={} static_tokens={static_tokens} tools_tokens={tools_tokens} reserve={RESERVE_TOKENS} total_tokens={total}",
+                if function_call { "function_call" } else { "text" },
+                tools.len(),
+                static_text.chars().count(),
+                tools_text.chars().count()
+            );
+            assert!(
+                total < 10_000,
+                "first-turn prompt is ~{total} tokens in {locale} mode (static {static_tokens}, tools {tools_tokens})"
+            );
+        }
     }
 }

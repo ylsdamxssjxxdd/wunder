@@ -1,0 +1,179 @@
+<!-- AI生成 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>蛹 · 工具过程与滚动锚定</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #FBFAF8;
+      --color-ink:     #1F2329;
+      --color-muted:   #5C6470;
+      --color-soft:    #636B76;
+      --color-accent:  #B4531A;
+      --font-sans:     'Geist', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif', 'Noto Serif SC', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1320px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .eyebrow {
+      font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500;
+      letter-spacing: 0.18em; text-transform: uppercase; color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif); font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400; letter-spacing: -0.01em; line-height: 1.2;
+      color: var(--color-ink); margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 1280px; display: block; }
+    .foot {
+      margin-top: 1rem; font-family: var(--font-mono); font-size: 0.66rem;
+      letter-spacing: 0.04em; color: var(--color-soft);
+    }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Architecture · 蛹 / 过程视图</p>
+    <h1>工具过程：从事件到行条目，再到视口锚定</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1280 780" xmlns="http://www.w3.org/2000/svg" role="img"
+           aria-labelledby="tool-process-title tool-process-desc"
+           font-family="'Geist', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+        <title id="tool-process-title">工具过程：事件、行条目、分页与视口锚定</title>
+        <desc id="tool-process-desc">运行时工具事件进入有界缓冲，折算为以 26 像素为基础行的条目，经 older/newer 分页写入列表，最终由两次固定顶部边缘的滚动帧把视口约束在合法偏移区间内。</desc>
+
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5C6470"/></marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#B4531A"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2E5AA8"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#FBFAF8"/>
+        <text x="40" y="44" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">WORKFLOW HEIGHT 420 px · BASE ROW 26 · PASS 33 ms · PIN 2 PASSES</text>
+
+        <!-- 连接器 -->
+        <g fill="none" stroke="#5C6470" stroke-width="1.2">
+          <path d="M 320 250 H 380" marker-end="url(#arrow)"/>
+          <path d="M 620 250 H 680" marker-end="url(#arrow)"/>
+          <path d="M 920 250 H 980" marker-end="url(#arrow)"/>
+        </g>
+
+        <!-- 节点 1：事件 -->
+        <rect x="80" y="200" width="240" height="100" rx="6" fill="#FBFAF8"/>
+        <rect x="80" y="200" width="240" height="100" rx="6" fill="#ffffff" stroke="#1F2329" stroke-width="1"/>
+        <rect x="88" y="206" width="36" height="12" rx="2" fill="none" stroke="rgba(31,35,41,0.40)" stroke-width="0.8"/>
+        <text x="106" y="215" fill="#5C6470" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">EVENT</text>
+        <text x="200" y="248" fill="#1F2329" font-size="12" font-weight="600" text-anchor="middle">运行时工具事件</text>
+        <text x="200" y="268" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">tool-start / tool-result</text>
+        <text x="200" y="284" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">BUFFER BOUNDED</text>
+
+        <!-- 节点 2：条目 -->
+        <rect x="380" y="200" width="240" height="100" rx="6" fill="#FBFAF8"/>
+        <rect x="380" y="200" width="240" height="100" rx="6" fill="#ffffff" stroke="#1F2329" stroke-width="1"/>
+        <rect x="388" y="206" width="36" height="12" rx="2" fill="none" stroke="rgba(31,35,41,0.40)" stroke-width="0.8"/>
+        <text x="406" y="215" fill="#5C6470" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">ROW</text>
+        <text x="500" y="248" fill="#1F2329" font-size="12" font-weight="600" text-anchor="middle">行条目</text>
+        <text x="500" y="268" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">26 px → expanded</text>
+        <text x="500" y="284" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">HUNDREDS WHEN OPEN</text>
+
+        <!-- 节点 3：分页 -->
+        <rect x="680" y="200" width="240" height="100" rx="6" fill="#FBFAF8"/>
+        <rect x="680" y="200" width="240" height="100" rx="6" fill="#ffffff" stroke="#1F2329" stroke-width="1"/>
+        <rect x="688" y="206" width="36" height="12" rx="2" fill="none" stroke="rgba(31,35,41,0.40)" stroke-width="0.8"/>
+        <text x="706" y="215" fill="#5C6470" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PAGE</text>
+        <text x="800" y="248" fill="#1F2329" font-size="12" font-weight="600" text-anchor="middle">分页写入</text>
+        <text x="800" y="268" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">older · newer</text>
+        <text x="800" y="284" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">REVISION ±</text>
+
+        <!-- 节点 4：锚定（焦点） -->
+        <rect x="980" y="200" width="240" height="100" rx="6" fill="#FBFAF8"/>
+        <rect x="980" y="200" width="240" height="100" rx="6" fill="rgba(180,83,26,0.07)" stroke="#B4531A" stroke-width="1.2"/>
+        <rect x="988" y="206" width="36" height="12" rx="2" fill="none" stroke="rgba(180,83,26,0.50)" stroke-width="0.8"/>
+        <text x="1006" y="215" fill="#B4531A" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PIN</text>
+        <text x="1100" y="248" fill="#B4531A" font-size="12" font-weight="600" text-anchor="middle">视口锚定</text>
+        <text x="1100" y="268" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">content-y = 0</text>
+        <text x="1100" y="284" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">FOLLOW TAIL −8 px</text>
+
+        <!-- 下半：偏移区间 -->
+        <text x="80" y="380" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">LEGAL OFFSET WINDOW</text>
+
+        <!-- 越界区（左：正偏移 → 空白条） -->
+        <rect x="120" y="404" width="80" height="28" fill="rgba(208,74,67,0.08)" stroke="rgba(208,74,67,0.35)" stroke-width="0.8" stroke-dasharray="4,3"/>
+        <text x="160" y="422" fill="#D04A43" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">BLANK</text>
+
+        <!-- 合法区 -->
+        <rect x="200" y="404" width="880" height="28" fill="rgba(180,83,26,0.06)"/>
+        <line x1="200" y1="404" x2="200" y2="432" stroke="#B4531A" stroke-width="1.2"/>
+        <line x1="1080" y1="404" x2="1080" y2="432" stroke="#B4531A" stroke-width="1.2"/>
+        <line x1="200" y1="418" x2="1080" y2="418" stroke="#B4531A" stroke-width="1.2"/>
+        <text x="640" y="422" fill="#B4531A" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">0 ≥ content-y ≥ visible − content</text>
+
+        <!-- 越界区（右：越过尾部） -->
+        <rect x="1080" y="404" width="80" height="28" fill="rgba(208,74,67,0.08)" stroke="rgba(208,74,67,0.35)" stroke-width="0.8" stroke-dasharray="4,3"/>
+        <text x="1120" y="422" fill="#D04A43" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">TAIL</text>
+
+        <!-- 两端说明 -->
+        <text x="200" y="456" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">TOP EDGE</text>
+        <text x="1080" y="456" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">BOTTOM EDGE</text>
+        <text x="160" y="456" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">≤ 0</text>
+        <text x="1120" y="456" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">MAX</text>
+
+        <!-- 三次约束说明 -->
+        <rect x="200" y="492" width="880" height="120" rx="6" fill="rgba(31,35,41,0.015)" stroke="rgba(31,35,41,0.10)" stroke-width="1"/>
+        <text x="216" y="516" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.12em">3 CONSTRAINTS · v0.3.4</text>
+
+        <text x="216" y="544" fill="#1F2329" font-size="12" font-weight="600">① 旧页落位后固定顶边</text>
+        <text x="216" y="562" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">pin-passes = 2, not a height delta</text>
+
+        <text x="216" y="586" fill="#1F2329" font-size="12" font-weight="600">② 尾随判定收紧到 −8 px</text>
+        <text x="216" y="604" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">follow-tail = visible − content − y ≥ −8px</text>
+
+        <text x="640" y="544" fill="#1F2329" font-size="12" font-weight="600">③ 每帧夹回合法区间</text>
+        <text x="640" y="562" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">clamp before paint · never blank strip</text>
+
+        <text x="640" y="586" fill="#1F2329" font-size="12" font-weight="600">④ 手势越界立即重排</text>
+        <text x="640" y="604" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">scrolled → re-arm 33 ms pass</text>
+
+        <!-- 编辑注记 -->
+        <text x="80" y="656" fill="#5C6470" font-size="12" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', 'Noto Serif SC', serif">行高从 26 px 到数百 px 不等，任何按平均行高换算的补偿都会整行偏移；所以只固定顶边，不做高度差补偿。</text>
+
+        <!-- 图例 -->
+        <line x1="40" y1="700" x2="1240" y2="700" stroke="rgba(31,35,41,0.10)" stroke-width="0.8"/>
+        <text x="40" y="716" fill="#5C6470" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">LEGEND</text>
+
+        <rect x="108" y="708" width="12" height="12" rx="2" fill="#ffffff" stroke="#1F2329" stroke-width="1"/>
+        <text x="128" y="718" fill="#5C6470" font-size="12">处理阶段</text>
+
+        <rect x="288" y="708" width="12" height="12" rx="2" fill="rgba(180,83,26,0.07)" stroke="#B4531A" stroke-width="1.2"/>
+        <text x="308" y="718" fill="#5C6470" font-size="12">本次修复的焦点</text>
+
+        <rect x="488" y="708" width="12" height="12" rx="2" fill="rgba(180,83,26,0.06)" stroke="#B4531A" stroke-width="1"/>
+        <text x="508" y="718" fill="#5C6470" font-size="12">合法偏移区间</text>
+
+        <rect x="688" y="708" width="12" height="12" rx="2" fill="rgba(208,74,67,0.08)" stroke="rgba(208,74,67,0.35)" stroke-width="0.8"/>
+        <text x="708" y="718" fill="#5C6470" font-size="12">越界（空白 / 越尾）</text>
+
+        <line x1="928" y1="714" x2="968" y2="714" stroke="#5C6470" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <text x="978" y="718" fill="#5C6470" font-size="12">数据流向</text>
+      </svg>
+    </div>
+
+    <p class="foot">FACT BASE · frontend-slint/ui/tool_process.slint（pin-passes / follow-tail / clamp）· v0.3.4 滚动修复</p>
+  </div>
+</body>
+</html>

@@ -21,8 +21,21 @@ export struct HelpEntry {
     topic: int,
     title: string,
     detail: string,
-    // 侧栏分组名（开始 / 核心 / 工具 / 界面 / 参考）；索引与搜索结果为空。
+    // 所属二级分组名（入门 / 核心能力 / 美术 / 参考 …）；索引与搜索结果为空。
     group: string,
+}
+
+// 左侧目录的一行：0 = 可展开的分区标题，1 = 分区内的二级分组标题，2 = 主题。
+export struct HelpNavRow {
+    kind: int,
+    topic: int,
+    title: string,
+    detail: string,
+    // 分区下标（0–3），点选分区标题时回传给控制器。
+    block: int,
+    expanded: bool,
+    // 分区内的主题数，只对分区标题有意义。
+    count: int,
 }
 
 export struct HelpTextRun {
@@ -59,7 +72,8 @@ export struct HelpImage {
 }
 
 export global HelpDocs {
-    in property <[HelpEntry]> contents;
+    // 左侧目录：四个分区按展开状态压平成一行行导航项。
+    in property <[HelpNavRow]> nav-rows;
     in property <[HelpEntry]> keyword-index;
     in property <[HelpEntry]> search-results;
     // The manual is Markdown. Rust projects the current topic once into the
@@ -87,6 +101,8 @@ export global HelpDocs {
     in-out property <int> reveal-request: 0;
     in-out property <float> reveal-y: 0;
     callback topic-opened(int);
+    // 展开/收起左侧目录的四个分区之一。
+    callback block-toggled(int);
     callback history-requested(int);
     callback search-changed(string);
     callback find-changed(string);

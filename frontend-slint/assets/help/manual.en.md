@@ -1,12 +1,12 @@
 <!-- help-manual: en -->
 <!-- 正文是标准 Markdown；topic: 链接指向站内主题，art/*.png 指向内嵌图册。 -->
-<!-- topic id="welcome" title="Welcome" group="Getting Started" keywords="getting started,welcome,manual,help" -->
+<!-- topic id="welcome" block="start" title="Welcome" group="Getting Started" keywords="getting started,welcome,manual,help" -->
 
 # Pupa User Manual
 
 Pupa is a local AI workbench: hand a goal to the agent, and it breaks the task down, calls tools, and delivers results. Files and threads stay on this machine.
 
-This manual introduces Pupa's core capabilities and day-to-day operations. On the left, the **Contents** pane organizes topics, the **Index** looks entries up by keyword, and **Search** matches full text. Green links in the body jump to the related topic.
+This manual introduces Pupa's core capabilities and day-to-day operations. On the left, the **Contents** pane groups topics into four blocks — Getting Started, Tools, Surfaces and Capabilities — and each block title expands or collapses; the **Index** looks entries up by keyword, and **Search** matches full text. Green links in the body jump to the related topic.
 
 - [**Quick Start**](topic:quickstart)：Create a thread, send a message, switch models — your first conversation in a few minutes.
 - [**Diverse, Fast, Superior, Efficient**](topic:core-overview)：The four cores: multi-platform and multi-form, instant startup and lag-free response, 24/7 stability and high intelligence, extremely low CPU, memory, and context cost with a ready-made runtime.
@@ -19,7 +19,7 @@ This manual introduces Pupa's core capabilities and day-to-day operations. On th
 
 > **Tip:** Type a keyword into the search box at the top of the settings category list to jump straight to that category.
 
-<!-- topic id="quickstart" title="Quick Start" group="Getting Started" keywords="new thread,send message,switch model,conversation,first time" -->
+<!-- topic id="quickstart" block="start" title="Quick Start" group="Getting Started" keywords="new thread,send message,switch model,conversation,first time" -->
 
 # Quick Start
 
@@ -41,7 +41,7 @@ The model switcher beside the input box affects only the **current thread**; the
 
 > All conversation data is stored in a local SQLite database; you can browse past threads while offline.
 
-<!-- topic id="forms" title="Form matrix" group="Getting Started" keywords="form,Pupa,Beehive,Helm,Hull" -->
+<!-- topic id="forms" block="start" title="Form matrix" group="Getting Started" keywords="form,Pupa,Beehive,Helm,Hull" -->
 
 # Form matrix
 
@@ -67,7 +67,7 @@ All forms share the same engine (wunder-runtime) and core (wunder-core): threads
 
 - **Multi-user management and governance** → Hull (server). Multi-tenancy, user and org-unit management, agent app build and publish, unified gateway access and scheduling. The admin console is the Bridge (web), which starts with Hull and is aimed at administrators.
 
-<!-- topic id="install" title="Starting with the Pupa (Desktop)" group="Getting Started" keywords="install,launch,download,desktop" -->
+<!-- topic id="install" block="start" title="Starting with the Pupa (Desktop)" group="Getting Started" keywords="install,launch,download,desktop" -->
 
 # Starting with the Pupa (Desktop)
 
@@ -216,7 +216,7 @@ Two default behaviors are worth separating:
 
 - **The subagent activity indicator**: when a task has spawned subagents, the chat area shows the child runs that are still working; subagents are temporary work units the main agent creates, reclaimed once the task ends.
 
-<!-- topic id="core-overview" title="Core Concepts" group="Core Capabilities" keywords="Diverse,Fast,Superior,Efficient,multi-platform,multi-form,startup speed,response speed,stability,intelligence,CPU usage,memory usage,context consumption" -->
+<!-- topic id="core-overview" block="capabilities" title="Core Concepts" group="Core Capabilities" keywords="Diverse,Fast,Superior,Efficient,multi-platform,multi-form,startup speed,response speed,stability,intelligence,CPU usage,memory usage,context consumption" -->
 
 # Core Concepts
 
@@ -235,7 +235,7 @@ Diversity and strength set the capability surface; speed and efficiency constrai
 
 The eleven capabilities expanded page by page — goal, compatibility, context compression, subagents, scheduled tasks, channels, memory, multithreading, streaming and realtime state, stability, and multi-tenancy — live under Capabilities › Core Capabilities.
 
-<!-- topic id="core-goal" title="Goal" group="Core Capabilities" keywords="goal,goal state,phase,round cap" -->
+<!-- topic id="core-goal" block="capabilities" title="Goal" group="Core Capabilities" keywords="goal,goal state,phase,round cap" -->
 
 # Goal
 
@@ -277,7 +277,7 @@ Updates use CAS-on-revision: an update must carry the goal's current revision, a
 
 - The Bridge has no goal UI; goal operations happen in the Beehive, the Pupa, and the Helm.
 
-<!-- topic id="core-compatibility" title="Compatibility" group="Core Capabilities" keywords="compatibility,Windows 7,Ubuntu,offline" -->
+<!-- topic id="core-compatibility" block="capabilities" title="Compatibility" group="Core Capabilities" keywords="compatibility,Windows 7,Ubuntu,offline" -->
 
 # Compatibility
 
@@ -306,7 +306,7 @@ Both chains work offline, the interface needs no GPU, and command sessions adapt
 
 - win7 interlink nodes do not declare ` tool.exec `, so the capability surface on legacy devices is narrower.
 
-<!-- topic id="core-context-compression" title="Context Compression" group="Core Capabilities" keywords="context compaction,compaction,context" -->
+<!-- topic id="core-context-compression" block="capabilities" title="Context Compression" group="Core Capabilities" keywords="context compaction,compaction,context" -->
 
 # Context Compression
 
@@ -355,7 +355,7 @@ Administrators can see the estimated savings of the local reduction in the progr
 
 After compression, the system favors what the current task needs. Only in extreme cases (a very long conversation stacked with a large amount of tool output) might the agent recall early details less precisely, and then a new conversation thread is the fix.
 
-<!-- topic id="core-subagent" title="Subagents" group="Core Capabilities" keywords="subagent,spawn,collaboration" -->
+<!-- topic id="core-subagent" block="capabilities" title="Subagents" group="Core Capabilities" keywords="subagent,spawn,collaboration" -->
 
 # Subagents
 
@@ -380,7 +380,7 @@ Parent–child round references are encoded as ` user\_round ` + ` model\_round 
 
 - Swarm leftovers remain in TUI prompts, front-end i18n labels, and compatibility shims, and empty directories await cleanup. Those leftovers do not mean the capability exists.
 
-<!-- topic id="core-scheduled-tasks" title="Scheduled Tasks" group="Core Capabilities" keywords="scheduled task,schedule,cron" -->
+<!-- topic id="core-scheduled-tasks" block="capabilities" title="Scheduled Tasks" group="Core Capabilities" keywords="scheduled task,schedule,cron" -->
 
 # Scheduled Tasks
 
@@ -446,7 +446,7 @@ With the master switch off (` cron.enabled=false `), four kinds of write operati
 
 When you need something to run on a schedule, configure it on the Beehive, the Pupa, or the Hull side.
 
-<!-- topic id="core-channels" title="Channels" group="Core Capabilities" keywords="channel,Feishu,QQ,WeChat,IM" -->
+<!-- topic id="core-channels" block="capabilities" title="Channels" group="Core Capabilities" keywords="channel,Feishu,QQ,WeChat,IM" -->
 
 # Channels
 
@@ -539,7 +539,7 @@ Verification differs by platform: some loop back a verification token from confi
 
 - Pupa and Helm do not go through the channel layer: Pupa is a native in-process call, and Helm uses its own access path.
 
-<!-- topic id="core-memory" title="Memory" group="Core Capabilities" keywords="memory,long-term memory,knowledge base" -->
+<!-- topic id="core-memory" block="capabilities" title="Memory" group="Core Capabilities" keywords="memory,long-term memory,knowledge base" -->
 
 # Memory
 
@@ -585,7 +585,7 @@ More memory is not better. Injecting too much crowds the conversation's context 
 
 Memory does not update automatically every round; it is injected only at initialization and does not change during a run. Recall is a dynamic supplement and does not rewrite the base. Workspace files are not the same as memory either — a workspace is the scene of the current task, while memory is long-term accumulation.
 
-<!-- topic id="core-multithreading" title="Multi-threading" group="Core Capabilities" keywords="multi-threading,concurrency,thread,queue" -->
+<!-- topic id="core-multithreading" block="capabilities" title="Multi-threading" group="Core Capabilities" keywords="multi-threading,concurrency,thread,queue" -->
 
 # Multi-threading
 
@@ -615,7 +615,7 @@ A single user can hold several task threads at once, and scheduling, locks, and 
 
 - Blocking category quotas and bounded queues are hard caps: when full, the system reports busy and does not wait in a queue.
 
-<!-- topic id="core-realtime" title="Streaming and Realtime State" group="Core Capabilities" keywords="streaming,realtime state,increment,delta,terminal state,rehydration,disconnect" -->
+<!-- topic id="core-realtime" block="capabilities" title="Streaming and Realtime State" group="Core Capabilities" keywords="streaming,realtime state,increment,delta,terminal state,rehydration,disconnect" -->
 
 # Streaming and Realtime State
 
@@ -658,7 +658,7 @@ Text increments and model rounds are two different granularities: a single round
 
 - Streaming continuity takes priority over rich-text completeness; long messages are organized as stable blocks and only the active tail block updates.
 
-<!-- topic id="core-stability" title="Stability and Recovery" group="Core Capabilities" keywords="stability,circuit breaking,recovery,queue,timeout,retry,bounded" -->
+<!-- topic id="core-stability" block="capabilities" title="Stability and Recovery" group="Core Capabilities" keywords="stability,circuit breaking,recovery,queue,timeout,retry,bounded" -->
 
 # Stability
 
@@ -698,7 +698,7 @@ When failures with the same fingerprint repeat, the circuit breaker trips: non-r
 | Judged "user busy" | That task thread is still executing | Send again later, or yield/cancel the thread |
 | UI and backend state disagree | The projection lags behind | Refresh or restart; if it still disagrees, use [Reset](topic:desktop-ui) |
 
-<!-- topic id="core-multi-user-management" title="Multi-user Management" group="Core Capabilities" keywords="multi-tenancy,account,quota,permission" -->
+<!-- topic id="core-multi-user-management" block="capabilities" title="Multi-user Management" group="Core Capabilities" keywords="multi-tenancy,account,quota,permission" -->
 
 # Multi-user Management
 
@@ -775,7 +775,7 @@ Sessions, tasks, workspaces, tools, and channel bindings are all isolated by use
 
 - The system does not ship a set of preset agent cards; the preset card directory is empty by default, and nothing exists until it is configured.
 
-<!-- topic id="tools-overview" title="Tools Overview" group="Tools" keywords="tools,tool matrix,MCP,alias" -->
+<!-- topic id="tools-overview" block="tools" title="Tools Overview" group="Tools" keywords="tools,tool matrix,MCP,alias" -->
 
 # Tools Overview
 
@@ -865,7 +865,7 @@ Exceptions that skip the shared shell:
 
 - **Text Edit** (formerly ` apply\_patch `): success uses the shared shell; in its patch form, failures carry stricter error semantics than ordinary file tools.
 
-<!-- topic id="tools" title="Tools &amp; Skills" group="Tools" keywords="tools,skills,MCP,knowledge base,server" -->
+<!-- topic id="tools" block="tools" title="Tools &amp; Skills" group="Tools" keywords="tools,skills,MCP,knowledge base,server" -->
 
 # Tools & Skills
 
@@ -883,7 +883,7 @@ The **Tools & Skills** page in settings centrally manages the capabilities the a
 
 > Local capabilities run under least privilege: system capability calls must be declared explicitly and are never silently exposed to remote ends.
 
-<!-- topic id="interface" title="Interface Tour" group="Surfaces" keywords="interface,sidebar,working process,trajectory,layout" -->
+<!-- topic id="interface" block="interface" title="Interface Tour" group="Surfaces" keywords="interface,sidebar,working process,trajectory,layout" -->
 
 # Interface Tour
 
@@ -901,7 +901,7 @@ The trajectory view replays a task's full execution timeline round by round, inc
 
 > **Recommended:** For everyday use the working process is enough; open the trajectory view when you need a full review.
 
-<!-- topic id="desktop-ui" title="Pupa Interface" group="Surfaces" keywords="interface,desktop,sidebar,layout" -->
+<!-- topic id="desktop-ui" block="interface" title="Pupa Interface" group="Surfaces" keywords="interface,desktop,sidebar,layout" -->
 
 # Pupa Interface
 
@@ -1044,7 +1044,7 @@ It cleans up the working state rather than performing a factory reset.
 | Device-interconnection settings panel | Category not opened; only the cloud workspace + approval pop-up | ✅ Devices category + interconnection view |
 | One agent | Multiple threads, multiple workspaces | The same |
 
-<!-- topic id="art-overview" title="00 Overview" group="Art" keywords="art,design sheet,overview,window layout" -->
+<!-- topic id="art-overview" block="interface" title="00 Overview" group="Art" keywords="art,design sheet,overview,window layout" -->
 
 # 00 Overview
 
@@ -1056,7 +1056,7 @@ Whole-window baseline for the Pupa desktop app: 1462×866 logical pixels, a 240 
 
 > The sources live in docs/wunder美术设计稿/蛹. After editing an SVG run python scripts/render\_art\_previews.py, then python scripts/build\_help\_manual.py to refresh the manual.
 
-<!-- topic id="art-foundations" title="01 Foundations" group="Art" keywords="art,foundations,color,type scale,spacing,radii" -->
+<!-- topic id="art-foundations" block="interface" title="01 Foundations" group="Art" keywords="art,foundations,color,type scale,spacing,radii" -->
 
 # 01 Foundations
 
@@ -1066,7 +1066,7 @@ Neutral, accent and semantic colors, the type scale, spacing, radii and the wind
 
 *01 Foundations · color, type, spacing, radii*
 
-<!-- topic id="art-icons" title="02 Icons" group="Art" keywords="art,icons,production assets,pupa icon,status icons" -->
+<!-- topic id="art-icons" block="interface" title="02 Icons" group="Art" keywords="art,icons,production assets,pupa icon,status icons" -->
 
 # 02 Icons
 
@@ -1076,7 +1076,7 @@ Thirty production icons grouped by purpose and state, preserving solid, line and
 
 *02 Icons · production assets, sizes, color and states*
 
-<!-- topic id="art-shell" title="03 Shell and Sidebar" group="Art" keywords="art,shell,sidebar,title bar,splitter" -->
+<!-- topic id="art-shell" block="interface" title="03 Shell and Sidebar" group="Art" keywords="art,shell,sidebar,title bar,splitter" -->
 
 # 03 Shell and Sidebar
 
@@ -1086,7 +1086,7 @@ Title bar, sidebar width, groups, workspace rows, thread rows, the working-direc
 
 *03 Shell and sidebar · title bar, sidebar, splitter*
 
-<!-- topic id="art-timeline" title="04 Timeline" group="Art" keywords="art,timeline,message,turn footer,state capsule" -->
+<!-- topic id="art-timeline" block="interface" title="04 Timeline" group="Art" keywords="art,timeline,message,turn footer,state capsule" -->
 
 # 04 Timeline
 
@@ -1096,7 +1096,7 @@ Reading column and scrolling, user messages, turn footers, the run-state capsule
 
 *04 Timeline · messages, footers, state capsule*
 
-<!-- topic id="art-process" title="05 Process and Tools" group="Art" keywords="art,process,tools,thinking,subagent" -->
+<!-- topic id="art-process" block="interface" title="05 Process and Tools" group="Art" keywords="art,process,tools,thinking,subagent" -->
 
 # 05 Process and Tools
 
@@ -1106,7 +1106,7 @@ Process bar, thinking entries, tool rows, the expanded output panel, tool groups
 
 *05 Process and tools · process bar, tool rows, subagents*
 
-<!-- topic id="art-plan" title="06 Plan and Inquiry" group="Art" keywords="art,plan,inquiry,goal,no preference" -->
+<!-- topic id="art-plan" block="interface" title="06 Plan and Inquiry" group="Art" keywords="art,plan,inquiry,goal,no preference" -->
 
 # 06 Plan and Inquiry
 
@@ -1116,7 +1116,7 @@ Plan capsule, expanded card, goal banner and inquiry panel. Option rows include 
 
 *06 Plan and inquiry · plan card, goal banner, inquiry panel*
 
-<!-- topic id="art-composer" title="07 Composer" group="Art" keywords="art,composer,send,stop,queue" -->
+<!-- topic id="art-composer" block="interface" title="07 Composer" group="Art" keywords="art,composer,send,stop,queue" -->
 
 # 07 Composer
 
@@ -1126,7 +1126,7 @@ The 972×100 input card, the 30-high footer, attachment rows, recording, generat
 
 *07 Composer · input card, footer, stop and queue*
 
-<!-- topic id="art-settings" title="08 Settings and Dialogs" group="Art" keywords="art,settings,dialogs,controls,validation" -->
+<!-- topic id="art-settings" block="interface" title="08 Settings and Dialogs" group="Art" keywords="art,settings,dialogs,controls,validation" -->
 
 # 08 Settings and Dialogs
 
@@ -1136,7 +1136,7 @@ Settings row anatomy, input and select controls, buttons, validation and hints, 
 
 *08 Settings and dialogs · rows, controls, validation*
 
-<!-- topic id="art-motion" title="09 States and Motion" group="Art" keywords="art,interaction,states,motion,keys,breakpoints" -->
+<!-- topic id="art-motion" block="interface" title="09 States and Motion" group="Art" keywords="art,interaction,states,motion,keys,breakpoints" -->
 
 # 09 States and Motion
 
@@ -1146,7 +1146,7 @@ Row and input states, the motion timeline, performance limits, key bindings, acc
 
 *09 States and motion · states, timing, keys*
 
-<!-- topic id="interlink" title="Interlink" group="Capabilities" keywords="interlink,devices,tunnel,remote" -->
+<!-- topic id="interlink" block="capabilities" title="Interlink" group="Capabilities" keywords="interlink,devices,tunnel,remote" -->
 
 # Interlink
 
@@ -1257,7 +1257,7 @@ After a Hull restart, unfinished commands are settled in bounded batches with ` 
 
 Remote file reads use a 256 KiB inline-result boundary; larger device files use bounded chunks. Cloud-direct execution has no device data channel, so larger reads and writes must be split. Beehive does not offer binary upload, archive, or batch file operations.
 
-<!-- topic id="settings" title="Settings Overview" group="Reference" keywords="settings,language,theme,cloud account,preferences" -->
+<!-- topic id="settings" block="capabilities" title="Settings Overview" group="Reference" keywords="settings,language,theme,cloud account,preferences" -->
 
 # Settings Overview
 
@@ -1281,7 +1281,7 @@ The settings page is organized by category; the search box at the top locates a 
 
 Language, theme, and font size changes take effect immediately; no restart needed.
 
-<!-- topic id="models" title="Models" group="Reference" keywords="models,parameters,default model,channel,multimodal parameters,temperature" -->
+<!-- topic id="models" block="capabilities" title="Models" group="Reference" keywords="models,parameters,default model,channel,multimodal parameters,temperature" -->
 
 # Models
 
@@ -1303,7 +1303,7 @@ One model record can hold separate parameters for chat (LLM), speech recognition
 
 > **Tip:** Before saving, use the "Probe" button to verify that the context length or voice list is available.
 
-<!-- topic id="threads" title="Agent Threads" group="Reference" keywords="rounds,tool calls,context compaction,subagent,thread" -->
+<!-- topic id="threads" block="capabilities" title="Agent Threads" group="Reference" keywords="rounds,tool calls,context compaction,subagent,thread" -->
 
 # Agent Threads
 
@@ -1325,7 +1325,7 @@ Complex tasks are broken down and handed to subagents. A subagent is a work unit
 
 > A thread's system prompt stays frozen after it is first created; long-term memory is injected once at thread initialization, keeping the model's prompt cache stable.
 
-<!-- topic id="workspace" title="Files &amp; Workspace" group="Reference" keywords="files,workspace,local,storage,export" -->
+<!-- topic id="workspace" block="tools" title="Files &amp; Workspace" group="Workspace" keywords="files,workspace,local,storage,export" -->
 
 # Files & Workspace
 
@@ -1335,7 +1335,7 @@ Files, screenshots, and generated content from a session can be viewed and manag
 
 > **Recommended:** Put the workspace on a disk partition with plenty of space, and back up important output regularly.
 
-<!-- topic id="multimodal" title="Multimodal Input" group="Reference" keywords="screenshot,recording,speech recognition,speech synthesis,image generation,video generation" -->
+<!-- topic id="multimodal" block="tools" title="Multimodal Input" group="Multimodal" keywords="screenshot,recording,speech recognition,speech synthesis,image generation,video generation" -->
 
 # Multimodal Input
 
@@ -1353,7 +1353,7 @@ Once a TTS voice is configured, the agent's replies can be read aloud; with imag
 
 > **Tip:** Multimodal capabilities depend on the corresponding parameters being filled in; unconfigured items do not appear in the input area.
 
-<!-- topic id="privacy" title="Data &amp; Privacy" group="Reference" keywords="data,privacy,offline,SQLite,backup,storage location" -->
+<!-- topic id="privacy" block="capabilities" title="Data &amp; Privacy" group="Reference" keywords="data,privacy,offline,SQLite,backup,storage location" -->
 
 # Data & Privacy
 
@@ -1373,7 +1373,7 @@ To back up, copy both the database file and the workspace directory to preserve 
 
 > **Note:** Exported diagnostics (see "Diagnostics & Troubleshooting") contain only key-free information about this machine's settings and capability counts, for troubleshooting.
 
-<!-- topic id="usage" title="Token Usage and Credits" group="Reference" keywords="token,usage,credits,quota,cost,context usage" -->
+<!-- topic id="usage" block="capabilities" title="Token Usage and Credits" group="Reference" keywords="token,usage,credits,quota,cost,context usage" -->
 
 # Token Usage and Credits
 
@@ -1395,7 +1395,7 @@ Credits limit model request counts and belong to Hull (server) multi-user govern
 
 > **Tip:** Model request count and credit consumption are two different metrics. In quota-exempt scenarios the request count still grows while credit consumption stays 0.
 
-<!-- topic id="faq" title="FAQ" group="Reference" keywords="FAQ,common questions,registration,cost,memory,subagent,password,tool visibility" -->
+<!-- topic id="faq" block="capabilities" title="FAQ" group="Help" keywords="FAQ,common questions,registration,cost,memory,subagent,password,tool visibility" -->
 
 # FAQ
 
@@ -1435,7 +1435,7 @@ Possible causes: the tool is not enabled, the MCP service is off, or the current
 
 Web fetch reads one page's body; the browser operates a page like a person (clicking, scrolling, filling forms, waiting for rendering).
 
-<!-- topic id="troubleshooting" title="Diagnostics &amp; Troubleshooting" group="Reference" keywords="diagnostics,troubleshooting,failure,FAQ,symptoms,logs" -->
+<!-- topic id="troubleshooting" block="capabilities" title="Diagnostics &amp; Troubleshooting" group="Help" keywords="diagnostics,troubleshooting,failure,FAQ,symptoms,logs" -->
 
 # Diagnostics & Troubleshooting
 
@@ -1515,7 +1515,7 @@ When submitting a problem, attach:
 
 - Whether subagents, MCP, or Devices & interlink were involved
 
-<!-- topic id="glossary" title="Glossary" group="Reference" keywords="terminology,terms,definitions,concepts" -->
+<!-- topic id="glossary" block="capabilities" title="Glossary" group="Help" keywords="terminology,terms,definitions,concepts" -->
 
 # Glossary
 

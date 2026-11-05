@@ -1,0 +1,183 @@
+<!-- AI生成 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>舵机 · 命名色与修饰</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #FBFAF8;
+      --color-ink:     #1F2329;
+      --color-muted:   #5C6470;
+      --color-soft:    #636B76;
+      --color-accent:  #B4531A;
+      --font-sans:     'Geist', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif', 'Noto Serif SC', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1320px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .eyebrow {
+      font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500;
+      letter-spacing: 0.18em; text-transform: uppercase; color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif); font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400; letter-spacing: -0.01em; line-height: 1.2;
+      color: var(--color-ink); margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 1280px; display: block; }
+    .foot {
+      margin-top: 1rem; font-family: var(--font-mono); font-size: 0.66rem;
+      letter-spacing: 0.04em; color: var(--color-soft);
+    }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Key · 舵机 / 色彩语义</p>
+    <h1>命名色与修饰：五个名字，三种修饰</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1280 780" xmlns="http://www.w3.org/2000/svg" role="img"
+           aria-labelledby="tui-colors-title tui-colors-desc"
+           font-family="'Geist', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+        <title id="tui-colors-title">命名色与修饰：青、绿、红、黄、品红与默认</title>
+        <desc id="tui-colors-desc">终端只使用五个命名色加默认色表达语义，配合加粗、变暗、反显三种修饰；不使用 256 色索引，以保证跨终端与主题切换一致。</desc>
+
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5C6470"/></marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#B4531A"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2E5AA8"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#FBFAF8"/>
+        <text x="40" y="44" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">5 NAMED COLOURS + DEFAULT · NO 256-COLOUR INDEX · NO RGB LITERALS</text>
+
+        <!-- 表头 -->
+        <text x="128" y="132" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">SWATCH</text>
+        <text x="176" y="132" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">NAME</text>
+        <text x="316" y="132" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">语义</text>
+        <text x="440" y="132" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">用于</text>
+        <text x="900" y="132" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">限制</text>
+        <line x1="120" y1="144" x2="1160" y2="144" stroke="#1F2329" stroke-width="1"/>
+
+        <!-- 行 1 CYAN -->
+        <rect x="128" y="160" width="24" height="24" rx="3" fill="#0E7C86"/>
+        <text x="176" y="177" fill="#1F2329" font-size="10" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.08em">CYAN</text>
+        <text x="316" y="177" fill="#1F2329" font-size="12">青</text>
+        <text x="440" y="177" fill="#5C6470" font-size="12">工具名 · 路径 · 链接 · 命令回声</text>
+        <text x="900" y="177" fill="#636B76" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">NEVER FOR BODY</text>
+        <line x1="120" y1="200" x2="1160" y2="200" stroke="rgba(31,35,41,0.12)" stroke-width="0.8"/>
+
+        <!-- 行 2 GREEN -->
+        <rect x="128" y="208" width="24" height="24" rx="3" fill="#1A8A5C"/>
+        <text x="176" y="225" fill="#1F2329" font-size="10" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.08em">GREEN</text>
+        <text x="316" y="225" fill="#1F2329" font-size="12">绿</text>
+        <text x="440" y="225" fill="#5C6470" font-size="12">成功 · 新增行 · 完成 · 已允许</text>
+        <text x="900" y="225" fill="#636B76" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">PAIRED WITH + MARK</text>
+        <line x1="120" y1="248" x2="1160" y2="248" stroke="rgba(31,35,41,0.12)" stroke-width="0.8"/>
+
+        <!-- 行 3 RED -->
+        <rect x="128" y="256" width="24" height="24" rx="3" fill="#D04A43"/>
+        <text x="176" y="273" fill="#1F2329" font-size="10" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.08em">RED</text>
+        <text x="316" y="273" fill="#1F2329" font-size="12">红</text>
+        <text x="440" y="273" fill="#5C6470" font-size="12">错误 · 删除行 · 失败 · 已拒绝</text>
+        <text x="900" y="273" fill="#636B76" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">ALWAYS WITH WORD</text>
+        <line x1="120" y1="296" x2="1160" y2="296" stroke="rgba(31,35,41,0.12)" stroke-width="0.8"/>
+
+        <!-- 行 4 YELLOW -->
+        <rect x="128" y="304" width="24" height="24" rx="3" fill="#C98A2B"/>
+        <text x="176" y="321" fill="#1F2329" font-size="10" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.08em">YELLOW</text>
+        <text x="316" y="321" fill="#1F2329" font-size="12">黄</text>
+        <text x="440" y="321" fill="#5C6470" font-size="12">警告 · 待确认 · 已更改 · 计划提案</text>
+        <text x="900" y="321" fill="#636B76" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">NEVER ALONE</text>
+        <line x1="120" y1="344" x2="1160" y2="344" stroke="rgba(31,35,41,0.12)" stroke-width="0.8"/>
+
+        <!-- 行 5 MAGENTA -->
+        <rect x="128" y="352" width="24" height="24" rx="3" fill="#B03A8C"/>
+        <text x="176" y="369" fill="#1F2329" font-size="10" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.08em">MAGENTA</text>
+        <text x="316" y="369" fill="#1F2329" font-size="12">品红</text>
+        <text x="440" y="369" fill="#5C6470" font-size="12">强调 · 模型标识 · 思考块边界</text>
+        <text x="900" y="369" fill="#636B76" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">ONE PER SCREEN</text>
+        <line x1="120" y1="392" x2="1160" y2="392" stroke="rgba(31,35,41,0.12)" stroke-width="0.8"/>
+
+        <!-- 行 6 DEFAULT（焦点） -->
+        <rect x="128" y="400" width="24" height="24" rx="3" fill="#FBFAF8" stroke="#B4531A" stroke-width="1.2"/>
+        <text x="176" y="417" fill="#B4531A" font-size="10" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.08em">DEFAULT</text>
+        <text x="316" y="417" fill="#B4531A" font-size="12">默认</text>
+        <text x="440" y="417" fill="#B4531A" font-size="12">正文 · 助手输出 · 表格内容</text>
+        <text x="900" y="417" fill="#636B76" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">THE MAJORITY</text>
+        <line x1="120" y1="440" x2="1160" y2="440" stroke="#1F2329" stroke-width="1"/>
+
+        <!-- 修饰区 -->
+        <text x="120" y="476" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">TEXT ATTRIBUTES</text>
+
+        <!-- BOLD -->
+        <rect x="120" y="492" width="280" height="72" rx="6" fill="#F3F1ED"/>
+        <text x="136" y="518" fill="#1F2329" font-size="10" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.08em">BOLD</text>
+        <text x="136" y="540" fill="#1F2329" font-size="12" font-weight="600">加粗</text>
+        <text x="136" y="556" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">标题 · 当前项 · 计数变化</text>
+
+        <!-- DIM -->
+        <rect x="420" y="492" width="280" height="72" rx="6" fill="#F3F1ED"/>
+        <text x="436" y="518" fill="#1F2329" font-size="10" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.08em">DIM</text>
+        <text x="436" y="540" fill="#5C6470" font-size="12">变暗</text>
+        <text x="436" y="556" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">元信息 · 时间戳 · 路径前缀</text>
+
+        <!-- REVERSED -->
+        <rect x="720" y="492" width="280" height="72" rx="6" fill="#1F2329"/>
+        <text x="736" y="518" fill="#FBFAF8" font-size="10" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.08em">REVERSED</text>
+        <text x="736" y="540" fill="#FBFAF8" font-size="12" font-weight="600">反显</text>
+        <text x="736" y="556" fill="#FBFAF8" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">选中行 · 焦点项（唯一）</text>
+
+        <!-- 规则 -->
+        <text x="1036" y="518" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">每行 =</text>
+        <text x="1036" y="536" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">1 色 +</text>
+        <text x="1036" y="554" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">1 修饰</text>
+
+        <!-- 编辑注记 -->
+        <text x="120" y="612" fill="#5C6470" font-size="12" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', 'Noto Serif SC', serif">色不是唯一信号：成功/失败同时带 + / − 记号，警告同时带词，反显同时带焦点边框。</text>
+
+        <!-- 图例 -->
+        <line x1="40" y1="700" x2="1240" y2="700" stroke="rgba(31,35,41,0.10)" stroke-width="0.8"/>
+        <text x="40" y="716" fill="#5C6470" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">LEGEND</text>
+
+        <rect x="108" y="708" width="12" height="12" rx="2" fill="#0E7C86"/>
+        <text x="128" y="718" fill="#5C6470" font-size="12">标识 / 工具</text>
+
+        <rect x="248" y="708" width="12" height="12" rx="2" fill="#1A8A5C"/>
+        <text x="268" y="718" fill="#5C6470" font-size="12">成功</text>
+
+        <rect x="348" y="708" width="12" height="12" rx="2" fill="#D04A43"/>
+        <text x="368" y="718" fill="#5C6470" font-size="12">失败</text>
+
+        <rect x="448" y="708" width="12" height="12" rx="2" fill="#C98A2B"/>
+        <text x="468" y="718" fill="#5C6470" font-size="12">警告</text>
+
+        <rect x="548" y="708" width="12" height="12" rx="2" fill="#B03A8C"/>
+        <text x="568" y="718" fill="#5C6470" font-size="12">强调</text>
+
+        <rect x="648" y="708" width="12" height="12" rx="2" fill="#FBFAF8" stroke="#B4531A" stroke-width="1.2"/>
+        <text x="668" y="718" fill="#5C6470" font-size="12">默认正文（焦点）</text>
+
+        <text x="108" y="748" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.06em">COLOURS SHOWN AT UI VALUE — THE TERMINAL MAY REMAP THEM TO THE USER'S THEME</text>
+      </svg>
+    </div>
+
+    <p class="foot">FACT BASE · crates/wunder-cli 样式表 · Cyan / Green / Red / Yellow / Magenta + BOLD / DIM / REVERSED</p>
+  </div>
+</body>
+</html>

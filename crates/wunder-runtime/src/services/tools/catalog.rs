@@ -244,175 +244,74 @@ fn localized_tool_title(name: &str, language: &str) -> Option<String> {
 pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
     let t = |key: &str| i18n::t_in_language(key, language);
     let schedule_task_schema = || {
-        let action = |name: &str, properties: serde_json::Map<String, Value>, required: &[&str]| {
-            let mut fields = serde_json::Map::new();
-            fields.insert("action".to_string(), json!({"const": name}));
-            fields.extend(properties);
-            json!({
-                "type":"object",
-                "properties": fields,
-                "required": required.iter().map(|key| json!(key)).collect::<Vec<_>>(),
-                "additionalProperties": false
-            })
-        };
-        let string = |description: String| json!({"type":"string", "description": description});
-        let boolean = |description: String| json!({"type":"boolean", "description": description});
-        let mut id = serde_json::Map::new();
-        id.insert(
-            "job_id".to_string(),
-            string(t("tool.spec.schedule_task.args.job.job_id")),
-        );
-        let mut add = id.clone();
-        add.insert(
-            "name".to_string(),
-            string(t("tool.spec.schedule_task.args.job.name")),
-        );
-        add.insert(
-            "schedule_text".to_string(),
-            string(t("tool.spec.schedule_task.args.job.schedule_text")),
-        );
-        add.insert(
-            "message".to_string(),
-            string(t("tool.spec.schedule_task.args.job.payload.message")),
-        );
-        add.insert(
-            "session".to_string(),
-            json!({"type":"string", "enum":["main","isolated"], "description": t("tool.spec.schedule_task.args.job.session")}),
-        );
-        add.insert(
-            "enabled".to_string(),
-            boolean(t("tool.spec.schedule_task.args.job.enabled")),
-        );
-        let mut add_with_schedule = add.clone();
-        add_with_schedule.insert(
-            "schedule".to_string(),
-            json!({
-                "type":"object", "additionalProperties":false,
-                "properties": {
-                    "kind":{"type":"string","enum":["at","every","cron"]},
-                    "at":{"type":"string"}, "every_ms":{"type":"integer","minimum":1000},
-                    "cron":{"type":"string"}, "tz":{"type":"string"}
-                }, "required":["kind"]
-            }),
-        );
-        let mut update = add.clone();
-        update.insert(
-            "schedule".to_string(),
-            json!({
-                "type":"object", "additionalProperties":false,
-                "properties": {
-                    "kind":{"type":"string","enum":["at","every","cron"]},
-                    "at":{"type":"string"}, "every_ms":{"type":"integer","minimum":1000},
-                    "cron":{"type":"string"}, "tz":{"type":"string"}
-                }, "required":["kind"]
-            }),
-        );
-        let mut only_id = serde_json::Map::new();
-        only_id.insert(
-            "job_id".to_string(),
-            string(t("tool.spec.schedule_task.args.job.job_id")),
-        );
-        let mut branches = vec![
-            action("add", add, &["action", "message", "schedule_text"]),
-            action("add", add_with_schedule, &["action", "message", "schedule"]),
-            action("update", update, &["action", "job_id"]),
-        ]
-        .into_iter()
-        .collect::<Vec<_>>();
-        for name in ["get", "remove", "enable", "disable", "run"] {
-            branches.push(action(name, only_id.clone(), &["action", "job_id"]));
-        }
-        branches.push(action("list", serde_json::Map::new(), &["action"]));
-        branches.push(action("status", serde_json::Map::new(), &["action"]));
-        json!({"oneOf": branches})
+        // One flat action object. Shared field types live in $defs so every
+        // parameter is declared once instead of being repeated across eleven
+        // oneOf branches. The executor still enforces per-action requirements
+        // (add needs message + a schedule, id actions need job_id) and rejects
+        // unknown keys, so no model-side union is needed.
+        let reference = |name: &str| json!({"$ref": format!("#/$defs/{name}")});
+        json!({
+            "type": "object",
+            "$defs": {
+                "s": {"type":"string","minLength":1},
+                "b": {"type":"boolean"},
+                "schedule": {
+                    "type":"object", "additionalProperties":false,
+                    "properties": {
+                        "kind":{"type":"string","enum":["at","every","cron"]},
+                        "at":reference("s"), "every_ms":{"type":"integer","minimum":1000},
+                        "cron":reference("s"), "tz":reference("s")
+                    }, "required":["kind"]
+                }
+            },
+            "properties": {
+                "action": {
+                    "type":"string",
+                    "enum":["add","update","get","remove","enable","disable","run","list","status"],
+                    "description":"add needs message plus schedule_text or schedule; update/get/remove/enable/disable/run need job_id."
+                },
+                "job_id": reference("s"),
+                "name": reference("s"),
+                "message": reference("s"),
+                "schedule_text": {"type":"string","minLength":1,"description":"Natural-language schedule for add, e.g. 'every 5 minutes'."},
+                "schedule": reference("schedule"),
+                "session": {"type":"string","enum":["main","isolated"]},
+                "enabled": reference("b")
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        })
     };
     let memory_manager_schema = || {
-        let action =
-            |name: &str, mut properties: serde_json::Map<String, Value>, required: &[&str]| {
-                properties.insert("action".to_string(), json!({"const": name}));
-                let mut branch = serde_json::Map::new();
-                branch.insert("type".to_string(), json!("object"));
-                branch.insert("properties".to_string(), Value::Object(properties));
-                branch.insert(
-                    "required".to_string(),
-                    Value::Array(required.iter().map(|key| json!(key)).collect()),
-                );
-                branch.insert("additionalProperties".to_string(), json!(false));
-                Value::Object(branch)
-            };
-        let string = |description: String| json!({"type":"string", "description": description});
-        let integer = |description: String| json!({"type":"integer", "minimum":1, "maximum":200, "description": description});
-        let mut list = serde_json::Map::new();
-        list.insert(
-            "query".to_string(),
-            string(t("tool.spec.memory_manager.args.query")),
-        );
-        list.insert(
-            "limit".to_string(),
-            integer(t("tool.spec.memory_manager.args.limit")),
-        );
-        list.insert(
-            "order".to_string(),
-            json!({
-                "type":"string", "enum":["desc","asc"],
-                "description": t("tool.spec.memory_manager.args.order")
-            }),
-        );
-
-        let mut search = serde_json::Map::new();
-        search.insert(
-            "query".to_string(),
-            string(t("tool.spec.memory_manager.args.query")),
-        );
-        search.insert(
-            "limit".to_string(),
-            integer(t("tool.spec.memory_manager.args.limit")),
-        );
-
-        let mut get = serde_json::Map::new();
-        get.insert(
-            "memory_id".to_string(),
-            string(t("tool.spec.memory_manager.args.memory_id")),
-        );
-
-        let mut add = get.clone();
-        add.insert(
-            "title".to_string(),
-            string(t("tool.spec.memory_manager.args.title")),
-        );
-        add.insert(
-            "content".to_string(),
-            string(t("tool.spec.memory_manager.args.content")),
-        );
-        add.insert(
-            "tag".to_string(),
-            string(t("tool.spec.memory_manager.args.tag")),
-        );
-        add.insert(
-            "related_memory_id".to_string(),
-            string(t("tool.spec.memory_manager.args.related_memory_id")),
-        );
-        add.insert(
-            "memory_time".to_string(),
-            string(t("tool.spec.memory_manager.args.memory_time")),
-        );
-
-        let update = add.clone();
-        let mut remove = serde_json::Map::new();
-        remove.insert(
-            "memory_id".to_string(),
-            string(t("tool.spec.memory_manager.args.memory_id")),
-        );
+        // Flat action object with $defs reuse; the seven oneOf branches used to
+        // repeat the same string/limit/order definitions. Action-specific
+        // requirements are enforced by the executor, not by the model surface.
+        let reference = |name: &str| json!({"$ref": format!("#/$defs/{name}")});
         json!({
-            "oneOf": [
-                action("list", list, &["action"]),
-                action("search", search, &["action"]),
-                action("get", get, &["action", "memory_id"]),
-                action("add", add, &["action", "content"]),
-                action("update", update, &["action", "memory_id", "content"]),
-                action("remove", remove, &["action", "memory_id"]),
-                action("clear", serde_json::Map::new(), &["action"])
-            ]
+            "type": "object",
+            "$defs": {
+                "s": {"type":"string","minLength":1},
+                "limit": {"type":"integer","minimum":1,"maximum":200},
+                "order": {"type":"string","enum":["desc","asc"]}
+            },
+            "properties": {
+                "action": {
+                    "type":"string",
+                    "enum":["list","search","get","add","update","remove","clear"],
+                    "description":"add/update need content; get/remove need memory_id; clear deletes every fragment in the current scope."
+                },
+                "query": reference("s"),
+                "limit": reference("limit"),
+                "order": reference("order"),
+                "memory_id": reference("s"),
+                "title": reference("s"),
+                "content": {"type":"string","minLength":1,"description":"Memory body; required for add/update."},
+                "tag": reference("s"),
+                "related_memory_id": reference("s"),
+                "memory_time": reference("s")
+            },
+            "required": ["action"],
+            "additionalProperties": false
         })
     };
     let mut specs = vec![
@@ -569,7 +468,18 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 super::schema::string("path")
                     .desc(t("tool.spec.list.args.path"))
                     .optional(),
-                super::schema::integer("max_depth").min(0).optional(),
+                super::schema::integer("max_depth")
+                    .desc(t("tool.spec.list.args.max_depth"))
+                    .min(0)
+                    .optional(),
+                super::schema::boolean("top_level_only")
+                    .desc(t("tool.spec.list.args.top_level_only"))
+                    .default_value(json!(false))
+                    .optional(),
+                super::schema::boolean("folders_first")
+                    .desc(t("tool.spec.list.args.folders_first"))
+                    .default_value(json!(true))
+                    .optional(),
                 super::schema::string("cursor")
                     .desc(t("tool.spec.list.args.cursor"))
                     .optional(),
@@ -728,9 +638,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .optional(),
                 super::schema::integer("limit")
                     .desc(if language.to_ascii_lowercase().starts_with("zh") {
-                        "普通文件为返回行数，默认且最大 500；tool-result: 句柄为字节预算，默认 8192、最大 16384。"
+                        "普通文件为返回行数，可单独使用：省略 start_line/offset 时等价于读取前 limit 行，默认且最大 500；tool-result: 句柄为字节预算，默认 8192、最大 16384。"
                     } else {
-                        "For files, the line count (default and maximum 500); for tool-result: handles, the byte budget (default 8192, maximum 16384)."
+                        "For files, the line count; it works on its own, so without start_line/offset it means 'read the first limit lines' (default and maximum 500). For tool-result: handles, the byte budget (default 8192, maximum 16384)."
                     })
                     .min(1)
                     .max(16384)
@@ -1037,110 +947,59 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             title: None,
             description: t("tool.spec.subagent_control.description"),
             input_schema: {
-                // Each action receives only the fields it can consume. Keeping
-                // this as a discriminated oneOf materially reduces schema
-                // tokens and prevents a model from combining spawn fields
-                // with wait/list fields.
-                let branch = |action: Value,
-                              mut properties: serde_json::Map<String, Value>,
-                              required: &[&str]| {
-                    properties.insert("action".to_string(), action);
-                    json!({
-                        "type": "object",
-                        "properties": properties,
-                        "required": required.iter().map(|key| json!(key)).collect::<Vec<_>>(),
-                        "additionalProperties": false
-                    })
-                };
-                let text = |name: &'static str, description: String| {
-                    super::schema::string(name).desc(description).optional().to_schema()
-                };
-                let required_text = |name: &'static str, description: String| {
-                    super::schema::string(name).desc(description).to_schema()
-                };
-                let id = |name: &'static str, description: String| text(name, description);
-                let selector_fields = || {
-                    let mut fields = serde_json::Map::new();
-                    fields.insert("session_id".to_string(), id("session_id", t("tool.spec.subagent_control.args.session_id")));
-                    fields.insert("session_ids".to_string(), super::schema::array("session_ids").desc(t("tool.spec.subagent_control.args.session_ids")).items(super::schema::string("_")).max_items(64).optional().to_schema());
-                    fields.insert("run_id".to_string(), id("run_id", t("tool.spec.subagent_control.args.run_id")));
-                    fields.insert("run_ids".to_string(), super::schema::array("run_ids").desc(t("tool.spec.subagent_control.args.run_ids")).items(super::schema::string("_")).max_items(64).optional().to_schema());
-                    fields.insert("dispatch_id".to_string(), id("dispatch_id", t("tool.spec.subagent_control.args.dispatch_id")));
-                    fields.insert("parent_id".to_string(), id("parent_id", t("tool.spec.subagent_control.args.parent_id")));
-                    fields
-                };
-                let mut list = serde_json::Map::new();
-                list.insert("parent_id".to_string(), id("parent_id", t("tool.spec.subagent_control.args.parent_id")));
-                list.insert("limit".to_string(), super::schema::integer("limit").desc(t("tool.spec.sessions_list.args.limit")).min(1).max(200).optional().to_schema());
-                let mut history = serde_json::Map::new();
-                history.insert("session_id".to_string(), required_text("session_id", t("tool.spec.subagent_control.args.session_id")));
-                history.insert("limit".to_string(), super::schema::integer("limit").desc(t("tool.spec.sessions_history.args.limit")).min(1).max(200).optional().to_schema());
-                history.insert("include_tools".to_string(), super::schema::boolean("include_tools").desc(t("tool.spec.sessions_history.args.include_tools")).optional().to_schema());
-                let mut send = selector_fields();
-                send.insert("message".to_string(), super::schema::string("message").desc(t("tool.spec.subagent_control.args.message")).min_len(1).max_len(20000).to_schema());
-                send.insert("message_id".to_string(), text("message_id", "Optional id used to retry the same message.".to_string()));
-                send.insert("timeout_seconds".to_string(), super::schema::number("timeout_seconds").desc(t("tool.spec.sessions_send.args.timeout")).optional().to_schema());
-                send.insert("label".to_string(), text("label", t("tool.spec.sessions_spawn.args.label")));
-                send.insert("announce_parent_session_id".to_string(), text("announce_parent_session_id", "Parent session for the completion notice.".to_string()));
-                send.insert("announce_persist_history".to_string(), super::schema::boolean("announce_persist_history").optional().to_schema());
-                send.insert("announce_emit_parent_events".to_string(), super::schema::boolean("announce_emit_parent_events").optional().to_schema());
-                let mut report = serde_json::Map::new();
-                report.insert("message".to_string(), required_text("message", t("tool.spec.subagent_control.args.message")));
-                report.insert("message_id".to_string(), text("message_id", "Optional id used to retry the same report.".to_string()));
-                let mut spawn = serde_json::Map::new();
-                spawn.insert("task".to_string(), required_text("task", t("tool.spec.subagent_control.args.task")));
-                spawn.insert("label".to_string(), text("label", t("tool.spec.sessions_spawn.args.label")));
-                spawn.insert("agent_id".to_string(), text("agent_id", t("tool.spec.sessions_spawn.args.agent_id")));
-                spawn.insert("model".to_string(), text("model", "Optional model override.".to_string()));
-                spawn.insert("run_timeout_seconds".to_string(), super::schema::number("run_timeout_seconds").desc(t("tool.spec.sessions_spawn.args.timeout")).optional().to_schema());
-                spawn.insert("cleanup".to_string(), super::schema::string("cleanup").desc(t("tool.spec.sessions_spawn.args.cleanup")).enums(vec!["keep", "delete"]).optional().to_schema());
-                spawn.insert("fork_turns".to_string(), super::schema::integer("fork_turns").desc("Recent user turns to quote as background.").min(0).max(16).optional().to_schema());
-                spawn.insert("context_summary".to_string(), super::schema::string("context_summary").desc("Optional background summary.").max_len(16384).optional().to_schema());
-                let mut batch = spawn.clone();
-                batch.remove("task");
-                batch.insert("task".to_string(), text("task", t("tool.spec.subagent_control.args.task")));
-                batch.insert("tasks".to_string(), super::schema::array("tasks").desc(t("tool.spec.subagent_control.args.tasks")).min_items(1).max_items(64).items(super::schema::object_param("_").props(vec![
-                    super::schema::string("task").desc(t("tool.spec.sessions_spawn.args.task")),
-                    super::schema::string("label").desc(t("tool.spec.sessions_spawn.args.label")).optional(),
-                    super::schema::string("agent_id").desc(t("tool.spec.sessions_spawn.args.agent_id")).optional(),
-                    super::schema::string("model").desc("Optional model override.").optional(),
-                    super::schema::number("run_timeout_seconds").desc(t("tool.spec.sessions_spawn.args.timeout")).optional(),
-                    super::schema::string("cleanup").desc(t("tool.spec.sessions_spawn.args.cleanup")).enums(vec!["keep", "delete"]).optional(),
-                    super::schema::integer("fork_turns").min(0).max(16).optional(),
-                    super::schema::string("context_summary").max_len(16384).optional(),
-                ]).closed()).optional().to_schema());
-                batch.insert("dispatch_label".to_string(), text("dispatch_label", "Optional dispatch label.".to_string()));
-                batch.insert("wait_seconds".to_string(), super::schema::number("wait_seconds").optional().to_schema());
-                batch.insert("poll_interval_seconds".to_string(), super::schema::number("poll_interval_seconds").optional().to_schema());
-                batch.insert("strategy".to_string(), super::schema::string("strategy").enums(vec!["parallel_all", "first_success", "review_then_merge"]).optional().to_schema());
-                batch.insert("remaining_action".to_string(), super::schema::string("remaining_action").enums(vec!["keep", "interrupt", "close"]).optional().to_schema());
-                let mut status = selector_fields();
-                status.insert("limit".to_string(), super::schema::integer("limit").min(1).max(200).optional().to_schema());
-                let mut wait = selector_fields();
-                wait.insert("wait_seconds".to_string(), super::schema::number("wait_seconds").optional().to_schema());
-                wait.insert("poll_interval_seconds".to_string(), super::schema::number("poll_interval_seconds").optional().to_schema());
-                wait.insert("wait_mode".to_string(), super::schema::string("wait_mode").enums(vec!["all", "any", "first_success"]).optional().to_schema());
-                wait.insert("remaining_action".to_string(), super::schema::string("remaining_action").enums(vec!["keep", "interrupt", "close"]).optional().to_schema());
-                let mut lifecycle = selector_fields();
-                lifecycle.insert("cascade".to_string(), super::schema::boolean("cascade").optional().to_schema());
-                let mut resume = lifecycle.clone();
-                resume.insert("message".to_string(), text("message", t("tool.spec.subagent_control.args.message")));
-                resume.insert("message_id".to_string(), text("message_id", "Optional retry id.".to_string()));
-                resume.insert("timeout_seconds".to_string(), super::schema::number("timeout_seconds").optional().to_schema());
-                let variants = vec![
-                    branch(json!({"const":"list"}), list, &["action"]),
-                    branch(json!({"const":"history"}), history, &["action"]),
-                    branch(json!({"const":"send"}), send, &["action", "message"]),
-                    branch(json!({"const":"report"}), report, &["action", "message"]),
-                    branch(json!({"const":"spawn"}), spawn, &["action", "task"]),
-                    branch(json!({"const":"batch_spawn"}), batch, &["action"]),
-                    branch(json!({"const":"status"}), status, &["action"]),
-                    branch(json!({"const":"wait"}), wait, &["action"]),
-                    branch(json!({"const":"interrupt"}), lifecycle.clone(), &["action"]),
-                    branch(json!({"const":"close"}), lifecycle.clone(), &["action"]),
-                    branch(json!({"const":"resume"}), resume, &["action"]),
-                ];
-                json!({"oneOf": variants})
+                // Flat action object: every field is declared once in $defs.
+                // The old eleven-branch oneOf repeated selector_fields, spawn
+                // fields and lifecycle fields in each branch, which made this
+                // the single largest item in the tool catalogue. Swarm-style
+                // batch dispatch is no longer advertised to the model; the
+                // executor still validates every action's allowed fields.
+                let reference = |name: &str| json!({"$ref": format!("#/$defs/{name}")});
+                json!({
+                    "type": "object",
+                    "$defs": {
+                        "s": {"type":"string","minLength":1},
+                        "m": {"type":"string","minLength":1,"maxLength":20000},
+                        "ids": {"type":"array","items":reference("s"),"maxItems":64},
+                        "n": {"type":"number","minimum":0},
+                        "b": {"type":"boolean"},
+                        "limit": {"type":"integer","minimum":1,"maximum":200},
+                        "cleanup": {"type":"string","enum":["keep","delete"]},
+                        "wait_mode": {"type":"string","enum":["all","any","first_success"]}
+                    },
+                    "properties": {
+                        "action": {
+                            "type":"string",
+                            "enum":["list","history","send","report","spawn","status","wait","interrupt","close","resume"],
+                            "description":"spawn(task) -> wait/status -> history; send/report exchange messages; interrupt/close/resume control lifecycle. Selectors default to the current parent scope."
+                        },
+                        "task": {"type":"string","minLength":1,"description":"spawn: work item for the new child."},
+                        "label": reference("s"),
+                        "agent_id": reference("s"),
+                        "model": reference("s"),
+                        "run_timeout_seconds": reference("n"),
+                        "cleanup": reference("cleanup"),
+                        "fork_turns": {"type":"integer","minimum":0,"maximum":16},
+                        "context_summary": {"type":"string","minLength":1,"maxLength":16384},
+                        "message": reference("m"),
+                        "message_id": reference("s"),
+                        "timeout_seconds": reference("n"),
+                        "announce_persist_history": reference("b"),
+                        "announce_emit_parent_events": reference("b"),
+                        "session_id": reference("s"),
+                        "session_ids": reference("ids"),
+                        "run_id": reference("s"),
+                        "run_ids": reference("ids"),
+                        "parent_id": reference("s"),
+                        "limit": reference("limit"),
+                        "include_tools": reference("b"),
+                        "wait_seconds": reference("n"),
+                        "poll_interval_seconds": reference("n"),
+                        "wait_mode": reference("wait_mode"),
+                        "cascade": reference("b")
+                    },
+                    "required": ["action"],
+                    "additionalProperties": false
+                })
             },
         },
         ToolSpec {
@@ -2313,6 +2172,82 @@ mod tests {
     use serde_json::json;
     use std::path::PathBuf;
 
+    /// Baseline for the fixed cost of the tool catalogue on every first turn.
+    /// Each tool contributes its full name + description + arguments JSON to
+    /// either the system prompt's tool block or the API `tools` parameter.
+    #[test]
+    fn tool_spec_prompt_budget_report() {
+        for language in ["zh-CN", "en-US"] {
+            let authoritative = builtin_tool_specs_with_language(language);
+            let specs: Vec<_> = authoritative
+                .iter()
+                .map(|spec| crate::tools::prompt_tool_spec(spec, language))
+                .collect();
+            let mut rows: Vec<(usize, String, usize, usize)> = specs
+                .iter()
+                .map(|spec| {
+                    let rendered = serde_json::to_string(&json!({
+                        "name": spec.name.as_str(),
+                        "description": spec.description.as_str(),
+                        "arguments": &spec.input_schema
+                    }))
+                    .unwrap_or_default();
+                    let schema = serde_json::to_string(&spec.input_schema)
+                        .unwrap_or_default()
+                        .chars()
+                        .count();
+                    (
+                        rendered.chars().count(),
+                        spec.name.clone(),
+                        spec.description.chars().count(),
+                        schema,
+                    )
+                })
+                .collect();
+            rows.sort_by(|left, right| right.0.cmp(&left.0));
+            let total: usize = rows.iter().map(|row| row.0).sum();
+            // Ceilings apply to the model-facing projection, not the
+            // authoritative schemas. A verbose new tool must not silently
+            // add another few thousand tokens to every first turn.
+            let largest = rows.first().map(|row| row.0).unwrap_or(0);
+            assert!(
+                largest < 2_500,
+                "largest model-facing tool spec is {largest} chars in {language}"
+            );
+            assert!(
+                total < 20_000,
+                "model-facing tool catalogue grew to {total} chars in {language}"
+            );
+            let authoritative_chars: usize = authoritative
+                .iter()
+                .map(|spec| {
+                    serde_json::to_string(&json!({
+                        "name": spec.name.as_str(),
+                        "description": spec.description.as_str(),
+                        "arguments": &spec.input_schema
+                    }))
+                    .unwrap_or_default()
+                    .chars()
+                    .count()
+                })
+                .sum();
+            println!(
+                "TOOL_SPEC_BUDGET lang={language} tools={} model_chars={total} authoritative_chars={authoritative_chars}",
+                rows.len()
+            );
+            for (index, (len, name, desc, schema)) in rows.iter().enumerate() {
+                println!(
+                    "  {:2} {:<24} chars={:<6} desc={:<5} schema={:<6}",
+                    index + 1,
+                    name,
+                    len,
+                    desc,
+                    schema
+                );
+            }
+        }
+    }
+
     /// Inline the local definitions used by an action schema for a byte-size
     /// comparison. This intentionally supports the catalog's `$defs` form
     /// only: it is a regression metric for repeated field definitions, not a
@@ -3082,7 +3017,7 @@ mod tests {
     }
 
     #[test]
-    fn subagent_control_schema_defaults_to_current_parent_scope() {
+    fn subagent_control_schema_is_flat_and_drops_swarm_surface() {
         let spec = builtin_tool_specs_with_language("zh-CN")
             .into_iter()
             .find(|spec| spec.name == "子智能体控制")
@@ -3091,43 +3026,33 @@ mod tests {
         assert!(spec
             .description
             .contains("spawn(task) -> wait/status -> history"));
-        let variants = spec.input_schema["oneOf"]
+        let schema = &spec.input_schema;
+        assert!(schema["oneOf"].is_null());
+        assert_eq!(schema["additionalProperties"].as_bool(), Some(false));
+        assert_eq!(schema["required"], json!(["action"]));
+        assert!(schema["$defs"].is_object());
+        let actions = schema["properties"]["action"]["enum"]
             .as_array()
-            .expect("action variants");
-        assert!(variants
-            .iter()
-            .all(|variant| { variant["additionalProperties"].as_bool() == Some(false) }));
-        let list = variants
-            .iter()
-            .find(|variant| variant["properties"]["action"]["const"] == "list")
-            .expect("list branch");
-        assert!(list["properties"]["parent_id"]["description"]
-            .as_str()
-            .is_some_and(|value| value.contains("当前会话")));
-        let send = variants
-            .iter()
-            .find(|variant| variant["properties"]["action"]["const"] == "send")
-            .expect("send branch");
-        assert!(send["properties"]["session_id"]["description"]
-            .as_str()
-            .is_some_and(|value| value.contains("子会话")));
-        assert!(variants
-            .iter()
-            .all(|variant| variant["properties"]["active_minutes"].is_null()));
-        assert!(variants
-            .iter()
-            .all(|variant| variant["properties"]["message_limit"].is_null()));
-        assert!(variants
-            .iter()
-            .all(|variant| variant["properties"]["sessionId"].is_null()));
-        let batch = variants
-            .iter()
-            .find(|variant| variant["properties"]["action"]["const"] == "batch_spawn")
-            .expect("batch branch");
-        assert_eq!(
-            batch["properties"]["tasks"]["items"]["additionalProperties"].as_bool(),
-            Some(false)
-        );
+            .expect("action enum");
+        assert!(actions.iter().any(|action| action == "spawn"));
+        assert!(!actions.iter().any(|action| action == "batch_spawn"));
+        let properties = schema["properties"].as_object().expect("properties");
+        for removed in [
+            "tasks",
+            "strategy",
+            "remaining_action",
+            "dispatch_id",
+            "dispatch_label",
+            "announce_parent_session_id",
+            "active_minutes",
+            "message_limit",
+            "sessionId",
+        ] {
+            assert!(
+                !properties.contains_key(removed),
+                "{removed} must not be advertised to the model"
+            );
+        }
     }
 
     #[test]
@@ -3137,19 +3062,20 @@ mod tests {
             .find(|spec| spec.name == "定时任务")
             .expect("schedule_task spec");
         assert!(spec.description.contains("优先使用扁平字段"));
-        let variants = spec.input_schema["oneOf"]
-            .as_array()
-            .expect("action variants");
-        let add = variants
-            .iter()
-            .find(|variant| variant["properties"]["action"]["const"] == "add")
-            .expect("add branch");
-        assert!(add["properties"]["job_id"].is_object());
-        assert!(add["properties"]["schedule_text"].is_object());
-        assert!(add["properties"]["message"].is_object());
-        assert!(add["properties"]["enabled"].is_object());
-        assert!(add["properties"]["delete_after_run"].is_null());
-        assert!(add["properties"]["job"].is_null());
+        let schema = &spec.input_schema;
+        assert!(schema["oneOf"].is_null());
+        assert_eq!(schema["additionalProperties"].as_bool(), Some(false));
+        assert_eq!(schema["required"], json!(["action"]));
+        let properties = schema["properties"].as_object().expect("properties");
+        for field in ["job_id", "schedule_text", "schedule", "message", "enabled"] {
+            assert!(properties.contains_key(field), "{field} must be exposed");
+        }
+        assert!(!properties.contains_key("delete_after_run"));
+        assert!(!properties.contains_key("job"));
+        assert_eq!(
+            schema["$defs"]["schedule"]["additionalProperties"].as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
@@ -3180,6 +3106,28 @@ mod tests {
         assert!(spec.input_schema["properties"]["cursor"].is_object());
         assert!(spec.input_schema["properties"]["limit"].is_object());
         assert!(spec.input_schema["properties"]["offset"].is_null());
+        assert!(spec.input_schema["properties"]["top_level_only"].is_object());
+        assert!(spec.input_schema["properties"]["folders_first"].is_object());
+        assert!(spec.input_schema["properties"]["max_depth"].is_object());
+    }
+
+    #[test]
+    fn read_file_spec_limit_works_without_offset() {
+        for language in ["en-US", "zh-CN"] {
+            let spec = builtin_tool_specs_with_language(language)
+                .into_iter()
+                .find(|spec| spec.name == "读取文件")
+                .expect("read_file spec");
+            let description = spec.input_schema["properties"]["limit"]["description"]
+                .as_str()
+                .expect("limit description");
+            assert!(description.contains("start_line/offset") || description.contains("start_line"));
+            let list_spec = builtin_tool_specs_with_language(language)
+                .into_iter()
+                .find(|spec| spec.name == resolve_tool_name("list_files"))
+                .expect("list_files spec");
+            assert!(list_spec.description.contains("search_content"));
+        }
     }
 
     #[test]
@@ -3219,7 +3167,12 @@ mod tests {
         let browser_specs: Vec<_> = specs.iter().filter(|spec| spec.name == "browser").collect();
         assert_eq!(browser_specs.len(), 1);
         let browser = browser_specs[0];
-        assert!(browser.input_schema["oneOf"].is_array());
+        assert!(browser.input_schema["oneOf"].is_null());
+        assert_eq!(
+            browser.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+        assert!(browser.input_schema["properties"]["action"]["enum"].is_array());
         assert!(specs.iter().all(|spec| !spec.name.starts_with("browser_")));
         assert!(specs.iter().all(|spec| spec.name != "浏览器"));
     }
@@ -3441,18 +3394,14 @@ mod tests {
             .iter()
             .find(|spec| spec.name == resolve_tool_name("schedule_task"))
             .expect("schedule task spec");
-        let schedule_variants = schedule_spec.input_schema["oneOf"]
-            .as_array()
-            .expect("schedule action variants");
-        assert!(schedule_variants
-            .iter()
-            .all(|variant| variant["additionalProperties"].as_bool() == Some(false)));
-        let update = schedule_variants
-            .iter()
-            .find(|variant| variant["properties"]["action"]["const"] == "update")
-            .expect("update branch");
+        let schedule_schema = &schedule_spec.input_schema;
+        assert!(schedule_schema["oneOf"].is_null());
         assert_eq!(
-            update["properties"]["schedule"]["additionalProperties"].as_bool(),
+            schedule_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            schedule_schema["$defs"]["schedule"]["additionalProperties"].as_bool(),
             Some(false)
         );
 
@@ -3465,27 +3414,21 @@ mod tests {
         assert!(memory_spec.description.contains("长期记忆"));
         assert!(memory_spec.description.contains("memory_id"));
         assert!(memory_spec.description.contains("list/search"));
-        let memory_variants = memory_spec.input_schema["oneOf"]
-            .as_array()
-            .expect("memory action variants");
-        assert!(memory_variants
-            .iter()
-            .all(|variant| variant["additionalProperties"].as_bool() == Some(false)));
-        let add_memory = memory_variants
-            .iter()
-            .find(|variant| variant["properties"]["action"]["const"] == "add")
-            .expect("memory add branch");
-        assert!(add_memory["properties"]["title"].is_object());
-        assert!(add_memory["properties"]["content"].is_object());
-        assert!(add_memory["properties"]["tag"].is_object());
-        assert!(add_memory["properties"]["related_memory_id"].is_object());
-        assert!(add_memory["properties"]["memory_time"].is_object());
-        assert!(memory_variants
-            .iter()
-            .all(|variant| variant["properties"]["summary"].is_null()));
-        assert!(memory_variants
-            .iter()
-            .all(|variant| variant["properties"]["entities"].is_null()));
+        let memory_schema = &memory_spec.input_schema;
+        assert!(memory_schema["oneOf"].is_null());
+        assert_eq!(memory_schema["additionalProperties"].as_bool(), Some(false));
+        let memory_properties = memory_schema["properties"].as_object().expect("properties");
+        for field in [
+            "title",
+            "content",
+            "tag",
+            "related_memory_id",
+            "memory_time",
+        ] {
+            assert!(memory_properties.contains_key(field), "{field} must be exposed");
+        }
+        assert!(!memory_properties.contains_key("summary"));
+        assert!(!memory_properties.contains_key("entities"));
 
         let self_status_spec = specs
             .iter()

@@ -88,167 +88,72 @@ impl BrowserProvider for PlaywrightProvider {
     }
 }
 
-fn strict_object_schema(properties: Value, required: &[&str], constraints: Option<Value>) -> Value {
-    let mut schema = json!({
-        "type": "object",
-        "properties": properties,
-        "required": required,
-        "additionalProperties": false,
-    });
-    if let Some(Value::Object(constraints)) = constraints {
-        schema
-            .as_object_mut()
-            .expect("schema object")
-            .extend(constraints);
-    }
-    schema
-}
-
 fn playwright_tool_specs() -> Vec<ToolSpec> {
-    // Keep the action union strict while defining repeated fields once. Each
-    // branch still owns its `properties`, `required`, and
-    // `additionalProperties=false`; shared fields and target constraints never
-    // widen those action-specific closed object shapes.
-    // Definition identifiers are part of every serialized `$ref`; retain
-    // descriptive action fields while using compact local identifiers.
-    let mut defs = serde_json::Map::new();
-    defs.insert("x".to_string(), json!({"type":"string","minLength":1}));
-    defs.insert("i".to_string(), json!({"type":"integer","minimum":0}));
-    defs.insert(
-        "u".to_string(),
-        json!({"type":"string","minLength":1,"description":"Absolute http(s) URL."}),
-    );
-    defs.insert(
-        "m".to_string(),
-        json!({"type":"integer","minimum":1,"maximum":120000}),
-    );
-    defs.insert(
-        "h".to_string(),
-        json!({"type":"integer","minimum":1,"maximum":40000}),
-    );
-    defs.insert(
-        "n".to_string(),
-        json!({"type":"integer","minimum":0,"maximum":120000}),
-    );
-
-    defs.insert(
-        "p".to_string(),
-        json!({"type":"string","minLength":1,"description":"Workspace-relative output path."}),
-    );
-    defs.insert("f".to_string(), json!({"type":"boolean"}));
-    defs.insert("r".to_string(), json!({"type":"string","minLength":1,"description":"Element ref from action=observe_refs."}));
-    defs.insert("s".to_string(), json!({"type":"string","minLength":1,"description":"CSS selector when no ref is available."}));
-    defs.insert(
-        "v".to_string(),
-        json!({"anyOf":[
+    // Flat action object with a single $defs block. The old surface repeated
+    // every field across seventeen oneOf branches and carried a nested
+    // ten-branch batch step schema. validate_browser_action remains the
+    // runtime authority for per-action required fields, target constraints and
+    // rejected cross-action keys, so the model surface does not need a union.
+    let reference = |name: &str| json!({"$ref": format!("#/$defs/{name}")});
+    let defs = json!({
+        "x": {"type":"string","minLength":1},
+        "i": {"type":"integer","minimum":0},
+        "u": {"type":"string","minLength":1,"description":"Absolute http(s) URL."},
+        "m": {"type":"integer","minimum":1,"maximum":120000},
+        "h": {"type":"integer","minimum":1,"maximum":40000},
+        "n": {"type":"integer","minimum":0,"maximum":120000},
+        "p": {"type":"string","minLength":1,"description":"Workspace-relative output path."},
+        "f": {"type":"boolean"},
+        "r": {"type":"string","minLength":1,"description":"Element ref from action=observe_refs."},
+        "s": {"type":"string","minLength":1,"description":"CSS selector when no ref is available."},
+        "v": {"anyOf":[
             {"type":"string","minLength":1},
             {"type":"array","items":{"type":"string","minLength":1},"minItems":1,"maxItems":64}
-        ]}),
-    );
-
-    defs.insert(
-        "l".to_string(),
-        json!({"type":"string","enum":["load","domcontentloaded","networkidle"]}),
-    );
-    defs.insert(
-        "q".to_string(),
-        json!({"type":"string","enum":["visible","hidden","attached","detached"]}),
-    );
-
-    defs.insert(
-        "e".to_string(),
-        json!({"type":"object","oneOf":[{"required":["ref"]},{"required":["selector"]}]}),
-    );
-    defs.insert(
-        "d".to_string(),
-        json!({"type":"object","oneOf":[
-            {"required":["from_ref","to_ref"]}, {"required":["from_selector","to_selector"]}
-        ]}),
-    );
-
-    let reference = |name: &str| json!({"$ref": format!("#/$defs/{name}")});
-    let target = || reference("x");
-    let target_or_index = || json!({"target_id":target(),"index":reference("i")});
-    let element = || {
-        json!({
-            "target_id":target(), "ref":reference("r"), "selector":reference("s")
-        })
-    };
-    let element_target = || json!({"allOf":[reference("e")]});
-    let drag_target = || json!({"allOf":[reference("d")]});
-    let tab_target = json!({"oneOf":[{"required":["target_id"]},{"required":["index"]}]});
-
-    let mut click = element();
-    click["action"] = json!({"const":"click"});
-    click["double_click"] = reference("f");
-    let mut typing = element();
-    typing["action"] = json!({"const":"type"});
-    typing["text"] = reference("x");
-    typing["submit"] = reference("f");
-    let mut hover = element();
-    hover["action"] = json!({"const":"hover"});
-    let mut select = element();
-    select["action"] = json!({"const":"select"});
-    select["value"] = reference("v");
-
-    let tabs_select = target_or_index();
-    let tabs_close = target_or_index();
-    defs.insert("b".to_string(), batch_step_schema());
+        ]},
+        "l": {"type":"string","enum":["load","domcontentloaded","networkidle"]},
+        "q": {"type":"string","enum":["visible","hidden","attached","detached"]}
+    });
     vec![ToolSpec {
         name: TOOL_BROWSER.to_string(),
         title: None,
-        description: "Browser automation. Select one action; observe refs before element actions. Text cursors require an unchanged page; batch has 1-10 dependent steps and may end with back/observe_text to verify the result.".to_string(),
-        input_schema: json!({"type":"object","$defs":defs,"oneOf":[
-            strict_object_schema(json!({"action":{"const":"navigate"},"url":reference("u"),"target_id":target(),"timeout_ms":reference("m")}), &["action","url"], None),
-            strict_object_schema(json!({"action":{"const":"back"},"target_id":target()}), &["action"], None),
-            strict_object_schema(json!({"action":{"const":"tabs_list"}}), &["action"], None),
-            strict_object_schema(json!({"action":{"const":"tabs_new"},"url":reference("u"),"target_id":target()}), &["action"], None),
-            strict_object_schema(json!({"action":{"const":"tabs_select"},"target_id":tabs_select["target_id"],"index":tabs_select["index"]}), &["action"], Some(tab_target.clone())),
-            strict_object_schema(json!({"action":{"const":"tabs_close"},"target_id":tabs_close["target_id"],"index":tabs_close["index"]}), &["action"], Some(tab_target)),
-            strict_object_schema(json!({"action":{"const":"observe_refs"},"target_id":target(),"max_chars":reference("h"),"snapshot_timeout_ms":reference("n")}), &["action"], None),
-            strict_object_schema(json!({"action":{"const":"observe_text"},"target_id":target(),"max_chars":reference("h"),"cursor":reference("x")}), &["action"], None),
-            strict_object_schema(json!({"action":{"const":"screenshot"},"target_id":target(),"path":reference("p"),"full_page":reference("f")}), &["action"], None),
-            strict_object_schema(click, &["action"], Some(element_target())),
-            strict_object_schema(typing, &["action","text"], Some(element_target())),
-            strict_object_schema(hover, &["action"], Some(element_target())),
-            strict_object_schema(select, &["action","value"], Some(element_target())),
-            strict_object_schema(json!({"action":{"const":"drag"},"target_id":target(),"from_ref":reference("r"),"from_selector":reference("s"),"to_ref":reference("r"),"to_selector":reference("s")}), &["action"], Some(drag_target())),
-            strict_object_schema(json!({"action":{"const":"press"},"target_id":target(),"key":reference("x")}), &["action","key"], None),
-            strict_object_schema(json!({"action":{"const":"wait"},"target_id":target(),"wait_ms":reference("n"),"load_state":reference("l"),"text":reference("x"),"selector":reference("s"),"state":reference("q"),"url":reference("u"),"timeout_ms":reference("m")}), &["action"], None),
-            strict_object_schema(json!({"action":{"const":"batch"},"target_id":target(),"steps":{"type":"array","items":reference("b"),"minItems":1,"maxItems":10}}), &["action","steps"], None)
-        ]}),
+        description: "Browser automation. Pick one action. observe_refs supplies element refs for click/type/select/hover/drag; element actions take ref or selector. navigate needs url, type needs text, press needs key, screenshot writes a workspace-relative path.".to_string(),
+        input_schema: json!({
+            "type":"object",
+            "$defs": defs,
+            "properties": {
+                "action": {
+                    "type":"string",
+                    "enum":["navigate","back","tabs_list","tabs_new","tabs_select","tabs_close","observe_refs","observe_text","screenshot","click","type","hover","select","drag","press","wait"],
+                    "description":"One browser action per call; tabs_* actions manage tabs, observe_* read the page, the rest interact with it."
+                },
+                "url": reference("u"),
+                "target_id": reference("x"),
+                "timeout_ms": reference("m"),
+                "index": reference("i"),
+                "max_chars": reference("h"),
+                "snapshot_timeout_ms": reference("n"),
+                "cursor": reference("x"),
+                "path": reference("p"),
+                "full_page": reference("f"),
+                "ref": reference("r"),
+                "selector": reference("s"),
+                "double_click": reference("f"),
+                "text": reference("x"),
+                "submit": reference("f"),
+                "value": reference("v"),
+                "from_ref": reference("r"),
+                "from_selector": reference("s"),
+                "to_ref": reference("r"),
+                "to_selector": reference("s"),
+                "key": reference("x"),
+                "wait_ms": reference("n"),
+                "load_state": reference("l"),
+                "state": reference("q")
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }),
     }]
-}
-
-fn batch_step_schema() -> Value {
-    let reference = |name: &str| json!({"$ref": format!("#/$defs/{name}")});
-    let strict = |properties: Value, required: &[&str], constraints: Option<Value>| {
-        strict_object_schema(properties, required, constraints)
-    };
-    let element_target = || json!({"allOf":[reference("e")]});
-    let drag_target = || json!({"allOf":[reference("d")]});
-    let element =
-        |kind: &str| json!({"kind":{"const":kind},"ref":reference("r"),"selector":reference("s")});
-    let mut click = element("click");
-    click["double_click"] = reference("f");
-    let mut typing = element("type");
-    typing["text"] = reference("x");
-    typing["submit"] = reference("f");
-    let hover = element("hover");
-    let mut select = element("select");
-    select["value"] = reference("v");
-    json!({"type":"object","oneOf":[
-        strict(json!({"kind":{"const":"navigate"},"url":reference("u"),"timeout_ms":reference("m")}), &["kind","url"], None),
-        strict(click, &["kind"], Some(element_target())),
-        strict(typing, &["kind","text"], Some(element_target())),
-        strict(hover, &["kind"], Some(element_target())),
-        strict(select, &["kind","value"], Some(element_target())),
-        strict(json!({"kind":{"const":"drag"},"from_ref":reference("r"),"from_selector":reference("s"),"to_ref":reference("r"),"to_selector":reference("s")}), &["kind"], Some(drag_target())),
-        strict(json!({"kind":{"const":"press"},"key":reference("x")}), &["kind","key"], None),
-        strict(json!({"kind":{"const":"back"}}), &["kind"], None),
-        strict(json!({"kind":{"const":"observe_text"},"max_chars":reference("h"),"cursor":reference("x")}), &["kind"], None),
-        strict(json!({"kind":{"const":"wait"},"wait_ms":reference("n"),"load_state":reference("l"),"text":reference("x"),"selector":reference("s"),"state":reference("q"),"url":reference("u"),"timeout_ms":reference("m")}), &["kind"], None)
-    ]})
 }
 
 /// Validate the single browser action again at execution time. Provider schemas
@@ -1001,54 +906,32 @@ mod tests {
     }
 
     #[test]
-    fn browser_schema_is_a_strict_action_union() {
+    fn browser_schema_is_a_flat_action_object() {
         let schema = PlaywrightProvider::new()
             .tool_specs()
             .pop()
             .unwrap()
             .input_schema;
-        let variants = schema["oneOf"].as_array().expect("action variants");
-        assert!(variants.len() >= 17);
-        for variant in variants {
-            assert_eq!(variant["type"], json!("object"));
-            assert_eq!(variant["additionalProperties"], json!(false));
-            assert!(variant["properties"]["action"]["const"].is_string());
-        }
-        let select = variants
-            .iter()
-            .find(|variant| variant["properties"]["action"]["const"] == "tabs_select")
-            .unwrap();
-        assert_eq!(
-            select["oneOf"],
-            json!([{"required":["target_id"]},{"required":["index"]}])
-        );
-        let batch = variants
-            .iter()
-            .find(|variant| variant["properties"]["action"]["const"] == "batch")
-            .unwrap();
-        assert_eq!(batch["properties"]["steps"]["minItems"], 1);
-        assert_eq!(batch["properties"]["steps"]["maxItems"], 10);
-        assert_eq!(
-            batch["properties"]["steps"]["items"]["$ref"],
-            json!("#/$defs/b")
-        );
-        let steps = schema["$defs"]["b"]["oneOf"]
+        assert!(schema["oneOf"].is_null());
+        assert_eq!(schema["type"], json!("object"));
+        assert_eq!(schema["additionalProperties"], json!(false));
+        assert_eq!(schema["required"], json!(["action"]));
+        let actions = schema["properties"]["action"]["enum"]
             .as_array()
-            .expect("strict batch variants");
-        assert!(steps
-            .iter()
-            .any(|step| step["properties"]["kind"]["const"] == "back"));
-        assert!(steps
-            .iter()
-            .any(|step| step["properties"]["kind"]["const"] == "observe_text"));
-        assert!(steps
-            .iter()
-            .all(|step| step["additionalProperties"] == false));
+            .expect("action enum");
+        assert_eq!(actions.len(), 16);
+        assert!(actions.iter().any(|action| action == "navigate"));
+        assert!(!actions.iter().any(|action| action == "batch"));
+        assert_eq!(
+            schema["properties"]["target_id"]["$ref"],
+            json!("#/$defs/x")
+        );
         assert_eq!(schema["$defs"]["x"]["type"], json!("string"));
+        assert!(schema["$defs"].get("b").is_none());
     }
 
     #[test]
-    fn browser_schema_refs_reduce_serialized_size_and_survive_normalization() {
+    fn browser_schema_refs_resolve_and_survive_normalization() {
         let compact = PlaywrightProvider::new()
             .tool_specs()
             .pop()
@@ -1063,18 +946,26 @@ mod tests {
             .len();
         eprintln!("browser schema compact={compact_bytes}, expanded={expanded_bytes}");
 
-        // This compares the exact same strict action schema with every local
-        // reference inlined, rather than a hand-maintained old fixture.
+        // A flat action object references each definition only a few times,
+        // so $defs now buys reuse and consistency rather than byte savings:
+        // the two forms stay within a few percent. What must hold is that
+        // every local reference resolves and normalization preserves them.
         assert!(
-            compact_bytes * 100 <= expanded_bytes * 80,
+            compact_bytes <= expanded_bytes.saturating_mul(11) / 10,
             "compact={compact_bytes}, expanded={expanded_bytes}"
+        );
+        assert!(
+            !serde_json::to_string(&expanded)
+                .expect("serialize expanded browser schema")
+                .contains("$ref"),
+            "every local $ref must resolve"
         );
         let normalized = crate::core::json_schema::normalize_tool_input_schema(Some(&compact));
         assert_eq!(
-            normalized["oneOf"][0]["properties"]["target_id"]["$ref"],
+            normalized["properties"]["target_id"]["$ref"],
             json!("#/$defs/x")
         );
-        assert_eq!(normalized["$defs"]["b"]["oneOf"][0]["type"], "object");
+        assert!(normalized["$defs"].get("b").is_none());
         assert!(normalized["$defs"]["v"].get("type").is_none());
         assert_eq!(
             normalized["$defs"]["v"]["anyOf"][1],

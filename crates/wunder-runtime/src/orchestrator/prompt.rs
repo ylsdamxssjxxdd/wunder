@@ -168,6 +168,10 @@ impl Orchestrator {
         let ws_placeholder = "/workspaces/{user_id}/";
         let ws_actual = format!("/workspaces/{workspace_id}/");
         for spec in specs {
+            // Function-call tools are billed as input tokens on every turn,
+            // just like the XML tool block. Use the reduced model-facing
+            // surface; execution keeps validating the authoritative schema.
+            let spec = crate::tools::prompt_tool_spec(&spec, "en-US");
             let runtime_name = name_map
                 .get(&spec.name)
                 .cloned()

@@ -1,0 +1,223 @@
+<!-- AI生成 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>蛹 · 窗口解剖</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* Wunder brand skin mapped onto Diagram Design semantic roles.
+       accent is the brand tangerine darkened to clear 4.5:1 on paper. */
+    :root {
+      --color-paper:   #FBFAF8;
+      --color-paper-2: #F3F1ED;
+      --color-ink:     #1F2329;
+      --color-muted:   #5C6470;
+      --color-soft:    #636B76;
+      --color-accent:  #B4531A;
+      --color-link:    #2E5AA8;
+      --font-sans:     'Geist', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif', 'Noto Serif SC', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+
+    .frame { max-width: 1320px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.01em;
+      line-height: 1.2;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+
+    svg { width: 100%; min-width: 1280px; display: block; }
+
+    .foot {
+      margin-top: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      letter-spacing: 0.04em;
+      color: var(--color-soft);
+    }
+
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Architecture · 蛹 / 桌面端</p>
+    <h1>窗口解剖：一列侧栏，一列阅读，一条输入带</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1280 780" xmlns="http://www.w3.org/2000/svg" role="img"
+           aria-labelledby="window-anatomy-title window-anatomy-desc"
+           font-family="'Geist', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+        <title id="window-anatomy-title">蛹窗口解剖：侧栏、阅读列与输入带</title>
+        <desc id="window-anatomy-desc">桌面端窗口由 240 像素侧栏、最大 1000 像素的阅读列和底部固定输入带组成，橙条标记当前活动线程，输入带描边标记本轮焦点。</desc>
+
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5C6470"/></marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#B4531A"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2E5AA8"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#FBFAF8"/>
+
+        <!-- 顶部事实行 -->
+        <text x="40" y="44" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">WINDOW 1462 × 866 · PREFERRED 1180 × 740 · MIN 1024 × 700</text>
+
+        <!-- 窗口外框 -->
+        <rect x="100" y="72" width="1080" height="584" rx="8" fill="rgba(31,35,41,0.012)" stroke="#C9C4BC" stroke-width="1"/>
+
+        <!-- 标题栏 -->
+        <line x1="100" y1="116" x2="1180" y2="116" stroke="rgba(31,35,41,0.12)" stroke-width="1"/>
+        <rect x="116" y="86" width="16" height="16" rx="4" fill="#B4531A" opacity="0.9"/>
+        <text x="144" y="99" fill="#1F2329" font-size="12" font-weight="600">蛹 · WUNDER DESKTOP</text>
+        <rect x="1076" y="87" width="20" height="14" rx="2" fill="none" stroke="rgba(31,35,41,0.30)" stroke-width="0.8"/>
+        <rect x="1104" y="87" width="20" height="14" rx="2" fill="none" stroke="rgba(31,35,41,0.30)" stroke-width="0.8"/>
+        <rect x="1132" y="87" width="20" height="14" rx="2" fill="none" stroke="rgba(31,35,41,0.30)" stroke-width="0.8"/>
+        <text x="40" y="99" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">FRAME 1px</text>
+
+        <!-- 侧栏 -->
+        <rect x="100" y="116" width="240" height="540" fill="#F3F1ED"/>
+        <line x1="340" y1="116" x2="340" y2="656" stroke="rgba(31,35,41,0.12)" stroke-width="1"/>
+        <text x="116" y="140" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">01 SIDEBAR</text>
+        <text x="324" y="140" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">240 px</text>
+
+        <!-- 侧栏：组头 -->
+        <rect x="112" y="152" width="216" height="36" rx="6" fill="rgba(31,35,41,0.04)"/>
+        <text x="124" y="175" fill="#1F2329" font-size="12" font-weight="600">工作区组头</text>
+        <text x="316" y="175" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">36</text>
+
+        <!-- 线程行 ×3，第一行为活动线程 -->
+        <rect x="112" y="196" width="216" height="28" rx="6" fill="rgba(180,83,26,0.08)"/>
+        <rect x="112" y="196" width="2" height="28" rx="1" fill="#B4531A"/>
+        <circle cx="128" cy="210" r="3.5" fill="#B4531A"/>
+        <text x="140" y="214" fill="#1F2329" font-size="12" font-weight="600">线程 · 运行中</text>
+        <text x="316" y="214" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">32</text>
+
+        <rect x="112" y="228" width="216" height="28" rx="6" fill="none"/>
+        <circle cx="128" cy="242" r="3.5" fill="none" stroke="rgba(31,35,41,0.30)" stroke-width="1"/>
+        <text x="140" y="246" fill="#1F2329" font-size="12">线程 · 空闲</text>
+
+        <rect x="112" y="260" width="216" height="28" rx="6" fill="none"/>
+        <circle cx="128" cy="274" r="3.5" fill="none" stroke="rgba(31,35,41,0.30)" stroke-width="1"/>
+        <text x="140" y="278" fill="#1F2329" font-size="12">线程 · 完成</text>
+
+        <!-- 组间气口 4px -->
+        <line x1="124" y1="292" x2="316" y2="292" stroke="rgba(31,35,41,0.10)" stroke-width="1" stroke-dasharray="2,4"/>
+
+        <!-- 文件树 ×4 -->
+        <text x="112" y="320" fill="#1F2329" font-size="12">文件树 · 父链</text>
+        <text x="316" y="320" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">28</text>
+        <rect x="124" y="332" width="180" height="1" fill="rgba(31,35,41,0.10)"/>
+        <text x="124" y="356" fill="#5C6470" font-size="12">└ 目录</text>
+        <text x="140" y="384" fill="#5C6470" font-size="12">└ 文件</text>
+        <text x="156" y="412" fill="#5C6470" font-size="12">└ 文件</text>
+
+        <!-- 侧栏底部尺寸注记 -->
+        <text x="112" y="604" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.06em">DRAG 170 – 420 px</text>
+        <text x="112" y="624" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.06em">SEPARATOR HIT 6 px</text>
+
+        <!-- 阅读列 -->
+        <text x="364" y="140" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">02 READING COLUMN</text>
+        <text x="1156" y="140" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">≤ 1000 px · PAD 24</text>
+
+        <!-- 时间线 -->
+        <rect x="364" y="156" width="792" height="368" rx="6" fill="rgba(31,35,41,0.015)" stroke="rgba(31,35,41,0.10)" stroke-width="1"/>
+        <text x="380" y="180" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">TIMELINE · 回合流</text>
+
+        <!-- 用户回合 -->
+        <rect x="380" y="192" width="320" height="52" rx="6" fill="#F3F1ED" stroke="rgba(31,35,41,0.10)" stroke-width="1"/>
+        <text x="396" y="214" fill="#1F2329" font-size="12" font-weight="600">用户回合</text>
+        <text x="396" y="232" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">BUBBLE · 1 回合 = 1 气泡</text>
+
+        <!-- 过程行 -->
+        <text x="380" y="276" fill="#5C6470" font-size="12">过程 · 工具条目</text>
+        <circle cx="512" cy="272" r="3" fill="none" stroke="#3E9C7E" stroke-width="1"/>
+        <circle cx="532" cy="272" r="3" fill="none" stroke="#3E9C7E" stroke-width="1"/>
+        <circle cx="552" cy="272" r="3" fill="none" stroke="#3E9C7E" stroke-width="1"/>
+        <text x="1156" y="276" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">26 px / 行</text>
+
+        <!-- 正文 -->
+        <rect x="380" y="292" width="760" height="128" rx="6" fill="none" stroke="rgba(31,35,41,0.08)" stroke-width="1"/>
+        <text x="396" y="314" fill="#1F2329" font-size="12" font-weight="600">助手正文 · Markdown</text>
+        <line x1="396" y1="330" x2="1000" y2="330" stroke="rgba(31,35,41,0.10)" stroke-width="1"/>
+        <line x1="396" y1="350" x2="1100" y2="350" stroke="rgba(31,35,41,0.10)" stroke-width="1"/>
+        <line x1="396" y1="370" x2="900" y2="370" stroke="rgba(31,35,41,0.10)" stroke-width="1"/>
+        <line x1="396" y1="398" x2="1120" y2="398" stroke="rgba(31,35,41,0.10)" stroke-width="1"/>
+
+        <!-- 状态胶囊 -->
+        <rect x="380" y="440" width="132" height="24" rx="12" fill="rgba(26,138,92,0.10)"/>
+        <circle cx="396" cy="452" r="3" fill="#1A8A5C"/>
+        <text x="406" y="456" fill="#1A8A5C" font-size="12">回合完成</text>
+        <text x="1156" y="456" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end" letter-spacing="0.06em">STATE · 显式 PHASE</text>
+
+        <!-- 输入带 -->
+        <rect x="364" y="548" width="792" height="84" rx="6" fill="rgba(180,83,26,0.05)" stroke="#B4531A" stroke-width="1.2"/>
+        <text x="380" y="570" fill="#B4531A" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">03 COMPOSER · 焦点</text>
+        <rect x="380" y="580" width="640" height="36" rx="6" fill="#FBFAF8" stroke="rgba(31,35,41,0.16)" stroke-width="1"/>
+        <text x="396" y="603" fill="#5C6470" font-size="12">草稿 14px SimSun</text>
+        <rect x="1040" y="580" width="100" height="36" rx="6" fill="#B4531A"/>
+        <text x="1090" y="603" fill="#FBFAF8" font-size="12" font-weight="600" text-anchor="middle">发送 / 停止</text>
+        <text x="1156" y="570" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">BAND 154</text>
+
+        <!-- 编辑注记 -->
+        <text x="100" y="676" fill="#5C6470" font-size="12" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', 'Noto Serif SC', serif">橙条 = 当前活动线程；输入带描边 = 本轮焦点。侧栏与阅读列共享同一条阅读内边距。</text>
+
+        <!-- 图例 -->
+        <line x1="40" y1="700" x2="1240" y2="700" stroke="rgba(31,35,41,0.10)" stroke-width="0.8"/>
+        <text x="40" y="716" fill="#5C6470" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">LEGEND</text>
+
+        <rect x="108" y="708" width="12" height="12" rx="2" fill="none" stroke="#C9C4BC" stroke-width="1"/>
+        <text x="128" y="718" fill="#5C6470" font-size="12">窗口框架 1px</text>
+
+        <rect x="288" y="708" width="12" height="12" rx="2" fill="#F3F1ED"/>
+        <text x="308" y="718" fill="#5C6470" font-size="12">侧栏 240 px</text>
+
+        <rect x="468" y="708" width="12" height="12" rx="2" fill="rgba(31,35,41,0.015)" stroke="rgba(31,35,41,0.10)" stroke-width="1"/>
+        <text x="488" y="718" fill="#5C6470" font-size="12">阅读列 ≤ 1000 px</text>
+
+        <rect x="688" y="708" width="12" height="12" rx="2" fill="rgba(180,83,26,0.08)" stroke="#B4531A" stroke-width="1"/>
+        <text x="708" y="718" fill="#5C6470" font-size="12">焦点 / 当前态</text>
+
+        <circle cx="888" cy="714" r="4" fill="none" stroke="#3E9C7E" stroke-width="1"/>
+        <text x="904" y="718" fill="#5C6470" font-size="12">工具条目状态</text>
+      </svg>
+    </div>
+
+    <p class="foot">FACT BASE · frontend-slint/ui/design_tokens.slint · window_chrome.slint · sidebar.slint · timeline.slint · composer.slint · v0.3.4</p>
+  </div>
+</body>
+</html>

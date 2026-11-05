@@ -1,0 +1,205 @@
+<!-- AI生成 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>蛹 · 设计 token 分层</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #FBFAF8;
+      --color-ink:     #1F2329;
+      --color-muted:   #5C6470;
+      --color-soft:    #636B76;
+      --color-accent:  #B4531A;
+      --font-sans:     'Geist', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif', 'Noto Serif SC', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1320px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .eyebrow {
+      font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500;
+      letter-spacing: 0.18em; text-transform: uppercase; color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif); font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400; letter-spacing: -0.01em; line-height: 1.2;
+      color: var(--color-ink); margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 1280px; display: block; }
+    .foot {
+      margin-top: 1rem; font-family: var(--font-mono); font-size: 0.66rem;
+      letter-spacing: 0.04em; color: var(--color-soft);
+    }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Layer stack · 蛹 / 视觉体系</p>
+    <h1>设计 token 分层：从基色板到间距刻度</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1280 780" xmlns="http://www.w3.org/2000/svg" role="img"
+           aria-labelledby="token-stack-title token-stack-desc"
+           font-family="'Geist', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+        <title id="token-stack-title">设计 token 分层：基色板、语义别名、组件 token、版式、间距与圆角</title>
+        <desc id="token-stack-desc">视觉体系自下而上分为五层：基色板、语义别名、组件 token、版式与间距圆角；语义别名层是唯一的橙色焦点层，向上承载所有组件命名。</desc>
+
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5C6470"/></marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#B4531A"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2E5AA8"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#FBFAF8"/>
+        <text x="40" y="44" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">SOURCE OF TRUTH = frontend-slint/ui/design_tokens.slint · 5 LAYERS</text>
+
+        <!-- 左侧抽象方向 -->
+        <text x="60" y="128" fill="#5C6470" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">ABSTRACTION ↑</text>
+        <path d="M 152 176 V 140" fill="none" stroke="#5C6470" stroke-width="1.2" marker-end="url(#arrow)" stroke-dasharray="4,3"/>
+
+        <!-- 层 5：间距与圆角 -->
+        <rect x="200" y="140" width="880" height="64" fill="#F3F1ED"/>
+        <text x="216" y="166" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L5</text>
+        <text x="264" y="170" fill="#1F2329" font-size="14" font-weight="600">间距与圆角</text>
+        <text x="264" y="188" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">SPACE 4 · GUTTER 12 · PAD 24</text>
+        <!-- 刻度 -->
+        <g fill="#5C6470" font-size="8" font-family="'Geist Mono', ui-monospace, monospace">
+          <rect x="600" y="158" width="4" height="28" fill="rgba(31,35,41,0.30)"/>
+          <text x="610" y="176">4</text>
+          <rect x="644" y="150" width="6" height="36" fill="rgba(31,35,41,0.30)"/>
+          <text x="658" y="176">6</text>
+          <rect x="692" y="150" width="8" height="36" rx="2" fill="rgba(31,35,41,0.30)"/>
+          <text x="708" y="176">8</text>
+          <rect x="746" y="144" width="12" height="42" rx="3" fill="rgba(31,35,41,0.30)"/>
+          <text x="766" y="176">12</text>
+          <rect x="806" y="144" width="24" height="42" rx="6" fill="rgba(31,35,41,0.30)"/>
+          <text x="838" y="176">24</text>
+        </g>
+        <text x="1064" y="176" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">NO SHADOW</text>
+        <line x1="200" y1="204" x2="1080" y2="204" stroke="rgba(31,35,41,0.12)" stroke-width="1"/>
+
+        <!-- 层 4：版式 -->
+        <rect x="200" y="204" width="880" height="64" fill="#FBFAF8"/>
+        <text x="216" y="230" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L4</text>
+        <text x="264" y="234" fill="#1F2329" font-size="14" font-weight="600">版式</text>
+        <text x="264" y="252" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">SCALE · font-2xs → 21 px</text>
+        <g fill="#5C6470" font-family="'Geist Mono', ui-monospace, monospace">
+          <text x="620" y="238" font-size="10">10</text>
+          <text x="660" y="238" font-size="11">11</text>
+          <text x="704" y="239" font-size="12">12</text>
+          <text x="748" y="240" font-size="14">14</text>
+          <text x="800" y="242" font-size="18">18</text>
+          <text x="864" y="244" font-size="21">21</text>
+        </g>
+        <text x="1064" y="240" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">EDITOR 14 SIMSUN</text>
+        <line x1="200" y1="268" x2="1080" y2="268" stroke="rgba(31,35,41,0.12)" stroke-width="1"/>
+
+        <!-- 层 3：组件 token -->
+        <rect x="200" y="268" width="880" height="64" fill="#F3F1ED"/>
+        <text x="216" y="294" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L3</text>
+        <text x="264" y="298" fill="#1F2329" font-size="14" font-weight="600">组件 token</text>
+        <text x="264" y="316" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">BUTTON · BUBBLE · DIFF · STATUS</text>
+        <g font-size="9" font-family="'Geist Mono', ui-monospace, monospace" fill="#5C6470">
+          <rect x="600" y="290" width="48" height="20" rx="4" fill="#FDF0DE"/>
+          <text x="612" y="304">soft</text>
+          <rect x="660" y="290" width="48" height="20" rx="4" fill="#F3F2F0"/>
+          <text x="670" y="304">bubble</text>
+          <rect x="720" y="290" width="48" height="20" rx="4" fill="#EAF7F0"/>
+          <text x="730" y="304">add</text>
+          <rect x="780" y="290" width="48" height="20" rx="4" fill="#FDECEC"/>
+          <text x="790" y="304">del</text>
+        </g>
+        <text x="1064" y="304" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">NAMED, NOT RAW</text>
+        <line x1="200" y1="332" x2="1080" y2="332" stroke="rgba(31,35,41,0.12)" stroke-width="1"/>
+
+        <!-- 层 2：语义别名（焦点） -->
+        <rect x="200" y="332" width="880" height="64" fill="rgba(180,83,26,0.08)"/>
+        <rect x="200" y="332" width="880" height="64" fill="none" stroke="#B4531A" stroke-width="1.2"/>
+        <text x="216" y="358" fill="#B4531A" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L2</text>
+        <text x="264" y="362" fill="#B4531A" font-size="14" font-weight="600">语义别名</text>
+        <text x="264" y="380" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">text · accent · panel · border</text>
+        <g font-size="9" font-family="'Geist Mono', ui-monospace, monospace" fill="#5C6470">
+          <rect x="600" y="354" width="16" height="16" rx="2" fill="#1F2329"/>
+          <text x="624" y="366">text</text>
+          <rect x="680" y="354" width="16" height="16" rx="2" fill="#F58A24"/>
+          <text x="704" y="366">accent</text>
+          <rect x="776" y="354" width="16" height="16" rx="2" fill="#FBFAF8" stroke="rgba(31,35,41,0.30)" stroke-width="1"/>
+          <text x="800" y="366">panel</text>
+        </g>
+        <text x="1064" y="368" fill="#B4531A" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">PAY-RENT LAYER</text>
+        <line x1="200" y1="396" x2="1080" y2="396" stroke="rgba(31,35,41,0.12)" stroke-width="1"/>
+
+        <!-- 层 1：基色板 -->
+        <rect x="200" y="396" width="880" height="64" fill="#FBFAF8"/>
+        <text x="216" y="422" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L1</text>
+        <text x="264" y="426" fill="#1F2329" font-size="14" font-weight="600">基色板</text>
+        <text x="264" y="444" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">RAW HEX · 22 VALUES</text>
+        <g>
+          <rect x="600" y="418" width="28" height="28" rx="3" fill="#1F2329"/>
+          <rect x="634" y="418" width="28" height="28" rx="3" fill="#F58A24"/>
+          <rect x="668" y="418" width="28" height="28" rx="3" fill="#E07A12"/>
+          <rect x="702" y="418" width="28" height="28" rx="3" fill="#FBFAF8" stroke="rgba(31,35,41,0.20)" stroke-width="1"/>
+          <rect x="736" y="418" width="28" height="28" rx="3" fill="#F3F1ED"/>
+          <rect x="770" y="418" width="28" height="28" rx="3" fill="#1A8A5C"/>
+          <rect x="804" y="418" width="28" height="28" rx="3" fill="#C98A2B"/>
+          <rect x="838" y="418" width="28" height="28" rx="3" fill="#D04A43"/>
+        </g>
+        <text x="1064" y="432" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">ONLY HERE</text>
+
+        <!-- 轮廓 -->
+        <rect x="200" y="140" width="880" height="320" rx="8" fill="none" stroke="#1F2329" stroke-width="1.2"/>
+
+        <!-- 右侧依赖说明 -->
+        <text x="1104" y="170" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">↑ 只向上被引用</text>
+        <text x="1104" y="192" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace">NO DOWNWARD</text>
+        <text x="1104" y="206" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace">IMPORT</text>
+
+        <!-- accent 对比度说明 -->
+        <rect x="200" y="488" width="880" height="72" rx="6" fill="rgba(31,35,41,0.015)" stroke="rgba(31,35,41,0.10)" stroke-width="1"/>
+        <text x="216" y="512" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.12em">ACCENT CONTRAST CONTRACT</text>
+        <text x="216" y="534" fill="#1F2329" font-size="12">#F58A24 在白底仅 2.46:1，只用于填充与描边；作为文字改用 #B4531A（4.8:1）或 accent-deep。</text>
+        <text x="216" y="550" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">FILL / STROKE = BRAND · TEXT ON PAPER = DARKENED</text>
+
+        <!-- 编辑注记 -->
+        <text x="200" y="600" fill="#5C6470" font-size="12" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', 'Noto Serif SC', serif">任何新组件只允许引用 L2 以上的名字；直接写死 hex 会让调色板切换（terracotta / hula-green / forest / honey / minimal / tech-blue）失效。</text>
+
+        <!-- 图例 -->
+        <line x1="40" y1="700" x2="1240" y2="700" stroke="rgba(31,35,41,0.10)" stroke-width="0.8"/>
+        <text x="40" y="716" fill="#5C6470" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">LEGEND</text>
+
+        <rect x="108" y="708" width="12" height="12" rx="2" fill="#F3F1ED"/>
+        <text x="128" y="718" fill="#5C6470" font-size="12">奇层（交替底色）</text>
+
+        <rect x="308" y="708" width="12" height="12" rx="2" fill="#FBFAF8" stroke="rgba(31,35,41,0.20)" stroke-width="1"/>
+        <text x="328" y="718" fill="#5C6470" font-size="12">偶层</text>
+
+        <rect x="428" y="708" width="12" height="12" rx="2" fill="rgba(180,83,26,0.08)" stroke="#B4531A" stroke-width="1.2"/>
+        <text x="448" y="718" fill="#5C6470" font-size="12">焦点层</text>
+
+        <rect x="548" y="708" width="12" height="12" rx="2" fill="#1F2329"/>
+        <text x="568" y="718" fill="#5C6470" font-size="12">基色值</text>
+
+        <rect x="668" y="708" width="12" height="12" rx="2" fill="#F58A24"/>
+        <text x="688" y="718" fill="#5C6470" font-size="12">品牌色（仅填充）</text>
+
+        <text x="108" y="748" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.06em">22 RAW HEX · 6 PALETTE OPTIONS · 2 SEMANTIC FAMILIES (STATUS / DIFF)</text>
+      </svg>
+    </div>
+
+    <p class="foot">FACT BASE · frontend-slint/ui/design_tokens.slint（22 个原始色值 · 6 套调色板 · font-2xs 10px）</p>
+  </div>
+</body>
+</html>

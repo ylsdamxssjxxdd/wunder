@@ -32,6 +32,7 @@ mod memory_manager_tool;
 mod multimodal_generation_tool;
 mod panel_tools;
 pub(crate) mod pipeline;
+mod prompt_surface;
 mod read_file_guard;
 mod read_image_tool;
 mod read_indentation;
@@ -69,6 +70,7 @@ pub use browser_tool::{
     browser_tool_names, browser_tool_summary_spec, BROWSER_GROUP_NAME, BROWSER_GROUP_NAME_ALIAS,
 };
 pub(crate) use catalog::current_executable_tool_input_schema;
+pub(crate) use prompt_surface::prompt_tool_spec;
 pub use catalog::{
     browser_tools_available, build_desktop_followup_user_message, build_mcp_tool_alias_entries,
     build_mcp_tool_alias_entries_for_names, build_read_image_followup_user_message,

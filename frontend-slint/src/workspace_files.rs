@@ -669,7 +669,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             return;
         };
         let Some(op) = PROMPT.with(|slot| slot.borrow_mut().take()) else {
-            app.set_ws_prompt_open(false);
+            close_prompt(&app);
             return;
         };
         if app.get_ws_prompt_busy() {
@@ -695,11 +695,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         }
         if op.kind == PromptKind::Clear {
             clear_root(&app, prompt_api.clone());
-            app.set_ws_prompt_open(false);
+            close_prompt(&app);
             return;
         }
         if op.kind == PromptKind::BatchDelete {
-            app.set_ws_prompt_open(false);
+            close_prompt(&app);
             PROMPT.with(|slot| *slot.borrow_mut() = None);
             let paths = BATCH_PATHS.with(|slot| std::mem::take(&mut *slot.borrow_mut()));
             batch_delete(&app, prompt_api.clone(), paths);
@@ -748,7 +748,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                                 PromptKind::Rename | PromptKind::Delete => drop_dir_cache(&path),
                                 _ => {}
                             }
-                            app.set_ws_prompt_open(false);
+                            close_prompt(&app);
                             PROMPT.with(|slot| *slot.borrow_mut() = None);
                             app.set_status(done_message(kind, &value).into());
                             settle(&app, refresh_api);
@@ -790,7 +790,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                             if matches!(op.kind, PromptKind::Rename | PromptKind::Delete) {
                                 drop_dir_cache(&op.path);
                             }
-                            app.set_ws_prompt_open(false);
+                            close_prompt(&app);
                             PROMPT.with(|slot| *slot.borrow_mut() = None);
                             app.set_status("云端已执行".into());
                             settle(&app, refresh_api);
@@ -867,7 +867,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         if matches!(kind, PromptKind::Rename | PromptKind::Delete) {
                             drop_dir_cache(&path);
                         }
-                        app.set_ws_prompt_open(false);
+                        close_prompt(&app);
                         PROMPT.with(|slot| *slot.borrow_mut() = None);
                         app.set_status(done_message(kind, &value).into());
                         settle(&app, refresh_api);
@@ -909,7 +909,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             if app.get_ws_prompt_busy() {
                 return;
             }
-            app.set_ws_prompt_open(false);
+            close_prompt(&app);
         }
         PROMPT.with(|slot| *slot.borrow_mut() = None);
     });
@@ -1786,7 +1786,7 @@ fn open_prompt(app: &MainWindow, kind: PromptKind, path: String, name: String) {
             } else {
                 format!("删除「{name}」？云端文件不可恢复。")
             },
-            "确认删除",
+            "删除",
             true,
             false,
             String::new(),
@@ -1828,7 +1828,7 @@ fn open_prompt(app: &MainWindow, kind: PromptKind, path: String, name: String) {
             (
                 "删除",
                 format!("删除选中的 {count} 项？本地或云端文件删除后不可恢复。"),
-                "确认删除",
+                "删除",
                 true,
                 false,
                 String::new(),
@@ -1883,6 +1883,36 @@ fn release_pointer(app: &MainWindow) {
             position: slint::LogicalPosition { x: -1.0, y: -1.0 },
             button: slint::platform::PointerEventButton::Left,
         });
+}
+
+/// Hand the input path a release and queue a frame once the native modal loop
+/// that owns the current message is gone.
+///
+/// Both gestures the shell takes over — the OLE drag loop and the Win32
+/// `TrackPopupMenu` of a native context menu — swallow the button release that
+/// ends them, and the modal dialog's own touch target disappears while the
+/// gesture that dismissed it is still being dispatched. Slint is then left
+/// holding a press that never ends: the next right-click is read as the tail of
+/// the previous gesture (no menu, no dialog, a window that looks frozen) and the
+/// frame queued for the prompt that did open is never presented until a resize
+/// invalidates the software surface. Deferring the settle to the next loop turn
+/// keeps it out of the dispatching callback, after the native loop returned.
+fn settle_after_modal(app: &MainWindow) {
+    let weak = app.as_weak();
+    slint::Timer::single_shot(std::time::Duration::from_millis(0), move || {
+        if let Some(app) = weak.upgrade() {
+            release_pointer(&app);
+            app.window().request_redraw();
+        }
+    });
+}
+
+/// Dismiss the shared prompt and settle the input path behind it, so the next
+/// right-click starts a fresh gesture instead of resuming the one that closed
+/// the dialog.
+fn close_prompt(app: &MainWindow) {
+    app.set_ws_prompt_open(false);
+    settle_after_modal(app);
 }
 
 /// Drop-in uploads: read each staged file as text (binary and oversized

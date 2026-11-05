@@ -6,6 +6,13 @@
 | --- | --- | --- |
 | [`蛹/`](蛹/README.md) | 本地 AI 工作台（desktop） | `frontend-slint/` · Slint 窗口 UI · 10 张稿 |
 | [`舵机/`](舵机/README.md) | 手工本地操作入口（cli） | `crates/wunder-cli/tui/` · 终端 TUI · 6 张稿 |
+| [`editorial/`](editorial/README.md) | 编辑版重做（结构 / 状态 / 约束） | 同基线 · 10 张自包含 HTML · 1280×780 |
+
+### 两版关系
+
+- `蛹/`、`舵机/` 是**像素级实现规范**（1600px、逐区域尺寸标注），继续作为实现手册与验收依据。
+- `editorial/` 是**编辑型图表**，按 `diagram-design` 技能重做：每张只回答一个问题，统一形状语义、正交连接线与排版规则，用于改稿讨论、决策对照与新人理解「为什么这样切」。不做界面像素复刻。
+- 两版并存，互不覆盖；`editorial/` 有独立索引 [`editorial/index.html`](editorial/index.html)。
 
 ## 阅读方式
 

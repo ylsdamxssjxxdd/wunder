@@ -5,7 +5,7 @@
 //! 控制器读一次手册，切出主题；打开主题时用 `src/md/` 投影一次，交给
 //! `ui/help_document.slint` 的 `BlockView` 排版。选区、复制与右键菜单复用
 //! StyledText 的窗口级实现，不再自己做像素级排版。
-use crate::{HelpDocs, HelpEntry, HelpWindow, MdBlock, TextFieldActivation};
+use crate::{HelpDocs, HelpEntry, HelpNavRow, HelpWindow, MdBlock, TextFieldActivation};
 use slint::{ComponentHandle, Global, ModelRc, VecModel};
 use std::{
     cell::{Cell, RefCell},
@@ -17,6 +17,25 @@ fn model<T: Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
 }
 
 // ---------------------------------------------------------------------------
+// 左侧目录的四个分区
+// ---------------------------------------------------------------------------
+
+/// 手册左侧目录按蜂巢手册的四块组织：开始 / 工具 / 界面 / 能力。
+/// 主题用 `block="start|tools|interface|capabilities"` 归入其中一块；
+/// `group` 仍是块内的二级分组。
+const BLOCKS: [(&str, &str, &str); 4] = [
+    ("start", "开始", "Getting Started"),
+    ("tools", "工具", "Tools"),
+    ("interface", "界面", "Surfaces"),
+    ("capabilities", "能力", "Capabilities"),
+];
+
+/// 导航行类型：分区标题 / 二级分组标题 / 主题。
+const ROW_BLOCK: i32 = 0;
+const ROW_GROUP: i32 = 1;
+const ROW_TOPIC: i32 = 2;
+
+// ---------------------------------------------------------------------------
 // 手册内容模型
 // ---------------------------------------------------------------------------
 
@@ -24,7 +43,9 @@ fn model<T: Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
 pub struct Topic {
     pub id: String,
     pub title: String,
-    /// 侧栏分组名（开始 / 核心 / 工具 / 界面 / 参考）。
+    /// 侧栏一级分区：start / tools / interface / capabilities。
+    pub block: String,
+    /// 侧栏二级分组名（入门 / 核心能力 / 美术 / 参考 …）。
     pub group: String,
     pub keywords: Vec<String>,
     /// 主题的 Markdown 正文，不含元数据行。
@@ -88,6 +109,7 @@ impl Manual {
                 current = Some(Topic {
                     id: attribute(line, "id"),
                     title: attribute(line, "title"),
+                    block: attribute(line, "block"),
                     group: attribute(line, "group"),
                     keywords: keywords
                         .split(',')
@@ -272,6 +294,63 @@ struct Controller {
     art: ArtCache,
     blocks: Vec<MdBlock>,
     layout_key: Option<(bool, usize)>,
+    /// 四个分区的展开状态；当前主题所在分区始终展开。
+    expanded: [bool; BLOCKS.len()],
+}
+
+fn nav_rows(manual: &Manual, zh: bool, expanded: &[bool; BLOCKS.len()]) -> Vec<HelpNavRow> {
+    let mut rows: Vec<HelpNavRow> = Vec::new();
+    for (block, (key, title_zh, title_en)) in BLOCKS.iter().enumerate() {
+        let members: Vec<usize> = manual
+            .topics
+            .iter()
+            .enumerate()
+            .filter(|(_, topic)| topic.block == *key)
+            .map(|(index, _)| index)
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+        let title = if zh { *title_zh } else { *title_en };
+        rows.push(HelpNavRow {
+            kind: ROW_BLOCK,
+            topic: -1,
+            title: title.into(),
+            detail: Default::default(),
+            block: block as i32,
+            expanded: expanded[block],
+            count: members.len() as i32,
+        });
+        if !expanded[block] {
+            continue;
+        }
+        let mut group = String::new();
+        for index in members {
+            let topic = &manual.topics[index];
+            if topic.group != group {
+                group = topic.group.clone();
+                rows.push(HelpNavRow {
+                    kind: ROW_GROUP,
+                    topic: -1,
+                    title: group.clone().into(),
+                    detail: Default::default(),
+                    block: block as i32,
+                    expanded: true,
+                    count: 0,
+                });
+            }
+            rows.push(HelpNavRow {
+                kind: ROW_TOPIC,
+                topic: index as i32,
+                title: topic.title.clone().into(),
+                detail: topic.keywords.join(" / ").into(),
+                block: block as i32,
+                expanded: true,
+                count: 0,
+            });
+        }
+    }
+    rows
 }
 
 impl Controller {
@@ -283,6 +362,7 @@ impl Controller {
             art: ArtCache::default(),
             blocks: Vec::new(),
             layout_key: None,
+            expanded: [false; BLOCKS.len()],
         }
     }
 
@@ -295,25 +375,33 @@ impl Controller {
         &self.manuals[lang].topics[self.history.current()]
     }
 
+    /// 主题所属的一级分区下标；未知分区退回第一块，避免目录缺项。
+    fn block_index(&self, topic: usize) -> usize {
+        let key = &self.manuals[self.lang()].topics[topic].block;
+        BLOCKS.iter().position(|entry| entry.0 == key).unwrap_or(0)
+    }
+
+    /// 当前主题所在分区保持展开，其余分区沿用用户的选择。
+    fn sync_expansion(&mut self) {
+        let index = self.block_index(self.history.current());
+        if !self.expanded[index] {
+            self.expanded[index] = true;
+        }
+    }
+
+    /// 把四个分区、块内分组和主题压平成一列导航行。
+    fn rebuild_nav(&self, docs: &HelpDocs) {
+        let rows = nav_rows(&self.manuals[self.lang()], self.zh, &self.expanded);
+        docs.set_nav_rows(model(rows));
+    }
+
     /// 按当前语言重建目录与索引，并重新投影当前主题。
     fn apply_language(&mut self, docs: &HelpDocs, zh: bool) {
         self.zh = zh;
         self.history = History::new();
         self.layout_key = None;
         let lang = self.lang();
-        docs.set_contents(model(
-            self.manuals[lang]
-                .topics
-                .iter()
-                .enumerate()
-                .map(|(i, topic)| HelpEntry {
-                    topic: i as i32,
-                    title: topic.title.clone().into(),
-                    detail: topic.keywords.join(" / ").into(),
-                    group: topic.group.clone().into(),
-                })
-                .collect(),
-        ));
+        self.expanded = [false; BLOCKS.len()];
         docs.set_keyword_index(model(
             self.manuals[lang]
                 .index
@@ -355,6 +443,7 @@ impl Controller {
 
     /// 一个主题只投影一次；缩放只改字号，不需要重新解析 Markdown。
     fn render(&mut self, docs: &HelpDocs) {
+        self.sync_expansion();
         let key = (self.zh, self.history.current());
         if self.layout_key == Some(key) {
             return;
@@ -371,6 +460,7 @@ impl Controller {
     fn navigate(&mut self, docs: &HelpDocs) {
         self.layout_key = None;
         self.render(docs);
+        self.rebuild_nav(docs);
         docs.set_can_back(self.history.can_back());
         docs.set_can_forward(self.history.can_forward());
         docs.set_scroll_request(docs.get_scroll_request() + 1);
@@ -471,6 +561,18 @@ where
         if index >= 0 && (index as usize) < state.manuals[state.lang()].topics.len() {
             state.history.open(index as usize);
             state.navigate(&docs);
+        }
+    });
+    let weak = window.as_weak();
+    let state = Rc::clone(&controller);
+    docs.on_block_toggled(move |block| {
+        let Some(app) = weak.upgrade() else { return };
+        let docs = app.global::<HelpDocs>();
+        let mut state = state.borrow_mut();
+        let index = block.max(0) as usize;
+        if index < BLOCKS.len() {
+            state.expanded[index] = !state.expanded[index];
+            state.rebuild_nav(&docs);
         }
     });
     let weak = window.as_weak();
@@ -594,8 +696,21 @@ mod tests {
                 assert!(entry.topic < manual.topics.len(), "index 引用越界");
             }
             for topic in &manual.topics {
+                assert!(
+                    BLOCKS.iter().any(|entry| entry.0 == topic.block),
+                    "主题 {} 的分区 {} 不在四块之内",
+                    topic.id,
+                    topic.block
+                );
                 assert!(!topic.group.is_empty(), "主题 {} 缺少分组", topic.id);
                 assert!(!topic.body.is_empty(), "主题 {} 没有正文", topic.id);
+            }
+            // 四块都要有内容，空块不该出现在左侧目录里。
+            for (key, _, _) in BLOCKS {
+                assert!(
+                    manual.topics.iter().any(|topic| topic.block == key),
+                    "分区 {key} 没有任何主题"
+                );
             }
             for topic in &manual.topics {
                 for (target, _) in topic.body.match_indices("topic:") {
@@ -620,6 +735,32 @@ mod tests {
                     assert!(art_preview(&slug).is_some(), "预览图资源不存在: {slug}");
                 }
             }
+        }
+    }
+
+    /// 左侧目录始终是四块；折叠时只留分区标题，展开后按分组投影主题。
+    #[test]
+    fn nav_rows_fold_into_four_blocks() {
+        for zh in [true, false] {
+            let manual = Manual::load(zh);
+            let collapsed = nav_rows(&manual, zh, &[false; BLOCKS.len()]);
+            assert_eq!(collapsed.len(), 4, "折叠时应只剩四个分区标题");
+            assert!(collapsed.iter().all(|row| row.kind == ROW_BLOCK));
+            let counts: i32 = collapsed.iter().map(|row| row.count).sum();
+            assert_eq!(counts as usize, manual.topics.len(), "分区主题数应覆盖整本手册");
+
+            let mut expanded = [false; BLOCKS.len()];
+            expanded[0] = true;
+            let rows = nav_rows(&manual, zh, &expanded);
+            assert!(rows.iter().any(|row| row.kind == ROW_GROUP), "展开后应有二级分组");
+            assert!(
+                rows.iter().any(|row| row.kind == ROW_TOPIC && row.topic == 0),
+                "展开后应能看到首篇主题"
+            );
+            assert!(
+                rows.iter().all(|row| row.kind != ROW_TOPIC || row.block == 0),
+                "未展开的分区不应投影主题"
+            );
         }
     }
 

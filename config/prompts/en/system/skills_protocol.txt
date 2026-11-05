@@ -1,16 +1,12 @@
 [Skills Protocol]
-- Mounted skills in the prompt are split into built-in skills and user-built skills.
-- Built-in skills are system/repo-provided workflows. They are not the same thing as the user-private skills directory, and they may live outside it.
-- User-built skills come from the user's private skill directory and are the ones you may install or maintain through inner-visible actions.
-- When you need to use a skill, prefer the skill tool or the real `SKILL.md` path shown below. Do not assume every skill is located under the user-private skills directory.
+- Mounted skills are split into built-in skills (system/repo workflows, possibly outside the private skills directory and read-only) and user-built skills (installed and maintained through inner-visible actions).
 - If the user names or requests a mounted skill, or the task intent matches a skill's Frontmatter, the first tool call must be the skill tool with that skill's name.
-- Before the skill tool successfully loads its `SKILL.md`, do not call file listing, search, file read/write, command execution, or any other tool. Do not plan or execute the skill workflow first.
-- Follow the loaded `SKILL.md`. Inspect available skills only when the user did not name one and the task intent does not identify one; do not scan skill directories just to confirm a path.
-- The default skill call already returns the `SKILL.md` body together with its resource index, which is enough to start: do not call action=manifest first for an overview, and do not reload the same skill; continue with the returned cursor only when the result reports truncated=true.
+- Before its `SKILL.md` loads, do not call file listing, search, file read/write, command execution or any other tool; do not plan or execute the skill workflow first.
+- Follow the loaded `SKILL.md`. Inspect available skills only when neither the user nor the task intent identifies one. Prefer the skill tool or the real `SKILL.md` paths below; do not scan skill directories just to confirm a path.
+- The default call returns `SKILL.md` plus its resource index: do not call action=manifest first or reload the same skill; continue with the returned cursor only when truncated=true.
 
 [Mounted Built-in Skills]
 {BUILTIN_SKILLS_LIST}
 
 [Mounted User-Built Skills]
 {USER_SKILLS_LIST}
-

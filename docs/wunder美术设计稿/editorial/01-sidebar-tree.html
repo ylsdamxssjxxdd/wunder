@@ -1,0 +1,216 @@
+<!-- AI生成 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>蛹 · 侧栏层级</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #FBFAF8;
+      --color-ink:     #1F2329;
+      --color-muted:   #5C6470;
+      --color-soft:    #636B76;
+      --color-accent:  #B4531A;
+      --font-sans:     'Geist', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif', 'Noto Serif SC', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1320px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .eyebrow {
+      font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500;
+      letter-spacing: 0.18em; text-transform: uppercase; color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif); font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400; letter-spacing: -0.01em; line-height: 1.2;
+      color: var(--color-ink); margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 1280px; display: block; }
+    .foot {
+      margin-top: 1rem; font-family: var(--font-mono); font-size: 0.66rem;
+      letter-spacing: 0.04em; color: var(--color-soft);
+    }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Tree · 蛹 / 侧栏</p>
+    <h1>侧栏层级：工作区、分组、线程与文件树</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1280 780" xmlns="http://www.w3.org/2000/svg" role="img"
+           aria-labelledby="sidebar-tree-title sidebar-tree-desc"
+           font-family="'Geist', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+        <title id="sidebar-tree-title">侧栏层级：工作区、分组、线程与文件树</title>
+        <desc id="sidebar-tree-desc">侧栏以工作区为根，下含进行中、已归档与文件树三组，每组下挂线程行或文件行；当前线程以橙色标记。</desc>
+
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#5C6470"/></marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#B4531A"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2E5AA8"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#FBFAF8"/>
+        <text x="40" y="44" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">SIDEBAR 240 px · ROW 32 / GROUP 36 + 4 · PAD 12 · INSET 8</text>
+
+        <!-- 连接器（先画） -->
+        <g fill="none" stroke="#5C6470" stroke-width="1">
+          <!-- root → bus -->
+          <path d="M 220 376 H 260"/>
+          <path d="M 260 168 V 528"/>
+          <path d="M 260 168 H 320" />
+          <path d="M 260 348 H 320" />
+          <path d="M 260 528 H 320" />
+          <!-- group A → children -->
+          <path d="M 488 168 H 520"/>
+          <path d="M 520 132 V 244"/>
+          <path d="M 520 132 H 580"/>
+          <path d="M 520 188 H 580"/>
+          <path d="M 520 244 H 580"/>
+          <!-- group B → children -->
+          <path d="M 488 348 H 520"/>
+          <path d="M 520 312 V 424"/>
+          <path d="M 520 312 H 580"/>
+          <path d="M 520 368 H 580"/>
+          <path d="M 520 424 H 580"/>
+          <!-- group C → children -->
+          <path d="M 488 528 H 520"/>
+          <path d="M 520 492 V 604"/>
+          <path d="M 520 492 H 580"/>
+          <path d="M 520 548 H 580"/>
+          <path d="M 520 604 H 580"/>
+        </g>
+
+        <!-- 根：工作区 -->
+        <rect x="60" y="344" width="160" height="64" rx="6" fill="#FBFAF8"/>
+        <rect x="60" y="344" width="160" height="64" rx="6" fill="#ffffff" stroke="#1F2329" stroke-width="1.2"/>
+        <rect x="68" y="350" width="32" height="12" rx="2" fill="none" stroke="rgba(31,35,41,0.40)" stroke-width="0.8"/>
+        <text x="84" y="359" fill="#5C6470" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">ROOT</text>
+        <text x="140" y="382" fill="#1F2329" font-size="12" font-weight="600" text-anchor="middle">工作区 wunder</text>
+        <text x="140" y="398" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">workspace</text>
+
+        <!-- 一级：三个分组 -->
+        <g>
+          <rect x="320" y="140" width="168" height="56" rx="6" fill="#FBFAF8"/>
+          <rect x="320" y="140" width="168" height="56" rx="6" fill="#F3F1ED" stroke="rgba(31,35,41,0.30)" stroke-width="1"/>
+          <text x="336" y="164" fill="#1F2329" font-size="12" font-weight="600">进行中</text>
+          <text x="472" y="164" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">3</text>
+          <text x="336" y="182" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">GROUP 36 · PIN TOP</text>
+        </g>
+        <g>
+          <rect x="320" y="320" width="168" height="56" rx="6" fill="#FBFAF8"/>
+          <rect x="320" y="320" width="168" height="56" rx="6" fill="#F3F1ED" stroke="rgba(31,35,41,0.30)" stroke-width="1"/>
+          <text x="336" y="344" fill="#1F2329" font-size="12" font-weight="600">已归档</text>
+          <text x="472" y="344" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">12</text>
+          <text x="336" y="362" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">COLLAPSED</text>
+        </g>
+        <g>
+          <rect x="320" y="500" width="168" height="56" rx="6" fill="#FBFAF8"/>
+          <rect x="320" y="500" width="168" height="56" rx="6" fill="#F3F1ED" stroke="rgba(31,35,41,0.30)" stroke-width="1"/>
+          <text x="336" y="524" fill="#1F2329" font-size="12" font-weight="600">文件树</text>
+          <text x="472" y="524" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">28</text>
+          <text x="336" y="542" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">ROW 28 · PAD 8</text>
+        </g>
+
+        <!-- 二级：线程行 -->
+        <g>
+          <rect x="580" y="112" width="200" height="40" rx="6" fill="#FBFAF8"/>
+          <rect x="580" y="112" width="200" height="40" rx="6" fill="rgba(180,83,26,0.08)" stroke="#B4531A" stroke-width="1.2"/>
+          <circle cx="596" cy="132" r="3.5" fill="#B4531A"/>
+          <text x="608" y="136" fill="#1F2329" font-size="12" font-weight="600">当前线程 · 运行中</text>
+        </g>
+        <g>
+          <rect x="580" y="168" width="200" height="40" rx="6" fill="#FBFAF8"/>
+          <rect x="580" y="168" width="200" height="40" rx="6" fill="#ffffff" stroke="rgba(31,35,41,0.30)" stroke-width="1"/>
+          <circle cx="596" cy="188" r="3.5" fill="none" stroke="rgba(31,35,41,0.40)" stroke-width="1"/>
+          <text x="608" y="192" fill="#1F2329" font-size="12">排队中</text>
+        </g>
+        <g>
+          <rect x="580" y="224" width="200" height="40" rx="6" fill="#FBFAF8"/>
+          <rect x="580" y="224" width="200" height="40" rx="6" fill="#ffffff" stroke="rgba(31,35,41,0.30)" stroke-width="1"/>
+          <circle cx="596" cy="244" r="3.5" fill="none" stroke="rgba(31,35,41,0.40)" stroke-width="1"/>
+          <text x="608" y="248" fill="#1F2329" font-size="12">等待授权</text>
+        </g>
+
+        <g>
+          <rect x="580" y="292" width="200" height="40" rx="6" fill="#FBFAF8"/>
+          <rect x="580" y="292" width="200" height="40" rx="6" fill="#ffffff" stroke="rgba(31,35,41,0.30)" stroke-width="1"/>
+          <text x="596" y="316" fill="#5C6470" font-size="12">线程 · 完成</text>
+        </g>
+        <g>
+          <rect x="580" y="348" width="200" height="40" rx="6" fill="#FBFAF8"/>
+          <rect x="580" y="348" width="200" height="40" rx="6" fill="#ffffff" stroke="rgba(31,35,41,0.30)" stroke-width="1"/>
+          <text x="596" y="372" fill="#5C6470" font-size="12">线程 · 失败</text>
+        </g>
+        <g>
+          <rect x="580" y="404" width="200" height="40" rx="6" fill="#FBFAF8"/>
+          <rect x="580" y="404" width="200" height="40" rx="6" fill="#ffffff" stroke="rgba(31,35,41,0.30)" stroke-width="1"/>
+          <text x="596" y="428" fill="#5C6470" font-size="12">线程 · 空闲</text>
+        </g>
+
+        <g>
+          <rect x="580" y="472" width="200" height="40" rx="6" fill="#FBFAF8"/>
+          <rect x="580" y="472" width="200" height="40" rx="6" fill="#ffffff" stroke="rgba(31,35,41,0.30)" stroke-width="1"/>
+          <text x="596" y="496" fill="#1F2329" font-size="12">父链目录 · 吸顶</text>
+        </g>
+        <g>
+          <rect x="580" y="528" width="200" height="40" rx="6" fill="#FBFAF8"/>
+          <rect x="580" y="528" width="200" height="40" rx="6" fill="#ffffff" stroke="rgba(31,35,41,0.30)" stroke-width="1"/>
+          <text x="596" y="552" fill="#5C6470" font-size="12">子目录</text>
+        </g>
+        <g>
+          <rect x="580" y="584" width="200" height="40" rx="6" fill="#FBFAF8"/>
+          <rect x="580" y="584" width="200" height="40" rx="6" fill="#ffffff" stroke="rgba(31,35,41,0.30)" stroke-width="1"/>
+          <text x="596" y="608" fill="#5C6470" font-size="12">文件 · 多选态</text>
+        </g>
+
+        <!-- 行交互说明 -->
+        <text x="820" y="132" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">HOVER = RENAME / TRACE / ARCHIVE</text>
+        <text x="820" y="152" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace">ROW HIT 20 + GAP 4</text>
+        <text x="820" y="192" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">PHASE = QUEUED</text>
+        <text x="820" y="248" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">PHASE = WAITING</text>
+        <text x="820" y="496" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">PINNED FILE ROW</text>
+        <text x="820" y="516" fill="#636B76" font-size="8" font-family="'Geist Mono', ui-monospace, monospace">GROUP-TOP / GROUP-END</text>
+        <text x="820" y="608" fill="#5C6470" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">BATCH DELETE · CLOUD/LOCAL</text>
+
+        <!-- 编辑注记 -->
+        <text x="60" y="676" fill="#5C6470" font-size="12" font-style="italic" font-family="'Instrument Serif', 'Noto Serif', 'Noto Serif SC', serif">分组行在展开的分组下滚时钉在树顶，随下一组到达推出；文件父链用同一套吸顶几何。</text>
+
+        <!-- 图例 -->
+        <line x1="40" y1="700" x2="1240" y2="700" stroke="rgba(31,35,41,0.10)" stroke-width="0.8"/>
+        <text x="40" y="716" fill="#5C6470" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">LEGEND</text>
+
+        <rect x="108" y="708" width="12" height="12" rx="2" fill="#ffffff" stroke="#1F2329" stroke-width="1.2"/>
+        <text x="128" y="718" fill="#5C6470" font-size="12">根 / 工作区</text>
+
+        <rect x="288" y="708" width="12" height="12" rx="2" fill="#F3F1ED" stroke="rgba(31,35,41,0.30)" stroke-width="1"/>
+        <text x="308" y="718" fill="#5C6470" font-size="12">分组行</text>
+
+        <rect x="468" y="708" width="12" height="12" rx="2" fill="#ffffff" stroke="rgba(31,35,41,0.30)" stroke-width="1"/>
+        <text x="488" y="718" fill="#5C6470" font-size="12">线程 / 文件行</text>
+
+        <rect x="688" y="708" width="12" height="12" rx="2" fill="rgba(180,83,26,0.08)" stroke="#B4531A" stroke-width="1.2"/>
+        <text x="708" y="718" fill="#5C6470" font-size="12">当前线程</text>
+
+        <circle cx="888" cy="714" r="3.5" fill="#B4531A"/>
+        <text x="904" y="718" fill="#5C6470" font-size="12">状态点（运行）</text>
+      </svg>
+    </div>
+
+    <p class="foot">FACT BASE · frontend-slint/ui/sidebar.slint · workspace_files.slint · src/workspace_files.rs · v0.3.4</p>
+  </div>
+</body>
+</html>
