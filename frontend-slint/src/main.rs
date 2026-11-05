@@ -26,6 +26,8 @@ mod file_icons;
 mod help_browser;
 mod host_hud;
 mod hotkey;
+mod md;
+mod md_probe;
 mod message_blocks;
 mod model_editor;
 mod model_editor_smoke;
@@ -155,6 +157,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             help_browser::open(&app);
         }
     });
+    // Transcript context menu: the selection lives in the text layout, so the
+    // two actions have to run through the same core entry points the keyboard
+    // shortcuts use (Ctrl+C / Ctrl+A).
+    let menu_weak = app.as_weak();
+    app.on_copy_selection(move || {
+        if let Some(app) = menu_weak.upgrade() {
+            i_slint_core::text_selection::copy_context(&app.window());
+        }
+    });
+    let select_weak = app.as_weak();
+    app.on_select_all_text(move || {
+        let _ = select_weak;
+        i_slint_core::text_selection::select_all();
+    });
     if first_argument.as_deref() == Some(std::ffi::OsStr::new("--timeline-probe")) {
         // §十二.2: measure the worst-case timeline on the real renderer without
         // depending on the rest of the smoke check.
@@ -162,6 +178,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .next()
             .ok_or("missing timeline-probe output directory")?;
         return smoke::run_timeline_probe(&app, std::path::PathBuf::from(directory));
+    }
+    if first_argument.as_deref() == Some(std::ffi::OsStr::new("--markdown-probe")) {
+        // Render one document that covers every block kind, for a layout check
+        // that does not depend on the rest of the shell.
+        let directory = arguments
+            .next()
+            .ok_or("missing markdown-probe output directory")?;
+        return md_probe::run(&app, std::path::PathBuf::from(directory));
     }
     if first_argument.as_deref() == Some(std::ffi::OsStr::new("--hide-probe")) {
         // The hide verdict can only be measured on a window the screen really

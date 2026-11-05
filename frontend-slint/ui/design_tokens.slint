@@ -132,6 +132,34 @@ export global Theme {
     out property <length> radius-lg: 12px;
     out property <length> radius-xl: 14px;
 
+    // ---- Markdown document surface ----
+    // A transcript reads as a document, so its block chrome (code fences,
+    // quote rails, table rules) gets tokens of its own instead of reusing the
+    // form-control palette. Values mirror the 蜂巢 web renderer.
+    out property <color> code-bg: #F7F6F3;
+    out property <color> code-border: #EAE7E2;
+    out property <color> code-header: #F1EFEB;
+    out property <color> quote-bg: #F7F5F2;
+    out property <color> quote-bar: #E0D8CC;
+    out property <color> table-head: #FAF8F5;
+    out property <color> table-zebra: #FCFBF9;
+    out property <color> rule: #E6E2DC;
+    // Body copy is warm, so links take a blue: it is the only hue that stays
+    // unmistakably "clickable" next to the accent.
+    out property <color> link: #1F6FEB;
+    // Document type scale. Deliberately larger than the UI scale: prose at the
+    // 13px form size reads as a caption, not an answer.
+    out property <length> font-body: 14px;
+    out property <length> font-code: 12.5px;
+    out property <length> font-h1: 23px;
+    out property <length> font-h2: 19px;
+    out property <length> font-h3: 16px;
+    out property <length> font-h4: 14.5px;
+    out property <length> radius-block: 8px;
+    // Prose face. The shell bundles Microsoft YaHei for gb2312 coverage; code
+    // falls back to the monospace stack above.
+    out property <string> font-ui: "Microsoft YaHei";
+
     // Monospace stack for diff cards and tool output previews.
     out property <string> font-mono: "Consolas";
     // Timeline metrics (§7): full-width entries with 24px side padding.

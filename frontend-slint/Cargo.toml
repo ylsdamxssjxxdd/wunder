@@ -22,6 +22,9 @@ slint = { version = "=1.18.0", default-features = false, features = [
 ] }
 i-slint-backend-winit = { version = "=1.18.0", default-features = false, features = ["raw-window-handle-06", "renderer-software"] }
 i-slint-renderer-software = { version = "=1.18.0", default-features = false, features = ["std", "systemfonts"] }
+# The transcript's cross-block text selection lives in the fork's
+# `text_selection` module; the menu needs its copy/select-all entry points.
+i-slint-core = { version = "=1.18.0", default-features = false }
 lz4_flex = { version = "=0.11.6", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 winit = { version = "=0.30.2", default-features = false }
 png = "=0.18.1"

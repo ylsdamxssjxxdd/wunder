@@ -4,8 +4,8 @@
 // an entry expands, a streamed line wraps, and the layout follows, which is
 // what a virtualized ListView cannot do while the rows keep changing height.
 import { I18n } from "i18n.slint";
-import { Theme, TimelineRow, PatchCard, TextBlock, TimelineSpin, TurnStatMetric, TurnMark } from "theme.slint";
-import { MarkdownBlock } from "markdown.slint";
+import { BlockKind, Theme, TimelineRow, PatchCard, TimelineSpin, TurnStatMetric, TurnMark } from "theme.slint";
+import { BlockView } from "markdown-rich.slint";
 import { PatchDiffCard } from "patch_diff_card.slint";
 import { WorkflowDetail } from "workflow_detail.slint";
 import { ToolIcons } from "tool_icons.slint";
@@ -230,6 +230,9 @@ component UserBubble inherits Rectangle {
     in property <TimelineRow> data;
     callback copy-text(string);
     callback open-resource(string);
+    /// Right-click on the bubble text: window coordinates plus whether there
+    /// is a selection to act on.
+    callback show-context-menu(length, length, bool);
     height: bubble-column.preferred-height;
     bubble-column := VerticalLayout {
         spacing: 2px;
@@ -243,14 +246,24 @@ component UserBubble inherits Rectangle {
                 bubble-body := VerticalLayout {
                     x: 12px; y: 8px; width: parent.width - 24px;
                     spacing: 6px;
-                    if root.data.blocks.length == 0 && root.data.text != "" : TextInput {
+                    // The bubble hugs its text, so it stays one read-only
+                    // control instead of a block column: a block column would
+                    // need a definite width, and deriving that width from the
+                    // bubble's own preferred size is a binding loop.
+                    if root.data.text != "" : TextInput {
                         text: root.data.text; color: Theme.text; font-size: Theme.font-lg;
                         read-only: true; wrap: word-wrap;
                     }
-                    for block in root.data.blocks : MarkdownBlock {
+                    // Attachments are the one block kind a user message needs;
+                    // their card width is intrinsic, so it can be fixed here.
+                    for block in root.data.blocks : BlockView {
+                        visible: block.kind == BlockKind.image || block.kind == BlockKind.document;
                         block: block;
-                        copy-code(text) => { root.copy-text(text); }
+                        column-width: 360px;
+                        copy-text(text) => { root.copy-text(text); }
                         open-resource(path) => { root.open-resource(path); }
+                        link-clicked(path) => { root.open-resource(path); }
+                        context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
                     }
                 }
             }
@@ -352,18 +365,21 @@ component BodyBlock inherits Rectangle {
     in property <TimelineRow> data;
     callback copy-text(string);
     callback open-resource(string);
+    callback show-context-menu(length, length, bool);
     height: body-column.preferred-height;
     body-column := VerticalLayout {
         padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding;
         padding-top: 6px; padding-bottom: 6px; spacing: 6px;
-        if root.data.blocks.length == 0 && root.data.text != "" : TextInput {
-            text: root.data.text; color: Theme.text; font-size: Theme.font-lg;
-            read-only: true; wrap: word-wrap;
-        }
-        for block in root.data.blocks : MarkdownBlock {
+        for block in root.data.blocks : BlockView {
             block: block;
-            copy-code(text) => { root.copy-text(text); }
+            // The body column is the reading column minus its own padding; it
+            // is definite here, so a block can wrap without the 1.18
+            // preferred-width measurement bug shrinking the timeline.
+            column-width: root.width - Theme.timeline-padding * 2;
+            copy-text(text) => { root.copy-text(text); }
             open-resource(path) => { root.open-resource(path); }
+            link-clicked(path) => { root.open-resource(path); }
+            context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
         }
     }
 }
@@ -459,6 +475,7 @@ component FoldEntry inherits Rectangle {
     callback toggle(int);
     callback copy-text(string);
     callback open-resource(string);
+    callback show-context-menu(length, length, bool);
     // Nothing to unfold means no toggle affordance at all, as on the web.
     private property <bool> expandable: root.data.detail != "" || root.data.patch.length > 0;
     height: entry-column.preferred-height;
@@ -536,7 +553,7 @@ component FoldEntry inherits Rectangle {
             // renders it as a plain block, while a tool result keeps the
             // structured viewer with its "输出" head.
             if root.data.kind == EntryKind.reason && root.data.detail != "" : Rectangle {
-                height: min(240px, thinking-box.preferred-height + 16px);
+                height: min(240px, thinking-column.preferred-height + 16px);
                 border-radius: Theme.radius-sm; background: Theme.panel;
                 border-width: 1px; border-color: Theme.border;
                 private property <bool> follow-tail: true;
@@ -560,12 +577,29 @@ component FoldEntry inherits Rectangle {
                     // content height from layout children, and this one holds a
                     // TextInput. Without it the box was capped at 240px with the
                     // rest of the reasoning unreachable.
-                    content-height: max(self.visible-height, thinking-box.preferred-height);
+                    content-height: max(self.visible-height, thinking-column.preferred-height);
                     content-width: self.visible-width;
 
-                    thinking-box := TextInput {
-                        text: root.data.detail; read-only: true; wrap: word-wrap;
-                        color: Theme.muted; font-size: Theme.font-sm;
+                    thinking-column := VerticalLayout {
+                        width: thinking-scroll.visible-width;
+                        padding-left: 4px; padding-right: 4px;
+                        alignment: start;
+                        // Streaming: plain text. Settled: the same Markdown
+                        // blocks the transcript uses.
+                        thinking-box := TextInput {
+                            visible: root.data.reasoning-blocks.length == 0;
+                            text: root.data.detail; read-only: true; wrap: word-wrap;
+                            color: Theme.muted; font-size: Theme.font-sm;
+                        }
+                        for block in root.data.reasoning-blocks : BlockView {
+                            block: block;
+                            column-width: thinking-scroll.visible-width - 8px;
+                            font-scale: 0.92;
+                            copy-text(value) => { root.copy-text(value); }
+                            open-resource(path) => { root.open-resource(path); }
+                            link-clicked(path) => { root.open-resource(path); }
+                            context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
+                        }
                     }
                     scrolled => {
                         parent.follow-tail = self.visible-height - self.content-height - self.content-y >= -24px;
@@ -645,6 +679,7 @@ component ProcessBar inherits Rectangle {
     callback process-page(int, int);
     callback copy-text(string);
     callback open-resource(string);
+    callback show-context-menu(length, length, bool);
     // During a live turn the current work is the visible tail of the
     // conversation and starts unfolded: the reducer stamps the bar's `open`
     // when it first reveals the process. After that `open` is the single source
@@ -728,6 +763,7 @@ component ProcessBar inherits Rectangle {
         toggle(index) => { root.toggle(index); }
         copy-text(text) => { root.copy-text(text); }
         open-resource(path) => { root.open-resource(path); }
+        show-context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
     }
 }
 
@@ -739,6 +775,7 @@ export component TimelineRowView inherits Rectangle {
     callback copy-text(string);
     callback copy-original(string);
     callback open-resource(string);
+    callback show-context-menu(length, length, bool);
     width: 100%;
     // A batch entry belongs to its bar: folding the bar takes the entries with
     // it, which is what `toggle` writes into `group-open` across the group. The
@@ -766,11 +803,13 @@ export component TimelineRowView inherits Rectangle {
             data: root.entry;
             copy-text(text) => { root.copy-text(text); }
             open-resource(path) => { root.open-resource(path); }
+            show-context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
         }
         if root.shown && root.entry.kind == EntryKind.body : BodyBlock {
             data: root.entry;
             copy-text(text) => { root.copy-text(text); }
             open-resource(path) => { root.open-resource(path); }
+            show-context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
         }
         if root.shown && root.entry.kind == EntryKind.error : ErrorBlock {
             data: root.entry;
@@ -786,6 +825,7 @@ export component TimelineRowView inherits Rectangle {
             toggle(index) => { root.toggle(index); }
             copy-text(text) => { root.copy-text(text); }
             open-resource(id) => { root.open-resource(id); }
+            show-context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
         }
         if root.shown && root.entry.kind == EntryKind.group : GroupBar {
             data: root.entry;
@@ -798,6 +838,7 @@ export component TimelineRowView inherits Rectangle {
             process-page(index, direction) => { root.process-page(index, direction); }
             copy-text(text) => { root.copy-text(text); }
             open-resource(path) => { root.open-resource(path); }
+            show-context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
         }
     }
 }
@@ -829,6 +870,9 @@ export component TimelineView inherits Rectangle {
     // smoke checks (they assert the position holds while the user reads back).
     out property <length> scroll-y: rows-scroll.content-y;
     callback load-older();
+    /// Right-click on transcript text. The menu is drawn at window level so it
+    /// can paint over the whole chat column instead of being clipped by a row.
+    callback show-context-menu(length, length, bool);
     private property <bool> older-requested: false;
     callback toggle(int);
     callback process-page(int, int);
@@ -981,6 +1025,7 @@ export component TimelineView inherits Rectangle {
                 copy-text(text) => { root.copy-text(text); }
                 copy-original(id) => { root.copy-original(id); }
                 open-resource(id) => { root.open-resource(id); }
+                show-context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
             }
         }
         scrolled => {

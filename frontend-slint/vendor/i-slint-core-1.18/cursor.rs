@@ -33,6 +33,57 @@ impl Default for MouseCursorInner {
     }
 }
 
+std::thread_local! {
+    /// What the pointer looked like after the last dispatched event.
+    static LAST: core::cell::Cell<&'static str> = const { core::cell::Cell::new("default") };
+}
+
+/// Records the cursor a mouse event resolved to.
+pub(crate) fn record(cursor: &MouseCursorInner) {
+    let name = match cursor {
+        MouseCursorInner::BuiltIn(cursor) => builtin_name(cursor),
+        MouseCursorInner::CustomMouseCursor { .. } => "custom",
+    };
+    LAST.with(|last| last.set(name));
+}
+
+/// The name of the cursor the last mouse event resolved to. The windowing backend turns it into
+/// an operating-system cursor, which a screenshot cannot capture; tests read it here instead.
+pub fn last_mouse_cursor() -> &'static str {
+    LAST.with(|last| last.get())
+}
+
+fn builtin_name(cursor: &BuiltInMouseCursor) -> &'static str {
+    match cursor {
+        BuiltInMouseCursor::Default => "default",
+        BuiltInMouseCursor::None => "none",
+        BuiltInMouseCursor::Help => "help",
+        BuiltInMouseCursor::Pointer => "pointer",
+        BuiltInMouseCursor::Progress => "progress",
+        BuiltInMouseCursor::Wait => "wait",
+        BuiltInMouseCursor::Crosshair => "crosshair",
+        BuiltInMouseCursor::Text => "text",
+        BuiltInMouseCursor::Alias => "alias",
+        BuiltInMouseCursor::Copy => "copy",
+        BuiltInMouseCursor::Move => "move",
+        BuiltInMouseCursor::NoDrop => "no-drop",
+        BuiltInMouseCursor::NotAllowed => "not-allowed",
+        BuiltInMouseCursor::Grab => "grab",
+        BuiltInMouseCursor::Grabbing => "grabbing",
+        BuiltInMouseCursor::ColResize => "col-resize",
+        BuiltInMouseCursor::RowResize => "row-resize",
+        BuiltInMouseCursor::NResize => "n-resize",
+        BuiltInMouseCursor::EResize => "e-resize",
+        BuiltInMouseCursor::SResize => "s-resize",
+        BuiltInMouseCursor::WResize => "w-resize",
+        BuiltInMouseCursor::NeResize => "ne-resize",
+        BuiltInMouseCursor::NwResize => "nw-resize",
+        BuiltInMouseCursor::SeResize => "se-resize",
+        BuiltInMouseCursor::SwResize => "sw-resize",
+        _ => "other",
+    }
+}
+
 /// Maps a custom cursor's hotspot from the source image into a buffer rendered at
 /// `rendered_size` pixels, clamped to stay inside it.
 pub fn scaled_hotspot(hotspot: i32, source_size: u32, rendered_size: u32) -> u32 {

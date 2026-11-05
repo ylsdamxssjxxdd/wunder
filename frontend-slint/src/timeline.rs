@@ -9,7 +9,7 @@
 //!
 //! The work-process bar owns thinking, tools and earlier answer blocks. It
 //! ships folded in a bounded viewport; batch rows retain invocation identity.
-use crate::{TextBlock, TimelineRow, TurnMark};
+use crate::{MdBlock, TimelineRow, TurnMark};
 #[allow(unused_imports)]
 use slint::{Model, ModelRc, VecModel};
 use std::cell::Cell;
@@ -185,6 +185,7 @@ fn blank(kind: i32, id: String) -> TimelineRow {
         tokens: Default::default(),
         duration: Default::default(),
         detail: slint::SharedString::default(),
+        reasoning_blocks: ModelRc::default(),
         sections: ModelRc::default(),
         process_entries: ModelRc::default(),
         process_root: Default::default(),
@@ -291,7 +292,6 @@ pub struct Timeline {
     settled: bool,
     /// Whether frozen body blocks get syntax highlighting; the reducer turns
     /// this on for the chat view and off elsewhere.
-    highlight: bool,
     /// Whether MainWindow.timeline already observes `model`. Binding once
     /// avoids replacing the list's model handle during every 33ms stream tick.
     published: Cell<bool>,
@@ -366,7 +366,6 @@ impl Timeline {
             turn: None,
             active_user_row: usize::MAX,
             settled: false,
-            highlight: false,
             published: Cell::new(false),
             markdown_desktop: None,
             markdown_root: String::new(),
@@ -543,12 +542,6 @@ impl Timeline {
         self.footer.set(usize::MAX);
         self.turn = None;
         self.settled = false;
-        self.highlight = false;
-    }
-
-    /// Highlight the code blocks of frozen body blocks.
-    pub fn set_highlight(&mut self, highlight: bool) {
-        self.highlight = highlight;
     }
 
     fn push(&mut self, row: TimelineRow) -> usize {
@@ -713,7 +706,7 @@ impl Timeline {
 
     /// Repaint the live turn's user bubble, e.g. with the composer's local
     /// attachment cards, until the durable projection takes the row over.
-    pub fn set_user_blocks(&self, index: usize, blocks: ModelRc<TextBlock>) {
+    pub fn set_user_blocks(&self, index: usize, blocks: ModelRc<MdBlock>) {
         self.patch(index, |row| {
             if row.kind == KIND_USER {
                 row.blocks = blocks;
@@ -1180,6 +1173,9 @@ impl Timeline {
             row.tool_name = label.into();
             row.summary = summary;
             row.detail = text.as_str().into();
+            // The thought is finished: parse it once, the same way a settled
+            // answer is parsed, so the expanded box renders its Markdown.
+            row.reasoning_blocks = crate::message_blocks::from_text(&text);
             row.status_kind = if failed { STATUS_FAILED } else { STATUS_DONE };
         });
     }
@@ -1503,15 +1499,15 @@ impl Timeline {
         if let Some(desktop) = self.markdown_desktop.clone() {
             crate::native_markdown::hydrate(&mut blocks, desktop, self.markdown_root.clone());
         }
-        let styled = self.highlight.then(|| highlight_code(&mut blocks));
+        // The whole answer is projected here, once: streaming published plain
+        // text, and this is the only Markdown parse the message ever gets.
+        let model = ModelRc::from(blocks.model.clone());
         let text = body.text.clone();
         let index = body.index;
         self.patch(index, |row| {
             row.text = text.as_str().into();
             row.foldable = true;
-            if let Some(styled) = styled.as_ref() {
-                row.blocks = styled.clone();
-            }
+            row.blocks = model;
         });
     }
 
@@ -1692,7 +1688,7 @@ impl Timeline {
             // blinks a picture back to its label.
             let previous: std::collections::HashMap<
                 (slint::SharedString, slint::SharedString),
-                ModelRc<TextBlock>,
+                ModelRc<MdBlock>,
             > = self
                 .model
                 .iter()
@@ -2060,21 +2056,6 @@ impl Timeline {
             self.set_turn_stats(stats);
         }
     }
-}
-
-/// Apply the linear syntax lexer to every code block of a frozen body and hand
-/// back the model the row publishes. It runs once per block, never per token.
-fn highlight_code(blocks: &mut crate::message_blocks::Blocks) -> ModelRc<TextBlock> {
-    for index in 0..blocks.model.row_count() {
-        let Some(mut block) = blocks.model.row_data(index) else {
-            continue;
-        };
-        if block.kind == 1 {
-            block.styled = crate::code_highlight::highlight(&block.text, &block.language);
-            blocks.model.set_row_data(index, block);
-        }
-    }
-    ModelRc::from(blocks.model.clone())
 }
 
 #[cfg(test)]
@@ -3291,7 +3272,7 @@ mod tests {
         );
         // The composer echo decodes the data URL into the card; emulate the
         // loaded state the handoff must preserve.
-        let held = echo.as_any().downcast_ref::<VecModel<TextBlock>>().unwrap();
+        let held = echo.as_any().downcast_ref::<VecModel<MdBlock>>().unwrap();
         let mut card = held.row_data(held.row_count() - 1).unwrap();
         card.image = pixels.clone();
         held.set_row_data(held.row_count() - 1, card);

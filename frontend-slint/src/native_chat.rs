@@ -884,6 +884,14 @@ fn bind_timeline(
         if resource.trim().is_empty() {
             return;
         }
+        // Markdown links are clickable, but the desktop shell has no browser
+        // bridge: hand the target over through the clipboard and say so, which
+        // is more useful than failing with "not a workspace file".
+        if is_external_link(&resource) {
+            app.invoke_copy_raw(resource.into());
+            app.set_status("链接已复制到剪贴板".into());
+            return;
+        }
         let root = markdown_root(&app);
         if root.trim().is_empty() {
             app.set_status("当前会话没有可用的本地工作区".into());
@@ -911,6 +919,23 @@ fn bind_timeline(
     });
     let answer_timeline = timeline;
     app.on_timeline_last_answer(move || answer_timeline.borrow().last_answer().into());
+}
+
+/// Whether a Markdown target is a remote reference rather than a workspace
+/// path. `mailto:` and friends count: none of them can resolve locally.
+fn is_external_link(resource: &str) -> bool {
+    let trimmed = resource.trim_start();
+    trimmed.starts_with("//")
+        || trimmed.split_once(':').is_some_and(|(scheme, _)| {
+            // At least two characters, so a Windows drive letter (`C:`) stays a
+            // path; the rest is the RFC 3986 scheme grammar.
+            scheme.len() >= 2
+                && scheme.starts_with(|ch: char| ch.is_ascii_alphabetic())
+                && scheme
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
+                && !scheme.eq_ignore_ascii_case("file")
+        })
 }
 
 /// Resolve the folder used for Markdown resources in the focused thread.
@@ -2416,7 +2441,6 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                 (st.timeline.clone(), st.desktop.clone())
             };
             let mut live = timeline.borrow_mut();
-            live.set_highlight(true);
             if settles_inquiry {
                 live.settle_answered_inquiry();
             }
@@ -2634,7 +2658,6 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                     if !optimistic_visible {
                         let desktop = state.borrow().desktop.clone();
                         let mut live = timeline.borrow_mut();
-                        live.set_highlight(true);
                         if settles_inquiry {
                             live.settle_answered_inquiry();
                         }
@@ -3621,7 +3644,6 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
                 pending = entry.prelude.into();
                 {
                     let mut live = timeline.borrow_mut();
-                    live.set_highlight(true);
                     if entry.settles_inquiry {
                         live.settle_answered_inquiry();
                     }

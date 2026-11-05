@@ -423,3 +423,36 @@ gate rejects `api-ms-win-*`, `ext-ms-win-*`, `SystemParametersInfoForDpi`,
 `CreateWaitableTimerEx`, and `GetDpiForWindow` strong imports. Before changing
 the text stack, inspect `cargo tree -e features -i fontique`: Fontique/Parley
 `default` or `system` discovery can pull the `windows` WinRT bindings back in.
+
+## Text selection, context menu and the text cursor (i-slint-core)
+
+The markdown surface selects across blocks, so the fork carries a window-level
+selection layer instead of relying on `TextInput`'s own caret model:
+
+- `text_selection.rs` (new) owns the selection state: two endpoints
+  `(ItemWeak, ordinal, byte offset)`, the hit-test helpers, the geometry that
+  reuses `TextLayout::selection_geometry`, copy/all-select, the drag-to-scroll
+  timer and the right-click dispatch.
+- `items/text.rs` gains a `context_menu(x, y, selected)` callback, reports
+  press/drag/release to the selection layer, and sets
+  `BuiltInMouseCursor::Text` on hover (a link still wins with `Pointer`).
+- `textlayout/sharedparley.rs` adds `text_range_at` and paints the selection
+  background inside `draw_text`.
+- `textlayout/sharedparley/shaping.rs` fixes an upstream 1.18.0 defect:
+  every `StyledText` paragraph was shaped with the range `0..0`, so
+  `selection_geometry` could never resolve a rectangle. Paragraph ranges now
+  accumulate.
+- `window.rs` clears the selection on a left press outside a text item, takes
+  over pointer events while dragging (a block only sees `Exit` once the
+  pointer leaves it, so `GrabMouse` alone loses the drag), and routes
+  Ctrl+C / Ctrl+A / Escape.
+- `items/flickable.rs` intercepts instead of starting a pan while a drag
+  selection is active.
+- `cursor.rs` records the cursor each dispatched event resolved to
+  (`last_mouse_cursor()`), because the OS cursor never appears in an offscreen
+  render.
+- `i-slint-compiler/builtin_elements.rs` declares the `context-menu` callback
+  on `StyledText`; without it the builtin has no such callback to bind.
+
+Right-click has no default menu: the host either handles the callback or the
+right click does nothing.

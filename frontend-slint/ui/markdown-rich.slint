@@ -1,0 +1,490 @@
+// Rich Markdown surface for the chat transcript.
+//
+// Why not one StyledText: Slint's StyledText supports inline markup only
+// (bold / italic / strike / inline code / links / colour). Headings, lists,
+// code fences, tables and images are rejected by its parser, and it has no
+// spacing or font-size-per-span control. So the block structure is laid out by
+// Slint here, and only the inline content of one block reaches StyledText.
+//
+// Two rules keep the layout honest on Slint 1.18:
+//   1. every block states its column width explicitly. 1.18 measures the
+//      height of an element created by `for`/`if` at its own *preferred*
+//      width, which for wrapped text is one unwrapped line, and the enclosing
+//      scroll view then ends before the document does (slint-ui/slint#13655).
+//   2. vertical spacing is precomputed in Rust (`space-before`) and applied as
+//      a top offset, because StyledText stacks paragraphs with no gap and
+//      exposes no spacing property.
+import { BlockKind, MdBlock, Theme } from "theme.slint";
+
+// A paragraph, a heading, a list item body — all the same mechanism: one
+// StyledText carrying pre-built inline markup.
+component ProseBlock inherits Rectangle {
+    in property <MdBlock> block;
+    in property <length> content-width;
+    in property <length> font-size;
+    in property <color> foreground: Theme.text;
+    callback link-clicked(string);
+    callback context-menu(length, length, bool);
+
+    width: content-width;
+    height: max(body.preferred-height, font-size);
+    body := StyledText {
+        width: content-width;
+        height: self.preferred-height;
+        vertical-alignment: top;
+        text: block.text;
+        default-color: root.foreground;
+        default-font-size: root.font-size;
+        link-color: Theme.link;
+        link-clicked(url) => { root.link-clicked(url); }
+        context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
+    }
+}
+
+component ListItemBlock inherits Rectangle {
+    // Help browser zoom; the chat transcript keeps 1.0.
+    in property <float> font-scale: 1.0;
+    in property <MdBlock> block;
+    in property <length> content-width;
+    callback link-clicked(string);
+    callback context-menu(length, length, bool);
+
+    // The marker is its own Text, not part of the paragraph string: a wrapped
+    // list item then keeps a hanging indent, which StyledText's built-in list
+    // handling cannot do (the bullet is glued to the first line there).
+    private property <length> indent: 2px + block.depth * 18px;
+    private property <length> marker-width: 19px;
+
+    width: content-width;
+    height: max(body.preferred-height, Theme.font-body * root.font-scale);
+
+    if block.task == 0 : Text {
+        x: root.indent;
+        y: 0px;
+        width: root.marker-width;
+        height: max(root.height, Theme.font-body * root.font-scale);
+        vertical-alignment: top;
+        text: block.marker;
+        color: Theme.muted;
+        font-size: Theme.font-body * root.font-scale;
+        font-family: Theme.font-ui;
+    }
+
+    if block.task > 0 : Rectangle {
+        x: root.indent + 1px;
+        y: 3.5px;
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        border-width: 1.2px;
+        border-color: block.task == 2 ? Theme.accent : Theme.border-strong;
+        background: block.task == 2 ? Theme.accent : transparent;
+        if block.task == 2 : Path {
+            x: 1px;
+            y: 1px;
+            width: 10px;
+            height: 10px;
+            commands: "M 1 4 L 3.6 6.6 L 8.4 1";
+            stroke: #FFFFFF;
+            stroke-width: 1.4px;
+            fill: transparent;
+        }
+    }
+
+    body := StyledText {
+        x: root.indent + root.marker-width;
+        y: 0px;
+        width: content-width - root.indent - root.marker-width;
+        height: self.preferred-height;
+        vertical-alignment: top;
+        text: block.text;
+        default-color: Theme.text;
+        default-font-size: Theme.font-body * root.font-scale;
+        link-color: Theme.link;
+        link-clicked(url) => { root.link-clicked(url); }
+        context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
+    }
+}
+
+component CodeBlock inherits Rectangle {
+    // Help browser zoom; the chat transcript keeps 1.0.
+    in property <float> font-scale: 1.0;
+    in property <MdBlock> block;
+    in property <length> content-width;
+    callback copy-text(string);
+    callback context-menu(length, length, bool);
+
+    private property <bool> copied: false;
+
+    width: content-width;
+    height: frame.preferred-height;
+    border-radius: Theme.radius-block;
+    border-width: 1px;
+    border-color: Theme.code-border;
+    background: Theme.code-bg;
+    clip: true;
+
+    frame := VerticalLayout {
+        // Header: language on the left, copy affordance on the right. Always
+        // present so the copy target keeps a stable position even for plain
+        // fenced blocks.
+        Rectangle {
+            height: 27px;
+            background: Theme.code-header;
+            Text {
+                x: 11px;
+                y: 0px;
+                height: parent.height;
+                vertical-alignment: center;
+                text: block.language == "" ? "代码" : block.language;
+                color: Theme.muted;
+                font-size: Theme.font-xs * root.font-scale;
+                font-family: Theme.font-ui;
+            }
+            copy-area := TouchArea {
+                x: parent.width - 68px;
+                y: 0px;
+                width: 56px;
+                height: parent.height;
+                mouse-cursor: pointer;
+                clicked => {
+                    root.copy-text(block.code);
+                    root.copied = true;
+                }
+                Text {
+                    width: parent.width;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                    text: root.copied ? "已复制" : "复制";
+                    color: root.copied ? Theme.accent-ink : (copy-area.has-hover ? Theme.text : Theme.muted);
+                    font-size: Theme.font-xs * root.font-scale;
+                    font-family: Theme.font-ui;
+                }
+            }
+            Rectangle {
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.code-border;
+            }
+        }
+        // Wrapped in a Rectangle because a layout child cannot be offset: the
+        // padding has to come from a box the layout places, not from x/y.
+        Rectangle {
+            height: body.preferred-height + 20px;
+            body := StyledText {
+                x: 12px;
+                y: 10px;
+                width: content-width - 24px;
+                height: self.preferred-height;
+                vertical-alignment: top;
+                text: block.code-text;
+                default-color: Theme.text;
+                default-font-size: Theme.font-code * root.font-scale;
+                default-font-family: Theme.font-mono;
+                context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
+            }
+        }
+    }
+
+    Timer {
+        interval: 1600ms;
+        running: root.copied;
+        triggered => { root.copied = false; }
+    }
+}
+
+component TableBlock inherits Rectangle {
+    // Help browser zoom; the chat transcript keeps 1.0.
+    in property <float> font-scale: 1.0;
+    in property <MdBlock> block;
+    in property <length> content-width;
+    callback link-clicked(string);
+    callback context-menu(length, length, bool);
+
+    private property <int> columns: max(1, block.columns);
+    private property <int> rows: Math.ceil(block.cells.length / max(1, block.columns));
+
+    width: content-width;
+    height: grid.preferred-height;
+    background: transparent;
+
+    grid := VerticalLayout {
+        width: content-width;
+        for r in rows : Rectangle {
+            // Row background lives here, not on the cells: a cell only needs to
+            // be tall enough for its own text, and the tallest one decides the
+            // row.
+            height: row.preferred-height;
+            background: r == 0 ? Theme.table-head : (Math.mod(r, 2) == 0 ? Theme.table-zebra : transparent);
+
+            row := HorizontalLayout {
+                width: parent.width;
+                for c in columns : Rectangle {
+                    private property <length> cw: content-width * block.widths[c];
+                    width: cw;
+                    height: cell-text.preferred-height + 17px;
+
+                    cell-text := StyledText {
+                        x: 10px;
+                        y: 8px;
+                        width: cw - 20px;
+                        height: self.preferred-height;
+                        vertical-alignment: top;
+                        horizontal-alignment: block.cells[r * columns + c].align == 1
+                            ? center
+                            : block.cells[r * columns + c].align == 2 ? end : start;
+                        text: block.cells[r * columns + c].text;
+                        default-color: r == 0 ? Theme.text : Theme.text-secondary;
+                        default-font-size: Theme.font-body * root.font-scale - 1px;
+                        link-color: Theme.link;
+                        link-clicked(url) => { root.link-clicked(url); }
+                        context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
+                    }
+                }
+            }
+
+            if r < rows - 1 : Rectangle {
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+        }
+    }
+}
+
+component ImageBlock inherits Rectangle {
+    // Help browser zoom; the chat transcript keeps 1.0.
+    in property <float> font-scale: 1.0;
+    in property <MdBlock> block;
+    in property <length> content-width;
+    callback open-resource(string);
+
+    // Fit-content sizing: tall images shrink by height first instead of
+    // leaving a wide empty card around a narrow image.
+    private property <float> ratio: block.image-width > 0 ? block.image-height / block.image-width : 0.5625;
+    private property <length> box-width: min(content-width, 560px);
+    private property <length> draw-width: block.image-width > 0
+        ? min(box-width, 440px / max(0.05, ratio))
+        : box-width;
+    private property <length> draw-height: block.image-width > 0 ? draw-width * ratio : 220px;
+
+    // A failed image collapses to a one-line notice: a 220px grey box for a
+    // broken link would dominate the document it failed to illustrate.
+    width: block.image-error ? min(content-width, 340px) : draw-width;
+    height: block.image-error ? 32px : paint.preferred-height;
+    border-radius: Theme.radius-block;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: block.image-error ? Theme.hover : Theme.surface;
+    clip: true;
+
+    if block.image-error : Text {
+        x: 10px;
+        y: 0px;
+        width: parent.width - 20px;
+        height: parent.height;
+        vertical-alignment: center;
+        overflow: elide;
+        text: "图片加载失败 · " + block.plain;
+        color: Theme.muted;
+        font-size: Theme.font-xs * root.font-scale;
+        font-family: Theme.font-ui;
+    }
+
+    paint := VerticalLayout {
+        visible: !block.image-error;
+        if block.image.width > 0 : Image {
+            width: root.draw-width;
+            height: root.draw-height;
+            source: block.image;
+            image-fit: contain;
+        }
+        if block.image.width <= 0 : Rectangle {
+            height: root.draw-height;
+            background: Theme.hover;
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    horizontal-alignment: center;
+                    text: "图片加载中…";
+                    color: Theme.muted;
+                    font-size: Theme.font-xs * root.font-scale;
+                    font-family: Theme.font-ui;
+                }
+                Text {
+                    horizontal-alignment: center;
+                    text: block.plain;
+                    color: Theme.muted;
+                    font-size: Theme.font-xs * root.font-scale;
+                    font-family: Theme.font-ui;
+                }
+            }
+        }
+    }
+}
+
+// A link to a workspace file: the transcript shows the affordance (icon, title,
+// file name) instead of a URL the reader cannot act on.
+component DocumentBlock inherits Rectangle {
+    // Help browser zoom; the chat transcript keeps 1.0.
+    in property <float> font-scale: 1.0;
+    in property <MdBlock> block;
+    in property <length> content-width;
+    callback open-resource(string);
+
+    width: min(content-width, 320px);
+    height: 64px;
+    border-radius: Theme.radius-block;
+    border-width: 1px;
+    border-color: doc-area.has-hover ? Theme.accent : Theme.border;
+    background: doc-area.has-hover ? Theme.accent-soft : Theme.surface;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 12px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 10px;
+        alignment: start;
+        Rectangle {
+            width: 36px;
+            height: 36px;
+            border-radius: Theme.radius-sm;
+            background: Theme.hover;
+            Image {
+                x: 4px;
+                y: 4px;
+                width: 28px;
+                height: 28px;
+                source: block.image;
+                image-fit: contain;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: block.plain;
+                color: Theme.text;
+                font-size: Theme.font-md * root.font-scale;
+                overflow: elide;
+            }
+            Text {
+                text: block.resource-name;
+                color: Theme.muted;
+                font-size: Theme.font-xs * root.font-scale;
+                overflow: elide;
+            }
+        }
+    }
+    doc-area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.open-resource(block.image-source); }
+    }
+}
+
+component RuleBlock inherits Rectangle {
+    in property <MdBlock> block;
+    in property <length> content-width;
+
+    width: content-width;
+    height: 1px;
+    background: Theme.rule;
+}
+
+// Dispatcher: one row per block, gaps precomputed by the projector.
+export component BlockView inherits Rectangle {
+    in property <MdBlock> block;
+    in property <length> column-width;
+    /// Multiplies every font size in the block. 1.0 for the transcript; the
+    /// help browser drives it from its 80–160% zoom control.
+    in property <float> font-scale: 1.0;
+    callback link-clicked(string);
+    callback copy-text(string);
+    callback open-resource(string);
+    /// Right-click on body text: window coordinates, plus whether there is a
+    /// selection to act on.
+    callback context-menu(length, length, bool);
+
+    // Quote decoration: a tinted panel plus a 3px rail. Because each row paints
+    // its own background edge-to-edge, consecutive quoted rows merge into one
+    // continuous panel without needing a container block.
+    private property <length> pad-left: block.quoted ? 14px : 0px;
+    private property <length> pad-right: block.quoted ? 10px : 0px;
+    private property <length> inner: column-width - pad-left - pad-right;
+
+    width: column-width;
+    height: block.space-before + body.preferred-height;
+    background: block.quoted ? Theme.quote-bg : transparent;
+
+    if block.quoted : Rectangle {
+        x: 0px;
+        y: 0px;
+        // Full row height, not `height - space-before`: consecutive quoted rows
+        // must butt together or the rail turns into a dashed line.
+        width: 3px;
+        height: parent.height;
+        background: Theme.quote-bar;
+    }
+
+    body := VerticalLayout {
+        x: pad-left;
+        y: block.space-before;
+        width: inner;
+
+        if block.kind == BlockKind.paragraph : ProseBlock {
+            block: block;
+            content-width: inner;
+            font-size: Theme.font-body * root.font-scale;
+            link-clicked(url) => { root.link-clicked(url); }
+            context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
+        }
+        if block.kind == BlockKind.heading : ProseBlock {
+            block: block;
+            content-width: inner;
+            font-size: (block.level <= 1 ? Theme.font-h1 : block.level == 2 ? Theme.font-h2 : block.level == 3 ? Theme.font-h3 : Theme.font-h4) * root.font-scale;
+            link-clicked(url) => { root.link-clicked(url); }
+            context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
+        }
+        if block.kind == BlockKind.code : CodeBlock {
+            block: block;
+            content-width: inner;
+            font-scale: root.font-scale;
+            copy-text(value) => { root.copy-text(value); }
+            context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
+        }
+        if block.kind == BlockKind.list-item : ListItemBlock {
+            block: block;
+            content-width: inner;
+            font-scale: root.font-scale;
+            link-clicked(url) => { root.link-clicked(url); }
+            context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
+        }
+        if block.kind == BlockKind.table : TableBlock {
+            block: block;
+            content-width: inner;
+            font-scale: root.font-scale;
+            link-clicked(url) => { root.link-clicked(url); }
+            context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
+        }
+        if block.kind == BlockKind.image : ImageBlock {
+            block: block;
+            content-width: inner;
+            font-scale: root.font-scale;
+            open-resource(source) => { root.open-resource(source); }
+        }
+        if block.kind == BlockKind.document : DocumentBlock {
+            block: block;
+            content-width: inner;
+            font-scale: root.font-scale;
+            open-resource(source) => { root.open-resource(source); }
+        }
+        if block.kind == BlockKind.rule : RuleBlock {
+            block: block;
+            content-width: inner;
+        }
+    }
+}

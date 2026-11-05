@@ -68,7 +68,63 @@ export struct TrajBoundary { pos: float, label: string }
 export struct TrajTiming { label: string, value: string }
 export struct TrajSection { title: string, body: string }
 export struct TrajTab { title: string, kind: int }  // 0 overview 1 raw 2 timing
-export struct TextBlock { text: string, styled: styled-text, kind: int, table-cells: [string], table-columns: int, table-rows: [string], image: image, image-source: string, resource-name: string, language: string }
+// One row of the rich Markdown surface (`ui/markdown-rich.slint`). A markdown
+// answer is projected into these once, when the turn settles; the flat struct
+// keeps cloning cheap and lets the timeline reuse a row model as-is.
+export struct MdCell {
+    text: styled-text,
+    plain: string,
+    // 0 start, 1 center, 2 end
+    align: int,
+}
+export struct MdBlock {
+    kind: int,
+    // Heading level 1..6 (meaningful when kind == heading).
+    level: int,
+    // Inline rich text of a paragraph / heading / list item body.
+    text: styled-text,
+    // Plain projection of the same run: copy, search, and the fallback when
+    // the rich markup fails to parse.
+    plain: string,
+    // Code block.
+    language: string,
+    code: string,
+    code-text: styled-text,
+    // Lists.
+    depth: int,
+    marker: string,
+    // Task item: 0 plain, 1 open, 2 done. The checkbox is drawn, because the
+    // bundled face has no U+2610/U+2611.
+    task: int,
+    // A row inside a quote container.
+    quoted: bool,
+    // Tables.
+    columns: int,
+    // Normalised column widths, summing to 1.
+    widths: [float],
+    cells: [MdCell],
+    // Images and document cards.
+    image: image,
+    image-source: string,
+    image-width: length,
+    image-height: length,
+    image-error: bool,
+    resource-name: string,
+    // Gap above the block, computed by Rust from the previous block.
+    space-before: length,
+}
+// Mirrors `crate::md::block` (src/md/block.rs). Kept as ints so the model stays
+// a flat, cheap-to-clone projection rather than an enum the host matches on.
+export global BlockKind {
+    out property <int> paragraph: 0;
+    out property <int> heading: 1;
+    out property <int> code: 2;
+    out property <int> list-item: 3;
+    out property <int> table: 4;
+    out property <int> image: 5;
+    out property <int> rule: 6;
+    out property <int> document: 7;
+}
 // A bounded, stable projection of one tool invocation. Detail text is only
 // laid out after the user expands that entry, so streaming tool output never
 // causes the full chat history to be reparsed.
@@ -128,7 +184,7 @@ export global TimelineSpin {
 // A process owns a bounded child model. Keeping this separate from TimelineRow
 // avoids recursive models and lets a live tool update only its own child row.
 export struct ProcessEntry {
-    kind: int, id: string, text: string, blocks: [TextBlock],
+    kind: int, id: string, text: string, blocks: [MdBlock],
     summary: string, tool-name: string, tool-icon: string, target: string,
     detail: string, sections: [WorkflowSection], patch: [PatchCard],
     tokens: string, duration: string, status-kind: int, open: bool, payload: int
@@ -143,7 +199,7 @@ export struct TimelineRow {
     // button. Local threads fill it from the durable record; cloud rows carry
     // no wall clock and stay empty (the label hides).
     time: string,
-    blocks: [TextBlock],
+    blocks: [MdBlock],
     summary: string,
     tool-name: string,
     tool-icon: string,
@@ -156,6 +212,10 @@ export struct TimelineRow {
     tokens: string,
     duration: string,
     detail: string,
+    // Settled reasoning text, projected once into the shared Markdown block
+    // model. Empty while the thought is still streaming: the live view stays
+    // plain text and costs nothing to re-lay-out.
+    reasoning-blocks: [MdBlock],
     sections: [WorkflowSection],
     process-entries: [ProcessEntry],
     process-root: string,

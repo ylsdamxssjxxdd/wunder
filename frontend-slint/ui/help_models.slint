@@ -4,6 +4,18 @@
 // global so the view can be created and destroyed with the settings tab
 // without losing the reading position.
 import { I18n } from "i18n.slint";
+import { MdBlock } from "theme.slint";
+
+// The help browser owns its own context menu state: the settings page embeds
+// HelpBrowser inside the main window, while the standalone help window is a
+// separate top-level window. One shared global would open both menus.
+export global HelpMenuState {
+    in-out property <bool> open: false;
+    in-out property <length> anchor-x: 0px;
+    in-out property <length> anchor-y: 0px;
+    in-out property <bool> has-selection: false;
+}
+
 
 export struct HelpEntry {
     topic: int,
@@ -50,15 +62,14 @@ export global HelpDocs {
     in property <[HelpEntry]> contents;
     in property <[HelpEntry]> keyword-index;
     in property <[HelpEntry]> search-results;
-    in property <[HelpTextRun]> runs;
-    in property <[HelpRect]> decorations;
-    in property <[HelpImage]> images;
-    in property <[HelpRect]> matches;
-    in property <[HelpRect]> selection;
-    in property <float> document-height: 600;
+    // The manual is Markdown. Rust projects the current topic once into the
+    // same flat block model the chat transcript uses, and the view renders it
+    // with BlockView; no absolute-positioned runs are involved any more.
+    in property <[MdBlock]> blocks;
+    // 80–160% zoom, applied as a type scale by BlockView.
+    in property <float> font-scale: 1;
     in property <bool> can-back: false;
     in property <bool> can-forward: false;
-    in property <bool> over-link: false;
     in property <int> match-count: 0;
     in property <string> topic-title: I18n.hp_default_topic;
     in property <int> selected-topic: 0;
@@ -67,12 +78,11 @@ export global HelpDocs {
     in-out property <string> search-text;
     in-out property <string> find-text;
     in-out property <float> document-width: 0;
-    // Clipboard handoff: the controller computes the text to copy and bumps
-    // copy-request; the mounted view performs the clipboard write.
+    // Clipboard handoff for the toolbar copy button and code-block copy.
     in-out property <string> copy-text;
     in-out property <int> copy-request: 0;
-    // Scroll coordination: the controller bumps scroll-request after opening a
-    // topic and reveal-request to scroll the first find hit into view.
+    // Scroll coordination: opening a topic returns to the top, a find hit
+    // reveals its position.
     in-out property <int> scroll-request: 0;
     in-out property <int> reveal-request: 0;
     in-out property <float> reveal-y: 0;
@@ -81,9 +91,10 @@ export global HelpDocs {
     callback search-changed(string);
     callback find-changed(string);
     callback layout-changed();
+    /// In-manual link: the target is a `topic:<id>` reference.
+    callback link-opened(string);
     // 界面语言切换（设置 › 常规 › 语言）：zh 为 true 时加载中文手册。
     callback language-changed(bool);
-    callback pointer(float, float, int);
     callback select-all();
     callback copy-requested();
 }

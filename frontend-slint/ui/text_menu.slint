@@ -1,0 +1,130 @@
+// Right-click menu for transcript text.
+//
+// Slint has no built-in context menu, and the text selection lives in the
+// vendored i-slint-core (`text_selection`), not in a Slint element. So the menu
+// is a window-level overlay driven by one global: any Markdown block that sees
+// a right click publishes the position here, and the two actions are forwarded
+// to Rust, which is the only place that can reach the selection.
+import { I18n } from "i18n.slint";
+import { Theme } from "theme.slint";
+
+export global TextMenuState {
+    in-out property <bool> open: false;
+    // Pointer position in window coordinates, as reported by the block.
+    in-out property <length> anchor-x: 0px;
+    in-out property <length> anchor-y: 0px;
+    // False when the click landed on text with nothing selected: the two
+    // actions still make sense, "copy" just has nothing to copy.
+    in-out property <bool> has-selection: false;
+}
+
+export component TextMenu inherits Rectangle {
+    callback copy-selection();
+    callback select-all();
+
+    // State is injected rather than read from a global: the settings page and
+    // the standalone help window each own a menu, and both live in the same
+    // process. Sharing one global would open both menus on a single click.
+    in-out property <bool> open: false;
+    in-out property <length> anchor-x: 0px;
+    in-out property <length> anchor-y: 0px;
+    in-out property <bool> has-selection: false;
+
+    // Sized by the host: the overlay covers the whole window so the dismiss
+    // area can catch a click anywhere outside the card.
+    background: transparent;
+    visible: root.open;
+
+    // The menu paints inside the window: a click near the right or bottom edge
+    // has to fold back instead of opening off-screen.
+    private property <length> card-width: 148px;
+    private property <length> card-height: card.preferred-height;
+    private property <length> card-x: min(max(4px, root.anchor-x), max(4px, root.width - card-width - 4px));
+    private property <length> card-y: min(max(4px, root.anchor-y), max(4px, root.height - card-height - 4px));
+
+    // Click anywhere outside the card to dismiss. It sits below the card and
+    // above the transcript, so the first click never reaches a block.
+    dismiss := TouchArea {
+        clicked => { root.open = false; }
+    }
+
+    card := Rectangle {
+        x: root.card-x;
+        y: root.card-y;
+        width: root.card-width;
+        height: self.preferred-height;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        background: Theme.surface;
+        drop-shadow-blur: 12px;
+        drop-shadow-color: #00000030;
+        drop-shadow-offset-y: 3px;
+
+        VerticalLayout {
+            padding: 4px;
+            spacing: 1px;
+
+            menu-item-copy := Rectangle {
+                height: 28px;
+                border-radius: Theme.radius-sm;
+                background: copy-area.has-hover && root.has-selection ? Theme.hover : transparent;
+                Text {
+                    x: 10px;
+                    width: parent.width - 20px;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    text: I18n.common_copy;
+                    color: root.has-selection ? Theme.text : Theme.muted;
+                    font-size: Theme.font-md;
+                }
+                Text {
+                    x: parent.width - 52px;
+                    width: 44px;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                    text: "Ctrl+C";
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                }
+                copy-area := TouchArea {
+                    enabled: root.has-selection;
+                    mouse-cursor: root.has-selection ? pointer : default;
+                    clicked => { root.copy-selection(); root.open = false; }
+                }
+            }
+
+            Rectangle { height: 1px; background: Theme.border; }
+
+            menu-item-all := Rectangle {
+                height: 28px;
+                border-radius: Theme.radius-sm;
+                background: all-area.has-hover ? Theme.hover : transparent;
+                Text {
+                    x: 10px;
+                    width: parent.width - 20px;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    text: I18n.sb_thread_select_all;
+                    color: Theme.text;
+                    font-size: Theme.font-md;
+                }
+                Text {
+                    x: parent.width - 52px;
+                    width: 44px;
+                    height: parent.height;
+                    vertical-alignment: center;
+                    horizontal-alignment: right;
+                    text: "Ctrl+A";
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                }
+                all-area := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.select-all(); root.open = false; }
+                }
+            }
+        }
+    }
+}

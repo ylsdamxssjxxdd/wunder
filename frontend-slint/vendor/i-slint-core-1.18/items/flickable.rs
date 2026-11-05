@@ -141,6 +141,16 @@ impl Item for Flickable {
         self_rc: &ItemRc,
         _: &mut super::MouseCursorInner,
     ) -> InputEventFilterResult {
+        // A drag selecting text owns the pointer: the view must not start panning under it, or
+        // the selection would stop at the edge of the block it began in. Until the drag has
+        // selected something, the press still goes through so a click stays a click.
+        if let Some(selecting) = crate::text_selection::drag_in(self_rc) {
+            return if selecting || matches!(event, MouseEvent::Wheel { .. }) {
+                InputEventFilterResult::Intercept
+            } else {
+                InputEventFilterResult::ForwardEvent
+            };
+        }
         if let Some(pos) = event.position() {
             let geometry = Self::geometry_without_virtual_keyboard(self_rc);
 

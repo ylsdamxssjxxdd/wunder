@@ -854,6 +854,33 @@ impl WindowInner {
         // handle multiple press release
         event = self.click_state.check_repeat(event, self.context());
 
+        // A left press ends any selection; a press that lands in a selectable text starts a
+        // new one, from that text's own handler (see `crate::text_selection`).
+        if matches!(
+            event,
+            MouseEvent::Pressed { button: crate::items::PointerEventButton::Left, .. }
+        ) {
+            crate::text_selection::pressed();
+        }
+
+        // While a selection is being dragged, the pointer belongs to it: the text that began the
+        // drag may have scrolled away or the pointer may be over another block, and neither
+        // should change where the events go. Positions here are the window's, which is what the
+        // selection measures against.
+        if crate::text_selection::dragging() {
+            match event {
+                MouseEvent::Moved { position, .. } => {
+                    crate::text_selection::drag_to(&self.window_adapter(), position);
+                    return Some(MouseDispatchResult { drag_action: None, accepted: true });
+                }
+                MouseEvent::Released { button: crate::items::PointerEventButton::Left, .. } => {
+                    crate::text_selection::release();
+                    return Some(MouseDispatchResult { drag_action: None, accepted: true });
+                }
+                _ => {}
+            }
+        }
+
         let window_adapter = self.window_adapter();
         let mut mouse_input_state = self.mouse_input_state.take();
 
@@ -1101,6 +1128,8 @@ impl WindowInner {
         {
             window_adapter.set_mouse_cursor(mouse_input_state.cursor.clone());
         }
+        // Remembers the shape for tests: a screenshot cannot show an OS cursor.
+        crate::cursor::record(&mouse_input_state.cursor);
 
         let is_dragging = mouse_input_state.drag_data.is_some();
         let drag_action = mouse_input_state.drop_target_action();
@@ -1296,6 +1325,28 @@ impl WindowInner {
 
         internal_key_event.key_event.modifiers =
             self.context().0.modifiers.get().modifiers_for(&internal_key_event);
+
+        // Copy the text selection, or drop it on Escape. A focused text input keeps its own
+        // handling: it returns false here when it has a selection of its own.
+        if internal_key_event.event_type == KeyEventType::KeyPressed {
+            if matches!(internal_key_event.shortcut(), Some(crate::input::StandardShortcut::Copy))
+                && crate::text_selection::copy(self)
+            {
+                return crate::input::KeyEventResult::EventAccepted;
+            }
+            if matches!(
+                internal_key_event.shortcut(),
+                Some(crate::input::StandardShortcut::SelectAll)
+            ) && crate::text_selection::select_all_in_view(self)
+            {
+                return crate::input::KeyEventResult::EventAccepted;
+            }
+            if internal_key_event.key_event.text.chars().eq([char::from(
+                crate::input::key_codes::Key::Escape,
+            )]) {
+                crate::text_selection::clear();
+            }
+        }
 
         // Emulate macOS menubar behavior: The OS consumes the event before it reaches any
         // Slint widgets. Therefore we process the menubar shortcuts here first and abort event

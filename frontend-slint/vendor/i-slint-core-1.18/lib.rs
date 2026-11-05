@@ -60,6 +60,7 @@ pub mod sharedvector;
 pub mod slice;
 pub mod string;
 pub mod styled_text;
+pub mod text_selection;
 pub mod textlayout;
 pub mod timers;
 pub mod translations;

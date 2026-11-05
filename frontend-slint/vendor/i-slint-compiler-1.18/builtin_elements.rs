@@ -1212,6 +1212,10 @@ fn build(l: &mut Loader) {
         in property <TextVerticalAlignment> vertical-alignment;
         /// A callback that's invoked when a link in the text is clicked. The parameter contains the clicked link as a string.
         callback link-clicked(link: string);
+        /// A callback that's invoked when the text is right-clicked, to let the application show a
+        /// context menu. The position is in window coordinates; the flag says whether there is a
+        /// text selection to act on.
+        callback context-menu(x: length, y: length, selected: bool);
     } }
 
     element! {

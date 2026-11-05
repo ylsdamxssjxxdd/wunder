@@ -506,6 +506,11 @@ pub trait RenderText: RenderString {
     fn wrap(self: Pin<&Self>) -> TextWrap;
     fn overflow(self: Pin<&Self>) -> TextOverflow;
     fn is_markdown(self: Pin<&Self>) -> bool;
+    /// The bytes a selection covers, with paragraphs counted as if joined by newlines, and the
+    /// colour to fill behind them. `None` for text that can't be selected.
+    fn selection(self: Pin<&Self>) -> Option<(core::ops::Range<usize>, Color)> {
+        None
+    }
 }
 
 impl HasFont for (SharedString, Brush) {

@@ -7,7 +7,7 @@
 //! patched when the pixels arrive. Without the cache, each durable refresh
 //! rebuilt the blocks with empty images and re-decoded everything, which is
 //! what made restored pictures blink between thumbnail and path text.
-use crate::{message_blocks::Blocks, TextBlock};
+use crate::{message_blocks::Blocks, MdBlock};
 use slint::{Model, ModelRc};
 use std::{
     cell::RefCell,
@@ -43,7 +43,7 @@ struct Job {
 struct Loader {
     cache: HashMap<String, slint::Image>,
     order: VecDeque<String>,
-    inflight: HashMap<String, Vec<ModelRc<TextBlock>>>,
+    inflight: HashMap<String, Vec<ModelRc<MdBlock>>>,
 }
 
 impl Loader {
@@ -82,7 +82,7 @@ thread_local! {
     static LOADER: RefCell<Loader> = RefCell::new(Loader::default());
 }
 
-fn same_model(a: &ModelRc<TextBlock>, b: &ModelRc<TextBlock>) -> bool {
+fn same_model(a: &ModelRc<MdBlock>, b: &ModelRc<MdBlock>) -> bool {
     std::ptr::eq(a.as_any(), b.as_any())
 }
 
@@ -161,7 +161,7 @@ pub fn hydrate(blocks: &mut Blocks, desktop: Arc<NativeDesktop>, agent: String) 
 /// alone, cached sources apply synchronously, and only the remaining sources
 /// queue a decode — repeated publishes of the same history are therefore
 /// free and never blank a loaded image.
-pub fn hydrate_model(model: slint::ModelRc<TextBlock>, desktop: Arc<NativeDesktop>, agent: String) {
+pub fn hydrate_model(model: slint::ModelRc<MdBlock>, desktop: Arc<NativeDesktop>, agent: String) {
     let mut to_fetch = Vec::new();
     LOADER.with(|loader| {
         let mut loader = loader.borrow_mut();
@@ -173,12 +173,12 @@ pub fn hydrate_model(model: slint::ModelRc<TextBlock>, desktop: Arc<NativeDeskto
             if block.kind != crate::message_blocks::KIND_IMAGE || block.image_source.is_empty() {
                 continue;
             }
-            if block.image.size().width > 0 {
+            if block.image.size().width > 0 || block.image_error {
                 continue;
             }
             let source = block.image_source.to_string();
             if let Some(image) = loader.cached(&source) {
-                block.image = image;
+                fill(&mut block, image);
                 model.set_row_data(index, block);
                 continue;
             }
@@ -271,7 +271,17 @@ fn release(sources: &[String]) {
     });
 }
 
-fn apply(model: &ModelRc<TextBlock>, source: &str, image: Option<&slint::Image>) {
+/// Store the pixels together with their aspect ratio: the Slint side sizes a
+/// picture from `image-width`/`image-height` before the texture arrives, and a
+/// zero ratio would render every image at the 16:9 default.
+fn fill(block: &mut MdBlock, image: slint::Image) {
+    let size = image.size();
+    block.image_width = size.width as f32;
+    block.image_height = size.height as f32;
+    block.image = image;
+}
+
+fn apply(model: &ModelRc<MdBlock>, source: &str, image: Option<&slint::Image>) {
     for index in 0..model.row_count() {
         let Some(mut block) = model.row_data(index) else {
             continue;
@@ -280,8 +290,12 @@ fn apply(model: &ModelRc<TextBlock>, source: &str, image: Option<&slint::Image>)
             continue;
         }
         if let Some(image) = image {
-            block.image = image.clone();
-            // A missing/unsupported image retains its label and source.
+            fill(&mut block, image.clone());
+            model.set_row_data(index, block);
+        } else {
+            // A missing/unsupported image keeps its label but collapses the
+            // card to a one-line notice instead of a blank 220px box.
+            block.image_error = true;
             model.set_row_data(index, block);
         }
     }
