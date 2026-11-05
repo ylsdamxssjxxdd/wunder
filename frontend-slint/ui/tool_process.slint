@@ -202,7 +202,11 @@ export component ToolProcess inherits Rectangle {
         triggered => { root.page(2); }
     }
     changed revision => {
-        root.follow-tail = !root.has-newer;
+        // A landed frame is not a reason to abandon where the reader is.
+        // `scrolled` owns `follow-tail`; re-arming it here (as an earlier
+        // version did) dragged anyone who had scrolled up back to the tail on
+        // the next 33ms pass — the "stops half a row short of the top, then
+        // snaps back" the list used to show.
         root.scroll-pending = true;
         root.page-pending = true;
     }
@@ -214,6 +218,13 @@ export component ToolProcess inherits Rectangle {
         // nor `revision` moves, so re-arm the tail follow here or the new text
         // sinks below the capped viewport until the reader scrolls by hand.
         root.scroll-pending = true;
+        // An older page can land after the 33ms pass already ran (the pass
+        // reads `content-height` before layout folded the page in). While the
+        // anchor is still held, re-arm so the shift is applied against the
+        // height that really contains the new page instead of being lost.
+        if root.anchor-hold && root.revision < 0 {
+            root.page-pending = true;
+        }
     }
     private property <bool> follow-tail: true;
     private property <bool> scroll-pending: true;
@@ -268,8 +279,12 @@ export component ToolProcess inherits Rectangle {
             root.follow-tail = self.visible-height - self.content-height - self.content-y >= -32px;
             // Reaching the top is the request for the older page.
             if root.has-older && !root.loading && !root.failed
-                && self.content-y >= -4px && root.last-content-y < -4px {
-                root.anchor-y = self.content-y;
+                && self.content-y >= -1px && root.last-content-y < -1px {
+                // Anchor on the top edge itself. Reading the residual offset of
+                // the wheel animation (-1..-4px) into the anchor carried that
+                // small error into the compensated position, so the viewport
+                // stayed permanently a little short of the top.
+                root.anchor-y = 0px;
                 root.anchor-height = self.content-height;
                 root.anchor-hold = true;
                 root.page(-1);
