@@ -14,6 +14,8 @@ This manual introduces Pupa's core capabilities and day-to-day operations. On th
 - [**Tools Overview**](topic:tools-overview)：The built-in tool matrix, grouped into eight categories.
 - [**Interface Tour**](topic:interface)：Get to know the sidebar, thread list, working process, and trajectory view.
 - [**Settings Overview**](topic:settings)：Entry point for general preferences, model configuration, cloud account, and Devices & interlink.
+- [**FAQ**](topic:faq)：Common answers on registration, memory loading, subagents, and tool visibility.
+- [**Diagnostics &amp; Troubleshooting**](topic:troubleshooting)：Health checks, symptom-based checklists, and diagnostics export.
 
 > **Tip:** Type a keyword into the search box at the top of the settings category list to jump straight to that category.
 
@@ -214,7 +216,7 @@ Two default behaviors are worth separating:
 
 - **The subagent activity indicator**: when a task has spawned subagents, the chat area shows the child runs that are still working; subagents are temporary work units the main agent creates, reclaimed once the task ends.
 
-<!-- topic id="core-overview" title="Core Concepts" group="Core" keywords="Diverse,Fast,Superior,Efficient,multi-platform,multi-form,startup speed,response speed,stability,intelligence,CPU usage,memory usage,context consumption" -->
+<!-- topic id="core-overview" title="Core Concepts" group="Core Capabilities" keywords="Diverse,Fast,Superior,Efficient,multi-platform,multi-form,startup speed,response speed,stability,intelligence,CPU usage,memory usage,context consumption" -->
 
 # Core Concepts
 
@@ -231,7 +233,7 @@ Diversity and strength set the capability surface; speed and efficiency constrai
 | **Superior** | Strong stability for 24/7 operation and a high degree of intelligence. Queues, caches, views, and context are bounded, with session locks, round caps, quotas, and retry circuit breaking for long runs; goal mode, subagents, the tool chain, long-term memory, and knowledge bases carry complex tasks from decomposition to delivery |
 | **Efficient** | Extremely low CPU and memory use, minimal context consumption. A native Rust process with local SQLite needs no browser runtime, and supplement packages ship a ready-made agent runtime so nothing has to be assembled by hand; tool-result trimming, frozen prompts that reuse cache, one-time memory-index injection, and micro-compaction and history compaction keep token consumption down |
 
-The nine capabilities expanded page by page — goal, compatibility, context compression, subagents, scheduled tasks, channels, memory, multithreading, and multi-tenancy — live under Capabilities › Core Capabilities.
+The eleven capabilities expanded page by page — goal, compatibility, context compression, subagents, scheduled tasks, channels, memory, multithreading, streaming and realtime state, stability, and multi-tenancy — live under Capabilities › Core Capabilities.
 
 <!-- topic id="core-goal" title="Goal" group="Core Capabilities" keywords="goal,goal state,phase,round cap" -->
 
@@ -241,9 +243,9 @@ A goal is attached to a session; the agent keeps working on it until the goal co
 
 ## Driver tools
 
-| Tool | Role |  |  |  |  |  |  |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| ` goal ` | Uses \`action=get | create | edit | pause | resume | complete | blocked\` to read, create, edit, pause, resume, complete, or report blocked |
+| Tool | Role|
+| --- | --- |
+| ` goal ` | Uses \`action=get / create / edit / pause / resume / complete / blocked\` to read, create, edit, pause, resume, complete, or report blocked |
 
 ## Phases
 
@@ -368,7 +370,7 @@ The parent thread hands one subtask to an independent executor, which runs it an
 | ` spawn ` | ` batch\_spawn ` | ` wait ` |
 | ` interrupt ` | ` close ` | ` resume ` |
 | ` report ` | ` send ` | ` status ` |
-| ` list ` | ` history ` |  |
+| ` list ` | ` history `|
 
 Parent–child round references are encoded as ` user\_round ` + ` model\_round `, and an executor's rounds hang under that pair of parent round references. The sub-session's user message is hidden, and it wakes with auto-wake.
 
@@ -613,6 +615,89 @@ A single user can hold several task threads at once, and scheduling, locks, and 
 
 - Blocking category quotas and bounded queues are hard caps: when full, the system reports busy and does not wait in a queue.
 
+<!-- topic id="core-realtime" title="Streaming and Realtime State" group="Core Capabilities" keywords="streaming,realtime state,increment,delta,terminal state,rehydration,disconnect" -->
+
+# Streaming and Realtime State
+
+Replies and execution progress both arrive **streaming**: the body appears character by character as increments, and tool calls and intermediate output enter the [working process](topic:interface) collapsible bar in real time. The Pupa calls the engine in-process by default, so events are delivered straight to the UI without touching the local network; only the compatibility bridge and [Devices &amp; interlink](topic:interlink) go over network channels.
+
+## Truth and projection
+
+The thread log is the single source of truth: every event is written to the local session record first, then pushed to the UI. The text the UI shows and the text you read after re-entering come from the same source — there is no intermediate state where "the stream has it but the log does not".
+
+Three rules of judgment follow:
+
+- Lost pushes can be rehydrated; the record is never lost.
+
+- When the UI looks wrong, trust the actual execution state, not what the screen suggests about whether the task has ended.
+
+- To decide whether a round has ended, look for the **round terminal state** (carrying status and stop reason), not "it seems quiet". While waiting for approval or input, the thread is still alive.
+
+## Events and increments
+
+- **Item events** (tool calls, model calls, visible replies, approvals, compaction, round terminal states) update in place by item id and enter the timeline.
+
+- **Transport increments** (body tail blocks, command output) only keep the text continuous; they never become items on their own.
+
+- **Usage statistics** (context usage, token usage) are display-only and stay out of the timeline.
+
+Text increments and model rounds are two different granularities: a single round can contain thousands of increments — "seeing text come out" does not mean "many rounds have run".
+
+## Common observations
+
+| Observation | Explanation |
+| --- | --- |
+| Duplicate bubbles appear | The same item was appended instead of overwritten; locate it by "round + model round" |
+| Content is longer after re-entering | Re-entering reads the persisted body, which can be more complete than the streaming tail block |
+| Output suddenly stops | First check whether it is waiting for approval or input, then check the round terminal state; only if neither is the case is it a fault |
+| UI and actual state disagree | Wait a few seconds, restart the app, and if it still disagrees use "Reset work state" |
+
+## Limits
+
+- Losing the observation does not mean the run was interrupted: an accepted round keeps executing; reopening the thread reconnects, rehydrates by cursor, and never replays the whole history.
+
+- Streaming continuity takes priority over rich-text completeness; long messages are organized as stable blocks and only the active tail block updates.
+
+<!-- topic id="core-stability" title="Stability and Recovery" group="Core Capabilities" keywords="stability,circuit breaking,recovery,queue,timeout,retry,bounded" -->
+
+# Stability
+
+The engine guarantees stability with four families of hard constraints: **bounded** (every queue has a fixed capacity; when full it reports busy rather than dropping silently), **budgeted** (rounds, tool calls, and timeouts all have caps), **circuit-broken** (the same failure repeating is temporarily halted), and **single-writer** (thread logs are written serially, in the same order the UI sees).
+
+## Key defaults
+
+| Item | Value |
+| --- | --- |
+| User input cap | 1,048,576 characters (image attachments not counted) |
+| Model call default timeout | 120 seconds |
+| Tool default timeout | 120 seconds (floor 1 second) |
+| Tool parallelism | ≤ 4 |
+| Round cap | 1000 by default |
+| Session lock lifetime | 120 seconds (with heartbeat renewal) |
+
+## Recovery mechanisms
+
+| Scenario | What the system does |
+| --- | --- |
+| Streaming stalls | An idle watchdog judges by "duration without activity", not total duration |
+| Model returns empty or unusable output | Retries once with thinking disabled; only then reports an output error |
+| Context exceeds the limit | Progressive compaction (see [Context Compression](topic:core-context-compression)); overflow recovery up to 8 times |
+| Network or subscription drops | Rehydration by cursor; the whole history is never replayed |
+
+## Circuit breaking
+
+When failures with the same fingerprint repeat, the circuit breaker trips: non-retryable failures after 5 times, parameter or structure failures after 2 times (deterministic errors — retrying cannot change the result), retryable failures or the same tool failing consecutively after 5 times, and success-without-progress after 4 times. **Circuit breaking counts "how often the same problem repeats", not "how many calls were made in total"**: a ten-thousand-call tool budget cannot be exhausted by one dead loop.
+
+## Observations and responses
+
+| Observation | What the system is doing | What to do |
+| --- | --- | --- |
+| Shows "compacting" or "queued" | Normal processing | Wait |
+| Stopped after the same tool failed repeatedly | The circuit breaker has tripped | Change parameters or take another path; resubmitting unchanged is useless |
+| Reports an output error | Automatic recovery is exhausted | Change the model configuration or rephrase |
+| Judged "user busy" | That task thread is still executing | Send again later, or yield/cancel the thread |
+| UI and backend state disagree | The projection lags behind | Refresh or restart; if it still disagrees, use [Reset](topic:desktop-ui) |
+
 <!-- topic id="core-multi-user-management" title="Multi-user Management" group="Core Capabilities" keywords="multi-tenancy,account,quota,permission" -->
 
 # Multi-user Management
@@ -698,34 +783,34 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 
 ## The tool matrix
 
-| 工具（规范名） | 英文别名 | 简介 | 分类 |  |  |  |  |  |  |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 计划面板 | ` update\_plan ` | 向前端推送结构化的任务计划面板 | 收尾与前端协同 |  |  |  |  |  |  |
-| 问询面板 | ` question\_panel ` | 弹出结构化选项，向用户提问并等待选择 | 收尾与前端协同 |  |  |  |  |  |  |
-| 会话让出 | ` sessions\_yield ` | 主动让出当前回合控制权，稍后再被唤起 | 收尾与前端协同 |  |  |  |  |  |  |
-| 列出文件 | ` list\_files ` | 列出目录内容 | 工作区与代码 |  |  |  |  |  |  |
-| glob | — | 按通配模式查找文件路径 | 工作区与代码 |  |  |  |  |  |  |
-| 搜索内容 | ` search\_content ` | 在文件中按正则搜索匹配内容 | 工作区与代码 |  |  |  |  |  |  |
-| 读取文件 | ` read\_file ` | 读取文件内容，支持分段读取 | 工作区与代码 |  |  |  |  |  |  |
-| 写入文件 | ` write\_file ` | 写入或整体覆盖文件 | 工作区与代码 |  |  |  |  |  |  |
-| 文本编辑 | ` edit ` / ` edit\_file ` | 精确替换 / 补丁 / 子命令三形态（` apply\_patch ` 已并入） | 工作区与代码 |  |  |  |  |  |  |
-| 执行命令 | ` execute\_command ` | 执行 Shell / 系统命令 | 工作区与代码 |  |  |  |  |  |  |
-| 命令会话 | ` command\_session ` | 管理后台长驻命令会话，支持前后台切换 | 工作区与代码 |  |  |  |  |  |  |
-| 技能调用 | ` skill\_call ` | 读取技能正文并执行技能脚本 | 工作区与代码 |  |  |  |  |  |  |
-| 网页抓取 | ` web\_fetch ` | 抓取并解析网页正文（需启用配置） | Web |  |  |  |  |  |  |
-| 浏览器 | ` browser ` | 单一严格 action 工具，覆盖导航、观察、交互、等待与截图 | Web |  |  |  |  |  |  |
-| 读图工具 | ` read\_image ` | 读取图片内容供模型理解（需 vision 能力） | 多模态 |  |  |  |  |  |  |
-| 图像生成 | ` generate\_image ` | 按提示词生成图片 | 多模态 |  |  |  |  |  |  |
-| 视频生成 | ` generate\_video ` | 按提示词生成视频 | 多模态 |  |  |  |  |  |  |
-| 语音生成 | ` generate\_speech ` | 文本转语音 | 多模态 |  |  |  |  |  |  |
-| 声转文 | ` transcribe\_speech ` | 语音转文字 | 多模态 |  |  |  |  |  |  |
-| 桌面控制 | ` desktop\_control ` | 操作本机桌面并观察（鼠标、键盘、窗口） | 桌面 |  |  |  |  |  |  |
-| 子智能体控制 | ` subagent\_control ` | 在任务中临时派生子智能体，结果回传后回收 | 线程与子智能体 |  |  |  |  |  |  |
-| 会话线程控制 | ` thread\_control ` | 管理任务线程 / 分支线程（桌面端不开放） | 线程与子智能体 |  |  |  |  |  |  |
-| 自我状态 | ` self\_status ` | 查询智能体自身的运行状态 | 系统与记忆 |  |  |  |  |  |  |
-| 记忆管理 | ` memory\_manager ` | 读写长期记忆 | 系统与记忆 |  |  |  |  |  |  |
-| 定时任务 | ` schedule\_task ` | 创建与管理定时 / 周期任务 | 系统与记忆 |  |  |  |  |  |  |
-| ` goal ` | \`action=get | create | edit | pause | resume | complete | blocked\` | Goal-state tool, auto-injected per session by the runtime; not selectable on desktop | 目标态 |
+| 工具（规范名） | 英文别名 | 简介 | 分类|
+| --- | --- | --- | --- |
+| 计划面板 | ` update\_plan ` | 向前端推送结构化的任务计划面板 | 收尾与前端协同|
+| 问询面板 | ` question\_panel ` | 弹出结构化选项，向用户提问并等待选择 | 收尾与前端协同|
+| 会话让出 | ` sessions\_yield ` | 主动让出当前回合控制权，稍后再被唤起 | 收尾与前端协同|
+| 列出文件 | ` list\_files ` | 列出目录内容 | 工作区与代码|
+| glob | — | 按通配模式查找文件路径 | 工作区与代码|
+| 搜索内容 | ` search\_content ` | 在文件中按正则搜索匹配内容 | 工作区与代码|
+| 读取文件 | ` read\_file ` | 读取文件内容，支持分段读取 | 工作区与代码|
+| 写入文件 | ` write\_file ` | 写入或整体覆盖文件 | 工作区与代码|
+| 文本编辑 | ` edit ` / ` edit\_file ` | 精确替换 / 补丁 / 子命令三形态（` apply\_patch ` 已并入） | 工作区与代码|
+| 执行命令 | ` execute\_command ` | 执行 Shell / 系统命令 | 工作区与代码|
+| 命令会话 | ` command\_session ` | 管理后台长驻命令会话，支持前后台切换 | 工作区与代码|
+| 技能调用 | ` skill\_call ` | 读取技能正文并执行技能脚本 | 工作区与代码|
+| 网页抓取 | ` web\_fetch ` | 抓取并解析网页正文（需启用配置） | Web|
+| 浏览器 | ` browser ` | 单一严格 action 工具，覆盖导航、观察、交互、等待与截图 | Web|
+| 读图工具 | ` read\_image ` | 读取图片内容供模型理解（需 vision 能力） | 多模态|
+| 图像生成 | ` generate\_image ` | 按提示词生成图片 | 多模态|
+| 视频生成 | ` generate\_video ` | 按提示词生成视频 | 多模态|
+| 语音生成 | ` generate\_speech ` | 文本转语音 | 多模态|
+| 声转文 | ` transcribe\_speech ` | 语音转文字 | 多模态|
+| 桌面控制 | ` desktop\_control ` | 操作本机桌面并观察（鼠标、键盘、窗口） | 桌面|
+| 子智能体控制 | ` subagent\_control ` | 在任务中临时派生子智能体，结果回传后回收 | 线程与子智能体|
+| 会话线程控制 | ` thread\_control ` | 管理任务线程 / 分支线程（桌面端不开放） | 线程与子智能体|
+| 自我状态 | ` self\_status ` | 查询智能体自身的运行状态 | 系统与记忆|
+| 记忆管理 | ` memory\_manager ` | 读写长期记忆 | 系统与记忆|
+| 定时任务 | ` schedule\_task ` | 创建与管理定时 / 周期任务 | 系统与记忆|
+| ` goal ` | \`action=get / create / edit / pause / resume / complete / blocked\` | Goal-state tool, auto-injected per session by the runtime; not selectable on desktop | 目标态 |
 
 ` 网页搜索 ` is retained in code but currently **temporarily delisted** — invisible to the model and to the user (see ` default\_tool\_profile.rs `). Removed entirely: ` ptc `, channel tools, user-world tools, ` a2a\_\* ` tools, ` final\_response `, ` a2ui `, LSP query tools.
 
@@ -747,16 +832,16 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 
 ## Categories and docs
 
-| Category | Pages |  |  |  |  |  |  |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Turn finishing and frontend coordination | Plan Panel / Question Panel / Sessions Yield: Plan Panel / Question Panel / Sessions Yield |  |  |  |  |  |  |
-| Workspace and code | List files / glob / search content / read file / write file / text edit: Workspace Files; execute command / command session: Execute Command; skill call: Skill Call |  |  |  |  |  |  |
-| Web | Web fetch: Web Fetch; browser: Browser Tools |  |  |  |  |  |  |
-| Multimodal | Read image: Read Image; generate image / generate video / generate speech / transcribe speech: canonical names ` 图像生成 ` / ` 视频生成 ` / ` 语音生成 ` / ` 声转文 `, aliases ` generate\_image ` / ` generate\_video ` / ` generate\_speech ` / ` transcribe\_speech `; no dedicated page in this section |  |  |  |  |  |  |
-| Desktop | Desktop control: Desktop Control |  |  |  |  |  |  |
-| Threads and subagents | Subagent control: Subagent Control; thread control: Thread Control |  |  |  |  |  |  |
-| System and memory | Self status: Self Status; memory manager: Memory Manager; schedule task: Schedule Task |  |  |  |  |  |  |
-| Goal state | ` goal ` (\`action=get | create | edit | pause | resume | complete | blocked\`) is injected by the runtime per session and is not offered for selection on the desktop endpoint |
+| Category | Pages|
+| --- | --- |
+| Turn finishing and frontend coordination | Plan Panel / Question Panel / Sessions Yield: Plan Panel / Question Panel / Sessions Yield|
+| Workspace and code | List files / glob / search content / read file / write file / text edit: Workspace Files; execute command / command session: Execute Command; skill call: Skill Call|
+| Web | Web fetch: Web Fetch; browser: Browser Tools|
+| Multimodal | Read image: Read Image; generate image / generate video / generate speech / transcribe speech: canonical names ` 图像生成 ` / ` 视频生成 ` / ` 语音生成 ` / ` 声转文 `, aliases ` generate\_image ` / ` generate\_video ` / ` generate\_speech ` / ` transcribe\_speech `; no dedicated page in this section|
+| Desktop | Desktop control: Desktop Control|
+| Threads and subagents | Subagent control: Subagent Control; thread control: Thread Control|
+| System and memory | Self status: Self Status; memory manager: Memory Manager; schedule task: Schedule Task|
+| Goal state | ` goal ` (\`action=get / create / edit / pause / resume / complete / blocked\`) is injected by the runtime per session and is not offered for selection on the desktop endpoint |
 
 ## Result shell
 
@@ -1138,13 +1223,13 @@ The unified state model:
 
 Risk tiers:
 
-| Level | Operations covered | Approval |  |  |  |  |
-| --- | --- | --- | --- | --- | --- | --- |
+| Level | Operations covered | Approval|
+| --- | --- | --- |
 | L0 read-only | ` node.summary ` / ` shadow.refresh ` / \`workspace.list\\ | search\\ | stat\\ | read ` / ` threads.list\\ | get\` | No approval needed |
-| L0+ | ` workspace.read:binary ` | No approval needed + audited |  |  |  |  |
-| L1 session | ` thread.create ` / ` thread.message ` / ` thread.cancel ` / ` thread.answer ` | Local-device operations normally need local approval; a user's own cloud threads use account authorization |  |  |  |  |
+| L0+ | ` workspace.read:binary ` | No approval needed + audited|
+| L1 session | ` thread.create ` / ` thread.message ` / ` thread.cancel ` / ` thread.answer ` | Local-device operations normally need local approval; a user's own cloud threads use account authorization|
 | L2 workspace write | \`workspace.write\\ | mkdir\\ | move\\ | copy\\ | delete\` | Approval mandatory, cannot be lowered |
-| L3 execution | ` tool.exec ` (allow-listed commands) / ` agent.spawn ` | Approval mandatory + disabled for administrators by default, can be enabled |  |  |  |  |
+| L3 execution | ` tool.exec ` (allow-listed commands) / ` agent.spawn ` | Approval mandatory + disabled for administrators by default, can be enabled|
 
 - **L3 is off by default**: ` tool.exec ` and ` agent.spawn ` are not in a device's capability set by default; approvals are never remembered; only a summary of the execution result is returned.
 
@@ -1288,33 +1373,147 @@ To back up, copy both the database file and the workspace directory to preserve 
 
 > **Note:** Exported diagnostics (see "Diagnostics & Troubleshooting") contain only key-free information about this machine's settings and capability counts, for troubleshooting.
 
-<!-- topic id="troubleshooting" title="Diagnostics &amp; Troubleshooting" group="Reference" keywords="diagnostics,troubleshooting,FAQ,failure,FAQ" -->
+<!-- topic id="usage" title="Token Usage and Credits" group="Reference" keywords="token,usage,credits,quota,cost,context usage" -->
+
+# Token Usage and Credits
+
+## Tokens are an observation metric
+
+A token count is **not a cost** — it is a measure of context length and consumption: the ` 5.6k token 262ms ` label on a working-process entry is the context usage and duration at that moment. Actual cost follows the model provider's billing rules and has no fixed conversion to these numbers.
+
+Where token metrics are visible:
+
+- Working process: context usage and duration on each entry.
+
+- Trajectory view: the metrics of every step, replayed round by round.
+
+- [Model configuration](topic:models): parameters such as "Max context" and "Max output" set the metering limits.
+
+## Credits are a Hull concept
+
+Credits limit model request counts and belong to Hull (server) multi-user governance: each request sent to the model service deducts exactly 1 Credit, independent of token metering. Local, single-machine use of the Pupa involves no credit deduction; only when you use agents on a remote Hull through [Devices &amp; interlink](topic:interlink) does the account quota apply, and a short balance makes the remote side reject new model requests.
+
+> **Tip:** Model request count and credit consumption are two different metrics. In quota-exempt scenarios the request count still grows while credit consumption stays 0.
+
+<!-- topic id="faq" title="FAQ" group="Reference" keywords="FAQ,common questions,registration,cost,memory,subagent,password,tool visibility" -->
+
+# FAQ
+
+## Do I need to register?
+
+Not for local use. You only need to sign in to a cloud account for [Devices &amp; interlink](topic:interlink) — syncing cloud-side threads and managing devices.
+
+## Is the token count a cost?
+
+No. Tokens only measure context length and consumption; actual cost follows the model provider's billing rules. See [Token Usage and Credits](topic:usage).
+
+## Do requirements set at the start of a conversation keep applying?
+
+A thread's system prompt stays frozen once first created, so requirements set at the start are locked in for the whole thread — no need to repeat them. To change them, open a new thread.
+
+## When is long-term memory loaded?
+
+It is injected once at thread initialization; recall results during a run are supplementary only and never rewrite it. After updating memory, open a new thread for it to take effect — see [Memory](topic:core-memory).
+
+## What is a subagent?
+
+A subagent is a work unit the agent creates temporarily inside a task, to split off something that can proceed in parallel; it is recycled once its result is returned. There is always exactly one agent instance on the user side — see [Subagents](topic:core-subagent).
+
+## Does the Pupa need a Hull deployed first?
+
+No. The Pupa runs standalone and locally; deploy a Hull only when you need multi-user collaboration and unified management — see [Form matrix](topic:forms).
+
+## Are uploaded temporary files cleaned up?
+
+Yes. Contents of the temp directory may be cleaned; keep important files in the workspace for persistence — see [Files &amp; Workspace](topic:workspace).
+
+## Why does a tool not appear?
+
+Possible causes: the tool is not enabled, the MCP service is off, or the current agent does not have the tool mounted. Check each item in the [Tools &amp; Skills](topic:tools) pane in settings; if it still fails, see [Diagnostics &amp; Troubleshooting](topic:troubleshooting).
+
+## Web fetch versus the browser tool?
+
+Web fetch reads one page's body; the browser operates a page like a person (clicking, scrolling, filling forms, waiting for rendering).
+
+<!-- topic id="troubleshooting" title="Diagnostics &amp; Troubleshooting" group="Reference" keywords="diagnostics,troubleshooting,failure,FAQ,symptoms,logs" -->
 
 # Diagnostics & Troubleshooting
+
+Look up by symptom first, then dig into logs. The [FAQ](topic:faq) collects "how do I use this"; this page collects "it does not work".
+
+## Health checks
+
+1. The app starts and the UI responds.
+
+2. The "Probe" button in [Model configuration](topic:models) passes.
+
+3. The workspace directory exists and is writable.
 
 ## Export diagnostics
 
 When something goes wrong, click **Export diagnostics** under the Help category in settings; the app writes key-free local settings and capability counts into a diagnostics file, for troubleshooting. A popup shows the file location once the export finishes.
 
-## FAQ
+## Symptoms and checklists
 
-## Model connection failed
+### Model connection failed
 
-Check that the key and service address in the model configuration are correct, and confirm this machine can reach the service. The "Probe" button quickly tells you whether it is a network problem or a parameter problem.
+- Is the key and service address correct, and can this machine reach the service?
 
-## Reply interrupted or incomplete
+- Use the "Probe" button to tell a network problem from a parameter problem.
 
-Usually a request timeout or network instability. Raise the timeout in the model configuration and retry; the portion already generated is kept in the thread.
+### Reply interrupted or incomplete
 
-## Tool execution failed
+- Usually a request timeout or network instability; raise the [model](topic:models) timeout and retry.
 
-Expand the working process bar above the message and check the output and duration of the failed entry — in most cases the cause is immediately visible (path does not exist, insufficient permissions, service not running, and so on).
+- The portion already generated is kept in the thread.
 
-## Context compaction triggers frequently
+### Tool execution failed
 
-This means the task's context is large. Raise the model's "Max context" parameter, or split the long task across several threads.
+- Expand the working process bar above the message and check the output and duration of the failed entry.
 
-> **Tip:** When troubleshooting execution problems, the trajectory view replays every step round by round.
+- In most cases the cause is directly visible: path does not exist, insufficient permissions, service not running.
+
+### Context compaction triggers frequently
+
+- The task's context is large: raise the model's "Max context" parameter, or split the long task across several threads.
+
+### Microphone or screenshot button unavailable
+
+- Has the system granted microphone and screen permission (check Windows privacy settings)?
+
+- Are the supplement components that recording depends on (such as ffmpeg) installed with the supplement package?
+
+### UI laggy or unresponsive
+
+- First check whether a heavy task is running (long output, large workspace scan) and let it finish.
+
+- Does it reproduce after restarting the app? If it does, attach the diagnostics file when reporting.
+
+### Help manual blank or failing to open
+
+- The manual is embedded in the app and should never be blank; this is usually a rendering glitch — restart the help window or the app.
+
+- If it persists, attach the diagnostics file when reporting.
+
+### Session state scrambled overall
+
+- Use "Reset work state": stop running sessions and tasks, and rebuild clean threads.
+
+- Skills, knowledge bases, and other long-term assets are not deleted.
+
+> **Tip:** When troubleshooting execution problems, the [trajectory view](topic:interface) replays every step round by round.
+
+## What to include in a report
+
+When submitting a problem, attach:
+
+- Form and version (Pupa desktop)
+
+- The steps that trigger the problem
+
+- Key error messages and the diagnostics file
+
+- Whether subagents, MCP, or Devices & interlink were involved
 
 <!-- topic id="glossary" title="Glossary" group="Reference" keywords="terminology,terms,definitions,concepts" -->
 
@@ -1334,3 +1533,8 @@ This means the task's context is large. Raise the model's "Max context" paramete
 | Knowledge base | Long-term knowledge retrieval for the agent. |
 | Workspace | The local root directory for file assets. |
 | Context compaction | Automatic compaction of history when the context nears its limit, so the task can continue. |
+| Streaming | Replies and execution progress arrive at the UI as real-time increments, persisted to the log before being pushed. |
+| Round terminal state | The formal signal that a round has ended, carrying status and stop reason; judge completion only by it. |
+| Rehydration | After a disconnect or re-entry, missed changes are filled in by cursor; the whole history is never replayed. |
+| Circuit breaking | When failures with the same fingerprint repeat, the run is temporarily halted so a dead loop cannot exhaust the budget. |
+| Credits | The Hull-side account metric limiting model request counts; not involved in local Pupa use. |

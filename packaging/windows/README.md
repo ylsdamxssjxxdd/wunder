@@ -14,7 +14,7 @@
 
 当前约定：
 
-- `build.bat pack -a win7-x86` 生成单文件 `wunder-<版本>-win7-x86-setup.exe`；安装向导把程序本体也作为可勾选项：蛹（桌面端）与舵机（命令行）默认勾选，不勾则不安装对应的 `wunder-desktop.exe`/`wunder-cli.exe`，因此可以只装补充组件。补充组件里只有 PowerShell 7 默认勾选（它是命令工具的默认 shell，缺了会退回系统 PowerShell 2.0），Python/Git/ripgrep/ffmpeg/7-Zip/内置浏览器默认不勾选。勾选蛹即自动创建开始菜单与桌面快捷方式（不再单列“桌面快捷方式”任务）。页面提供“全选（推荐）”一次勾选全部项，任一项取消会自动回退全选状态。
+- `build.bat pack -a win7-x86` 生成单文件 `wunder-<版本>-win7-x86-setup.exe`；安装向导把程序本体也作为可勾选项：蛹（桌面端）与舵机（命令行）默认勾选，不勾则不安装对应的 `wunder-desktop.exe`/`wunder-cli.exe`，因此可以只装补充组件。补充组件（Python/Git/ripgrep/ffmpeg/7-Zip/PowerShell 7/内置浏览器）默认全部勾选，一次安装即得完整运行环境；不需要的项可逐条取消。勾选蛹即自动创建开始菜单与桌面快捷方式（不再单列“桌面快捷方式”任务）。页面提供“全选”一键恢复全部勾选，任一项取消会自动回退全选状态。
 - 安装向导允许改安装目录，默认 `%USERPROFILE%\.wunder`。安装根会写入 `.wunder-home`，蛹和舵机启动时以该根作为 `WUNDER_HOME`；显式设置的非空 `WUNDER_HOME` 优先。
 - 安装目录同时保存配置、会话、工作区、日志和 `opt/` 补充组件；迁移时复制整个安装根。
 - 选中已存在的组件时，安装器先清空对应 `opt/<component>`，再写入新版本；`config`、`data`、`workspace`、`logs` 等用户数据不会删除。
@@ -44,7 +44,7 @@ wunder-<版本>-win7-x86-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR
 ```
 
 - `/SILENT` 只显示进度，`/VERYSILENT` 完全无界面；两者都会跳过全部向导页。
-- 组件用 `/TASKS=` 指定，任务名与向导勾选项一致（`desktop`、`cli`、`python`、`git`、`rg`、`ffmpeg`、`sevenzip`、`powershell`、`browser`），例如 `/TASKS="desktop,cli,powershell,sevenzip"`；不传时按向导默认勾选（蛹、舵机、PowerShell 7）。`7zip` 的目录名不能直接当任务名——Inno 把任务名按表达式解析，数字开头会报 `Invalid token '7'`，所以任务名固定为 `sevenzip`，安装目录仍是 `opt/7zip`。
+- 组件用 `/TASKS=` 指定，任务名与向导勾选项一致（`desktop`、`cli`、`python`、`git`、`rg`、`ffmpeg`、`sevenzip`、`powershell`、`browser`），例如 `/TASKS="desktop,cli,powershell,sevenzip"`；不传时按向导默认勾选（蛹、舵机与全部补充组件）。`7zip` 的目录名不能直接当任务名——Inno 把任务名按表达式解析，数字开头会报 `Invalid token '7'`，所以任务名固定为 `sevenzip`，安装目录仍是 `opt/7zip`。
 - 检测到已安装组件时的确认弹窗在静默模式下自动跳过（直接按“清空组件目录后继续”执行）；只有组件目录被占用这类致命错误会中止安装（非零退出码），`/SUPPRESSMSGBOXES` 连错误弹窗也不再显示。
 - 卸载器同样支持静默：`unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`。
 

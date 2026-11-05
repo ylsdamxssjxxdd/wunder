@@ -16,6 +16,10 @@ Each release publishes the main program, supplement packages, and installers.
 
 On first launch, configure a model on the settings page and you are ready to go.
 
+## Interface
+
+<img src="docs/images/wunder-pupa.png" alt="Pupa: local AI workbench interface" width="880">
+
 ## Form Matrix
 
 | Icon | Form | Tech Stack | Role | How It Runs | Platforms |
@@ -27,6 +31,8 @@ On first launch, configure a model on the settings page and you are ready to go.
 | ⚙️ | Helm (cli) | Rust terminal TUI (ratatui + crossterm); SQLite | Hands-on local entry point (terminal work, scripting, automation) | Local terminal process calling the engine in-process; JSONL output supported | Windows 7 and up (GNU toolchain); Linux amd64 / arm64 (ubuntu18.04 sysroot) |
 
 All forms share one engine (wunder-runtime) and one core (wunder-core): threads, tools, storage abstractions, realtime events, and permission semantics are a single codebase — only the access layer differs. Pupa and Helm run standalone without the Hull.
+
+<img src="docs/images/wunder-architecture.png" alt="wunder: four forms over a shared engine" width="880">
 
 One agent can own multiple independent task threads at the same time; scheduling, locks, and live status are isolated per thread. Workspaces can coexist as a local directory, the cloud directory `/workspaces/<user>/workspace`, and remote-device workspaces.
 

@@ -397,10 +397,9 @@ foreach ($name in @("desktop", "cli")) {
   $lines.Add(('Name: "{0}"; Description: "{1}"' -f $name, $label))
 }
 if (-not $CoreOnly) {
-  # The bundled portable PowerShell is the command tool's default shell, so it
-  # is the one supplement component checked by default; everything else stays
-  # opt-in to keep the default install lean.
-  $defaultCheckedComponents = @("powershell")
+  # Every supplement component is checked by default: a plain wizard run
+  # installs a complete workstation. Rows can be unchecked individually (or
+  # via the select-all box) and /TASKS= still narrows scripted installs.
   foreach ($name in $available) {
     $task = Get-TaskName $name
     if ($task -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
@@ -409,11 +408,7 @@ if (-not $CoreOnly) {
     $versionForLabel = Get-MetadataVersion $metadata $name
     $taskBytes = $componentBytes[$name]
     $label = Format-ComponentLabel $name $versionForLabel $taskBytes
-    if ($defaultCheckedComponents -contains $name) {
-      $lines.Add(('Name: "{0}"; Description: "{1}"' -f $task, $label))
-    } else {
-      $lines.Add(('Name: "{0}"; Description: "{1}"; Flags: unchecked' -f $task, $label))
-    }
+    $lines.Add(('Name: "{0}"; Description: "{1}"' -f $task, $label))
   }
 }
 $lines.Add("")
@@ -479,7 +474,7 @@ foreach ($name in $ComponentOrder) {
       version = (Get-MetadataVersion $metadata $name)
       bytes = $componentBytes[$name]
       files = $componentFiles[$name]
-      defaultSelected = $false
+      defaultSelected = $true
     }
   }
 }

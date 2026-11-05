@@ -363,6 +363,7 @@ If the target aspect ratio doesn't match the `viewBox` aspect ratio, say so and 
 - **No `<svg>` block found**: the source isn't a diagram file. Tell the user; don't write anything.
 - **Surrounding HTML matters to the user**: they want cards/header in the image. Tell them this skill exports diagrams only, and recommend a browser-based full-page screenshot (or a separate PDF print).
 - **Output looks typographically off**: under the default `system` font source this is expected — the platform's own serif/sans/mono faces carry different metrics than Geist. Keep the label padding rather than resizing boxes, and check the HTML in a browser before re-exporting. Only `web`-source output depends on the Google Fonts `<link>`, and Playwright substitutes when that request fails.
+- **`OSError: [Errno 22] Invalid argument` while writing the PNG**: the target file is open in an image viewer or thumbnailer, so Windows refuses the overwrite. Close the viewer and retry, or export to a new name and replace the old file afterwards. This is a file lock, not a path or encoding problem — the same path succeeds once the handle is released.
 
 ## What this command never does
 
