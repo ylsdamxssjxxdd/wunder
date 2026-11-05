@@ -256,14 +256,21 @@ component UserBubble inherits Rectangle {
                     }
                     // Attachments are the one block kind a user message needs;
                     // their card width is intrinsic, so it can be fixed here.
-                    for block in root.data.blocks : BlockView {
-                        visible: block.kind == BlockKind.image || block.kind == BlockKind.document;
-                        block: block;
-                        column-width: 360px;
-                        copy-text(text) => { root.copy-text(text); }
-                        open-resource(path) => { root.open-resource(path); }
-                        link-clicked(path) => { root.open-resource(path); }
-                        context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
+                    // `visible: false` still keeps the element's slot in a
+                    // layout, so the wrapper only takes the card's own height
+                    // when the card is shown; otherwise every paragraph of the
+                    // text would leave a blank line under the bubble.
+                    for block in root.data.blocks : Rectangle {
+                        height: attachment.visible ? attachment.height : 0px;
+                        attachment := BlockView {
+                            visible: block.kind == BlockKind.image || block.kind == BlockKind.document;
+                            block: block;
+                            column-width: 360px;
+                            copy-text(text) => { root.copy-text(text); }
+                            open-resource(path) => { root.open-resource(path); }
+                            link-clicked(path) => { root.open-resource(path); }
+                            context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
+                        }
                     }
                 }
             }
@@ -585,9 +592,12 @@ component FoldEntry inherits Rectangle {
                         padding-left: 4px; padding-right: 4px;
                         alignment: start;
                         // Streaming: plain text. Settled: the same Markdown
-                        // blocks the transcript uses.
-                        thinking-box := TextInput {
-                            visible: root.data.reasoning-blocks.length == 0;
+                        // blocks the transcript uses. `if`, not `visible`: a
+                        // hidden TextInput still reserves its whole text
+                        // height in this column, which made the box's
+                        // content-height a blank screen taller than the blocks
+                        // and left the reasoning unreachable at the bottom.
+                        if root.data.reasoning-blocks.length == 0 : TextInput {
                             text: root.data.detail; read-only: true; wrap: word-wrap;
                             color: Theme.muted; font-size: Theme.font-sm;
                         }
