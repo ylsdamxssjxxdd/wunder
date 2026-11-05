@@ -213,13 +213,23 @@ pub fn draw_text(
             };
 
             if render {
+                // A selected run fills its background and keeps the glyph colours it was
+                // shaped with, so links and inline code still read as such inside the
+                // highlight. The spans come from the same machinery `TextInput` uses; the
+                // selection itself is handed in by the item (`RenderText::selection`).
+                if let Some((range, background)) = text.selection().filter(|(r, _)| !r.is_empty())
+                {
+                    let spans =
+                        layout.selection_geometry(range, &draw::visible_band(item_renderer));
+                    for span in spans.backgrounds() {
+                        item_renderer.fill_rectangle_with_color(span, background);
+                    }
+                }
                 layout.draw(
                     item_renderer,
                     platform_fill_brush,
                     platform_stroke_brush,
                     text_color,
-                    // `Text` has no selection today; the machinery is shared so wiring one up
-                    // later is a matter of passing spans here.
                     None,
                 );
             }
@@ -260,6 +270,87 @@ pub fn link_under_cursor(
         },
         window,
         |layout| link_in_layout(layout, cursor),
+    )
+    .flatten()
+}
+
+/// How much text a press selects: the character boundary, the word, or the paragraph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextUnit {
+    Character,
+    Word,
+    Paragraph,
+}
+
+/// The byte range a press at `position` selects, with the paragraphs counted as if they were
+/// joined by newlines. A `Character` unit gives an empty range at the nearest boundary, which is
+/// what a drag needs; the other units give the word or paragraph there.
+///
+/// Positions above the text map to its start and positions below it to its end, so dragging past
+/// either edge keeps the selection growing instead of stopping at the first line.
+#[cfg(feature = "std")]
+pub fn text_range_at(
+    scale_factor: ScaleFactor,
+    text: Pin<&dyn crate::item_rendering::RenderText>,
+    item_rc: &crate::item_tree::ItemRc,
+    size: LogicalSize,
+    position: PhysicalPoint,
+    unit: TextUnit,
+    window: &crate::api::Window,
+    cache: Option<&TextLayoutCache>,
+) -> Option<Range<usize>> {
+    let layout_builder = shaping_builder(text, Some(item_rc), text.wrap(), scale_factor);
+
+    let (horizontal_align, vertical_align) = text.alignment();
+
+    with_text_layout(
+        cache,
+        Some(item_rc),
+        text,
+        &layout_builder,
+        LayoutOptions {
+            horizontal_align,
+            vertical_align,
+            max_height: Some(size.height_length()),
+            max_width: Some(size.width_length()),
+            max_lines: text.line_limit(),
+            text_overflow: text.overflow(),
+        },
+        window,
+        |layout| {
+            let paragraphs = layout.visible_paragraphs();
+            let (first, last) = (paragraphs.first()?, paragraphs.last()?);
+            let y = position.y_length();
+            // Clamp outside the block: a drag continues past the last line of a paragraph and
+            // into the next one, which is a different item.
+            if y < layout.y_offset + first.y {
+                return Some(first.range.start..first.range.start);
+            }
+            if y >= layout.y_offset + last.y + PhysicalLength::new(last.layout.height()) {
+                return Some(last.range.end..last.range.end);
+            }
+            let paragraph = layout.paragraph_by_y(y)?;
+            let local_y = (y - layout.y_offset - paragraph.y).get();
+            let local = match unit {
+                TextUnit::Character => {
+                    let index = parley::editing::Cursor::from_point(
+                        &paragraph.layout,
+                        position.x,
+                        local_y,
+                    )
+                    .index();
+                    index..index
+                }
+                TextUnit::Word => parley::Selection::word_from_point(
+                    &paragraph.layout,
+                    position.x,
+                    local_y,
+                )
+                .text_range(),
+                TextUnit::Paragraph => 0..paragraph.range.len(),
+            };
+            Some(paragraph.range.start + local.start..paragraph.range.start + local.end)
+        },
     )
     .flatten()
 }

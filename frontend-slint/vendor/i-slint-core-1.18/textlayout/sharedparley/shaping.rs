@@ -308,14 +308,21 @@ pub(super) fn create_text_paragraphs(
             }
         }
         PlainOrStyledText::Styled(rich_text) => {
+            // The byte range is what hit-testing and selection measure offsets against, so it has
+            // to be the paragraph's place in the text `get_raw_text` produces: its paragraphs
+            // joined by newlines. Leaving it at `0..0` (as upstream does) makes every offset
+            // land at the start of the block.
+            let mut start = 0;
             for paragraph in rich_text.paragraphs {
+                let end = start + paragraph.text.len();
                 paragraphs.push(paragraph_from_text(
                     font_context,
                     &paragraph.text,
-                    0..0,
+                    start..end,
                     paragraph.formatting,
                     paragraph.links,
                 ));
+                start = end + 1;
             }
         }
     };

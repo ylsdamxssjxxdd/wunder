@@ -4,7 +4,7 @@
 //! Slint only lays out bounded rows, and every row and span is keyed by the
 //! global record index so hover and selection survive filtering.
 use crate::{
-    I18n, MainWindow, TrajBoundary, TrajRow, TrajSearchHit, TrajSection, TrajSpan, TrajTab,
+    I18n, MainWindow, TrajBoundary, TrajMdSection, TrajRow, TrajSearchHit, TrajSpan, TrajTab,
     TrajTick, TrajTiming, TrajTokenBar,
 };
 use chrono::{Local, TimeZone};
@@ -2716,6 +2716,26 @@ fn bounded_body(text: &str) -> String {
     }
 }
 
+// Markdown 文档类详情（输出/结果/思考/输入）：把 body 一次性投影成 [MdBlock]
+// 交给 BlockView 渲染。
+fn md_section(title: &str, body: String) -> TrajMdSection {
+    let blocks = crate::message_blocks::from_text(&body);
+    TrajMdSection {
+        title: title.into(),
+        body: body.into(),
+        blocks,
+    }
+}
+
+// 工具参数 / JSON 契约不是 Markdown 文档：blocks 留空，UI 保留纯文本展示。
+fn plain_section(title: &str, body: String) -> TrajMdSection {
+    TrajMdSection {
+        title: title.into(),
+        body: body.into(),
+        blocks: ModelRc::default(),
+    }
+}
+
 fn tab_title(texts: &Texts, tab: i32) -> &'static str {
     let zh = texts.zh;
     match tab {
@@ -2829,7 +2849,7 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
     }
 
     let mut overview: Vec<TrajTiming> = Vec::new();
-    let mut sections: Vec<TrajSection> = Vec::new();
+    let mut sections: Vec<TrajMdSection> = Vec::new();
     let mut timing: Vec<TrajTiming> = Vec::new();
     let mut raw = String::new();
 
@@ -2881,10 +2901,10 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
         }
         TAB_PARAMS => {
             if let Some(input) = &cell.input_detail {
-                sections.push(TrajSection {
-                    title: label(zh, "参数", "Params").into(),
-                    body: bounded_body(input).into(),
-                });
+                sections.push(plain_section(
+                    label(zh, "参数", "Params"),
+                    bounded_body(input),
+                ));
             }
         }
         TAB_RESULT => {
@@ -2894,10 +2914,10 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
                 .or(cell.output_detail.as_deref())
                 .unwrap_or_default();
             if !body.is_empty() {
-                sections.push(TrajSection {
-                    title: label(zh, "结果", "Result").into(),
-                    body: bounded_body(body).into(),
-                });
+                sections.push(md_section(
+                    label(zh, "结果", "Result"),
+                    bounded_body(body),
+                ));
             }
         }
         TAB_SCHEMA => {
@@ -2908,10 +2928,7 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
                 .schema_detail
                 .clone()
                 .unwrap_or_else(|| label(zh, "不可用", "Not available").to_string());
-            sections.push(TrajSection {
-                title: "Schema".into(),
-                body: bounded_body(&body).into(),
-            });
+            sections.push(plain_section("Schema", bounded_body(&body)));
         }
         _ => {
             let number = request_number_of(model, selected as usize);
@@ -2989,26 +3006,23 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
                 });
             }
             if let Some(input) = &cell.input_detail {
-                sections.push(TrajSection {
-                    title: label(zh, "输入", "Input").into(),
-                    body: bounded_body(input).into(),
-                });
+                sections.push(md_section(label(zh, "输入", "Input"), bounded_body(input)));
             }
             if let Some(thinking) = &cell.thinking_detail {
-                sections.push(TrajSection {
-                    title: label(zh, "思考", "Thinking").into(),
-                    body: bounded_body(thinking).into(),
-                });
+                sections.push(md_section(
+                    label(zh, "思考", "Thinking"),
+                    bounded_body(thinking),
+                ));
             }
             if let Some(output) = &cell.output_detail {
                 if matches!(
                     cell.kind,
                     KIND_MESSAGE | KIND_TOOL | KIND_SUBTOOL | KIND_COMPACTED
                 ) {
-                    sections.push(TrajSection {
-                        title: label(zh, "输出", "Output").into(),
-                        body: bounded_body(output).into(),
-                    });
+                    sections.push(md_section(
+                        label(zh, "输出", "Output"),
+                        bounded_body(output),
+                    ));
                 }
             }
         }

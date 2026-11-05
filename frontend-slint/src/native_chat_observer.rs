@@ -1089,6 +1089,7 @@ fn blank_row(kind: i32, id: String) -> TimelineRow {
         visible: true,
         text: Default::default(),
         time: Default::default(),
+        reasoning_blocks: ModelRc::default(),
         blocks: ModelRc::default(),
         summary: Default::default(),
         tool_name: Default::default(),
@@ -1264,7 +1265,7 @@ mod tests {
         let row = history_user(&orphan);
         let text = (0..row.blocks.row_count())
             .filter_map(|index| row.blocks.row_data(index))
-            .map(|block| block.text.to_string())
+            .map(|block| block.plain.to_string())
             .collect::<Vec<_>>()
             .join("\n");
         assert!(text.contains("[附件] fixture.txt"), "text: {text}");
@@ -1718,7 +1719,7 @@ mod tests {
         timeline.set_history(rows);
 
         let frozen = timeline.model();
-        let before: Vec<(i32, ModelRc<crate::TextBlock>, ModelRc<crate::PatchCard>)> = frozen
+        let before: Vec<(i32, ModelRc<crate::MdBlock>, ModelRc<crate::PatchCard>)> = frozen
             .iter()
             .map(|row| (row.kind, row.blocks.clone(), row.patch.clone()))
             .collect();

@@ -3520,7 +3520,7 @@ storage:
             .map(|root| root.join("config").join("wunder-example.yaml"))
             .expect("repo config template");
         let config = try_load_config_from_path(&template).expect("deployment template must parse");
-        for name in ["技能创建器", "公文写作", "文稿校对", "3D网页", "视频制作"]
+        for name in ["技能创建器", "公文写作", "文稿校对", "3D网页", "视频制作", "图纸设计"]
         {
             assert!(
                 config.skills.enabled.iter().any(|skill| skill == name),

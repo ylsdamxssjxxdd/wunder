@@ -248,8 +248,47 @@ pub struct StyledTextItem {
     pub vertical_alignment: Property<TextVerticalAlignment>,
     pub max_lines: Property<i32>,
     pub link_clicked: Callback<StringArg>,
+    /// Right click, in window coordinates, plus whether there is a selection to act on. The
+    /// application owns the menu; this only reports that one should open.
+    pub context_menu: Callback<(f32, f32, bool)>,
     pub link_color: Property<Color>,
     pub cached_rendering_data: CachedRenderingData,
+    /// Set while a press in this text is selecting: the drag then keeps extending the selection
+    /// even once the pointer has left this item.
+    pressed: core::cell::Cell<bool>,
+    /// What a selection covers of this text, as last drawn, with the colour behind it.
+    shown_selection: core::cell::RefCell<Option<(core::ops::Range<usize>, Color)>>,
+}
+
+impl StyledTextItem {
+    /// The text as one string, its paragraphs joined by newlines, matching the offsets
+    /// [`Self::range_at`] reports.
+    pub(crate) fn plain(self: Pin<&Self>) -> alloc::string::String {
+        crate::styled_text::get_raw_text(&self.text()).into_owned()
+    }
+
+    /// The byte range a press at `position` (this item's coordinates) selects.
+    #[cfg(feature = "shared-parley")]
+    pub(crate) fn range_at(
+        self: Pin<&Self>,
+        self_rc: &ItemRc,
+        window_adapter: &Rc<dyn WindowAdapter>,
+        position: LogicalPoint,
+        unit: crate::textlayout::sharedparley::TextUnit,
+    ) -> Option<core::ops::Range<usize>> {
+        let window_inner = WindowInner::from_pub(window_adapter.window());
+        let scale_factor = crate::lengths::ScaleFactor::new(window_inner.scale_factor());
+        crate::textlayout::sharedparley::text_range_at(
+            scale_factor,
+            self,
+            self_rc,
+            LogicalSize::from_lengths(self.width(), self.height()),
+            position * scale_factor,
+            unit,
+            window_adapter.window(),
+            None,
+        )
+    }
 }
 
 impl Item for StyledTextItem {
@@ -306,7 +345,78 @@ impl Item for StyledTextItem {
                 None,
             )
         };
+        // A press starts a selection and grabs the pointer, so the drag keeps coming here even
+        // after it leaves this item; `crate::text_selection` works out which text is under it.
+        #[cfg(feature = "shared-parley")]
+        let in_window = |position: &LogicalPoint| {
+            self_rc.map_to_window(self_rc.geometry().origin + position.to_vector())
+        };
         match event {
+            #[cfg(feature = "shared-parley")]
+            MouseEvent::Pressed {
+                position,
+                button: PointerEventButton::Left,
+                click_count,
+                ..
+            } => {
+                let pressed = crate::text_selection::press(
+                    self_rc,
+                    self,
+                    window_adapter,
+                    *position,
+                    *click_count,
+                );
+                self.pressed.set(pressed);
+                *cursor = super::MouseCursorInner::BuiltIn(
+                    if find_link(position).is_some() {
+                        super::BuiltInMouseCursor::Pointer
+                    } else {
+                        super::BuiltInMouseCursor::Text
+                    },
+                );
+                if pressed {
+                    InputEventResult::GrabMouse
+                } else {
+                    InputEventResult::EventAccepted
+                }
+            }
+            #[cfg(feature = "shared-parley")]
+            MouseEvent::Pressed { position, button: PointerEventButton::Right, .. } => {
+                // The menu itself belongs to the application; all this does is keep (or drop)
+                // the selection and tell the UI where the click was, in window coordinates.
+                let has_selection =
+                    crate::text_selection::right_press(self_rc, window_adapter, *position);
+                let at = self_rc.map_to_window(*position);
+                Self::FIELD_OFFSETS
+                    .context_menu()
+                    .apply_pin(self)
+                    .call(&(at.x, at.y, has_selection));
+                *cursor = super::MouseCursorInner::BuiltIn(super::BuiltInMouseCursor::Text);
+                InputEventResult::EventAccepted
+            }
+            #[cfg(feature = "shared-parley")]
+            MouseEvent::Moved { position, .. }
+                if self.pressed.get() && crate::text_selection::dragging() =>
+            {
+                crate::text_selection::drag_to(window_adapter, in_window(position));
+                *cursor = super::MouseCursorInner::BuiltIn(super::BuiltInMouseCursor::Text);
+                InputEventResult::EventAccepted
+            }
+            #[cfg(feature = "shared-parley")]
+            MouseEvent::Released { position, button: PointerEventButton::Left, .. }
+                if self.pressed.get() =>
+            {
+                self.pressed.set(false);
+                // A click that selected nothing is still a click: follow the link under it.
+                if !crate::text_selection::release() {
+                    if let Some(link) = find_link(position) {
+                        *cursor =
+                            super::MouseCursorInner::BuiltIn(super::BuiltInMouseCursor::Pointer);
+                        Self::FIELD_OFFSETS.link_clicked().apply_pin(self).call(&(link.into(),));
+                    }
+                }
+                InputEventResult::EventAccepted
+            }
             #[cfg(feature = "shared-parley")]
             MouseEvent::Released {
                 position,
@@ -324,9 +434,13 @@ impl Item for StyledTextItem {
             MouseEvent::Moved { position, .. }
             | MouseEvent::Pressed { position, .. }
             | MouseEvent::Released { position, .. } => {
-                if find_link(position).is_some() {
-                    *cursor = super::MouseCursorInner::BuiltIn(super::BuiltInMouseCursor::Pointer);
-                }
+                // Over the glyphs the pointer turns into a text caret, the way it does in a
+                // browser; a link still wins, because clicking it does something else.
+                *cursor = super::MouseCursorInner::BuiltIn(if find_link(position).is_some() {
+                    super::BuiltInMouseCursor::Pointer
+                } else {
+                    super::BuiltInMouseCursor::Text
+                });
                 InputEventResult::EventAccepted
             }
             _ => InputEventResult::EventIgnored,
@@ -366,6 +480,9 @@ impl Item for StyledTextItem {
         self_rc: &ItemRc,
         size: LogicalSize,
     ) -> RenderingResult {
+        // Resolved per frame: the selection lives outside the items, so an item only knows what
+        // of it is covered when it is about to be drawn.
+        *self.shown_selection.borrow_mut() = crate::text_selection::covered(self_rc);
         (*backend).draw_text(self, self_rc, size, &self.cached_rendering_data);
         RenderingResult::ContinueRenderingChildren
     }
@@ -444,6 +561,12 @@ impl RenderText for StyledTextItem {
 
     fn is_markdown(self: Pin<&Self>) -> bool {
         true
+    }
+
+    fn selection(self: Pin<&Self>) -> Option<(core::ops::Range<usize>, Color)> {
+        // Read here while drawing, which is what makes a selection change repaint this text.
+        crate::text_selection::track();
+        self.shown_selection.borrow().clone()
     }
 }
 

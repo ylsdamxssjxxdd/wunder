@@ -8,12 +8,13 @@ import { I18n } from "i18n.slint";
 // the root file get a public wrapper. The fields report focus through
 // components.slint / textedit-base.slint.
 export { TextFieldActivation } from "text_field.slint";
-import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow, CommandTask, SubagentItem } from "theme.slint";
+import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow, CommandTask, SubagentItem } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 export { ToastState }
 import { ProcessEntry } from "theme.slint";
 import { Composer, GoalBanner, InquiryPanel, StatusDock } from "composer.slint";
 import { TimelineView } from "timeline.slint";
+import { TextMenu, TextMenuState } from "text_menu.slint";
 import { ActivityMonth, ActivityWeek } from "activity_card.slint";
 export { ActivityMonth, ActivityWeek }
 import { Sidebar, WorkspaceVisual } from "sidebar.slint";
@@ -24,10 +25,10 @@ export { SidebarMetrics, PointerChase }
 import { SettingsPage } from "settings_page.slint";
 import { ModelPresets } from "model_presets.slint";
 import { I18n } from "i18n.slint";
-import { ThreadTrajectoryDialog } from "thread_trajectory.slint";
+import { ThreadTrajectoryDialog, TrajMdSection } from "thread_trajectory.slint";
 import { SubagentDetailDialog } from "subagent_detail.slint";
 import { WorkspacePromptDialog } from "workspace_files.slint";
-export { I18n }
+export { I18n, TextMenuState }
 import { ToolResource, ToolsDialog, McpServerDraft, KnowledgeInfo } from "tools_page.slint";
 export { ToolResource, ToolsDialog, McpServerDraft, KnowledgeInfo }
 import { AvatarDialog, AvatarDialogState } from "avatar_dialog.slint";
@@ -45,7 +46,7 @@ export { ModelPresets }
 import { WindowChrome, WindowFrame } from "window_chrome.slint";
 // `TimelineView` is deliberately absent: nothing in Rust names it, and an
 // exported component that does not inherit Window only earns a build warning.
-export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, TextBlock, WorkflowLine, WorkflowSection, ToolWorkflowEntry, ProcessEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, CronCard, CronRunCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkApproval, WorkspaceFileRow }
+export { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, WorkflowLine, WorkflowSection, ToolWorkflowEntry, ProcessEntry, TimelineRow, TimelineCounts, TurnStatMetric, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajMdSection, TrajTab, CronCard, CronRunCard, ChannelCatalogCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InterlinkApproval, WorkspaceFileRow }
 export { AppTray } from "tray.slint";
 export { TrayNotice } from "tray-notice.slint";
 export { CompletionNotice } from "completion-notice.slint";
@@ -373,7 +374,7 @@ export component MainWindow inherits Window {
     in-out property <[TrajTab]> traj-detail-tabs;
     in-out property <int> traj-detail-tab: 0;
     in-out property <[TrajTiming]> traj-overview;
-    in-out property <[TrajSection]> traj-sections;
+    in-out property <[TrajMdSection]> traj-sections;
     in-out property <[TrajTiming]> traj-timing;
     in-out property <string> traj-raw;
     in-out property <int> traj-selected: -1;
@@ -884,6 +885,11 @@ export component MainWindow inherits Window {
     callback save-session-reasoning-effort(string);
     callback select-thread-model(string);
     callback copy-raw(string);
+    /// Copy the transcript's text selection. The selection lives in the text
+    /// layout, so only Rust can read it.
+    callback copy-selection();
+    /// Select every block of the document the click landed on.
+    callback select-all-text();
     copy-buffer := TextInput { width: 0px; height: 0px; }
     copy-raw(raw) => {
         copy-buffer.text = raw; copy-buffer.select-all(); copy-buffer.copy(); copy-buffer.text = "";
@@ -1318,6 +1324,12 @@ export component MainWindow inherits Window {
                             copy-text(text) => { root.copy-raw(text); }
                             copy-original(id) => { root.cloud-copy-original(id); }
                             open-resource(id) => { root.timeline-open(id); }
+                            show-context-menu(x, y, selected) => {
+                                TextMenuState.anchor-x = x;
+                                TextMenuState.anchor-y = y;
+                                TextMenuState.has-selection = selected;
+                                TextMenuState.open = true;
+                            }
                         }
                     }
                     // Status dock: the plan capsule sits between the timeline
@@ -2033,6 +2045,22 @@ export component MainWindow inherits Window {
     // The toast floats clear of the title strip: the chrome paints above it,
     // so a toast anchored at y=0 would lose its top edge under the strip.
     ToastHost { z: 300; width: root.width; height: 52px; x: 0px; y: Theme.titlebar-height + 4px; }
+
+    // Right-click menu for transcript text, above every page but below the
+    // toast host: it is dismissed by any outside click.
+    TextMenu {
+        z: 290;
+        x: 0px;
+        y: Theme.titlebar-height;
+        width: root.width;
+        height: max(0px, root.height - Theme.titlebar-height);
+        open <=> TextMenuState.open;
+        anchor-x <=> TextMenuState.anchor-x;
+        anchor-y <=> TextMenuState.anchor-y;
+        has-selection <=> TextMenuState.has-selection;
+        copy-selection => { root.copy-selection(); }
+        select-all => { root.select-all-text(); }
+    }
 
     Timer { interval: 4200ms; running: ToastState.message != ""; triggered => { ToastState.message = ""; } }
 }

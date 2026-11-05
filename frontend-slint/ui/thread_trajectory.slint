@@ -2,10 +2,17 @@
 // detail text are pre-projected and pre-bounded in Rust; Slint only lays out
 // what it was handed. The --tt-* palette matches web `thread-trajectory.css`
 // value for value so both shells render the same trajectory experience.
-import { Theme, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar } from "theme.slint";
+import { MdBlock, Theme, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajTab, TrajSearchHit, TrajTokenBar } from "theme.slint";
+import { BlockView } from "markdown-rich.slint";
+import { TextMenuState } from "text_menu.slint";
 import { I18n } from "i18n.slint";
 import { TextFieldActivation, TextFieldMenu } from "text_field.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
+
+// 详情面板的本地富文本投影：AI 原文（输出/结果/思考/输入）由 Rust 侧
+// from_text 一次性解析成 [MdBlock]，用 BlockView 渲染；工具参数与 JSON 契约
+// 不是 Markdown 文档，把 blocks 留空以保留原来的纯文本展示与复制/全选菜单。
+export struct TrajMdSection { title: string, body: string, blocks: [MdBlock] }
 
 // Keep the trajectory's typography independent of the surrounding workbench.
 component TrajText inherits Text { font-family: "Segoe UI"; }
@@ -160,7 +167,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
     in property <[TrajTab]> detail-tabs;
     in property <int> detail-tab: 0;
     in property <[TrajTiming]> overview-rows;
-    in property <[TrajSection]> sections;
+    in property <[TrajMdSection]> sections;
     in property <[TrajTiming]> timing-rows;
     in property <string> raw-text;
     in property <int> selected-index: -1;
@@ -1143,33 +1150,56 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                     visible: section-card.expanded;
                                     x: 0px; y: section-card.show-heading ? 24.5px : 0px;
                                     width: parent.width;
-                                    height: min(280px, section-content.preferred-height + (section-card.code ? 28px : 54px));
+                                    height: min(280px, section-body.preferred-height + (section-card.code ? 28px : 54px));
                                     horizontal-scrollbar-policy: always-off;
                                     vertical-scrollbar-policy: as-needed;
                                     content-width: self.visible-width;
-                                    content-height: section-content.preferred-height + (section-card.code ? 28px : 54px);
+                                    content-height: section-body.preferred-height + (section-card.code ? 28px : 54px);
                                     Rectangle {
                                         width: section-scroll.visible-width;
-                                        height: section-content.preferred-height + (section-card.code ? 28px : 54px);
+                                        height: section-body.preferred-height + (section-card.code ? 28px : 54px);
                                         background: section-card.code ? TrajTokens.code-bg : white;
-                                        ContextMenuArea {
-                                            Menu {
-                                                MenuItem { title: @tr("Copy"); activated => { section-content.copy(); } }
-                                                MenuItem { title: @tr("Select All"); activated => { section-content.select-all(); } }
+                                        section-body := VerticalLayout {
+                                            x: 14px; y: section-card.code ? 14px : 25px;
+                                            width: section-scroll.visible-width - 28px;
+                                            spacing: 0px;
+
+                                            // AI 原文（输出/结果/思考/输入）：Rust 侧已把 body
+                                            // 解析成 [MdBlock]，逐块交给 BlockView 渲染。
+                                            for block in section.blocks : BlockView {
+                                                block: block;
+                                                column-width: section-scroll.visible-width - 28px;
+                                                // 详情面板没有独立的复制/资源通道：右键交给主
+                                                // 窗口统一的 TextMenuState 菜单处理，不破坏编译。
+                                                context-menu(x, y, selected) => {
+                                                    TextMenuState.anchor-x = x;
+                                                    TextMenuState.anchor-y = y;
+                                                    TextMenuState.has-selection = selected;
+                                                    TextMenuState.open = true;
+                                                }
                                             }
-                                            section-content := TrajTextInput {
-                                                x: 14px; y: section-card.code ? 14px : 25px;
-                                                width: section-scroll.visible-width - 28px;
-                                                height: self.preferred-height;
-                                                text: section.body;
-                                                read-only: true; single-line: false;
-                                                wrap: word-wrap;
-                                                font-family: section-card.code ? Theme.font-mono : "Segoe UI";
-                                                font-size: section-card.code ? 12px : 13px;
-                                                line-height-factor: section-card.code ? 1.05 : 1.18;
-                                                color: TrajTokens.text;
-                                                selection-background-color: TrajTokens.brand-soft;
-                                                selection-foreground-color: TrajTokens.text;
+
+                                            // 工具参数 / JSON 契约不是 Markdown 文档：blocks 为
+                                            // 空时保留原来的纯文本展示与复制/全选菜单。
+                                            if section.blocks.length == 0 : ContextMenuArea {
+                                                height: section-content.preferred-height;
+                                                Menu {
+                                                    MenuItem { title: @tr("Copy"); activated => { section-content.copy(); } }
+                                                    MenuItem { title: @tr("Select All"); activated => { section-content.select-all(); } }
+                                                }
+                                                section-content := TrajTextInput {
+                                                    width: section-scroll.visible-width - 28px;
+                                                    height: self.preferred-height;
+                                                    text: section.body;
+                                                    read-only: true; single-line: false;
+                                                    wrap: word-wrap;
+                                                    font-family: section-card.code ? Theme.font-mono : "Segoe UI";
+                                                    font-size: section-card.code ? 12px : 13px;
+                                                    line-height-factor: section-card.code ? 1.05 : 1.18;
+                                                    color: TrajTokens.text;
+                                                    selection-background-color: TrajTokens.brand-soft;
+                                                    selection-foreground-color: TrajTokens.text;
+                                                }
                                             }
                                         }
                                     }

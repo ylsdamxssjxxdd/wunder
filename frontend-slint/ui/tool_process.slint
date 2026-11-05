@@ -5,7 +5,7 @@ import { I18n } from "i18n.slint";
 import { ToolIcons } from "tool_icons.slint";
 import { WorkflowDetail } from "workflow_detail.slint";
 import { PatchDiffCard } from "patch_diff_card.slint";
-import { MarkdownBlock } from "markdown.slint";
+import { BlockView } from "markdown-rich.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
 
 component ProcessEntryCard inherits Rectangle {
@@ -13,20 +13,20 @@ component ProcessEntryCard inherits Rectangle {
     callback toggle(int);
     callback copy-text(string);
     callback open-resource(string);
+    callback show-context-menu(length, length, bool);
     height: column.preferred-height;
     column := VerticalLayout {
         spacing: 0px;
         if root.entry.kind == 1 : VerticalLayout {
             padding-left: 24px; padding-right: 24px;
             padding-top: 6px; padding-bottom: 6px; spacing: 6px;
-            for block in root.entry.blocks : MarkdownBlock {
+            for block in root.entry.blocks : BlockView {
                 block: block;
-                copy-code(text) => { root.copy-text(text); }
+                column-width: root.width - 48px;
+                copy-text(text) => { root.copy-text(text); }
                 open-resource(path) => { root.open-resource(path); }
-            }
-            if root.entry.blocks.length == 0 : TextInput {
-                text: root.entry.text; read-only: true; wrap: word-wrap;
-                color: Theme.text; font-size: Theme.font-lg;
+                link-clicked(path) => { root.open-resource(path); }
+                context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
             }
         }
         if root.entry.kind != 1 : Rectangle {
@@ -182,6 +182,7 @@ export component ToolProcess inherits Rectangle {
     callback page(int);
     in property <length> viewport-limit: Theme.workflow-height;
     callback toggle(int);
+    callback show-context-menu(length, length, bool);
     callback copy-text(string);
     callback open-resource(string);
     // Grow naturally for a few entries; long processes keep their own scroll.
@@ -261,6 +262,7 @@ export component ToolProcess inherits Rectangle {
             toggle(index) => { root.toggle(index); }
             copy-text(text) => { root.copy-text(text); }
             open-resource(path) => { root.open-resource(path); }
+            show-context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
         }
         scrolled => {
             root.follow-tail = self.visible-height - self.content-height - self.content-y >= -32px;

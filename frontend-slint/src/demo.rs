@@ -357,6 +357,7 @@ fn fixture_row(kind: i32, index: usize, text: &str) -> TimelineRow {
         id: format!("demo-{index}").into(),
         visible: true,
         text: text.into(),
+        reasoning_blocks: ModelRc::default(),
         time: if kind == crate::timeline::KIND_USER {
             crate::timeline_text::clock_hhmm_now().into()
         } else {

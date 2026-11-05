@@ -171,6 +171,7 @@ skills: # Skills 技能配置
     - 文稿校对
     - 3D网页
     - 视频制作
+    - 图纸设计
 
 tools: # 内置工具配置
   builtin:

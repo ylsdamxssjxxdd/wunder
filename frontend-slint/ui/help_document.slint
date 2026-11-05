@@ -1,12 +1,14 @@
 import { ScrollView } from "std-widgets.slint";
-import { HelpDocs, HelpTextRun, HelpRect } from "help_models.slint";
+import { HelpDocs, HelpMenuState } from "help_models.slint";
+import { BlockView } from "markdown-rich.slint";
+import { TextMenu } from "text_menu.slint";
 
-// The typeset help document: the controller lays the topic out with parley and
-// ships absolute-positioned runs/rects; this view only projects them, handles
-// scrolling, text selection and link activation.
+// The manual is Markdown. Rust projects the current topic once into the same
+// flat `[MdBlock]` model the chat transcript uses; this view lays the blocks
+// out with BlockView, so headings, lists, tables, code and images read exactly
+// like a finished answer. Paragraph selection and the right-click menu come
+// from the same fork of StyledText.
 export component HelpDocument inherits Rectangle {
-    // Local mirrors of the global coordination signals; `changed` handlers are
-    // declared on the local two-way aliases.
     property <int> scroll-request <=> HelpDocs.scroll-request;
     property <int> reveal-request <=> HelpDocs.reveal-request;
     background: #ffffff;
@@ -18,7 +20,7 @@ export component HelpDocument inherits Rectangle {
     }
     keyboard := FocusScope {
         key-pressed(event) => {
-            if event.modifiers.control && (event.text == "a" || event.text == "A") { HelpDocs.select-all(); return accept; }
+            // Ctrl+A / Ctrl+C are handled by the window-level selection layer.
             if event.text == Key.DownArrow || event.text == Key.PageDown {
                 scroll.content-y = max(min(0px, scroll.visible-height - scroll.content-height), scroll.content-y - (event.text == Key.PageDown ? scroll.visible-height * 0.9 : 40px));
                 return accept;
@@ -34,72 +36,44 @@ export component HelpDocument inherits Rectangle {
     }
     scroll := ScrollView {
         content-width: self.visible-width;
-        content-height: max(self.visible-height, HelpDocs.document-height * 1px);
-        Rectangle {
+        content-height: max(self.visible-height, body.preferred-height);
+        body := VerticalLayout {
             width: scroll.visible-width;
-            height: scroll.content-height;
-            for box in HelpDocs.decorations : Rectangle {
-                x: box.x * 1px;
-                y: box.y * 1px;
-                width: box.width * 1px;
-                height: box.height * 1px;
-                background: box.fill;
-                border-color: box.border;
-                border-width: box.border-width * 1px;
-                border-radius: box.radius * 1px;
-            }
-            for img in HelpDocs.images : Image {
-                x: img.x * 1px;
-                y: img.y * 1px;
-                width: img.width * 1px;
-                height: img.height * 1px;
-                source: img.source;
-                image-fit: fill;
-                accessible-role: image;
-                accessible-label: img.alt;
-            }
-            for mark in HelpDocs.matches : Rectangle {
-                x: mark.x * 1px;
-                y: mark.y * 1px;
-                width: mark.width * 1px;
-                height: mark.height * 1px;
-                background: mark.fill;
-            }
-            for mark in HelpDocs.selection : Rectangle {
-                x: mark.x * 1px;
-                y: mark.y * 1px;
-                width: mark.width * 1px;
-                height: mark.height * 1px;
-                background: mark.fill;
-            }
-            for run in HelpDocs.runs : Text {
-                x: run.x * 1px;
-                y: run.y * 1px;
-                width: run.width * 1px;
-                height: run.height * 1px;
-                text: run.text;
-                font-size: run.size * 1px;
-                font-weight: run.weight;
-                color: run.color;
-                font-family: run.family;
-                vertical-alignment: center;
-            }
-            pointer := TouchArea {
-                mouse-cursor: HelpDocs.over-link ? MouseCursor.pointer : MouseCursor.text;
-                pointer-event(event) => {
-                    if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
-                        keyboard.focus();
-                        HelpDocs.pointer(self.mouse-x / 1px, self.mouse-y / 1px, 0);
-                    }
-                    if event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
-                        HelpDocs.pointer(self.mouse-x / 1px, self.mouse-y / 1px, 2);
-                    }
-                    if event.kind == PointerEventKind.cancel { HelpDocs.pointer(0, 0, 4); }
+            padding-left: 22px;
+            padding-right: 22px;
+            padding-top: 10px;
+            padding-bottom: 32px;
+            alignment: start;
+            for block in HelpDocs.blocks : BlockView {
+                block: block;
+                column-width: scroll.visible-width - 44px;
+                font-scale: HelpDocs.font-scale;
+                link-clicked(url) => { HelpDocs.link-opened(url); }
+                open-resource(url) => { HelpDocs.link-opened(url); }
+                copy-text(value) => {
+                    HelpDocs.copy-text = value;
+                    HelpDocs.copy-request += 1;
                 }
-                moved => { HelpDocs.pointer(self.mouse-x / 1px, self.mouse-y / 1px, 1); }
-                changed mouse-x => { if !self.pressed { HelpDocs.pointer(self.mouse-x / 1px, self.mouse-y / 1px, 3); } }
-                changed mouse-y => { if !self.pressed { HelpDocs.pointer(self.mouse-x / 1px, self.mouse-y / 1px, 3); } }
+                context-menu(x, y, selected) => {
+                    // The callback reports window coordinates; the menu is
+                    // anchored inside this document's own coordinate space.
+                    HelpMenuState.anchor-x = x - root.absolute-position.x;
+                    HelpMenuState.anchor-y = y - root.absolute-position.y;
+                    HelpMenuState.has-selection = selected;
+                    HelpMenuState.open = true;
+                }
             }
         }
+    }
+    TextMenu {
+        z: 30;
+        width: root.width;
+        height: root.height;
+        open <=> HelpMenuState.open;
+        anchor-x <=> HelpMenuState.anchor-x;
+        anchor-y <=> HelpMenuState.anchor-y;
+        has-selection <=> HelpMenuState.has-selection;
+        copy-selection => { HelpDocs.copy-requested(); }
+        select-all => { HelpDocs.select-all(); }
     }
 }

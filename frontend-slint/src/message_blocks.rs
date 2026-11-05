@@ -1,21 +1,24 @@
 //! Bounded native Markdown projection.
 //!
-//! Streaming output remains plain text and is published as a frozen prefix of
+//! Streaming output stays plain text and is published as a frozen prefix of
 //! completed lines plus one active tail block, so a growing answer costs
-//! O(tail) per frame instead of re-shaping the whole message. Once a model
-//! response is terminal we parse its visible window once with pulldown-cmark.
-//! Text blocks carry a marker-free plain projection so the read-only text
-//! controls in the bubble stay selectable and copyable with the mouse; code
-//! blocks keep Slint's StyledText rendering for syntax colours.
-use crate::TextBlock;
-use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+//! O(tail) per frame instead of laying out the whole message. Markdown parsing
+//! runs **once**, when the model response reaches a terminal state: a 5k-block
+//! answer projects in ~13 ms, and re-projecting it on every stream tick would
+//! cost more than the model takes to emit the next token.
+//!
+//! The projected rows are the flat `MdBlock` model of `src/md`, rendered by
+//! `ui/markdown-rich.slint`.
+use crate::md::block as md;
+use crate::md::MarkdownRenderer;
+use crate::MdBlock;
 use slint::{Model, ModelRc, StyledText, VecModel};
 use std::rc::Rc;
 
 const DISPLAY_BYTES: usize = 16 * 1024;
 const DISPLAY_LINES: usize = 160;
 /// Completed lines are frozen into their own block once the live tail passes
-/// this budget; only the tail is re-shaped on the following frame.
+/// this budget; only the tail is re-laid-out on the following frame.
 const TAIL_BYTES: usize = 2 * 1024;
 /// Upper bound for one frozen block.
 const FROZEN_CHUNK_BYTES: usize = 4 * 1024;
@@ -24,19 +27,15 @@ const FROZEN_CHUNK_BYTES: usize = 4 * 1024;
 /// those would cost more than the tail it is meant to bound.
 const REBASE_SLACK: usize = 4 * 1024;
 /// Shown at the head once the display window drops older lines; streaming and
-/// the settled view use the same words so the settle step never reshapes it.
+/// the settled view use the same words so the settle step never reflows it.
 const TRUNCATED_NOTICE: &str = "仅展示最近 16 KiB 或 160 行；点击气泡下方“复制”获取完整原文。";
 pub const MAX_TEXT_BYTES: usize = 8 * 1024 * 1024;
-const KIND_TEXT: i32 = 0;
-const KIND_CODE: i32 = 1;
-const KIND_QUOTE: i32 = 4;
-const KIND_TABLE: i32 = 5;
-pub(crate) const KIND_IMAGE: i32 = 6;
-const KIND_H1: i32 = 10;
+pub(crate) const KIND_IMAGE: i32 = md::IMAGE;
 
 pub struct Blocks {
     pub raw: String,
-    pub model: Rc<VecModel<TextBlock>>,
+    pub model: Rc<VecModel<MdBlock>>,
+    renderer: MarkdownRenderer,
     rendered: bool,
     /// Byte offset in `raw` where the published window starts. It only moves
     /// forward when the reply outgrows the display budget.
@@ -47,11 +46,18 @@ pub struct Blocks {
     tail: Option<usize>,
 }
 
+impl Default for Blocks {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Blocks {
     pub fn new() -> Self {
         Self {
             raw: String::new(),
             model: Rc::new(VecModel::default()),
+            renderer: MarkdownRenderer::new(),
             rendered: false,
             window: 0,
             frozen: 0,
@@ -104,9 +110,9 @@ impl Blocks {
             return;
         }
         let (source, head_capped) = visible_source(&self.raw);
-        let mut blocks = markdown_blocks(source);
+        let mut blocks = self.renderer.render(source);
         if head_capped {
-            blocks.insert(0, text_block(TRUNCATED_NOTICE, KIND_H1));
+            blocks.insert(0, notice_block(TRUNCATED_NOTICE));
         }
         self.model.set_vec(blocks);
         self.tail = None;
@@ -139,7 +145,7 @@ impl Blocks {
         self.tail = None;
         self.model.set_vec(Vec::new());
         if start > 0 {
-            self.model.push(plain_text_block(TRUNCATED_NOTICE));
+            self.model.push(notice_block(TRUNCATED_NOTICE));
         }
     }
 
@@ -166,7 +172,7 @@ impl Blocks {
             if text.is_empty() {
                 continue;
             }
-            self.model.insert(at + inserted, plain_text_block(text));
+            self.model.insert(at + inserted, plain_block(text));
             inserted += 1;
         }
         if inserted > 0 {
@@ -178,10 +184,10 @@ impl Blocks {
     fn publish_tail(&mut self) {
         let text = &self.raw[self.frozen..];
         match self.tail {
-            Some(index) => self.model.set_row_data(index, plain_text_block(text)),
+            Some(index) => self.model.set_row_data(index, plain_block(text)),
             None if !text.is_empty() => {
                 let index = self.model.row_count();
-                self.model.push(plain_text_block(text));
+                self.model.push(plain_block(text));
                 self.tail = Some(index);
             }
             None => {}
@@ -189,77 +195,35 @@ impl Blocks {
     }
 }
 
-pub fn from_text(text: &str) -> ModelRc<TextBlock> {
+/// Parse a finished message straight into a ready-to-render row model.
+pub fn from_text(text: &str) -> ModelRc<MdBlock> {
     let mut blocks = Blocks::new();
     blocks.raw = text.to_owned();
     blocks.finalize_markdown();
     ModelRc::from(blocks.model)
 }
 
+/// Project a whole document without the streaming display-window cap.
+///
+/// A chat answer over 16 KiB only shows its newest lines, because the live
+/// transcript is a tail view. A static document (the help manual) is not a
+/// stream: it must be rendered in full, so it bypasses `Blocks` entirely.
+pub fn render_full(source: &str) -> Vec<MdBlock> {
+    MarkdownRenderer::new().render(source)
+}
+
 /// The user bubble's local echo: the message text plus one image card per
 /// composer attachment, sourced from its data URL. The durable projection
 /// replaces these cards with the stored paths once the turn publishes.
-pub fn with_image_cards(text: &str, images: &[(String, String)]) -> ModelRc<TextBlock> {
+pub fn with_image_cards(text: &str, images: &[(String, String)]) -> ModelRc<MdBlock> {
     let blocks = from_text(text);
-    let Some(model) = blocks.as_any().downcast_ref::<VecModel<TextBlock>>() else {
+    let Some(model) = blocks.as_any().downcast_ref::<VecModel<MdBlock>>() else {
         return blocks;
     };
     for (name, source) in images {
-        model.push(image_block(name, source));
+        model.push(image_card(name, source));
     }
     blocks
-}
-
-/// Classify supported image references without reading the filesystem.
-pub fn workspace_image_source(source: &str) -> Option<&str> {
-    let path = source.split(['?', '#']).next()?.trim();
-    // Final authorization (including absolute/file/public workspace paths)
-    // belongs to NativeDesktop; never open these paths in the UI.
-    if path.is_empty()
-        || path.starts_with("//")
-        || path.contains("://") && !path.starts_with("file://")
-    {
-        return None;
-    }
-    let extension = path.rsplit('.').next()?.to_ascii_lowercase();
-    matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp").then_some(path)
-}
-
-fn workspace_document_source(source: &str) -> bool {
-    let path = source.split(['?', '#']).next().unwrap_or_default();
-    if path.starts_with('#')
-        || path.starts_with("//")
-        || path.contains("://") && !path.starts_with("file://")
-    {
-        return false;
-    }
-    let extension = path
-        .rsplit('.')
-        .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    matches!(
-        extension.as_str(),
-        "pdf"
-            | "doc"
-            | "docx"
-            | "xls"
-            | "xlsx"
-            | "csv"
-            | "ppt"
-            | "pptx"
-            | "odt"
-            | "ods"
-            | "txt"
-            | "md"
-            | "markdown"
-            | "rtf"
-            | "json"
-            | "yaml"
-            | "yml"
-            | "xml"
-            | "drawio"
-    )
 }
 
 /// The published window keeps the newest lines, so a long answer never freezes
@@ -296,121 +260,62 @@ fn window_start(text: &str) -> usize {
     start
 }
 
-fn styled(text: &str) -> StyledText {
-    StyledText::from_markdown(text).unwrap_or_else(|_| StyledText::from_plain_text(text))
-}
-
-fn text_block(text: &str, kind: i32) -> TextBlock {
-    TextBlock {
-        text: text.into(),
-        styled: styled(text),
-        kind,
-        table_cells: string_model(Vec::new()),
-        table_columns: 0,
-        table_rows: string_model(Vec::new()),
-        image: slint::Image::default(),
-        image_source: "".into(),
-        resource_name: "".into(),
-        language: "".into(),
+/// A streaming placeholder: one plain paragraph, never parsed as Markdown.
+fn plain_block(text: &str) -> MdBlock {
+    MdBlock {
+        text: StyledText::from_plain_text(text),
+        plain: text.into(),
+        ..blank(md::PARAGRAPH)
     }
 }
 
-fn table_block(rows: &[String], columns: usize) -> TextBlock {
-    let text = rows.join("\n");
-    TextBlock {
-        text: text.clone().into(),
-        styled: StyledText::from_plain_text(&text),
-        kind: KIND_TABLE,
-        table_cells: string_model(
-            rows.iter()
-                .flat_map(|row| row.split("\u{1f}").map(str::to_owned))
-                .collect(),
-        ),
-        table_columns: columns as i32,
-        table_rows: string_model(
-            rows.iter()
-                .map(|row| row.replace('\u{1f}', "  |  "))
-                .collect(),
-        ),
-        image: slint::Image::default(),
-        image_source: "".into(),
-        resource_name: "".into(),
-        language: "".into(),
+fn notice_block(text: &str) -> MdBlock {
+    MdBlock {
+        text: StyledText::from_plain_text(text),
+        plain: text.into(),
+        ..blank(md::PARAGRAPH)
     }
 }
 
-fn image_block(alt: &str, source: &str) -> TextBlock {
-    TextBlock {
-        text: if alt.trim().is_empty() {
-            source
-                .split(['?', '#'])
-                .next()
-                .and_then(|value| value.rsplit(['/', '\\']).next())
-                .filter(|value| !value.is_empty())
-                .unwrap_or("图片")
-                .into()
-        } else {
-            alt.into()
-        },
-        styled: StyledText::from_plain_text(alt),
-        kind: KIND_IMAGE,
-        table_cells: string_model(Vec::new()),
-        table_columns: 0,
-        table_rows: string_model(Vec::new()),
-        image: slint::Image::default(),
-        image_source: source.into(),
-        resource_name: "".into(),
-        language: "".into(),
-    }
-}
-
-fn document_block(label: &str, source: &str) -> TextBlock {
-    let fallback = source
-        .split(['?', '#'])
-        .next()
-        .and_then(|value| value.rsplit(['/', '\\']).next())
-        .filter(|value| !value.is_empty())
-        .unwrap_or("文件");
-    let title = if label.trim().is_empty() {
-        fallback
+fn image_card(alt: &str, source: &str) -> MdBlock {
+    let label = if alt.trim().is_empty() {
+        crate::md::source::file_name(source, "图片")
     } else {
-        label
+        alt.to_string()
     };
-    TextBlock {
-        text: title.into(),
-        styled: StyledText::from_plain_text(title),
-        kind: 7,
-        table_cells: string_model(Vec::new()),
-        table_columns: 0,
-        table_rows: string_model(Vec::new()),
-        image: crate::file_icons::workspace_file_icon(fallback, "file"),
+    MdBlock {
         image_source: source.into(),
-        resource_name: fallback.into(),
-        language: "".into(),
+        plain: label.as_str().into(),
+        ..blank(md::IMAGE)
     }
 }
 
-fn plain_text_block(text: &str) -> TextBlock {
-    TextBlock {
-        text: text.into(),
-        styled: StyledText::from_plain_text(text),
-        kind: KIND_TEXT,
-        table_cells: string_model(Vec::new()),
-        table_columns: 0,
-        table_rows: string_model(Vec::new()),
+/// Every field spelled out once: a new field on `MdBlock` then fails here
+/// instead of silently defaulting at each call site.
+fn blank(kind: i32) -> MdBlock {
+    MdBlock {
+        kind,
+        level: 0,
+        text: StyledText::default(),
+        plain: slint::SharedString::default(),
+        language: slint::SharedString::default(),
+        code: slint::SharedString::default(),
+        code_text: StyledText::default(),
+        depth: 0,
+        marker: slint::SharedString::default(),
+        task: 0,
+        quoted: false,
+        columns: 0,
+        widths: ModelRc::default(),
+        cells: ModelRc::default(),
         image: slint::Image::default(),
-        image_source: "".into(),
-        resource_name: "".into(),
-        language: "".into(),
+        image_source: slint::SharedString::default(),
+        image_width: 0.0,
+        image_height: 0.0,
+        image_error: false,
+        resource_name: slint::SharedString::default(),
+        space_before: 0.0,
     }
-}
-
-fn string_model(values: Vec<String>) -> slint::ModelRc<slint::SharedString> {
-    let values = values
-        .into_iter()
-        .map(Into::into)
-        .collect::<Vec<slint::SharedString>>();
-    slint::ModelRc::from(Rc::new(VecModel::from(values)))
 }
 
 /// Split a completed run of lines into bounded frozen blocks, preferring blank
@@ -455,266 +360,6 @@ fn char_boundary_down(text: &str, mut index: usize) -> usize {
     index
 }
 
-fn flush_block(blocks: &mut Vec<TextBlock>, text: &mut String, kind: &mut i32) {
-    let value = if *kind == KIND_CODE {
-        text.as_str()
-    } else {
-        text.trim()
-    };
-    if !value.is_empty() {
-        blocks.push(text_block(value, *kind));
-    }
-    text.clear();
-    *kind = KIND_TEXT;
-}
-
-fn markdown_blocks(source: &str) -> Vec<TextBlock> {
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-    options.insert(Options::ENABLE_TABLES);
-    options.insert(Options::ENABLE_TASKLISTS);
-    let mut blocks = Vec::new();
-    let mut text = String::new();
-    let mut kind = KIND_TEXT;
-    let mut code = false;
-    let mut language = String::new();
-    let mut document: Option<(String, String)> = None;
-    let mut quote = false;
-    let mut list_depth = 0usize;
-    let mut ordered: Vec<Option<u64>> = Vec::new();
-    let mut links: Vec<String> = Vec::new();
-    let mut link_starts: Vec<usize> = Vec::new();
-    let mut table = false;
-    let mut table_cells: Vec<String> = Vec::new();
-    let mut cell = String::new();
-    let mut table_rows: Vec<String> = Vec::new();
-    let mut image_target: Option<String> = None;
-    let mut image_alt = String::new();
-
-    for event in Parser::new_ext(source, options) {
-        if let Some((target, label)) = document.as_mut() {
-            match &event {
-                Event::End(TagEnd::Link) => {
-                    blocks.push(document_block(label, target));
-                    document = None;
-                }
-                Event::Text(value) | Event::Code(value) => label.push_str(value),
-                Event::SoftBreak | Event::HardBreak => label.push(' '),
-                _ => {}
-            }
-            continue;
-        }
-        if table {
-            match &event {
-                Event::Code(value) => {
-                    cell.push_str(value);
-                    continue;
-                }
-                Event::Start(
-                    Tag::Emphasis | Tag::Strong | Tag::Strikethrough | Tag::Link { .. },
-                )
-                | Event::End(
-                    TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Link,
-                ) => continue,
-                Event::Start(Tag::Image { dest_url, .. }) => {
-                    cell.push_str(dest_url);
-                    continue;
-                }
-                Event::End(TagEnd::Image) => continue,
-                _ => {}
-            }
-        }
-        match event {
-            Event::End(TagEnd::Paragraph) => {
-                if list_depth == 0 && !table && !text.ends_with('\n') {
-                    text.push('\n');
-                }
-            }
-            Event::Start(Tag::Heading { level, .. }) => {
-                flush_block(&mut blocks, &mut text, &mut kind);
-                kind = KIND_H1 + level as i32 - 1;
-            }
-            Event::End(TagEnd::Heading(_)) => flush_block(&mut blocks, &mut text, &mut kind),
-            Event::Start(Tag::CodeBlock(kind_info)) => {
-                flush_block(&mut blocks, &mut text, &mut kind);
-                code = true;
-                kind = KIND_CODE;
-                language = match kind_info {
-                    CodeBlockKind::Fenced(info) => info
-                        .split_whitespace()
-                        .next()
-                        .unwrap_or_default()
-                        .to_owned(),
-                    CodeBlockKind::Indented => String::new(),
-                };
-            }
-            Event::End(TagEnd::CodeBlock) => {
-                code = false;
-                let mut block = plain_text_block(&text);
-                block.kind = KIND_CODE;
-                block.styled = crate::code_highlight::highlight(&text, &language);
-                block.language = language.as_str().into();
-                blocks.push(block);
-                text.clear();
-                kind = KIND_TEXT;
-            }
-            Event::Start(Tag::BlockQuote) => {
-                flush_block(&mut blocks, &mut text, &mut kind);
-                quote = true;
-                kind = KIND_QUOTE;
-            }
-            Event::End(TagEnd::BlockQuote) => {
-                quote = false;
-                flush_block(&mut blocks, &mut text, &mut kind);
-            }
-            Event::Start(Tag::List(start)) => {
-                list_depth += 1;
-                ordered.push(start);
-            }
-            Event::End(TagEnd::List(_)) => {
-                list_depth = list_depth.saturating_sub(1);
-                ordered.pop();
-                // The list stays in the surrounding text block: splitting at
-                // the list boundary made drag selection stop there, and item
-                // lines already carry their own newlines.
-            }
-            Event::Start(Tag::Item) => {
-                if !text.is_empty() {
-                    text.push('\n');
-                }
-                text.push_str(&"  ".repeat(list_depth.saturating_sub(1)));
-                if let Some(Some(index)) = ordered.last_mut() {
-                    text.push_str(&format!("{index}. "));
-                    *index += 1;
-                } else {
-                    text.push_str("• ");
-                }
-            }
-            Event::End(TagEnd::Item) => text.push('\n'),
-            Event::Start(Tag::Emphasis) => {}
-            Event::End(TagEnd::Emphasis) => {}
-            Event::Start(Tag::Strong) => {}
-            Event::End(TagEnd::Strong) => {}
-            Event::Start(Tag::Strikethrough) => {}
-            Event::End(TagEnd::Strikethrough) => {}
-            Event::Start(Tag::Link { dest_url, .. }) => {
-                if workspace_document_source(&dest_url) {
-                    flush_block(&mut blocks, &mut text, &mut kind);
-                    document = Some((dest_url.to_string(), String::new()));
-                    continue;
-                }
-                link_starts.push(text.len());
-                links.push(dest_url.to_string());
-            }
-            Event::End(TagEnd::Link) => {
-                let url = links.pop().unwrap_or_default();
-                let start = link_starts.pop().unwrap_or(text.len());
-                // Render remote links as readable text: keep the label and
-                // append the target once, skipping labels that already are the
-                // target. The full markdown stays available via message copy.
-                let labeled = text.len() > start && &text[start..] != url;
-                if labeled {
-                    text.push_str(" (");
-                }
-                text.push_str(&url);
-                if labeled {
-                    text.push(')');
-                }
-            }
-            Event::Start(Tag::Image { dest_url, .. }) => {
-                image_target = Some(dest_url.to_string());
-                image_alt.clear();
-            }
-            Event::End(TagEnd::Image) => {
-                if let Some(source) = image_target.take() {
-                    if workspace_image_source(&source).is_some() {
-                        flush_block(&mut blocks, &mut text, &mut kind);
-                        blocks.push(image_block(&image_alt, &source));
-                    } else if workspace_document_source(&source) {
-                        flush_block(&mut blocks, &mut text, &mut kind);
-                        blocks.push(document_block(&image_alt, &source));
-                    } else {
-                        if image_alt.is_empty() {
-                            text.push_str("图片 ");
-                        } else {
-                            text.push_str(&image_alt);
-                            text.push(' ');
-                        }
-                        text.push('（');
-                        text.push_str(&source);
-                        text.push('）');
-                    }
-                }
-            }
-            Event::Code(value) => {
-                text.push_str(&value);
-            }
-            Event::Text(value) | Event::Html(value) | Event::InlineHtml(value) => {
-                if image_target.is_some() {
-                    image_alt.push_str(&value);
-                } else if table {
-                    cell.push_str(&value);
-                } else {
-                    text.push_str(&value);
-                }
-            }
-            Event::SoftBreak | Event::HardBreak => {
-                if table {
-                    cell.push(' ');
-                } else {
-                    text.push('\n');
-                }
-            }
-            Event::Rule => {
-                flush_block(&mut blocks, &mut text, &mut kind);
-                blocks.push(text_block("────────────────", KIND_QUOTE));
-            }
-            Event::Start(Tag::Table(_)) => {
-                flush_block(&mut blocks, &mut text, &mut kind);
-                table = true;
-                kind = KIND_TABLE;
-            }
-            Event::End(TagEnd::Table) => {
-                if !table_cells.is_empty() {
-                    table_rows.push(table_cells.join("\u{1f}"));
-                }
-                blocks.push(table_block(
-                    &table_rows,
-                    table_rows
-                        .first()
-                        .map_or(0, |row| row.split('\u{1f}').count()),
-                ));
-                table_cells.clear();
-                table_rows.clear();
-                text.clear();
-                table = false;
-                kind = KIND_TEXT;
-            }
-            Event::Start(Tag::TableRow) => {}
-            Event::End(TagEnd::TableRow) | Event::End(TagEnd::TableHead) => {
-                text.push_str(&table_cells.join("  |  "));
-                text.push('\n');
-                table_rows.push(table_cells.join("\u{1f}"));
-                table_cells.clear();
-            }
-            Event::Start(Tag::TableCell) => cell.clear(),
-            Event::End(TagEnd::TableCell) => {
-                table_cells.push(std::mem::take(&mut cell));
-            }
-            Event::TaskListMarker(checked) => text.push_str(if checked { "☑ " } else { "☐ " }),
-            Event::FootnoteReference(label) => {
-                text.push('[');
-                text.push_str(&label);
-                text.push(']');
-            }
-            _ => {}
-        }
-    }
-    flush_block(&mut blocks, &mut text, &mut kind);
-    let _ = (code, quote);
-    blocks
-}
-
 /// Match the web's tail-only single-line thinking preview.
 pub fn reasoning_preview(text: &str) -> slint::SharedString {
     let tail: Vec<char> = text.chars().rev().take(640).collect();
@@ -741,8 +386,12 @@ mod tests {
         blocks
             .model
             .iter()
-            .map(|block| block.text.to_string())
+            .map(|block| block.plain.to_string())
             .collect()
+    }
+
+    fn kinds(blocks: &Blocks) -> Vec<i32> {
+        blocks.model.iter().map(|block| block.kind).collect()
     }
 
     #[test]
@@ -844,7 +493,22 @@ mod tests {
     }
 
     #[test]
-    fn finalize_after_streaming_parses_the_window_once() {
+    fn streaming_publishes_plain_paragraphs_only() {
+        let source = "# 标题\n\n**粗体** 段落\n\n```rust\nlet value = 1;\n```\n";
+        let mut blocks = Blocks::new();
+        for line in source.split_inclusive('\n') {
+            blocks.append(line).unwrap();
+            blocks.flush();
+        }
+        assert!(
+            kinds(&blocks).iter().all(|kind| *kind == md::PARAGRAPH),
+            "streaming must not parse Markdown: {:?}",
+            kinds(&blocks)
+        );
+    }
+
+    #[test]
+    fn finalizing_projects_the_document_once() {
         let source = "# 标题\n\n**粗体** 段落\n\n```rust\nlet value = 1;\n```\n";
         let mut blocks = Blocks::new();
         for line in source.split_inclusive('\n') {
@@ -852,99 +516,109 @@ mod tests {
             blocks.flush();
         }
         blocks.finalize_markdown();
-        assert!(blocks.model.iter().any(|block| block.kind == KIND_H1));
-        assert!(blocks.model.iter().any(|block| block.kind == KIND_CODE));
+        let kinds = kinds(&blocks);
+        assert!(kinds.contains(&md::HEADING));
+        assert!(kinds.contains(&md::CODE));
         assert_eq!(blocks.raw, source);
+        // A second finalize is a no-op, not a re-parse.
+        let before = blocks.model.row_count();
+        blocks.finalize_markdown();
+        assert_eq!(blocks.model.row_count(), before);
     }
 
     #[test]
-    fn final_render_supports_common_elements_and_stream_is_plain() {
+    fn final_render_supports_common_elements() {
         let source = "# 标题\n\n段落含 **粗体**、*斜体*、`代码` 和 [链接](https://example.invalid)。\n\n> 引用\n\n- 项目一\n1. 项目二\n\n```rust\nlet value = 1;\n```\n\n| 名称 | 数值 |\n| --- | ---: |\n| A | 1 |\n\n---\n\n![说明](image.png)";
         let mut blocks = Blocks::new();
         for ch in source.chars() {
             blocks.append(&ch.to_string()).unwrap();
             blocks.flush();
         }
-        assert!(blocks.model.iter().all(|block| block.kind == KIND_TEXT));
         blocks.finalize_markdown();
-        assert!(blocks.model.iter().any(|block| block.kind == KIND_H1));
-        assert!(blocks.model.iter().any(|block| block.kind == KIND_CODE));
-        assert!(blocks.model.iter().any(|block| block.kind == KIND_TABLE));
+        let kinds = kinds(&blocks);
+        for expected in [
+            md::HEADING,
+            md::CODE,
+            md::TABLE,
+            md::RULE,
+            md::IMAGE,
+            md::LIST_ITEM,
+        ] {
+            assert!(kinds.contains(&expected), "missing kind {expected}: {kinds:?}");
+        }
         assert!(blocks.raw == source);
+        assert!(
+            blocks
+                .model
+                .iter()
+                .any(|block| block.quoted),
+            "a quote child is flagged"
+        );
     }
 
     #[test]
-    fn code_blocks_copy_only_code_without_the_fence_language() {
-        let blocks = markdown_blocks("```rust\nlet value = 1;\n```");
-        assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].kind, KIND_CODE);
-        assert_eq!(blocks[0].text, "let value = 1;\n");
-    }
-
-    #[test]
-    fn paragraph_list_paragraph_stays_one_selectable_text_block() {
-        // One block per contiguous prose run keeps drag selection continuous;
-        // splitting at the list boundary created an uncrossable gap.
-        let blocks = markdown_blocks("段落一\n\n- 甲\n- 乙\n\n段落二\n");
-        assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].kind, KIND_TEXT);
-        assert_eq!(blocks[0].text, "段落一\n\n• 甲\n\n• 乙\n段落二");
-        // A list inside a quote no longer splits the quote card either.
-        let quote = markdown_blocks("> 前文\n>\n> - 甲\n> - 乙\n");
-        assert_eq!(quote.len(), 1);
-        assert_eq!(quote[0].kind, KIND_QUOTE);
-        assert!(quote[0].text.contains("• 乙"), "{}", quote[0].text);
-    }
-
-    #[test]
-    fn table_header_empty_cells_and_inline_code_keep_their_columns() {
-        let blocks = markdown_blocks("| Key | Value |\n| --- | --- |\n| `item` | **value** |\n| empty | |\n\n| Next |\n| --- |\n| row |");
-        assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[0].table_columns, 2);
-        let cells: Vec<_> = blocks[0]
-            .table_cells
+    fn code_rows_copy_only_code_without_the_fence_language() {
+        let mut blocks = Blocks::new();
+        blocks.append("```rust\nlet value = 1;\n```").unwrap();
+        blocks.finalize_markdown();
+        let code = blocks
+            .model
             .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert_eq!(cells, ["Key", "Value", "item", "value", "empty", ""]);
-        assert_eq!(blocks[1].table_columns, 1);
-    }
-
-    #[test]
-    fn code_copy_preserves_indentation_blank_lines_and_final_newline() {
-        let blocks = markdown_blocks("```text\n\n    indented\n\n```\n");
-        assert_eq!(blocks[0].text, "\n    indented\n\n");
+            .find(|block| block.kind == md::CODE)
+            .expect("code row");
+        assert_eq!(code.code, "let value = 1;");
+        assert_eq!(code.language, "rust");
     }
 
     #[test]
     fn local_document_links_become_cards_and_remote_links_stay_text() {
-        let blocks = markdown_blocks("之前 [**示例文档**](documents/example.pdf) 之后\n\n[远程](https://example.invalid/example.pdf)");
-        assert_eq!(blocks[0].text, "之前");
-        assert_eq!(blocks[1].kind, 7);
-        assert_eq!(blocks[1].text, "示例文档");
-        assert_eq!(blocks[1].image_source, "documents/example.pdf");
-        assert!(blocks[2].text.contains("之后"));
-        assert!(blocks[2]
-            .text
-            .contains("https://example.invalid/example.pdf"));
-        let code = markdown_blocks("```python\n# 示例\nvalue = 42\n```");
-        assert_eq!(code[0].language, "python");
-        assert_eq!(code[0].text, "# 示例\nvalue = 42\n");
+        let mut blocks = Blocks::new();
+        blocks
+            .append("之前 [**示例文档**](documents/example.pdf) 之后\n\n[远程](https://example.invalid/example.pdf)")
+            .unwrap();
+        blocks.finalize_markdown();
+        let rows = block_texts(&blocks);
+        // The space that separated the prose from the link stays in the row:
+        // the projection is faithful, and a trailing space is invisible.
+        assert_eq!(rows[0].trim(), "之前");
+        let card = blocks
+            .model
+            .iter()
+            .find(|block| block.kind == md::DOCUMENT)
+            .expect("document card");
+        assert_eq!(card.plain, "示例文档");
+        assert_eq!(card.image_source, "documents/example.pdf");
+        assert!(
+            blocks
+                .model
+                .iter()
+                .any(|block| block.plain.contains("https://example.invalid/example.pdf")),
+            "a remote link keeps its target in the text"
+        );
     }
 
     #[test]
     fn public_workspace_paths_are_kept_as_local_resource_cards() {
-        let blocks = markdown_blocks(
-            "![图片](/workspaces/scope/workspace/image.png)\n\n[文档](/workspaces/scope/workspace/report.docx)",
-        );
-        assert_eq!(blocks[0].kind, KIND_IMAGE);
+        let mut blocks = Blocks::new();
+        blocks
+            .append(
+                "![图片](/workspaces/scope/workspace/image.png)\n\n[文档](/workspaces/scope/workspace/report.docx)",
+            )
+            .unwrap();
+        blocks.finalize_markdown();
+        let image = blocks
+            .model
+            .iter()
+            .find(|block| block.kind == md::IMAGE)
+            .expect("image card");
+        assert_eq!(image.image_source, "/workspaces/scope/workspace/image.png");
+        let document = blocks
+            .model
+            .iter()
+            .find(|block| block.kind == md::DOCUMENT)
+            .expect("document card");
         assert_eq!(
-            blocks[0].image_source,
-            "/workspaces/scope/workspace/image.png"
-        );
-        assert_eq!(blocks[1].kind, 7);
-        assert_eq!(
-            blocks[1].image_source,
+            document.image_source,
             "/workspaces/scope/workspace/report.docx"
         );
     }
@@ -959,25 +633,26 @@ mod tests {
             .filter_map(|index| model.row_data(index))
             .map(|block| block.kind)
             .collect::<Vec<_>>();
-        assert_eq!(kinds.last(), Some(&KIND_IMAGE));
+        assert_eq!(kinds.last(), Some(&md::IMAGE));
         let card = model.row_data(model.row_count() - 1).unwrap();
-        assert_eq!(card.text, "shot.png");
+        assert_eq!(card.plain, "shot.png");
         assert_eq!(card.image_source, "data:image/png;base64,AAAA");
         assert_eq!(card.image.size().width, 0);
     }
 
     #[test]
-    fn image_syntax_for_documents_uses_the_same_file_card_as_links() {
-        let blocks = markdown_blocks(
-            "![交付文档](/workspaces/scope/workspace/report.docx)\n\n![图片](/workspaces/scope/workspace/output.webp)",
-        );
-        assert_eq!(blocks[0].kind, 7);
-        assert_eq!(blocks[0].text, "交付文档");
-        assert!(blocks[0].image.to_rgba8().is_some());
-        assert_eq!(blocks[1].kind, KIND_IMAGE);
-        assert_eq!(
-            blocks[1].image_source,
-            "/workspaces/scope/workspace/output.webp"
-        );
+    fn library_files_use_the_same_card_as_workspace_links() {
+        let mut blocks = Blocks::new();
+        blocks
+            .append("![交付文档](/workspaces/scope/workspace/report.docx)")
+            .unwrap();
+        blocks.finalize_markdown();
+        let card = blocks
+            .model
+            .iter()
+            .find(|block| block.kind == md::DOCUMENT)
+            .expect("document card");
+        assert_eq!(card.plain, "交付文档");
+        assert!(card.image.to_rgba8().is_some(), "the file icon is filled in");
     }
 }

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Embedded help browser (standalone help window) labels. The manual content
-# itself ships as assets/help/manual.{zh,en}.json; these cover the chrome.
+# itself ships as assets/help/manual.{zh,en}.md; these cover the chrome.
 
 ENTRIES = [
     ("hp_back", "后退 (Alt+←)", "Back (Alt+←)"),

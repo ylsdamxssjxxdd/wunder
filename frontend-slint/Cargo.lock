@@ -7535,6 +7535,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "i-slint-backend-winit",
+ "i-slint-core",
  "i-slint-renderer-software",
  "image",
  "libc",
