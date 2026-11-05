@@ -237,7 +237,17 @@ pub fn render_item_children(
             };
 
             if matches!(render_result, RenderingResult::ContinueRenderingChildren) {
-                render_item_children(renderer, component, index as isize, window_adapter);
+                // Nothing below this item can produce pixels when the
+                // accumulated clip is empty (a row scrolled out of the
+                // transcript viewport, a folded row) or an enclosing opacity
+                // made the subtree transparent. Without this, every row of a
+                // non-virtualized scroll column is walked item by item on each
+                // frame, so scroll cost grows with the whole history.
+                let subtree_invisible = renderer.global_alpha_transparent()
+                    || (item.as_ref().clips_children() && renderer.get_current_clip().is_empty());
+                if !subtree_invisible {
+                    render_item_children(renderer, component, index as isize, window_adapter);
+                }
             }
             renderer.restore_state();
             VisitChildrenResult::CONTINUE

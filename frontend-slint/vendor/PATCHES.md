@@ -81,6 +81,18 @@ Ported from the 1.17.1 patch set with these upstream changes:
   Seeks past unmeasured rows and row insert/remove notifications above the
   window still estimate with `cached_item_height`, then stay exact while
   scrolling contiguously.
+- `frame_throttle.rs` no longer paces frames with a repeating timer at a
+  whole-millisecond period. 60 Hz is 16.667 ms, so a 16 ms period runs at
+  62.5 fps and every ~25th frame lands in the same vertical blank, which reads
+  as a small hitch several times a second; `TimerMode::Repeated` also re-arms
+  from the moment it wakes, so wake-up delay accumulates as drift. The local
+  throttle advances an absolute deadline grid whose period is
+  `Duration::from_nanos(1e12 / refresh_millihertz)` (16/17 ms alternating
+  through Slint's whole-millisecond timer clock), and schedules it with a fresh
+  `Timer::single_shot` from `request_throttled_redraw` only. A timer that is
+  re-`start`ed, or a `Timer::single_shot` registered, from inside its own
+  callback is removed by `TimerList::activate_expired` after the callback
+  returns, which silently ends a self-restarting chain.
 
 The remaining 1.17 patch intents (gb2312 tiered embedding, bitmap-strike
 embedding preference, ASCII subpixel packing, 1bpp packed glyphs + LRU,
@@ -348,6 +360,15 @@ deltas).
   scanned face of its family — family font lists grew quadratically (~29k
   entries across 121 families on a stock Windows install) and the settings
   font scan took seconds. The fix keeps the merge linear.
+- `i-slint-core` scene building now skips a subtree whose accumulated clip is
+  empty or whose enclosing opacity chain is fully transparent. `ScrollView`
+  clips its children, but a child that does not clip itself was still walked
+  item by item for every row, including rows scrolled outside the viewport,
+  so per-frame scene cost grew with the whole history instead of the visible
+  rows. The timeline additionally sets `clip: true` on every repeated row root
+  (`ui/timeline.slint`), so a row outside the transcript viewport has an empty
+  clip and is pruned at the row boundary. Culling is safe because an empty
+  clip or zero opacity cannot contribute any descendant pixels.
 - `i-slint-core` partial-render item filtering includes a physical-pixel
   margin around floating-point item bounds. Software damage is rounded out
   before clearing; adjacent toolbar borders must remain in the draw list
