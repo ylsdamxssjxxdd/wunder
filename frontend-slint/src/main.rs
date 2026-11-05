@@ -179,6 +179,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or("missing timeline-probe output directory")?;
         return smoke::run_timeline_probe(&app, std::path::PathBuf::from(directory));
     }
+    if first_argument.as_deref() == Some(std::ffi::OsStr::new("--scroll-probe")) {
+        let directory = arguments
+            .next()
+            .ok_or("missing scroll-probe output directory")?;
+        return smoke::run_scroll_probe(&app, std::path::PathBuf::from(directory));
+    }
+    if first_argument.as_deref() == Some(std::ffi::OsStr::new("--list-probe")) {
+        // ListView-specific scroll probe: virtualization shifts work into the
+        // frame that reveals each row.
+        let directory = arguments
+            .next()
+            .ok_or("missing list-probe output directory")?;
+        return smoke::run_list_probe(&app, std::path::PathBuf::from(directory));
+    }
     if first_argument.as_deref() == Some(std::ffi::OsStr::new("--markdown-probe")) {
         // Render one document that covers every block kind, for a layout check
         // that does not depend on the rest of the shell.

@@ -791,6 +791,11 @@ export component TimelineRowView inherits Rectangle {
             || root.entry.group-open)
         && !root.in-process;
     visible: root.shown;
+    // Clipping to the row turns scrolling into a pure culling problem for the
+    // renderer: rows outside the transcript viewport have an empty clip, so
+    // their subtrees are skipped instead of being walked and rejected one
+    // text block at a time.
+    clip: true;
     // The column sizes every row from its own content, so an unfold or a
     // wrapped line simply makes the timeline taller. A hidden row has to give
     // its height back: Slint keeps the reservation of an invisible layout item,
