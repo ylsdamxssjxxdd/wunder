@@ -267,12 +267,121 @@ fn build_cmd_command(command: &str, cwd: &Path) -> Command {
     cmd
 }
 
+/// Tokenise a command line the way the host shell would.
+///
+/// POSIX `shell_words::split` treats `\` as an escape character, so on Windows
+/// `python C:\tools\export.py` becomes `python C:toolsexport.py`. The direct
+/// launch path (used to rewrite a bare `python` into the bundled interpreter)
+/// must use Windows `CommandLineToArgvW` semantics instead, where a backslash
+/// only escapes a quote and is otherwise an ordinary path character.
+fn split_command_words(command: &str) -> Option<Vec<String>> {
+    #[cfg(windows)]
+    {
+        split_windows_command_words(command)
+    }
+    #[cfg(not(windows))]
+    {
+        shell_words::split(command).ok()
+    }
+}
+
+/// Windows `CommandLineToArgvW` tokenisation, kept platform-independent so the
+/// path-preservation regression can be tested on every build host.
+pub(crate) fn split_windows_command_words(command: &str) -> Option<Vec<String>> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut started = false;
+    let mut in_quotes = false;
+    let mut chars = command.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                let mut count = 1usize;
+                while chars.peek() == Some(&'\\') {
+                    chars.next();
+                    count += 1;
+                }
+                if chars.peek() == Some(&'"') {
+                    for _ in 0..(count / 2) {
+                        current.push('\\');
+                    }
+                    if count % 2 == 1 {
+                        current.push('"');
+                        chars.next();
+                    }
+                    // With an even count the quote stays as a delimiter and is
+                    // handled on the next iteration.
+                } else {
+                    for _ in 0..count {
+                        current.push('\\');
+                    }
+                }
+                started = true;
+            }
+            '"' => {
+                if in_quotes && chars.peek() == Some(&'"') {
+                    current.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = !in_quotes;
+                }
+                started = true;
+            }
+            ch if ch.is_whitespace() && !in_quotes => {
+                if started {
+                    args.push(std::mem::take(&mut current));
+                    started = false;
+                }
+            }
+            ch => {
+                current.push(ch);
+                started = true;
+            }
+        }
+    }
+    if in_quotes {
+        return None;
+    }
+    if started {
+        args.push(current);
+    }
+    Some(args)
+}
+
+/// Defence in depth: never spawn a direct command whose Windows path
+/// separators vanished during tokenisation. Falling back to the shell keeps
+/// the caller's original text intact and produces a meaningful path error
+/// instead of a confusing `C:Users...` file-not-found.
+fn direct_args_preserve_paths(command: &str, parts: &[String]) -> bool {
+    if !command.contains('\\') {
+        return true;
+    }
+    let parsed_backslashes = parts
+        .iter()
+        .map(|part| part.matches('\\').count())
+        .sum::<usize>();
+    if parsed_backslashes == 0 {
+        return false;
+    }
+    !parts.iter().any(|part| {
+        let bytes = part.as_bytes();
+        bytes.len() > 2
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && bytes[2] != b'\\'
+            && bytes[2] != b'/'
+    })
+}
+
 pub fn build_direct_command(command: &str, cwd: &Path) -> Option<Command> {
     let trimmed = command.trim();
     if trimmed.is_empty() || contains_shell_meta(trimmed) {
         return None;
     }
-    let parts = shell_words::split(trimmed).ok()?;
+    let parts = split_command_words(trimmed)?;
+    if !direct_args_preserve_paths(trimmed, &parts) {
+        return None;
+    }
     if parts.is_empty() {
         return None;
     }
@@ -323,8 +432,8 @@ pub fn build_direct_command_with_overrides(
     if trimmed.is_empty() || contains_shell_meta(trimmed) {
         return None;
     }
-    let parts = shell_words::split(trimmed).ok()?;
-    if parts.is_empty() {
+    let parts = split_command_words(trimmed)?;
+    if parts.is_empty() || !direct_args_preserve_paths(trimmed, &parts) {
         return None;
     }
     let (envs, program_index) = parse_env_prefix(&parts);
@@ -333,6 +442,9 @@ pub fn build_direct_command_with_overrides(
         return None;
     }
     let pip_invocation = command_is_pip_invocation(program);
+    // Only the program token is rewritten. Every token after `program_index`
+    // is passed through verbatim, so Windows paths in the arguments keep
+    // their backslashes.
     let mut cmd = if is_python_program(program) {
         Command::new(python_bin?)
     } else if pip_invocation {
@@ -821,6 +933,68 @@ fn is_rg_program(program: &str) -> bool {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn windows_tokenizer_preserves_backslash_paths() {
+        let parts = split_windows_command_words(
+            r"python C:\tools\scripts\export_png.py --out D:\proj\out.png",
+        )
+        .expect("tokenise command");
+        assert_eq!(
+            parts,
+            vec![
+                "python",
+                r"C:\tools\scripts\export_png.py",
+                "--out",
+                r"D:\proj\out.png"
+            ]
+        );
+    }
+
+    #[test]
+    fn windows_tokenizer_handles_quoted_paths_and_escaped_quotes() {
+        let parts = split_windows_command_words(r#"python "C:\Program Files\tool.py" -c "a b""#)
+            .expect("tokenise command");
+        assert_eq!(
+            parts,
+            vec!["python", r"C:\Program Files\tool.py", "-c", "a b"]
+        );
+        let parts = split_windows_command_words(r#"python -c \"quoted\""#)
+            .expect("tokenise command");
+        assert_eq!(parts, vec!["python", "-c", "\"quoted\""]);
+        assert!(split_windows_command_words(r#"python "unterminated"#).is_none());
+    }
+
+    #[test]
+    fn direct_launch_rejects_stripped_windows_paths() {
+        assert!(!direct_args_preserve_paths(
+            r"python C:\tools\a.py",
+            &["python".to_string(), "C:toolsa.py".to_string()]
+        ));
+        assert!(direct_args_preserve_paths(
+            r"python C:\tools\a.py",
+            &["python".to_string(), r"C:\tools\a.py".to_string()]
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn python_override_keeps_windows_path_arguments() {
+        let cmd = build_direct_command_with_python_override(
+            r"python C:\tools\export_png.py --out D:\proj\out.png",
+            Path::new("."),
+            Path::new(r"C:\runtime\python.exe"),
+        )
+        .expect("direct command with interpreter override");
+        let args: Vec<String> = cmd
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect();
+        assert!(args.iter().any(|arg| arg == r"C:\tools\export_png.py"));
+        assert!(args.iter().any(|arg| arg == r"D:\proj\out.png"));
+        assert!(!args.iter().any(|arg| arg.starts_with("C:tools")));
+    }
 
     /// The launcher and the version probe must agree on one binary. Asserting
     /// against `powershell_host()` instead of a literal `powershell.exe` keeps

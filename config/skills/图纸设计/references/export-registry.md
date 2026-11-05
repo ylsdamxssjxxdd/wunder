@@ -75,4 +75,4 @@ No other keys, and no generation timestamp: the registry is meant to be regenera
 - Correlates a block's metadata against its drawn position or connector geometry. Out of scope for the registry entirely, not just deferred — the JSON is a metadata projection, not a geometry audit.
 - Writes a generation timestamp, tool version, or any field not literally sourced from a `data-block-*` attribute.
 - Modifies the source HTML.
-- Auto-emits `.registry.json` without `--registry` explicitly passed. Manual on every call, same as SVG/PNG export.
+- Auto-emits `.registry.json` without `--registry` explicitly passed. Manual on every call, same as SVG export. (PNG is different — it is exported on every delivery.)

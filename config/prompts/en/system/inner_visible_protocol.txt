@@ -1,12 +1,8 @@
 [Inner-Visible Protocol]
-You may perform "inner-visible actions" in the user's private directory to adjust the agent's subsequent state.
-- Inner-visible actions include but are not limited to: modifying your own configuration file (WorkerCard), managing your own skills, etc.
-- Agent (yourself) ID: `{INNER_VISIBLE_CURRENT_AGENT_ID}`
-- Agent (yourself) configuration file (WorkerCard): `{INNER_VISIBLE_CURRENT_AGENT_CARD}`. Frequently modified fields: `metadata`, `abilities`, `prompt`
-- User-built skills directory: `{INNER_VISIBLE_SKILLS_DIR}` (each subdirectory is a user-private skill package, containing at least `SKILL.md`, with optional scripts/templates/resources)
-- Important: `{INNER_VISIBLE_SKILLS_DIR}` is only your user-private/custom skill root. It is NOT the universal root for all mounted skills. Built-in/shared skills may live elsewhere and may be read-only.
-- To inspect a mounted skill, prefer the skill tool or the real `SKILL.md` paths shown in the mounted-skills section. Do not assume every skill is under `{INNER_VISIBLE_SKILLS_DIR}`.
-- Always read the target file before modification, keep changes minimal, and ensure valid JSON/Markdown syntax.
-- User-skill self-installation: Place the skill directory in `{INNER_VISIBLE_SKILLS_DIR}/<skill_name>/` and ensure it contains `SKILL.md`; then add `<skill_name>` to `abilities.skills` in your WorkerCard.
-- Non-skill tools shall be written to `abilities.tool_names`, and must not be mixed with `abilities.skills`.
-- You may only modify your own assets, and must not contaminate the user's home directory. Modify global or other agent configurations ONLY with the user's explicit authorization.
+You may adjust your own state in the user's private directory.
+- Agent ID: `{INNER_VISIBLE_CURRENT_AGENT_ID}`. WorkerCard: `{INNER_VISIBLE_CURRENT_AGENT_CARD}` (commonly edited: `metadata`, `abilities`, `prompt`).
+- Private root: `{INNER_VISIBLE_ROOT}`. Global config: `{INNER_VISIBLE_GLOBAL_DIR}` (`{INNER_VISIBLE_GLOBAL_TOOLING_FILE}`, `{INNER_VISIBLE_GLOBAL_DEFAULTS_CARD}`); agents: `{INNER_VISIBLE_AGENTS_DIR}`; knowledge: `{INNER_VISIBLE_KNOWLEDGE_DIR}`. {INNER_VISIBLE_DEFAULT_AGENT_ONLY_NOTE}
+- User-built skills root: `{INNER_VISIBLE_SKILLS_DIR}`; each subdirectory is a skill package containing `SKILL.md`. This is NOT the root of all mounted skills: built-in and shared skills may live elsewhere and may be read-only. Prefer the skill tool or the real `SKILL.md` paths listed in the mounted-skills section.
+- Read a file before modifying it, keep edits minimal, and keep JSON/Markdown valid.
+- To install your own skill, place it at `{INNER_VISIBLE_SKILLS_DIR}/<skill_name>/` with `SKILL.md`, then add `<skill_name>` to `abilities.skills`. Non-skill tools belong in `abilities.tool_names`.
+- Only modify your own assets. Never contaminate the user's home directory, and edit global or other agents' configuration only with explicit authorization.

@@ -209,6 +209,7 @@ export component ToolProcess inherits Rectangle {
         // snaps back" the list used to show.
         root.scroll-pending = true;
         root.page-pending = true;
+        root.pin-passes = 2;
     }
     private property <length> viewport-height: min(Theme.workflow-height, max(26px, root.entries.length * 26px));
     private property <length> measured-height: process-list.content-height;
@@ -218,47 +219,57 @@ export component ToolProcess inherits Rectangle {
         // nor `revision` moves, so re-arm the tail follow here or the new text
         // sinks below the capped viewport until the reader scrolls by hand.
         root.scroll-pending = true;
-        // An older page can land after the 33ms pass already ran (the pass
-        // reads `content-height` before layout folded the page in). While the
-        // anchor is still held, re-arm so the shift is applied against the
-        // height that really contains the new page instead of being lost.
-        if root.anchor-hold && root.revision < 0 {
-            root.page-pending = true;
+        // An older page can land after the 33ms pass already ran (that pass
+        // reads `content-height` before layout folded the page in), so keep
+        // re-pinning the top edge for a couple of passes instead of trusting
+        // a single write to be the last word.
+        if root.revision < 0 {
+            root.pin-passes = 2;
         }
     }
     private property <bool> follow-tail: true;
     private property <bool> scroll-pending: true;
     private property <bool> page-pending: false;
     private property <int> count: root.entries.length;
-    // Row that the reader is holding when an older page is asked for: after
-    // the page lands, that same row must stay where it was on screen.
-    private property <length> anchor-y: 0px;
-    private property <length> anchor-height: 0px;
+    // Passes left that re-pin the top edge after an older page was prepended.
+    private property <int> pin-passes: 2;
     // Previous scroll offset, so one flick past the top asks for the older
     // page exactly once instead of once per scroll notification.
     private property <length> last-content-y: 0px;
-    // Set while an older page is in flight: the list must hold the reader's
-    // row instead of following the tail, even when the tail was in view.
-    private property <bool> anchor-hold: false;
     changed count => { root.scroll-pending = true; }
-    changed failed => { if (root.failed) { root.anchor-hold = false; } }
     Timer {
         interval: 33ms; running: root.scroll-pending;
         triggered => {
             root.scroll-pending = false;
             if root.page-pending && root.revision < 0 {
-                // An older page was prepended: shift by the height it added so
-                // the anchored row keeps its place.
-                process-list.content-y = root.anchor-y - max(0px, process-list.content-height - root.anchor-height);
-                root.anchor-hold = false;
+                // Pin the top edge; do not "compensate" by a height delta.
+                // Slint anchors a prepended page with its cached average row
+                // height, and process rows run from 26px tool lines to
+                // hundreds of pixels of expanded detail. That estimate lands
+                // whole rows off in either direction — which is exactly why
+                // the viewport sometimes stopped short of the top and
+                // sometimes rolled past it and left a blank strip above.
+                process-list.content-y = 0px;
             } else if root.page-pending && root.revision > 0 && root.has-newer {
                 process-list.content-y = 0px;
-            } else if root.follow-tail && !root.anchor-hold && root.entries.length > 0 {
+            } else if root.follow-tail && root.entries.length > 0 {
                 process-list.content-y = min(0px, process-list.visible-height - process-list.content-height);
             } else if root.page-pending && root.revision > 0 {
                 process-list.content-y = 0px;
             }
             root.page-pending = false;
+            // Whatever the ListView did with its own anchor, never leave the
+            // viewport past an edge: a positive offset paints a blank strip
+            // above the first row, and past the end hides the tail.
+            if process-list.content-y > 0px {
+                process-list.content-y = 0px;
+            } else if process-list.content-y < min(0px, process-list.visible-height - process-list.content-height) {
+                process-list.content-y = min(0px, process-list.visible-height - process-list.content-height);
+            }
+            if root.pin-passes > 0 {
+                root.pin-passes -= 1;
+                root.scroll-pending = true;
+            }
         }
     }
     process-list := ListView {
@@ -276,18 +287,21 @@ export component ToolProcess inherits Rectangle {
             show-context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
         }
         scrolled => {
-            root.follow-tail = self.visible-height - self.content-height - self.content-y >= -32px;
+            // "At the tail" means the last line is really on screen. The old
+            // -32px window treated "almost at the bottom" as following, so the
+            // 33ms pass could still drag a reader who had just started to
+            // scroll back up.
+            root.follow-tail = self.visible-height - self.content-height - self.content-y >= -8px;
             // Reaching the top is the request for the older page.
             if root.has-older && !root.loading && !root.failed
                 && self.content-y >= -1px && root.last-content-y < -1px {
-                // Anchor on the top edge itself. Reading the residual offset of
-                // the wheel animation (-1..-4px) into the anchor carried that
-                // small error into the compensated position, so the viewport
-                // stayed permanently a little short of the top.
-                root.anchor-y = 0px;
-                root.anchor-height = self.content-height;
-                root.anchor-hold = true;
                 root.page(-1);
+            }
+            // If a reprepend left the offset outside the legal range, let the
+            // 33ms pass pull it back instead of waiting for the next gesture.
+            if self.content-y > 0px
+                || self.content-y < min(0px, self.visible-height - self.content-height) {
+                root.scroll-pending = true;
             }
             root.last-content-y = self.content-y;
         }

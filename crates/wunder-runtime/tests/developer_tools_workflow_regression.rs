@@ -297,7 +297,11 @@ async fn read_file_defaults_pattern_and_outline_share_one_bounded_workflow() {
     assert_eq!(read["data"]["files"][0]["read_lines"], 500);
     assert_eq!(read["data"]["files"][0]["total_lines"], 601);
     assert_eq!(read["data"]["budget"]["output_budget_bytes"], 16384);
-    assert_eq!(read["data"]["continuation_required"], true);
+    // A default window reaching its line limit is informational, not a demand
+    // to keep reading; exactly one reason is reported.
+    assert_eq!(read["data"]["truncation_reason"], "line_window");
+    assert_eq!(read["data"]["has_more"], true);
+    assert!(read["data"].get("continuation_required").is_none());
     let text = read["data"]["content"].as_str().expect("raw read content");
     assert!(text.ends_with("line 500"));
     assert!(!text.contains("500: line 500"));
@@ -315,6 +319,8 @@ async fn read_file_defaults_pattern_and_outline_share_one_bounded_workflow() {
     let bounded = invoke(&fixture, "read_file", json!({"path": "long-lines.txt"})).await;
     assert_eq!(bounded["ok"], true);
     assert_eq!(bounded["data"]["output_budget_hit"], true);
+    assert_eq!(bounded["data"]["truncation_reason"], "output_budget");
+    assert_eq!(bounded["data"]["continuation_required"], true);
     assert_eq!(bounded["data"]["total_lines"], 100);
     let read_lines = bounded["data"]["read_lines"].as_u64().expect("read lines");
     assert!(read_lines > 0 && read_lines < 100);
@@ -466,4 +472,62 @@ async fn read_image_generates_the_followup_image_block_for_the_model() {
     assert!(image_block["image_url"]["url"]
         .as_str()
         .is_some_and(|url| url.starts_with("data:image/png;base64,")));
+}
+
+#[tokio::test]
+async fn read_file_limit_and_list_files_top_level_work_in_one_call() {
+    let fixture = ToolFixture::new();
+    let root = fixture.workspace_path("survey");
+    std::fs::create_dir_all(root.join("alpha/nested")).expect("create nested dir");
+    std::fs::create_dir_all(root.join("beta")).expect("create second dir");
+    for index in 0..40 {
+        std::fs::write(root.join(format!("file-{index:02}.txt")), "x")
+            .expect("write survey file");
+    }
+    std::fs::write(root.join("alpha/inside.txt"), "x").expect("write nested file");
+    let lines = (1..=80)
+        .map(|line| format!("line {line}\n"))
+        .collect::<String>();
+    std::fs::write(root.join("many.txt"), lines).expect("write long file");
+
+    // `limit` alone must be an explicit 20-line window, not a silent 500-line
+    // default that trips the byte budget and emits a false paging warning.
+    let read = invoke(
+        &fixture,
+        "read_file",
+        json!({ "path": "survey/many.txt", "limit": 20 }),
+    )
+    .await;
+    assert_eq!(read["ok"], true);
+    assert_eq!(read["data"]["read_lines"], 20);
+    assert_eq!(read["data"]["total_lines"], 80);
+    assert_eq!(read["data"]["truncation_reason"], Value::Null);
+    assert_eq!(read["data"]["has_more"], true);
+    assert!(read["data"].get("continuation_required").is_none());
+
+    let list = invoke(&fixture, "list_files", json!({ "path": "survey" })).await;
+    assert_eq!(list["ok"], true);
+    assert_eq!(list["data"]["folders_first"], true);
+    let items = list["data"]["items"].as_array().expect("list items");
+    assert!(items.len() > 32);
+    assert!(items[0].as_str().is_some_and(|item| item.ends_with('/')));
+    assert!(items[1].as_str().is_some_and(|item| item.ends_with('/')));
+
+    let top = invoke(
+        &fixture,
+        "list_files",
+        json!({ "path": "survey", "top_level_only": true }),
+    )
+    .await;
+    assert_eq!(top["ok"], true);
+    let top_items = top["data"]["items"].as_array().expect("top-level items");
+    assert!(top_items.iter().any(|item| item.as_str() == Some("alpha/")));
+    assert!(top_items.iter().any(|item| item.as_str() == Some("beta/")));
+    for item in top_items {
+        let text = item.as_str().expect("string entry");
+        assert!(
+            text.ends_with('/') || !text.contains('/'),
+            "unexpected nested entry: {text}"
+        );
+    }
 }

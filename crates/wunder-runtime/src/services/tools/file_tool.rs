@@ -18,8 +18,9 @@ use crate::services::tool_result_store;
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use walkdir::WalkDir;
 pub(crate) async fn list_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -35,6 +36,14 @@ pub(crate) async fn list_files(context: &ToolContext<'_>, args: &Value) -> Resul
         .get("max_depth")
         .and_then(Value::as_u64)
         .unwrap_or(DEFAULT_LIST_DEPTH as u64) as usize;
+    let top_level_only = args
+        .get("top_level_only")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let folders_first = args
+        .get("folders_first")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
     let pagination = match parse_list_files_pagination(args) {
         Ok(value) => value,
         Err(err) => {
@@ -65,6 +74,8 @@ pub(crate) async fn list_files(context: &ToolContext<'_>, args: &Value) -> Resul
             &path,
             &extra_roots,
             max_depth,
+            top_level_only,
+            folders_first,
             pagination.start,
             pagination.limit,
         )
@@ -154,6 +165,8 @@ pub(crate) fn list_files_inner(
     path: &str,
     extra_roots: &[PathBuf],
     max_depth: usize,
+    top_level_only: bool,
+    folders_first: bool,
     page_start: usize,
     page_limit: usize,
 ) -> Result<Value> {
@@ -174,35 +187,58 @@ pub(crate) fn list_files_inner(
             false,
         ));
     }
-    let mut items = Vec::new();
-    let mut seen_entries: usize = 0;
-    let mut has_more = false;
+    let walk_depth = if top_level_only {
+        1
+    } else {
+        max_depth.saturating_add(1)
+    };
+    // Directory-first ordering needs to see beyond a single page, but the walk
+    // must stay bounded on very large trees.
+    let scan_cap = page_start
+        .saturating_add(page_limit)
+        .saturating_add(MAX_LIST_ITEMS)
+        .min(MAX_LIST_ITEMS.saturating_mul(4))
+        // Deep pagination must always be able to advance: never let the
+        // look-ahead cap fall below the end of the requested page.
+        .max(page_start.saturating_add(page_limit).saturating_add(1));
+    let mut entries: Vec<(String, bool)> = Vec::new();
+    let mut scan_limited = false;
     let unrestricted_paths = roots_allow_any_path(extra_roots);
     let _ = unrestricted_paths;
     for entry in WalkDir::new(&root)
         .min_depth(1)
-        .max_depth(max_depth.saturating_add(1))
+        .max_depth(walk_depth)
         .into_iter()
         .filter_map(|item| item.ok())
     {
-        let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
-        let mut display = rel.to_string_lossy().replace('\\', "/");
-        if entry.file_type().is_dir() {
-            display.push('/');
-        }
-        if seen_entries < page_start {
-            seen_entries += 1;
-            continue;
-        }
-        if items.len() >= page_limit {
-            has_more = true;
+        if entries.len() >= scan_cap {
+            scan_limited = true;
             break;
         }
-        items.push(display);
-        seen_entries += 1;
+        let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
+        let is_dir = entry.file_type().is_dir();
+        let mut display = rel.to_string_lossy().replace('\\', "/");
+        if is_dir {
+            display.push('/');
+        }
+        entries.push((display, is_dir));
     }
+    let dir_count = entries.iter().filter(|(_, is_dir)| *is_dir).count();
+    let file_count = entries.len().saturating_sub(dir_count);
+    if folders_first {
+        // Stable: directories first, original walk order preserved in each group.
+        entries.sort_by_key(|(_, is_dir)| !*is_dir);
+    }
+    let total_collected = entries.len();
+    let items: Vec<String> = entries
+        .iter()
+        .skip(page_start)
+        .take(page_limit)
+        .map(|(display, _)| display.clone())
+        .collect();
     let returned = items.len();
     let next_offset = page_start.saturating_add(returned);
+    let has_more = next_offset < total_collected || scan_limited;
     let next_cursor = has_more.then(|| next_offset.to_string());
     let resolved_path = root.to_string_lossy().to_string();
     Ok(build_model_tool_success_with_hint(
@@ -220,10 +256,21 @@ pub(crate) fn list_files_inner(
             "next_offset": has_more.then_some(next_offset),
             "next_cursor": next_cursor,
             "max_depth": max_depth,
+            "effective_depth": walk_depth.saturating_sub(1),
+            "top_level_only": top_level_only,
+            "folders_first": folders_first,
+            "dir_count": dir_count,
+            "file_count": file_count,
+            "scan_limited": scan_limited,
         }),
         has_more.then(|| {
-            "More entries are available. Reuse next_cursor to continue listing the same directory."
-                .to_string()
+            if top_level_only {
+                "More entries are available. Reuse next_cursor to continue listing the same directory."
+                    .to_string()
+            } else {
+                "More entries are available. Directories are listed first; pass top_level_only=true to get only direct children in one call, or reuse next_cursor to continue."
+                    .to_string()
+            }
         }),
     ))
 }
@@ -490,6 +537,17 @@ fn parse_read_file_spec_object(
             )
             .build()
             .map_err(|error| ReadSpecParseError::invalid_args(format!("pattern 无效：{error}")))?;
+    }
+    // `limit` is a first-class line window. It used to be ignored unless
+    // `offset` was also supplied, which silently upgraded an explicit
+    // "give me N lines" request to the 500-line default and tripped the output
+    // budget even though the caller asked for fewer lines than that.
+    if ranges.is_empty() && pattern.is_none() {
+        if let Some(limit) = obj.get("limit").and_then(parse_line_number) {
+            let limit = limit.clamp(1, MAX_READ_LINES);
+            requested_ranges.push((1, limit));
+            ranges.push((1, limit));
+        }
     }
     let used_default_range =
         ranges.is_empty() && pattern.is_none() && mode != ReadFileMode::Outline;
@@ -971,32 +1029,133 @@ fn cap_selected_by_bytes(
     (kept, total.saturating_sub(used))
 }
 
-fn summary_requires_read_continuation(summary: &Value) -> bool {
-    let Some(obj) = summary.as_object() else {
-        return false;
-    };
-    if obj
-        .get("truncated_by_size")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-        || obj
-            .get("outline_truncated")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        || obj
-            .get("matches_truncated")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-    {
-        return true;
+/// Pick exactly one reason why a read result is not the whole file. The order
+/// reflects what actually removed content; `line_window` is last because it is
+/// only an informational default-window boundary, not a cut.
+fn classify_read_truncation(
+    timeout_hit: bool,
+    budget_file_limit_hit: bool,
+    output_budget_hit: bool,
+    summaries: &[Value],
+) -> Option<&'static str> {
+    if timeout_hit {
+        return Some("time_budget");
     }
-    let used_default_range = obj
+    if budget_file_limit_hit {
+        return Some("file_limit");
+    }
+    if summaries
+        .iter()
+        .any(|summary| summary.get("truncated_by_size").and_then(Value::as_bool) == Some(true))
+    {
+        return Some("source_size");
+    }
+    if output_budget_hit {
+        return Some("output_budget");
+    }
+    if summaries
+        .iter()
+        .any(|summary| summary.get("matches_truncated").and_then(Value::as_bool) == Some(true))
+    {
+        return Some("pattern_matches");
+    }
+    if summaries
+        .iter()
+        .any(|summary| summary.get("outline_truncated").and_then(Value::as_bool) == Some(true))
+    {
+        return Some("outline_budget");
+    }
+    if summaries.iter().any(summary_stopped_at_default_window) {
+        return Some("line_window");
+    }
+    None
+}
+
+fn summary_stopped_at_default_window(summary: &Value) -> bool {
+    summary
         .get("used_default_range")
         .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let read_lines = obj.get("read_lines").and_then(Value::as_u64).unwrap_or(0);
-    let total_lines = obj.get("total_lines").and_then(Value::as_u64).unwrap_or(0);
-    used_default_range && read_lines > 0 && total_lines > read_lines
+        == Some(true)
+        && summary_has_more_lines(summary)
+}
+
+fn summary_has_more_lines(summary: &Value) -> bool {
+    let read_lines = summary
+        .get("read_lines")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let total_lines = summary
+        .get("total_lines")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    read_lines > 0 && total_lines > read_lines
+}
+
+fn read_next_line(summaries: &[Value]) -> Option<u64> {
+    let summary = summaries.last()?;
+    if let Some(end) = summary
+        .get("effective_ranges")
+        .and_then(Value::as_array)
+        .and_then(|ranges| ranges.last())
+        .and_then(Value::as_array)
+        .and_then(|pair| pair.get(1))
+        .and_then(Value::as_u64)
+    {
+        return Some(end.saturating_add(1));
+    }
+    let read_lines = summary
+        .get("read_lines")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    (read_lines > 0).then_some(read_lines.saturating_add(1))
+}
+
+/// Bounded per-thread window history. The hard "no fixed-step paging" rule is
+/// only worth emitting when the model is actually doing it; emitting it on a
+/// single ordinary read was the false positive that made callers doubt the
+/// result. At most 256 stamps are kept, so this cannot grow with session count.
+const READ_WINDOW_HISTORY_CAPACITY: usize = 256;
+static READ_WINDOW_HISTORY: OnceLock<Mutex<VecDeque<(String, u64, u64)>>> = OnceLock::new();
+
+fn record_read_windows(session_id: &str, specs: &[ReadFileSpec]) -> bool {
+    let [spec] = specs else {
+        return false;
+    };
+    if spec.used_default_range || spec.mode != ReadFileMode::Slice {
+        return false;
+    }
+    let Some(&(start, end)) = spec.requested_ranges.first() else {
+        return false;
+    };
+    let key = format!("{session_id}\n{}", spec.path);
+    let history = READ_WINDOW_HISTORY.get_or_init(|| Mutex::new(VecDeque::new()));
+    let Ok(mut history) = history.lock() else {
+        return false;
+    };
+    history.push_back((key.clone(), start as u64, end as u64));
+    while history.len() > READ_WINDOW_HISTORY_CAPACITY {
+        history.pop_front();
+    }
+    let recent: Vec<&(String, u64, u64)> = history
+        .iter()
+        .rev()
+        .filter(|(candidate, _, _)| candidate == &key)
+        .take(3)
+        .collect();
+    if recent.len() < 3 {
+        return false;
+    }
+    // newest first: [w3, w2, w1]
+    let (w1, w2, w3) = (recent[2], recent[1], recent[0]);
+    let first_step = w2.1.saturating_sub(w1.1);
+    let second_step = w3.1.saturating_sub(w2.1);
+    let width1 = w1.2.saturating_sub(w1.1);
+    let width2 = w2.2.saturating_sub(w2.1);
+    let width3 = w3.2.saturating_sub(w3.1);
+    first_step > 0
+        && first_step == second_step
+        && width1 == width2
+        && width2 == width3
 }
 
 fn compact_read_file_summary_for_model(summary: &Value) -> Value {
@@ -1218,6 +1377,7 @@ pub(crate) async fn read_files(context: &ToolContext<'_>, args: &Value) -> Resul
     }
 
     let specs_for_lsp = specs.clone();
+    let repeated_paging = record_read_windows(context.session_id, &specs);
     let workspace = context.workspace.clone();
     let extra_roots = collect_read_roots(context);
     let budget_for_task = read_budget;
@@ -1231,6 +1391,7 @@ pub(crate) async fn read_files(context: &ToolContext<'_>, args: &Value) -> Resul
             dry_run,
             requested_files,
             budget_file_limit_hit,
+            repeated_paging,
         )
     })
     .await;
@@ -1256,6 +1417,7 @@ pub(crate) fn read_files_inner(
     dry_run: bool,
     requested_files: usize,
     budget_file_limit_hit: bool,
+    repeated_paging: bool,
 ) -> Result<Value> {
     let started_at = Instant::now();
     let mut outputs = Vec::new();
@@ -1600,8 +1762,30 @@ pub(crate) fn read_files_inner(
         }
         result = truncated;
     }
-    let continuation_required =
-        output_budget_hit || summaries.iter().any(summary_requires_read_continuation);
+    // Exactly one reason explains why the payload is not the whole file.
+    // Exposing `output_budget_hit` next to a per-file `truncated_by_size: false`
+    // made two unrelated signals look contradictory to the model.
+    let truncation_reason = classify_read_truncation(
+        timeout_hit,
+        budget_file_limit_hit,
+        output_budget_hit,
+        &summaries,
+    );
+    // A default window that simply reached its line limit is informative, not a
+    // demand to keep reading. Only content that was actually cut short requires
+    // a continuation, and only repeated fixed-step paging earns the hard rule.
+    let continuation_required = truncation_reason.is_some_and(|reason| reason != "line_window");
+    let has_more = summaries.iter().any(summary_has_more_lines);
+    let next_line = read_next_line(&summaries);
+    let continuation_hint = if continuation_required {
+        Some(if repeated_paging {
+            i18n::t("tool.read.continuation_hint_repeated")
+        } else {
+            i18n::t("tool.read.continuation_hint")
+        })
+    } else {
+        None
+    };
     let processed_files = summaries.len();
     let read_lines = summaries
         .iter()
@@ -1631,10 +1815,16 @@ pub(crate) fn read_files_inner(
         "output_budget_omitted_bytes": output_budget_omitted_bytes,
         "content_bytes_before_budget": bytes_before_budget,
         "budget": budget.to_json(),
+        "truncation_reason": truncation_reason,
+        "has_more": has_more,
+        "next_line": next_line,
     });
-    if continuation_required {
+    if repeated_paging {
+        data["repeated_paging"] = Value::Bool(true);
+    }
+    if let Some(hint) = &continuation_hint {
         data["continuation_required"] = Value::Bool(true);
-        data["continuation_hint"] = Value::String(i18n::t("tool.read.continuation_hint"));
+        data["continuation_hint"] = Value::String(hint.clone());
     }
     if successful_reads == 0 && !failures.is_empty() {
         let (code, hint) = classify_read_failure(&failures);
@@ -1663,7 +1853,7 @@ pub(crate) fn read_files_inner(
             format!("Read {read_lines} of {total_lines} lines from {processed_files} files.")
         },
         data,
-        continuation_required.then(|| i18n::t("tool.read.continuation_hint")),
+        continuation_hint,
     ))
 }
 
@@ -2076,6 +2266,91 @@ mod saved_result_read_tests {
             "path": "sample.txt", "query": "sample"
         }))
         .is_err());
+    }
+}
+
+#[cfg(test)]
+mod truncation_contract_tests {
+    use super::*;
+
+    #[test]
+    fn limit_without_offset_is_an_explicit_line_window() {
+        let specs = parse_read_file_specs(&json!({ "path": "sample.txt", "limit": 200 }))
+            .expect("valid read spec");
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].requested_ranges, vec![(1, 200)]);
+        assert!(!specs[0].used_default_range);
+    }
+
+    #[test]
+    fn limit_is_clamped_and_does_not_collide_with_pattern() {
+        let specs = parse_read_file_specs(&json!({ "path": "sample.txt", "limit": 99_999 }))
+            .expect("valid read spec");
+        assert_eq!(specs[0].requested_ranges, vec![(1, MAX_READ_LINES)]);
+        assert!(parse_read_file_specs(&json!({
+            "path": "sample.txt", "pattern": "needle", "limit": 20
+        }))
+        .is_ok());
+    }
+
+    #[test]
+    fn only_one_truncation_reason_is_reported() {
+        let summaries = vec![json!({
+            "used_default_range": true,
+            "read_lines": 488,
+            "total_lines": 676,
+            "truncated_by_size": false
+        })];
+        assert_eq!(
+            classify_read_truncation(false, false, true, &summaries),
+            Some("output_budget")
+        );
+        assert_eq!(
+            classify_read_truncation(false, false, false, &summaries),
+            Some("line_window")
+        );
+        assert_eq!(classify_read_truncation(false, false, false, &[]), None);
+        assert_eq!(
+            classify_read_truncation(
+                false,
+                false,
+                false,
+                &[json!({
+                    "used_default_range": true,
+                    "read_lines": 676,
+                    "total_lines": 676,
+                    "truncated_by_size": false
+                })]
+            ),
+            None
+        );
+        assert!(summary_has_more_lines(&summaries[0]));
+        assert_eq!(
+            read_next_line(&[json!({
+                "effective_ranges": [[1, 488]],
+                "read_lines": 488
+            })]),
+            Some(489)
+        );
+    }
+
+    #[test]
+    fn fixed_step_paging_is_detected_but_a_single_read_is_not() {
+        let session = "truncation-contract-fixed-step";
+        let mut hits = Vec::new();
+        for (start, end) in [(1, 100), (101, 200), (201, 300)] {
+            let specs = parse_read_file_specs(&json!({
+                "path": "sample.txt", "start_line": start, "end_line": end
+            }))
+            .expect("valid read spec");
+            hits.push(record_read_windows(session, &specs));
+        }
+        assert_eq!(hits, vec![false, false, true]);
+        let narrow = parse_read_file_specs(&json!({
+            "path": "sample.txt", "start_line": 205, "end_line": 210
+        }))
+        .expect("valid read spec");
+        assert!(!record_read_windows(session, &narrow));
     }
 }
 

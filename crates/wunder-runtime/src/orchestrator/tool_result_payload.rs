@@ -553,6 +553,11 @@ const OBSERVATION_MAX_CHARS: usize = 262_144;
 const OBSERVATION_HEAD_CHARS: usize = 131_072;
 const OBSERVATION_TAIL_CHARS: usize = 131_072;
 const OBSERVATION_MAX_ARRAY_ITEMS: usize = 32;
+/// A top-level listing is bounded by the number of direct children (normally
+/// dozens), so keeping it inline is both cheap and avoids forcing a second
+/// read through the result handle. Still bounded so a pathological directory
+/// cannot put an unbounded array into the observation envelope.
+const TOP_LEVEL_LIST_INLINE_MAX_ITEMS: usize = 256;
 const OBSERVATION_ARRAY_HEAD_ITEMS: usize = 20;
 const OBSERVATION_ARRAY_TAIL_ITEMS: usize = 8;
 const OBSERVATION_TABLE_SAMPLE_ROWS: usize = 4;
@@ -1021,6 +1026,20 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
         return;
     }
     let canonical = crate::services::tools::resolve_tool_name(tool_name);
+    // Read the flag before the success projection replaces `data`. A complete
+    // top-level listing must also bypass the generic array sampler below,
+    // otherwise the enlarged projection is cut back down to 32 entries.
+    let top_level_listing = matches!(canonical.as_str(), "列出文件" | "list_files")
+        && map
+            .get("data")
+            .and_then(|data| data.get("top_level_only"))
+            .and_then(Value::as_bool)
+            == Some(true);
+    let array_limit = if top_level_listing {
+        TOP_LEVEL_LIST_INLINE_MAX_ITEMS
+    } else {
+        OBSERVATION_MAX_ARRAY_ITEMS
+    };
     let projected_success = compact_success_observation_payload(map, canonical.as_str());
     // The MCP projection deliberately keeps a small identity envelope around
     // the remote result. Generic structured-content extraction would replace
@@ -1047,6 +1066,7 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
                 OBSERVATION_HEAD_CHARS,
                 OBSERVATION_TAIL_CHARS,
                 TOOL_RESULT_TRUNCATION_MARKER,
+                array_limit,
             );
             let observation_output_chars = estimate_tool_result_chars(&compacted_data);
             map.insert("data".to_string(), compacted_data);
@@ -1088,6 +1108,7 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
         OBSERVATION_HEAD_CHARS,
         OBSERVATION_TAIL_CHARS,
         TOOL_RESULT_TRUNCATION_MARKER,
+        array_limit,
     );
     let mut truncation_reasons = if observation_truncated {
         collect_truncation_reasons_from_value(&compacted_data, TOOL_RESULT_TRUNCATION_MARKER)
@@ -2441,9 +2462,53 @@ fn model_tool_result_data_map(data: &Value) -> Option<&Map<String, Value>> {
 
 fn project_list_files_success(data: &Value) -> Option<Value> {
     let map = model_tool_result_data_map(data)?;
+    let top_level_only = map
+        .get("top_level_only")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    // `top_level_only` already guarantees a small, complete result set, so
+    // give it a much larger inline allowance than a recursive directory walk.
+    let inline_limit = if top_level_only {
+        TOP_LEVEL_LIST_INLINE_MAX_ITEMS
+    } else {
+        OBSERVATION_MAX_ARRAY_ITEMS
+    };
     let mut projected = Map::new();
     if let Some(items) = map.get("items").filter(|value| !value.is_null()) {
-        projected.insert("items".to_string(), items.clone());
+        if let Some(items) = items.as_array().filter(|items| items.len() > inline_limit)
+        {
+            // A generic head/tail sampler drops the middle of a 289-entry
+            // listing, which is exactly where the top-level directories live.
+            // Keep directories first so one call is enough for an architecture
+            // survey instead of forcing a second read through result_handle.
+            let (mut dirs, mut files): (Vec<&Value>, Vec<&Value>) = items
+                .iter()
+                .partition(|item| item.as_str().is_some_and(|text| text.ends_with('/')));
+            let keep = inline_limit.saturating_sub(1);
+            let dirs_kept = dirs.len().min(keep);
+            let files_kept = files.len().min(keep.saturating_sub(dirs_kept));
+            let omitted_dirs = dirs.len().saturating_sub(dirs_kept);
+            let omitted_files = files.len().saturating_sub(files_kept);
+            let mut compacted = Vec::with_capacity(dirs_kept + files_kept + 1);
+            compacted.extend(dirs.drain(..dirs_kept).cloned());
+            compacted.extend(files.drain(..files_kept).cloned());
+            compacted.push(json!({
+                "__truncated": true,
+                "omitted_items": omitted_dirs.saturating_add(omitted_files),
+                "omitted_dirs": omitted_dirs,
+                "omitted_files": omitted_files
+            }));
+            projected.insert("items".to_string(), Value::Array(compacted));
+            let hint = if top_level_only {
+                "directories_first; this top-level listing exceeded the inline limit, reuse next_cursor or read the result_handle to recover the omitted entries"
+            } else {
+                "directories_first; pass top_level_only=true to get only direct children in one call"
+            };
+            projected
+                .insert("hint".to_string(), Value::String(hint.to_string()));
+        } else {
+            projected.insert("items".to_string(), items.clone());
+        }
     }
     copy_pagination_fields(&mut projected, map);
     Some(Value::Object(projected))
@@ -2948,11 +3013,23 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
         "read_lines",
         "total_lines",
         "returned_bytes",
-        "output_budget_hit",
         "output_budget_omitted_bytes",
+        "truncation_reason",
+        "has_more",
+        "next_line",
+        "repeated_paging",
     ] {
         if let Some(value) = map.get(key).filter(|value| !value.is_null()) {
             compacted.insert(key.to_string(), value.clone());
+        }
+    }
+    // `truncation_reason` supersedes the old booleans. Only surface
+    // `output_budget_hit` for producers that have not migrated yet, so the
+    // model never has to reconcile `output_budget_hit: true` with
+    // `truncated_by_size: false` in the same payload.
+    if !map.contains_key("truncation_reason") {
+        if let Some(value) = map.get("output_budget_hit").filter(|value| !value.is_null()) {
+            compacted.insert("output_budget_hit".to_string(), value.clone());
         }
     }
     let files = map.get("files").and_then(Value::as_array).or_else(|| {
@@ -2981,11 +3058,19 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
                 "total_lines",
                 "request_satisfied",
                 "complete",
-                "truncated_by_size",
             ] {
                 if let Some(value) = file_obj.get(key).filter(|value| !value.is_null()) {
                     item.insert(key.to_string(), value.clone());
                 }
+            }
+            // A `false` next to `truncation_reason: output_budget` reads like a
+            // contradiction. Only the affirmative case carries information.
+            if file_obj
+                .get("truncated_by_size")
+                .and_then(Value::as_bool)
+                == Some(true)
+            {
+                item.insert("truncated_by_size".to_string(), Value::Bool(true));
             }
             if !item.is_empty() {
                 file_entries.push(Value::Object(item));
@@ -3089,6 +3174,11 @@ fn fit_read_file_content_to_observation_budget(compacted: &mut Map<String, Value
         compacted.insert("content_omitted_chars".to_string(), json!(omitted_chars));
     }
     compacted.insert("continuation_required".to_string(), Value::Bool(true));
+    // The observation budget is now the single reason this preview ends here.
+    compacted.insert(
+        "truncation_reason".to_string(),
+        Value::String("observation_budget".to_string()),
+    );
     compacted
         .entry("continuation_hint".to_string())
         .or_insert_with(|| Value::String(TRUNCATION_CONTINUATION_HINT.to_string()));
@@ -3251,6 +3341,7 @@ fn truncate_observation_data(
     head_chars: usize,
     tail_chars: usize,
     marker: &str,
+    array_limit: usize,
 ) -> bool {
     match value {
         Value::String(text) => {
@@ -3273,7 +3364,7 @@ fn truncate_observation_data(
                 .and_then(|marker| marker.get("__truncated"))
                 .and_then(Value::as_bool)
                 == Some(true);
-            if items.len() > OBSERVATION_MAX_ARRAY_ITEMS && !has_omission_marker {
+            if items.len() > array_limit && !has_omission_marker {
                 let original_len = items.len();
                 let head_items = OBSERVATION_ARRAY_HEAD_ITEMS.min(original_len);
                 let tail_items = OBSERVATION_ARRAY_TAIL_ITEMS.min(original_len - head_items);
@@ -3288,7 +3379,7 @@ fn truncate_observation_data(
                 truncated = true;
             }
             for item in items.iter_mut() {
-                if truncate_observation_data(item, head_chars, tail_chars, marker) {
+                if truncate_observation_data(item, head_chars, tail_chars, marker, array_limit) {
                     truncated = true;
                 }
             }
@@ -3302,7 +3393,7 @@ fn truncate_observation_data(
                 if CONTINUATION_SIGNAL_KEYS.contains(&key.as_str()) {
                     continue;
                 }
-                if truncate_observation_data(inner, head_chars, tail_chars, marker) {
+                if truncate_observation_data(inner, head_chars, tail_chars, marker, array_limit) {
                     truncated = true;
                 }
             }

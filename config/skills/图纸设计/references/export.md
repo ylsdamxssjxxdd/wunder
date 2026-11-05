@@ -1,6 +1,11 @@
 # Export to PNG / SVG
 
-Convert a generated diagram HTML file into a portable `.svg` and/or `.png` next to it. **Manual only — never run unprompted.**
+Convert a generated diagram HTML file into a portable `.svg` and/or `.png` next to it.
+
+Two different defaults apply:
+
+- **PNG is a default deliverable.** Export it on every diagram delivery at `scale=2`, without waiting to be asked, and hand the file to the user (see SKILL.md §12 and §13).
+- **SVG stays manual-only.** Produce it when the user asks for an editable vector; never emit `.svg` unprompted.
 
 ## Trigger
 
@@ -369,7 +374,7 @@ If the target aspect ratio doesn't match the `viewBox` aspect ratio, say so and 
 
 - Modifies the source HTML.
 - Adds export buttons or `<script>` tags. Static diagrams remain script-free; an already motion-enabled source may retain the scoped controller from [`animation.md`](animation.md), but export never injects another controller.
-- Auto-emits `.svg` or `.png` alongside HTML generation. Manual on every call.
+- Auto-emits `.svg` alongside HTML generation. SVG is manual on every call. (`.png` is the exception: it is exported on every delivery — see the defaults at the top of this file.)
 - Embeds an HTML wrapper (cards, headers) into the SVG via `foreignObject`. Too fragile across renderers.
 
 The exporter preserves `@font-face` and scopes ordinary rules within block at-rules such as `@supports`, `@media`, `@layer`, and `@container` without flattening their conditions. Groups containing only keyframes or font faces are also retained, including nested groups, so references outside the group keep their definitions. Declaration-only unsupported blocks are dropped with a warning rather than aborting the export. System-font mode continues to omit custom font-face declarations. Semicolons inside parenthesized CSS functions, including unquoted data URLs, remain value text instead of ending a statement.

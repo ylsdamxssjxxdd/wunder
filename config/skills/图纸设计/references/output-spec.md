@@ -4,7 +4,7 @@ Four dials decide what an imported diagram becomes. Set them **before** redrawin
 
 | Dial | Question it answers | Default |
 |---|---|---|
-| **Format** | Where does this file land? | `html` |
+| **Format** | Where does this file land? | `html+png` |
 | **Size** | How big is the canvas, and how far away is the reader? | `doc-inline` |
 | **Detail level** | Reproduce every element, or compress it? | `balanced` |
 | **Audience** | How technical should the wording be? | `mixed` |
@@ -17,12 +17,14 @@ Infer choices that are clear from the request (for example, "for my deck" implie
 
 | Format | Deliverable | Keeps | Drops |
 |---|---|---|---|
-| `html` | self-contained `.html` (default) | header, diagram, summary cards, footer, live fonts | nothing |
+| `html+png` | `.html` + `.png` (**default**) | both below | — |
+| `html` | self-contained `.html` | header, diagram, summary cards, footer, live fonts | nothing |
 | `svg` | `.svg` next to the source | the `<svg>` node, vector text | editorial wrapper; fonts substitute in offline tools |
 | `png` | `.png` at `device_scale_factor` | pixels exactly as the browser renders them | vector editability |
-| `html+png` | both | — | — |
 
 Always generate the HTML first — `svg` and `png` are produced *from* it via [`export.md`](export.md). Never hand-author an SVG file directly; the HTML is the source of truth and the only artifact the taste gate (SKILL.md §9) is written against.
+
+**PNG is exported on every delivery, not on request.** Default `scale=2`, written next to the source as `<slug>.png`, then handed to the user (`send_file_to_user` when available, otherwise an absolute path in the reply). Only skip it when the user explicitly says HTML-only. If Playwright is unavailable, deliver the HTML and say the raster step was skipped — never install dependencies to get it.
 
 Pick by destination:
 

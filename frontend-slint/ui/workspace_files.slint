@@ -672,8 +672,14 @@ export component WorkspacePromptDialog inherits ModalDialog {
         Rectangle { vertical-stretch: 1; }
         HorizontalLayout {
             height: 32px; spacing: Theme.space-2; alignment: end;
+            // Confirm-mode dialogs (delete / clear / approval) start on the
+            // confirm button, so Enter and Space press it without a click —
+            // Action forwards key presses to its own callback. Input mode keeps
+            // the draft focused: there Enter means "accept the name" through
+            // InlineInput's own `accepted`.
+            init => { if !root.input-visible && !root.busy { confirm.focus(); } }
             Action { width: 72px; label: I18n.common_cancel; show-label: true; enabled: !root.busy; clicked => { root.canceled(); } }
-            Action { width: 96px; label: root.confirm-label; show-label: true; danger: root.danger; primary: !root.danger; enabled: !root.busy; clicked => { root.accepted(root.prompt-value); } }
+            confirm := Action { width: 96px; label: root.confirm-label; show-label: true; danger: root.danger; primary: !root.danger; enabled: !root.busy; clicked => { root.accepted(root.prompt-value); } }
         }
     }
 }

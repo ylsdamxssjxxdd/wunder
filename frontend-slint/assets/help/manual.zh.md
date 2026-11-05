@@ -1,12 +1,12 @@
 <!-- help-manual: zh -->
 <!-- 正文是标准 Markdown；topic: 链接指向站内主题，art/*.png 指向内嵌图册。 -->
-<!-- topic id="welcome" title="欢迎" group="开始" keywords="开始,欢迎,手册,帮助" -->
+<!-- topic id="welcome" block="start" title="欢迎" group="开始" keywords="开始,欢迎,手册,帮助" -->
 
 # 蛹使用手册
 
 蛹是本地 AI 工作台：把目标交给智能体，它拆解任务、调用工具、交付结果。文件与线程保存在本机。
 
-这份手册介绍蛹的核心能力与日常操作。左侧**目录**按主题组织内容，**索引**按关键词检索，**搜索**支持全文匹配。点击正文中的绿色链接可以跳转到相关主题。
+这份手册介绍蛹的核心能力与日常操作。左侧**目录**按四块组织内容——开始、工具、界面、能力，点分区标题可以展开或收起；**索引**按关键词检索，**搜索**支持全文匹配。点击正文中的绿色链接可以跳转到相关主题。
 
 - [**快速上手**](topic:quickstart)：新建线程、发送消息、切换模型，几分钟完成第一次对话。
 - [**多快好省**](topic:core-overview)：四个核心：多平台多形态、秒开且响应不卡顿、可 7×24 运行且智能程度高、CPU 内存与上下文消耗低并自带预制运行环境。
@@ -19,7 +19,7 @@
 
 > **提示：**在设置分类列表顶部的搜索框输入关键词，可以直接定位到对应分类。
 
-<!-- topic id="quickstart" title="快速上手" group="开始" keywords="新建线程,发送消息,切换模型,对话,第一次" -->
+<!-- topic id="quickstart" block="start" title="快速上手" group="开始" keywords="新建线程,发送消息,切换模型,对话,第一次" -->
 
 # 快速上手
 
@@ -41,7 +41,7 @@
 
 > 所有对话数据保存在本地 SQLite 数据库中，离线也能查看历史线程。
 
-<!-- topic id="forms" title="形态矩阵" group="开始" keywords="形态,蛹,蜂巢,舵机,舰体" -->
+<!-- topic id="forms" block="start" title="形态矩阵" group="开始" keywords="形态,蛹,蜂巢,舵机,舰体" -->
 
 # 形态矩阵
 
@@ -67,7 +67,7 @@ wunder 是多形态的智能体工作台，同一套引擎对外有多个程序�
 
 - **多人管理与治理** → 舰体（server）。多租户、用户与单位管理、智能体应用构建发布、网关统一接入与调度。治理后台用舰桥（web），随舰体启动，面向管理员。
 
-<!-- topic id="install" title="蛹（desktop）入门" group="开始" keywords="安装,启动,下载,桌面端" -->
+<!-- topic id="install" block="start" title="蛹（desktop）入门" group="开始" keywords="安装,启动,下载,桌面端" -->
 
 # 蛹（desktop）入门
 
@@ -216,7 +216,7 @@ wunder 是多形态的智能体工作台，同一套引擎对外有多个程序�
 
 - **子智能体运行时的提示**：任务派生了子智能体时，聊天区会显示仍在工作的子运行状态；子智能体是主智能体临时创建的工作单元，任务结束即回收。
 
-<!-- topic id="core-overview" title="核心概览" group="核心能力" keywords="多快好省,多平台,多形态,启动速度,响应速度,稳定性,智能程度,CPU 占用,内存占用,上下文消耗" -->
+<!-- topic id="core-overview" block="capabilities" title="核心概览" group="核心能力" keywords="多快好省,多平台,多形态,启动速度,响应速度,稳定性,智能程度,CPU 占用,内存占用,上下文消耗" -->
 
 # 核心概览
 
@@ -235,7 +235,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 目标、兼容性、上下文压缩、子智能体、定时任务、渠道通信、记忆、多线程、流式输出与实时状态、稳定性、多租户 11 项逐页展开的核心能力见能力 › 核心能力。
 
-<!-- topic id="core-goal" title="目标" group="核心能力" keywords="目标,目标态,相位,轮上限" -->
+<!-- topic id="core-goal" block="capabilities" title="目标" group="核心能力" keywords="目标,目标态,相位,轮上限" -->
 
 # 目标
 
@@ -277,7 +277,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 - 舰桥没有 goal 界面，目标操作在蜂巢、蛹、舵机里做。
 
-<!-- topic id="core-compatibility" title="兼容性" group="核心能力" keywords="兼容性,Win7,Ubuntu,离线" -->
+<!-- topic id="core-compatibility" block="capabilities" title="兼容性" group="核心能力" keywords="兼容性,Win7,Ubuntu,离线" -->
 
 # 兼容性
 
@@ -306,7 +306,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 - win7 互通节点不声明 ` tool.exec `，旧设备的能力面因此收窄。
 
-<!-- topic id="core-context-compression" title="上下文压缩" group="核心能力" keywords="上下文压缩,压缩,上下文" -->
+<!-- topic id="core-context-compression" block="capabilities" title="上下文压缩" group="核心能力" keywords="上下文压缩,压缩,上下文" -->
 
 # 上下文压缩
 
@@ -355,7 +355,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 压缩之后系统会优先保留当前任务需要的信息。极端情况下（很长的对话叠加大量工具结果），智能体对早期细节可能记得不够准，开一个新的对话线程即可。
 
-<!-- topic id="core-subagent" title="子智能体" group="核心能力" keywords="子智能体,派生,协作" -->
+<!-- topic id="core-subagent" block="capabilities" title="子智能体" group="核心能力" keywords="子智能体,派生,协作" -->
 
 # 子智能体
 
@@ -380,7 +380,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 - TUI 提示、前端 i18n 标签与兼容垫片仍有蜂群残留，空目录待清理。这些残留不代表能力存在。
 
-<!-- topic id="core-scheduled-tasks" title="定时任务" group="核心能力" keywords="定时任务,计划,cron" -->
+<!-- topic id="core-scheduled-tasks" block="capabilities" title="定时任务" group="核心能力" keywords="定时任务,计划,cron" -->
 
 # 定时任务
 
@@ -446,7 +446,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 需要定时执行时，在蜂巢、蛹或舰体侧配置。
 
-<!-- topic id="core-channels" title="渠道" group="核心能力" keywords="渠道,飞书,QQ,微信,IM" -->
+<!-- topic id="core-channels" block="capabilities" title="渠道" group="核心能力" keywords="渠道,飞书,QQ,微信,IM" -->
 
 # 渠道
 
@@ -539,7 +539,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 - 蛹、舵机不经过渠道层：蛹是同进程原生调用，舵机走自己的接入。
 
-<!-- topic id="core-memory" title="记忆" group="核心能力" keywords="记忆,长期记忆,知识库" -->
+<!-- topic id="core-memory" block="capabilities" title="记忆" group="核心能力" keywords="记忆,长期记忆,知识库" -->
 
 # 记忆
 
@@ -585,7 +585,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 记忆不会每轮自动更新，它只在初始化注入，运行期不改。recall 是动态补充，不会改写底座。工作区文件也不等于记忆——工作区是当前任务现场，记忆是长期沉淀。
 
-<!-- topic id="core-multithreading" title="多线程" group="核心能力" keywords="多线程,并发,线程,队列" -->
+<!-- topic id="core-multithreading" block="capabilities" title="多线程" group="核心能力" keywords="多线程,并发,线程,队列" -->
 
 # 多线程
 
@@ -615,7 +615,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 - blocking 分类配额与有界队列是硬上限，满了即报 busy，不会排队等待。
 
-<!-- topic id="core-realtime" title="流式输出与实时状态" group="核心能力" keywords="流式输出,实时状态,增量,终态,补水,断线" -->
+<!-- topic id="core-realtime" block="capabilities" title="流式输出与实时状态" group="核心能力" keywords="流式输出,实时状态,增量,终态,补水,断线" -->
 
 # 流式输出与实时状态
 
@@ -658,7 +658,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 - 流式连续性优先于富文本完整性；长消息按块稳定组织，只有活动尾块在更新。
 
-<!-- topic id="core-stability" title="稳定性与恢复" group="核心能力" keywords="稳定性,熔断,恢复,队列,超时,重试,有界" -->
+<!-- topic id="core-stability" block="capabilities" title="稳定性与恢复" group="核心能力" keywords="稳定性,熔断,恢复,队列,超时,重试,有界" -->
 
 # 稳定性
 
@@ -698,7 +698,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 | 被判「用户忙」 | 该任务线程仍在执行 | 稍后再发，或让出/取消该线程 |
 | 界面与后端状态不一致 | 投影落后 | 刷新或重启；仍不一致用[一键重置](topic:desktop-ui) |
 
-<!-- topic id="core-multi-user-management" title="多用户管理" group="核心能力" keywords="多租户,账号,配额,权限" -->
+<!-- topic id="core-multi-user-management" block="capabilities" title="多用户管理" group="核心能力" keywords="多租户,账号,配额,权限" -->
 
 # 多用户管理
 
@@ -775,7 +775,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 - 系统不自带一批预设智能体卡，磁盘预设目录缺省为空，未配置即没有。
 
-<!-- topic id="tools-overview" title="工具总览" group="工具" keywords="工具,工具矩阵,MCP,别名" -->
+<!-- topic id="tools-overview" block="tools" title="工具总览" group="工具" keywords="工具,工具矩阵,MCP,别名" -->
 
 # 工具总览
 
@@ -865,7 +865,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 - **文本编辑**（旧名 ` apply\_patch `）：成功走统一外壳；补丁形态失败时，错误语义比普通文件工具更严格。
 
-<!-- topic id="tools" title="工具与技能" group="工具" keywords="工具,技能,MCP,知识库,服务器" -->
+<!-- topic id="tools" block="tools" title="工具与技能" group="工具" keywords="工具,技能,MCP,知识库,服务器" -->
 
 # 工具与技能
 
@@ -883,7 +883,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 > 本地能力以最小权限原则运行：系统能力调用必须显式声明，不会默默暴露给远端。
 
-<!-- topic id="interface" title="界面导览" group="界面" keywords="界面,侧栏,工作过程,轨迹,布局" -->
+<!-- topic id="interface" block="interface" title="界面导览" group="界面" keywords="界面,侧栏,工作过程,轨迹,布局" -->
 
 # 界面导览
 
@@ -901,7 +901,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 > **建议：**日常使用看工作过程即可；需要完整复盘时再打开轨迹视图。
 
-<!-- topic id="desktop-ui" title="蛹界面" group="界面" keywords="界面,桌面端,侧栏,布局" -->
+<!-- topic id="desktop-ui" block="interface" title="蛹界面" group="界面" keywords="界面,桌面端,侧栏,布局" -->
 
 # 蛹界面
 
@@ -1044,7 +1044,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 | 设备互通设置面板 | 分类未开放；仅云端工作区 + 审批弹窗 | ✅ 设备分类 + 互通视图 |
 | 一个智能体 | 多个线程、多个工作区 | 一样 |
 
-<!-- topic id="art-overview" title="00 整体总览" group="美术" keywords="美术,设计稿,整体总览,窗口布局" -->
+<!-- topic id="art-overview" block="interface" title="00 整体总览" group="美术" keywords="美术,设计稿,整体总览,窗口布局" -->
 
 # 00 整体总览
 
@@ -1056,7 +1056,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 > 设计稿源文件在 docs/wunder美术设计稿/蛹。改完 SVG 后运行 python scripts/render\_art\_previews.py，再运行 python scripts/build\_help\_manual.py 更新手册里的预览图。
 
-<!-- topic id="art-foundations" title="01 基础规范" group="美术" keywords="美术,基础规范,颜色,字阶,间距,圆角" -->
+<!-- topic id="art-foundations" block="interface" title="01 基础规范" group="美术" keywords="美术,基础规范,颜色,字阶,间距,圆角" -->
 
 # 01 基础规范
 
@@ -1066,7 +1066,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 *01 基础规范 · 色彩、文字、间距、圆角*
 
-<!-- topic id="art-icons" title="02 图标系统" group="美术" keywords="美术,图标,生产资产,蛹图标,状态图标" -->
+<!-- topic id="art-icons" block="interface" title="02 图标系统" group="美术" keywords="美术,图标,生产资产,蛹图标,状态图标" -->
 
 # 02 图标系统
 
@@ -1076,7 +1076,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 *02 图标系统 · 真实资产、尺寸、着色与状态*
 
-<!-- topic id="art-shell" title="03 外壳与侧栏" group="美术" keywords="美术,外壳,侧栏,标题栏,分隔柄" -->
+<!-- topic id="art-shell" block="interface" title="03 外壳与侧栏" group="美术" keywords="美术,外壳,侧栏,标题栏,分隔柄" -->
 
 # 03 外壳与侧栏
 
@@ -1086,7 +1086,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 *03 外壳与侧栏 · 标题栏、侧栏、分隔柄*
 
-<!-- topic id="art-timeline" title="04 会话时间线" group="美术" keywords="美术,时间线,消息,回合页脚,状态胶囊" -->
+<!-- topic id="art-timeline" block="interface" title="04 会话时间线" group="美术" keywords="美术,时间线,消息,回合页脚,状态胶囊" -->
 
 # 04 会话时间线
 
@@ -1096,7 +1096,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 *04 会话时间线 · 消息、页脚、状态胶囊*
 
-<!-- topic id="art-process" title="05 过程与工具" group="美术" keywords="美术,过程,工具,思考,子智能体" -->
+<!-- topic id="art-process" block="interface" title="05 过程与工具" group="美术" keywords="美术,过程,工具,思考,子智能体" -->
 
 # 05 过程与工具
 
@@ -1106,7 +1106,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 *05 过程与工具 · 过程条、工具行、子智能体*
 
-<!-- topic id="art-plan" title="06 计划与问询" group="美术" keywords="美术,计划,问询,目标,无偏好" -->
+<!-- topic id="art-plan" block="interface" title="06 计划与问询" group="美术" keywords="美术,计划,问询,目标,无偏好" -->
 
 # 06 计划与问询
 
@@ -1116,7 +1116,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 *06 计划与问询 · 计划卡、目标横幅、问询面板*
 
-<!-- topic id="art-composer" title="07 输入区" group="美术" keywords="美术,输入区,发送,停止,队列" -->
+<!-- topic id="art-composer" block="interface" title="07 输入区" group="美术" keywords="美术,输入区,发送,停止,队列" -->
 
 # 07 输入区
 
@@ -1126,7 +1126,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 *07 输入区 · 输入卡、底栏、停止与队列*
 
-<!-- topic id="art-settings" title="08 设置与弹窗" group="美术" keywords="美术,设置,弹窗,控件,校验" -->
+<!-- topic id="art-settings" block="interface" title="08 设置与弹窗" group="美术" keywords="美术,设置,弹窗,控件,校验" -->
 
 # 08 设置与弹窗
 
@@ -1136,7 +1136,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 *08 设置与弹窗 · 设置行、控件、校验*
 
-<!-- topic id="art-motion" title="09 交互状态与动效" group="美术" keywords="美术,交互,状态,动效,键位,断点" -->
+<!-- topic id="art-motion" block="interface" title="09 交互状态与动效" group="美术" keywords="美术,交互,状态,动效,键位,断点" -->
 
 # 09 交互状态与动效
 
@@ -1146,7 +1146,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 *09 交互状态与动效 · 状态、时间表、键位*
 
-<!-- topic id="interlink" title="三端互通" group="能力" keywords="三端互通,设备互通,隧道,远程" -->
+<!-- topic id="interlink" block="capabilities" title="三端互通" group="能力" keywords="三端互通,设备互通,隧道,远程" -->
 
 # 三端互通
 
@@ -1257,7 +1257,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 远程文件读取以 256 KiB 内联结果为界，较大文件通过有界分片传输；云端直执行没有设备数据通道，超过该大小的读写需要拆分。蜂巢不提供二进制上传、归档和批量文件操作。
 
-<!-- topic id="settings" title="设置总览" group="参考" keywords="设置,语言,主题,云账号,偏好" -->
+<!-- topic id="settings" block="capabilities" title="设置总览" group="参考" keywords="设置,语言,主题,云账号,偏好" -->
 
 # 设置总览
 
@@ -1281,7 +1281,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 语言、主题与字号修改后立即生效，无需重启。
 
-<!-- topic id="models" title="模型" group="参考" keywords="模型,参数,默认模型,渠道,多模态参数,温度" -->
+<!-- topic id="models" block="capabilities" title="模型" group="参考" keywords="模型,参数,默认模型,渠道,多模态参数,温度" -->
 
 # 模型
 
@@ -1303,7 +1303,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 > **提示：**保存前可以使用「探测」按钮校验上下文长度或音色列表是否可用。
 
-<!-- topic id="threads" title="智能体线程" group="参考" keywords="轮次,工具调用,上下文压缩,子智能体,线程" -->
+<!-- topic id="threads" block="capabilities" title="智能体线程" group="参考" keywords="轮次,工具调用,上下文压缩,子智能体,线程" -->
 
 # 智能体线程
 
@@ -1325,7 +1325,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 > 线程的系统提示词在首次创建后保持冻结；长期记忆只在线程初始化时注入一次，保证模型提示词缓存的稳定性。
 
-<!-- topic id="workspace" title="文件与工作区" group="参考" keywords="文件,工作区,本地,存储,导出" -->
+<!-- topic id="workspace" block="tools" title="文件与工作区" group="工作区" keywords="文件,工作区,本地,存储,导出" -->
 
 # 文件与工作区
 
@@ -1335,7 +1335,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 > **建议：**把工作区放在空间充足的磁盘分区，定期备份重要产出。
 
-<!-- topic id="multimodal" title="多模态输入" group="参考" keywords="截图,录音,语音识别,语音合成,图像生成,视频生成" -->
+<!-- topic id="multimodal" block="tools" title="多模态输入" group="多模态" keywords="截图,录音,语音识别,语音合成,图像生成,视频生成" -->
 
 # 多模态输入
 
@@ -1353,7 +1353,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 > **提示：**多模态能力依赖对应参数是否填写，未配置的项目不会出现在输入区。
 
-<!-- topic id="privacy" title="数据与隐私" group="参考" keywords="数据,隐私,离线,SQLite,备份,存储位置" -->
+<!-- topic id="privacy" block="capabilities" title="数据与隐私" group="参考" keywords="数据,隐私,离线,SQLite,备份,存储位置" -->
 
 # 数据与隐私
 
@@ -1373,7 +1373,7 @@ wunder（心舰）是多形态的智能体工作台：把目标交给智能体�
 
 > **说明：**导出诊断信息（见「诊断与排查」）只包含与本机设置和能力计数相关的密钥无关内容，用于排查问题。
 
-<!-- topic id="usage" title="Token 用量与额度" group="参考" keywords="token,用量,额度,费用,上下文占用,credits" -->
+<!-- topic id="usage" block="capabilities" title="Token 用量与额度" group="参考" keywords="token,用量,额度,费用,上下文占用,credits" -->
 
 # Token 用量与额度
 
@@ -1395,7 +1395,7 @@ Token 数**不是费用**，只是上下文长度与消耗的计量：工作过�
 
 > **提示：**模型请求次数与额度消耗是两个指标。免额度场景请求数照增，额度消耗为 0。
 
-<!-- topic id="faq" title="常见问题" group="参考" keywords="FAQ,常见问题,注册,费用,记忆,子智能体,密码,工具可见性" -->
+<!-- topic id="faq" block="capabilities" title="常见问题" group="帮助" keywords="FAQ,常见问题,注册,费用,记忆,子智能体,密码,工具可见性" -->
 
 # 常见问题
 
@@ -1435,7 +1435,7 @@ Token 数**不是费用**，只是上下文长度与消耗的计量：工作过�
 
 网页抓取只读一页正文；浏览器像真人一样操作网页（点击、滚动、填表、等待渲染）。
 
-<!-- topic id="troubleshooting" title="诊断与排查" group="参考" keywords="诊断,排查,故障,FAQ,症状,日志" -->
+<!-- topic id="troubleshooting" block="capabilities" title="诊断与排查" group="帮助" keywords="诊断,排查,故障,FAQ,症状,日志" -->
 
 # 诊断与排查
 
@@ -1515,7 +1515,7 @@ Token 数**不是费用**，只是上下文长度与消耗的计量：工作过�
 
 - 是否涉及子智能体、MCP、设备互通
 
-<!-- topic id="glossary" title="术语表" group="参考" keywords="术语,名词,定义,概念" -->
+<!-- topic id="glossary" block="capabilities" title="术语表" group="帮助" keywords="术语,名词,定义,概念" -->
 
 # 术语表
 
