@@ -221,7 +221,21 @@ impl SqliteStorage {
         // connection shares it), the backoff lets the scanner finish, and the
         // next open rebuilds the node read-write.
         for attempt in 0..3u32 {
-            let conn = self.open_connection()?;
+            // `open_connection` can itself detect a silent read-only
+            // downgrade when a freshly created -shm sidecar is briefly held by
+            // a scanner. That is exactly the failure this loop exists to heal,
+            // so it must not be short-circuited by `?`: drop the connection,
+            // back off, and let the next attempt rebuild the wal-index node.
+            let conn = match self.open_connection() {
+                Ok(conn) => conn,
+                Err(err) => {
+                    if attempt == 2 {
+                        return Err(err);
+                    }
+                    std::thread::sleep(Duration::from_millis(40 * u64::from(attempt + 1)));
+                    continue;
+                }
+            };
             match conn.execute_batch("BEGIN IMMEDIATE; ROLLBACK") {
                 Ok(()) => {
                     self.write_ready.store(true, Ordering::Release);

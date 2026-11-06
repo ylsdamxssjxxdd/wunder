@@ -531,3 +531,59 @@ async fn read_file_limit_and_list_files_top_level_work_in_one_call() {
         );
     }
 }
+
+#[test]
+fn localized_schedule_text_and_browser_surface_match_model_feedback() {
+    use wunder_server::cron_schedule::{parse_schedule_text, ParsedScheduleText};
+
+    assert_eq!(
+        parse_schedule_text("每天 09:00").unwrap(),
+        ParsedScheduleText::Cron("0 9 * * *".to_string())
+    );
+    assert_eq!(
+        parse_schedule_text("每天下午3点半").unwrap(),
+        ParsedScheduleText::Cron("30 15 * * *".to_string())
+    );
+    assert_eq!(
+        parse_schedule_text("每周一 10:30").unwrap(),
+        ParsedScheduleText::Cron("30 10 * * 1".to_string())
+    );
+    assert_eq!(
+        parse_schedule_text("每 5 分钟").unwrap(),
+        ParsedScheduleText::EveryMs(300_000)
+    );
+    assert_eq!(
+        parse_schedule_text("daily at 9am").unwrap(),
+        ParsedScheduleText::Cron("0 9 * * *".to_string())
+    );
+    assert!(parse_schedule_text("随便什么时候").is_err());
+
+    // A flat action schema must not advertise a wait-only field to navigate.
+    let browser = wunder_server::tools::builtin_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "browser")
+        .expect("browser spec");
+    let projected = wunder_server::tools::prompt_tool_spec(&browser, "en-US");
+    let properties = projected.input_schema["properties"]
+        .as_object()
+        .expect("browser properties");
+    assert!(!properties.contains_key("load_state"));
+    assert!(properties.contains_key("wait_ms"));
+    assert!(projected
+        .description
+        .contains("wait_ms only applies to wait"));
+}
+
+#[cfg(windows)]
+#[test]
+fn command_output_decoder_recovers_gbk_chinese() {
+    let (encoded, _, _) = encoding_rs::GBK.encode("中文输出正常");
+    assert_eq!(
+        wunder_server::tools::decode_command_output(&encoded),
+        "中文输出正常"
+    );
+    assert_eq!(
+        wunder_server::tools::decode_command_output("中文输出正常".as_bytes()),
+        "中文输出正常"
+    );
+}

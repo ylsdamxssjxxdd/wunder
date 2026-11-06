@@ -8,7 +8,11 @@
 //! per-pixel alpha.
 
 use crate::companion_sprite::Sheet;
+// Only the non-Windows overlay keeps its controller on the UI thread; the Win32
+// backend owns its state on a dedicated message-loop thread.
+#[cfg(not(windows))]
 use std::cell::RefCell;
+#[cfg(not(windows))]
 use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
@@ -133,6 +137,7 @@ pub(crate) fn take_overlay_window() -> bool {
     OVERLAY_WINDOW_PENDING.with(|pending| pending.replace(false))
 }
 
+#[cfg(not(windows))]
 fn mark_overlay_window() {
     OVERLAY_WINDOW_PENDING.with(|pending| pending.set(true));
 }

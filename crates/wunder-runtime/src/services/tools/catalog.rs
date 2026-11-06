@@ -273,7 +273,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "job_id": reference("s"),
                 "name": reference("s"),
                 "message": reference("s"),
-                "schedule_text": {"type":"string","minLength":1,"description":"Natural-language schedule for add, e.g. 'every 5 minutes'."},
+                "schedule_text": {"type":"string","minLength":1,"description":"Natural-language schedule for add, e.g. 'every 5 minutes', 'daily at 9am', '每天 09:00', '每 5 分钟', or a cron expression such as '0 9 * * *'."},
                 "schedule": reference("schedule"),
                 "session": {"type":"string","enum":["main","isolated"]},
                 "enabled": reference("b")

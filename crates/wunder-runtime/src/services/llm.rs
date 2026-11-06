@@ -482,6 +482,9 @@ fn merge_reasoning_capped_response(
     // 断掉的那次请求同样消耗了输入与已生成的思考 token，不能因为流被
     // 丢弃就从统计里消失。
     merged.usage = merge_token_usage(base_usage, merged.usage.take());
+    // This resend is the turn's single output recovery; tell the orchestrator
+    // so it does not add another empty-output retry on top of it.
+    merged.transport_recovery_used = true;
     merged
 }
 
@@ -572,6 +575,11 @@ pub struct LlmResponse {
     pub reasoning: String,
     pub usage: Option<TokenUsage>,
     pub tool_calls: Option<Value>,
+    /// A streaming attempt whose thinking budget was exhausted already
+    /// resent the request once with thinking disabled. Recovery is a
+    /// once-per-turn budget shared with `EmptyOutputGuard`, so the
+    /// orchestrator must not grant a second retry for the same empty answer.
+    pub transport_recovery_used: bool,
 }
 
 fn llm_response_has_payload(content: &str, reasoning: &str, tool_calls: Option<&Value>) -> bool {
@@ -1276,6 +1284,7 @@ impl LlmClient {
             reasoning: ReasoningBudgetCap::new(&self.config).trim(reasoning),
             usage,
             tool_calls,
+            transport_recovery_used: false,
         })
     }
 
@@ -1575,6 +1584,7 @@ impl LlmClient {
                 reasoning: trim_reasoning_to_budget(reasoning_combined, budget_tokens),
                 usage,
                 tool_calls,
+                transport_recovery_used: false,
             }));
         }
     }

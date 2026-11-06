@@ -2170,6 +2170,9 @@ impl WinitWindowAdapter {
         self.shown.get()
     }
 
+    // Vendored i-slint-backend-winit: the field is read by the redraw logic
+    // below, but wunder's frontend never calls this accessor.
+    #[allow(dead_code)]
     pub(crate) fn pending_redraw(&self) -> bool {
         self.pending_redraw.get()
     }

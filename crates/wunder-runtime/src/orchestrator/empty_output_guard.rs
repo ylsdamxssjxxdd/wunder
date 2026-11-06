@@ -11,6 +11,14 @@ pub(super) struct EmptyOutputGuard {
 
 impl EmptyOutputGuard {
     pub(super) fn observe(&mut self, output: OutputDiagnostics) {
+        // The streaming client can spend the turn's single recovery itself by
+        // resending with thinking disabled when a thinking budget is exhausted.
+        // Count that resend here; otherwise the orchestrator would grant a
+        // second recovery and send another pair of requests for one empty
+        // answer. The budget is deliberately turn-wide, not per layer.
+        if output.transport_recovery_used {
+            self.recovery_used = true;
+        }
         self.last_output = output;
     }
 

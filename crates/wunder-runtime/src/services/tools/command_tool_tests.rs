@@ -1,4 +1,14 @@
 use super::*;
+
+#[cfg(windows)]
+#[test]
+fn decode_command_output_recovers_gbk_chinese() {
+    let (encoded, _, _) = encoding_rs::GBK.encode("中文输出正常");
+    assert_eq!(decode_command_output(&encoded), "中文输出正常");
+    // Valid UTF-8 must stay untouched.
+    assert_eq!(decode_command_output("中文输出正常".as_bytes()), "中文输出正常");
+}
+
 #[cfg(feature = "sqlite-storage")]
 use crate::{
     lsp::LspManager,

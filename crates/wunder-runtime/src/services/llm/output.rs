@@ -11,6 +11,9 @@ pub(crate) struct OutputDiagnostics {
     pub max_output: u32,
     pub thinking_token_budget: Option<u32>,
     pub thinking_disabled: bool,
+    /// Set when the transport layer already resent this request once with
+    /// thinking disabled, consuming the turn's output-recovery budget.
+    pub transport_recovery_used: bool,
 }
 
 impl OutputDiagnostics {
@@ -32,6 +35,7 @@ impl OutputDiagnostics {
             max_output,
             thinking_token_budget: resolved_thinking_token_budget(config),
             thinking_disabled: disable_thinking_requested(config),
+            transport_recovery_used: false,
         }
     }
 

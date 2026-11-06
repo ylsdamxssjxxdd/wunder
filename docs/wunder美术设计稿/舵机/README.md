@@ -6,13 +6,14 @@
 - 唯一外层框架：转写区 / 弹层带 / 欢迎横幅带 / 活动行 / 输入区
 - 语义由命名色 + 字重修饰承载：Cyan/Green/Red/Yellow/Magenta + BOLD/DIM/REVERSED/UNDERLINED/CROSSED_OUT/ITALIC
 - 双语界面（zh/en）；NO_COLOR 时保留修饰与布局，具体降级以实际函数为准
-- 更新日期：2026-10-25
+- 欢迎头像为无彩色白/灰灰阶：只用亮度表现体积，调色板是 48–255 的 15 级灰阶，第 16 槽为透明；头像不占命名色语义
+- 更新日期：2026-11-06
 
 ## 文件
 
 | 文件 | 内容与状态 |
 | --- | --- |
-| `00-整体总览.svg` | 启动实帧、真实欢迎像素画、五段功能栈、布局规则与调用形态 |
+| `00-整体总览.svg` | 启动实帧、真实欢迎灰阶像素画、五段功能栈、布局规则与调用形态 |
 | `01-基础规范.svg` | 命名色、Rgb 面板、字重修饰、NO_COLOR、显示列宽与终端兼容 |
 | `02-布局与底栏.svg` | 布局约束、运行帧、活动行、输入内部行预算与底栏收缩 |
 | `03-会话时间线.svg` | 条目样式、Markdown、流式、代码差异、Ctrl+T 全展开、选区与搜索 |
@@ -78,6 +79,13 @@
 
 欢迎像素画只绘制一次，不运行常驻动画；复制反馈按到期时间安排清除帧。
 
+### 欢迎头像
+
+- 数据源 `welcome_logo_art.rs` 由 `scripts/generate_cli_logo.py` 从 `images/eva01-head.png` 生成，40×34 像素、每单元格两像素（半块 ▀/▄）。
+- 观感目标：白色高光 + 灰色阴影构成体积，**不使用任何色相**；渲染只允许 `Rgb(g,g,g)`，不允许 Magenta/Green 等命名色参与。
+- 宽度不足 24 列时整块头像不画，横幅只剩品牌文字；列宽在 24–40 之间时按比例缩宽，行高随 40×34 比例换算。
+- `NO_COLOR` 下改用亮度字符梯度（空格到 `@`），仍然保留明暗层次，且不输出转义样式。
+
 ## 事实来源
 
 - `crates/wunder-cli/tui/theme.rs`（命名色、Rgb、修饰与降级）
@@ -86,6 +94,7 @@
 - `crates/wunder-cli/tui/command_center.rs`、`tui/trajectory/view.rs`、`tui/app/plan_panel.rs`、`tui/app/patch_log.rs`
 - `crates/wunder-cli/tui/activity_indicator.rs`、`markdown_render.rs`、`markdown_stream.rs`、`highlight.rs`
 - `crates/wunder-cli/empty_state_animation.rs`、`welcome_logo_art.rs`（位于 crate 根部，不在 `tui/` 子目录）
+- `scripts/generate_cli_logo.py`（灰阶头像的唯一生成入口；调色板固定为中性灰阶）
 
 ## 实机差异与待决项
 
@@ -93,6 +102,7 @@
 2. 真彩色在 16/256 色终端的回退由终端完成；若未来改由代码做降级映射，再补对应规范。
 3. 示例线程名、路径与模型名均为通用示例，不对应真实业务数据。
 4. 欢迎横幅来自生成数据；修改横幅先改生成源，再重新生成并校验内嵌图，不能手工画占位九宫格代替。
+5. 头像自 v0.3.5 起改为无彩色灰阶；此前版本是彩色量化调色板，历史截图里的绿/紫头部不再作为有效参考。
 
 ## 校验
 

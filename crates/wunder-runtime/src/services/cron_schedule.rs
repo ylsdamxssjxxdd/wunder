@@ -18,10 +18,14 @@ pub fn parse_schedule_text(input: &str) -> Result<ParsedScheduleText> {
     if raw.is_empty() {
         return Err(anyhow!("schedule text empty"));
     }
-    let lowered = raw.to_lowercase();
+    // Chinese descriptions are normalized into the same English internal
+    // grammar, so every downstream rule stays single-sourced.
+    let normalized = normalize_localized_schedule_text(raw);
+    let effective = normalized.as_deref().unwrap_or(raw);
+    let lowered = effective.to_lowercase();
 
-    if is_cron_expr(raw) {
-        return Ok(ParsedScheduleText::Cron(raw.to_string()));
+    if is_cron_expr(effective) {
+        return Ok(ParsedScheduleText::Cron(effective.to_string()));
     }
 
     if let Some(parsed) = parse_every_expression(&lowered)? {
@@ -37,8 +41,149 @@ pub fn parse_schedule_text(input: &str) -> Result<ParsedScheduleText> {
     }
 
     Err(anyhow!(
-        "unsupported schedule text: {raw}. Try 'every 5 minutes', 'daily at 9am', 'weekdays at 6pm', or a cron expression like '0 */5 * * *'"
+        "unsupported schedule text: {raw}. Try 'every 5 minutes', 'daily at 9am', 'weekdays at 6pm', a cron expression like '0 */5 * * *', or Chinese forms such as '每天 09:00', '每 5 分钟', '每周一 10:30'"
     ))
+}
+
+/// Translate common Chinese schedule phrases into the English grammar the
+/// existing parsers already understand, so there is one source of truth for
+/// cron/every conversion. `None` leaves ASCII input on the original path.
+fn normalize_localized_schedule_text(raw: &str) -> Option<String> {
+    if raw.is_ascii() {
+        return None;
+    }
+    let compact: String = raw.chars().filter(|ch| !ch.is_whitespace()).collect();
+
+    // Weekly at a fixed time, e.g. 每周一 09:00 / 星期三 9点 / 周天 20:30.
+    for (label, day) in [
+        ("每周一", "1"),
+        ("每周二", "2"),
+        ("每周三", "3"),
+        ("每周四", "4"),
+        ("每周五", "5"),
+        ("每周六", "6"),
+        ("每周日", "0"),
+        ("每周天", "0"),
+        ("星期一", "1"),
+        ("星期二", "2"),
+        ("星期三", "3"),
+        ("星期四", "4"),
+        ("星期五", "5"),
+        ("星期六", "6"),
+        ("星期日", "0"),
+        ("星期天", "0"),
+        ("周一", "1"),
+        ("周二", "2"),
+        ("周三", "3"),
+        ("周四", "4"),
+        ("周五", "5"),
+        ("周六", "6"),
+        ("周日", "0"),
+        ("周天", "0"),
+    ] {
+        if let Some(rest) = compact.strip_prefix(label) {
+            let (hour, minute) = normalize_cjk_time(rest)?;
+            return Some(format!("{minute} {hour} * * {day}"));
+        }
+    }
+
+    // Daily / working days / weekends at a fixed time.
+    for (labels, prefix) in [
+        (&["每天", "每日"][..], "daily at "),
+        (&["工作日", "每个工作日", "周一至周五"][..], "weekdays at "),
+        (&["周末", "每周末"][..], "weekends at "),
+    ] {
+        for label in labels {
+            if let Some(rest) = compact.strip_prefix(label) {
+                if rest.is_empty() {
+                    continue;
+                }
+                let (hour, minute) = normalize_cjk_time(rest)?;
+                return Some(format!("{prefix}{hour:02}:{minute:02}"));
+            }
+        }
+    }
+
+    let bare = match compact.as_str() {
+        "每小时" | "每小时一次" => Some("hourly"),
+        "每天" | "每日" => Some("daily"),
+        "每周" | "每星期" => Some("weekly"),
+        "每月" => Some("monthly"),
+        "工作日" | "每个工作日" => Some("weekdays at 09:00"),
+        "周末" | "每周末" => Some("weekends at 09:00"),
+        _ => None,
+    };
+    if let Some(expr) = bare {
+        return Some(expr.to_string());
+    }
+
+    // Recurring intervals, e.g. 每 5 分钟 / 每隔 30 秒 / 每 2 小时.
+    let interval = compact
+        .strip_prefix("每隔")
+        .or_else(|| compact.strip_prefix("每"))?;
+    let digits: String = interval
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect();
+    if digits.is_empty() {
+        return None;
+    }
+    let unit = match &interval[digits.len()..] {
+        "秒" | "秒钟" => "seconds",
+        "分钟" | "分" => "minutes",
+        "小时" | "钟头" | "个小时" => "hours",
+        "天" | "日" => "days",
+        _ => return None,
+    };
+    Some(format!("every {digits} {unit}"))
+}
+
+/// Parse `HH:MM`, `H点`, `H点M分`, `H点半`, and 上午/下午 prefixes into a
+/// 24-hour (hour, minute) pair. Full-width digits and colons are normalized.
+fn normalize_cjk_time(text: &str) -> Option<(u32, u32)> {
+    let mut value = text.trim().to_string();
+    let mut pm = false;
+    for prefix in ["下午", "晚上", "傍晚"] {
+        if let Some(rest) = value.strip_prefix(prefix) {
+            pm = true;
+            value = rest.to_string();
+            break;
+        }
+    }
+    for prefix in ["上午", "早上", "早晨", "凌晨"] {
+        if let Some(rest) = value.strip_prefix(prefix) {
+            value = rest.to_string();
+            break;
+        }
+    }
+    let value: String = value
+        .chars()
+        .map(|ch| match ch {
+            '０'..='９' => (ch as u32 - '０' as u32 + '0' as u32) as u8 as char,
+            '：' => ':',
+            _ => ch,
+        })
+        .collect();
+    let value = value.trim();
+    let (hour, minute) = if let Some((hours, minutes)) = value.split_once(':') {
+        (hours.parse::<u32>().ok()?, minutes.parse::<u32>().ok()?)
+    } else if let Some((hours, rest)) = value.split_once('点') {
+        let hour = hours.parse::<u32>().ok()?;
+        let rest = rest.trim_end_matches('分');
+        let minute = match rest {
+            "" => 0,
+            "半" => 30,
+            other => other.parse::<u32>().ok()?,
+        };
+        (hour, minute)
+    } else {
+        return None;
+    };
+    let hour = if pm && hour < 12 { hour + 12 } else { hour };
+    if hour > 23 || minute > 59 {
+        return None;
+    }
+    Some((hour, minute))
 }
 
 pub fn validate_cron_expr(expr: &str) -> Result<()> {
@@ -332,6 +477,59 @@ mod tests {
             parse_schedule_text("weekdays at 6:30pm").unwrap(),
             ParsedScheduleText::Cron("30 18 * * 1-5".to_string())
         );
+    }
+
+    #[test]
+    fn test_parse_schedule_text_chinese() {
+        assert_eq!(
+            parse_schedule_text("每天 09:00").unwrap(),
+            ParsedScheduleText::Cron("0 9 * * *".to_string())
+        );
+        assert_eq!(
+            parse_schedule_text("每天9点").unwrap(),
+            ParsedScheduleText::Cron("0 9 * * *".to_string())
+        );
+        assert_eq!(
+            parse_schedule_text("每天下午3点半").unwrap(),
+            ParsedScheduleText::Cron("30 15 * * *".to_string())
+        );
+        assert_eq!(
+            parse_schedule_text("每天 ２０:３０").unwrap(),
+            ParsedScheduleText::Cron("30 20 * * *".to_string())
+        );
+        assert_eq!(
+            parse_schedule_text("工作日 18:30").unwrap(),
+            ParsedScheduleText::Cron("30 18 * * 1-5".to_string())
+        );
+        assert_eq!(
+            parse_schedule_text("每周一 10:30").unwrap(),
+            ParsedScheduleText::Cron("30 10 * * 1".to_string())
+        );
+        assert_eq!(
+            parse_schedule_text("每周日 20:30").unwrap(),
+            ParsedScheduleText::Cron("30 20 * * 0".to_string())
+        );
+        assert_eq!(
+            parse_schedule_text("每 5 分钟").unwrap(),
+            ParsedScheduleText::EveryMs(300_000)
+        );
+        assert_eq!(
+            parse_schedule_text("每隔 30 秒").unwrap(),
+            ParsedScheduleText::EveryMs(30_000)
+        );
+        assert_eq!(
+            parse_schedule_text("每 2 小时").unwrap(),
+            ParsedScheduleText::EveryMs(7_200_000)
+        );
+        assert_eq!(
+            parse_schedule_text("每小时").unwrap(),
+            ParsedScheduleText::Cron("0 * * * *".to_string())
+        );
+        assert_eq!(
+            parse_schedule_text("每天").unwrap(),
+            ParsedScheduleText::Cron("0 0 * * *".to_string())
+        );
+        assert!(parse_schedule_text("随便什么时候").is_err());
     }
 
     #[test]
