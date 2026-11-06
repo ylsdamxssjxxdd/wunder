@@ -16,7 +16,21 @@ wunder 心舰 是一个多形态的智能体工作台
 
 ## 界面预览
 
+**🍯 蛹 desktop** —— 本地 AI 工作台（主推形态）
+
 <img src="docs/images/wunder-pupa.png" alt="蛹：本地 AI 工作台界面" width="880">
+
+**🐉 舰桥 web** —— 舰体的治理后台
+
+<img src="docs/images/wunder-bridge.png" alt="舰桥：治理后台界面" width="880">
+
+**🐝 蜂巢 web** —— 云端 AI 工作台
+
+<img src="docs/images/wunder-hive.png" alt="蜂巢：云端 AI 工作台界面" width="880">
+
+**⚙️ 舵机 cli** —— 终端 TUI 入口
+
+<img src="docs/images/wunder-servo.png" alt="舵机：终端 TUI 界面" width="880">
 
 ## 形态矩阵
 

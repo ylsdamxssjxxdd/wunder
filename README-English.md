@@ -18,7 +18,21 @@ On first launch, configure a model on the settings page and you are ready to go.
 
 ## Interface
 
+**🍯 Pupa (desktop)** — local AI workbench (flagship form)
+
 <img src="docs/images/wunder-pupa.png" alt="Pupa: local AI workbench interface" width="880">
+
+**🐉 Bridge (web)** — the Hull's governance console
+
+<img src="docs/images/wunder-bridge.png" alt="Bridge: governance console interface" width="880">
+
+**🐝 Beehive (web)** — cloud AI workbench
+
+<img src="docs/images/wunder-hive.png" alt="Beehive: cloud AI workbench interface" width="880">
+
+**⚙️ Servo (cli)** — terminal TUI entry point
+
+<img src="docs/images/wunder-servo.png" alt="Servo: terminal TUI interface" width="880">
 
 ## Form Matrix
 
