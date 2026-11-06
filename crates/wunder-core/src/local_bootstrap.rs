@@ -278,6 +278,9 @@ pub fn release_file_if_missing(target: &Path, bytes: &[u8]) -> Result<bool> {
 
 pub const RELEASE_MANIFEST_FILE: &str = ".release-manifest.json";
 pub const RELEASE_MANIFEST_LOCK: &str = ".release-manifest.lock";
+/// Single-file anchor for the whole released asset set. When it matches the
+/// running build, startup reads one small JSON instead of stat-ing every asset.
+pub const RELEASE_ANCHOR_FILE: &str = ".release-anchor.json";
 const RELEASE_MANIFEST_SCHEMA: u32 = 1;
 const RELEASE_CONFLICT_DIR: &str = "temp/asset-conflicts";
 
@@ -381,6 +384,8 @@ pub struct ReleaseOutcome {
 pub struct ReleaseReport {
     pub outcomes: Vec<ReleaseOutcome>,
     pub conflicts: Vec<PathBuf>,
+    /// The build anchor matched the released tree, so no per-file stat was done.
+    pub anchor_hit: bool,
 }
 
 impl ReleaseReport {
@@ -416,18 +421,42 @@ impl Default for ReleasePolicy {
     }
 }
 
-/// Publish immutable bundled assets with three-state semantics.
-///
-/// `managed` entries follow the binary forever unless the on-disk copy differs
-/// from the last released bytes. `seeds` are create-if-absent only (the user
-/// configuration is never replaced).
-pub fn release_assets(
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ReleaseAnchor {
+    #[serde(default)]
+    schema: u32,
+    #[serde(default)]
+    asset_set_id: String,
+}
+
+fn anchor_matches(home: &Path, asset_set_id: &str) -> bool {
+    let Ok(bytes) = fs::read(home.join(RELEASE_ANCHOR_FILE)) else {
+        return false;
+    };
+    let Ok(anchor) = serde_json::from_slice::<ReleaseAnchor>(&bytes) else {
+        return false;
+    };
+    anchor.schema == RELEASE_MANIFEST_SCHEMA
+        && !anchor.asset_set_id.is_empty()
+        && anchor.asset_set_id == asset_set_id
+}
+
+fn save_anchor(home: &Path, asset_set_id: &str) -> Result<()> {
+    let anchor = ReleaseAnchor {
+        schema: RELEASE_MANIFEST_SCHEMA,
+        asset_set_id: asset_set_id.to_string(),
+    };
+    replace_atomic(
+        &home.join(RELEASE_ANCHOR_FILE),
+        &serde_json::to_vec_pretty(&anchor)?,
+    )
+}
+
+fn release_seeds(
     home: &Path,
-    managed: &[(String, &'static [u8])],
     seeds: &[(String, &'static [u8])],
-    policy: &ReleasePolicy,
-) -> Result<ReleaseReport> {
-    let mut report = ReleaseReport::default();
+    report: &mut ReleaseReport,
+) -> Result<()> {
     for (relative, bytes) in seeds {
         let published = release_file_if_missing(&home.join(relative), bytes)?;
         report.outcomes.push(ReleaseOutcome {
@@ -440,6 +469,46 @@ pub fn release_assets(
             conflict: None,
         });
     }
+    Ok(())
+}
+
+/// Publish immutable bundled assets with three-state semantics.
+///
+/// `managed` entries follow the binary forever unless the on-disk copy differs
+/// from the last released bytes. `seeds` are create-if-absent only (the user
+/// configuration is never replaced).
+pub fn release_assets(
+    home: &Path,
+    managed: &[(String, &'static [u8])],
+    seeds: &[(String, &'static [u8])],
+    policy: &ReleasePolicy,
+) -> Result<ReleaseReport> {
+    release_assets_with_id(home, managed, seeds, policy, None)
+}
+
+/// Release assets with an optional build anchor.
+///
+/// With `asset_set_id` present, a matching `.release-anchor.json` plus an intact
+/// manifest proves that the whole managed set already matches this binary. The
+/// pass then costs one small read and the seed check instead of one stat (and
+/// possibly one hash) per bundled file.
+pub fn release_assets_with_id(
+    home: &Path,
+    managed: &[(String, &'static [u8])],
+    seeds: &[(String, &'static [u8])],
+    policy: &ReleasePolicy,
+    asset_set_id: Option<&str>,
+) -> Result<ReleaseReport> {
+    let mut report = ReleaseReport::default();
+
+    if let Some(asset_set_id) = asset_set_id {
+        if home.join(RELEASE_MANIFEST_FILE).is_file() && anchor_matches(home, asset_set_id) {
+            report.anchor_hit = true;
+            release_seeds(home, seeds, &mut report)?;
+            return Ok(report);
+        }
+    }
+    release_seeds(home, seeds, &mut report)?;
 
     // Concurrent 蛹/舵机 launches share one manifest. When the lock is held by
     // another process this pass still releases files (idempotent) but leaves the
@@ -662,6 +731,11 @@ pub fn release_assets(
 
     if lock.is_some() {
         save_release_manifest(home, &manifest)?;
+        // Only the process that actually updated the manifest may move the
+        // anchor; otherwise a concurrent loser could pin a half-applied state.
+        if let Some(asset_set_id) = asset_set_id {
+            save_anchor(home, asset_set_id)?;
+        }
     }
     drop(lock);
     Ok(report)
@@ -1062,5 +1136,51 @@ mod tests {
             fs::read_to_string(home.join("config/wunder.yaml")).unwrap(),
             broken
         );
+    }
+
+    #[test]
+    fn anchor_skips_the_per_file_pass_until_the_build_changes() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let v1: &'static [u8] = b"v1";
+        let managed = vec![("config/prompts/a.txt".to_string(), v1)];
+
+        let first = release_assets_with_id(
+            root,
+            &managed,
+            &[],
+            &ReleasePolicy::default(),
+            Some("set-1"),
+        )
+        .unwrap();
+        assert!(!first.anchor_hit);
+        assert_eq!(first.count(ReleaseAction::Created), 1);
+        assert!(root.join(RELEASE_ANCHOR_FILE).is_file());
+
+        // Same build: the anchor short-circuits the whole per-file pass, so an
+        // edited file is not inspected at all.
+        fs::write(root.join("config/prompts/a.txt"), b"user edit").unwrap();
+        let second = release_assets_with_id(
+            root,
+            &managed,
+            &[],
+            &ReleasePolicy::default(),
+            Some("set-1"),
+        )
+        .unwrap();
+        assert!(second.anchor_hit);
+        assert!(second.outcomes.is_empty());
+
+        // A different build id re-runs the full pass and finds the user edit.
+        let third = release_assets_with_id(
+            root,
+            &managed,
+            &[],
+            &ReleasePolicy::default(),
+            Some("set-2"),
+        )
+        .unwrap();
+        assert!(!third.anchor_hit);
+        assert_eq!(third.count(ReleaseAction::KeptUserModified), 1);
     }
 }
