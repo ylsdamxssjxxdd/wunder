@@ -85,8 +85,22 @@ impl CliRuntime {
         let user_tools_root = wunder_home.join("user_tools");
         let vector_root = wunder_home.join("vector_knowledge");
         let companions_root = wunder_home.join("config/data/companions/global");
-        wunder_server::local_assets::release_embedded_local_assets(&wunder_home)
-            .context("release embedded local assets failed")?;
+        let release_report =
+            wunder_server::local_assets::release_embedded_local_assets_with_report(&wunder_home)
+                .context("release embedded local assets failed")?;
+        // Untouched system assets now follow this binary; user-edited copies are
+        // preserved and the new bytes are written under temp/asset-conflicts/.
+        let config_merge =
+            wunder_server::local_bootstrap::merge_missing_config_keys(&wunder_home)
+                .context("merge default config keys failed")?;
+        if config_merge.changed || release_report.conflict_count() > 0 {
+            eprintln!(
+                "local assets: updated={} conflicts={} config_keys_added={}",
+                release_report.count(wunder_server::local_bootstrap::ReleaseAction::Updated),
+                release_report.conflict_count(),
+                config_merge.inserted_keys.len()
+            );
+        }
         ensure_runtime_dirs(&temp_root, &wunder_home, &user_tools_root, &vector_root)?;
         cli_startup_segment("release_assets_and_dirs", step_start, startup_boot);
         step_start = Instant::now();

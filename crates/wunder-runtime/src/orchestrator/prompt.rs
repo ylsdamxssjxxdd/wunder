@@ -229,6 +229,13 @@ impl Orchestrator {
         })
     }
 
+    /// Frozen system prompt for an existing thread, or `None` when the thread
+    /// has no canonical metadata yet. Debug exports use this to make a
+    /// downloaded log self-contained without widening `thread_store` access.
+    pub async fn frozen_thread_system_prompt(&self, session_id: &str) -> Option<String> {
+        crate::services::thread_log::frozen_system_prompt(&self.thread_store, session_id).await
+    }
+
     /// Freeze the prompt for an admitted control turn that has no model
     /// execution. It shares the same prompt finalization path as an ordinary
     /// request, so the admitted body can be materialized in canonical history.

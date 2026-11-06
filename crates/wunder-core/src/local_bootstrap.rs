@@ -6,9 +6,13 @@
 //! from choosing a client-specific layout.
 
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub mod supplement;
 
@@ -250,6 +254,650 @@ pub fn release_file_if_missing(target: &Path, bytes: &[u8]) -> Result<bool> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Version-tracked release.
+//
+// The seed above is create-if-absent only: once a bundled prompt, skill or
+// companion exists on disk it can never follow a new binary. That protects user
+// edits but also freezes stale system content forever. The release manifest
+// below remembers the exact bytes that were released, so startup can tell three
+// states apart:
+//
+//   * target missing              -> release the bundled bytes
+//   * target == released bytes    -> untouched system copy, replace with the new
+//                                    binary's bytes (system always follows the
+//                                    build)
+//   * target != released bytes    -> user edited, never overwrite; if the new
+//                                    build changed too, export the new version to
+//                                    temp/asset-conflicts/ for comparison
+//
+// Assets removed from a build are deleted only when they are still untouched.
+// User deletions are remembered as tombstones so a deleted prompt does not
+// reappear on every restart.
+// ---------------------------------------------------------------------------
+
+pub const RELEASE_MANIFEST_FILE: &str = ".release-manifest.json";
+pub const RELEASE_MANIFEST_LOCK: &str = ".release-manifest.lock";
+const RELEASE_MANIFEST_SCHEMA: u32 = 1;
+const RELEASE_CONFLICT_DIR: &str = "temp/asset-conflicts";
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReleaseManifest {
+    #[serde(default = "release_manifest_schema")]
+    pub schema: u32,
+    #[serde(default)]
+    pub assets: BTreeMap<String, ReleaseRecord>,
+}
+
+fn release_manifest_schema() -> u32 {
+    RELEASE_MANIFEST_SCHEMA
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReleaseRecord {
+    /// Hash of the bytes this build released as the system baseline.
+    #[serde(default)]
+    pub sha256: String,
+    #[serde(default)]
+    pub deleted_by_user: bool,
+    /// The on-disk copy is a user version and must never be replaced.
+    #[serde(default)]
+    pub user_modified: bool,
+    /// Hash of the user version, so repeat starts can skip reading it.
+    #[serde(default)]
+    pub user_sha256: String,
+    /// Last observed file size, used as a cheap "unchanged" fast path.
+    #[serde(default)]
+    pub size: u64,
+    /// Last observed modification time in nanoseconds since the Unix epoch.
+    #[serde(default)]
+    pub mtime_ns: u64,
+}
+
+fn file_signature(path: &Path) -> Option<(u64, u64)> {
+    let meta = fs::metadata(path).ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    let mtime_ns = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos() as u64;
+    Some((meta.len(), mtime_ns))
+}
+
+fn system_record(path: &Path, sha256: String) -> ReleaseRecord {
+    let (size, mtime_ns) = file_signature(path).unwrap_or((0, 0));
+    ReleaseRecord {
+        sha256,
+        deleted_by_user: false,
+        user_modified: false,
+        user_sha256: String::new(),
+        size,
+        mtime_ns,
+    }
+}
+
+fn user_record(path: &Path, baseline: String, user_sha256: String) -> ReleaseRecord {
+    let (size, mtime_ns) = file_signature(path).unwrap_or((0, 0));
+    ReleaseRecord {
+        sha256: baseline,
+        deleted_by_user: false,
+        user_modified: true,
+        user_sha256,
+        size,
+        mtime_ns,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleaseAction {
+    /// Target did not exist and the bundled bytes were published.
+    Created,
+    /// Target held the previous release verbatim and was replaced.
+    Updated,
+    /// Target differs from the previous release; the user copy was kept.
+    KeptUserModified,
+    /// Target was previously deleted by the user; nothing was released.
+    KeptUserDeleted,
+    /// Bundled asset no longer exists and an untouched copy was removed.
+    Removed,
+    /// Nothing to do.
+    Unchanged,
+    /// Seed-only asset already existed.
+    Seeded,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReleaseOutcome {
+    pub path: String,
+    pub action: ReleaseAction,
+    pub conflict: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ReleaseReport {
+    pub outcomes: Vec<ReleaseOutcome>,
+    pub conflicts: Vec<PathBuf>,
+}
+
+impl ReleaseReport {
+    pub fn count(&self, action: ReleaseAction) -> usize {
+        self.outcomes
+            .iter()
+            .filter(|outcome| outcome.action == action)
+            .count()
+    }
+
+    pub fn changed(&self) -> usize {
+        self.count(ReleaseAction::Created)
+            + self.count(ReleaseAction::Updated)
+            + self.count(ReleaseAction::Removed)
+    }
+
+    pub fn conflict_count(&self) -> usize {
+        self.conflicts.len()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ReleasePolicy {
+    /// Honour a file the user deleted: do not re-release it on the next start.
+    pub respect_user_deletes: bool,
+}
+
+impl Default for ReleasePolicy {
+    fn default() -> Self {
+        Self {
+            respect_user_deletes: true,
+        }
+    }
+}
+
+/// Publish immutable bundled assets with three-state semantics.
+///
+/// `managed` entries follow the binary forever unless the on-disk copy differs
+/// from the last released bytes. `seeds` are create-if-absent only (the user
+/// configuration is never replaced).
+pub fn release_assets(
+    home: &Path,
+    managed: &[(String, &'static [u8])],
+    seeds: &[(String, &'static [u8])],
+    policy: &ReleasePolicy,
+) -> Result<ReleaseReport> {
+    let mut report = ReleaseReport::default();
+    for (relative, bytes) in seeds {
+        let published = release_file_if_missing(&home.join(relative), bytes)?;
+        report.outcomes.push(ReleaseOutcome {
+            path: relative.clone(),
+            action: if published {
+                ReleaseAction::Created
+            } else {
+                ReleaseAction::Seeded
+            },
+            conflict: None,
+        });
+    }
+
+    // Concurrent 蛹/舵机 launches share one manifest. When the lock is held by
+    // another process this pass still releases files (idempotent) but leaves the
+    // bookkeeping to the winner.
+    let lock = ReleaseManifestLock::acquire(home);
+    let mut manifest = load_release_manifest(home);
+    let conflict_root = home.join(RELEASE_CONFLICT_DIR);
+    let mut managed_paths = HashSet::new();
+
+    for (relative, bytes) in managed {
+        managed_paths.insert(relative.clone());
+        let target = home.join(relative);
+        let new_hash = sha256_hex(bytes);
+        let record = manifest.assets.get(relative.as_str()).cloned();
+
+        if !target.is_file() {
+            // A file that was released before and is now gone was deleted by the
+            // user. Remember that instead of resurrecting it on every start.
+            if policy.respect_user_deletes {
+                if let Some(record) = record.as_ref() {
+                    if !record.deleted_by_user && lock.is_some() {
+                        let mut tombstone = record.clone();
+                        tombstone.deleted_by_user = true;
+                        manifest.assets.insert(relative.clone(), tombstone);
+                    }
+                    report.outcomes.push(ReleaseOutcome {
+                        path: relative.clone(),
+                        action: ReleaseAction::KeptUserDeleted,
+                        conflict: None,
+                    });
+                    continue;
+                }
+            }
+            create_dir_all_for(&target)?;
+            let published = release_file_if_missing(&target, bytes)?;
+            if lock.is_some() {
+                manifest
+                    .assets
+                    .insert(relative.clone(), system_record(&target, new_hash));
+            }
+            report.outcomes.push(ReleaseOutcome {
+                path: relative.clone(),
+                action: if published {
+                    ReleaseAction::Created
+                } else {
+                    ReleaseAction::Unchanged
+                },
+                conflict: None,
+            });
+            continue;
+        }
+
+        let (size, mtime_ns) = file_signature(&target).unwrap_or((0, 0));
+
+        // A copy already known to be user-owned is never replaced. The recorded
+        // size+mtime lets a normal start skip reading it entirely.
+        if let Some(record) = record.as_ref().filter(|record| record.user_modified) {
+            let signature_matches = record.size == size
+                && record.mtime_ns == mtime_ns
+                && !record.user_sha256.is_empty();
+            let current_hash = if signature_matches {
+                record.user_sha256.clone()
+            } else {
+                sha256_hex(
+                    fs::read(&target)
+                        .with_context(|| format!("read released asset: {}", target.display()))?
+                        .as_slice(),
+                )
+            };
+            if lock.is_some() {
+                manifest.assets.insert(
+                    relative.clone(),
+                    user_record(&target, record.sha256.clone(), current_hash.clone()),
+                );
+            }
+            let mut conflict = None;
+            if current_hash != new_hash {
+                conflict = export_conflict(&conflict_root, relative, bytes).ok();
+                if let Some(path) = conflict.clone() {
+                    report.conflicts.push(path);
+                }
+            }
+            report.outcomes.push(ReleaseOutcome {
+                path: relative.clone(),
+                action: ReleaseAction::KeptUserModified,
+                conflict,
+            });
+            continue;
+        }
+
+        // System copy: an unchanged signature proves the bytes are still what the
+        // previous build released, so the content never has to be read.
+        let signature_proves_untouched = record.as_ref().is_some_and(|record| {
+            !record.user_modified
+                && !record.sha256.is_empty()
+                && record.size == size
+                && record.mtime_ns == mtime_ns
+        });
+        let current_hash = if signature_proves_untouched {
+            record
+                .as_ref()
+                .map(|record| record.sha256.clone())
+                .unwrap_or_default()
+        } else {
+            sha256_hex(
+                fs::read(&target)
+                    .with_context(|| format!("read released asset: {}", target.display()))?
+                    .as_slice(),
+            )
+        };
+
+        let is_system_copy = match record.as_ref() {
+            Some(record) if !record.user_modified && !record.sha256.is_empty() => {
+                current_hash == record.sha256
+            }
+            // First launch with this mechanism, or a corrupted record: compare
+            // against this build and keep anything different.
+            _ => current_hash == new_hash,
+        };
+
+        if is_system_copy {
+            if current_hash == new_hash {
+                if lock.is_some() {
+                    manifest
+                        .assets
+                        .insert(relative.clone(), system_record(&target, new_hash));
+                }
+                report.outcomes.push(ReleaseOutcome {
+                    path: relative.clone(),
+                    action: ReleaseAction::Unchanged,
+                    conflict: None,
+                });
+            } else {
+                replace_atomic(&target, bytes)?;
+                if lock.is_some() {
+                    manifest
+                        .assets
+                        .insert(relative.clone(), system_record(&target, new_hash));
+                }
+                report.outcomes.push(ReleaseOutcome {
+                    path: relative.clone(),
+                    action: ReleaseAction::Updated,
+                    conflict: None,
+                });
+            }
+            continue;
+        }
+
+        // Different from the released baseline: promote to a user version that
+        // will never be overwritten again.
+        if lock.is_some() {
+            let baseline = record
+                .as_ref()
+                .map(|record| record.sha256.clone())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| new_hash.clone());
+            manifest.assets.insert(
+                relative.clone(),
+                user_record(&target, baseline, current_hash.clone()),
+            );
+        }
+        let mut conflict = None;
+        if current_hash != new_hash {
+            conflict = export_conflict(&conflict_root, relative, bytes).ok();
+            if let Some(path) = conflict.clone() {
+                report.conflicts.push(path);
+            }
+        }
+        report.outcomes.push(ReleaseOutcome {
+            path: relative.clone(),
+            action: ReleaseAction::KeptUserModified,
+            conflict,
+        });
+    }
+
+    // Assets that disappeared from the build.
+    let retired: Vec<String> = manifest
+        .assets
+        .keys()
+        .filter(|relative| !managed_paths.contains(relative.as_str()))
+        .cloned()
+        .collect();
+    for relative in retired {
+        let Some(record) = manifest.assets.get(&relative).cloned() else {
+            continue;
+        };
+        let target = home.join(&relative);
+        if !target.is_file() {
+            manifest.assets.remove(&relative);
+            continue;
+        }
+        let current_hash = fs::read(&target)
+            .map(|bytes| sha256_hex(&bytes))
+            .unwrap_or_default();
+        if record.deleted_by_user
+            || (!record.user_modified && current_hash == record.sha256)
+        {
+            // Untouched system copy (or an already deleted tombstone).
+            if record.deleted_by_user {
+                manifest.assets.remove(&relative);
+                continue;
+            }
+            match fs::remove_file(&target) {
+                Ok(()) => {
+                    manifest.assets.remove(&relative);
+                    report.outcomes.push(ReleaseOutcome {
+                        path: relative,
+                        action: ReleaseAction::Removed,
+                        conflict: None,
+                    });
+                }
+                Err(_) => {}
+            }
+        } else {
+            // User modified an asset the build no longer ships: hand it back to
+            // the user instead of managing it.
+            manifest.assets.remove(&relative);
+        }
+    }
+
+    if lock.is_some() {
+        save_release_manifest(home, &manifest)?;
+    }
+    drop(lock);
+    Ok(report)
+}
+
+fn create_dir_all_for(target: &Path) -> Result<()> {
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+fn staging_path(target: &Path) -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    target.with_file_name(format!(
+        ".asset-{}-{stamp}-{sequence}.tmp",
+        std::process::id()
+    ))
+}
+
+/// Replace an existing file with complete new bytes. The staging file is fully
+/// written first, then published by rename (atomic on the same volume; on
+/// Windows `fs::rename` replaces the destination).
+fn replace_atomic(target: &Path, bytes: &[u8]) -> Result<()> {
+    create_dir_all_for(target)?;
+    let staging = staging_path(target);
+    {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&staging)
+            .with_context(|| format!("create staging asset: {}", staging.display()))?;
+        file.write_all(bytes)?;
+        file.flush()?;
+    }
+    match fs::rename(&staging, target) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&staging);
+            // Some Windows configurations refuse replace-by-rename. Fall back to
+            // a delete+rename, which is still safe because the old bytes are
+            // either the previous release or already backed up as a conflict.
+            if target.exists() {
+                fs::remove_file(target)?;
+                return fs::rename(&staging, target).map_err(|_| error.into());
+            }
+            Err(error.into())
+        }
+    }
+}
+
+fn unique_conflict_path(root: &Path, relative: &str) -> PathBuf {
+    let candidate = root.join(relative);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let mut index = 1usize;
+    loop {
+        let mut name = candidate.file_name().unwrap_or_default().to_os_string();
+        name.push(format!(".{index}"));
+        let next = candidate.with_file_name(name);
+        if !next.exists() {
+            return next;
+        }
+        index += 1;
+    }
+}
+
+fn export_conflict(root: &Path, relative: &str, bytes: &[u8]) -> Result<PathBuf> {
+    let path = unique_conflict_path(root, relative);
+    create_dir_all_for(&path)?;
+    fs::write(&path, bytes)
+        .with_context(|| format!("export updated bundled asset: {}", path.display()))?;
+    Ok(path)
+}
+
+fn load_release_manifest(home: &Path) -> ReleaseManifest {
+    let path = home.join(RELEASE_MANIFEST_FILE);
+    let Ok(bytes) = fs::read(&path) else {
+        return ReleaseManifest::default();
+    };
+    serde_json::from_slice::<ReleaseManifest>(&bytes).unwrap_or_default()
+}
+
+fn save_release_manifest(home: &Path, manifest: &ReleaseManifest) -> Result<()> {
+    let bytes = serde_json::to_vec_pretty(manifest)?;
+    replace_atomic(&home.join(RELEASE_MANIFEST_FILE), &bytes)
+}
+
+struct ReleaseManifestLock {
+    path: PathBuf,
+}
+
+impl ReleaseManifestLock {
+    fn acquire(home: &Path) -> Option<Self> {
+        let path = home.join(RELEASE_MANIFEST_LOCK);
+        for _ in 0..250 {
+            match OpenOptions::new().create_new(true).write(true).open(&path) {
+                Ok(mut file) => {
+                    let _ = write!(file, "{}", std::process::id());
+                    return Some(Self { path });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // A crashed process must not block every later launch.
+                    let stale = fs::metadata(&path)
+                        .and_then(|meta| meta.modified())
+                        .ok()
+                        .and_then(|modified| modified.elapsed().ok())
+                        .is_some_and(|age| age > Duration::from_secs(30));
+                    if stale {
+                        let _ = fs::remove_file(&path);
+                        continue;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(_) => return None,
+            }
+        }
+        None
+    }
+}
+
+impl Drop for ReleaseManifestLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Configuration merge.
+//
+// `config/wunder.yaml` is user-owned and must never be replaced, but a new build
+// may add options. Inserting only keys the user config lacks keeps every default
+// current while preserving explicit user values.
+// ---------------------------------------------------------------------------
+
+pub const DEFAULT_CONFIG_FILE: &str = "config/wunder-example.yaml";
+
+#[derive(Debug, Clone, Default)]
+pub struct ConfigMergeReport {
+    pub changed: bool,
+    pub inserted_keys: Vec<String>,
+    pub backup: Option<PathBuf>,
+}
+
+pub fn merge_missing_config_keys(home: &Path) -> Result<ConfigMergeReport> {
+    let user_path = home.join(CONFIG_FILE);
+    let default_path = home.join(DEFAULT_CONFIG_FILE);
+    if !user_path.is_file() || !default_path.is_file() {
+        return Ok(ConfigMergeReport::default());
+    }
+    let user_text = fs::read_to_string(&user_path)
+        .with_context(|| format!("read user config: {}", user_path.display()))?;
+    let default_text = fs::read_to_string(&default_path)
+        .with_context(|| format!("read default config: {}", default_path.display()))?;
+    let Ok(mut user) = serde_yaml::from_str::<serde_yaml::Value>(&user_text) else {
+        // Never rewrite a config we cannot parse; the loader reports the error.
+        return Ok(ConfigMergeReport::default());
+    };
+    let Ok(default) = serde_yaml::from_str::<serde_yaml::Value>(&default_text) else {
+        return Ok(ConfigMergeReport::default());
+    };
+    if !user.is_mapping() || !default.is_mapping() {
+        return Ok(ConfigMergeReport::default());
+    }
+
+    let mut inserted_keys = Vec::new();
+    insert_missing_keys(&mut user, &default, "", &mut inserted_keys);
+    if inserted_keys.is_empty() {
+        return Ok(ConfigMergeReport::default());
+    }
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    let backup = user_path.with_file_name(format!("wunder.yaml.bak.{stamp}"));
+    fs::copy(&user_path, &backup)
+        .with_context(|| format!("backup user config: {}", user_path.display()))?;
+
+    let merged = serde_yaml::to_string(&user).context("serialize merged config failed")?;
+    replace_atomic(&user_path, merged.as_bytes())?;
+    Ok(ConfigMergeReport {
+        changed: true,
+        inserted_keys,
+        backup: Some(backup),
+    })
+}
+
+fn insert_missing_keys(
+    user: &mut serde_yaml::Value,
+    default: &serde_yaml::Value,
+    prefix: &str,
+    inserted: &mut Vec<String>,
+) {
+    let (serde_yaml::Value::Mapping(user_map), serde_yaml::Value::Mapping(default_map)) =
+        (user, default)
+    else {
+        return;
+    };
+    for (key, default_value) in default_map {
+        let key_name = match key {
+            serde_yaml::Value::String(name) => name.clone(),
+            other => format!("{other:?}"),
+        };
+        let full = if prefix.is_empty() {
+            key_name
+        } else {
+            format!("{prefix}.{key_name}")
+        };
+        match user_map.get_mut(key) {
+            Some(user_value) => insert_missing_keys(user_value, default_value, &full, inserted),
+            None => {
+                user_map.insert(key.clone(), default_value.clone());
+                inserted.push(full);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,5 +1008,59 @@ mod tests {
             assert!(bytes == b"first complete payload" || bytes == b"second complete payload");
         }
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 128);
+    }
+
+    #[test]
+    fn config_merge_backfills_missing_keys_only() {
+        let dir = tempdir().unwrap();
+        let home = dir.path();
+        fs::create_dir_all(home.join("config")).unwrap();
+        fs::write(home.join("config/wunder.yaml"), "server:\n  port: 8123\n").unwrap();
+        fs::write(
+            home.join("config/wunder-example.yaml"),
+            "server:\n  host: 127.0.0.1\n  port: 8000\nstorage:\n  backend: sqlite\n",
+        )
+        .unwrap();
+
+        let report = merge_missing_config_keys(home).unwrap();
+        assert!(report.changed);
+        let mut inserted = report.inserted_keys.clone();
+        inserted.sort();
+        assert_eq!(inserted, vec!["server.host".to_string(), "storage".to_string()]);
+        assert!(report.backup.is_some());
+        assert!(report.backup.as_ref().unwrap().is_file());
+
+        let merged = fs::read_to_string(home.join("config/wunder.yaml")).unwrap();
+        let value: serde_yaml::Value = serde_yaml::from_str(&merged).unwrap();
+        // Explicit user values win; only absent keys are added.
+        assert_eq!(value["server"]["port"].as_i64(), Some(8123));
+        assert_eq!(value["server"]["host"].as_str(), Some("127.0.0.1"));
+        assert_eq!(value["storage"]["backend"].as_str(), Some("sqlite"));
+
+        // A second start has nothing left to add.
+        let report = merge_missing_config_keys(home).unwrap();
+        assert!(!report.changed);
+        assert!(report.inserted_keys.is_empty());
+    }
+
+    #[test]
+    fn config_merge_never_rewrites_unparsable_user_config() {
+        let dir = tempdir().unwrap();
+        let home = dir.path();
+        fs::create_dir_all(home.join("config")).unwrap();
+        let broken = "server: [unclosed\n";
+        fs::write(home.join("config/wunder.yaml"), broken).unwrap();
+        fs::write(
+            home.join("config/wunder-example.yaml"),
+            "server:\n  host: 127.0.0.1\n",
+        )
+        .unwrap();
+
+        let report = merge_missing_config_keys(home).unwrap();
+        assert!(!report.changed);
+        assert_eq!(
+            fs::read_to_string(home.join("config/wunder.yaml")).unwrap(),
+            broken
+        );
     }
 }

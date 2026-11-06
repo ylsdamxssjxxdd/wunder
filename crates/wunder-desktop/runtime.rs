@@ -170,8 +170,22 @@ impl DesktopRuntime {
         );
 
         step_start = Instant::now();
-        wunder_server::local_assets::release_embedded_local_assets(&state_root)
-            .context("release embedded local assets failed")?;
+        let release_report =
+            wunder_server::local_assets::release_embedded_local_assets_with_report(&state_root)
+                .context("release embedded local assets failed")?;
+        // Untouched system assets follow this binary; user edits stay untouched
+        // and the new bytes land in temp/asset-conflicts/ for comparison.
+        let config_merge =
+            wunder_server::local_bootstrap::merge_missing_config_keys(&state_root)
+                .context("merge default config keys failed")?;
+        if config_merge.changed || release_report.conflict_count() > 0 {
+            eprintln!(
+                "local assets: updated={} conflicts={} config_keys_added={}",
+                release_report.count(wunder_server::local_bootstrap::ReleaseAction::Updated),
+                release_report.conflict_count(),
+                config_merge.inserted_keys.len()
+            );
+        }
         ensure_runtime_dirs(&state_root, &temp_root)?;
         log_startup_segment(
             startup_enabled,

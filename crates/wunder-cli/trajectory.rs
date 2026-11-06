@@ -230,11 +230,18 @@ pub(crate) async fn export(
         .await
         .context("create trajectory export (the destination must not exist)")?;
     let mut output = BufWriter::new(file);
+    let system_prompt = runtime
+        .state
+        .kernel
+        .orchestrator
+        .frozen_thread_system_prompt(&session)
+        .await;
     let mut stream = wunder_server::export_thread_log_stream(
         runtime.state.storage.clone(),
         runtime.user_id.clone(),
         session,
         false,
+        system_prompt,
     );
     while let Some(record) = stream.recv().await {
         output.write_all(record?.as_bytes()).await?;
@@ -258,11 +265,18 @@ pub(crate) async fn handle(
     };
     if let Some(path) = cmd.export {
         if path == Path::new("-") {
+            let system_prompt = runtime
+                .state
+                .kernel
+                .orchestrator
+                .frozen_thread_system_prompt(&session)
+                .await;
             let mut stream = wunder_server::export_thread_log_stream(
                 runtime.state.storage.clone(),
                 runtime.user_id.clone(),
                 session,
                 false,
+                system_prompt,
             );
             let mut output = BufWriter::new(tokio::io::stdout());
             while let Some(record) = stream.recv().await {
