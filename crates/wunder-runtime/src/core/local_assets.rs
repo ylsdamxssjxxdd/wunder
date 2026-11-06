@@ -1,7 +1,7 @@
 //! Embedded immutable assets shared by 蛹 and 舵机.
 
 use super::local_bootstrap::{
-    release_assets, ReleasePolicy, ReleaseReport, LocalHomeLayout,
+    release_assets_with_id, LocalHomeLayout, ReleasePolicy, ReleaseReport,
 };
 use anyhow::Result;
 use std::path::Path;
@@ -52,7 +52,13 @@ pub fn release_embedded_local_assets_with_report(home: &Path) -> Result<ReleaseR
         managed.push((target, bytes));
     }
 
-    release_assets(home, &managed, &seeds, &ReleasePolicy::default())
+    release_assets_with_id(
+        home,
+        &managed,
+        &seeds,
+        &ReleasePolicy::default(),
+        Some(EMBEDDED_ASSET_SET_ID),
+    )
 }
 
 #[cfg(test)]
