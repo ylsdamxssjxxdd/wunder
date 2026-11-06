@@ -70,7 +70,12 @@ pub use browser_tool::{
     browser_tool_names, browser_tool_summary_spec, BROWSER_GROUP_NAME, BROWSER_GROUP_NAME_ALIAS,
 };
 pub(crate) use catalog::current_executable_tool_input_schema;
-pub(crate) use prompt_surface::prompt_tool_spec;
+/// Decode raw command output (UTF-8, then Windows GBK / UTF-16 fallbacks).
+/// Exposed so non-tool callers that render command streams use the same
+/// byte-level decoder instead of a lossy conversion.
+pub use command_tool::decode_command_output;
+/// Produce the reduced tool specification the model actually receives.
+pub use prompt_surface::prompt_tool_spec;
 pub use catalog::{
     browser_tools_available, build_desktop_followup_user_message, build_mcp_tool_alias_entries,
     build_mcp_tool_alias_entries_for_names, build_read_image_followup_user_message,

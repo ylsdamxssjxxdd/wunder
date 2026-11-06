@@ -38,8 +38,10 @@ use tokio::sync::RwLock;
 use tracing::info;
 #[cfg(any(feature = "sqlite-storage", test))]
 use tracing::warn;
-// `SqliteStorage` is concrete here, so `ensure_initialized` resolves only with
-// the trait in scope; `dyn StorageBackend` reaches it through its supertrait.
+// `SqliteStorage::ensure_initialized` comes from this trait. The sqlite
+// fallback is compiled for `test` too (see `init_storage_auto`), so both
+// configurations need the trait in scope.
+#[cfg(any(feature = "sqlite-storage", test))]
 use wunder_core::storage_backend::StorageLifecycle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

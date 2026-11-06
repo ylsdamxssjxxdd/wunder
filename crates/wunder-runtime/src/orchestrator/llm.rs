@@ -1121,6 +1121,8 @@ impl Orchestrator {
 
             match result {
                 Ok(response) => {
+                    // Read the Copy flag before the response fields are moved.
+                    let transport_recovery_used = response.transport_recovery_used;
                     let finish_reason = response.finish_reason;
                     let response_finished_at = Instant::now();
                     let mut content = response.content;
@@ -1194,7 +1196,9 @@ impl Orchestrator {
                         prefill_duration_s,
                         decode_duration_s,
                     );
-                    let output = OutputDiagnostics::new(&effective_config, finish_reason, &usage);
+                    let mut output =
+                        OutputDiagnostics::new(&effective_config, finish_reason, &usage);
+                    output.transport_recovery_used = transport_recovery_used;
                     if emit_events {
                         let tool_calls_snapshot = tool_calls.clone();
                         let mut output_payload = json!({

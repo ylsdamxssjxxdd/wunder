@@ -165,42 +165,8 @@ fn validate_browser_action(args: &Value) -> Result<String> {
         .as_object()
         .ok_or_else(|| anyhow!("browser arguments must be an object"))?;
     let action = required_str(args, "action")?;
-    let allowed: &[&str] = match action.as_str() {
-        "navigate" => &["action", "url", "target_id", "timeout_ms"],
-        "back" => &["action", "target_id"],
-        "tabs_list" => &["action"],
-        "tabs_new" => &["action", "url", "target_id"],
-        "tabs_select" | "tabs_close" => &["action", "target_id", "index"],
-        "observe_refs" => &["action", "target_id", "max_chars", "snapshot_timeout_ms"],
-        "observe_text" => &["action", "target_id", "max_chars", "cursor"],
-        "screenshot" => &["action", "target_id", "path", "full_page"],
-        "click" => &["action", "target_id", "ref", "selector", "double_click"],
-        "type" => &["action", "target_id", "ref", "selector", "text", "submit"],
-        "hover" => &["action", "target_id", "ref", "selector"],
-        "select" => &["action", "target_id", "ref", "selector", "value"],
-        "drag" => &[
-            "action",
-            "target_id",
-            "from_ref",
-            "from_selector",
-            "to_ref",
-            "to_selector",
-        ],
-        "press" => &["action", "target_id", "key"],
-        "wait" => &[
-            "action",
-            "target_id",
-            "wait_ms",
-            "load_state",
-            "text",
-            "selector",
-            "state",
-            "url",
-            "timeout_ms",
-        ],
-        "batch" => &["action", "target_id", "steps"],
-        _ => return Err(anyhow!("unsupported browser action '{action}'")),
-    };
+    let allowed = browser_action_allowed_fields(&action)
+        .ok_or_else(|| anyhow!("unsupported browser action '{action}'"))?;
     reject_unlisted_fields(map, allowed, &format!("browser action '{action}'"))?;
     validate_optional_strings(
         args,
@@ -263,9 +229,60 @@ fn validate_browser_action(args: &Value) -> Result<String> {
     Ok(action)
 }
 
+const BROWSER_ACTIONS: &[&str] = &[
+    "navigate", "back", "tabs_list", "tabs_new", "tabs_select", "tabs_close",
+    "observe_refs", "observe_text", "screenshot", "click", "type", "hover",
+    "select", "drag", "press", "wait", "batch",
+];
+
+fn browser_action_allowed_fields(action: &str) -> Option<&'static [&'static str]> {
+    let allowed: &'static [&'static str] = match action {
+        "navigate" => &["action", "url", "target_id", "timeout_ms"],
+        "back" => &["action", "target_id"],
+        "tabs_list" => &["action"],
+        "tabs_new" => &["action", "url", "target_id"],
+        "tabs_select" | "tabs_close" => &["action", "target_id", "index"],
+        "observe_refs" => &["action", "target_id", "max_chars", "snapshot_timeout_ms"],
+        "observe_text" => &["action", "target_id", "max_chars", "cursor"],
+        "screenshot" => &["action", "target_id", "path", "full_page"],
+        "click" => &["action", "target_id", "ref", "selector", "double_click"],
+        "type" => &["action", "target_id", "ref", "selector", "text", "submit"],
+        "hover" => &["action", "target_id", "ref", "selector"],
+        "select" => &["action", "target_id", "ref", "selector", "value"],
+        "drag" => &[
+            "action", "target_id", "from_ref", "from_selector", "to_ref", "to_selector",
+        ],
+        "press" => &["action", "target_id", "key"],
+        "wait" => &[
+            "action", "target_id", "wait_ms", "load_state", "text", "selector",
+            "state", "url", "timeout_ms",
+        ],
+        "batch" => &["action", "target_id", "steps"],
+        _ => return None,
+    };
+    Some(allowed)
+}
+
 fn reject_unlisted_fields(map: &Map<String, Value>, allowed: &[&str], subject: &str) -> Result<()> {
     if let Some(extra) = map.keys().find(|key| !allowed.contains(&key.as_str())) {
-        return Err(anyhow!("field '{extra}' is not valid for {subject}"));
+        // A flat action schema cannot express which action owns a field. When
+        // the model combines them anyway, name the owning action(s) so one
+        // retry can fix the call instead of dropping fields by guesswork.
+        let mut owners: Vec<&str> = BROWSER_ACTIONS
+            .iter()
+            .copied()
+            .filter(|candidate| {
+                browser_action_allowed_fields(candidate)
+                    .is_some_and(|fields| fields.contains(&extra.as_str()))
+            })
+            .collect();
+        owners.sort_unstable();
+        let hint = if owners.is_empty() {
+            " (unknown field)".to_string()
+        } else {
+            format!("; use it with action(s): {}", owners.join(", "))
+        };
+        return Err(anyhow!("field '{extra}' is not valid for {subject}{hint}"));
     }
     Ok(())
 }
@@ -878,8 +895,9 @@ fn normalize_image_mime(format: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        copy_snapshot_args, normalize_image_mime, truncate_chars, validate_batch_steps,
-        validate_browser_action, PlaywrightProvider, TOOL_BROWSER, TOOL_NAMES,
+        browser_action_allowed_fields, copy_snapshot_args, normalize_image_mime, truncate_chars,
+        validate_batch_steps, validate_browser_action, BROWSER_ACTIONS, PlaywrightProvider,
+        TOOL_BROWSER, TOOL_NAMES,
     };
     use crate::services::browser::provider::BrowserProvider;
     use serde_json::{json, Value};
@@ -1080,5 +1098,37 @@ mod tests {
         let truncated = truncate_chars("abcdefghij", 3);
         assert!(truncated.starts_with("abc"));
         assert_eq!(truncated.chars().count(), 3);
+    }
+
+    #[test]
+    fn cross_action_field_error_names_the_owning_action() {
+        let error = validate_browser_action(&json!({
+            "action": "navigate",
+            "url": "https://example.test",
+            "load_state": "domcontentloaded"
+        }))
+        .expect_err("cross-action field must be rejected");
+        let message = error.to_string();
+        assert!(message.contains("load_state"), "{message}");
+        assert!(message.contains("action(s): wait"), "{message}");
+    }
+
+    #[test]
+    fn model_visible_browser_fields_are_accepted_by_at_least_one_action() {
+        let spec = crate::tools::builtin_tool_specs()
+            .into_iter()
+            .find(|spec| spec.name == TOOL_BROWSER)
+            .expect("browser spec");
+        let projected = crate::tools::prompt_tool_spec(&spec, "en-US");
+        let properties = projected.input_schema["properties"]
+            .as_object()
+            .expect("browser properties");
+        for field in properties.keys() {
+            let accepted = BROWSER_ACTIONS.iter().any(|action| {
+                browser_action_allowed_fields(action)
+                    .is_some_and(|fields| fields.contains(&field.as_str()))
+            });
+            assert!(accepted, "model-visible field '{field}' is dead in every action");
+        }
     }
 }

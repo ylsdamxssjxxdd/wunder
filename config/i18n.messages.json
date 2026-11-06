@@ -2208,8 +2208,8 @@
     "zh-CN": "Cron 解析使用的时区，例如 Asia/Shanghai。"
   },
   "tool.spec.schedule_task.args.job.schedule_text": {
-    "en-US": "Preferred shortcut. Natural language or cron text such as 'every 5 minutes' or '0 9 * * *'.",
-    "zh-CN": "推荐快捷写法。可填自然语言或 cron 文本，例如“every 5 minutes”或“0 9 * * *”。"
+    "en-US": "Preferred shortcut. English or Chinese natural language, or cron, such as 'every 5 minutes', '每天 09:00', '每 5 分钟', or '0 9 * * *'.",
+    "zh-CN": "推荐快捷写法。可填中文或英文自然语言、cron 文本，例如“每天 09:00”“每 5 分钟”“every 5 minutes”或“0 9 * * *”。"
   },
   "tool.spec.schedule_task.args.job.session": {
     "en-US": "main sends the trigger into the job's bound task thread at run time. isolated runs in a fresh child thread and publishes a completed result turn to the bound thread without another model call. Switching threads does not change the binding.",

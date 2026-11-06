@@ -171,8 +171,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "定时任务",
-        brief_en: "Manage scheduled jobs. add needs message + schedule_text; other actions use job_id. session=main injects into the bound thread, isolated starts a fresh child thread; enabled toggles a job; run is async (queued = accepted, not finished).",
-        brief_zh: "管理定时任务：add 需 message + schedule_text，其余动作用 job_id；session=main 注入绑定线程、isolated 新建子线程，enabled 控制开关；run 是异步的（queued 仅表示已接收，不要轮询等结果）。",
+        brief_en: "Manage scheduled jobs. add needs message + schedule_text (English or Chinese natural language, or cron); other actions use job_id. session=main injects into the bound thread, isolated starts a fresh child thread; enabled toggles a job; run is async (queued = accepted, not finished).",
+        brief_zh: "管理定时任务：add 需 message + schedule_text（支持中文如“每天 09:00”“每 5 分钟”，也支持英文与 cron），其余动作用 job_id；session=main 注入绑定线程、isolated 新建子线程，enabled 控制开关；run 是异步的（queued 仅表示已接收，不要轮询等结果）。",
         drop_actions: &["get", "status"],
         drop_fields: &["schedule"],
     },
@@ -388,8 +388,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "browser",
-        brief_en: "Browser automation. observe_refs before element actions; click/type/press use ref or selector, navigate/back/tabs_*/observe_text/screenshot/wait cover the rest. target_id selects a tab; text cursors require an unchanged page.",
-        brief_zh: "浏览器自动化：元素操作前先 observe_refs；click/type/press 用 ref 或 selector，另有 navigate/back/tabs_*/observe_text/screenshot/wait；target_id 指定标签页；文本 cursor 要求页面未变化。",
+        brief_en: "Browser automation. observe_refs before element actions. navigate/tabs_new take url; click/type/press take ref or selector; wait_ms only applies to wait. target_id selects a tab; text cursors require an unchanged page.",
+        brief_zh: "浏览器自动化：元素操作前先 observe_refs；navigate/tabs_new 用 url，click/type/press 用 ref 或 selector，wait_ms 仅用于 wait；target_id 指定标签页；文本 cursor 要求页面未变化。",
         drop_actions: &["hover", "select", "drag"],
         drop_fields: &[
             "from_ref",
@@ -398,6 +398,7 @@ const SURFACE_RULES: &[SurfaceRule] = &[
             "to_selector",
             "value",
             "state",
+            "load_state",
             "snapshot_timeout_ms",
             "submit",
         ],
@@ -655,6 +656,26 @@ mod tests {
             .description
             .contains("text cursors require an unchanged page"));
         assert_ne!(projected.description, spec.description);
+    }
+
+    #[test]
+    fn browser_prompt_surface_hides_wait_only_fields() {
+        let spec = crate::tools::catalog::builtin_tool_specs_with_language("en-US")
+            .into_iter()
+            .find(|spec| spec.name == "browser")
+            .expect("browser spec");
+        let projected = prompt_tool_spec(&spec, "en-US");
+        let properties = projected.input_schema["properties"]
+            .as_object()
+            .expect("browser properties");
+        // `load_state` belongs only to action=wait, but a flat action schema
+        // made it look usable with navigate; that produced a runtime rejection.
+        assert!(!properties.contains_key("load_state"));
+        assert!(!properties.contains_key("state"));
+        assert!(properties.contains_key("wait_ms"));
+        assert!(projected
+            .description
+            .contains("wait_ms only applies to wait"));
     }
 
     #[test]

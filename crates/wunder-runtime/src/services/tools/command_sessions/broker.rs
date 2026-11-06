@@ -83,16 +83,19 @@ impl OutputTailState {
     }
 
     fn text(&self) -> String {
+        // Command output is decoded from the *complete* byte buffer, so a
+        // Windows GBK code page is recovered instead of being destroyed by a
+        // lossy UTF-8 conversion. Streaming deltas use the same decoder.
         if !self.truncated {
             if self.full_bytes.is_empty() {
                 return String::new();
             }
-            return String::from_utf8_lossy(&self.full_bytes).into_owned();
+            return crate::tools::decode_command_output(&self.full_bytes);
         }
 
-        let head = String::from_utf8_lossy(&self.head_bytes).into_owned();
+        let head = crate::tools::decode_command_output(&self.head_bytes);
         let tail_bytes = self.tail_bytes.iter().copied().collect::<Vec<_>>();
-        let tail = String::from_utf8_lossy(&tail_bytes).into_owned();
+        let tail = crate::tools::decode_command_output(&tail_bytes);
         let marker = format!(
             "...(truncated command output, omitted {} bytes)...",
             self.dropped_bytes
@@ -397,7 +400,7 @@ impl CommandSessionBroker {
         record
             .stream_mut(stream)
             .push(chunk, self.ring_buffer_bytes);
-        let text = String::from_utf8_lossy(chunk).into_owned();
+        let text = crate::tools::decode_command_output(chunk);
         record.delta_bytes = record.delta_bytes.saturating_add(text.len());
         let seq = record.seq;
         record.deltas.push_back(OutputDelta { seq, stream, text });
@@ -419,7 +422,7 @@ impl CommandSessionBroker {
                 "tool_call_id": record.tool_call_id,
                 "command_index": record.command_index,
                 "stream": stream,
-                "delta": String::from_utf8_lossy(chunk), "seq": seq,
+                "delta": crate::tools::decode_command_output(chunk), "seq": seq,
             }),
         });
         Some(record.seq)
@@ -883,6 +886,15 @@ mod tests {
             tty: false,
             interactive: false,
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn output_tail_state_decodes_gbk_output_for_the_model() {
+        let (encoded, _, _) = encoding_rs::GBK.encode("中文输出正常");
+        let mut state = OutputTailState::default();
+        state.push(&encoded, 4096);
+        assert_eq!(state.text(), "中文输出正常");
     }
 
     #[test]

@@ -659,7 +659,7 @@ async fn drain_output_captures(
     Ok((CommandOutputCapture::empty(), CommandOutputCapture::empty()))
 }
 
-pub(crate) fn decode_command_output(bytes: &[u8]) -> String {
+pub fn decode_command_output(bytes: &[u8]) -> String {
     if bytes.is_empty() {
         return String::new();
     }
@@ -1684,15 +1684,11 @@ async fn await_sandbox_command_exit(
             map.remove("deltas");
             map.insert(
                 "stdout".into(),
-                json!(render_command_output(&stdout, |bytes| {
-                    String::from_utf8_lossy(bytes).into_owned()
-                })),
+                json!(render_command_output(&stdout, decode_command_output)),
             );
             map.insert(
                 "stderr".into(),
-                json!(render_command_output(&stderr, |bytes| {
-                    String::from_utf8_lossy(bytes).into_owned()
-                })),
+                json!(render_command_output(&stderr, decode_command_output)),
             );
             map.insert(
                 "output_truncated".into(),

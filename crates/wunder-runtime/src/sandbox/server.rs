@@ -1707,7 +1707,7 @@ impl CommandStreamSink {
         if chunk.is_empty() {
             return;
         }
-        let delta = String::from_utf8_lossy(chunk).into_owned();
+        let delta = crate::tools::decode_command_output(chunk);
         if delta.is_empty() {
             return;
         }

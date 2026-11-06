@@ -3,6 +3,7 @@ mod attachments;
 mod cloud_command;
 mod cloud_interlink;
 mod command_session_display;
+mod empty_state_animation;
 mod error_display;
 mod exec_events;
 mod input_guard;

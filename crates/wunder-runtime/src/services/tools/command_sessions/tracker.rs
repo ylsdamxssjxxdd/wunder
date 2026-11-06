@@ -203,7 +203,7 @@ impl CommandSessionTracker {
         } else {
             self.fallback_seq.fetch_add(1, Ordering::Relaxed) + 1
         };
-        let delta = String::from_utf8_lossy(chunk).into_owned();
+        let delta = crate::tools::decode_command_output(chunk);
         if delta.is_empty() {
             return;
         }

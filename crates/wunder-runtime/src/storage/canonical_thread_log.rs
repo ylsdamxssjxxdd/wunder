@@ -1833,13 +1833,17 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
             if found == 0 {
                 continue;
             }
-            // Newest execution head per thread: the most recent admission row
-            // of any kind, matching `Self::execution_head`.
+            // Execution head per thread, matching `Self::execution_head`: a
+            // newer *queued* input must not mask an in-flight turn. Only
+            // `queued` is deprioritized; other statuses keep recency order so
+            // a completed inquiry continuation still replaces its older
+            // `waiting_input` head.
             let sql = format!(
                 "SELECT thread_id, turn_id, status FROM ( \
                    SELECT a.thread_id AS thread_id, a.turn_id AS turn_id, {STATUS} AS status, \
                           ROW_NUMBER() OVER (PARTITION BY a.thread_id \
-                                             ORDER BY a.created_at_ms DESC, a.rowid DESC) AS rn \
+                                             ORDER BY CASE WHEN {STATUS}='queued' THEN 1 ELSE 0 END, \
+                                                       a.created_at_ms DESC, a.rowid DESC) AS rn \
                    FROM queue.canonical_turn_admissions a \
                    LEFT JOIN state.canonical_threads d ON d.thread_id=a.thread_id \
                    LEFT JOIN thread_turns t ON t.rollout_id=d.rollout_id AND t.turn_id=a.turn_id \

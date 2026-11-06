@@ -11,19 +11,51 @@ use std::{
 pub struct ProcessFileLock {
     _file: File,
 }
+
+/// Windows error 5 (ACCESS_DENIED), 32 (SHARING_VIOLATION) and 33
+/// (LOCK_VIOLATION) are transient when several processes create or open the
+/// same marker at once. Other errors (missing directory, real permission
+/// problems) must still fail immediately.
+fn is_transient_open_error(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        matches!(error.raw_os_error(), Some(5 | 32 | 33))
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 impl ProcessFileLock {
     pub async fn acquire(path: &Path, timeout: Duration) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(path)
-            .context("open shared lock failed")?;
         let started = Instant::now();
+        // On Windows a freshly created marker can be held briefly by a
+        // real-time scanner or by a racing creator in another process. That
+        // surfaces as ACCESS_DENIED / sharing violation from CreateFile even
+        // though the path is writable; retry within the same timeout budget
+        // instead of failing the whole update on a transient open error.
+        let file = loop {
+            match OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(path)
+            {
+                Ok(file) => break file,
+                Err(error) if is_transient_open_error(&error) && started.elapsed() < timeout => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Err(error) => return Err(error).context("open shared lock failed"),
+            }
+        };
         loop {
             match file.try_lock() {
                 Ok(()) => return Ok(Self { _file: file }),

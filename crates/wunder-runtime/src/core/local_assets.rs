@@ -143,12 +143,12 @@ mod tests {
         let v2: &'static [u8] = b"system prompt v2";
         let managed = vec![("config/prompts/zh/role.txt".to_string(), v1)];
 
-        let report = release_assets(prompt, &managed, &[], &ReleasePolicy::default()).unwrap();
+        let report = release_assets_with_id(prompt, &managed, &[], &ReleasePolicy::default(), None).unwrap();
         assert_eq!(report.count(ReleaseAction::Created), 1);
 
         // Untouched copy follows the new build.
         let managed_v2 = vec![("config/prompts/zh/role.txt".to_string(), v2)];
-        let report = release_assets(prompt, &managed_v2, &[], &ReleasePolicy::default()).unwrap();
+        let report = release_assets_with_id(prompt, &managed_v2, &[], &ReleasePolicy::default(), None).unwrap();
         assert_eq!(report.count(ReleaseAction::Updated), 1);
         assert_eq!(
             fs::read(prompt.join("config/prompts/zh/role.txt")).unwrap(),
@@ -160,7 +160,7 @@ mod tests {
         fs::write(prompt.join("config/prompts/zh/role.txt"), b"my own prompt").unwrap();
         let v3: &'static [u8] = b"system prompt v3";
         let managed_v3 = vec![("config/prompts/zh/role.txt".to_string(), v3)];
-        let report = release_assets(prompt, &managed_v3, &[], &ReleasePolicy::default()).unwrap();
+        let report = release_assets_with_id(prompt, &managed_v3, &[], &ReleasePolicy::default(), None).unwrap();
         assert_eq!(report.count(ReleaseAction::KeptUserModified), 1);
         assert_eq!(report.conflict_count(), 1);
         assert_eq!(
@@ -181,16 +181,16 @@ mod tests {
             ("config/prompts/zh/role.txt".to_string(), first),
             ("config/prompts/zh/retired.txt".to_string(), second),
         ];
-        release_assets(root, &managed, &[], &ReleasePolicy::default()).unwrap();
+        release_assets_with_id(root, &managed, &[], &ReleasePolicy::default(), None).unwrap();
 
         fs::remove_file(root.join("config/prompts/zh/role.txt")).unwrap();
-        let report = release_assets(root, &managed, &[], &ReleasePolicy::default()).unwrap();
+        let report = release_assets_with_id(root, &managed, &[], &ReleasePolicy::default(), None).unwrap();
         assert_eq!(report.count(ReleaseAction::KeptUserDeleted), 1);
         assert!(!root.join("config/prompts/zh/role.txt").exists());
 
         // Dropping an untouched asset from the build retires it on disk.
         let only_role = vec![("config/prompts/zh/role.txt".to_string(), first)];
-        let report = release_assets(root, &only_role, &[], &ReleasePolicy::default()).unwrap();
+        let report = release_assets_with_id(root, &only_role, &[], &ReleasePolicy::default(), None).unwrap();
         assert_eq!(report.count(ReleaseAction::Removed), 1);
         assert!(!root.join("config/prompts/zh/retired.txt").exists());
     }

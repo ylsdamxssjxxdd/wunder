@@ -950,12 +950,19 @@ impl TuiApp {
             crate::session_header::BRAND_MARK,
             env!("CARGO_PKG_VERSION")
         );
+        // The welcome avatar is colourless relief: the grey head sits above the
+        // brand header, sized to the terminal that just opened. `session_header`
+        // stays the single owner of the text so the two never drift apart.
+        let columns = crossterm::terminal::size()
+            .map(|(columns, _)| columns)
+            .unwrap_or(80);
         app.push_special_log(
             LogKind::Tool,
             brand_summary.clone(),
             build_static_art_log(
                 brand_summary,
-                crate::session_header::header_lines(
+                crate::empty_state_animation::banner_lines(
+                    columns,
                     env!("CARGO_PKG_VERSION"),
                     app.runtime.launch_dir.to_string_lossy().as_ref(),
                     is_zh,
