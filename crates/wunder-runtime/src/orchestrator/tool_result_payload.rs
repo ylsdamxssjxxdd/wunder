@@ -1032,6 +1032,7 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
     let top_level_listing = matches!(canonical.as_str(), "列出文件" | "list_files")
         && map
             .get("data")
+            .and_then(model_tool_result_data_map)
             .and_then(|data| data.get("top_level_only"))
             .and_then(Value::as_bool)
             == Some(true);

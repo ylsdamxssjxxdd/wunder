@@ -17,19 +17,26 @@ fn main() {
     let mut source = String::from("pub static EMBEDDED_LOCAL_ASSETS: &[(&str, &[u8])] = &[\n");
     for (relative, path) in &files {
         let include_path = path.to_string_lossy().replace('\\', "/");
-        let target = if relative == "config/wunder-example.yaml" {
-            "config/wunder.yaml".to_string()
+        // The example YAML serves two roles: the create-if-absent seed for a new
+        // home, and the versioned default template used to backfill missing keys
+        // in an existing user config. Both targets embed the same source bytes.
+        let mut targets: Vec<String> = Vec::new();
+        if relative == "config/wunder-example.yaml" {
+            targets.push("config/wunder.yaml".to_string());
+            targets.push("config/wunder-example.yaml".to_string());
         } else if let Some(companion) = relative.strip_prefix("config/companions/") {
             // Source packages seed the writable companion library consumed by
             // WUNDER_COMPANIONS_ROOT on the first launch.
-            format!("config/data/companions/global/{companion}")
+            targets.push(format!("config/data/companions/global/{companion}"));
         } else {
-            relative.clone()
-        };
-        source.push_str(&format!(
-            "    ({:?}, include_bytes!(r#\"{}\"#)),\n",
-            target, include_path
-        ));
+            targets.push(relative.clone());
+        }
+        for target in targets {
+            source.push_str(&format!(
+                "    ({:?}, include_bytes!(r#\"{}\"#)),\n",
+                target, include_path
+            ));
+        }
         println!("cargo:rerun-if-changed={}", path.display());
     }
     source.push_str("];\n");

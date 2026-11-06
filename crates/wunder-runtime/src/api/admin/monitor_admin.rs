@@ -1260,10 +1260,16 @@ async fn export_thread_log(
     AxumPath(session_id): AxumPath<String>,
 ) -> Result<Response, Response> {
     let user_id = monitor_user_id(&state, &session_id)?;
+    let system_prompt = crate::services::thread_log::frozen_system_prompt(
+        &state.kernel.orchestrator.thread_store,
+        &session_id,
+    )
+    .await;
     Ok(crate::services::thread_log::export_response(
         state.storage.clone(),
         user_id,
         session_id,
         true,
+        system_prompt,
     ))
 }

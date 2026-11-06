@@ -51,8 +51,9 @@ pub fn export_response(
     user_id: String,
     session_id: String,
     include_internal: bool,
+    system_prompt: Option<String>,
 ) -> axum::response::Response {
-    let rx = export_stream(storage, user_id, session_id, include_internal);
+    let rx = export_stream(storage, user_id, session_id, include_internal, system_prompt);
     let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
     let mut response = axum::response::Response::new(axum::body::Body::from_stream(stream));
     response.headers_mut().insert(
@@ -66,6 +67,19 @@ pub fn export_response(
     response
 }
 
+/// Export header. `export_schema_version` 6 adds the frozen system prompt and
+/// its character count so a downloaded log is self-contained for debugging:
+/// the exact instruction block that shaped the history travels with it.
+fn export_header(session_id: &str, system_prompt: Option<&str>) -> Value {
+    json!({
+        "record_type": "thread_meta",
+        "export_schema_version": 6,
+        "session_id": session_id,
+        "system_prompt": system_prompt,
+        "system_prompt_chars": system_prompt.map(|prompt| prompt.chars().count()),
+    })
+}
+
 /// Shared export for HTTP and local clients. Dropping the receiver cancels the
 /// producer; the two-record channel keeps database reads under backpressure.
 pub fn export_stream(
@@ -73,12 +87,13 @@ pub fn export_stream(
     user_id: String,
     session_id: String,
     include_internal: bool,
+    system_prompt: Option<String>,
 ) -> tokio::sync::mpsc::Receiver<Result<String, std::io::Error>> {
     // Backpressure propagates to the database producer, including download cancellation.
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, std::io::Error>>(2);
     crate::core::long_task::spawn("thread_log.export", async move {
         let result: anyhow::Result<()> = async {
-            let header=json!({"record_type":"thread_meta","export_schema_version":5,"session_id":session_id});
+            let header = export_header(&session_id, system_prompt.as_deref());
             tx.send(Ok(format!("{header}\n"))).await?;
             let mut before=None;
             loop {
@@ -113,6 +128,34 @@ pub fn export_stream(
         }
     });
     rx
+}
+
+/// Frozen system prompt for a thread, read from its canonical metadata.
+///
+/// Export is a debugging surface: a missing thread (or metadata that cannot be
+/// read) yields `null` in the header instead of failing the whole download, so
+/// a partially materialized thread stays inspectable.
+pub async fn frozen_system_prompt(
+    thread_store: &crate::storage::RuntimeThreadStore,
+    session_id: &str,
+) -> Option<String> {
+    let thread = wunder_core::thread_store::ThreadId::new(session_id).ok()?;
+    match thread_store.session_meta(&thread).await {
+        Ok(meta) => Some(meta.initial_system_prompt),
+        Err(error) => {
+            if !matches!(
+                error,
+                wunder_core::thread_store::ThreadStoreError::NotFound { .. }
+            ) {
+                tracing::warn!(
+                    session_id,
+                    error = %error,
+                    "thread log export: load frozen system prompt failed"
+                );
+            }
+            None
+        }
+    }
 }
 
 /// Stable lifecycle projection. Transport-only deltas never enter the timeline.
@@ -348,6 +391,24 @@ fn derive_context_text(event_type: &str, data: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_header_carries_frozen_system_prompt() {
+        let header = export_header("s", Some("frozen 提示词"));
+        assert_eq!(header["record_type"], json!("thread_meta"));
+        assert_eq!(header["export_schema_version"], json!(6));
+        assert_eq!(header["session_id"], json!("s"));
+        assert_eq!(header["system_prompt"], json!("frozen 提示词"));
+        // Character count, not bytes: CJK prompts must not be counted twice.
+        assert_eq!(header["system_prompt_chars"], json!(10));
+    }
+
+    #[test]
+    fn export_header_marks_missing_system_prompt_as_null() {
+        let header = export_header("s", None);
+        assert!(header["system_prompt"].is_null());
+        assert!(header["system_prompt_chars"].is_null());
+    }
 
     #[test]
     fn transport_status_events_never_enter_the_timeline() {
