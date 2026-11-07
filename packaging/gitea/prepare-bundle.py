@@ -66,9 +66,9 @@ PROFILES = {
                          "linux-arm64-ubuntu18/root", "host-tools-amd64", "appimage-runtime",
                          "mingw-i686-windows-gnu"],
         "squashfs_processors": "3",
-        # x86_64 构建机按 24 核 / 64G 量级配置：三个任务并行，每个 6 线程。
-        "runner_capacity": "3",
-        "build_jobs": "6",
+        # x86_64 构建机按 24 核 / 64G 量级配置：五个任务并行，每个 4 线程（20 道编译 ≤ 24 核）。
+        "runner_capacity": "5",
+        "build_jobs": "4",
     },
 }
 

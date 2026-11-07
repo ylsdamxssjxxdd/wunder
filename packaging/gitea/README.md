@@ -153,7 +153,7 @@ git push gitea main
   任务容器只加入 `internal` 网络，无外网出口；仅 Runner 持有 Docker socket。
 - 新增/升级依赖超出 vendor 或 wheel 索引时离线构建会明确失败，需在联网准备机刷新
   在准备机上重产补充包（`cache/offline_build.sh <arch>`）并用 `--supplement-prebuilt` 重新导出套件。
-- 补充包依赖（requirements-linux-common.txt）或工具链变化后同样要重产重导。x86_64 剖面默认 3 个并行任务、每任务 6 线程（建议 ≥16 核、32 GB 内存、200 GB 可用存储）；
+- 补充包依赖（requirements-linux-common.txt）或工具链变化后同样要重产重导。x86_64 剖面默认 5 个并行任务、每任务 4 线程（建议 ≥24 核、64 GB 内存、200 GB 可用存储）；
   arm64 剖面默认 1 并行、4 线程。改 `prepare-bundle.py` 的 `runner_capacity`/`build_jobs` 后重新导出。
 - 数据在 `data/gitea/`（仓库、账号、SQLite、Release 附件），Runner 注册在 `data/runner/`，
   启动凭据在 `data/bootstrap/`。备份先 `docker compose stop` 再拷 `data/`。发布留存由仓库工作流负责：

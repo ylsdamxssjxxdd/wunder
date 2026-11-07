@@ -17,82 +17,9 @@ env:
 
 # Gitea 的表达式引擎没有 runner 上下文，架构门禁一律放进脚本：
 # 任务容器自己按 uname -m 判断能不能干这活，不能就打印跳过原因并成功退出。
+# runner 单机多任务（容量见套件 runner.yaml 的 capacity），任务按这里的声明顺序排队：
+# Win7 两个任务最先跑，其次安卓，Linux 双架构最后。
 jobs:
-  linux:
-    # wunder-offline 任务镜像里有 /opt/offline-ci/checkout.py；检出后一律改用仓库内脚本。
-    # 桌面、CLI、.portable 与 .run 都在同一个任务的工作区里产出，补充包直接取套件预置包。
-    runs-on: wunder-offline
-    timeout-minutes: 1440
-    strategy:
-      fail-fast: false
-      max-parallel: 3
-      matrix:
-        arch: [arm64, x64]
-    steps:
-      - name: Checkout from local Gitea
-        env:
-          CI_REPOSITORY: ${{ github.repository }}
-          CI_COMMIT: ${{ github.sha }}
-          CI_REF: ${{ github.ref }}
-          CI_TOKEN: ${{ github.token }}
-        run: python3 /opt/offline-ci/checkout.py
-      - name: Build offline Linux desktop, CLI and installer
-        env:
-          ARCH: ${{ matrix.arch }}
-          CI_REPOSITORY: ${{ github.repository }}
-          CI_COMMIT: ${{ github.sha }}
-          CI_REF: ${{ github.ref }}
-          CI_TOKEN: ${{ github.token }}
-        run: bash packaging/gitea/ci/build.sh
-      - name: Publish build outputs to local Releases
-        env:
-          ARCH: ${{ matrix.arch }}
-          CI_REPOSITORY: ${{ github.repository }}
-          CI_COMMIT: ${{ github.sha }}
-          CI_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if find release-assets -maxdepth 1 -type f | grep -q .; then
-            python3 packaging/gitea/ci/publish.py release-assets
-            python3 packaging/gitea/ci/prune.py
-          else
-            echo 'nothing to publish from this worker'
-          fi
-
-  android:
-    # 安卓 arm64 APK：x86_64 worker 直接用 NDK 交叉编译；aarch64 worker 用套件内置的
-    # qemu-x86_64 模拟 NDK/build-tools，Rust 仍原生编译。两种宿主都从 /opt/android 取工具链。
-    runs-on: wunder-offline
-    timeout-minutes: 1440
-    steps:
-      - name: Checkout from local Gitea
-        env:
-          CI_REPOSITORY: ${{ github.repository }}
-          CI_COMMIT: ${{ github.sha }}
-          CI_REF: ${{ github.ref }}
-          CI_TOKEN: ${{ github.token }}
-        run: python3 /opt/offline-ci/checkout.py
-      - name: Build Android arm64 APK
-        env:
-          CI_REPOSITORY: ${{ github.repository }}
-          CI_COMMIT: ${{ github.sha }}
-          CI_REF: ${{ github.ref }}
-          CI_TOKEN: ${{ github.token }}
-        run: bash packaging/gitea/ci/build-android.sh
-      - name: Publish APK to local Releases
-        env:
-          CI_REPOSITORY: ${{ github.repository }}
-          CI_COMMIT: ${{ github.sha }}
-          CI_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if find release-assets -maxdepth 1 -type f | grep -q .; then
-            python3 packaging/gitea/ci/publish.py release-assets
-            python3 packaging/gitea/ci/prune.py
-          else
-            echo 'nothing to publish from this worker'
-          fi
-
   win7:
     # Win7 32 位由 x86_64 宿主的 kylin-x86 MinGW 交叉构建；ARM64 worker 上脚本自行跳过。
     runs-on: wunder-offline
@@ -152,6 +79,82 @@ jobs:
         run: bash packaging/gitea/ci/build-win7-installer.sh
       - name: Publish installer to local Releases
         env:
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if find release-assets -maxdepth 1 -type f | grep -q .; then
+            python3 packaging/gitea/ci/publish.py release-assets
+            python3 packaging/gitea/ci/prune.py
+          else
+            echo 'nothing to publish from this worker'
+          fi
+
+  android:
+    # 安卓 arm64 APK：x86_64 worker 直接用 NDK 交叉编译；aarch64 worker 用套件内置的
+    # qemu-x86_64 模拟 NDK/build-tools，Rust 仍原生编译。两种宿主都从 /opt/android 取工具链。
+    runs-on: wunder-offline
+    timeout-minutes: 1440
+    steps:
+      - name: Checkout from local Gitea
+        env:
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_REF: ${{ github.ref }}
+          CI_TOKEN: ${{ github.token }}
+        run: python3 /opt/offline-ci/checkout.py
+      - name: Build Android arm64 APK
+        env:
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_REF: ${{ github.ref }}
+          CI_TOKEN: ${{ github.token }}
+        run: bash packaging/gitea/ci/build-android.sh
+      - name: Publish APK to local Releases
+        env:
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_REF: ${{ github.ref }}
+          CI_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if find release-assets -maxdepth 1 -type f | grep -q .; then
+            python3 packaging/gitea/ci/publish.py release-assets
+            python3 packaging/gitea/ci/prune.py
+          else
+            echo 'nothing to publish from this worker'
+          fi
+
+  linux:
+    # wunder-offline 任务镜像里有 /opt/offline-ci/checkout.py；检出后一律改用仓库内脚本。
+    # 桌面、CLI、.portable 与 .run 都在同一个任务的工作区里产出，补充包直接取套件预置包。
+    runs-on: wunder-offline
+    timeout-minutes: 1440
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        arch: [arm64, x64]
+    steps:
+      - name: Checkout from local Gitea
+        env:
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_REF: ${{ github.ref }}
+          CI_TOKEN: ${{ github.token }}
+        run: python3 /opt/offline-ci/checkout.py
+      - name: Build offline Linux desktop, CLI and installer
+        env:
+          ARCH: ${{ matrix.arch }}
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_REF: ${{ github.ref }}
+          CI_TOKEN: ${{ github.token }}
+        run: bash packaging/gitea/ci/build.sh
+      - name: Publish build outputs to local Releases
+        env:
+          ARCH: ${{ matrix.arch }}
           CI_REPOSITORY: ${{ github.repository }}
           CI_COMMIT: ${{ github.sha }}
           CI_TOKEN: ${{ github.token }}
