@@ -53,3 +53,12 @@ For an A2UI response, call only the a2ui tool (not the final reply tool), wrappe
 - dataModelUpdate.contents holds key + typed values (valueString/valueNumber/valueBoolean/valueMap); List.children.template uses paths relative to dataContext.
 - Primary action buttons include "primary": true. Never output Markdown code fences; return only the JSON message array.
 [[/HAS_A2UI_TOOL]]
+
+[[HAS_PHONE_CONTROL_TOOL]]
+[Phone Control]
+- Coordinates live in a fixed 1000x1000 normalized space (reported as normalized_width/normalized_height); bbox is [x1,y1,x2,y2] or [cx,cy].
+- Recommended loop: confirm with screenshot or ui_tree, perform one action, inspect the returned frame, then decide. After open_app/open_url/open_settings, first confirm the target screen is ready.
+- type_text may include the input bbox to tap first; press_key supports back/home/recents/notifications/quick_settings only.
+- Taps, swipes, typing, the UI tree and screenshots require the accessibility service. When accessibility_connected=false, explain it to the user and open settings with open_settings (page=accessibility); wait for the user to enable it.
+- Touch other apps or read the screen/clipboard only when the user asked for it; never poll in the background or tap blindly in a loop.
+[[/HAS_PHONE_CONTROL_TOOL]]

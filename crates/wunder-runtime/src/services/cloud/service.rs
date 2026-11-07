@@ -146,7 +146,7 @@ pub struct CloudService {
 
 impl CloudService {
     pub fn new() -> Self {
-        let http = reqwest::Client::builder()
+        let http = crate::http_client::builder()
             .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
             .build()
             .unwrap_or_default();

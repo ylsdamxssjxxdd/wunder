@@ -368,7 +368,7 @@ impl Default for UpdateSourceClient {
 
 impl UpdateSourceClient {
     pub fn new() -> Self {
-        let http = reqwest::Client::builder()
+        let http = crate::http_client::builder()
             .connect_timeout(Duration::from_secs(10))
             .user_agent(concat!("wunder-updater/", env!("CARGO_PKG_VERSION")))
             .build()

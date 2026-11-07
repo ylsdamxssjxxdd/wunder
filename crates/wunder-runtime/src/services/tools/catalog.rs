@@ -1,7 +1,7 @@
 use super::mcp_pack;
 use super::{
-    browser_tool, desktop_control, multimodal_generation_tool, read_image_tool, self_status_tool,
-    sessions_yield_tool, thread_control_tool, web_fetch_tool, web_search_tool,
+    browser_tool, desktop_control, multimodal_generation_tool, phone_control, read_image_tool,
+    self_status_tool, sessions_yield_tool, thread_control_tool, web_fetch_tool, web_search_tool,
 };
 use crate::config::Config;
 use crate::core::json_schema::normalize_tool_input_schema;
@@ -196,6 +196,7 @@ fn exec_shell_note(language: &str) -> Option<String> {
     let env = crate::core::python_runtime::resolve_desktop_command_env();
     let key = match env.shell.kind {
         ShellKind::Bash => "tool.spec.exec.shell_bash",
+        ShellKind::Sh => "tool.spec.exec.shell_sh",
         // Windows 7 ships PowerShell 2.0; without saying so the model keeps
         // reaching for `::new()`, `Get-FileHash` and `-Raw` and blames itself
         // for the red errors that follow. The bundled portable PowerShell 7 is
@@ -1095,6 +1096,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             ]),
         },
         desktop_control::desktop_control_tool_spec(language),
+        phone_control::phone_control_tool_spec(language),
         ToolSpec {
             name: self_status_tool::TOOL_SELF_STATUS.to_string(),
             title: None,
@@ -1219,6 +1221,14 @@ pub fn builtin_aliases() -> HashMap<String, String> {
         desktop_control::TOOL_DESKTOP_CONTROL_ALIAS_SHORT.to_string(),
         desktop_control::TOOL_DESKTOP_CONTROL.to_string(),
     );
+    map.insert(
+        phone_control::TOOL_PHONE_CONTROL_ALIAS.to_string(),
+        phone_control::TOOL_PHONE_CONTROL.to_string(),
+    );
+    map.insert(
+        phone_control::TOOL_PHONE_CONTROL_ALIAS_SHORT.to_string(),
+        phone_control::TOOL_PHONE_CONTROL.to_string(),
+    );
     map
 }
 
@@ -1276,8 +1286,20 @@ pub fn is_desktop_control_tool_name(name: &str) -> bool {
     desktop_control::is_desktop_control_tool_name(name)
 }
 
+pub fn phone_tools_available() -> bool {
+    phone_control::phone_tools_enabled()
+}
+
+pub fn is_phone_control_tool_name(name: &str) -> bool {
+    phone_control::is_phone_control_tool_name(name)
+}
+
 pub async fn build_desktop_followup_user_message(result: &Value) -> Result<Option<Value>> {
     desktop_control::build_followup_user_message(result).await
+}
+
+pub async fn build_phone_followup_user_message(result: &Value) -> Result<Option<Value>> {
+    phone_control::build_followup_user_message(result).await
 }
 
 pub fn is_read_image_tool_name(name: &str) -> bool {
@@ -1318,6 +1340,11 @@ fn runtime_builtin_tool_allowed(config: &Config, canonical: &str) -> bool {
     }
     if desktop_control::is_desktop_control_tool_name(canonical)
         && !desktop_control::desktop_tools_enabled(config)
+    {
+        return false;
+    }
+    if phone_control::is_phone_control_tool_name(canonical)
+        && !phone_control::phone_tools_enabled()
     {
         return false;
     }
@@ -1379,6 +1406,8 @@ pub fn filter_tool_names_by_model_capability(
                 && !read_image_tool::is_read_image_tool_name(name)
                 && !desktop_control::is_desktop_control_tool_name(&canonical)
                 && !desktop_control::is_desktop_control_tool_name(name)
+                && !phone_control::is_phone_control_tool_name(&canonical)
+                && !phone_control::is_phone_control_tool_name(name)
         })
         .collect()
 }
@@ -1404,6 +1433,21 @@ mod model_capability_tests {
         assert!(!filtered.contains("桌面控制"));
         assert!(!filtered.contains(TOOL_READ_IMAGE));
     }
+
+    #[test]
+    fn unsupported_vision_also_removes_phone_frames() {
+        let names = HashSet::from(["手机控制".to_string(), TOOL_READ_IMAGE.to_string()]);
+        let filtered = filter_tool_names_by_model_capability(names, Some(false));
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn phone_control_requires_an_installed_device_host() {
+        let config = crate::config::Config::default();
+        assert!(!super::runtime_builtin_tool_allowed(&config, "手机控制"));
+        assert!(!crate::services::default_tool_profile::default_tool_candidates()
+            .contains(&"手机控制".to_string()));
+    }
 }
 
 pub fn resolve_tool_name(name: &str) -> String {
@@ -1417,6 +1461,9 @@ pub fn resolve_tool_name(name: &str) -> String {
             // session snapshots without being exposed as separate tools.
             "桌面控制器" | "桌面监视器" | "desktop_controller" | "desktop_monitor" => {
                 Some(desktop_control::TOOL_DESKTOP_CONTROL.to_string())
+            }
+            "手机控制器" | "手机监视器" | "phone_controller" | "phone_monitor" => {
+                Some(phone_control::TOOL_PHONE_CONTROL.to_string())
             }
             _ => None,
         })
@@ -1772,6 +1819,7 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         web_search_tool::TOOL_WEB_SEARCH => Some(web_search_tool::TOOL_WEB_SEARCH_ALIAS),
         web_fetch_tool::TOOL_WEB_FETCH => Some(web_fetch_tool::TOOL_WEB_FETCH_ALIAS),
         desktop_control::TOOL_DESKTOP_CONTROL => Some("desktop_control"),
+        phone_control::TOOL_PHONE_CONTROL => Some(phone_control::TOOL_PHONE_CONTROL_ALIAS),
         self_status_tool::TOOL_SELF_STATUS => Some(self_status_tool::TOOL_SELF_STATUS_ALIAS),
         read_image_tool::TOOL_READ_IMAGE => Some(read_image_tool::TOOL_READ_IMAGE_ALIAS),
         multimodal_generation_tool::TOOL_GENERATE_SPEECH => {

@@ -879,6 +879,10 @@ pub struct DoctorCommand {
     /// Print extended diagnostics / 输出扩展诊断信息。
     #[arg(long, default_value_t = false)]
     pub verbose: bool,
+
+    /// Probe an HTTPS URL with the selected certificate roots / 用当前证书根探测 HTTPS 地址。
+    #[arg(long, value_name = "URL")]
+    pub tls_probe: Option<String>,
 }
 
 #[derive(Debug, Args)]

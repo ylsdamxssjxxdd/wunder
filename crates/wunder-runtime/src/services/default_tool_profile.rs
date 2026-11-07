@@ -37,6 +37,14 @@ pub fn default_tool_candidates() -> Vec<String> {
                 {
                     continue;
                 }
+                // The phone surface only exists on the Android shell, which
+                // installs its device host at startup. 蛹/舵机/舰体 must not
+                // advertise a control that has no executor.
+                if crate::tools::is_phone_control_tool_name(&spec.name)
+                    && !crate::tools::phone_tools_available()
+                {
+                    continue;
+                }
                 let name = if crate::tools::is_browser_tool_name(&spec.name) {
                     crate::tools::BROWSER_GROUP_NAME.to_string()
                 } else {

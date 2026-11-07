@@ -397,7 +397,10 @@ component BodyBlock inherits Rectangle {
 // step. It sits where the answer would have been, so it reads as the reply.
 component ErrorBlock inherits Rectangle {
     in property <TimelineRow> data;
-    height: card.preferred-height + 12px;
+    // Use the card's explicit height binding, not its `preferred-height`:
+    // a Rectangle's preferred height resolves to 0 in this layout chain, so
+    // the row collapsed to its border and every failure card was invisible.
+    height: card.height + 12px;
     card := Rectangle {
         x: Theme.timeline-padding; y: 6px;
         width: parent.width - 2 * Theme.timeline-padding;
@@ -901,6 +904,7 @@ export component TimelineView inherits Rectangle {
     // viewport edge, exactly like the web messenger's chat lane.
     private property <length> column-width: min(rows-scroll.visible-width, Theme.timeline-column-width);
     private property <length> transcript-height: rows-scroll.content-height;
+    private property <length> transcript-visible-height: rows-scroll.visible-height;
     private property <int> follow-passes: 2;
     private property <bool> follow-pending: true;
     // False until the rearmed follow has scrolled once; only then may the
@@ -979,6 +983,17 @@ export component TimelineView inherits Rectangle {
         // settled, so permit the next intentional upward scroll to request
         // one more bounded page.
         root.older-requested = false;
+        if root.follow-output {
+            root.follow-passes = 2;
+            root.follow-pending = true;
+            root.follow-scrolled = false;
+        }
+    }
+    changed transcript-visible-height => {
+        // The soft keyboard opening or closing changes the viewport without
+        // changing the transcript. A following transcript has to re-anchor to
+        // the newest row, otherwise the tail ends up hidden behind the
+        // composer after the app returns from the background.
         if root.follow-output {
             root.follow-passes = 2;
             root.follow-pending = true;

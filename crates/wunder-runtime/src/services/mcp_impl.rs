@@ -328,7 +328,7 @@ impl WunderMcpServer {
         let input_path = temp_dir.join(format!("{stem}{extension}"));
         let output_path = temp_dir.join(format!("{stem}.md"));
         let result = async {
-            let response = reqwest::Client::new()
+            let response = crate::http_client::new()
                 .get(&source_url)
                 .send()
                 .await
@@ -713,7 +713,7 @@ fn build_mcp_client(headers: HeaderMap, timeout_s: Option<u64>) -> Result<reqwes
     if let Some(client) = mcp_client_cache().lock().get(&key) {
         return Ok(client.clone());
     }
-    let mut builder = reqwest::Client::builder().default_headers(headers);
+    let mut builder = crate::http_client::builder().default_headers(headers);
     if let Some(seconds) = timeout_s.filter(|seconds| *seconds > 0) {
         builder = builder.timeout(std::time::Duration::from_secs(seconds));
     }

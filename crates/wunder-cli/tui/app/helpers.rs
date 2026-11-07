@@ -639,14 +639,8 @@ pub(super) fn read_system_clipboard_text() -> Result<Option<String>> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        const CLIPBOARD_COMMANDS: &[(&str, &[&str])] = &[
-            ("wl-paste", &["-n"]),
-            ("xclip", &["-selection", "clipboard", "-o"]),
-            ("xsel", &["--clipboard", "--output"]),
-        ];
-
-        for (program, args) in CLIPBOARD_COMMANDS {
-            match Command::new(program).args(*args).output() {
+        for (program, args) in clipboard_read_commands(wunder_server::http_client::is_termux()) {
+            match Command::new(program).args(args).output() {
                 Ok(output) if output.status.success() => {
                     return Ok(normalize_clipboard_text(
                         String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -664,7 +658,12 @@ pub(super) fn read_system_clipboard_text() -> Result<Option<String>> {
         }
 
         return Err(anyhow!(
-            "no supported clipboard command found (tried wl-paste, xclip, xsel)"
+            "no supported clipboard command found (tried wl-paste, xclip, xsel{})",
+            if wunder_server::http_client::is_termux() {
+                "; install Termux:API for termux-clipboard-get"
+            } else {
+                ""
+            }
         ));
     }
 
@@ -722,14 +721,8 @@ pub(super) fn write_system_clipboard_text(text: &str) -> Result<()> {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        const CLIPBOARD_WRITERS: &[(&str, &[&str])] = &[
-            ("wl-copy", &[]),
-            ("xclip", &["-selection", "clipboard"]),
-            ("xsel", &["--clipboard", "--input"]),
-        ];
-
-        for (program, args) in CLIPBOARD_WRITERS {
-            match write_clipboard_via_stdin(program, *args, text) {
+        for (program, args) in clipboard_write_commands(wunder_server::http_client::is_termux()) {
+            match write_clipboard_via_stdin(program, args, text) {
                 Ok(()) => return Ok(()),
                 Err(error) => {
                     if error.to_string().contains("not found") {
@@ -740,7 +733,12 @@ pub(super) fn write_system_clipboard_text(text: &str) -> Result<()> {
             }
         }
         return Err(anyhow!(
-            "no supported clipboard command found (tried wl-copy, xclip, xsel)"
+            "no supported clipboard command found (tried wl-copy, xclip, xsel{})",
+            if wunder_server::http_client::is_termux() {
+                "; install Termux:API for termux-clipboard-set"
+            } else {
+                ""
+            }
         ));
     }
 
@@ -781,6 +779,58 @@ fn write_clipboard_via_stdin(program: &str, args: &[&str], text: &str) -> Result
         return Err(anyhow!("{program} failed: {stderr}"));
     }
     Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+const CLIPBOARD_READERS: &[(&str, &[&str])] = &[
+    ("wl-paste", &["-n"]),
+    ("xclip", &["-selection", "clipboard", "-o"]),
+    ("xsel", &["--clipboard", "--output"]),
+];
+
+#[cfg(all(unix, not(target_os = "macos")))]
+const CLIPBOARD_WRITERS: &[(&str, &[&str])] = &[
+    ("wl-copy", &[]),
+    ("xclip", &["-selection", "clipboard"]),
+    ("xsel", &["--clipboard", "--input"]),
+];
+
+/// Termux has no X/Wayland clipboard; only Termux:API can reach Android's.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn clipboard_read_commands(termux: bool) -> Vec<(&'static str, &'static [&'static str])> {
+    let mut commands = Vec::new();
+    if termux {
+        commands.push(("termux-clipboard-get", &[] as &[&str]));
+    }
+    commands.extend_from_slice(CLIPBOARD_READERS);
+    commands
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn clipboard_write_commands(termux: bool) -> Vec<(&'static str, &'static [&'static str])> {
+    let mut commands = Vec::new();
+    if termux {
+        commands.push(("termux-clipboard-set", &[] as &[&str]));
+    }
+    commands.extend_from_slice(CLIPBOARD_WRITERS);
+    commands
+}
+
+#[cfg(all(test, unix, not(target_os = "macos")))]
+mod clipboard_command_tests {
+    use super::{clipboard_read_commands, clipboard_write_commands};
+
+    #[test]
+    fn termux_uses_the_api_clipboard_first() {
+        assert_eq!(clipboard_read_commands(true)[0].0, "termux-clipboard-get");
+        assert_eq!(clipboard_write_commands(true)[0].0, "termux-clipboard-set");
+        assert!(clipboard_read_commands(false)
+            .iter()
+            .all(|(name, _)| *name != "termux-clipboard-get"));
+        assert!(clipboard_write_commands(false)
+            .iter()
+            .all(|(name, _)| *name != "termux-clipboard-set"));
+    }
 }
 
 #[cfg(test)]

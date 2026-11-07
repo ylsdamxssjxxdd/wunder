@@ -113,7 +113,7 @@ pub async fn run_sample(
         lsp_manager: state.lsp_manager.clone(),
         skills: Arc::new(skills_snapshot),
         user_tool_bindings: Arc::new(user_tool_bindings),
-        http: Arc::new(reqwest::Client::new()),
+        http: Arc::new(crate::http_client::new()),
         tool_roots,
         user_id: PERF_USER_ID.to_string(),
         workspace_id: state.workspace.scoped_user_id(PERF_USER_ID, None),

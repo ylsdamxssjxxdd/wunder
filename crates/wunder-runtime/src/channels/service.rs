@@ -208,7 +208,7 @@ impl ChannelHub {
             bridge_runtime: shared_state.bridge_runtime,
             rate_limiter: ChannelRateLimiter::new(),
             adapter_registry: build_default_channel_adapter_registry(),
-            http: reqwest::Client::new(),
+            http: crate::http_client::new(),
             recent_inbound: Arc::new(Mutex::new(HashMap::new())),
             approval_registry: shared_state.approval_registry,
             runtime_logs: Arc::new(Mutex::new(ChannelRuntimeLogBuffer::new(

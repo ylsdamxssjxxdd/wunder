@@ -1,0 +1,1439 @@
+// 茧's settings sheet: one full-screen surface with three pages — the phone's
+// settings index, the model catalogue and the model editor. The form language
+// and every control (FormField, Action, ThemeSwitch, ConfirmDialog) come from
+// 蛹's shared UI, so the mobile sheet never grows a second visual vocabulary.
+
+import { Theme, ModelCard } from "../../../frontend-slint/ui/theme.slint";
+import { I18n } from "../../../frontend-slint/ui/i18n.slint";
+import { Action, FormField, ThemeSwitch, ConfirmDialog } from "../../../frontend-slint/ui/components.slint";
+import { ModelPresets } from "../../../frontend-slint/ui/model_presets.slint";
+import { ListView, ScrollView } from "std-widgets.slint";
+
+component SheetHeader inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle: "";
+    in property <length> inset-top: 0px;
+    callback back();
+    height: 52px + root.inset-top;
+    background: Theme.surface;
+
+    Rectangle {
+        y: root.inset-top;
+        height: 52px;
+        width: parent.width;
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            spacing: 4px;
+            cross-axis-alignment: center;
+            Action {
+                width: 34px;
+                height: 34px;
+                icon-size: 17px;
+                icon: @image-url("../../../frontend-slint/assets/icons/chevron-left.svg");
+                label: "返回";
+                clicked => { root.back(); }
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 1px;
+                Text {
+                    text: root.title;
+                    color: Theme.text;
+                    font-size: Theme.font-lg;
+                    font-weight: 600;
+                    overflow: elide;
+                    horizontal-alignment: left;
+                }
+                Text {
+                    text: root.subtitle;
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                    overflow: elide;
+                    horizontal-alignment: left;
+                    visible: root.subtitle != "";
+                }
+            }
+            @children
+        }
+    }
+
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
+component SheetCard inherits Rectangle {
+    border-radius: Theme.radius-lg;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        spacing: 0px;
+        @children
+    }
+}
+
+component CardTitle inherits VerticalLayout {
+    in property <string> title;
+    in property <string> subtitle: "";
+    spacing: 2px;
+    Text {
+        text: root.title;
+        color: Theme.text;
+        font-size: Theme.font-md;
+        font-weight: 700;
+    }
+    if root.subtitle != "" : Text {
+        text: root.subtitle;
+        color: Theme.muted;
+        font-size: Theme.font-xs;
+        wrap: word-wrap;
+    }
+    Rectangle { height: 6px; }
+}
+
+// Label (+ optional note) on the left, one control on the right, divider
+// below. Mirrors the settings row rhythm on the desktop sheet.
+component SettingRow inherits Rectangle {
+    in property <string> label;
+    in property <string> note: "";
+    in property <bool> last: false;
+    height: body.preferred-height + (root.last ? 0px : 1px);
+    body := VerticalLayout {
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 10px;
+            cross-axis-alignment: center;
+            Text {
+                horizontal-stretch: 1;
+                text: root.label;
+                color: Theme.text;
+                font-size: Theme.font-sm;
+                font-weight: 600;
+                wrap: word-wrap;
+                vertical-alignment: center;
+            }
+            @children
+        }
+        if root.note != "" : Text {
+            text: root.note;
+            color: Theme.muted;
+            font-size: Theme.font-xs;
+            wrap: word-wrap;
+        }
+    }
+    if !root.last : Rectangle {
+        y: parent.height - 1px;
+        width: parent.width;
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
+// A tap target that shows the current choice and opens the shared picker
+// sheet. Android touch does not keep a stock ComboBox popup open (the release
+// lands outside the popup), so every enum-like field uses this in-window
+// picker instead.
+component PickerField inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback picked();
+    width: 168px;
+    height: 34px;
+    border-radius: Theme.radius-sm;
+    background: root.enabled ? Theme.input-bg : Theme.input-readonly-bg;
+    border-width: 1px;
+    border-color: Theme.input-border;
+    Text {
+        x: 10px;
+        width: parent.width - 34px;
+        height: parent.height;
+        text: root.text;
+        color: root.enabled ? Theme.text : Theme.muted;
+        font-size: Theme.font-sm;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Image {
+        x: parent.width - 24px;
+        y: (parent.height - 12px) / 2;
+        width: 12px;
+        height: 12px;
+        source: @image-url("../../../frontend-slint/assets/icons/chevron-down.svg");
+        colorize: Theme.muted;
+    }
+    TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.picked(); }
+    }
+}
+
+component ThemeTile inherits Rectangle {
+    in property <string> palette;
+    in property <string> name;
+    in property <color> accent;
+    in property <color> tint;
+    in property <bool> active: false;
+    callback picked(string);
+    horizontal-stretch: 1;
+    height: 76px;
+    border-radius: Theme.radius-md;
+    border-width: root.active ? 2px : 1px;
+    border-color: root.active ? root.accent : Theme.border;
+    background: Theme.surface;
+    Rectangle {
+        x: 8px;
+        y: 8px;
+        width: parent.width - 16px;
+        height: 42px;
+        border-radius: 6px;
+        background: root.tint;
+        Rectangle {
+            x: 8px;
+            y: 8px;
+            width: parent.width * 0.58;
+            height: 6px;
+            border-radius: 3px;
+            background: root.accent;
+        }
+        Rectangle {
+            x: 8px;
+            y: 21px;
+            width: parent.width * 0.38;
+            height: 4px;
+            border-radius: 2px;
+            background: Theme.border-strong;
+        }
+        Rectangle {
+            x: parent.width - 20px;
+            y: 7px;
+            width: 13px;
+            height: 13px;
+            border-radius: 6.5px;
+            background: Theme.surface;
+            border-width: root.active ? 3px : 1px;
+            border-color: root.active ? root.accent : Theme.border-strong;
+        }
+    }
+    Text {
+        y: 53px;
+        width: 100%;
+        height: 17px;
+        text: root.name;
+        color: Theme.text;
+        font-size: Theme.font-2xs;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    TouchArea { mouse-cursor: pointer; clicked => { root.picked(root.palette); } }
+}
+
+component ModelRow inherits Rectangle {
+    in property <string> model-key;
+    in property <string> model-name;
+    in property <string> base-url;
+    in property <string> type-label;
+    in property <bool> is-default: false;
+    in property <bool> disabled: false;
+    callback picked();
+    height: 64px;
+    border-radius: Theme.radius-md;
+    background: touch.has-hover ? Theme.hover : Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.picked(); } }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 10px;
+        cross-axis-alignment: center;
+        Rectangle {
+            width: 30px;
+            height: 30px;
+            border-radius: 8px;
+            background: Theme.accent-soft;
+            Text {
+                width: 100%;
+                height: 100%;
+                text: root.type-label;
+                color: Theme.accent-ink;
+                font-size: 8px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text {
+                text: root.model-key;
+                color: root.disabled ? Theme.muted : Theme.text;
+                font-size: Theme.font-sm;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.model-name + (root.base-url == "" ? "" : " · " + root.base-url);
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                overflow: elide;
+            }
+        }
+        if root.is-default : Rectangle {
+            height: 20px;
+            width: 36px;
+            border-radius: 10px;
+            background: Theme.accent-soft;
+            Text {
+                width: 100%;
+                height: 100%;
+                text: I18n.st_models_default_badge;
+                color: Theme.accent-ink;
+                font-size: Theme.font-2xs;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+component SettingsHome inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <string> theme: "terracotta";
+    in property <int> font-size: 14;
+    in property <string> send-key: "enter";
+    in property <string> language: "zh-CN";
+    in property <string> permission-mode: "full_auto";
+    in property <string> current-model: "";
+    in property <int> model-count: 0;
+    in property <string> workspace: "";
+    in property <string> version: "";
+    in property <string> ubuntu-state: "missing";
+    in property <int> ubuntu-progress: 0;
+    in property <string> ubuntu-stage: "";
+    in property <string> ubuntu-version: "";
+    in property <string> ubuntu-error: "";
+    in property <bool> ubuntu-enabled: false;
+    callback close();
+    callback save-theme(string);
+    callback save-font-size(int);
+    callback save-send-key(string);
+    callback save-language(string);
+    callback install-ubuntu();
+    callback set-ubuntu-enabled(bool);
+    callback permission-changed(string);
+    callback manage-models();
+    callback open-picker(int, string, string);
+
+    pure function send-key-label(value: string) -> string {
+        return value == "ctrl_enter" ? I18n.st_send_ctrl_enter : value == "none" ? I18n.st_send_button : I18n.st_send_enter_direct;
+    }
+    pure function permission-label(value: string) -> string {
+        return value == "auto_edit" ? I18n.cp_permission_write : value == "suggest" ? I18n.cp_permission_command : I18n.cp_permission_full;
+    }
+    pure function ubuntu-action-label() -> string {
+        return root.ubuntu-state == "installed" ? "已安装"
+            : root.ubuntu-state == "installing" ? "安装中…"
+            : root.ubuntu-state == "unsupported" ? "不支持"
+            : root.ubuntu-state == "error" ? "重试"
+            : "安装";
+    }
+    pure function ubuntu-detail() -> string {
+        if root.ubuntu-state == "installing" {
+            return root.ubuntu-stage != ""
+                ? root.ubuntu-stage + " · " + root.ubuntu-progress + "%"
+                : "正在安装…";
+        }
+        if root.ubuntu-state == "installed" {
+            return "python、git、rg、ffmpeg、7zip 等常用工具可离线使用";
+        }
+        if root.ubuntu-state == "unsupported" {
+            return root.ubuntu-stage;
+        }
+        if root.ubuntu-state == "error" {
+            return root.ubuntu-error != "" ? root.ubuntu-error : root.ubuntu-stage;
+        }
+        return "首次启动自动解压 Ubuntu 24.04 与常用工具，全程无需联网";
+    }
+
+    VerticalLayout {
+        SheetHeader {
+            title: I18n.sidebar_settings;
+            subtitle: I18n.st_nav_subtitle;
+            inset-top: root.inset-top;
+            back() => { root.close(); }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 14px;
+                padding-bottom: 16px + root.inset-bottom;
+                spacing: 12px;
+                alignment: start;
+
+                SheetCard {
+                    HorizontalLayout {
+                        spacing: 10px;
+                        cross-axis-alignment: center;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 2px;
+                            Text {
+                                text: I18n.st_tab_models;
+                                color: Theme.text;
+                                font-size: Theme.font-md;
+                                font-weight: 700;
+                            }
+                            Text {
+                                text: root.current-model != ""
+                                    ? (root.current-model + (root.model-count > 0 ? " · " + root.model-count + " 个配置" : ""))
+                                    : (root.model-count > 0 ? root.model-count + " 个模型配置" : I18n.st_models_empty);
+                                color: Theme.muted;
+                                font-size: Theme.font-xs;
+                                overflow: elide;
+                            }
+                        }
+                        Action {
+                            width: 92px;
+                            label: "管理模型";
+                            show-label: true;
+                            primary: true;
+                            clicked => { root.manage-models(); }
+                        }
+                    }
+                }
+
+                SheetCard {
+                    CardTitle {
+                        title: "运行环境";
+                        subtitle: "在手机本地提供 Ubuntu 24.04，让命令工具拥有和电脑一致的 Linux 环境。";
+                    }
+                    SettingRow {
+                        label: "Ubuntu 24.04";
+                        note: root.ubuntu-detail();
+                        Action {
+                            width: 96px;
+                            label: root.ubuntu-action-label();
+                            show-label: true;
+                            primary: root.ubuntu-state != "installed"
+                                && root.ubuntu-state != "installing"
+                                && root.ubuntu-state != "unsupported";
+                            enabled: root.ubuntu-state != "installed"
+                                && root.ubuntu-state != "installing"
+                                && root.ubuntu-state != "unsupported";
+                            clicked => { root.install-ubuntu(); }
+                        }
+                    }
+                    if root.ubuntu-state == "installing" : Rectangle {
+                        height: 6px;
+                        border-radius: 3px;
+                        background: Theme.panel;
+                        Rectangle {
+                            width: max(6px, parent.width * root.ubuntu-progress / 100);
+                            height: parent.height;
+                            border-radius: 3px;
+                            background: Theme.accent;
+                        }
+                    }
+                    SettingRow {
+                        label: "命令在 Ubuntu 中执行";
+                        note: "开启后命令工具通过 proot 进入 Ubuntu；关闭后仍使用 Android 自带的 sh/toybox。";
+                        last: true;
+                        ThemeSwitch {
+                            checked: root.ubuntu-enabled;
+                            enabled: root.ubuntu-state == "installed";
+                            toggled => { root.set-ubuntu-enabled(!root.ubuntu-enabled); }
+                        }
+                    }
+                }
+
+                SheetCard {
+                    CardTitle { title: I18n.st_palette; subtitle: I18n.st_palette_note; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        ThemeTile {
+                            palette: "terracotta";
+                            name: I18n.st_theme_parchment;
+                            accent: #f58a24;
+                            tint: #fdf0de;
+                            active: root.theme == "terracotta";
+                            picked(value) => { root.save-theme(value); }
+                        }
+                        ThemeTile {
+                            palette: "hula-green";
+                            name: I18n.st_theme_mint;
+                            accent: #16ad8d;
+                            tint: #e7f7f2;
+                            active: root.theme == "hula-green";
+                            picked(value) => { root.save-theme(value); }
+                        }
+                        ThemeTile {
+                            palette: "forest";
+                            name: I18n.st_theme_forest;
+                            accent: #2f7a5c;
+                            tint: #e9f2ee;
+                            active: root.theme == "forest";
+                            picked(value) => { root.save-theme(value); }
+                        }
+                        ThemeTile {
+                            palette: "honey";
+                            name: I18n.st_theme_honey;
+                            accent: #c08a2a;
+                            tint: #f8f0dd;
+                            active: root.theme == "honey";
+                            picked(value) => { root.save-theme(value); }
+                        }
+                    }
+                    Rectangle { height: 8px; }
+                    SettingRow {
+                        label: I18n.st_font_size;
+                        note: I18n.st_font_size_note;
+                        last: true;
+                        Rectangle {
+                            width: 112px;
+                            height: 32px;
+                            border-radius: 16px;
+                            background: Theme.panel;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            Text {
+                                x: 0px;
+                                width: 34px;
+                                height: parent.height;
+                                text: "A-";
+                                color: root.font-size > 12 ? Theme.text : Theme.muted;
+                                font-size: Theme.font-sm;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                x: 34px;
+                                width: 44px;
+                                height: parent.height;
+                                text: root.font-size;
+                                color: Theme.text;
+                                font-size: Theme.font-md;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                x: parent.width - 34px;
+                                width: 34px;
+                                height: parent.height;
+                                text: "A+";
+                                color: root.font-size < 20 ? Theme.text : Theme.muted;
+                                font-size: Theme.font-sm;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            TouchArea {
+                                x: 0px;
+                                width: 34px;
+                                height: parent.height;
+                                enabled: root.font-size > 12;
+                                mouse-cursor: pointer;
+                                clicked => { root.save-font-size(root.font-size - 1); }
+                            }
+                            TouchArea {
+                                x: parent.width - 34px;
+                                width: 34px;
+                                height: parent.height;
+                                enabled: root.font-size < 20;
+                                mouse-cursor: pointer;
+                                clicked => { root.save-font-size(root.font-size + 1); }
+                            }
+                        }
+                    }
+                }
+
+                SheetCard {
+                    CardTitle { title: "交互"; }
+                    SettingRow {
+                        label: I18n.st_send_key;
+                        PickerField {
+                            text: root.send-key-label(root.send-key);
+                            picked => { root.open-picker(1, I18n.st_send_key, root.send-key); }
+                        }
+                    }
+                    SettingRow {
+                        label: I18n.st_ui_language;
+                        note: I18n.st_language_hint;
+                        PickerField {
+                            text: root.language;
+                            picked => { root.open-picker(2, I18n.st_ui_language, root.language); }
+                        }
+                    }
+                    SettingRow {
+                        label: I18n.ag_permission_mode;
+                        note: I18n.cp_permission_note;
+                        last: true;
+                        PickerField {
+                            text: root.permission-label(root.permission-mode);
+                            picked => { root.open-picker(3, I18n.ag_permission_mode, root.permission-mode); }
+                        }
+                    }
+                }
+
+                SheetCard {
+                    CardTitle { title: I18n.st_tab_help; }
+                    SettingRow {
+                        label: "版本";
+                        Text {
+                            text: "茧 " + root.version;
+                            color: Theme.text;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                        }
+                    }
+                    SettingRow {
+                        label: I18n.st_workspace_root;
+                        note: root.workspace;
+                        Text {
+                            text: "本机应用目录";
+                            color: Theme.muted;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
+                        }
+                    }
+                    SettingRow {
+                        label: "数据与隐私";
+                        note: I18n.stc_local_note;
+                        last: true;
+                    }
+                }
+            }
+        }
+    }
+}
+
+component ModelsPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <[ModelCard]> models: [];
+    callback back();
+    callback add();
+    callback edit(string);
+
+    VerticalLayout {
+        SheetHeader {
+            title: I18n.common_model_config;
+            subtitle: I18n.st_models_subtitle;
+            inset-top: root.inset-top;
+            back() => { root.back(); }
+            Action {
+                width: 92px;
+                label: I18n.model_editor_add;
+                show-label: true;
+                primary: true;
+                clicked => { root.add(); }
+            }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 14px;
+                padding-bottom: 16px + root.inset-bottom;
+                spacing: 8px;
+                alignment: start;
+
+                for model in root.models : ModelRow {
+                    model-key: model.key;
+                    model-name: model.model == "" ? I18n.st_models_no_info : model.model;
+                    base-url: model.base-url;
+                    type-label: model.model-type == "llm" ? "LLM"
+                        : model.model-type == "embedding" ? "EMB"
+                        : model.model-type == "asr" ? "ASR"
+                        : model.model-type == "tts" ? "TTS"
+                        : model.model-type == "image" ? "IMG"
+                        : model.model-type == "video" ? "VID"
+                        : "LLM";
+                    is-default: model.is-default;
+                    disabled: model.disabled;
+                    picked() => { root.edit(model.key); }
+                }
+
+                if root.models.length == 0 : Rectangle {
+                    height: 120px;
+                    border-radius: Theme.radius-md;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 8px;
+                        Text {
+                            text: I18n.st_models_empty;
+                            color: Theme.muted;
+                            font-size: Theme.font-sm;
+                            horizontal-alignment: center;
+                        }
+                        HorizontalLayout {
+                            alignment: center;
+                            Action {
+                                width: 108px;
+                                label: I18n.model_editor_add;
+                                show-label: true;
+                                primary: true;
+                                clicked => { root.add(); }
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    text: I18n.st_models_note;
+                    color: Theme.muted;
+                    font-size: Theme.font-xs;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}
+
+component ModelEditorPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <bool> is-new: true;
+    in property <bool> is-default: false;
+    in property <string> original-key: "";
+    in property <string> error: "";
+    in property <string> probe: "";
+    in property <bool> probing: false;
+    in-out property <string> secret: "";
+    in-out property <ModelCard> draft;
+    callback back();
+    callback save(ModelCard, string);
+    callback probe-model(ModelCard, string);
+    callback remove(string);
+    callback set-default(string);
+    callback ask-delete();
+    callback open-picker(int, string, string);
+
+    pure function type-label(value: string) -> string {
+        return value == "embedding" ? I18n.st_type_embedding : value == "asr" ? I18n.st_type_asr : value == "tts" ? I18n.st_type_tts : value == "image" ? I18n.st_type_image : value == "video" ? I18n.st_type_video : I18n.st_type_llm;
+    }
+    pure function effort-label(value: string) -> string {
+        return value == "" ? I18n.st_param_default_option : value;
+    }
+    pure function format-label(value: string) -> string {
+        return value == "" ? I18n.st_param_default_option : value;
+    }
+    pure function speed-label(value: string) -> string {
+        return value == "" ? "fast" : value;
+    }
+    pure function probe-ok() -> bool {
+        return !root.probing && root.draft.model != "" && (root.draft.base-url != "" || root.draft.provider != "");
+    }
+    pure function editor-subtitle() -> string {
+        if root.draft.model == "" && root.draft.base-url == "" { return I18n.st_models_no_info; }
+        if root.draft.base-url == "" { return root.draft.model; }
+        if root.draft.model == "" { return root.draft.base-url; }
+        return root.draft.model + " · " + root.draft.base-url;
+    }
+
+    VerticalLayout {
+        SheetHeader {
+            title: root.is-new ? I18n.model_editor_add : root.original-key;
+            subtitle: root.is-new ? I18n.st_model_new_hint : root.editor-subtitle();
+            inset-top: root.inset-top;
+            back() => { root.back(); }
+            Action {
+                width: 76px;
+                label: I18n.common_save;
+                show-label: true;
+                primary: true;
+                enabled: root.draft.key != "" && root.draft.model != "";
+                clicked => { root.save(root.draft, root.secret); }
+            }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 14px;
+                padding-bottom: 16px + root.inset-bottom;
+                spacing: 12px;
+                alignment: start;
+
+                if root.error != "" : Rectangle {
+                    height: error-text.preferred-height + 20px;
+                    border-radius: Theme.radius-md;
+                    background: Theme.danger.transparentize(0.92);
+                    border-width: 1px;
+                    border-color: Theme.danger;
+                    error-text := Text {
+                        x: 10px;
+                        y: 10px;
+                        width: parent.width - 20px;
+                        text: root.error;
+                        color: Theme.danger;
+                        font-size: Theme.font-xs;
+                        wrap: word-wrap;
+                    }
+                }
+
+                SheetCard {
+                    CardTitle { title: I18n.st_model_section_basic; }
+                    FormField {
+                        label: I18n.model_key_label;
+                        placeholder: I18n.model_key_placeholder;
+                        text <=> root.draft.key;
+                    }
+                    SettingRow {
+                        label: I18n.st_model_type_label;
+                        PickerField {
+                            text: root.type-label(root.draft.model-type);
+                            picked => { root.open-picker(4, I18n.st_model_type_label, root.draft.model-type); }
+                        }
+                    }
+                    SettingRow {
+                        label: I18n.model_provider_label;
+                        PickerField {
+                            text: root.draft.provider;
+                            picked => { root.open-picker(5, I18n.model_provider_label, root.draft.provider); }
+                        }
+                    }
+                    FormField {
+                        label: I18n.model_name_label;
+                        placeholder: I18n.model_name_placeholder;
+                        text <=> root.draft.model;
+                    }
+                    FormField {
+                        label: I18n.model_base_url_label;
+                        placeholder: I18n.model_base_url_placeholder;
+                        text <=> root.draft.base-url;
+                    }
+                    FormField {
+                        label: I18n.model_token_label;
+                        placeholder: I18n.model_token_placeholder;
+                        secret: true;
+                        text <=> root.secret;
+                    }
+                }
+
+                if root.draft.model-type == "llm" : SheetCard {
+                    CardTitle { title: I18n.st_params_llm; }
+                    FormField {
+                        label: "temperature";
+                        placeholder: "0.7";
+                        text <=> root.draft.temperature;
+                    }
+                    FormField {
+                        label: I18n.st_param_timeout;
+                        placeholder: "120";
+                        text <=> root.draft.timeout-s;
+                    }
+                    FormField {
+                        label: I18n.st_param_max_output;
+                        placeholder: I18n.st_param_model_default;
+                        text <=> root.draft.max-output;
+                    }
+                    FormField {
+                        label: I18n.st_param_thinking;
+                        placeholder: I18n.st_param_model_default;
+                        text <=> root.draft.thinking-token-budget;
+                    }
+                    FormField {
+                        label: I18n.st_param_max_rounds;
+                        placeholder: "1000";
+                        text <=> root.draft.max-rounds;
+                    }
+                    FormField {
+                        label: I18n.st_param_history_ratio;
+                        placeholder: "0.9";
+                        text <=> root.draft.history-compaction-ratio;
+                    }
+                    SettingRow {
+                        label: I18n.st_param_reasoning_effort;
+                        PickerField {
+                            text: root.effort-label(root.draft.reasoning-effort);
+                            picked => { root.open-picker(6, I18n.st_param_reasoning_effort, root.draft.reasoning-effort); }
+                        }
+                    }
+                    if root.draft.provider == "virtual_replay" : SettingRow {
+                        label: I18n.st_param_simulation_speed;
+                        PickerField {
+                            text: root.speed-label(root.draft.simulation-speed);
+                            picked => { root.open-picker(7, I18n.st_param_simulation_speed, root.draft.simulation-speed); }
+                        }
+                    }
+                    SettingRow {
+                        label: "工具调用方式";
+                        PickerField {
+                            text: root.draft.tool-call-mode == "" ? "function_call" : root.draft.tool-call-mode;
+                            picked => { root.open-picker(8, "工具调用方式", root.draft.tool-call-mode); }
+                        }
+                    }
+                    SettingRow {
+                        label: "能力";
+                        note: I18n.st_model_vision + " / " + I18n.st_model_hearing + " / " + I18n.st_model_stream_usage;
+                        HorizontalLayout {
+                            spacing: 10px;
+                            ThemeSwitch {
+                                checked: root.draft.support-vision;
+                                toggled => { root.draft.support-vision = !root.draft.support-vision; }
+                            }
+                            ThemeSwitch {
+                                checked: root.draft.support-hearing;
+                                toggled => { root.draft.support-hearing = !root.draft.support-hearing; }
+                            }
+                            ThemeSwitch {
+                                checked: root.draft.stream-include-usage;
+                                toggled => { root.draft.stream-include-usage = !root.draft.stream-include-usage; }
+                            }
+                        }
+                    }
+                    FormField {
+                        label: I18n.st_param_max_context;
+                        placeholder: I18n.st_param_context_hint;
+                        text <=> root.draft.max-context;
+                    }
+                    Rectangle {
+                        height: 34px;
+                        Action {
+                            x: 0px;
+                            y: 0px;
+                            width: parent.width;
+                            height: parent.height;
+                            show-label: true;
+                            primary: true;
+                            icon: @image-url("../../../frontend-slint/assets/icons/wand-magic-sparkles.svg");
+                            label: root.probing ? "探测中…" : I18n.model_probe_context;
+                            enabled: root.probe-ok();
+                            clicked => { root.probe-model(root.draft, root.secret); }
+                        }
+                    }
+                    if root.probe != "" : Text {
+                        text: root.probe;
+                        color: root.probe.starts-with("探测失败") ? Theme.danger : Theme.muted;
+                        font-size: Theme.font-xs;
+                        wrap: word-wrap;
+                    }
+                }
+
+                if root.draft.model-type == "embedding" : SheetCard {
+                    CardTitle { title: I18n.st_params_llm; }
+                    Text {
+                        text: I18n.st_params_empty_hint;
+                        color: Theme.muted;
+                        font-size: Theme.font-sm;
+                        wrap: word-wrap;
+                    }
+                }
+
+                if root.draft.model-type == "asr" : SheetCard {
+                    CardTitle { title: I18n.st_params_asr; }
+                    FormField {
+                        label: I18n.st_param_asr_language;
+                        placeholder: I18n.st_param_asr_language_hint;
+                        text <=> root.draft.asr-language;
+                    }
+                    SettingRow {
+                        label: I18n.st_param_asr_format;
+                        PickerField {
+                            text: root.format-label(root.draft.asr-response-format);
+                            picked => { root.open-picker(9, I18n.st_param_asr_format, root.draft.asr-response-format); }
+                        }
+                    }
+                    FormField {
+                        label: "temperature";
+                        placeholder: "0 - 2";
+                        text <=> root.draft.asr-temperature;
+                    }
+                    FormField {
+                        label: I18n.st_param_asr_prompt;
+                        placeholder: I18n.st_param_model_default;
+                        text <=> root.draft.asr-prompt;
+                    }
+                }
+
+                if root.draft.model-type == "tts" : SheetCard {
+                    CardTitle { title: I18n.st_params_tts; }
+                    FormField {
+                        label: I18n.st_param_tts_voice;
+                        placeholder: I18n.st_param_model_default;
+                        text <=> root.draft.tts-voice;
+                    }
+                    SettingRow {
+                        label: I18n.st_param_tts_format;
+                        PickerField {
+                            text: root.format-label(root.draft.tts-response-format);
+                            picked => { root.open-picker(10, I18n.st_param_tts_format, root.draft.tts-response-format); }
+                        }
+                    }
+                    FormField {
+                        label: I18n.st_param_tts_speed;
+                        placeholder: "0.25 - 4";
+                        text <=> root.draft.tts-speed;
+                    }
+                    FormField {
+                        label: I18n.st_param_tts_instructions;
+                        placeholder: I18n.st_param_model_default;
+                        text <=> root.draft.tts-instructions;
+                    }
+                }
+
+                if root.draft.model-type == "image" : SheetCard {
+                    CardTitle { title: I18n.st_params_image; }
+                    FormField {
+                        label: I18n.st_param_image_size;
+                        placeholder: I18n.st_param_image_size_hint;
+                        text <=> root.draft.image-size;
+                    }
+                    SettingRow {
+                        label: I18n.st_param_image_format;
+                        PickerField {
+                            text: root.format-label(root.draft.image-output-format);
+                            picked => { root.open-picker(11, I18n.st_param_image_format, root.draft.image-output-format); }
+                        }
+                    }
+                    FormField {
+                        label: I18n.st_param_image_steps;
+                        placeholder: "1 - 200";
+                        text <=> root.draft.image-steps;
+                    }
+                    FormField {
+                        label: I18n.st_param_image_guidance;
+                        placeholder: "0 - 20";
+                        text <=> root.draft.image-guidance-scale;
+                    }
+                    FormField {
+                        label: I18n.st_param_negative;
+                        placeholder: I18n.st_param_model_default;
+                        text <=> root.draft.image-negative-prompt;
+                    }
+                }
+
+                if root.draft.model-type == "video" : SheetCard {
+                    CardTitle { title: I18n.st_params_video; }
+                    FormField {
+                        label: I18n.st_param_video_size;
+                        placeholder: I18n.st_param_video_size_hint;
+                        text <=> root.draft.video-size;
+                    }
+                    FormField {
+                        label: I18n.st_param_video_seconds;
+                        placeholder: "≥ 0.5";
+                        text <=> root.draft.video-seconds;
+                    }
+                    FormField {
+                        label: "FPS";
+                        placeholder: "≥ 1";
+                        text <=> root.draft.video-fps;
+                    }
+                    FormField {
+                        label: I18n.st_model_video_frames;
+                        placeholder: "≥ 1";
+                        text <=> root.draft.video-num-frames;
+                    }
+                    FormField {
+                        label: I18n.st_param_image_steps;
+                        placeholder: "1 - 200";
+                        text <=> root.draft.video-steps;
+                    }
+                    FormField {
+                        label: "guidance_scale";
+                        placeholder: "0 - 20";
+                        text <=> root.draft.video-guidance-scale;
+                    }
+                    FormField {
+                        label: "guidance_scale_2";
+                        placeholder: "0 - 20";
+                        text <=> root.draft.video-guidance-scale-2;
+                    }
+                    FormField {
+                        label: "boundary_ratio";
+                        placeholder: "0 - 1";
+                        text <=> root.draft.video-boundary-ratio;
+                    }
+                    FormField {
+                        label: "flow_shift";
+                        placeholder: "≥ 0";
+                        text <=> root.draft.video-flow-shift;
+                    }
+                    FormField {
+                        label: I18n.st_param_negative;
+                        placeholder: I18n.st_param_model_default;
+                        text <=> root.draft.video-negative-prompt;
+                    }
+                    SettingRow {
+                        label: I18n.st_model_video_interpolation + " / " + I18n.st_model_video_sync_mode;
+                        HorizontalLayout {
+                            spacing: 10px;
+                            ThemeSwitch {
+                                checked: root.draft.video-frame-interpolation;
+                                toggled => { root.draft.video-frame-interpolation = !root.draft.video-frame-interpolation; }
+                            }
+                            ThemeSwitch {
+                                checked: root.draft.video-sync-mode;
+                                toggled => { root.draft.video-sync-mode = !root.draft.video-sync-mode; }
+                            }
+                        }
+                    }
+                }
+
+                SheetCard {
+                    CardTitle { title: "模型操作"; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Action {
+                            width: 108px;
+                            label: root.is-default ? I18n.st_is_default : I18n.st_set_default;
+                            show-label: true;
+                            primary: !root.is-default;
+                            selected: root.is-default;
+                            enabled: !root.is-new && !root.is-default;
+                            clicked => { root.set-default(root.original-key); }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Action {
+                            width: 84px;
+                            label: I18n.common_delete;
+                            show-label: true;
+                            danger: true;
+                            enabled: !root.is-new;
+                            clicked => { root.ask-delete(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component MobileSettings inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <length> ime-height: 0px;
+    in-out property <int> page: 0;
+    in property <string> theme: "terracotta";
+    in property <int> font-size: 14;
+    in property <string> send-key: "enter";
+    in property <string> language: "zh-CN";
+    in-out property <string> permission-mode: "full_auto";
+    in property <string> current-model: "";
+    in property <int> model-count: 0;
+    in property <string> workspace: "";
+    in property <string> version: "";
+    in property <string> ubuntu-state: "missing";
+    in property <int> ubuntu-progress: 0;
+    in property <string> ubuntu-stage: "";
+    in property <string> ubuntu-version: "";
+    in property <string> ubuntu-error: "";
+    in property <bool> ubuntu-enabled: false;
+    in property <[ModelCard]> models: [];
+
+    in property <bool> editor-open: false;
+    in property <bool> editor-new: false;
+    in property <bool> editor-default: false;
+    in property <string> editor-key: "";
+    in property <string> editor-error: "";
+    in property <string> editor-probe: "";
+    in property <bool> editor-probing: false;
+    in property <string> editor-probed-context: "";
+    in-out property <ModelCard> draft;
+    in-out property <string> secret: "";
+
+    callback close();
+    callback save-theme(string);
+    callback save-font-size(int);
+    callback save-send-key(string);
+    callback save-language(string);
+    callback install-ubuntu();
+    callback set-ubuntu-enabled(bool);
+    callback permission-changed(string);
+    callback open-model-editor(string);
+    callback close-model-editor();
+    callback save-model(ModelCard, string);
+    callback probe-model(ModelCard, string);
+    callback delete-model(string);
+    callback set-default-model(string);
+
+    background: Theme.panel;
+
+    in-out property <bool> confirm-delete: false;
+    // Shared choice sheet. `picker` is the target field id (-1 = closed).
+    in-out property <int> picker: -1;
+    in-out property <string> picker-title: "";
+    in-out property <[string]> picker-options: [];
+    in-out property <[string]> picker-values: [];
+    in-out property <string> picker-value: "";
+
+    function show-picker(id: int, title: string, value: string) {
+        root.picker = id;
+        root.picker-title = title;
+        root.picker-value = value;
+        if (id == 1) {
+            root.picker-options = [I18n.st_send_enter_direct, I18n.st_send_ctrl_enter, I18n.st_send_button];
+            root.picker-values = ["enter", "ctrl_enter", "none"];
+        } else if (id == 2) {
+            root.picker-options = ["zh-CN", "en-US"];
+            root.picker-values = ["zh-CN", "en-US"];
+        } else if (id == 3) {
+            root.picker-options = [I18n.cp_permission_full, I18n.cp_permission_write, I18n.cp_permission_command];
+            root.picker-values = ["full_auto", "auto_edit", "suggest"];
+        } else if (id == 4) {
+            root.picker-options = [I18n.st_type_llm, I18n.st_type_embedding, I18n.st_type_asr, I18n.st_type_tts, I18n.st_type_image, I18n.st_type_video];
+            root.picker-values = ["llm", "embedding", "asr", "tts", "image", "video"];
+        } else if (id == 5) {
+            root.picker-options = ModelPresets.names;
+            root.picker-values = ModelPresets.names;
+        } else if (id == 6) {
+            root.picker-options = [I18n.st_param_default_option, "none", "minimal", "low", "medium", "high", "xhigh"];
+            root.picker-values = ["", "none", "minimal", "low", "medium", "high", "xhigh"];
+        } else if (id == 7) {
+            root.picker-options = ["fast", "medium", "slow"];
+            root.picker-values = ["fast", "medium", "slow"];
+        } else if (id == 8) {
+            root.picker-options = ["tool_call", "function_call", "freeform_call"];
+            root.picker-values = ["tool_call", "function_call", "freeform_call"];
+        } else if (id == 9) {
+            root.picker-options = [I18n.st_param_default_option, "json", "text", "verbose_json", "srt", "vtt"];
+            root.picker-values = ["", "json", "text", "verbose_json", "srt", "vtt"];
+        } else if (id == 10) {
+            root.picker-options = [I18n.st_param_default_option, "wav", "mp3", "flac", "aac", "opus", "pcm"];
+            root.picker-values = ["", "wav", "mp3", "flac", "aac", "opus", "pcm"];
+        } else if (id == 11) {
+            root.picker-options = [I18n.st_param_default_option, "png", "jpeg", "webp"];
+            root.picker-values = ["", "png", "jpeg", "webp"];
+        }
+    }
+
+    function apply-pick(id: int, value: string) {
+        if (id == 1) { root.save-send-key(value); }
+        else if (id == 2) { root.save-language(value); }
+        else if (id == 3) {
+            root.permission-mode = value;
+            root.permission-changed(value);
+        }
+        else if (id == 4) { root.draft.model-type = value; }
+        else if (id == 5) {
+            root.draft.provider = value;
+            root.draft.base-url = value == "virtual_replay" ? "" : ModelPresets.base-url(value);
+        }
+        else if (id == 6) { root.draft.reasoning-effort = value; }
+        else if (id == 7) { root.draft.simulation-speed = value; }
+        else if (id == 8) { root.draft.tool-call-mode = value; }
+        else if (id == 9) { root.draft.asr-response-format = value; }
+        else if (id == 10) { root.draft.tts-response-format = value; }
+        else if (id == 11) { root.draft.image-output-format = value; }
+    }
+
+    // Page transitions live here; the draft itself is owned by the window so
+    // the engine can seed it exactly once per editor opening without a
+    // property-order race with the sheet's creation.
+    changed editor-open => {
+        if (root.editor-open) {
+            root.page = 2;
+            root.confirm-delete = false;
+        } else {
+            if (root.page == 2) {
+                root.page = 1;
+            }
+        }
+    }
+    changed editor-probed-context => {
+        if (root.editor-probed-context != "" && root.draft.model-type == "llm") {
+            root.draft.max-context = root.editor-probed-context;
+        }
+    }
+
+    VerticalLayout {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: 100%;
+        spacing: 0px;
+
+        if root.page == 0 : SettingsHome {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
+            theme: root.theme;
+            font-size: root.font-size;
+            send-key: root.send-key;
+            language: root.language;
+            permission-mode: root.permission-mode;
+            current-model: root.current-model;
+            model-count: root.model-count;
+            workspace: root.workspace;
+            version: root.version;
+            ubuntu-state: root.ubuntu-state;
+            ubuntu-progress: root.ubuntu-progress;
+            ubuntu-stage: root.ubuntu-stage;
+            ubuntu-version: root.ubuntu-version;
+            ubuntu-error: root.ubuntu-error;
+            ubuntu-enabled: root.ubuntu-enabled;
+            close() => { root.close(); }
+            save-theme(value) => {
+                Theme.palette = value;
+                root.save-theme(value);
+            }
+            save-font-size(value) => { root.save-font-size(value); }
+            save-send-key(value) => { root.save-send-key(value); }
+            save-language(value) => { root.save-language(value); }
+            install-ubuntu() => { root.install-ubuntu(); }
+            set-ubuntu-enabled(value) => { root.set-ubuntu-enabled(value); }
+            permission-changed(value) => { root.permission-changed(value); }
+            manage-models() => { root.page = 1; }
+            open-picker(id, title, value) => {
+                root.show-picker(id, title, value);
+            }
+        }
+
+        if root.page == 1 : ModelsPage {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
+            models: root.models;
+            back() => { root.page = 0; }
+            add() => { root.open-model-editor(""); }
+            edit(key) => { root.open-model-editor(key); }
+        }
+
+        if root.page == 2 && root.editor-open : ModelEditorPage {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
+            is-new: root.editor-new;
+            is-default: root.editor-default;
+            original-key: root.editor-key;
+            error: root.editor-error;
+            probe: root.editor-probe;
+            probing: root.editor-probing;
+            secret <=> root.secret;
+            draft <=> root.draft;
+            back() => { root.close-model-editor(); }
+            save(card, token) => { root.save-model(card, token); }
+            probe-model(card, token) => { root.probe-model(card, token); }
+            remove(key) => { root.delete-model(key); }
+            set-default(key) => { root.set-default-model(key); }
+            ask-delete() => { root.confirm-delete = true; }
+            open-picker(id, title, value) => {
+                root.show-picker(id, title, value);
+            }
+        }
+    }
+
+    // ---- shared choice sheet -----------------------------------------
+    if root.picker >= 0 : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: 100%;
+        background: Theme.overlay;
+        TouchArea { clicked => { root.picker = -1; } }
+        Rectangle {
+            x: 0px;
+            y: parent.height - self.height;
+            width: 100%;
+            height: min(parent.height * 0.66, 560px);
+            border-top-left-radius: Theme.radius-lg;
+            border-top-right-radius: Theme.radius-lg;
+            background: Theme.surface;
+            drop-shadow-color: #00000033;
+            drop-shadow-blur: 24px;
+            TouchArea { }
+            VerticalLayout {
+                padding-top: 8px;
+                padding-bottom: 10px + root.inset-bottom;
+                spacing: 2px;
+                HorizontalLayout {
+                    height: 4px;
+                    alignment: center;
+                    Rectangle {
+                        width: 40px;
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Theme.border;
+                    }
+                }
+                Text {
+                    height: 44px;
+                    text: root.picker-title;
+                    color: Theme.text;
+                    font-size: Theme.font-md;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                ListView {
+                    vertical-stretch: 1;
+                    for option[index] in root.picker-options : Rectangle {
+                        height: 48px;
+                        background: root.picker-values[index] == root.picker-value ? Theme.accent-soft
+                            : picker-touch.has-hover ? Theme.hover : transparent;
+                        picker-touch := TouchArea {
+                            clicked => {
+                                root.apply-pick(root.picker, root.picker-values[index]);
+                                root.picker = -1;
+                            }
+                        }
+                        HorizontalLayout {
+                            padding-left: 20px;
+                            padding-right: 20px;
+                            spacing: 10px;
+                            cross-axis-alignment: center;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: option;
+                                color: Theme.text;
+                                font-size: Theme.font-sm;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            if root.picker-values[index] == root.picker-value : Image {
+                                width: 16px;
+                                height: 16px;
+                                source: @image-url("../../../frontend-slint/assets/icons/circle-check.svg");
+                                colorize: Theme.accent-ink;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.confirm-delete : ConfirmDialog {
+        width: 100%;
+        height: 100%;
+        title: I18n.common_confirm_delete;
+        message: root.editor-key + " 删除后需要重新配置模型参数。";
+        confirm-label: I18n.common_delete;
+        cancel-label: I18n.common_cancel;
+        danger: true;
+        confirmed => {
+            root.confirm-delete = false;
+            root.delete-model(root.editor-key);
+        }
+        canceled => { root.confirm-delete = false; }
+    }
+}

@@ -236,9 +236,10 @@ windows-sys = { version = "0.52", features = [
 # detected at runtime and returns a clear unsupported-platform error.
 x11-dl = { version = "=2.21.0", optional = true }
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(all(unix, not(target_os = "android")))'.dependencies]
 # A real local PTY is required for interactive shells, signal delivery, resize,
 # and full-screen programs; pipes remain only as the Windows no-winpty fallback.
+# Android has no app-owned PTY and the crate has no call sites there.
 portable-pty = "=0.9.0"
 
 [target.'cfg(not(target_vendor = "win7"))'.dependencies]

@@ -620,7 +620,7 @@ fn unix_timestamp() -> i64 {
 fn http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::http_client::builder()
             .connect_timeout(Duration::from_secs(WEBHOOK_TIMEOUT_S))
             .timeout(Duration::from_secs(WEBHOOK_TIMEOUT_S))
             .build()

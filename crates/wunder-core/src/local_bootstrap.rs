@@ -240,7 +240,7 @@ pub fn release_file_if_missing(target: &Path, bytes: &[u8]) -> Result<bool> {
     file.write_all(bytes)?;
     file.flush()?;
     drop(file);
-    let result = fs::hard_link(&staging, target);
+    let result = publish_staged(&staging, target);
     let _ = fs::remove_file(&staging);
     match result {
         Ok(()) => Ok(true),
@@ -252,6 +252,26 @@ pub fn release_file_if_missing(target: &Path, bytes: &[u8]) -> Result<bool> {
         Err(_) if target.is_file() => Ok(false),
         Err(error) => Err(error.into()),
     }
+}
+
+/// Publish a completely written staging inode at `target`.
+///
+/// A hard link lets two competing publishers serialize on the destination path
+/// without either ever overwriting the other. Android's SELinux
+/// `untrusted_app` domain denies `link()` on app data (API 36), while rename
+/// stays permitted, so the mobile form publishes with rename instead; the
+/// single-activity app has no second process racing the same home directory.
+#[cfg(not(target_os = "android"))]
+fn publish_staged(staging: &Path, target: &Path) -> std::io::Result<()> {
+    fs::hard_link(staging, target)
+}
+
+#[cfg(target_os = "android")]
+fn publish_staged(staging: &Path, target: &Path) -> std::io::Result<()> {
+    if target.exists() {
+        return Err(std::io::ErrorKind::AlreadyExists.into());
+    }
+    fs::rename(staging, target)
 }
 
 // ---------------------------------------------------------------------------

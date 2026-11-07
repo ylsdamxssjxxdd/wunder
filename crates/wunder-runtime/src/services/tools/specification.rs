@@ -366,7 +366,7 @@ fn tool_profile(name: &str) -> ToolProfile {
         "读取图片" | "读图工具" | "语音生成" | "声转文" | "图像生成" | "视频生成" => {
             ToolProfile::Media
         }
-        "桌面控制" => ToolProfile::Desktop,
+        "桌面控制" | "手机控制" => ToolProfile::Desktop,
         "goal" | "self_status" | "会话线程控制" | "会话让出" | "定时任务" => {
             ToolProfile::Runtime
         }
@@ -381,7 +381,7 @@ fn tool_effect(name: &str) -> ToolEffect {
         "goal" => ToolEffect::Mixed,
         "写入文件" | "文本编辑" | "计划面板" => ToolEffect::Write,
         "执行命令" | "命令会话" => ToolEffect::Execute,
-        "桌面控制" | "问询面板" => ToolEffect::Interactive,
+        "桌面控制" | "手机控制" | "问询面板" => ToolEffect::Interactive,
         "browser" => ToolEffect::Interactive,
         _ => ToolEffect::Mixed,
     }

@@ -70,22 +70,6 @@ impl NativeThreadWatch {
 }
 
 impl NativeDesktop {
-    pub fn watch_chat(&self, session: &str) -> NativeThreadWatch {
-        // The legacy general-purpose watcher can be called without a prior
-        // selection snapshot (for example by the egui shell), so preserve its
-        // ownership guard. The Slint selection path uses the overload below
-        // after `open_chat_snapshot` has already done this work on its worker.
-        if let Err(error) = self.open_session(session) {
-            let (output, receiver) = mpsc::channel(8);
-            let _ = output.try_send(NativeThreadUpdate::Failed(error.to_string()));
-            return NativeThreadWatch {
-                receiver,
-                cancel: CancellationToken::new(),
-            };
-        }
-        self.watch_chat_with_initial(session, None)
-    }
-
     /// Start watching a thread which the caller has already opened with
     /// `open_chat_snapshot` or `open_session`. A selection can pass the turns
     /// it already loaded so a slow disk is read only once; this method does

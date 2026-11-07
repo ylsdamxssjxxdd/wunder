@@ -1309,6 +1309,12 @@ component ScreenshotFlyout inherits Rectangle {
 export component Composer inherits Rectangle {
     in-out property <string> draft <=> editor.text;
     in property <bool> busy: false;
+    // Phone shells (茧) hand the plus button to their own sheet: the desktop
+    // cascade is too small for touch, so tapping the button reports intent and
+    // the shell renders a full-width function panel under the input instead.
+    in property <bool> mobile: false;
+    in property <bool> mobile-plus-open: false;
+    callback mobile-plus-toggled();
     // A live 问询面板 whose current page has an answer: the send button and the
     // send key then work with an empty draft, because the choices themselves
     // are the message.
@@ -1347,6 +1353,10 @@ export component Composer inherits Rectangle {
     in property <[string]> preset-questions: [];
     in property <[ChatAttachment]> attachments: [];
     in property <string> send-key: "enter";
+    // The Android shell trims desktop-only chrome: the host hardware HUD and
+    // the "open CLI" action have no counterpart on a phone.
+    in property <bool> show-host-hud: true;
+    in property <bool> show-cli-action: true;
     // §8.5 status line under the box.
     in property <string> workspace-name: "";
     in property <string> branch-name: "";
@@ -1429,8 +1439,11 @@ export component Composer inherits Rectangle {
         : 0px;
     // 对齐蜂巢的固定构图: 8px top padding + 100px input card + 6 + 30px action
     // row + 10px bottom padding; the attachment row (+36) and the branch line
-    // (+22) only exist while they have content.
-    height: 154px + (root.attachments.length > 0 ? 36px : 0px)
+    // (+22) only exist while they have content. The phone grows the action row
+    // to a 40px touch band and adds the extra height to the composer slot.
+    private property <length> action-row-height: root.mobile ? 40px : 30px;
+    height: 154px + (root.mobile ? 10px : 0px)
+        + (root.attachments.length > 0 ? 36px : 0px)
         + (root.branch-name != "" ? 22px : 0px) + root.queue-height;
     private property <bool> plus-open: false;
     private property <bool> model-open: false;
@@ -1445,7 +1458,7 @@ export component Composer inherits Rectangle {
     private property <int> command-index: 0;
     private property <bool> command-dismissed: false;
     private property <bool> command-keys:
-        !root.plus-open && !root.command-dismissed && root.draft == "/";
+        !root.mobile && !root.plus-open && !root.command-dismissed && root.draft == "/";
     // 蜂巢同款发送门禁: allow attachment-only and answered-inquiry sends.
     private property <bool> send-enabled:
         ((root.draft != "" || root.attachments.length > 0 || root.inquiry-ready) && !root.send-blocked);
@@ -1667,47 +1680,60 @@ export component Composer inherits Rectangle {
         // 动作行：左侧加号 + 本机硬件状态网格（占据原工作区名的位置，工作区名
         // 不再单独显示——它仍用于输入框的占位文案），右侧模型触发器与发送方块。
         HorizontalLayout {
-            height: 30px; spacing: 6px;
+            height: root.action-row-height; spacing: 6px;
             Rectangle {
-                width: 24px; height: 30px;
+                width: root.mobile ? 40px : 24px; height: root.action-row-height;
                 plus-btn := Rectangle {
-                    y: 3px; width: 24px; height: 24px;
-                    border-radius: Theme.radius-sm;
-                    background: root.plus-open ? Theme.accent-soft : Theme.surface;
+                    y: root.mobile ? 2px : 3px;
+                    width: root.mobile ? 36px : 24px;
+                    height: root.mobile ? 36px : 24px;
+                    border-radius: root.mobile ? Theme.radius-md : Theme.radius-sm;
+                    background: (root.plus-open || root.mobile-plus-open) ? Theme.accent-soft : Theme.surface;
                     border-width: 1px;
-                    border-color: root.plus-open ? Theme.accent-secondary : Theme.border-strong;
+                    border-color: (root.plus-open || root.mobile-plus-open) ? Theme.accent-secondary : Theme.border-strong;
                     drop-shadow-color: #1F23290F; drop-shadow-blur: 2px; drop-shadow-offset-y: 1px;
                     Image {
-                        x: 4px; y: 4px; width: 16px; height: 16px;
-                        source: root.plus-open ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/plus-plain.svg");
-                        colorize: root.plus-open ? Theme.accent-ink : Theme.text-secondary;
+                        x: root.mobile ? 8px : 4px;
+                        y: root.mobile ? 8px : 4px;
+                        width: root.mobile ? 20px : 16px;
+                        height: root.mobile ? 20px : 16px;
+                        source: (root.plus-open || root.mobile-plus-open) ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/plus-plain.svg");
+                        colorize: (root.plus-open || root.mobile-plus-open) ? Theme.accent-ink : Theme.text-secondary;
                         image-fit: contain;
                     }
                     accessible-role: button; accessible-label: I18n.cp_more;
                     accessible-action-default => {
-                        root.plus-open = !root.plus-open;
-                        root.model-open = false;
-                        root.close-submenus();
+                        if root.mobile {
+                            root.mobile-plus-toggled();
+                        } else {
+                            root.plus-open = !root.plus-open;
+                            root.model-open = false;
+                            root.close-submenus();
+                        }
                     }
                     plus-touch := TouchArea {
                         mouse-cursor: pointer;
                         clicked => {
-                            root.plus-open = !root.plus-open;
-                            root.model-open = false;
-                            root.close-submenus();
+                            if root.mobile {
+                                root.mobile-plus-toggled();
+                            } else {
+                                root.plus-open = !root.plus-open;
+                                root.model-open = false;
+                                root.close-submenus();
+                            }
                         }
                     }
                 }
                 // Typed "/" still expands the command list in place whenever
                 // the menu itself is closed; Escape can dismiss it until the
                 // draft is edited again.
-                if !root.plus-open && !root.command-dismissed && root.draft == "/" : CommandFlyout {
+                if !root.mobile && !root.plus-open && !root.command-dismissed && root.draft == "/" : CommandFlyout {
                     x: 0px; y: -self.height - 8px; z: 30;
                     active-index: root.command-index;
                     pick(value) => { root.draft = value; editor.focus(); }
                 }
                 plus_menu := Rectangle {
-                    visible: root.plus-open;
+                    visible: root.plus-open && !root.mobile;
                     x: 0px;
                     y: -self.height - 8px;
                     width: 220px;
@@ -1900,7 +1926,7 @@ export component Composer inherits Rectangle {
                                     pick(hide, region) => { root.plus-open = false; root.close-submenus(); root.screenshot(hide, region); }
                                 }
                             }
-                            Rectangle {
+                            if root.show-cli-action : Rectangle {
                                 height: 34px; border-radius: Theme.radius-sm;
                                 background: term-row-touch.has-hover ? Theme.hover : transparent;
                                 accessible-role: list-item; accessible-label: I18n.cp_open_cli;
@@ -1924,8 +1950,9 @@ export component Composer inherits Rectangle {
             // 侧栏展开）也放得下；而 `if` 条件元素包一层、宽度又绑到子元素，会让
             // 布局高度产生 binding loop。
             Rectangle {
-                width: hud.width;
-                height: 30px;
+                width: root.show-host-hud ? hud.width : 0px;
+                height: root.show-host-hud ? 30px : 0px;
+                visible: root.show-host-hud;
                 horizontal-stretch: 0;
                 hud := HostHud {
                     // 26px 的读数行放进 30px 的行里，y=2 才与加号、发送方块共中线。
@@ -1995,10 +2022,12 @@ export component Composer inherits Rectangle {
             // While a reply streams, the square itself becomes the stop action;
             // the editor remains available and Enter sends the next queued turn.
             Rectangle {
-                width: 28px; height: 30px;
+                width: root.mobile ? 40px : 28px; height: root.action-row-height;
                 send-btn := Rectangle {
-                    y: 1px; width: 28px; height: 28px;
-                    border-radius: Theme.radius-sm;
+                    y: root.mobile ? 2px : 1px;
+                    width: root.mobile ? 36px : 28px;
+                    height: root.mobile ? 36px : 28px;
+                    border-radius: root.mobile ? Theme.radius-md : Theme.radius-sm;
                     background: root.stop-action
                         ? (root.stopping ? Theme.border-strong : Theme.accent-ink)
                         : (root.send-enabled ? (send-touch.has-hover ? Theme.accent-deep : Theme.accent) : Theme.border-strong);
@@ -2007,8 +2036,8 @@ export component Composer inherits Rectangle {
                         // contain box yields a 10.5px mark, matching the web
                         // client's 12px font-size stop icon. The arrow keeps
                         // the 16px box.
-                        x: root.stop-action ? 8px : 6px;
-                        y: root.stop-action ? 8px : 6px;
+                        x: root.stop-action ? (root.mobile ? 12px : 8px) : (root.mobile ? 10px : 6px);
+                        y: root.stop-action ? (root.mobile ? 12px : 8px) : (root.mobile ? 10px : 6px);
                         width: root.stop-action ? 12px : 16px;
                         height: root.stop-action ? 12px : 16px;
                         source: root.stop-action ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/arrow-up.svg");

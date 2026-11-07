@@ -1241,7 +1241,7 @@ fn web_fetch_client() -> Result<&'static reqwest::Client> {
         return Ok(client);
     }
 
-    let client = reqwest::Client::builder()
+    let client = crate::http_client::builder()
         .redirect(Policy::none())
         .build()
         .map_err(|err| anyhow!(err.to_string()))?;

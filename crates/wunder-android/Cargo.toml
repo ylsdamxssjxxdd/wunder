@@ -1,0 +1,110 @@
+[workspace]
+
+[package]
+name = "wunder-android"
+version = "0.4.0"
+edition = "2021"
+rust-version = "1.92"
+publish = false
+description = "wunder Android client (茧): mobile shell over the shared native engine"
+
+[lib]
+name = "wunder_android"
+path = "src/lib.rs"
+# Android loads `libwunder_android.so` through NativeActivity; the rlib keeps
+# the host preview binary able to link the same UI and projection code.
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "wunder-android-preview"
+path = "src/preview.rs"
+
+[dependencies]
+anyhow = "1"
+lz4_flex = { version = "=0.11.6", default-features = false, features = ["std", "safe-decode"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+pulldown-cmark = "0.10"
+serde_json = "1"
+log = "0.4"
+wunder-desktop = { path = "../wunder-desktop", default-features = false, features = ["sqlite-storage"] }
+
+# The Android backend brings its own Skia renderer; the desktop preview keeps
+# the winit + software pair so the mobile layout can be inspected without a
+# device. Both feature sets are target-scoped: enabling winit on Android would
+# compile the desktop backend into the APK for no reason.
+[target.'cfg(target_os = "android")'.dependencies]
+slint = { version = "=1.18.0", default-features = false, features = [
+  "backend-android-activity-06",
+  "compat-1-2",
+  "std",
+  "unstable-fontique-011",
+] }
+# The shared i-slint-core fork's text-selection module needs the parley text
+# stack on every target; the Android backend alone does not pull it in.
+i-slint-core = { version = "=1.18.0", default-features = false, features = ["std", "shared-parley"] }
+# 茧 bundles Microsoft YaHei exactly like 蛹 and registers it into Slint's
+# shared collection at startup, so fontique never enumerates host fonts.
+fontique = { version = "=0.11.1", features = ["system"] }
+android_logger = "0.14"
+# The phone-control host installs itself into the shared runtime; the JNI
+# bridge reaches the Java accessibility service and system intents.
+wunder-server = { path = "../wunder-runtime", package = "wunder-runtime", default-features = false }
+jni = "=0.21.1"
+# rustls-platform-verifier resolves the Android trust store through a JNI
+# bridge. Its 0.7 line uses jni 0.22, which cannot share types with the 0.21
+# phone bridge, so the initializer is linked under a renamed package.
+jni022 = { package = "jni", version = "=0.22.4", default-features = false }
+rustls-platform-verifier = { version = "=0.7.1", default-features = false }
+ndk-context = "0.1.1"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+slint = { version = "=1.18.0", default-features = false, features = [
+  "backend-winit",
+  "compat-1-2",
+  "renderer-software",
+  "std",
+  "unstable-fontique-011",
+] }
+# `systemfonts` turns on the fork's shared-parley text stack; the selector's
+# renderer-software feature alone leaves it off.
+i-slint-renderer-software = { version = "=1.18.0", default-features = false, features = ["std", "systemfonts"] }
+i-slint-backend-winit = { version = "=1.18.0", default-features = false, features = ["raw-window-handle-06", "renderer-software"] }
+i-slint-core = { version = "=1.18.0", default-features = false, features = ["std", "shared-parley"] }
+fontique = { version = "=0.11.1", features = ["system"] }
+
+[profile.release]
+# The engine, SQLite and Skia are linked statically; debug symbols alone add
+# ~34 MB to the APK and are useless on a device without a symbol server.
+strip = "symbols"
+
+[build-dependencies]
+slint-build = "=1.18.0"
+lz4_flex = { version = "=0.11.6", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
+
+# 蛹's chat components depend on the shared Slint forks (selectable transcript
+# text, Win7 window/IME fixes, the rlib-only html2md). 茧 renders those same
+# components, so it must build against the same forks — a stock Slint rejects
+# `context-menu` on StyledText.
+[patch.crates-io]
+html2md = { path = "../../frontend-slint/vendor/html2md-0.2.15" }
+i-slint-compiler = { path = "../../frontend-slint/vendor/i-slint-compiler-1.18" }
+i-slint-backend-winit = { path = "../../frontend-slint/vendor/i-slint-backend-winit-1.18" }
+softbuffer = { path = "../../frontend-slint/vendor/softbuffer-0.4.8" }
+i-slint-common = { path = "../../frontend-slint/vendor/i-slint-common-1.18" }
+i-slint-core = { path = "../../frontend-slint/vendor/i-slint-core-1.18" }
+i-slint-renderer-software = { path = "../../frontend-slint/vendor/i-slint-renderer-software-1.18" }
+fontique = { path = "../../frontend-slint/vendor/fontique-0.11" }
+parley = { path = "../../frontend-slint/vendor/parley-0.11" }
+winit = { path = "../../frontend-slint/vendor/winit-0.30.2" }
+arboard = { path = "../../patches/win7/arboard-3.7.0-win7" }
+tungstenite = { path = "../../frontend-slint/vendor/tungstenite-0.29.0" }
+http = { path = "../../frontend-slint/vendor/http-1.4.0" }
+httparse = { path = "../../frontend-slint/vendor/httparse-1.10.1" }
+data-encoding = { path = "../../frontend-slint/vendor/data-encoding-2.10.0" }
+sha1 = { path = "../../frontend-slint/vendor/sha1-0.10.6" }
+digest = { path = "../../frontend-slint/vendor/digest-0.10.7" }
+block-buffer = { path = "../../frontend-slint/vendor/block-buffer-0.10.4" }
+crypto-common = { path = "../../frontend-slint/vendor/crypto-common-0.1.7" }
+generic-array = { path = "../../frontend-slint/vendor/generic-array-0.14.7" }
+typenum = { path = "../../frontend-slint/vendor/typenum-1.20.1" }
+cpufeatures = { path = "../../frontend-slint/vendor/cpufeatures-0.2.17" }

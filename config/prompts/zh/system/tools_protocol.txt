@@ -53,3 +53,12 @@ XML 兜底示例（仅在原生工具调用不可用时使用）：
 - dataModelUpdate.contents 为 key + 类型化值（valueString / valueNumber / valueBoolean / valueMap）；List.children.template 使用相对 dataContext 的路径。
 - 主操作按钮包含 "primary": true。不要输出 Markdown 代码块，a2ui 中只返回 JSON 消息数组。
 [[/HAS_A2UI_TOOL]]
+
+[[HAS_PHONE_CONTROL_TOOL]]
+[手机控制]
+- 坐标使用固定 1000x1000 的归一化空间（结果中的 normalized_width/normalized_height），bbox 格式为 [x1,y1,x2,y2] 或 [cx,cy]。
+- 推荐循环：screenshot 或 ui_tree 确认界面 → 选择一个动作 → 查看返回截图 → 再决定下一步。open_app/open_url/open_settings 之后先确认目标界面已就绪。
+- type_text 可附带输入框 bbox，先点击再写入；press_key 只支持 back/home/recents/notifications/quick_settings。
+- 点击、滑动、输入、界面树和截图依赖无障碍服务；accessibility_connected=false 时先向用户说明并通过 open_settings（page=accessibility）打开设置，等用户开启后再继续。
+- 只在用户明确要求时操作其他应用或读取屏幕/剪贴板；不要做后台轮询或连续盲点。
+[[/HAS_PHONE_CONTROL_TOOL]]

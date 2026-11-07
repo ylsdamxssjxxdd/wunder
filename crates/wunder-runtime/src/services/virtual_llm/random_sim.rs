@@ -83,6 +83,9 @@ const FIXED_ARGS: &[(&str, &str)] = &[
         "desktop_control",
         r#"{"bbox":[0,0,0,0],"action":"wait","delay_ms":0}"#,
     ),
+    // 手机控制：只发 wait，不点击、不打开应用，避免模拟轨迹干扰设备。
+    ("手机控制", r#"{"action":"wait","delay_ms":0}"#),
+    ("phone_control", r#"{"action":"wait","delay_ms":0}"#),
     // 付费生成：最小提示词，产物落工作区 .temp/。
     (
         "语音生成",

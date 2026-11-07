@@ -1335,6 +1335,118 @@
     "en-US": "Firecrawl Cloud search requires FIRECRAWL_API_KEY. Self-hosted Firecrawl can use FIRECRAWL_BASE_URL without an API key.",
     "zh-CN": "Firecrawl Cloud 搜索需要 FIRECRAWL_API_KEY；自托管 Firecrawl 可配置 FIRECRAWL_BASE_URL 且通常不需要 API Key。"
   },
+  "tool.phone_control.disabled": {
+    "en-US": "Phone control is unavailable: no device executor is installed in this process.",
+    "zh-CN": "手机控制不可用：当前进程没有安装手机执行端。"
+  },
+  "tool.phone_control.invalid_args": {
+    "en-US": "Invalid phone control arguments.",
+    "zh-CN": "手机控制参数无效。"
+  },
+  "tool.phone_control.action_required": {
+    "en-US": "action is required.",
+    "zh-CN": "必须提供 action。"
+  },
+  "tool.phone_control.unknown_action": {
+    "en-US": "Unknown phone action.",
+    "zh-CN": "未知的手机动作。"
+  },
+  "tool.phone_control.bbox_required": {
+    "en-US": "bbox is required for this action.",
+    "zh-CN": "该动作需要 bbox。"
+  },
+  "tool.phone_control.to_bbox_required": {
+    "en-US": "to_bbox is required for swipe.",
+    "zh-CN": "swipe 需要 to_bbox。"
+  },
+  "tool.phone_control.invalid_bbox": {
+    "en-US": "bbox must be a JSON array like [x1,y1,x2,y2] or [cx,cy] (no quotes).",
+    "zh-CN": "bbox 必须是 [x1,y1,x2,y2] 或 [cx,cy] 形式的 JSON 数组，不要加引号。"
+  },
+  "tool.phone_control.bbox_out_of_range": {
+    "en-US": "Coordinates are outside the fixed 1000x1000 normalized space; both axes must stay within 0..1000. Re-read the latest screenshot and retry.",
+    "zh-CN": "坐标超出归一化范围：固定 1000x1000，两轴都必须在 0..1000 内；请按最近一次截图重新给出坐标。"
+  },
+  "tool.phone_control.text_required": {
+    "en-US": "A non-empty text is required.",
+    "zh-CN": "该动作需要非空 text。"
+  },
+  "tool.phone_control.key_required": {
+    "en-US": "key is required for press_key.",
+    "zh-CN": "press_key 需要 key。"
+  },
+  "tool.phone_control.invalid_key": {
+    "en-US": "Unsupported key; allowed values: ",
+    "zh-CN": "不支持的按键，仅支持："
+  },
+  "tool.phone_control.app_required": {
+    "en-US": "open_app requires app (label or package name).",
+    "zh-CN": "open_app 需要 app（应用名或包名）。"
+  },
+  "tool.phone_control.url_required": {
+    "en-US": "open_url requires url.",
+    "zh-CN": "open_url 需要 url。"
+  },
+  "tool.phone_control.invalid_url": {
+    "en-US": "Only http:// or https:// URLs are allowed.",
+    "zh-CN": "只允许 http:// 或 https:// 链接。"
+  },
+  "tool.phone_control.invalid_settings_page": {
+    "en-US": "Unsupported settings page.",
+    "zh-CN": "不支持的设置页。"
+  },
+  "tool.phone_control.operation_required": {
+    "en-US": "clipboard requires operation=get|set.",
+    "zh-CN": "clipboard 需要 operation=get|set。"
+  },
+  "tool.phone_control.summary": {
+    "en-US": "Phone action {action} completed.",
+    "zh-CN": "手机动作 {action} 已完成。"
+  },
+  "tool.phone_control.summary_app": {
+    "en-US": "Phone action {action} completed; foreground app: {app}.",
+    "zh-CN": "手机动作 {action} 已完成，当前前台应用：{app}。"
+  },
+  "tool.phone_control.action_failed": {
+    "en-US": "Phone action was not applied.",
+    "zh-CN": "手机动作未执行。"
+  },
+  "tool.phone_control.accessibility_disabled": {
+    "en-US": "The phone-control accessibility service is not connected. Ask the user to enable this app in system accessibility settings, or call open_settings with page=accessibility first.",
+    "zh-CN": "手机控制的无障碍服务未连接：请在系统设置中开启“茧”的无障碍服务后再操作，也可先调用 open_settings（page=accessibility）打开设置页。"
+  },
+  "tool.phone_control.no_editable_field": {
+    "en-US": "No editable text field on the current screen; tap an input field or open the target page first.",
+    "zh-CN": "当前界面没有可输入的文本框：先点击输入框或打开目标页面后重试。"
+  },
+  "tool.phone_control.app_not_found": {
+    "en-US": "No matching app; use list_apps to find a launchable label or package.",
+    "zh-CN": "未找到匹配的应用：请用 list_apps 查看可启动的应用名或包名。"
+  },
+  "tool.phone_control.screenshot_unsupported": {
+    "en-US": "Screenshots are unsupported on this Android version; use ui_tree instead.",
+    "zh-CN": "当前系统版本不支持无障碍截图，可改用 ui_tree 获取界面结构。"
+  },
+  "tool.phone_control.capture_failed": {
+    "en-US": "Failed to capture the phone screenshot.",
+    "zh-CN": "手机截图失败。"
+  },
+  "tool.phone_control.capture_too_large": {
+    "en-US": "Phone screenshot is too large.",
+    "zh-CN": "手机截图过大。"
+  },
+  "tool.phone_control.clipboard_unavailable": {
+    "en-US": "Clipboard is unavailable right now; keep the target app in the foreground and retry.",
+    "zh-CN": "剪贴板当前不可读：请保持目标应用在前台后重试。"
+  },
+  "tool.phone_control.followup_prompt": {
+    "en-US": "The phone action has been applied. This is the latest screenshot. Verify it before deciding the next step; repeat the same action only when the state is confirmed unchanged.",
+    "zh-CN": "手机动作已执行。下面是动作后的最新截图。请先核对截图，再决定下一步；确认状态未变化时才重试同一动作。"
+  },
+  "tool.phone_control.followup_prompt_unsettled": {
+    "en-US": "The action was applied but the screen may still be settling. Call wait to observe it again before repeating input.",
+    "zh-CN": "动作已执行，但画面可能仍在变化。请先调用 wait 再观察一次，然后再决定是否重复操作。"
+  },
   "tool.desktop_control.disabled": {
     "en-US": "Desktop control is disabled.",
     "zh-CN": "桌面控制未启用。"
@@ -1839,6 +1951,10 @@
     "en-US": "Shell environment: POSIX bash. Write POSIX commands: pipes, &&, ;, grep, sed, awk, find, ssh, ls, cat, head, tail, tar, curl, etc. On Windows use /c/... or forward-slash C:/... paths (avoid backslashes) and invoke cmd as `cmd //c ...`. Output is UTF-8. Do not use cmd or PowerShell syntax (e.g. dir, type, copy, del, set, %VAR%).",
     "zh-CN": "Shell 环境：POSIX bash。请编写 POSIX 命令：管道、&&、;、grep、sed、awk、find、ssh、ls、cat、head、tail、tar、curl 等。在 Windows 上路径用 /c/... 或正斜杠 C:/...（避免反斜杠），调用 cmd 请写成 `cmd //c ...`。输出为 UTF-8。不要使用 cmd 或 PowerShell 语法（如 dir、type、copy、del、set、%VAR%）。"
   },
+  "tool.spec.exec.shell_sh": {
+    "en-US": "Shell environment: Android /system/bin/sh (mksh) with toybox. POSIX syntax works: pipes, &&, ;, variables, functions, grep/sed/awk/find, tar, xargs. The available tools are Android's toybox subset: no bash arrays, no grep -P, and no curl/wget/ssh by default; python/git/rg only exist when the app provides them. The workspace is app-private; paths outside it are not accessible. Run scripts as `sh script.sh` or `python script.py`, not `./script.sh`; prefer file tools for workspace edits.",
+    "zh-CN": "Shell 环境：Android 的 /system/bin/sh（mksh）+ toybox。支持 POSIX 语法：管道、&&、;、变量、函数、grep/sed/awk/find、tar、xargs。可用工具是 Android toybox 子集：不支持 bash 数组、grep -P，默认没有 curl/wget/ssh；python/git/rg 仅在应用提供时可用。工作区是应用私有目录，外部路径不可访问。脚本用 `sh script.sh` 或 `python script.py` 执行，不要用 `./script.sh`；文件修改优先用文件工具。"
+  },
   "tool.spec.exec.shell_powershell": {
     "en-US": "Shell environment: Windows PowerShell. Use PowerShell syntax (cmdlets, pipelines, $variables). `&&` and `||` are not supported — chain with `;` or issue separate calls. Do not use cmd or bash syntax.",
     "zh-CN": "Shell 环境：Windows PowerShell。请使用 PowerShell 语法（cmdlet、管道、$变量）。不支持 `&&`、`||`，串联请用 `;` 或分多次调用。不要使用 cmd 或 bash 语法。"
@@ -1982,6 +2098,54 @@
   "tool.spec.web_fetch.args.max_chars": {
     "en-US": "Optional maximum number of characters to return after cleaning.",
     "zh-CN": "清洗后返回内容的最大字符数，可选。"
+  },
+  "tool.spec.phone_control.description": {
+    "en-US": "Drive and observe this Android phone. action selects the operation: screenshot, ui_tree, tap/long_press/swipe, type_text, press_key (back/home/recents/notifications/quick_settings), open_app/open_url/open_settings, list_apps/device_info, clipboard, or wait. Touch coordinates use a fixed 1000x1000 normalized space; bbox is [x1,y1,x2,y2] or [cx,cy]. Actions that change the screen return a post-action screenshot: verify it before the next step. Touch, text, screenshots and the UI tree require the user-enabled accessibility service.",
+    "zh-CN": "操作并观察这台 Android 手机。用 action 指定动作：screenshot 截图、ui_tree 读取界面结构、tap/long_press/swipe 触摸、type_text 输入文本、press_key 系统返回/主页/最近任务/通知栏、open_app/open_url/open_settings 打开应用/链接/系统设置、list_apps/device_info 查询环境、clipboard 读写剪贴板、wait 等待后截图。触摸坐标使用固定 1000x1000 归一化空间，bbox 为 [x1,y1,x2,y2] 或 [cx,cy]。除查询类动作外都会返回动作后的截图；请先核对截图再决定下一步。触摸、输入、截图和界面树需要用户开启无障碍服务。"
+  },
+  "tool.spec.phone_control.args.action": {
+    "en-US": "Action: screenshot, ui_tree, tap, long_press, swipe, type_text, press_key, open_app, open_url, open_settings, list_apps, device_info, clipboard, wait.",
+    "zh-CN": "动作：screenshot、ui_tree、tap、long_press、swipe、type_text、press_key、open_app、open_url、open_settings、list_apps、device_info、clipboard、wait。"
+  },
+  "tool.spec.phone_control.args.bbox": {
+    "en-US": "Target touch position as [x1,y1,x2,y2] or [cx,cy] in the fixed 1000x1000 normalized space (0..1000 on both axes); out-of-range values are rejected.",
+    "zh-CN": "目标触摸位置，格式 [x1,y1,x2,y2] 或 [cx,cy]，归一化空间固定 1000x1000，两轴有效范围 0..1000；越界会被拒绝。"
+  },
+  "tool.spec.phone_control.args.to_bbox": {
+    "en-US": "Swipe end point in the same 1000x1000 normalized space as bbox.",
+    "zh-CN": "swipe 终点，归一化空间与 bbox 相同（1000x1000）。"
+  },
+  "tool.spec.phone_control.args.text": {
+    "en-US": "Text for type_text or clipboard set.",
+    "zh-CN": "type_text 或 clipboard set 使用的文本。"
+  },
+  "tool.spec.phone_control.args.key": {
+    "en-US": "System key: back/home/recents/notifications/quick_settings.",
+    "zh-CN": "系统按键：back/home/recents/notifications/quick_settings。"
+  },
+  "tool.spec.phone_control.args.app": {
+    "en-US": "App label or package name; use list_apps to discover them.",
+    "zh-CN": "应用名或包名；可先用 list_apps 查看。"
+  },
+  "tool.spec.phone_control.args.url": {
+    "en-US": "http/https URL to open.",
+    "zh-CN": "要打开的 http/https 链接。"
+  },
+  "tool.spec.phone_control.args.page": {
+    "en-US": "Settings page: settings/wifi/bluetooth/display/sound/battery/apps/accessibility/storage/location; defaults to settings.",
+    "zh-CN": "设置页：settings/wifi/bluetooth/display/sound/battery/apps/accessibility/storage/location，默认 settings。"
+  },
+  "tool.spec.phone_control.args.operation": {
+    "en-US": "Clipboard operation: get or set.",
+    "zh-CN": "clipboard 操作：get 读取或 set 写入。"
+  },
+  "tool.spec.phone_control.args.delay_ms": {
+    "en-US": "Wait milliseconds for action=wait (0-30000).",
+    "zh-CN": "wait 动作的等待毫秒数（0-30000）。"
+  },
+  "tool.spec.phone_control.args.duration_ms": {
+    "en-US": "Optional duration in milliseconds for long_press/swipe.",
+    "zh-CN": "long_press/swipe 的持续时间（毫秒），可选。"
   },
   "tool.spec.desktop_control.description": {
     "en-US": "Drive and observe the local desktop. Use bbox together with an action; each action exposes only its own fields. Keyboard actions use key or text, scrolling uses scroll_steps, and drag uses to_bbox. action=wait (with delay_ms) waits then returns a fresh screenshot. Other actions wait at least 240 ms and compare up to three frames before returning the bounded post-action screenshot; verify it before retrying the same action.",

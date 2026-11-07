@@ -357,7 +357,7 @@ impl DesktopSeedManager {
         Self {
             jobs: RwLock::new(HashMap::new()),
             latest_by_container: RwLock::new(HashMap::new()),
-            http: reqwest::Client::new(),
+            http: crate::http_client::new(),
         }
     }
 

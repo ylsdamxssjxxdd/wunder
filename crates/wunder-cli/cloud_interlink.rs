@@ -119,7 +119,7 @@ fn session() -> Result<CloudSessionFile> {
 }
 
 fn http() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
+    wunder_server::http_client::builder()
         .timeout(Duration::from_secs(20))
         .build()
         .context("build http client")
@@ -128,7 +128,7 @@ fn http() -> Result<reqwest::Client> {
 /// Short client for the read-only probes a one-shot status line needs; it must
 /// never keep `cloud status` waiting on a slow or disabled interlink plane.
 fn quick_http() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
+    wunder_server::http_client::builder()
         .timeout(Duration::from_secs(5))
         .build()
         .context("build http client")

@@ -373,6 +373,13 @@ const SURFACE_RULES: &[SurfaceRule] = &[
         drop_fields: &[],
     },
     SurfaceRule {
+        tool: "手机控制",
+        brief_en: "Drive and observe this Android phone: screenshot/ui_tree to inspect, tap/long_press/swipe to touch (bbox in a fixed 1000x1000 space), type_text, press_key for system keys, open_app/open_url/open_settings, list_apps/device_info/clipboard/wait. Touch, text and screenshots need the user-enabled accessibility service; check accessibility_connected and verify the returned frame after each action.",
+        brief_zh: "操作并观察这台 Android 手机：screenshot/ui_tree 观察，tap/long_press/swipe 触摸（bbox 为 1000x1000 归一化坐标），type_text 输入，press_key 系统键，open_app/open_url/open_settings 打开应用、链接或设置，list_apps/device_info/clipboard/wait 辅助。触摸、输入和截图需要无障碍服务；先看 accessibility_connected，动作后核对截图再继续。",
+        drop_actions: &[],
+        drop_fields: &[],
+    },
+    SurfaceRule {
         tool: "自我状态",
         brief_en: "Report the current agent's own status; detail_level=basic|full.",
         brief_zh: "查询当前智能体自身状态；detail_level=basic|full。",

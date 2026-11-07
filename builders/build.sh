@@ -18,7 +18,6 @@ docker_builder_root="${WUNDER_DOCKER_BUILDER_ROOT:-$repo_root/../Rust-builder/ky
 target=""
 arch=""
 build_all=0
-build_egui=0
 mode=native
 
 usage() {
@@ -26,7 +25,6 @@ usage() {
 Usage:
   build.sh -t desktop|cli -a linux-arm64|linux-amd64|win7-x86 [--native|--docker]
   build.sh -all [--native|--docker]
-  build.sh --egui
 
 Options:
   -t, -target, --target  Build one program: desktop or cli.
@@ -37,7 +35,6 @@ Options:
                                       (i686-win7-windows-gnu with -Z build-std).
   -all, --all            Build every distribution available on this host: both programs for
                          Linux ARM64, Linux amd64 and Win7 x86. Linux Desktop outputs are AppDir archives.
-  --egui                 Build the native wunder-egui desktop into target/wunder-egui/release.
   --native         Build directly on this Linux host (default).
   --docker         Run the ARM64 Ubuntu 18.04 build image. Requires Rust-builder/kylin-arm.
 
@@ -77,7 +74,6 @@ while (($#)); do
       arch="$(normalize_arch "$1")" || fail "unsupported architecture: $1"
       ;;
     -all|--all) build_all=1 ;;
-    --egui) build_egui=1 ;;
     --native) mode=native ;;
     --docker) mode=docker ;;
     -h|--help) usage; exit 0 ;;
@@ -85,16 +81,6 @@ while (($#)); do
   esac
   shift
 done
-
-if [[ "$build_egui" == 1 ]]; then
-  [[ "$build_all" == 0 && -z "$target" && -z "$arch" ]] || fail "--egui cannot be combined with --all, --target or --arch"
-  [[ "$mode" == native ]] || fail "--egui currently builds on the host; omit --docker"
-  egui_target_dir="$repo_root/target/wunder-egui"
-  mkdir -p "$egui_target_dir"
-  CARGO_TARGET_DIR="$egui_target_dir" cargo build --locked --release -p wunder-egui --features native
-  printf '[wunder-build] egui native artifact: %s\n' "$egui_target_dir/release/wunder-egui"
-  exit 0
-fi
 
 if [[ "$build_all" == 1 ]]; then
   [[ -z "$target" && -z "$arch" ]] || fail "-all already selects every program and architecture; do not combine it with --target or --arch"
