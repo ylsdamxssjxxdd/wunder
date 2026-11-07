@@ -57,8 +57,8 @@ def main():
             release = api("POST", prefix + "/releases", {
                 "tag_name": tag, "target_commitish": commit,
                 "name": "Offline build " + run + " (" + commit[:12] + ")",
-                "body": "离线套件自动构建：三个桌面程序（Win7 x86 exe、Ubuntu 18.04 x86_64 与 ARM64 桌面归档）"
-                        "与两组 Linux 安装包（.portable、.run），与 GitHub nightly 的交付同形。"
+                "body": "离线套件自动构建：三个桌面程序（Win7 x86 exe、Ubuntu 18.04 x86_64 与 ARM64 桌面归档）、"
+                        "两组 Linux 安装包（.portable、.run）与安卓 arm64 APK（内嵌 proot Ubuntu 与离线工具包）。"
                         "各任务独立上传附件，完成与否以 Actions 任务状态为准。",
                 "draft": False, "prerelease": True})
         except HTTPError as conflict:

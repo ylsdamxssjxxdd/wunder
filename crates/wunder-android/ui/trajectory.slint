@@ -2,9 +2,9 @@
 // tool activity in one thread. The projection lives in Rust (engine.rs); this
 // file only groups and lays out the already-truncated rows.
 
-import { Theme } from "../../../frontend-slint/ui/theme.slint";
-import { I18n } from "../../../frontend-slint/ui/i18n.slint";
-import { Action } from "../../../frontend-slint/ui/components.slint";
+import { Theme } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
+import { I18n } from "../../../crates/wunder-desktop/frontend/ui/i18n.slint";
+import { Action } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 export struct TrajectoryItem {
@@ -240,7 +240,7 @@ component TrajectoryRow inherits Rectangle {
                 Image {
                     width: 10px;
                     height: 10px;
-                    source: @image-url("../../../frontend-slint/assets/icons/chevron-down.svg");
+                    source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-down.svg");
                     colorize: Theme.muted;
                     transform-rotation: root.expanded ? 180deg : 0deg;
                 }
@@ -343,7 +343,7 @@ export component TrajectoryPage inherits Rectangle {
                         width: 34px;
                         height: 34px;
                         icon-size: 17px;
-                        icon: @image-url("../../../frontend-slint/assets/icons/chevron-left.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-left.svg");
                         label: "返回";
                         clicked => { root.back(); }
                     }
@@ -371,7 +371,7 @@ export component TrajectoryPage inherits Rectangle {
                         width: 34px;
                         height: 34px;
                         icon-size: 16px;
-                        icon: @image-url("../../../frontend-slint/assets/icons/rotate-right.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
                         label: "刷新轨迹";
                         enabled: !root.loading;
                         clicked => { root.retry(); }
@@ -477,7 +477,7 @@ export component TrajectoryPage inherits Rectangle {
                         label: "重试";
                         show-label: true;
                         primary: true;
-                        icon: @image-url("../../../frontend-slint/assets/icons/rotate-right.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
                         clicked => { root.retry(); }
                     }
                 }

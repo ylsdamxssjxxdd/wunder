@@ -4,7 +4,7 @@
 Selection follows the same model as rcho's export_source.py: every file git
 reports (tracked, or untracked but not ignored) is exported, minus build
 output and temp directories. The archive must be buildable on another machine,
-so committed third-party trees required by the build (frontend-slint/vendor
+so committed third-party trees required by the build (crates/wunder-desktop/frontend/vendor
 with the patched Slint 1.18 sources, web/third for the admin console) are
 included; web/docs is excluded because it is the built help site and is
 regenerated with `python scripts/build_docs_site.py`.
@@ -42,8 +42,8 @@ REQUIRED_FILES = (
     PurePosixPath("crates/wunder-server/Cargo.toml"),
     PurePosixPath("crates/wunder-cli/Cargo.toml"),
     PurePosixPath("crates/wunder-desktop/Cargo.toml"),
-    PurePosixPath("frontend-slint/Cargo.toml"),
-    PurePosixPath("frontend-slint/vendor/i-slint-core-1.18/Cargo.toml"),
+    PurePosixPath("crates/wunder-desktop/frontend/Cargo.toml"),
+    PurePosixPath("crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/Cargo.toml"),
     PurePosixPath("frontend/package.json"),
     PurePosixPath("web/index.html"),
 )

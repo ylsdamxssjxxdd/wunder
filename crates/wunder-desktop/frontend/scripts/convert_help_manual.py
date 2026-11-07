@@ -9,7 +9,7 @@ The help browser now reads Markdown directly and projects it through the same
 structured JSON content over; from here on the .md files are the source of
 truth and are edited by hand.
 
-Usage (from frontend-slint/):
+Usage (from crates/wunder-desktop/frontend/):
     python scripts/convert_help_manual.py
 """
 from __future__ import annotations

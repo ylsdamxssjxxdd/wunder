@@ -6,7 +6,7 @@
 
 | 统一名称 | 英文 | 定位 | 目录/产物 | 旧称（仅用于读旧文档与日志） |
 | --- | --- | --- | --- | --- |
-| wunder 桌面版 | wunder Desktop | 本地 AI 工作台，个人用户默认入口，主推应用 | `frontend-slint/` + `crates/wunder-desktop/` | 蛹 / Pupa |
+| wunder 桌面版 | wunder Desktop | 本地 AI 工作台，个人用户默认入口，主推应用 | `crates/wunder-desktop/`（`frontend/` 为 Slint UI） | 蛹 / Pupa |
 | wunder 安卓版 | wunder Android | 桌面版的 Android 形态，复用 Slint 界面 | `crates/wunder-android/` | 茧 / Cocoon |
 | wunder 命令行 | wunder CLI | 手工本地操作入口，终端驱动、脚本化、自动化 | `crates/wunder-cli/` | 舵机 / Helm / Servo |
 | wunder 云端版 | wunder Cloud | 云端 AI 工作台，随服务端提供，浏览器访问 | `frontend/`（Vue3 + TS） | 蜂巢 / Hive / Beehive |
@@ -19,7 +19,7 @@
 
 ## 产物命名（构建脚本与 CI）
 
-- 程序名统一：`wunder-desktop`（桌面版可执行文件；crate/目录仍是 `frontend-slint`）、`wunder-cli`、`wunder-android`（APK）、`wunder-server`。
+- 程序名统一：`wunder-desktop`（桌面版可执行文件；包名仍为 `wunder-frontend-slint`，UI 目录为 `crates/wunder-desktop/frontend/`）、`wunder-cli`、`wunder-android`（APK）、`wunder-server`。
 - 发布物统一：`wunder-<形态>-<版本>-<os>-<arch>[.<变体>].<扩展名>`；版本取 `config/app_version.json`（不带 v 前缀），os 为 `linux` / `win7` / `android`，arch 为 `x86` / `x64` / `arm64`。
   - 例：`wunder-desktop-0.4.0-linux-x64.tar.gz`、`wunder-desktop-0.4.0-linux-x64.run`、`wunder-desktop-0.4.0-linux-x64.portable`、`wunder-desktop-0.4.0-win7-x86.exe`、`wunder-desktop-0.4.0-win7-x86-setup.exe`、`wunder-cli-0.4.0-linux-x64`、`wunder-android-0.4.0-arm64.apk`。
 - 更新清单的 `os`/`arch` 字段沿用 Rust `std::env::consts`（`windows`/`linux`、`x86`/`x86_64`/`aarch64`），与发布物文件名解耦；补充包产物名保持 `wunder-supplement-*`（已发布清单按文件名引用），不要改名。
@@ -36,7 +36,7 @@
 - 每次完成任务，将实现内容写入 `docs/功能迭代.md` 的分类区块，使用 `python scripts/update_feature_log.py --type <类型> --scope <范围> ...`；类型仅限：新增/变更/修复/性能/文档/重构/安全/工程/测试/移除/弃用。
 - 不要尝试创建git分支或提交，这些交给用户，你git diff时可能会遇到出现了不是你修改的内容，没关系那是用户自己改的不用管他，你自行继续就可以了
 - 当前开发处于原型阶段，老旧的代码和不合适的字段或架构直接移除保持项目干净
-- 桌面版默认前端为 `frontend-slint/`（Rust + Slint）；Electron、Tauri 前端壳停止日常维护与功能迭代。云端版使用 `frontend/`（Vue3 + TypeScript），管理端为 `web/`（HTML + JS）。
+- 桌面版默认前端为 `crates/wunder-desktop/frontend/`（Rust + Slint）；Electron、Tauri 前端壳停止日常维护与功能迭代。云端版使用 `frontend/`（Vue3 + TypeScript），管理端为 `web/`（HTML + JS）。
 - frontend中有大量的依赖库，搜索时会返回大量内容，一定要做好限制，不要直接搜索frontend的根目录
 - 会话轮次拆分为“用户轮次/模型轮次”：用户每发送一条消息记 1 轮用户轮次；模型每执行一次动作（模型调用、工具调用或最终回复）记 1 轮模型轮次；一次会话可包含多轮用户轮次，每轮用户轮次可包含多轮模型轮次。
 - 你在开发的过程中，其他开发者也会在修改文件，如果你遇到了不是你修改的文件，不必理会
@@ -66,7 +66,7 @@
 
 ## 桌面版与命令行
 
-- 桌面版默认使用 `frontend-slint/`，无参数启动即在同一进程通过 `wunder-desktop::NativeDesktop` 原生调用后端，不经本机 HTTP/WebSocket，不拉起 bridge 子进程。桌面版页面新增能力使用强类型 Rust façade；本地能力放 `crates/wunder-desktop/`，执行、工具与存储语义继续复用引擎（wunder-runtime）。独立 bridge 仅为已有兼容客户端保留。不要为了桌面版功能继续维护 Electron 或 Tauri 前端壳，也不要把停止维护前端壳理解为停止维护桌面版后端。
+- 桌面版默认使用 `crates/wunder-desktop/frontend/`，无参数启动即在同一进程通过 `wunder-desktop::NativeDesktop` 原生调用后端，不经本机 HTTP/WebSocket，不拉起 bridge 子进程。桌面版页面新增能力使用强类型 Rust façade；本地能力放 `crates/wunder-desktop/`，执行、工具与存储语义继续复用引擎（wunder-runtime）。独立 bridge 仅为已有兼容客户端保留。不要为了桌面版功能继续维护 Electron 或 Tauri 前端壳，也不要把停止维护前端壳理解为停止维护桌面版后端。
 - 桌面版以后端能力、稳定性和性能为首要目标，前端清晰、直观、可用即可。保持原浅色云端版基调，不为追求 TS 端全部视觉效果引入 WebView、浏览器渲染链或重型组件。
 - Markdown 采用最低必要能力：纯文本保底，可逐步支持段落、换行、列表和代码块；图片、表格、复杂 HTML、公式、图表及语法高亮不是必需项，可降级为可读文本、链接或占位提示。降级只影响展示，原始消息与复制内容必须完整保留。
 - 流式输出的连续性优先于富文本完整性。优先复用后端既有 WebSocket 事件、去重、replay 与补水语义；不以收到完整回复后再做打字动画替代真实流式输出。

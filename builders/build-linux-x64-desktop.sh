@@ -13,7 +13,7 @@ offline_root="${WUNDER_OFFLINE_ROOT:-${WUNDER_BUILDER_ROOT:-$repo_root/../Rust-b
 sdk="$offline_root/linux-amd64-ubuntu18/root"
 target_dir="${CARGO_TARGET_DIR:-$repo_root/target/linux-x64-ubuntu18-slint/cargo}"
 output_dir="${WUNDER_OUTPUT_DIR:-$repo_root/target/slint/dist/linux-x64}"
-manifest="$repo_root/frontend-slint/Cargo.toml"
+manifest="$repo_root/crates/wunder-desktop/frontend/Cargo.toml"
 max_glibc="${WUNDER_SLINT_LINUX_MAX_GLIBC:-2.27}"
 stage_dir=""
 

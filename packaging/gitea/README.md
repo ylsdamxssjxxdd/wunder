@@ -53,7 +53,6 @@ docker compose logs --tail=100 gitea bootstrap runner
 `GITEA_REQUIRE_SIGNIN_VIEW`（套件默认关闭自助注册并要求登录，个人机器可置 false 放开）。
 
 Runner 注册三个标签，前两个指向同一个任务镜像，只是给两个仓库各留一条路由：
-
 - `wunder-offline` → 任务镜像（Ubuntu 18.04 + Rust/Slint 交叉工具链 + git + `/opt/offline-ci`），构建 Linux 桌面/CLI、Win7 32 位交叉，并复用预制补充包。
 - `rcho-offline` → 同一个镜像，供 rcho 的离线流水线使用。rcho 仓库自带 `.gitea/workflows/offline.yml` 与 `packaging/gitea/ci/`，推到同一实例即可构建 Linux x64/arm64 与 Win7 x86；检出前只能调用镜像里烘焙的 `/opt/offline-ci/checkout.py`，检出后一律改用仓库内脚本。因为 rcho 的构建器会往 SDK 的 `cargo-home-*` 写配置，它的 `prepare-view.sh` 把只读 SDK 组织成 `/ci-cache` 下的可写视图（只读内容用符号链接引用），任何情况下都不向 `/opt/offline-sdk` 写入。
 - `wunder-offline-installer` → x86_64 剖面指向带 Wine + Inno Setup 的第四个镜像；arm64 剖面没有可用的 i386 Wine，该标签指回构建镜像，任务按宿主架构自行跳过。标签名必须留着，否则 `runs-on: wunder-offline-installer` 排不到 runner、任务永久排队。
@@ -90,6 +89,13 @@ git push gitea main
   `wunder-supplement-win7-ia32-common.zip` 组出 `wunder-desktop-<版本>-win7-x86-setup.exe`。ARM 宿主跑不了 i386 Wine，
   脚本按 `uname -m` 打印 SKIP 并成功退出（所以 arm64 剖面把该标签指向构建镜像本身，不留空标签）——
   ARM 侧的 Release 与 x86_64 侧只差这一个安装包。
+- `android`（x86_64 或 aarch64 worker）：`wunder-android-<版本>-arm64.apk`，内嵌 proot Ubuntu rootfs、离线
+  工具补充包 `common.tar.xz` 与 proot/busybox 运行库。工具链（Android SDK 36、NDK 28.2、Temurin JDK 17、
+  Gradle 8.13 与预热缓存）和 APK 资产放在套件 `android/` 目录，由 `<前缀>-android` 卷只读挂载到任务容器的
+  `/opt/android`。x86_64 宿主直接用 NDK 原生工具链；aarch64 宿主用套件内置的 `qemu-x86_64-static` 模拟
+  x86_64 的 clang/aapt2（Google 只为 x86_64 宿主发布 NDK 与 build-tools），Rust 仍按 aarch64 原生编译。
+  Gradle 缓存在首次构建时复制到 `/ci-cache` 后复用，调试签名固定使用 `android/keystore/debug.keystore`，
+  多次构建的 APK 可互相覆盖安装。
 
 检出后的步骤一律使用仓库内 `packaging/gitea/ci/` 脚本，只有检出本身用镜像内 `/opt/offline-ci/checkout.py`。
 产物由该次运行的短期令牌上传到 Releases，标签形如 `ci-<提交短哈希>-<运行编号>`。
@@ -104,6 +110,36 @@ git push gitea main
 ## 离线边界与资源
 
 - Rust crate vendor、双架构工具链与 sysroot、MinGW、AppImage runtime 由 SDK 目录只读挂载。
+- 安卓工具链与 APK 内嵌资产由套件 `android/` 目录只读挂载到 `/opt/android`，准备方法：
+  ```bash
+  packaging/gitea/prepare-android.sh --out /path/to/kit/android \
+    --sdk "$HOME/android-sdk" --jdk /path/to/temurin-17 \
+    --gradle "$HOME/gradle/gradle-8.13" --gradle-home "$HOME/.gradle" \
+    --rust-std /path/to/rust-std-1.92.0-aarch64-linux-android.tar.xz \
+    --offline-sdk /path/to/kit/rust-builder/offline \
+    --skia /path/to/skia-binaries
+  ```
+  ARM64 任务机把 `--jdk` 换成 aarch64 Temurin，并追加
+  `--host-arch aarch64 --qemu /usr/bin/qemu-x86_64-static --x86-root /path/to/x86_64-root`：
+  `x86_64-root` 是最小 glibc 运行库根，至少包含 `lib64/ld-linux-x86-64.so.2` 与
+  `lib/x86_64-linux-gnu/{libc,libm,libdl,libpthread,librt,libgcc_s,libz}.so*`；脚本会在 `android/bin/`
+  生成 clang/ar/aapt2 的 qemu 包装器和直接调 `ld.lld` 的 `rust-linker`。模拟环境下 aws-lc 走
+  `AWS_LC_SYS_CMAKE_BUILDER=0` 的 cc 构建链，避免 CMake 链接探测（clang 驱动在 qemu 里无法 exec 子进程）。
+  JDK 必须是 Temurin 17（glibc 2.17 基线）；发行版自带的 OpenJDK 17 往往要求 glibc 2.33+，在
+  Ubuntu 18.04 任务镜像里起不来。Android 依赖复用 SDK 的 `cargo-vendor-slint`，但安卓 crate 有独立的
+  `crates/wunder-android/Cargo.lock`（如 `jni`、`android-activity`），套件导出前必须把它 vendor 进同一快照：
+  ```bash
+  (cd crates/wunder-android && cargo vendor --locked --versioned-dirs /tmp/vendor-android)
+  comm -23 <(ls /tmp/vendor-android | sort) <(ls "$OFFLINE_SDK/cargo-vendor-slint" | sort) |
+    while read -r crate; do cp -a "/tmp/vendor-android/$crate" "$OFFLINE_SDK/cargo-vendor-slint/"; done
+  ```
+  合并后再重打 `rust-builder/offline-sdk.tar.gz` 与 `SHA256SUMS`，否则重新部署的套件会在解析阶段报
+  `failed to select a version`。
+  Slint 的安卓渲染链还会用 rust-skia 的预编译包（`skia-bindings 0.153.3` 的
+  `aarch64-linux-android-ganesh-gl-…` 变体），准备机联网下载后放到
+  `android/skia-binaries/<版本>/skia-binaries-<key>.tar.gz`；`ci/build-android.sh` 用
+  `SKIA_BINARIES_URL=file://…/{tag}/skia-binaries-{key}.tar.gz` 指过去。skia 版本或特性变化时
+  key 会变，以构建日志里 `TRYING TO DOWNLOAD AND INSTALL SKIA BINARIES` 那一行为准。
   补充包（Linux 的 opt/python、opt/git、opt/rg、opt/ffmpeg、opt/browser 与 Win7 的 ia32 同名组件）
   **不在离线端构建**：它要在目标 libc 上编译 git 并铺 Python 运行时，离线机没有这些上游归档与 wheel 索引，
   所以在联网准备机上产好后随套件导出，放在 `supplement-prebuilt/<arch>/`（`amd64`、`arm64`、`win7-ia32` 三份，

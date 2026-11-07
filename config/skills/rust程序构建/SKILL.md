@@ -1,13 +1,13 @@
 ---
 name: rust程序构建
-description: 构建 Rust CLI、服务和桌面应用的离线交叉编译技能。支持默认 Win7 32 位、Linux x64/arm64 目标；桌面默认 frontend-slint，并包含 Slint 检查与渲染流程。需要使用 Rust-builder 离线 SDK、Cargo vendor 或交叉编译工具链时使用。
+description: 构建 Rust CLI、服务和桌面应用的离线交叉编译技能。支持默认 Win7 32 位、Linux x64/arm64 目标；桌面默认 crates/wunder-desktop/frontend，并包含 Slint 检查与渲染流程。需要使用 Rust-builder 离线 SDK、Cargo vendor 或交叉编译工具链时使用。
 ---
 
 # RUST 程序构建
 
 ## 目标与约束
 
-- 先识别产物类型：`cli`、`service` 或 `desktop`。桌面默认使用仓库的 `frontend-slint/`，不要切换到 Electron/Tauri。
+- 先识别产物类型：`cli`、`service` 或 `desktop`。桌面默认使用仓库的 `crates/wunder-desktop/frontend/`，不要切换到 Electron/Tauri。
 - 未指定目标时使用 `win7-x86`：`i686-win7-windows-gnu`，面向 Windows 7 32 位。
 - 支持 `linux-amd64-ubuntu18` 和 `linux-arm64-ubuntu18`；Kylin x86 统一按 Linux x64 处理，目标为 `x86_64-unknown-linux-gnu`。
 - 构建必须可离线重复：设置 `CARGO_NET_OFFLINE=true`，优先使用已提交的 `Cargo.lock`、vendor 源和固定 toolchain；禁止为了补依赖自动联网。

@@ -1,7 +1,7 @@
 # Local Win32 and text-stack patches
 
 The `-1.18` source copies are pinned to Slint 1.18.0 (declared in
-`frontend-slint/Cargo.toml`) and are used only through Cargo's
+`crates/wunder-desktop/frontend/Cargo.toml`) and are used only through Cargo's
 `[patch.crates-io]` override.
 
 ## Slint 1.18.0 port notes
@@ -388,7 +388,7 @@ equivalent behavior rather than copying these files blindly. Run
 crate against its pristine crates.io source, so local changes can be replayed
 onto a newer Slint release instead of being rediscovered by hand.
 
-Regenerate after touching vendored code (from `frontend-slint/vendor`; the
+Regenerate after touching vendored code (from `crates/wunder-desktop/frontend/vendor`; the
 pristine copy may come from the cargo registry or a downloaded `.crate`):
 
 ```sh

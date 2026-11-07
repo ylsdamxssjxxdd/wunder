@@ -653,7 +653,7 @@ const buildAssistantBubbleRaw = (
 };
 
 /**
- * 时间线块（形态对齐桌面端 `frontend-slint/src/timeline.rs`）：一个用户轮次里的
+ * 时间线块（形态对齐桌面端 `crates/wunder-desktop/frontend/src/timeline.rs`）：一个用户轮次里的
  * 每段正式输出是独立的一块，思考与工具调用按到达顺序折成批次夹在它们之间。
  *
  * 排序只认 `created_seq`（回落到登记序号），因此快照重放与实时流得到同一序列。

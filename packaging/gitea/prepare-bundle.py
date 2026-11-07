@@ -147,13 +147,13 @@ def render_runner(source, profile, labels):
     return render_text((source / "runner.yaml").read_text(encoding="utf-8"), profile, labels)
 
 
-def write_env(source, profile, labels):
+def write_env(source, profile, labels, android_path=""):
     lines = []
     for line in (source / ".env.example").read_text(encoding="utf-8").splitlines():
         key = line.split("=", 1)[0].strip() if "=" in line and not line.startswith("#") else ""
         if key in {"CI_PLATFORM", "STACK_PREFIX", "SDK_PROFILE", "GITEA_IMAGE", "RUNNER_IMAGE",
                    "RUNNER_MIN_DOCKER_API", "BUILDER_IMAGE", "INSTALLER_IMAGE", "RUNNER_LABELS",
-                   "RUNNER_NAME", "WUNDER_BUILD_JOBS"}:
+                   "RUNNER_NAME", "WUNDER_BUILD_JOBS", "WUNDER_ANDROID_PATH"}:
             continue
         lines.append(line)
     values = {
@@ -163,6 +163,7 @@ def write_env(source, profile, labels):
         "GITEA_IMAGE": GITEA,
         "RUNNER_IMAGE": profile["runner_image"],
         "RUNNER_MIN_DOCKER_API": profile["runner_min_api"],
+        "WUNDER_ANDROID_PATH": android_path,
         "BUILDER_IMAGE": profile["builder_tag"],
         "INSTALLER_IMAGE": profile["installer_tag"] or profile["builder_tag"],
         "RUNNER_LABELS": ",".join((labels["builder"], labels["rcho"], labels["installer"])),
@@ -217,6 +218,9 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--reuse-sdk-archive", action="store_true")
+    parser.add_argument("--android-dir", type=Path,
+                        help="准备好的安卓工具链与 APK 内嵌资产目录（SDK/NDK/JDK/Gradle/rootfs/补充包），"
+                             "导出时整体复制进套件的 android/；不提供则留空目录，安卓任务会因缺输入而失败")
     args = parser.parse_args()
 
     source = Path(__file__).resolve().parent
@@ -283,7 +287,17 @@ def main():
          + sha256(prebuilt_archive) + "  supplement-prebuilt.tar.gz\n").encode())
 
     (output / "runner.yaml").write_text(render_runner(source, profile, labels), encoding="utf-8")
-    (output / ".env").write_text(write_env(source, profile, labels), encoding="utf-8")
+    android_target = output / "android"
+    if args.android_dir is not None:
+        android_source = args.android_dir.resolve()
+        if not android_source.is_dir():
+            raise RuntimeError("android toolchain directory does not exist: " + str(android_source))
+        print("Copying Android toolchain and APK assets", flush=True)
+        shutil.copytree(android_source, android_target, symlinks=True, dirs_exist_ok=True)
+    else:
+        android_target.mkdir(exist_ok=True)
+        print("WARN: 未提供 --android-dir；套件缺安卓工具链，android 任务会失败（仅影响安卓构建）", flush=True)
+    (output / ".env").write_text(write_env(source, profile, labels, str(android_target)), encoding="utf-8")
     for name in ("compose.yaml", "bootstrap.sh", "load-images.sh",
                  "prepare-sdk.sh", "upgrade-docker.sh", ".env.example", "README.md"):
         shutil.copy2(source / name, output / name)

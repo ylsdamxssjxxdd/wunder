@@ -1,6 +1,6 @@
 # Desktop and CLI builders
 
-本目录集中放置桌面 Slint 与 CLI 的离线发布、交叉编译和分发门禁脚本。仓库根目录只保留两个公开入口：Linux 使用 `build.sh`，Windows 使用 `build.bat`。`frontend-slint/scripts/` 只保留原生联调与启动回归。
+本目录集中放置桌面 Slint 与 CLI 的离线发布、交叉编译和分发门禁脚本。仓库根目录只保留两个公开入口：Linux 使用 `build.sh`，Windows 使用 `build.bat`。`crates/wunder-desktop/frontend/scripts/` 只保留原生联调与启动回归。
 
 公开入口统一以程序目标和分发架构选择构建，并按宿主自动选择离线 SDK：ARM64 Linux 使用 `Rust-builder/kylin-arm`，x86_64 Linux 使用 `Rust-builder/kylin-x86`（准备方法见“kylin-x86”章节）。推荐使用简拼 `-t`/`-a`，`-target`/`-arch`/`--target`/`--arch` 写法等价：
 
@@ -70,6 +70,17 @@ Linux 安装包是单文件自解压 `.run`，由 Python 3.6+ 组装，不需要
 
 `.github/workflows/desktop-nightly.yml` 在每次分支推送时构建三套桌面版和命令行，并从固定的 `supplement` release 下载对应补充包，再用 `builders/pack.ps1` / `builders/pack.sh` 组装安装包。`nightly` release 因此同时包含三个桌面程序和三个安装包：Win7 x86、Linux x64、Linux arm64。打包前会等待同一提交触发的 Desktop Supplements 运行完成，避免旧补充包被打进安装包。
 
+同一工作流还包含 `build-android-arm64` 任务：在 ubuntu-latest 上安装 JDK 17、SDK 36、NDK 28.2.13676358 与 Gradle 8.13，从固定的 `android-runtime` release 下载 APK 内嵌的运行时资产（rootfs、common 离线工具包、proot/busybox 库），随后走 `builders/build-android-arm64.sh` 在线构建 arm64 debug APK。产物与桌面程序一起上传到 `nightly` release。
+
+运行时资产不入库，由 `packaging/android/pack-runtime.sh` 从已 stage 的应用源码树打包并上传（rootfs 与 proot 库来自 `builders/stage-android-ubuntu.sh` 的参考实现，common 包来自 `builders/build-android-ubuntu-pack.sh`）：
+
+```bash
+packaging/android/pack-runtime.sh            # 生成 target/android/runtime/
+packaging/android/pack-runtime.sh --publish  # 并上传到 android-runtime release
+```
+
+APK 使用仓库内 `packaging/android/debug.keystore`（标准调试密钥，store 口令 `android`、别名 `androiddebugkey`），与本地及 Gitea 离线套件构建共用同一签名，各渠道的 APK 可互相覆盖安装。
+
 CI 使用的构建入口：
 
 - Windows：`builders/build-win7-cli.ps1 -Toolchain <rustup工具链> -MingwBin <mingw32/bin> -HostMingwBin <mingw64/bin> -OutputDirectory <目录>`；不传 `-Toolchain` 时仍使用相邻离线 SDK。
@@ -114,7 +125,7 @@ docker run --rm --network none --platform linux/amd64 --entrypoint bash \
   -v /path/to/wunder/builders:/scripts:ro \
   wunder-rust-builder-kylin-x86:ubuntu18 /scripts/export-kylin-x86-sdk.sh
 
-# 4. cargo vendor（主 workspace + frontend-slint + rust-src 的 std 依赖三者并集；
+# 4. cargo vendor（主 workspace + crates/wunder-desktop/frontend + rust-src 的 std 依赖三者并集；
 #    cargo vendor 会清空目标目录，必须各自 vendor 到临时目录后合并）。
 # 6. docker image save 到 offline/archives/builder-amd64-ubuntu18.docker.tar，
 #    再跑 check-kylin-x86-sdk.sh 门禁与 index-kylin-x86-sdk.py 索引。

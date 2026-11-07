@@ -24,7 +24,7 @@ The whole-window baseline is 1462×866 logical pixels, with a 240 sidebar, a 100
 
 ## 01 Foundations
 
-Neutral, accent and semantic colors, type, spacing, radii and window metrics. Tokens map to `frontend-slint/ui/design_tokens.slint`; document annotations and product UI use independent scales.
+Neutral, accent and semantic colors, type, spacing, radii and window metrics. Tokens map to `crates/wunder-desktop/frontend/ui/design_tokens.slint`; document annotations and product UI use independent scales.
 
 ![Foundations design sheet](/docs/art/01-基础规范.svg)
 
@@ -152,7 +152,7 @@ python scripts/sync_art.py
 
 It performs three steps:
 
-1. Renders the Desktop SVGs into 1200px PNGs under `frontend-slint/assets/help/art` for desktop help.
+1. Renders the Desktop SVGs into 1200px PNGs under `crates/wunder-desktop/frontend/assets/help/art` for desktop help.
 2. Rebuilds the Chinese and English manual JSON from those images.
 3. Rebuilds the docs site, publishing SVGs to `web/docs/art` (Desktop) and `web/docs/art/servo` (CLI), copying the unified gallery and viewer assets, and embedding the app icon as a data URI in published SVGs.
 

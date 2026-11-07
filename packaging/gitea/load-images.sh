@@ -84,6 +84,26 @@ fi
 docker volume inspect "$prefix-sdk" >/dev/null 2>&1 || \
     docker volume create --driver local --opt type=none --opt o=bind --opt device="$sdk" \
         "$prefix-sdk" >/dev/null
+
+# 安卓工具链与 APK 内嵌资产：x86_64 剖面用它构建 arm64 APK；arm64 剖面没有这套工具链，
+# 目录留空即可（工作流里的安卓任务按宿主架构自行跳过）。
+android_path="$(quote_trim "$(env_value WUNDER_ANDROID_PATH)")"
+android_path="${android_path:-$(pwd -P)/android}"
+mkdir -p "$android_path"
+if ! grep -q '^WUNDER_ANDROID_PATH=' .env 2>/dev/null; then
+    printf '\nWUNDER_ANDROID_PATH=%s\n' "$android_path" >> .env
+fi
+if docker volume inspect "$prefix-android" >/dev/null 2>&1; then
+    current="$(docker volume inspect --format '{{ index .Options "device" }}' "$prefix-android" 2>/dev/null || true)"
+    if [[ "$current" != "$android_path" ]]; then
+        echo "Android 卷 $prefix-android 指向 ${current:-<未绑定>}，与 $android_path 不一致，正在重建。"
+        echo '如果 Runner 或任务容器还在运行，先 docker compose down（或 docker-compose stop）。'
+        docker volume rm "$prefix-android" >/dev/null
+    fi
+fi
+docker volume inspect "$prefix-android" >/dev/null 2>&1 || \
+    docker volume create --driver local --opt type=none --opt o=bind --opt device="$android_path" \
+        "$prefix-android" >/dev/null
 docker volume inspect "$prefix-build-cache" >/dev/null 2>&1 || \
     docker volume create "$prefix-build-cache" >/dev/null
 docker network inspect "$prefix-ingress" >/dev/null 2>&1 || \

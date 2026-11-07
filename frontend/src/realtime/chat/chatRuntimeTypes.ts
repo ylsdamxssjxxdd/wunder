@@ -134,7 +134,7 @@ export type ChatRuntimePendingSequentialEvent = {
 };
 
 /**
- * 一个用户轮次内的时间线块（形态对齐桌面端 `frontend-slint/src/timeline.rs`）：
+ * 一个用户轮次内的时间线块（形态对齐桌面端 `crates/wunder-desktop/frontend/src/timeline.rs`）：
  * 模型每轮的正式输出是一段独立打印（`body`），思考与工具调用按到达顺序
  * 折成可开合的 `activity` 批次夹在它们之间。顺序只由 `created_seq` 决定。
  */

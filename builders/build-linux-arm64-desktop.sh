@@ -53,7 +53,7 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-manifest="$repo_root/frontend-slint/Cargo.toml"
+manifest="$repo_root/crates/wunder-desktop/frontend/Cargo.toml"
 require_file "$manifest"
 [[ -d "$vendor_root" ]] || fail "offline Cargo vendor is missing: $vendor_root"
 [[ -f "$sysroot_lib/crt1.o" && -f "$sysroot_lib/libc.so" ]] || fail "Ubuntu 18 ARM64 development sysroot is incomplete: $sysroot"

@@ -1,17 +1,17 @@
 // wunder 安卓版 (wunder Android) — Android shell for the same chat surface as 桌面版.
 //
 // The visual language must not fork: this file imports 桌面版's theme, composer,
-// timeline and icon assets in place, so a change in `frontend-slint/ui`
+// timeline and icon assets in place, so a change in `crates/wunder-desktop/frontend/ui`
 // reaches both shells. Only the shell chrome (single window, drawer, safe
 // area) is mobile specific.
 
-import { I18n } from "../../../frontend-slint/ui/i18n.slint";
+import { I18n } from "../../../crates/wunder-desktop/frontend/ui/i18n.slint";
 export { I18n }
-import { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion, CommandTask, SubagentItem } from "../../../frontend-slint/ui/theme.slint";
+import { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion, CommandTask, SubagentItem } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
 export { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion }
-import { TimelineView } from "../../../frontend-slint/ui/timeline.slint";
-import { Composer, CommandOptions, InquiryPanel } from "../../../frontend-slint/ui/composer.slint";
-import { Action, FormField, ConfirmDialog } from "../../../frontend-slint/ui/components.slint";
+import { TimelineView } from "../../../crates/wunder-desktop/frontend/ui/timeline.slint";
+import { Composer, CommandOptions, InquiryPanel } from "../../../crates/wunder-desktop/frontend/ui/composer.slint";
+import { Action, FormField, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
 import { MobileSettings } from "settings.slint";
 import { TrajectoryPage, TrajectoryItem, TrajectoryAudit, TrajectorySegment } from "trajectory.slint";
 import { WorkspacePage, WorkspaceFile } from "workspace.slint";
@@ -96,7 +96,7 @@ component PanelOption inherits Rectangle {
         y: (parent.height - 16px) / 2;
         width: 16px;
         height: 16px;
-        source: @image-url("../../../frontend-slint/assets/icons/circle-check.svg");
+        source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/circle-check.svg");
         colorize: Theme.accent-ink;
     }
 }
@@ -590,7 +590,7 @@ export component MobileWindow inherits Window {
                         width: 36px;
                         height: 36px;
                         icon-size: 18px;
-                        icon: @image-url("../../../frontend-slint/assets/icons/bars.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/bars.svg");
                         label: I18n.act_tab_sessions;
                         clicked => { root.open-drawer(); }
                     }
@@ -624,7 +624,7 @@ export component MobileWindow inherits Window {
                         width: 36px;
                         height: 36px;
                         icon-size: 18px;
-                        icon: @image-url("../../../frontend-slint/assets/icons/fa-pen-to-square.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-pen-to-square.svg");
                         label: I18n.chat_new_thread;
                         clicked => {
                             root.close-plus();
@@ -703,21 +703,21 @@ export component MobileWindow inherits Window {
                                     x: (parent.width - 10px) / 2;
                                     y: (parent.height - 10px) / 2;
                                     width: 10px; height: 10px;
-                                    source: @image-url("../../../frontend-slint/assets/icons/xmark.svg");
+                                    source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/xmark.svg");
                                     colorize: close-host-detail.has-hover ? Theme.text : Theme.muted;
                                     image-fit: contain;
                                 }
                             }
                         }
                         HudDetailRow {
-                            icon: @image-url("../../../frontend-slint/assets/icons/cpu-chip.svg");
+                            icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/cpu-chip.svg");
                             label: I18n.hud_cpu;
                             value: root.host-cpu-text;
                             detail: root.host-cores > 0 ? I18n.hud_cores("" + root.host-cores) : "";
                             ratio: root.host-cpu;
                         }
                         HudDetailRow {
-                            icon: @image-url("../../../frontend-slint/assets/icons/fa-memory.svg");
+                            icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-memory.svg");
                             label: I18n.hud_memory;
                             value: root.host-memory-text;
                             detail: root.host-memory-used + " / " + root.host-memory-total;
@@ -732,25 +732,25 @@ export component MobileWindow inherits Window {
                     height: 24px;
                     spacing: 8px;
                     GaugePill {
-                        icon: @image-url("../../../frontend-slint/assets/icons/cpu-chip.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/cpu-chip.svg");
                         label: I18n.hud_cpu;
                         ratio: root.host-cpu;
                         clicked => { root.host-detail-open = !root.host-detail-open; }
                     }
                     GaugePill {
-                        icon: @image-url("../../../frontend-slint/assets/icons/fa-memory.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-memory.svg");
                         label: I18n.hud_memory;
                         ratio: root.host-memory;
                         clicked => { root.host-detail-open = !root.host-detail-open; }
                     }
                     HudPill {
-                        icon: @image-url("../../../frontend-slint/assets/icons/terminal.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/terminal.svg");
                         label: I18n.hud_tasks_short;
                         count: root.running-task-count;
                         active: root.running-task-count > 0;
                     }
                     HudPill {
-                        icon: @image-url("../../../frontend-slint/assets/icons/fa-diagram-project.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-diagram-project.svg");
                         label: I18n.hud_agents_short;
                         count: root.subagent-count;
                         active: root.subagent-count > 0;
@@ -871,23 +871,23 @@ export component MobileWindow inherits Window {
                 HorizontalLayout {
                     spacing: 8px;
                     PlusTile {
-                        icon: @image-url("../../../frontend-slint/assets/icons/terminal.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/terminal.svg");
                         label: I18n.cp_commands;
                         clicked => { root.plus-view = 1; }
                     }
                     PlusTile {
-                        icon: @image-url("../../../frontend-slint/assets/icons/lc-wand-sparkles.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-wand-sparkles.svg");
                         label: I18n.ag_preset_questions;
                         enabled: root.preset-questions.length > 0;
                         clicked => { root.plus-view = 2; }
                     }
                     PlusTile {
-                        icon: @image-url("../../../frontend-slint/assets/icons/lc-shield.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-shield.svg");
                         label: I18n.cp_permission;
                         clicked => { root.plus-view = 3; }
                     }
                     PlusTile {
-                        icon: @image-url("../../../frontend-slint/assets/icons/lc-brain.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-brain.svg");
                         label: I18n.st_tab_models;
                         clicked => {
                             root.close-plus();
@@ -898,7 +898,7 @@ export component MobileWindow inherits Window {
                 HorizontalLayout {
                     spacing: 8px;
                     PlusTile {
-                        icon: @image-url("../../../frontend-slint/assets/icons/gear.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/gear.svg");
                         label: I18n.sidebar_settings;
                         clicked => {
                             root.close-plus();
@@ -906,7 +906,7 @@ export component MobileWindow inherits Window {
                         }
                     }
                     PlusTile {
-                        icon: @image-url("../../../frontend-slint/assets/icons/fa-plus.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-plus.svg");
                         label: I18n.chat_new_thread;
                         clicked => {
                             root.close-plus();
@@ -914,7 +914,7 @@ export component MobileWindow inherits Window {
                         }
                     }
                     PlusTile {
-                        icon: @image-url("../../../frontend-slint/assets/icons/folder-tree.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/folder-tree.svg");
                         label: "工作目录";
                         clicked => { root.show-workspace(); }
                     }
@@ -937,7 +937,7 @@ export component MobileWindow inherits Window {
                             width: 34px;
                             height: 34px;
                             icon-size: 17px;
-                            icon: @image-url("../../../frontend-slint/assets/icons/chevron-left.svg");
+                            icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-left.svg");
                             label: "返回";
                             clicked => { root.plus-view = 0; }
                         }
@@ -1068,7 +1068,7 @@ export component MobileWindow inherits Window {
                         width: 34px;
                         height: 34px;
                         icon-size: 16px;
-                        icon: @image-url("../../../frontend-slint/assets/icons/fa-plus.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-plus.svg");
                         label: I18n.chat_new_thread;
                         clicked => {
                             root.close-plus();
@@ -1156,7 +1156,7 @@ export component MobileWindow inherits Window {
                                 y: 13px;
                                 width: 16px;
                                 height: 16px;
-                                source: @image-url("../../../frontend-slint/assets/icons/ellipsis.svg");
+                                source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/ellipsis.svg");
                                 colorize: Theme.muted;
                             }
                         }
@@ -1182,7 +1182,7 @@ export component MobileWindow inherits Window {
                     Image {
                         width: 17px;
                         height: 17px;
-                        source: @image-url("../../../frontend-slint/assets/icons/folder-tree.svg");
+                        source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/folder-tree.svg");
                         colorize: Theme.muted;
                     }
                     Text {
@@ -1221,7 +1221,7 @@ export component MobileWindow inherits Window {
                     Image {
                         width: 17px;
                         height: 17px;
-                        source: @image-url("../../../frontend-slint/assets/icons/lc-archive.svg");
+                        source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-archive.svg");
                         colorize: Theme.muted;
                     }
                     Text {
@@ -1257,7 +1257,7 @@ export component MobileWindow inherits Window {
                     Image {
                         width: 17px;
                         height: 17px;
-                        source: @image-url("../../../frontend-slint/assets/icons/gear.svg");
+                        source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/gear.svg");
                         colorize: Theme.muted;
                     }
                     Text {
@@ -1395,28 +1395,28 @@ export component MobileWindow inherits Window {
                 }
 
                 if !root.session-sheet-archived : SheetAction {
-                    icon: @image-url("../../../frontend-slint/assets/icons/fa-pen-to-square.svg");
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-pen-to-square.svg");
                     label: I18n.common_rename;
                     clicked => { root.begin-rename(); }
                 }
                 if !root.session-sheet-archived : SheetAction {
-                    icon: @image-url("../../../frontend-slint/assets/icons/fa-route.svg");
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-route.svg");
                     label: I18n.sb_thread_trajectory;
                     clicked => { root.open-trajectory(); }
                 }
                 if !root.session-sheet-archived : SheetAction {
-                    icon: @image-url("../../../frontend-slint/assets/icons/box-archive.svg");
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/box-archive.svg");
                     label: I18n.sb_thread_archive;
                     clicked => { root.archive-from-sheet(); }
                 }
 
                 if root.session-sheet-archived : SheetAction {
-                    icon: @image-url("../../../frontend-slint/assets/icons/rotate-right.svg");
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
                     label: "恢复会话";
                     clicked => { root.restore-from-sheet(); }
                 }
                 if root.session-sheet-archived : SheetAction {
-                    icon: @image-url("../../../frontend-slint/assets/icons/trash.svg");
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trash.svg");
                     label: "永久删除";
                     danger: true;
                     clicked => { root.delete-from-sheet(); }

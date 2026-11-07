@@ -59,6 +59,40 @@ jobs:
             echo 'nothing to publish from this worker'
           fi
 
+  android:
+    # 安卓 arm64 APK：x86_64 worker 直接用 NDK 交叉编译；aarch64 worker 用套件内置的
+    # qemu-x86_64 模拟 NDK/build-tools，Rust 仍原生编译。两种宿主都从 /opt/android 取工具链。
+    runs-on: wunder-offline
+    timeout-minutes: 1440
+    steps:
+      - name: Checkout from local Gitea
+        env:
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_REF: ${{ github.ref }}
+          CI_TOKEN: ${{ github.token }}
+        run: python3 /opt/offline-ci/checkout.py
+      - name: Build Android arm64 APK
+        env:
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_REF: ${{ github.ref }}
+          CI_TOKEN: ${{ github.token }}
+        run: bash packaging/gitea/ci/build-android.sh
+      - name: Publish APK to local Releases
+        env:
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if find release-assets -maxdepth 1 -type f | grep -q .; then
+            python3 packaging/gitea/ci/publish.py release-assets
+            python3 packaging/gitea/ci/prune.py
+          else
+            echo 'nothing to publish from this worker'
+          fi
+
   win7:
     # Win7 32 位由 x86_64 宿主的 kylin-x86 MinGW 交叉构建；ARM64 worker 上脚本自行跳过。
     runs-on: wunder-offline

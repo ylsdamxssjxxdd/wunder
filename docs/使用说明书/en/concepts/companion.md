@@ -9,7 +9,7 @@ source_docs:
   - crates/wunder-runtime/src/services/companions.rs
   - crates/wunder-runtime/src/api/companions.rs
   - crates/wunder-runtime/src/api/admin/resource_admin.rs
-  - frontend-slint/src/companion_sprite.rs
+  - crates/wunder-desktop/frontend/src/companion_sprite.rs
   - crates/wunder-desktop/native_companion_overlay.rs
 updated_at: 2026-10-16
 ---

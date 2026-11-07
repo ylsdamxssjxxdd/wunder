@@ -471,11 +471,101 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-android-arm64:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space for the Android build
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Rust + Skia + Gradle caches and the 350 MB APK need more room than
+          # the preinstalled dotnet/ghc trees leave behind.
+          sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platforms;android-36
+            build-tools;36.0.0
+            ndk;28.2.13676358
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: aarch64-linux-android
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Download Android runtime inputs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p android-runtime
+          gh release download android-runtime --repo "${GITHUB_REPOSITORY}" \
+            --pattern 'wunder-android-runtime-arm64.tar.gz' \
+            --pattern 'SHA256SUMS' \
+            --dir android-runtime --clobber || {
+            echo 'android-runtime release is missing its assets;' >&2
+            echo 'rebuild them with packaging/android/pack-runtime.sh --publish' >&2
+            exit 1
+          }
+          (cd android-runtime && sha256sum -c SHA256SUMS)
+          tar -xzf android-runtime/wunder-android-runtime-arm64.tar.gz -C android-runtime
+          test -f android-runtime/assets/ubuntu/rootfs.tar.xz
+          test -f android-runtime/assets/ubuntu/packs/common.tar.xz
+          file -b android-runtime/jniLibs/arm64-v8a/liboperit_proot.so | grep -qi aarch64
+      - name: Stage runtime inputs and debug keystore
+        shell: bash
+        run: |
+          set -euo pipefail
+          app=crates/wunder-android/android/app/src/main
+          mkdir -p "$app/assets" "$app/jniLibs/arm64-v8a" "$HOME/.android"
+          cp -a android-runtime/assets/. "$app/assets/"
+          cp -a android-runtime/jniLibs/arm64-v8a/. "$app/jniLibs/arm64-v8a/"
+          # Pinned debug keystore: every nightly APK keeps the same signature,
+          # so a new nightly installs over the previous one without uninstall.
+          cp -f packaging/android/debug.keystore "$HOME/.android/debug.keystore"
+      - name: Build arm64 debug APK
+        shell: bash
+        env:
+          WUNDER_ANDROID_ABIS: arm64-v8a
+        run: |
+          set -euo pipefail
+          export GRADLE="$(command -v gradle)"
+          bash builders/build-android-arm64.sh
+      - name: Verify arm64 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          cp -f target/android/dist/android-arm64/wunder-android-*.apk release-assets/
+          python3 packaging/gitea/ci/verify.py release-assets android-arm64
+          apksigner="$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner | sort -V | tail -1)"
+          "$apksigner" verify release-assets/*.apk
+          ls -lh release-assets
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-arm64
+          path: release-assets/wunder-android-*.apk
+          if-no-files-found: error
+          retention-days: 7
+
   release:
     needs:
       - prepare
       - build-windows-win7-x86
       - build-linux
+      - build-android-arm64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -491,30 +581,42 @@ jobs:
           pattern: installer-*
           path: installer-assets
           merge-multiple: true
-      - name: Verify three desktop programs and three installers
+      - name: Download Android artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: android-arm64
+          path: android-assets
+      - name: Verify three desktop programs, three installers and one APK
         shell: bash
         run: |
           set -euo pipefail
           mapfile -t desktops < <(find desktop-assets -type f -maxdepth 2 | sort)
           mapfile -t installers < <(find installer-assets -type f -maxdepth 2 | sort)
+          mapfile -t android_apks < <(find android-assets -type f -maxdepth 2 | sort)
           # List before asserting: a bare exit 1 cannot say which form drifted.
           printf 'desktop programs (%d):\n' "${#desktops[@]}"
           printf '%s\n' "${desktops[@]}"
           printf 'installers (%d):\n' "${#installers[@]}"
           printf '%s\n' "${installers[@]}"
-          # 3+3 = one Windows program and setup, plus the portable and the .run
-          # for each Linux arch. Pin every slot by name, not just the totals, so
-          # an extra or missing form fails with the slot it belongs to.
+          printf 'android APKs (%d):\n' "${#android_apks[@]}"
+          printf '%s\n' "${android_apks[@]}"
+          # 3+3+1 = one Windows program and setup, plus the portable and the
+          # .run for each Linux arch, plus the Android arm64 APK. Pin every
+          # slot by name, not just the totals, so an extra or missing form
+          # fails with the slot it belongs to.
           test "${#desktops[@]}" -eq 3
           test "${#installers[@]}" -eq 3
+          test "${#android_apks[@]}" -eq 1
           mapfile -t win_desktop < <(find desktop-assets -maxdepth 1 -type f -name 'wunder-desktop-*-win7-x86.exe')
           mapfile -t portables < <(find desktop-assets -maxdepth 1 -type f -name 'wunder-desktop-*.portable')
           mapfile -t win_setup < <(find installer-assets -maxdepth 1 -type f -name 'wunder-desktop-*-win7-x86-setup.exe')
           mapfile -t linux_runs < <(find installer-assets -maxdepth 1 -type f -name 'wunder-desktop-*.run')
+          mapfile -t android_apk < <(find android-assets -maxdepth 1 -type f -name 'wunder-android-*-arm64.apk')
           test "${#win_desktop[@]}" -eq 1
           test "${#portables[@]}" -eq 2
           test "${#win_setup[@]}" -eq 1
           test "${#linux_runs[@]}" -eq 2
+          test "${#android_apk[@]}" -eq 1
       - name: Reset nightly release
         shell: bash
         env:
@@ -528,7 +630,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -fa nightly -m "Desktop build ${GITHUB_SHA}" "${GITHUB_SHA}"
           git push origin refs/tags/nightly --force
-      - name: Publish three desktop programs and three installers
+      - name: Publish three desktop programs, three installers and one APK
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -536,9 +638,9 @@ jobs:
           set -euo pipefail
           gh release create nightly \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "Wunder Desktop & Installers（Win7 x86 / Ubuntu 18.04 x86_64 / Ubuntu 18.04 ARM64）" \
-            --notes "发布三个桌面程序与三个安装包：Windows 7 32 位、Ubuntu 18.04 x86_64、Ubuntu 18.04 ARM64。安装包默认安装桌面版和命令行到用户目录的 .wunder，补充组件可选。" \
+            --title "Wunder Desktop, Android & Installers（Win7 x86 / Ubuntu 18.04 x86_64 / Ubuntu 18.04 ARM64 / Android arm64）" \
+            --notes "发布三个桌面程序、三个安装包与安卓 arm64 APK：Windows 7 32 位、Ubuntu 18.04 x86_64、Ubuntu 18.04 ARM64、Android 8.0+。安装包默认安装桌面版和命令行到用户目录的 .wunder，补充组件可选；APK 为固定调试签名，可直接覆盖安装旧版。" \
             --prerelease --latest=false --target "${GITHUB_SHA}"
-          find desktop-assets installer-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do
+          find desktop-assets installer-assets android-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do
             gh release upload nightly "$asset" --repo "${GITHUB_REPOSITORY}" --clobber
           done

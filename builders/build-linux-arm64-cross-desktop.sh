@@ -47,7 +47,7 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-manifest="$repo_root/frontend-slint/Cargo.toml"
+manifest="$repo_root/crates/wunder-desktop/frontend/Cargo.toml"
 require_file "$manifest"
 target="aarch64-unknown-linux-gnu"
 sysroot="${WUNDER_ARM64_SYSROOT:-/}"

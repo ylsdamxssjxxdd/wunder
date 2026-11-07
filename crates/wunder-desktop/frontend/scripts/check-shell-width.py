@@ -15,7 +15,7 @@ import sys
 
 from PIL import Image
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[4]
 OUT = ROOT / "temp_dir" / "shell-width"
 SIDEBAR_BG = (246, 245, 243)
 CARD_BG = (255, 255, 255)
@@ -31,7 +31,7 @@ def render(width, height):
     env = {**os.environ, "SLINT_BACKEND": "software"}
     subprocess.run(
         ["slint-viewer", "--screenshot", str(png), "--size", f"{width}x{height}",
-         "frontend-slint/ui/main.slint"],
+         "crates/wunder-desktop/frontend/ui/main.slint"],
         cwd=ROOT, env=env, check=True, capture_output=True, text=True,
     )
     return png

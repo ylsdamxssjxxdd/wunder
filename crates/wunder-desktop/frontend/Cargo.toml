@@ -5,16 +5,16 @@ edition = "2021"
 rust-version = "1.92"
 publish = false
 
-# Release executable name. The package and directory keep the frontend-slint
-# name; only the shipped program is called wunder-desktop.
+# Release executable name. The package keeps the wunder-frontend-slint name;
+# only the shipped program is called wunder-desktop.
 [[bin]]
 name = "wunder-desktop"
 path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
-wunder-desktop = { path = "../crates/wunder-desktop", default-features = false, features = ["sqlite-storage", "desktop-control"] }
-wunder-runtime = { path = "../crates/wunder-runtime", default-features = false, features = ["sqlite-storage"] }
+wunder-desktop = { path = "..", default-features = false, features = ["sqlite-storage", "desktop-control"] }
+wunder-runtime = { path = "../../wunder-runtime", default-features = false, features = ["sqlite-storage"] }
 slint = { version = "=1.18.0", default-features = false, features = [
   "backend-winit",
   "compat-1-2",
@@ -63,7 +63,7 @@ libc = "0.2"
 [target.'cfg(windows)'.dependencies]
 # Real console for the terminal panel. The winpty library is loaded at run
 # time from the git supplement, so a host without it keeps using pipes.
-wunder-desktop = { path = "../crates/wunder-desktop", default-features = false }
+wunder-desktop = { path = "..", default-features = false }
 windows-sys = { version = "0.52", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dwm",
@@ -126,7 +126,7 @@ winit = { path = "vendor/winit-0.30.2" }
 # Shared Win7 fork (workspace-wide, also used by the Android shell): replaces
 # the Windows 8 PathCchStripPrefix import and widens the clipboard-open retry
 # window.
-arboard = { path = "../patches/win7/arboard-3.7.0-win7" }
+arboard = { path = "../../../patches/win7/arboard-3.7.0-win7" }
 
 tungstenite = { path = "vendor/tungstenite-0.29.0" }
 http = { path = "vendor/http-1.4.0" }

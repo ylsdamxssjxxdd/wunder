@@ -2,8 +2,8 @@
 // the agent uses. Browsing, uploading from the phone and saving a file back to
 // the phone all project from Rust (engine.rs); this file only lays them out.
 
-import { Theme } from "../../../frontend-slint/ui/theme.slint";
-import { Action } from "../../../frontend-slint/ui/components.slint";
+import { Theme } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
+import { Action } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 export struct WorkspaceFile {
@@ -44,12 +44,12 @@ component WorkspaceRow inherits Rectangle {
                 height: 20px;
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
-                source: root.entry.dir ? @image-url("../../../frontend-slint/assets/icons/folder-open.svg")
-                    : root.entry.kind == 1 ? @image-url("../../../frontend-slint/assets/icons/fa-image.svg")
-                    : root.entry.kind == 2 ? @image-url("../../../frontend-slint/assets/icons/fa-film.svg")
-                    : root.entry.kind == 3 ? @image-url("../../../frontend-slint/assets/icons/file-zipper.svg")
-                    : root.entry.kind == 4 ? @image-url("../../../frontend-slint/assets/icons/file-lines.svg")
-                    : @image-url("../../../frontend-slint/assets/icons/file-lines.svg");
+                source: root.entry.dir ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/folder-open.svg")
+                    : root.entry.kind == 1 ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-image.svg")
+                    : root.entry.kind == 2 ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-film.svg")
+                    : root.entry.kind == 3 ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/file-zipper.svg")
+                    : root.entry.kind == 4 ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/file-lines.svg")
+                    : @image-url("../../../crates/wunder-desktop/frontend/assets/icons/file-lines.svg");
                 colorize: root.entry.dir ? Theme.accent-ink : Theme.text-secondary;
                 image-fit: contain;
             }
@@ -77,8 +77,8 @@ component WorkspaceRow inherits Rectangle {
             width: 14px;
             height: 14px;
             source: root.entry.dir
-                ? @image-url("../../../frontend-slint/assets/icons/chevron-right.svg")
-                : @image-url("../../../frontend-slint/assets/icons/ellipsis.svg");
+                ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-right.svg")
+                : @image-url("../../../crates/wunder-desktop/frontend/assets/icons/ellipsis.svg");
             colorize: Theme.muted;
             image-fit: contain;
         }
@@ -178,7 +178,7 @@ export component WorkspacePage inherits Rectangle {
                         width: 34px;
                         height: 34px;
                         icon-size: 17px;
-                        icon: @image-url("../../../frontend-slint/assets/icons/chevron-left.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-left.svg");
                         label: "返回";
                         clicked => { root.back(); }
                     }
@@ -203,7 +203,7 @@ export component WorkspacePage inherits Rectangle {
                         width: 34px;
                         height: 34px;
                         icon-size: 17px;
-                        icon: @image-url("../../../frontend-slint/assets/icons/upload.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/upload.svg");
                         label: "上传文件";
                         clicked => { root.upload(root.path); }
                     }
@@ -211,7 +211,7 @@ export component WorkspacePage inherits Rectangle {
                         width: 34px;
                         height: 34px;
                         icon-size: 16px;
-                        icon: @image-url("../../../frontend-slint/assets/icons/rotate-right.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
                         label: "刷新";
                         enabled: !root.loading;
                         clicked => { root.refresh(); }
@@ -254,7 +254,7 @@ export component WorkspacePage inherits Rectangle {
                         Image {
                             width: 12px;
                             height: 12px;
-                            source: @image-url("../../../frontend-slint/assets/icons/chevron-left.svg");
+                            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-left.svg");
                             colorize: Theme.text-secondary;
                         }
                         Text {
@@ -319,7 +319,7 @@ export component WorkspacePage inherits Rectangle {
                         label: "重试";
                         show-label: true;
                         primary: true;
-                        icon: @image-url("../../../frontend-slint/assets/icons/rotate-right.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
                         clicked => { root.refresh(); }
                     }
                 }
@@ -372,7 +372,7 @@ export component WorkspacePage inherits Rectangle {
                         Image {
                             width: 40px;
                             height: 40px;
-                            source: @image-url("../../../frontend-slint/assets/icons/folder-open.svg");
+                            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/folder-open.svg");
                             colorize: Theme.border-strong;
                             image-fit: contain;
                         }
@@ -445,7 +445,7 @@ export component WorkspacePage inherits Rectangle {
                 Rectangle { height: 1px; background: Theme.border; }
 
                 SheetAction {
-                    icon: @image-url("../../../frontend-slint/assets/icons/log-download.svg");
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/log-download.svg");
                     label: "保存到手机";
                     clicked => {
                         root.sheet-open = false;

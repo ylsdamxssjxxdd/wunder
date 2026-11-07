@@ -10,8 +10,8 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-EXE = ROOT / "frontend-slint/target/debug/wunder-desktop.exe"
+ROOT = Path(__file__).resolve().parents[4]
+EXE = ROOT / "crates/wunder-desktop/frontend/target/debug/wunder-desktop.exe"
 WORK = ROOT / "temp_dir/right-click-repro"
 
 user32 = ctypes.windll.user32

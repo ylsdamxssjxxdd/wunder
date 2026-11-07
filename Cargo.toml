@@ -112,8 +112,8 @@ incremental = false
 incremental = false
 
 # Keep release artifacts (wunder-cli/wunder-server) in the same shape as the
-# standalone frontend-slint workspace: thin LTO and one codegen unit cut most of
-# the code size that the default 16-CGU build leaves behind. Unlike the desktop
+# standalone desktop frontend workspace: thin LTO and one codegen unit cut most
+# of the code size that the default 16-CGU build leaves behind. Unlike the desktop
 # shell this workspace keeps panic=unwind: wunder-runtime and wunder-server rely
 # on catch_unwind for task/request isolation.
 [profile.release]
@@ -131,4 +131,4 @@ codegen-units = 8
 # old-layout html2md declares crate-type dylib/staticlib, which makes CLI
 # builds emit a DLL whose link fails on missing DW2 unwind symbols with
 # rust-lld, and desktop/CLI would otherwise compile different html2md code.
-html2md = { path = "frontend-slint/vendor/html2md-0.2.15" }
+html2md = { path = "crates/wunder-desktop/frontend/vendor/html2md-0.2.15" }

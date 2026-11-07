@@ -6,8 +6,8 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-EXE = ROOT / "frontend-slint/target/debug/examples/context_menu_probe.exe"
+ROOT = Path(__file__).resolve().parents[4]
+EXE = ROOT / "crates/wunder-desktop/frontend/target/debug/examples/context_menu_probe.exe"
 
 user32 = ctypes.windll.user32
 

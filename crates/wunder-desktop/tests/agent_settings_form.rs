@@ -1,6 +1,6 @@
 //! Round-trip contract for the native settings page's `save-agent` action.
 //!
-//! The constants and field set mirror `frontend-slint/src/agent_editor.rs`:
+//! The constants and field set mirror `crates/wunder-desktop/frontend/src/agent_editor.rs`:
 //! the panel sends the twelve editor fields, and a fresh `default_agent` read
 //! must report every one of them back. A façade that cannot persist one of
 //! these fields leaves the settings form silently lossy.

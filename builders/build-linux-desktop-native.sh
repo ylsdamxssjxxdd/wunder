@@ -10,7 +10,7 @@ set -euo pipefail
 # the reference implementation.
 
 repo_root="${WUNDER_REPO_ROOT:-$(cd -- "$(dirname -- "$0")/.." && pwd)}"
-manifest="$repo_root/frontend-slint/Cargo.toml"
+manifest="$repo_root/crates/wunder-desktop/frontend/Cargo.toml"
 max_glibc="${WUNDER_SLINT_LINUX_MAX_GLIBC:-2.27}"
 phase=preflight
 stage_dir=""

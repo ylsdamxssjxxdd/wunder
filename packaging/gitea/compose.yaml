@@ -108,5 +108,12 @@ volumes:
       type: none
       o: bind
       device: ${WUNDER_SDK_PATH:?Run bash load-images.sh to prepare the SDK mount}
+  android:
+    name: ${STACK_PREFIX:-offline-gitea}-android
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${WUNDER_ANDROID_PATH:?Run bash load-images.sh to prepare the Android toolchain mount}
   build-cache:
     name: ${STACK_PREFIX:-offline-gitea}-build-cache

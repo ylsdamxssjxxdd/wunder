@@ -2,7 +2,7 @@
 .gitignore
 target
 **/target
-frontend-slint/target
+crates/wunder-desktop/frontend/target
 node_modules
 node_modules-*
 **/node_modules

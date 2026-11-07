@@ -13,7 +13,7 @@ Rule enforced here: every `ScrollView` must either
     child, which the compiler can measure.
 
 Usage:
-    python frontend-slint/scripts/check-scrollview-content.py [--fix-hint]
+    python crates/wunder-desktop/frontend/scripts/check-scrollview-content.py [--fix-hint]
 
 Exit code 1 lists the offenders with a pointer to the pattern to copy
 (`help_document.slint`, `timeline.slint` transcript scroll).

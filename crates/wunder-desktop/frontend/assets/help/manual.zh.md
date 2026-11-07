@@ -52,7 +52,7 @@ wunder 是多形态的智能体工作台，同一套引擎对外有多个程序�
 | 🚀 | wunder 服务端 | Rust + axum 0.8；PostgreSQL | 用户与智能体管理平台（多租户、用户与单位、智能体应用构建发布、网关接入与调度） | 服务端常驻进程，Docker 部署，HTTP / WebSocket 接入 | Linux / Docker |
 | 🐉 | wunder 管理端 | 原生 HTML + CSS + JavaScript（` web/ `，无构建） | 服务端的治理后台（系统、智能体、调试、文档四组面板） | 浏览器访问，由服务端静态挂载于 ` / ` | 跨平台浏览器 |
 | 🐝 | wunder 云端版 | Vue 3 + TypeScript（Vite 构建，` frontend/ `） | 云端 AI 工作台（服务端的用户端） | 浏览器访问；构建产物 ` frontend/dist ` 由 nginx 容器只读挂载对外服务（默认端口 18001），**不由服务端托管** | 跨平台浏览器 |
-| 🍯 | wunder 桌面版 | Rust + Slint 1.18（默认前端 ` frontend-slint/ `，原生界面、软件渲染）；SQLite | 本地 AI 工作台（主推形态，个人用户默认入口） | 本地桌面进程，同进程原生直调引擎（不经本机网络）；Electron / Tauri 壳已停止维护 | Windows 7 x86 起；Linux（ubuntu18.04 基线）x64 / arm64 AppImage |
+| 🍯 | wunder 桌面版 | Rust + Slint 1.18（默认前端 ` crates/wunder-desktop/frontend/ `，原生界面、软件渲染）；SQLite | 本地 AI 工作台（主推形态，个人用户默认入口） | 本地桌面进程，同进程原生直调引擎（不经本机网络）；Electron / Tauri 壳已停止维护 | Windows 7 x86 起；Linux（ubuntu18.04 基线）x64 / arm64 AppImage |
 | ⚙️ | wunder 命令行 | Rust 终端 TUI（ratatui + crossterm）；SQLite | 手工本地操作入口（终端、脚本化、自动化） | 本地终端进程，同进程直调引擎，支持 JSONL 输出 | Windows 7 起（GNU 工具链）；Linux x64 / arm64（ubuntu18.04 sysroot） |
 
 各形态共享同一引擎（wunder-runtime）与核心（wunder-core）：线程、工具、存储抽象、实时事件和权限语义是同一份代码，差异只在接入层。桌面版与命令行不依赖服务端，可独立运行与分发。

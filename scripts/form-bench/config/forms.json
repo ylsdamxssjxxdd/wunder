@@ -92,7 +92,7 @@
       "name": "桌面版",
       "nameEn": "wunder Desktop",
       "kind": "desktop",
-      "summary": "原生桌面端 frontend-slint（Rust + Slint 单进程，内嵌后端）",
+      "summary": "原生桌面端 crates/wunder-desktop/frontend（Rust + Slint 单进程，内嵌后端）",
       "package": { "kind": "file", "target": "target/release/wunder-desktop.exe" },
       "startup": {
         "mode": "window",
@@ -103,7 +103,7 @@
       "chat": {
         "supported": true,
         "mode": "slint",
-        "note": "Slint 原生帧率需在 frontend-slint 加埋点（见 README 待办 T-chat-native）"
+        "note": "Slint 原生帧率需在 crates/wunder-desktop/frontend 加埋点（见 README 待办 T-chat-native）"
       }
     },
     {

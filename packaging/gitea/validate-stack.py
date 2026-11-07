@@ -114,7 +114,7 @@ PATH="$toolchain:$PATH" rustc --version
         shutil.copy2(root / relative, destination)
     (directory / "Cargo.toml").write_text('''[workspace]
 members = ["crates/wunder-cli"]
-exclude = ["frontend-slint"]
+exclude = ["crates/wunder-desktop/frontend"]
 resolver = "2"
 [workspace.package]
 version = "0.0.0"
@@ -122,15 +122,15 @@ version = "0.0.0"
     (directory / "config").mkdir(parents=True, exist_ok=True)
     (directory / "config" / "app_version.json").write_text('{"version": "0.0.0"}\n', encoding="utf-8")
     for relative, package in (("crates/wunder-cli", "wunder-cli"),
-                              ("frontend-slint", "wunder-frontend-slint")):
+                              ("crates/wunder-desktop/frontend", "wunder-frontend-slint")):
         project = directory / relative
         (project / "src").mkdir(parents=True)
         manifest = '[package]\nname = "' + package + '"\nversion = "0.0.0"\nedition = "2021"\n'
-        if relative == "frontend-slint":
+        if relative == "crates/wunder-desktop/frontend":
             manifest += '\n[[bin]]\nname = "wunder-desktop"\npath = "src/main.rs"\n'
         (project / "Cargo.toml").write_text(manifest, encoding="utf-8")
         (project / "src/main.rs").write_text('fn main() { println!("offline probe"); }\n', encoding="utf-8")
-        lock = project if relative == "frontend-slint" else directory
+        lock = project if relative == "crates/wunder-desktop/frontend" else directory
         (lock / "Cargo.lock").write_text('version = 4\n[[package]]\nname = "' + package
                                          + '"\nversion = "0.0.0"\n', encoding="utf-8")
     environment = dict(os.environ, GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="http.extraHeader",

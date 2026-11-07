@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[4]
 OUT = ROOT / "temp_dir" / "desktop-turn-review"
 
 def run(*args):
@@ -11,9 +11,9 @@ def run(*args):
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
-    run("slint-viewer", "--check", "frontend-slint/ui/main.slint")
+    run("slint-viewer", "--check", "crates/wunder-desktop/frontend/ui/main.slint")
     run("cargo", "test", "-p", "wunder-desktop", "--lib", "native::", "--no-default-features", "--features", "sqlite-storage")
-    run("cargo", "test", "--manifest-path", "frontend-slint/Cargo.toml", "turn_tests", "--bin", "wunder-desktop")
+    run("cargo", "test", "--manifest-path", "crates/wunder-desktop/frontend/Cargo.toml", "turn_tests", "--bin", "wunder-desktop")
     empty = {key: "" for key in ["text", "time", "workflow-detail", "state", "stats-status", "stats-duration", "stats-speed", "stats-context", "stats-quota", "stats-tools", "stats-credits", "avatar-glyph"]}
     empty.update(mine=False, workflow=False, blocks=[], **{"avatar-tone": 0})
     turns = []
@@ -25,7 +25,7 @@ def main():
                 "stats-duration": "1.2s", "stats-speed": "24.0/s", "avatar-glyph": "✦", "avatar-tone": 1}})
     fixture = OUT / "fixture.json"
     fixture.write_text(json.dumps({"turns": turns, "heading": "测试会话", "selected-agent-name": "测试智能体", "right-open": False}, ensure_ascii=False), encoding="utf-8")
-    run("slint-viewer", "--screenshot", str(OUT / "conversation.png"), "--load-data", str(fixture), "--size", "1100x1500", "frontend-slint/ui/main.slint")
+    run("slint-viewer", "--screenshot", str(OUT / "conversation.png"), "--load-data", str(fixture), "--size", "1100x1500", "crates/wunder-desktop/frontend/ui/main.slint")
     (OUT / "analysis.json").write_text(json.dumps({"mode": "native-projection-and-viewer", "passed": True,
         "coverage": ["fixed-pair", "model-rounds", "continuation-history", "stop-late-output", "queue", "compaction", "background-durable-stream", "snapshot-resume", "terminal-drain"],
         "limitations": ["Viewer data is synthetic; durable follow uses isolated SQLite tests without a real model provider."]}, indent=2), encoding="utf-8")

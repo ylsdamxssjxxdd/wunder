@@ -5,7 +5,7 @@ read_when:
   - You are new to wunder and choosing which form to use
   - You want the entry point to the whole manual
 source_docs:
-  - frontend-slint/ui/theme.slint
+  - crates/wunder-desktop/frontend/ui/theme.slint
   - frontend/src/router/index.ts
   - web/index.html
   - crates/wunder-server/src/main.rs

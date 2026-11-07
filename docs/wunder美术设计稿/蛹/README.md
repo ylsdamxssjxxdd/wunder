@@ -1,6 +1,6 @@
 # 蛹 · 桌面端 UI 设计稿
 
-以 `frontend-slint/` 当前实现为事实基线的桌面端视觉规范。用于改稿、重构对照、实现验收和新人理解组件边界，不是营销稿。
+以 `crates/wunder-desktop/frontend/` 当前实现为事实基线的桌面端视觉规范。用于改稿、重构对照、实现验收和新人理解组件边界，不是营销稿。
 
 - 总览窗口：1462 × 866 逻辑像素；preferred：1180 × 740；最小：1024 × 700
 - 分页画布：1600 px 宽；产品 UI 按 1× 逻辑像素绘制，稿面注释独立排版
@@ -31,7 +31,7 @@
 
 1. 使用统一画廊直接拖动大 SVG；支持适宽、适窗、100%、缩放、键盘与离线打开。
 2. 改稿优先复用每页 `<defs>` 的图形与 `01` 的 token，不在页面里发明新的灰色、字号或控件状态。
-3. 需要落地到代码时，仍以 `frontend-slint/ui/design_tokens.slint` 为唯一变量来源；本稿不是运行时代码。
+3. 需要落地到代码时，仍以 `crates/wunder-desktop/frontend/ui/design_tokens.slint` 为唯一变量来源；本稿不是运行时代码。
 4. 改完运行 `python scripts/sync_art.py`，刷新 Web 文档、统一画廊与蛹内嵌预览图。
 5. 生产图标本就混用 Font Awesome 实心与仓库线性 SVG，不得再写成“统一 1.7px 线性重绘”。新增或替换图标必须核对真实资产、viewBox、光学尺寸与 colorize 行为。
 
@@ -77,17 +77,17 @@
 
 ## 事实来源
 
-- `frontend-slint/ui/design_tokens.slint`、`theme.slint`、`main.slint`
-- `frontend-slint/ui/window_chrome.slint`、`sidebar.slint`、`workspace_files.slint`、`drag_row.slint`
-- `frontend-slint/ui/timeline.slint`、`tool_process.slint`、`status_icon.slint`、`thread_trajectory.slint`
-- `frontend-slint/ui/composer.slint`、`textedit-base.slint`、`text_field.slint`、`settings_page.slint`
-- `frontend-slint/ui/components.slint`、`patch_diff_card.slint`、`workflow_detail.slint`
-- `frontend-slint/ui/markdown.slint`、`activity_card.slint`、`runtime_status.slint`
-- `frontend-slint/src/turn_stats.rs`、`tool_icons.rs`、`demo.rs` 与当前 Slint 软件渲染帧
+- `crates/wunder-desktop/frontend/ui/design_tokens.slint`、`theme.slint`、`main.slint`
+- `crates/wunder-desktop/frontend/ui/window_chrome.slint`、`sidebar.slint`、`workspace_files.slint`、`drag_row.slint`
+- `crates/wunder-desktop/frontend/ui/timeline.slint`、`tool_process.slint`、`status_icon.slint`、`thread_trajectory.slint`
+- `crates/wunder-desktop/frontend/ui/composer.slint`、`textedit-base.slint`、`text_field.slint`、`settings_page.slint`
+- `crates/wunder-desktop/frontend/ui/components.slint`、`patch_diff_card.slint`、`workflow_detail.slint`
+- `crates/wunder-desktop/frontend/ui/markdown.slint`、`activity_card.slint`、`runtime_status.slint`
+- `crates/wunder-desktop/frontend/src/turn_stats.rs`、`tool_icons.rs`、`demo.rs` 与当前 Slint 软件渲染帧
 
 ## 校验
 
 - 所有分页使用 Edge 按原始 1600px 宽渲染，检查文字溢出、卡片遮挡、真实图标与状态。
 - 源文件保留 `assets/app-icon.png` 外链；发布时 `build_docs_site.py` 自动内嵌为 data URI，避免 `<img>` 加载时丢失嵌套资源。
-- 蛹帮助手册使用 `render_art_previews.py` 生成的 1200px PNG，输出只在 `frontend-slint/assets/help/art`；不要手工编辑生成图。
+- 蛹帮助手册使用 `render_art_previews.py` 生成的 1200px PNG，输出只在 `crates/wunder-desktop/frontend/assets/help/art`；不要手工编辑生成图。
 - 若在 Inkscape/Figma 中编辑，保留 `defs` 与命名分组；避免将文字转曲，除非确定不再修改文案。

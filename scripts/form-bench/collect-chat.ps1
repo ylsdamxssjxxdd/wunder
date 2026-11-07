@@ -5,7 +5,7 @@
     playwright  run a Playwright perf spec (frontend/tests/e2e/*) and report the
                 spec wall-clock duration (ms) plus pass/fail
     slint       placeholder: native Slint frame metrics require instrumentation
-                inside frontend-slint (see README todo T-chat-native)
+                inside crates/wunder-desktop/frontend (see README todo T-chat-native)
     none        metric is not applicable to this form (e.g. server / cli)
 
   Always emits a record; value = $null with details.error / details.note when the
@@ -78,7 +78,7 @@ try {
     }
     "slint" {
       $details.supported = $true
-      $details.note = "native Slint frame metrics need instrumentation in frontend-slint (todo T-chat-native)"
+      $details.note = "native Slint frame metrics need instrumentation in crates/wunder-desktop/frontend (todo T-chat-native)"
     }
     "none" {
       $details.supported = $false

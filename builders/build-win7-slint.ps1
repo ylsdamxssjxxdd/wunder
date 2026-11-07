@@ -11,7 +11,7 @@
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$frontendRoot = Join-Path $repoRoot "frontend-slint"
+$frontendRoot = Join-Path $repoRoot "crates/wunder-desktop/frontend"
 $manifest = Join-Path $frontendRoot "Cargo.toml"
 $target = "i686-win7-windows-gnu"
 . (Join-Path $PSScriptRoot 'win7_host_tools.ps1')

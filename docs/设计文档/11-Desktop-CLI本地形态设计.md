@@ -19,7 +19,7 @@
 | --- | --- |
 | 无参数启动即 `NativeDesktop::start()` → `DesktopArgs::native_defaults()`（`port=0, bridge_only=true, native_runtime=true`），自建 tokio Runtime 并 `DesktopRuntime::init` 同进程 | `crates/wunder-desktop/args.rs:53-67`（已实测） |
 | native 路径无 axum、无 TcpListener：不经本机 HTTP/WS，不拉起 bridge 子进程 | `crates/wunder-desktop/native.rs` |
-| Slint 入口只接受 `None | --native`，其余参数直接报「旧 bridge 参数已移除」 | `frontend-slint/src/main.rs:123-126` |
+| Slint 入口只接受 `None | --native`，其余参数直接报「旧 bridge 参数已移除」 | `crates/wunder-desktop/frontend/src/main.rs:123-126` |
 | 本地能力放 `crates/wunder-desktop/`，以强类型 Rust façade 暴露（`lib.rs` 公开 `args/native/runtime` 三模块 + `NativeDesktop`、事件流、设置等），façade 与 UI 调用点一一对应 | `wunder-desktop/lib.rs:6-24` |
 
 **bridge 只是兼容层**：独立 bridge（默认端口 18123、挂 `build_desktop_router`）仅为既有客户端保留；`lib.rs` 不导出 bridge，只有 bridge bin 才组装它。新能力不得再往 bridge 协议面加。

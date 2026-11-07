@@ -128,7 +128,7 @@ import { reasoningPreview } from './timelineActivity';
 
 /**
  * 云端版时间线的块渲染单元（§7.3 / §7.4，形态对齐桌面端
- * `frontend-slint/ui/timeline.slint` 的 `BodyBlock` / `FoldEntry` / `GroupBar`）：
+ * `crates/wunder-desktop/frontend/ui/timeline.slint` 的 `BodyBlock` / `FoldEntry` / `GroupBar`）：
  * 正文块（全宽、无气泡）与思考/工具批次按投影给定的到达顺序交错铺开。
  *
  * 一轮里最后一段正文之前的中间内容（各轮模型的中间打印、思考、工具批次）折进
