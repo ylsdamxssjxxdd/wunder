@@ -2,7 +2,7 @@
 /**
  * 远程命令的执行流（方案 §4.3 状态机 / §6.4 按需拉取 / §7.3 审批）。
  *
- * 蜂巢侧只走 REST：`POST /interlink/commands` 发起 → 轮询 `GET /interlink/commands/{id}`
+ * 云端版侧只走 REST：`POST /interlink/commands` 发起 → 轮询 `GET /interlink/commands/{id}`
  * 直到终态（实时链路是 WS，本期前端不订阅命令帧）→ 大文件再走 blob 端点。
  * 所有循环都有节奏、超时与 AbortSignal 边界，不做无界重试。
  */

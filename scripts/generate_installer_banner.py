@@ -14,9 +14,27 @@ from pathlib import Path
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
-MARK = ROOT / "images" / "pupa.png"
+MARK = ROOT / "images" / "eva01-head.png"
 OUT = ROOT / "images" / "wizard-banner.png"
-FONT_DIR = Path("C:/Windows/Fonts")
+
+# Windows keeps the original YaHei faces; Linux builds fall back to Noto CJK.
+BOLD_FONTS = (
+    Path("C:/Windows/Fonts/msyhbd.ttc"),
+    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
+    Path("/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc"),
+)
+REGULAR_FONTS = (
+    Path("C:/Windows/Fonts/msyh.ttc"),
+    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+    Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+)
+
+
+def load_font(candidates: tuple[Path, ...], size: int) -> ImageFont.FreeTypeFont:
+    for path in candidates:
+        if path.exists():
+            return ImageFont.truetype(str(path), size)
+    raise FileNotFoundError(f"no usable font among {candidates}")
 
 W, H = 328, 628
 
@@ -118,8 +136,8 @@ def mark() -> Image.Image:
 def text() -> Image.Image:
     layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
-    bold = ImageFont.truetype(str(FONT_DIR / "msyhbd.ttc"), 46)
-    regular = ImageFont.truetype(str(FONT_DIR / "msyh.ttc"), 21)
+    bold = load_font(BOLD_FONTS, 46)
+    regular = load_font(REGULAR_FONTS, 21)
 
     draw.text((W // 2, 400), "心舰", font=bold, fill=INK, anchor="mm")
     word = "W U N D E R"

@@ -10,17 +10,17 @@
 
 | 生产入口 | 旧行为观测 | 修复版 |
 | --- | --- | --- |
-| 蛹取消终态与 Timeline.finish | 工具仍为运行态 | 工具非成功结清 |
-| 蛹英文错误 | `failed()` 为 false | `failed()` 为 true |
-| 蛹失败终态后 final | 状态被改成任务完成 | 保留失败且拒绝迟到正文 |
-| 蛹 restore_folds | 终态仍保留 `process_paged=true` 与运行工具 | 最新页失效，新模型身份拒绝旧响应 |
+| 桌面版取消终态与 Timeline.finish | 工具仍为运行态 | 工具非成功结清 |
+| 桌面版英文错误 | `failed()` 为 false | `failed()` 为 true |
+| 桌面版失败终态后 final | 状态被改成任务完成 | 保留失败且拒绝迟到正文 |
+| 桌面版 restore_folds | 终态仍保留 `process_paged=true` 与运行工具 | 最新页失效，新模型身份拒绝旧响应 |
 | TUI 语义失败 / transport Error 后 Done | 实际 `Some(Finished)`，期望 `Some(Failed)` | 失败保持；活动订阅尚未关闭时条目已优先失败 |
 | TUI 未完成普通工具卡 | 可见文本仍是调用中，未出现非成功结论 | 普通工具、读取组、命令和补丁显示失败或结果未知 |
 | exec failed terminal | `saw_error()` 仍为 false | 语义失败被保留 |
 | exec 普通工具缺失结果 | `open_items` 非空 | finish 关闭，且不伪造成功 |
-| 蛹目录旧快照 | 用户提交后的旧 `done` 目录行立即替换本地热状态并触发完成提示 | 状态版本栅栏保留本地 `请求中`/运行状态；直接终态才提示，后台目录完成仍可提示 |
+| 桌面版目录旧快照 | 用户提交后的旧 `done` 目录行立即替换本地热状态并触发完成提示 | 状态版本栅栏保留本地 `请求中`/运行状态；直接终态才提示，后台目录完成仍可提示 |
 
-修复版定向回归共两组各 23 项通过：蛹 turn_tests 18 项（另显式跳过一个既有失败项）与 chat_process 5 项；舵机新 TUI 5 项、exec_events 9 项与 thread_registry 9 项。本次目录状态投影纯回归 6 项通过；它直接驱动生产 `StatusProjection`，覆盖本地提交、旧目录完成、直接终态、后台线程完成、下一次目录读取以及失败/停止终态保护。新增回归合计 21 项，其他为已有邻接测试。Slint 主窗口编译检查通过，静态组件截图已目视检查；修改 Rust 文件自身格式与 `git diff --check` 通过。
+修复版定向回归共两组各 23 项通过：桌面版 turn_tests 18 项（另显式跳过一个既有失败项）与 chat_process 5 项；命令行新 TUI 5 项、exec_events 9 项与 thread_registry 9 项。本次目录状态投影纯回归 6 项通过；它直接驱动生产 `StatusProjection`，覆盖本地提交、旧目录完成、直接终态、后台线程完成、下一次目录读取以及失败/停止终态保护。新增回归合计 21 项，其他为已有邻接测试。Slint 主窗口编译检查通过，静态组件截图已目视检查；修改 Rust 文件自身格式与 `git diff --check` 通过。
 
 ## 最终全量结果
 
@@ -31,7 +31,7 @@ wunder-cli:    473 passed; 15 failed; 0 ignored
 
 本轮新增终态回归在全量中也通过。全量失败不被隐藏，不通过删测、放松断言或修改无关实现强行变绿。
 
-### 蛹失败项
+### 桌面版失败项
 
 这些相同失败在旧行为对照运行也出现，但对照不是纯 HEAD 全量验收：
 
@@ -44,7 +44,7 @@ wunder-cli:    473 passed; 15 failed; 0 ignored
 - `timeline::tests::process_children_patch_in_place_and_keep_folds_on_history_refresh`：原有过程展开断言。
 - `workspace_files::tests::listing_projection_preserves_collapse_selection_and_rejects_old_results`：Slint 平台跨测试线程初始化。
 
-### 舵机失败项
+### 命令行失败项
 
 以下为当前工作区全量观测，不声明已经逐项在纯 HEAD 复验：
 
@@ -66,7 +66,7 @@ wunder-cli:    473 passed; 15 failed; 0 ignored
 
 ### 补充底层检查
 
-扩大检查时也运行了桌面 native 单测组，观测 96 通过、6 失败，涉及未冻结提示词、单线程 Tokio 中的 `block_in_place`、Windows 路径与目标 follower 结清预期。本补丁没有修改这些 façade/目标领域实现，未将该组算作通过，也未据此宣称蛹完整链路已被形式化证明。
+扩大检查时也运行了桌面 native 单测组，观测 96 通过、6 失败，涉及未冻结提示词、单线程 Tokio 中的 `block_in_place`、Windows 路径与目标 follower 结清预期。本补丁没有修改这些 façade/目标领域实现，未将该组算作通过，也未据此宣称桌面版完整链路已被形式化证明。
 
 ## 2026-10-27 增补：状态相位与过程分页游标
 
@@ -101,7 +101,7 @@ wunder-cli:    473 passed; 15 failed; 0 ignored
 ## 重新运行全量
 
 ```powershell
-cargo test --manifest-path frontend-slint/Cargo.toml --bin wunder-frontend-slint -- --test-threads=1
+cargo test --manifest-path frontend-slint/Cargo.toml --bin wunder-desktop -- --test-threads=1
 cargo test -p wunder-cli --bin wunder-cli -- --test-threads=1
 ```
 

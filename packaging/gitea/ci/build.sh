@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 在套件的任务容器里离线构建蛹（wunder）的 Linux 桌面/命令行与 Win7 32 位产物。
+# 在套件的任务容器里离线构建桌面版（wunder）的 Linux 桌面/命令行与 Win7 32 位产物。
 # 宿主可以是 x86_64 或 ARM64：交叉目标由 SDK 里的交叉工具链完成，不需要 QEMU。
 ci_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 case "${ARCH:?ARCH is required}" in
-    arm64|amd64|win7-x86) ;;
-    *) echo 'Only arm64, amd64 and win7-x86 are supported.' >&2; exit 2 ;;
+    arm64|x64|win7-x86) ;;
+    *) echo 'Only arm64, x64 and win7-x86 are supported.' >&2; exit 2 ;;
 esac
 host_arch="$(uname -m)"
 case "$host_arch" in
@@ -50,7 +50,7 @@ fi
 export WUNDER_OUTPUT_DIR="$PWD/release-assets"
 export WUNDER_CLI_OUTPUT_DIR="$PWD/release-assets"
 export CARGO_BUILD_JOBS="${WUNDER_BUILD_JOBS:-4}"
-chmod +x builders/linux_arm64_sysroot_cc.sh builders/linux-amd64-cross-cc.sh 2>/dev/null || true
+chmod +x builders/linux_arm64_sysroot_cc.sh builders/linux-x64-cross-cc.sh 2>/dev/null || true
 
 if [[ "$ARCH" == win7-x86 ]]; then
     # Tier 3 目标：Desktop 与 CLI 都用 build-std 从 SDK 内的 rust-src 重建标准库。
@@ -81,13 +81,18 @@ if [[ "$ARCH" != win7-x86 ]]; then
     # 与 GitHub 发布同形：Linux 每架构交桌面归档 + .portable + .run 三件，
     # 裸 CLI 与组包留下的校验件不进 Release（GitHub 的产物通配也收不到它们）。
     # 补充包是 .run 的必需输入，离线端只复用套件预置包，先复核 SHA256 再用。
-    pack="$WUNDER_OFFLINE_ROOT/supplement-prebuilt/$ARCH/wunder-supplement-linux-$ARCH.tar.gz"
+    # 补充包沿用已发布的 amd64/arm64 文件名；发行物架构 token 用 x64。
+    case "$ARCH" in
+        x64) supplement_arch=amd64 ;;
+        *) supplement_arch="$ARCH" ;;
+    esac
+    pack="$WUNDER_OFFLINE_ROOT/supplement-prebuilt/$supplement_arch/wunder-supplement-linux-$supplement_arch.tar.gz"
     [[ -s "$pack" && -s "$pack.sha256" ]] || {
         echo "套件预置补充包缺失: $pack（在准备机重产并重新导出套件）" >&2
         exit 2
     }
     ( cd "$(dirname "$pack")" && sha256sum --check --strict "$(basename "$pack").sha256" )
-    desktop="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-$ARCH.tar.gz" -print -quit)"
+    desktop="$(find release-assets -maxdepth 1 -name "wunder-desktop-*-linux-$ARCH.tar.gz" -print -quit)"
     cli="$(find release-assets -maxdepth 1 -name "wunder-cli-*-linux-$ARCH" -print -quit)"
     [[ -n "$desktop" && -n "$cli" ]] || { echo "桌面归档或 CLI 缺失: desktop=$desktop cli=$cli" >&2; exit 2; }
     bash builders/pack-portable.sh -a "linux-$ARCH" --desktop-archive "$desktop" --output-dir release-assets
@@ -96,7 +101,7 @@ if [[ "$ARCH" != win7-x86 ]]; then
     sample="$cache/wunder-cli-$ARCH.bin"
     mv -f -- "$cli" "$sample"
     # 桌面构建会同时留下裸 ELF 与 AppDir 归档；GitHub 只收归档，松散二进制一并转存缓存卷。
-    find release-assets -maxdepth 1 -type f -name "wunder-frontend-slint-*-linux-$ARCH" \
+    find release-assets -maxdepth 1 -type f -name "wunder-desktop-*-linux-$ARCH" \
         -exec mv -f -- {} "$cache/" \;
     # 组包脚本会就地留下 .sha256 与 .manifest.json，一并转存到缓存卷，避免混进附件。
     find release-assets -maxdepth 1 -type f \( -name '*.sha256' -o -name '*.manifest.json' \) \
@@ -112,7 +117,7 @@ else
     # 交接目录每次重建，只留本次运行的输入，避免上一轮的版本混进组包。
     rm -rf "$cache/installer-inputs"
     mkdir -p "$cache/installer-inputs"
-    find release-assets -maxdepth 1 -name 'wunder-frontend-slint-*-win7-x86.exe' \
+    find release-assets -maxdepth 1 -name 'wunder-desktop-*-win7-x86.exe' \
         -exec cp -f -- {} "$cache/installer-inputs/" \;
     if [[ -f "$sample" ]]; then
         cp -f -- "$sample" "$cache/installer-inputs/wunder-cli-win7-x86.exe"

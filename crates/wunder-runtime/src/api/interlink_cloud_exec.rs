@@ -3,7 +3,7 @@
 //!
 //! A local client that targets `cloud` does not go through a tunnel - the
 //! server runs the action with its OWN engine services (the same handlers the
-//! 蜂巢 web plane uses) and only borrows the ledger for idempotency, audit and
+//! 云端版 web plane uses) and only borrows the ledger for idempotency, audit and
 //! a uniform result shape. Nothing here invents new execution semantics: every
 //! kind is answered by `services::interlink::client::execute`, the exact code a
 //! local node runs.

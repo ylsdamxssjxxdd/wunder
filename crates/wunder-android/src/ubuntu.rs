@@ -126,6 +126,31 @@ mod android {
         string_method("shellPath").unwrap_or_default()
     }
 
+    /// Absolute path of the proot python wrapper; empty until installed.
+    pub fn python_path() -> String {
+        string_method("pythonPath").unwrap_or_default()
+    }
+
+    fn boolean_method(name: &str) -> Option<bool> {
+        let class = class()?;
+        android_host::with_app(|env, _| -> Option<bool> {
+            let value = env
+                .call_static_method(as_class(class), name, "()Z", &[])
+                .ok()?;
+            value.z().ok()
+        })?
+    }
+
+    /// True when the optional browser overlay is installed.
+    pub fn browser_installed() -> bool {
+        boolean_method("browserInstalled").unwrap_or(false)
+    }
+
+    /// Guest path of the bundled Chromium after entering proot.
+    pub fn browser_executable() -> String {
+        string_method("browserExecutablePath").unwrap_or_default()
+    }
+
     pub fn snapshot() -> Option<Snapshot> {
         let raw = string_method("snapshot")?;
         let mut parts = raw.split('\u{1f}');
@@ -145,7 +170,7 @@ mod android {
 }
 
 #[cfg(target_os = "android")]
-pub use android::{bind, install, shell_path, snapshot};
+pub use android::{bind, browser_executable, browser_installed, install, python_path, shell_path, snapshot};
 
 #[cfg(not(target_os = "android"))]
 pub fn bind() {}
@@ -153,6 +178,18 @@ pub fn bind() {}
 pub fn install() {}
 #[cfg(not(target_os = "android"))]
 pub fn shell_path() -> String {
+    String::new()
+}
+#[cfg(not(target_os = "android"))]
+pub fn python_path() -> String {
+    String::new()
+}
+#[cfg(not(target_os = "android"))]
+pub fn browser_installed() -> bool {
+    false
+}
+#[cfg(not(target_os = "android"))]
+pub fn browser_executable() -> String {
     String::new()
 }
 #[cfg(not(target_os = "android"))]

@@ -98,11 +98,11 @@ Thread listing pagination caps at 100, and keyword search scans at most 10 pages
 
 ## Interlink
 
-The realtime surface between local devices (Pupa, Helm) and the cloud is interlink, which differs from the client WebSocket above:
+The realtime surface between local devices (Desktop, CLI) and the cloud is interlink, which differs from the client WebSocket above:
 
 - **Local nodes are outbound-only**: they open no listening port. The local side initiates a single long connection, and the control, data, and command planes all share it.
 - **Shadow projection**: the cloud holds a projection of the local threads and workspace directories. Writes are gated on a live channel; once the channel expires, no new shadow is written.
 - **Command ledger and approvals**: commands, confirmations, events, and results are all recorded. Risk is tiered L0–L3; `tool.exec` and `agent.spawn` are L3, the default device capability set excludes L3, and L3 approvals cannot be remembered.
-- Interlink governance currently exposes only backend interfaces; **the Bridge has no interlink panel**.
+- Interlink governance currently exposes only backend interfaces; **the Admin has no interlink panel**.
 
 Details and protocol are in [Interlink](/docs/en/capabilities/interlink/).

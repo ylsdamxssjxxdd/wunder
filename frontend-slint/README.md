@@ -4,7 +4,7 @@
 
 后端继续复用共享 AppState、SQLite、ThreadRuntime、工具权限与执行链路。默认数据目录是程序旁的 `WUNDER_TEMPD` 和 `WUNDER_WORK`，兼容已有桌面数据；模型供应商与外部工具自身仍按各自网络协议调用。
 
-同一安装位置只运行一个蛹：再次双击会呼出原有主窗口，包括最小化或隐藏到托盘的窗口，不重复启动后端；启动期间的呼出请求也会保留。不同目录的安装副本可独立运行，互不抢占窗口。实例标识使用规范化的程序路径；便携包使用启动文件路径而非解压后的程序路径。退出或进程崩溃后实例锁自动释放。该机制不开放 TCP/HTTP 端口，不影响隔离的冒烟检查。
+同一安装位置只运行一个桌面版：再次双击会呼出原有主窗口，包括最小化或隐藏到托盘的窗口，不重复启动后端；启动期间的呼出请求也会保留。不同目录的安装副本可独立运行，互不抢占窗口。实例标识使用规范化的程序路径；便携包使用启动文件路径而非解压后的程序路径。退出或进程崩溃后实例锁自动释放。该机制不开放 TCP/HTTP 端口，不影响隔离的冒烟检查。
 
 ## 运行与预览
 
@@ -14,7 +14,7 @@ slint-viewer --check frontend-slint/ui/main.slint
 slint-viewer --screenshot frontend-slint/artifacts/preview.png --size 1360x820 frontend-slint/ui/main.slint
 ```
 
-界面包含聊天、专家、工具、文件工作区、用户世界（联系人/普通群组）、定时任务、系统设置/模型配置，沿用 TS 浅色蜂巢配色；没有蜂群、编排和深色切换入口。聊天右侧工作目录与独立文件页共用同一容器根和 native façade。
+界面包含聊天、专家、工具、文件工作区、用户世界（联系人/普通群组）、定时任务、系统设置/模型配置，沿用 TS 浅色云端版配色；没有蜂群、编排和深色切换入口。聊天右侧工作目录与独立文件页共用同一容器根和 native façade。
 
 - 聊天：加载最近 100 个会话及当前会话最近 100 条记录，支持新建、切换、草稿隔离、刷新、原生内存通道流式输出、停止和排队事件回读。输入栏可区域截图、全屏截图以及录音转写；录音在 Windows 使用 Win7 兼容的 WinMM、Linux 使用 ALSA，最多 120 秒，生成 WAV 后直接调用同进程 ASR runtime，并将结果放回当前会话草稿。消息以轻量文本块每 33 ms 合并更新，复制保留原文。单条气泡最多展示前 16 KiB/160 行，避免老系统软件渲染坐标溢出；原文缓冲最多 8 MiB，超过时提示从历史查看。发送过程中禁止重复提交和会话切换；若请求超时，请先刷新确认结果再重发。
 - 智能体：读取默认智能体和已有智能体，支持复制默认配置创建智能体；消息页新建会话时使用当前选中的智能体；支持保存名称、描述、多行系统提示词和模型配置键。留空模型键继承默认值，默认专家模型在系统设置中调整。已开始线程的提示词仍由后端保持冻结。
@@ -33,7 +33,7 @@ slint-viewer --screenshot frontend-slint/artifacts/preview.png --size 1360x820 f
 隔离原生联调（需要 Python `psutil`，输出目录必须不存在）：
 
 ```powershell
-python frontend-slint/scripts/check-native.py --ui frontend-slint/target/release/wunder-frontend-slint.exe --output target/frontend-slint/native-check
+python frontend-slint/scripts/check-native.py --ui frontend-slint/target/release/wunder-desktop.exe --output target/frontend-slint/native-check
 ```
 
 脚本准备独立 SQLite、工作目录和本机测试模型，检查智能体创建/编辑/归属、工具目录、模型密钥保留/默认项、工作目录设置/预览/越界拒绝，以及未知实体拒绝、启动前停止、同线程排队、订阅释放后的后端完成、长流完整性、历史回读、停止、输出期间输入/导航/停止自动滚动、退出，以及没有本机监听和 bridge 子进程。输出包含 `smoke.txt`、`stream-metrics.json` 与截图。UI 更新耗时不包含全部渲染/排版时间，Win7 真机流畅性仍需单独验证。`--native-smoke` 只接受已准备配置的隔离目录。
@@ -57,7 +57,7 @@ powershell -ExecutionPolicy Bypass -File builders/build-win7-offline.ps1 -CargoC
 
 2026-09-23 完整原生 Win7 x86 Release 构建与 PE 门禁通过，产物约 76.6 MiB。该 32 位产物在当前 Windows 主机的隔离回归通过（`target/frontend-slint/native-win7-check-20260923-a/`）：聊天与全部已接入页面、配置重启回读，50,999 字节、184 次刷新、最大 UI 投影应用 1.010 ms、积压 30/128、峰值工作集约 70.6 MiB。无参数启动、重启及启动中关闭另经 `target/frontend-slint/native-win7-launch-20260923-a/` 验证，未创建 bridge 子进程或本机监听。**尚未在 Win7 真机执行**；编译、导入门禁及当前系统运行结果不能替代真机验证。
 
-Release 输出：`target/frontend-slint/dist/win7-x86/wunder-frontend-slint-0.2.0-win7-x86.exe`。构建脚本会检查最终 PE 是否为 i386，并拒绝 Win7 不支持的 WinRT/API Set 导入。
+Release 输出：`target/frontend-slint/dist/win7-x86/wunder-desktop-0.2.0-win7-x86.exe`。构建脚本会检查最终 PE 是否为 i386，并拒绝 Win7 不支持的 WinRT/API Set 导入。
 
 ## 原生冒烟检查
 
@@ -66,11 +66,11 @@ Release 输出：`target/frontend-slint/dist/win7-x86/wunder-frontend-slint-0.2.
 模型生命周期专项回归使用独立 `WUNDER_HOME` 和共享模型配置，不访问日常配置：
 
 ```powershell
-python frontend-slint/scripts/check-native.py --ui frontend-slint/target/debug/wunder-frontend-slint.exe --output target/model-settings-check --models-only
+python frontend-slint/scripts/check-native.py --ui frontend-slint/target/debug/wunder-desktop.exe --output target/model-settings-check --models-only
 ```
 
 ```powershell
-wunder-frontend-slint-0.2.0-win7-x86.exe --smoke-check frontend-slint/artifacts/native
+wunder-desktop-0.2.0-win7-x86.exe --smoke-check frontend-slint/artifacts/native
 ```
 
 它会生成 `smoke.txt` 和各页面的浅色截图，并通过真实指针事件验证侧边栏单击切换，再检查输入限制、会话隔离、任务切换、有界历史、新任务、专家编辑、模型编辑和默认项切换。
@@ -78,7 +78,7 @@ wunder-frontend-slint-0.2.0-win7-x86.exe --smoke-check frontend-slint/artifacts/
 无参数启动、重启和关闭回归（需要 Python `psutil`，输出目录必须尚不存在）：
 
 ```powershell
-python frontend-slint/scripts/check-launch.py --ui frontend-slint/target/release/wunder-frontend-slint.exe --output target/frontend-slint/native-launch-check
+python frontend-slint/scripts/check-launch.py --ui frontend-slint/target/release/wunder-desktop.exe --output target/frontend-slint/native-launch-check
 ```
 
 脚本把 EXE 复制到隔离目录，验证不带参数即可启动、无子进程及监听、正常关闭、重启和启动中关闭。即使遗留配置启用了 LAN 发现，原生 UI 也不会启动本地控制监听。
@@ -86,7 +86,7 @@ python frontend-slint/scripts/check-launch.py --ui frontend-slint/target/release
 单实例与窗口唤醒专项回归（Windows，使用独立数据目录和两个不同安装位置）：
 
 ```powershell
-python frontend-slint/scripts/check-single-instance.py --ui frontend-slint/target/debug/wunder-frontend-slint.exe --output target/frontend-slint/single-instance-check
+python frontend-slint/scripts/check-single-instance.py --ui frontend-slint/target/debug/wunder-desktop.exe --output target/frontend-slint/single-instance-check
 ```
 
 覆盖启动中重复打开、连续呼出、最小化与隐藏恢复、前台焦点、多目录隔离、修改数据目录不绕过单实例，以及异常退出后重启；不访问日常配置。
@@ -95,10 +95,10 @@ python frontend-slint/scripts/check-single-instance.py --ui frontend-slint/targe
 
 Linux x86_64 与 ARM64 桌面版使用 Ubuntu 18.04/glibc 2.27 作为构建基线，AppDir 内携带
 Slint 软件渲染所需的 XCB/X11/XKB 动态库和 `libasound.so.2`。产物是目录归档
-`wunder-slint-<版本>-linux-<架构>.tar.gz`，由两条发布链消费：
+`wunder-desktop-<版本>-linux-<架构>.tar.gz`，由两条发布链消费：
 
-- `build.sh pack`：打成 `.run` 安装包（安装到 `~/.wunder`，同时提供舵机与可选组件）
-- `build.sh portable`：打成单文件免安装包 `wunder-<版本>-<x64|arm64>.portable`
+- `build.sh pack`：打成 `.run` 安装包（安装到 `~/.wunder`，同时提供命令行与可选组件）
+- `build.sh portable`：打成单文件免安装包 `wunder-desktop-<版本>-linux-<x64|arm64>.portable`
 
 两者都在安装或首次启动时解压，不需要 FUSE、`libfuse2` 或 AppImage runtime。
 
@@ -106,7 +106,7 @@ Slint 软件渲染所需的 XCB/X11/XKB 动态库和 `libasound.so.2`。产物�
 wunder 派生镜像只补充 XCB 运行库：
 
 ```bash
-docker build --platform linux/arm64 -t wunder-slint-arm64-ubuntu18:latest -f packaging/docker/Dockerfile.ubuntu18-arm64-slint .
+docker build --platform linux/arm64 -t wunder-builder-arm64-ubuntu18:latest -f packaging/docker/Dockerfile.ubuntu18-arm64-slint .
 ```
 
 ARM64 的桌面构建从 Windows 主机使用统一入口：
@@ -120,7 +120,7 @@ Rust 1.92 和 Cargo vendor 从同级 `Rust-builder/kylin-arm` 挂载，构建完
 
 ```bash
 bash build.sh portable -a linux-arm64
-./target/slint/dist/linux-arm64/wunder-0.2.0-arm64.portable
+./target/slint/dist/linux-arm64/wunder-desktop-0.2.0-linux-arm64.portable
 ```
 
 运行时把 `WUNDER_TEMPD` 和 `WUNDER_WORK` 放到用户数据目录；也可通过 `--temp-root`、
@@ -129,14 +129,14 @@ bash build.sh portable -a linux-arm64
 Win7 本机构建继续使用相邻的 `Rust-builder/win7/offline`；Linux 宿主按架构选择相邻的离线 SDK（ARM64 用 `kylin-arm`，x86_64 用 `kylin-x86`），Windows Docker 交叉构建使用 `kylin-arm`。
 
 构建入口集中在仓库根 `builders/`；`frontend-slint/scripts/` 只保留原生联调与启动回归。
-Linux 入口自动识别宿主：ARM64 主机原生构建全部目标，x86_64 主机原生构建 amd64、交叉构建
+Linux 入口自动识别宿主：ARM64 主机原生构建全部目标，x86_64 主机原生构建 x64、交叉构建
 arm64 与 Win7 x86：
 
 ```bash
 # Linux（ARM64 或 x86_64 宿主）-> Ubuntu 18.04 Desktop AppDir 归档 / CLI ELF
 # Desktop 产出裸 ELF 和同目录的目录归档；CLI 永远是普通 ELF。
-bash build.sh -t desktop -a linux-amd64
-bash build.sh -t cli -a linux-amd64
+bash build.sh -t desktop -a linux-x64
+bash build.sh -t cli -a linux-x64
 bash build.sh -t desktop -a linux-arm64
 bash build.sh -t cli -a linux-arm64
 
@@ -151,16 +151,16 @@ bash build.sh -all
 Windows 主机使用同一个 `build.bat`，Linux/Win32 走 Docker，Win7 留在本地 SDK：
 
 ```powershell
-.\build.bat -Target cli -Arch linux-amd64
-.\build.bat -Target desktop -Arch linux-amd64
+.\build.bat -Target cli -Arch linux-x64
+.\build.bat -Target desktop -Arch linux-x64
 .\build.bat -Target cli -Arch win7-x86
 ```
 
 `build.bat -All` 同时使用 `Rust-builder/kylin-arm` 与 `Rust-builder/win7`；可分别通过 `-KylinBuilderRoot`、`-Win7BuilderRoot` 覆盖，不能用同一目录替代两套工具链。
 
-ARM64 与 amd64 打包都在输出目录创建唯一私有临时目录，完成后原子发布；失败会清理临时文件并保留已有版本。构建缓存分别位于 `target/linux-arm64-ubuntu18-slint`、`target/linux-amd64-ubuntu18-slint` 和 `target/win32-x86-arm64`，与旧桌面壳产物隔离。
+ARM64 与 x64 打包都在输出目录创建唯一私有临时目录，完成后原子发布；失败会清理临时文件并保留已有版本。构建缓存分别位于 `target/linux-arm64-ubuntu18-slint`、`target/linux-x64-ubuntu18-slint` 和 `target/win32-x86-arm64`，与旧桌面壳产物隔离。
 
-Desktop CI 发布 Win7 32 位 EXE、Linux `.run` 安装包与 `-portable` 免安装包。CLI 发布为各目标的普通可执行文件。
+Desktop CI 发布 Win7 32 位 EXE、Linux `.run` 安装包与 `.portable` 免安装包。CLI 发布为各目标的普通可执行文件。
 
 ## 固定轮次回归
 

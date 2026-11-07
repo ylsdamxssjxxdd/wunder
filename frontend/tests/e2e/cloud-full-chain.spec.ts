@@ -15,8 +15,8 @@ const ORIGIN = process.env.ADMIN_E2E_ORIGIN || 'http://127.0.0.1:18020';
 const REPLY = process.env.MOCK_REPLY || '这是 mock 模型回复：收到你的消息了。';
 
 test('G3 全链路：登录 → 工作目录上传 → 发消息 → 时间线回复', async ({ page, request }) => {
-  // 这条用例是**第一个**打开蜂巢主视图的用例时，Vite dev server 要按需编译整棵聊天模块树；
-  // 默认 60s 的单测超时会被冷编译吃掉（实测：单独跑 8–12s 通过，排在舰桥用例之后跑 46s 被超时打断）。
+  // 这条用例是**第一个**打开云端版主视图的用例时，Vite dev server 要按需编译整棵聊天模块树；
+  // 默认 60s 的单测超时会被冷编译吃掉（实测：单独跑 8–12s 通过，排在管理端用例之后跑 46s 被超时打断）。
   // 放宽的是**环境等待**，不是断言口径：回复仍必须在时间线里实时渲染出来才会通过。
   test.setTimeout(180_000);
   const username = `e2e_g3_${Date.now().toString(36)}`;

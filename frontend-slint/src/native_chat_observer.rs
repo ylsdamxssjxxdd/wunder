@@ -1234,7 +1234,7 @@ mod tests {
             kinds.contains(&crate::message_blocks::KIND_IMAGE),
             "kinds: {kinds:?}"
         );
-        // 蛹的本地单根形态下持久化路径是本地绝对路径；它必须同样投影成图片块，
+        // 桌面版的本地单根形态下持久化路径是本地绝对路径；它必须同样投影成图片块，
         // 否则气泡退回贴路径文本。
         let local = wunder_desktop::NativeMessage {
             attachments: vec![wunder_desktop::NativeMessageAttachment {

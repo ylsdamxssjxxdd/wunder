@@ -802,7 +802,7 @@ export component SettingsPage inherits Rectangle {
 
     // ---- built-in agent editor (§9.3 分类 4) ----
     // The personal build owns exactly one agent, so this category is a single
-    // form. Its field set matches 蜂巢's agent panel: name, greeting, extra
+    // form. Its field set matches 云端版's agent panel: name, greeting, extra
     // prompt, tool selection and preset questions. Model, permission mode and
     // the three behaviour switches have no web counterpart, so the record's
     // values round-trip untouched through the shell projection instead.
@@ -959,7 +959,7 @@ export component SettingsPage inherits Rectangle {
                         }
                         SettingsNavItem {
                             visible: root.settings-category-flags[4];
-                            // 空心螺丝刀+扳手，蜂巢 tools 分类同款意象。
+                            // 空心螺丝刀+扳手，云端版 tools 分类同款意象。
                             icon: @image-url("../assets/icons/tools-outline.svg");
                             title: I18n.stc_tools;
                             selected: root.settings-tab == 2;
@@ -1104,7 +1104,7 @@ export component SettingsPage inherits Rectangle {
                                 }
                             }
                             // 软件更新：选定更新源后一键检测并更新全部有新版本的组件
-                            // （蛹本体、舵机与补充包）；状态机在原生侧，这里只渲染阶段
+                            // （桌面版本体、命令行与补充包）；状态机在原生侧，这里只渲染阶段
                             // 并回传一次性请求。
                             SettingsCard {
                                 SettingsCardHeader { title: I18n.st_upd_title; subtitle: I18n.st_upd_subtitle; }
@@ -1294,7 +1294,7 @@ export component SettingsPage inherits Rectangle {
                                 }
                                 SettingRow {
                                     label: I18n.zh ? "共享工作区与线程目录" : "Share workspace and thread catalog";
-                                    note: I18n.zh ? "需同时获得舰桥授权；关闭时只共享设备摘要" : "Also requires server grants; otherwise only device summary is shared";
+                                    note: I18n.zh ? "需同时获得管理端授权；关闭时只共享设备摘要" : "Also requires server grants; otherwise only device summary is shared";
                                     ThemeSwitch { checked <=> root.cloud-full-shadow; enabled: root.cloud-inbound-enabled && !root.cloud-busy; toggled => { root.cloud-toggle-sharing(root.cloud-inbound-enabled, self.checked); } }
                                 }
                             }
@@ -1806,7 +1806,7 @@ export component SettingsPage inherits Rectangle {
                                     height: 44px; text: I18n.pet_library_empty; color: Theme.muted; font-size: Theme.font-sm;
                                     vertical-alignment: center;
                                 }
-                                // 形象库网格：蜂巢同款 3 列卡片。绝对定位取 parent.width，
+                                // 形象库网格：云端版同款 3 列卡片。绝对定位取 parent.width，
                                 // 不走布局约束，避免子项宽度反向依赖容器形成回路。
                                 if PetSettingsState.companions.length > 0 : Rectangle {
                                     // Slint 的 int/int 是浮点除法，必须显式取整，

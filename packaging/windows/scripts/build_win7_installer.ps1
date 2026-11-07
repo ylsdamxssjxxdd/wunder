@@ -303,16 +303,25 @@ function Ensure-Iscc([string]$Explicit, [bool]$AllowDownload) {
   return (Resolve-Path -LiteralPath $isccPath).Path
 }
 
-$version = if ($Version) { $Version } else { Read-CargoVersion (Join-Path $repoRoot "Cargo.toml") }
+function Read-AppVersion([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path)) { throw "App version file was not found: $Path" }
+  $payload = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+  if (-not $payload.version) { throw "Missing version in: $Path" }
+  return [string]$payload.version
+}
+
+$appVersion = Read-AppVersion (Join-Path $repoRoot "config\app_version.json")
+$version = if ($Version) { $Version } else { $appVersion }
+$workspaceVersion = Read-CargoVersion (Join-Path $repoRoot "Cargo.toml")
 $frontendVersion = Read-CargoVersion (Join-Path $repoRoot "frontend-slint\Cargo.toml")
-if ($frontendVersion -ne $version) {
-  throw "Version mismatch: workspace=$version frontend-slint=$frontendVersion. Rebuild both artifacts from one revision."
+if ($workspaceVersion -ne $version -or $frontendVersion -ne $version) {
+  throw "Version mismatch: app_version=$version workspace=$workspaceVersion frontend-slint=$frontendVersion. Run scripts/sync_app_version.py and rebuild both artifacts from one revision."
 }
 $numericVersion = Get-NumericVersion $version
-$outputBase = "wunder-$version-win7-x86-setup"
+$outputBase = "wunder-desktop-$version-win7-x86-setup"
 
 $desktopPath = if ($DesktopExe) { Resolve-RepoPath $DesktopExe } else {
-  Join-Path $repoRoot "target\frontend-slint\dist\win7-x86\wunder-frontend-slint-$version-win7-x86.exe"
+  Join-Path $repoRoot "target\frontend-slint\dist\win7-x86\wunder-desktop-$version-win7-x86.exe"
 }
 $cliPath = if ($CliExe) { Resolve-RepoPath $CliExe } else {
   Join-Path $repoRoot "target\cli\dist\win7-x86\wunder-cli-$version-win7-x86.exe"
@@ -385,9 +394,9 @@ function Format-ComponentLabel([string]$Name, [string]$Version, [int64]$Bytes) {
 
 $lines = New-Object System.Collections.Generic.List[string]
 $lines.Add("[Tasks]")
-# The app bodies (Pupa/Harness) are selectable tasks too, checked by default; leaving
+# The app bodies (Desktop/CLI) are selectable tasks too, checked by default; leaving
 # them unchecked skips their executables so a components-only install is possible.
-# Checking Pupa also creates the desktop shortcut, so there is no separate task for it.
+# Checking Desktop also creates the desktop shortcut, so there is no separate task for it.
 $coreBytes = @{
   desktop = (Get-Item -LiteralPath $desktopPath).Length
   cli = (Get-Item -LiteralPath $cliPath).Length
@@ -427,8 +436,8 @@ $generatedPath = Join-Path $stageRoot "payload.generated.iss"
 
 Copy-Item -LiteralPath (Join-Path $installerRoot "wunder.iss") -Destination (Join-Path $stageRoot "wunder.iss") -Force
 Copy-Item -LiteralPath (Join-Path $installerRoot "ChineseSimplified.isl") -Destination (Join-Path $stageRoot "ChineseSimplified.isl") -Force
-Copy-Item -LiteralPath (Join-Path $repoRoot "images\pupa.ico") -Destination (Join-Path $stageRoot "pupa.ico") -Force
-Copy-Item -LiteralPath (Join-Path $repoRoot "images\pupa.png") -Destination (Join-Path $stageRoot "pupa.png") -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "images\eva01-head.ico") -Destination (Join-Path $stageRoot "eva01-head.ico") -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "images\eva01-head.png") -Destination (Join-Path $stageRoot "eva01-head.png") -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "images\wizard-banner.png") -Destination (Join-Path $stageRoot "wizard-banner.png") -Force
 
 $isccPath = Ensure-Iscc $Iscc (-not $NoDownload)

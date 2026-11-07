@@ -65,8 +65,8 @@ pub fn install_phone_control_host(host: Arc<dyn PhoneControlHost>) {
     *slot = Some(host);
 }
 
-/// The tool is offered only when a device executor is installed. 蛹, 舵机 and
-/// 舰体 never install one, so the phone surface cannot leak into them.
+/// The tool is offered only when a device executor is installed. 桌面版, 命令行 and
+/// 服务端 never install one, so the phone surface cannot leak into them.
 pub fn phone_tools_enabled() -> bool {
     HOST.read()
         .unwrap_or_else(|error| error.into_inner())

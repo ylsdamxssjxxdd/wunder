@@ -291,7 +291,7 @@ const handleStripClick = (event: MouseEvent): void => {
   if (!mark) {
     return;
   }
-  // 桌面端 jump-to-turn 会先退出「跟随输出」；蜂巢的跟随态由 handleMessageListScroll 统一判定。
+  // 桌面端 jump-to-turn 会先退出「跟随输出」；云端版的跟随态由 handleMessageListScroll 统一判定。
   const autoStick = props.controller?.autoStickToBottom;
   if (autoStick && typeof autoStick === 'object' && 'value' in autoStick) {
     (autoStick as { value: boolean }).value = false;

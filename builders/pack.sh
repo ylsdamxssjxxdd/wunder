@@ -15,7 +15,7 @@ core_only=0
 usage() {
   cat <<'EOF'
 Usage:
-  build.sh pack -a linux-amd64|linux-arm64 [options]
+  build.sh pack -a linux-x64|linux-arm64 [options]
 
 Options:
   -a, --arch            Target architecture. Defaults to the host architecture.
@@ -74,14 +74,14 @@ done
 
 if [[ -z "$arch" ]]; then
   case "$(uname -m)" in
-    x86_64|amd64) arch="linux-amd64" ;;
+    x86_64|amd64) arch="linux-x64" ;;
     aarch64|arm64) arch="linux-arm64" ;;
-    *) fail "could not infer the host architecture; pass -a linux-amd64|linux-arm64" ;;
+    *) fail "could not infer the host architecture; pass -a linux-x64|linux-arm64" ;;
   esac
 fi
 
 case "$arch" in
-  linux-amd64|linux-arm64) ;;
+  linux-x64|linux-arm64) ;;
   win7-x86) fail "the Windows installer must be built with build.bat pack on Windows" ;;
   *) fail "unsupported architecture: $arch" ;;
 esac

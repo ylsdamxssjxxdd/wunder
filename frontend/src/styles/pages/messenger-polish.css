@@ -28,7 +28,7 @@
 }
 
 :root[data-user-accent='eva-orange'] .messenger-view {
-  /* 橙汁：暖白层以蛹的 soft #FDF0DE 为落点，收在暖橙而不是赤陶粉。 */
+  /* 橙汁：暖白层以桌面版的 soft #FDF0DE 为落点，收在暖橙而不是赤陶粉。 */
   --messenger-polish-panel-bg:
     linear-gradient(180deg, rgba(254, 251, 246, 0.94), rgba(253, 240, 222, 0.78));
   --messenger-polish-panel-bg-soft:

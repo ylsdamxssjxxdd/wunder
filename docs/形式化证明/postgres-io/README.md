@@ -8,7 +8,7 @@
 
 2026-10-28 已实际执行 TLC 并打开检查两张 PNG。`results/summary.json` 记录原模型 912 个状态、2912 条迁移，修复后仍违反规则的图状态为 0；两份模型的未溯源条件为空。旧模型违反 `NoIoStarvation`，修复模型的两条不变量均通过。模型允许已全部完成时正常静止；“总能完成”没有公平性假设，不能从这里推出。
 
-编号反例见 `results/bug-1.mmd`、`results/bug-1.png` 与 `results/stories.md`：调用同步数据库接口 → 移交业务线程 → 再调用并移交 → 替补槽耗尽 → 最后两个业务线程也等待数据库，驱动没有运行机会。实际 Compose 基线用 2000 个不同用户在线后发送 100 个任务，240 秒内完成 0 个、模型调用 0 次、舰桥探针超时，复现了该停滞；线程/数据库观测用于解释内部等待关系，不把外部压测说成逐指令调度复放。
+编号反例见 `results/bug-1.mmd`、`results/bug-1.png` 与 `results/stories.md`：调用同步数据库接口 → 移交业务线程 → 再调用并移交 → 替补槽耗尽 → 最后两个业务线程也等待数据库，驱动没有运行机会。实际 Compose 基线用 2000 个不同用户在线后发送 100 个任务，240 秒内完成 0 个、模型调用 0 次、管理端探针超时，复现了该停滞；线程/数据库观测用于解释内部等待关系，不把外部压测说成逐指令调度复放。
 
 真实回归 `postgres_io_uses_dedicated_runtime_from_async_and_blocking_callers` 检查同步桥接选用独立运行时；`postgres_queries_progress_when_caller_blocking_pool_is_saturated` 在 2 个业务 worker、2 个 blocking 槽下执行实际 PostgreSQL 查询，外部 15 秒看门狗验证查询可完成。前者检查实现选择，后者与真实 HTTP/WebSocket 压测检查可观察进展。
 

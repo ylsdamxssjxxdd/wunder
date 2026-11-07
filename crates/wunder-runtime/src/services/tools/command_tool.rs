@@ -1108,7 +1108,7 @@ async fn run_command_streaming(
         rg_bin: command_env.command_overrides.rg_bin.clone(),
     };
     // A shell script override means the host shell is a gateway into another
-    // runtime (茧's Ubuntu). Direct-spawning `uname` or `git` would silently
+    // runtime (安卓版's Ubuntu). Direct-spawning `uname` or `git` would silently
     // bypass that runtime and answer from Android/toybox instead.
     let force_shell = std::env::var_os(command_utils::SHELL_SCRIPT_ENV).is_some();
     let shell_command = || {

@@ -181,7 +181,7 @@ services/tools/dispatch.rs:27  真正分发到实现
 
 ## 6. MCP：Rust 侧作为服务端
 
-舰体内置 MCP 服务端点 `/wunder/mcp`（`services/mcp.rs:73-85`）。
+服务端内置 MCP 服务端点 `/wunder/mcp`（`services/mcp.rs:73-85`）。
 
 | 项 | 事实 |
 | --- | --- |
@@ -252,7 +252,7 @@ services/tools/dispatch.rs:27  真正分发到实现
 - 别名进 `UserToolBindings.alias_map`，**dispatch 最优先按别名路由**（`dispatch.rs:29-33`）。
 - 用户 MCP 仍走 `server@tool` 命名。
 - 端点 `/wunder/user_tools/{mcp|skills|knowledge}`（`api/user_tools.rs:96-110`），共 33 条路由，是用户面里规模最大的一组。
-- 蜂巢有独立目录 `frontend/src/components/user-tools/`；舰桥在「工具管理」导航下统一装配 builtin / mcp / knowledge / skills / toolVisibility（`web/app.js:196`）。
+- 云端版有独立目录 `frontend/src/components/user-tools/`；管理端在「工具管理」导航下统一装配 builtin / mcp / knowledge / skills / toolVisibility（`web/app.js:196`）。
 
 ## 9. 本地能力与执行边界
 
@@ -282,7 +282,7 @@ services/tools/dispatch.rs:27  真正分发到实现
 | 6 档位 | `services/default_tool_profile.rs` | 是否进 `DEFAULT_BUILTIN`；要临时下架写进 `TEMPORARILY_HIDDEN`，不要删代码 |
 | 7 并行 | `orchestrator/tool_parallel.rs:6-45` | 只读工具才加白名单；写类保持独占 |
 | 8 审批 | `ToolKind` 归档 | `Read` / `Write` / `Exec` / `Control` 选对档，决定缓存与提示语义 |
-| 9 文案 | 三端展示 | 蜂巢 i18n `frontend/src/i18n/messages/`；舰桥 `web/shared/tool-visuals.js` 与 `web/modules/`；蛹 `frontend-slint/src/tool_icons.rs`；Slint 文案由 `scripts/build_i18n.py` 生成 `ui/i18n.slint`，**勿手改生成物** |
+| 9 文案 | 三端展示 | 云端版 i18n `frontend/src/i18n/messages/`；管理端 `web/shared/tool-visuals.js` 与 `web/modules/`；桌面版 `frontend-slint/src/tool_icons.rs`；Slint 文案由 `scripts/build_i18n.py` 生成 `ui/i18n.slint`，**勿手改生成物** |
 | 10 测试 | `crates/wunder-runtime/tests/` | 至少一条 dispatch 与一条结果裁剪边界用例 |
 
 工具的系统描述（description）是模型唯一的选择依据，写模糊就会误调用或不被调用。返回要精简，长内容落文件路径而不是塞回上下文。
@@ -307,7 +307,7 @@ services/tools/dispatch.rs:27  真正分发到实现
 
 - 已合并：`apply_patch` 并入 `文本编辑`（一个工具三形态，`catalog.rs:1219-1226`）。
 - 已删除（无 dispatch 分支，工具文档应移除）：用户世界工具、渠道工具、`a2a_*`、`final_response`、`a2ui`、LSP 查询/节点调用工具、独立的「休眠等待」工具（现在由 `会话让出` 承担）。
-- 未实现：**A2A 互操作**。`grep -rniE "a2a|agent2agent" crates/ --include=*.rs` 零命中，舰桥仅残留读不到后端数据的幽灵文案。对外集成面是「外部工作流 `/wunder/external/workflow*` + MCP 端点 + 渠道 webhook」，不要写 A2A。
+- 未实现：**A2A 互操作**。`grep -rniE "a2a|agent2agent" crates/ --include=*.rs` 零命中，管理端仅残留读不到后端数据的幽灵文案。对外集成面是「外部工作流 `/wunder/external/workflow*` + MCP 端点 + 渠道 webhook」，不要写 A2A。
 - 蜂群编排已从引擎与调度面移除，协作形态只剩子智能体；前端标签与兼容垫片仍在（`docs/技术说明书/02-仓库结构与模块职责.md` 记了残留清单）。
 
 ## 关联文档

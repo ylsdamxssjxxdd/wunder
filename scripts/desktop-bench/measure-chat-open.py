@@ -329,7 +329,7 @@ def prepare(binary, fixture, args):
 
 
 def render(report):
-    lines = ["# 蛹聊天打开后端基准", "", "直接调用 NativeDesktop 后端库；不启动蛹程序或前端。",
+    lines = ["# 桌面版聊天打开后端基准", "", "直接调用 NativeDesktop 后端库；不启动桌面版程序或前端。",
              "首屏指标截至 open_chat_snapshot 返回，不包含前端投影、布局、绘制或完整日志导出。", "",
              "| 场景 | 成功/运行 | P50 ms | P95 ms | 最大 ms |",
              "| --- | ---: | ---: | ---: | ---: |"]

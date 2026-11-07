@@ -1,12 +1,12 @@
 ---
 title: 说明书总览
-summary: 说明书导航页：从蛹起步，按分区进入界面、概念与其它形态。start 与 surfaces 两组的全部页面都在这里。
+summary: 说明书导航页：从桌面版起步，按分区进入界面、概念与其它形态。start 与 surfaces 两组的全部页面都在这里。
 updated_at: 2026-10-16
 ---
 
 # 说明书总览
 
-起点是[蛹（desktop）](/docs/zh-CN/start/desktop/)：下载安装后在本地直接运行，不需要先部署舰体。
+起点是[桌面版（desktop）](/docs/zh-CN/start/desktop/)：下载安装后在本地直接运行，不需要先部署服务端。
 
 ## 入门
 
@@ -16,7 +16,7 @@ updated_at: 2026-10-16
     <span>4 步跑通第一个任务。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/start/desktop/">
-    <strong>蛹入门</strong>
+    <strong>桌面版入门</strong>
     <span>下载安装，打开即用；数据存在本机，不占端口。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/start/troubleshooting-first-run/">
@@ -33,15 +33,15 @@ updated_at: 2026-10-16
     <span>四个形态的界面分工与能力矩阵。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/desktop-ui/">
-    <strong>蛹界面</strong>
+    <strong>桌面版界面</strong>
     <span>主窗两页 + 12 个设置分类 + 面板与对话框。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/frontend/">
-    <strong>蜂巢界面</strong>
+    <strong>云端版界面</strong>
     <span>浏览器里的单页应用，含双向语音。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/web-admin/">
-    <strong>舰桥界面</strong>
+    <strong>管理端界面</strong>
     <span>管理员的治理与调试后台。</span>
   </a>
 </div>
@@ -61,15 +61,15 @@ updated_at: 2026-10-16
 
 ## 可选形态
 
-个人用户用蛹即可；下列是团队协作或自动化场景才需要：
+个人用户用桌面版即可；下列是团队协作或自动化场景才需要：
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/start/server/">
-    <strong>舰体部署</strong>
-    <span>18000 提供 API 与舰桥；18001 下发蜂巢；沙箱 9001。</span>
+    <strong>服务端部署</strong>
+    <span>18000 提供 API 与管理端；18001 下发云端版；沙箱 9001。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/start/cli/">
-    <strong>舵机使用</strong>
+    <strong>命令行使用</strong>
     <span>终端里进交互界面；`exec --json` 事件流；`cloud` 全套。</span>
   </a>
 </div>

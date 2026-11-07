@@ -1,4 +1,4 @@
-//! Reproduction for "蛹的目标不会持续驱动": a desktop session with an armed
+//! Reproduction for "桌面版的目标不会持续驱动": a desktop session with an armed
 //! goal and a tool-less virtual model must keep starting rounds on its own.
 use std::sync::Mutex;
 use std::time::{Duration, Instant};

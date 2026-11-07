@@ -11,7 +11,7 @@
 # Produces linux-amd64-ubuntu18/ (native cross-link sysroot for x86_64 hosts)
 # and linux-arm64-ubuntu18/ (aarch64 cross target) with the same layout the
 # kylin-arm SDK uses. The runtime package lists mirror
-# builders/prepare-linux-amd64-runtime-sysroot.sh and
+# builders/prepare-linux-x64-runtime-sysroot.sh and
 # builders/prepare-linux-arm64-runtime-sysroot.sh; keep them in sync.
 set -euo pipefail
 

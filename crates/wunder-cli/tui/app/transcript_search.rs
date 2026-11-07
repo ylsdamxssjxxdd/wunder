@@ -29,7 +29,7 @@
 //!
 //! Out of scope here, deliberately, and the reasons are the shape of this client rather than
 //! unfinished work: the scan never reaches further back than the addressable document, because
-//! the 舵机 hands older lines to the terminal's own scrollback, where they are no longer
+//! the 命令行 hands older lines to the terminal's own scrollback, where they are no longer
 //! addressable — codex's `history_loaded` paging assumes it owns its transcript, which this
 //! form cannot do, so `SearchProgress` stays as it is. There is no regex or other `SearchMode`,
 //! no OSC 8 change, and the match ceiling and the per-frame budget are unchanged.

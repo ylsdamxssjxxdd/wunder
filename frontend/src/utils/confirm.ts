@@ -1,7 +1,7 @@
 import { mzConfirm, type MzDialogOptions } from '@/utils/mzDialog';
 
 /**
- * 统一的确认弹窗：走蜂巢主题弹窗（mzConfirm），取消一律返回 false。
+ * 统一的确认弹窗：走云端版主题弹窗（mzConfirm），取消一律返回 false。
  *
  * 历史调用传的是 ElMessageBox 风格的第三参（type / confirmButtonText /
  * cancelButtonText），这里做一层翻译，避免调用方因换组件丢掉按钮文案与语义：

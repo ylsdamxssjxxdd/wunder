@@ -27,11 +27,12 @@ import time
 from pathlib import Path
 
 KNOWN_COMPONENTS = ("python", "git", "rg", "ffmpeg", "7zip", "browser")
-ELF_MACHINES = {"amd64": 0x3E, "arm64": 0xB7}
-ARCH_LABELS = {"amd64": "x64", "arm64": "arm64"}
+ELF_MACHINES = {"x64": 0x3E, "arm64": 0xB7}
+# The supplement keeps its published amd64/arm64 file names.
+SUPPLEMENT_ARCH = {"x64": "amd64", "arm64": "arm64"}
 # Path of the desktop binary inside the AppDir, used both for validation and by
 # the installer's launcher.
-DESKTOP_BINARY_MEMBER = "usr/bin/wunder-frontend-slint"
+DESKTOP_BINARY_MEMBER = "usr/bin/wunder-desktop"
 LABELS = {
     "python": "Python {version} + 常用库",
     "git": "Git {version}",
@@ -94,11 +95,15 @@ def sha256_file(path):
 
 
 def read_version(root):
-    text = (root / "Cargo.toml").read_text(encoding="utf-8")
-    match = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
-    if not match:
-        fail("could not read the workspace version from " + str(root / "Cargo.toml"))
-    return match.group(1)
+    path = root / "config" / "app_version.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        fail("could not read the app version from %s: %s" % (path, error))
+    version = str(payload.get("version", "")).strip()
+    if not version:
+        fail("missing version in " + str(path))
+    return version
 
 
 def read_frontend_version(root):
@@ -119,10 +124,12 @@ def resolve_path(root, value):
 
 
 def find_supplement(root, arch):
+    supplement_arch = SUPPLEMENT_ARCH[arch]
+    name = "wunder-supplement-linux-" + supplement_arch + ".tar.gz"
     patterns = (
-        root / "dist" / ("linux-" + arch) / ("wunder-supplement-linux-" + arch + ".tar.gz"),
-        root / "target" / "installer" / "payload" / ("linux-" + arch) / ("wunder-supplement-linux-" + arch + ".tar.gz"),
-        root / "temp_dir" / "linux-supplement" / "dist" / ("wunder-supplement-linux-" + arch + ".tar.gz"),
+        root / "dist" / ("linux-" + arch) / name,
+        root / "target" / "installer" / "payload" / ("linux-" + arch) / name,
+        root / "temp_dir" / "linux-supplement" / "dist" / name,
     )
     found = [path for path in patterns if path.is_file()]
     if not found:
@@ -429,7 +436,7 @@ def build_payload(
         add_file(target_tar, "payload/wunder-desktop.tar.gz", desktop_archive, 0o644)
         add_file(target_tar, "payload/wunder-cli", cli, 0o755)
         if image is not None and image.is_file():
-            add_file(target_tar, "payload/pupa.png", image, 0o644)
+            add_file(target_tar, "payload/eva01-head.png", image, 0o644)
         add_file(target_tar, "payload/install.sh", installer_dir / "install.sh", 0o755)
         add_file(target_tar, "payload/uninstall.sh", installer_dir / "uninstall.sh", 0o755)
         if not core_only:
@@ -491,7 +498,7 @@ def main():
 
     desktop_dist = root / "target" / "slint" / "dist" / ("linux-" + args.arch)
     desktop_archive = resolve_path(root, args.desktop_archive) if args.desktop_archive else (
-        desktop_dist / ("wunder-slint-%s-linux-%s.tar.gz" % (version, args.arch))
+        desktop_dist / ("wunder-desktop-%s-linux-%s.tar.gz" % (version, args.arch))
     )
 
     cli = resolve_path(root, args.cli) or (
@@ -525,7 +532,7 @@ def main():
     stage.mkdir(parents=True, exist_ok=True)
 
     installer_dir = root / "packaging" / "linux" / "installer"
-    image = root / "images" / "pupa.png"
+    image = root / "images" / "eva01-head.png"
     components = {}
     normalized_supplement = None
 
@@ -573,10 +580,8 @@ def main():
         image,
     )
 
-    # User-facing name: x64/arm64 instead of amd64/aarch64 so the download is
-    # short enough to type, and matches the win7-x86 target naming.
-    arch_label = ARCH_LABELS[args.arch]
-    output_name = "wunder-%s-%s.run" % (version, arch_label)
+    # User-facing name: wunder-desktop-<version>-linux-<x64|arm64>.run.
+    output_name = "wunder-desktop-%s-linux-%s.run" % (version, args.arch)
     output = output_dir / output_name
     build_run(stage, output, installer_dir, payload)
     installer_hash = sha256_file(output)

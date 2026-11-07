@@ -10,7 +10,7 @@ for argument in "$@"; do
     -y|--yes) ASSUME_YES=1 ;;
     -h|--help)
       echo "用法: $0 [--yes]"
-      echo "卸载心舰的蛹和舵机及已安装的补充组件，保留配置、会话和工作区。"
+      echo "卸载心舰的桌面版和命令行及已安装的补充组件，保留配置、会话和工作区。"
       exit 0
       ;;
     *) echo "未知参数：$argument" >&2; exit 2 ;;
@@ -40,7 +40,7 @@ if [ -f "$HOME_DIR/bin/install-components.txt" ]; then
 fi
 
 LOCAL_BIN="$HOME/.local/bin"
-for name in wunder-cli wunder-desktop desktop; do
+for name in wunder-cli wunder-desktop desktop wunder-frontend-slint; do
   link="$LOCAL_BIN/$name"
   if [ -L "$link" ]; then
     target=$(readlink -- "$link" 2>/dev/null || true)
@@ -92,10 +92,10 @@ rm -rf -- "$HOME_DIR/bin"
 rm -rf -- "$HOME_DIR/app/desktop"
 rmdir "$HOME_DIR/app" 2>/dev/null || true
 rm -f -- "$HOME_DIR/.wunder-home"
-rm -f -- "$HOME_DIR/images/pupa.png" "$HOME_DIR/images/wunder.png"
+rm -f -- "$HOME_DIR/images/eva01-head.png" "$HOME_DIR/images/pupa.png" "$HOME_DIR/images/wunder.png"
 rmdir "$HOME_DIR/images" 2>/dev/null || true
 
-echo "已卸载心舰的蛹、舵机和安装时选择的补充组件。"
+echo "已卸载心舰的桌面版、命令行和安装时选择的补充组件。"
 echo "保留的用户数据："
 echo "  $HOME_DIR/config"
 echo "  $HOME_DIR/data"

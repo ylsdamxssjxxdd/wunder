@@ -1,4 +1,4 @@
-/* 蜂巢主题弹窗（mzConfirm / mzPrompt）：替代 Element Plus 原生 ElMessageBox 观感。
+/* 云端版主题弹窗（mzConfirm / mzPrompt）：替代 Element Plus 原生 ElMessageBox 观感。
    弹层 teleport 到 body，取不到 .messenger-view 的 --mz-*，所以配色直接钉在自身，
    色值取自 :root 的暖色赤陶系 --ui-accent 色板（styles/base.css §11.1）。 */
 

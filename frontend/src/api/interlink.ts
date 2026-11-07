@@ -111,7 +111,7 @@ export type InterlinkNodeListPage = {
   online_count: number;
   total: number;
   /**
-   * 设备口径计数（§5.3）：只统计持久设备（蜂窝/舵机），不含本页的 web 会话与
+   * 设备口径计数（§5.3）：只统计持久设备（蜂窝/命令行），不含本页的 web 会话与
    * cloud 节点。`total`/`online_count` 是「节点目录」口径，两者不可混用。
    */
   device_total: number;
@@ -286,7 +286,7 @@ const normalizeNode = (raw: Record<string, unknown>): InterlinkNode => {
   };
 };
 
-/** 持久设备节点判定：只有蜂窝/舵机是「设备」，web 会话与 cloud 节点不是。 */
+/** 持久设备节点判定：只有蜂窝/命令行是「设备」，web 会话与 cloud 节点不是。 */
 const isDeviceNodeType = (value: unknown): boolean => {
   const type = String(value || '').trim().toLowerCase();
   return type === 'desktop' || type === 'cli';
@@ -477,7 +477,7 @@ export const purgeInterlinkShadow = async (deviceId: string): Promise<boolean> =
 };
 
 // ---------------------------------------------------------------------------
-// §6.3 侧栏工作区行的云端排序（纯蜂巢偏好，不回写本地设备）
+// §6.3 侧栏工作区行的云端排序（纯云端版偏好，不回写本地设备）
 // ---------------------------------------------------------------------------
 
 export const WORKSPACE_ORDER_MAX_KEYS = 128;

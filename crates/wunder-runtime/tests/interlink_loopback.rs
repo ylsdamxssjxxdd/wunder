@@ -3,7 +3,7 @@
 //! node secret bootstrap, WSS handshake, shadow push, C2L commands with the
 //! approval gate, idempotency, the offline queue, the L2C cloud executor and the
 //! governance cuts (kill switch, revocation, CSV audit export, the L3 alert that
-//! a user and the 舰桥 can both read back).
+//! a user and the 管理端 can both read back).
 //!
 //! The engine's tunnel session lives in the process-global `cloud::shared()`,
 //! so the link assertions share one test function; the ignored idle-budget test
@@ -358,7 +358,7 @@ fn pattern_bytes(len: usize) -> Vec<u8> {
     (0..len).map(|index| (index % 251) as u8).collect()
 }
 
-/// A cloud-side reader of `remote_ws` (docs §7.4): the same socket 蜂巢 opens.
+/// A cloud-side reader of `remote_ws` (docs §7.4): the same socket 云端版 opens.
 struct RemoteView {
     socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
 }
@@ -586,7 +586,7 @@ async fn wait_disconnected(client: &InterlinkClient, timeout: Duration) {
     }
 }
 
-/// Wait until the舰体 no longer holds a live channel for one device.
+/// Wait until the服务端 no longer holds a live channel for one device.
 async fn wait_channel_gone(device_id: &str, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     loop {
@@ -671,7 +671,7 @@ fn session_count(state: &AppState) -> usize {
 
 /// One real model round builds a deep future chain (orchestrator, tools, durable
 /// writers) whose debug frames do not fit tokio's 2 MiB worker default — the
-/// same reason 舵机 sizes its runtime workers (main.rs, CLI_WORKER_STACK_BYTES).
+/// same reason 命令行 sizes its runtime workers (main.rs, CLI_WORKER_STACK_BYTES).
 #[test]
 fn loopback_tunnel_shadow_commands_and_approvals_end_to_end() {
     // SQLite's own log reports the extended error code behind every failed
@@ -702,7 +702,7 @@ async fn loopback_run() {
         .update(|config| config.interlink.heartbeat_s = 1)
         .await
         .unwrap();
-    // The alert pump is a 舰体 background task that the real server starts with
+    // The alert pump is a 服务端 background task that the real server starts with
     // its janitor; this harness builds the router directly, so without an
     // explicit spawn every detected alert would only be counted as dropped.
     wunder_server::interlink::alerts::spawn(server.state.clone());
@@ -949,7 +949,7 @@ async fn loopback_run() {
     }
 
     // The cloud node has no L3 capability: a self-approvable ticket must not
-    // turn the 舰体 host into a controllable device (docs §9.2, §13.5 17).
+    // turn the 服务端 host into a controllable device (docs §9.2, §13.5 17).
     let (l3_status, l3_body) = http_json(
         "POST",
         &format!("{}/wunder/interlink/commands", server.base_url),
@@ -1218,7 +1218,7 @@ async fn loopback_run() {
     );
     assert!(
         baseline["payload"]["items"].is_array(),
-        "蜂巢's reducer takes the baseline as `payload.items`: {baseline}"
+        "云端版's reducer takes the baseline as `payload.items`: {baseline}"
     );
 
     // ... and the next turn on the same thread arrives as a delta.
@@ -1273,7 +1273,7 @@ async fn loopback_run() {
     // the session still holds its run is admitted as queued, and cancelling a
     // queued task does not exercise the interrupt. Queued work only moves once
     // the thread runtime pump exists, which the CLI profile does not start by
-    // default (state.rs) - the same reason a 舵机 node needs it at tunnel start.
+    // default (state.rs) - the same reason a 命令行 node needs it at tunnel start.
     let idle_deadline = Instant::now() + Duration::from_secs(20);
     while node
         .state
@@ -1396,7 +1396,7 @@ async fn loopback_run() {
             .contains("ready"),
         "the alert never carries arguments: {alert}"
     );
-    // ... and the counters behind that row are readable by the 舰桥 (§9.4).
+    // ... and the counters behind that row are readable by the 管理端 (§9.4).
     let (_, runtime) = get_json(
         &format!("{}/wunder/admin/interlink/runtime", server.base_url),
         &server.token,
@@ -1475,7 +1475,7 @@ async fn loopback_run() {
 
     // -- offline queue: a stopped node parks the command -------------------
     node.client.stop();
-    // The舰体 drops the channel asynchronously: issuing while the old channel is
+    // The服务端 drops the channel asynchronously: issuing while the old channel is
     // still registered dispatches the command instead of parking it, so the
     // queue assertion below would race the teardown instead of testing the queue.
     wait_channel_gone(DEVICE_ID, Duration::from_secs(20)).await;
@@ -1562,7 +1562,7 @@ async fn loopback_run() {
     assert_eq!(
         header,
         "seq,created_at,actor,from_node,to_node,action,command_id,approval_id,detail_digest",
-        "csv header is the contract the 舰桥 importer expects"
+        "csv header is the contract the 管理端 importer expects"
     );
     let csv_body = csv_lines.collect::<Vec<&str>>().join("\n");
     assert!(csv_body.contains("command.issue"), "{csv_body}");

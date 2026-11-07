@@ -3358,7 +3358,7 @@ storage:
         assert_eq!(config.security.api_key.as_deref(), Some("true"));
     }
 
-    /// The chat composer queue is a product behaviour in 蜂巢 and 蛹: a
+    /// The chat composer queue is a product behaviour in 云端版 and 桌面版: a
     /// follow-up message sent during a run parks above the input box. Off, the
     /// same send comes back USER_BUSY, so neither the code default nor the
     /// shipped template may turn it off.
@@ -3510,7 +3510,7 @@ storage:
         let _ = fs::remove_dir_all(&root);
     }
 
-    /// 蛹/舵机随包附带的技能必须在新装环境默认启用；否则用户只能手写配置
+    /// 桌面版/命令行随包附带的技能必须在新装环境默认启用；否则用户只能手写配置
     /// 才能在智能体里勾选它们，随包技能等于不可用。
     #[test]
     fn test_shipped_template_enables_bundled_default_skills() {

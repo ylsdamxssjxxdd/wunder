@@ -67,7 +67,7 @@ The model side operates on a goal through three built-in tools.
 
 Authority does not come from anything the model writes: human entry points stamp `__source = "human"` onto the turn and the goal-round driver stamps `__goal_round`. Edit, pause, and resume are allowed only in a person's round; complete and report-blocked are additionally allowed in the goal's **own automatic continuation rounds**.
 
-The Pupa (desktop) **does not expose the `goal` tool for users to pick** (it is a hidden built-in capability); the runtime injects it per session, and the Beehive (web) and the Helm (cli) reuse the same injection.
+The Desktop **does not expose the `goal` tool for users to pick** (it is a hidden built-in capability); the runtime injects it per session, and the Cloud (web) and the CLI reuse the same injection.
 
 ## Entry Points
 
@@ -75,10 +75,10 @@ The Pupa (desktop) **does not expose the `goal` tool for users to pick** (it is 
 | --- | --- |
 | API | `GET`/`PUT`/`DELETE /wunder/chat/sessions/{id}/goal` (user side; requires an ownership check) |
 | Slash command | `/goal [<objective>\|clear\|edit <objective>\|pause\|resume]` |
-| Beehive | A goal bar in the message area |
-| Pupa | A goal banner above the input box, with inline editing |
-| Helm | The `/goal` command |
-| Bridge | **No goal UI** (the governance surface offers no goal operations) |
+| Cloud | A goal bar in the message area |
+| Desktop | A goal banner above the input box, with inline editing |
+| CLI | The `/goal` command |
+| Admin | **No goal UI** (the governance surface offers no goal operations) |
 
 ## Points Often Misread
 
@@ -86,5 +86,5 @@ The Pupa (desktop) **does not expose the `goal` tool for users to pick** (it is 
 - After a service restart an active goal does not resume on its own; a resume action is needed to arm it again.
 - The model cannot mark a goal blocked at will: the same blocking condition must persist across at least 3 continuation rounds.
 - A goal is managed through one `goal` tool. Its actions are strictly `get`, `create`, `edit`, `pause`, `resume`, `complete`, and `blocked`.
-- The Bridge has no goal panel; use the Beehive, the Pupa, or the Helm.
+- The Admin has no goal panel; use the Cloud, the Desktop, or the CLI.
 - Clearing a goal does not undo work already done: messages, tool results, and file changes already stored are kept.

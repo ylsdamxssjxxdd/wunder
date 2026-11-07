@@ -6,7 +6,7 @@ version = "0.4.0"
 edition = "2021"
 rust-version = "1.92"
 publish = false
-description = "wunder Android client (茧): mobile shell over the shared native engine"
+description = "wunder Android client (安卓版): mobile shell over the shared native engine"
 
 [lib]
 name = "wunder_android"
@@ -42,7 +42,7 @@ slint = { version = "=1.18.0", default-features = false, features = [
 # The shared i-slint-core fork's text-selection module needs the parley text
 # stack on every target; the Android backend alone does not pull it in.
 i-slint-core = { version = "=1.18.0", default-features = false, features = ["std", "shared-parley"] }
-# 茧 bundles Microsoft YaHei exactly like 蛹 and registers it into Slint's
+# 安卓版 bundles Microsoft YaHei exactly like 桌面版 and registers it into Slint's
 # shared collection at startup, so fontique never enumerates host fonts.
 fontique = { version = "=0.11.1", features = ["system"] }
 android_logger = "0.14"
@@ -81,8 +81,8 @@ strip = "symbols"
 slint-build = "=1.18.0"
 lz4_flex = { version = "=0.11.6", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 
-# 蛹's chat components depend on the shared Slint forks (selectable transcript
-# text, Win7 window/IME fixes, the rlib-only html2md). 茧 renders those same
+# 桌面版's chat components depend on the shared Slint forks (selectable transcript
+# text, Win7 window/IME fixes, the rlib-only html2md). 安卓版 renders those same
 # components, so it must build against the same forks — a stock Slint rejects
 # `context-menu` on StyledText.
 [patch.crates-io]

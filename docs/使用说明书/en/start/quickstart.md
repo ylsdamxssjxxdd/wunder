@@ -13,19 +13,19 @@ updated_at: 2026-10-16
 
 # Quick Start
 
-Individual users start with the **Pupa (desktop)**: download the matching build and it runs; there is no Hull (server) to deploy first. The four sections below follow install, model configuration, your first message, and the run itself.
+Individual users start with the **Desktop**: download the matching build and it runs; there is no Server to deploy first. The four sections below follow install, model configuration, your first message, and the run itself.
 
 ## Download and install
 
-Download the build that matches your system from Releases. The Pupa targets 32-bit Win7 and Ubuntu 18.04 and also covers modern Windows / Linux.
+Download the build that matches your system from Releases. The Desktop targets 32-bit Win7 and Ubuntu 18.04 and also covers modern Windows / Linux.
 
 - **Legacy systems** (32-bit Win7, Ubuntu 18.04): download the `setup` or `.run` installer. It ships with a complete runtime, but compatibility constraints limit some third-party features.
-- **Modern systems**: download the `.exe` or the `-portable` single file and run it directly; the first launch unpacks into `~/.wunder`, later launches start right away.
-- **Two Linux options**: use the `.run` installer for long-term use with the `wunder-cli` command and optional bundled Python/Git, or the `-portable` file for a green, carry-anywhere install. Neither needs FUSE, `libfuse2` or administrator rights, both work on fuse3-only systems such as Ubuntu 24.04, and they share the same user data.
+- **Modern systems**: download the `.exe` or the `.portable` single file and run it directly; the first launch unpacks into `~/.wunder`, later launches start right away.
+- **Two Linux options**: use the `.run` installer for long-term use with the `wunder-cli` command and optional bundled Python/Git, or the `.portable` file for a green, carry-anywhere install. Neither needs FUSE, `libfuse2` or administrator rights, both work on fuse3-only systems such as Ubuntu 24.04, and they share the same user data.
 
 Install or extract it, then launch.
 
-In a development environment you can also run the launch script directly (on Windows that's `run.bat`, or run `wunder-frontend-slint` straight). It calls the engine natively in-process — it takes no local port and needs no local HTTP/WebSocket relay.
+In a development environment you can also run the launch script directly (on Windows that's `run.bat`, or run `wunder-desktop` straight). It calls the engine natively in-process — it takes no local port and needs no local HTTP/WebSocket relay.
 
 ## Configure the model
 
@@ -80,8 +80,8 @@ When the timeline shows tool batches, a "work process" entry for each turn, and 
 
 ## Other forms
 
-The Hull, the Beehive, and the Helm are installed per scenario:
+The Server, the Cloud, and the CLI are installed per scenario:
 
-- **The Hull (server)**: multi-user sharing, permission management, channel integration, and publishing and governing agent apps. See [Hull deployment](/docs/en/start/server/).
-- **The Beehive (web)**: the cloud AI workbench delivered with the Hull, accessed in a browser; its pages are delivered by a separate web-service container, on 18001 by default. See [Beehive interface](/docs/en/surfaces/frontend/).
-- **The Helm (cli)**: the manual local entry point for terminals and automation. See [Helm usage](/docs/en/start/cli/).
+- **The Server**: multi-user sharing, permission management, channel integration, and publishing and governing agent apps. See [Server deployment](/docs/en/start/server/).
+- **The Cloud (web)**: the cloud AI workbench delivered with the Server, accessed in a browser; its pages are delivered by a separate web-service container, on 18001 by default. See [Cloud interface](/docs/en/surfaces/frontend/).
+- **The CLI**: the manual local entry point for terminals and automation. See [CLI usage](/docs/en/start/cli/).

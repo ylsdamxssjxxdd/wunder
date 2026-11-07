@@ -4,11 +4,11 @@
 
 ## 契约与修复
 
-蛹的问询回答是一个新的用户轮次；旧等待轮次另行结清，不把新消息挂到旧 root。消费作用域是同一用户、同一任务线程中的 `inquiry_turn_id`。同一问询的不同客户端消息键只能得到同一个回答身份，先写者胜，不修改首个回答正文。
+桌面版的问询回答是一个新的用户轮次；旧等待轮次另行结清，不把新消息挂到旧 root。消费作用域是同一用户、同一任务线程中的 `inquiry_turn_id`。同一问询的不同客户端消息键只能得到同一个回答身份，先写者胜，不修改首个回答正文。
 
 SQLite Immediate 事务与 PostgreSQL 线程 advisory lock 事务同时写入新回答和旧问询的 `answered_by_turn_id`。原问询仍是 `waiting_input`，随后经过统一 `ThreadLogCommitter` 追加 canonical 终态并更新控制面。两步不是一个原子操作；失败后重试可以补结算，不得在受理时伪造 canonical 完成。终态物化输入也不再把等待轮次临时改回 `running`。
 
-统一提交边界服务于排队入口和直接引擎入口；舵机问询面板现在保留事件中的原轮次身份，选择回答与自由文本回答均传回该身份。非法身份、跨线程目标、非等待目标、伪造结算身份被拒绝。先停止后回答不分配新轮次；回答先受理后停止，保留已受理身份但不把取消态改回完成。
+统一提交边界服务于排队入口和直接引擎入口；命令行问询面板现在保留事件中的原轮次身份，选择回答与自由文本回答均传回该身份。非法身份、跨线程目标、非等待目标、伪造结算身份被拒绝。先停止后回答不分配新轮次；回答先受理后停止，保留已受理身份但不把取消态改回完成。
 
 ## 模型与反例
 
@@ -28,9 +28,9 @@ SQLite Immediate 事务与 PostgreSQL 线程 advisory lock 事务同时写入新
 - `storage::thread_admission::tests::inquiry_answer_is_consumed_once_across_distinct_clients_and_reopen`：重新打开存储后仍去重。
 - `orchestrator::thread_log_committer::tests::inquiry_claim_survives_interrupted_settlement_and_rejects_forgery`：停在受理事务后，再经统一入口重试补结算；不是强杀进程测试。
 - `orchestrator::thread_log_committer::tests::inquiry_unmaterialized_waiting_turn_keeps_waiting_state_until_completion`：尚未物化的输入经 canonical 终态结算后，控制面和页面均为完成。
-- `orchestrator::request::tests::direct_inquiry_answer_settles_waiting_turn_and_deduplicates_other_clients`：舵机使用的直接引擎请求准备链路，不调用真实模型。
+- `orchestrator::request::tests::direct_inquiry_answer_settles_waiting_turn_and_deduplicates_other_clients`：命令行使用的直接引擎请求准备链路，不调用真实模型。
 - `storage::canonical_thread_log_tests::inquiry_answer_starts_new_user_round_and_keeps_original_question`：原问题、新回答、用户轮次及面板投影。
-- 舵机新增 `inquiry_panel_preserves_consumption_identity_for_direct_and_nested_events`；测试构建仍受既有缺失的临时轨迹截图模块阻挡，不能记为运行通过。
+- 命令行新增 `inquiry_panel_preserves_consumption_identity_for_direct_and_nested_events`；测试构建仍受既有缺失的临时轨迹截图模块阻挡，不能记为运行通过。
 
 ## 重现命令
 

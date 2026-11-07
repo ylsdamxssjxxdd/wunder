@@ -168,7 +168,7 @@
 }
 
 :root[data-user-accent='eva-orange'] .messenger-view {
-  /* 橙汁面板层：浅底以蛹的 soft #FDF0DE 为锚，边框与描边跟随主色 #F58A24。 */
+  /* 橙汁面板层：浅底以桌面版的 soft #FDF0DE 为锚，边框与描边跟随主色 #F58A24。 */
   --hula-main-bg: #fdf0de;
   --hula-center-bg: #fef7ec;
   --hula-list-hover: rgba(var(--ui-accent-rgb), 0.12);
@@ -5162,7 +5162,7 @@
   white-space: pre;
 }
 
-/* 语法高亮配色（浅色代码底）：与 .chat-shell 深色作用域同构，色值换成浅底可读的蜂巢暖色系。 */
+/* 语法高亮配色（浅色代码底）：与 .chat-shell 深色作用域同构，色值换成浅底可读的云端版暖色系。 */
 .messenger-markdown .markdown-body .ai-code-block code .token-comment {
   color: #8a919c;
 }
@@ -5229,7 +5229,7 @@
 }
 
 /* 最终回复中的工作目录引用使用资源卡片展示。
-   图片沿用蜂巢原有的自适应预览规格；文档维持紧凑的预览/下载入口。 */
+   图片沿用云端版原有的自适应预览规格；文档维持紧凑的预览/下载入口。 */
 .messenger-chat-body .message-markdown-body--assistant .ai-resource-card,
 .messenger-chat-body .message-markdown-body--assistant .ai-external-image-card {
   box-sizing: border-box;

@@ -34,24 +34,24 @@ class PerformanceScoreTests(unittest.TestCase):
         self.assertEqual(score_metric(spec.boundary + 1000, spec), 0.0)
 
     def test_template_has_all_scenarios_and_empty_values(self) -> None:
-        data = template("蜂巢")
-        self.assertEqual(data["shape"], "蜂巢")
+        data = template("云端版")
+        self.assertEqual(data["shape"], "云端版")
         self.assertEqual(set(data["scenarios"]), {item.key for item in SCORECARDS["beehive"]})
         self.assertIsNone(data["scenarios"]["H1"]["metrics"]["tti_p95_ms"])
 
     def test_partial_report_has_coverage_and_no_fake_total(self) -> None:
-        report = evaluate({"shape": "蛹", "scenarios": {"C1": {"metrics": {"first_frame_p95_ms": 350}, "gates": {"no_heavy_work_before_frame": True}}}})
+        report = evaluate({"shape": "桌面版", "scenarios": {"C1": {"metrics": {"first_frame_p95_ms": 350}, "gates": {"no_heavy_work_before_frame": True}}}})
         self.assertIsNone(report["score"])
         self.assertEqual(report["coverage_percent"], 8.0)
         self.assertIn("C2", report["missing_scenarios"])
 
     def test_hard_gate_failure_is_reported(self) -> None:
-        report = evaluate({"shape": "舵机", "scenarios": {"D1": {"metrics": {"first_line_p95_ms": 300}, "gates": {"exit_code_zero": False}}}})
+        report = evaluate({"shape": "命令行", "scenarios": {"D1": {"metrics": {"first_line_p95_ms": 300}, "gates": {"exit_code_zero": False}}}})
         self.assertIn("D1.exit_code_zero: 退出码正确", report["hard_failures"])
 
     def test_baseline_detects_total_and_scenario_regression(self) -> None:
-        current = evaluate({"shape": "蜂巢", "scenarios": {"H1": {"metrics": {"tti_p95_ms": 2000}, "gates": {"no_uncaught_errors": True}}}})
-        baseline = evaluate({"shape": "蜂巢", "scenarios": {"H1": {"metrics": {"tti_p95_ms": 1200}, "gates": {"no_uncaught_errors": True}}}})
+        current = evaluate({"shape": "云端版", "scenarios": {"H1": {"metrics": {"tti_p95_ms": 2000}, "gates": {"no_uncaught_errors": True}}}})
+        baseline = evaluate({"shape": "云端版", "scenarios": {"H1": {"metrics": {"tti_p95_ms": 1200}, "gates": {"no_uncaught_errors": True}}}})
         apply_baseline(current, baseline, "beehive")
         self.assertTrue(any(item["key"] == "H1" for item in current["regressions"]))
 
@@ -59,7 +59,7 @@ class PerformanceScoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "sample.csv"
             path.write_text("scenario,metric,value,gate,passed\nC1,first_frame_p95_ms,350,,\nC1,,,no_heavy_work_before_frame,true\n", encoding="utf-8")
-            data = read_csv(path, "蛹")
+            data = read_csv(path, "桌面版")
         self.assertEqual(data["scenarios"]["C1"]["metrics"]["first_frame_p95_ms"], 350.0)
         self.assertTrue(data["scenarios"]["C1"]["gates"]["no_heavy_work_before_frame"])
 

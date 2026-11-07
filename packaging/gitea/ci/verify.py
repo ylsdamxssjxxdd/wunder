@@ -15,8 +15,7 @@ import tarfile
 import tempfile
 
 
-LINUX_MACHINES = {"amd64": 62, "arm64": 183}
-ARCH_LABELS = {"amd64": "x64", "arm64": "arm64"}
+LINUX_MACHINES = {"x64": 62, "arm64": 183}
 RUN_MARKER = b"__WUNDER_PAYLOAD_BELOW__\n"
 PORTABLE_MARKER = b"__WUNDER_PORTABLE_PAYLOAD__\n"
 GZIP_MAGIC = b"\x1f\x8b\x08"
@@ -72,9 +71,9 @@ def desktop_member(archive, name):
 def check_desktop_archive(archive, architecture):
     with tarfile.open(str(archive), "r:gz") as stream:
         names = set(stream.getnames())
-    if "./AppRun" not in names or "./usr/bin/wunder-frontend-slint" not in names:
+    if "./AppRun" not in names or "./usr/bin/wunder-desktop" not in names:
         raise RuntimeError("desktop archive is not an AppDir layout: " + archive.name)
-    executable = desktop_member(archive, "usr/bin/wunder-frontend-slint")
+    executable = desktop_member(archive, "usr/bin/wunder-desktop")
     try:
         check_elf(executable, LINUX_MACHINES[architecture])
         check_glibc(executable)
@@ -97,9 +96,8 @@ def check_self_extractor(path, architecture):
         stream.seek(offset)
         if stream.read(3) != GZIP_MAGIC:
             raise RuntimeError("payload of " + path.name + " is not a gzip member")
-    label = ARCH_LABELS[architecture]
-    if ("-" + label) not in path.name:
-        raise RuntimeError("artifact name does not carry the " + label + " label: " + path.name)
+    if ("-" + architecture) not in path.name:
+        raise RuntimeError("artifact name does not carry the " + architecture + " label: " + path.name)
 
 
 def reject_unexpected(directory, patterns):
@@ -126,31 +124,31 @@ def main():
     architecture = sys.argv[2]
     extra = Path(sys.argv[3]) if len(sys.argv) > 3 else None
     if architecture == "win7-installer":
-        installer = find_single(directory, "wunder-*-win7-x86-setup.exe", "Win7 installer")
+        installer = find_single(directory, "wunder-desktop-*-win7-x86-setup.exe", "Win7 installer")
         check_pe_i386(installer)
         check_inno_payload(installer)
-        reject_unexpected(directory, ["wunder-*-win7-x86-setup.exe"])
+        reject_unexpected(directory, ["wunder-desktop-*-win7-x86-setup.exe"])
         print("PASS: win7-x86 setup installer is an i386 PE with an Inno Setup payload")
         return
     if architecture == "win7-x86":
-        desktop = find_single(directory, "wunder-frontend-slint-*-win7-x86.exe", "Win32 desktop executable")
+        desktop = find_single(directory, "wunder-desktop-*-win7-x86.exe", "Win32 desktop executable")
         check_pe_i386(desktop)
         if extra is not None and extra.is_file():
             check_pe_i386(extra)
-        reject_unexpected(directory, ["wunder-frontend-slint-*-win7-x86.exe"])
+        reject_unexpected(directory, ["wunder-desktop-*-win7-x86.exe"])
         print("PASS: win7-x86 PE headers (i386)")
         return
-    desktop = find_single(directory, "wunder-slint-*-linux-" + architecture + ".tar.gz", "desktop archive")
-    portable = find_single(directory, "wunder-*-*.portable", "portable package")
-    run = find_single(directory, "wunder-*-*.run", "run installer")
+    desktop = find_single(directory, "wunder-desktop-*-linux-" + architecture + ".tar.gz", "desktop archive")
+    portable = find_single(directory, "wunder-desktop-*-linux-*.portable", "portable package")
+    run = find_single(directory, "wunder-desktop-*-linux-*.run", "run installer")
     check_desktop_archive(desktop, architecture)
     check_self_extractor(portable, architecture)
     check_self_extractor(run, architecture)
     if extra is not None and extra.is_file():
         check_elf(extra, LINUX_MACHINES[architecture])
         check_glibc(extra)
-    reject_unexpected(directory, ["wunder-slint-*-linux-" + architecture + ".tar.gz",
-                                  "wunder-*-*.portable", "wunder-*-*.run"])
+    reject_unexpected(directory, ["wunder-desktop-*-linux-" + architecture + ".tar.gz",
+                                  "wunder-desktop-*-linux-*.portable", "wunder-desktop-*-linux-*.run"])
     print("PASS: " + architecture + " desktop archive, portable and installer payloads, ELF and glibc gates")
 
 

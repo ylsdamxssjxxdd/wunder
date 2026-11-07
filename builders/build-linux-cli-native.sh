@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build the plain Linux CLI inside the Ubuntu 18.04 CI image. This mirrors the
-# Native CLI entry: amd64 compiles natively, arm64 cross-compiles with the
+# Native CLI entry: x64 compiles natively, arm64 cross-compiles with the
 # target that the image installs. CLI distribution is always a bare ELF, never
 # an archive; prompts and skills are embedded into the binary at build time.
 
@@ -16,8 +16,8 @@ require_file() { [[ -f "$1" ]] || fail "required file is missing: $1"; }
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "required command is unavailable: $1"; }
 
 case "${ARCH:-$(uname -m)}" in
-  x86_64|amd64)
-    arch="amd64"
+  x86_64|x64)
+    arch="x64"
     target="x86_64-unknown-linux-gnu"
     elf_machine="Advanced Micro Devices X86-64"
     native=1
@@ -80,7 +80,7 @@ require_file "$binary"
 machine="$(LC_ALL=C "$readelf_tool" -h "$binary" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[ \t]+/, "", $2); print $2}')"
 [[ "$machine" == "$elf_machine" ]] || fail "expected $arch ELF, got: ${machine:-unknown}"
 
-version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$repo_root/Cargo.toml" | head -n 1)"
+version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$repo_root/config/app_version.json" | head -n 1)"
 [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]] || fail "could not read a safe workspace version"
 release_binary="$output_dir/wunder-cli-$version-linux-$arch"
 cp -f "$binary" "$release_binary"

@@ -19,12 +19,12 @@ marker='__WUNDER_PORTABLE_PAYLOAD__'
 usage() {
   cat <<'EOF'
 Usage:
-  build.sh portable -a linux-amd64|linux-arm64 [options]
+  build.sh portable -a linux-x64|linux-arm64 [options]
 
 Options:
   -a, --arch             Target architecture. Defaults to the host architecture.
       --desktop-archive  AppDir tar.gz. Defaults to
-                         target/slint/dist/linux-<arch>/wunder-slint-<ver>-linux-<arch>.tar.gz
+                         target/slint/dist/linux-<arch>/wunder-desktop-<ver>-linux-<arch>.tar.gz
   -o, --output-dir DIR   Output directory. Defaults to the archive's directory.
       --version VER      Override the version stamped into the launcher.
   -h, --help             Show this help.
@@ -69,15 +69,15 @@ done
 
 if [[ -z "$arch" ]]; then
   case "$(uname -m)" in
-    x86_64|amd64) arch="linux-amd64" ;;
+    x86_64|x64) arch="linux-x64" ;;
     aarch64|arm64) arch="linux-arm64" ;;
-    *) fail "could not infer the host architecture; pass -a linux-amd64|linux-arm64" ;;
+    *) fail "could not infer the host architecture; pass -a linux-x64|linux-arm64" ;;
   esac
 fi
 
 case "$arch" in
-  linux-amd64)
-    short_arch=amd64
+  linux-x64)
+    short_arch=x64
     arch_label=x64
     ;;
   linux-arm64)
@@ -88,15 +88,15 @@ case "$arch" in
 esac
 
 if [[ -z "$version" ]]; then
-  manifest="$repo_root/frontend-slint/Cargo.toml"
-  [[ -f "$manifest" ]] || fail "missing version source: $manifest"
-  version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" | head -n 1)"
+  version_file="$repo_root/config/app_version.json"
+  [[ -f "$version_file" ]] || fail "missing version source: $version_file"
+  version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$version_file" | head -n 1)"
 fi
 [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]] || fail "invalid version: ${version:-empty}"
 
 dist_dir="$repo_root/target/slint/dist/$arch"
 if [[ -z "$desktop_archive" ]]; then
-  desktop_archive="$dist_dir/wunder-slint-$version-linux-$short_arch.tar.gz"
+  desktop_archive="$dist_dir/wunder-desktop-$version-linux-$short_arch.tar.gz"
 fi
 [[ -f "$desktop_archive" ]] || fail "desktop archive is missing: $desktop_archive (build the desktop target first)"
 [[ -f "$header" ]] || fail "portable header is missing: $header"
@@ -110,7 +110,7 @@ if [[ -z "$output_dir" ]]; then
   output_dir="$(cd -- "$(dirname -- "$desktop_archive")" && pwd)"
 fi
 
-output="$output_dir/wunder-$version-$arch_label.portable"
+output="$output_dir/wunder-desktop-$version-linux-$arch_label.portable"
 temporary="$output.tmp"
 rm -f -- "$temporary"
 mkdir -p "$output_dir"

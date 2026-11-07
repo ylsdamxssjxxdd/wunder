@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="accessibility_service_label">手机控制</string>
-    <string name="accessibility_service_description">允许茧读取屏幕、点击、滑动和输入，以完成用户交代的手机自动化任务。仅在你主动发起任务时使用，可随时在系统设置中关闭。</string>
+    <string name="accessibility_service_description">允许安卓版读取屏幕、点击、滑动和输入，以完成用户交代的手机自动化任务。仅在你主动发起任务时使用，可随时在系统设置中关闭。</string>
 </resources>

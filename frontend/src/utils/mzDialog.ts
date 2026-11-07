@@ -1,10 +1,10 @@
 import { reactive } from 'vue';
 
 /**
- * 蜂巢主题弹窗队列（替代 ElMessageBox）。
+ * 云端版主题弹窗队列（替代 ElMessageBox）。
  *
  * ElMessageBox 渲染的是 Element Plus 自带盒子（蓝色主按钮、方角、系统字体），
- * 与蜂巢的暖色赤陶配色和圆角语言不一致。这里用 Vue 组件渲染同样语义的
+ * 与云端版的暖色赤陶配色和圆角语言不一致。这里用 Vue 组件渲染同样语义的
  * confirm / prompt 弹窗，样式走 `--ui-accent` 色板，视觉与 el-dialog 派生的
  * 业务弹窗保持一致。
  *

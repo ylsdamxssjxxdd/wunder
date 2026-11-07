@@ -1,5 +1,5 @@
 // AI生成
-// 舰桥导出用的极简 XLSX 写出：单工作表、纯文本与数值单元格、ZIP 打包。
+// 管理端导出用的极简 XLSX 写出：单工作表、纯文本与数值单元格、ZIP 打包。
 // 不引入第三方库，浏览器端直接生成可被 Excel / WPS / LibreOffice 打开的 .xlsx。
 
 const CRC_TABLE = (() => {

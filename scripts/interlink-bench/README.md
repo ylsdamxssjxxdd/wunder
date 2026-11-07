@@ -3,7 +3,7 @@
 对应《云端本地互通方案》§13.6 的第一条：隧道空闲时 CPU < 1%、内存增量 < 30 MB。
 
 CPU 与 RSS 是进程级指标，所以采样对象是**回环测量测试自己**：`crates/wunder-runtime/tests/interlink_loopback.rs`
-里的 `idle_tunnel_stays_open_without_growth`（`#[ignore]`）在同进程内拉起真实舰体 router 与真实本地引擎。
+里的 `idle_tunnel_stays_open_without_growth`（`#[ignore]`）在同进程内拉起真实服务端 router 与真实本地引擎。
 两个引擎各有自己的巡检定时器，直接测整进程会把它们算到隧道头上，所以这个测试跑**两段**：
 
 1. `baseline`：同进程、隧道未起，空闲 N 秒；

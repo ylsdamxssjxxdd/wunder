@@ -297,7 +297,7 @@ pub fn requires_hard_approval(kind: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 // The values below are wire format: they live in the audit table, the CSV
-// export and the filter list of the 舰桥, so changing one is a data migration
+// export and the filter list of the 管理端, so changing one is a data migration
 // and not a rename. Writers must use these constants; tests pin the literals.
 pub const AUDIT_CHANNEL_OPEN: &str = "channel.open";
 pub const AUDIT_CHANNEL_CLOSE: &str = "channel.close";
@@ -451,7 +451,7 @@ mod tests {
     }
 
     /// Audit action names are the stored format: the CSV export and the filter
-    /// list of the 舰桥 match on them, so a rename must be deliberate.
+    /// list of the 管理端 match on them, so a rename must be deliberate.
     #[test]
     fn audit_action_names_are_frozen() {
         assert_eq!(

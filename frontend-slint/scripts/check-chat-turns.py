@@ -13,7 +13,7 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     run("slint-viewer", "--check", "frontend-slint/ui/main.slint")
     run("cargo", "test", "-p", "wunder-desktop", "--lib", "native::", "--no-default-features", "--features", "sqlite-storage")
-    run("cargo", "test", "--manifest-path", "frontend-slint/Cargo.toml", "turn_tests", "--bin", "wunder-frontend-slint")
+    run("cargo", "test", "--manifest-path", "frontend-slint/Cargo.toml", "turn_tests", "--bin", "wunder-desktop")
     empty = {key: "" for key in ["text", "time", "workflow-detail", "state", "stats-status", "stats-duration", "stats-speed", "stats-context", "stats-quota", "stats-tools", "stats-credits", "avatar-glyph"]}
     empty.update(mine=False, workflow=False, blocks=[], **{"avatar-tone": 0})
     turns = []

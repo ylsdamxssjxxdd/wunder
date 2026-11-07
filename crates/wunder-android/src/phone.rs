@@ -76,7 +76,7 @@ impl AndroidPhoneHost {
 }
 
 /// Install the device executor once the Android activity exists. A failure is
-/// non-fatal: 茧 keeps working, and the runtime simply does not advertise the
+/// non-fatal: 安卓版 keeps working, and the runtime simply does not advertise the
 /// phone-control tool because no host is installed.
 pub fn install() {
     if let Err(error) = try_install() {

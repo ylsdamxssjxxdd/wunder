@@ -3,7 +3,7 @@
 本包面向已有 Docker Engine 与 Docker Compose 的 Linux 服务器，一套脚本按 `--arch` 导出两种剖面：
 `arm64`（ARM64 宿主，amd64 与 Win7 32 位都靠 SDK 内的交叉工具链原生完成）与
 `amd64`（x86_64 宿主，arm64 与 Win7 32 位同样靠交叉）。两者都不需要 QEMU，都保持 Ubuntu 18.04 / glibc 2.27 基线。
-蛹（wunder）两个剖面都出 Linux 桌面归档 + `.portable` + `.run` 与 Win7 的桌面/CLI PE；
+桌面版（wunder）两个剖面都出 Linux 桌面归档 + `.portable` + `.run` 与 Win7 的桌面/CLI PE；
 只有 Win7 的 Inno Setup 安装包必须在 x86_64 上用 Wine 组，ARM 剖面会跳过那一个任务。
 arm64 剖面默认配老版 Runner（`gitea/act_runner:0.2.11`）与 `compose.v1.yaml`，专为只有老 Docker Engine 的机器（如麒麟 V10 的 18.09）。
 
@@ -55,7 +55,7 @@ docker compose logs --tail=100 gitea bootstrap runner
 Runner 注册三个标签，前两个指向同一个任务镜像，只是给两个仓库各留一条路由：
 
 - `wunder-offline` → 任务镜像（Ubuntu 18.04 + Rust/Slint 交叉工具链 + git + `/opt/offline-ci`），构建 Linux 桌面/CLI、Win7 32 位交叉，并复用预制补充包。
-- `rcho-offline` → 同一个镜像，供 rcho 的离线流水线使用。rcho 仓库自带 `.gitea/workflows/offline.yml` 与 `packaging/gitea/ci/`，推到同一实例即可构建 Linux amd64/arm64 与 Win7 x86；检出前只能调用镜像里烘焙的 `/opt/offline-ci/checkout.py`，检出后一律改用仓库内脚本。因为 rcho 的构建器会往 SDK 的 `cargo-home-*` 写配置，它的 `prepare-view.sh` 把只读 SDK 组织成 `/ci-cache` 下的可写视图（只读内容用符号链接引用），任何情况下都不向 `/opt/offline-sdk` 写入。
+- `rcho-offline` → 同一个镜像，供 rcho 的离线流水线使用。rcho 仓库自带 `.gitea/workflows/offline.yml` 与 `packaging/gitea/ci/`，推到同一实例即可构建 Linux x64/arm64 与 Win7 x86；检出前只能调用镜像里烘焙的 `/opt/offline-ci/checkout.py`，检出后一律改用仓库内脚本。因为 rcho 的构建器会往 SDK 的 `cargo-home-*` 写配置，它的 `prepare-view.sh` 把只读 SDK 组织成 `/ci-cache` 下的可写视图（只读内容用符号链接引用），任何情况下都不向 `/opt/offline-sdk` 写入。
 - `wunder-offline-installer` → x86_64 剖面指向带 Wine + Inno Setup 的第四个镜像；arm64 剖面没有可用的 i386 Wine，该标签指回构建镜像，任务按宿主架构自行跳过。标签名必须留着，否则 `runs-on: wunder-offline-installer` 排不到 runner、任务永久排队。
 
 `runner.yaml` 是模板，`@TOKEN@` 由 `prepare-bundle.py` 渲染，套件里拿到的是已渲染值；标签与卷名必须和 `.env`/`compose.yaml` 同源。
@@ -78,16 +78,16 @@ git push gitea main
 `Offline Linux Release` 在每次分支推送、`v*` 标签推送或手工触发时执行，交付物与 GitHub 的
 `nightly` 发布同形——三个桌面程序 + 三个安装包，补充包不进 Release：
 
-- `linux`：矩阵 arm64/amd64。桌面 `wunder-slint-<版本>-linux-<arch>.tar.gz`、便携包 `wunder-<版本>-<x64|arm64>.portable`、
-  安装包 `wunder-<版本>-<x64|arm64>.run`；裸 CLI 只作架构与 glibc 门禁的样本，组完包转存到缓存卷，不当附件发布。
+- `linux`：矩阵 arm64/x64。桌面 `wunder-desktop-<版本>-linux-<x64|arm64>.tar.gz`、便携包 `wunder-desktop-<版本>-linux-<x64|arm64>.portable`、
+  安装包 `wunder-desktop-<版本>-linux-<x64|arm64>.run`；裸 CLI 只作架构与 glibc 门禁的样本，组完包转存到缓存卷，不当附件发布。
   `verify.py` 校验 ELF 架构、AppDir 布局、桌面二进制的 glibc ≤ 2.27，以及两个自解压件的头部标记与 gzip 载荷。
-- `win7`（两种宿主都真构建）：`wunder-frontend-slint-<版本>-win7-x86.exe`，`verify.py` 校验 PE i386 头；
+- `win7`（两种宿主都真构建）：`wunder-desktop-<版本>-win7-x86.exe`，`verify.py` 校验 PE i386 头；
   同时把桌面与 CLI 两个 PE 写进 `/ci-cache/<仓库键>/win7-x86/installer-inputs/` 交给下一个任务。
   宿主架构决定走哪套通道：x86_64 用 `build-win7-x86-offline.sh`（kylin-x86 的 MinGW 便携包），
   aarch64 用 `build-win7-arm64-offline.sh`（SDK 内 aarch64 宿主版便携包 + `nightly-*-aarch64` 的 rust-src 走
   `-Z build-std`），两条通道的产物名、`imports.txt` 与 Win7 导入门禁一致。
 - `win7-installer`（`needs: win7`）：在带 Wine + Inno Setup 的第四个镜像里跑 `ISCC.exe`，用交接 PE 与预置的
-  `wunder-supplement-win7-ia32-common.zip` 组出 `wunder-<版本>-win7-x86-setup.exe`。ARM 宿主跑不了 i386 Wine，
+  `wunder-supplement-win7-ia32-common.zip` 组出 `wunder-desktop-<版本>-win7-x86-setup.exe`。ARM 宿主跑不了 i386 Wine，
   脚本按 `uname -m` 打印 SKIP 并成功退出（所以 arm64 剖面把该标签指向构建镜像本身，不留空标签）——
   ARM 侧的 Release 与 x86_64 侧只差这一个安装包。
 

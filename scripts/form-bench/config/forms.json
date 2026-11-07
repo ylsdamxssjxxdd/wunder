@@ -31,8 +31,8 @@
   "forms": [
     {
       "id": "hull",
-      "name": "舰体",
-      "nameEn": "Hull",
+      "name": "服务端",
+      "nameEn": "wunder Server",
       "kind": "server",
       "summary": "服务端进程 wunder-server（默认 member，共享引擎 wunder-runtime）",
       "package": {
@@ -47,8 +47,8 @@
     },
     {
       "id": "bridge",
-      "name": "舰桥",
-      "nameEn": "Bridge",
+      "name": "管理端",
+      "nameEn": "wunder Admin",
       "kind": "web",
       "summary": "Web 管理端，由服务端静态托管于 /",
       "package": { "kind": "dir", "target": "web" },
@@ -68,8 +68,8 @@
     },
     {
       "id": "beehive",
-      "name": "蜂巢",
-      "nameEn": "Beehive",
+      "name": "云端版",
+      "nameEn": "wunder Cloud",
       "kind": "web",
       "summary": "Web 用户端 frontend（Vue + Vite）",
       "package": { "kind": "dir", "target": "frontend/dist" },
@@ -89,16 +89,16 @@
     },
     {
       "id": "pupa",
-      "name": "蛹",
-      "nameEn": "Pupa",
+      "name": "桌面版",
+      "nameEn": "wunder Desktop",
       "kind": "desktop",
       "summary": "原生桌面端 frontend-slint（Rust + Slint 单进程，内嵌后端）",
-      "package": { "kind": "file", "target": "target/release/wunder-frontend-slint.exe" },
+      "package": { "kind": "file", "target": "target/release/wunder-desktop.exe" },
       "startup": {
         "mode": "window",
-        "exe": "target/release/wunder-frontend-slint.exe"
+        "exe": "target/release/wunder-desktop.exe"
       },
-      "process": { "name": "wunder-frontend-slint" },
+      "process": { "name": "wunder-desktop" },
       "concurrency": { "supported": true, "mode": "backend", "note": "内嵌后端，按进程内并发会话计" },
       "chat": {
         "supported": true,
@@ -108,8 +108,8 @@
     },
     {
       "id": "helm",
-      "name": "舵机",
-      "nameEn": "Helm",
+      "name": "命令行",
+      "nameEn": "wunder CLI",
       "kind": "cli",
       "summary": "命令行 TUI wunder-cli",
       "package": { "kind": "file", "target": "target/release/wunder-cli.exe" },

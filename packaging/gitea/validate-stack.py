@@ -51,7 +51,7 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        arch: [arm64, amd64]
+        arch: [arm64, x64]
     steps:
       - name: Local checkout
         env:
@@ -76,7 +76,7 @@ jobs:
           if [[ "$ARCH" == arm64 && "$(uname -m)" == aarch64 ]]; then
             ./release-assets/wunder-cli-0.0.0-linux-arm64
           fi
-          tar -tzf ./release-assets/wunder-slint-0.0.0-linux-$ARCH.tar.gz | grep -qx './AppRun'
+          tar -tzf ./release-assets/wunder-desktop-0.0.0-linux-$ARCH.tar.gz | grep -qx './AppRun'
       - name: Local release upload
         env:
           ARCH: ${{ matrix.arch }}
@@ -105,10 +105,10 @@ PATH="$toolchain:$PATH" rustc --version
 """, encoding="utf-8")
     for relative in ("packaging/gitea/ci/build.sh", "packaging/gitea/ci/verify.py",
                      "builders/build-linux-arm64-desktop.sh",
-                     "builders/build-linux-amd64-desktop.sh", "builders/build-linux-amd64-offline.sh",
-                     "builders/build-cli-linux-arm64-offline.sh", "builders/build-cli-linux-amd64-offline.sh",
-                     "builders/linux_arm64_sysroot_cc.sh", "builders/linux-amd64-cross-cc.sh",
-                     "config/wunder-example.yaml", "images/pupa.png"):
+                     "builders/build-linux-x64-desktop.sh", "builders/build-linux-x64-offline.sh",
+                     "builders/build-cli-linux-arm64-offline.sh", "builders/build-cli-linux-x64-offline.sh",
+                     "builders/linux_arm64_sysroot_cc.sh", "builders/linux-x64-cross-cc.sh",
+                     "config/wunder-example.yaml", "images/eva01-head.png"):
         destination = directory / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(root / relative, destination)
@@ -119,12 +119,16 @@ resolver = "2"
 [workspace.package]
 version = "0.0.0"
 ''', encoding="utf-8")
+    (directory / "config").mkdir(parents=True, exist_ok=True)
+    (directory / "config" / "app_version.json").write_text('{"version": "0.0.0"}\n', encoding="utf-8")
     for relative, package in (("crates/wunder-cli", "wunder-cli"),
                               ("frontend-slint", "wunder-frontend-slint")):
         project = directory / relative
         (project / "src").mkdir(parents=True)
-        (project / "Cargo.toml").write_text('[package]\nname = "' + package
-                                            + '"\nversion = "0.0.0"\nedition = "2021"\n', encoding="utf-8")
+        manifest = '[package]\nname = "' + package + '"\nversion = "0.0.0"\nedition = "2021"\n'
+        if relative == "frontend-slint":
+            manifest += '\n[[bin]]\nname = "wunder-desktop"\npath = "src/main.rs"\n'
+        (project / "Cargo.toml").write_text(manifest, encoding="utf-8")
         (project / "src/main.rs").write_text('fn main() { println!("offline probe"); }\n', encoding="utf-8")
         lock = project if relative == "frontend-slint" else directory
         (lock / "Cargo.lock").write_text('version = 4\n[[package]]\nname = "' + package
@@ -157,13 +161,13 @@ version = "0.0.0"
                 raise RuntimeError("offline stack workflow failed: " + name)
             releases = api("/repos/admin/" + name + "/releases")
             assets = {asset["name"] for asset in releases[0]["assets"]}
-            expected = {"wunder-slint-0.0.0-linux-" + architecture + ".tar.gz"
-                        for architecture in ("arm64", "amd64")}
-            expected.update("wunder-cli-0.0.0-linux-" + architecture for architecture in ("arm64", "amd64"))
-            expected.update("SHA256SUMS-" + architecture + ".txt" for architecture in ("arm64", "amd64"))
+            expected = {"wunder-desktop-0.0.0-linux-" + architecture + ".tar.gz"
+                        for architecture in ("arm64", "x64")}
+            expected.update("wunder-cli-0.0.0-linux-" + architecture for architecture in ("arm64", "x64"))
+            expected.update("SHA256SUMS-" + architecture + ".txt" for architecture in ("arm64", "x64"))
             if not expected.issubset(assets):
                 raise RuntimeError("both architecture outputs were not published")
-            print("PASS: authenticated checkout, push-triggered matrix, ARM64 native/AMD64 cross Rust, "
+            print("PASS: authenticated checkout, push-triggered matrix, ARM64 native/x64 cross Rust, "
                   "read-only mounted SDK, original desktop/CLI build scripts, ELF/glibc checks, "
                   "isolation and local Release uploads")
             return

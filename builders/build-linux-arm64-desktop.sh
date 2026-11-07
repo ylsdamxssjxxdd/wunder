@@ -11,7 +11,7 @@ host_arch="$(uname -m)"
 case "$host_arch" in
   aarch64) host_profile=kylin-arm ;;
   x86_64) host_profile=kylin-x86 ;;
-  *) echo "[wunder-slint-arm64-desktop] unsupported Linux host: ${host_arch:-unknown}" >&2; exit 2 ;;
+  *) echo "[wunder-desktop-arm64] unsupported Linux host: ${host_arch:-unknown}" >&2; exit 2 ;;
 esac
 # A native ARM64 Linux checkout keeps the reusable SDK beside the repository.
 # Docker mounts it at /builder/kylin-arm; x86_64 hosts default to kylin-x86.
@@ -28,7 +28,7 @@ gcc_lib="$sysroot/usr/lib/gcc/aarch64-linux-gnu/7"
 stage_dir=""
 phase=preflight
 
-fail() { echo "[wunder-slint-arm64-desktop] $*" >&2; exit 2; }
+fail() { echo "[wunder-desktop-arm64] $*" >&2; exit 2; }
 require_file() { [[ -f "$1" ]] || fail "required file is missing: $1"; }
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "required command is unavailable: $1"; }
 
@@ -40,11 +40,11 @@ cleanup() {
   # supplied output directory.
   if [[ -n "$stage_dir" ]]; then
     case "$stage_dir" in
-      "$output_dir"/.wunder-arm-package.*) rm -rf -- "$stage_dir" ;;
+      "$output_dir"/.wunder-desktop-arm64-package.*) rm -rf -- "$stage_dir" ;;
     esac
   fi
   if ((status != 0)); then
-    echo "[wunder-slint-arm64-desktop] failed during $phase (exit $status); command: ${BASH_COMMAND:-unknown}; no new archive was published" >&2
+    echo "[wunder-desktop-arm64] failed during $phase (exit $status); command: ${BASH_COMMAND:-unknown}; no new archive was published" >&2
   fi
   exit "$status"
 }
@@ -88,7 +88,7 @@ for command_name in cargo rustc readelf awk grep sort mktemp stat tr tar; do
 done
 [[ "$host_arch" == x86_64 ]] || require_command ldd
 
-version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" | head -n 1)"
+version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$repo_root/config/app_version.json" | head -n 1)"
 [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]] || fail "invalid package version: $version"
 
 mkdir -p "$cargo_home" "$target_dir" "$output_dir"
@@ -137,17 +137,17 @@ if [[ "$host_arch" == x86_64 ]]; then
   export PKG_CONFIG_LIBDIR="$sysroot/usr/lib/aarch64-linux-gnu/pkgconfig:$sysroot/usr/share/pkgconfig"
 fi
 
-echo "[wunder-slint-arm64-desktop] cargo: $(cargo --version)"
-echo "[wunder-slint-arm64-desktop] rustc: $(rustc --version)"
-echo "[wunder-slint-arm64-desktop] baseline: GLIBC_$max_glibc (Ubuntu 18.04 sysroot)"
+echo "[wunder-desktop-arm64] cargo: $(cargo --version)"
+echo "[wunder-desktop-arm64] rustc: $(rustc --version)"
+echo "[wunder-desktop-arm64] baseline: GLIBC_$max_glibc (Ubuntu 18.04 sysroot)"
 cargo "${WUNDER_VENDORED_CONFIG[@]}" build --locked --offline --release --manifest-path "$manifest" \
-  --bin wunder-frontend-slint "${cargo_target_args[@]}"
+  --bin wunder-desktop "${cargo_target_args[@]}"
 
 phase=validation
 if [[ "$host_arch" == x86_64 ]]; then
-  binary="$target_dir/aarch64-unknown-linux-gnu/release/wunder-frontend-slint"
+  binary="$target_dir/aarch64-unknown-linux-gnu/release/wunder-desktop"
 else
-  binary="$target_dir/release/wunder-frontend-slint"
+  binary="$target_dir/release/wunder-desktop"
 fi
 require_file "$binary"
 machine="$(LC_ALL=C readelf -h "$binary" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[ \t]+/, "", $2); print $2}')"
@@ -156,15 +156,15 @@ required_glibc="$(LC_ALL=C readelf --version-info "$binary" 2>/dev/null | LC_ALL
 [[ -n "$required_glibc" ]] || fail "could not determine executable GLIBC requirement"
 [[ "$(printf '%s\n%s\n' "$max_glibc" "$required_glibc" | sort -V | tail -n 1)" == "$max_glibc" ]] || fail "GLIBC_$required_glibc exceeds release limit GLIBC_$max_glibc"
 
-app_name="wunder-slint-$version-linux-arm64"
+app_name="wunder-desktop-$version-linux-arm64"
 phase=packaging
-stage_dir="$(mktemp -d "$output_dir/.wunder-arm-package.XXXXXXXX")"
+stage_dir="$(mktemp -d "$output_dir/.wunder-desktop-arm64-package.XXXXXXXX")"
 appdir="$stage_dir/appdir"
 mkdir -p "$appdir/usr/bin" "$appdir/usr/lib" "$appdir/usr/share/applications" "$appdir/usr/share/icons/hicolor/256x256/apps" "$appdir/config" "$appdir/images"
 # Strip a private copy only; Cargo's incremental/release cache remains usable
 # after packaging and can be reused by the next build.
-cp -f "$binary" "$appdir/usr/bin/wunder-frontend-slint"
-"${strip_cmd[@]}" --strip-all --strip-unneeded "$appdir/usr/bin/wunder-frontend-slint"
+cp -f "$binary" "$appdir/usr/bin/wunder-desktop"
+"${strip_cmd[@]}" --strip-all --strip-unneeded "$appdir/usr/bin/wunder-desktop"
 
 # Use the example configuration as the distributable seed; runtime state is
 # written outside the pack and no machine-specific paths are packaged.
@@ -175,7 +175,7 @@ for resource in prompts skills preset_worker_cards ppt_templates i18n.messages.j
   if [[ -d "$source" ]]; then cp -a "$source" "$appdir/config/"; fi
   if [[ -f "$source" ]]; then cp -f "$source" "$appdir/config/"; fi
 done
-icon_source="$repo_root/images/pupa.png"
+icon_source="$repo_root/images/eva01-head.png"
 [[ -f "$icon_source" ]] || icon_source="$repo_root/images/wunder.png"
 if [[ -f "$icon_source" ]]; then
   cp -f "$icon_source" "$appdir/usr/share/icons/hicolor/256x256/apps/wunder.png"
@@ -184,9 +184,9 @@ fi
 
 cat > "$appdir/wunder.desktop" <<'EOF'
 [Desktop Entry]
-Name=蛹
+Name=wunder 桌面版
 Comment=本地 AI 工作台
-Exec=wunder-frontend-slint
+Exec=wunder-desktop
 Icon=wunder
 Terminal=false
 Type=Application
@@ -291,7 +291,7 @@ if [ -z "${WUNDER_HOME:-}" ]; then
     export WUNDER_HOME
   fi
 fi
-exec "$APPDIR/usr/bin/wunder-frontend-slint" "$@"
+exec "$APPDIR/usr/bin/wunder-desktop" "$@"
 EOF
 chmod +x "$appdir/AppRun"
 
@@ -300,4 +300,4 @@ chmod +x "$appdir/AppRun"
 tarball="$stage_dir/$app_name.tar.gz"
 tar --sort=name --numeric-owner -czf "$tarball" -C "$appdir" .
 mv -f -- "$tarball" "$output_dir/$app_name.tar.gz"
-echo "[wunder-slint-arm64-desktop] produced: $output_dir/$app_name.tar.gz ($(stat -c '%s' "$output_dir/$app_name.tar.gz") bytes)"
+echo "[wunder-desktop-arm64] produced: $output_dir/$app_name.tar.gz ($(stat -c '%s' "$output_dir/$app_name.tar.gz") bytes)"

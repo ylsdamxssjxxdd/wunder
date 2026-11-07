@@ -12,39 +12,39 @@ wunder (Xinjian) is a **multi-form agent workbench**:
 Each release publishes the main program, supplement packages, and installers.
 
 - **Legacy systems**: download the `setup` or `.run` installer. It ships with a complete runtime, but compatibility constraints limit many third-party features.
-- **Modern systems**: download the `.exe` or the `-portable` single file and run it directly; it needs no extra system packages.
+- **Modern systems**: download the `.exe` or the `.portable` single file and run it directly; it needs no extra system packages.
 
 On first launch, configure a model on the settings page and you are ready to go.
 
 ## Interface
 
-**🍯 Pupa (desktop)** — local AI workbench (flagship form)
+**🍯 wunder Desktop** — local AI workbench (flagship form)
 
-<img src="docs/images/wunder-pupa.png" alt="Pupa: local AI workbench interface" width="880">
+<img src="docs/images/wunder-pupa.png" alt="wunder Desktop: local AI workbench interface" width="880">
 
-**🐉 Bridge (web)** — the Hull's governance console
+**🐉 wunder Admin** — the Server's governance console
 
-<img src="docs/images/wunder-bridge.png" alt="Bridge: governance console interface" width="880">
+<img src="docs/images/wunder-bridge.png" alt="wunder Admin: governance console interface" width="880">
 
-**🐝 Beehive (web)** — cloud AI workbench
+**🐝 wunder Cloud** — cloud AI workbench
 
-<img src="docs/images/wunder-hive.png" alt="Beehive: cloud AI workbench interface" width="880">
+<img src="docs/images/wunder-hive.png" alt="wunder Cloud: cloud AI workbench interface" width="880">
 
-**⚙️ Servo (cli)** — terminal TUI entry point
+**⚙️ wunder CLI** — terminal TUI entry point
 
-<img src="docs/images/wunder-servo.png" alt="Servo: terminal TUI interface" width="880">
+<img src="docs/images/wunder-servo.png" alt="wunder CLI: terminal TUI interface" width="880">
 
 ## Form Matrix
 
 | Icon | Form | Tech Stack | Role | How It Runs | Platforms |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| 🚀 | Hull (server) | Rust + axum 0.8; PostgreSQL | User-and-agent management platform. All users share a single sandbox with no barriers between them | Server daemon, Docker deployment | Linux / Docker |
-| 🐉 | Bridge (web) | Plain HTML + CSS + JavaScript (`web/`, no build) | Hull's governance console (four nav groups: system, agents, debugging, docs) | Browser access, statically mounted by the Hull at `/` | Cross-platform browsers |
-| 🐝 | Beehive (web) | Vue 3 + TypeScript (Vite build, `frontend/`) | Cloud AI workbench (the Hull's user frontend) | Browser access; the built `frontend/dist` is mounted read-only into an nginx container and served externally (default port 18001) — **not hosted by the Hull** | Cross-platform browsers |
-| 🍯 | Pupa (desktop) | Rust + Slint 1.18 (default frontend `frontend-slint/`, native UI, software rendering); SQLite | Local AI workbench (flagship form, install and go) | Local desktop process calling the engine in-process (no local HTTP); Electron / Tauri shells are no longer maintained | Windows 7 x86 and up; Linux (ubuntu18.04 baseline) x64 / arm64 via the `.run` installer or `-portable` |
-| ⚙️ | Helm (cli) | Rust terminal TUI (ratatui + crossterm); SQLite | Hands-on local entry point (terminal work, scripting, automation) | Local terminal process calling the engine in-process; JSONL output supported | Windows 7 and up (GNU toolchain); Linux amd64 / arm64 (ubuntu18.04 sysroot) |
+| 🚀 | wunder Server | Rust + axum 0.8; PostgreSQL | User-and-agent management platform. All users share a single sandbox with no barriers between them | Server daemon, Docker deployment | Linux / Docker |
+| 🐉 | wunder Admin | Plain HTML + CSS + JavaScript (`web/`, no build) | Server's governance console (four nav groups: system, agents, debugging, docs) | Browser access, statically mounted by the Server at `/` | Cross-platform browsers |
+| 🐝 | wunder Cloud | Vue 3 + TypeScript (Vite build, `frontend/`) | Cloud AI workbench (the Server's user frontend) | Browser access; the built `frontend/dist` is mounted read-only into an nginx container and served externally (default port 18001) — **not hosted by the Server** | Cross-platform browsers |
+| 🍯 | wunder Desktop | Rust + Slint 1.18 (default frontend `frontend-slint/`, native UI, software rendering); SQLite | Local AI workbench (flagship form, install and go) | Local desktop process calling the engine in-process (no local HTTP); Electron / Tauri shells are no longer maintained | Windows 7 x86 and up; Linux (ubuntu18.04 baseline) x64 / arm64 via the `.run` installer or `.portable` |
+| ⚙️ | wunder CLI | Rust terminal TUI (ratatui + crossterm); SQLite | Hands-on local entry point (terminal work, scripting, automation) | Local terminal process calling the engine in-process; JSONL output supported | Windows 7 and up (GNU toolchain); Linux amd64 / arm64 (ubuntu18.04 sysroot) |
 
-All forms share one engine (wunder-runtime) and one core (wunder-core): threads, tools, storage abstractions, realtime events, and permission semantics are a single codebase — only the access layer differs. Pupa and Helm run standalone without the Hull.
+All forms share one engine (wunder-runtime) and one core (wunder-core): threads, tools, storage abstractions, realtime events, and permission semantics are a single codebase — only the access layer differs. wunder Desktop and wunder CLI run standalone without the Server.
 
 <img src="docs/images/wunder-architecture.png" alt="wunder: four forms over a shared engine" width="880">
 
@@ -56,11 +56,11 @@ Performance characteristics of the same engine across forms. Values are to be fi
 
 | Icon | Form | Startup speed | Memory usage | CPU usage | Package size | Concurrent agent threads | Chat page performance |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 🚀 | Hull (server) | — | — | — | — | — | — |
-| 🐉 | Bridge (web) | — | — | — | — | — | — |
-| 🐝 | Beehive (web) | — | — | — | — | — | — |
-| 🍯 | Pupa (desktop) | — | — | — | — | — | — |
-| ⚙️ | Helm (cli) | — | — | — | — | — | — |
+| 🚀 | wunder Server | — | — | — | — | — | — |
+| 🐉 | wunder Admin | — | — | — | — | — | — |
+| 🐝 | wunder Cloud | — | — | — | — | — | — |
+| 🍯 | wunder Desktop | — | — | — | — | — | — |
+| ⚙️ | wunder CLI | — | — | — | — | — | — |
 
 ## Tool Matrix
 

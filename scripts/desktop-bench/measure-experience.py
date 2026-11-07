@@ -142,7 +142,7 @@ def compare(now, old, percent, absolute):
 
 
 def render(report):
-    lines = ["# 蛹后端体验测试", "", "独立进程调用正式 NativeDesktop 库；结果不含界面布局、绘制及交互响应时间。", "",
+    lines = ["# 桌面版后端体验测试", "", "独立进程调用正式 NativeDesktop 库；结果不含界面布局、绘制及交互响应时间。", "",
              "- 配置：`{}`；正确性：{}；总结果：{}。".format(report["profile"],
                   "通过" if report["correctness_passed"] else "失败", "通过" if report["passed"] else "失败"),
              "- 启动恢复为正常退出后重启；工具阻塞取消、故障中断恢复和真正并发执行尚待扩充。",

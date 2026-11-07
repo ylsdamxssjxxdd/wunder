@@ -1,4 +1,4 @@
-// 线程轨迹视图（对齐蜂巢 ThreadTrajectoryView.vue）：
+// 线程轨迹视图（对齐云端版 ThreadTrajectoryView.vue）：
 // 工具栏 + 三泳道时间线 + 台账表格（虚拟滚动）+ 详情检查器。
 // 纯 DOM 实现，数据由调用方注入（setRawTurns），并提供全屏「轨迹页面」弹窗。
 
@@ -579,7 +579,7 @@ export function createTrajectoryView(host, options = {}) {
     const domain = timeline
       ? { start: timeline.start, end: Math.max(timeline.end, timeline.start + 1) }
       : { start: 0, end: 1 };
-    // 对齐蜂巢 watch(timeline)：时间线重建（数据刷新或模式切换）后回到全域视图。
+    // 对齐云端版 watch(timeline)：时间线重建（数据刷新或模式切换）后回到全域视图。
     if (timeline && st.viewSpan <= 0) {
       st.viewStart = timeline.start;
       st.viewSpan = Math.max(1, timeline.end - timeline.start);
@@ -854,7 +854,7 @@ export function createTrajectoryView(host, options = {}) {
     tbody.textContent = "";
     const foldGroups = buildFoldGroups(flattenRecords(computeTurns()));
 
-    // 请求编号圆点挂在助手消息行上，并与蜂巢保持同一条纵线。
+    // 请求编号圆点挂在助手消息行上，并与云端版保持同一条纵线。
     const dotsByAssistantIndex = new Map();
     for (const request of requests) {
       dotsByAssistantIndex.set(request.assistantIndex, {
@@ -1026,7 +1026,7 @@ export function createTrajectoryView(host, options = {}) {
     if (cell.kind === "compacted") return [label.overview, label.rawOutput];
     if (cell.kind === "tool" || cell.kind === "subtool") {
       // The overview already carries the duration; a second timing tab only
-      // repeated it, and 蛹/蜂巢 do not offer one on a tool entry.
+      // repeated it, and 桌面版/云端版 do not offer one on a tool entry.
       return [label.overview, label.params, label.result, label.schema];
     }
     return [label.overview, label.preview, label.raw];
@@ -1760,7 +1760,7 @@ export function createTrajectoryView(host, options = {}) {
     if (ledgerEl) st.ledgerViewport = ledgerEl.clientHeight;
   };
 
-  // 舰桥轨迹既可能在全屏弹窗中打开，也可能嵌在调试面板里；仅监听
+  // 管理端轨迹既可能在全屏弹窗中打开，也可能嵌在调试面板里；仅监听
   // window.resize 无法覆盖面板折叠、详情栏拖拽等容器尺寸变化。
   const trackResizeObserver = typeof ResizeObserver === "function"
     ? new ResizeObserver(() => {

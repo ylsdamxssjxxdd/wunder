@@ -1,5 +1,5 @@
 fn main() {
-    // The shell imports 蛹's chat components in place; an edit on either side
+    // The shell imports 桌面版's chat components in place; an edit on either side
     // changes the generated code.
     for dir in ["ui", "../../frontend-slint/ui"] {
         if let Ok(entries) = std::fs::read_dir(dir) {
@@ -11,7 +11,7 @@ fn main() {
             }
         }
     }
-    // 蛹's settings dropdowns use the array search helpers, which stock Slint
+    // 桌面版's settings dropdowns use the array search helpers, which stock Slint
     // still gates behind the experimental flag.
     std::env::set_var("SLINT_ENABLE_EXPERIMENTAL_FEATURES", "1");
     slint_build::compile_with_config(
@@ -22,8 +22,8 @@ fn main() {
     )
     .expect("failed to compile the mobile Slint UI");
 
-    // 蛹 registers Microsoft YaHei at startup because Win7 has no CJK face.
-    // 茧 must show the same typography, so the same face is compressed into
+    // 桌面版 registers Microsoft YaHei at startup because Win7 has no CJK face.
+    // 安卓版 must show the same typography, so the same face is compressed into
     // the binary and registered before the first frame.
     let raw = std::fs::read("../../frontend-slint/assets/fonts/msyh.ttc")
         .expect("read the bundled Microsoft YaHei");

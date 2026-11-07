@@ -68,7 +68,7 @@ Micro-compaction conventions: keep the most recent 5 groups, collapse older obse
 ## MCP Integration
 
 - An external MCP client must be configured with a name, endpoint, transport, request headers, authentication, allowed tools, whether to package, and tool specs.
-- The hull's built-in MCP service endpoint is `/wunder/mcp` (streamable-http), exposing two tools, `wunder@excute` and `doc2md`; it returns 501 when the matching capability is off.
+- The Server's built-in MCP service endpoint is `/wunder/mcp` (streamable-http), exposing two tools, `wunder@excute` and `doc2md`; it returns 501 when the matching capability is off.
 - The standalone Python FastMCP service carries its own configuration and toolset and is not part of this engine.
 
 ## Protocol and Provider

@@ -1,6 +1,6 @@
-# 蛹 `/goal` 控制链验证
+# 桌面版 `/goal` 控制链验证
 
-日期：2026-10-26。对象是蛹的原生 Slint 前端、`NativeDesktop` façade 与共享引擎，不是舰桥、蜂巢或兼容 bridge 的全量验收。
+日期：2026-10-26。对象是桌面版的原生 Slint 前端、`NativeDesktop` façade 与共享引擎，不是管理端、云端版或兼容 bridge 的全量验收。
 
 ## 结论
 

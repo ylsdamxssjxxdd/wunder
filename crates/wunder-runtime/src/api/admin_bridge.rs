@@ -1611,7 +1611,7 @@ mod tests {
     #[test]
     fn bridge_center_upsert_payload_supports_embedded_shared_channels() {
         let payload: BridgeCenterUpsertPayload = serde_json::from_value(json!({
-            "name": "舰桥节点",
+            "name": "桥接节点",
             "code": "service_center",
             "default_preset_agent_name": "客服助手",
             "shared_channels": [
@@ -1625,7 +1625,7 @@ mod tests {
         }))
         .expect("payload should deserialize");
 
-        assert_eq!(payload.name, "舰桥节点");
+        assert_eq!(payload.name, "桥接节点");
         assert_eq!(payload.code, "service_center");
         assert_eq!(payload.default_preset_agent_name, "客服助手");
         assert_eq!(
@@ -1649,7 +1649,7 @@ mod tests {
     #[test]
     fn bridge_center_upsert_payload_allows_missing_shared_channels() {
         let payload: BridgeCenterUpsertPayload = serde_json::from_value(json!({
-            "name": "舰桥节点",
+            "name": "桥接节点",
             "code": "service_center",
             "default_preset_agent_name": "客服助手"
         }))
@@ -1670,7 +1670,7 @@ mod tests {
     fn build_bridge_weixin_account_id_uses_stable_center_id() {
         let center = BridgeCenterRecord {
             center_id: "bc_AbC-123".to_string(),
-            name: "舰桥".to_string(),
+            name: "桥接中心".to_string(),
             code: "bridge".to_string(),
             description: None,
             owner_user_id: "admin".to_string(),

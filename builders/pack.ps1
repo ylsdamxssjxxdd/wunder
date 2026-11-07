@@ -1,6 +1,6 @@
 param(
   [Parameter(Position = 0)][ValidateSet("pack")][string]$Action = "pack",
-  [Alias("a")][ValidateSet("win7-x86", "linux-amd64", "linux-arm64")][string]$Arch = "",
+  [Alias("a")][ValidateSet("win7-x86", "linux-x64", "linux-arm64")][string]$Arch = "",
   [string]$Desktop = "",
   [string]$Cli = "",
   [string]$Supplement = "",

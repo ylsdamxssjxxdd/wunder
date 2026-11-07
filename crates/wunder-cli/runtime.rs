@@ -115,7 +115,7 @@ impl CliRuntime {
         set_env_path("WUNDER_BUILTIN_SKILLS_ROOT", &wunder_home.join("skills"));
         set_env_path_if_exists("WUNDER_SKILL_RUNNER_PATH", &skill_runner);
         set_env_path("WUNDER_HOME", &wunder_home);
-        // Supplements imported by 蛹 are shared with this manual local entry.
+        // Supplements imported by 桌面版 are shared with this manual local entry.
         wunder_server::local_bootstrap::supplement::configure_runtime_env(&[wunder_home.clone()]);
         // The shell host is probed lazily and cached; drop the cache so a
         // supplement unpacked since this process started is picked up.
@@ -127,7 +127,7 @@ impl CliRuntime {
         std::env::set_var("WUNDER_WORKSPACE_SINGLE_ROOT", "1");
 
         // Users configure the CLI through `~/.wunder/config.toml`; the engine
-        // YAML is the runtime store shared with 蛹. The template is created once
+        // YAML is the runtime store shared with 桌面版. The template is created once
         // so the file is discoverable, then every layer is projected onto it.
         crate::user_config::ensure_user_config_template(&wunder_home)
             .context("write user config template failed")?;
@@ -155,7 +155,7 @@ impl CliRuntime {
         cli_startup_segment("load_user_config", step_start, startup_boot);
         step_start = Instant::now();
 
-        // The engine YAML is the same file 蛹 writes, so it is read back on every
+        // The engine YAML is the same file 桌面版 writes, so it is read back on every
         // start instead of being rebuilt from the shipped template. The template
         // now only supplies the floor for keys this CLI owns alone: a setting the
         // user deleted from config.toml still reverts to it, while model entries
@@ -789,7 +789,7 @@ fn apply_cli_defaults(
     }
 
     // These switches belong to the shared local engine configuration. Keep
-    // the same values for 蛹 and 舵机 so starting one client never rewrites
+    // the same values for 桌面版 and 命令行 so starting one client never rewrites
     // the other client's runtime policy.
     config.channels.enabled = true;
     config.channels.outbox.worker_enabled = true;
@@ -797,7 +797,7 @@ fn apply_cli_defaults(
     config.agent_queue.enabled = true;
     config.cron.enabled = true;
 
-    // 舵机 is a local form like 蛹: the workspace folder is the boundary, so
+    // 命令行 is a local form like 桌面版: the workspace folder is the boundary, so
     // commands are not filtered by a per-call whitelist and the approval gate
     // starts open. An explicit user choice lives in the approval sidecar
     // (config.toml takes over this role in the config-projection step).
@@ -998,7 +998,7 @@ fn load_engine_template(repo_root: &Path) -> Result<Config> {
 /// Reset the configuration this CLI owns alone back to the shipped template.
 /// It runs before the user layers, so a key the user deleted from config.toml
 /// cannot keep living in the shared engine file. Model entries are deliberately
-/// left out: 蛹 writes them into the same file and they are not this CLI's to
+/// left out: 桌面版 writes them into the same file and they are not this CLI's to
 /// discard.
 fn apply_template_defaults(config: &mut Config, template: &Config) {
     config.project_doc.enabled = template.project_doc.enabled;

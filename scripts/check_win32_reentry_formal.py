@@ -35,7 +35,7 @@ def main():
         "--map", str(scratch / (name + ".map.mjs")),
         *(flag for rule in broken for flag in ("--expect-broken", rule)),
         "--out", str(output), "--png", "--cover",
-        "--title", "蛹UI线程消息帧重入审计",
+        "--title", "桌面版UI线程消息帧重入审计",
     ]
     subprocess.run(command, env=environment, check=True)
     summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))

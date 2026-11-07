@@ -27,7 +27,7 @@ Logs go to two channels at once: a colorized layer on the console and a file lay
 
 The default level is `info`, and it can be overridden with the `RUST_LOG` environment variable; noise from third-party libraries is quieted by default.
 
-Retention defaults to **0, which means files are never cleaned up automatically** — the system only deletes old files by day once you set an explicit positive number of days. Long-running deployments should either set retention explicitly or rotate the log directory themselves. Note that in sandbox mode nothing is written to files, and only console output is produced. The Helm (cli) logs at `warn` and above by default, the standalone local bridge at `info`/`warn`, and neither writes log files.
+Retention defaults to **0, which means files are never cleaned up automatically** — the system only deletes old files by day once you set an explicit positive number of days. Long-running deployments should either set retention explicitly or rotate the log directory themselves. Note that in sandbox mode nothing is written to files, and only console output is produced. The CLI logs at `warn` and above by default, the standalone local bridge at `info`/`warn`, and neither writes log files.
 
 ## Runtime metrics and alerts
 
@@ -45,9 +45,9 @@ Channel runtime logs live in an in-memory ring buffer that keeps only the most r
 
 Admin-side monitoring is the entry point to governance views. Sessions are labeled by status — running, waiting, queued, finished, error, cancelling, and cancelled — and you can export a session's thread log, page through its turns, or pull a snapshot (for example, `/wunder/admin/monitor/{session_id}/thread-log/export|turns|snapshot|changes`).
 
-The log pane on the right side of the Bridge debug panel is the **thread trace view**; following a single thread's execution record starts there.
+The log pane on the right side of the Admin debug panel is the **thread trace view**; following a single thread's execution record starts there.
 
-Not everything has a Bridge panel: interlink governance, long-term memory, and goals are backend-only, with no Bridge UI, so those are checked through their APIs and the logs.
+Not everything has a Admin panel: interlink governance, long-term memory, and goals are backend-only, with no Admin UI, so those are checked through their APIs and the logs.
 
 ## Performance entry points
 
@@ -61,7 +61,7 @@ Throughput and performance sampling belong to the admin side (`/wunder/admin/thr
 
 ## How performance is scored
 
-The three forms — the Pupa, the Beehive, and the Hull — are each scored **independently** on a weighted 0–100 scale, and scores cannot be added across forms. Comparisons are always made in the same environment, through the same entry point, before and after a change; the matching baselines live in the documentation's performance-baseline section. Numbers obtained on a different machine or through a different entry point are not comparable.
+The three forms — the Desktop, the Cloud, and the Server — are each scored **independently** on a weighted 0–100 scale, and scores cannot be added across forms. Comparisons are always made in the same environment, through the same entry point, before and after a change; the matching baselines live in the documentation's performance-baseline section. Numbers obtained on a different machine or through a different entry point are not comparable.
 
 ## Troubleshooting flow
 

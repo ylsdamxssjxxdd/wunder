@@ -112,7 +112,7 @@ impl ProcessTree {
                 return None;
             }
             let handle = JobHandle(job);
-            // 蛹自身若已处于别的 Job（Win7 单 Job 限制），指派会失败；
+            // 桌面版自身若已处于别的 Job（Win7 单 Job 限制），指派会失败；
             // 此时退回逐进程 kill，不视为致命，但必须留下痕迹：树终止会
             // 静默退化为只杀 shell，孙进程仍然存活。
             let Some(process) = child.raw_handle() else {

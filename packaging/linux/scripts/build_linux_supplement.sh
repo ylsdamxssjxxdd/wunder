@@ -410,12 +410,12 @@ Browser: $browser_version at opt/browser/$browser_executable_rel (when bundled)
 Browsers: Playwright Chromium in opt/python/ms-playwright (when bundled)
 
 Usage:
-1. Use Import supplement in the Pupa settings, or close processes using this runtime.
+1. Use Import supplement in the wunder Desktop settings, or close processes using this runtime.
 2. For manual installation, extract into WUNDER_HOME (default: ~/.wunder),
-   including when the Pupa is distributed as an AppImage.
+   including when wunder Desktop is distributed as an AppImage.
 3. Ensure the target now contains opt/python, opt/git, opt/rg, opt/ffmpeg,
    opt/7zip (and opt/browser on amd64).
-4. Start the Pupa or Helm; both prepend the shared opt/python,
+4. Start wunder Desktop or wunder CLI; both prepend the shared opt/python,
    opt/git, opt/rg, opt/ffmpeg and opt/7zip to PATH automatically.
 EOF
 

@@ -1,6 +1,6 @@
 ---
 title: Compatibility
-summary: Offline build chains, software rendering, and terminal adaptation for the Pupa and the Helm on Windows 7 32-bit and Ubuntu 18.04.
+summary: Offline build chains, software rendering, and terminal adaptation for the Desktop and the CLI on Windows 7 32-bit and Ubuntu 18.04.
 updated_at: 2026-10-16
 ---
 
@@ -20,7 +20,7 @@ updated_at: 2026-10-16
 - **Command sessions adapt to old terminals**: command sessions are carried over winpty, and output is decoded as GBK.
 - **Startup checks**: a recovery scan and self-check run at startup.
 
-Both chains work offline, the interface needs no GPU, and command sessions adapt to legacy terminals — Windows 7 32-bit and Ubuntu 18.04 (x64 / arm64) can run the Pupa and the Helm directly.
+Both chains work offline, the interface needs no GPU, and command sessions adapt to legacy terminals — Windows 7 32-bit and Ubuntu 18.04 (x64 / arm64) can run the Desktop and the CLI directly.
 
 ## Limits
 

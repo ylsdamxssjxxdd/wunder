@@ -1,8 +1,8 @@
-# 蛹聊天打开后端基准
+# 桌面版聊天打开后端基准
 
-统一场景、复测频率和优化流程见 [蛹体验测试方案](../../docs/蛹体验测试方案.md)。本基准作为该方案的 UX-01，被 `measure-experience.py` 直接复用。
+统一场景、复测频率和优化流程见 [桌面版体验测试方案](../../docs/蛹体验测试方案.md)。本基准作为该方案的 UX-01，被 `measure-experience.py` 直接复用。
 
-这是开发用的外部测试，直接链接 `wunder-desktop` 和 `wunder-runtime`，调用聊天页面实际使用的 `NativeDesktop::open_chat_snapshot()`。不构建或启动最终蛹程序，不依赖 Slint、桌面窗口、浏览器、HTTP bridge、模型或补充包。测试工作进程位于 `crates/wunder-desktop/examples/chat_open_probe.rs`，不会编入蛹的产品入口。
+这是开发用的外部测试，直接链接 `wunder-desktop` 和 `wunder-runtime`，调用聊天页面实际使用的 `NativeDesktop::open_chat_snapshot()`。不构建或启动最终桌面版程序，不依赖 Slint、桌面窗口、浏览器、HTTP bridge、模型或补充包。测试工作进程位于 `crates/wunder-desktop/examples/chat_open_probe.rs`，不会编入桌面版的产品入口。
 
 需要 Rust 工具链、Python 3.8+ 和 `psutil`。Windows 7 使用与该系统兼容的 Python/psutil；跨平台脚本本身不依赖新 Windows API。当前机器上的通过不能替代 Win7 或 Ubuntu 18.04 真机测试。
 
@@ -53,7 +53,7 @@ python scripts/desktop-bench/measure-chat-open.py --runs 30 --output target/desk
 
 基线比较必须满足相同数据摘要、环境、构建形态和测量模式。每个场景 P50/P95 同时超过默认 `20%` 和 `5 ms` 时判为退化，可用 `--regression-percent`、`--regression-ms` 调整；条件不一致直接拒绝比较。产物 SHA-256、Git 版本与工作区是否修改另行记录，允许优化后代码与二进制变化。不要把不同机器或磁盘的结果直接比较；报告环境清单不包含主机名、用户名和绝对目录。
 
-重复测量已构建的独立 worker 可以指定 `--probe`，这里传的是测试程序，而非蛹 EXE。更换后端代码后默认不传该参数，脚本会重新构建，避免误测旧程序。
+重复测量已构建的独立 worker 可以指定 `--probe`，这里传的是测试程序，而非桌面版 EXE。更换后端代码后默认不传该参数，脚本会重新构建，避免误测旧程序。
 
 较小的连通性检查：
 

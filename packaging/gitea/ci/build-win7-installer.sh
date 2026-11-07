@@ -27,7 +27,7 @@ cache="/ci-cache/$cache_key/win7-x86"
 inputs="$cache/installer-inputs"
 export WUNDER_OFFLINE_ROOT="${WUNDER_OFFLINE_ROOT:-/opt/offline-sdk}"
 
-desktop="$(find "$inputs" -maxdepth 1 -name 'wunder-frontend-slint-*-win7-x86.exe' -print -quit 2>/dev/null)"
+desktop="$(find "$inputs" -maxdepth 1 -name 'wunder-desktop-*-win7-x86.exe' -print -quit 2>/dev/null)"
 cli="$(find "$inputs" -maxdepth 1 -name 'wunder-cli-*win7-x86.exe' -print -quit 2>/dev/null)"
 pack="$WUNDER_OFFLINE_ROOT/supplement-prebuilt/win7-ia32/wunder-supplement-win7-ia32-common.zip"
 [[ -d "$inputs" ]] || { echo "交接目录不存在: $inputs（win7 构建任务未产出或缓存卷被清理）" >&2; exit 2; }

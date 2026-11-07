@@ -399,7 +399,7 @@ mod daemon {
         let id: u32 = match proxy.call(
             "Notify",
             &(
-                "蛹",
+                "wunder 桌面版",
                 0u32,
                 "",
                 title,

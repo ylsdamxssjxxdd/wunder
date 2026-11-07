@@ -1,10 +1,10 @@
-# 蛹目标轮次驱动验证：会话栅栏释放后的继续驱动
+# 桌面版目标轮次驱动验证：会话栅栏释放后的继续驱动
 
-日期：2026-10-30。对象是蛹（`frontend-slint/` + `crates/wunder-desktop`）经原生流进入 `wunder-runtime` 的目标轮次驱动链；不覆盖蜂巢、舵机或兼容 bridge 的全量验收。
+日期：2026-10-30。对象是桌面版（`frontend-slint/` + `crates/wunder-desktop`）经原生流进入 `wunder-runtime` 的目标轮次驱动链；不覆盖云端版、命令行或兼容 bridge 的全量验收。
 
 ## 结论
 
-现场现象是蜂巢的目标功能正常，蛹没有继续驱动智能体。根因不是目标领域状态损坏，而是**唤醒丢失**：目标在人类回合运行期间由模型通过 `goal` 工具创建/变更时，驱动任务被会话栅栏挡回；蛹的原生流要到消费完整个回合事件才 `drop(lease)`，而人类回合的 Direct-Run 路径释放租约后没有目标唤醒（只有目标轮与队列路径有释放后通知）。之后没有任何事件再请求驱动，活跃目标永久停在 `rounds_started = 0`。
+现场现象是云端版的目标功能正常，桌面版没有继续驱动智能体。根因不是目标领域状态损坏，而是**唤醒丢失**：目标在人类回合运行期间由模型通过 `goal` 工具创建/变更时，驱动任务被会话栅栏挡回；桌面版的原生流要到消费完整个回合事件才 `drop(lease)`，而人类回合的 Direct-Run 路径释放租约后没有目标唤醒（只有目标轮与队列路径有释放后通知）。之后没有任何事件再请求驱动，活跃目标永久停在 `rounds_started = 0`。
 
 修复后模型满足“活跃且武装的目标在空闲会话、未在轮中、未达轮次上限时必须继续开轮”；修复前的同一条规则被编号路径打破。
 
@@ -31,7 +31,7 @@
 ## 真实回归
 
 - `crates/wunder-runtime/src/services/runtime/thread/runtime.rs` 新增 `goal_change_during_a_direct_run_drives_after_the_fence_release`：使用真实 `ThreadRuntime` 与真实 `GoalService`，先取得 Direct-Run 租约模拟运行中的人类回合，回合中创建目标并确认会话忙碌时不开轮（`rounds_started = 0`），释放租约后不再发送任何目标或轮次通知，验证目标轮自动开始。
-- `crates/wunder-desktop/tests/goal_drive.rs::goal_keeps_driving_rounds_without_human_input` 实跑通过（`rounds_started >= 3`），验证蛹进程内的连续驱动。
+- `crates/wunder-desktop/tests/goal_drive.rs::goal_keeps_driving_rounds_without_human_input` 实跑通过（`rounds_started >= 3`），验证桌面版进程内的连续驱动。
 - `cargo test -p wunder-runtime --features sqlite-storage --lib goal::driver` 15 项通过，含 `lease_release_re_drives_a_deferred_round` 与 `waiting_user_input_discards_a_deferred_drive`。
 - 既有失败仍保留：`crates/wunder-desktop` 的 `native::stream::follow::tests::completed_history_is_drained_before_terminal_and_goal_updates_wake_settlement`（“active goal retains the completed follower”）本次未修改 follower，不宣称该扩展测试全绿。
 
@@ -59,6 +59,6 @@ Windows + Node 24 上 `statechart` 的发布步骤对已存在的输出目录可
 
 ## 尚未证明的部分
 
-- 任意并发、多个控制者、目标轮次与人类回合的队列交错不在模型范围内；蜂巢 WS 路径结构相同但未单独建模型。
+- 任意并发、多个控制者、目标轮次与人类回合的队列交错不在模型范围内；云端版 WS 路径结构相同但未单独建模型。
 - 未覆盖重启恢复、跨进程租约、目标预算计量与所有入口的行为等价。
 - 本次证据不替代 Win7 32 位或 Ubuntu 18.04 的运行验证。

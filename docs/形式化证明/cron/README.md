@@ -1,6 +1,6 @@
 # 定时任务并发状态审计
 
-日期：2026-10-27。蛹是本地 AI 工作台，蜂巢是随舰体提供的云端 AI 工作台；两端共用引擎调度与存储语义。
+日期：2026-10-27。桌面版是本地 AI 工作台，云端版是随服务端提供的云端 AI 工作台；两端共用引擎调度与存储语义。
 
 ## 结论
 
@@ -41,15 +41,15 @@ SQLite 使用 `BEGIN IMMEDIATE`、PostgreSQL 使用 `SELECT ... FOR UPDATE`，�
 
 - cron 直接取当前时间后的匹配，不预加一秒漏掉紧邻秒级触发；非法时区拒绝，不静默回退 UTC。
 - 下次唤醒考虑逾期任务及有效租约到期，不把逾期任务过滤为没有计划。
-- 数据库分页每页最多 200 条，额外一条判断后续页；蜂巢按页替换不无限累积；蛹保留最近 200 条有界列表。
+- 数据库分页每页最多 200 条，额外一条判断后续页；云端版按页替换不无限累积；桌面版保留最近 200 条有界列表。
 - 状态数据库聚合，工作区绑定按页批量查询，移除全量拉取和每任务一次会话查询；分页解析错误不静默吞掉。
-- 两端展示有效租约的运行中状态；蜂巢历史请求校验代次及所选任务，旧响应不覆盖新任务。页面不是实时订阅，以刷新时快照为准。
+- 两端展示有效租约的运行中状态；云端版历史请求校验代次及所选任务，旧响应不覆盖新任务。页面不是实时订阅，以刷新时快照为准。
 
 ## 实际验证
 
 - runtime 单元：`cargo test -p wunder-runtime --features sqlite-storage --lib cron -- --test-threads=1`。
 - 存储/完成/工具：`cargo test -p wunder-runtime --features sqlite-storage --test cron_lease --test cron_finish_job --test cron_tool --test cron_session_delete -- --test-threads=1`。不要附加 `cron` 名称过滤器，否则跳过部分并发测试。
-- 蛹原生 façade 六项通过；SQLite/PostgreSQL 双后端编译通过。
+- 桌面版原生 façade 六项通过；SQLite/PostgreSQL 双后端编译通过。
 - Vue 类型检查及三项 Playwright 通过，覆盖工作区、权限、迟到历史和翻页。
 
 ## 复验

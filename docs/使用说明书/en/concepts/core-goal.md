@@ -39,4 +39,4 @@ Updates use CAS-on-revision: an update must carry the goal's current revision, a
 - There is no token budget and no cooldown between rounds. Whether a goal stops depends on three things only: the round budget, the phase, and whether it is armed.
 - The **armed** state is **not persisted**: after a process restart or a session resume, even if the phase is still `active`, an explicit `goal action=resume` is needed to arm it again. When a goal stops moving, check armed first.
 - The desktop form does not expose goal selection; the runtime injects it per session.
-- The Bridge has no goal UI; goal operations happen in the Beehive, the Pupa, and the Helm.
+- The Admin has no goal UI; goal operations happen in the Cloud, the Desktop, and the CLI.

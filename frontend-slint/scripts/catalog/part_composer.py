@@ -56,14 +56,14 @@ ENTRIES = [
     ("cp_permission_full", "完全访问", "Full access"),
     ("cp_permission_write", "写入自动", "Auto-edit"),
     ("cp_permission_command", "执行前确认", "Confirm commands"),
-    ("cp_permission_note", "与运行时 approval_mode 同名：full_auto 直接执行；auto_edit 仅放行编辑；suggest 在执行前确认。蛹本地链路尚未接审批往返，当前选择只记录偏好。", "Named after the runtime approval_mode: full_auto runs directly, auto_edit allows edits only, suggest confirms before executing. The local desktop path has no approval round-trip yet, so the choice is recorded as a preference only."),
+    ("cp_permission_note", "与运行时 approval_mode 同名：full_auto 直接执行；auto_edit 仅放行编辑；suggest 在执行前确认。桌面版本地链路尚未接审批往返，当前选择只记录偏好。", "Named after the runtime approval_mode: full_auto runs directly, auto_edit allows edits only, suggest confirms before executing. The local desktop path has no approval round-trip yet, so the choice is recorded as a preference only."),
 
     # ---- model picker (§8.3) ----
     ("cp_model", "模型", "Model"),
     ("cp_model_pick", "切换模型", "Switch model"),
     ("cp_model_context", "上下文 Token", "Context tokens"),
     ("cp_voice_input", "语音输入", "Voice input"),
-    ("cp_open_cli", "打开舵机", "Open CLI"),
+    ("cp_open_cli", "打开命令行", "Open CLI"),
     ("cp_model_search", "搜索模型", "Search models"),
     ("cp_model_empty", "还没有可用模型。请到「设置 → 模型设置」添加。", "No models yet. Add one in Settings → Models."),
     ("cp_model_no_match", "没有匹配的模型", "No matching model"),

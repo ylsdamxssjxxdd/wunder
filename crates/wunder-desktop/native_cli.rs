@@ -22,14 +22,14 @@ impl NativeDesktop {
             self.desktop.workspace_root.clone()
         };
         let child_path = super::terminal_child_path(&roots, &self.desktop.app_dir)
-            .map_err(|error| format!("构造舵机 PATH 失败: {error}"))?;
+            .map_err(|error| format!("构造命令行 PATH 失败: {error}"))?;
         let current_exe = std::env::current_exe().ok();
         let executable = resolve_cli(
             &self.desktop.app_dir,
             current_exe.as_deref().and_then(Path::parent),
             &child_path,
         )
-        .ok_or_else(|| "未找到舵机程序，请安装舵机组件后重试".to_string())?;
+        .ok_or_else(|| "未找到命令行程序，请安装命令行组件后重试".to_string())?;
         let arguments = [
             OsString::from("--cd"),
             workdir.as_os_str().to_owned(),
@@ -43,7 +43,7 @@ impl NativeDesktop {
             &self.desktop.wunder_home,
             &child_path,
         )
-        .map_err(|error| format!("打开舵机失败: {error}"))
+        .map_err(|error| format!("打开命令行失败: {error}"))
     }
 }
 

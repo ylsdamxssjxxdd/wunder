@@ -50,7 +50,7 @@ const TRACKED_KEYS_MAX: usize = 1_024;
 /// Hand-off queue between the detecting task and the pump (§10.1).
 pub const QUEUE_CAPACITY: usize = 64;
 /// Env var holding the webhook signing secret (docs §9.4). Deliberately not a
-/// config key: config is echoed back to the 舰桥.
+/// config key: config is echoed back to the 管理端.
 pub const ALERT_WEBHOOK_SECRET_ENV: &str = "WUNDER_ALERT_WEBHOOK_SECRET";
 const WEBHOOK_TIMEOUT_S: u64 = 5;
 /// A failed delivery is retried at most this often, then counted (§9.4).
@@ -497,7 +497,7 @@ pub fn is_running() -> bool {
 /// or the scheme is not http(s).
 ///
 /// The URL is ordinary config; the secret is env-only (`WUNDER_ALERT_WEBHOOK_SECRET`)
-/// on purpose: the whole config is echoed back to the 舰桥 and pulled by
+/// on purpose: the whole config is echoed back to the 管理端 and pulled by
 /// diagnostics, so a signing key in it would be readable by anyone who can see
 /// the settings page.
 async fn webhook_target(state: &AppState) -> (String, String) {

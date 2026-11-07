@@ -389,7 +389,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         std::thread::spawn(move || {
             // Archive inspection is read-only. It deliberately bypasses the
             // normal selected-thread lease so viewing a detail modal cannot
-            // block a concurrent restore/open in 蛹 or 舵机.
+            // block a concurrent restore/open in the desktop app or CLI.
             let result = api.get_archived_session_detail(&id);
             let _ = weak.upgrade_in_event_loop(move |app| match result {
                 Ok((session, messages)) => {

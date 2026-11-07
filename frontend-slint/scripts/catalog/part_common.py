@@ -193,8 +193,8 @@ ENTRIES = [
     # ---- workspace sidebar (two-column layout) ----
     ("sb_device_local", "本地", "Local"),
     ("sb_device_cloud", "云端", "Cloud"),
-    ("sb_device_local_host", "蛹", "Pupa"),
-    ("sb_device_cloud_host", "蜂巢", "Hive"),
+    ("sb_device_local_host", "wunder 桌面版", "wunder Desktop"),
+    ("sb_device_cloud_host", "wunder 云端版", "wunder Cloud"),
     ("sb_device_select", "切换设备", "Switch device"),
     ("sb_device_workspaces", "{} 个工作区", "{} workspaces", ["count"]),
     ("sb_device_no_workspaces", "暂无工作区", "No workspaces"),

@@ -17,7 +17,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 
 /// A local UI owns a thread only while it is open. Keep crash recovery short
-/// enough that a closed 舵机 does not leave 蛹 blocked for half a minute, while
+/// enough that a closed 命令行 does not leave 桌面版 blocked for half a minute, while
 /// renewing well before expiry on slow Win7 disks.
 const LOCAL_THREAD_LEASE_TTL: Duration = Duration::from_secs(15);
 const LOCAL_THREAD_LEASE_HEARTBEAT: Duration = Duration::from_secs(4);
@@ -510,7 +510,7 @@ impl Drop for ThreadLeaseHeartbeat {
 
 /// 本地进程重启后的状态收敛。上一进程被关闭时不会有机会把运行中的线程
 /// 落成终态，监视缓存和受理表因此会把它们永久标成运行中。启动时结算
-/// 这些孤儿，并跳过仍被其它存活客户端（舵机）持有的线程。
+/// 这些孤儿，并跳过仍被其它存活客户端（命令行）持有的线程。
 fn recover_restarted_threads(desktop: &DesktopRuntime, instance_id: &str) -> usize {
     let user = desktop.user_id.trim();
     if user.is_empty() {
@@ -877,7 +877,7 @@ impl NativeDesktop {
                 Ok(())
             }
             ThreadOpenLeaseStatus::Busy => Err(anyhow!(
-                "THREAD_IN_USE: 线程正在由其他蛹或舵机实例打开，关闭占用实例后重试"
+                "THREAD_IN_USE: 线程正在由其他桌面版或命令行实例打开，关闭占用实例后重试"
             )),
         }
     }
@@ -887,11 +887,11 @@ impl NativeDesktop {
     }
 
     /// Drop a thread lease left by an earlier process of a single-process
-    /// shell (茧). A hard kill leaves the lease behind until its 15 s TTL
+    /// shell (安卓版). A hard kill leaves the lease behind until its 15 s TTL
     /// lapses, and the next launch would wait that window out before showing
     /// any messages. A desktop-kind lease from another instance id cannot be
     /// alive in the same app process, so it is safe to release immediately.
-    /// Leases owned by another client kind (舵机 sharing the same home) stay.
+    /// Leases owned by another client kind (命令行 sharing the same home) stay.
     pub fn reclaim_previous_process_lease(&self, session_id: &str) -> Result<bool> {
         let session_id = session_id.trim();
         if session_id.is_empty() {
@@ -914,7 +914,7 @@ impl NativeDesktop {
         )
     }
 
-    /// 茧 sandboxes its own `WUNDER_HOME`, so no second local client can share
+    /// 安卓版 sandboxes its own `WUNDER_HOME`, so no second local client can share
     /// it. Every durable session execution lock present at startup therefore
     /// belongs to a process the system already killed. A lock left by a
     /// killed turn stays valid for minutes and makes the first open return
@@ -1258,6 +1258,31 @@ impl NativeDesktop {
                 session
             })
             .collect())
+    }
+
+    /// Archived threads for shells that expose archive management locally.
+    /// Ordered newest-first by the storage layer, bounded to one page.
+    pub fn list_archived_sessions(
+        &self,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<NativeSession>, i64)> {
+        let (records, total) = self.state().user_store.list_chat_sessions_by_status(
+            self.user_id(),
+            None,
+            None,
+            Some("archived"),
+            offset.max(0),
+            limit.clamp(1, 200),
+        )?;
+        let workspaces = self.workspace_lookup();
+        Ok((
+            records
+                .into_iter()
+                .map(|record| self.session_with_stats(record, &workspaces))
+                .collect(),
+            total,
+        ))
     }
 
     /// Workspace name/color keyed by id for session projection.

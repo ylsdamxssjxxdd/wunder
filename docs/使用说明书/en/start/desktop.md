@@ -1,8 +1,8 @@
 ---
-title: Starting with the Pupa (Desktop)
+title: Starting with the Desktop
 summary: The local AI workbench: install and launch, layout of local data, the two-page main window, first-run configuration, capabilities unique to the desktop, and interaction constraints.
 read_when:
-  - You are installing or first launching the Pupa
+  - You are installing or first launching the Desktop
   - You need to know where its local data lives or how to migrate it
 source_docs:
   - frontend-slint/Cargo.toml
@@ -13,13 +13,13 @@ source_docs:
 updated_at: 2026-10-16
 ---
 
-# Starting with the Pupa (Desktop)
+# Starting with the Desktop
 
-It calls the engine natively in-process, has no port of its own, and routes through no HTTP/WebSocket relay. Individual users install just this — there is no Hull (server) to deploy first.
+It calls the engine natively in-process, has no port of its own, and routes through no HTTP/WebSocket relay. Individual users install just this — there is no Server to deploy first.
 
 ## Prerequisites
 
-| Scenario | Choose the Pupa |
+| Scenario | Choose the Desktop |
 | --- | --- |
 | Want to start right away, without deploying a service first | ✅ |
 | Need to work with local files, windows, and browsers | ✅ |
@@ -27,23 +27,23 @@ It calls the engine natively in-process, has no port of its own, and routes thro
 | Need an interactive terminal and screenshot capture | ✅ |
 | Need a tray, system notifications, and global hotkeys | ✅ |
 | May connect to a remote later, but want to get running now | ✅ |
-| Need multi-user governance and an admin backend | ❌ Choose the Hull (server) |
-| Need to access it in a browser | ❌ Choose the Beehive (web, ships with the Hull) |
+| Need multi-user governance and an admin backend | ❌ Choose the Server |
+| Need to access it in a browser | ❌ Choose the Cloud (web, ships with the Server) |
 
-The Pupa covers single-user local scenarios; sharing among several people runs through the Hull and the Beehive.
+The Desktop covers single-user local scenarios; sharing among several people runs through the Server and the Cloud.
 
 ## Install and launch
 
-Download and run the installer for your system. It installs the Pupa and Helm (CLI) by default; optional Python/Git/rg/ffmpeg/browser components are opt-in. The install directory defaults to `~/.wunder` and can be changed to any writable directory. The installer writes `.wunder-home` at the install root, and both local forms use that root as `WUNDER_HOME`; an explicit non-empty `WUNDER_HOME` still wins.
+Download and run the installer for your system. It installs the Desktop and CLI by default; optional Python/Git/rg/ffmpeg/browser components are opt-in. The install directory defaults to `~/.wunder` and can be changed to any writable directory. The installer writes `.wunder-home` at the install root, and both local forms use that root as `WUNDER_HOME`; an explicit non-empty `WUNDER_HOME` still wins.
 
-- **Executable**: `bin/wunder-desktop.exe` (Windows) or `bin/wunder-desktop` (Linux) after installation; development builds use `wunder-frontend-slint`
-- **Terminal commands**: the installer adds the install root's `bin` to the user PATH (Windows) or creates command links under `~/.local/bin` (Linux); after opening a new terminal, `wunder-cli` (Helm) and `desktop` / `wunder-desktop` (Pupa) run directly
-- **Menu and desktop entry**: Windows names the Start Menu and optional desktop shortcuts Pupa and Helm; Linux registers a Pupa application-menu entry and creates a Pupa launcher in the XDG desktop directory by default
+- **Executable**: `bin/wunder-desktop.exe` (Windows) or `bin/wunder-desktop` (Linux) after installation; development builds use `wunder-desktop`
+- **Terminal commands**: the installer adds the install root's `bin` to the user PATH (Windows) or creates command links under `~/.local/bin` (Linux); after opening a new terminal, `wunder-cli` (CLI) and `desktop` / `wunder-desktop` (Desktop) run directly
+- **Menu and desktop entry**: Windows names the Start Menu and optional desktop shortcuts Desktop and CLI; Linux registers a Desktop application-menu entry and creates a Desktop launcher in the XDG desktop directory by default
 - **Development launch**: on Windows, use the project's bundled `run.bat`
 - **Platforms**: primarily targets 32-bit Win7 and Ubuntu 18.04; modern Windows / Linux also run
 - **No port, no required arguments**: it calls the engine in-process right after launch
 - There's also a compatibility bridge port (default 18123) that serves only legacy-compatible clients; day-to-day use doesn't go through it
-- The Electron / Tauri frontend shells are **no longer maintained day-to-day and get no new features** (this doesn't mean the Pupa backend stops being maintained)
+- The Electron / Tauri frontend shells are **no longer maintained day-to-day and get no new features** (this doesn't mean the Desktop backend stops being maintained)
 
 ## Local data
 
@@ -106,9 +106,9 @@ List the files in the current working directory
 
 When you see the model think → a batch of tools → the final reply landing in the chat area, you're up and running.
 
-## Capabilities unique to the Pupa
+## Capabilities unique to the Desktop
 
-None of these exist on the Beehive, the Bridge, or the Helm:
+None of these exist on the Cloud, the Admin, or the CLI:
 
 - **Interactive terminal** (winpty on Windows, PTY on Linux)
 - **Screenshot capture** (X11 on Linux, Win32 APIs on Windows)
@@ -118,7 +118,7 @@ None of these exist on the Beehive, the Bridge, or the Helm:
 
 ## Device interlink surfaces
 
-Only **two** interlink surfaces are available in the Pupa:
+Only **two** interlink surfaces are available in the Desktop:
 
 1. The **cloud workspaces** in the sidebar's working-directory area: when the network is unavailable they clearly show "offline" alongside a "connect" button
 2. The **remote command approval dialog**: high-risk commands (L3) in device interlink pop up for confirmation with a red border, showing the command level, risk, and source, plus a "don't remember" hint

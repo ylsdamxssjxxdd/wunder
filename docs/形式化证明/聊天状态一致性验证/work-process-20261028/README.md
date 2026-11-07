@@ -1,6 +1,6 @@
 # 工作过程实时性与条目身份验证
 
-日期：2026-10-28。对象：蛹本地 AI 工作台的原生聊天投影、蛹云端线程，以及蜂巢云端 AI 工作台的工作过程。修复共享运行时与持久投影，再验证客户端；不是整个运行时已被形式化证明。
+日期：2026-10-28。对象：桌面版本地 AI 工作台的原生聊天投影、桌面版云端线程，以及云端版云端 AI 工作台的工作过程。修复共享运行时与持久投影，再验证客户端；不是整个运行时已被形式化证明。
 
 ## 根因和契约
 
@@ -63,7 +63,7 @@
 ## 资源与迁移边界
 
 - live hub 每线程 128 帧；无订阅不保留事件。丢失 text tail 以 offset 阻止拼接伪连续正文，后续持久快照修复；结构帧至多等待 2 秒，溢出触发明确补水，读侧等待可取消，不能无限累积队列。
-- Web 同一线程跨所有用户轮次的在线条目合计最多 100；蛹云端在线条目最多 100，过程子行最多 201。历史页有后续页时不混入在线尾部。原生并发读最多 4，同过程在途需求合并；跨过程容量耗尽仍由既有 1500 ms 定时刷新补偿，不宣称每次事件都有立即网络读。
+- Web 同一线程跨所有用户轮次的在线条目合计最多 100；桌面版云端在线条目最多 100，过程子行最多 201。历史页有后续页时不混入在线尾部。原生并发读最多 4，同过程在途需求合并；跨过程容量耗尽仍由既有 1500 ms 定时刷新补偿，不宣称每次事件都有立即网络读。
 - 排序缓存上限为执行工具预算 10000 + 1024 个额外条目；验证覆盖 1100 个待完成工具，不宣称任意无限模型轮次、异常超预算或淘汰后极晚结果的全局顺序。
 - SQLite chat 派生表与 PostgreSQL display 派生表升级到 v2；canonical 记录不变，按访问线程以有界事务补建（128 项/约 2 MiB 批次）。已有数据库首次访问有补建成本，旧 v1 表暂不自动删除，磁盘会暂存两代索引；没有后台全库扫描，也没有证明迁移成本为零。
 - 没有改线程 system prompt 冻结规则。测试必须先创建冻结 SessionMeta，再写 canonical 内容。
@@ -82,7 +82,7 @@ cargo test -p wunder-runtime --lib thread_chat_summary -- --test-threads=1
 cargo test -p wunder-runtime --lib canonical_thread_log_tests -- --test-threads=1
 cargo test -p wunder-runtime --lib thread_change_hub -- --test-threads=1
 cargo test -p wunder-desktop --lib chat_process::tests -- --test-threads=1
-cargo test --manifest-path frontend-slint/Cargo.toml --bin wunder-frontend-slint cloud_ -- --test-threads=1
+cargo test --manifest-path frontend-slint/Cargo.toml --bin wunder-desktop cloud_ -- --test-threads=1
 node frontend/scripts/run-regression-tests.mjs process-order-regression.test.ts thread-view-regression.test.ts process-refresh-gate-regression.test.ts
 node frontend/scripts/run-vue-tsc.mjs --noEmit
 ```

@@ -22,17 +22,13 @@ if (-not (Test-Path -LiteralPath $manifest)) {
   throw "Slint manifest was not found: $manifest"
 }
 
-# Cargo owns the package version. Keep the user-facing Win7 release filename
-# synchronized with the manifest instead of duplicating version constants.
-$manifestText = Get-Content -LiteralPath $manifest -Raw
-$packageVersionMatch = [regex]::Match(
-  $manifestText,
-  '(?ms)^\[package\].*?^version\s*=\s*"(?<version>[^"]+)"\s*$'
-)
-if (-not $packageVersionMatch.Success) {
-  throw "Could not read [package].version from: $manifest"
+# config/app_version.json is the single version source for every release
+# artifact name; keep the user-facing Win7 filename synchronized with it.
+$appVersionPath = Join-Path $repoRoot "config\app_version.json"
+if (-not (Test-Path -LiteralPath $appVersionPath)) {
+  throw "App version file was not found: $appVersionPath"
 }
-$packageVersion = $packageVersionMatch.Groups['version'].Value
+$packageVersion = (Get-Content -LiteralPath $appVersionPath -Raw | ConvertFrom-Json).version
 if ($packageVersion -notmatch '^[0-9A-Za-z][0-9A-Za-z.+-]*$') {
   throw "Package version contains characters unsafe for a release filename: $packageVersion"
 }
@@ -136,7 +132,7 @@ $cargoArgs += @(
   "-Z", "build-std=std,panic_abort",
   "build",
   "--locked",
-  "--bin", "wunder-frontend-slint",
+  "--bin", "wunder-desktop",
   "--jobs", "$Jobs",
   "--manifest-path", $manifest,
   "--target", $target
@@ -150,7 +146,7 @@ if ($Check) { $cargoArgs[$cargoArgs.IndexOf("build")] = "check" }
 $previousRayonThreads = $env:RAYON_NUM_THREADS
 try {
   $env:RAYON_NUM_THREADS = "$Jobs"
-  Write-Host "Slint Win7 build: host=x86_64-pc-windows-gnu, bin=wunder-frontend-slint, target=$target, jobs=$Jobs, Rayon threads=$Jobs"
+  Write-Host "Slint Win7 build: host=x86_64-pc-windows-gnu, bin=wunder-desktop, target=$target, jobs=$Jobs, Rayon threads=$Jobs"
   if ($CargoExe) {
     & $cargoCommand @cargoArgs
   } else {
@@ -165,7 +161,7 @@ try {
 
 if ($Check) { return }
 $profile = "release"
-$executable = Join-Path $env:CARGO_TARGET_DIR "$target\$profile\wunder-frontend-slint.exe"
+$executable = Join-Path $env:CARGO_TARGET_DIR "$target\$profile\wunder-desktop.exe"
 if (!(Test-Path -LiteralPath $executable)) {
   throw "Slint Win7 executable was not produced: $executable"
 }
@@ -235,7 +231,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
-$releaseFileName = "wunder-frontend-slint-$packageVersion-win7-x86.exe"
+$releaseFileName = "wunder-desktop-$packageVersion-win7-x86.exe"
 $releaseExecutable = Join-Path $OutputDirectory $releaseFileName
 Copy-Item -LiteralPath $executable -Destination $releaseExecutable -Force
 Write-Host "Slint Win7 release executable: $releaseExecutable"

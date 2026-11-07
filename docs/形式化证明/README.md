@@ -1,6 +1,6 @@
 # 形式化证明与状态验证
 
-本目录是 wunder 形式化模型、状态验证、反例和证明证据的唯一归档入口。蛹是本地 AI 工作台，相关证明优先保障消息、执行、停止与本地数据安全；共享引擎及其他入口的证据按各主题声明适用范围，不相互扩大结论。
+本目录是 wunder 形式化模型、状态验证、反例和证明证据的唯一归档入口。桌面版是本地 AI 工作台，相关证明优先保障消息、执行、停止与本地数据安全；共享引擎及其他入口的证据按各主题声明适用范围，不相互扩大结论。
 
 目录名称不表示所有内容都是无限状态定理证明。已有资料包含有限模型检查、真实入口回归和部分未完成项；每份结论必须连同假设、边界和失败清单一起阅读。
 
@@ -23,19 +23,19 @@
 | 子智能体 | [fv-14-child-runs](./fv-14-child-runs/README.md) | 祖先取消、派生与迟到回收 |
 | 目标控制 | [goal-control](./goal-control/README.md) | 创建、编辑、暂停与本地投影 |
 | 目标轮次驱动 | [goal-round-driver](./goal-round-driver/README.md) | 会话栅栏释放后的继续驱动与丢失唤醒 |
-| 多本地入口共存 | [local-entry-coexistence](./local-entry-coexistence/README.md) | 蛹与多个舵机共享数据根、线程隔离 |
+| 多本地入口共存 | [local-entry-coexistence](./local-entry-coexistence/README.md) | 桌面版与多个命令行共享数据根、线程隔离 |
 | 定时任务 | [cron](./cron/README.md) | 领取、编辑、停用、删除与历史原子性 |
 | 服务长线程 | [service-history-20261027](./service-history-20261027/README.md) | 诊断资源边界、元信息与投影计数 |
 | 线程历史窗口外回读 | [thread-history-replay](./thread-history-replay/README.md) | 活动窗口裁剪、稀疏锚点、轮次起点、扫描预算与分页完整性 |
 | 请求前缀冻结 | [context-cache-prefix](./context-cache-prefix/README.md) | 轮内与跨轮模型请求消息前缀 append-only 与 system 块冻结 |
 | 数据库 I/O 隔离 | [postgres-io](./postgres-io/README.md) | 业务运行时阻塞与独立网络驱动模型 |
-| 蛹与蜂巢聊天投影 | [聊天状态一致性验证](./聊天状态一致性验证/README.md) | 完成头、过程刷新、实时条目与思考身份隔离 |
-| 蛹聊天流式跟随 | [stream-follow-20261030](./stream-follow-20261030/README.md) | 外层时间线与工作过程列表的尾部跟随、条目静默变高反例 |
-| 蛹与舵机投影 | [蛹与舵机状态一致性验证](./蛹与舵机状态一致性验证/README.md) | 终态、过程分页与线程状态 |
-| 舵机 stream 轮次边界 | [tui-stream-epoch-20261027](./tui-stream-epoch-20261027/README.md) | 传输事件编号去重与新 stream 重置 |
-| 舵机中断报错 | [tui-terminal-20261028](./tui-terminal-20261028/README.md) | 错误、取消终态、关闭与下一轮重置 |
-| 蛹在线更新 | [self-update-20261101](./self-update-20261101/README.md) | 多目标更新分发、下载哈希闸、改名轮换与暂存恢复 |
-| 蛹 UI 线程消息帧重入 | [win32-reentry-20261104](./win32-reentry-20261104/README.md) | 窗口过程帧栈纪律：IMM32 写调用位置、同步回弹递归上界与持锁卡死 |
+| 桌面版与云端版聊天投影 | [聊天状态一致性验证](./聊天状态一致性验证/README.md) | 完成头、过程刷新、实时条目与思考身份隔离 |
+| 桌面版聊天流式跟随 | [stream-follow-20261030](./stream-follow-20261030/README.md) | 外层时间线与工作过程列表的尾部跟随、条目静默变高反例 |
+| 桌面版与命令行投影 | [桌面版与命令行状态一致性验证](./蛹与舵机状态一致性验证/README.md) | 终态、过程分页与线程状态 |
+| 命令行 stream 轮次边界 | [tui-stream-epoch-20261027](./tui-stream-epoch-20261027/README.md) | 传输事件编号去重与新 stream 重置 |
+| 命令行中断报错 | [tui-terminal-20261028](./tui-terminal-20261028/README.md) | 错误、取消终态、关闭与下一轮重置 |
+| 桌面版在线更新 | [self-update-20261101](./self-update-20261101/README.md) | 多目标更新分发、下载哈希闸、改名轮换与暂存恢复 |
+| 桌面版 UI 线程消息帧重入 | [win32-reentry-20261104](./win32-reentry-20261104/README.md) | 窗口过程帧栈纪律：IMM32 写调用位置、同步回弹递归上界与持锁卡死 |
 
 ## 后续存放规则
 

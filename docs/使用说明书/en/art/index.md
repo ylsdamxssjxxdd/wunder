@@ -1,18 +1,18 @@
 ---
 title: Art Sheets
-summary: Ten implementation-based interface sheets for the Pupa desktop app and six for the Helm terminal app, organized around real UI, functional structure, control states and constraints, with drag-to-pan and zoom in the browser.
+summary: Ten implementation-based interface sheets for the Desktop desktop app and six for the CLI terminal app, organized around real UI, functional structure, control states and constraints, with drag-to-pan and zoom in the browser.
 updated_at: 2026-10-25
 ---
 
 # Art Sheets
 
-These sheets focus on Pupa, the local AI workbench, while also covering Helm, the manual terminal entry. Code and actual rendering are the sources of truth; SVG is used for design changes, refactoring and acceptance checks. When a sheet and the implementation disagree, check the running UI instead of treating the sketch as reality.
+These sheets focus on Desktop, the local AI workbench, while also covering CLI, the manual terminal entry. Code and actual rendering are the sources of truth; SVG is used for design changes, refactoring and acceptance checks. When a sheet and the implementation disagree, check the running UI instead of treating the sketch as reality.
 
 - Open the [unified art gallery](/docs/art/) for all 16 sheets. Sources live in `docs/wunder美术设计稿`, split into `蛹/` and `舵机/`.
 - Drag with the primary mouse button or one finger. Fit width, fit window, 100%, zoom and previous/next navigation are available. Arrow keys pan, `+/-` zoom, `0` resets and Esc closes.
 - Large images embedded on this page also pan directly. The normal wheel scrolls the document; Ctrl/Command + wheel zooms the image. Raw SVG links remain available without JavaScript.
 - Every sheet follows “real UI → functional structure → state presentation → dimensions and behavior”. Control interaction states and task lifecycle states are separate, and proposals are never drawn as current behavior.
-- The Pupa help manual embeds raster previews so no SVG renderer is needed. Helm sheets are not included in that manual.
+- The Desktop help manual embeds raster previews so no SVG renderer is needed. CLI sheets are not included in that manual.
 
 ## 00 Overview
 
@@ -94,53 +94,53 @@ State matrices come from real `Action`, `FormField`, `ThemeCheck` and system `Sw
 
 *09 States and motion · actual controls, keys, feedback and degradation*
 
-## Helm 00 Overview
+## CLI 00 Overview
 
 The startup frame and five-band stack: transcript, popup, welcome banner, activity and composer. Startup text belongs to the transcript. The welcome pixels come from current generated data rather than a placeholder mark.
 
-![Helm overview design sheet](/docs/art/servo/00-整体总览.svg)
+![CLI overview design sheet](/docs/art/servo/00-整体总览.svg)
 
-*Helm 00 · startup frame, welcome pixels and layout contract*
+*CLI 00 · startup frame, welcome pixels and layout contract*
 
-## Helm 01 Foundations
+## CLI 01 Foundations
 
 Named colors, modifiers, truecolor surfaces, NO_COLOR, display columns and terminal capabilities. Ordinary popups and centered pickers keep their respective selection colors; the running indicator is documented as a local implementation.
 
-![Helm foundations design sheet](/docs/art/servo/01-基础规范.svg)
+![CLI foundations design sheet](/docs/art/servo/01-基础规范.svg)
 
-*Helm 01 · semantic colors, surfaces, degradation and width*
+*CLI 01 · semantic colors, surfaces, degradation and width*
 
-## Helm 02 Layout and Footer
+## CLI 02 Layout and Footer
 
 Five-band layout, a running frame, activity and footer shedding. The composer stays five rows high externally, while cloud errors, warnings and gap content can reduce the draft to one internally scrolling row.
 
-![Helm layout and footer design sheet](/docs/art/servo/02-布局与底栏.svg)
+![CLI layout and footer design sheet](/docs/art/servo/02-布局与底栏.svg)
 
-*Helm 02 · layout stack, activity, input budget and footer shedding*
+*CLI 02 · layout stack, activity, input budget and footer shedding*
 
-## Helm 03 Timeline
+## CLI 03 Timeline
 
 Entry styles, Markdown, streaming, code and diff, the Ctrl+T expanded view, selection and search. Process information stays dim while content and action-required notices retain distinct weight.
 
-![Helm timeline design sheet](/docs/art/servo/03-会话时间线.svg)
+![CLI timeline design sheet](/docs/art/servo/03-会话时间线.svg)
 
-*Helm 03 · entries, diffs, expanded view and selection*
+*CLI 03 · entries, diffs, expanded view and selection*
 
-## Helm 04 Tools and Plan
+## CLI 04 Tools and Plan
 
 Tool lines, patches, the plan card, trajectory tabs and status marks. The plan includes an “Updated Plan · n/m complete” header, shows at most three folded steps, and orders in-progress, pending and completed steps accordingly.
 
-![Helm tools and plan design sheet](/docs/art/servo/04-工具与计划.svg)
+![CLI tools and plan design sheet](/docs/art/servo/04-工具与计划.svg)
 
-*Helm 04 · tools, plan header, trajectory and status marks*
+*CLI 04 · tools, plan header, trajectory and status marks*
 
-## Helm 05 Input and Popups
+## CLI 05 Input and Popups
 
 The composer, its anchored popup band, centered pickers and the full-screen thread center. Resume, approval and inquiry use centered choices; shortcuts and warnings use information panels. Containers do not share position or selection styling by assumption.
 
-![Helm input and popups design sheet](/docs/art/servo/05-输入与弹层.svg)
+![CLI input and popups design sheet](/docs/art/servo/05-输入与弹层.svg)
 
-*Helm 05 · input, popups, centered choices and thread center*
+*CLI 05 · input, popups, centered choices and thread center*
 
 ## Maintenance
 
@@ -152,14 +152,14 @@ python scripts/sync_art.py
 
 It performs three steps:
 
-1. Renders the Pupa SVGs into 1200px PNGs under `frontend-slint/assets/help/art` for desktop help.
+1. Renders the Desktop SVGs into 1200px PNGs under `frontend-slint/assets/help/art` for desktop help.
 2. Rebuilds the Chinese and English manual JSON from those images.
-3. Rebuilds the docs site, publishing SVGs to `web/docs/art` (Pupa) and `web/docs/art/servo` (Helm), copying the unified gallery and viewer assets, and embedding the app icon as a data URI in published SVGs.
+3. Rebuilds the docs site, publishing SVGs to `web/docs/art` (Desktop) and `web/docs/art/servo` (CLI), copying the unified gallery and viewer assets, and embedding the app icon as a data URI in published SVGs.
 
 The web side updates immediately after rebuilding. The desktop app must be recompiled because its previews are embedded with `include_bytes!`.
 
-When adding or removing a Pupa sheet, update `SHEETS` in `scripts/render_art_previews.py`, `ART_TOPICS` in `scripts/build_help_manual.py`, the sheet data in `docs/wunder美术设计稿/index.html`, and this page. Do not edit generated PNGs manually.
+When adding or removing a Desktop sheet, update `SHEETS` in `scripts/render_art_previews.py`, `ART_TOPICS` in `scripts/build_help_manual.py`, the sheet data in `docs/wunder美术设计稿/index.html`, and this page. Do not edit generated PNGs manually.
 
-For Helm changes, update the unified gallery data, this page and `docs/wunder美术设计稿/舵机/README.md`; no in-app assets are involved.
+For CLI changes, update the unified gallery data, this page and `docs/wunder美术设计稿/舵机/README.md`; no in-app assets are involved.
 
 The shared viewer lives in `docs/wunder美术设计稿/assets/art-viewer.js` and `art-viewer.css`. It loads only on the art documentation page, and old instances are destroyed during dynamic navigation. Every sheet should also pass XML/reference checks and Edge rendering at its original width.

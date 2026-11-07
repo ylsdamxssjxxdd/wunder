@@ -1,9 +1,9 @@
 ---
-title: Bridge Interface
-summary: The governance and debugging console built into the Hull, visible to administrators only. Top-level navigation has 4 groups and 19 items: System 4, Agents 6, Debug 6, Docs 2; plus notes on panels never implemented.
+title: Admin Interface
+summary: The governance and debugging console built into the Server, visible to administrators only. Top-level navigation has 4 groups and 19 items: System 4, Agents 6, Debug 6, Docs 2; plus notes on panels never implemented.
 read_when:
-  - You administer the Hull as an administrator through the Bridge
-  - You want to know what the Bridge does not have (memory, interconnection, goal editing)
+  - You administer the Server as an administrator through the Admin
+  - You want to know what the Admin does not have (memory, interconnection, goal editing)
 source_docs:
   - web/index.html
   - web/app.js
@@ -12,22 +12,22 @@ source_docs:
 updated_at: 2026-10-16
 ---
 
-# Bridge Interface
+# Admin Interface
 
-The Bridge is the governance and debugging console built into the **Hull (the user and agent management platform)**. Regular users never see it after signing in; only administrators get in, and daily conversation happens in the Beehive or the Pupa.
+The Admin is the governance and debugging console built into the **Server (the user and agent management platform)**. Regular users never see it after signing in; only administrators get in, and daily conversation happens in the Cloud or the Desktop.
 
-It starts along with the Hull, with no separate build step, and shares the Hull's port (18000 by default). The Beehive and it are **two separate interfaces**: the Beehive faces users, the Bridge faces admins.
+It starts along with the Server, with no separate build step, and shares the Server's port (18000 by default). The Cloud and it are **two separate interfaces**: the Cloud faces users, the Admin faces admins.
 
 ## Top-level navigation
 
-The Bridge has 4 groups and 19 items.
+The Admin has 4 groups and 19 items.
 
 **System (4)**
 
 - Internal status: process health, locks and queues, runtime metrics
 - System settings: hot-update configuration while running
 - Organization management: the organization tree, up to 4 levels deep
-- User management: accounts, quotas, and online status (split by Beehive / Pupa / Helm)
+- User management: accounts, quotas, and online status (split by Cloud / Desktop / CLI)
 
 **Agents (6)**
 
@@ -52,15 +52,15 @@ The Bridge has 4 groups and 19 items.
 - Manual: the whole manual embedded in the console
 - API: the API documentation entry
 
-The throughput test and the performance test are the Bridge's operations panels; the rendering-oriented thread stress test belongs to the user side, where the three interfaces default to 1000×1000.
+The throughput test and the performance test are the Admin's operations panels; the rendering-oriented thread stress test belongs to the user side, where the three interfaces default to 1000×1000.
 
 ## Panels never implemented
 
 - **A user-level scheduled-task panel**: there is no separate entry; scheduling exists only as a template under "Preset agents"
 - **User-level channel management**: the same — channels live only in preset templates
 - **A long-term memory panel**: not implemented
-- **An interconnection governance panel**: fleet / channel / command / audit / policy governance for device interconnection is backend-API-only for now, with no interface; it is not true that the Bridge can govern interconnection
-- **Goal editing**: thread management is read-only, with no goal editor; goal entry points are on the user side — the Beehive timeline, the Pupa input area, and the Helm's `/goal` command
+- **An interconnection governance panel**: fleet / channel / command / audit / policy governance for device interconnection is backend-API-only for now, with no interface; it is not true that the Admin can govern interconnection
+- **Goal editing**: thread management is read-only, with no goal editor; goal entry points are on the user side — the Cloud timeline, the Desktop input area, and the CLI's `/goal` command
 
 Status may still show interconnection and memory entries whose panels are empty; those are leftover dead entries, since the panels were never implemented.
 

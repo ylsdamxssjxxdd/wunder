@@ -1,0 +1,478 @@
+// 安卓版's working-directory page: a touch-first file list over the same workspace
+// the agent uses. Browsing, uploading from the phone and saving a file back to
+// the phone all project from Rust (engine.rs); this file only lays them out.
+
+import { Theme } from "../../../frontend-slint/ui/theme.slint";
+import { Action } from "../../../frontend-slint/ui/components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export struct WorkspaceFile {
+    name: string,
+    path: string,
+    dir: bool,
+    // 1 image, 2 media, 3 archive, 4 document/code, 5 other.
+    kind: int,
+    size-text: string,
+}
+
+component WorkspaceRow inherits Rectangle {
+    in property <WorkspaceFile> entry;
+    callback clicked();
+
+    height: 60px;
+    background: row-touch.has-hover ? Theme.hover : transparent;
+
+    row-touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+        cross-axis-alignment: center;
+
+        Rectangle {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            Image {
+                width: 20px;
+                height: 20px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                source: root.entry.dir ? @image-url("../../../frontend-slint/assets/icons/folder-open.svg")
+                    : root.entry.kind == 1 ? @image-url("../../../frontend-slint/assets/icons/fa-image.svg")
+                    : root.entry.kind == 2 ? @image-url("../../../frontend-slint/assets/icons/fa-film.svg")
+                    : root.entry.kind == 3 ? @image-url("../../../frontend-slint/assets/icons/file-zipper.svg")
+                    : root.entry.kind == 4 ? @image-url("../../../frontend-slint/assets/icons/file-lines.svg")
+                    : @image-url("../../../frontend-slint/assets/icons/file-lines.svg");
+                colorize: root.entry.dir ? Theme.accent-ink : Theme.text-secondary;
+                image-fit: contain;
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text {
+                text: root.entry.name;
+                color: Theme.text;
+                font-size: Theme.font-sm;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.entry.dir ? "文件夹" : root.entry.size-text;
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                overflow: elide;
+            }
+        }
+
+        Image {
+            width: 14px;
+            height: 14px;
+            source: root.entry.dir
+                ? @image-url("../../../frontend-slint/assets/icons/chevron-right.svg")
+                : @image-url("../../../frontend-slint/assets/icons/ellipsis.svg");
+            colorize: Theme.muted;
+            image-fit: contain;
+        }
+    }
+
+    Rectangle {
+        y: parent.height - 1px;
+        x: 60px;
+        width: parent.width - 60px;
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
+component SheetAction inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    callback clicked();
+
+    height: 52px;
+    border-radius: Theme.radius-sm;
+    background: action-touch.has-hover ? Theme.hover : transparent;
+    action-touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+        cross-axis-alignment: center;
+        Image {
+            width: 18px;
+            height: 18px;
+            source: root.icon;
+            colorize: Theme.text-secondary;
+            image-fit: contain;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.label;
+            color: Theme.text;
+            font-size: Theme.font-md;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+export component WorkspacePage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <string> path: "";
+    // Empty at the root; the engine computes it so Slint needs no string
+    // search for the last separator.
+    in property <string> parent-path: "";
+    in property <int> total: 0;
+    in property <bool> loading: false;
+    in property <string> error: "";
+    in property <[WorkspaceFile]> entries: [];
+
+    callback back();
+    callback refresh();
+    callback open-path(string);
+    callback upload(string);
+    callback download(string);
+    callback load-more();
+
+    in-out property <bool> sheet-open: false;
+    in-out property <WorkspaceFile> pending: {
+        name: "",
+        path: "",
+        dir: false,
+        kind: 5,
+        size-text: "",
+    };
+
+    background: Theme.panel;
+
+    VerticalLayout {
+        spacing: 0px;
+
+        // Header: back + title + upload + refresh.
+        Rectangle {
+            height: 52px + root.inset-top;
+            background: Theme.surface;
+
+            Rectangle {
+                y: root.inset-top;
+                height: 52px;
+                width: parent.width;
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    spacing: 2px;
+                    cross-axis-alignment: center;
+                    Action {
+                        width: 34px;
+                        height: 34px;
+                        icon-size: 17px;
+                        icon: @image-url("../../../frontend-slint/assets/icons/chevron-left.svg");
+                        label: "返回";
+                        clicked => { root.back(); }
+                    }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 1px;
+                        Text {
+                            text: "工作目录";
+                            color: Theme.text;
+                            font-size: Theme.font-lg;
+                            font-weight: 600;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: root.path == "" ? "根目录" : root.path;
+                            color: Theme.muted;
+                            font-size: Theme.font-2xs;
+                            overflow: elide;
+                        }
+                    }
+                    Action {
+                        width: 34px;
+                        height: 34px;
+                        icon-size: 17px;
+                        icon: @image-url("../../../frontend-slint/assets/icons/upload.svg");
+                        label: "上传文件";
+                        clicked => { root.upload(root.path); }
+                    }
+                    Action {
+                        width: 34px;
+                        height: 34px;
+                        icon-size: 16px;
+                        icon: @image-url("../../../frontend-slint/assets/icons/rotate-right.svg");
+                        label: "刷新";
+                        enabled: !root.loading;
+                        clicked => { root.refresh(); }
+                    }
+                }
+            }
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
+            }
+        }
+
+        // Path strip: one row, thumb-sized back target on the left.
+        Rectangle {
+            height: 42px;
+            background: Theme.surface;
+
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 12px;
+                spacing: 8px;
+                cross-axis-alignment: center;
+
+                if root.path != "" : Rectangle {
+                    height: 30px;
+                    width: up-row.preferred-width + 16px;
+                    border-radius: 15px;
+                    background: up-touch.has-hover ? Theme.hover : Theme.panel;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    up-touch := TouchArea {
+                        clicked => { root.open-path(root.parent-path); }
+                    }
+                    up-row := HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 4px;
+                        cross-axis-alignment: center;
+                        Image {
+                            width: 12px;
+                            height: 12px;
+                            source: @image-url("../../../frontend-slint/assets/icons/chevron-left.svg");
+                            colorize: Theme.text-secondary;
+                        }
+                        Text {
+                            text: "上级";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.path == "" ? "工作区根目录" : "/" + root.path;
+                    color: Theme.muted;
+                    font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                Text {
+                    text: "" + root.total + " 项";
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        if root.loading : Rectangle {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: center;
+                spacing: 8px;
+                Text {
+                    text: "正在读取工作目录…";
+                    color: Theme.muted;
+                    font-size: Theme.font-sm;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        if !root.loading && root.error != "" : Rectangle {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+                padding-left: 32px;
+                padding-right: 32px;
+                Text {
+                    text: root.error;
+                    color: Theme.danger;
+                    font-size: Theme.font-sm;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    Action {
+                        width: 108px;
+                        label: "重试";
+                        show-label: true;
+                        primary: true;
+                        icon: @image-url("../../../frontend-slint/assets/icons/rotate-right.svg");
+                        clicked => { root.refresh(); }
+                    }
+                }
+            }
+        }
+
+        if !root.loading && root.error == "" : ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding-top: 4px;
+                padding-bottom: 16px + root.inset-bottom;
+                spacing: 0px;
+                alignment: start;
+
+                for entry in root.entries : WorkspaceRow {
+                    entry: entry;
+                    clicked => {
+                        if entry.dir {
+                            root.open-path(entry.path);
+                        } else {
+                            root.pending = entry;
+                            root.sheet-open = true;
+                        }
+                    }
+                }
+
+                if root.entries.length < root.total : Rectangle {
+                    height: 52px;
+                    background: more-touch.has-hover ? Theme.hover : transparent;
+                    more-touch := TouchArea {
+                        clicked => { root.load-more(); }
+                    }
+                    Text {
+                        width: 100%;
+                        height: 100%;
+                        text: "加载更多（剩余 " + (root.total - root.entries.length) + " 项）";
+                        color: Theme.accent-ink;
+                        font-size: Theme.font-sm;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                if root.entries.length == 0 : Rectangle {
+                    height: 260px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 10px;
+                        Image {
+                            width: 40px;
+                            height: 40px;
+                            source: @image-url("../../../frontend-slint/assets/icons/folder-open.svg");
+                            colorize: Theme.border-strong;
+                            image-fit: contain;
+                        }
+                        Text {
+                            text: "工作目录还是空的";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "点右上角的上传按钮，从手机里选文件";
+                            color: Theme.muted;
+                            font-size: Theme.font-2xs;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // File action sheet: the phone equivalent of 桌面版's file context menu.
+    if root.sheet-open : Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.overlay;
+        TouchArea {
+            clicked => { root.sheet-open = false; }
+        }
+
+        Rectangle {
+            x: 8px;
+            y: parent.height - self.height - 8px - root.inset-bottom;
+            width: parent.width - 16px;
+            height: sheet-body.preferred-height;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            drop-shadow-color: #00000033;
+            drop-shadow-blur: 24px;
+            TouchArea { }
+
+            sheet-body := VerticalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 2px;
+
+                VerticalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-top: 6px;
+                    padding-bottom: 8px;
+                    spacing: 2px;
+                    Text {
+                        text: root.pending.name;
+                        color: Theme.text;
+                        font-size: Theme.font-md;
+                        font-weight: 600;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.pending.size-text + " · 保存后可分享或继续处理";
+                        color: Theme.muted;
+                        font-size: Theme.font-2xs;
+                        overflow: elide;
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.border; }
+
+                SheetAction {
+                    icon: @image-url("../../../frontend-slint/assets/icons/log-download.svg");
+                    label: "保存到手机";
+                    clicked => {
+                        root.sheet-open = false;
+                        root.download(root.pending.path);
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.border; }
+
+                Rectangle {
+                    height: 52px;
+                    border-radius: Theme.radius-sm;
+                    background: cancel-touch.has-hover ? Theme.hover : transparent;
+                    cancel-touch := TouchArea {
+                        clicked => { root.sheet-open = false; }
+                    }
+                    Text {
+                        width: 100%;
+                        height: 100%;
+                        text: "取消";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-md;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}

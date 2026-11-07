@@ -19,7 +19,7 @@ sdk="$offline_root/linux-arm64-ubuntu18"
 root="$sdk/root"
 debs="$sdk/debs/runtime-arm64"
 
-fail() { echo "[wunder-arm64-runtime-sdk] $*" >&2; exit 2; }
+fail() { echo "[wunder-desktop-arm64-runtime-sdk] $*" >&2; exit 2; }
 
 [[ "$(uname -m)" == aarch64 ]] || fail "run this one-time SDK preparation on an aarch64 Ubuntu 18.04 environment"
 [[ -r /etc/os-release ]] || fail "cannot identify Linux distribution"
@@ -92,4 +92,4 @@ done
 
 [[ -x "$root/usr/bin/mksquashfs" ]] || fail "mksquashfs was not installed into arm64 sysroot: $root/usr/bin/mksquashfs"
 
-printf '[wunder-arm64-runtime-sdk] installed %s Ubuntu 18.04 arm64 runtime packages into %s\n' "${#archives[@]}" "$root"
+printf '[wunder-desktop-arm64-runtime-sdk] installed %s Ubuntu 18.04 arm64 runtime packages into %s\n' "${#archives[@]}" "$root"

@@ -5,7 +5,7 @@ pub(crate) const BRAND_MARK: &str = ">_";
 
 pub(crate) fn brand_name(is_zh: bool) -> &'static str {
     if is_zh {
-        "wunder 舵机"
+        "wunder 命令行"
     } else {
         "wunder CLI"
     }

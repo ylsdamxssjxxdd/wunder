@@ -1418,7 +1418,7 @@ fn settle_cancelling_submission(
     }
 }
 
-/// Keep lock indicators current while another 蛹 or 舵机 owns a thread.
+/// Keep lock indicators current while another desktop app or CLI instance owns a thread.
 /// This timer is independent of the 33ms stream reducer, runs only when the
 /// visible catalogue has a lock, and its worker captures only weak UI state.
 fn sync_lease_refresh_timer(app: &MainWindow, state: &Rc<RefCell<State>>) {
@@ -1612,7 +1612,7 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                         && allow_initial_auto_open
                     {
                         // Opening a thread acquires a cross-process lease. Do
-                        // not auto-open a row that another live蛹/舵机 owns;
+                        // not auto-open a row that another live 桌面版/命令行 owns;
                         // otherwise every fresh startup reports THREAD_IN_USE
                         // before the user has chosen a conversation.
                         if let Some(index) =

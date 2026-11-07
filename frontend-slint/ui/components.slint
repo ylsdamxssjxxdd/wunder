@@ -429,6 +429,11 @@ export component FormField inherits Rectangle {
     in property <bool> secret: false;
     in property <bool> read-only: false;
     in property <bool> enabled: true;
+    // Phone dialogs open with the caret and keyboard already on the field.
+    in property <bool> auto-focus: false;
+    // Identity fields commit when the user leaves them; dialogs with explicit
+    // Save/Cancel buttons opt out and only commit on Enter.
+    in property <bool> commit-on-blur: true;
     // Inline validation message; empty keeps the compact single-line form.
     in property <string> error: "";
     // Bold heading label for stacked form fields (the agent editor), instead of
@@ -441,6 +446,11 @@ export component FormField inherits Rectangle {
     // of on every keystroke.
     callback committed();
     height: root.error == "" ? 62px : 78px;
+    init => {
+        if root.auto-focus && root.enabled && !root.read-only {
+            editor.focus();
+        }
+    }
     Text {
         y: 0px; width: parent.width; height: 18px; text: root.label;
         color: root.strong-label ? Theme.text : Theme.muted;
@@ -477,7 +487,7 @@ export component FormField inherits Rectangle {
                 accepted => { root.committed(); }
                 changed has-focus => {
                     if editor.has-focus && !editor.read-only && editor.enabled { TextFieldActivation.activated(); }
-                    if !editor.has-focus { root.committed(); }
+                    if !editor.has-focus && root.commit-on-blur { root.committed(); }
                 }
             }
         }

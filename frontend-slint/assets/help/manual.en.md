@@ -2,11 +2,11 @@
 <!-- 正文是标准 Markdown；topic: 链接指向站内主题，art/*.png 指向内嵌图册。 -->
 <!-- topic id="welcome" block="start" title="Welcome" group="Getting Started" keywords="getting started,welcome,manual,help" -->
 
-# Pupa User Manual
+# wunder Desktop User Manual
 
-Pupa is a local AI workbench: hand a goal to the agent, and it breaks the task down, calls tools, and delivers results. Files and threads stay on this machine.
+wunder Desktop is a local AI workbench: hand a goal to the agent, and it breaks the task down, calls tools, and delivers results. Files and threads stay on this machine.
 
-This manual introduces Pupa's core capabilities and day-to-day operations. On the left, the **Contents** pane groups topics into four blocks — Getting Started, Tools, Surfaces and Capabilities — and each block title expands or collapses; the **Index** looks entries up by keyword, and **Search** matches full text. Green links in the body jump to the related topic.
+This manual introduces wunder Desktop's core capabilities and day-to-day operations. On the left, the **Contents** pane groups topics into four blocks — Getting Started, Tools, Surfaces and Capabilities — and each block title expands or collapses; the **Index** looks entries up by keyword, and **Search** matches full text. Green links in the body jump to the related topic.
 
 - [**Quick Start**](topic:quickstart)：Create a thread, send a message, switch models — your first conversation in a few minutes.
 - [**Diverse, Fast, Superior, Efficient**](topic:core-overview)：The four cores: multi-platform and multi-form, instant startup and lag-free response, 24/7 stability and high intelligence, extremely low CPU, memory, and context cost with a ready-made runtime.
@@ -41,7 +41,7 @@ The model switcher beside the input box affects only the **current thread**; the
 
 > All conversation data is stored in a local SQLite database; you can browse past threads while offline.
 
-<!-- topic id="forms" block="start" title="Form matrix" group="Getting Started" keywords="form,Pupa,Beehive,Helm,Hull" -->
+<!-- topic id="forms" block="start" title="Form matrix" group="Getting Started" keywords="form,wunder Desktop,wunder Cloud,wunder CLI,wunder Server" -->
 
 # Form matrix
 
@@ -49,33 +49,33 @@ wunder is a multi-form agent workbench. One engine is shipped as several program
 
 | Icon | Form | Tech stack | Purpose | Run model | OS support |
 | --- | --- | --- | --- | --- | --- |
-| 🚀 | Hull server | Rust + axum 0.8; PostgreSQL | User and agent management platform (multi-tenancy, users and org units, agent app build and publish, gateway access and scheduling) | Long-running server process, Docker deployment, HTTP / WebSocket access | Linux / Docker |
-| 🐉 | Bridge web | Plain HTML + CSS + JavaScript (` web/ `, no build step) | Hull's admin console (four panel groups: system, agents, debug, docs) | Browser access, statically mounted by Hull at ` / ` | Any browser |
-| 🐝 | Beehive web | Vue 3 + TypeScript (Vite build, ` frontend/ `) | Cloud AI workbench (Hull's user side) | Browser access; build output ` frontend/dist ` is served read-only by the nginx container (default port 18001) and is **not hosted by Hull** | Any browser |
-| 🍯 | Pupa desktop | Rust + Slint 1.18 (default frontend ` frontend-slint/ `, native UI, software rendering); SQLite | Local AI workbench (the flagship form, works out of the box) | Local desktop process, native in-process calls to the engine (no local network hop); Electron / Tauri shells are no longer maintained | Windows 7 x86 and up; Linux (ubuntu 18.04 baseline) x64 / arm64 AppImage |
-| ⚙ | Helm cli | Rust terminal TUI (ratatui + crossterm); SQLite | Manual local entry point (terminal, scriptable, automation) | Local terminal process, direct in-process engine calls, JSONL output supported | Windows 7 and up (GNU toolchain); Linux amd64 / arm64 (ubuntu 18.04 sysroot) |
+| 🚀 | wunder Server | Rust + axum 0.8; PostgreSQL | User and agent management platform (multi-tenancy, users and org units, agent app build and publish, gateway access and scheduling) | Long-running server process, Docker deployment, HTTP / WebSocket access | Linux / Docker |
+| 🐉 | wunder Admin | Plain HTML + CSS + JavaScript (` web/ `, no build step) | wunder Server's admin console (four panel groups: system, agents, debug, docs) | Browser access, statically mounted by wunder Server at ` / ` | Any browser |
+| 🐝 | wunder Cloud | Vue 3 + TypeScript (Vite build, ` frontend/ `) | Cloud AI workbench (wunder Server's user side) | Browser access; build output ` frontend/dist ` is served read-only by the nginx container (default port 18001) and is **not hosted by wunder Server** | Any browser |
+| 🍯 | wunder Desktop | Rust + Slint 1.18 (default frontend ` frontend-slint/ `, native UI, software rendering); SQLite | Local AI workbench (the flagship form, works out of the box) | Local desktop process, native in-process calls to the engine (no local network hop); Electron / Tauri shells are no longer maintained | Windows 7 x86 and up; Linux (ubuntu 18.04 baseline) x64 / arm64 AppImage |
+| ⚙ | wunder CLI | Rust terminal TUI (ratatui + crossterm); SQLite | Manual local entry point (terminal, scriptable, automation) | Local terminal process, direct in-process engine calls, JSONL output supported | Windows 7 and up (GNU toolchain); Linux x64 / arm64 (ubuntu 18.04 sysroot) |
 
-All forms share the same engine (wunder-runtime) and core (wunder-core): threads, tools, storage abstractions, realtime events and permission semantics are one body of code, and the difference is only in the access layer. Pupa and Helm do not depend on Hull and can be installed and run on their own.
+All forms share the same engine (wunder-runtime) and core (wunder-core): threads, tools, storage abstractions, realtime events and permission semantics are one body of code, and the difference is only in the access layer. wunder Desktop and wunder CLI do not depend on wunder Server and can be installed and run on their own.
 
 ## Choosing a form
 
-- **Individual users** → Pupa (desktop). The local AI workbench, the default entry point for personal use, ready to run after install.
+- **Individual users** → wunder Desktop. The local AI workbench, the default entry point for personal use, ready to run after install.
 
-- **Teams, or anyone working in a browser** → Beehive (web). Hull's user side, provided with Hull; once Hull is deployed, members reach it in a browser.
+- **Teams, or anyone working in a browser** → wunder Cloud. wunder Server's user side, provided with wunder Server; once wunder Server is deployed, members reach it in a browser.
 
-- **Terminal and scripting** → Helm (cli). The manual local entry point, terminal-driven, scriptable, automation-friendly.
+- **Terminal and scripting** → wunder CLI. The manual local entry point, terminal-driven, scriptable, automation-friendly.
 
-- **Multi-user management and governance** → Hull (server). Multi-tenancy, user and org-unit management, agent app build and publish, unified gateway access and scheduling. The admin console is the Bridge (web), which starts with Hull and is aimed at administrators.
+- **Multi-user management and governance** → wunder Server. Multi-tenancy, user and org-unit management, agent app build and publish, unified gateway access and scheduling. The admin console is wunder Admin, which starts with wunder Server and is aimed at administrators.
 
-<!-- topic id="install" block="start" title="Starting with the Pupa (Desktop)" group="Getting Started" keywords="install,launch,download,desktop" -->
+<!-- topic id="install" block="start" title="Starting with wunder Desktop" group="Getting Started" keywords="install,launch,download,desktop" -->
 
-# Starting with the Pupa (Desktop)
+# Starting with wunder Desktop
 
-It calls the engine natively in-process, has no port of its own, and routes through no HTTP/WebSocket relay. Individual users install just this — there is no Hull (server) to deploy first.
+It calls the engine natively in-process, has no port of its own, and routes through no HTTP/WebSocket relay. Individual users install just this — there is no wunder Server to deploy first.
 
 ## Prerequisites
 
-| Scenario | Choose the Pupa |
+| Scenario | Choose wunder Desktop |
 | --- | --- |
 | Want to start right away, without deploying a service first | ✅ |
 | Need to work with local files, windows, and browsers | ✅ |
@@ -83,20 +83,20 @@ It calls the engine natively in-process, has no port of its own, and routes thro
 | Need an interactive terminal and screenshot capture | ✅ |
 | Need a tray, system notifications, and global hotkeys | ✅ |
 | May connect to a remote later, but want to get running now | ✅ |
-| Need multi-user governance and an admin backend | ❌ Choose the Hull (server) |
-| Need to access it in a browser | ❌ Choose the Beehive (web, ships with the Hull) |
+| Need multi-user governance and an admin backend | ❌ Choose wunder Server |
+| Need to access it in a browser | ❌ Choose wunder Cloud (web, ships with wunder Server) |
 
-The Pupa covers single-user local scenarios; sharing among several people runs through the Hull and the Beehive.
+wunder Desktop covers single-user local scenarios; sharing among several people runs through wunder Server and wunder Cloud.
 
 ## Install and launch
 
-Download and run the installer for your system. It installs the Pupa and Helm (CLI) by default; optional Python/Git/rg/ffmpeg/browser components are opt-in. The install directory defaults to ` ~/.wunder ` and can be changed to any writable directory. The installer writes ` .wunder-home ` at the install root, and both local forms use that root as ` WUNDER\_HOME `; an explicit non-empty ` WUNDER\_HOME ` still wins.
+Download and run the installer for your system. It installs wunder Desktop and wunder CLI by default; optional Python/Git/rg/ffmpeg/browser components are opt-in. The install directory defaults to ` ~/.wunder ` and can be changed to any writable directory. The installer writes ` .wunder-home ` at the install root, and both local forms use that root as ` WUNDER\_HOME `; an explicit non-empty ` WUNDER\_HOME ` still wins.
 
-- **Executable**: ` bin/wunder-desktop.exe ` (Windows) or ` bin/wunder-desktop ` (Linux) after installation; development builds use ` wunder-frontend-slint `
+- **Executable**: ` bin/wunder-desktop.exe ` (Windows) or ` bin/wunder-desktop ` (Linux) after installation; development builds use ` wunder-desktop `
 
-- **Terminal commands**: the installer adds the install root's ` bin ` to the user PATH (Windows) or creates command links under ` ~/.local/bin ` (Linux); after opening a new terminal, ` wunder-cli ` (Helm) and ` desktop ` / ` wunder-desktop ` (Pupa) run directly
+- **Terminal commands**: the installer adds the install root's ` bin ` to the user PATH (Windows) or creates command links under ` ~/.local/bin ` (Linux); after opening a new terminal, ` wunder-cli ` (wunder CLI) and ` desktop ` / ` wunder-desktop ` (wunder Desktop) run directly
 
-- **Menu and desktop entry**: Windows names the Start Menu and optional desktop shortcuts Pupa and Helm; Linux registers a Pupa application-menu entry and creates a Pupa launcher in the XDG desktop directory by default
+- **Menu and desktop entry**: Windows names the Start Menu and optional desktop shortcuts wunder Desktop and wunder CLI; Linux registers a wunder Desktop application-menu entry and creates a wunder Desktop launcher in the XDG desktop directory by default
 
 - **Development launch**: on Windows, use the project's bundled ` run.bat `
 
@@ -106,7 +106,7 @@ Download and run the installer for your system. It installs the Pupa and Helm (C
 
 - There's also a compatibility bridge port (default 18123) that serves only legacy-compatible clients; day-to-day use doesn't go through it
 
-- The Electron / Tauri frontend shells are **no longer maintained day-to-day and get no new features** (this doesn't mean the Pupa backend stops being maintained)
+- The Electron / Tauri frontend shells are **no longer maintained day-to-day and get no new features** (this doesn't mean the wunder Desktop backend stops being maintained)
 
 ## Local data
 
@@ -174,9 +174,9 @@ List the files in the current working directory
 
 When you see the model think → a batch of tools → the final reply landing in the chat area, you're up and running.
 
-## Capabilities unique to the Pupa
+## Capabilities unique to wunder Desktop
 
-None of these exist on the Beehive, the Bridge, or the Helm:
+None of these exist on wunder Cloud, wunder Admin, or wunder CLI:
 
 - **Interactive terminal** (winpty on Windows, PTY on Linux)
 
@@ -190,7 +190,7 @@ None of these exist on the Beehive, the Bridge, or the Helm:
 
 ## Device interlink surfaces
 
-Only **two** interlink surfaces are available in the Pupa:
+Only **two** interlink surfaces are available in wunder Desktop:
 
 - The **cloud workspaces** in the sidebar's working-directory area: when the network is unavailable they clearly show "offline" alongside a "connect" button
 
@@ -228,7 +228,7 @@ Diversity and strength set the capability surface; speed and efficiency constrai
 
 | Core | Meaning |
 | --- | --- |
-| **Diverse** | Multi-platform, multi-form. One core and engine back the Pupa, Beehive, Helm, and Hull across 32-bit Windows 7, Ubuntu 18.04, and modern Windows / Linux / Docker, in both web and local usage; models, channels, and workspaces extend through the same access layer |
+| **Diverse** | Multi-platform, multi-form. One core and engine back wunder Desktop, wunder Cloud, wunder CLI, and wunder Server across 32-bit Windows 7, Ubuntu 18.04, and modern Windows / Linux / Docker, in both web and local usage; models, channels, and workspaces extend through the same access layer |
 | **Fast** | Instant startup and a response that never lags. Local forms call the engine in-process without local HTTP; threads and history restore directly from local storage; streaming events are frame-coalesced and projected incrementally, and tools run in parallel where allowed |
 | **Superior** | Strong stability for 24/7 operation and a high degree of intelligence. Queues, caches, views, and context are bounded, with session locks, round caps, quotas, and retry circuit breaking for long runs; goal mode, subagents, the tool chain, long-term memory, and knowledge bases carry complex tasks from decomposition to delivery |
 | **Efficient** | Extremely low CPU and memory use, minimal context consumption. A native Rust process with local SQLite needs no browser runtime, and supplement packages ship a ready-made agent runtime so nothing has to be assembled by hand; tool-result trimming, frozen prompts that reuse cache, one-time memory-index injection, and micro-compaction and history compaction keep token consumption down |
@@ -275,7 +275,7 @@ Updates use CAS-on-revision: an update must carry the goal's current revision, a
 
 - The desktop form does not expose goal selection; the runtime injects it per session.
 
-- The Bridge has no goal UI; goal operations happen in the Beehive, the Pupa, and the Helm.
+- wunder Admin has no goal UI; goal operations happen in wunder Cloud, wunder Desktop, and wunder CLI.
 
 <!-- topic id="core-compatibility" block="capabilities" title="Compatibility" group="Core Capabilities" keywords="compatibility,Windows 7,Ubuntu,offline" -->
 
@@ -298,7 +298,7 @@ Updates use CAS-on-revision: an update must carry the goal's current revision, a
 
 - **Startup checks**: a recovery scan and self-check run at startup.
 
-Both chains work offline, the interface needs no GPU, and command sessions adapt to legacy terminals — Windows 7 32-bit and Ubuntu 18.04 (x64 / arm64) can run the Pupa and the Helm directly.
+Both chains work offline, the interface needs no GPU, and command sessions adapt to legacy terminals — Windows 7 32-bit and Ubuntu 18.04 (x64 / arm64) can run wunder Desktop and wunder CLI directly.
 
 ## Limits
 
@@ -439,12 +439,12 @@ With the master switch off (` cron.enabled=false `), four kinds of write operati
 | --- | --- |
 | API | ` /wunder/cron/\* `, 11 endpoints in all (status / list / runs / add / update / remove / enable / disable / get / run / action), on the **user side**, isolated by user ownership |
 | Tool | The built-in scheduled-tasks tool (canonical name ` 定时任务 `, alias ` schedule\_task `), sharing the same handler as the API, so the model can create tasks on its own |
-| Beehive | A scheduled-tasks category page under settings |
-| Pupa | A scheduled-tasks page plus a native entry point, calling the same handler in-process |
-| Helm | **No scheduled tasks**: the local engine explicitly disables the scheduler at startup, and there is no related slash command |
-| Bridge | No user-level task management page; it exists only as a template configuration under preset agents |
+| wunder Cloud | A scheduled-tasks category page under settings |
+| wunder Desktop | A scheduled-tasks page plus a native entry point, calling the same handler in-process |
+| wunder CLI | **No scheduled tasks**: the local engine explicitly disables the scheduler at startup, and there is no related slash command |
+| wunder Admin | No user-level task management page; it exists only as a template configuration under preset agents |
 
-When you need something to run on a schedule, configure it on the Beehive, the Pupa, or the Hull side.
+When you need something to run on a schedule, configure it on wunder Cloud, wunder Desktop, or wunder Server side.
 
 <!-- topic id="core-channels" block="capabilities" title="Channels" group="Core Capabilities" keywords="channel,Feishu,QQ,WeChat,IM" -->
 
@@ -452,9 +452,9 @@ When you need something to run on a schedule, configure it on the Beehive, the P
 
 ## Scope of responsibility
 
-All execution happens in the engine. A channel does just two things: parse an external message into a unified inbound shape, and deliver the unified outbound shape back into an external protocol. Protocol adaptation stops at the entry; a channel does not copy business logic, does not keep its own storage, and does not change thread semantics. The same task thread can take a message from Beehive, continue it from Feishu, and finish it from Pupa; a channel never creates a second execution path.
+All execution happens in the engine. A channel does just two things: parse an external message into a unified inbound shape, and deliver the unified outbound shape back into an external protocol. Protocol adaptation stops at the entry; a channel does not copy business logic, does not keep its own storage, and does not change thread semantics. The same task thread can take a message from wunder Cloud, continue it from Feishu, and finish it from wunder Desktop; a channel never creates a second execution path.
 
-A form (Pupa / Beehive / Helm / Hull) is the shape of running and access; a channel (Feishu / QQ / WeChat …) is an off-site platform. The two are not one layer. The statement that many entries share one engine holds; what tends to be written wrong is the support level.
+A form (wunder Desktop / wunder Cloud / wunder CLI / wunder Server) is the shape of running and access; a channel (Feishu / QQ / WeChat …) is an off-site platform. The two are not one layer. The statement that many entries share one engine holds; what tends to be written wrong is the support level.
 
 ## Support level
 
@@ -487,7 +487,7 @@ An inbound message is first resolved by binding: candidates are scored by specif
 | account\_id match | 2 | Empty means wildcard |
 | channel match | 1 | Empty means wildcard |
 
-A hit yields the target agent and any tool overrides, after which the workspace is decided: empty, as well as the default and \_\_default\_\_ aliases, all point to that user's default agent workspace. In the Hull form, workspaces are flattened per user into a single cloud directory, so files arriving from different channels for the same user land in the same place.
+A hit yields the target agent and any tool overrides, after which the workspace is decided: empty, as well as the default and \_\_default\_\_ aliases, all point to that user's default agent workspace. In wunder Server form, workspaces are flattened per user into a single cloud directory, so files arriving from different channels for the same user land in the same place.
 
 ## Inbound, outbound, and rate limiting
 
@@ -537,7 +537,7 @@ Verification differs by platform: some loop back a verification token from confi
 
 - A failed outbound delivery is not dropped outright; it uses a persistent queue with exponential backoff and at most 5 retries.
 
-- Pupa and Helm do not go through the channel layer: Pupa is a native in-process call, and Helm uses its own access path.
+- wunder Desktop and wunder CLI do not go through the channel layer: wunder Desktop is a native in-process call, and wunder CLI uses its own access path.
 
 <!-- topic id="core-memory" block="capabilities" title="Memory" group="Core Capabilities" keywords="memory,long-term memory,knowledge base" -->
 
@@ -611,7 +611,7 @@ A single user can hold several task threads at once, and scheduling, locks, and 
 
 ## Limits
 
-- With ` agent\_queue.enabled ` turned off, sending another message while a run is in progress is judged "user busy" and no longer enters the queue bar (the Hull warns about this at startup). This is a configuration choice, not a fault.
+- With ` agent\_queue.enabled ` turned off, sending another message while a run is in progress is judged "user busy" and no longer enters the queue bar (wunder Server warns about this at startup). This is a configuration choice, not a fault.
 
 - Blocking category quotas and bounded queues are hard caps: when full, the system reports busy and does not wait in a queue.
 
@@ -619,7 +619,7 @@ A single user can hold several task threads at once, and scheduling, locks, and 
 
 # Streaming and Realtime State
 
-Replies and execution progress both arrive **streaming**: the body appears character by character as increments, and tool calls and intermediate output enter the [working process](topic:interface) collapsible bar in real time. The Pupa calls the engine in-process by default, so events are delivered straight to the UI without touching the local network; only the compatibility bridge and [Devices &amp; interlink](topic:interlink) go over network channels.
+Replies and execution progress both arrive **streaming**: the body appears character by character as increments, and tool calls and intermediate output enter the [working process](topic:interface) collapsible bar in real time. wunder Desktop calls the engine in-process by default, so events are delivered straight to the UI without touching the local network; only the compatibility bridge and [Devices &amp; interlink](topic:interlink) go over network channels.
 
 ## Truth and projection
 
@@ -702,7 +702,7 @@ When failures with the same fingerprint repeat, the circuit breaker trips: non-r
 
 # Multi-user Management
 
-Multi-user governance is a foundational capability of the Hull (server) form; the Pupa (desktop) and the Helm (cli) are local, single-machine forms with no account system. Concrete panel operations are covered in the reference section.
+Multi-user governance is a foundational capability of the wunder Server form; wunder Desktop and wunder CLI are local, single-machine forms with no account system. Concrete panel operations are covered in the reference section.
 
 ## Identity checks
 
@@ -726,7 +726,7 @@ A few key semantics:
 
 - **Refresh is an OAuth-style family rotation**: one refresh issues a new access plus a new refresh, both in the same rotation family; presenting an already-revoked token to refresh again is judged to be a stolen token, and the whole family (including the access token in use) is revoked at once.
 
-- **The session scope decides who can renew**: login reads the ` x-wunder-session-scope ` header, and only local scopes such as the Pupa and the Helm get a refresh chain that can renew; browser sessions do not take this path.
+- **The session scope decides who can renew**: login reads the ` x-wunder-session-scope ` header, and only local scopes such as wunder Desktop and wunder CLI get a refresh chain that can renew; browser sessions do not take this path.
 
 - **Logging in again from the same scope evicts the old session**: when the same user logs in again from the same scope, the old session receives a notice that it has been superseded and is disconnected. When troubleshooting a connection that dropped on another client, first check whether it was the same scope logging in again.
 
@@ -734,7 +734,7 @@ A few key semantics:
 
 ## Presence
 
-Presence is recorded separately by client type, with the Beehive (web), the Pupa (desktop), and the Helm (cli) as three independent lines; roughly 90 seconds without a touch counts as offline, with a sweep interval of 30 seconds (minimum 10 seconds). As a result, presence in the user list is split into web, desktop, and cli columns — "online" is no longer a yes-or-no value, and to see who is online on which form you look at the matching column. The management exit is at ` /wunder/admin/gateway/presence `.
+Presence is recorded separately by client type, with wunder Cloud (web), wunder Desktop (desktop), and wunder CLI (cli) as three independent lines; roughly 90 seconds without a touch counts as offline, with a sweep interval of 30 seconds (minimum 10 seconds). As a result, presence in the user list is split into web, desktop, and cli columns — "online" is no longer a yes-or-no value, and to see who is online on which form you look at the matching column. The management exit is at ` /wunder/admin/gateway/presence `.
 
 ## Unit tree
 
@@ -901,9 +901,9 @@ The trajectory view replays a task's full execution timeline round by round, inc
 
 > **Recommended:** For everyday use the working process is enough; open the trajectory view when you need a full review.
 
-<!-- topic id="desktop-ui" block="interface" title="Pupa Interface" group="Surfaces" keywords="interface,desktop,sidebar,layout" -->
+<!-- topic id="desktop-ui" block="interface" title="wunder Desktop Interface" group="Surfaces" keywords="interface,desktop,sidebar,layout" -->
 
-# Pupa Interface
+# wunder Desktop Interface
 
 It runs entirely on your own computer: there is no separate backend port and no network relay, and the interface calls the local engine directly. It is the default entry for individual users.
 
@@ -1001,13 +1001,13 @@ These areas live inside the two pages, not as pages of their own:
 
 - **Remote command approval pop-up**: a high-risk confirmation for interconnection commands, with a prominent border, risk level, and source details, plus a "cannot be remembered" prompt
 
-## Capabilities unique to the Pupa
+## Capabilities unique to wunder Desktop
 
-The Beehive, the Bridge, and the Helm have none of these:
+wunder Cloud, wunder Admin, and wunder CLI have none of these:
 
 | Capability | What it is |
 | --- | --- |
-| **Interactive terminal** | Run commands right inside it; the Beehive, the Bridge, and the Helm have none |
+| **Interactive terminal** | Run commands right inside it; wunder Cloud, wunder Admin, and wunder CLI have none |
 | **Screenshot capture** | A full-screen capture pasted back into the input area |
 | **Tray and system notifications** | Reminders while running in the background and when a task finishes |
 | **Global hotkey** | Bring it up with a system-wide shortcut |
@@ -1016,11 +1016,11 @@ The Beehive, the Bridge, and the Helm have none of these:
 
 ## Entries not wired up yet
 
-- The **Device interconnection** category in settings is not wired up: the entry exists in code but never renders, so it cannot be opened today. Interconnection in the Pupa lives in only two places — the cloud workspace under "Working directory" in the sidebar, and the remote-command approval pop-up.
+- The **Device interconnection** category in settings is not wired up: the entry exists in code but never renders, so it cannot be opened today. Interconnection in wunder Desktop lives in only two places — the cloud workspace under "Working directory" in the sidebar, and the remote-command approval pop-up.
 
-- **Voice output (TTS) is not implemented**: TTS models can be configured in settings, but there is no playback; the voice side is input-only. For spoken output, use the Beehive.
+- **Voice output (TTS) is not implemented**: TTS models can be configured in settings, but there is no playback; the voice side is input-only. For spoken output, use wunder Cloud.
 
-- **The early desktop shells are no longer maintained**: the Electron / Tauri frontend shells receive no feature updates. This does not affect the Pupa's underlying engine.
+- **The early desktop shells are no longer maintained**: the Electron / Tauri frontend shells receive no feature updates. This does not affect wunder Desktop's underlying engine.
 
 ## Resetting the working state
 
@@ -1032,12 +1032,12 @@ It keeps skills, knowledge bases, long-term memory, user configuration, workspac
 
 It cleans up the working state rather than performing a factory reset.
 
-## Differences from the Beehive
+## Differences from wunder Cloud
 
-| Item | Pupa | Beehive |
+| Item | wunder Desktop | wunder Cloud |
 | --- | --- | --- |
 | Running mode | A desktop app installed on your own computer | Reached in a browser, in the cloud |
-| Data storage | Local (` ~/.wunder `) | Hull storage |
+| Data storage | Local (` ~/.wunder `) | wunder Server storage |
 | Interactive terminal | ✅ Yes | ❌ No |
 | Voice input / output | Input ✅, output ❌ | Both directions ✅ |
 | Tray / system notifications / global hotkey / screenshot | ✅ | ❌ |
@@ -1048,7 +1048,7 @@ It cleans up the working state rather than performing a factory reset.
 
 # 00 Overview
 
-Whole-window baseline for the Pupa desktop app: 1462×866 logical pixels, a 240 sidebar, a 1000 reading column and a 154-high composer band.
+Whole-window baseline for the wunder Desktop app: 1462×866 logical pixels, a 240 sidebar, a 1000 reading column and a 154-high composer band.
 
 ![00 Overview](art/00-overview.png)
 
@@ -1066,7 +1066,7 @@ Neutral, accent and semantic colors, the type scale, spacing, radii and the wind
 
 *01 Foundations · color, type, spacing, radii*
 
-<!-- topic id="art-icons" block="interface" title="02 Icons" group="Art" keywords="art,icons,production assets,pupa icon,status icons" -->
+<!-- topic id="art-icons" block="interface" title="02 Icons" group="Art" keywords="art,icons,production assets,desktop icon,status icons" -->
 
 # 02 Icons
 
@@ -1150,30 +1150,30 @@ Row and input states, the motion timeline, performance limits, key bindings, acc
 
 # Interlink
 
-Pupa remains a local AI workbench that works offline. After it signs in to the Hull, it can use cloud agents and threads without opening a local port. If the user explicitly enables local sharing, Beehive can access the device's authorized workspaces and threads through the Hull. Helm exposes the same operations for manual and scripted use.
+wunder Desktop remains a local AI workbench that works offline. After it signs in to wunder Server, it can use cloud agents and threads without opening a local port. If the user explicitly enables local sharing, wunder Cloud can access the device's authorized workspaces and threads through wunder Server. wunder CLI exposes the same operations for manual and scripted use.
 
 ## Sign-in and sharing
 
-The first Pupa or Helm sign-in creates an independent device session. It does not automatically expose local files or threads. The user can select off, summary sharing, or full sharing in account settings, and Bridge policy can further restrict every device.
+The first wunder Desktop or wunder CLI sign-in creates an independent device session. It does not automatically expose local files or threads. The user can select off, summary sharing, or full sharing in account settings, and wunder Admin policy can further restrict every device.
 
 “Signed in”, “tunnel online”, and “this operation is authorized” are separate states. Sign-in permits cloud access; an online tunnel is required to operate a local device; mutations and execution also require capability, policy, and approval checks.
 
 ## Prerequisites
 
-- Pupa or Helm is signed in to the Hull.
+- wunder Desktop or wunder CLI is signed in to wunder Server.
 
 - To access a local device, that device is online and its owner enabled sharing.
 
-- The Hull is the authority for accounts, devices, quota, and policy.
+- wunder Server is the authority for accounts, devices, quota, and policy.
 
 ## Capabilities
 
 | ID | Capability | What it means |
 | --- | --- | --- |
-| R1 | Device state | The Hull distinguishes a valid sign-in, a live tunnel, and effective capabilities; it presents ` online ` / ` away ` / ` busy ` / ` reconnecting ` / ` offline ` |
-| R2 | Workspace visibility | The local workspace appears in the Beehive as a **shadow projection**, projecting metadata summaries (thread directory, directory-tree summary, scheduled tasks, usage); **file contents are not mirrored**, and are pulled on demand over the interlink tunnel as the user acts |
-| R3 | Cloud controlling local | The Beehive can issue graded operations to online local nodes (query / session control / workspace write / tool execution); sensitive operations go through local **human-in-the-loop approval**, and everything is audited |
-| R4 | Local controlling cloud | The Pupa and the Helm treat the cloud as a symmetric node — browse the cloud workspace, send messages to cloud threads, read thread event streams; the Helm provides a scriptable command group |
+| R1 | Device state | wunder Server distinguishes a valid sign-in, a live tunnel, and effective capabilities; it presents ` online ` / ` away ` / ` busy ` / ` reconnecting ` / ` offline ` |
+| R2 | Workspace visibility | The local workspace appears in wunder Cloud as a **shadow projection**, projecting metadata summaries (thread directory, directory-tree summary, scheduled tasks, usage); **file contents are not mirrored**, and are pulled on demand over the interlink tunnel as the user acts |
+| R3 | Cloud controlling local | wunder Cloud can issue graded operations to online local nodes (query / session control / workspace write / tool execution); sensitive operations go through local **human-in-the-loop approval**, and everything is audited |
+| R4 | Local controlling cloud | wunder Desktop and wunder CLI treat the cloud as a symmetric node — browse the cloud workspace, send messages to cloud threads, read thread event streams; wunder CLI provides a scriptable command group |
 
 The unified state model:
 
@@ -1187,22 +1187,22 @@ The unified state model:
 
 ## Entry Points
 
-## Pupa
+## wunder Desktop
 
 | Entry point | What it does |
 | --- | --- |
 | Account settings | Sign-in state, local sharing permission, and sharing level |
 | Cloud agents and threads | Agents, recent threads, send, stop, tool approval, live status, history pages, and full-text copy |
-| Local approval | Controlled requests from Beehive to this machine |
+| Local approval | Controlled requests from wunder Cloud to this machine |
 
-## Beehive (web)
+## wunder Cloud (web)
 
 | Entry point | What it does |
 | --- | --- |
 | Sidebar | Local workspaces sit beside the cloud workspace: the default root is “device name-Local workspace”, named roots are “device name-workspace name”, and selecting one expands that workspace’s local threads beneath it |
 | The "cloud / device" dropdown switcher | Removed |
 
-## Helm
+## wunder CLI
 
 | Entry point | What it does |
 | --- | --- |
@@ -1216,7 +1216,7 @@ The unified state model:
 | --- | --- |
 | No public inbound entry point | Reverse tunnel: the local side only makes outbound connections, opens no listening port, and control traffic is delivered over the already-established link |
 | Least capability | Each class of remote operation is a declarative capability, read-only by default |
-| Explicit authorization | Write and execution classes require local user authorization, and an administrator can tighten it further in the Bridge |
+| Explicit authorization | Write and execution classes require local user authorization, and an administrator can tighten it further in wunder Admin |
 | Graded approval | Risk tiers L0–L3, see the table below |
 | Complete audit | Every remote operation forms a chain that can be inspected |
 | One-click shutdown | The kill switch is held by the user |
@@ -1239,9 +1239,9 @@ Risk tiers:
 
 ## Disconnection and recovery
 
-The Pupa reconnects with backoff. While the Hull process remains running, its bounded queue retains commands that have not been sent and delivers them after reconnection. Commands already sent, executing, or awaiting approval on the device fail explicitly when their connection ends, avoiding duplicate operations.
+wunder Desktop reconnects with backoff. While wunder Server process remains running, its bounded queue retains commands that have not been sent and delivers them after reconnection. Commands already sent, executing, or awaiting approval on the device fail explicitly when their connection ends, avoiding duplicate operations.
 
-After a Hull restart, unfinished commands are settled in bounded batches with ` SERVER\_RESTARTED `. Command bodies are not persisted, so arguments are never reconstructed from digests and writes are not replayed automatically. Queries can be submitted again; check the actual outcome of a write before resubmitting it through the normal approval flow. Remote thread views obtain a new snapshot after reconnecting.
+After a wunder Server restart, unfinished commands are settled in bounded batches with ` SERVER\_RESTARTED `. Command bodies are not persisted, so arguments are never reconstructed from digests and writes are not replayed automatically. Queries can be submitted again; check the actual outcome of a write before resubmitting it through the normal approval flow. Remote thread views obtain a new snapshot after reconnecting.
 
 ## Boundaries
 
@@ -1251,11 +1251,11 @@ After a Hull restart, unfinished commands are settled in bounded batches with ` 
 
 - No graphical remote control; control granularity stops at the engine and file APIs.
 
-- No NAT hole-punching; all traffic is relayed through the Hull.
+- No NAT hole-punching; all traffic is relayed through wunder Server.
 
-- The Pupa and the Helm do not interlink directly; local-to-local access always goes through the Hull.
+- wunder Desktop and wunder CLI do not interlink directly; local-to-local access always goes through wunder Server.
 
-Remote file reads use a 256 KiB inline-result boundary; larger device files use bounded chunks. Cloud-direct execution has no device data channel, so larger reads and writes must be split. Beehive does not offer binary upload, archive, or batch file operations.
+Remote file reads use a 256 KiB inline-result boundary; larger device files use bounded chunks. Cloud-direct execution has no device data channel, so larger reads and writes must be split. wunder Cloud does not offer binary upload, archive, or batch file operations.
 
 <!-- topic id="settings" block="capabilities" title="Settings Overview" group="Reference" keywords="settings,language,theme,cloud account,preferences" -->
 
@@ -1329,7 +1329,7 @@ Complex tasks are broken down and handed to subagents. A subagent is a work unit
 
 # Files & Workspace
 
-Pupa stores file assets in a local workspace directory. The **Workspace directory** setting specifies the root path; files the agent produces and content you export are both saved locally.
+wunder Desktop stores file assets in a local workspace directory. The **Workspace directory** setting specifies the root path; files the agent produces and content you export are both saved locally.
 
 Files, screenshots, and generated content from a session can be viewed and managed in the file panel, with drag-and-drop interop with the system file manager.
 
@@ -1365,7 +1365,7 @@ Once a TTS voice is configured, the agent's replies can be read aloud; with imag
 
 - Offline, you can still browse past threads; network is only needed to start a conversation or call online services.
 
-- Model requests go directly to the service address you configured; Pupa does not handle or store them through any third-party relay.
+- Model requests go directly to the service address you configured; wunder Desktop does not handle or store them through any third-party relay.
 
 ## Backup recommendations
 
@@ -1389,9 +1389,9 @@ Where token metrics are visible:
 
 - [Model configuration](topic:models): parameters such as "Max context" and "Max output" set the metering limits.
 
-## Credits are a Hull concept
+## Credits are a wunder Server concept
 
-Credits limit model request counts and belong to Hull (server) multi-user governance: each request sent to the model service deducts exactly 1 Credit, independent of token metering. Local, single-machine use of the Pupa involves no credit deduction; only when you use agents on a remote Hull through [Devices &amp; interlink](topic:interlink) does the account quota apply, and a short balance makes the remote side reject new model requests.
+Credits limit model request counts and belong to wunder Server multi-user governance: each request sent to the model service deducts exactly 1 Credit, independent of token metering. Local, single-machine use of wunder Desktop involves no credit deduction; only when you use agents on a remote wunder Server through [Devices &amp; interlink](topic:interlink) does the account quota apply, and a short balance makes the remote side reject new model requests.
 
 > **Tip:** Model request count and credit consumption are two different metrics. In quota-exempt scenarios the request count still grows while credit consumption stays 0.
 
@@ -1419,9 +1419,9 @@ It is injected once at thread initialization; recall results during a run are su
 
 A subagent is a work unit the agent creates temporarily inside a task, to split off something that can proceed in parallel; it is recycled once its result is returned. There is always exactly one agent instance on the user side — see [Subagents](topic:core-subagent).
 
-## Does the Pupa need a Hull deployed first?
+## Does wunder Desktop need a wunder Server deployed first?
 
-No. The Pupa runs standalone and locally; deploy a Hull only when you need multi-user collaboration and unified management — see [Form matrix](topic:forms).
+No. wunder Desktop runs standalone and locally; deploy wunder Server only when you need multi-user collaboration and unified management — see [Form matrix](topic:forms).
 
 ## Are uploaded temporary files cleaned up?
 
@@ -1507,7 +1507,7 @@ When something goes wrong, click **Export diagnostics** under the Help category 
 
 When submitting a problem, attach:
 
-- Form and version (Pupa desktop)
+- Form and version (wunder Desktop)
 
 - The steps that trigger the problem
 
@@ -1521,7 +1521,7 @@ When submitting a problem, attach:
 
 | Term | Meaning |
 | --- | --- |
-| Pupa | The local AI workbench — the application described by this manual. |
+| wunder Desktop | The local AI workbench — the application described by this manual. |
 | Agent thread | The container for one complete conversation, with its own history, tool records, and model selection. |
 | User round | Each message the user sends counts as 1 round. |
 | Model round | Each action the model performs (a call, a tool, or a reply) counts as 1 round. |
@@ -1537,4 +1537,4 @@ When submitting a problem, attach:
 | Round terminal state | The formal signal that a round has ended, carrying status and stop reason; judge completion only by it. |
 | Rehydration | After a disconnect or re-entry, missed changes are filled in by cursor; the whole history is never replayed. |
 | Circuit breaking | When failures with the same fingerprint repeat, the run is temporarily halted so a dead loop cannot exhaust the budget. |
-| Credits | The Hull-side account metric limiting model request counts; not involved in local Pupa use. |
+| Credits | wunder Server-side account metric limiting model request counts; not involved in local wunder Desktop use. |

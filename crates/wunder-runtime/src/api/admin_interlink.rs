@@ -1,4 +1,4 @@
-//! Admin (舰桥) governance surface for the cloud <-> local interlink fleet.
+//! Admin (管理端) governance surface for the cloud <-> local interlink fleet.
 //!
 //! Frozen contract: docs/云端本地互通方案.md §3.2 管理面, §5.2, §7.1, §9.2, §9.4,
 //! §10, §13.5.

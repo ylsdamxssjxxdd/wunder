@@ -459,7 +459,7 @@ struct InquiryRoute {
 }
 
 /// 一题：问题正文 + 候选路线 + 是否多选。一次问询可含多题，终端里按全局编号
-/// 连续出题，蜂巢前端则按页展示。
+/// 连续出题，云端版前端则按页展示。
 #[derive(Debug, Clone)]
 struct InquiryQuestion {
     question: String,
@@ -1023,7 +1023,7 @@ impl TuiApp {
                 Ok(())
             }
             ThreadOpenLeaseStatus::Busy => Err(anyhow!(
-                "THREAD_IN_USE: 线程正在由其他蛹或舵机实例打开，关闭占用实例后重试"
+                "THREAD_IN_USE: 线程正在由其他桌面版或命令行实例打开，关闭占用实例后重试"
             )),
         }
     }
@@ -6183,7 +6183,7 @@ impl TuiApp {
         let previous_session_id = self.session_id.clone();
         // The write-access verdict is read first: a thread whose input belongs to an
         // orchestration run opens in read-only watch, honoring the same rule the
-        // 舰体 HTTP layer applies. A failed read leaves the thread writable - the
+        // 服务端 HTTP layer applies. A failed read leaves the thread writable - the
         // engine still enforces its own per-thread rules.
         let watch_only = {
             let catalog = wunder_server::ThreadCatalogService::new((*self.runtime.state).clone());

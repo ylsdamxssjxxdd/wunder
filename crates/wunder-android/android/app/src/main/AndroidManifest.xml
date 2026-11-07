@@ -13,6 +13,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- The agent browser is a floating WebView window, mirroring the
+         reference phone assistant. The user grants it in system settings. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- Phone control launches user apps by label; Android 11+ hides the
          launcher catalogue from apps without this visibility query. -->
@@ -24,16 +27,18 @@
     </queries>
 
     <application
-        android:label="茧"
+        android:label="wunder 安卓版"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:allowBackup="false"
         android:hasCode="true"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
-        <!-- android-activity's native-activity feature owns the window; the
-             only Java class in the APK is Slint's IME/clipboard helper. -->
+        <!-- android-activity's native-activity feature owns the window. The
+             thin WunderActivity subclass only forwards file-picker results. -->
         <activity
-            android:name="android.app.NativeActivity"
+            android:name=".WunderActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|navigation|uiMode|density|fontScale|layoutDirection"

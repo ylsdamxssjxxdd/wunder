@@ -1252,13 +1252,13 @@
  },
  {
   "key": "sb_device_local_host",
-  "zh": "蛹",
-  "en": "Pupa"
+  "zh": "wunder 桌面版",
+  "en": "wunder Desktop"
  },
  {
   "key": "sb_device_cloud_host",
-  "zh": "蜂巢",
-  "en": "Hive"
+  "zh": "wunder 云端版",
+  "en": "wunder Cloud"
  },
  {
   "key": "sb_device_select",
@@ -1596,7 +1596,7 @@
  },
  {
   "key": "cp_permission_note",
-  "zh": "与运行时 approval_mode 同名：full_auto 直接执行；auto_edit 仅放行编辑；suggest 在执行前确认。蛹本地链路尚未接审批往返，当前选择只记录偏好。",
+  "zh": "与运行时 approval_mode 同名：full_auto 直接执行；auto_edit 仅放行编辑；suggest 在执行前确认。桌面版本地链路尚未接审批往返，当前选择只记录偏好。",
   "en": "Named after the runtime approval_mode: full_auto runs directly, auto_edit allows edits only, suggest confirms before executing. The local desktop path has no approval round-trip yet, so the choice is recorded as a preference only."
  },
  {
@@ -1621,7 +1621,7 @@
  },
  {
   "key": "cp_open_cli",
-  "zh": "打开舵机",
+  "zh": "打开命令行",
   "en": "Open CLI"
  },
  {
@@ -2359,8 +2359,8 @@
  },
  {
   "key": "st_wunder_model_hint",
-  "zh": "在新浏览器窗口打开舰桥 3D 展示",
-  "en": "Open the Bridge 3D viewer in a new browser window"
+  "zh": "在新浏览器窗口打开 3D 展示",
+  "en": "Open the 3D viewer in a new browser window"
  },
  {
   "key": "st_wunder_model_open",
@@ -2426,6 +2426,11 @@
   "key": "ed_memory_desc",
   "zh": "将可复用的长期事实整理为模型友好的记忆索引与详情。",
   "en": "Organize reusable long-term facts into model-friendly memory indexes."
+ },
+ {
+  "key": "ed_replicate_desc",
+  "zh": "将当前智能体的记忆复制到目标智能体，覆盖目标已有记忆。",
+  "en": "Copy this agent's memories to a target agent, overwriting existing ones."
  },
  {
   "key": "ed_tool_calls",
@@ -2501,6 +2506,11 @@
   "key": "ed_edit_memory",
   "zh": "编辑记忆碎片",
   "en": "Edit memory"
+ },
+ {
+  "key": "ed_replicate",
+  "zh": "记忆复刻",
+  "en": "Memory replication"
  },
  {
   "key": "ed_duration",
@@ -3962,13 +3972,13 @@
  },
  {
   "key": "tr_title",
-  "zh": "蛹",
-  "en": "Pupa"
+  "zh": "wunder 桌面版",
+  "en": "wunder Desktop"
  },
  {
   "key": "tr_name",
-  "zh": "蛹",
-  "en": "Pupa"
+  "zh": "wunder 桌面版",
+  "en": "wunder Desktop"
  },
  {
   "key": "tr_show_window",
@@ -4025,8 +4035,8 @@
  },
  {
   "key": "app_window_title",
-  "zh": "蛹",
-  "en": "Pupa"
+  "zh": "wunder 桌面版",
+  "en": "wunder Desktop"
  },
  {
   "key": "wm_minimize",
@@ -4515,6 +4525,16 @@
   "en": "Prompt segment saved"
  },
  {
+  "key": "st_prompt_pack_created",
+  "zh": "提示词包已创建：{0}",
+  "en": "Prompt pack created: {0}"
+ },
+ {
+  "key": "st_prompt_pack_deleted",
+  "zh": "提示词包已删除",
+  "en": "Prompt pack deleted"
+ },
+ {
   "key": "st_file_saved",
   "zh": "文件已保存",
   "en": "File saved"
@@ -4761,7 +4781,7 @@
  },
  {
   "key": "il_share_catalog_hint",
-  "zh": "需同时获得舰桥授权；关闭时只共享设备摘要",
+  "zh": "需同时获得管理端授权；关闭时只共享设备摘要",
   "en": "Also requires server grants; otherwise only the device summary is shared"
  },
  {
@@ -4996,7 +5016,7 @@
  },
  {
   "key": "il_browse_hint",
-  "zh": "输入云端路径浏览舰体上的工作区文件，点击文件夹进入；文件可拉到本地工作区，同名不覆盖，云端单次上限 1 MiB。",
+  "zh": "输入云端路径浏览服务端上的工作区文件，点击文件夹进入；文件可拉到本地工作区，同名不覆盖，云端单次上限 1 MiB。",
   "en": "Enter a cloud path to browse workspace files; click a folder to open it. Files pull into the local workspace without overwriting, one cloud read capped at 1 MiB."
  },
  {
@@ -5274,8 +5294,8 @@
  },
  {
   "key": "st_theme_light",
-  "zh": "浅色（蜂巢基调）",
-  "en": "Light (hive tone)"
+  "zh": "浅色（云端版基调）",
+  "en": "Light (cloud tone)"
  },
  {
   "key": "st_send_key",
@@ -5399,8 +5419,8 @@
  },
  {
   "key": "st_exec_paths_note",
-  "zh": "指定 Python / Git / rg 路径，保存后对新启动的工具生效；留空自动检测。补充包统一导入用户目录 .wunder/opt，与舵机共用；设置 WUNDER_HOME 时使用该目录。",
-  "en": "Set Python / Git / rg paths for newly started tools; leave empty to auto-detect. Supplements are imported into .wunder/opt in your home and shared with the Helm. WUNDER_HOME overrides this location."
+  "zh": "指定 Python / Git / rg 路径，保存后对新启动的工具生效；留空自动检测。补充包统一导入用户目录 .wunder/opt，与命令行共用；设置 WUNDER_HOME 时使用该目录。",
+  "en": "Set Python / Git / rg paths for newly started tools; leave empty to auto-detect. Supplements are imported into .wunder/opt in your home and shared with the CLI. WUNDER_HOME overrides this location."
  },
  {
   "key": "st_python_path",
@@ -5734,7 +5754,7 @@
  },
  {
   "key": "st_upd_subtitle",
-  "zh": "选择更新源，一键检测并更新全部有新版本的组件（蛹本体、舵机与补充包）",
+  "zh": "选择更新源，一键检测并更新全部有新版本的组件（桌面版本体、命令行与补充包）",
   "en": "Pick a source, then check and update every component that has a newer version (the desktop app, the CLI and the supplement pack)"
  },
  {
@@ -5799,7 +5819,7 @@
  },
  {
   "key": "st_upd_source_note",
-  "zh": "云端账号走登录的舰体；GitHub 拉取公开发布",
+  "zh": "云端账号走登录的服务端；GitHub 拉取公开发布",
   "en": "Cloud account uses the signed-in server; GitHub fetches public releases"
  },
  {
@@ -5890,7 +5910,7 @@
  {
   "key": "pm_preview_hint",
   "zh": "按当前配置拼接后的完整系统提示词",
-  "en": "The full system prompt assembled from the current configuration"
+  "en": "The full system prompt assembled from the current settings"
  },
  {
   "key": "fl_title",
@@ -6521,6 +6541,16 @@
   "key": "tl_process_retry",
   "zh": "加载失败，重试",
   "en": "Loading failed. Retry"
+ },
+ {
+  "key": "tl_md_image_loading",
+  "zh": "图片加载中…",
+  "en": "Loading image…"
+ },
+ {
+  "key": "tl_md_image_error",
+  "zh": "图片加载失败 · ",
+  "en": "Image failed to load · "
  },
  {
   "key": "tl_stat_round",

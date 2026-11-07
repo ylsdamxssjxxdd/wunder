@@ -88,7 +88,10 @@ impl BrowserProvider for PlaywrightProvider {
     }
 }
 
-fn playwright_tool_specs() -> Vec<ToolSpec> {
+/// Model-facing action schema shared by browser providers. The Playwright and
+/// Android WebView providers expose the same `browser` tool so switching the
+/// backend does not change the model's tool surface.
+pub fn playwright_tool_specs() -> Vec<ToolSpec> {
     // Flat action object with a single $defs block. The old surface repeated
     // every field across seventeen oneOf branches and carried a nested
     // ten-branch batch step schema. validate_browser_action remains the

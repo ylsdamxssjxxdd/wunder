@@ -149,8 +149,8 @@ ENTRIES = [
     ("so_fullscreen", "全屏", "Fullscreen"),
 
     # ---- tray ----
-    ("tr_title", "蛹", "Pupa"),
-    ("tr_name", "蛹", "Pupa"),
+    ("tr_title", "wunder 桌面版", "wunder Desktop"),
+    ("tr_name", "wunder 桌面版", "wunder Desktop"),
     ("tr_show_window", "显示主窗口", "Show main window"),
     ("tr_screenshot", "截图 (Ctrl+F1)", "Screenshot (Ctrl+F1)"),
     ("tr_fullscreen_shot", "全屏截图", "Fullscreen screenshot"),
@@ -163,7 +163,7 @@ ENTRIES = [
     ("cn_notice_body", "智能体 {} 已完成任务", "Agent {} finished the task", ["name"]),
 
     # ---- window ----
-    ("app_window_title", "蛹", "Pupa"),
+    ("app_window_title", "wunder 桌面版", "wunder Desktop"),
     ("wm_minimize", "最小化", "Minimize"),
     ("wm_maximize", "最大化", "Maximize"),
     ("wm_restore", "还原", "Restore"),

@@ -55,7 +55,7 @@ def main():
     addrs = sorted({int(m.group(1), 16) for line in lines for m in [re.match(r"\s+0x([0-9a-f]+)$", line)] if m})
 
     # Batch-symbolize addresses belonging to the app exe via llvm-symbolizer.
-    exe_entries = [(b, s, p) for b, s, p in mods if "wunder-frontend-slint" in p]
+    exe_entries = [(b, s, p) for b, s, p in mods if Path(p).stem == "wunder-desktop"]
     cache = {}
     for base, size, path in exe_entries:
         targets = [a for a in addrs if base <= a < base + size]

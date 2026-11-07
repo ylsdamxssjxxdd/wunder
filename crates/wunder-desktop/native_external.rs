@@ -16,14 +16,14 @@ impl NativeDesktop {
 fn bridge_model_url(server: &str) -> Result<Url> {
     let server = server.trim();
     if server.is_empty() || server.chars().any(char::is_control) {
-        bail!("请先在账号页填写有效的舰体服务地址");
+        bail!("请先在账号页填写有效的服务端地址");
     }
-    let mut url = Url::parse(server).context("舰体服务地址格式无效")?;
+    let mut url = Url::parse(server).context("服务端地址格式无效")?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-        bail!("舰体服务地址须使用 HTTP 或 HTTPS");
+        bail!("服务端地址须使用 HTTP 或 HTTPS");
     }
     if !url.username().is_empty() || url.password().is_some() {
-        bail!("舰体服务地址不能包含账号或密码");
+        bail!("服务端地址不能包含账号或密码");
     }
     let base = url.path().trim_end_matches('/');
     let base = base.strip_suffix("/wunder").unwrap_or(base);

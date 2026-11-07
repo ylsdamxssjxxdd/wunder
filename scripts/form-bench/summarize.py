@@ -29,11 +29,11 @@ METRIC_ORDER = [
 ]
 
 FORM_LABELS = {
-    "hull": "舰体 Hull",
-    "bridge": "舰桥 Bridge",
-    "beehive": "蜂巢 Beehive",
-    "pupa": "蛹 Pupa",
-    "helm": "舵机 Helm",
+    "hull": "wunder 服务端",
+    "bridge": "wunder 管理端",
+    "beehive": "wunder 云端版",
+    "pupa": "wunder 桌面版",
+    "helm": "wunder 命令行",
 }
 
 
