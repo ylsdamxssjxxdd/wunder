@@ -64,7 +64,7 @@ pub(crate) fn try_representation_lock(path: &Path) -> Result<Option<File>> {
         .read(true)
         .write(true)
         .open(directory.join(format!("{digest:x}.lock")))?;
-    match guard.try_lock() {
+    match crate::core::process_file_lock::try_lock_exclusive(&guard) {
         Ok(()) => Ok(Some(guard)),
         Err(std::fs::TryLockError::WouldBlock) => Ok(None),
         Err(error) => Err(error.into()),
@@ -410,7 +410,7 @@ impl MaintenancePass {
             .read(true)
             .write(true)
             .open(directory.join("rollout-compression.lock"))?;
-        match file.try_lock() {
+        match crate::core::process_file_lock::try_lock_exclusive(&file) {
             Ok(()) => {}
             Err(std::fs::TryLockError::WouldBlock) => return Ok(None),
             Err(error) => return Err(error.into()),

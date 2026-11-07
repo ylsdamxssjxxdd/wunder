@@ -67,23 +67,6 @@
       </template>
     </div>
 
-    <div class="composer-model-footer">
-      <div class="composer-model-footer-title">{{ t('desktop.system.reasoningEffort') }}</div>
-      <div class="composer-model-effort" role="menu">
-        <button
-          v-for="option in effortOptions"
-          :key="option.value"
-          class="composer-model-effort-item"
-          :class="{ 'is-active': reasoningEffort === option.value }"
-          type="button"
-          role="menuitemradio"
-          :aria-checked="reasoningEffort === option.value"
-          @click="emit('effort', option.value)"
-        >
-          {{ option.label }}
-        </button>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -92,8 +75,6 @@ import { computed, type PropType } from 'vue';
 
 import { useI18n } from '@/i18n';
 import type { ComposerModelOption } from '@/components/chat/composerModelCatalog';
-
-type EffortOption = { value: string; label: string };
 
 type ModelPickerContextUsage = {
   ratio: number | null;
@@ -127,18 +108,10 @@ const props = defineProps({
   busy: {
     type: Boolean,
     default: false
-  },
-  reasoningEffort: {
-    type: String,
-    default: 'default'
-  },
-  reasoningEffortOptions: {
-    type: Array as PropType<EffortOption[]>,
-    default: () => []
   }
 });
 
-const emit = defineEmits(['select', 'effort', 'retry', 'close']);
+const emit = defineEmits(['select', 'retry', 'close']);
 
 const { t } = useI18n();
 const MAX_VISIBLE_ROWS = 80;
@@ -151,16 +124,6 @@ const modelItems = computed<ComposerModelOption[]>(() =>
 
 // 目录有界（<=200），渲染窗口再收一道，避免一次性铺满 DOM。
 const visibleItems = computed(() => modelItems.value.slice(0, MAX_VISIBLE_ROWS));
-
-const effortOptions = computed<EffortOption[]>(() =>
-  (Array.isArray(props.reasoningEffortOptions) ? props.reasoningEffortOptions : [])
-    .filter((item): item is EffortOption => Boolean(item && typeof item === 'object'))
-    .map((item) => ({
-      value: String(item.value || '').trim(),
-      label: String(item.label || item.value || '').trim()
-    }))
-    .filter((item) => Boolean(item.value && item.label))
-);
 
 const isActiveModel = (item: ComposerModelOption): boolean => {
   const active = String(props.activeModelId || '').trim().toLowerCase();
@@ -389,13 +352,6 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
   }
 }
 
-.composer-model-footer {
-  flex-shrink: 0;
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid var(--mz-border, #e8e6e3);
-}
-
 .composer-model-footer-title {
   color: var(--mz-text-muted, #8a8f99);
   font-size: 11px;
@@ -439,39 +395,5 @@ const resolveModelTags = (item: ComposerModelOption): Array<{
 .composer-model-context-hint {
   color: var(--mz-danger, #d04a43);
   font-size: 11px;
-}
-
-.composer-model-effort {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 4px;
-}
-
-.composer-model-effort-item {
-  padding: 3px 8px;
-  border: 1px solid var(--mz-border, #e8e6e3);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--mz-text-secondary, #3d3d3d);
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.composer-model-effort-item:hover {
-  border-color: var(--mz-primary-soft, var(--ui-accent-secondary));
-}
-
-.composer-model-effort-item.is-active {
-  border-color: transparent;
-  background: var(--mz-primary-tint, var(--ui-accent-soft));
-  color: var(--mz-primary, var(--ui-accent-ink));
-  font-weight: 600;
-}
-
-.composer-model-effort-item:focus-visible {
-  outline: 2px solid var(--mz-primary);
-  outline-offset: 1px;
 }
 </style>

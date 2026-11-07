@@ -321,10 +321,7 @@
               :loading="modelCatalog.loading"
               :failed="modelCatalog.failed"
               :busy="modelSwitching"
-              :reasoning-effort="reasoningEffort"
-              :reasoning-effort-options="reasoningEffortOptions"
               @select="selectModel"
-              @effort="selectReasoningEffort"
               @retry="reloadModelCatalog"
               @close="closeComposerPanels"
             />
@@ -479,8 +476,7 @@ const emit = defineEmits([
   'new-thread',
   'open-thread',
   'toggle-voice-record',
-  'update:approval-mode',
-  'update:reasoning-effort'
+  'update:approval-mode'
 ]);
 
 const normalizeOptionalNumber = (value: unknown): number | null => {
@@ -2327,25 +2323,6 @@ const selectModel = async (modelId: string) => {
     ElMessage.error(resolveUploadError(error, t('chat.composer.modelSwitchFailed')));
   } finally {
     modelSwitching.value = false;
-  }
-};
-
-const selectReasoningEffort = async (value: ReasoningEffort) => {
-  const previous = reasoningEffort.value;
-  const sessionId = String(chatStore.activeSessionId || '').trim();
-  reasoningEffort.value = value;
-  emit('update:reasoning-effort', reasoningEffort.value);
-  // Draft sessions have no server record yet; the effort travels with the send.
-  if (!sessionId) return;
-  try {
-    const saved = await chatStore.updateSessionReasoningEffort(sessionId, value);
-    if (saved) {
-      reasoningEffort.value = normalizeReasoningEffort(saved);
-      emit('update:reasoning-effort', reasoningEffort.value);
-    }
-  } catch {
-    reasoningEffort.value = previous;
-    emit('update:reasoning-effort', previous);
   }
 };
 

@@ -81,6 +81,57 @@ component SheetCard inherits Rectangle {
     }
 }
 
+// Collapsible card: the title row toggles the body. The body stays mounted
+// but invisible, so @children can live inside a fixed slot.
+component FoldSheetCard inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle: "";
+    in-out property <bool> open: false;
+    border-radius: Theme.radius-lg;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 0px;
+        padding-bottom: 12px;
+        spacing: 0px;
+        Rectangle {
+            height: 48px;
+            background: fold-touch.has-hover ? Theme.hover : transparent;
+            border-radius: Theme.radius-sm;
+            accessible-role: button;
+            accessible-label: root.title;
+            accessible-action-default => { root.open = !root.open; }
+            Text {
+                x: 0px; y: 7px; width: parent.width - 28px; height: 19px;
+                text: root.title; color: Theme.text; font-size: Theme.font-md; font-weight: 700;
+                vertical-alignment: center; overflow: elide;
+            }
+            Text {
+                x: 0px; y: 26px; width: parent.width - 28px; height: 16px;
+                text: root.subtitle; color: Theme.muted; font-size: Theme.font-xs;
+                vertical-alignment: center; overflow: elide;
+                visible: root.subtitle != "";
+            }
+            Image {
+                x: parent.width - 18px; y: (parent.height - 12px) / 2; width: 12px; height: 12px;
+                source: root.open
+                    ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-up.svg")
+                    : @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-down.svg");
+                colorize: Theme.muted;
+            }
+            fold-touch := TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
+        }
+        VerticalLayout {
+            visible: root.open;
+            spacing: 0px;
+            @children
+        }
+    }
+}
+
 component CardTitle inherits VerticalLayout {
     in property <string> title;
     in property <string> subtitle: "";
@@ -1215,6 +1266,7 @@ component ModelEditorPage inherits Rectangle {
     in property <bool> probing: false;
     in-out property <string> secret: "";
     in-out property <ModelCard> draft;
+    private property <bool> advanced-open: false;
     callback back();
     callback save(ModelCard, string);
     callback probe-model(ModelCard, string);
@@ -1326,92 +1378,18 @@ component ModelEditorPage inherits Rectangle {
                         secret: true;
                         text <=> root.secret;
                     }
-                }
-
-                if root.draft.model-type == "llm" : SheetCard {
-                    CardTitle { title: I18n.st_params_llm; }
-                    FormField {
-                        label: "temperature";
-                        placeholder: "0.7";
-                        text <=> root.draft.temperature;
-                    }
-                    FormField {
-                        label: I18n.st_param_timeout;
-                        placeholder: "120";
-                        text <=> root.draft.timeout-s;
-                    }
-                    FormField {
-                        label: I18n.st_param_max_output;
-                        placeholder: I18n.st_param_model_default;
-                        text <=> root.draft.max-output;
-                    }
-                    FormField {
-                        label: I18n.st_param_thinking;
-                        placeholder: I18n.st_param_model_default;
-                        text <=> root.draft.thinking-token-budget;
-                    }
-                    FormField {
-                        label: I18n.st_param_max_rounds;
-                        placeholder: "1000";
-                        text <=> root.draft.max-rounds;
-                    }
-                    FormField {
-                        label: I18n.st_param_history_ratio;
-                        placeholder: "0.9";
-                        text <=> root.draft.history-compaction-ratio;
-                    }
-                    SettingRow {
-                        label: I18n.st_param_reasoning_effort;
-                        PickerField {
-                            text: root.effort-label(root.draft.reasoning-effort);
-                            picked => { root.open-picker(6, I18n.st_param_reasoning_effort, root.draft.reasoning-effort); }
-                        }
-                    }
-                    if root.draft.provider == "virtual_replay" : SettingRow {
-                        label: I18n.st_param_simulation_speed;
-                        PickerField {
-                            text: root.speed-label(root.draft.simulation-speed);
-                            picked => { root.open-picker(7, I18n.st_param_simulation_speed, root.draft.simulation-speed); }
-                        }
-                    }
-                    SettingRow {
-                        label: "工具调用方式";
-                        PickerField {
-                            text: root.draft.tool-call-mode == "" ? "function_call" : root.draft.tool-call-mode;
-                            picked => { root.open-picker(8, "工具调用方式", root.draft.tool-call-mode); }
-                        }
-                    }
-                    SettingRow {
-                        label: "能力";
-                        note: I18n.st_model_vision + " / " + I18n.st_model_hearing + " / " + I18n.st_model_stream_usage;
-                        HorizontalLayout {
-                            spacing: 10px;
-                            ThemeSwitch {
-                                checked: root.draft.support-vision;
-                                toggled => { root.draft.support-vision = !root.draft.support-vision; }
-                            }
-                            ThemeSwitch {
-                                checked: root.draft.support-hearing;
-                                toggled => { root.draft.support-hearing = !root.draft.support-hearing; }
-                            }
-                            ThemeSwitch {
-                                checked: root.draft.stream-include-usage;
-                                toggled => { root.draft.stream-include-usage = !root.draft.stream-include-usage; }
-                            }
-                        }
-                    }
                     FormField {
                         label: I18n.st_param_max_context;
                         placeholder: I18n.st_param_context_hint;
                         text <=> root.draft.max-context;
                     }
                     Rectangle {
-                        height: 34px;
+                        height: 40px;
                         Action {
                             x: 0px;
                             y: 0px;
                             width: parent.width;
-                            height: parent.height;
+                            height: 34px;
                             show-label: true;
                             primary: true;
                             icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/wand-magic-sparkles.svg");
@@ -1428,162 +1406,227 @@ component ModelEditorPage inherits Rectangle {
                     }
                 }
 
-                if root.draft.model-type == "embedding" : SheetCard {
-                    CardTitle { title: I18n.st_params_llm; }
-                    Text {
-                        text: I18n.st_params_empty_hint;
-                        color: Theme.muted;
-                        font-size: Theme.font-sm;
-                        wrap: word-wrap;
-                    }
-                }
-
-                if root.draft.model-type == "asr" : SheetCard {
-                    CardTitle { title: I18n.st_params_asr; }
-                    FormField {
-                        label: I18n.st_param_asr_language;
-                        placeholder: I18n.st_param_asr_language_hint;
-                        text <=> root.draft.asr-language;
-                    }
-                    SettingRow {
-                        label: I18n.st_param_asr_format;
-                        PickerField {
-                            text: root.format-label(root.draft.asr-response-format);
-                            picked => { root.open-picker(9, I18n.st_param_asr_format, root.draft.asr-response-format); }
+                if root.draft.model-type != "embedding" : FoldSheetCard {
+                    title: I18n.st_model_advanced;
+                    subtitle: I18n.st_model_advanced_hint;
+                    open <=> root.advanced-open;
+                    if root.draft.model-type == "llm" : VerticalLayout {
+                        spacing: 0px;
+                        FormField {
+                            label: "temperature";
+                            placeholder: "0.7";
+                            text <=> root.draft.temperature;
                         }
-                    }
-                    FormField {
-                        label: "temperature";
-                        placeholder: "0 - 2";
-                        text <=> root.draft.asr-temperature;
-                    }
-                    FormField {
-                        label: I18n.st_param_asr_prompt;
-                        placeholder: I18n.st_param_model_default;
-                        text <=> root.draft.asr-prompt;
-                    }
-                }
-
-                if root.draft.model-type == "tts" : SheetCard {
-                    CardTitle { title: I18n.st_params_tts; }
-                    FormField {
-                        label: I18n.st_param_tts_voice;
-                        placeholder: I18n.st_param_model_default;
-                        text <=> root.draft.tts-voice;
-                    }
-                    SettingRow {
-                        label: I18n.st_param_tts_format;
-                        PickerField {
-                            text: root.format-label(root.draft.tts-response-format);
-                            picked => { root.open-picker(10, I18n.st_param_tts_format, root.draft.tts-response-format); }
+                        FormField {
+                            label: I18n.st_param_timeout;
+                            placeholder: "120";
+                            text <=> root.draft.timeout-s;
                         }
-                    }
-                    FormField {
-                        label: I18n.st_param_tts_speed;
-                        placeholder: "0.25 - 4";
-                        text <=> root.draft.tts-speed;
-                    }
-                    FormField {
-                        label: I18n.st_param_tts_instructions;
-                        placeholder: I18n.st_param_model_default;
-                        text <=> root.draft.tts-instructions;
-                    }
-                }
-
-                if root.draft.model-type == "image" : SheetCard {
-                    CardTitle { title: I18n.st_params_image; }
-                    FormField {
-                        label: I18n.st_param_image_size;
-                        placeholder: I18n.st_param_image_size_hint;
-                        text <=> root.draft.image-size;
-                    }
-                    SettingRow {
-                        label: I18n.st_param_image_format;
-                        PickerField {
-                            text: root.format-label(root.draft.image-output-format);
-                            picked => { root.open-picker(11, I18n.st_param_image_format, root.draft.image-output-format); }
+                        FormField {
+                            label: I18n.st_param_max_output;
+                            placeholder: I18n.st_param_model_default;
+                            text <=> root.draft.max-output;
                         }
-                    }
-                    FormField {
-                        label: I18n.st_param_image_steps;
-                        placeholder: "1 - 200";
-                        text <=> root.draft.image-steps;
-                    }
-                    FormField {
-                        label: I18n.st_param_image_guidance;
-                        placeholder: "0 - 20";
-                        text <=> root.draft.image-guidance-scale;
-                    }
-                    FormField {
-                        label: I18n.st_param_negative;
-                        placeholder: I18n.st_param_model_default;
-                        text <=> root.draft.image-negative-prompt;
-                    }
-                }
-
-                if root.draft.model-type == "video" : SheetCard {
-                    CardTitle { title: I18n.st_params_video; }
-                    FormField {
-                        label: I18n.st_param_video_size;
-                        placeholder: I18n.st_param_video_size_hint;
-                        text <=> root.draft.video-size;
-                    }
-                    FormField {
-                        label: I18n.st_param_video_seconds;
-                        placeholder: "≥ 0.5";
-                        text <=> root.draft.video-seconds;
-                    }
-                    FormField {
-                        label: "FPS";
-                        placeholder: "≥ 1";
-                        text <=> root.draft.video-fps;
-                    }
-                    FormField {
-                        label: I18n.st_model_video_frames;
-                        placeholder: "≥ 1";
-                        text <=> root.draft.video-num-frames;
-                    }
-                    FormField {
-                        label: I18n.st_param_image_steps;
-                        placeholder: "1 - 200";
-                        text <=> root.draft.video-steps;
-                    }
-                    FormField {
-                        label: "guidance_scale";
-                        placeholder: "0 - 20";
-                        text <=> root.draft.video-guidance-scale;
-                    }
-                    FormField {
-                        label: "guidance_scale_2";
-                        placeholder: "0 - 20";
-                        text <=> root.draft.video-guidance-scale-2;
-                    }
-                    FormField {
-                        label: "boundary_ratio";
-                        placeholder: "0 - 1";
-                        text <=> root.draft.video-boundary-ratio;
-                    }
-                    FormField {
-                        label: "flow_shift";
-                        placeholder: "≥ 0";
-                        text <=> root.draft.video-flow-shift;
-                    }
-                    FormField {
-                        label: I18n.st_param_negative;
-                        placeholder: I18n.st_param_model_default;
-                        text <=> root.draft.video-negative-prompt;
-                    }
-                    SettingRow {
-                        label: I18n.st_model_video_interpolation + " / " + I18n.st_model_video_sync_mode;
-                        HorizontalLayout {
-                            spacing: 10px;
-                            ThemeSwitch {
-                                checked: root.draft.video-frame-interpolation;
-                                toggled => { root.draft.video-frame-interpolation = !root.draft.video-frame-interpolation; }
+                        FormField {
+                            label: I18n.st_param_thinking;
+                            placeholder: I18n.st_param_model_default;
+                            text <=> root.draft.thinking-token-budget;
+                        }
+                        FormField {
+                            label: I18n.st_param_max_rounds;
+                            placeholder: "1000";
+                            text <=> root.draft.max-rounds;
+                        }
+                        FormField {
+                            label: I18n.st_param_history_ratio;
+                            placeholder: "0.9";
+                            text <=> root.draft.history-compaction-ratio;
+                        }
+                        SettingRow {
+                            label: I18n.st_param_reasoning_effort;
+                            PickerField {
+                                text: root.effort-label(root.draft.reasoning-effort);
+                                picked => { root.open-picker(6, I18n.st_param_reasoning_effort, root.draft.reasoning-effort); }
                             }
-                            ThemeSwitch {
-                                checked: root.draft.video-sync-mode;
-                                toggled => { root.draft.video-sync-mode = !root.draft.video-sync-mode; }
+                        }
+                        if root.draft.provider == "virtual_replay" : SettingRow {
+                            label: I18n.st_param_simulation_speed;
+                            PickerField {
+                                text: root.speed-label(root.draft.simulation-speed);
+                                picked => { root.open-picker(7, I18n.st_param_simulation_speed, root.draft.simulation-speed); }
+                            }
+                        }
+                        SettingRow {
+                            label: "工具调用方式";
+                            PickerField {
+                                text: root.draft.tool-call-mode == "" ? "function_call" : root.draft.tool-call-mode;
+                                picked => { root.open-picker(8, "工具调用方式", root.draft.tool-call-mode); }
+                            }
+                        }
+                        SettingRow {
+                            label: "能力";
+                            note: I18n.st_model_vision + " / " + I18n.st_model_hearing + " / " + I18n.st_model_stream_usage;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                ThemeSwitch {
+                                    checked: root.draft.support-vision;
+                                    toggled => { root.draft.support-vision = !root.draft.support-vision; }
+                                }
+                                ThemeSwitch {
+                                    checked: root.draft.support-hearing;
+                                    toggled => { root.draft.support-hearing = !root.draft.support-hearing; }
+                                }
+                                ThemeSwitch {
+                                    checked: root.draft.stream-include-usage;
+                                    toggled => { root.draft.stream-include-usage = !root.draft.stream-include-usage; }
+                                }
+                            }
+                        }
+                    }
+                    if root.draft.model-type == "asr" : VerticalLayout {
+                        spacing: 0px;
+                        FormField {
+                            label: I18n.st_param_asr_language;
+                            placeholder: I18n.st_param_asr_language_hint;
+                            text <=> root.draft.asr-language;
+                        }
+                        SettingRow {
+                            label: I18n.st_param_asr_format;
+                            PickerField {
+                                text: root.format-label(root.draft.asr-response-format);
+                                picked => { root.open-picker(9, I18n.st_param_asr_format, root.draft.asr-response-format); }
+                            }
+                        }
+                        FormField {
+                            label: "temperature";
+                            placeholder: "0 - 2";
+                            text <=> root.draft.asr-temperature;
+                        }
+                        FormField {
+                            label: I18n.st_param_asr_prompt;
+                            placeholder: I18n.st_param_model_default;
+                            text <=> root.draft.asr-prompt;
+                        }
+                    }
+                    if root.draft.model-type == "tts" : VerticalLayout {
+                        spacing: 0px;
+                        FormField {
+                            label: I18n.st_param_tts_voice;
+                            placeholder: I18n.st_param_model_default;
+                            text <=> root.draft.tts-voice;
+                        }
+                        SettingRow {
+                            label: I18n.st_param_tts_format;
+                            PickerField {
+                                text: root.format-label(root.draft.tts-response-format);
+                                picked => { root.open-picker(10, I18n.st_param_tts_format, root.draft.tts-response-format); }
+                            }
+                        }
+                        FormField {
+                            label: I18n.st_param_tts_speed;
+                            placeholder: "0.25 - 4";
+                            text <=> root.draft.tts-speed;
+                        }
+                        FormField {
+                            label: I18n.st_param_tts_instructions;
+                            placeholder: I18n.st_param_model_default;
+                            text <=> root.draft.tts-instructions;
+                        }
+                    }
+                    if root.draft.model-type == "image" : VerticalLayout {
+                        spacing: 0px;
+                        FormField {
+                            label: I18n.st_param_image_size;
+                            placeholder: I18n.st_param_image_size_hint;
+                            text <=> root.draft.image-size;
+                        }
+                        SettingRow {
+                            label: I18n.st_param_image_format;
+                            PickerField {
+                                text: root.format-label(root.draft.image-output-format);
+                                picked => { root.open-picker(11, I18n.st_param_image_format, root.draft.image-output-format); }
+                            }
+                        }
+                        FormField {
+                            label: I18n.st_param_image_steps;
+                            placeholder: "1 - 200";
+                            text <=> root.draft.image-steps;
+                        }
+                        FormField {
+                            label: I18n.st_param_image_guidance;
+                            placeholder: "0 - 20";
+                            text <=> root.draft.image-guidance-scale;
+                        }
+                        FormField {
+                            label: I18n.st_param_negative;
+                            placeholder: I18n.st_param_model_default;
+                            text <=> root.draft.image-negative-prompt;
+                        }
+                    }
+                    if root.draft.model-type == "video" : VerticalLayout {
+                        spacing: 0px;
+                        FormField {
+                            label: I18n.st_param_video_size;
+                            placeholder: I18n.st_param_video_size_hint;
+                            text <=> root.draft.video-size;
+                        }
+                        FormField {
+                            label: I18n.st_param_video_seconds;
+                            placeholder: "≥ 0.5";
+                            text <=> root.draft.video-seconds;
+                        }
+                        FormField {
+                            label: "FPS";
+                            placeholder: "≥ 1";
+                            text <=> root.draft.video-fps;
+                        }
+                        FormField {
+                            label: I18n.st_model_video_frames;
+                            placeholder: "≥ 1";
+                            text <=> root.draft.video-num-frames;
+                        }
+                        FormField {
+                            label: I18n.st_param_image_steps;
+                            placeholder: "1 - 200";
+                            text <=> root.draft.video-steps;
+                        }
+                        FormField {
+                            label: "guidance_scale";
+                            placeholder: "0 - 20";
+                            text <=> root.draft.video-guidance-scale;
+                        }
+                        FormField {
+                            label: "guidance_scale_2";
+                            placeholder: "0 - 20";
+                            text <=> root.draft.video-guidance-scale-2;
+                        }
+                        FormField {
+                            label: "boundary_ratio";
+                            placeholder: "0 - 1";
+                            text <=> root.draft.video-boundary-ratio;
+                        }
+                        FormField {
+                            label: "flow_shift";
+                            placeholder: "≥ 0";
+                            text <=> root.draft.video-flow-shift;
+                        }
+                        FormField {
+                            label: I18n.st_param_negative;
+                            placeholder: I18n.st_param_model_default;
+                            text <=> root.draft.video-negative-prompt;
+                        }
+                        SettingRow {
+                            label: I18n.st_model_video_interpolation + " / " + I18n.st_model_video_sync_mode;
+                            HorizontalLayout {
+                                spacing: 10px;
+                                ThemeSwitch {
+                                    checked: root.draft.video-frame-interpolation;
+                                    toggled => { root.draft.video-frame-interpolation = !root.draft.video-frame-interpolation; }
+                                }
+                                ThemeSwitch {
+                                    checked: root.draft.video-sync-mode;
+                                    toggled => { root.draft.video-sync-mode = !root.draft.video-sync-mode; }
+                                }
                             }
                         }
                     }
@@ -1755,7 +1798,7 @@ export component MobileSettings inherits Rectangle {
         }
     }
     changed editor-probed-context => {
-        if (root.editor-probed-context != "" && root.draft.model-type == "llm") {
+        if (root.editor-probed-context != "") {
             root.draft.max-context = root.editor-probed-context;
         }
     }

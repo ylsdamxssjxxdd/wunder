@@ -261,7 +261,7 @@ pub(crate) fn new_model_card(key: String) -> ModelCard {
         max_output: "32768".into(),
         thinking_token_budget: "4096".into(),
         max_rounds: "1000".into(),
-        max_context: "128000".into(),
+        max_context: "262144".into(),
         history_compaction_ratio: "0.9".into(),
         reasoning_effort: "".into(),
         simulation_speed: "fast".into(),
@@ -438,7 +438,7 @@ mod tests {
         assert_eq!(card.max_output.as_str(), "32768");
         assert_eq!(card.thinking_token_budget.as_str(), "4096");
         assert_eq!(card.max_rounds.as_str(), "1000");
-        assert_eq!(card.max_context.as_str(), "128000");
+        assert_eq!(card.max_context.as_str(), "262144");
         assert_eq!(card.history_compaction_ratio.as_str(), "0.9");
         assert_eq!(card.simulation_speed.as_str(), "fast");
         assert_eq!(card.tts_speed.as_str(), "1");

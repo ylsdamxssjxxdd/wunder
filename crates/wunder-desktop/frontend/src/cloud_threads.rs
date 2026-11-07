@@ -1121,31 +1121,6 @@ pub(crate) fn set_model(app: &MainWindow, api: Arc<NativeDesktop>, key: String) 
     });
 }
 
-pub(crate) fn set_effort(app: &MainWindow, api: Arc<NativeDesktop>, effort: String) {
-    if !is_active(app) || app.get_cloud_thread_busy() {
-        return;
-    }
-    let id = selected_id(app);
-    let generation = GENERATION.load(Ordering::Acquire);
-    let previous = app.get_reasoning_effort();
-    let weak = app.as_weak();
-    std::thread::spawn(move || {
-        let result = api.cloud_thread_set_effort(&id, &effort);
-        let _ = weak.upgrade_in_event_loop(move |app| {
-            if !active(generation) || !is_active(&app) {
-                return;
-            }
-            match result {
-                Ok(value) => app.set_reasoning_effort(value.into()),
-                Err(error) => {
-                    app.set_reasoning_effort(previous);
-                    app.set_status(format!("无法保存云端思考等级：{error}").into());
-                }
-            }
-        });
-    });
-}
-
 pub(crate) fn rename(app: &MainWindow, api: Arc<NativeDesktop>, id: String, title: String) {
     if id.is_empty() || title.trim().is_empty() {
         return;

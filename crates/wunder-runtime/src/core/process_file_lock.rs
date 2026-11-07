@@ -12,6 +12,59 @@ pub struct ProcessFileLock {
     _file: File,
 }
 
+/// Exclusive non-blocking advisory lock on a file.
+///
+/// std's `File::try_lock` gates its flock implementation to
+/// `target_os = "linux"` and friends; `target_os = "android"` is missing from
+/// that list even though bionic implements `flock`, so the kernel is called
+/// directly there. Locks are released when the file is closed, matching std.
+pub(crate) fn try_lock_exclusive(file: &File) -> std::result::Result<(), std::fs::TryLockError> {
+    #[cfg(target_os = "android")]
+    {
+        use std::os::fd::AsRawFd;
+        // SAFETY: flock on a file descriptor we own; LOCK_NB keeps the call
+        // non-blocking like std's try_lock.
+        let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if rc == 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() == std::io::ErrorKind::WouldBlock {
+            Err(std::fs::TryLockError::WouldBlock)
+        } else {
+            Err(std::fs::TryLockError::Error(error))
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        file.try_lock()
+    }
+}
+
+/// Shared (read) non-blocking advisory lock on a file; see [`try_lock_exclusive`].
+pub(crate) fn try_lock_shared(file: &File) -> std::result::Result<(), std::fs::TryLockError> {
+    #[cfg(target_os = "android")]
+    {
+        use std::os::fd::AsRawFd;
+        // SAFETY: flock on a file descriptor we own; LOCK_NB keeps the call
+        // non-blocking like std's try_lock_shared.
+        let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) };
+        if rc == 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() == std::io::ErrorKind::WouldBlock {
+            Err(std::fs::TryLockError::WouldBlock)
+        } else {
+            Err(std::fs::TryLockError::Error(error))
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        file.try_lock_shared()
+    }
+}
+
 /// Windows error 5 (ACCESS_DENIED), 32 (SHARING_VIOLATION) and 33
 /// (LOCK_VIOLATION) are transient when several processes create or open the
 /// same marker at once. Other errors (missing directory, real permission
@@ -57,7 +110,7 @@ impl ProcessFileLock {
             }
         };
         loop {
-            match file.try_lock() {
+            match try_lock_exclusive(&file) {
                 Ok(()) => return Ok(Self { _file: file }),
                 Err(TryLockError::WouldBlock) if started.elapsed() < timeout => {
                     tokio::time::sleep(Duration::from_millis(20)).await;

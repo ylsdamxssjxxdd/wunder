@@ -773,7 +773,6 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             }
         }
     });
-    bind_reasoning_effort(app, state.clone());
     bind_thread_model(app, state.clone());
     bind_attachments(app);
     bind_voice_recording(app, state.clone());
@@ -2210,39 +2209,6 @@ fn bind_thread_model(app: &MainWindow, state: Rc<RefCell<State>>) {
                         crate::native_pages::select_model_key(&app, &previous_key);
                         app.set_status(format!("无法切换模型：{error}").into());
                     }
-                }
-            });
-        });
-    });
-}
-
-fn bind_reasoning_effort(app: &MainWindow, state: Rc<RefCell<State>>) {
-    let weak = app.as_weak();
-    app.on_save_session_reasoning_effort(move |value| {
-        let Some(app) = weak.upgrade() else { return };
-        if app.get_cloud_chat_active() {
-            crate::cloud_threads::set_effort(
-                &app,
-                state.borrow().desktop.clone(),
-                value.to_string(),
-            );
-            return;
-        }
-        let session = app.get_active_session_id().to_string();
-        if session.is_empty() {
-            return;
-        }
-        let desktop = state.borrow().desktop.clone();
-        let weak = app.as_weak();
-        std::thread::spawn(move || {
-            let result = desktop.save_session_reasoning_effort(&session, &value);
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                if app.get_cloud_chat_active() || app.get_active_session_id() != session {
-                    return;
-                }
-                match result {
-                    Ok(value) => app.set_reasoning_effort(value.into()),
-                    Err(error) => app.set_status(format!("无法保存思考等级：{error}").into()),
                 }
             });
         });

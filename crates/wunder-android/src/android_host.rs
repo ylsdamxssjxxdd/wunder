@@ -37,8 +37,13 @@ static PENDING_UPLOAD_DIR: Mutex<Option<String>> = Mutex::new(None);
 /// own, and it is only used synchronously here; the process-scoped host keeps
 /// the application context instead.
 pub fn install(activity: *mut std::ffi::c_void) {
-    if let Err(error) = try_install(activity) {
-        log::error!("android runtime host unavailable: {error:#}");
+    if let Err(first) = try_install(activity) {
+        // A fresh process can hit a window where ART reports a pending
+        // exception with no exception object behind it; one retry has been
+        // enough to get past it on first launch.
+        if let Err(error) = try_install(activity) {
+            log::error!("android runtime host unavailable: {error:#} (first attempt: {first:#})");
+        }
     }
     attach_activity(activity);
     // The service may have stopped itself when the task was removed while
@@ -189,6 +194,107 @@ pub fn take_save_results() -> Vec<(bool, String)> {
         .unwrap_or_default();
     let (flag, name) = text.split_once('|').unwrap_or(("0", ""));
     vec![(flag == "1", name.to_string())]
+}
+
+/// Start a voice clip. Returns `recording`, `permission` (system prompt
+/// opened; the granted callback starts capture) or `failed:<reason>`.
+pub fn start_voice() -> String {
+    call_string("startVoice")
+}
+
+/// Ask the capture thread to stop. The WAV path arrives through
+/// [`take_voice_events`].
+pub fn stop_voice() -> String {
+    call_string("stopVoice")
+}
+
+/// Drain capture events: `recording`, `denied`, `done|<path>` or
+/// `error|<message>`.
+pub fn take_voice_events() -> Vec<String> {
+    call_string_array("takeVoiceEvents")
+}
+
+/// Capture the current screen. Returns `pending` (the result arrives through
+/// [`take_screenshot_events`]) or `failed:<reason>`.
+pub fn capture_screenshot() -> String {
+    call_string("captureScreenshot")
+}
+
+/// Drain screenshot results: `ok|<path>`, `no_service` or `error|<message>`.
+pub fn take_screenshot_events() -> Vec<String> {
+    call_string_array("takeScreenshotEvents")
+}
+
+fn call_string(method: &str) -> String {
+    let Some(host) = HOST.get() else {
+        return "failed:no host".into();
+    };
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return "failed:jvm".into();
+    };
+    let result = (|| -> Result<String> {
+        let value =
+            env.call_static_method(&host.ui_bridge, method, "()Ljava/lang/String;", &[])?;
+        let object = value.l()?;
+        if object.is_null() {
+            return Ok(String::new());
+        }
+        Ok(env
+            .get_string(&JString::from(object))?
+            .to_string_lossy()
+            .into_owned())
+    })();
+    match result {
+        Ok(value) => value,
+        Err(error) => {
+            clear_java_exception(&mut env);
+            log::error!("call UiBridge.{method}: {error:#}");
+            "failed:jni".into()
+        }
+    }
+}
+
+fn call_string_array(method: &str) -> Vec<String> {
+    let Some(host) = HOST.get() else {
+        return Vec::new();
+    };
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return Vec::new();
+    };
+    let value = match env.call_static_method(
+        &host.ui_bridge,
+        method,
+        "()[Ljava/lang/String;",
+        &[],
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            clear_java_exception(&mut env);
+            log::error!("call UiBridge.{method}: {error}");
+            return Vec::new();
+        }
+    };
+    let Ok(object) = value.l() else {
+        return Vec::new();
+    };
+    if object.is_null() {
+        return Vec::new();
+    }
+    let array = JObjectArray::from(object);
+    let mut events = Vec::new();
+    let count = env.get_array_length(&array).unwrap_or(0);
+    for index in 0..count {
+        let Ok(element) = env.get_object_array_element(&array, index) else {
+            continue;
+        };
+        if element.is_null() {
+            continue;
+        }
+        if let Ok(text) = env.get_string(&JString::from(element)) {
+            events.push(text.to_string_lossy().into_owned());
+        }
+    }
+    events
 }
 
 /// Copy one workspace file out of the sandbox. Returns `saved`, `pending`

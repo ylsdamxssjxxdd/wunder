@@ -210,8 +210,7 @@ fn shared_registry(root: &Path) -> Result<Arc<ThreadRegistry>> {
         .read(true)
         .write(true)
         .open(root.join(".canonical-store.lock"))?;
-    owner
-        .try_lock_shared()
+    crate::core::process_file_lock::try_lock_shared(&owner)
         .context("canonical storage root is held exclusively by another process")?;
     let registry = Arc::new(ThreadRegistry {
         history_init: Mutex::new(()),
@@ -234,7 +233,7 @@ fn initialization_lock(root: &Path) -> Result<File> {
         .open(root.join(".canonical-init.lock"))?;
     let started = std::time::Instant::now();
     loop {
-        match lock.try_lock() {
+        match crate::core::process_file_lock::try_lock_exclusive(&lock) {
             Ok(()) => return Ok(lock),
             Err(std::fs::TryLockError::WouldBlock)
                 if started.elapsed() < Duration::from_secs(10) =>
@@ -1434,7 +1433,7 @@ impl LocalThreadStore {
                 .read(true)
                 .write(true)
                 .open(directory.join(format!("{:x}.lock", digest)))?;
-            file.try_lock()
+            crate::core::process_file_lock::try_lock_exclusive(&file)
                 .map_err(|_| anyhow!("thread has another active owner"))?;
             Ok(file)
         })

@@ -3118,8 +3118,8 @@ function installMessengerControllerAgentIdentityState(ctx: MessengerControllerCo
    * Before the first message there is no thread to pin, so the pick falls back
    * to updating the agent record — the upcoming thread then starts with it.
    *
-   * Reasoning effort stays a per-thread setting and is written by the composer
-   * itself through `POST /chat/sessions/{id}/reasoning-effort`.
+   * Reasoning effort stays a per-thread setting; the composer no longer edits
+   * it, so a model switch reuses the thread's current value.
    *
    * `user_default_model_name` (A3) is not delivered yet and has no setter
    * endpoint, so "设为我的默认" reports the gap instead of faking a write.
