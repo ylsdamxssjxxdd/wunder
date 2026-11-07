@@ -1357,64 +1357,9 @@
   "en": "Current context usage: "
  },
  {
-  "key": "cp_thinking_level",
-  "zh": "思考等级",
-  "en": "Thinking level"
- },
- {
   "key": "dk_new_folder",
   "zh": "新建文件夹",
   "en": "New folder"
- },
- {
-  "key": "cp_effort_default",
-  "zh": "默认（跟随模型）",
-  "en": "Default (model default)"
- },
- {
-  "key": "cp_effort_none",
-  "zh": "none（不额外思考）",
-  "en": "None (no extra reasoning)"
- },
- {
-  "key": "cp_effort_minimal",
-  "zh": "minimal（极少思考）",
-  "en": "Minimal"
- },
- {
-  "key": "cp_effort_low",
-  "zh": "low（低）",
-  "en": "Low"
- },
- {
-  "key": "cp_effort_medium",
-  "zh": "medium（中）",
-  "en": "Medium"
- },
- {
-  "key": "cp_effort_high",
-  "zh": "high（高）",
-  "en": "High"
- },
- {
-  "key": "cp_effort_xhigh",
-  "zh": "xhigh（超高）",
-  "en": "XHigh"
- },
- {
-  "key": "cp_think_low",
-  "zh": "低",
-  "en": "Low"
- },
- {
-  "key": "cp_think_mid",
-  "zh": "中",
-  "en": "Medium"
- },
- {
-  "key": "cp_think_high",
-  "zh": "高",
-  "en": "High"
  },
  {
   "key": "cp_image_prefix",
@@ -1483,11 +1428,6 @@
   "key": "cp_cmd_compact",
   "zh": "/compact  压缩上下文",
   "en": "/compact  compact context"
- },
- {
-  "key": "cp_usage_effort_hint",
-  "zh": "推理强度随线程保存，切换后下一条消息即时生效；上下文占用来自最近一次请求的实际用量。",
-  "en": "Reasoning effort is stored per thread and applies to the next message. Context usage comes from the last request's actual usage."
  },
  {
   "key": "cp_stop_recording",
@@ -1650,49 +1590,9 @@
   "en": "Open model settings"
  },
  {
-  "key": "cp_model_effort",
-  "zh": "推理强度",
-  "en": "Reasoning effort"
- },
- {
   "key": "cp_model_none",
   "zh": "未选择模型",
   "en": "No model selected"
- },
- {
-  "key": "cp_effort_short_default",
-  "zh": "默认",
-  "en": "Default"
- },
- {
-  "key": "cp_effort_short_none",
-  "zh": "不思考",
-  "en": "None"
- },
- {
-  "key": "cp_effort_short_minimal",
-  "zh": "极少",
-  "en": "Minimal"
- },
- {
-  "key": "cp_effort_short_low",
-  "zh": "低",
-  "en": "Low"
- },
- {
-  "key": "cp_effort_short_medium",
-  "zh": "中",
-  "en": "Medium"
- },
- {
-  "key": "cp_effort_short_high",
-  "zh": "高",
-  "en": "High"
- },
- {
-  "key": "cp_effort_short_xhigh",
-  "zh": "极高",
-  "en": "XHigh"
  },
  {
   "key": "cp_error_prefix",
@@ -1837,6 +1737,16 @@
   "params": [
    "cores"
   ]
+ },
+ {
+  "key": "hud_tasks_short",
+  "zh": "任务",
+  "en": "Tasks"
+ },
+ {
+  "key": "hud_agents_short",
+  "zh": "智能体",
+  "en": "Agents"
  },
  {
   "key": "hud_tasks_title",
@@ -5573,34 +5483,14 @@
   "en": "Video generation"
  },
  {
-  "key": "st_params_llm",
-  "zh": "生成参数",
-  "en": "Generation parameters"
+  "key": "st_model_advanced",
+  "zh": "高级设置",
+  "en": "Advanced settings"
  },
  {
-  "key": "st_params_asr",
-  "zh": "语音识别参数",
-  "en": "Speech recognition parameters"
- },
- {
-  "key": "st_params_tts",
-  "zh": "语音合成参数",
-  "en": "Speech synthesis parameters"
- },
- {
-  "key": "st_params_image",
-  "zh": "图像生成参数",
-  "en": "Image generation parameters"
- },
- {
-  "key": "st_params_video",
-  "zh": "视频生成参数",
-  "en": "Video generation parameters"
- },
- {
-  "key": "st_params_empty_hint",
-  "zh": "该类型只需基础设置，无额外参数。",
-  "en": "This type only needs the basic settings."
+  "key": "st_model_advanced_hint",
+  "zh": "温度、输出、能力与类型专属参数",
+  "en": "Temperature, limits, capabilities and type-specific options"
  },
  {
   "key": "st_param_timeout",
@@ -6354,6 +6244,16 @@
   "key": "inquiry_collapse",
   "zh": "收起",
   "en": "Collapse"
+ },
+ {
+  "key": "inquiry_submit",
+  "zh": "提交",
+  "en": "Submit"
+ },
+ {
+  "key": "inquiry_submit_blocked",
+  "zh": "请先完成必选项",
+  "en": "Answer required fields"
  },
  {
   "key": "inquiry_use_recommended",

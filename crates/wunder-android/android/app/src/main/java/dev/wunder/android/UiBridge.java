@@ -1,11 +1,16 @@
 package dev.wunder.android;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
@@ -15,6 +20,7 @@ import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.MimeTypeMap;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -23,6 +29,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Locale;
 
 /**
@@ -37,8 +45,14 @@ import java.util.Locale;
 public final class UiBridge {
     private static final int REQUEST_PICK_FILES = 0x5701;
     private static final int REQUEST_SAVE_FILE = 0x5702;
+    private static final int REQUEST_RECORD_AUDIO = 0x5703;
     // 桌面版 caps one drop at twenty files; keep the same bound on the phone.
     private static final int MAX_PICKED = 20;
+    // Same capture contract as the desktop recorder: 16 kHz mono PCM WAV,
+    // two minutes max.
+    private static final int VOICE_RATE = 16_000;
+    private static final int VOICE_MAX_SECONDS = 120;
+    private static final int KEEP_VOICE_FILES = 2;
 
     private static WeakReference<Activity> activity = new WeakReference<>(null);
     private static String pendingSaveSource;
@@ -49,6 +63,12 @@ public final class UiBridge {
     private static final Object queueLock = new Object();
     private static ArrayList<String> pickedPaths; // null = no result pending
     private static String saveResult; // null or "1|name" / "0|name"
+    private static final ArrayList<String> voiceEvents = new ArrayList<>();
+    private static final ArrayList<String> screenshotEvents = new ArrayList<>();
+    private static final Object voiceLock = new Object();
+    private static volatile boolean voiceRecording;
+    private static volatile boolean voiceStopRequested;
+    private static boolean pendingVoicePermission;
 
     private UiBridge() {}
 
@@ -89,6 +109,232 @@ public final class UiBridge {
                 publishPick(new ArrayList<>());
             }
         });
+    }
+
+    /**
+     * Begin a voice clip. The permission prompt is asynchronous; the granted
+     * callback starts the recorder and publishes "recording", which the Rust
+     * tick consumes.
+     *
+     * @return {@code recording}, {@code permission}, or {@code failed:<reason>}
+     */
+    public static String startVoice() {
+        Activity current = activity.get();
+        if (current == null) {
+            return "failed:no activity";
+        }
+        if (voiceRecording) {
+            return "recording";
+        }
+        if (current.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            pendingVoicePermission = true;
+            current.runOnUiThread(() -> current.requestPermissions(
+                    new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_RECORD_AUDIO));
+            return "permission";
+        }
+        startVoiceThread(current.getApplicationContext());
+        return "recording";
+    }
+
+    /** Ask the capture thread to stop; the WAV lands in the event queue. */
+    public static String stopVoice() {
+        synchronized (voiceLock) {
+            if (!voiceRecording) {
+                return "failed:not recording";
+            }
+            voiceStopRequested = true;
+        }
+        return "stopping";
+    }
+
+    /** Drain capture events: recording / denied / done|path / error|message. */
+    public static String[] takeVoiceEvents() {
+        synchronized (queueLock) {
+            if (voiceEvents.isEmpty()) {
+                return null;
+            }
+            String[] events = voiceEvents.toArray(new String[0]);
+            voiceEvents.clear();
+            return events;
+        }
+    }
+
+    /**
+     * Capture the current screen through the accessibility service. The caller
+     * closes the function panel first, so the frame is what the user was
+     * looking at.
+     *
+     * @return {@code pending} or {@code failed:<reason>}
+     */
+    public static String captureScreenshot() {
+        Activity current = activity.get();
+        if (current == null) {
+            return "failed:no activity";
+        }
+        if (WunderAccessibilityService.getInstance() == null) {
+            publishScreenshot("no_service");
+            return "pending";
+        }
+        Context context = current.getApplicationContext();
+        new Thread(() -> {
+            String path = PhoneBridge.captureScreenForUi(context);
+            publishScreenshot(path == null ? "error:无法截取屏幕" : "ok|" + path);
+        }, "wunder-shot").start();
+        return "pending";
+    }
+
+    /** Drain screenshot results: ok|path / no_service / error|message. */
+    public static String[] takeScreenshotEvents() {
+        synchronized (queueLock) {
+            if (screenshotEvents.isEmpty()) {
+                return null;
+            }
+            String[] events = screenshotEvents.toArray(new String[0]);
+            screenshotEvents.clear();
+            return events;
+        }
+    }
+
+    static void handlePermissionResult(int requestCode, int[] grantResults) {
+        if (requestCode != REQUEST_RECORD_AUDIO || !pendingVoicePermission) {
+            return;
+        }
+        pendingVoicePermission = false;
+        boolean granted = grantResults.length > 0
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+        if (!granted) {
+            publishVoice("denied");
+            return;
+        }
+        Activity current = activity.get();
+        if (current == null) {
+            publishVoice("error:界面已关闭");
+            return;
+        }
+        startVoiceThread(current.getApplicationContext());
+    }
+
+    private static void startVoiceThread(Context context) {
+        synchronized (voiceLock) {
+            if (voiceRecording) {
+                return;
+            }
+            voiceRecording = true;
+            voiceStopRequested = false;
+            publishVoice("recording");
+            new Thread(() -> recordVoice(context), "wunder-voice").start();
+        }
+    }
+
+    private static void recordVoice(Context context) {
+        String error = null;
+        ByteArrayOutputStream pcm = new ByteArrayOutputStream(VOICE_RATE * 2 * 8);
+        AudioRecord recorder = null;
+        try {
+            int minimum = AudioRecord.getMinBufferSize(
+                    VOICE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+            int buffer = Math.max(minimum > 0 ? minimum : 0, VOICE_RATE / 2);
+            recorder = new AudioRecord(
+                    MediaRecorder.AudioSource.MIC,
+                    VOICE_RATE,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    buffer);
+            if (recorder.getState() != AudioRecord.STATE_INITIALIZED) {
+                throw new IOException("麦克风不可用");
+            }
+            recorder.startRecording();
+            byte[] chunk = new byte[VOICE_RATE / 10 * 2];
+            int limit = VOICE_RATE * 2 * VOICE_MAX_SECONDS;
+            while (!voiceStopRequested && pcm.size() < limit) {
+                int read = recorder.read(chunk, 0, chunk.length);
+                if (read > 0) {
+                    pcm.write(chunk, 0, read);
+                } else if (read < 0) {
+                    throw new IOException("读取麦克风失败");
+                }
+            }
+        } catch (Throwable failure) {
+            error = String.valueOf(failure.getMessage() == null ? failure : failure.getMessage());
+        } finally {
+            if (recorder != null) {
+                try {
+                    recorder.stop();
+                } catch (Throwable ignored) {
+                }
+                recorder.release();
+            }
+            voiceRecording = false;
+        }
+        if (error != null && pcm.size() == 0) {
+            publishVoice("error|" + error);
+            return;
+        }
+        try {
+            File file = writeVoiceWav(context, pcm.toByteArray());
+            publishVoice("done|" + file.getAbsolutePath());
+        } catch (IOException failure) {
+            publishVoice("error|" + failure.getMessage());
+        }
+    }
+
+    private static File writeVoiceWav(Context context, byte[] pcm) throws IOException {
+        File directory = new File(context.getCacheDir(), "wunder-voice");
+        if (!directory.isDirectory() && !directory.mkdirs()) {
+            throw new IOException("无法创建录音目录");
+        }
+        File file = new File(directory, "voice-" + System.currentTimeMillis() + ".wav");
+        int dataLength = pcm.length;
+        try (OutputStream output = new FileOutputStream(file)) {
+            output.write(new byte[]{'R', 'I', 'F', 'F'});
+            writeIntLe(output, 36 + dataLength);
+            output.write(new byte[]{'W', 'A', 'V', 'E', 'f', 'm', 't', ' '});
+            writeIntLe(output, 16);
+            writeShortLe(output, 1);
+            writeShortLe(output, 1);
+            writeIntLe(output, VOICE_RATE);
+            writeIntLe(output, VOICE_RATE * 2);
+            writeShortLe(output, 2);
+            writeShortLe(output, 16);
+            output.write(new byte[]{'d', 'a', 't', 'a'});
+            writeIntLe(output, dataLength);
+            output.write(pcm);
+        }
+        File[] leftovers = directory.listFiles();
+        if (leftovers != null && leftovers.length > KEEP_VOICE_FILES) {
+            Arrays.sort(leftovers, Comparator.comparingLong(File::lastModified));
+            int remove = leftovers.length - KEEP_VOICE_FILES;
+            for (int index = 0; index < remove; index++) {
+                //noinspection ResultOfMethodCallIgnored
+                leftovers[index].delete();
+            }
+        }
+        return file;
+    }
+
+    private static void writeIntLe(OutputStream output, int value) throws IOException {
+        output.write(value & 0xff);
+        output.write((value >> 8) & 0xff);
+        output.write((value >> 16) & 0xff);
+        output.write((value >> 24) & 0xff);
+    }
+
+    private static void writeShortLe(OutputStream output, int value) throws IOException {
+        output.write(value & 0xff);
+        output.write((value >> 8) & 0xff);
+    }
+
+    private static void publishVoice(String event) {
+        synchronized (queueLock) {
+            voiceEvents.add(event);
+        }
+    }
+
+    private static void publishScreenshot(String event) {
+        synchronized (queueLock) {
+            screenshotEvents.add(event);
+        }
     }
 
     /**

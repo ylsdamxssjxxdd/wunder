@@ -943,7 +943,7 @@ Two columns:
 
 - The welcome page shows when no thread is selected
 
-- The input area holds the model switch, approval mode, reasoning level, attachments, a voice-input button (when available), a screenshot button (when available), and send / stop
+- The input area holds the model switch (its popover links to model settings), approval mode, attachments, a voice-input button (when available), a screenshot button (when available), and send / stop
 
 - Below each reply, "Work process" folds away intermediate thinking, tool batches, and interim output
 

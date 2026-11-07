@@ -271,18 +271,7 @@ export global I18n {
     out property <string> cp_context_usage: zh ? "上下文占用" : "Context usage";
     out property <string> cp_usage_empty: zh ? "暂无最近一次请求数据" : "No request usage yet";
     out property <string> cp_usage_prefix: zh ? "当前请求上下文占用：" : "Current context usage: ";
-    out property <string> cp_thinking_level: zh ? "思考等级" : "Thinking level";
     out property <string> dk_new_folder: zh ? "新建文件夹" : "New folder";
-    out property <string> cp_effort_default: zh ? "默认（跟随模型）" : "Default (model default)";
-    out property <string> cp_effort_none: zh ? "none（不额外思考）" : "None (no extra reasoning)";
-    out property <string> cp_effort_minimal: zh ? "minimal（极少思考）" : "Minimal";
-    out property <string> cp_effort_low: zh ? "low（低）" : "Low";
-    out property <string> cp_effort_medium: zh ? "medium（中）" : "Medium";
-    out property <string> cp_effort_high: zh ? "high（高）" : "High";
-    out property <string> cp_effort_xhigh: zh ? "xhigh（超高）" : "XHigh";
-    out property <string> cp_think_low: zh ? "低" : "Low";
-    out property <string> cp_think_mid: zh ? "中" : "Medium";
-    out property <string> cp_think_high: zh ? "高" : "High";
     out property <string> cp_image_prefix: zh ? "图片 · " : "Images · ";
     out property <string> cp_remove_attachment: zh ? "移除附件" : "Remove attachment";
     out property <string> cp_input_placeholder: zh ? "输入消息，开始新的对话…" : "Type a message to start…";
@@ -296,7 +285,6 @@ export global I18n {
     out property <string> cp_cmd_stop: zh ? "/stop  停止并退出目标态" : "/stop  stop and leave goal mode";
     out property <string> cp_cmd_goal: zh ? "/goal  设置目标" : "/goal  set a goal";
     out property <string> cp_cmd_compact: zh ? "/compact  压缩上下文" : "/compact  compact context";
-    out property <string> cp_usage_effort_hint: zh ? "推理强度随线程保存，切换后下一条消息即时生效；上下文占用来自最近一次请求的实际用量。" : "Reasoning effort is stored per thread and applies to the next message. Context usage comes from the last request's actual usage.";
     out property <string> cp_stop_recording: zh ? "停止录音" : "Stop recording";
     out property <string> cp_transcribing: zh ? "识别中" : "Transcribing";
     out property <string> cp_record: zh ? "录音" : "Record";
@@ -329,15 +317,7 @@ export global I18n {
     out property <string> cp_model_no_match: zh ? "没有匹配的模型" : "No matching model";
     out property <string> cp_model_default_tag: zh ? "默认" : "Default";
     out property <string> cp_model_settings: zh ? "打开模型设置" : "Open model settings";
-    out property <string> cp_model_effort: zh ? "推理强度" : "Reasoning effort";
     out property <string> cp_model_none: zh ? "未选择模型" : "No model selected";
-    out property <string> cp_effort_short_default: zh ? "默认" : "Default";
-    out property <string> cp_effort_short_none: zh ? "不思考" : "None";
-    out property <string> cp_effort_short_minimal: zh ? "极少" : "Minimal";
-    out property <string> cp_effort_short_low: zh ? "低" : "Low";
-    out property <string> cp_effort_short_medium: zh ? "中" : "Medium";
-    out property <string> cp_effort_short_high: zh ? "高" : "High";
-    out property <string> cp_effort_short_xhigh: zh ? "极高" : "XHigh";
     out property <string> cp_error_prefix: zh ? "无法" : "Unable to ";
     out property <string> cp_fail_prefix: zh ? "失败" : "Failed";
     out property <string> cp_goal_label: zh ? "目标" : "Goal";
@@ -362,11 +342,11 @@ export global I18n {
     out property <string> hud_network: zh ? "网络" : "Network";
     out property <string> hud_disk: zh ? "磁盘" : "Disk";
     out property <string> hud_detail_title: zh ? "本机状态" : "This machine";
-    out property <string> hud_tasks_short: zh ? "任务" : "Tasks";
-    out property <string> hud_agents_short: zh ? "智能体" : "Agents";
     out property <string> hud_read: zh ? "读" : "R";
     out property <string> hud_write: zh ? "写" : "W";
     public pure function hud_cores(cores: string) -> string { return zh ? "" + cores + " 核" : "" + cores + " cores"; }
+    out property <string> hud_tasks_short: zh ? "任务" : "Tasks";
+    out property <string> hud_agents_short: zh ? "智能体" : "Agents";
     out property <string> hud_tasks_title: zh ? "后台任务" : "Running tasks";
     public pure function hud_tasks_count(count: string) -> string { return zh ? "" + count + " 个运行中" : "" + count + " running"; }
     out property <string> hud_tasks_empty: zh ? "没有正在运行的任务" : "Nothing is running";
@@ -1109,12 +1089,8 @@ export global I18n {
     out property <string> st_type_tts: zh ? "语音合成" : "Text-to-speech";
     out property <string> st_type_image: zh ? "图像生成" : "Image generation";
     out property <string> st_type_video: zh ? "视频生成" : "Video generation";
-    out property <string> st_params_llm: zh ? "生成参数" : "Generation parameters";
-    out property <string> st_params_asr: zh ? "语音识别参数" : "Speech recognition parameters";
-    out property <string> st_params_tts: zh ? "语音合成参数" : "Speech synthesis parameters";
-    out property <string> st_params_image: zh ? "图像生成参数" : "Image generation parameters";
-    out property <string> st_params_video: zh ? "视频生成参数" : "Video generation parameters";
-    out property <string> st_params_empty_hint: zh ? "该类型只需基础设置，无额外参数。" : "This type only needs the basic settings.";
+    out property <string> st_model_advanced: zh ? "高级设置" : "Advanced settings";
+    out property <string> st_model_advanced_hint: zh ? "温度、输出、能力与类型专属参数" : "Temperature, limits, capabilities and type-specific options";
     out property <string> st_param_timeout: zh ? "超时（秒）" : "Timeout (s)";
     out property <string> st_param_max_output: zh ? "最大输出 token" : "Max output tokens";
     out property <string> st_param_thinking: zh ? "思考 token 预算" : "Thinking token budget";
@@ -1265,9 +1241,9 @@ export global I18n {
     out property <string> inquiry_all_questions: zh ? "全部问题" : "All questions";
     out property <string> inquiry_expand: zh ? "展开全部" : "Expand all";
     out property <string> inquiry_collapse: zh ? "收起" : "Collapse";
-    out property <string> inquiry_use_recommended: zh ? "使用推荐" : "Use the recommended";
     out property <string> inquiry_submit: zh ? "提交" : "Submit";
     out property <string> inquiry_submit_blocked: zh ? "请先完成必选项" : "Answer required fields";
+    out property <string> inquiry_use_recommended: zh ? "使用推荐" : "Use the recommended";
     public pure function inquiry_question_progress(position: string) -> string { return zh ? "第 " + position + " 题" : "Question " + position + ""; }
     out property <string> sub_card_title: zh ? "子智能体" : "Subagent";
     out property <string> sub_status_running: zh ? "运行中" : "Running";

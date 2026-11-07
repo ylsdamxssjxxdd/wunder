@@ -749,6 +749,20 @@ final class PhoneBridge {
 
     // ---- screenshots --------------------------------------------------------
 
+    /**
+     * One-shot screenshot for the chat's 截图 action. Returns the cache path,
+     * or null when the service is disconnected or the frame failed.
+     */
+    static String captureScreenForUi(Context context) {
+        WunderAccessibilityService service = WunderAccessibilityService.getInstance();
+        if (service == null) {
+            return null;
+        }
+        // The chat only needs the bitmap; skip the UI-tree walk the agent
+        // tools do after every action.
+        return ScreenshotApi30.capture(context, service);
+    }
+
     private static Frame captureFrame(Context context, WunderAccessibilityService service) {
         if (service == null) {
             return null;

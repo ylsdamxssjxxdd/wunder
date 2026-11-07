@@ -15,6 +15,9 @@ CRATE="$ROOT/crates/wunder-android"
 
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/android-sdk}"
 export ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-$ANDROID_HOME/ndk/28.2.13676358}"
+# skia-bindings' build script keys off this spelling; without it a cache miss
+# falls into the source-build path and fails before the prebuilt lookup.
+export ANDROID_NDK="${ANDROID_NDK:-$ANDROID_NDK_ROOT}"
 export JAVA_HOME="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}"
 
 host_arch="$(uname -m)"

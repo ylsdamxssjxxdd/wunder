@@ -25,7 +25,6 @@ pub enum Command {
     Send(String),
     Stop,
     SelectModel(String),
-    ReasoningEffort(String),
     RefreshSessions,
     LoadSettings,
     RenameSession {
@@ -59,6 +58,18 @@ pub enum Command {
     WorkspaceSaved {
         ok: bool,
         name: String,
+    },
+    VoiceToggle,
+    VoiceStarted,
+    VoiceFinished {
+        path: String,
+    },
+    VoiceFailed {
+        message: String,
+    },
+    CaptureScreenshot,
+    ScreenshotResult {
+        status: String,
     },
     SavePreferences {
         theme: String,
@@ -410,6 +421,12 @@ pub struct Shared {
     pub workspace_total: u64,
     pub workspace_loading: bool,
     pub workspace_error: String,
+    pub voice_rev: u64,
+    /// 0 idle, 1 recording, 2 transcribing.
+    pub voice_phase: i32,
+    /// Text produced off the UI thread (voice transcription) and appended to
+    /// the draft by the UI tick, so a late result never overwrites typing.
+    pub pending_draft: Option<String>,
     pub models: Vec<ModelCard>,
     pub inquiry: Option<InquiryView>,
     pub inquiry_rev: u64,
@@ -692,6 +709,15 @@ fn run(shared: Arc<Mutex<Shared>>, commands: mpsc::Receiver<Command>) -> anyhow:
                     notify(&shared, format!("保存 {name} 失败"));
                 }
             }
+            Command::VoiceToggle => toggle_voice(&desktop, &shared),
+            Command::VoiceStarted => set_voice_phase(&shared, 1),
+            Command::VoiceFinished { path } => finish_voice(&desktop, &shared, path),
+            Command::VoiceFailed { message } => {
+                set_voice_phase(&shared, 0);
+                notify(&shared, message);
+            }
+            Command::CaptureScreenshot => start_screenshot(&shared),
+            Command::ScreenshotResult { status } => apply_screenshot(&desktop, &shared, &status),
             Command::Send(text) => {
                 let session = shared.lock().unwrap().session_id.clone();
                 if session.is_empty() {
@@ -723,12 +749,6 @@ fn run(shared: Arc<Mutex<Shared>>, commands: mpsc::Receiver<Command>) -> anyhow:
                         state.touch();
                     }
                     Err(error) => notify(&shared, format!("切换模型失败：{error}")),
-                }
-            }
-            Command::ReasoningEffort(value) => {
-                let session = shared.lock().unwrap().session_id.clone();
-                if let Err(error) = desktop.save_session_reasoning_effort(&session, &value) {
-                    notify(&shared, format!("保存推理强度失败：{error}"));
                 }
             }
             Command::RefreshSessions | Command::LoadSettings => {
@@ -1905,6 +1925,163 @@ fn unique_upload_name(existing: &std::collections::HashSet<String>, name: &str) 
 }
 
 /// Resolve one workspace file and hand it to the Android save flow.
+#[cfg(target_os = "android")]
+fn host_start_voice() -> String {
+    crate::android_host::start_voice()
+}
+
+#[cfg(not(target_os = "android"))]
+fn host_start_voice() -> String {
+    "failed:unsupported".into()
+}
+
+#[cfg(target_os = "android")]
+fn host_stop_voice() -> String {
+    crate::android_host::stop_voice()
+}
+
+#[cfg(not(target_os = "android"))]
+fn host_stop_voice() -> String {
+    "failed:unsupported".into()
+}
+
+#[cfg(target_os = "android")]
+fn host_capture_screenshot() -> String {
+    crate::android_host::capture_screenshot()
+}
+
+#[cfg(not(target_os = "android"))]
+fn host_capture_screenshot() -> String {
+    "failed:unsupported".into()
+}
+
+fn set_voice_phase(shared: &Arc<Mutex<Shared>>, phase: i32) {
+    if let Ok(mut state) = shared.lock() {
+        if state.voice_phase == phase {
+            return;
+        }
+        state.voice_phase = phase;
+        state.voice_rev = state.voice_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+fn toggle_voice(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
+    let phase = shared.lock().map(|state| state.voice_phase).unwrap_or(0);
+    if phase == 2 {
+        return;
+    }
+    if phase == 1 {
+        let status = host_stop_voice();
+        if let Some(error) = status.strip_prefix("failed:") {
+            set_voice_phase(shared, 0);
+            notify(shared, format!("停止录音失败：{error}"));
+        } else {
+            // The Java capture thread publishes the WAV path next; showing
+            // "transcribing" now covers the device teardown gap.
+            set_voice_phase(shared, 2);
+        }
+        return;
+    }
+    if !desktop.has_asr_model() {
+        notify(shared, "请先在设置中配置默认语音识别模型");
+        return;
+    }
+    match host_start_voice() {
+        status if status == "recording" => set_voice_phase(shared, 1),
+        status if status == "permission" => {
+            notify(shared, "请在系统提示中允许录音权限");
+        }
+        status => notify(shared, format!("无法开始录音：{status}")),
+    }
+}
+
+fn finish_voice(desktop: &Arc<NativeDesktop>, shared: &Arc<Mutex<Shared>>, path: String) {
+    set_voice_phase(shared, 2);
+    let desktop = Arc::clone(desktop);
+    let worker_shared = shared.clone();
+    let spawned = thread::Builder::new()
+        .name("wunder-android-asr".into())
+        .spawn(move || {
+            let result = std::fs::read(&path)
+                .map_err(|error| format!("读取录音失败：{error}"))
+                .and_then(|bytes| {
+                    desktop
+                        .transcribe_audio(
+                            "wunder-voice.wav".to_string(),
+                            "audio/wav".to_string(),
+                            bytes,
+                        )
+                        .map_err(|error| error.to_string())
+                });
+            let _ = std::fs::remove_file(&path);
+            let Ok(mut state) = worker_shared.lock() else {
+                return;
+            };
+            state.voice_phase = 0;
+            state.voice_rev = state.voice_rev.wrapping_add(1);
+            match result {
+                Ok(text) if !text.trim().is_empty() => {
+                    state.pending_draft = Some(text);
+                    state.notify("语音已转写到输入区，可编辑后发送");
+                }
+                Ok(_) => state.notify("语音识别没有返回文字"),
+                Err(error) => state.notify(format!("语音识别失败：{error}")),
+            }
+            state.touch();
+        });
+    if let Err(error) = spawned {
+        log::warn!("start the asr worker: {error}");
+        set_voice_phase(shared, 0);
+        notify(shared, "无法启动语音识别");
+    }
+}
+
+fn start_screenshot(shared: &Arc<Mutex<Shared>>) {
+    match host_capture_screenshot() {
+        status if status == "pending" => notify(shared, "正在截取屏幕…"),
+        status => notify(shared, format!("截图失败：{status}")),
+    }
+}
+
+fn apply_screenshot(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, status: &str) {
+    if status == "no_service" {
+        notify(
+            shared,
+            "请先在系统设置中开启 wunder 无障碍服务，再使用截图",
+        );
+        return;
+    }
+    let Some(source) = status.strip_prefix("ok|") else {
+        notify(
+            shared,
+            format!("截图失败：{}", status.strip_prefix("error|").unwrap_or(status)),
+        );
+        return;
+    };
+    let saved = (|| -> Result<String, String> {
+        let settings = desktop
+            .get_desktop_settings()
+            .map_err(|error| error.to_string())?;
+        let directory = std::path::Path::new(&settings.workspace_root).join("screenshots");
+        std::fs::create_dir_all(&directory).map_err(|error| format!("无法创建截图目录：{error}"))?;
+        let now = chrono::Local::now();
+        let name = format!(
+            "screenshot-{}-{:03}.png",
+            now.format("%Y%m%d-%H%M%S"),
+            now.timestamp_subsec_millis()
+        );
+        std::fs::copy(source, directory.join(&name))
+            .map_err(|error| format!("无法写入截图：{error}"))?;
+        Ok(format!("screenshots/{name}"))
+    })();
+    let _ = std::fs::remove_file(source);
+    match saved {
+        Ok(relative) => notify(shared, format!("截图已保存到工作目录：{relative}")),
+        Err(error) => notify(shared, format!("截图保存失败：{error}")),
+    }
+}
+
 fn download_workspace(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, relative: &str) {
     let root = match desktop.get_desktop_settings() {
         Ok(settings) => settings.workspace_root,
@@ -2493,7 +2670,7 @@ fn new_model_card() -> ModelCard {
         max_output: "32768".into(),
         thinking_token_budget: "4096".into(),
         max_rounds: "1000".into(),
-        max_context: "128000".into(),
+        max_context: "262144".into(),
         history_compaction_ratio: "0.9".into(),
         reasoning_effort: "".into(),
         simulation_speed: "fast".into(),

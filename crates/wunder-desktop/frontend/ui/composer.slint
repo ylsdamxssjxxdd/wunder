@@ -7,34 +7,6 @@ import { TextEditBase } from "textedit-base.slint";
 import { TextFieldActivation, TextFieldMenu } from "text_field.slint";
 import { DragPreview } from "drag_row.slint";
 
-// Slint has neither top-level functions nor module-level constants, so the
-// reasoning ladder lives in a global. The ladder is split in two rows because
-// the popover's pill row wraps on the web and Slint has no wrapping layout.
-export global EffortOptions {
-    out property <[{ value: string, label: string }]> pills-a: [
-        { value: "default", label: I18n.cp_effort_default },
-        { value: "none", label: I18n.cp_effort_none },
-        { value: "minimal", label: I18n.cp_effort_minimal },
-        { value: "low", label: I18n.cp_effort_low }
-    ];
-    out property <[{ value: string, label: string }]> pills-b: [
-        { value: "medium", label: I18n.cp_effort_medium },
-        { value: "high", label: I18n.cp_effort_high },
-        { value: "xhigh", label: I18n.cp_effort_xhigh }
-    ];
-    // Short label for a reasoning-effort value; the picker shows it next to the
-    // model name so the active strength reads without opening the popover (§8.3).
-    public pure function short(value: string) -> string {
-        return value == "none" ? I18n.cp_effort_short_none
-            : value == "minimal" ? I18n.cp_effort_short_minimal
-            : value == "low" ? I18n.cp_effort_short_low
-            : value == "medium" ? I18n.cp_effort_short_medium
-            : value == "high" ? I18n.cp_effort_short_high
-            : value == "xhigh" ? I18n.cp_effort_short_xhigh
-            : I18n.cp_effort_short_default;
-    }
-}
-
 // The slash commands the composer offers. One source for both flyout
 // variants, and the editor's Enter needs the same list to commit the
 // highlighted row without reaching into the flyout's own for loop.
@@ -65,8 +37,8 @@ component DockSpinner inherits Rectangle {
 // §8.3 model switcher, 对齐云端版 ChatComposer: the model button and the context
 // gauge are one control — the trigger's brain glyph fills with the used share
 // of the window — and the popover carries the numbers, the catalogue and the
-// reasoning-effort pills. Selection applies to the active thread immediately
-// through the existing select-model / reasoning-effort callbacks.
+// model-config entry. Selection applies to the active thread immediately
+// through the existing select-model callback.
 component ModelPicker inherits Rectangle {
     in property <[ModelCard]> models: [];
     // True while the catalogue itself is non-empty.
@@ -82,10 +54,8 @@ component ModelPicker inherits Rectangle {
     in property <float> context-usage: 0.0;
     in property <bool> context-known: false;
     in property <string> context-counts;
-    in-out property <string> effort: "default";
     in property <bool> saving: false;
     callback select-model(int, string);
-    callback effort-changed(string);
     callback open-settings();
     // Lets the parent close the other composer popover when this picker opens.
     callback opened();
@@ -183,7 +153,7 @@ component ModelPicker inherits Rectangle {
         visible: root.open;
         x: parent.width - 300px;
         y: -self.height - 8px;
-        width: 300px; height: 340px;
+        width: 300px; height: 300px;
         z: 30;
         border-radius: Theme.radius-lg; background: Theme.surface;
         border-width: 1px; border-color: Theme.border;
@@ -286,55 +256,27 @@ component ModelPicker inherits Rectangle {
                 }
             }
             Rectangle { height: 1px; background: Theme.border; }
-            // 推理力度 pills：两行圆角胶囊（对齐云端版 composer-model-effort-item）。
-            VerticalLayout {
-                spacing: 4px;
-                Text {
-                    height: 14px; text: I18n.cp_model_effort;
-                    color: Theme.muted; font-size: Theme.font-xs; font-weight: 600;
-                    vertical-alignment: center;
-                }
+            // 模型配置入口：点击关闭浮层并直接切到设置页的模型配置。
+            Rectangle {
+                height: 32px;
+                border-radius: Theme.radius-sm;
+                background: model-config-touch.has-hover ? Theme.hover : transparent;
+                accessible-role: button;
+                accessible-label: I18n.common_model_config;
+                accessible-action-default => { root.open = false; root.open-settings(); }
                 HorizontalLayout {
-                    height: 24px; spacing: 4px;
-                    for option in EffortOptions.pills-a : Rectangle {
-                        width: pill-a-text.preferred-width + 18px;
-                        border-radius: 12px;
-                        background: root.effort == option.value ? Theme.accent-soft : pill-a-touch.has-hover ? Theme.hover : transparent;
-                        border-width: 1px;
-                        border-color: root.effort == option.value ? Theme.accent-soft : Theme.border;
-                        accessible-role: button;
-                        accessible-label: option.label;
-                        accessible-action-default => { root.effort = option.value; root.effort-changed(option.value); }
-                        pill-a-text := Text {
-                            x: 9px; width: self.preferred-width; height: parent.height;
-                            text: EffortOptions.short(option.value);
-                            color: root.effort == option.value ? Theme.accent-ink : Theme.text-secondary;
-                            font-size: Theme.font-xs; font-weight: root.effort == option.value ? 600 : 400;
-                            vertical-alignment: center;
-                        }
-                        pill-a-touch := TouchArea { mouse-cursor: pointer; clicked => { root.effort = option.value; root.effort-changed(option.value); } }
+                    alignment: center;
+                    spacing: 6px;
+                    Image { width: 14px; height: 14px; source: @image-url("../assets/icons/gear.svg"); colorize: Theme.accent-ink; }
+                    Text {
+                        text: I18n.common_model_config;
+                        color: Theme.accent-ink; font-size: Theme.font-sm; font-weight: 600;
+                        vertical-alignment: center;
                     }
                 }
-                HorizontalLayout {
-                    height: 24px; spacing: 4px;
-                    for option in EffortOptions.pills-b : Rectangle {
-                        width: pill-b-text.preferred-width + 18px;
-                        border-radius: 12px;
-                        background: root.effort == option.value ? Theme.accent-soft : pill-b-touch.has-hover ? Theme.hover : transparent;
-                        border-width: 1px;
-                        border-color: root.effort == option.value ? Theme.accent-soft : Theme.border;
-                        accessible-role: button;
-                        accessible-label: option.label;
-                        accessible-action-default => { root.effort = option.value; root.effort-changed(option.value); }
-                        pill-b-text := Text {
-                            x: 9px; width: self.preferred-width; height: parent.height;
-                            text: EffortOptions.short(option.value);
-                            color: root.effort == option.value ? Theme.accent-ink : Theme.text-secondary;
-                            font-size: Theme.font-xs; font-weight: root.effort == option.value ? 600 : 400;
-                            vertical-alignment: center;
-                        }
-                        pill-b-touch := TouchArea { mouse-cursor: pointer; clicked => { root.effort = option.value; root.effort-changed(option.value); } }
-                    }
+                model-config-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.open = false; root.open-settings(); }
                 }
             }
         }
@@ -1329,8 +1271,6 @@ export component Composer inherits Rectangle {
     in property <float> context-usage: 0.0;
     in property <bool> context-known: false;
     in property <string> context-counts;
-    in-out property <string> reasoning-effort: "default";
-    callback reasoning-effort-changed(string);
     // §8.3: the action row owns the model switcher. The catalogue comes
     // straight from the settings projection, so the picker needs no separate
     // fetch.
@@ -2002,8 +1942,8 @@ export component Composer inherits Rectangle {
             // row reports a fixed implicit width and the Window shrink-wraps
             // to it. The leftover space belongs to the spacer alone.
             Rectangle { horizontal-stretch: 1; }
-            // Right: the merged model trigger (liquid brain gauge + model name
-            // + effort), then the send square. Zero stretch keeps the picker at
+            // Right: the merged model trigger (liquid brain gauge + model name),
+            // then the send square. Zero stretch keeps the picker at
             // its content width — the row's leftover space belongs to the
             // spacer, and a stretched picker would push the popover's right
             // edge past the trigger's.
@@ -2017,7 +1957,6 @@ export component Composer inherits Rectangle {
                 context-usage: root.context-usage;
                 context-known: root.context-known;
                 context-counts: root.context-counts;
-                effort <=> root.reasoning-effort;
                 saving: root.model-saving;
                 open <=> root.model-open;
                 opened => {
@@ -2028,7 +1967,6 @@ export component Composer inherits Rectangle {
                     root.close-submenus();
                 }
                 select-model(index, name) => { root.select-model(index, name); }
-                effort-changed(value) => { root.reasoning-effort-changed(value); }
                 open-settings => { root.open-model-settings(); }
             }
             // While a reply streams, the square itself becomes the stop action;

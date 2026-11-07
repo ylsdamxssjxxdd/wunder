@@ -23,20 +23,18 @@ import { ListView, ScrollView } from "std-widgets.slint";
 // One row of the mobile thread drawer. The projection lives in Rust; this is
 // a flat, bounded card so a long thread list stays cheap to scroll.
 
-// One square in the phone's function panel: a large icon target with a short
-// caption, sized for thumbs rather than the desktop's 28px menu rows.
+// One square in the phone's function panel: a single soft icon capsule with a
+// caption. No outer card or border — the capsule is the whole shape, so five
+// thumbs in one row read as one even strip instead of nested boxes.
 component PlusTile inherits Rectangle {
     in property <image> icon;
     in property <string> label;
     in property <bool> enabled: true;
-    in property <bool> selected: false;
+    in property <bool> active: false;
     callback clicked();
     horizontal-stretch: 1;
-    height: 86px;
-    border-radius: Theme.radius-md;
-    background: root.selected ? Theme.selected : tile-touch.has-hover ? Theme.hover : Theme.surface;
-    border-width: 1px;
-    border-color: Theme.border;
+    height: 74px;
+    background: transparent;
     tile-touch := TouchArea {
         enabled: root.enabled;
         clicked => { root.clicked(); }
@@ -45,26 +43,74 @@ component PlusTile inherits Rectangle {
         alignment: center;
         spacing: 7px;
         Rectangle {
-            width: 44px;
-            height: 44px;
-            border-radius: 12px;
-            background: root.enabled ? Theme.panel : Theme.input-readonly-bg;
+            width: 50px;
+            height: 50px;
+            border-radius: 18px;
+            background: root.active ? Theme.accent-soft
+                : tile-touch.has-hover ? Theme.selected
+                : root.enabled ? Theme.surface : Theme.input-readonly-bg;
+            border-width: 1px;
+            border-color: root.active ? Theme.danger.with-alpha(0.28) : Theme.border;
             Image {
-                x: 11px;
-                y: 11px;
+                x: 14px;
+                y: 14px;
                 width: 22px;
                 height: 22px;
                 source: root.icon;
-                colorize: root.enabled ? Theme.text-secondary : Theme.border-strong;
+                colorize: root.active ? Theme.danger
+                    : root.enabled ? Theme.text-secondary : Theme.border-strong;
                 image-fit: contain;
             }
         }
         Text {
             text: root.label;
-            color: root.enabled ? Theme.text : Theme.muted;
+            color: root.active ? Theme.danger : root.enabled ? Theme.text-secondary : Theme.muted;
             font-size: Theme.font-2xs;
             horizontal-alignment: center;
             overflow: elide;
+        }
+    }
+}
+
+// Capture strip above the composer. Recording and transcription stay visible
+// after the plus tray closes, and stopping is one tap.
+component VoiceBar inherits Rectangle {
+    in property <int> phase: 0;
+    in property <string> elapsed: "";
+    callback stop();
+    height: 38px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 4px;
+        spacing: 8px;
+        cross-axis-alignment: center;
+        Rectangle {
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            background: root.phase == 1 ? Theme.danger : Theme.muted;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.phase == 1
+                ? "正在录音 · " + root.elapsed + "，点停止结束"
+                : "正在识别录音…";
+            color: root.phase == 1 ? Theme.danger : Theme.muted;
+            font-size: Theme.font-sm;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        if root.phase == 1 : Action {
+            width: 34px;
+            height: 30px;
+            icon-size: 14px;
+            icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/stop.svg");
+            label: "停止";
+            clicked => { root.stop(); }
         }
     }
 }
@@ -343,6 +389,10 @@ export component MobileWindow inherits Window {
     // 0 grid, 1 commands, 2 preset questions, 3 approval mode.
     in-out property <int> plus-view: 0;
     in property <[string]> preset-questions: [];
+    // Voice capture: 0 idle, 1 recording, 2 transcribing. The strip above the
+    // composer owns the stop action; the plus tile mirrors the same state.
+    in property <int> voice-phase: 0;
+    in property <string> voice-elapsed: "";
 
     // ---- composer ----------------------------------------------------
     in-out property <string> draft: "";
@@ -358,7 +408,6 @@ export component MobileWindow inherits Window {
     in property <string> send-key: "enter";
     in property <string> workspace-name: "";
     in property <string> branch-name: "";
-    in-out property <string> reasoning-effort: "default";
     in-out property <string> permission-mode: "full_auto";
 
     // ---- 问询面板 ----------------------------------------------------
@@ -426,11 +475,12 @@ export component MobileWindow inherits Window {
     callback load-more-workspace(string, int);
     callback plus-panel-opened();
     callback keyboard-dismiss();
+    callback record-voice();
+    callback capture-screenshot();
     callback send();
     callback stop();
     callback select-model(int, string);
     callback open-model-settings();
-    callback reasoning-effort-changed(string);
     callback permission-changed(string);
     callback remove-attachment(int);
     callback copy-text(string);
@@ -465,7 +515,7 @@ export component MobileWindow inherits Window {
     // Secondary lists fit five 48px rows plus the 46px back header without
     // scrolling on a standard phone.
     private property <length> plus-panel-height: root.plus-open
-        ? (root.plus-view == 0 ? 212px : 312px) + root.inset-bottom : 0px;
+        ? (root.plus-view == 0 ? 100px : 312px) + root.inset-bottom : 0px;
 
     function close-sheet() {
         root.session-sheet-open = false;
@@ -812,6 +862,19 @@ export component MobileWindow inherits Window {
                     }
                 }
 
+                if root.voice-phase != 0 : HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    padding-top: 4px;
+                    padding-bottom: 2px;
+                    VoiceBar {
+                        horizontal-stretch: 1;
+                        phase: root.voice-phase;
+                        elapsed: root.voice-elapsed;
+                        stop() => { root.record-voice(); }
+                    }
+                }
+
                 composer := Composer {
                     mobile: true;
                     mobile-plus-open: root.plus-open;
@@ -832,7 +895,6 @@ export component MobileWindow inherits Window {
                     show-cli-action: false;
                     workspace-name: root.workspace-name;
                     branch-name: root.branch-name;
-                    reasoning-effort <=> root.reasoning-effort;
                     permission-mode <=> root.permission-mode;
                     send() => {
                         root.close-plus();
@@ -841,7 +903,6 @@ export component MobileWindow inherits Window {
                     stop() => { root.stop(); }
                     select-model(index, key) => { root.select-model(index, key); }
                     open-model-settings() => { root.open-model-settings(); }
-                    reasoning-effort-changed(value) => { root.reasoning-effort-changed(value); }
                     permission-changed(value) => { root.permission-changed(value); }
                     remove-attachment(index) => { root.remove-attachment(index); }
                 }
@@ -863,62 +924,51 @@ export component MobileWindow inherits Window {
             }
 
             if root.plus-view == 0 : VerticalLayout {
-                padding-left: 16px;
-                padding-right: 16px;
-                padding-top: 14px;
-                padding-bottom: 10px + root.inset-bottom;
-                spacing: 10px;
+                padding-left: 10px;
+                padding-right: 10px;
+                padding-top: 12px;
+                padding-bottom: 8px + root.inset-bottom;
+                spacing: 0px;
                 HorizontalLayout {
-                    spacing: 8px;
+                    spacing: 2px;
+                    PlusTile {
+                        icon: root.voice-phase == 1
+                            ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/stop.svg")
+                            : @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-mic.svg");
+                        label: root.voice-phase == 1 ? "停止"
+                            : root.voice-phase == 2 ? "识别中"
+                            : "录音";
+                        active: root.voice-phase == 1;
+                        enabled: root.voice-phase != 2;
+                        clicked => {
+                            root.close-plus();
+                            root.record-voice();
+                        }
+                    }
+                    PlusTile {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-camera.svg");
+                        label: I18n.cp_screenshot;
+                        clicked => {
+                            root.close-plus();
+                            root.capture-screenshot();
+                        }
+                    }
                     PlusTile {
                         icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/terminal.svg");
                         label: I18n.cp_commands;
                         clicked => { root.plus-view = 1; }
                     }
                     PlusTile {
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-wand-sparkles.svg");
-                        label: I18n.ag_preset_questions;
-                        enabled: root.preset-questions.length > 0;
-                        clicked => { root.plus-view = 2; }
-                    }
-                    PlusTile {
                         icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-shield.svg");
-                        label: I18n.cp_permission;
+                        label: "权限";
                         clicked => { root.plus-view = 3; }
                     }
                     PlusTile {
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-brain.svg");
-                        label: I18n.st_tab_models;
-                        clicked => {
-                            root.close-plus();
-                            root.open-settings(1);
-                        }
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-wand-sparkles.svg");
+                        label: "预设";
+                        enabled: root.preset-questions.length > 0;
+                        clicked => { root.plus-view = 2; }
                     }
-                }
-                HorizontalLayout {
-                    spacing: 8px;
-                    PlusTile {
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/gear.svg");
-                        label: I18n.sidebar_settings;
-                        clicked => {
-                            root.close-plus();
-                            root.open-settings(0);
-                        }
-                    }
-                    PlusTile {
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-plus.svg");
-                        label: I18n.chat_new_thread;
-                        clicked => {
-                            root.close-plus();
-                            root.new-session();
-                        }
-                    }
-                    PlusTile {
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/folder-tree.svg");
-                        label: "工作目录";
-                        clicked => { root.show-workspace(); }
-                    }
-                    Rectangle { horizontal-stretch: 1; }
                 }
             }
 
@@ -1194,45 +1244,6 @@ export component MobileWindow inherits Window {
                     }
                     Text {
                         text: "文件";
-                        color: Theme.muted;
-                        font-size: Theme.font-2xs;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-            Rectangle {
-                height: 1px;
-                background: Theme.border;
-            }
-            Rectangle {
-                height: 48px;
-                background: archived-touch.has-hover ? Theme.hover : transparent;
-                archived-touch := TouchArea {
-                    clicked => {
-                        root.close-drawer();
-                        root.open-settings(5);
-                    }
-                }
-                HorizontalLayout {
-                    padding-left: 16px;
-                    padding-right: 16px;
-                    spacing: 10px;
-                    cross-axis-alignment: center;
-                    Image {
-                        width: 17px;
-                        height: 17px;
-                        source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-archive.svg");
-                        colorize: Theme.muted;
-                    }
-                    Text {
-                        horizontal-stretch: 1;
-                        text: "已归档会话";
-                        color: Theme.text;
-                        font-size: Theme.font-md;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        text: "" + root.archived-total;
                         color: Theme.muted;
                         font-size: Theme.font-2xs;
                         vertical-alignment: center;

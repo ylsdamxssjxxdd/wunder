@@ -419,6 +419,32 @@ Most hunks are self-contained (new files like `passes/gb2312_table.rs` and
 `pack_mono_1bpp` never conflict); the expected touch points are
 `passes/embed_glyphs.rs` and `fonts.rs::register_bitmap_font`.
 
+## jni 0.22.4 Android fork
+
+`jni-0.22.4` is pinned through `[patch.crates-io]` in `crates/wunder-android/Cargo.toml`
+(registry copies of jni 0.19.0/0.21.1 stay untouched; only the 0.22 line used by
+android-activity 0.6, i-slint-backend-android-activity, rustls-platform-verifier
+and webbrowser is patched). It carries one Android-only fix: on a freshly
+attached `android_main` thread during the first launch after install, ART (via
+the native-bridge runtime) can report a pending exception through
+`ExceptionCheck` while `ExceptionOccurred` finds no exception object at all —
+the two JNI calls are defined to agree, so this violates every caller's
+assumption. Upstream maps exceptions inside `jni_call_with_catch!`/`jni_try!`
+with `.expect("Expected an exception after ExceptionCheck")`, so the phantom
+flag aborted the whole app (SIGABRT before `android_main` runs; the phone shows
+a frozen first frame and none of the first-run setup).
+
+The fork makes `Env::exception_check` self-healing: when `ExceptionCheck` is
+true it cross-checks the authoritative `ExceptionOccurred`, clears the spurious
+flag (one `jni: ExceptionCheck reported a pending exception but
+ExceptionOccurred found none` line per process), and returns false. The
+exception-mapping macros and `Env::exception_catch` keep upstream behavior but
+fall back to an error / the block result instead of panicking if the
+inconsistency is ever observed; `JavaVM::attach_current_thread_with_config`
+treats the phantom flag the same way in its pre-checks. `Env::exception_check`
+is crate-internal to jni 0.22 — the wunder phone bridge on jni 0.21 still sees
+the raw flag, which is why `android_host::install` retries once.
+
 ## Shared arboard Win7 fork
 
 `arboard` is pinned through `[patch.crates-io]` to the shared fork at

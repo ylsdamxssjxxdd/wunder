@@ -108,3 +108,8 @@ crypto-common = { path = "../../crates/wunder-desktop/frontend/vendor/crypto-com
 generic-array = { path = "../../crates/wunder-desktop/frontend/vendor/generic-array-0.14.7" }
 typenum = { path = "../../crates/wunder-desktop/frontend/vendor/typenum-1.20.1" }
 cpufeatures = { path = "../../crates/wunder-desktop/frontend/vendor/cpufeatures-0.2.17" }
+# Harden the jni 0.22 line used by android-activity/slint: its exception
+# mapping panics (aborting the whole app) when ART reports a pending exception
+# via ExceptionCheck but ExceptionOccurred returns null, which happens on
+# first launch. See vendor/jni-0.22.4/src/macros.rs.
+jni = { path = "../../crates/wunder-desktop/frontend/vendor/jni-0.22.4" }

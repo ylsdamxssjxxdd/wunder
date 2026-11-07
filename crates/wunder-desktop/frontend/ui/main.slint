@@ -882,7 +882,6 @@ export component MainWindow inherits Window {
     in-out property <string> context-counts;
     in-out property <string> reasoning-effort: "default";
     callback stop-generation();
-    callback save-session-reasoning-effort(string);
     callback select-thread-model(string);
     callback copy-raw(string);
     /// Copy the transcript's text selection. The selection lives in the text
@@ -1392,7 +1391,7 @@ export component MainWindow inherits Window {
                                 draft <=> root.draft; busy: root.command-pending || root.session-loading || root.creating-session || (root.chat-loading && !root.busy) || (root.cloud-chat-active && root.cloud-thread-busy);
                             launch-cli => { root.launch-cli(); }
                             send-key: root.runtime-send-key;
-                            context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts; reasoning-effort <=> root.reasoning-effort;
+                            context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts;
                             models: root.cloud-chat-active ? root.cloud-thread-models : root.composer-models;
                             // The local built-in agent owns the saved quick prompts; a
                             // cloud thread keeps its service-side composer scope.
@@ -1442,7 +1441,6 @@ export component MainWindow inherits Window {
                             screenshot(hide-window, region) => { root.capture-screenshot(hide-window, region); }
                             file-drop(event) => { root.composer-file-drop(event); }
                             record-voice => { root.record-voice(); }
-                            reasoning-effort-changed(value) => { root.save-session-reasoning-effort(value); }
                             remove-attachment(index) => { root.remove-attachment(index); }
                             }
                         }

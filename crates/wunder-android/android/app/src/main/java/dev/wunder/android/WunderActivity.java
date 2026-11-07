@@ -17,4 +17,10 @@ public class WunderActivity extends NativeActivity {
         super.onActivityResult(requestCode, resultCode, data);
         UiBridge.handleActivityResult(this, requestCode, resultCode, data);
     }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        UiBridge.handlePermissionResult(requestCode, grantResults);
+    }
 }

@@ -28,7 +28,6 @@
           @new-thread="log('new-thread')"
           @open-thread="log(`open-thread:${$event}`)"
           @update:approval-mode="handleApprovalMode"
-          @update:reasoning-effort="(value) => log(`reasoning-effort:${value}`)"
         />
       </div>
     </section>

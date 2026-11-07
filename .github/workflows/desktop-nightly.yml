@@ -493,10 +493,9 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: |
-            platforms;android-36
-            build-tools;36.0.0
-            ndk;28.2.13676358
+          # setup-android splits this input on single spaces only, so a YAML
+          # block scalar would reach sdkmanager as one multi-line package name.
+          packages: 'platforms;android-36 build-tools;36.0.0 ndk;28.2.13676358'
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}

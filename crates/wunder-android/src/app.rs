@@ -598,11 +598,6 @@ fn wire_callbacks(
         let _ = sender.send(Command::SelectModel(key.to_string()));
     });
 
-    let sender = commands.clone();
-    ui.on_reasoning_effort_changed(move |value| {
-        let _ = sender.send(Command::ReasoningEffort(value.to_string()));
-    });
-
     // ---- settings sheet ----------------------------------------------
     let sender = commands.clone();
     let weak = ui.as_weak();
@@ -729,6 +724,14 @@ fn wire_callbacks(
     let sender = commands.clone();
     ui.on_permission_changed(move |value| {
         let _ = sender.send(Command::PermissionMode(value.to_string()));
+    });
+    let sender = commands.clone();
+    ui.on_record_voice(move || {
+        let _ = sender.send(Command::VoiceToggle);
+    });
+    let sender = commands.clone();
+    ui.on_capture_screenshot(move || {
+        let _ = sender.send(Command::CaptureScreenshot);
     });
     ui.on_remove_attachment(|_index| {});
 
@@ -989,6 +992,9 @@ fn start_tick(
     let mut last_ime = -1.0f32;
     let mut last_host: Option<HostHud> = None;
     let mut host_ticks = 0u32;
+    let mut last_voice = 0u64;
+    let mut voice_started: Option<Instant> = None;
+    let mut last_voice_elapsed = String::new();
     let sampler = HostHudSampler::start(Duration::from_secs(1));
 
     let timer = Timer::default();
@@ -1037,6 +1043,42 @@ fn start_tick(
                 let _ = commands.send(Command::WorkspaceSaved { ok, name });
             }
         }
+        // Voice and screenshot results are posted by Java workers; poll them
+        // often enough that the capture strip reacts within a frame or two.
+        #[cfg(target_os = "android")]
+        if host_ticks % 6 == 0 {
+            for event in crate::android_host::take_voice_events() {
+                if event == "recording" {
+                    let _ = commands.send(Command::VoiceStarted);
+                } else if event == "denied" {
+                    let _ = commands.send(Command::VoiceFailed {
+                        message: "录音权限被拒绝".into(),
+                    });
+                } else if let Some(path) = event.strip_prefix("done|") {
+                    let _ = commands.send(Command::VoiceFinished {
+                        path: path.to_string(),
+                    });
+                } else if let Some(message) = event.strip_prefix("error|") {
+                    let _ = commands.send(Command::VoiceFailed {
+                        message: format!("录音失败：{message}"),
+                    });
+                }
+            }
+            for status in crate::android_host::take_screenshot_events() {
+                let _ = commands.send(Command::ScreenshotResult { status });
+            }
+        }
+        let pending_draft = shared
+            .lock()
+            .ok()
+            .and_then(|mut state| state.pending_draft.take());
+        if let Some(text) = pending_draft {
+            let current = ui.get_draft().to_string();
+            let separator = if current.trim().is_empty() { "" } else { "\n" };
+            ui.set_draft(format!("{current}{separator}{}", text.trim()).into());
+            ui.set_plus_open(false);
+            ui.set_plus_view(0);
+        }
         let Ok(state) = shared.lock() else { return };
 
         if state.rev != last_rev {
@@ -1055,6 +1097,29 @@ fn start_tick(
             ui.set_running_task_count(state.running_task_count);
             ui.set_subagent_count(state.subagent_count);
             last_rev = state.rev;
+        }
+
+        if state.voice_rev != last_voice {
+            last_voice = state.voice_rev;
+            ui.set_voice_phase(state.voice_phase);
+            if state.voice_phase == 1 {
+                voice_started = Some(Instant::now());
+                last_voice_elapsed = "00:00".into();
+                ui.set_voice_elapsed("00:00".into());
+            } else {
+                voice_started = None;
+                last_voice_elapsed.clear();
+                ui.set_voice_elapsed("".into());
+            }
+        }
+        if state.voice_phase == 1 {
+            let started = voice_started.get_or_insert_with(Instant::now);
+            let seconds = started.elapsed().as_secs();
+            let text = format!("{:02}:{:02}", seconds / 60, seconds % 60);
+            if text != last_voice_elapsed {
+                last_voice_elapsed = text.clone();
+                ui.set_voice_elapsed(text.into());
+            }
         }
 
         if state.sessions_rev != last_sessions {
@@ -1502,7 +1567,7 @@ fn preview_model_card(
     card.temperature = "0.7".into();
     card.timeout_s = "120".into();
     card.max_output = "32768".into();
-    card.max_context = "128000".into();
+    card.max_context = "262144".into();
     card.tool_call_mode = "function_call".into();
     card.support_vision = true;
     card.stream_include_usage = true;
@@ -1555,7 +1620,7 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_editor_default(true);
             ui.set_editor_draft(card);
             ui.set_editor_secret("".into());
-            ui.set_editor_probe("探测成功：上下文 128000".into());
+            ui.set_editor_probe("探测成功：上下文 262144".into());
             ui.set_editor_open(true);
             // The preview window is not running yet, so the sheet's
             // `changed editor-open` handler has not been installed; select
