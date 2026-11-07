@@ -713,6 +713,123 @@ impl<'a> CanonicalThreadLog<'a> {
         Ok(())
     }
 
+    /// Full-domain ruler data, independent of the ledger window and of the
+    /// bounded 1024-row timing rail.  Three bounded reads produce: global
+    /// ordinal/time bounds, a fixed 512-bucket histogram, and real user-round
+    /// markers.  Every thread size therefore gets the same coordinate system.
+    fn fill_trajectory_axis(
+        conn: &Connection,
+        session: &str,
+        rollout: Option<&str>,
+        root: Option<&str>,
+        page: &mut ThreadViewPage,
+    ) -> Result<()> {
+        let Some(rollout) = rollout else {
+            return Ok(());
+        };
+        const BUCKETS: i64 = 512;
+        let scope =
+            "rollout_id=?1 AND (?2 IS NULL OR COALESCE(root_turn_id,turn_id)=?2) AND visible=1";
+        let bounds: (Option<i64>, Option<i64>, i64, Option<i64>, Option<i64>) = conn.query_row(
+            &format!(
+                "SELECT MIN(rollout_ordinal), MAX(rollout_ordinal), COUNT(*), \
+                 MIN(created_at_ms), MAX(created_at_ms) FROM thread_items WHERE {scope}"
+            ),
+            params![rollout, root],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )?;
+        let (min_ordinal, max_ordinal, total, min_time, max_time) = bounds;
+        let Some(min_ordinal) = min_ordinal else {
+            return Ok(());
+        };
+        let max_ordinal = max_ordinal.unwrap_or(min_ordinal);
+        let seq_start = min_ordinal + 1;
+        let seq_end = max_ordinal + 2;
+        let span = (seq_end - seq_start).max(1);
+        let bucket_width = (span + BUCKETS - 1) / BUCKETS;
+        let time_start = min_time.unwrap_or(0) as f64;
+        let time_end = (max_time.unwrap_or(min_time.unwrap_or(0)) as f64).max(time_start + 1.0);
+
+        let mut stmt = conn.prepare(&format!(
+            "SELECT CAST((rollout_ordinal - ?3) * {BUCKETS} / ?4 AS INTEGER), COUNT(*), \
+             SUM(CASE WHEN item_type IN ('user_message','system_message','context','compaction', \
+               'context_message','queue','plan','approval','terminal','note','status','system_prompt') \
+               THEN 1 ELSE 0 END), \
+             SUM(CASE WHEN item_type IN ('assistant_message','model_call','agent_message','reasoning') \
+               THEN 1 ELSE 0 END), \
+             SUM(CASE WHEN item_type IN ('tool_call','tool_result','subagent_run','subagent', \
+               'subagent_message') THEN 1 ELSE 0 END), \
+             SUM(CASE WHEN preview_json LIKE '%\"failed\"%' THEN 1 ELSE 0 END), \
+             MIN(created_at_ms), MAX(created_at_ms) \
+             FROM thread_items WHERE {scope} GROUP BY 1 ORDER BY 1"
+        ))?;
+        let rows = stmt.query_map(params![rollout, root, min_ordinal, span], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, Option<i64>>(2)?.unwrap_or(0),
+                r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                r.get::<_, Option<i64>>(4)?.unwrap_or(0),
+                r.get::<_, Option<i64>>(5)?.unwrap_or(0),
+                r.get::<_, Option<i64>>(6)?.unwrap_or(0),
+                r.get::<_, Option<i64>>(7)?.unwrap_or(0),
+            ))
+        })?;
+        page.tiles.clear();
+        for row in rows {
+            let (bucket, count, input, model, tool, failed, start, end) = row?;
+            page.tiles.push(TrajectoryTile {
+                bucket,
+                count,
+                failed,
+                running: 0,
+                start: start as f64,
+                end: end.max(start) as f64,
+                input_count: input,
+                model_count: model,
+                tool_count: tool,
+            });
+        }
+        page.tile_level = 0;
+
+        let mut turns_stmt = conn.prepare(
+            "SELECT a.user_round, MIN(i.rollout_ordinal), MIN(i.created_at_ms) \
+             FROM queue.canonical_turn_admissions a \
+             JOIN thread_items i ON i.rollout_id=?1 AND i.visible=1 \
+               AND COALESCE(i.root_turn_id,i.turn_id)=a.turn_id \
+               AND (?2 IS NULL OR COALESCE(i.root_turn_id,i.turn_id)=?2) \
+             WHERE a.thread_id=?3 AND a.turn_id=a.root_turn_id \
+             GROUP BY a.user_round ORDER BY a.user_round LIMIT 4096",
+        )?;
+        let turn_rows = turns_stmt.query_map(params![rollout, root, session], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, Option<i64>>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+            ))
+        })?;
+        let mut turns = Vec::new();
+        for row in turn_rows {
+            let (round, ordinal, time) = row?;
+            turns.push(TrajectoryAxisTurn {
+                round,
+                seq: ordinal.unwrap_or(min_ordinal) + 1,
+                time_ms: time.unwrap_or(0) as f64,
+            });
+        }
+        page.axis = ThreadViewAxis {
+            seq_start,
+            seq_end,
+            time_start_ms: time_start,
+            time_end_ms: time_end,
+            total_events: total,
+            bucket_width,
+            turns,
+            complete: true,
+        };
+        Ok(())
+    }
+
     fn chat_row(
         &self,
         snapshot: &HistorySnapshot,
@@ -1103,7 +1220,19 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
             let limit = limit.clamp(1, TRAJECTORY_PAGE_MAX);
             let items =
                 Self::item_page(&conn, s, root, b, a, limit as i64, false, false, true)?;
-            page.has_more = items.more;
+            // `item_page` scans newest-first (DESC) without a forward cursor and
+            // oldest-first (ASC) with one.  Its `limit + 1` sentinel therefore
+            // means "older rows remain" in the first case but "newer rows
+            // remain" in the second.  Folding both into `has_more` left
+            // `has_newer` permanently false, so a refresh that could not fit
+            // every new record in one page never lit the TUI's newer badge and
+            // the remaining pages were never fetched.  The Postgres window
+            // already computes this edge with an EXISTS query; mirror it here.
+            if a.is_some() {
+                page.has_newer = items.more;
+            } else {
+                page.has_more = items.more;
+            }
             for item in items.items {
                 let id = item["item_id"].as_str().unwrap_or("");
                 let turn = item["turn_id"].as_str().unwrap_or("");
@@ -1133,6 +1262,17 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
             page.next_before = page.trajectory.first().map(|r| r.item_index);
             page.next_after = page.trajectory.last().map(|r| r.item_index);
             Self::fill_trajectory_timeline(&conn, rollout.as_deref(), root, &mut page)?;
+            // The full-domain histogram is stable across ledger pages, so it is
+            // computed on the initial read (and on a refresh) only.  A failed
+            // aggregate must degrade to the local fallback, never break the
+            // ledger itself.
+            if b.is_none() && a.is_none() {
+                if let Err(error) =
+                    Self::fill_trajectory_axis(&conn, s, rollout.as_deref(), root, &mut page)
+                {
+                    tracing::warn!(error = %error, "trajectory axis aggregate read failed");
+                }
+            }
         }
         Ok(page)
     }

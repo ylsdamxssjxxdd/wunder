@@ -241,6 +241,36 @@ pub struct TrajectoryTile {
     pub tool_count: i64,
 }
 
+/// One user round in the whole-thread axis.  Coordinates are the durable event
+/// ordinal and a wall-clock timestamp, so every surface shares one origin.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct TrajectoryAxisTurn {
+    pub round: i64,
+    pub seq: i64,
+    pub time_ms: f64,
+}
+
+/// Full-domain axis description, independent of ledger pagination.  This is
+/// the single source of truth for the trajectory ruler: the ledger window can
+/// grow, shrink or move without changing the domain, its ticks or its turn
+/// markers.  `tiles` in `ThreadViewPage` is a fixed-resolution histogram over
+/// `seq_start..seq_end` (512 buckets) and is present at every thread size.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct ThreadViewAxis {
+    pub seq_start: i64,
+    pub seq_end: i64,
+    pub time_start_ms: f64,
+    pub time_end_ms: f64,
+    pub total_events: i64,
+    /// Event ordinals covered by one histogram bucket.
+    pub bucket_width: i64,
+    pub turns: Vec<TrajectoryAxisTurn>,
+    /// False when the backend could not read full-domain bounds; consumers
+    /// then keep their local fallback but must not switch coordinate systems.
+    #[serde(default)]
+    pub complete: bool,
+}
+
 /// A bounded timeline independent of the scrollable ledger/body window.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TrajectoryTimelineRow {
@@ -305,6 +335,8 @@ pub struct ThreadViewPage {
     pub timeline: Vec<TrajectoryTimelineRow>,
     #[serde(default)]
     pub timeline_has_more: bool,
+    #[serde(default)]
+    pub axis: ThreadViewAxis,
     pub tile_level: usize,
     pub next_before: Option<i64>,
     pub has_more: bool,

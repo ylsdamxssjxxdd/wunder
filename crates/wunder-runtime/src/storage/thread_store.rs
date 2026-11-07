@@ -1010,6 +1010,10 @@ impl LocalThreadStore {
         let now = Utc::now().timestamp_millis();
         let rollout = RolloutId::new(uuid::Uuid::new_v4().to_string())?;
         let seed = spec.seed.unwrap_or_else(base_seed);
+        // 虚拟时钟：按「轮间间隔 + 每轮预填/解码/工具耗时」推进记录时间戳，
+        // 让轨迹视图与统计读到真实的时间结构，而不是全部记录共用同一时刻。
+        let timeline = super::stress_model::plan_timeline(seed, now as f64 / 1000.0, spec)?;
+        let mut clock = (timeline.start_time * 1000.0) as i64;
         let initial_system_prompt = synthetic_initial_system_prompt(seed, spec.scenario);
         let initial_memory = synthetic_initial_memory(seed, spec.scenario);
         // The synthetic generator uses the same admission lifecycle as a
@@ -1069,6 +1073,13 @@ impl LocalThreadStore {
         let mut tools = 0_i64;
         let mut thread_usage = StressUsageAccumulator::default();
         for number in 1..=spec.user_rounds {
+            // 轮与轮之间按计划的空闲间隔推进。
+            clock += timeline
+                .costs
+                .get(number as usize - 1)
+                .map(|cost| (cost.gap_before_s * 1000.0) as i64)
+                .unwrap_or_default();
+            let turn_at = clock;
             let prompt = fill_template(rng.pick_str(user_prompts()), &mut rng, number);
             let admissions = self.admission_store()?;
             let owner = user_id.to_owned();
@@ -1108,7 +1119,7 @@ impl LocalThreadStore {
                 CanonicalRecord::Event(CanonicalEvent::TurnStarted {
                     turn_id: turn.clone(),
                     root_turn_id: Some(root_turn.clone()),
-                    started_at_ms: now,
+                    started_at_ms: turn_at,
                 }),
             )
             .await?;
@@ -1120,7 +1131,7 @@ impl LocalThreadStore {
                     item_id: ItemId::new(format!("{turn}:user"))?,
                     turn_id: turn.clone(),
                     root_turn_id: Some(root_turn.clone()),
-                    created_at_ms: now,
+                    created_at_ms: turn_at,
                     kind: CanonicalItemKind::UserMessage,
                     payload: serde_json::json!({"role":"user","content":prompt.clone(),"session_id":thread.as_str(),"turn_id":turn.as_str()}),
                     display_output: None,
@@ -1135,7 +1146,7 @@ impl LocalThreadStore {
                     item_id: ItemId::new(format!("{turn}:model-user"))?,
                     turn_id: turn.clone(),
                     root_turn_id: Some(root_turn.clone()),
-                    created_at_ms: now,
+                    created_at_ms: turn_at,
                     kind: CanonicalItemKind::UserMessage,
                     payload: serde_json::json!({"role":"user","content":prompt}),
                 }),
@@ -1150,6 +1161,14 @@ impl LocalThreadStore {
             )
             .enumerate()
             {
+                // 本轮占用的时间：预填 → 模型回复（含工具调用）→ 工具依序执行 → 解码。
+                let round_at = clock;
+                let round_ms = ((round.prefill_duration_s
+                    + round.decode_duration_s
+                    + round.tool_duration_s.iter().sum::<f64>())
+                    * 1000.0) as i64;
+                let model_at = round_at + (round.prefill_duration_s * 1000.0) as i64;
+                let mut tool_cursor = model_at;
                 let answer = build_answer_text(&mut rng, &prompt, number);
                 let reasoning =
                     build_reasoning_text(&mut rng, round.reasoning_tokens.unwrap_or_default());
@@ -1213,7 +1232,7 @@ impl LocalThreadStore {
                         item_id: ItemId::new(format!("{turn}:response-{index}"))?,
                         turn_id: turn.clone(),
                         root_turn_id: Some(root_turn.clone()),
-                        created_at_ms: now,
+                        created_at_ms: model_at,
                         kind: CanonicalItemKind::AssistantMessage,
                         payload: model_payload,
                     }),
@@ -1230,7 +1249,7 @@ impl LocalThreadStore {
                         item_id: ItemId::new(format!("{turn}:text-{}", index + 1))?,
                         turn_id: turn.clone(),
                         root_turn_id: Some(root_turn.clone()),
-                        created_at_ms: now,
+                        created_at_ms: model_at,
                         kind: CanonicalItemKind::AssistantMessage,
                         payload,
                         display_output: None,
@@ -1267,6 +1286,10 @@ impl LocalThreadStore {
                         fields.remove("tool_call_id");
                     }
                     let observation = serde_json::json!({"role":"tool","tool_call_id":call_id,"content":serde_json::to_string(&observation_payload)?});
+                    // 工具按计划时长依序执行，时间戳随之推进。
+                    tool_cursor += (round.tool_duration_s.get(tool_index).copied().unwrap_or(0.0)
+                        * 1000.0) as i64;
+                    let tool_at = tool_cursor;
                     self.push_stress_record(
                         &thread,
                         &mut batch,
@@ -1275,7 +1298,7 @@ impl LocalThreadStore {
                             item_id: ItemId::new(format!("{turn}:call-{index}-{tool_index}"))?,
                             turn_id: turn.clone(),
                             root_turn_id: Some(root_turn.clone()),
-                            created_at_ms: now,
+                            created_at_ms: tool_at,
                             kind: CanonicalItemKind::ToolResult,
                             payload: observation,
                         }),
@@ -1289,7 +1312,7 @@ impl LocalThreadStore {
                             item_id: ItemId::new(format!("{turn}:tool-{index}-{tool_index}"))?,
                             turn_id: turn.clone(),
                             root_turn_id: Some(root_turn.clone()),
-                            created_at_ms: now,
+                            created_at_ms: tool_at,
                             kind: CanonicalItemKind::ToolResult,
                             payload,
                             display_output: Some(result.data_text),
@@ -1301,6 +1324,8 @@ impl LocalThreadStore {
                     tools += 1;
                     turn_statistics.complete_tool(round.tool_duration_s[tool_index]);
                 }
+                // 本轮全部耗时记入虚拟时钟，下一轮（或 TurnCompleted）从其后开始。
+                clock += round_ms;
             }
             self.push_stress_record(
                 &thread,
@@ -1308,7 +1333,7 @@ impl LocalThreadStore {
                 &mut records,
                 CanonicalRecord::Event(CanonicalEvent::TurnCompleted {
                     turn_id: turn.clone(),
-                    completed_at_ms: now,
+                    completed_at_ms: clock,
                 }),
             )
             .await?;

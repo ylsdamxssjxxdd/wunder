@@ -27,6 +27,7 @@ pub mod storage_policy;
 pub mod storage_records;
 pub mod thread_store;
 pub mod thread_view;
+pub mod trajectory_axis;
 pub mod token_utils;
 pub mod tool_args;
 pub mod virtual_model;

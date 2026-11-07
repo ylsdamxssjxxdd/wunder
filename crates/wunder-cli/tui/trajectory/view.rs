@@ -1,5 +1,6 @@
 use super::*;
 use crate::tool_display::tool_result_ledger_summary;
+use wunder_server::stable_core::trajectory_axis as axis;
 use crate::tui::theme;
 use ratatui::layout::{Constraint, Direction as LayoutDirection, Layout};
 use ratatui::style::Style;
@@ -569,7 +570,7 @@ fn draw_timeline(frame: &mut Frame, area: Rect, v: &mut TrajectoryView, zh: bool
     }
     let mut lanes = vec![vec![("·", theme::secondary_text()); width]; 3];
     if v.root.is_none() && v.hits.is_none() {
-        let size = (128_i64 << (v.tile_level.min(7) * 3)) as f64;
+        let size = v.tile_size();
         for tile in &v.tiles {
             let (start, end) = if v.duration {
                 (tile.start, tile.end)
@@ -597,30 +598,43 @@ fn draw_timeline(frame: &mut Frame, area: Rect, v: &mut TrajectoryView, zh: bool
             }
         }
     }
-    for (i, row) in v.active_rows().iter().enumerate() {
-        let (start, end) = row_span(row, v.duration);
-        if end < range.0 || start > range.1 {
-            continue;
-        }
-        let lane = lane(&row.kind);
-        for x in coordinate(start, range, width)..=coordinate(end, range, width) {
-            lanes[lane][x] = (
-                if i == v.selected {
-                    "◆"
-                } else {
-                    mark(&row.status)
-                },
-                style(row),
-            );
-        }
-    }
-    // Selection must remain visible when several spans occupy the same terminal cell.
-    if let Some(row) = v.row() {
-        let (start, end) = row_span(row, v.duration);
-        if end >= range.0 && start <= range.1 {
-            for x in coordinate(start, range, width)..=coordinate(end, range, width) {
-                lanes[lane(&row.kind)][x] = ("◆", style(row));
+    // A terminal cell is already the smallest addressable unit. Fold into it
+    // explicitly so an error or the selection cannot be overwritten by a later
+    // row that happens to share the same cell.
+    let rows = v.active_rows();
+    let pixel_spans: Vec<axis::PixelSpan> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, row)| {
+            let (start, end) = row_span(row, v.duration);
+            if end < range.0 || start > range.1 {
+                return None;
             }
+            Some(axis::PixelSpan {
+                left: coordinate(start, range, width) as f64,
+                right: coordinate(end, range, width) as f64 + 1.0,
+                lane: lane(&row.kind) as i32,
+                error: row.status == "failed",
+                selected: i == v.selected,
+                dimmed: false,
+                outside: false,
+                index: i as i64,
+            })
+        })
+        .collect();
+    for folded in axis::fold_spans(&pixel_spans, width as f64, 1.0) {
+        let row = &rows[folded.index as usize];
+        let symbol = if folded.selected {
+            "◆"
+        } else if folded.error {
+            "×"
+        } else {
+            mark(&row.status)
+        };
+        let first = (folded.left as usize).min(width - 1);
+        let last = (folded.right.ceil() as usize).min(width).max(first + 1);
+        for cell in &mut lanes[folded.lane as usize][first..last] {
+            *cell = (symbol, style(row));
         }
     }
     let labels = if zh {
@@ -641,15 +655,87 @@ fn draw_timeline(frame: &mut Frame, area: Rect, v: &mut TrajectoryView, zh: bool
         lines.push(Line::from(spans));
     }
     if area.height >= 5 {
-        let labels = if v.duration {
-            format!("0 → {:.3}s  Δ {:.3}s", range.1 - range.0, range.1 - range.0)
+        // Ticks are measured from the unzoomed domain origin; 12 px per
+        // terminal cell keeps the shared ladder at a readable density.
+        let mode = if v.duration {
+            axis::AxisMode::Duration
         } else {
-            format!("#{} → #{}", range.0 as i64, range.1 as i64)
+            axis::AxisMode::Sequence
         };
-        lines.push(Line::from(Span::styled(
-            format!("        {labels}"),
-            theme::secondary_text(),
-        )));
+        let origin = v.domain_bounds().0;
+        let axis_width = width as f64 * 12.0;
+        let ticks = axis::axis_ticks(origin, range.0, range.1 - range.0, axis_width, mode);
+        let mut tick_line = format!("{} ", pad(mode.unit(), 7));
+        let mut cursor = tick_line.chars().count();
+        for tick in ticks {
+            let start = ((tick.x / 12.0).round() as usize + 8).max(cursor);
+            if start >= width + 8 {
+                break;
+            }
+            while tick_line.chars().count() < start {
+                tick_line.push(' ');
+            }
+            tick_line.push_str(&tick.label);
+            cursor = tick_line.chars().count() + 1;
+        }
+        lines.push(Line::from(Span::styled(tick_line, theme::secondary_text())));
+
+        // Real user rounds from the full-domain axis; the legacy fallback
+        // derives them from the currently loaded ledger window only.
+        let candidates: Vec<(i64, f64)> = if v.axis.complete && !v.axis.turns.is_empty() {
+            v.axis
+                .turns
+                .iter()
+                .filter_map(|turn| {
+                    let value = if v.duration {
+                        turn.time_ms
+                    } else {
+                        turn.seq as f64
+                    };
+                    (value >= range.0 && value <= range.1)
+                        .then_some((turn.round, coordinate(value, range, width) as f64 * 12.0))
+                })
+                .collect()
+        } else {
+            let mut seen = std::collections::HashSet::new();
+            let mut result: Vec<(i64, f64)> = Vec::new();
+            for row in rows {
+                if !seen.insert(row.user_round) {
+                    continue;
+                }
+                let (start, _) = row_span(row, v.duration);
+                if start < range.0 || start > range.1 {
+                    continue;
+                }
+                result.push((row.user_round, coordinate(start, range, width) as f64 * 12.0));
+            }
+            result
+        };
+        let mut turn_line = format!("{} ", pad("R", 7));
+        let mut cursor = turn_line.chars().count();
+        for turn in axis::thin_turns(&candidates, axis_width) {
+            let start = ((turn.x / 12.0).round() as usize + 8).max(cursor);
+            if start >= width + 8 {
+                break;
+            }
+            while turn_line.chars().count() < start {
+                turn_line.push(' ');
+            }
+            turn_line.push_str(&turn.label);
+            cursor = turn_line.chars().count() + 1;
+        }
+        let span_label = if v.duration {
+            axis::format_offset(range.1 - range.0)
+        } else {
+            format!("#{}", (range.1 - range.0).round() as i64)
+        };
+        turn_line.push_str(&format!(
+            "   Δ {}  ({} → {})",
+            span_label,
+            axis::format_label(range.0 - origin, mode),
+            axis::format_label(range.1 - origin, mode),
+        ));
+        lines.push(Line::from(Span::styled(turn_line, theme::secondary_text())));
     }
     frame.render_widget(Paragraph::new(lines), area);
 }

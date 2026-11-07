@@ -4,6 +4,7 @@
  */
 
 import { chatPerf } from '@/utils/chatPerf'
+import { timelineWarp, type IdleWarp } from './trajectoryAxis'
 
 // W4-L: guarded clock for the heavy-history metrics. `performance` is missing in
 // some non-browser hosts, and the recorder is inert while capture is off.
@@ -125,6 +126,8 @@ export interface TimelineModel {
   end: number
   spans: TimelineSpan[]
   turnBoundaries: TimelineTurnBoundary[]
+  /** 空闲压缩映射；仅在时长轴发生折叠时存在，刻度标签用它的 unmap 反解。 */
+  warp?: IdleWarp
 }
 
 export interface TableRecord {
@@ -1275,7 +1278,9 @@ function deriveTimelineUninstrumented(
   mode: TimelineMode = 'sequence',
 ): TimelineModel | null {
   if (mode !== 'sequence') {
-    return deriveTimedTimeline(turns, mode === 'duration' || mode === 'actual', mode === 'duration')
+    // 时长轴始终表示真实经过时间；紧凑等宽视图由 sequence 模式承担。
+    // 压缩空闲曾让同一线程在不同数据源下拥有两套坐标，已移除。
+    return deriveTimedTimeline(turns, mode === 'duration' || mode === 'actual')
   }
   const spans: TimelineSpan[] = []
   const turnBoundaries: TimelineTurnBoundary[] = []
@@ -1312,7 +1317,6 @@ export function deriveTimeline(
 function deriveTimedTimeline(
   turns: readonly TrajTurnModel[],
   actualDuration: boolean,
-  compressIdle: boolean,
 ): TimelineModel | null {
   const timedTurns = turns.flatMap((turn) => {
     const rawSpans = turn.groups.flatMap(group => group.cells.flatMap((cell): TimelineSpan[] => {
@@ -1325,18 +1329,6 @@ function deriveTimedTimeline(
   const rawSpans = timedTurns.flatMap(turn => turn.rawSpans)
   if (rawSpans.length === 0) return null
 
-  const removedIdleBySpan = new Map<TimelineSpan, number>()
-  let removedIdle = 0
-  let coveredUntil: number | null = null
-  for (const span of [...rawSpans].sort((left, right) =>
-    left.start - right.start || left.end - right.end)) {
-    if (compressIdle && coveredUntil !== null && span.start > coveredUntil) {
-      removedIdle += span.start - coveredUntil
-    }
-    removedIdleBySpan.set(span, removedIdle)
-    coveredUntil = coveredUntil === null ? span.end : Math.max(coveredUntil, span.end)
-  }
-
   const spans: TimelineSpan[] = []
   const turnBoundaries: TimelineTurnBoundary[] = []
   // 用循环累加求 min/max，避免对大数组做 Math.min(...) / Math.max(...) 展开。
@@ -1345,12 +1337,10 @@ function deriveTimedTimeline(
   for (const turn of timedTurns) {
     let turnStart = Infinity
     for (const span of turn.rawSpans) {
-      const offset = removedIdleBySpan.get(span) ?? 0
-      const projectedStart = span.start - offset
-      const projectedEnd = (actualDuration ? span.end : span.start) - offset
-      spans.push({ ...span, start: projectedStart, end: projectedEnd })
-      if (projectedStart < turnStart) turnStart = projectedStart
-      if (projectedStart < start) start = projectedStart
+      const projectedEnd = actualDuration ? span.end : span.start
+      spans.push({ ...span, end: projectedEnd })
+      if (span.start < turnStart) turnStart = span.start
+      if (span.start < start) start = span.start
       if (projectedEnd > end) end = projectedEnd
     }
     if (turn.turn !== null) {

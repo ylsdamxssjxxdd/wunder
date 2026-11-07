@@ -264,6 +264,10 @@ impl PostgresThreadStore {
         let thread = ThreadId::new(spec.session_id.clone())?;
         let seed = spec.seed.unwrap_or_else(base_seed);
         let now = Utc::now().timestamp_millis();
+        // 虚拟时钟：与 SQLite 写入端一致，按「轮间间隔 + 每轮预填/解码/工具
+        // 耗时」推进记录时间戳，而不是全部记录共用同一时刻。
+        let timeline = plan_timeline(seed, now as f64 / 1000.0, spec)?;
+        let mut clock = (timeline.start_time * 1000.0) as i64;
         let rollout = RolloutId::new(uuid::Uuid::new_v4().to_string())?;
         let admissions = self.admission_store();
         admissions.register_owner(user, thread.as_str())?;
@@ -284,6 +288,13 @@ impl PostgresThreadStore {
         let mut batch = Batch::new();
         let mut thread_usage = StressUsageAccumulator::default();
         for number in 1..=spec.user_rounds {
+            // 轮与轮之间按计划的空闲间隔推进。
+            clock += timeline
+                .costs
+                .get(number as usize - 1)
+                .map(|cost| (cost.gap_before_s * 1000.0) as i64)
+                .unwrap_or_default();
+            let turn_at = clock;
             let prompt = fill_template(rng.pick_str(user_prompts()), &mut rng, number);
             let input =
                 json!({"content":prompt,"client_message_id":format!("sample-{seed}-{number}")});
@@ -309,7 +320,7 @@ impl PostgresThreadStore {
                     CanonicalRecord::Event(CanonicalEvent::TurnStarted {
                         turn_id: turn.clone(),
                         root_turn_id: Some(root.clone()),
-                        started_at_ms: now,
+                        started_at_ms: turn_at,
                     }),
                 )
                 .await?;
@@ -323,7 +334,7 @@ impl PostgresThreadStore {
                         "user",
                         CanonicalItemKind::UserMessage,
                         json!({"role":"user","content":prompt}),
-                        now,
+                        turn_at,
                     )?,
                 )
                 .await?;
@@ -337,7 +348,7 @@ impl PostgresThreadStore {
                         "model-user",
                         CanonicalItemKind::UserMessage,
                         json!({"role":"user","content":prompt}),
-                        now,
+                        turn_at,
                     )?,
                 )
                 .await?;
@@ -351,6 +362,14 @@ impl PostgresThreadStore {
             )
             .enumerate()
             {
+                // 本轮占用的时间：预填 → 模型回复（含工具调用）→ 工具依序执行 → 解码。
+                let round_at = clock;
+                let round_ms = ((plan.prefill_duration_s
+                    + plan.decode_duration_s
+                    + plan.tool_duration_s.iter().sum::<f64>())
+                    * 1000.0) as i64;
+                let model_at = round_at + (plan.prefill_duration_s * 1000.0) as i64;
+                let mut tool_cursor = model_at;
                 let answer = build_answer_text(&mut rng, &prompt, number);
                 let reasoning =
                     build_reasoning_text(&mut rng, plan.reasoning_tokens.unwrap_or_default());
@@ -395,7 +414,7 @@ impl PostgresThreadStore {
                             &format!("response-{index}"),
                             CanonicalItemKind::AssistantMessage,
                             payload.clone(),
-                            now,
+                            model_at,
                         )?,
                     )
                     .await?;
@@ -415,7 +434,7 @@ impl PostgresThreadStore {
                             &format!("text-{}", index + 1),
                             CanonicalItemKind::AssistantMessage,
                             payload,
-                            now,
+                            model_at,
                         )?,
                     )
                     .await?;
@@ -443,15 +462,19 @@ impl PostgresThreadStore {
                     if let Some(fields) = observation_payload.as_object_mut() {
                         fields.remove("tool_call_id");
                     }
+                    // 工具按计划时长依序执行，时间戳随之推进。
+                    tool_cursor += (plan.tool_duration_s.get(tool_index).copied().unwrap_or(0.0)
+                        * 1000.0) as i64;
+                    let tool_at = tool_cursor;
                     batch.push(self, &thread, response(&turn, &root, &format!("call-{index}-{tool_index}"), CanonicalItemKind::ToolResult,
-                        json!({"role":"tool","tool_call_id":call_id,"content":serde_json::to_string(&observation_payload)?}), now)?).await?;
+                        json!({"role":"tool","tool_call_id":call_id,"content":serde_json::to_string(&observation_payload)?}), tool_at)?).await?;
                     let mut record = item(
                         &turn,
                         &root,
                         &format!("tool-{index}-{tool_index}"),
                         CanonicalItemKind::ToolResult,
                         payload,
-                        now,
+                        tool_at,
                     )?;
                     if let CanonicalRecord::Event(CanonicalEvent::ItemCompleted(
                         ref mut completed,
@@ -464,6 +487,8 @@ impl PostgresThreadStore {
                     tools += 1;
                     turn_statistics.complete_tool(plan.tool_duration_s[tool_index]);
                 }
+                // 本轮全部耗时记入虚拟时钟。
+                clock += round_ms;
             }
             batch
                 .push(
@@ -471,7 +496,7 @@ impl PostgresThreadStore {
                     &thread,
                     CanonicalRecord::Event(CanonicalEvent::TurnCompleted {
                         turn_id: turn.clone(),
-                        completed_at_ms: now,
+                        completed_at_ms: clock,
                     }),
                 )
                 .await?;

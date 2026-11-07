@@ -65,6 +65,11 @@ fn trajectory_timeline_respects_time_gaps_and_model_lane() {
     assert_eq!(lane("model_call"), 1);
     let mut v = TrajectoryView::new("fixture-thread".into());
     v.rows = rows(100, 110);
+    // row_span 把持久化的秒投影成毫秒；让 fixture 仍落在瓦片区间内。
+    for row in &mut v.rows {
+        row.started_at /= 1000.0;
+        row.completed_at = Some(row.started_at + 0.0005);
+    }
     v.tiles = vec![TrajectoryTile {
         start: 10.,
         end: 200.,
@@ -77,6 +82,57 @@ fn trajectory_timeline_respects_time_gaps_and_model_lane() {
     v.zoom = 2;
     assert!((v.domain().1 - v.domain().0 - 47.5).abs() < 0.01);
 }
+#[test]
+fn full_domain_axis_stays_fixed_across_ledger_pages() {
+    let axis = ThreadViewAxis {
+        seq_start: 1,
+        seq_end: 12_000,
+        time_start_ms: 1_800_000_000_000.0,
+        time_end_ms: 1_800_072_000_000.0,
+        total_events: 12_000,
+        bucket_width: 24,
+        turns: vec![wunder_server::stable_core::thread_view::TrajectoryAxisTurn {
+            round: 120,
+            seq: 11_900,
+            time_ms: 1_800_071_000_000.0,
+        }],
+        complete: true,
+    };
+    let mut v = TrajectoryView::new("fixture-thread".into());
+    v.apply_page(
+        Direction::Latest,
+        ThreadViewPage {
+            trajectory: rows(100, 180),
+            axis: axis.clone(),
+            tiles: vec![TrajectoryTile {
+                bucket: 0,
+                count: 40,
+                start: 1_800_000_000_000.0,
+                end: 1_800_000_300_000.0,
+                ..Default::default()
+            }],
+            ..Default::default()
+        },
+    );
+    let first = v.domain_bounds();
+    v.apply_page(
+        Direction::Older,
+        ThreadViewPage {
+            trajectory: rows(20, 100),
+            axis,
+            ..Default::default()
+        },
+    );
+    assert_eq!(v.domain_bounds(), first);
+    assert_eq!(v.tile_size(), 24.0);
+    assert_eq!(v.axis.turns.len(), 1);
+    v.duration = true;
+    assert_eq!(
+        v.domain_bounds(),
+        (1_800_000_000_000.0, 1_800_072_000_000.0)
+    );
+}
+
 #[test]
 fn trajectory_step_token_bars_track_total_and_increment() {
     let usage_row = |seq: i64, stats: Option<serde_json::Value>| TrajectoryViewRow {
@@ -345,7 +401,12 @@ async fn trajectory_refresh_catches_every_page_and_recovers_revisions() {
         .unwrap();
     crate::tui::app::snapshot_tests::freeze_fixture_instructions(&app).await;
     let turn_id = turn["turn_id"].as_str().unwrap();
-    store.append_thread_item(&owner, &json!({"session_id":session,"turn_id":turn_id,"item_id":"fixture-running","kind":"assistant_message","status":"running","content":"partial"})).unwrap();
+    // Running stream items are deliberately not committed by
+    // commit_thread_item (only completed/failed/cancelled reach thread_items),
+    // and re-appending an existing item_id is ignored.  Seed a settled
+    // baseline row, then let the revision arrive as its own first durable
+    // commit instead of assuming an in-place overwrite.
+    store.append_thread_item(&owner, &json!({"session_id":session,"turn_id":turn_id,"item_id":"fixture-base","kind":"assistant_message","status":"completed","content":"partial"})).unwrap();
     app.open_trajectory_view(None).await.unwrap();
     settle(&mut app).await;
     for i in 0..105 {
@@ -364,18 +425,23 @@ async fn trajectory_refresh_catches_every_page_and_recovers_revisions() {
             .count(),
         105
     );
-    let running_index = view
+    // A settled revision is a new durable record: the refresh must surface its
+    // row and the detail read must return the final body.
+    store.append_thread_item(&owner, &json!({"session_id":session,"turn_id":turn_id,"item_id":"fixture-final","kind":"assistant_message","status":"completed","content":"final revision"})).unwrap();
+    key(&mut app, KeyCode::Char('r')).await;
+    app.trajectory_view.as_mut().unwrap().live = false;
+    let final_index = app
+        .trajectory_view
+        .as_ref()
+        .unwrap()
         .rows
         .iter()
-        .position(|r| r.item_id == "fixture-running")
+        .position(|r| r.item_id == "fixture-final")
         .unwrap();
-    app.trajectory_view.as_mut().unwrap().selected = running_index;
-    app.trajectory_view.as_mut().unwrap().live = false;
+    app.trajectory_view.as_mut().unwrap().selected = final_index;
     key(&mut app, KeyCode::Char('i')).await;
-    store.append_thread_item(&owner, &json!({"session_id":session,"turn_id":turn_id,"item_id":"fixture-running","kind":"assistant_message","status":"completed","content":"final revision"})).unwrap();
-    key(&mut app, KeyCode::Char('r')).await;
     let view = app.trajectory_view.as_ref().unwrap();
-    assert_eq!(view.row().unwrap().item_id, "fixture-running");
+    assert_eq!(view.row().unwrap().item_id, "fixture-final");
     assert_eq!(view.row().unwrap().status, "completed");
     assert_eq!(view.detail.value["content"], "final revision");
 }

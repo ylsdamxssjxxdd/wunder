@@ -955,6 +955,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn timeline_plan_spreads_turns_over_time() {
+        // 压测数据必须有可读的时间结构：每轮之间留有空闲间隔，且起点使线程
+        // 结束于当前时刻附近（recent history）。
+        let spec = StressThreadSpec {
+            session_id: "stress-timeline-plan".into(),
+            title: "timeline plan".into(),
+            workspace_id: None,
+            user_rounds: 5,
+            model_rounds_per_turn: 2,
+            scenario: StressThreadScenario::Complex,
+            seed: Some(7),
+        };
+        let now_s = 1_800_000_000.0;
+        let plan = plan_timeline(7, now_s, &spec).expect("plan");
+        assert_eq!(plan.costs.len(), 5);
+        assert!(plan.costs.iter().all(|cost| cost.gap_before_s > 0.0));
+        assert!(plan.costs.iter().all(|cost| cost.total_s > cost.gap_before_s));
+        // 起点 = now - 总时长：线程恰好结束在 now 附近。
+        let total_s: f64 = plan.costs.iter().map(|cost| cost.total_s).sum();
+        assert!((plan.start_time + total_s - now_s).abs() < 1.0);
+    }
+
+    #[test]
     fn reasoning_text_reaches_budget() {
         let mut rng = Rng::new(1);
         let text = build_reasoning_text(&mut rng, 100);

@@ -155,6 +155,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
     in property <string> token-summary;
     in property <[TrajTick]> ticks;
     in property <[TrajBoundary]> boundaries;
+    in property <string> unit;
     in property <float> view-start: 0.0;
     in property <float> view-width: 1.0;
     in property <bool> selection-active: false;
@@ -235,6 +236,11 @@ export component ThreadTrajectoryDialog inherits Rectangle {
     private property <bool> press-pan: false;
     private property <bool> track-hovered: false;
     private property <length> track-hover-x: 0px;
+    // Horizontal viewport scrollbar drag state.  `view-start`/`view-width`
+    // are already normalized 0..1, so they double as thumb geometry.
+    private property <bool> scroll-dragging: false;
+    private property <length> scroll-press-x: 0px;
+    private property <float> scroll-press-start: 0.0;
     private property <int> bar-hover: -1;
     private property <length> bar-tip-x: 0px;
     private property <length> bar-tip-y: 0px;
@@ -420,24 +426,30 @@ export component ThreadTrajectoryDialog inherits Rectangle {
             }
         }
 
-        // ---- timeline: 4px top padding + 16px axis + 50px track + 8px bottom ----
-        // The web ledger uses the same 78px plot box. Keeping the padding in
-        // the native view prevents the axis/track from appearing glued to the
-        // toolbar and leaves the coloured segments on the same baseline.
+        // ---- timeline: 4px + 28px axis (ticks + turn marks) + 50px track + 10px scrollbar ----
+        // All three surfaces use the same 100px plot box. The second axis row
+        // keeps thinned round markers away from the time/ordinal ticks, and the
+        // bottom row is a viewport scrollbar for zoomed long threads.
         Rectangle {
-            height: 78px;
+            height: 100px;
             clip: true;
             // Keep the 44px lane gutter separate from the track, matching the
             // web grid. Labels must never sit underneath a colored span.
+            TrajText {
+                x: 0px; y: 4px; width: 40px; height: 14px;
+                vertical-alignment: center; horizontal-alignment: right;
+                text: root.unit; color: TrajTokens.text-3;
+                font-family: Theme.font-mono; font-size: 10px;
+            }
             Rectangle {
-                height: 16px;
+                height: 28px;
                 x: 44px;
                 width: parent.width - 44px;
                 y: 4px;
                 for tick in root.ticks : TrajText {
                     x: tick.pos * parent.width - self.preferred-width / 2;
                     y: 0px;
-                    height: parent.height;
+                    height: 14px;
                     horizontal-alignment: center;
                     text: tick.label;
                     color: TrajTokens.text-3;
@@ -445,9 +457,20 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     font-size: 10px;
                     overflow: elide;
                 }
+                for boundary in root.boundaries : TrajText {
+                    x: boundary.pos * parent.width - self.preferred-width / 2;
+                    y: 14px;
+                    height: 12px;
+                    horizontal-alignment: center;
+                    text: boundary.label;
+                    color: TrajTokens.text-3;
+                    font-family: Theme.font-mono;
+                    font-size: 9px;
+                    overflow: elide;
+                }
             }
             HorizontalLayout {
-                y: 20px;
+                y: 32px;
                 height: 50px;
                 Rectangle {
                     width: 44px;
@@ -460,8 +483,9 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                     horizontal-stretch: 1;
                     clip: true;
                 // turn boundaries behind the spans
+                // Boundaries are already thinned by the shared axis model, so
+                // they stay visible regardless of the ledger fold state.
                 for boundary in root.boundaries : Rectangle {
-                    visible: root.show-turns && !(root.spans.length > 0 && root.spans[0].overview);
                     x: boundary.pos * track.width;
                     y: 0px;
                     width: 0.5px;
@@ -484,7 +508,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                         if event.kind == PointerEventKind.move {
                             root.handle-track-move(self.mouse-x);
                             root.hover-mx = self.mouse-x;
-                            root.hover-my = 20px + self.mouse-y;
+                            root.hover-my = 32px + self.mouse-y;
                         }
                     }
                     changed has-hover => {
@@ -492,7 +516,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                             root.track-hovered = true;
                             root.track-hover-x = self.mouse-x;
                             root.hover-mx = self.mouse-x;
-                            root.hover-my = 20px + self.mouse-y;
+                            root.hover-my = 32px + self.mouse-y;
                             root.hover-position(root.view-start + self.mouse-x / track.width * root.view-width);
                         }
                         else { root.track-hovered = false; root.leave-span(); }
@@ -535,7 +559,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                 root.handle-track-move(sp.x + self.mouse-x);
                                 root.hover-span(span.index);
                                 root.hover-mx = sp.x + self.mouse-x;
-                                root.hover-my = 20px + sp.y + self.mouse-y;
+                                root.hover-my = 32px + sp.y + self.mouse-y;
                             }
                         }
                         clicked => {
@@ -603,11 +627,67 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                 }
                 }
             }
+            // ---- 视口横向滚动条：与 view-start / view-width 双向联动 ----
+            // 同一套几何在 web/frontend 由共享轴模型 axisScrollbar 计算；蛹的
+            // 视口本来就是 0..1 归一化分数，因此 thumb 位置/宽度直接等于它们。
+            // 滚轮缩放后 thumb 变窄，拖动或点击轨道即可浏览整条线程。
+            scroll-track := Rectangle {
+                x: 44px;
+                y: 86px;
+                width: parent.width - 44px;
+                height: 10px;
+                border-radius: 4px;
+                background: TrajTokens.border-2;
+                property <length> thumb-width: max(14px, root.view-width * self.width);
+                property <length> thumb-x: min(root.view-start * self.width, self.width - self.thumb-width);
+                scroll-thumb := Rectangle {
+                    x: scroll-track.thumb-x;
+                    y: 1px;
+                    width: scroll-track.thumb-width;
+                    height: 8px;
+                    border-radius: 3px;
+                    background: root.view-width < 0.999 ? TrajTokens.brand : TrajTokens.text-3;
+                    opacity: root.view-width < 0.999 ? (scroll-touch.has-hover ? 1.0 : 0.75) : 0.35;
+                }
+                scroll-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down {
+                            root.scroll-dragging = true;
+                            root.scroll-press-x = self.mouse-x;
+                            if self.mouse-x < scroll-thumb.x || self.mouse-x > scroll-thumb.x + scroll-thumb.width {
+                                // 点击轨道：把点击点作为新视口的中心。先按轨道夹紧，
+                                // 否则贴着两端起拖时 thumb 会落后于指针。
+                                root.scroll-press-start = min(
+                                    max(0.0, self.mouse-x / scroll-track.width - root.view-width / 2),
+                                    1.0 - root.view-width,
+                                );
+                                root.pan(root.scroll-press-start);
+                            } else {
+                                root.scroll-press-start = root.view-start;
+                            }
+                        }
+                        if event.kind == PointerEventKind.up {
+                            root.scroll-dragging = false;
+                        }
+                    }
+                    moved => {
+                        if root.scroll-dragging {
+                            root.pan(root.scroll-press-start + (self.mouse-x - root.scroll-press-x) / scroll-track.width);
+                        }
+                    }
+                }
+            }
         }
-        // ---- 消耗直方图：每一步（模型请求）一根柱，柱高随模式取全部消耗或新增占用 ----
-        if root.token-bars.length > 0 : Rectangle {
-            height: 48px;
+        // ---- 消耗直方图：每一步（模型请求）一根柱；步骤多时固定最小柱宽并横向滚动 ----
+        if root.token-bars.length > 0 : token-band := Rectangle {
+            height: 60px;
             clip: true;
+            // 8px 内边距 + (6px 柱宽 + 1px 间距) × 步骤数。步骤少时铺满一屏，
+            // 步骤多时内容宽度超出视口，ScrollView 自动给出横向滚动条，
+            // 想看多少看多少，不再把上百步压成一条蓝色实心带。
+            property <length> bars-natural-width: 8px + 7px * root.token-bars.length;
+            property <length> bars-strip-width: max(token-scroll.visible-width, token-band.bars-natural-width);
             HorizontalLayout {
                 // 与泳道标签共用 44px 标签沟槽
                 Rectangle {
@@ -623,52 +703,65 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                 token-track := Rectangle {
                     horizontal-stretch: 1;
                     clip: true;
-                    HorizontalLayout {
-                        x: 4px;
-                        width: parent.width - 8px;
-                        padding-top: 4px;
-                        padding-bottom: 8px;
-                        spacing: 1px;
-                        for bar[i] in root.token-bars : bar-cell := Rectangle {
-                            horizontal-stretch: 1;
-                            max-width: 28px;
-                            bar-fill := Rectangle {
-                                y: parent.height - self.height;
-                                width: parent.width;
-                                height: bar.reported ? max(2px, parent.height * max(0.04, bar.ratio)) : 2px;
-                                border-radius: 1px;
-                                background: !bar.reported ? TrajTokens.caption : bar.peak ? TrajTokens.amber : TrajTokens.brand;
-                                opacity: bar.reported ? 1.0 : 0.5;
-                            }
-                            // 与管理端/云端版一致：点击时间线段或台账行后，对应柱子
-                            // 保持琥珀色选中环，反向点击柱子亦然（同走 select-span）。
-                            property <bool> is-selected: bar.index >= 0 && bar.index == root.selected-index;
-                            if bar-touch.has-hover || bar-cell.is-selected : Rectangle {
-                                x: -2px;
-                                y: bar-fill.y - 2px;
-                                width: parent.width + 4px;
-                                height: bar-fill.height + 4px;
-                                border-radius: 3px;
-                                border-width: 1px;
-                                border-color: bar-cell.is-selected ? TrajTokens.amber : bar.peak ? TrajTokens.amber : TrajTokens.brand;
-                                background: transparent;
-                            }
-                            bar-touch := TouchArea {
-                                mouse-cursor: bar.index >= 0 ? pointer : default;
-                                pointer-event(event) => {
-                                    // 同 track：悬停不会触发 `moved`，须用 move 事件，
-                                    // 否则柱子悬停时不会有任何提示。
-                                    if event.kind == PointerEventKind.move {
-                                        root.bar-hover = i;
-                                        root.bar-tip-x = 48px + bar-cell.x + self.mouse-x;
-                                        root.bar-tip-y = 114px + self.mouse-y;
+                    token-scroll := ScrollView {
+                        width: parent.width;
+                        height: parent.height;
+                        vertical-scrollbar-policy: always-off;
+                        horizontal-scrollbar-policy: as-needed;
+                        mouse-drag-pan-enabled: true;
+                        content-width: token-band.bars-strip-width;
+                        content-height: self.visible-height;
+                        HorizontalLayout {
+                            width: token-band.bars-strip-width;
+                            padding-left: 4px;
+                            padding-right: 4px;
+                            padding-top: 4px;
+                            padding-bottom: 12px;
+                            spacing: 1px;
+                            for bar[i] in root.token-bars : bar-cell := Rectangle {
+                                horizontal-stretch: 1;
+                                min-width: 6px;
+                                max-width: 28px;
+                                bar-fill := Rectangle {
+                                    y: parent.height - self.height;
+                                    width: parent.width;
+                                    height: bar.reported ? max(2px, parent.height * max(0.04, bar.ratio)) : 2px;
+                                    border-radius: 1px;
+                                    background: !bar.reported ? TrajTokens.caption : bar.peak ? TrajTokens.amber : TrajTokens.brand;
+                                    opacity: bar.reported ? 1.0 : 0.5;
+                                }
+                                // 与舰桥/蜂巢一致：点击时间线段或台账行后，对应柱子
+                                // 保持琥珀色选中环，反向点击柱子亦然（同走 select-span）。
+                                property <bool> is-selected: bar.index >= 0 && bar.index == root.selected-index;
+                                if bar-touch.has-hover || bar-cell.is-selected : Rectangle {
+                                    x: -2px;
+                                    y: bar-fill.y - 2px;
+                                    width: parent.width + 4px;
+                                    height: bar-fill.height + 4px;
+                                    border-radius: 3px;
+                                    border-width: 1px;
+                                    border-color: bar-cell.is-selected ? TrajTokens.amber : bar.peak ? TrajTokens.amber : TrajTokens.brand;
+                                    background: transparent;
+                                }
+                                bar-touch := TouchArea {
+                                    mouse-cursor: bar.index >= 0 ? pointer : default;
+                                    pointer-event(event) => {
+                                        // 同 track：悬停不会触发 `moved`，须用 move 事件，
+                                        // 否则柱子悬停时不会有任何提示。
+                                        if event.kind == PointerEventKind.move {
+                                            root.bar-hover = i;
+                                            // 用绝对坐标定位 tooltip：横向滚动后
+                                            // bar-cell.x 仍是内容坐标，硬编码偏移会错位。
+                                            root.bar-tip-x = bar-touch.absolute-position.x - root.absolute-position.x + self.mouse-x;
+                                            root.bar-tip-y = bar-touch.absolute-position.y - root.absolute-position.y + self.mouse-y;
+                                        }
                                     }
-                                }
-                                changed has-hover => {
-                                    if !self.has-hover && root.bar-hover == i { root.bar-hover = -1; }
-                                }
-                                clicked => {
-                                    if bar.index >= 0 { root.select-span(bar.index); }
+                                    changed has-hover => {
+                                        if !self.has-hover && root.bar-hover == i { root.bar-hover = -1; }
+                                    }
+                                    clicked => {
+                                        if bar.index >= 0 { root.select-span(bar.index); }
+                                    }
                                 }
                             }
                         }
@@ -834,6 +927,9 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                             vertical-alignment: center;
                                             overflow: elide; wrap: no-wrap;
                                             horizontal-stretch: row.kind == 5 || row.kind == 6 ? 0 : 1;
+                                            // 工具名是这一行的识别信息，不能被后面的参数预览挤成“…”。
+                                            // 上限取固定 220px：引用父宽度会让布局形成自反依赖。
+                                            min-width: row.kind == 5 || row.kind == 6 ? min(self.preferred-width, 220px) : 0px;
                                             max-width: row.kind == 5 || row.kind == 6 ? self.preferred-width : 100000px;
                                         }
                                         if row.arguments != "" : Rectangle { width: 7px; }

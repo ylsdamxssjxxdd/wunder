@@ -40,12 +40,17 @@ impl TuiApp {
         if v.pending.is_some() {
             return;
         }
+        // Window cursors are `rollout_ordinal` values (`item_index` on a row),
+        // not `created_seq`: the projection exposes created_seq = ordinal + 1,
+        // while the storage query filters on `rollout_ordinal < ? / > ?`.
+        // Passing created_seq made every forward page skip the record right
+        // after the cursor, so a refresh could never catch all new rows.
         let before = (direction == Direction::Older)
-            .then(|| v.rows.first().map(|r| r.created_seq))
+            .then(|| v.rows.first().map(|r| r.item_index))
             .flatten()
             .or_else(|| {
                 (direction == Direction::Reload)
-                    .then(|| v.row().map(|r| r.created_seq.saturating_add(1)))
+                    .then(|| v.row().map(|r| r.item_index.saturating_add(1)))
                     .flatten()
             })
             .or_else(|| {
@@ -55,8 +60,14 @@ impl TuiApp {
                     .map(|n| n.saturating_add(1))
             });
         let after = (direction == Direction::Newer || direction == Direction::Refresh)
-            .then(|| v.rows.last().map(|r| r.created_seq))
-            .flatten();
+            .then(|| v.rows.last().map(|r| r.item_index))
+            .flatten()
+            // An empty ledger has no forward cursor, so a refresh would keep
+            // re-reading the newest tail and replacing the same 80 rows while
+            // older records stay unreachable.  Start the chase just below the
+            // oldest durable ordinal; item_page's canonical-lineage branch is
+            // built for exactly this "below the trimmed window" case.
+            .or_else(|| (direction == Direction::Refresh).then_some(-1));
         let store = self.runtime.state.storage.clone();
         let user = self.runtime.user_id.clone();
         let session = v.session.clone();
@@ -372,7 +383,7 @@ impl TuiApp {
             KeyCode::Enter if v.pending.is_none() => {
                 if let Some(row) = v.row().cloned() {
                     if row.overview_only || v.root.is_none() && !row.root_turn_id.is_empty() {
-                        v.return_anchor = (row.created_seq > 0).then_some(row.created_seq);
+                        v.return_anchor = (row.item_index > 0).then_some(row.item_index);
                         v.live = false;
                         v.root = Some(row.root_turn_id.clone());
                         v.detail_key = None;

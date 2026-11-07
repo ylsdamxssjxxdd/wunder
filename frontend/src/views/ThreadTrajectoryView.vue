@@ -104,7 +104,7 @@
       :class="{ 'tt-panning': panning, 'tt-dragging': dragging }"
     >
       <div class="tt-plot">
-        <div class="tt-plot-corner" aria-hidden="true" />
+        <div class="tt-plot-corner">{{ axisUnitLabel }}</div>
         <div class="tt-axis">
           <span
             v-for="tick in timelineTicks"
@@ -112,6 +112,12 @@
             class="tt-axis-tick"
             :style="{ left: `${tick.x}px` }"
           >{{ tick.label }}</span>
+          <span
+            v-for="turn in turnTicks"
+            :key="`r${turn.turn}`"
+            class="tt-turn-label"
+            :style="{ left: `${turn.x}px` }"
+          >{{ turn.label }}</span>
         </div>
         <div class="tt-lane-labels" aria-hidden="true">
           <span class="tt-lane-label">{{ t('messenger.trajectory.laneInput') }}</span>
@@ -144,10 +150,10 @@
             />
           </template>
           <span
-            v-for="boundary in projectedBoundaries"
-            :key="`b${boundary.turn}`"
+            v-for="turn in turnTicks"
+            :key="`b${turn.turn}`"
             class="tt-turn-boundary"
-            :style="{ left: `${boundary.x}px` }"
+            :style="{ left: `${turn.x}px` }"
           />
           <span v-if="hoverX !== null" class="tt-hoverline" :style="{ left: `${hoverX}px` }" />
           <template v-if="!overviewTimeline">
@@ -171,6 +177,14 @@
             <span class="tt-selection-edge tt-selection-edge-start" />
             <span class="tt-selection-edge tt-selection-edge-end" />
           </span>
+        </div>
+        <div
+          ref="scrollbarEl"
+          class="tt-scrollbar"
+          :class="{ 'is-full': !scrollbar.scrollable }"
+          @pointerdown="onScrollbarPointerDown"
+        >
+          <span class="tt-scrollbar-thumb" :style="scrollThumbStyle" />
         </div>
       </div>
       <div
@@ -546,12 +560,27 @@ import type {
   TimelineMode,
   TimelineModel,
   TimelineSpan,
+  TimelineTurnBoundary,
   TrajCell,
   TrajKind,
   TrajRequestNumber,
   Translate,
   TrajectoryPageRow,
 } from './trajectory/trajectoryModel'
+import {
+  axisTicks,
+  axisUnit,
+  thinTurns,
+  foldSpans,
+  formatOffset,
+  timelineWarp,
+  densityViewWidth,
+  type AxisMode,
+  IdleWarp,
+  type PixelSpan,
+  axisScrollbar,
+  scrollbarViewStart,
+} from './trajectory/trajectoryAxis'
 
 const OVERSCAN_PX = 360
 const VIRTUAL_THRESHOLD = 100
@@ -798,22 +827,117 @@ function serverOverviewTimeline(rows: unknown[], mode: TimelineMode, indexBySeq:
   })
   if (raw.length === 0) return null
   raw.sort((left, right) => left.start - right.start || left.end - right.end || left.index - right.index)
-  const compressed = mode === 'duration'
-  let removed = 0
-  let covered: number | null = null
-  const spans = raw.map(span => {
-    if (compressed && covered !== null && span.start > covered) removed += span.start - covered
-    covered = covered === null ? span.end : Math.max(covered, span.end)
-    return { ...span, start: span.start - removed, end: (mode === 'sequence' || mode === 'duration' || mode === 'actual' ? span.end : span.start) - removed }
-  })
+  // 时长轴统一表示真实经过时间（不再压缩空闲），与后端全域轴同坐标。
+  const spans = raw.map(span => ({ ...span, end: mode === 'time' ? span.start : span.end }))
   let start = Infinity; let end = -Infinity
   for (const span of spans) { start = Math.min(start, span.start); end = Math.max(end, span.end) }
+  const turnBoundaries: TimelineTurnBoundary[] = []
+  let turn = 0
+  for (const span of spans) {
+    if (span.kind !== 'user') continue
+    turn += 1
+    turnBoundaries.push({ turn, time: span.start })
+  }
   return Number.isFinite(start) && Number.isFinite(end)
-    ? { start, end: Math.max(end, start + 1), spans, turnBoundaries: [] } : null
+    ? { start, end: Math.max(end, start + 1), spans, turnBoundaries } : null
 }
 
 const overviewTimeline = computed(() => {
   const page = displayPage.value
+  // 后端下发全规模轴：域、轮次与 512 桶直方图都来自同一份全域数据，
+  // 不随分页或 1024 行时间轨截断而切换坐标系。当前页明细按真实坐标叠加，
+  // 保留可点击的记录。
+  const axis = page?.axis
+  if (axis?.complete) {
+    const timed = timelineMode.value !== 'sequence'
+    const seqStart = Number(axis.seq_start)
+    const seqEnd = Number(axis.seq_end)
+    const timeStart = Number(axis.time_start_ms)
+    const timeEnd = Number(axis.time_end_ms)
+    const start = timed ? timeStart : seqStart
+    const end = Math.max(timed ? timeEnd : seqEnd, start + 1)
+    const turnBoundaries: TimelineTurnBoundary[] = (Array.isArray(axis.turns) ? axis.turns : [])
+      .map((entry: { round?: unknown; seq?: unknown; time_ms?: unknown }) => ({
+        turn: Number(entry.round),
+        time: timed ? Number(entry.time_ms) : Number(entry.seq),
+      }))
+      .filter(entry => Number.isFinite(entry.turn) && Number.isFinite(entry.time))
+    const tiles: Record<string, unknown>[] = Array.isArray(page?.tiles) ? page.tiles : []
+    const bucketSpan = Math.max(1, seqEnd - seqStart) / 512
+    const timeSpan = Math.max(1, timeEnd - timeStart)
+    const perTileLimit = Math.max(1, Math.min(8,
+      Math.floor(MAX_OVERVIEW_SPANS / Math.max(1, tiles.length))))
+    const spans: OverviewSpan[] = []
+    for (const tile of tiles) {
+      if (spans.length >= MAX_OVERVIEW_SPANS - 600) break
+      const bucket = Number(tile.bucket)
+      const total = Math.max(0, Number(tile.count) || 0)
+      if (!Number.isFinite(bucket) || total <= 0) continue
+      const rawStart = timed
+        ? (timestampMs(tile.start) ?? timeStart + bucket / 512 * timeSpan)
+        : seqStart + bucket * bucketSpan
+      const rawEnd = timed
+        ? Math.max(rawStart, timestampMs(tile.end) ?? rawStart + 1)
+        : rawStart + bucketSpan
+      const explicit = [Number(tile.input_count) || 0, Number(tile.model_count) || 0, Number(tile.tool_count) || 0]
+      const explicitTotal = explicit.reduce((sum, value) => sum + value, 0)
+      const counts = explicitTotal > 0
+        ? explicit
+        : [Math.round(total * 0.2), Math.round(total * 0.5), Math.max(0, total - Math.round(total * 0.2) - Math.round(total * 0.5))]
+      const laneTotal = counts.reduce((sum, value) => sum + Math.max(0, value), 0) || total
+      const segmentCount = Math.max(1, Math.min(perTileLimit, laneTotal))
+      const segmentWidth = (rawEnd - rawStart) / segmentCount
+      const failed = Number(tile.failed) > 0
+      for (let segment = 0; segment < segmentCount; segment += 1) {
+        const eventAt = (segment + 0.5) / segmentCount * laneTotal
+        let lane = 2
+        let accumulated = 0
+        for (let candidate = 0; candidate < 3; candidate += 1) {
+          accumulated += Math.max(0, counts[candidate] ?? 0)
+          if (eventAt <= accumulated) { lane = candidate; break }
+        }
+        const segmentStart = rawStart + segment * segmentWidth
+        const segmentEnd = segment === segmentCount - 1 ? rawEnd : segmentStart + segmentWidth
+        const count = Math.max(1, Math.round(total / segmentCount))
+        spans.push({
+          start: segmentStart,
+          end: Math.max(segmentEnd, segmentStart + (timed ? 0.001 : 1)),
+          index: -(spans.length + 1),
+          isError: failed,
+          kind: lane === 0 ? 'context' : lane === 1 ? 'message' : 'tool',
+          label: `${count} events`,
+          lane,
+          ttftFraction: null,
+          count,
+          aggregate: true,
+          bucket,
+        })
+      }
+    }
+    const cellsById = new Map(allRecords.value.map(record => [record.cell.recordId, record.cell]))
+    const spanByIndex = new Map((timeline.value?.spans ?? []).map(span => [span.index, span]))
+    const detailedSpans: OverviewSpan[] = []
+    for (const row of trajectoryRows.value) {
+      const cell = cellsById.get(String(row.item_id))
+      const localSpan = cell ? spanByIndex.get(cell.index) : undefined
+      if (!cell || !localSpan) continue
+      const rawStart = timed ? timestampMs(row.started_at) : Number(row.created_seq)
+      if (rawStart === null || !Number.isFinite(rawStart)) continue
+      const rawEnd = timed
+        ? Math.max(rawStart, timestampMs(row.completed_at ?? row.started_at) ?? rawStart)
+        : rawStart + 1
+      detailedSpans.push({
+        ...localSpan,
+        start: rawStart,
+        end: Math.max(rawEnd, rawStart + (timed ? 0.001 : 1)),
+        count: 1,
+      })
+    }
+    spans.push(...detailedSpans)
+    if (Number.isFinite(start) && Number.isFinite(end) && spans.length > 0) {
+      return { start, end, spans, turnBoundaries }
+    }
+  }
   // A tail-only timeline is useful as a bounded fallback, but it must not be
   // presented as the full session domain: older spans would otherwise appear
   // to move when the user scrolls and loads them.
@@ -975,48 +1099,114 @@ const overviewTimeline = computed(() => {
     Math.max(0, MAX_OVERVIEW_SPANS - detailedSpans.length),
   ))
   if (spans.length === 0 || !Number.isFinite(start) || !Number.isFinite(end)) return null
-  return { start, end: Math.max(end, start + 1), spans, turnBoundaries: [] }
+  // 瓦片只有事件计数，没有轮次字段。用同一响应的时间行定位用户轮次，并以
+  // latest_round 回推真实轮次号；时间行与瓦片域同为真实时间/真实序号坐标，
+  // 因此这些标记不会随分页漂移。
+  const turnBoundaries: TimelineTurnBoundary[] = []
+  const timelineRows: TimelineRow[] = Array.isArray(page?.timeline) ? page.timeline : []
+  const userRows = timelineRows.filter(row =>
+    row && typeof row === 'object' && overviewKind((row as TimelineRow).kind) === 'user')
+  const roundOffset = Math.max(0, Number(page?.latest_round) || 0) - userRows.length
+  userRows.forEach((row, index) => {
+    const item = row as TimelineRow
+    const time = timelineMode.value === 'sequence'
+      ? Number(item.created_seq)
+      : timestampMs(item.started_at)
+    if (time === null || !Number.isFinite(time)) return
+    turnBoundaries.push({ turn: Math.max(1, roundOffset + index + 1), time })
+  })
+  return { start, end: Math.max(end, start + 1), spans, turnBoundaries }
+})
+
+// 空闲压缩：轮次之间长时间停顿会把时间条挤成左侧一条细线。事件自身的持续
+// 时间不变，只有没有任何事件的间隙被折叠。概览与明细共用同一份 warp，因此
+// 瓦片、可点击明细与轮次标记保持对齐；刻度标签由渲染层反解回真实经过时间。
+const displayTimeline = computed(() => {
+  const model = overviewTimeline.value ?? timeline.value
+  if (!model || timelineMode.value === 'sequence') return model
+  const warp = timelineWarp(
+    model.spans.map(span => [span.start, span.end] as [number, number]),
+    model.turnBoundaries.map(boundary => boundary.time),
+  )
+  if (warp.isEmpty) return model
+  const spans = model.spans.map(span => {
+    const start = warp.map(span.start)
+    return { ...span, start, end: Math.max(warp.map(span.end), start) }
+  })
+  const turnBoundaries = model.turnBoundaries.map(boundary => ({ ...boundary, time: warp.map(boundary.time) }))
+  let start = warp.map(model.start)
+  let end = warp.map(model.end)
+  for (const span of spans) {
+    if (span.start < start) start = span.start
+    if (span.end > end) end = span.end
+  }
+  return { ...model, start, end: Math.max(end, start + 1), spans, turnBoundaries, warp }
+})
+
+const displayWarp = computed<IdleWarp | null>(() => {
+  const model = displayTimeline.value
+  return model && 'warp' in model && model.warp instanceof IdleWarp ? model.warp : null
 })
 
 const domain = computed(() => {
-  const model = overviewTimeline.value ?? timeline.value
+  const model = displayTimeline.value
   if (!model) return { start: 0, end: 1 }
   return { start: model.start, end: Math.max(model.end, model.start + 1) }
 })
 
 // Selection and click targets share the displayed overview coordinates.
 // Recompressing only the loaded tail gives those same records another origin.
-const interactionTimeline = computed(() => overviewTimeline.value
-  ? { ...overviewTimeline.value, spans: overviewTimeline.value.spans.filter(span => span.index >= 0) }
-  : timeline.value)
+const interactionTimeline = computed(() => displayTimeline.value
+  ? { ...displayTimeline.value, spans: displayTimeline.value.spans.filter(span => span.index >= 0) }
+  : null)
 
-watch([timeline, overviewTimeline], ([detailModel, overviewModel]) => {
-  const model = overviewModel ?? detailModel
-  if (!model || !Number.isFinite(model.start) || !Number.isFinite(model.end)) {
+// 只有全域域本身变化才复位视口。翻页加载明细不应把用户缩放过的时间条
+// 拉回全域，否则长线程上每次读取都会看到色块整体跳动。
+watch(domain, (next, previous) => {
+  if (!Number.isFinite(next.start) || !Number.isFinite(next.end)) {
     viewStart.value = 0
     viewSpan.value = 1
     return
   }
-  viewStart.value = model.start
-  viewSpan.value = Math.max(1, model.end - model.start)
+  if (previous && next.start === previous.start && next.end === previous.end) return
+  const total = Math.max(1, next.end - next.start)
+  // 密集线程首帧不把几千个事件塞进一条轨道：按约 4px/事件给出可读窗口，
+  // 右对齐到最新活动（与台账初始页一致）；滚动条仍覆盖整条线程。
+  const fit = densityViewWidth(displayTimeline.value?.spans.length ?? 0, trackWidth.value || 1000)
+  viewSpan.value = Math.max(total * fit, MIN_VIEWPORT_MS)
+  viewStart.value = Math.max(next.start, next.end - viewSpan.value)
 }, { immediate: true })
 
 const projectedOverviewSpans = computed(() => {
-  const model = overviewTimeline.value
+  const model = displayTimeline.value
   if (!model) return []
   const width = trackWidth.value || 600
   const span = Math.max(1e-9, viewSpan.value)
-  return model.spans.map((modelSpan, i) => {
-    const left = ((modelSpan.start - viewStart.value) / span) * width
-    const pw = ((modelSpan.end - modelSpan.start) / span) * width
+  // 全域瓦片可达数千段；按 (通道, 像素桶) 折叠，避免三通道糊成实心带。
+  const pixels: PixelSpan[] = model.spans.map((modelSpan, i) => ({
+    left: ((modelSpan.start - viewStart.value) / span) * width,
+    right: ((modelSpan.end - viewStart.value) / span) * width,
+    lane: modelSpan.lane,
+    error: modelSpan.isError === true,
+    selected: selectedIndex.value !== null && selectedIndex.value === modelSpan.index,
+    dimmed: !!searchNeedle.value && !searchMatched.value.has(modelSpan.index),
+    outside: !!focusSet.value && !focusSet.value.has(modelSpan.index),
+    index: i,
+  }))
+  return foldSpans(pixels, width).map((folded, i) => {
+    const modelSpan = model.spans[folded.index] ?? model.spans[0]
+    const pw = folded.right - folded.left
     const gap = Math.min(pw * 0.15, 0.5)
     return {
-      key: `overview-${modelSpan.index}-${i}`,
+      key: `overview-${folded.index}-${i}`,
       model: modelSpan,
-      left: left + gap,
+      left: folded.left + gap,
       width: Math.max(1, pw - gap * 2),
-      dimmed: false,
-      outside: false,
+      dimmed: folded.dimmed,
+      outside: folded.outside,
+      error: folded.error,
+      selected: folded.selected,
+      count: folded.count,
     }
   }).filter(item => item.left + item.width > 0 && item.left < width)
 })
@@ -1064,38 +1254,62 @@ const focusSet = computed<ReadonlySet<number> | null>(() => {
 })
 
 const projectedSpans = computed(() => {
-  const model = timeline.value
+  // 明细层必须与概览共用同一份压缩坐标：直接取展示时间线里 index>=0 的
+  // 可点击 span，而不是未经压缩的明细时间线。
+  const model = displayTimeline.value
   if (!model) return []
   const width = trackWidth.value || 600
   const span = Math.max(1e-9, viewSpan.value)
   const matched = searchMatched.value
-  const projected = model.spans
-    .map((modelSpan, i) => {
-      const left = ((modelSpan.start - viewStart.value) / span) * width
-      const pw = ((modelSpan.end - modelSpan.start) / span) * width
-      const gap = Math.min(pw * 0.08, 1)
-      return {
-        key: `${modelSpan.index}-${i}`,
-        model: modelSpan,
-        left: left + gap,
-        width: Math.max(2, pw - gap * 2),
-        dimmed: searchNeedle.value ? !matched.has(modelSpan.index) : false,
-        outside: focusSet.value ? !focusSet.value.has(modelSpan.index) : false,
-      }
-    })
-    .filter(span => span.left + span.width > 0 && span.left < width)
-  return projected
+  const detailSpans = model.spans.filter(span => span.index >= 0)
+  const pixels: PixelSpan[] = detailSpans.map((modelSpan, i) => ({
+    left: ((modelSpan.start - viewStart.value) / span) * width,
+    right: ((modelSpan.end - viewStart.value) / span) * width,
+    lane: modelSpan.lane,
+    error: modelSpan.isError === true,
+    selected: selectedIndex.value !== null && selectedIndex.value === modelSpan.index,
+    dimmed: searchNeedle.value ? !matched.has(modelSpan.index) : false,
+    outside: focusSet.value ? !focusSet.value.has(modelSpan.index) : false,
+    index: i,
+  }))
+  return foldSpans(pixels, width).map((folded, i) => {
+    const modelSpan = detailSpans[folded.index] ?? detailSpans[0]
+    const pw = folded.right - folded.left
+    const gap = Math.min(pw * 0.08, 1)
+    return {
+      key: `${folded.index}-${i}`,
+      model: modelSpan,
+      left: folded.left + gap,
+      width: Math.max(2, pw - gap * 2),
+      dimmed: folded.dimmed,
+      outside: folded.outside,
+      error: folded.error,
+      selected: folded.selected,
+      count: folded.count,
+    }
+  }).filter(item => item.left + item.width > 0 && item.left < width)
 })
 
-const projectedBoundaries = computed(() => {
-  if (overviewTimeline.value) return []
-  const model = timeline.value
-  if (!model || !showTurns.value) return []
+// 坐标单位与刻度步长由共享轴模型给出：相对域原点对齐、步长是人类单位、
+// 序列模式标事件序号、时长模式标相对时长。
+const axisMode = computed<AxisMode>(() =>
+  timelineMode.value === 'sequence' ? 'sequence' : 'duration')
+const axisUnitLabel = computed(() => axisUnit(axisMode.value))
+
+// 轮次标记来自全域时间行，而不是只覆盖当前页的明细边界；抽稀后带 R 编号，
+// 100+ 轮也不会变成一片竖线。
+const turnTicks = computed(() => {
+  const model = displayTimeline.value
+  if (!model) return []
   const width = trackWidth.value || 600
   const span = Math.max(1e-9, viewSpan.value)
-  return model.turnBoundaries
-    .map(boundary => ({ turn: boundary.turn, x: ((boundary.time - viewStart.value) / span) * width }))
-    .filter(boundary => boundary.x >= 0 && boundary.x <= width)
+  return thinTurns(
+    model.turnBoundaries.map(boundary => ({
+      turn: Number(boundary.turn ?? 0),
+      x: ((boundary.time - viewStart.value) / span) * width,
+    })),
+    width,
+  )
 })
 
 const timelineTicks = computed(() => {
@@ -1103,42 +1317,26 @@ const timelineTicks = computed(() => {
   if (width <= 0) return []
   const span = Math.max(1e-9, viewSpan.value)
   if (!Number.isFinite(viewStart.value) || !Number.isFinite(span)) return []
-  const targetCount = Math.max(2, Math.floor(width / 120))
-  const raw = span / targetCount
-  const magnitude = 10 ** Math.floor(Math.log10(raw))
-  const residual = raw / magnitude
-  const step = (residual >= 5 ? 5 : residual >= 2 ? 2 : 1) * magnitude
-  const timed = timelineMode.value !== 'sequence'
-  const ticks: { value: number; x: number; label: string }[] = []
-  const first = Math.ceil(viewStart.value / step) * step
-  for (let value = first; value <= viewStart.value + span; value += step) {
-    const x = ((value - viewStart.value) / span) * width
-    ticks.push({
-      value,
-      x,
-      label: timed ? formatAxisDuration(value - domain.value.start) : String(Math.round(value)),
-    })
+  const ticks = axisTicks({
+    domainStart: domain.value.start,
+    viewStart: viewStart.value,
+    viewSpan: span,
+    width,
+    mode: axisMode.value,
+  })
+  // 空闲压缩让 x 不再等于真实时间：反解回时间戳再格式化。落在折叠间隙里
+  // 的刻度都对应同一瞬时，相邻重复标签只保留一个。
+  const warp = displayWarp.value
+  if (!warp || warp.isEmpty || axisMode.value !== 'duration') return ticks
+  const realOrigin = warp.unmap(domain.value.start)
+  const labelled: typeof ticks = []
+  for (const tick of ticks) {
+    const label = formatOffset(warp.unmap(tick.value) - realOrigin)
+    if (labelled.length > 0 && labelled[labelled.length - 1].label === label) continue
+    labelled.push({ ...tick, label })
   }
-  return ticks
+  return labelled
 })
-
-function pad2(value: number): string {
-  return String(value).padStart(2, '0')
-}
-
-function formatAxisDuration(ms: number): string {
-  const abs = Math.abs(ms)
-  if (abs < 1000) return `${Math.round(abs)} ms`
-  if (abs < 60_000) return `${(abs / 1000).toFixed(abs < 10_000 ? 1 : 0)} s`
-  if (abs < 3_600_000) {
-    const minutes = Math.floor(abs / 60_000)
-    const seconds = Math.round((abs % 60_000) / 1000)
-    return seconds > 0 ? `${minutes}m ${pad2(seconds)}s` : `${minutes}m`
-  }
-  const hours = Math.floor(abs / 3_600_000)
-  const minutes = Math.round((abs % 3_600_000) / 60_000)
-  return `${hours}h ${pad2(minutes)}m`
-}
 
 /* ---------------------------------------------------------------- */
 /* 数据加载                                                          */
@@ -1162,6 +1360,14 @@ async function load(cursor: number | null = null, direction: 'older' | 'newer' |
     const response = await getThreadViewTrajectoryPage(sessionId, params, { signal: controller.signal })
     if (controller.signal.aborted || loadAbort !== controller) return false
     const page = response.data.data.page
+    // 全域轴只在首次读取时下发，翻页响应不带 axis；沿用上一份避免时间条
+    // 在翻页时退回「尾部窗口域」。
+    const previousPage = displayPage.value
+    if (previousPage?.axis?.complete && !page.axis?.complete) {
+      page.axis = previousPage.axis
+      page.tiles = previousPage.tiles
+      page.tile_level = previousPage.tile_level
+    }
     if (page.degraded || !['ready', 'source'].includes(page.projection_state)) throw new Error('Display temporarily unavailable')
     if (direction && displayPage.value?.epoch !== page.epoch) return await load()
     const ledger = ledgerEl.value
@@ -1318,6 +1524,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('pointermove', onWindowPointerMove)
   window.removeEventListener('pointerup', onWindowPointerUp)
+  window.removeEventListener('pointermove', onScrollbarPointerMove)
+  window.removeEventListener('pointerup', endScrollbarDrag)
   window.removeEventListener('resize', updateSizes)
   trackResizeObserver?.disconnect()
   trackResizeObserver = null
@@ -1938,6 +2146,77 @@ function clampViewport(start: number, span: number): { start: number; span: numb
   }
 }
 
+/* 视口横向滚动条：几何与舰桥/蛹共用共享轴模型，拖动/点击轨道直接改视口 */
+const scrollbarEl = ref<HTMLElement | null>(null)
+const scrollbar = computed(() => axisScrollbar({
+  domainStart: domain.value.start,
+  domainEnd: domain.value.end,
+  viewStart: viewStart.value,
+  viewSpan: viewSpan.value,
+}))
+const scrollThumbStyle = computed(() => ({
+  left: `${scrollbar.value.thumbStart * 100}%`,
+  width: `${scrollbar.value.thumbWidth * 100}%`,
+}))
+
+let scrollbarDrag: {
+  offset: number
+  domainStart: number
+  domainEnd: number
+  span: number
+} | null = null
+
+function onScrollbarPointerMove(event: PointerEvent): void {
+  if (!scrollbarDrag) return
+  const rect = scrollbarEl.value?.getBoundingClientRect()
+  if (!rect || rect.width <= 0) return
+  const fraction = (event.clientX - rect.left - scrollbarDrag.offset) / rect.width
+  const nextStart = scrollbarViewStart(
+    scrollbarDrag.domainStart,
+    scrollbarDrag.domainEnd,
+    scrollbarDrag.span,
+    fraction,
+  )
+  const clamped = clampViewport(nextStart, scrollbarDrag.span)
+  viewStart.value = clamped.start
+  viewSpan.value = clamped.span
+}
+
+function endScrollbarDrag(): void {
+  scrollbarDrag = null
+  window.removeEventListener('pointermove', onScrollbarPointerMove)
+  window.removeEventListener('pointerup', endScrollbarDrag)
+}
+
+function onScrollbarPointerDown(event: PointerEvent): void {
+  // 滚动条是独立控件，不能让时间线把它当成选区拖拽的起点。
+  event.stopPropagation()
+  event.preventDefault()
+  const rect = scrollbarEl.value?.getBoundingClientRect()
+  if (!rect || rect.width <= 0) return
+  const target = event.currentTarget as HTMLElement
+  const thumb = target.querySelector('.tt-scrollbar-thumb')?.getBoundingClientRect()
+  const domainStart = domain.value.start
+  const domainEnd = domain.value.end
+  let offset: number
+  if (thumb && event.clientX >= thumb.left && event.clientX <= thumb.right) {
+    offset = event.clientX - thumb.left
+  } else {
+    // 点击轨道时把点击点作为新视口的中心。
+    const centerFraction = (event.clientX - rect.left) / rect.width
+      - viewSpan.value / Math.max(1e-9, domainEnd - domainStart) / 2
+    const nextStart = scrollbarViewStart(domainStart, domainEnd, viewSpan.value, centerFraction)
+    const clamped = clampViewport(nextStart, viewSpan.value)
+    viewStart.value = clamped.start
+    viewSpan.value = clamped.span
+    offset = target.querySelector('.tt-scrollbar-thumb')?.getBoundingClientRect().width ?? 0
+    offset /= 2
+  }
+  scrollbarDrag = { offset, domainStart, domainEnd, span: viewSpan.value }
+  window.addEventListener('pointermove', onScrollbarPointerMove)
+  window.addEventListener('pointerup', endScrollbarDrag)
+}
+
 function minSpan(): number {
   return timelineMode.value === 'sequence' ? MIN_VIEWPORT_OPS : MIN_VIEWPORT_MS
 }
@@ -2152,13 +2431,21 @@ function clearSelection(): void {
   void hydrateDetail(null)
 }
 
-function spanClasses(span: { model: TimelineSpan; dimmed: boolean; outside: boolean }): Record<string, boolean> {
+function spanClasses(span: {
+  model: TimelineSpan
+  dimmed: boolean
+  outside: boolean
+  error?: boolean
+  selected?: boolean
+  count?: number
+}): Record<string, boolean> {
   return {
     [`tt-span-${span.model.kind}`]: true,
-    'tt-span-error': span.model.isError,
+    'tt-span-error': !!(span.error ?? span.model.isError),
     'tt-span-dimmed': span.dimmed,
     'tt-span-outside': span.outside,
-    'tt-span-selected': selectedIndex.value !== null && selectedIndex.value === span.model.index,
+    'tt-span-selected': !!(span.selected ?? (selectedIndex.value !== null && selectedIndex.value === span.model.index)),
+    'tt-span-folded': (span.count ?? 1) > 1,
   }
 }
 

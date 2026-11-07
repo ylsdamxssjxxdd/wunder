@@ -1,6 +1,7 @@
 // 线程轨迹的数据模型（对齐云端版 trajectoryModel.ts）：
 // 把线程日志快照折叠成 轮次 → 步骤组 → 记录，并给出时间线投影、
 // 请求编号、折叠与虚拟行布局。纯函数实现，不持有 DOM。
+import { timelineWarp } from "../shared/trajectory-axis.js?v=20261107-02";
 
 export const TRAJ_KINDS = ["system", "user", "context", "compacted", "message", "tool", "subtool"];
 
@@ -1047,7 +1048,9 @@ function spanFor(cell, start, end) {
 /** 把每条记录投影到稳定的三通道时间线。 */
 function deriveTimelineUninstrumented(turns, mode = 'sequence') {
     if (mode !== 'sequence') {
-        return deriveTimedTimeline(turns, mode === 'duration' || mode === 'actual', mode === 'duration');
+        // 时长轴始终表示真实经过时间；紧凑等宽视图由 sequence 模式承担。
+        // 压缩空闲曾让同一线程在不同数据源下拥有两套坐标，已移除。
+        return deriveTimedTimeline(turns, mode === 'duration' || mode === 'actual');
     }
     const spans = [];
     const turnBoundaries = [];
@@ -1070,7 +1073,7 @@ function deriveTimelineUninstrumented(turns, mode = 'sequence') {
  * and the timed layout run inside the measured span.
  */
 export function deriveTimeline(turns, mode = 'sequence') { return deriveTimelineUninstrumented(turns, mode); }
-function deriveTimedTimeline(turns, actualDuration, compressIdle) {
+function deriveTimedTimeline(turns, actualDuration) {
     const timedTurns = turns.flatMap((turn) => {
         const rawSpans = turn.groups.flatMap(group => group.cells.flatMap((cell) => {
             const range = cellRange(cell);
@@ -1083,16 +1086,6 @@ function deriveTimedTimeline(turns, actualDuration, compressIdle) {
     const rawSpans = timedTurns.flatMap(turn => turn.rawSpans);
     if (rawSpans.length === 0)
         return null;
-    const removedIdleBySpan = new Map();
-    let removedIdle = 0;
-    let coveredUntil = null;
-    for (const span of [...rawSpans].sort((left, right) => left.start - right.start || left.end - right.end)) {
-        if (compressIdle && coveredUntil !== null && span.start > coveredUntil) {
-            removedIdle += span.start - coveredUntil;
-        }
-        removedIdleBySpan.set(span, removedIdle);
-        coveredUntil = coveredUntil === null ? span.end : Math.max(coveredUntil, span.end);
-    }
     const spans = [];
     const turnBoundaries = [];
     // 用循环累加求 min/max，避免对大数组做 Math.min(...) / Math.max(...) 展开。
@@ -1101,14 +1094,12 @@ function deriveTimedTimeline(turns, actualDuration, compressIdle) {
     for (const turn of timedTurns) {
         let turnStart = Infinity;
         for (const span of turn.rawSpans) {
-            const offset = removedIdleBySpan.get(span) ?? 0;
-            const projectedStart = span.start - offset;
-            const projectedEnd = (actualDuration ? span.end : span.start) - offset;
-            spans.push({ ...span, start: projectedStart, end: projectedEnd });
-            if (projectedStart < turnStart)
-                turnStart = projectedStart;
-            if (projectedStart < start)
-                start = projectedStart;
+            const projectedEnd = actualDuration ? span.end : span.start;
+            spans.push({ ...span, end: projectedEnd });
+            if (span.start < turnStart)
+                turnStart = span.start;
+            if (span.start < start)
+                start = span.start;
             if (projectedEnd > end)
                 end = projectedEnd;
         }
@@ -1116,7 +1107,33 @@ function deriveTimedTimeline(turns, actualDuration, compressIdle) {
             turnBoundaries.push({ turn: turn.turn, time: turnStart });
         }
     }
-    return { start, end, spans, turnBoundaries };
+    const model = { start, end, spans, turnBoundaries };
+    if (actualDuration) {
+        applyIdleCompression(model);
+    }
+    return model;
+}
+
+/** 空闲压缩：轮次之间长时间停顿会把时间条挤成左侧一条细线。事件自身的
+ * 持续时间不变，只有没有任何事件的间隙被折叠；warp 随模型返回，刻度标签
+ * 由渲染层反解回真实经过时间。 */
+function applyIdleCompression(model) {
+    const warp = timelineWarp(
+        model.spans.map((span) => [span.start, span.end]),
+        model.turnBoundaries.map((boundary) => boundary.time),
+    );
+    if (warp.isEmpty)
+        return;
+    for (const span of model.spans) {
+        const nextStart = warp.map(span.start);
+        span.end = Math.max(warp.map(span.end), nextStart);
+        span.start = nextStart;
+    }
+    for (const boundary of model.turnBoundaries)
+        boundary.time = warp.map(boundary.time);
+    model.start = warp.map(model.start);
+    model.end = Math.max(warp.map(model.end), model.start + 1);
+    model.warp = warp;
 }
 /** 选区覆盖的记录索引集合。 */
 export function timelineFocusIndexes(turns, range, mode = 'sequence') {

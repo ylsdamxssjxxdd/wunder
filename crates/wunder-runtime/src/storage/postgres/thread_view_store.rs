@@ -16,6 +16,105 @@ fn wire(raw: &str, ordinal: i64) -> Result<Value> {
     Ok(item)
 }
 
+/// Mirrors the SQLite full-domain ruler: global bounds, a fixed 512-bucket
+/// histogram and real user rounds.  Bucket times are linearly mapped onto the
+/// admission time range; the axis ticks and turn markers use the exact values.
+fn fill_trajectory_axis(
+    tx: &mut PgTx<'_>,
+    session: &str,
+    root: Option<&str>,
+    page: &mut ThreadViewPage,
+) -> Result<()> {
+    const BUCKETS: i64 = 512;
+    let bounds = tx.query_one(
+        "SELECT MIN(i.ordinal), MAX(i.ordinal), COUNT(*)::bigint, \
+           (SELECT MIN(created_at_ms) FROM service_thread_admissions WHERE thread_id=$1), \
+           (SELECT MAX(created_at_ms) FROM service_thread_admissions WHERE thread_id=$1) \
+         FROM service_thread_items_v2 i \
+         WHERE i.thread_id=$1 AND ($2::text IS NULL OR i.root_turn_id=$2) AND i.visible",
+        &[&session, &root],
+    )?;
+    let min_ordinal: Option<i64> = bounds.get(0);
+    let Some(min_ordinal) = min_ordinal else {
+        return Ok(());
+    };
+    let max_ordinal = bounds.get::<_, Option<i64>>(1).unwrap_or(min_ordinal);
+    let total: i64 = bounds.get(2);
+    let min_time: Option<i64> = bounds.get(3);
+    let max_time: Option<i64> = bounds.get(4);
+    let seq_start = min_ordinal + 1;
+    let seq_end = max_ordinal + 2;
+    let span = (seq_end - seq_start).max(1);
+    let bucket_width = (span + BUCKETS - 1) / BUCKETS;
+    let time_start = min_time.unwrap_or(0) as f64;
+    let time_end = (max_time.unwrap_or(min_time.unwrap_or(0)) as f64).max(time_start + 1.0);
+    let time_span = time_end - time_start;
+
+    let rows = tx.query(
+        "SELECT ((ordinal - $3) * 512 / GREATEST($4,1))::bigint AS bucket, \
+                COUNT(*)::bigint, \
+                COUNT(*) FILTER (WHERE COALESCE(preview_json::jsonb->>'kind','') IN ( \
+                  'user_message','system_message','context','compaction','context_message', \
+                  'queue','plan','approval','terminal','note','status','system_prompt'))::bigint, \
+                COUNT(*) FILTER (WHERE COALESCE(preview_json::jsonb->>'kind','') IN ( \
+                  'assistant_message','model_call','agent_message','reasoning'))::bigint, \
+                COUNT(*) FILTER (WHERE COALESCE(preview_json::jsonb->>'kind','') IN ( \
+                  'tool_call','tool_result','subagent_run','subagent','subagent_message'))::bigint, \
+                (COUNT(*) FILTER (WHERE preview_json LIKE '%\"failed\"%'))::bigint \
+         FROM service_thread_items_v2 \
+         WHERE thread_id=$1 AND ($2::text IS NULL OR root_turn_id=$2) AND visible \
+         GROUP BY 1 ORDER BY 1",
+        &[&session, &root, &min_ordinal, &span],
+    )?;
+    page.tiles.clear();
+    for row in rows {
+        let bucket: i64 = row.get(0);
+        let start = time_start + bucket as f64 / BUCKETS as f64 * time_span;
+        let end = time_start + (bucket + 1) as f64 / BUCKETS as f64 * time_span;
+        page.tiles.push(TrajectoryTile {
+            bucket,
+            count: row.get(1),
+            failed: row.get(5),
+            running: 0,
+            start,
+            end,
+            input_count: row.get(2),
+            model_count: row.get(3),
+            tool_count: row.get(4),
+        });
+    }
+    page.tile_level = 0;
+
+    let turn_rows = tx.query(
+        "SELECT a.user_round, MIN(i.ordinal), MIN(a.created_at_ms) \
+         FROM service_thread_admissions a \
+         JOIN service_thread_items_v2 i ON i.thread_id=$1 AND i.visible \
+           AND i.root_turn_id=a.turn_id AND ($2::text IS NULL OR i.root_turn_id=$2) \
+         WHERE a.thread_id=$1 AND a.turn_id=a.root_turn_id \
+         GROUP BY a.user_round ORDER BY a.user_round LIMIT 4096",
+        &[&session, &root],
+    )?;
+    let mut turns = Vec::new();
+    for row in turn_rows {
+        turns.push(TrajectoryAxisTurn {
+            round: row.get(0),
+            seq: row.get::<_, Option<i64>>(1).unwrap_or(min_ordinal) + 1,
+            time_ms: row.get::<_, Option<i64>>(2).unwrap_or(0) as f64,
+        });
+    }
+    page.axis = ThreadViewAxis {
+        seq_start,
+        seq_end,
+        time_start_ms: time_start,
+        time_end_ms: time_end,
+        total_events: total,
+        bucket_width,
+        turns,
+        complete: true,
+    };
+    Ok(())
+}
+
 fn turn(row: tokio_postgres::Row) -> Result<Value> {
     let control: Option<String> = row.get("control_json");
     Ok(json!({
@@ -500,6 +599,13 @@ impl PostgresThreadLog<'_> {
             page.next_after = page.trajectory.last().map(|r| r.item_index);
             if let Some(cursor) = page.next_after {
                 page.has_newer=tx.query_one("SELECT EXISTS(SELECT 1 FROM service_thread_items_v2 WHERE thread_id=$1 AND ($2::text IS NULL OR root_turn_id=$2) AND visible AND ordinal>$3)",&[&session,&root,&cursor])?.get(0);
+            }
+            // Stable across ledger pages: compute on the initial read only,
+            // and degrade to the local fallback instead of failing the view.
+            if before.is_none() && after.is_none() {
+                if let Err(error) = fill_trajectory_axis(&mut tx, session, root, &mut page) {
+                    tracing::warn!(error = %error, "trajectory axis aggregate read failed");
+                }
             }
         }
         Ok(page)

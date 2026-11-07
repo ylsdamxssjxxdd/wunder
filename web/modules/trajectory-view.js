@@ -28,6 +28,18 @@ import {
   timelineFocusIndexes,
   trajectoryDiagnosticRows,
 } from "./trajectory-model.js?v=20261102-01";
+import {
+  axisTicks,
+  axisUnit,
+  thinTurns,
+  foldSpans,
+  formatOffset,
+  densityViewWidth,
+  SEQUENCE,
+  DURATION,
+  axisScrollbar,
+  scrollbarViewStart,
+} from "../shared/trajectory-axis.js?v=20261107-02";
 
 const OVERSCAN_PX = 360;
 const VIRTUAL_THRESHOLD = 100;
@@ -264,6 +276,7 @@ export function createTrajectoryView(host, options = {}) {
     trackWidth: 600,
     viewStart: 0,
     viewSpan: 0,
+    domainSignature: "",
     hoverX: null,
     panning: false,
     dragging: false,
@@ -398,10 +411,15 @@ export function createTrajectoryView(host, options = {}) {
   selectionEl.appendChild(h("span", "tt-selection-edge tt-selection-edge-end"));
   trackEl.appendChild(hoverlineEl);
   trackEl.appendChild(selectionEl);
+  // 第三行：44px 标签列留空，滚动条由 CSS 显式定位到 (row 3, col 2)。
+  const scrollbarEl = h("div", "tt-scrollbar");
+  const scrollThumbEl = h("div", "tt-scrollbar-thumb");
+  scrollbarEl.appendChild(scrollThumbEl);
   plotEl.appendChild(plotCornerEl);
   plotEl.appendChild(axisEl);
   plotEl.appendChild(laneLabelsEl);
   plotEl.appendChild(trackEl);
+  plotEl.appendChild(scrollbarEl);
   timelineEl.appendChild(plotEl);
 
   // 消耗直方图：每一步（模型请求）一根柱，柱高对应该步 token 消耗。
@@ -492,22 +510,6 @@ export function createTrajectoryView(host, options = {}) {
 
   const kindLabel = (kind) => kindLabels()[kind] ?? kind;
 
-  const padAxis2 = (value) => String(value).padStart(2, "0");
-
-  const formatAxisDuration = (ms) => {
-    const abs = Math.abs(ms);
-    if (abs < 1000) return `${Math.round(abs)} ms`;
-    if (abs < 60000) return `${(abs / 1000).toFixed(abs < 10000 ? 1 : 0)} s`;
-    if (abs < 3600000) {
-      const minutes = Math.floor(abs / 60000);
-      const seconds = Math.round((abs % 60000) / 1000);
-      return seconds > 0 ? `${minutes}m ${padAxis2(seconds)}s` : `${minutes}m`;
-    }
-    const hours = Math.floor(abs / 3600000);
-    const minutes = Math.round((abs % 3600000) / 60000);
-    return `${hours}h ${padAxis2(minutes)}m`;
-  };
-
   /** 直方图与汇总的紧凑 token 数：12,345 → 12.3k。 */
   const formatCompactTokens = (value) => {
     if (!Number.isFinite(value)) return "0";
@@ -579,11 +581,17 @@ export function createTrajectoryView(host, options = {}) {
     const domain = timeline
       ? { start: timeline.start, end: Math.max(timeline.end, timeline.start + 1) }
       : { start: 0, end: 1 };
-    // 对齐云端版 watch(timeline)：时间线重建（数据刷新或模式切换）后回到全域视图。
-    if (timeline && st.viewSpan <= 0) {
-      st.viewStart = timeline.start;
-      st.viewSpan = Math.max(1, timeline.end - timeline.start);
+    // 与蜂巢 watch(timeline) 一致：域或坐标模式变化后回到全域视图。
+    // 只判断 viewSpan<=0 会让刷新后的旧视口配上新域，长线程上表现为色块漂移。
+    const domainSignature = timeline ? `${timelineMode()}:${domain.start}:${domain.end}` : "";
+    if (domainSignature && domainSignature !== st.domainSignature) {
+      // 密集线程首帧不把几千个事件塞进一条轨道：按约 4px/事件给出可读窗口，
+      // 右对齐到最新活动（与台账初始页一致）；滚动条仍覆盖整条线程。
+      const fit = densityViewWidth(timeline ? timeline.spans.length : 0, st.trackWidth || 1000);
+      st.viewSpan = Math.max(1, domain.end - domain.start) * fit;
+      st.viewStart = Math.max(domain.start, domain.end - st.viewSpan);
     }
+    st.domainSignature = domainSignature;
 
     const selectedCell = st.selectedIndex === null ? null : findCell(turns, st.selectedIndex);
     const selectedRecord = selectedCell
@@ -674,61 +682,107 @@ export function createTrajectoryView(host, options = {}) {
     const span = Math.max(1e-9, st.viewSpan);
     const needle = st.searchQuery.trim().toLowerCase();
 
+    const mode = st.showDuration ? DURATION : SEQUENCE;
+    plotCornerEl.textContent = axisUnit(mode);
+
+    // The thumb always describes the whole thread, so a zoomed viewport is
+    // visible at a glance and can be dragged instead of guessed with a wheel.
+    const scrollbar = axisScrollbar({
+      domainStart: domain.start,
+      domainEnd: domain.end,
+      viewStart: st.viewStart,
+      viewSpan: span,
+    });
+    scrollbarEl.classList.toggle("is-full", !scrollbar.scrollable);
+    scrollThumbEl.style.left = `${scrollbar.thumbStart * 100}%`;
+    scrollThumbEl.style.width = `${scrollbar.thumbWidth * 100}%`;
+
     axisEl.textContent = "";
-    if (width > 0) {
-      const targetCount = Math.max(2, Math.floor(width / 120));
-      const raw = span / targetCount;
-      const magnitude = 10 ** Math.floor(Math.log10(raw));
-      const residual = raw / magnitude;
-      const step = (residual >= 5 ? 5 : residual >= 2 ? 2 : 1) * magnitude;
-      const timed = timelineMode() !== "sequence";
-      const first = Math.ceil(st.viewStart / step) * step;
-      for (let value = first; value <= st.viewStart + span; value += step) {
-        const tick = h("span", "tt-axis-tick");
-        tick.style.left = `${((value - st.viewStart) / span) * width}px`;
-        tick.textContent = timed
-          ? formatAxisDuration(value - domain.start)
-          : String(Math.round(value));
-        axisEl.appendChild(tick);
-      }
-    }
-
     trackEl.querySelectorAll(".tt-span, .tt-turn-boundary").forEach((node) => node.remove());
-
-    if (st.showTurns) {
-      for (const boundary of timeline.turnBoundaries) {
-        const x = ((boundary.time - st.viewStart) / span) * width;
-        if (x < 0 || x > width) continue;
-        const node = h("span", "tt-turn-boundary");
-        node.style.left = `${x}px`;
-        trackEl.appendChild(node);
+    if (width > 0) {
+      // Ticks are aligned to the domain origin, not to an absolute Unix
+      // timestamp; the corner marker states which coordinate is on screen.
+      // Idle compression moves x off the real clock, so labels are resolved
+      // back through the warp; ticks landing inside a collapsed gap all
+      // describe the same instant and collapse into one label.
+      const warp = mode === DURATION ? timeline.warp : null;
+      const realOrigin = warp && !warp.isEmpty ? warp.unmap(domain.start) : null;
+      let previousLabel = null;
+      for (const tick of axisTicks({
+        domainStart: domain.start,
+        viewStart: st.viewStart,
+        viewSpan: span,
+        width,
+        mode,
+      })) {
+        let label = tick.label;
+        if (realOrigin !== null) {
+          label = formatOffset(warp.unmap(tick.value) - realOrigin);
+          if (label === previousLabel) continue;
+        }
+        previousLabel = label;
+        const node = h("span", "tt-axis-tick", label);
+        node.style.left = `${tick.x}px`;
+        axisEl.appendChild(node);
+      }
+      // Turn markers replace the old one-line-per-turn forest: at 100+ turns
+      // they are thinned to a readable density and labelled with the round.
+      for (const turn of thinTurns(
+        timeline.turnBoundaries.map((boundary) => ({
+          turn: boundary.turn,
+          x: ((boundary.time - st.viewStart) / span) * width,
+        })),
+        width
+      )) {
+        const label = h("span", "tt-turn-label", turn.label);
+        label.style.left = `${turn.x}px`;
+        axisEl.appendChild(label);
+        const line = h("span", "tt-turn-boundary");
+        line.style.left = `${turn.x}px`;
+        trackEl.appendChild(line);
       }
     }
 
-    for (let i = 0; i < timeline.spans.length; i += 1) {
-      const modelSpan = timeline.spans[i];
-      const left = ((modelSpan.start - st.viewStart) / span) * width;
-      const pw = ((modelSpan.end - modelSpan.start) / span) * width;
+    const byIndex = new Map(timeline.spans.map((entry) => [entry.index, entry]));
+    const projected = timeline.spans.map((modelSpan) => ({
+      left: ((modelSpan.start - st.viewStart) / span) * width,
+      right: ((modelSpan.end - st.viewStart) / span) * width,
+      lane: modelSpan.lane,
+      error: modelSpan.isError === true,
+      selected: st.selectedIndex !== null && st.selectedIndex === modelSpan.index,
+      dimmed: !!needle && !matched.has(modelSpan.index),
+      outside: !!focusSet && !focusSet.has(modelSpan.index),
+      index: modelSpan.index,
+    }));
+    for (const folded of foldSpans(projected, width)) {
+      const modelSpan = byIndex.get(folded.index);
+      const pw = folded.right - folded.left;
       const gap = Math.min(pw * 0.08, 1);
-      const spanLeft = left + gap;
+      const spanLeft = folded.left + gap;
       const spanWidth = Math.max(2, pw - gap * 2);
       if (spanLeft + spanWidth <= 0 || spanLeft >= width) continue;
       const node = h("span", "tt-span");
-      node.classList.add(`tt-span-${modelSpan.kind}`);
-      if (modelSpan.isError) node.classList.add("tt-span-error");
-      if (st.selectedIndex !== null && st.selectedIndex === modelSpan.index) node.classList.add("tt-span-selected");
-      if (needle && !matched.has(modelSpan.index)) node.classList.add("tt-span-dimmed");
-      if (focusSet && !focusSet.has(modelSpan.index)) node.classList.add("tt-span-outside");
+      node.classList.add(`tt-span-${modelSpan?.kind ?? "context"}`);
+      if (folded.error) node.classList.add("tt-span-error");
+      if (folded.selected) node.classList.add("tt-span-selected");
+      if (folded.dimmed) node.classList.add("tt-span-dimmed");
+      if (folded.outside) node.classList.add("tt-span-outside");
+      if (folded.count > 1) {
+        node.classList.add("tt-span-folded");
+        node.title = `${folded.count} events`;
+      }
       node.style.left = `${spanLeft}px`;
       node.style.width = `${spanWidth}px`;
-      node.style.top = `${7 + modelSpan.lane * 14}px`;
+      node.style.top = `${7 + folded.lane * 14}px`;
       node.addEventListener("pointerdown", (event) => event.stopPropagation());
-      node.addEventListener("pointerenter", (event) => onSpanEnter(modelSpan, event));
-      node.addEventListener("pointerleave", onSpanLeave);
-      node.addEventListener("click", (event) => {
-        event.stopPropagation();
-        selectIndex(modelSpan.index);
-      });
+      if (modelSpan) {
+        node.addEventListener("pointerenter", (event) => onSpanEnter(modelSpan, event));
+        node.addEventListener("pointerleave", onSpanLeave);
+        node.addEventListener("click", (event) => {
+          event.stopPropagation();
+          selectIndex(modelSpan.index);
+        });
+      }
       trackEl.appendChild(node);
     }
 
@@ -1828,6 +1882,57 @@ export function createTrajectoryView(host, options = {}) {
   if (showBackButton) {
     backBtn.addEventListener("click", () => onBack?.());
   }
+
+  let scrollbarDrag = null;
+  const onScrollbarPointerMove = (event) => {
+    if (!scrollbarDrag) return;
+    const rect = scrollbarEl.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const fraction = (event.clientX - rect.left - scrollbarDrag.offset) / rect.width;
+    setViewport(
+      scrollbarViewStart(
+        scrollbarDrag.domain.start,
+        scrollbarDrag.domain.end,
+        scrollbarDrag.span,
+        fraction,
+      ),
+      scrollbarDrag.span,
+    );
+    scheduleRender();
+  };
+  const endScrollbarDrag = () => {
+    scrollbarDrag = null;
+    window.removeEventListener("pointermove", onScrollbarPointerMove);
+    window.removeEventListener("pointerup", endScrollbarDrag);
+  };
+  scrollbarEl.addEventListener("pointerdown", (event) => {
+    // The timeline owns pointerdown for pan/selection; the scrollbar is a
+    // separate control and must not start a ledger range selection.
+    event.stopPropagation();
+    event.preventDefault();
+    const rect = scrollbarEl.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const dragDomain = domainOf();
+    const thumbRect = scrollThumbEl.getBoundingClientRect();
+    let offset;
+    if (event.clientX >= thumbRect.left && event.clientX <= thumbRect.right) {
+      offset = event.clientX - thumbRect.left;
+    } else {
+      // Clicking the track centers the viewport on the pointer.
+      const centerFraction =
+        (event.clientX - rect.left) / rect.width -
+        st.viewSpan / Math.max(1e-9, dragDomain.end - dragDomain.start) / 2;
+      setViewport(
+        scrollbarViewStart(dragDomain.start, dragDomain.end, st.viewSpan, centerFraction),
+        st.viewSpan,
+      );
+      scheduleRender();
+      offset = scrollThumbEl.getBoundingClientRect().width / 2;
+    }
+    scrollbarDrag = { offset, domain: dragDomain, span: st.viewSpan };
+    window.addEventListener("pointermove", onScrollbarPointerMove);
+    window.addEventListener("pointerup", endScrollbarDrag);
+  });
 
   timelineEl.addEventListener("wheel", onTimelineWheel, { passive: false });
   timelineEl.addEventListener("contextmenu", (event) => event.preventDefault());

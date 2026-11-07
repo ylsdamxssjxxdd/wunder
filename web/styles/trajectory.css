@@ -260,23 +260,65 @@
 .tt-plot {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
-  grid-template-rows: 16px 50px;
+  grid-template-rows: 28px 50px 10px;
   width: 100%;
 }
 
+/* 视口横向滚动条：thumb 的位置/宽度由共享轴模型按全域与当前视口计算，
+   滚轮缩放后自动变窄，拖动或点击轨道即可浏览整条线程。 */
+.tt-scrollbar {
+  grid-row: 3;
+  grid-column: 2;
+  position: relative;
+  height: 10px;
+  border-radius: 4px;
+  background: var(--tt-border-2);
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.tt-scrollbar-thumb {
+  position: absolute;
+  top: 1px;
+  height: 8px;
+  border-radius: 3px;
+  background: var(--tt-brand);
+  opacity: 0.75;
+}
+
+.tt-scrollbar-thumb:hover {
+  opacity: 1;
+}
+
+.tt-scrollbar.is-full .tt-scrollbar-thumb {
+  background: var(--tt-text-3);
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* 轴角标出当前坐标的单位：#E=事件序号，Δt=距线程起点的相对时长。 */
 .tt-plot-corner {
   grid-row: 1;
   grid-column: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding-right: 4px;
+  font-family: var(--tt-mono);
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--tt-text-3);
 }
 
 .tt-axis {
   grid-row: 1;
   grid-column: 2;
   position: relative;
-  height: 16px;
+  height: 28px;
   font-family: var(--tt-mono);
   font-size: 10px;
-  line-height: 16px;
+  line-height: 14px;
   color: var(--tt-text-3);
 }
 
@@ -284,6 +326,22 @@
   position: absolute;
   top: 0;
   transform: translateX(-50%);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 第二行是抽稀后的用户轮次标记，与第一行的时间/序号刻度分离。 */
+.tt-turn-label {
+  position: absolute;
+  top: 14px;
+  transform: translateX(-50%);
+  padding: 0 2px;
+  border-radius: 2px;
+  background: var(--tt-bg);
+  font-family: var(--tt-mono);
+  font-size: 9px;
+  line-height: 12px;
+  color: var(--tt-text-3);
   white-space: nowrap;
   pointer-events: none;
 }
@@ -381,6 +439,13 @@
 
 .tt-span-outside {
   opacity: 0.2;
+}
+
+/* 折叠后的像素桶：矮一档、无圆角，与单记录色块区分开。 */
+.tt-span-folded {
+  height: 6px;
+  border-radius: 0;
+  opacity: 0.85;
 }
 
 .tt-selection {

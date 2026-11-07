@@ -363,6 +363,7 @@ export component MainWindow inherits Window {
     in-out property <string> traj-token-summary;
     in-out property <[TrajTick]> traj-ticks;
     in-out property <[TrajBoundary]> traj-boundaries;
+    in-out property <string> traj-unit: "";
     in-out property <float> traj-view-start: 0.0;
     in-out property <float> traj-view-width: 1.0;
     in-out property <bool> traj-selection-active: false;
@@ -1827,6 +1828,7 @@ export component MainWindow inherits Window {
         y: Theme.titlebar-height;
         height: max(0px, parent.height - Theme.titlebar-height);
         rows: root.traj-rows; spans: root.traj-spans; ticks: root.traj-ticks; boundaries: root.traj-boundaries;
+        unit: root.traj-unit;
         token-bars: root.traj-token-bars; token-summary: root.traj-token-summary;
         view-start: root.traj-view-start; view-width: root.traj-view-width;
         selection-active: root.traj-selection-active; selection-start: root.traj-selection-start; selection-end: root.traj-selection-end;

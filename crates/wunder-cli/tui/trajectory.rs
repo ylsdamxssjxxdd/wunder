@@ -11,7 +11,9 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 pub(crate) use view::draw;
-use wunder_server::stable_core::thread_view::{ThreadViewPage, TrajectoryTile, TrajectoryViewRow};
+use wunder_server::stable_core::thread_view::{
+    ThreadViewAxis, ThreadViewPage, TrajectoryTile, TrajectoryViewRow,
+};
 
 const PAGE: usize = 80;
 const MAX_ROWS: usize = 600;
@@ -47,6 +49,7 @@ pub(crate) struct TrajectoryView {
     rows: Vec<TrajectoryViewRow>,
     tiles: Vec<TrajectoryTile>,
     tile_level: usize,
+    axis: ThreadViewAxis,
     selected: usize,
     older: bool,
     newer: bool,
@@ -94,6 +97,7 @@ impl TrajectoryView {
             rows: vec![],
             tiles: vec![],
             tile_level: 0,
+            axis: ThreadViewAxis::default(),
             selected: 0,
             older: false,
             newer: false,
@@ -197,8 +201,14 @@ impl TrajectoryView {
             return;
         } // keep committed rows during bounded-read fallback
         self.epoch = Some(page.epoch);
-        self.tiles = page.tiles;
-        self.tile_level = page.tile_level;
+        // The axis and histogram arrive with the initial read only.  Paged
+        // responses must not clear them or the ruler would collapse to the
+        // loaded tail window.
+        if page.axis.complete {
+            self.tiles = page.tiles;
+            self.tile_level = page.tile_level;
+            self.axis = page.axis;
+        }
         if direction == Direction::Latest || changed_epoch {
             self.rows.clear();
             self.folded.clear();
@@ -252,10 +262,32 @@ impl TrajectoryView {
         }
         self.reconcile();
     }
-    fn domain(&self) -> (f64, f64) {
+    /// Ordinals covered by one histogram bucket.  The backend axis supplies
+    /// the full-domain width; legacy pages keep the old 8^level ladder.
+    pub(crate) fn tile_size(&self) -> f64 {
+        if self.axis.complete && self.axis.bucket_width > 0 {
+            self.axis.bucket_width as f64
+        } else {
+            (128_i64 << (self.tile_level.min(7) * 3)) as f64
+        }
+    }
+
+    /// Unzoomed whole-thread bounds.  The axis origin must stay fixed while
+    /// zooming, otherwise every tick label restarts at zero.
+    pub(crate) fn domain_bounds(&self) -> (f64, f64) {
+        // The backend axis is the single full-domain source.  Ledger paging
+        // must never change it, otherwise every tick and tile would jump.
+        if self.axis.complete {
+            let (start, end) = if self.duration {
+                (self.axis.time_start_ms, self.axis.time_end_ms)
+            } else {
+                (self.axis.seq_start as f64, self.axis.seq_end as f64)
+            };
+            return (start, end.max(start + if self.duration { 0.001 } else { 1.0 }));
+        }
         let mut start = f64::INFINITY;
         let mut end = f64::NEG_INFINITY;
-        let size = (128_i64 << (self.tile_level.min(7) * 3)) as f64;
+        let size = self.tile_size();
         if self.root.is_none() && self.hits.is_none() {
             for t in &self.tiles {
                 let (a, b) = if self.duration {
@@ -280,16 +312,21 @@ impl TrajectoryView {
             return (0., 1.);
         }
         end = end.max(start + if self.duration { 0.001 } else { 1. });
-        if self.zoom > 0 {
-            let width = (end - start) / 2_f64.powi(self.zoom as i32);
-            let center = self
-                .row()
-                .map(|r| row_span(r, self.duration).0)
-                .unwrap_or(start);
-            start = (center - width / 2.).clamp(start, (end - width).max(start));
-            end = start + width;
-        }
         (start, end)
+    }
+
+    fn domain(&self) -> (f64, f64) {
+        let (start, end) = self.domain_bounds();
+        if self.zoom == 0 {
+            return (start, end);
+        }
+        let width = (end - start) / 2_f64.powi(self.zoom as i32);
+        let center = self
+            .row()
+            .map(|r| row_span(r, self.duration).0)
+            .unwrap_or(start);
+        let start = (center - width / 2.).clamp(start, (end - width).max(start));
+        (start, start + width)
     }
     fn scroll_detail(&mut self, delta: isize) {
         self.detail_scroll = (self.detail_scroll as isize + delta).max(0) as usize;
@@ -311,21 +348,25 @@ fn is_tool(kind: &str) -> bool {
 }
 fn row_span(row: &TrajectoryViewRow, duration: bool) -> (f64, f64) {
     if duration {
-        (
-            row.started_at,
-            row.completed_at
-                .unwrap_or_else(|| {
-                    if matches!(row.status.as_str(), "running" | "waiting_input") {
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs_f64()
-                    } else {
-                        row.started_at
-                    }
-                })
-                .max(row.started_at),
-        )
+        // Durable row timestamps are Unix seconds while the full-domain axis
+        // and the histogram buckets are milliseconds.  Keep one unit here so
+        // ledger rows, tiles and ticks share the same projection.
+        let started_ms = row.started_at * 1000.0;
+        let completed_ms = row
+            .completed_at
+            .unwrap_or_else(|| {
+                if matches!(row.status.as_str(), "running" | "waiting_input") {
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs_f64()
+                } else {
+                    row.started_at
+                }
+            })
+            .max(row.started_at)
+            * 1000.0;
+        (started_ms, completed_ms)
     } else {
         (row.created_seq as f64, row.created_seq as f64)
     }

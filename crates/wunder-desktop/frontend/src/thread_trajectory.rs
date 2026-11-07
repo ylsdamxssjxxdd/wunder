@@ -15,6 +15,7 @@ use std::sync::mpsc::sync_channel;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use wunder_desktop::NativeDesktop;
+use wunder_server::stable_core::trajectory_axis as axis;
 
 // Ledger row kinds; mirrors TrajRow.kind in theme.slint.
 const KIND_SYSTEM: i32 = 0;
@@ -56,22 +57,10 @@ const CONTEXT_RAW_KINDS: [&str; 8] = [
     "status",
     "context_message",
 ];
-const TICK_STEPS_MS: [f64; 14] = [
-    100.0,
-    250.0,
-    500.0,
-    1_000.0,
-    2_000.0,
-    5_000.0,
-    10_000.0,
-    30_000.0,
-    60_000.0,
-    120_000.0,
-    300_000.0,
-    600_000.0,
-    1_800_000.0,
-    3_600_000.0,
-];
+/// The Slint projection is normalised to 0..1, so the shared axis model is
+/// evaluated against this reference track width.  It only affects how many
+/// labels are generated, not the position of any span.
+const AXIS_WIDTH_PX: f64 = 1000.0;
 
 /// Return the same deterministic shape as the web export download:
 /// `<session-id>-<Date.now()>.jsonl`.
@@ -228,6 +217,9 @@ struct SnapshotModel {
     spans: Vec<SpanBase>,
     // (turn, wall-clock start in ms, first record index)
     boundaries: Vec<(i64, f64, usize)>,
+    /// Full-domain user rounds from the backend axis: (round, ordinal, ms).
+    /// Non-empty means every projection must use the stable global domain.
+    axis_turns: Vec<(i64, f64, f64)>,
     tl_start: f64,
     tl_end: f64,
     /// Session-wide aggregate tiles are retained separately from detail rows.
@@ -241,6 +233,10 @@ struct SnapshotModel {
     /// Complete timing metadata, independent of the bounded ledger window.
     overview_exact: bool,
     overview_error_buckets: HashSet<i64>,
+    /// Idle compression applied to the time axis: long pauses between rounds
+    /// are collapsed so activity keeps most of the width.  Empty means the
+    /// axis is plain wall-clock time.
+    warp: axis::IdleWarp,
 }
 
 #[derive(Default)]
@@ -265,6 +261,9 @@ struct State {
     newer_edge_latched: bool,
     view_start: f64,
     view_width: f64,
+    /// 视口所有权：首帧自动适配后或用户手动缩放/平移后为 true，
+    /// 翻页与刷新不再改动视口。
+    view_zoomed: bool,
     selected: i32,
     tab: i32,
     show_duration: bool,
@@ -683,6 +682,16 @@ fn merge_page_json(current: &Value, incoming: &Value, older: bool) -> Value {
             "tile_level".into(),
             current.get("tile_level").cloned().unwrap_or(Value::from(0)),
         );
+        // The full-domain axis is emitted on the initial read only; paging
+        // keeps the first copy so the ruler never falls back to a tail window.
+        map.insert(
+            "axis".into(),
+            current
+                .get("axis")
+                .or_else(|| incoming.get("axis"))
+                .cloned()
+                .unwrap_or(Value::Null),
+        );
         for field in ["timeline", "timeline_has_more"] {
             if let Some(value) = incoming.get(field) {
                 map.insert(field.into(), value.clone());
@@ -835,6 +844,18 @@ fn parse_view_page(page: &Value) -> SnapshotModel {
                 }
             }
         }
+    }
+    // A full-domain axis supersedes every window-derived overview.  It is
+    // emitted at every thread size, so there is no 1024-row branch to drift.
+    if page
+        .get("axis")
+        .and_then(|axis| axis.get("complete"))
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        apply_axis_overview(&mut model, page);
+        compress_axis_idle(&mut model);
+        return model;
     }
     if apply_timing_overview(&mut model, page) {
         return model;
@@ -1293,6 +1314,206 @@ fn apply_timing_overview(model: &mut SnapshotModel, page: &Value) -> bool {
     model.has_overview = true;
     model.overview_exact = true;
     true
+}
+
+/// Replace every window-derived overview with the backend's full-domain axis.
+/// Bounds, turn markers and the fixed 512-bucket histogram no longer depend on
+/// the ledger page or on the bounded timing rail, so 100+ turn threads keep
+/// the same coordinate system as short ones.  Detail rows are still projected
+/// on top of the aggregate buckets by `project_timeline`.
+fn apply_axis_overview(model: &mut SnapshotModel, page: &Value) {
+    let Some(axis) = page.get("axis") else {
+        return;
+    };
+    let number = |key: &str, fallback: f64| {
+        axis.get(key).and_then(Value::as_f64).unwrap_or(fallback)
+    };
+    let seq_start = number("seq_start", 0.0);
+    let seq_end = number("seq_end", 1.0).max(seq_start + 1.0);
+    let time_start = number("time_start_ms", 0.0);
+    let time_end = number("time_end_ms", time_start + 1.0).max(time_start + 1.0);
+    let time_span = time_end - time_start;
+    let bucket_span = (seq_end - seq_start) / 512.0;
+    let normalize_time = |value: f64| {
+        if value.abs() < 1e11 {
+            value * 1000.0
+        } else {
+            value
+        }
+    };
+    let mut overview = Vec::new();
+    if let Some(tiles) = page.get("tiles").and_then(Value::as_array) {
+        let per_tile = (4096usize / tiles.len().max(1)).clamp(1, 8);
+        for tile in tiles {
+            let bucket = tile.get("bucket").and_then(Value::as_f64).unwrap_or(0.0);
+            let count = tile
+                .get("count")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+                .max(0);
+            if count == 0 {
+                continue;
+            }
+            let lane_count = |key: &str| {
+                tile.get(key)
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0)
+                    .max(0)
+            };
+            let mut counts = [
+                lane_count("input_count"),
+                lane_count("model_count"),
+                lane_count("tool_count"),
+            ];
+            if counts.iter().sum::<i64>() == 0 {
+                counts = [count / 5, count / 2, (count - count / 5 - count / 2).max(0)];
+            }
+            let lane_total = counts.iter().sum::<i64>().max(1) as f64;
+            let segments = (count as usize).clamp(1, per_tile);
+            let tile_start = tile
+                .get("start")
+                .and_then(Value::as_f64)
+                .map(normalize_time)
+                .unwrap_or(time_start + bucket / 512.0 * time_span);
+            let tile_end = tile
+                .get("end")
+                .and_then(Value::as_f64)
+                .map(normalize_time)
+                .unwrap_or(tile_start + 1.0)
+                .max(tile_start);
+            let sequence_start = seq_start + bucket * bucket_span;
+            for segment in 0..segments {
+                let fraction = segment as f64 / segments as f64;
+                let next_fraction = (segment + 1) as f64 / segments as f64;
+                let quantile = (segment as f64 + 0.5) / segments as f64 * lane_total;
+                let mut lane = 2usize;
+                let mut accumulated = 0i64;
+                for candidate in 0..3 {
+                    accumulated += counts[candidate];
+                    if quantile <= accumulated as f64 {
+                        lane = candidate;
+                        break;
+                    }
+                }
+                let kind = match lane {
+                    0 => KIND_CONTEXT,
+                    1 => KIND_MESSAGE,
+                    _ => KIND_TOOL,
+                };
+                overview.push(SpanBase {
+                    start: tile_start + (tile_end - tile_start) * fraction,
+                    end: tile_start + (tile_end - tile_start) * next_fraction,
+                    record: usize::MAX,
+                    kind,
+                    lane,
+                    ttft: None,
+                    sequence_start: Some(sequence_start + bucket_span * fraction),
+                    sequence_end: Some(sequence_start + bucket_span * next_fraction),
+                });
+            }
+        }
+    }
+    model.axis_turns = axis
+        .get("turns")
+        .and_then(Value::as_array)
+        .map(|turns| {
+            turns
+                .iter()
+                .filter_map(|turn| {
+                    Some((
+                        turn.get("round")?.as_i64()?,
+                        turn.get("seq")?.as_f64()?,
+                        turn.get("time_ms")?.as_f64()?,
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    model.overview_spans = overview;
+    model.overview_start = time_start;
+    model.overview_end = time_end;
+    model.overview_sequence_end = seq_end;
+    model.has_overview = true;
+    // Keep detail spans in the projection; the aggregate buckets stay behind
+    // them and are skipped wherever a loaded record already covers the range.
+    model.overview_exact = false;
+    model.overview_error_buckets.clear();
+}
+
+/// 长线程里两轮之间可能停顿几十分钟。按真实时间铺设会让整条时间条只剩
+/// 左侧一条细线，于是把「没有任何事件」的间隔压到固定上限：事件自身的持续
+/// 时间不变，只有空白被折叠。刻度标签仍是真实经过时间（见 `project_timeline`
+/// 的反向映射），所以压缩不会编造时刻。
+fn compress_axis_idle(model: &mut SnapshotModel) {
+    let mut anchors: Vec<f64> = model
+        .axis_turns
+        .iter()
+        .map(|(_, _, time)| *time)
+        .filter(|time| time.is_finite())
+        .collect();
+    anchors.sort_by(f64::total_cmp);
+    anchors.dedup_by(|left, right| (*left - *right).abs() < 1.0);
+
+    let mut raw: Vec<(f64, f64)> = Vec::with_capacity(
+        model.spans.len() + model.overview_spans.len() + 2,
+    );
+    for span in model.overview_spans.iter().chain(model.spans.iter()) {
+        if span.start.is_finite() {
+            raw.push((span.start, span.end.max(span.start)));
+        }
+    }
+    raw.push((model.overview_start, model.overview_start));
+    raw.push((model.overview_end, model.overview_end));
+
+    // 轮次起点把区间切开：否则一个跨越停顿的概览桶就能把整段空白盖住，
+    // 压缩永远不会生效。
+    let mut clipped: Vec<(f64, f64)> = Vec::with_capacity(raw.len());
+    for (start, end) in raw {
+        let mut lo = start;
+        for cut in &anchors {
+            if *cut <= lo || *cut >= end {
+                continue;
+            }
+            clipped.push((lo, *cut));
+            lo = *cut;
+        }
+        clipped.push((lo, end));
+    }
+
+    let warp = axis::idle_warp(&clipped);
+    if warp.is_empty() {
+        return;
+    }
+    for span in model.spans.iter_mut().chain(model.overview_spans.iter_mut()) {
+        span.start = warp.map(span.start);
+        span.end = warp.map(span.end).max(span.start);
+    }
+    for (_, _, time) in model.axis_turns.iter_mut() {
+        *time = warp.map(*time);
+    }
+    for (_, time, _) in model.boundaries.iter_mut() {
+        *time = warp.map(*time);
+    }
+    // 域端点不再沿用元数据：退化的 0..1ms 会被折叠成 0..1，而已压缩的
+    // 色块落在它之外。改从压缩后的全部覆盖重新推导，保证所有可绘制内容
+    // 都落在域内。
+    let mut domain_lo = warp.map(model.overview_start);
+    let mut domain_hi = warp.map(model.overview_end);
+    let mut detail_lo = warp.map(model.tl_start);
+    let mut detail_hi = warp.map(model.tl_end);
+    for span in model.spans.iter().chain(model.overview_spans.iter()) {
+        domain_lo = domain_lo.min(span.start);
+        domain_hi = domain_hi.max(span.end.max(span.start));
+    }
+    for span in model.spans.iter() {
+        detail_lo = detail_lo.min(span.start);
+        detail_hi = detail_hi.max(span.end.max(span.start));
+    }
+    model.overview_start = domain_lo;
+    model.overview_end = domain_hi.max(domain_lo + 1.0);
+    model.tl_start = detail_lo;
+    model.tl_end = detail_hi.max(detail_lo + 1.0);
+    model.warp = warp;
 }
 
 fn resolve_kind(raw_kind: &str, payload: &Value) -> i32 {
@@ -1919,6 +2140,7 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
         requests,
         spans,
         boundaries,
+        axis_turns: Vec::new(),
         tl_start,
         tl_end,
         overview_spans: Vec::new(),
@@ -1928,6 +2150,7 @@ fn parse_snapshot(snapshot: &Value) -> SnapshotModel {
         has_overview: false,
         overview_exact: false,
         overview_error_buckets: HashSet::new(),
+        warp: axis::IdleWarp::default(),
     }
 }
 
@@ -2182,32 +2405,6 @@ fn format_clock(ms: f64) -> String {
         .single()
         .map(|time| time.format("%H:%M:%S%.3f").to_string())
         .unwrap_or_default()
-}
-
-/// 时间轴刻度标签：从时间线起点计的偏移。
-fn format_offset(ms: f64) -> String {
-    let abs = ms.abs();
-    if abs < 1_000.0 {
-        return format!("{} ms", abs.round());
-    }
-    if abs < 60_000.0 {
-        if abs < 10_000.0 {
-            return format!("{:.1} s", abs / 1_000.0);
-        }
-        return format!("{:.0} s", abs / 1_000.0);
-    }
-    if abs < 3_600_000.0 {
-        let minutes = (abs / 60_000.0).floor();
-        let seconds = ((abs % 60_000.0) / 1_000.0).round();
-        return if seconds > 0.0 {
-            format!("{}m {:02}s", minutes, seconds)
-        } else {
-            format!("{}m", minutes)
-        };
-    }
-    let hours = (abs / 3_600_000.0).floor();
-    let minutes = ((abs % 3_600_000.0) / 60_000.0).round();
-    format!("{}h {:02}m", hours, minutes)
 }
 
 // ------------------------------------------------------------------ */
@@ -2495,7 +2692,49 @@ fn build_rows(state: &State, model: &SnapshotModel, texts: &Texts) -> Vec<TrajRo
 
 /// 时间线投影：时长模式压缩空闲，序列模式等宽；span/边界按当前视口裁剪归一。
 fn use_overview(state: &State, model: &SnapshotModel) -> bool {
-    model.has_overview && (model.overview_exact || state.has_more || state.has_newer)
+    // An axis without any bucket is metadata only.  Promoting it to a
+    // full-domain view would squeeze the loaded detail spans into a few
+    // pixels at the far left and leave the track apparently empty.
+    !model.overview_spans.is_empty()
+        && (!model.axis_turns.is_empty()
+            || (model.has_overview
+                && (model.overview_exact || state.has_more || state.has_newer)))
+}
+
+/// A degraded or unit-mismatched axis must not erase the whole track.  When
+/// none of the drawable spans intersect the advertised domain, use their own
+/// extent instead.  The normal path keeps the backend domain untouched, so
+/// paging still cannot move the ruler.
+fn effective_timeline_domain(
+    state: &State,
+    model: &SnapshotModel,
+    timed: bool,
+) -> (f64, f64, bool) {
+    let (lo, hi) = timeline_domain(state, model);
+    let mut min_value = f64::INFINITY;
+    let mut max_value = f64::NEG_INFINITY;
+    let mut consider = |span: &SpanBase| {
+        let (start, end) = if timed {
+            (span.start, span.end)
+        } else if let (Some(start), Some(end)) = (span.sequence_start, span.sequence_end) {
+            (start, end)
+        } else {
+            (span.record as f64, span.record as f64 + 1.0)
+        };
+        min_value = min_value.min(start);
+        max_value = max_value.max(end);
+    };
+    for span in &model.overview_spans {
+        consider(span);
+    }
+    for span in &model.spans {
+        consider(span);
+    }
+    if min_value.is_finite() && (max_value < lo || min_value > hi) {
+        let pad = (max_value - min_value).max(1.0) * 0.01;
+        return (min_value - pad, max_value + pad, true);
+    }
+    (lo, hi, false)
 }
 
 fn timeline_domain(state: &State, model: &SnapshotModel) -> (f64, f64) {
@@ -2550,16 +2789,16 @@ fn visible_span(start: f64, end: f64, window_lo: f64, window_total: f64) -> Opti
     Some((left as f32, (right - left).max(0.0) as f32))
 }
 
-fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, texts: &Texts) {
+fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, _texts: &Texts) {
     let view_start = state.view_start.clamp(0.0, 1.0);
     let view_width = state.view_width.clamp(0.02, 1.0);
     let timed = state.show_duration;
     let use_overview = use_overview(state, model);
-    let (total_lo, total_hi) = timeline_domain(state, model);
+    let (total_lo, total_hi, domain_fallback) =
+        effective_timeline_domain(state, model, timed);
     let total = (total_hi - total_lo).max(1.0);
     let window_lo = total_lo + view_start * total;
     let window_total = view_width * total;
-    let clamp_pos = |value: f64| ((value - window_lo) / window_total).clamp(0.0, 1.0) as f32;
     let needle = state.query.trim().to_lowercase();
     let overview_bucket_width = state
         .page
@@ -2659,44 +2898,123 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, text
         });
     }
 
-    let mut ticks: Vec<TrajTick> = Vec::new();
-    if timed {
-        let step = TICK_STEPS_MS
-            .iter()
-            .find(|step| window_total / **step <= 6.0)
-            .unwrap_or(&TICK_STEPS_MS[TICK_STEPS_MS.len() - 1]);
-        let mut tick = (window_lo / step).ceil() * step;
-        while tick <= window_lo + window_total {
-            ticks.push(TrajTick {
-                pos: clamp_pos(tick),
-                label: format_offset(tick - total_lo).into(),
-            });
-            tick += step;
+    // 刻度由共享轴模型生成：序列与时长两种模式都有刻度，步长是人类单位，
+    // 且相对域原点对齐，不再是绝对 Unix 毫秒上的零散标签。
+    let axis_mode = if timed {
+        axis::AxisMode::Duration
+    } else {
+        axis::AxisMode::Sequence
+    };
+    let raw_ticks = axis::axis_ticks(
+        total_lo,
+        window_lo,
+        window_total,
+        AXIS_WIDTH_PX,
+        axis_mode,
+    );
+    // 空闲被压缩后坐标不再是真实时间，刻度仍要显示真实经过时间：把压缩坐标
+    // 反解回时间戳再格式化。落在折叠区间里的多个刻度会反解到同一个瞬时点，
+    // 因此相邻重复标签只保留一个。
+    let warped = timed && !model.warp.is_empty();
+    let real_origin = if warped {
+        model.warp.unmap(total_lo)
+    } else {
+        total_lo
+    };
+    let mut ticks: Vec<TrajTick> = Vec::with_capacity(raw_ticks.len());
+    for tick in raw_ticks {
+        let label = if warped {
+            axis::format_label(model.warp.unmap(tick.value) - real_origin, axis_mode)
+        } else {
+            tick.label
+        };
+        if ticks
+            .last()
+            .is_some_and(|previous| previous.label.as_str() == label.as_str())
+        {
+            continue;
         }
+        ticks.push(TrajTick {
+            pos: (tick.x / AXIS_WIDTH_PX) as f32,
+            label: label.into(),
+        });
     }
 
-    let boundaries: Vec<TrajBoundary> = model
-        .boundaries
+    // 轮次标记抽稀后带 R 编号；100+ 轮不会变成一片竖线。
+    let boundary_candidates: Vec<(i64, f64)> = if !domain_fallback
+        && use_overview
+        && !model.axis_turns.is_empty()
+    {
+        // Real user rounds in the same global domain as the buckets.
+        model
+            .axis_turns
+            .iter()
+            .map(|(round, seq, time)| {
+                let value = if timed { *time } else { *seq };
+                (*round, (value - window_lo) / window_total * AXIS_WIDTH_PX)
+            })
+            .collect()
+    } else {
+        model
+            .boundaries
+            .iter()
+            .map(|(turn, time, record_index)| {
+                let value = if timed {
+                    *time
+                } else {
+                    model
+                        .spans
+                        .iter()
+                        .find(|span| span.record == *record_index)
+                        .and_then(|span| span.sequence_start)
+                        .unwrap_or(*record_index as f64)
+                };
+                (*turn, (value - window_lo) / window_total * AXIS_WIDTH_PX)
+            })
+            .collect()
+    };
+    let boundaries: Vec<TrajBoundary> = axis::thin_turns(&boundary_candidates, AXIS_WIDTH_PX)
+        .into_iter()
+        .map(|turn| TrajBoundary {
+            pos: (turn.x / AXIS_WIDTH_PX) as f32,
+            label: turn.label.clone().into(),
+        })
+        .collect();
+
+    // 密集线程按 (通道, 像素桶) 折叠，保留错误 / 选中 / 搜索状态。
+    let pixel_spans: Vec<axis::PixelSpan> = spans
         .iter()
-        .map(|(turn, time, record_index)| TrajBoundary {
-            pos: if timed {
-                clamp_pos(*time)
-            } else {
-                let sequence = model
-                    .spans
-                    .iter()
-                    .find(|span| span.record == *record_index)
-                    .and_then(|span| span.sequence_start)
-                    .unwrap_or(*record_index as f64);
-                clamp_pos(sequence)
-            },
-            label: texts.turn_label(*turn).into(),
+        .enumerate()
+        .map(|(i, span)| axis::PixelSpan {
+            left: span.start as f64 * AXIS_WIDTH_PX,
+            right: (span.start + span.width) as f64 * AXIS_WIDTH_PX,
+            lane: span.lane,
+            error: span.error,
+            selected: span.selected,
+            dimmed: span.dimmed,
+            outside: false,
+            index: i as i64,
+        })
+        .collect();
+    let folded = axis::fold_spans(&pixel_spans, AXIS_WIDTH_PX, axis::MIN_SPAN_PX);
+    let spans: Vec<TrajSpan> = folded
+        .iter()
+        .map(|item| {
+            let mut base = spans[item.index as usize].clone();
+            base.start = (item.left / AXIS_WIDTH_PX) as f32;
+            base.width = ((item.right - item.left) / AXIS_WIDTH_PX) as f32;
+            base.error = item.error;
+            base.selected = item.selected;
+            base.dimmed = item.dimmed;
+            base.aggregate |= item.count > 1;
+            base
         })
         .collect();
 
     app.set_traj_spans(to_model(spans));
     app.set_traj_ticks(to_model(ticks));
     app.set_traj_boundaries(to_model(boundaries));
+    app.set_traj_unit(axis_mode.unit().into());
     app.set_traj_view_start(view_start as f32);
     app.set_traj_view_width(view_width as f32);
     if let Some((start, end)) = state.selection {
@@ -3358,7 +3676,22 @@ fn replace_model(state: &mut State, model: SnapshotModel) {
     };
     state.detail_generation = state.detail_generation.wrapping_add(1);
     state.detail_original = None;
+    let events = model.spans.len() + model.overview_spans.len();
     state.model = Some(model);
+    // 密集线程首帧不把几千个事件塞进一条轨道（那只会画出实心带）：按约
+    // 4px/事件给出初始窗口并右对齐到最新活动，与台账初始页一致；滚动条
+    // 仍覆盖整条线程，想看全程随时缩放。适配只发生一次，之后视口归用户。
+    if !state.view_zoomed {
+        let fit = axis::density_view_width(events, AXIS_WIDTH_PX);
+        if fit < 1.0 {
+            state.view_width = fit;
+            state.view_start = 1.0 - fit;
+        } else {
+            state.view_width = 1.0;
+            state.view_start = 0.0;
+        }
+        state.view_zoomed = true;
+    }
 }
 
 fn hydrate_selected(app: &MainWindow, current: &Rc<RefCell<State>>, backend: &Arc<NativeDesktop>) {
@@ -3884,6 +4217,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         {
             let mut s = current.borrow_mut();
             s.show_duration = !s.show_duration;
+            s.view_zoomed = false;
             s.view_start = 0.0;
             s.view_width = 1.0;
             app.set_traj_show_duration(s.show_duration);
@@ -4205,6 +4539,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let Some(app) = weak.upgrade() else { return };
         {
             let mut s = current.borrow_mut();
+            s.view_zoomed = true;
             let anchor =
                 (s.view_start + (anchor as f64).clamp(0.0, 1.0) * s.view_width).clamp(0.0, 1.0);
             let fraction = (anchor - s.view_start) / s.view_width.max(0.02);
@@ -4223,6 +4558,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let Some(app) = weak.upgrade() else { return };
         {
             let mut s = current.borrow_mut();
+            s.view_zoomed = true;
             s.view_start = (start as f64).clamp(0.0, 1.0 - s.view_width.max(0.02));
         }
         let s = current.borrow();
@@ -4382,6 +4718,195 @@ mod tests {
             "sess_demo_part-42.jsonl"
         );
         assert_eq!(trajectory_export_filename("   ", 7), "thread-7.jsonl");
+    }
+
+    #[test]
+    fn full_domain_axis_supersedes_the_window_derived_overview() {
+        let page = json!({
+            "trajectory": [
+                {"item_id":"axis-user","turn_id":"axis-turn","user_round":7,"created_seq":900,
+                 "kind":"user_message","started_at":1800000000.0,"completed_at":1800000001.0}
+            ],
+            "timeline_has_more": true,
+            "tile_level": 0,
+            "axis": {
+                "seq_start":1,"seq_end":12000,
+                "time_start_ms":1800000000000.0,"time_end_ms":1800072000000.0,
+                "total_events":12000,"bucket_width":24,"complete":true,
+                "turns":[
+                    {"round":1,"seq":1,"time_ms":1800000000000.0},
+                    {"round":120,"seq":11900,"time_ms":1800071000000.0}
+                ]
+            },
+            "tiles": [
+                {"bucket":0,"count":40,"failed":1,"start":1800000000000.0,
+                 "end":1800000300000.0,"input_count":8,"model_count":12,"tool_count":20},
+                {"bucket":511,"count":30,"failed":0,"start":1800071700000.0,
+                 "end":1800072000000.0,"input_count":6,"model_count":9,"tool_count":15}
+            ]
+        });
+        let model = parse_view_page(&page);
+        assert_eq!(model.axis_turns.len(), 2);
+        assert_eq!(model.axis_turns[1].0, 120);
+        assert!(model.has_overview);
+        assert!(!model.overview_exact);
+        assert!(!model.overview_spans.is_empty());
+        assert!(model
+            .overview_spans
+            .iter()
+            .all(|span| span.record == usize::MAX));
+
+        // The two tiles sit two hours apart, so idle compression collapses the
+        // pause: the time domain shrinks while real instants stay recoverable.
+        assert!(model.warp.dropped() > 3_000_000.0);
+        assert!(model.overview_end - model.overview_start < 900_000.0);
+
+        let mut state = State::default();
+        assert!(use_overview(&state, &model));
+        state.show_duration = true;
+        let (lo, hi) = timeline_domain(&state, &model);
+        assert!(hi - lo < 900_000.0, "compressed duration domain {lo}..{hi}");
+        assert_eq!(model.warp.unmap(hi), 1_800_072_000_000.0);
+        state.show_duration = false;
+        let (lo, hi) = timeline_domain(&state, &model);
+        assert_eq!(lo, 0.0);
+        assert!(hi >= 12_000.0);
+    }
+
+    #[test]
+    fn long_idle_between_rounds_is_collapsed() {
+        // Turn 1 works for one minute, then the thread sits idle for two hours
+        // before turn 2 fires.  Wall-clock painting would leave >95% of the
+        // axis empty; the warp keeps the work and trims the pause.
+        let base = 1_800_000_000_000.0_f64;
+        let mut trajectory = Vec::new();
+        for i in 0..30 {
+            trajectory.push(json!({
+                "item_id": format!("busy-{i}"),
+                "turn_id": "turn-1",
+                "user_round": 1,
+                "created_seq": i + 1,
+                "kind": if i % 3 == 0 { "tool_call" } else { "assistant_message" },
+                "started_at": (base + (i * 2_000) as f64) / 1000.0,
+                "completed_at": (base + (i * 2_000 + 1_500) as f64) / 1000.0,
+            }));
+        }
+        trajectory.push(json!({
+            "item_id": "late-user", "turn_id": "turn-2", "user_round": 2,
+            "created_seq": 31, "kind": "user_message",
+            "started_at": (base + 7_200_000.0) / 1000.0,
+            "completed_at": (base + 7_201_000.0) / 1000.0,
+        }));
+        let page = json!({
+            "trajectory": trajectory,
+            "tile_level": 0,
+            "axis": {
+                "seq_start": 1, "seq_end": 31,
+                "time_start_ms": base, "time_end_ms": base + 7_201_000.0,
+                "total_events": 31, "bucket_width": 1, "complete": true,
+                "turns": [
+                    {"round": 1, "seq": 1, "time_ms": base},
+                    {"round": 2, "seq": 31, "time_ms": base + 7_200_000.0},
+                ],
+            },
+            "tiles": [
+                {"bucket": 0, "count": 30, "failed": 0, "start": base,
+                 "end": base + 60_000.0, "input_count": 10, "model_count": 10, "tool_count": 10},
+                {"bucket": 1, "count": 1, "failed": 0, "start": base + 7_200_000.0,
+                 "end": base + 7_201_000.0, "input_count": 1, "model_count": 0, "tool_count": 0},
+            ],
+        });
+        let model = parse_view_page(&page);
+        assert_eq!(model.axis_turns.len(), 2);
+        // The idle hour is gone: the compressed axis is about a minute wide.
+        assert!(model.warp.dropped() > 6_000_000.0);
+        let span = model.overview_end - model.overview_start;
+        assert!(span < 180_000.0, "collapsed span {span}");
+        // Both turns still sit inside the domain, ordered, and the second one
+        // unmaps back to its real wall-clock instant.
+        assert!(model.axis_turns[1].2 > model.axis_turns[0].2);
+        assert_eq!(model.warp.unmap(model.axis_turns[1].2), base + 7_200_000.0);
+        // Every detail span stays inside the compressed domain.
+        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        for s in &model.spans {
+            lo = lo.min(s.start);
+            hi = hi.max(s.end);
+        }
+        assert!(lo >= model.overview_start - 1.0);
+        assert!(hi <= model.overview_end + 1.0);
+    }
+
+    #[test]
+    fn axis_without_buckets_keeps_detail_spans_in_the_loaded_window() {
+        // Metadata-only axes must not push the loaded spans into a corner.
+        // Idle compression folds the degenerate 0..1ms metadata range and the
+        // real records into one compact axis, so the loaded detail spans keep
+        // essentially the whole width.
+        let page = json!({
+            "trajectory": [
+                {"item_id":"a","turn_id":"t","user_round":1,"created_seq":1,
+                 "kind":"user_message","started_at":1800000000.0,"completed_at":1800000001.0},
+                {"item_id":"b","turn_id":"t","user_round":1,"created_seq":2,
+                 "kind":"tool_call","started_at":1800000002.0,"completed_at":1800000003.0}
+            ],
+            "axis": {
+                "seq_start":1,"seq_end":12000,
+                "time_start_ms":0.0,"time_end_ms":1.0,
+                "total_events":12000,"bucket_width":24,"complete":true,
+                "turns":[{"round":1,"seq":1,"time_ms":0.0}]
+            },
+            "tiles": []
+        });
+        let model = parse_view_page(&page);
+        assert!(model.overview_spans.is_empty());
+        assert!(!model.axis_turns.is_empty());
+        let mut state = State::default();
+        state.show_duration = true;
+        assert!(!use_overview(&state, &model));
+        let (lo, hi, fallback) = effective_timeline_domain(&state, &model, true);
+        assert!(!fallback);
+        let (mut span_lo, mut span_hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        for span in &model.spans {
+            span_lo = span_lo.min(span.start);
+            span_hi = span_hi.max(span.end);
+        }
+        assert!(
+            lo <= span_lo && hi >= span_hi,
+            "domain {lo}..{hi} must contain spans {span_lo}..{span_hi}"
+        );
+        assert!(hi - lo < 10_000.0, "compact axis expected: {lo}..{hi}");
+    }
+
+    #[test]
+    fn degenerate_axis_metadata_no_longer_clips_drawable_spans() {
+        // The advertised time range degenerated to 0..1ms.  Idle compression
+        // folds it together with the real bucket/record times, so every span
+        // stays drawable inside the domain and the hard fallback is not needed.
+        let page = json!({
+            "trajectory": [
+                {"item_id":"a","turn_id":"t","user_round":1,"created_seq":1,
+                 "kind":"user_message","started_at":1800000000.0,"completed_at":1800000001.0}
+            ],
+            "axis": {
+                "seq_start":1,"seq_end":12000,
+                "time_start_ms":0.0,"time_end_ms":1.0,
+                "total_events":12000,"bucket_width":24,"complete":true,
+                "turns":[{"round":1,"seq":1,"time_ms":0.0}]
+            },
+            "tiles": [
+                {"bucket":0,"count":40,"failed":0,"start":1800000000000.0,
+                 "end":1800000300000.0,"input_count":8,"model_count":12,"tool_count":20}
+            ]
+        });
+        let model = parse_view_page(&page);
+        assert!(!model.overview_spans.is_empty());
+        let mut state = State::default();
+        state.show_duration = true;
+        let (lo, hi, fallback) = effective_timeline_domain(&state, &model, true);
+        assert!(!fallback);
+        let first = model.overview_spans[0].start;
+        assert!(lo <= first && hi >= model.overview_spans[model.overview_spans.len() - 1].end);
+        assert!(hi - lo < 400_000.0, "compact axis expected: {lo}..{hi}");
     }
 
     #[test]
