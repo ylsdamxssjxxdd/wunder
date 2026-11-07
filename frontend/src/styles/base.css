@@ -4,7 +4,7 @@
   --dark-border: #e3e3e3;
   --dark-text: #18181c;
   --dark-muted: #808080;
-  /* 默认强调色 = 橙汁（amber），色值逐项对齐桌面版 frontend-slint/ui/design_tokens.slint
+  /* 默认强调色 = 橙汁（amber），色值逐项对齐桌面版 crates/wunder-desktop/frontend/ui/design_tokens.slint
      的 terracotta 色板：accent #F58A24 / deep #E07A12 / secondary #FFC98A / soft #FDF0DE。
      橙汁以桌面版为准，云端版只按自身变量名映射，不另立色值。
      这里是全站唯一在 :root 上生效的强调色来源；配套变量按同一色阶推导：

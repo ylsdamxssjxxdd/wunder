@@ -39,7 +39,7 @@ BackgroundDone ==
 Next == Send \/ OldCatalogueDone \/ RealTerminal \/ BackgroundHot \/ BackgroundDone
 TypeOK == /\ phase \in 0..5 /\ local \in {"hot", "done"} /\ catalogue \in {"hot", "done"} /\ shown \in BOOLEAN
 \* A previous catalogue snapshot cannot finish a locally submitted turn or show its notice.
-\* Old behaviour: e5a90a38 frontend-slint/src/native_chat.rs:1476 observed every returned row.
+\* Old behaviour: e5a90a38 crates/wunder-desktop/frontend/src/native_chat.rs:1476 observed every returned row.
 StaleCatalogueCannotComplete == phase = 2 => /\ local = "hot" /\ ~shown
 Spec == Init /\ [][Next]_vars
 =============================================================================

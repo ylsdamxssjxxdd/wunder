@@ -3,21 +3,21 @@ EXTENDS Integers
 VARIABLES phase, status, entries, paged
 vars == <<phase, status, entries, paged>>
 Init ==
-    /\ phase = 0                 \* frontend-slint/src/chat_process.rs:46; selected latest page
-    /\ status = "running"        \* frontend-slint/src/native_chat_observer.rs:880
-    /\ entries = "running"       \* frontend-slint/src/chat_process.rs:273; prior loaded tool
-    /\ paged = TRUE              \* frontend-slint/src/chat_process.rs:306
+    /\ phase = 0                 \* crates/wunder-desktop/frontend/src/chat_process.rs:46; selected latest page
+    /\ status = "running"        \* crates/wunder-desktop/frontend/src/native_chat_observer.rs:880
+    /\ entries = "running"       \* crates/wunder-desktop/frontend/src/chat_process.rs:273; prior loaded tool
+    /\ paged = TRUE              \* crates/wunder-desktop/frontend/src/chat_process.rs:306
 TerminalHistory ==
-    /\ phase = 0                 \* frontend-slint/src/timeline_text.rs:410; matching process id
+    /\ phase = 0                 \* crates/wunder-desktop/frontend/src/timeline_text.rs:410; matching process id
     /\ phase' = 1
-    /\ status' = "completed"     \* frontend-slint/src/native_chat_observer.rs:880
-    /\ UNCHANGED <<entries, paged>> \* frontend-slint/src/timeline_text.rs:413; restores old page
+    /\ status' = "completed"     \* crates/wunder-desktop/frontend/src/native_chat_observer.rs:880
+    /\ UNCHANGED <<entries, paged>> \* crates/wunder-desktop/frontend/src/timeline_text.rs:413; restores old page
 RefreshTimer ==
-    /\ phase = 1                 \* frontend-slint/ui/tool_process.slint:186
-    /\ ~paged                    \* frontend-slint/ui/tool_process.slint:186; live refresh at :191 is off
+    /\ phase = 1                 \* crates/wunder-desktop/frontend/ui/tool_process.slint:186
+    /\ ~paged                    \* crates/wunder-desktop/frontend/ui/tool_process.slint:186; live refresh at :191 is off
     /\ phase' = 2
-    /\ entries' = "completed"    \* frontend-slint/src/chat_process.rs:182; completed durable page
-    /\ paged' = TRUE             \* frontend-slint/src/chat_process.rs:306
+    /\ entries' = "completed"    \* crates/wunder-desktop/frontend/src/chat_process.rs:182; completed durable page
+    /\ paged' = TRUE             \* crates/wunder-desktop/frontend/src/chat_process.rs:306
     /\ UNCHANGED status
 System == RefreshTimer
 Next == TerminalHistory \/ System

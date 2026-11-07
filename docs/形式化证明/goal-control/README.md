@@ -87,10 +87,10 @@ node $skill from-spec "$proof/GoalControl.tla" --fixed "$proof/GoalControlFixed.
 ```powershell
 $env:SLINT_ENABLE_EXPERIMENTAL_FEATURES = '1'
 $proof = 'docs/形式化证明/goal-control'
-slint-viewer --check frontend-slint/ui/main.slint
+slint-viewer --check crates/wunder-desktop/frontend/ui/main.slint
 slint-viewer --screenshot "$env:TEMP/goal-preview.png" "$proof/goal_preview.slint"
 foreach ($phase in @('active', 'paused', 'blocked', 'complete', 'cleared')) {
-    slint-viewer --screenshot "$env:TEMP/main-goal-$phase.png" --size 1100x800 --load-data "$proof/main-goal-$phase.json" frontend-slint/ui/main.slint
+    slint-viewer --screenshot "$env:TEMP/main-goal-$phase.png" --size 1100x800 --load-data "$proof/main-goal-$phase.json" crates/wunder-desktop/frontend/ui/main.slint
 }
 ```
 

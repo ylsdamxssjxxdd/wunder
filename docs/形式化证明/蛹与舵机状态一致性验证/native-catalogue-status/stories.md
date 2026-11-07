@@ -1,6 +1,6 @@
 ## 1. 本地任务已完成<br/>目录记录已完成，已弹出完成提示
 
-Rule broken: A previous catalogue snapshot cannot finish a locally submitted turn or show its notice. Old behaviour: e5a90a38 frontend-slint/src/native_chat.rs:1476 observed every returned row.
+Rule broken: A previous catalogue snapshot cannot finish a locally submitted turn or show its notice. Old behaviour: e5a90a38 crates/wunder-desktop/frontend/src/native_chat.rs:1476 observed every returned row.
 Why: 目录读取开始早于本地提交，旧完成快照覆盖本地热状态.
 In the model, one step leads into this bug: "旧目录快照返回完成".
 

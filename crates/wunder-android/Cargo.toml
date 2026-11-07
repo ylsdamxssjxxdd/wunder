@@ -86,25 +86,25 @@ lz4_flex = { version = "=0.11.6", default-features = false, features = ["std", "
 # components, so it must build against the same forks — a stock Slint rejects
 # `context-menu` on StyledText.
 [patch.crates-io]
-html2md = { path = "../../frontend-slint/vendor/html2md-0.2.15" }
-i-slint-compiler = { path = "../../frontend-slint/vendor/i-slint-compiler-1.18" }
-i-slint-backend-winit = { path = "../../frontend-slint/vendor/i-slint-backend-winit-1.18" }
-softbuffer = { path = "../../frontend-slint/vendor/softbuffer-0.4.8" }
-i-slint-common = { path = "../../frontend-slint/vendor/i-slint-common-1.18" }
-i-slint-core = { path = "../../frontend-slint/vendor/i-slint-core-1.18" }
-i-slint-renderer-software = { path = "../../frontend-slint/vendor/i-slint-renderer-software-1.18" }
-fontique = { path = "../../frontend-slint/vendor/fontique-0.11" }
-parley = { path = "../../frontend-slint/vendor/parley-0.11" }
-winit = { path = "../../frontend-slint/vendor/winit-0.30.2" }
+html2md = { path = "../../crates/wunder-desktop/frontend/vendor/html2md-0.2.15" }
+i-slint-compiler = { path = "../../crates/wunder-desktop/frontend/vendor/i-slint-compiler-1.18" }
+i-slint-backend-winit = { path = "../../crates/wunder-desktop/frontend/vendor/i-slint-backend-winit-1.18" }
+softbuffer = { path = "../../crates/wunder-desktop/frontend/vendor/softbuffer-0.4.8" }
+i-slint-common = { path = "../../crates/wunder-desktop/frontend/vendor/i-slint-common-1.18" }
+i-slint-core = { path = "../../crates/wunder-desktop/frontend/vendor/i-slint-core-1.18" }
+i-slint-renderer-software = { path = "../../crates/wunder-desktop/frontend/vendor/i-slint-renderer-software-1.18" }
+fontique = { path = "../../crates/wunder-desktop/frontend/vendor/fontique-0.11" }
+parley = { path = "../../crates/wunder-desktop/frontend/vendor/parley-0.11" }
+winit = { path = "../../crates/wunder-desktop/frontend/vendor/winit-0.30.2" }
 arboard = { path = "../../patches/win7/arboard-3.7.0-win7" }
-tungstenite = { path = "../../frontend-slint/vendor/tungstenite-0.29.0" }
-http = { path = "../../frontend-slint/vendor/http-1.4.0" }
-httparse = { path = "../../frontend-slint/vendor/httparse-1.10.1" }
-data-encoding = { path = "../../frontend-slint/vendor/data-encoding-2.10.0" }
-sha1 = { path = "../../frontend-slint/vendor/sha1-0.10.6" }
-digest = { path = "../../frontend-slint/vendor/digest-0.10.7" }
-block-buffer = { path = "../../frontend-slint/vendor/block-buffer-0.10.4" }
-crypto-common = { path = "../../frontend-slint/vendor/crypto-common-0.1.7" }
-generic-array = { path = "../../frontend-slint/vendor/generic-array-0.14.7" }
-typenum = { path = "../../frontend-slint/vendor/typenum-1.20.1" }
-cpufeatures = { path = "../../frontend-slint/vendor/cpufeatures-0.2.17" }
+tungstenite = { path = "../../crates/wunder-desktop/frontend/vendor/tungstenite-0.29.0" }
+http = { path = "../../crates/wunder-desktop/frontend/vendor/http-1.4.0" }
+httparse = { path = "../../crates/wunder-desktop/frontend/vendor/httparse-1.10.1" }
+data-encoding = { path = "../../crates/wunder-desktop/frontend/vendor/data-encoding-2.10.0" }
+sha1 = { path = "../../crates/wunder-desktop/frontend/vendor/sha1-0.10.6" }
+digest = { path = "../../crates/wunder-desktop/frontend/vendor/digest-0.10.7" }
+block-buffer = { path = "../../crates/wunder-desktop/frontend/vendor/block-buffer-0.10.4" }
+crypto-common = { path = "../../crates/wunder-desktop/frontend/vendor/crypto-common-0.1.7" }
+generic-array = { path = "../../crates/wunder-desktop/frontend/vendor/generic-array-0.14.7" }
+typenum = { path = "../../crates/wunder-desktop/frontend/vendor/typenum-1.20.1" }
+cpufeatures = { path = "../../crates/wunder-desktop/frontend/vendor/cpufeatures-0.2.17" }

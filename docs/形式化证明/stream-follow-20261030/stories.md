@@ -1,6 +1,6 @@
 ## 1. 外层时间线：最新3段，视口停在3，跟随中<br/>工作过程列表：最新3段，视口停在0，跟随中
 
-Rule broken: 跟随中且系统已安静时，工作过程列表尾部必须就是最新内容；mutator: frontend-slint/ui/tool_process.slint:244.
+Rule broken: 跟随中且系统已安静时，工作过程列表尾部必须就是最新内容；mutator: crates/wunder-desktop/frontend/ui/tool_process.slint:244.
 Why: 流式变高未重武装跟随.
 In the model, 2 different steps lead into this bug: "外层跟随到最新" and "过程区条目流式变高（无新增信号）". The steps below are the shortest path that TLC found.
 

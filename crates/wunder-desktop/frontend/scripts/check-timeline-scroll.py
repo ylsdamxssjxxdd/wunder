@@ -17,7 +17,7 @@ import time
 
 from PIL import ImageGrab
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[4]
 PROBE = """import { TimelineView } from "@TIMELINE@";
 import { TimelineRow } from "@THEME@";
 export struct Sample { offset: float, following: bool, revision: int, time: float }
@@ -74,7 +74,7 @@ export component ScrollProbe inherits Window {
 def fixture_rows():
     # Populate every field: the interpreter expects typed values even for the
     # unused nested models. Deriving defaults keeps this in sync with the API.
-    source = (ROOT / "frontend-slint/ui/theme.slint").read_text(encoding="utf-8")
+    source = (ROOT / "crates/wunder-desktop/frontend/ui/theme.slint").read_text(encoding="utf-8")
     fields = re.search(r"export struct TimelineRow \{(.*?)\n\}", source, re.S)[1]
     fields = re.sub(r"//[^\n]*", "", fields)
     defaults = {}
@@ -96,8 +96,8 @@ class Rect(ctypes.Structure):
 
 def exercise(viewer, output, width, height, empty=False):
     prefix = output / (f"empty-{width}x{height}" if empty else f"chat-{width}x{height}")
-    source = PROBE.replace("@TIMELINE@", (ROOT / "frontend-slint/ui/timeline.slint").as_posix())
-    source = source.replace("@THEME@", (ROOT / "frontend-slint/ui/theme.slint").as_posix())
+    source = PROBE.replace("@TIMELINE@", (ROOT / "crates/wunder-desktop/frontend/ui/timeline.slint").as_posix())
+    source = source.replace("@THEME@", (ROOT / "crates/wunder-desktop/frontend/ui/theme.slint").as_posix())
     source = source.replace("@WIDTH@", str(width)).replace("@HEIGHT@", str(height))
     source = source.replace("@SAMPLES@", ",".join(["{offset: 0, following: true, revision: 0, time: 0}"] * 600))
     prefix.with_suffix(".slint").write_text(source, encoding="utf-8")

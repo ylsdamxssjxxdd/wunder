@@ -13,7 +13,7 @@
 \* fence (Scoped = TRUE) lets a background settle land.
 \*
 \* Pump = FALSE was the original build (no independent poll); Pump = TRUE is the
-\* bounded pump (start_status_poll, frontend-slint/src/native_chat_observer.rs).
+\* bounded pump (start_status_poll, crates/wunder-desktop/frontend/src/native_chat_observer.rs).
 \* Scoped = FALSE is the sticky fence (native_chat_status.rs); Scoped = TRUE
 \* fences only a locally authored terminal, or a catalogue read that is not
 \* terminal.  The configurations checked here are the shipped pump-only state
@@ -51,35 +51,35 @@ Init ==
 \* ----- the reader -----
 
 SendA ==   \* reader posts to A; A becomes running at once
-    \* frontend-slint/src/native_chat.rs:3015 -- set_session_status writes the local phase on submit
+    \* crates/wunder-desktop/frontend/src/native_chat.rs:3015 -- set_session_status writes the local phase on submit
     /\ dA' = "running"
     /\ pA' = "live"
     /\ fA' = TRUE
     /\ UNCHANGED <<dB, pB, active, observable, fB>>
 
 SendB ==
-    \* frontend-slint/src/native_chat.rs:3015 -- set_session_status writes the local phase on submit
+    \* crates/wunder-desktop/frontend/src/native_chat.rs:3015 -- set_session_status writes the local phase on submit
     /\ dB' = "running"
     /\ pB' = "live"
     /\ fB' = TRUE
     /\ UNCHANGED <<dA, pA, active, observable, fA>>
 
 SwitchToA ==   \* selecting a thread attaches its watcher, which writes its row and clears its fence
-    \* frontend-slint/src/native_chat_observer.rs:357 -- a watch attaches to the selected thread
+    \* crates/wunder-desktop/frontend/src/native_chat_observer.rs:357 -- a watch attaches to the selected thread
     /\ active' = "A"
     /\ pA' = Mapped(dA)
     /\ fA' = FALSE
     /\ UNCHANGED <<dA, dB, pB, observable, fB>>
 
 SwitchToB ==
-    \* frontend-slint/src/native_chat_observer.rs:357 -- a watch attaches to the selected thread
+    \* crates/wunder-desktop/frontend/src/native_chat_observer.rs:357 -- a watch attaches to the selected thread
     /\ active' = "B"
     /\ pB' = Mapped(dB)
     /\ fB' = FALSE
     /\ UNCHANGED <<dA, dB, pA, observable, fA>>
 
 Hide ==    \* window hidden, or the cloud surface takes the sidebar
-    \* frontend-slint/src/native_chat_observer.rs:236 -- start_status_poll yields while !is_visible() || cloud_chat_active
+    \* crates/wunder-desktop/frontend/src/native_chat_observer.rs:236 -- start_status_poll yields while !is_visible() || cloud_chat_active
     /\ observable' = FALSE
     /\ UNCHANGED <<dA, dB, pA, pB, active, fA, fB>>
 
@@ -100,31 +100,31 @@ SettleB == \* B's run finishes on its own, while A is selected
     /\ UNCHANGED <<dA, pA, pB, active, observable, fA, fB>>
 
 ObserveA == \* A's own watcher copies A's durable phase into A's row
-    \* frontend-slint/src/native_chat_observer.rs:357 -- a watch attaches to the selected thread
+    \* crates/wunder-desktop/frontend/src/native_chat_observer.rs:357 -- a watch attaches to the selected thread
     /\ active = "A"
-    \* frontend-slint/src/native_chat_observer.rs:511 -- only a changed durable status is written back
+    \* crates/wunder-desktop/frontend/src/native_chat_observer.rs:511 -- only a changed durable status is written back
     /\ pA /= Mapped(dA)
     /\ pA' = Mapped(dA)
     /\ UNCHANGED <<dA, dB, pB, active, observable, fA, fB>>
 
 ObserveB == \* B's watcher only fires while B is the selected thread
-    \* frontend-slint/src/native_chat_observer.rs:357 -- the watch follows the selection, not B
+    \* crates/wunder-desktop/frontend/src/native_chat_observer.rs:357 -- the watch follows the selection, not B
     /\ active = "B"
-    \* frontend-slint/src/native_chat_observer.rs:511 -- a background thread raises no such write
+    \* crates/wunder-desktop/frontend/src/native_chat_observer.rs:511 -- a background thread raises no such write
     /\ pB /= Mapped(dB)
     /\ pB' = Mapped(dB)
     /\ UNCHANGED <<dA, dB, pA, active, observable, fA, fB>>
 
 Poll == \* the bounded pump raises the catalogue poll for any thread
-    \* frontend-slint/src/native_chat_observer.rs:229 -- start_status_poll raises the poll on its own cadence
+    \* crates/wunder-desktop/frontend/src/native_chat_observer.rs:229 -- start_status_poll raises the poll on its own cadence
     /\ Pump
-    \* frontend-slint/src/native_chat_observer.rs:236 -- the pump yields while the window is hidden or the cloud owns the sidebar
+    \* crates/wunder-desktop/frontend/src/native_chat_observer.rs:236 -- the pump yields while the window is hidden or the cloud owns the sidebar
     /\ observable
     /\ \/ (pA /= Mapped(dA) /\ ~(fA /\ ~Scoped) /\ pA' = Mapped(dA)
            /\ UNCHANGED <<dA, dB, pB, active, observable, fA, fB>>)
        \/ (pB /= Mapped(dB) /\ ~(fB /\ ~Scoped) /\ pB' = Mapped(dB)
            /\ UNCHANGED <<dA, dB, pA, active, observable, fA, fB>>)
-    \* frontend-slint/src/native_chat_status.rs:94 -- a stale local "hot" mark fences the catalogue read
+    \* crates/wunder-desktop/frontend/src/native_chat_status.rs:94 -- a stale local "hot" mark fences the catalogue read
     \*   unless the fence is scoped (Scoped = TRUE) to a locally authored terminal.
 
 Next ==

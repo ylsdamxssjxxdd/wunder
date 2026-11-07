@@ -5810,7 +5810,7 @@
         "You want the entry point to the whole manual"
       ],
       "source_docs": [
-        "frontend-slint/ui/theme.slint",
+        "crates/wunder-desktop/frontend/ui/theme.slint",
         "frontend/src/router/index.ts",
         "web/index.html",
         "crates/wunder-server/src/main.rs"
@@ -5874,7 +5874,7 @@
         "You want the fastest path from install to a completed first task"
       ],
       "source_docs": [
-        "frontend-slint/run.bat",
+        "crates/wunder-desktop/frontend/run.bat",
         "crates/wunder-desktop/native.rs",
         "crates/wunder-desktop/args.rs"
       ],
@@ -5947,8 +5947,8 @@
         "You need to know where its local data lives or how to migrate it"
       ],
       "source_docs": [
-        "frontend-slint/Cargo.toml",
-        "frontend-slint/run.bat",
+        "crates/wunder-desktop/frontend/Cargo.toml",
+        "crates/wunder-desktop/frontend/run.bat",
         "crates/wunder-desktop/args.rs",
         "crates/wunder-desktop/native.rs",
         "crates/wunder-desktop/runtime.rs"
@@ -6340,7 +6340,7 @@
       ],
       "source_docs": [
         "docs/使用说明书/site.json",
-        "frontend-slint/run.bat",
+        "crates/wunder-desktop/frontend/run.bat",
         "crates/wunder-server/src/main.rs"
       ],
       "tab": "Getting Started",
@@ -7574,8 +7574,8 @@
         "You expect a capability in one interface and want to check whether it exists there at all"
       ],
       "source_docs": [
-        "frontend-slint/ui/theme.slint",
-        "frontend-slint/ui/settings_page.slint",
+        "crates/wunder-desktop/frontend/ui/theme.slint",
+        "crates/wunder-desktop/frontend/ui/settings_page.slint",
         "frontend/src/router/index.ts",
         "web/index.html",
         "crates/wunder-cli/tui/app.rs"
@@ -7773,10 +7773,10 @@
         "You cannot find the device-interconnection panel or TTS playback in the Desktop"
       ],
       "source_docs": [
-        "frontend-slint/ui/theme.slint",
-        "frontend-slint/ui/main.slint",
-        "frontend-slint/ui/settings_page.slint",
-        "frontend-slint/src/native_interlink.rs",
+        "crates/wunder-desktop/frontend/ui/theme.slint",
+        "crates/wunder-desktop/frontend/ui/main.slint",
+        "crates/wunder-desktop/frontend/ui/settings_page.slint",
+        "crates/wunder-desktop/frontend/src/native_interlink.rs",
         "crates/wunder-desktop/native.rs"
       ],
       "tab": "Surfaces",
@@ -9423,7 +9423,7 @@
         "crates/wunder-runtime/src/services/companions.rs",
         "crates/wunder-runtime/src/api/companions.rs",
         "crates/wunder-runtime/src/api/admin/resource_admin.rs",
-        "frontend-slint/src/companion_sprite.rs",
+        "crates/wunder-desktop/frontend/src/companion_sprite.rs",
         "crates/wunder-desktop/native_companion_overlay.rs"
       ],
       "tab": "Capabilities",

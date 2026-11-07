@@ -23,7 +23,7 @@
       "n": 1,
       "end": "Save returned, original objective retained",
       "invariant": "BannerSaveUpdatesGoal",
-      "rule": "Saving the replacement objective through the goal banner updates the durable objective. frontend-slint/src/native_chat.rs:3124; crates/wunder-desktop/native_commands.rs:96",
+      "rule": "Saving the replacement objective through the goal banner updates the durable objective. crates/wunder-desktop/frontend/src/native_chat.rs:3124; crates/wunder-desktop/native_commands.rs:96",
       "cause": null,
       "readerSteps": 2,
       "modelSteps": 3,

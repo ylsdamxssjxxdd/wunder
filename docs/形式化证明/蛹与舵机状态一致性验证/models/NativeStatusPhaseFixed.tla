@@ -3,10 +3,10 @@
 \*
 \* The reducer still writes free-form phrases, but every write now carries the
 \* phase, and every view reads that phase:
-\*   - frontend-slint/src/runtime_phase.rs      Phase, the one phrase table
-\*   - frontend-slint/src/native_chat.rs        set_session_status(.., phase)
-\*   - frontend-slint/src/native_chat.rs        update_active_thread_filter(rows)
-\*   - frontend-slint/ui/sidebar.slint          StatusDot(phase:)
+\*   - crates/wunder-desktop/frontend/src/runtime_phase.rs      Phase, the one phrase table
+\*   - crates/wunder-desktop/frontend/src/native_chat.rs        set_session_status(.., phase)
+\*   - crates/wunder-desktop/frontend/src/native_chat.rs        update_active_thread_filter(rows)
+\*   - crates/wunder-desktop/frontend/ui/sidebar.slint          StatusDot(phase:)
 \*
 \* Only foreign text — the durable catalogue, a cloud row — still goes through
 \* the phrase table, and that table now covers the phrases the reducer writes.
@@ -21,7 +21,7 @@ Phases == {"idle", "queued", "running", "done", "error"}
 Shown == {"idle", "pending", "running", "done", "error"}
 
 \* What a view shows is a function of the phase. The phrase no longer decides.
-\* frontend-slint/src/runtime_phase.rs:Phase::live + ui/runtime_status.slint:from-phase
+\* crates/wunder-desktop/frontend/src/runtime_phase.rs:Phase::live + ui/runtime_status.slint:from-phase
 Show(value) ==
     CASE value = "queued" -> "pending"
       [] value = "running" -> "running"

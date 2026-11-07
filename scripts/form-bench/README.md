@@ -10,7 +10,7 @@
 | `hull` | wunder 服务端 | 服务端进程 `wunder-server`（默认 member，共享引擎 `wunder-runtime`） | `crates/wunder-server` |
 | `bridge` | wunder 管理端 | Web 管理端，由服务端静态托管于 `/` | `web/` |
 | `beehive` | wunder 云端版 | Web 用户端（Vue + Vite） | `frontend/` |
-| `pupa` | wunder 桌面版 | 原生桌面端（Rust + Slint，单进程内嵌后端） | `frontend-slint/` |
+| `pupa` | wunder 桌面版 | 原生桌面端（Rust + Slint，单进程内嵌后端） | `crates/wunder-desktop/frontend/` |
 | `helm` | wunder 命令行 | 命令行 TUI | `crates/wunder-cli` |
 
 矩阵的 6 个指标与本框架的 metric key 对应关系：
@@ -110,7 +110,7 @@ powershell -ExecutionPolicy Bypass -File scripts\form-bench\form-bench.ps1 -Auto
 
 ### 聊天页面性能 `chat_page_perf`
 - 管理端 / 云端版：跑对应 Playwright 性能用例（`frontend/tests/e2e/*.spec.ts`），取用例耗时（ms）。
-- 桌面版：Slint 原生帧率需在 `frontend-slint` 内加埋点（见「待办」），当前记为 N/A + note。
+- 桌面版：Slint 原生帧率需在 `crates/wunder-desktop/frontend` 内加埋点（见「待办」），当前记为 N/A + note。
 - 服务端 / 命令行：不适用，记为 N/A。
 
 ## 配置（config/forms.json）
@@ -144,7 +144,7 @@ chat       { supported, mode: playwright|slint|none, spec }
 
 - **T-cli-sentinel**：`wunder-cli` 需支持 `--bench-echo`（打印 `WUNDER_READY` 后退出），
   命令行启动速度才能取到有效值；否则记录 `details.error`。
-- **T-chat-native**：桌面版聊天页面性能需在 `frontend-slint` 增加帧耗时埋点，
+- **T-chat-native**：桌面版聊天页面性能需在 `crates/wunder-desktop/frontend` 增加帧耗时埋点，
   否则该格恒为 N/A。
 - **T-server-health**：服务端启动当前用 TCP 探活（未依赖 `/health` 路由，项目未见通用 health 路由）；
   若后续新增 `GET /health`，可在 `collect-startup.ps1` 的 tcp 模式加 HTTP 就绪校验。

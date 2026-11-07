@@ -57,7 +57,7 @@ CreateGoal ==
 
 SaveGoal ==
     /\ stage = IF Unified THEN "recorded" ELSE "controlled" \* crates/wunder-runtime/src/api/chat_goal.rs:281; crates/wunder-desktop/native_commands.rs:107 (baseline)
-    /\ command = "save" \* frontend-slint/src/native_chat.rs:3124
+    /\ command = "save" \* crates/wunder-desktop/frontend/src/native_chat.rs:3124
     /\ phase = "active" \* crates/wunder-runtime/src/services/goal/command.rs:142
     /\ stage' = "done"
     /\ objective' = IF Unified THEN "revised" ELSE objective
@@ -81,7 +81,7 @@ Spec == Init /\ [][Next]_vars
 CreateHasDurableCommand == (stage = "done" /\ command = "create") => durableCommand
 
 \* Saving the replacement objective through the goal banner updates the durable objective.
-\* frontend-slint/src/native_chat.rs:3124; crates/wunder-desktop/native_commands.rs:96
+\* crates/wunder-desktop/frontend/src/native_chat.rs:3124; crates/wunder-desktop/native_commands.rs:96
 BannerSaveUpdatesGoal == (stage = "done" /\ command = "save") => objective = "revised"
 
 \* Returning from a human pause command has fenced the previous executor.

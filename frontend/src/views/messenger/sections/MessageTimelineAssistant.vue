@@ -22,7 +22,7 @@
     <!-- 有工具的轮次：流式文本进过程区实时行，不外显为正文；过程区收起时外显保证输出可见；
          无工具轮次保持正文直播，活动尾部挂在持久前缀之后。 -->
     <!--
-      时间线主体（形态对齐桌面端 `frontend-slint/src/timeline.rs`）：模型每轮的正式
+      时间线主体（形态对齐桌面端 `crates/wunder-desktop/frontend/src/timeline.rs`）：模型每轮的正式
       输出是一段独立打印，思考与工具调用按到达顺序折成可开合的批次夹在段与段之间。
       块的顺序由投影层按 `created_seq` 定好；块渲染由 MessageTimelineBlocks 与
       子智能体详情弹窗共用，旧式单段正文（问候语、无块旧行）回退到本组件渲染。
@@ -242,7 +242,7 @@ import { buildAssistantDisplayContent } from '@/utils/assistantFailureNotice';
 
 /**
  * 助手轮次的时间线条目区（方案 §7.3 / §7.4，形态对齐桌面端
- * `frontend-slint/ui/timeline.slint` 的 `BodyBlock` / `FoldEntry` / `GroupBar`）。
+ * `crates/wunder-desktop/frontend/ui/timeline.slint` 的 `BodyBlock` / `FoldEntry` / `GroupBar`）。
  *
  * 结构：工作过程折叠条（34px，默认收起，罩住最后一段正文之前的全部中间
  * 内容）→ 正文块（**全宽、无气泡**，左右内边距 24px、上下 6px，hover 底 `hover`

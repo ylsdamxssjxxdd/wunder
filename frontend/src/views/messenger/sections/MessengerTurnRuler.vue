@@ -40,7 +40,7 @@
 
 <script setup lang="ts">
 /**
- * 聊天区右缘的「用户轮次刻度」（对齐桌面端 `frontend-slint/ui/timeline.slint:541-566`）。
+ * 聊天区右缘的「用户轮次刻度」（对齐桌面端 `crates/wunder-desktop/frontend/ui/timeline.slint:541-566`）。
  *
  * 布局：组件是 `.messenger-chat-lane` 里滚动容器的**同级 flex 通道**，独占 18px 宽
  * （桌面端 marks-strip 同款独占矩形），上下留 10px——空间由布局分配，不依赖

@@ -7,10 +7,10 @@
 \* thing, and the one that could silently do nothing.
 \*
 \* Code behind each step, after the fix:
-\*   Open        frontend-slint/src/timeline.slint      ToolProcess opens on toggle
-\*   ReadLatest  frontend-slint/src/chat_process.rs     direction 0, both cursors absent
-\*   Rebuild     frontend-slint/src/chat_process.rs     row.process_first/last survive
-\*   ScrollTop   frontend-slint/ui/tool_process.slint   scrolled at the top asks for -1
+\*   Open        crates/wunder-desktop/frontend/src/timeline.slint      ToolProcess opens on toggle
+\*   ReadLatest  crates/wunder-desktop/frontend/src/chat_process.rs     direction 0, both cursors absent
+\*   Rebuild     crates/wunder-desktop/frontend/src/chat_process.rs     row.process_first/last survive
+\*   ScrollTop   crates/wunder-desktop/frontend/ui/tool_process.slint   scrolled at the top asks for -1
 EXTENDS Naturals, TLC
 
 VARIABLES
@@ -39,7 +39,7 @@ Open ==
     /\ UNCHANGED <<page, older_left, edge, entry>>
 
 ReadLatest ==
-    /\ panel = "open"  \* frontend-slint/ui/timeline.slint:608
+    /\ panel = "open"  \* crates/wunder-desktop/frontend/ui/timeline.slint:608
     /\ page' = "latest"
     /\ edge' = "set"
     /\ UNCHANGED <<panel, older_left, entry>>
@@ -47,20 +47,20 @@ ReadLatest ==
 \* The view is rebuilt, but the page and its edges belong to the row, so
 \* nothing about the page is lost.
 Rebuild ==
-    /\ page = "latest"  \* frontend-slint/src/chat_process.rs:50
+    /\ page = "latest"  \* crates/wunder-desktop/frontend/src/chat_process.rs:50
     /\ UNCHANGED <<panel, page, older_left, edge, entry>>
 
 \* Scrolling past the top is the request for the older page. It only happens
 \* when the loaded page carries the cursor that continues it.
 ScrollTop ==
-    /\ panel = "open"  \* frontend-slint/ui/timeline.slint:608
-    /\ older_left  \* frontend-slint/src/chat_process.rs:96
-    /\ edge = "set"  \* frontend-slint/ui/tool_process.slint:252
+    /\ panel = "open"  \* crates/wunder-desktop/frontend/ui/timeline.slint:608
+    /\ older_left  \* crates/wunder-desktop/frontend/src/chat_process.rs:96
+    /\ edge = "set"  \* crates/wunder-desktop/frontend/ui/tool_process.slint:252
     /\ page' = "older"
     /\ UNCHANGED <<panel, older_left, edge, entry>>
 
 MarkOlder ==
-    /\ page = "latest"  \* frontend-slint/src/timeline.rs:832
+    /\ page = "latest"  \* crates/wunder-desktop/frontend/src/timeline.rs:832
     /\ older_left' = TRUE
     /\ UNCHANGED <<panel, page, edge, entry>>
 

@@ -7,16 +7,16 @@
 \* window title shows.
 \*
 \* Code behind each step, as it was before the fix:
-\*   Admit      frontend-slint/src/native_chat.rs:2256  set_session_status("请求中")
-\*   Promote    frontend-slint/src/native_chat.rs:3349  set_session_status("正在生成…")
-\*   Reason     frontend-slint/src/native_chat.rs:3654  active.state = "正在思考…"
-\*   Compact    frontend-slint/src/native_chat.rs:3804  active.state = "上下文压缩中…"
-\*   Queue      frontend-slint/src/native_chat.rs:3818  active.state = "模型请求正在排队…"
-\*   Request    frontend-slint/src/native_chat.rs:3712  active.state = "模型响应中"
-\*   Settle     frontend-slint/src/native_chat.rs:3762  active.state = "任务完成"
-\*   Fail       frontend-slint/src/native_chat.rs:4003  active.state = "执行失败"
-\*   Project    frontend-slint/src/native_chat.rs:2963  runtime_status_kind(phrase)
-\*   Title      frontend-slint/src/native_chat.rs:2931  update_active_thread_filter(rows)
+\*   Admit      crates/wunder-desktop/frontend/src/native_chat.rs:2256  set_session_status("请求中")
+\*   Promote    crates/wunder-desktop/frontend/src/native_chat.rs:3349  set_session_status("正在生成…")
+\*   Reason     crates/wunder-desktop/frontend/src/native_chat.rs:3654  active.state = "正在思考…"
+\*   Compact    crates/wunder-desktop/frontend/src/native_chat.rs:3804  active.state = "上下文压缩中…"
+\*   Queue      crates/wunder-desktop/frontend/src/native_chat.rs:3818  active.state = "模型请求正在排队…"
+\*   Request    crates/wunder-desktop/frontend/src/native_chat.rs:3712  active.state = "模型响应中"
+\*   Settle     crates/wunder-desktop/frontend/src/native_chat.rs:3762  active.state = "任务完成"
+\*   Fail       crates/wunder-desktop/frontend/src/native_chat.rs:4003  active.state = "执行失败"
+\*   Project    crates/wunder-desktop/frontend/src/native_chat.rs:2963  runtime_status_kind(phrase)
+\*   Title      crates/wunder-desktop/frontend/src/native_chat.rs:2931  update_active_thread_filter(rows)
 EXTENDS Naturals, TLC
 
 VARIABLES
@@ -35,7 +35,7 @@ Shown == {"idle", "pending", "running", "done", "error"}
 \* The table knew the 正在 family and the 排队 family and nothing else, so the
 \* admission phrase, the model phrase, the compaction phrase and the failure
 \* phrase fell through to idle.
-\* frontend-slint/src/native_chat.rs:2963
+\* crates/wunder-desktop/frontend/src/native_chat.rs:2963
 Project(value) ==
     CASE value = "streaming" -> "running"
       [] value = "thinking" -> "running"

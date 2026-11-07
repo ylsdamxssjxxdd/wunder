@@ -22,10 +22,11 @@ cache:
 container:
   network: "@STACK_PREFIX@-ci"
   privileged: false
-  options: "--volume @STACK_PREFIX@-build-cache:/ci-cache --volume @STACK_PREFIX@-sdk:/opt/offline-sdk:ro"
+  options: "--volume @STACK_PREFIX@-build-cache:/ci-cache --volume @STACK_PREFIX@-sdk:/opt/offline-sdk:ro --volume @STACK_PREFIX@-android:/opt/android:ro"
   valid_volumes:
     - "@STACK_PREFIX@-build-cache"
     - "@STACK_PREFIX@-sdk"
+    - "@STACK_PREFIX@-android"
   docker_host: "-"
   force_pull: false
   force_rebuild: false

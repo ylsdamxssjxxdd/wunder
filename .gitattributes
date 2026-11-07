@@ -3,4 +3,4 @@
 # GLB remains available through Git LFS without duplicating megabytes in the
 # normal repository history.
 web/third/models/*.glb filter=lfs diff=lfs merge=lfs -text
-frontend-slint/assets/models/*.glb filter=lfs diff=lfs merge=lfs -text
+crates/wunder-desktop/frontend/assets/models/*.glb filter=lfs diff=lfs merge=lfs -text

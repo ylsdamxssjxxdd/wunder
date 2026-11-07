@@ -56,7 +56,7 @@ WUNDER_TEMP
 gen/
 # Vendored typenum ships pregenerated type modules under src/gen/; the blanket
 # `gen/` rule above would drop them from CI checkouts and break the Win7 build.
-!frontend-slint/vendor/typenum-1.20.1/src/gen/
+!crates/wunder-desktop/frontend/vendor/typenum-1.20.1/src/gen/
 desktop/tauri/gen/
 .tmp*
 temp_eval*

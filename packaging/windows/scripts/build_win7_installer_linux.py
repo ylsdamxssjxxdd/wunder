@@ -235,8 +235,8 @@ def main():
     version = args.version or read_app_version(repo_root / "config" / "app_version.json")
     if read_cargo_version(repo_root / "Cargo.toml") != version:
         fail("app_version.json 与 workspace 版本不一致，请运行 scripts/sync_app_version.py 后用同一修订重建产物")
-    if read_cargo_version(repo_root / "frontend-slint" / "Cargo.toml") != version:
-        fail("app_version.json 与 frontend-slint 版本不一致，请用同一修订重建产物")
+    if read_cargo_version(repo_root / "crates/wunder-desktop/frontend" / "Cargo.toml") != version:
+        fail("app_version.json 与 crates/wunder-desktop/frontend 版本不一致，请用同一修订重建产物")
     for path, label in ((args.desktop, "desktop"), (args.cli, "cli")):
         if not path.is_file():
             fail(label + " 输入缺失: " + str(path))

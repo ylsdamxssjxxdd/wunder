@@ -3,7 +3,7 @@
 //! The engine owns this data on worker threads, so it must stay `Send`: rows
 //! are plain strings, and the Slint types (`MdBlock`, `ModelRc`, `Image`) are
 //! built only on the UI thread by [`RowData::to_row`]. 桌面版 computes the same
-//! rows in `frontend-slint/src/timeline.rs`, bound to its own window; 安卓版 keeps
+//! rows in `crates/wunder-desktop/frontend/src/timeline.rs`, bound to its own window; 安卓版 keeps
 //! the same row kinds and field meanings while dropping the desktop
 //! bookkeeping (group bars, process paging, subagent docks).
 

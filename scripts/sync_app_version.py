@@ -66,7 +66,7 @@ def main() -> int:
     sync_targets = [
         (ROOT / "Cargo.toml", ["-w"]),
         (ROOT / "crates" / "wunder-desktop" / "Cargo.toml", None),
-        (ROOT / "frontend-slint" / "Cargo.toml", ["-p", "wunder-frontend-slint"]),
+        (ROOT / "crates/wunder-desktop/frontend" / "Cargo.toml", ["-p", "wunder-frontend-slint"]),
     ]
     lock_jobs = []
     for target, repin_args in sync_targets:

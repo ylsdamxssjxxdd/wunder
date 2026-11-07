@@ -1,6 +1,6 @@
 ## 1. 相同前缀的新思考<br/>迟到数据处理结束<br/>活动第2轮，展示第2轮<br/>旧思考被新文字覆盖
 
-Rule broken: Completed canonical thoughts remain unchanged; mutators: frontend/src/components/chat/MessageTimelineTurnProcess.vue:178; frontend-slint/src/timeline_text.rs:251.
+Rule broken: Completed canonical thoughts remain unchanged; mutators: frontend/src/components/chat/MessageTimelineTurnProcess.vue:178; crates/wunder-desktop/frontend/src/timeline_text.rs:251.
 Why: prefix.
 In the model, one step leads into this bug: "按条目身份匹配思考".
 

@@ -1,6 +1,6 @@
 # 桌面版 UI 线程消息帧重入验证（win32-reentry-20261104）
 
-验证日期：2026-11-04。对象：桌面版（frontend-slint）Windows 后端 UI 线程的消息帧重入纪律——winit 窗口过程、Slint 同步事件分发、IMM32 输入法写调用与窗口过程互斥锁之间的嵌套关系。这是对 `docs/经验教训.md`「输入法死锁家族」三例（capture_mouse 持锁自死锁、触摸合成事件、IMM32 写调用重入）共性的有界模型检查，不是对闭源 Win32/IME DLL 内部行为的证明。
+验证日期：2026-11-04。对象：桌面版（crates/wunder-desktop/frontend）Windows 后端 UI 线程的消息帧重入纪律——winit 窗口过程、Slint 同步事件分发、IMM32 输入法写调用与窗口过程互斥锁之间的嵌套关系。这是对 `docs/经验教训.md`「输入法死锁家族」三例（capture_mouse 持锁自死锁、触摸合成事件、IMM32 写调用重入）共性的有界模型检查，不是对闭源 Win32/IME DLL 内部行为的证明。
 
 ## 契约与不变量
 
@@ -20,11 +20,11 @@
 
 ## 代码检查点
 
-- Slint 帧内同步分发：`frontend-slint/vendor/winit-0.30.2/src/platform_impl/windows/event_loop/runner.rs:160`（should_buffer 只看处理器取走与否）、`runner.rs:208`（send_event）。
+- Slint 帧内同步分发：`crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/event_loop/runner.rs:160`（should_buffer 只看处理器取走与否）、`runner.rs:208`（send_event）。
 - 泵轮收消息成帧：`event_loop.rs:1583`（WM_IME_STARTCOMPOSITION）、`event_loop.rs:1715`（WM_MOUSEMOVE 等普通消息）、`event_loop.rs:2838`（EXEC_MSG_ID 闭包执行）。
 - 修复前帧内直接写：`event_loop.rs:836`（execute_in_thread 线程内内联分支）；修复后投递：`event_loop.rs:867`（defer_to_thread 永远 PostMessageW）、`window.rs:924`/`window.rs:937`（set_ime_cursor_area/set_ime_allowed 延迟）。
-- Slint 侧触发链：`frontend-slint/vendor/i-slint-core-1.18/items/text.rs:1179`（UpdateComposition/Commit）、`text.rs:1773`（update_ime）、`frontend-slint/vendor/i-slint-backend-winit-1.18/winitwindowadapter.rs:2558`（input_method_request）。
-- IMM32 写调用：`frontend-slint/vendor/winit-0.30.2/src/platform_impl/windows/ime.rs:145-146`（ImmSetCompositionWindow/ImmSetCandidateWindow）、`ime.rs:156-158`（ImmAssociateContextEx）。
+- Slint 侧触发链：`crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/items/text.rs:1179`（UpdateComposition/Commit）、`text.rs:1773`（update_ime）、`crates/wunder-desktop/frontend/vendor/i-slint-backend-winit-1.18/winitwindowadapter.rs:2558`（input_method_request）。
+- IMM32 写调用：`crates/wunder-desktop/frontend/vendor/winit-0.30.2/src/platform_impl/windows/ime.rs:145-146`（ImmSetCompositionWindow/ImmSetCandidateWindow）、`ime.rs:156-158`（ImmAssociateContextEx）。
 - 锁家族：`event_loop.rs:1048-1057`（capture_mouse，修复后先 drop 守卫再 SetCapture）。
 
 ## 结果
@@ -41,7 +41,7 @@
 
 - 递归类（反例 8-11）：2026-11-04 实机观察「输入过程中卡死，且卡住后其他软件输入法一并冻结」，与递归反例同构（win32k 需与挂死的焦点线程同步，故全系统输入法停摆）。修复 `defer_to_thread` 已合入 vendored winit，x86_64-pc-windows-gnu 编译通过；Win7 真机验收（组合选字、连续提交、组合进行中切换窗口）待完成。
 - 持锁类（反例 7）：历史上以快速连点左右键文本框卡死出现，修复 capture_mouse 放锁已合入（`event_loop.rs:1055`）。
-- 未做自动化 UI 回放：消息帧重入发生在 winit 窗口过程内部，现有 smoke 覆盖不达这一层；该纪律由模型、代码锚点与 `frontend-slint/vendor/patches/winit-0.30.2.patch` 归档共同约束。
+- 未做自动化 UI 回放：消息帧重入发生在 winit 窗口过程内部，现有 smoke 覆盖不达这一层；该纪律由模型、代码锚点与 `crates/wunder-desktop/frontend/vendor/patches/winit-0.30.2.patch` 归档共同约束。
 
 ## 边界与未覆盖
 

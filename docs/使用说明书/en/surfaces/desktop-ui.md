@@ -5,10 +5,10 @@ read_when:
   - You use the Desktop desktop app and want to know where a capability lives
   - You cannot find the device-interconnection panel or TTS playback in the Desktop
 source_docs:
-  - frontend-slint/ui/theme.slint
-  - frontend-slint/ui/main.slint
-  - frontend-slint/ui/settings_page.slint
-  - frontend-slint/src/native_interlink.rs
+  - crates/wunder-desktop/frontend/ui/theme.slint
+  - crates/wunder-desktop/frontend/ui/main.slint
+  - crates/wunder-desktop/frontend/ui/settings_page.slint
+  - crates/wunder-desktop/frontend/src/native_interlink.rs
   - crates/wunder-desktop/native.rs
 updated_at: 2026-10-16
 ---

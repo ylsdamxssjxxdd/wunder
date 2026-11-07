@@ -5,8 +5,8 @@ read_when:
   - You are installing or first launching the Desktop
   - You need to know where its local data lives or how to migrate it
 source_docs:
-  - frontend-slint/Cargo.toml
-  - frontend-slint/run.bat
+  - crates/wunder-desktop/frontend/Cargo.toml
+  - crates/wunder-desktop/frontend/run.bat
   - crates/wunder-desktop/args.rs
   - crates/wunder-desktop/native.rs
   - crates/wunder-desktop/runtime.rs

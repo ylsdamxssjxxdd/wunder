@@ -17,23 +17,46 @@ export ANDROID_HOME="${ANDROID_HOME:-$HOME/android-sdk}"
 export ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-$ANDROID_HOME/ndk/28.2.13676358}"
 export JAVA_HOME="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}"
 
-TOOLCHAIN="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
-export PATH="$TOOLCHAIN:$ANDROID_HOME/platform-tools:$PATH"
+host_arch="$(uname -m)"
+if [[ "$host_arch" == aarch64 || "$host_arch" == arm64 ]]; then
+    # NDK 与 build-tools 只有 x86_64 宿主版：套件在 android 卷里带 qemu-x86_64-static，
+    # 由 android-host-tools.sh 生成的包装器负责编译/链接/aapt2。
+    ANDROID_HOST_BIN="${WUNDER_ANDROID_BIN:-$(cd -- "$ANDROID_HOME/.." && pwd -P)/bin}"
+    [[ -x "$ANDROID_HOST_BIN/aarch64-linux-android26-clang" ]] || {
+        echo "aarch64 宿主缺少 $ANDROID_HOST_BIN/aarch64-linux-android26-clang（先运行 prepare-android.sh --host-arch aarch64）" >&2
+        exit 2
+    }
+    export PATH="$ANDROID_HOST_BIN:$ANDROID_HOME/platform-tools:$PATH"
+    export CC_aarch64_linux_android="$ANDROID_HOST_BIN/aarch64-linux-android26-clang"
+    export CXX_aarch64_linux_android="$ANDROID_HOST_BIN/aarch64-linux-android26-clang++"
+    export AR_aarch64_linux_android="$ANDROID_HOST_BIN/llvm-ar"
+    export RANLIB_aarch64_linux_android="$ANDROID_HOST_BIN/llvm-ranlib"
+    export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$ANDROID_HOST_BIN/rust-linker"
+    export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384"
+    export WUNDER_AAPT2="$ANDROID_HOST_BIN/aapt2"
+    # CMake 的编译器探测会链接可执行文件；模拟环境下走 aws-lc 的 cc 构建链，只编译+打包。
+    export AWS_LC_SYS_CMAKE_BUILDER=0
+else
+    TOOLCHAIN="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+    export PATH="$TOOLCHAIN:$ANDROID_HOME/platform-tools:$PATH"
 
-# cc-rs builds SQLite/ring/zstd with the NDK clang; the same driver links the
-# Rust cdylib. API 26 matches the manifest's minSdk. The page-size flag is the
-# Android 15+ 16 KiB requirement.
-export CC_aarch64_linux_android="$TOOLCHAIN/aarch64-linux-android26-clang"
-export CXX_aarch64_linux_android="$TOOLCHAIN/aarch64-linux-android26-clang++"
-export AR_aarch64_linux_android="$TOOLCHAIN/llvm-ar"
-export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TOOLCHAIN/aarch64-linux-android26-clang"
-export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384"
+    # cc-rs builds SQLite/ring/zstd with the NDK clang; the same driver links the
+    # Rust cdylib. API 26 matches the manifest's minSdk. The page-size flag is the
+    # Android 15+ 16 KiB requirement.
+    export CC_aarch64_linux_android="$TOOLCHAIN/aarch64-linux-android26-clang"
+    export CXX_aarch64_linux_android="$TOOLCHAIN/aarch64-linux-android26-clang++"
+    export AR_aarch64_linux_android="$TOOLCHAIN/llvm-ar"
+    export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TOOLCHAIN/aarch64-linux-android26-clang"
+    export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384"
+fi
 
-export CC_x86_64_linux_android="$TOOLCHAIN/x86_64-linux-android26-clang"
-export CXX_x86_64_linux_android="$TOOLCHAIN/x86_64-linux-android26-clang++"
-export AR_x86_64_linux_android="$TOOLCHAIN/llvm-ar"
-export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$TOOLCHAIN/x86_64-linux-android26-clang"
-export CARGO_TARGET_X86_64_LINUX_ANDROID_RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384"
+if [[ "$host_arch" != aarch64 && "$host_arch" != arm64 ]]; then
+    export CC_x86_64_linux_android="$TOOLCHAIN/x86_64-linux-android26-clang"
+    export CXX_x86_64_linux_android="$TOOLCHAIN/x86_64-linux-android26-clang++"
+    export AR_x86_64_linux_android="$TOOLCHAIN/llvm-ar"
+    export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$TOOLCHAIN/x86_64-linux-android26-clang"
+    export CARGO_TARGET_X86_64_LINUX_ANDROID_RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384"
+fi
 
 ABIS="${WUNDER_ANDROID_ABIS:-arm64-v8a}"
 IFS=',' read -r -a ABI_LIST <<<"$ABIS"
@@ -42,18 +65,39 @@ cd "$CRATE"
 for ABI in "${ABI_LIST[@]}"; do
     case "$ABI" in
         arm64-v8a) TARGET=aarch64-linux-android ;;
-        x86_64) TARGET=x86_64-linux-android ;;
+        x86_64)
+            [[ "$host_arch" != aarch64 && "$host_arch" != arm64 ]] || {
+                echo "aarch64 宿主只构建 arm64-v8a（x86_64 切片仅用于 x86 模拟器）" >&2
+                exit 2
+            }
+            TARGET=x86_64-linux-android
+            ;;
         *) echo "unsupported ABI: $ABI (expected arm64-v8a or x86_64)" >&2; exit 2 ;;
     esac
-    rustup target add "$TARGET" >/dev/null
+    if [[ ! -d "$(rustc --print sysroot)/lib/rustlib/$TARGET/lib" ]]; then
+        command -v rustup >/dev/null || {
+            echo "Rust target $TARGET is not installed and rustup is unavailable (offline build?)" >&2
+            exit 2
+        }
+        rustup target add "$TARGET" >/dev/null
+    fi
     cargo build --release --target "$TARGET" --lib
+    target_dir="${CARGO_TARGET_DIR:-$PWD/target}"
     mkdir -p "android/app/src/main/jniLibs/$ABI"
-    cp "target/$TARGET/release/libwunder_android.so" "android/app/src/main/jniLibs/$ABI/"
+    cp "$target_dir/$TARGET/release/libwunder_android.so" "android/app/src/main/jniLibs/$ABI/"
 done
 
 GRADLE="${GRADLE:-$HOME/gradle/gradle-8.13/bin/gradle}"
+gradle_args=()
+if [[ -n "${WUNDER_GRADLE_ARGS:-}" ]]; then
+    read -r -a gradle_args <<<"$WUNDER_GRADLE_ARGS"
+fi
 cd android
-"$GRADLE" --no-daemon "-PwunderAbis=$ABIS" assembleDebug
+if [[ -n "${WUNDER_AAPT2:-}" ]]; then
+    # aarch64 宿主：AGP 默认会解包 Maven 里的 x86_64 aapt2，这里换成 qemu 包装器。
+    gradle_args+=("-Pandroid.aapt2FromMavenOverride=$WUNDER_AAPT2")
+fi
+"$GRADLE" --no-daemon "${gradle_args[@]}" "-PwunderAbis=$ABIS" assembleDebug
 
 VERSION="$(python3 - "$ROOT/config/app_version.json" <<'PY'
 import json, sys

@@ -24,7 +24,7 @@ if ($CargoCacheRoot) {
     }
 } else {
     if (!(Get-ChildItem -LiteralPath $vendor -Directory -Filter "axum-*" -ErrorAction SilentlyContinue)) {
-        throw "The frontend-only SDK lacks native runtime dependencies. Supply -CargoCacheRoot with a populated Cargo registry cache, or update cargo-vendor-slint from frontend-slint/Cargo.lock."
+        throw "The frontend-only SDK lacks native runtime dependencies. Supply -CargoCacheRoot with a populated Cargo registry cache, or update cargo-vendor-slint from crates/wunder-desktop/frontend/Cargo.lock."
     }
     $cargoCache = Join-Path $repoRoot "target\frontend-slint\cargo-home"
     New-Item -ItemType Directory -Force -Path $cargoCache | Out-Null

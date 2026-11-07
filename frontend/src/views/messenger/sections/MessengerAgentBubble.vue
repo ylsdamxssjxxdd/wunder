@@ -127,7 +127,7 @@ import { uiMessageStatus } from '@/realtime/chat/threadViewStore';
 /**
  * 聊天区消息行（§7 时间线形态）。
  *
- * 形态契约（桌面端 `frontend-slint/ui/timeline.slint`）：
+ * 形态契约（桌面端 `crates/wunder-desktop/frontend/ui/timeline.slint`）：
  * - **任何消息都不再渲染头像**，也没有「名字 / 时间」标签行；
  * - 用户消息是右对齐的浅灰气泡（无头像、无气泡尾巴），助手轮次由
  *   `MessageTimelineAssistant` 负责全宽正文 + 工具分组时间线；

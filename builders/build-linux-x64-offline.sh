@@ -16,7 +16,7 @@ else
   rust="$offline_root/rust/toolchains/1.92.0-aarch64-unknown-linux-gnu"
 fi
 target="x86_64-unknown-linux-gnu"
-manifest="$repo_root/frontend-slint/Cargo.toml"
+manifest="$repo_root/crates/wunder-desktop/frontend/Cargo.toml"
 target_dir="${CARGO_TARGET_DIR:-$repo_root/target/linux-x64-ubuntu18-slint/cargo}"
 output_dir="${WUNDER_OUTPUT_DIR:-$repo_root/target/slint/dist/linux-x64}"
 max_glibc="${WUNDER_SLINT_LINUX_MAX_GLIBC:-2.27}"

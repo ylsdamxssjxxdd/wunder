@@ -6,7 +6,7 @@ read_when:
   - You are troubleshooting and need to jump to the right form's page
 source_docs:
   - docs/使用说明书/site.json
-  - frontend-slint/run.bat
+  - crates/wunder-desktop/frontend/run.bat
   - crates/wunder-server/src/main.rs
 updated_at: 2026-10-16
 ---

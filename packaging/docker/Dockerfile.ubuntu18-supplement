@@ -63,7 +63,13 @@ RUN set -eux; \
       echo "apt install failed, retrying (attempt ${attempt}/3) from a clean cache" >&2; \
       apt-get clean; \
       rm -rf /var/lib/apt/lists/*; \
-      dpkg --configure -a || true; \
+      if apt-get update; then \
+        # A corrupted blob leaves its package half-unpacked and dependents
+        # unconfigured; a plain re-install then refuses to run on the unmet
+        # dependency instead of re-fetching the blob. Settle that state first.
+        apt-get -f install -y --no-install-recommends || true; \
+        dpkg --configure -a || true; \
+      fi; \
     done; \
     rm -rf /var/lib/apt/lists/*; \
     curl --version >/dev/null; \

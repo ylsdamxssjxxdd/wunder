@@ -109,9 +109,9 @@ node "$skill/scripts/statechart.mjs" from-spec "$model/NativeCatalogueStatus.tla
 node "$skill/scripts/statechart.mjs" from-spec "$model/NativeStatusPhase.tla" --fixed "$model/NativeStatusPhaseFixed.tla" --map "$model/NativeStatusPhase.map.mjs" --expect-broken LiveNeverIdle,FailureShowsError --out "$scratch/native-status-phase" --png
 node "$skill/scripts/statechart.mjs" from-spec "$model/NativeProcessPaging.tla" --fixed "$model/NativeProcessPagingFixed.tla" --map "$model/NativeProcessPaging.map.mjs" --expect-broken EarlierCanBeRead,LoadedPageKeepsItsEdge --out "$scratch/native-process-paging" --png
 python scripts/check_native_status_poll_formal.py --statechart <statechart-skill>/scripts/statechart.mjs --out "$scratch/native-status-poll"
-cargo test --manifest-path frontend-slint/Cargo.toml --bin wunder-desktop native_chat::turn_tests -- --test-threads=1 --skip one_tool_round_becomes_grouped_entries_and_frees_the_next_round
-cargo test --manifest-path frontend-slint/Cargo.toml --bin wunder-desktop native_chat::status::tests -- --test-threads=1
-cargo test --manifest-path frontend-slint/Cargo.toml --bin wunder-desktop chat_process::tests -- --test-threads=1
+cargo test --manifest-path crates/wunder-desktop/frontend/Cargo.toml --bin wunder-desktop native_chat::turn_tests -- --test-threads=1 --skip one_tool_round_becomes_grouped_entries_and_frees_the_next_round
+cargo test --manifest-path crates/wunder-desktop/frontend/Cargo.toml --bin wunder-desktop native_chat::status::tests -- --test-threads=1
+cargo test --manifest-path crates/wunder-desktop/frontend/Cargo.toml --bin wunder-desktop chat_process::tests -- --test-threads=1
 cargo test -p wunder-cli --bin wunder-cli survives_the_stream_done_marker -- --test-threads=1
 cargo test -p wunder-cli --bin wunder-cli background_error_is_not_replaced_by_done_before_replay -- --test-threads=1
 cargo test -p wunder-cli --bin wunder-cli waiting_terminal_is_preserved_and_new_submission_clears_old_failure -- --test-threads=1
@@ -119,8 +119,8 @@ cargo test -p wunder-cli --bin wunder-cli stream_end_never_leaves_tool_cards_run
 cargo test -p wunder-cli --bin wunder-cli exec_events::tests -- --test-threads=1
 cargo test -p wunder-cli --bin wunder-cli tui::thread_registry::tests -- --test-threads=1
 $env:SLINT_ENABLE_EXPERIMENTAL_FEATURES = '1'
-slint-viewer --check frontend-slint/ui/main.slint
-slint-viewer --screenshot "$scratch/desktop-process.png" --size 960x700 frontend-slint/ui/chat_alignment_demo.slint
+slint-viewer --check crates/wunder-desktop/frontend/ui/main.slint
+slint-viewer --screenshot "$scratch/desktop-process.png" --size 960x700 crates/wunder-desktop/frontend/ui/chat_alignment_demo.slint
 ```
 
 `check_native_status_poll_formal.py` 复制 `models/NativeStatusPoll.{tla,cfg,map.mjs}` 到仓库外，生成仅 `Scoped = TRUE` 不同的修复模型（`Scoped = FALSE` 即已发布构建），执行 `from-spec --fixed --expect-broken BackgroundSettledIsShown --cover --png`，再校验 6 份 TLC 输出、`uncited` 与残留错误状态。本次已在具备 TLC 的机器上运行通过：旧模型 `BackgroundSettledIsShown` 反例（1 步），修复模型无残余错误状态；`NativeStatusPoll/summary.json` 的 `chartStatus.wrong = 0`、`brokenProperties = []`、`uncited` 为空。

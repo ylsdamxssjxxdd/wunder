@@ -5,7 +5,7 @@ read_when:
   - You are an individual user setting up wunder for the first time
   - You want the fastest path from install to a completed first task
 source_docs:
-  - frontend-slint/run.bat
+  - crates/wunder-desktop/frontend/run.bat
   - crates/wunder-desktop/native.rs
   - crates/wunder-desktop/args.rs
 updated_at: 2026-10-16

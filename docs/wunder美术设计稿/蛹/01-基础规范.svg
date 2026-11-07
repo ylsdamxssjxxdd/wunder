@@ -106,5 +106,5 @@
     <text x="784" y="1638" class="note">阅读列 min(可用宽度, 1000px)，内边距 24。</text>
     <text x="784" y="1666" class="tiny">时间线与输入带共用列宽；输入带 8+100+6+30+10 = 154px；附件 +36；分支 +22；队列有界。</text>
   </g>
-  <g id="footer"><line x1="64" y1="1730" x2="1536" y2="1730" stroke="#D8D5D0"/><text x="64" y="1750" class="tiny">唯一变量来源：frontend-slint/ui/design_tokens.slint；稿面底色 #F5F3EF 仅用于文档，不是产品 token。</text><text x="1536" y="1750" text-anchor="end" class="mono tiny">01 / 09 · 2026-10-31</text></g>
+  <g id="footer"><line x1="64" y1="1730" x2="1536" y2="1730" stroke="#D8D5D0"/><text x="64" y="1750" class="tiny">唯一变量来源：crates/wunder-desktop/frontend/ui/design_tokens.slint；稿面底色 #F5F3EF 仅用于文档，不是产品 token。</text><text x="1536" y="1750" text-anchor="end" class="mono tiny">01 / 09 · 2026-10-31</text></g>
 </svg>

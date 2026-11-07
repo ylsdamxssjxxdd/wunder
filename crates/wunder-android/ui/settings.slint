@@ -3,10 +3,10 @@
 // and every control (FormField, Action, ThemeSwitch, ConfirmDialog) come from
 // 桌面版's shared UI, so the mobile sheet never grows a second visual vocabulary.
 
-import { Theme, ModelCard } from "../../../frontend-slint/ui/theme.slint";
-import { I18n } from "../../../frontend-slint/ui/i18n.slint";
-import { Action, FormField, ThemeSwitch, ConfirmDialog } from "../../../frontend-slint/ui/components.slint";
-import { ModelPresets } from "../../../frontend-slint/ui/model_presets.slint";
+import { Theme, ModelCard } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
+import { I18n } from "../../../crates/wunder-desktop/frontend/ui/i18n.slint";
+import { Action, FormField, ThemeSwitch, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
+import { ModelPresets } from "../../../crates/wunder-desktop/frontend/ui/model_presets.slint";
 import { MobileSession } from "session_model.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
 
@@ -31,7 +31,7 @@ component SheetHeader inherits Rectangle {
                 width: 34px;
                 height: 34px;
                 icon-size: 17px;
-                icon: @image-url("../../../frontend-slint/assets/icons/chevron-left.svg");
+                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-left.svg");
                 label: "返回";
                 clicked => { root.back(); }
             }
@@ -169,7 +169,7 @@ component PickerField inherits Rectangle {
         y: (parent.height - 12px) / 2;
         width: 12px;
         height: 12px;
-        source: @image-url("../../../frontend-slint/assets/icons/chevron-down.svg");
+        source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-down.svg");
         colorize: Theme.muted;
     }
     TouchArea {
@@ -368,7 +368,7 @@ component NavRow inherits Rectangle {
         Image {
             width: 12px;
             height: 12px;
-            source: @image-url("../../../frontend-slint/assets/icons/chevron-right.svg");
+            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-right.svg");
             colorize: Theme.border-strong;
         }
     }
@@ -439,7 +439,7 @@ component SettingsHome inherits Rectangle {
 
                 NavCard {
                     NavRow {
-                        icon: @image-url("../../../frontend-slint/assets/icons/lc-brain.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-brain.svg");
                         label: I18n.st_tab_models;
                         detail: root.model-detail();
                         last: true;
@@ -458,13 +458,13 @@ component SettingsHome inherits Rectangle {
 
                 NavCard {
                     NavRow {
-                        icon: @image-url("../../../frontend-slint/assets/icons/lc-sliders-horizontal.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-sliders-horizontal.svg");
                         label: I18n.st_tab_general;
                         detail: "主题、字号、语言与发送方式";
                         clicked => { root.open-page(3); }
                     }
                     NavRow {
-                        icon: @image-url("../../../frontend-slint/assets/icons/terminal.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/terminal.svg");
                         label: I18n.st_tab_runtime;
                         detail: root.ubuntu-detail();
                         last: true;
@@ -483,13 +483,13 @@ component SettingsHome inherits Rectangle {
 
                 NavCard {
                     NavRow {
-                        icon: @image-url("../../../frontend-slint/assets/icons/lc-archive.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-archive.svg");
                         label: "已归档会话";
                         detail: root.archived-total > 0 ? root.archived-total + " 个会话" : "没有归档会话";
                         clicked => { root.open-page(5); }
                     }
                     NavRow {
-                        icon: @image-url("../../../frontend-slint/assets/icons/fa-circle-question.svg");
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-circle-question.svg");
                         label: I18n.st_tab_help;
                         detail: "安卓版 v" + root.version;
                         last: true;
@@ -894,7 +894,7 @@ component ArchivePage inherits Rectangle {
                 width: 34px;
                 height: 34px;
                 icon-size: 16px;
-                icon: @image-url("../../../frontend-slint/assets/icons/rotate-right.svg");
+                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
                 label: "刷新";
                 clicked => { root.refresh(); }
             }
@@ -959,7 +959,7 @@ component ArchivePage inherits Rectangle {
                         Image {
                             width: 16px;
                             height: 16px;
-                            source: @image-url("../../../frontend-slint/assets/icons/ellipsis.svg");
+                            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/ellipsis.svg");
                             colorize: Theme.muted;
                         }
                     }
@@ -1038,7 +1038,7 @@ component ArchivePage inherits Rectangle {
                         Image {
                             width: 18px;
                             height: 18px;
-                            source: @image-url("../../../frontend-slint/assets/icons/rotate-right.svg");
+                            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
                             colorize: Theme.text-secondary;
                         }
                         Text {
@@ -1066,7 +1066,7 @@ component ArchivePage inherits Rectangle {
                         Image {
                             width: 18px;
                             height: 18px;
-                            source: @image-url("../../../frontend-slint/assets/icons/trash.svg");
+                            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trash.svg");
                             colorize: Theme.danger;
                         }
                         Text {
@@ -1414,7 +1414,7 @@ component ModelEditorPage inherits Rectangle {
                             height: parent.height;
                             show-label: true;
                             primary: true;
-                            icon: @image-url("../../../frontend-slint/assets/icons/wand-magic-sparkles.svg");
+                            icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/wand-magic-sparkles.svg");
                             label: root.probing ? "探测中…" : I18n.model_probe_context;
                             enabled: root.probe-ok();
                             clicked => { root.probe-model(root.draft, root.secret); }
@@ -1941,7 +1941,7 @@ export component MobileSettings inherits Rectangle {
                             if root.picker-values[index] == root.picker-value : Image {
                                 width: 16px;
                                 height: 16px;
-                                source: @image-url("../../../frontend-slint/assets/icons/circle-check.svg");
+                                source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/circle-check.svg");
                                 colorize: Theme.accent-ink;
                             }
                         }

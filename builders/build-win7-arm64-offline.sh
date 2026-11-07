@@ -11,7 +11,7 @@ offline_root="$(cd "$offline_root" && pwd -P)"
 toolchain="$offline_root/rust/toolchains/nightly-2026-03-14-aarch64-unknown-linux-gnu"
 mingw_root="$offline_root/mingw-i686-windows-gnu"
 vendor_root="${WUNDER_CARGO_VENDOR:-$offline_root/cargo-vendor-slint}"
-manifest="$repo_root/frontend-slint/Cargo.toml"
+manifest="$repo_root/crates/wunder-desktop/frontend/Cargo.toml"
 target="i686-win7-windows-gnu"
 target_dir="${CARGO_TARGET_DIR:-$repo_root/target/win7-x86-arm64/cargo}"
 cargo_home="${CARGO_HOME:-$repo_root/target/win7-x86-arm64/cargo-home}"
@@ -35,7 +35,7 @@ esac
 
 export RUSTC="$toolchain/bin/rustc"
 export PATH="$toolchain/bin:$mingw_root/portable-bin:$PATH"
-# frontend-slint's build.rs probes this dir for the windres that embeds the
+# crates/wunder-desktop/frontend's build.rs probes this dir for the windres that embeds the
 # exe icon resource (same variable the Windows-host win7 build exports).
 export WUNDER_WIN7_MINGW_BIN="$mingw_root/portable-bin"
 # CLI --config outranks every config file: cargo >=1.96 resolves its config

@@ -5,8 +5,8 @@ read_when:
   - You are choosing between the forms and need to know what each interface can do
   - You expect a capability in one interface and want to check whether it exists there at all
 source_docs:
-  - frontend-slint/ui/theme.slint
-  - frontend-slint/ui/settings_page.slint
+  - crates/wunder-desktop/frontend/ui/theme.slint
+  - crates/wunder-desktop/frontend/ui/settings_page.slint
   - frontend/src/router/index.ts
   - web/index.html
   - crates/wunder-cli/tui/app.rs

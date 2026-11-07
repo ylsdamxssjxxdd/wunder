@@ -2,7 +2,7 @@
 
 > 状态：本地形态采用 canonical JSONL + 分角色 SQLite；服务端形态采用 PostgreSQL canonical 记录、控制状态与可重建展示索引。两种实现共享持久化策略、线程身份、分页、恢复和流式契约。2026-10-25 已完成本轮单节点服务验收：本机 13/13、Docker 14/14、浏览器 20/20，十分钟历史零写入/零查询；构建范围及原始证据见[服务存储验收报告](性能基线/2026-10-25-服务存储验收.md)。除当前格式本地历史库的定向瘦身外，不修复、导入或清理旧架构数据库。
 >
-> 依据：2026-10-27 重新核对的本地 Codex 参考源码快照。下文涉及 Codex 源码的路径均相对于参考工程的 `codex-rs/`；以 `crates/`、`frontend-slint/` 等开头的路径相对于 Wunder 仓库。参考快照未提供可确认的 Git 提交号，因此不标注虚构版本。
+> 依据：2026-10-27 重新核对的本地 Codex 参考源码快照。下文涉及 Codex 源码的路径均相对于参考工程的 `codex-rs/`；以 `crates/`、`crates/wunder-desktop/frontend/` 等开头的路径相对于 Wunder 仓库。参考快照未提供可确认的 Git 提交号，因此不标注虚构版本。
 >
 > 2026-10-27 本地磁盘优化：保留 canonical JSONL 权威与分页语义，但不再照搬参考工程完整 `item_json` 投影，改为日志位置、校验值和有界预览。仅当前格式本地历史库支持核验后自动瘦身与空间回收；本文旧版“不迁移”约束仍适用于更早的单体库及其他旧架构。服务端 PostgreSQL 不受本轮改造影响。
 
@@ -555,7 +555,7 @@ thread_history 的删除/重建通过删除对应分区或重建新投影库完�
 | `thread_view_{source,projection,store}`、`services/thread_view_rebuild.rs` | 移除正文投影；保留必要轻量 metadata | 轨迹由 turn/item projection 导出，禁止再保存全量 tile/body |
 | SQLite/PG `session_lock_store`、`thread_open_leases` 的查看续约语义 | 重构 | 只读查看不写 lease；执行所有权使用生命周期协调 |
 | `services/workspace.rs` 的 Chat/ToolLog/ArtifactLog 写队列 | 拆除/改为资源服务 | 不再做第二份历史写队列 |
-| `native_chat_turns.rs`、`frontend-slint/src/native_chat*`、`thread_trajectory.rs` | 改造 | 调用新分页/订阅 façade，保持长历史虚拟化和稳定已完成块 |
+| `native_chat_turns.rs`、`crates/wunder-desktop/frontend/src/native_chat*`、`thread_trajectory.rs` | 改造 | 调用新分页/订阅 façade，保持长历史虚拟化和稳定已完成块 |
 | CLI/TUI 的线程注册、patch log | 改造 | 复用 ThreadStore cursor 与临时订阅，不维护平行日志 |
 | chat/core/ws、云线程观察、管理监控 API | 同步改造 | 所有调用方使用同一 cursor、权限与错误语义 |
 | `storage/stress_model.rs`、SQLite/PG `stress_thread.rs`、`services/stress_thread.rs`、压测 API/桌面入口 | 重写 | 生成真实 canonical 事件并走生产 write/project/read 链路 |

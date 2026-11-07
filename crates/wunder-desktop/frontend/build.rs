@@ -271,6 +271,8 @@ fn embed_windows_exe_icon() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("manifest dir");
     let ico = std::path::Path::new(&manifest_dir)
         .join("..")
+        .join("..")
+        .join("..")
         .join("images")
         .join("eva01-head.ico");
     println!("cargo:rerun-if-changed={}", ico.display());

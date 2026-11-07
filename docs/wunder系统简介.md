@@ -6,7 +6,7 @@ wunder（心舰）是一个**多形态的智能体工作台**：把目标交给�
 
 **桌面版（desktop）是 wunder 的本地 AI 工作台，也是主推的应用。** 个人用户下载安装即可使用，不需要先部署任何服务，打开就能把目标交给智能体。
 
-桌面版在本地运行：默认前端 `frontend-slint/`（Rust + Slint 原生界面、软件渲染），启动后在**同一进程内**直接调用引擎，不经本机 HTTP / WebSocket；SQLite 本地存储；兼容目标下探到 Windows 7 32 位，Linux 侧按 ubuntu18.04 基线打包（x64 / arm64 AppImage）。它可以操作本地文件、窗口和浏览器，也可以在需要时经互通隧道连接云端。Electron / Tauri 前端壳已停止日常维护——停止的是壳，不是桌面版后端。
+桌面版在本地运行：默认前端 `crates/wunder-desktop/frontend/`（Rust + Slint 原生界面、软件渲染），启动后在**同一进程内**直接调用引擎，不经本机 HTTP / WebSocket；SQLite 本地存储；兼容目标下探到 Windows 7 32 位，Linux 侧按 ubuntu18.04 基线打包（x64 / arm64 AppImage）。它可以操作本地文件、窗口和浏览器，也可以在需要时经互通隧道连接云端。Electron / Tauri 前端壳已停止日常维护——停止的是壳，不是桌面版后端。
 
 ## 核心概念
 

@@ -1,6 +1,6 @@
 # 桌面版聊天流式跟随验证（stream-follow-20261030）
 
-验证日期：2026-10-30。对象：桌面版（frontend-slint）聊天页面的两条流式跟随链——外层时间线（TimelineView）与工作过程列表（ToolProcess）。这是对指定事件交错的有界模型检查，不是整个渲染链路的形式化证明，也不是毫秒级端到端时延保证。
+验证日期：2026-10-30。对象：桌面版（crates/wunder-desktop/frontend）聊天页面的两条流式跟随链——外层时间线（TimelineView）与工作过程列表（ToolProcess）。这是对指定事件交错的有界模型检查，不是整个渲染链路的形式化证明，也不是毫秒级端到端时延保证。
 
 ## 契约与不变量
 
@@ -14,13 +14,13 @@
 
 ## 代码检查点
 
-- 外层发布帧重武装跟随：`frontend-slint/src/native_chat.rs:938`（stream_updates）→ `frontend-slint/ui/timeline.slint:883-888`（changed stream-revision）。
-- 外层布局变高重武装跟随：`frontend-slint/ui/timeline.slint:889-899`（changed transcript-height）。
-- 外层跟随定时器：`frontend-slint/ui/timeline.slint:865-875`、`840-842`（scroll-to-end）。
-- 内层新增条目重武装：`frontend-slint/ui/tool_process.slint:231`（changed count）。
-- 内层流式补丁只改高度：`frontend-slint/src/timeline.rs:498`（`sync_process_entry` 原地 `set_row_data`）；`process_revision` 只在分页时移动（`frontend-slint/src/chat_process.rs:315`）。
-- 内层跟随定时器：`frontend-slint/ui/tool_process.slint:233-251`，条件在 `:244`。
-- 修复：内层布局变高重武装，`frontend-slint/ui/tool_process.slint:210-216`（changed measured-height）。
+- 外层发布帧重武装跟随：`crates/wunder-desktop/frontend/src/native_chat.rs:938`（stream_updates）→ `crates/wunder-desktop/frontend/ui/timeline.slint:883-888`（changed stream-revision）。
+- 外层布局变高重武装跟随：`crates/wunder-desktop/frontend/ui/timeline.slint:889-899`（changed transcript-height）。
+- 外层跟随定时器：`crates/wunder-desktop/frontend/ui/timeline.slint:865-875`、`840-842`（scroll-to-end）。
+- 内层新增条目重武装：`crates/wunder-desktop/frontend/ui/tool_process.slint:231`（changed count）。
+- 内层流式补丁只改高度：`crates/wunder-desktop/frontend/src/timeline.rs:498`（`sync_process_entry` 原地 `set_row_data`）；`process_revision` 只在分页时移动（`crates/wunder-desktop/frontend/src/chat_process.rs:315`）。
+- 内层跟随定时器：`crates/wunder-desktop/frontend/ui/tool_process.slint:233-251`，条件在 `:244`。
+- 修复：内层布局变高重武装，`crates/wunder-desktop/frontend/ui/tool_process.slint:210-216`（changed measured-height）。
 
 ## 结果
 
@@ -33,7 +33,7 @@
 ## 真实回放
 
 - 更新不及时（反例一）：用户在修复前的实际使用中观察到"工作过程区有些内容出来了但在下面看不到，需要手动滚动"（2026-10-30 会话记录），与 TLC 反例第 5–7 步同构；代码阅读逐行确认了机制（`sync_process_entry` 原地补丁不触 `count`/`revision`）。修复 `tool_process.slint:210-216` 已合入并通过编译。
-- 缺漏类：模型内不存在内容丢失路径。真实代码中的有界截断属于设计而非缺陷：实时过程行滚动窗口 `MAX_LIVE_PROCESS_ROWS = 160`（`frontend-slint/src/timeline.rs:46`），被裁行可通过过程分页（`chat_process.rs`）向上翻回；思考详情截取末 32 KiB（`timeline.rs` flush_thinking）、条目 preview 上限 640 字符（`crates/wunder-desktop/native_workflow.rs:75`）。
+- 缺漏类：模型内不存在内容丢失路径。真实代码中的有界截断属于设计而非缺陷：实时过程行滚动窗口 `MAX_LIVE_PROCESS_ROWS = 160`（`crates/wunder-desktop/frontend/src/timeline.rs:46`），被裁行可通过过程分页（`chat_process.rs`）向上翻回；思考详情截取末 32 KiB（`timeline.rs` flush_thinking）、条目 preview 上限 640 字符（`crates/wunder-desktop/native_workflow.rs:75`）。
 - 未做自动化 UI 回放：内层跟随的端到端滚动断言目前没有 smoke 覆盖（`native_smoke.rs` 只断言外层滚动位置暂停/恢复），该路径由模型与代码锚点共同证明。
 
 ## 边界与未覆盖

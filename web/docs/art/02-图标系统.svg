@@ -60,7 +60,7 @@
   <g id="asset-rules">
     <rect x="64" y="160" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="177" text-anchor="middle" class="chip">01</text><text x="104" y="178" class="sect">资产规则 · 先复用，再谈新增</text>
     <rect x="64" y="202" width="1472" height="122" rx="12" class="card"/>
-    <text x="88" y="232" class="card-t">来源</text><text x="88" y="260" class="note">frontend-slint/assets/icons</text><text x="88" y="286" class="tiny">工作区图标位于 workspace/ 子目录</text>
+    <text x="88" y="232" class="card-t">来源</text><text x="88" y="260" class="note">crates/wunder-desktop/frontend/assets/icons</text><text x="88" y="286" class="tiny">工作区图标位于 workspace/ 子目录</text>
     <line x1="416" y1="222" x2="416" y2="304" stroke="#E8E6E3"/>
     <text x="448" y="232" class="card-t">两种真实形态</text><text x="448" y="260" class="note">Font Awesome 实心 + 仓库线性 SVG</text><text x="448" y="286" class="tiny">保留原始 viewBox；不在稿面改成另一套图形</text>
     <line x1="832" y1="222" x2="832" y2="304" stroke="#E8E6E3"/>
@@ -153,5 +153,5 @@
   </g>
 
   <g id="state-color"><rect x="64" y="1934" width="1472" height="76" rx="12" class="card"/><text x="88" y="1964" class="card-t">状态着色</text><text x="88" y="1990" class="note">默认 muted　·　正文 text-secondary　·　激活 accent / accent-deep　·　成功 success　·　危险 danger　·　主按钮上 white</text><text x="1512" y="1964" text-anchor="end" class="tiny">chevron-down.svg 等仅改变方向，不改变语义</text><text x="1512" y="1990" text-anchor="end" class="tiny">ProcessStatusIcon 是代码绘制节点，不强制替换成资产图标</text></g>
-  <g id="footer"><line x1="64" y1="2052" x2="1536" y2="2052" stroke="#D8D5D0"/><text x="64" y="2072" class="tiny">完整资产以 frontend-slint/assets/icons 为准；本页为 48 个高频实例，不是新增图标的设计许可清单。</text><text x="1536" y="2072" text-anchor="end" class="mono tiny">02 / 09 · 2026-11-01</text></g>
+  <g id="footer"><line x1="64" y1="2052" x2="1536" y2="2052" stroke="#D8D5D0"/><text x="64" y="2072" class="tiny">完整资产以 crates/wunder-desktop/frontend/assets/icons 为准；本页为 48 个高频实例，不是新增图标的设计许可清单。</text><text x="1536" y="2072" text-anchor="end" class="mono tiny">02 / 09 · 2026-11-01</text></g>
 </svg>

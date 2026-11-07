@@ -12,7 +12,7 @@
 LEAKY_BASELINE 是 2026-10-11 实测到的历史欠账（16 条，全是别的类目留下的旧回调）：
 它们不阻塞本次门禁，但删掉一条就应该从这份名单里划掉，名单只许缩短不许变长。
 
-用法：python frontend-slint/scripts/check-callback-wiring.py
+用法：python crates/wunder-desktop/frontend/scripts/check-callback-wiring.py
 """
 import glob
 import os

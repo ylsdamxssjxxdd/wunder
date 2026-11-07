@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import zipfile
 
 
 LINUX_MACHINES = {"x64": 62, "arm64": 183}
@@ -137,6 +138,25 @@ def main():
             check_pe_i386(extra)
         reject_unexpected(directory, ["wunder-desktop-*-win7-x86.exe"])
         print("PASS: win7-x86 PE headers (i386)")
+        return
+    if architecture == "android-arm64":
+        apk = find_single(directory, "wunder-android-*-arm64.apk", "Android APK")
+        with zipfile.ZipFile(str(apk)) as archive:
+            names = set(archive.namelist())
+            required = {
+                "lib/arm64-v8a/libwunder_android.so",
+                "lib/arm64-v8a/liboperit_proot.so",
+                "assets/ubuntu/rootfs.tar.xz",
+                "assets/ubuntu/packs/common.tar.xz",
+            }
+            missing = sorted(required - names)
+            if missing:
+                raise RuntimeError("APK is missing required entries: " + ", ".join(missing))
+            header = archive.open("lib/arm64-v8a/libwunder_android.so").read(20)
+        if header[:4] != b"\x7fELF" or struct.unpack("<H", header[18:20])[0] != 183:
+            raise RuntimeError("libwunder_android.so is not an AArch64 ELF")
+        reject_unexpected(directory, ["wunder-android-*-arm64.apk"])
+        print("PASS: android-arm64 APK (runtime assets + AArch64 ELF)")
         return
     desktop = find_single(directory, "wunder-desktop-*-linux-" + architecture + ".tar.gz", "desktop archive")
     portable = find_single(directory, "wunder-desktop-*-linux-*.portable", "portable package")

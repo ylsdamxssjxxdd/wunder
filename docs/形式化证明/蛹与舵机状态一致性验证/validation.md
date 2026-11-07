@@ -25,7 +25,7 @@
 ## 最终全量结果
 
 ```text
-frontend-slint: 179 passed; 8 failed; 3 ignored
+crates/wunder-desktop/frontend: 179 passed; 8 failed; 3 ignored
 wunder-cli:    473 passed; 15 failed; 0 ignored
 ```
 
@@ -94,14 +94,14 @@ wunder-cli:    473 passed; 15 failed; 0 ignored
 失败与本轮改动的关系说明：
 
 - `timeline` 三项失败分别在 `first_action_uses_one_stable_process_fold_and_later_thought_keeps_its_row`、`history_prefix_move_rebases_process_handle_and_latest_body`、`process_children_patch_in_place_and_keep_folds_on_history_refresh`，断言的是过程折叠是否默认展开，不涉及分页边界字段。
-- 全量测试没有在本机跑完：工作区 `target` 目录被其他开发者的 `cargo test -p wunder-runtime` 长时间占用，另建独立 `CARGO_TARGET_DIR` 时全量 codegen 在 58 分钟后仍未产出测试二进制，遂中止，不把该次运行算作证据。上述定向结果是复用 `frontend-slint/target` 缓存后实际执行的输出。
+- 全量测试没有在本机跑完：工作区 `target` 目录被其他开发者的 `cargo test -p wunder-runtime` 长时间占用，另建独立 `CARGO_TARGET_DIR` 时全量 codegen 在 58 分钟后仍未产出测试二进制，遂中止，不把该次运行算作证据。上述定向结果是复用 `crates/wunder-desktop/frontend/target` 缓存后实际执行的输出。
 - Slint UI 通过 `cargo check`（build 脚本会编译 `.slint`，包含新字段与滚动加载逻辑）；本机 `slint-viewer` 版本与项目锁定的 Slint 1.18 不兼容，`--check` 报的是既有的 `index-of` 字段缺失，未作为验收证据。
 - 滚动到顶自动加载、加载失败重试条、以及“加载更早后保持读者所在行”的视觉行为需要真实长过程人工验收，状态图与编译检查都不能替代。
 
 ## 重新运行全量
 
 ```powershell
-cargo test --manifest-path frontend-slint/Cargo.toml --bin wunder-desktop -- --test-threads=1
+cargo test --manifest-path crates/wunder-desktop/frontend/Cargo.toml --bin wunder-desktop -- --test-threads=1
 cargo test -p wunder-cli --bin wunder-cli -- --test-threads=1
 ```
 

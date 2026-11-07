@@ -1,6 +1,6 @@
-# frontend-slint
+# wunder 桌面版前端
 
-这是 wunder 的默认桌面用户前端。双击 EXE 即可在同一进程启动 Rust 后端，不需要 `--native`、bridge 程序、本机 HTTP 或 WebSocket。`--native` 暂时作为无参数启动的兼容别名；`--connect`、`--bridge-smoke` 已移除。`--demo` 仅用于界面演示。
+本目录位于 `crates/wunder-desktop/frontend/`，是 wunder 的默认桌面用户前端。双击 EXE 即可在同一进程启动 Rust 后端，不需要 `--native`、bridge 程序、本机 HTTP 或 WebSocket。`--native` 暂时作为无参数启动的兼容别名；`--connect`、`--bridge-smoke` 已移除。`--demo` 仅用于界面演示。
 
 后端继续复用共享 AppState、SQLite、ThreadRuntime、工具权限与执行链路。默认数据目录是程序旁的 `WUNDER_TEMPD` 和 `WUNDER_WORK`，兼容已有桌面数据；模型供应商与外部工具自身仍按各自网络协议调用。
 
@@ -9,9 +9,9 @@
 ## 运行与预览
 
 ```powershell
-cargo +1.95.0-x86_64-pc-windows-msvc run --release --manifest-path frontend-slint/Cargo.toml -j 8
-slint-viewer --check frontend-slint/ui/main.slint
-slint-viewer --screenshot frontend-slint/artifacts/preview.png --size 1360x820 frontend-slint/ui/main.slint
+cargo +1.95.0-x86_64-pc-windows-msvc run --release --manifest-path crates/wunder-desktop/frontend/Cargo.toml -j 8
+slint-viewer --check crates/wunder-desktop/frontend/ui/main.slint
+slint-viewer --screenshot crates/wunder-desktop/frontend/artifacts/preview.png --size 1360x820 crates/wunder-desktop/frontend/ui/main.slint
 ```
 
 界面包含聊天、专家、工具、文件工作区、用户世界（联系人/普通群组）、定时任务、系统设置/模型配置，沿用 TS 浅色云端版配色；没有蜂群、编排和深色切换入口。聊天右侧工作目录与独立文件页共用同一容器根和 native façade。
@@ -33,7 +33,7 @@ slint-viewer --screenshot frontend-slint/artifacts/preview.png --size 1360x820 f
 隔离原生联调（需要 Python `psutil`，输出目录必须不存在）：
 
 ```powershell
-python frontend-slint/scripts/check-native.py --ui frontend-slint/target/release/wunder-desktop.exe --output target/frontend-slint/native-check
+python crates/wunder-desktop/frontend/scripts/check-native.py --ui crates/wunder-desktop/frontend/target/release/wunder-desktop.exe --output target/frontend-slint/native-check
 ```
 
 脚本准备独立 SQLite、工作目录和本机测试模型，检查智能体创建/编辑/归属、工具目录、模型密钥保留/默认项、工作目录设置/预览/越界拒绝，以及未知实体拒绝、启动前停止、同线程排队、订阅释放后的后端完成、长流完整性、历史回读、停止、输出期间输入/导航/停止自动滚动、退出，以及没有本机监听和 bridge 子进程。输出包含 `smoke.txt`、`stream-metrics.json` 与截图。UI 更新耗时不包含全部渲染/排版时间，Win7 真机流畅性仍需单独验证。`--native-smoke` 只接受已准备配置的隔离目录。
@@ -66,11 +66,11 @@ Release 输出：`target/frontend-slint/dist/win7-x86/wunder-desktop-0.2.0-win7-
 模型生命周期专项回归使用独立 `WUNDER_HOME` 和共享模型配置，不访问日常配置：
 
 ```powershell
-python frontend-slint/scripts/check-native.py --ui frontend-slint/target/debug/wunder-desktop.exe --output target/model-settings-check --models-only
+python crates/wunder-desktop/frontend/scripts/check-native.py --ui crates/wunder-desktop/frontend/target/debug/wunder-desktop.exe --output target/model-settings-check --models-only
 ```
 
 ```powershell
-wunder-desktop-0.2.0-win7-x86.exe --smoke-check frontend-slint/artifacts/native
+wunder-desktop-0.2.0-win7-x86.exe --smoke-check crates/wunder-desktop/frontend/artifacts/native
 ```
 
 它会生成 `smoke.txt` 和各页面的浅色截图，并通过真实指针事件验证侧边栏单击切换，再检查输入限制、会话隔离、任务切换、有界历史、新任务、专家编辑、模型编辑和默认项切换。
@@ -78,7 +78,7 @@ wunder-desktop-0.2.0-win7-x86.exe --smoke-check frontend-slint/artifacts/native
 无参数启动、重启和关闭回归（需要 Python `psutil`，输出目录必须尚不存在）：
 
 ```powershell
-python frontend-slint/scripts/check-launch.py --ui frontend-slint/target/release/wunder-desktop.exe --output target/frontend-slint/native-launch-check
+python crates/wunder-desktop/frontend/scripts/check-launch.py --ui crates/wunder-desktop/frontend/target/release/wunder-desktop.exe --output target/frontend-slint/native-launch-check
 ```
 
 脚本把 EXE 复制到隔离目录，验证不带参数即可启动、无子进程及监听、正常关闭、重启和启动中关闭。即使遗留配置启用了 LAN 发现，原生 UI 也不会启动本地控制监听。
@@ -86,7 +86,7 @@ python frontend-slint/scripts/check-launch.py --ui frontend-slint/target/release
 单实例与窗口唤醒专项回归（Windows，使用独立数据目录和两个不同安装位置）：
 
 ```powershell
-python frontend-slint/scripts/check-single-instance.py --ui frontend-slint/target/debug/wunder-desktop.exe --output target/frontend-slint/single-instance-check
+python crates/wunder-desktop/frontend/scripts/check-single-instance.py --ui crates/wunder-desktop/frontend/target/debug/wunder-desktop.exe --output target/frontend-slint/single-instance-check
 ```
 
 覆盖启动中重复打开、连续呼出、最小化与隐藏恢复、前台焦点、多目录隔离、修改数据目录不绕过单实例，以及异常退出后重启；不访问日常配置。
@@ -128,7 +128,7 @@ bash build.sh portable -a linux-arm64
 
 Win7 本机构建继续使用相邻的 `Rust-builder/win7/offline`；Linux 宿主按架构选择相邻的离线 SDK（ARM64 用 `kylin-arm`，x86_64 用 `kylin-x86`），Windows Docker 交叉构建使用 `kylin-arm`。
 
-构建入口集中在仓库根 `builders/`；`frontend-slint/scripts/` 只保留原生联调与启动回归。
+构建入口集中在仓库根 `builders/`；`crates/wunder-desktop/frontend/scripts/` 只保留原生联调与启动回归。
 Linux 入口自动识别宿主：ARM64 主机原生构建全部目标，x86_64 主机原生构建 x64、交叉构建
 arm64 与 Win7 x86：
 
@@ -166,8 +166,8 @@ Desktop CI 发布 Win7 32 位 EXE、Linux `.run` 安装包与 `.portable` 免安
 
 聊天模型为 `ChatTurn { root_id, user, assistant }`，列表按完整轮次虚拟化；问候单独显示。模型动作只更新当前助手区域，停止保留正文、工具和统计。历史直接读取持久化根轮次及其执行条目，取消正文从分页文本块恢复，不再按正文猜测归属。
 
-常规执行 `python frontend-slint/scripts/check-chat-turns.py`：运行后端归属投影测试、原生流式投影测试及 Slint Viewer 编译/截图，产物在 `temp_dir/desktop-turn-review/`。无需真实后端服务或模型。隔离 SQLite 测试通过共享持久事件订阅器验证目标续跑间隙保持订阅、完成前收到部分正文、最终输出先于结束通知，以及订阅释放和显式取消；投影测试覆盖快照恢复、去重与模型轮次重置。Viewer 截图使用合成数据，仅证明布局；这些检查不替代真实模型调度或 Win7 真机性能验收。完整原生运行链另用 `check-native.py` 验证。
+常规执行 `python crates/wunder-desktop/frontend/scripts/check-chat-turns.py`：运行后端归属投影测试、原生流式投影测试及 Slint Viewer 编译/截图，产物在 `temp_dir/desktop-turn-review/`。无需真实后端服务或模型。隔离 SQLite 测试通过共享持久事件订阅器验证目标续跑间隙保持订阅、完成前收到部分正文、最终输出先于结束通知，以及订阅释放和显式取消；投影测试覆盖快照恢复、去重与模型轮次重置。Viewer 截图使用合成数据，仅证明布局；这些检查不替代真实模型调度或 Win7 真机性能验收。完整原生运行链另用 `check-native.py` 验证。
 
 目标后台续跑与排队任务按根用户轮次订阅 ThreadLog 持久游标，执行身份改变只更新原有助手区域。直接执行结束后先释放调度租约，再从调度前记录的游标接续；目标仍可继续或终态正文尚未消费完时不发送 `Finished`。订阅断开只停止观察，用户显式停止才取消目标和线程活动。
 
-Windows 可运行 `python frontend-slint/scripts/check-timeline-scroll.py`，用 Slint Viewer 真实窗口验证长记录滚轮上下移动、小窗口与长问候语溢出、流式期间保持历史阅读位置，以及回到最新后恢复跟随。脚本需要 Pillow，不启动后端或模型；隔离夹具、位置采样和截图写入 `target/.scratch/timeline-scroll-check/`。
+Windows 可运行 `python crates/wunder-desktop/frontend/scripts/check-timeline-scroll.py`，用 Slint Viewer 真实窗口验证长记录滚轮上下移动、小窗口与长问候语溢出、流式期间保持历史阅读位置，以及回到最新后恢复跟随。脚本需要 Pillow，不启动后端或模型；隔离夹具、位置采样和截图写入 `target/.scratch/timeline-scroll-check/`。

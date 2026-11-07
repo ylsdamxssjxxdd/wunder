@@ -53,7 +53,7 @@ TypeOK == /\ phase \in 0..2 /\ liveRound \in 1..2 /\ visibleRound \in 1..2
           /\ oldText \in {"Fixture repeated completed", "Fixture repeated"}
           /\ incomingText = "Fixture repeated"
           /\ currentText \in {"", "Fixture repeated", "Fixture repeated stale"}
-\* Completed canonical thoughts remain unchanged; mutators: frontend/src/components/chat/MessageTimelineTurnProcess.vue:178; frontend-slint/src/timeline_text.rs:251.
+\* Completed canonical thoughts remain unchanged; mutators: frontend/src/components/chat/MessageTimelineTurnProcess.vue:178; crates/wunder-desktop/frontend/src/timeline_text.rs:251.
 CompletedReasoningImmutable == oldText = "Fixture repeated completed"
 \* Old model tails cannot move or append to the current thought; mutator: frontend/src/realtime/chat/threadViewStore.ts:673.
 NoTailIdentityRollback == (scenario = "tail" /\ phase = 2) => (visibleRound = liveRound /\ currentText = incomingText)

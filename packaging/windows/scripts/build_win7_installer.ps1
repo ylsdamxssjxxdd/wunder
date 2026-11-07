@@ -313,9 +313,9 @@ function Read-AppVersion([string]$Path) {
 $appVersion = Read-AppVersion (Join-Path $repoRoot "config\app_version.json")
 $version = if ($Version) { $Version } else { $appVersion }
 $workspaceVersion = Read-CargoVersion (Join-Path $repoRoot "Cargo.toml")
-$frontendVersion = Read-CargoVersion (Join-Path $repoRoot "frontend-slint\Cargo.toml")
+$frontendVersion = Read-CargoVersion (Join-Path $repoRoot "crates\wunder-desktop\frontend\Cargo.toml")
 if ($workspaceVersion -ne $version -or $frontendVersion -ne $version) {
-  throw "Version mismatch: app_version=$version workspace=$workspaceVersion frontend-slint=$frontendVersion. Run scripts/sync_app_version.py and rebuild both artifacts from one revision."
+  throw "Version mismatch: app_version=$version workspace=$workspaceVersion crates/wunder-desktop/frontend=$frontendVersion. Run scripts/sync_app_version.py and rebuild both artifacts from one revision."
 }
 $numericVersion = Get-NumericVersion $version
 $outputBase = "wunder-desktop-$version-win7-x86-setup"

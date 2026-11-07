@@ -43,8 +43,8 @@
 
 | 状态/动作 | 实现与真实回归 |
 | --- | --- |
-| oldText / incomingText / BindReasoning | `frontend/src/components/chat/MessageTimelineTurnProcess.vue` 的 canonical reasoning key；`frontend-slint/src/timeline_text.rs::merge_reasoning_tail`；同前缀/相同正文回归 |
-| liveRound / visibleRound / currentText / NextRound / LateTail / DurableRefresh | `frontend/src/realtime/chat/threadViewStore.ts` 的 bindTailAssistant、applyThreadViewTail、行合并；`frontend-slint/src/cloud_threads.rs` 的 apply_tail_to、merge_messages；本地 TurnOutput 身份守卫 |
+| oldText / incomingText / BindReasoning | `frontend/src/components/chat/MessageTimelineTurnProcess.vue` 的 canonical reasoning key；`crates/wunder-desktop/frontend/src/timeline_text.rs::merge_reasoning_tail`；同前缀/相同正文回归 |
+| liveRound / visibleRound / currentText / NextRound / LateTail / DurableRefresh | `frontend/src/realtime/chat/threadViewStore.ts` 的 bindTailAssistant、applyThreadViewTail、行合并；`crates/wunder-desktop/frontend/src/cloud_threads.rs` 的 apply_tail_to、merge_messages；本地 TurnOutput 身份守卫 |
 | deadline / firstDeadline / StructuralEvent / DeadlineFires | Vue 不重置 timer + processRefreshGate；真实浏览器连续事件回归 |
 | visibleTool / toolStatus / processItemsStatus / ToolStarts / ToolFinishes / LateToolStart | runtime event_stream + thread_change_hub、WS display watch；两端 live/durable upsert 与 terminal 守卫 |
 | order / ConcurrentToolStarts / ReversedToolCompletion | runtime assign_process_order；native sort_process_items / cloud overlay；Vue rebuildRows；逆序完成回归 |
@@ -82,7 +82,7 @@ cargo test -p wunder-runtime --lib thread_chat_summary -- --test-threads=1
 cargo test -p wunder-runtime --lib canonical_thread_log_tests -- --test-threads=1
 cargo test -p wunder-runtime --lib thread_change_hub -- --test-threads=1
 cargo test -p wunder-desktop --lib chat_process::tests -- --test-threads=1
-cargo test --manifest-path frontend-slint/Cargo.toml --bin wunder-desktop cloud_ -- --test-threads=1
+cargo test --manifest-path crates/wunder-desktop/frontend/Cargo.toml --bin wunder-desktop cloud_ -- --test-threads=1
 node frontend/scripts/run-regression-tests.mjs process-order-regression.test.ts thread-view-regression.test.ts process-refresh-gate-regression.test.ts
 node frontend/scripts/run-vue-tsc.mjs --noEmit
 ```

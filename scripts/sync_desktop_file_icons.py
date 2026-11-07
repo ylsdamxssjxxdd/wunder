@@ -6,7 +6,7 @@ The web workspace panel resolves icons through the vscode-icons theme
 tables in `frontend/src/components/chat/workspaceIcons.ts`. This script
 mirrors that resolution, writes the resulting mapping as a compact JSON for
 the desktop build, and copies the referenced icon assets from
-`frontend/public/` into `frontend-slint/assets/`.
+`frontend/public/` into `crates/wunder-desktop/frontend/assets/`.
 
 Re-run whenever the web theme JSON or workspaceIcons.ts tables change:
     python scripts/sync_desktop_file_icons.py
@@ -24,8 +24,8 @@ THEME_JSON = ROOT / "frontend/src/assets/vscode-icons-theme.json"
 WORKSPACE_ICONS_TS = ROOT / "frontend/src/components/chat/workspaceIcons.ts"
 WEB_ICONS_DIR = ROOT / "frontend/public/vscode-icons/icons"
 WEB_DOC_ICONS_DIR = ROOT / "frontend/public/doc-icons"
-OUT_DIR = ROOT / "frontend-slint/assets/vscode-icons"
-OUT_DOC_DIR = ROOT / "frontend-slint/assets/doc-icons"
+OUT_DIR = ROOT / "crates/wunder-desktop/frontend/assets/vscode-icons"
+OUT_DOC_DIR = ROOT / "crates/wunder-desktop/frontend/assets/doc-icons"
 
 DIAGRAM_EXTENSIONS = ["dio", "drawio", "drawio.xml"]
 

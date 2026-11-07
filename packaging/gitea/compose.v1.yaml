@@ -114,5 +114,7 @@ networks:
 volumes:
   "@STACK_PREFIX@-sdk":
     external: true
+  "@STACK_PREFIX@-android":
+    external: true
   "@STACK_PREFIX@-build-cache":
     external: true

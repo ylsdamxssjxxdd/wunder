@@ -389,8 +389,8 @@ fn preview_trajectory_page() -> serde_json::Value {
             },
             {
                 "kind": "tool_call", "user_round": 1, "status": "completed",
-                "tool_name": "读取文件", "summary": "frontend-slint/ui/timeline.slint",
-                "args_preview": "{\"path\":\"frontend-slint/ui/timeline.slint\"}",
+                "tool_name": "读取文件", "summary": "crates/wunder-desktop/frontend/ui/timeline.slint",
+                "args_preview": "{\"path\":\"crates/wunder-desktop/frontend/ui/timeline.slint\"}",
                 "result_preview": "已读取 64 KB",
                 "started_at": at(10.0), "completed_at": at(10.8)
             },
@@ -415,8 +415,8 @@ fn preview_trajectory_page() -> serde_json::Value {
             },
             {
                 "kind": "tool_call", "user_round": 2, "status": "completed",
-                "tool_name": "编辑文件", "summary": "frontend-slint/ui/composer.slint",
-                "args_preview": "{\"path\":\"frontend-slint/ui/composer.slint\"}",
+                "tool_name": "编辑文件", "summary": "crates/wunder-desktop/frontend/ui/composer.slint",
+                "args_preview": "{\"path\":\"crates/wunder-desktop/frontend/ui/composer.slint\"}",
                 "result_preview": "已写入 3 处修改",
                 "started_at": at(381.0), "completed_at": at(382.2)
             },
@@ -1406,11 +1406,11 @@ pub fn install_preview_data(ui: &MobileWindow, model: &Rc<VecModel<TimelineRow>>
             kind: KIND_TOOL,
             tool_name: "读取文件".into(),
             tool_icon: "file-lines".into(),
-            target: "frontend-slint/ui/timeline.slint".into(),
+            target: "crates/wunder-desktop/frontend/ui/timeline.slint".into(),
             summary: "已读取 2.4k token".into(),
-            detail: "读取 frontend-slint/ui/timeline.slint，共 1176 行。".into(),
+            detail: "读取 crates/wunder-desktop/frontend/ui/timeline.slint，共 1176 行。".into(),
             sections: vec![wunder_desktop::NativeWorkflowSection {
-                title: "frontend-slint/ui/timeline.slint".into(),
+                title: "crates/wunder-desktop/frontend/ui/timeline.slint".into(),
                 meta: "1176 行".into(),
                 kind: "patch".into(),
                 lines: vec![

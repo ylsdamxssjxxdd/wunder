@@ -107,10 +107,10 @@ def read_version(root):
 
 
 def read_frontend_version(root):
-    text = (root / "frontend-slint" / "Cargo.toml").read_text(encoding="utf-8")
+    text = (root / "crates/wunder-desktop/frontend" / "Cargo.toml").read_text(encoding="utf-8")
     match = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
     if not match:
-        fail("could not read the frontend-slint version")
+        fail("could not read the crates/wunder-desktop/frontend version")
     return match.group(1)
 
 
@@ -494,7 +494,7 @@ def main():
     if not args.version:
         frontend_version = read_frontend_version(root)
         if frontend_version != version:
-            fail("version mismatch: workspace=%s frontend-slint=%s" % (version, frontend_version))
+            fail("version mismatch: workspace=%s crates/wunder-desktop/frontend=%s" % (version, frontend_version))
 
     desktop_dist = root / "target" / "slint" / "dist" / ("linux-" + args.arch)
     desktop_archive = resolve_path(root, args.desktop_archive) if args.desktop_archive else (

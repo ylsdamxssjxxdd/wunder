@@ -1,6 +1,6 @@
 # 桌面版目标轮次驱动验证：会话栅栏释放后的继续驱动
 
-日期：2026-10-30。对象是桌面版（`frontend-slint/` + `crates/wunder-desktop`）经原生流进入 `wunder-runtime` 的目标轮次驱动链；不覆盖云端版、命令行或兼容 bridge 的全量验收。
+日期：2026-10-30。对象是桌面版（`crates/wunder-desktop/frontend/` + `crates/wunder-desktop`）经原生流进入 `wunder-runtime` 的目标轮次驱动链；不覆盖云端版、命令行或兼容 bridge 的全量验收。
 
 ## 结论
 

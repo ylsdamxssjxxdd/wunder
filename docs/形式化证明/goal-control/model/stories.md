@@ -1,6 +1,6 @@
 ## 1. Save returned, original objective retained
 
-Rule broken: Saving the replacement objective through the goal banner updates the durable objective. frontend-slint/src/native_chat.rs:3124; crates/wunder-desktop/native_commands.rs:96
+Rule broken: Saving the replacement objective through the goal banner updates the durable objective. crates/wunder-desktop/frontend/src/native_chat.rs:3124; crates/wunder-desktop/native_commands.rs:96
 In the model, one step leads into this bug: "Banner save returns".
 
 0. Start: Save changed objective: ready

@@ -32,7 +32,7 @@
   --mz-warning-bg: #fbeae5;
 
   /* §7 timeline surfaces, mirroring the desktop tokens
-     (`frontend-slint/ui/design_tokens.slint`). Note that desktop `hover`
+     (`crates/wunder-desktop/frontend/ui/design_tokens.slint`). Note that desktop `hover`
      (#F6F5F3) is a different token from desktop `selected` (#F1EFEC): the
      `--mz-hover` above already holds `selected`, so the timeline rows that
      need desktop `hover` use `--mz-timeline-hover` instead. */
@@ -48,7 +48,7 @@
   /* 刻度条独占通道宽度：输入区按它右移，两列才能对齐到同一中线。 */
   --mz-turn-ruler-width: 18px;
 
-  /* §5.2 sidebar metrics — 与 frontend-slint/ui/drag_row.slint 的 SidebarMetrics
+  /* §5.2 sidebar metrics — 与 crates/wunder-desktop/frontend/ui/drag_row.slint 的 SidebarMetrics
      同值，两端侧栏的行节奏必须一致：
      · 两侧留白 12px，行内再补 8px，图标从 20px 起排；
      · 导航行 32px（设备/工作区/线程/设置），分组行另留 4px 组间气口；
@@ -1847,7 +1847,7 @@ button.messenger-sidebar-workspace-row {
 }
 
 /* ------------------------------------------------- §7 时间线行外壳与用户气泡
-   形态对齐桌面端 `frontend-slint/ui/timeline.slint`：聊天区**任何消息都不再有
+   形态对齐桌面端 `crates/wunder-desktop/frontend/ui/timeline.slint`：聊天区**任何消息都不再有
    头像、名字或时间标签**，用户消息是右对齐的 `timeline-bubble` 气泡，助手侧由
    `MessageTimelineAssistant` 渲染全宽正文与沟槽时间线。
    放在这里（而不是组件 `<style scoped>`）是因为群聊/世界消息路径在
