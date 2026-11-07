@@ -1654,7 +1654,7 @@ pub async fn start_user_weixin_qr_login(
     let session_key = account_id
         .clone()
         .unwrap_or_else(|| format!("wxqr_{}", Uuid::new_v4().simple()));
-    let http = reqwest::Client::new();
+    let http = crate::http_client::new();
 
     purge_expired_weixin_qr_sessions();
     if !force {
@@ -1807,7 +1807,7 @@ pub async fn wait_user_weixin_qr_login(
     let timeout_ms = payload.timeout_ms.unwrap_or(120_000).clamp(1_000, 480_000);
     let deadline = now_ms().saturating_add(timeout_ms);
 
-    let http = reqwest::Client::new();
+    let http = crate::http_client::new();
     loop {
         let status_resp = weixin::get_qrcode_status(
             &http,

@@ -432,7 +432,7 @@ pub fn subprotocol() -> &'static str {
 fn http() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::http_client::builder()
             .timeout(REST_TIMEOUT)
             .build()
             .unwrap_or_default()

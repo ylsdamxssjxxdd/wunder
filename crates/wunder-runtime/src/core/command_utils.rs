@@ -64,14 +64,18 @@ pub enum ShellKind {
     Cmd,
     PowerShell,
     Bash,
+    /// Android's system POSIX shell (`/system/bin/sh`, mksh + toybox).
+    Sh,
 }
 
-/// Resolved shell launcher: which flavour, the bash executable path and the
-/// Windows PATH entries that must be present so the POSIX toolchain resolves.
+/// Resolved shell launcher: which flavour, the POSIX shell executable path and
+/// the Windows PATH entries that must be present so the POSIX toolchain resolves.
 #[derive(Clone, Debug)]
 pub struct ShellLaunch {
     pub kind: ShellKind,
-    pub bash_bin: Option<PathBuf>,
+    /// POSIX shell binary. Android uses the system `/system/bin/sh`; desktop
+    /// Unix resolves bash from PATH or the supplement.
+    pub posix_bin: Option<PathBuf>,
     pub path_dirs: Vec<PathBuf>,
 }
 
@@ -79,7 +83,7 @@ impl Default for ShellLaunch {
     fn default() -> Self {
         Self {
             kind: default_shell_kind(),
-            bash_bin: None,
+            posix_bin: None,
             path_dirs: Vec::new(),
         }
     }
@@ -90,13 +94,18 @@ fn default_shell_kind() -> ShellKind {
     {
         ShellKind::Cmd
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "android")]
+    {
+        ShellKind::Sh
+    }
+    #[cfg(all(not(windows), not(target_os = "android")))]
     {
         ShellKind::Bash
     }
 }
 
-/// Platform default shell (PowerShell preferred on Windows, bash on Unix).
+/// Platform default shell (PowerShell preferred on Windows, bash on desktop
+/// Unix, Android's `/system/bin/sh` on the phone).
 pub fn platform_default_shell() -> ShellLaunch {
     #[cfg(windows)]
     {
@@ -107,15 +116,23 @@ pub fn platform_default_shell() -> ShellLaunch {
         };
         ShellLaunch {
             kind,
-            bash_bin: None,
+            posix_bin: None,
             path_dirs: Vec::new(),
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "android")]
+    {
+        ShellLaunch {
+            kind: ShellKind::Sh,
+            posix_bin: Some(PathBuf::from("/system/bin/sh")),
+            path_dirs: Vec::new(),
+        }
+    }
+    #[cfg(all(not(windows), not(target_os = "android")))]
     {
         ShellLaunch {
             kind: ShellKind::Bash,
-            bash_bin: Some(PathBuf::from("bash")),
+            posix_bin: Some(PathBuf::from("bash")),
             path_dirs: Vec::new(),
         }
     }
@@ -127,13 +144,15 @@ pub fn shell_display_name(shell: &ShellLaunch) -> String {
         ShellKind::Cmd => "cmd.exe".to_string(),
         ShellKind::PowerShell => powershell_display_name(),
         ShellKind::Bash => "bash".to_string(),
+        ShellKind::Sh => "sh".to_string(),
     }
 }
 
-/// Prefix bash commands with `set -o pipefail` so a failing middle stage of a
+/// Prefix POSIX commands with `set -o pipefail` so a failing middle stage of a
 /// pipeline propagates its exit code instead of being masked by the last
 /// command's success. Commands that already manage pipefail are kept as-is.
-fn bash_command_with_pipefail(command: &str) -> String {
+/// Android's mksh supports this option.
+fn posix_command_with_pipefail(command: &str) -> String {
     if command.contains("pipefail") {
         command.to_string()
     } else {
@@ -147,36 +166,65 @@ pub fn build_shell_command_with_shell(command: &str, cwd: &Path, shell: &ShellLa
     {
         match shell.kind {
             ShellKind::Bash => {
-                let bash_bin = shell
-                    .bash_bin
+                let posix_bin = shell
+                    .posix_bin
                     .as_ref()
-                    .expect("bash shell requires bash_bin");
-                let mut cmd = Command::new(bash_bin);
+                    .expect("bash shell requires posix_bin");
+                let mut cmd = Command::new(posix_bin);
                 // Non-login shell; PATH carrying the POSIX toolchain is applied
                 // by the caller so it works even on stripped MinGit layouts.
                 cmd.arg("-c")
-                    .arg(bash_command_with_pipefail(command))
+                    .arg(posix_command_with_pipefail(command))
                     .current_dir(cwd);
                 apply_platform_spawn_options(&mut cmd);
                 cmd
             }
             ShellKind::PowerShell => build_powershell_command(command, cwd),
             ShellKind::Cmd => build_cmd_command(command, cwd),
+            ShellKind::Sh => {
+                // Android never reaches the Windows branch; keep the match
+                // exhaustive for cross-target builds.
+                unreachable!("Sh shell is not used on Windows")
+            }
         }
     }
 
     #[cfg(not(windows))]
     {
-        let bash_bin = env::var_os(SHELL_BIN_ENV)
+        let posix_bin = env::var_os(SHELL_BIN_ENV)
             .map(PathBuf::from)
-            .or_else(|| shell.bash_bin.clone())
-            .unwrap_or_else(|| PathBuf::from("bash"));
-        let mut cmd = Command::new(bash_bin);
+            .or_else(|| shell.posix_bin.clone())
+            .unwrap_or_else(default_posix_shell);
+        let mut cmd = Command::new(posix_bin);
+        // A wrapper script cannot be executed directly inside an Android app
+        // sandbox (SELinux denies execve on app-private files), but the system
+        // shell may still read it. This form runs `<shell> <script> -lc <cmd>`
+        // and leaves the script in charge of entering its own runtime.
+        if let Some(script) = env::var_os(SHELL_SCRIPT_ENV) {
+            cmd.arg(PathBuf::from(script));
+        }
+        // `-l` keeps the desktop Unix behaviour where a login shell publishes
+        // the PATH assembled by the host profile. Android's mksh accepts the
+        // same flags and has no profile to run, so one branch covers both.
         cmd.arg("-lc")
-            .arg(bash_command_with_pipefail(command))
+            .arg(posix_command_with_pipefail(command))
             .current_dir(cwd);
         apply_platform_spawn_options(&mut cmd);
         cmd
+    }
+}
+
+/// Fallback shell name when no explicit binary was resolved. Android puts the
+/// system shell on PATH; desktop Unix expects bash.
+#[cfg(not(windows))]
+fn default_posix_shell() -> PathBuf {
+    #[cfg(target_os = "android")]
+    {
+        PathBuf::from("sh")
+    }
+    #[cfg(all(not(windows), not(target_os = "android")))]
+    {
+        PathBuf::from("bash")
     }
 }
 
@@ -511,6 +559,7 @@ pub fn resolve_shell_name(command: &str) -> &'static str {
         // Callers that need the real name use `shell_display_name`.
         ShellKind::PowerShell => "powershell.exe",
         ShellKind::Bash => "bash",
+        ShellKind::Sh => "sh",
     }
 }
 
@@ -528,10 +577,15 @@ fn prefer_powershell() -> bool {
 /// shell selection explicit instead of relying on PATH order.
 pub const POWERSHELL_EXE_ENV: &str = "WUNDER_POWERSHELL_EXE";
 
-/// Unix counterpart of the shell override: absolute path of a bash binary.
-/// The desktop settings field is auto-filled with the system bash, so this is
-/// only set when the user picks another bash explicitly.
+/// Unix counterpart of the shell override: absolute path of the POSIX shell
+/// binary. The desktop settings field is auto-filled with the system bash;
+/// Android publishes `/system/bin/sh` at startup.
 pub const SHELL_BIN_ENV: &str = "WUNDER_SHELL_BIN";
+
+/// Optional shell script executed through `SHELL_BIN_ENV`. Used on Android,
+/// where the app sandbox forbids execve on private files: the system shell
+/// reads the wrapper and the wrapper enters the bundled runtime.
+pub const SHELL_SCRIPT_ENV: &str = "WUNDER_SHELL_SCRIPT";
 
 /// A PowerShell host that answered its own version query.
 ///
@@ -1227,13 +1281,13 @@ mod tests {
     }
 
     #[test]
-    fn bash_command_with_pipefail_injects_once() {
+    fn posix_command_with_pipefail_injects_once() {
         assert_eq!(
-            bash_command_with_pipefail("echo ok | head"),
+            posix_command_with_pipefail("echo ok | head"),
             "set -o pipefail; echo ok | head"
         );
         assert_eq!(
-            bash_command_with_pipefail("set -o pipefail; echo ok | head"),
+            posix_command_with_pipefail("set -o pipefail; echo ok | head"),
             "set -o pipefail; echo ok | head"
         );
     }
@@ -1251,7 +1305,7 @@ mod tests {
     fn build_shell_command_with_bash_injects_pipefail() {
         let shell = ShellLaunch {
             kind: ShellKind::Bash,
-            bash_bin: Some(PathBuf::from("bash")),
+            posix_bin: Some(PathBuf::from("bash")),
             path_dirs: Vec::new(),
         };
         let command = build_shell_command_with_shell("echo ok | head", Path::new("."), &shell);
@@ -1279,7 +1333,7 @@ mod tests {
         for kind in [ShellKind::PowerShell, ShellKind::Cmd] {
             let shell = ShellLaunch {
                 kind,
-                bash_bin: None,
+                posix_bin: None,
                 path_dirs: Vec::new(),
             };
             let command = build_shell_command_with_shell("echo ok | head", Path::new("."), &shell);
@@ -1338,7 +1392,7 @@ mod tests {
     fn encoded_powershell_round_trips_unicode_and_quotes() {
         let shell = ShellLaunch {
             kind: ShellKind::PowerShell,
-            bash_bin: None,
+            posix_bin: None,
             path_dirs: Vec::new(),
         };
         let command = "Get-Content \"C:\\资料\\报告 1.txt\" | Select-String '错误'";
@@ -1359,7 +1413,7 @@ mod tests {
         }
         let shell = ShellLaunch {
             kind: ShellKind::PowerShell,
-            bash_bin: None,
+            posix_bin: None,
             path_dirs: Vec::new(),
         };
         let mut command =
@@ -1379,7 +1433,7 @@ mod tests {
     fn cmd_launcher_skips_autorun_hooks() {
         let shell = ShellLaunch {
             kind: ShellKind::Cmd,
-            bash_bin: None,
+            posix_bin: None,
             path_dirs: Vec::new(),
         };
         let command = build_shell_command_with_shell("dir", Path::new("."), &shell);
@@ -1395,7 +1449,7 @@ mod tests {
     fn oversized_powershell_script_falls_back_to_inline_command() {
         let shell = ShellLaunch {
             kind: ShellKind::PowerShell,
-            bash_bin: None,
+            posix_bin: None,
             path_dirs: Vec::new(),
         };
         let command = "Write-Output 1\n".repeat(3_000);
@@ -1409,6 +1463,24 @@ mod tests {
     #[test]
     fn build_shell_command_injects_pipefail_on_unix() {
         let command = build_shell_command("echo ok | head", Path::new("."));
+        assert_eq!(
+            command_args(&command),
+            vec!["-lc", "set -o pipefail; echo ok | head"]
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn android_sh_keeps_pipefail_contract() {
+        let shell = ShellLaunch {
+            kind: ShellKind::Sh,
+            posix_bin: Some(PathBuf::from("/system/bin/sh")),
+            path_dirs: Vec::new(),
+        };
+        assert_eq!(shell_display_name(&shell), "sh");
+        let command = build_shell_command_with_shell("echo ok | head", Path::new("."), &shell);
+        // The concrete binary may be overridden by WUNDER_SHELL_BIN in the test
+        // environment; the command contract is what Android relies on.
         assert_eq!(
             command_args(&command),
             vec!["-lc", "set -o pipefail; echo ok | head"]

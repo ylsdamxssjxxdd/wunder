@@ -10,6 +10,7 @@ pub mod config_store;
 pub mod dpi;
 pub mod drawio_config;
 pub mod exec_policy;
+pub mod http_client;
 pub mod i18n;
 pub mod json_schema;
 pub(crate) mod llm_speed;

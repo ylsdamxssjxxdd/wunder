@@ -1107,24 +1107,29 @@ async fn run_command_streaming(
         git_bin: command_env.command_overrides.git_bin.clone(),
         rg_bin: command_env.command_overrides.rg_bin.clone(),
     };
-    let (mut cmd, used_direct) = if let Some(cmd) =
-        command_utils::build_direct_command_with_overrides(
-            command,
-            cwd,
-            command_env
-                .python_runtime
-                .as_ref()
-                .map(|runtime| runtime.bin.as_path()),
-            command_overrides,
-        ) {
+    // A shell script override means the host shell is a gateway into another
+    // runtime (茧's Ubuntu). Direct-spawning `uname` or `git` would silently
+    // bypass that runtime and answer from Android/toybox instead.
+    let force_shell = std::env::var_os(command_utils::SHELL_SCRIPT_ENV).is_some();
+    let shell_command = || {
+        command_utils::build_shell_command_with_shell(command, cwd, &command_env.shell)
+    };
+    let (mut cmd, used_direct) = if force_shell {
+        (shell_command(), false)
+    } else if let Some(cmd) = command_utils::build_direct_command_with_overrides(
+        command,
+        cwd,
+        command_env
+            .python_runtime
+            .as_ref()
+            .map(|runtime| runtime.bin.as_path()),
+        command_overrides,
+    ) {
         (cmd, true)
     } else if let Some(cmd) = command_utils::build_direct_command(command, cwd) {
         (cmd, true)
     } else {
-        (
-            command_utils::build_shell_command_with_shell(command, cwd, &command_env.shell),
-            false,
-        )
+        (shell_command(), false)
     };
     python_runtime::apply_desktop_command_env(&mut cmd, &command_env);
     apply_streaming_command_env(&mut cmd);

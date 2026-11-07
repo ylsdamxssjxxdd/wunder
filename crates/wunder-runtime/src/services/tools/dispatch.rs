@@ -10,7 +10,9 @@ use super::schedule_task_tool;
 use super::search_content_tool::search_content;
 use super::sessions_yield_tool;
 use super::skill_call;
-use super::{browser_tool, desktop_control, read_image_tool, web_fetch_tool, web_search_tool};
+use super::{
+    browser_tool, desktop_control, phone_control, read_image_tool, web_fetch_tool, web_search_tool,
+};
 use super::{
     execute_mcp_tool, execute_memory_manager_tool, execute_thread_control_tool, execute_user_tool,
     is_mcp_tool_name, self_status_tool, subagent_control,
@@ -108,6 +110,9 @@ pub async fn execute_builtin_tool(
         }
         desktop_control::TOOL_DESKTOP_CONTROL => {
             desktop_control::tool_desktop_control(context, args).await
+        }
+        phone_control::TOOL_PHONE_CONTROL => {
+            phone_control::tool_phone_control(context, args).await
         }
         sessions_yield_tool::TOOL_SESSIONS_YIELD => {
             sessions_yield_tool::execute_sessions_yield_tool(context, args).await

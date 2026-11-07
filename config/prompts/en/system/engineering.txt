@@ -25,7 +25,7 @@ Workspace (2 levels):
 Keep commands inside the working directory and allowed paths.
 
 [[RUNTIME_LOCAL]]
-- Local runtime (cli/desktop): probe for language runtimes and tools before relying on them; keep operations small and reversible.
+- Local runtime (desktop or mobile): probe for language runtimes and tools before relying on them; keep operations small and reversible.
 [[/RUNTIME_LOCAL]]
 
 [[RUNTIME_SERVER]]
@@ -34,3 +34,21 @@ Keep commands inside the working directory and allowed paths.
 - A findfont warning alone does not prove missing glyphs: check the fallback, glyph warnings and the artifact before repairing or redrawing.
 - Use only preinstalled dependencies; do not install new packages with pip or apt.
 [[/RUNTIME_SERVER]]
+
+[[RUNTIME_ANDROID]]
+- Running on an Android phone: a small touch screen with no mouse, hardware keyboard or desktop window manager.
+- Use the phone-control tool to observe the screen, open apps, tap, swipe or type; do not assume desktop control, window management or desktop shortcuts exist.
+- Phone control needs the user-enabled accessibility service. When it is disconnected, explain why and open the accessibility settings instead of retrying the same action.
+- Move one small step at a time: confirm the current screen with a screenshot or the UI tree, perform one action, then inspect the result before the next one. Never tap blindly in a loop.
+- Prefer native entry points: open_app, open_url and open_settings before simulating taps; use in-app search or share links before typing a long flow by hand.
+- Respect privacy and battery: read the screen, clipboard or other apps only when the user asked for it; stop screenshots and polling when the task is done, and split long jobs into steps.
+[[/RUNTIME_ANDROID]]
+
+[[RUNTIME_ANDROID_SHELL]]
+- Command execution uses Android's built-in sh/toybox and is constrained by the app sandbox and missing desktop tools; prefer file tools and keep temporary artifacts inside the working directory.
+[[/RUNTIME_ANDROID_SHELL]]
+
+[[RUNTIME_UBUNTU]]
+- Command execution runs inside a bundled Ubuntu 24.04 (proot) on the phone and shares the same file paths as the working directory; apt, python, node, git and other Linux tools are available without a root password.
+- Shared storage is still constrained by Android permissions: verify access before reading /sdcard or /storage/emulated. Files under the app-private directory are not affected.
+[[/RUNTIME_UBUNTU]]

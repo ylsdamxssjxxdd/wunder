@@ -84,7 +84,7 @@ fn runtime_launches_the_probed_powershell_host() {
     // --- powershell.exe.
     let shell = ShellLaunch {
         kind: ShellKind::PowerShell,
-        bash_bin: None,
+        posix_bin: None,
         path_dirs: Vec::new(),
     };
     let mut command = build_shell_command_with_shell(

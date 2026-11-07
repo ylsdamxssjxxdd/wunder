@@ -36,9 +36,10 @@ use crate::token_utils::{
     trim_text_to_chars, trim_text_to_tokens,
 };
 use crate::tools::{
-    build_desktop_followup_user_message, build_read_image_followup_user_message, builtin_aliases,
-    collect_available_tool_names, collect_prompt_tool_specs_with_language,
-    filter_tool_names_by_model_capability, is_desktop_control_tool_name, is_read_image_tool_name,
+    build_desktop_followup_user_message, build_phone_followup_user_message,
+    build_read_image_followup_user_message, builtin_aliases, collect_available_tool_names,
+    collect_prompt_tool_specs_with_language, filter_tool_names_by_model_capability,
+    is_desktop_control_tool_name, is_phone_control_tool_name, is_read_image_tool_name,
     resolve_tool_name, ToolContext, ToolEventEmitter,
 };
 use crate::user_store::UserStore;
@@ -248,7 +249,7 @@ impl Orchestrator {
             committer,
             user_world,
             cron_wake_signal,
-            http: reqwest::Client::new(),
+            http: crate::http_client::new(),
         }
     }
 

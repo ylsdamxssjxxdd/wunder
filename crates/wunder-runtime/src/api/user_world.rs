@@ -932,7 +932,7 @@ async fn relay_envelope_to_lan(
         .bound_port()
         .await
         .unwrap_or(settings.listen_port);
-    let client = reqwest::Client::builder()
+    let client = crate::http_client::builder()
         .timeout(Duration::from_secs(4))
         .build()
         .map_err(|err| format!("build lan relay client failed: {err}"))?;

@@ -421,8 +421,8 @@ Most hunks are self-contained (new files like `passes/gb2312_table.rs` and
 
 ## Shared arboard Win7 fork
 
-`arboard` is pinned through `[patch.crates-io]` to the workspace-wide fork at
-`crates/wunder-egui/vendor/arboard-3.7.0-win7` (see its `PATCH.md`), not a
+`arboard` is pinned through `[patch.crates-io]` to the shared fork at
+`patches/win7/arboard-3.7.0-win7` (see its `PATCH.md`), not a
 copy in `vendor/`. It carries the Win7 replacement for the Windows 8
 `PathCchStripPrefix` static import and the widened clipboard-open retry window
 (25 attempts x 20ms): a clipboard monitor briefly holding the clipboard open

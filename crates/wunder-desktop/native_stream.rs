@@ -1,7 +1,7 @@
 //! Bounded asynchronous delivery; dropping a subscriber never cancels a settled turn.
 use super::{NativeChatInput, ThreadLeaseHeartbeat};
 use anyhow::{anyhow, Result};
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::{runtime::Runtime, sync::mpsc};
@@ -43,9 +43,9 @@ impl NativeStream {
         }
     }
 
-    /// Await the next stream event. The egui worker selects this with its
-    /// command queue, so an active stream wakes the worker instead of being
-    /// polled on a timer.
+    /// Await the next stream event. The native shell worker selects this with
+    /// its command queue, so an active stream wakes the worker instead of
+    /// being polled on a timer.
     pub async fn recv(&mut self) -> Option<NativeChatEvent> {
         self.receiver.recv().await
     }
@@ -79,19 +79,49 @@ pub(super) fn start(
         // generation and durable settlement. Dropping this task releases the
         // guard and returns the lease worker to a blocking idle wait.
         let _heartbeat = heartbeat;
-        let result = run(state, user, input, lease_proof, &output, &token).await;
-        if let Err(error) = result {
-            tracing::warn!(%error, "native chat failed");
-            let _ = output
-                .send(NativeChatEvent::Failed(
-                    "聊天执行失败，请检查模型配置或运行时日志".into(),
-                ))
-                .await;
-        } else {
-            let _ = output.send(NativeChatEvent::Finished).await;
+        // A panic deep inside the HTTP stack used to unwind this task: the
+        // sender was dropped, the subscriber saw a closed channel, and the
+        // turn ended with neither a reply nor an error. Convert it into a
+        // visible failure instead of silence.
+        let result = std::panic::AssertUnwindSafe(run(
+            state, user, input, lease_proof, &output, &token,
+        ))
+        .catch_unwind()
+        .await;
+        match result {
+            Ok(Ok(())) => {
+                let _ = output.send(NativeChatEvent::Finished).await;
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "native chat failed");
+                let _ = output
+                    .send(NativeChatEvent::Failed(
+                        "聊天执行失败，请检查模型配置或运行时日志".into(),
+                    ))
+                    .await;
+            }
+            Err(payload) => {
+                let detail = panic_message(payload.as_ref());
+                tracing::error!(%detail, "native chat task panicked");
+                let _ = output
+                    .send(NativeChatEvent::Failed(format!(
+                        "聊天执行失败：内部错误（{detail}）"
+                    )))
+                    .await;
+            }
         }
     });
     NativeStream { cancel, receiver }
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(text) = payload.downcast_ref::<&str>() {
+        (*text).to_string()
+    } else if let Some(text) = payload.downcast_ref::<String>() {
+        text.clone()
+    } else {
+        "未知错误".into()
+    }
 }
 
 async fn run(

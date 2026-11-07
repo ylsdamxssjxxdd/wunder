@@ -349,7 +349,7 @@ fn firecrawl_client() -> Result<&'static reqwest::Client> {
     if let Some(client) = CLIENT.get() {
         return Ok(client);
     }
-    let client = reqwest::Client::builder()
+    let client = crate::http_client::builder()
         .build()
         .map_err(|err| anyhow!(err.to_string()))?;
     let _ = CLIENT.set(client);

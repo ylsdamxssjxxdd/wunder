@@ -1,7 +1,6 @@
 param(
   [Alias("t")][ValidateSet("desktop", "cli")][string]$Target = "",
   [Alias("a")][ValidateSet("linux-arm64", "linux-amd64", "win7-x86")][string]$Arch = "",
-  [switch]$Egui,
   [switch]$All,
   [string]$KylinBuilderRoot = "",
   [string]$Win7BuilderRoot = "",
@@ -22,10 +21,7 @@ $KylinBuilderRoot = [IO.Path]::GetFullPath($KylinBuilderRoot)
 $Win7BuilderRoot = [IO.Path]::GetFullPath($Win7BuilderRoot)
 
 if ($All) {
-  if ($Target -or $Arch -or $Egui) { throw "-All selects every distribution; do not combine it with -Target, -Arch or -Egui." }
-} elseif ($Egui) {
-  if ($Target) { throw "-Egui builds the egui desktop; do not combine it with -Target." }
-  if ($Arch -and $Arch -ne "win7-x86") { throw "-Egui supports the native host build or -a win7-x86." }
+  if ($Target -or $Arch) { throw "-All selects every distribution; do not combine it with -Target or -Arch." }
 } elseif (-not $Target -or -not $Arch) {
   throw "Specify both -t desktop|cli and -a linux-arm64|linux-amd64|win7-x86, or use -All."
 }
@@ -59,39 +55,14 @@ function Invoke-LinuxBuild {
 }
 
 function Invoke-Win7Build {
-  param([ValidateSet("desktop", "cli", "egui")][string]$SelectedTarget)
+  param([ValidateSet("desktop", "cli")][string]$SelectedTarget)
 
   $scriptName = switch ($SelectedTarget) {
     "desktop" { "build-win7-offline.ps1"; break }
     "cli" { "build-win7-cli.ps1"; break }
-    "egui" { "build-win7-egui.ps1"; break }
   }
   & (Join-Path $PSScriptRoot $scriptName) -BuilderRoot $Win7BuilderRoot -Jobs $Jobs -Check:$Check
   if ($LASTEXITCODE -ne 0) { throw "Win7 $SelectedTarget build failed with exit code $LASTEXITCODE" }
-}
-
-function Invoke-EguiBuild {
-  $targetDirectory = Join-Path $repoRoot "target\wunder-egui"
-  New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
-  $previousTargetDirectory = $env:CARGO_TARGET_DIR
-  try {
-    $env:CARGO_TARGET_DIR = $targetDirectory
-    $cargoArgs = @("build", "--locked", "--release", "-p", "wunder-egui", "--features", "native")
-    if ($Check) { $cargoArgs[0] = "check" }
-    & cargo @cargoArgs
-    if ($LASTEXITCODE -ne 0) { throw "egui native build failed with exit code $LASTEXITCODE" }
-    if ($Check) {
-      Write-Host "egui native check complete"
-    } else {
-      $runningOnWindows = ($env:OS -eq "Windows_NT") -or ($IsWindows -eq $true)
-      $suffix = if ($runningOnWindows) { ".exe" } else { "" }
-      $artifact = Join-Path $targetDirectory "release\wunder-egui$suffix"
-      if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) { throw "egui native artifact was not produced: $artifact" }
-      Write-Host "egui native build complete: $artifact"
-    }
-  } finally {
-    $env:CARGO_TARGET_DIR = $previousTargetDirectory
-  }
 }
 
 if ($All) {
@@ -101,15 +72,6 @@ if ($All) {
   }
   Invoke-Win7Build -SelectedTarget desktop
   Invoke-Win7Build -SelectedTarget cli
-  return
-}
-
-if ($Egui) {
-  if ($Arch -eq "win7-x86") {
-    Invoke-Win7Build -SelectedTarget egui
-  } else {
-    Invoke-EguiBuild
-  }
   return
 }
 

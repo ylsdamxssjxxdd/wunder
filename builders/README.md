@@ -75,32 +75,6 @@ CI 使用的构建入口：
 - Windows：`builders/build-win7-cli.ps1 -Toolchain <rustup工具链> -MingwBin <mingw32/bin> -HostMingwBin <mingw64/bin> -OutputDirectory <目录>`；不传 `-Toolchain` 时仍使用相邻离线 SDK。
 - Linux：`builders/build-linux-cli-native.sh`，在 `packaging/docker/Dockerfile.ubuntu18-desktop` 容器内原生构建 amd64 或交叉构建 arm64；输出到 `target/cli/dist/linux-<arch>/`，可用 `WUNDER_CLI_OUTPUT_DIR` 覆盖。
 
-egui 版本提供独立的本机快速构建入口，不改变默认 Slint Desktop 发布矩阵：
-
-```bat
-build.bat -Egui
-```
-
-Win7 x86 发布必须选择 Win7 目标，而不能把上面的本机 x64 产物复制到旧系统：
-
-```bat
-build.bat -Egui -a win7-x86
-```
-
-```bash
-./build.sh --egui
-```
-
-本机快速构建产物位于 `target/wunder-egui/release/wunder-egui.exe`（Windows）或
-`target/wunder-egui/release/wunder-egui`（Linux）。该入口使用当前构建主机的 native
-Glow 后端，便于先运行 `--demo` 做视觉验收。Win7 x86 的产物位于
-`target/wunder-egui/dist/win7-x86/wunder-egui-<version>-win7-x86.exe`，使用
-`i686-win7-windows-gnu` 重编标准库。发布前会解析 PE 导入表，拒绝
-`bcryptprimitives.dll`、`ProcessPrng`、`api-ms-win-*`、`WaitOnAddress` 等 Win7
-不兼容项，并写出同目录的 `imports.txt`。Win7 目标依赖独立的
-`Rust-builder/win7/offline/cargo-vendor-egui` 锁定快照；缺失依赖时构建应直接失败，
-不得改用主机 Cargo 或手工复制系统 DLL。
-
 `-all` 为完整发布构建 Linux ARM64、Linux amd64 与 Win7 x86 的 Desktop/CLI；Linux Desktop 产物为 AppDir 目录归档，`.run` 与 `-portable` 都从它解压，目标机不需要 FUSE；CLI 在所有目标都只产生普通 ELF/EXE。Windows 的 `-All` 默认分别使用相邻的 `Rust-builder/kylin-arm` 和 `Rust-builder/win7`；如需覆盖，使用 `-KylinBuilderRoot` 与 `-Win7BuilderRoot`，不要把两套 SDK 指到同一目录。
 
 底层实现包括 `build-linux-*-*.sh`、`build-cli-*.sh`、`build-win7-*.ps1`、`build-win7-arm64-offline.sh`、`build-cli-win7-arm64-offline.sh` 和链接器辅助脚本。其中 `build-linux-desktop-native.sh` 是 CI 专用入口：在已预装 Ubuntu 18.04 工具链的容器内在线原生构建并打包 AppDir 归档，不依赖 kylin-arm 离线 SDK，打包语义与 `build-linux-arm64-desktop.sh` 保持同步。Win7 Windows 本机构建固定使用相邻的 `Rust-builder/win7/offline`；Linux ARM64 开发机与 Windows Docker 的 Linux 交叉构建固定使用相邻的 `Rust-builder/kylin-arm/offline`（Win7 交叉使用其中的 `nightly-2026-03-14-aarch64-unknown-linux-gnu` 工具链 + rust-src，-Z build-std 重编 std，MinGW 链接与导入库由 `mingw-i686-windows-gnu` 提供，sdk-version 戳接受 wunder/rcho 两种印记）。Linux 可通过 `WUNDER_BUILDER_ROOT` 覆盖 kylin-arm 根目录；Windows 分别通过 `-KylinBuilderRoot`、`-Win7BuilderRoot` 覆盖两套 SDK。脚本不探测或回退到旧 SDK 目录。
@@ -195,7 +169,7 @@ ARM64 开发 sysroot 首次准备使用 `bash builders/prepare-linux-arm64-devel
 
 `Rust-builder/win7/offline/cargo-vendor-slint`、`Rust-builder/kylin-arm/offline/cargo-vendor-slint` 与 `Rust-builder/kylin-x86/offline/cargo-vendor-slint` 是锁文件之外的独立快照：`Cargo.toml` 或 `Cargo.lock` 变化后，只改工作区不会让离线构建可用，解析会在 vendor 树里以 `no matching package named ...` 或 `failed to select a version ...` 终止，desktop 与 cli 一起失败。
 
-Cargo 解析的是**完整锁文件闭包**，不是当前目标的编译闭包。即使只构建 Win7 CLI，vendor 里也必须同时存在 macOS/Android 的 `objc2`、`calloop`、`wayland-backend`、wasm 的 `wgpu-core-deps-wasm` 等永远不参与本次编译的 crate，否则解析阶段就会失败。判断是否完整不能只看目录名：vendor 目录既有 `objc2` 这种不带版本的名字，也有 `objc2-0.5.3`，必须读取每个目录 `Cargo.toml` 的 `package.name/version` 后与 `Cargo.lock` 比对。Win7 egui 使用的 `cargo-vendor-egui` 也要单独检查。
+Cargo 解析的是**完整锁文件闭包**，不是当前目标的编译闭包。即使只构建 Win7 CLI，vendor 里也必须同时存在 macOS/Android 的 `objc2`、`calloop`、`wayland-backend`、wasm 的 `wgpu-core-deps-wasm` 等永远不参与本次编译的 crate，否则解析阶段就会失败。判断是否完整不能只看目录名：vendor 目录既有 `objc2` 这种不带版本的名字，也有 `objc2-0.5.3`，必须读取每个目录 `Cargo.toml` 的 `package.name/version` 后与 `Cargo.lock` 比对。
 
 补齐的可靠做法是生成一份完整快照再增量复制，而不是猜单个依赖：
 
@@ -212,7 +186,6 @@ cargo vendor --offline --locked temp_dir/vendor-full
 
 最后必须验证解析与真实编译两件事：为每棵 vendor 树临时生成只含 `source.crates-io -> vendored-sources` 的 `CARGO_HOME/config.toml`，执行 `cargo metadata --locked --offline` 确认解析；再跑 `build.bat -t desktop -a win7-x86`、`build.bat -t cli -a win7-x86` 或对应的 Linux 构建，确认新 crate 能编过并进入 PE/ELF 门禁。只做 `-Check` 会跳过 codegen 与链接，不能作为最终验收。
 
-2026-10-20 按此方法补齐：win7-slint 增加 9 个（`objc2 0.5.3/0.6.5`、`objc`、`calloop` 等），kylin-arm 与 kylin-x86 各增加 42 个（egui/wgpu 闭包等）；`cargo-vendor-egui` 经元数据审计原本完整。
 
 ## Linux amd64 离线 SDK 维护
 

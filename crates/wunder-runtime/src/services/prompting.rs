@@ -552,6 +552,20 @@ fn build_system_prompt_skeleton(
     let is_local = is_local_runtime_mode(&config.server.mode);
     engineering_flags.insert("RUNTIME_LOCAL".to_string(), is_local);
     engineering_flags.insert("RUNTIME_SERVER".to_string(), !is_local);
+    // The Android shell shares the desktop engine, but the working surface is
+    // a touch screen with no window manager. The flag is compile-time because
+    // the same config must not turn a desktop build into a phone build.
+    engineering_flags.insert("RUNTIME_ANDROID".to_string(), cfg!(target_os = "android"));
+    // The shell override is the same signal the command tool follows, so the
+    // prompt describes the environment commands will really run in. It is
+    // read when a thread's system prompt is frozen, not per turn.
+    let ubuntu_shell = cfg!(target_os = "android")
+        && std::env::var_os(crate::command_utils::SHELL_SCRIPT_ENV).is_some();
+    engineering_flags.insert(
+        "RUNTIME_ANDROID_SHELL".to_string(),
+        cfg!(target_os = "android") && !ubuntu_shell,
+    );
+    engineering_flags.insert("RUNTIME_UBUNTU".to_string(), ubuntu_shell);
 
     let engineering_template = read_prompt_template_from_scope(
         config,
@@ -617,7 +631,11 @@ fn build_system_prompt_skeleton(
         let has_sessions_yield = allowed_tool_names
             .iter()
             .any(|name| resolve_tool_name(name) == "会话让出");
+        let has_phone_control = allowed_tool_names
+            .iter()
+            .any(|name| resolve_tool_name(name) == "手机控制");
         tools_flags.insert("HAS_A2UI_TOOL".to_string(), has_a2ui);
+        tools_flags.insert("HAS_PHONE_CONTROL_TOOL".to_string(), has_phone_control);
         tools_flags.insert("HAS_PLAN_TOOL".to_string(), has_plan);
         tools_flags.insert("HAS_QUESTION_PANEL_TOOL".to_string(), has_question_panel);
         tools_flags.insert(

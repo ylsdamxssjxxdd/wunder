@@ -223,7 +223,7 @@ pub async fn query_knowledge_documents(
 
     let reply = match context.retrieval_llm_config.as_ref() {
         Some(config) if is_llm_configured(config) => {
-            let client = build_llm_client(config, reqwest::Client::new());
+            let client = build_llm_client(config, crate::http_client::new());
             match client.complete(&context.messages).await {
                 Ok(response) => response.content,
                 Err(_) => {
@@ -276,7 +276,7 @@ pub async fn query_knowledge_raw_with_documents(
     else {
         return Err(anyhow::anyhow!(i18n::t("error.llm_not_configured")));
     };
-    let client = build_llm_client(config, reqwest::Client::new());
+    let client = build_llm_client(config, crate::http_client::new());
     let response = client.complete(&context.messages).await.map_err(|err| {
         anyhow::anyhow!(i18n::t_with_params(
             "error.llm_call_failed",
@@ -315,7 +315,7 @@ where
     else {
         return Err(anyhow::anyhow!(i18n::t("error.llm_not_configured")));
     };
-    let client = build_llm_client(config, reqwest::Client::new());
+    let client = build_llm_client(config, crate::http_client::new());
     let response = client
         .stream_complete_with_callback(&context.messages, on_delta)
         .await

@@ -1276,7 +1276,7 @@ pub(crate) async fn execute_apps_command(
                 }]);
             }
 
-            let client = reqwest::Client::builder()
+            let client = wunder_server::http_client::builder()
                 .timeout(Duration::from_secs(6))
                 .build()?;
             let auth_header = resolve_mcp_auth_header(&server);
@@ -2011,7 +2011,7 @@ pub(crate) async fn run_tool_outside_turn(
     // A Client holds a connection pool and rustls state; building one per
     // command pays that setup on every `tool run` / `!cmd`.
     static TOOL_HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    let http = TOOL_HTTP_CLIENT.get_or_init(reqwest::Client::new);
+    let http = TOOL_HTTP_CLIENT.get_or_init(wunder_server::http_client::new);
 
     let tool_context = ToolContext {
         user_id: &runtime.user_id,
@@ -3680,6 +3680,41 @@ async fn handle_doctor(
         println!("- {check_name}: [{status}] {path}");
     }
 
+    let tls_roots = wunder_server::http_client::tls_roots_label();
+    println!(
+        "- {}: {tls_roots}",
+        if is_zh {
+            "TLS 根证书"
+        } else {
+            "tls_roots"
+        }
+    );
+    if wunder_server::http_client::is_termux() {
+        println!("- Termux: detected");
+    }
+    if let Some(url) = command
+        .tls_probe
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+    {
+        let client = wunder_server::http_client::new();
+        let probe = tokio::time::timeout(Duration::from_secs(15), client.get(url).send()).await;
+        let result = match probe {
+            Ok(Ok(response)) => format!("HTTP {}", response.status()),
+            Ok(Err(error)) => format!("failed: {error}"),
+            Err(_) => "timeout".to_string(),
+        };
+        println!(
+            "- {}: {result}",
+            if is_zh {
+                "HTTPS 探测"
+            } else {
+                "tls_probe"
+            }
+        );
+    }
+
     if command.verbose {
         let payload = json!({
             "skills_paths": config.skills.paths,
@@ -3689,6 +3724,8 @@ async fn handle_doctor(
             "approval_mode_effective": resolve_effective_approval_mode(&config, global.approval_mode),
             "exec_policy_mode": config.security.exec_policy_mode,
             "config_path": std::env::var("WUNDER_CONFIG_PATH").unwrap_or_default(),
+            "tls_roots": tls_roots,
+            "termux": wunder_server::http_client::is_termux(),
         });
         println!("{}", serde_json::to_string_pretty(&payload)?);
     }

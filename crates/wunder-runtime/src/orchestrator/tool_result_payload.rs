@@ -1228,6 +1228,7 @@ fn project_success_observation_data(tool_name: &str, data: &Value) -> Option<Val
         "自身状态" | "自我状态" | "self_status" => project_self_status(data),
         "goal" => project_goal_success(data),
         "桌面控制" | "desktop_control" => project_desktop_control(data),
+        "手机控制" | "phone_control" => project_phone_control(data),
         "执行命令" | "execute_command" => project_command_success(data),
         "命令会话" | "command_session" => project_command_session_success(data),
         "读取文件" | "read_file" => project_read_file_success(data),
@@ -1964,6 +1965,33 @@ fn project_desktop_control(data: &Value) -> Option<Value> {
         .or_else(|| project_artifact(data))
     {
         projected.insert("screenshot_artifact".to_string(), artifact);
+    }
+    if projected.is_empty() {
+        None
+    } else {
+        Some(Value::Object(projected))
+    }
+}
+
+fn project_phone_control(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    let mut projected = pick_non_empty_fields(
+        map,
+        &[
+            "action",
+            "state",
+            "action_applied",
+            "accessibility_connected",
+            "foreground_app",
+            "message",
+        ],
+    );
+    if let Some(tree) = map
+        .get("ui_tree")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        projected.insert("ui_tree".to_string(), Value::String(tree.to_string()));
     }
     if projected.is_empty() {
         None

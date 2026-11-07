@@ -31,6 +31,7 @@ mod mcp_pack;
 mod memory_manager_tool;
 mod multimodal_generation_tool;
 mod panel_tools;
+mod phone_control;
 pub(crate) mod pipeline;
 mod prompt_surface;
 mod read_file_guard;
@@ -78,16 +79,18 @@ pub use command_tool::decode_command_output;
 pub use prompt_surface::prompt_tool_spec;
 pub use catalog::{
     browser_tools_available, build_desktop_followup_user_message, build_mcp_tool_alias_entries,
-    build_mcp_tool_alias_entries_for_names, build_read_image_followup_user_message,
-    build_runtime_tool_display_map, builtin_aliases, builtin_tool_specs,
-    collect_available_tool_names, collect_enabled_tool_names_for_catalog,
+    build_mcp_tool_alias_entries_for_names, build_phone_followup_user_message,
+    build_read_image_followup_user_message, build_runtime_tool_display_map, builtin_aliases,
+    builtin_tool_specs, collect_available_tool_names, collect_enabled_tool_names_for_catalog,
     collect_prompt_tool_specs, collect_prompt_tool_specs_with_language,
     current_tool_schema_reference, desktop_tools_available, expand_browser_group_selection,
     filter_tool_names_by_model_capability, is_browser_group_name, is_browser_tool_name,
-    is_desktop_control_tool_name, is_read_image_tool_name, resolve_builtin_tool_schema,
-    resolve_builtin_tool_schema_reference, resolve_runtime_tool_display_name, resolve_tool_name,
-    runtime_tool_schema, runtime_tool_schema_reference, with_browser_group_members,
+    is_desktop_control_tool_name, is_phone_control_tool_name, is_read_image_tool_name,
+    phone_tools_available, resolve_builtin_tool_schema, resolve_builtin_tool_schema_reference,
+    resolve_runtime_tool_display_name, resolve_tool_name, runtime_tool_schema,
+    runtime_tool_schema_reference, with_browser_group_members,
 };
+pub use phone_control::{install_phone_control_host, PhoneControlHost};
 pub use context::{
     build_tool_roots, DetachedToolContext, ToolContext, ToolEventEmitter, ToolRoots,
 };

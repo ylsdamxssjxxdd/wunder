@@ -886,6 +886,47 @@ impl NativeDesktop {
         self.ensure_thread_open(session_id)
     }
 
+    /// Drop a thread lease left by an earlier process of a single-process
+    /// shell (茧). A hard kill leaves the lease behind until its 15 s TTL
+    /// lapses, and the next launch would wait that window out before showing
+    /// any messages. A desktop-kind lease from another instance id cannot be
+    /// alive in the same app process, so it is safe to release immediately.
+    /// Leases owned by another client kind (舵机 sharing the same home) stay.
+    pub fn reclaim_previous_process_lease(&self, session_id: &str) -> Result<bool> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Ok(false);
+        }
+        let Some(lease) = self
+            .state()
+            .storage
+            .get_thread_open_lease(session_id, self.user_id())?
+        else {
+            return Ok(false);
+        };
+        if lease.client_kind != "desktop" || lease.owner_instance_id == self.instance_id {
+            return Ok(false);
+        }
+        self.state().storage.release_thread_open_lease(
+            session_id,
+            &lease.owner_instance_id,
+            lease.fencing_token,
+        )
+    }
+
+    /// 茧 sandboxes its own `WUNDER_HOME`, so no second local client can share
+    /// it. Every durable session execution lock present at startup therefore
+    /// belongs to a process the system already killed. A lock left by a
+    /// killed turn stays valid for minutes and makes the first open return
+    /// `THREAD_IN_USE` until it expires, which the shell shows as an endless
+    /// "loading runtime" screen. Clear them before the first open.
+    pub fn clear_stale_session_locks(&self) -> Result<i64> {
+        use wunder_server::storage::SessionLockStore;
+        self.state()
+            .storage
+            .delete_session_locks_by_user(self.user_id())
+    }
+
     /// Control entry for stop and goal commands. A turn this very process is
     /// running stays stoppable even if the open lease lapsed meanwhile (system
     /// sleep, stalled heartbeat): the execution lock this process holds keeps

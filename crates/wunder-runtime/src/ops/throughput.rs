@@ -175,7 +175,7 @@ impl ThroughputManager {
                 tickets: Vec::new(),
             })),
             history_path: Arc::new(path),
-            http: reqwest::Client::new(),
+            http: crate::http_client::new(),
         }
     }
 

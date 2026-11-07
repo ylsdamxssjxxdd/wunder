@@ -1126,12 +1126,51 @@ pub(crate) fn refresh_runtime_tool_env(settings: &DesktopSettings, app_dir: &Pat
         // Unix always runs bash, so publish the same binary the settings tab
         // shows (custom pick first, then the system bash). Clearing the setting
         // removes the override instead of keeping the previously picked path.
-        let shell_effective = resolve_desktop_tool_bin(&settings.shell_path, app_dir)
-            .or_else(system_shell_bin);
-        if let Some(shell_bin) = shell_effective {
-            set_env_path_if_exists(wunder_server::command_utils::SHELL_BIN_ENV, &shell_bin);
-        } else {
-            std::env::remove_var(wunder_server::command_utils::SHELL_BIN_ENV);
+        let configured = resolve_desktop_tool_bin(&settings.shell_path, app_dir);
+        #[cfg(target_os = "android")]
+        {
+            // 茧 routes commands into the bundled Ubuntu by setting the shell
+            // to its wrapper. The sandbox forbids execve on app-private files,
+            // so the wrapper is read by the system shell instead of executed.
+            let ubuntu_wrapper = configured
+                .as_ref()
+                .and_then(|path| path.file_name())
+                .map(|name| name == "wunder-shell")
+                .unwrap_or(false);
+            if ubuntu_wrapper {
+                if let Some(script) = configured.as_ref() {
+                    set_env_path_if_exists(
+                        wunder_server::command_utils::SHELL_SCRIPT_ENV,
+                        script,
+                    );
+                }
+                set_env_path_if_exists(
+                    wunder_server::command_utils::SHELL_BIN_ENV,
+                    Path::new("/system/bin/sh"),
+                );
+            } else {
+                std::env::remove_var(wunder_server::command_utils::SHELL_SCRIPT_ENV);
+                match configured.or_else(system_shell_bin) {
+                    Some(shell_bin) => set_env_path_if_exists(
+                        wunder_server::command_utils::SHELL_BIN_ENV,
+                        &shell_bin,
+                    ),
+                    None => {
+                        std::env::remove_var(wunder_server::command_utils::SHELL_BIN_ENV);
+                    }
+                }
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            match configured.or_else(system_shell_bin) {
+                Some(shell_bin) => {
+                    set_env_path_if_exists(wunder_server::command_utils::SHELL_BIN_ENV, &shell_bin)
+                }
+                None => {
+                    std::env::remove_var(wunder_server::command_utils::SHELL_BIN_ENV);
+                }
+            }
         }
     }
 }
@@ -1320,7 +1359,14 @@ fn system_shell_bin() -> Option<PathBuf> {
     {
         search_path_for("powershell")
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "android")]
+    {
+        // 茧 has no bash; the platform shell plus toybox is the command
+        // tool's only portable POSIX surface.
+        let shell = PathBuf::from("/system/bin/sh");
+        shell.is_file().then_some(shell)
+    }
+    #[cfg(all(not(windows), not(target_os = "android")))]
     {
         search_path_for("bash").or_else(|| {
             ["/bin/bash", "/usr/bin/bash"].iter().find_map(|path| {
@@ -1642,18 +1688,31 @@ fn apply_desktop_defaults(
         }
     }
     ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "计划面板");
-    config.tools.desktop_control.enabled = true;
-    config.tools.desktop_control.norm_width = config
-        .tools
-        .desktop_control
-        .norm_width
-        .max(DESKTOP_CONTROL_MIN_NORM_WIDTH);
-    config.tools.desktop_control.norm_height = config
-        .tools
-        .desktop_control
-        .norm_height
-        .max(DESKTOP_CONTROL_MIN_NORM_HEIGHT);
-    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "桌面控制");
+    if cfg!(target_os = "android") {
+        // 茧 shares the local engine but has no window manager, mouse or
+        // keyboard. The Android shell installs the phone-control host; a
+        // persisted desktop switch from an older build must not revive the
+        // desktop tool on the phone.
+        config.tools.desktop_control.enabled = false;
+        config
+            .tools
+            .builtin
+            .enabled
+            .retain(|name| wunder_server::tools::resolve_tool_name(name.trim()) != "桌面控制");
+    } else {
+        config.tools.desktop_control.enabled = true;
+        config.tools.desktop_control.norm_width = config
+            .tools
+            .desktop_control
+            .norm_width
+            .max(DESKTOP_CONTROL_MIN_NORM_WIDTH);
+        config.tools.desktop_control.norm_height = config
+            .tools
+            .desktop_control
+            .norm_height
+            .max(DESKTOP_CONTROL_MIN_NORM_HEIGHT);
+        ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "桌面控制");
+    }
     config.tools.browser.enabled = true;
     // Browser tools now come from the active provider's native surface and are
     // auto-registered, so the legacy Chinese sub-tool whitelist entries are gone.

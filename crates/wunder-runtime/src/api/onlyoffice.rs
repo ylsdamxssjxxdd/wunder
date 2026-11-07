@@ -275,7 +275,7 @@ async fn download_onlyoffice_document(
     config: &onlyoffice_service::OnlyOfficeResolvedConfig,
     url: &str,
 ) -> anyhow::Result<Vec<u8>> {
-    let client = reqwest::Client::builder()
+    let client = crate::http_client::builder()
         .timeout(std::time::Duration::from_secs(config.request_timeout_s))
         .build()?;
     let download_url = resolve_onlyoffice_download_url(config, url);

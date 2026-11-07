@@ -486,7 +486,7 @@ fn build_system_prompt_model_request_preview(
     } else {
         Some(llm_tools)
     };
-    build_llm_client(llm_config, reqwest::Client::new())
+    build_llm_client(llm_config, crate::http_client::new())
         .build_request_payload_with_tools(&messages, true, tools)
 }
 
