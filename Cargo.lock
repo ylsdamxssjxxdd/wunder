@@ -5902,6 +5902,7 @@ dependencies = [
  "ignore",
  "image",
  "kuchiki",
+ "libc",
  "md5",
  "mime",
  "parking_lot",

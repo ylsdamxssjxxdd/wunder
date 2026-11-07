@@ -7586,6 +7586,7 @@ dependencies = [
  "html2md",
  "ignore",
  "image",
+ "libc",
  "md5",
  "mime",
  "parking_lot",
