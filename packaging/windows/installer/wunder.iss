@@ -38,9 +38,9 @@ PrivilegesRequired=lowest
 UsePreviousAppDir=yes
 OutputDir=.
 OutputBaseFilename={#OutputBaseFilename}
-SetupIconFile=pupa.ico
-; The pupa mark in the wizard pages' upper right corner (transparent PNG).
-WizardSmallImageFile=pupa.png
+SetupIconFile=eva01-head.ico
+; The application mark in the wizard pages' upper right corner (transparent PNG).
+WizardSmallImageFile=eva01-head.png
 UninstallDisplayIcon={app}\bin\wunder-desktop.exe
 UninstallDisplayName={#AppName} {#AppVersion}
 Compression={#PackCompression}
@@ -75,17 +75,17 @@ Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 WelcomeLabel1=欢迎安装 [name]
 WelcomeLabel2=本向导将引导您完成 [name/ver] 的安装。
 WizardSelectTasks=选择安装内容
-SelectTasksDesc=已默认全选：蛹与舵机是程序本体（勾选蛹会自动创建桌面快捷方式），补充组件默认随装，可按需取消勾选。
+SelectTasksDesc=已默认全选：桌面版与命令行是程序本体（勾选桌面版会自动创建桌面快捷方式），补充组件默认随装，可按需取消勾选。
 SelectTasksLabel2=
 SelectDirDesc=请选择心舰的安装目录，该目录也是用户数据目录。
 SelectDirLabel3=
 
 [Icons]
-; 勾选「蛹」即创建开始菜单与桌面快捷方式（不再单列快捷方式任务）；「舵机」同理。
-Name: "{group}\蛹"; Filename: "{app}\bin\wunder-desktop.exe"; WorkingDir: "{app}"; Tasks: desktop
-Name: "{group}\舵机"; Filename: "{app}\bin\wunder-cli.exe"; WorkingDir: "{app}\workspace"; Tasks: cli
+; 勾选「桌面版」即创建开始菜单与桌面快捷方式（不再单列快捷方式任务）；「命令行」同理。
+Name: "{group}\wunder 桌面版"; Filename: "{app}\bin\wunder-desktop.exe"; WorkingDir: "{app}"; Tasks: desktop
+Name: "{group}\wunder 命令行"; Filename: "{app}\bin\wunder-cli.exe"; WorkingDir: "{app}\workspace"; Tasks: cli
 Name: "{group}\卸载心舰"; Filename: "{uninstallexe}"
-Name: "{userdesktop}\蛹"; Filename: "{app}\bin\wunder-desktop.exe"; WorkingDir: "{app}"; Tasks: desktop
+Name: "{userdesktop}\wunder 桌面版"; Filename: "{app}\bin\wunder-desktop.exe"; WorkingDir: "{app}"; Tasks: desktop
 
 [Dirs]
 ; bin 由可选的本体文件创建，显式声明以确保组件清单等写入目录始终存在。
@@ -108,7 +108,7 @@ Type: filesandordirs; Name: "{app}\opt\node"
 Type: filesandordirs; Name: "{app}\opt\remotion"
 
 [Run]
-Filename: "{app}\bin\wunder-desktop.exe"; Description: "启动蛹"; Flags: nowait postinstall skipifsilent; Tasks: desktop
+Filename: "{app}\bin\wunder-desktop.exe"; Description: "启动桌面版"; Flags: nowait postinstall skipifsilent; Tasks: desktop
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\bin"
@@ -409,7 +409,7 @@ begin
             if not DelTree(Target, True, True, True) then
             begin
               MsgBox('无法清空目录：' + Target + #13#10#13#10 +
-                '请先关闭正在使用该组件的程序（心舰、舵机或组件进程）后重试。',
+                '请先关闭正在使用该组件的程序（心舰、命令行或组件进程）后重试。',
                 mbError, MB_OK);
               Abort;
             end;

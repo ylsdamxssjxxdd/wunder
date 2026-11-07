@@ -1,0 +1,11 @@
+# Android browser overlay (Ubuntu 24.04 / Python 3.12 / aarch64).
+#
+# The bridge script drives Chromium through Playwright's Python driver, so the
+# wheel must ship the Linux arm64 node driver. Chromium itself is downloaded
+# separately by builders/build-android-browser-pack.sh and installed under
+# /opt/browser; Playwright is pointed at that executable instead of its own
+# browser registry.
+playwright==1.40.0
+greenlet==3.0.1
+pyee==11.0.1
+typing_extensions==4.16.0

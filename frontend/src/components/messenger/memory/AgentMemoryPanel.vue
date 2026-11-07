@@ -914,7 +914,7 @@ watch(
 }
 
 :deep(.agent-memory-dialog.el-dialog) {
-  /* 对话框被传送到 body，显式承接蜂巢主题变量，避免退回组件的原生蓝灰默认色。 */
+  /* 对话框被传送到 body，显式承接云端版主题变量，避免退回组件的原生蓝灰默认色。 */
   --mz-primary: var(--ui-accent-ink);
   --mz-primary-hover: var(--ui-accent-ink-hover);
   --mz-primary-soft: var(--ui-accent-secondary);

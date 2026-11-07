@@ -23,7 +23,7 @@ For local use, keep the defaults; for a team deployment, set an address the team
 
 ### Run mode
 
-Two values: **Pupa local mode** (all data stored locally) and **Hull mode** (multi-user support and centralized management). Pick Pupa local mode for individual use, and Hull mode when you need multi-user collaboration or centralized management.
+Two values: **Desktop local mode** (all data stored locally) and **Server mode** (multi-user support and centralized management). Pick Desktop local mode for individual use, and Server mode when you need multi-user collaboration or centralized management.
 
 ### Concurrency limit
 
@@ -33,7 +33,7 @@ A cap on how many sessions can be active at once. The default is enough for indi
 
 ### API key
 
-The credential guarding access to the Bridge and the Hull interfaces. The key should be long enough — over 16 characters, mixing letters, digits, and symbols; do not use a key that is easy to guess, and rotate the key regularly.
+The credential guarding access to the Admin and the Server interfaces. The key should be long enough — over 16 characters, mixing letters, digits, and symbols; do not use a key that is easy to guess, and rotate the key regularly.
 
 ### Path access control
 
@@ -52,22 +52,22 @@ Used to verify external requests when wunder is embedded in another system, or w
 
 ### Database type
 
-- **SQLite**: a lightweight local database, suited to Pupa local mode (default)
-- **PostgreSQL**: a full-scale database, suited to the Hull multi-user mode
+- **SQLite**: a lightweight local database, suited to Desktop local mode (default)
+- **PostgreSQL**: a full-scale database, suited to the Server multi-user mode
 
 ### Data directory
 
-`storage.data_root` is the shared root for execution history, dedicated SQLite databases and attachment resources. Override it with `WUNDER_STORAGE_DATA_ROOT`. Pupa and Helm default to the `data/` directory in the local workbench home. Local state uses `state_1.sqlite`; canonical thread history uses JSONL files below `sessions/`, with a separate SQLite projection for paginated history.
+`storage.data_root` is the shared root for execution history, dedicated SQLite databases and attachment resources. Override it with `WUNDER_STORAGE_DATA_ROOT`. Desktop and CLI default to the `data/` directory in the local workbench home. Local state uses `state_1.sqlite`; canonical thread history uses JSONL files below `sessions/`, with a separate SQLite projection for paginated history.
 
 Thread execution history always uses the local canonical ThreadStore. `storage.thread_store.compression_enabled` enables cold rollout compression and defaults to `false`; its environment variable is `WUNDER_THREAD_STORE_COMPRESSION_ENABLED`. The single `storage.db_path` field and `WUNDER_SQLITE_DB_PATH` variable have been removed.
 
 ### Workspace location
 
-Where user files and agent artifacts are stored. In Hull mode, make sure the workspace directory is persistent (use NAS or network storage); do not put the workspace in a temporary directory.
+Where user files and agent artifacts are stored. In Server mode, make sure the workspace directory is persistent (use NAS or network storage); do not put the workspace in a temporary directory.
 
 ### Vector storage
 
-The storage backend used by knowledge-base retrieval, saved alongside the main storage backend: PostgreSQL in Hull mode and SQLite in Pupa local mode. Configure it when you need knowledge-base retrieval.
+The storage backend used by knowledge-base retrieval, saved alongside the main storage backend: PostgreSQL in Server mode and SQLite in Desktop local mode. Configure it when you need knowledge-base retrieval.
 
 ## Tool settings
 
@@ -77,7 +77,7 @@ Controls which built-in tools the agent may use. In sensitive environments, cons
 
 ### Browser tools
 
-Once enabled, the agent can browse pages and take screenshots. Enable them directly for local use; a Hull deployment may need Docker container support.
+Once enabled, the agent can browse pages and take screenshots. Enable them directly for local use; a Server deployment may need Docker container support.
 
 ### MCP extension tools
 
@@ -109,7 +109,7 @@ The receiving address external platforms push messages to. Set up a publicly rea
 
 ## Deployment forms
 
-| Item | Individual local use (Pupa desktop) | Team collaboration (Hull server) |
+| Item | Individual local use (Desktop desktop) | Team collaboration (Server server) |
 | --- | --- | --- |
 | Database | SQLite (default) | PostgreSQL |
 | Workspace | A local directory | Network storage (persistent) |

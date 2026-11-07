@@ -40,7 +40,7 @@ pub const CLOUD_FILE_CEILING: usize = 256 * 1024;
 /// file must not dump itself into the terminal.
 pub const CAT_LINE_CHARS: usize = 2000;
 /// `--attach` fallback cadence: used only when the `chat_ws` subscription is
-/// unavailable (older 舰体, device target, refused handshake). Every poll is a
+/// unavailable (older 服务端, device target, refused handshake). Every poll is a
 /// ledger command, so the streaming path is the default (docs §8.1, §8.2).
 const ATTACH_POLL: Duration = Duration::from_millis(1500);
 /// Transcript window pulled per attach read.
@@ -304,7 +304,7 @@ fn print_command_outcome(record: &Value, is_zh: bool) -> Result<()> {
             Ok(())
         }
         _ if data.get("approval_state").and_then(Value::as_str) == Some("pending") => Err(anyhow!(
-            "命令 {command_id} 等待审批：在蜂巢设备面板或用 `cloud approve {command_id} --yes` 处理 / command {command_id} awaits approval: decide in the web device panel or via `cloud approve {command_id} --yes`"
+            "命令 {command_id} 等待审批：在云端版设备面板或用 `cloud approve {command_id} --yes` 处理 / command {command_id} awaits approval: decide in the web device panel or via `cloud approve {command_id} --yes`"
         )),
         _ if is_open_status(status) => Err(anyhow!(
             "命令 {command_id} 仍在执行（{status}），稍后可重新查询 / command {command_id} is still {status}; query it again later"
@@ -1417,7 +1417,7 @@ async fn send(runtime: &CliRuntime, global: &GlobalArgs, command: CloudSendComma
 
 /// Echo one cloud thread's own turn as it lands (docs §8.2: 流式回显，等价于远程会话视图).
 ///
-/// 本控云 stays on the existing 舰体 API (§8.1): one transcript read seeds the
+/// 本控云 stays on the existing 服务端 API (§8.1): one transcript read seeds the
 /// watermark, then the thread's durable change feed is subscribed over
 /// `GET /wunder/chat/ws` (`watch`). Only that first read touches the command
 /// ledger, so a watch window no longer writes one ledger row per poll. A device
@@ -1441,7 +1441,7 @@ async fn attach_stream(
     // Order matters: the durable cursor is read *before* the transcript page, so
     // a change that lands between the two reads is either inside that page
     // (suppressed by the watermark) or ahead of the cursor (streamed).
-    // Only a cloud thread lives in the 舰体's own session log, so only a cloud
+    // Only a cloud thread lives in the 服务端's own session log, so only a cloud
     // target has a `chat_ws` session to subscribe to; a device node keeps its
     // log locally and is read through the ledger (docs §7.4).
     let mut degraded: Option<String> = None;
@@ -1627,7 +1627,7 @@ type AttachStream = futures::stream::SplitStream<AttachSocket>;
 /// The subscription is the handler's `watch` kind: it replays every
 /// `thread_change` row after `cursor` and keeps emitting them, so the window
 /// costs no command-ledger row at all (docs §8.1 keeps 本控云 on the existing
-/// 舰体 API). Nothing is spawned here: the socket, the projection and the
+/// 服务端 API). Nothing is spawned here: the socket, the projection and the
 /// capped print queue all die with this function, and the deadline branch
 /// always ends the loop.
 async fn attach_ws_stream(
@@ -1734,7 +1734,7 @@ async fn attach_ws_stream(
     AttachWsStream::Served
 }
 
-/// The thread's durable cursor, read from the 舰体 session API instead of the
+/// The thread's durable cursor, read from the 服务端 session API instead of the
 /// command ledger: `GET /wunder/chat/sessions/{id}` answers
 /// `data.thread_change_cursor`. `None` on a server that predates the field,
 /// which is a degrade signal rather than an error.
@@ -1898,7 +1898,7 @@ fn attach_reason(reason: AttachReason, is_zh: bool) -> String {
         AttachReason::Keepalive => ("chat_ws 保活写入失败", "chat_ws keepalive failed"),
         AttachReason::NoReady => ("chat_ws 未返回 ready", "chat_ws sent no ready frame"),
         AttachReason::NoCursor => (
-            "舰体未提供线程变更游标（服务端过旧）",
+            "服务端未提供线程变更游标（版本过旧）",
             "the server exposes no thread change cursor (older server)",
         ),
         AttachReason::Snapshot => (
@@ -2332,7 +2332,7 @@ async fn watch(
                 event = feed.recv() => match event {
                     Some(wunder_server::cloud::CloudThreadEvent::Change(change)) => println!("{}", serde_json::to_string(&change)?),
                     Some(wunder_server::cloud::CloudThreadEvent::Connection(state)) => eprintln!("{state}"),
-                    // 过程条目与消息尾块是给蛹侧就地绘制的实时增量，舵机旁观只做
+                    // 过程条目与消息尾块是给桌面版侧就地绘制的实时增量，命令行旁观只做
                     // 透传：按服务端事件名输出一行 JSON，脚本可按 type 分派；已结算
                     // 的行仍由 Change 承载，两者不重复结算。
                     Some(wunder_server::cloud::CloudThreadEvent::ProcessItem(item)) => println!("{}", json!({"type": "thread_process_item", "data": item})),
@@ -2543,7 +2543,7 @@ fn urlencode(raw: &str) -> String {
 
 /// Build the audit query string. The filter names stay exactly as the server
 /// spells them (`action`, `device_id`, `since`, `until`), so one query works on
-/// both the user plane and the 舰桥 admin surface.
+/// both the user plane and the 管理端 admin surface.
 fn audit_query_path(command: &CloudAuditCommand) -> String {
     let mut parts = vec![format!(
         "limit={}",
@@ -3194,7 +3194,7 @@ mod tests {
     }
 
     /// A port nothing listens on: the handshake is refused by the stack, which is
-    /// the deterministic version of an unreachable 舰体.
+    /// the deterministic version of an unreachable 服务端.
     fn closed_port() -> u16 {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("free port");
         let port = listener.local_addr().expect("addr").port();

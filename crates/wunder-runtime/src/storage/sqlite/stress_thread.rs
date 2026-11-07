@@ -23,7 +23,7 @@ impl SqliteStorage {
             move |done, items| progress(done, items),
         ))??;
         // Canonical history alone is not an openable thread: every session list
-        // (蛹's work area, the thread APIs, restart discovery) reads the
+        // (桌面版's work area, the thread APIs, restart discovery) reads the
         // `chat_sessions` catalog. Register that row only after the history
         // committed, so a failed generation never leaves a session that opens
         // onto nothing, and a completed one is reachable instead of merely
@@ -344,7 +344,7 @@ mod tests {
         );
     }
 
-    /// A caller without a work area (舵机, or a settings page opened before the
+    /// A caller without a work area (命令行, or a settings page opened before the
     /// workspace selector projected its first frame) still yields a thread the
     /// work area can show, instead of a workspace-less row nothing lists.
     #[test]

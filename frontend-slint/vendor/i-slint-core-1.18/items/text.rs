@@ -1348,7 +1348,7 @@ impl Item for TextInput {
         self_rc: &ItemRc,
     ) -> FocusEventResult {
         match event {
-            FocusEvent::FocusIn(_reason) => {
+            FocusEvent::FocusIn(reason) => {
                 if !self.enabled() {
                     return FocusEventResult::FocusIgnored;
                 }
@@ -1357,13 +1357,21 @@ impl Item for TextInput {
                 WindowInner::from_pub(window_adapter.window()).set_text_input_focused(true);
                 // FIXME: This should be tracked by a PropertyTracker in window and toggled when read_only() toggles.
                 if !self.read_only() {
-                    if let Some(w) = window_adapter.internal(crate::InternalToken) {
+                    // Android hides the IME when the activity leaves the
+                    // foreground. The activation FocusIn must restore the
+                    // focus state but not pop the keyboard back up; the next
+                    // tap goes through ensure_focus_and_ime instead.
+                    let show_ime = !(cfg!(target_os = "android")
+                        && *reason == FocusReason::WindowActivation);
+                    if show_ime
+                        && let Some(w) = window_adapter.internal(crate::InternalToken)
+                    {
                         w.input_method_request(InputMethodRequest::Enable(
                             self.ime_properties(window_adapter, self_rc),
                         ));
                     }
 
-                    if cfg!(not(target_vendor = "apple")) && *_reason == FocusReason::TabNavigation
+                    if cfg!(not(target_vendor = "apple")) && *reason == FocusReason::TabNavigation
                     {
                         self.select_all(window_adapter, self_rc);
                     }

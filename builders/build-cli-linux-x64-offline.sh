@@ -7,7 +7,7 @@ host_arch="$(uname -m)"
 case "$host_arch" in
   aarch64) host_profile=kylin-arm ;;
   x86_64) host_profile=kylin-x86 ;;
-  *) echo "[wunder-cli-linux-amd64] unsupported Linux host: ${host_arch:-unknown}" >&2; exit 2 ;;
+  *) echo "[wunder-cli-linux-x64] unsupported Linux host: ${host_arch:-unknown}" >&2; exit 2 ;;
 esac
 offline_root="${WUNDER_OFFLINE_ROOT:-${WUNDER_BUILDER_ROOT:-$repo_root/../Rust-builder/$host_profile}/offline}"
 offline_root="$(cd "$offline_root" && pwd -P)"
@@ -21,18 +21,18 @@ else
 fi
 vendor_root="${WUNDER_CARGO_VENDOR:-$offline_root/cargo-vendor-slint}"
 target="x86_64-unknown-linux-gnu"
-target_dir="${CARGO_TARGET_DIR:-$repo_root/target/cli-linux-amd64-ubuntu18/cargo}"
-cargo_home="${CARGO_HOME:-$repo_root/target/cli-linux-amd64-ubuntu18/cargo-home}"
-output_dir="${WUNDER_CLI_OUTPUT_DIR:-$repo_root/target/cli/dist/linux-amd64}"
+target_dir="${CARGO_TARGET_DIR:-$repo_root/target/cli-linux-x64-ubuntu18/cargo}"
+cargo_home="${CARGO_HOME:-$repo_root/target/cli-linux-x64-ubuntu18/cargo-home}"
+output_dir="${WUNDER_CLI_OUTPUT_DIR:-$repo_root/target/cli/dist/linux-x64}"
 max_glibc="${WUNDER_CLI_LINUX_MAX_GLIBC:-2.27}"
 
-fail() { echo "[wunder-cli-linux-amd64] $*" >&2; exit 2; }
+fail() { echo "[wunder-cli-linux-x64] $*" >&2; exit 2; }
 require_file() { [[ -f "$1" ]] || fail "required file is missing: $1"; }
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "required command is unavailable: $1"; }
 
 [[ "$host_arch" == aarch64 || "$host_arch" == x86_64 ]] || fail "x86_64 or ARM64 Linux host required"
 require_file "$repo_root/Cargo.toml"
-[[ -d "$sdk" ]] || fail "Ubuntu 18.04 amd64 SDK is missing: $sdk"
+[[ -d "$sdk" ]] || fail "Ubuntu 18.04 x64 SDK is missing: $sdk"
 [[ -x "$rust/bin/cargo" ]] || fail "Rust toolchain is missing: $rust/bin/cargo"
 [[ -d "$rust/lib/rustlib/$target/lib" ]] || fail "Rust std for $target is missing"
 [[ -d "$vendor_root" ]] || fail "shared offline Cargo vendor is missing: $vendor_root"
@@ -49,12 +49,12 @@ export WUNDER_AMD64_SDK_ROOT="$sdk"
 unset GCC_EXEC_PREFIX COMPILER_PATH LIBRARY_PATH
 # The repo may be checked out without the executable bit on builder scripts;
 # cargo needs a directly executable linker wrapper.
-amd64_cc="$repo_root/builders/linux-amd64-cross-cc.sh"
-if [[ ! -x "$amd64_cc" ]]; then
+x64_cc="$repo_root/builders/linux-x64-cross-cc.sh"
+if [[ ! -x "$x64_cc" ]]; then
   mkdir -p "$target_dir"
-  amd64_cc="$target_dir/linux-amd64-cross-cc.sh"
-  cp -f "$repo_root/builders/linux-amd64-cross-cc.sh" "$amd64_cc"
-  chmod 755 "$amd64_cc"
+  x64_cc="$target_dir/linux-x64-cross-cc.sh"
+  cp -f "$repo_root/builders/linux-x64-cross-cc.sh" "$x64_cc"
+  chmod 755 "$x64_cc"
 fi
 # CLI --config outranks every config file: cargo >=1.96 resolves its config
 # home from the passwd entry rather than HOME or CARGO_HOME, so a
@@ -64,9 +64,9 @@ WUNDER_VENDORED_CONFIG=(--config 'source.crates-io.replace-with="vendored-source
 export CARGO_HOME="$cargo_home"
 export CARGO_TARGET_DIR="$target_dir"
 export CARGO_NET_OFFLINE=true
-export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$amd64_cc"
-export CC_x86_64_unknown_linux_gnu="$amd64_cc"
-export CXX_x86_64_unknown_linux_gnu="$amd64_cc --cxx"
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$x64_cc"
+export CC_x86_64_unknown_linux_gnu="$x64_cc"
+export CXX_x86_64_unknown_linux_gnu="$x64_cc --cxx"
 export AR_x86_64_unknown_linux_gnu=x86_64-linux-gnu-ar
 mkdir -p "$cargo_home" "$target_dir" "$output_dir"
 cat > "$cargo_home/config.toml" <<EOF
@@ -75,21 +75,21 @@ replace-with = "vendored-sources"
 [source.vendored-sources]
 directory = "$vendor_root"
 [target.$target]
-linker = "$amd64_cc"
+linker = "$x64_cc"
 rustflags = ["-C", "link-arg=--sysroot=$sdk", "-C", "link-arg=-L$sdk/usr/x86_64-linux-gnu/lib"]
 [net]
 offline = true
 EOF
 
 cd "$repo_root"
-echo "[wunder-cli-linux-amd64] cargo: $(cargo --version)"
+echo "[wunder-cli-linux-x64] cargo: $(cargo --version)"
 cargo "${WUNDER_VENDORED_CONFIG[@]}" build --locked --offline --release -p wunder-cli --bin wunder-cli --target "$target" -j "${WUNDER_BUILD_JOBS:-2}"
 
 binary="$target_dir/$target/release/wunder-cli"
 require_file "$binary"
-version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$repo_root/Cargo.toml" | head -n 1)"
+version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$repo_root/config/app_version.json" | head -n 1)"
 [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]] || fail "could not read a safe workspace version"
-release_binary="$output_dir/wunder-cli-$version-linux-amd64"
+release_binary="$output_dir/wunder-cli-$version-linux-x64"
 cp -f "$binary" "$release_binary"
 x86_64-linux-gnu-strip --strip-all --strip-unneeded "$release_binary"
 # The SDK image ships mawk, whose regex lacks [[:space:]]; trim with sed.
@@ -98,4 +98,4 @@ machine="$(LC_ALL=C x86_64-linux-gnu-readelf -h "$release_binary" | LC_ALL=C awk
 required_glibc="$(LC_ALL=C x86_64-linux-gnu-readelf --version-info "$release_binary" | LC_ALL=C grep -oE 'GLIBC_[0-9.]+' | LC_ALL=C sed 's/GLIBC_//' | LC_ALL=C sort -Vu | LC_ALL=C tail -n 1 || true)"
 [[ -n "$required_glibc" ]] || fail "could not determine executable GLIBC requirement"
 [[ "$(printf '%s\n%s\n' "$max_glibc" "$required_glibc" | LC_ALL=C sort -V | tail -n 1)" == "$max_glibc" ]] || fail "GLIBC_$required_glibc exceeds release limit GLIBC_$max_glibc"
-echo "[wunder-cli-linux-amd64] produced: $release_binary (GLIBC_$required_glibc)"
+echo "[wunder-cli-linux-x64] produced: $release_binary (GLIBC_$required_glibc)"

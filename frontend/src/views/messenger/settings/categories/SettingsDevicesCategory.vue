@@ -170,7 +170,7 @@ const loading = nodes.loading;
 const error = nodes.error;
 const hasMore = nodes.hasMore;
 // 「我的设备」是设备口径：web 会话与 cloud 节点属于互通节点目录，但不是设备，
-// 混用会让这里凭空多出好几「台」（每张蜂巢标签页都算一个 web 节点）。
+// 混用会让这里凭空多出好几「台」（每张云端版标签页都算一个 web 节点）。
 const onlineCount = nodes.deviceOnlineCount;
 const totalCount = nodes.deviceCount;
 

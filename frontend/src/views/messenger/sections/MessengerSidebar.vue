@@ -6,7 +6,7 @@
     :aria-label="t('messenger.sidebar.deviceGroup')"
   >
     <div ref="workspaceRegionEl" class="messenger-sidebar-workspace-region" :style="workspaceRegionStyle">
-      <!-- 设备选择器：蜂巢自身是「云端」，互通设备（蛹/舵机）各自成项。
+      <!-- 设备选择器：云端版自身是「云端」，互通设备（桌面版/命令行）各自成项。
            切换设备即切换下面显示的工作区集合，设备之间不再混在同一棵树里。 -->
       <div class="messenger-sidebar-device-bar">
         <button
@@ -76,7 +76,7 @@
 
       <!-- 当前设备的工作区行。行只属于一台设备，标签不再重复设备名；
            最小投影设备保留明确的默认本地工作区；具名目录各占一个条目。
-           点击行把文件区切到对应目录（URL `?node=&ws=`），行顺序是蜂巢账号级偏好。 -->
+           点击行把文件区切到对应目录（URL `?node=&ws=`），行顺序是云端版账号级偏好。 -->
       <template v-else>
         <template v-for="entry in visibleWorkspaceEntries" :key="entry.key">
           <div
@@ -334,7 +334,7 @@ type DeviceOption = {
 
 const CLOUD_ENTRY_KEY = 'cloud';
 
-/** 蜂巢自身是云端；互通设备（蛹/舵机）按节点目录各成一项。 */
+/** 云端版自身是云端；互通设备（桌面版/命令行）按节点目录各成一项。 */
 const deviceOptions = computed<DeviceOption[]>(() => {
   const options: DeviceOption[] = [
     { key: CLOUD_ENTRY_KEY, kind: 'cloud', label: t('messenger.sidebar.deviceCloud'), icon: 'fa-solid fa-cloud' }

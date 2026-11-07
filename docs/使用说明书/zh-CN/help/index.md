@@ -40,4 +40,4 @@ updated_at: 2026-10-16
 ### 配置问题
 
 - [配置说明](/docs/zh-CN/capabilities/config/)
-- [舰桥面板索引](/docs/zh-CN/capabilities/admin-panels/)
+- [管理端面板索引](/docs/zh-CN/capabilities/admin-panels/)

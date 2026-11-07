@@ -1255,9 +1255,9 @@ Contents:
   opt/7zip     7-Zip __SZVER__ console (7z.exe + 7z.dll, when bundled)
   opt/browser  Chrome __BROWSERVER__ win32 at __BROWSEREXE__ (when bundled)
 
-Use Import supplement in the Pupa settings to install into WUNDER_HOME.
+Use Import supplement in the wunder Desktop settings to install into WUNDER_HOME.
 For manual installation, close processes using this runtime and unpack into
-WUNDER_HOME (default: .wunder in your user home). The Pupa and Helm share
+WUNDER_HOME (default: .wunder in your user home). wunder Desktop and wunder CLI share
 opt/python, opt/git, opt/rg, opt/ffmpeg, opt/powershell and opt/7zip, and
 prepend their bins to PATH.
 

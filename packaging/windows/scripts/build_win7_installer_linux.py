@@ -1,7 +1,7 @@
 """Assemble the Win7 x86 installer on a Linux host with Wine + Inno Setup 6.
 
 `build_win7_installer.ps1` 的 Linux 对应实现，输入与产物名完全相同：桌面 exe、CLI exe、
-win7 补充包 zip → `wunder-<版本>-win7-x86-setup.exe`。ISCC.exe 在 Wine 下以控制台模式运行，
+win7 补充包 zip → `wunder-desktop-<版本>-win7-x86-setup.exe`。ISCC.exe 在 Wine 下以控制台模式运行，
 不需要 X 服务；所有绝对路径先经 `winepath -w` 换成 Z: 形式再交给 ISCC，避免 Windows 侧
 解析 Linux 路径。任务与文件区块的语义（默认勾选、组件顺序、按 MB 取整的容量标注）与
 PowerShell 版逐条对齐，两个入口共用同一份 `payload.generated.iss` 契约。
@@ -41,6 +41,17 @@ def sha256_file(path):
         for chunk in iter(lambda: stream.read(4 * 1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def read_app_version(path):
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        fail("could not read the app version from %s: %s" % (path, error))
+    version = str(payload.get("version", "")).strip()
+    if not version:
+        fail("missing version in " + str(path))
+    return version
 
 
 def read_cargo_version(manifest):
@@ -221,9 +232,11 @@ def main():
     stage_root.mkdir(parents=True, exist_ok=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    version = args.version or read_cargo_version(repo_root / "Cargo.toml")
+    version = args.version or read_app_version(repo_root / "config" / "app_version.json")
+    if read_cargo_version(repo_root / "Cargo.toml") != version:
+        fail("app_version.json 与 workspace 版本不一致，请运行 scripts/sync_app_version.py 后用同一修订重建产物")
     if read_cargo_version(repo_root / "frontend-slint" / "Cargo.toml") != version:
-        fail("workspace 与 frontend-slint 版本不一致，请用同一修订重建产物")
+        fail("app_version.json 与 frontend-slint 版本不一致，请用同一修订重建产物")
     for path, label in ((args.desktop, "desktop"), (args.cli, "cli")):
         if not path.is_file():
             fail(label + " 输入缺失: " + str(path))
@@ -253,11 +266,11 @@ def main():
         encoding="utf-8")
     for name in ("wunder.iss", "ChineseSimplified.isl"):
         shutil.copy2(str(installer_root / name), str(stage_root / name))
-    for name, target in (("pupa.ico", "pupa.ico"), ("pupa.png", "pupa.png"),
+    for name, target in (("eva01-head.ico", "eva01-head.ico"), ("eva01-head.png", "eva01-head.png"),
                          ("wizard-banner.png", "wizard-banner.png")):
         shutil.copy2(str(repo_root / "images" / name), str(stage_root / target))
 
-    output_base = "wunder-%s-win7-x86-setup" % version
+    output_base = "wunder-desktop-%s-win7-x86-setup" % version
     arguments = [str(iscc), "/Qp",
                  "/O" + wine_path(args.output_dir),
                  "/F" + output_base,

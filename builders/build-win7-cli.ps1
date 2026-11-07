@@ -193,10 +193,11 @@ if ($peDetails -match '(?i)combase\.dll|api-ms-win-|ext-ms-win-|GetDpiForWindow|
 & $strip --strip-all $exe
 if ($LASTEXITCODE -ne 0) { throw "Win7 CLI strip failed with exit code $LASTEXITCODE" }
 
-$versionText = Get-Content -LiteralPath (Join-Path $repoRoot "Cargo.toml") -Raw
-$versionMatch = [regex]::Match($versionText, '(?m)^version\s*=\s*"(?<version>[0-9A-Za-z][0-9A-Za-z.+-]*)"\s*$')
-if (-not $versionMatch.Success) { throw "Could not read a safe workspace version" }
-$release = Join-Path $outputDir "wunder-cli-$($versionMatch.Groups['version'].Value)-win7-x86.exe"
+$appVersionPath = Join-Path $repoRoot "config\app_version.json"
+if (-not (Test-Path -LiteralPath $appVersionPath)) { throw "App version file was not found: $appVersionPath" }
+$packageVersion = (Get-Content -LiteralPath $appVersionPath -Raw | ConvertFrom-Json).version
+if ($packageVersion -notmatch '^[0-9A-Za-z][0-9A-Za-z.+-]*$') { throw "App version contains characters unsafe for a release filename: $packageVersion" }
+$release = Join-Path $outputDir "wunder-cli-$packageVersion-win7-x86.exe"
 Copy-Item -LiteralPath $exe -Destination $release -Force
 $peDetails | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $outputDir "imports.txt")
 

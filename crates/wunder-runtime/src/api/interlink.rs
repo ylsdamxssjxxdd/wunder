@@ -39,7 +39,7 @@ use crate::storage::{
     CloudDeviceInterlinkPatch, CloudDeviceRecord, InterlinkCommandRecord, InterlinkShadowOverview,
     ListInterlinkAuditQuery,
 };
-// The audit filter helpers are shared with the 舰桥 admin surface on purpose:
+// The audit filter helpers are shared with the 管理端 admin surface on purpose:
 // one query string must mean the same thing on both ends.
 use crate::api::admin_interlink;
 
@@ -130,7 +130,7 @@ impl NodeListQuery {
     }
 }
 
-/// A node is a *device* only when it is a persistent local form (蜂窝/舵机).
+/// A node is a *device* only when it is a persistent local form (桌面版/命令行).
 /// Volatile web sessions and the synthetic cloud node are directory members.
 fn is_device_node(node: &InterlinkNodeView) -> bool {
     matches!(node.node_type.as_str(), NODE_TYPE_DESKTOP | NODE_TYPE_CLI)
@@ -1632,7 +1632,7 @@ async fn audit_write(
 // ---------------------------------------------------------------------------
 
 /// Self-service audit filters. The names and their interpretation are the
-/// 舰桥 admin surface's (`action`, `device_id`, `since`, `until`), so one query
+/// 管理端 admin surface's (`action`, `device_id`, `since`, `until`), so one query
 /// string behaves the same on both ends and a client never has to guess.
 #[derive(Debug, Deserialize)]
 struct AuditQuery {

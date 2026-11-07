@@ -234,7 +234,7 @@ mod tests {
                 .map(|span| span.content.as_ref())
                 .collect()
         };
-        assert!(content(art_rows + 1).contains("wunder 舵机"));
+        assert!(content(art_rows + 1).contains("wunder 命令行"));
         assert!(content(lines.len() - 3).contains("/tmp/work"));
     }
 

@@ -40,7 +40,7 @@ After the auto-fill you **must save**, or long polling does not actually take ef
 - Optional enhancements: CDN address, bot type, allowed caller range, polling and interface timeouts, backoff after consecutive failures, and route tag.
 - Media-link troubleshooting order: whether media is enabled, whether the CDN address is reachable, whether the decryption key is correct, and whether the attachment exceeds the size limit.
 - A reply reporting "missing session context identifier" means the reply did not receive the context identifier from the previous inbound message. Confirm the reply goes through the same session and that the inbound message preserved it.
-- Not receiving messages for a long time: check in order whether the account is active, whether the long connection is on, whether the token and bot ID are valid, and whether the session has expired in the Bridge runtime view.
+- Not receiving messages for a long time: check in order whether the account is active, whether the long connection is on, whether the token and bot ID are valid, and whether the session has expired in the Admin runtime view.
 - Sessions expiring frequently: usually the login state is lost; scan again for a new token and save.
 
 ## Migration Steps

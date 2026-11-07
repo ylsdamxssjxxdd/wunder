@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage 茧's bundled proot Ubuntu runtime.
+# Stage 安卓版's bundled proot Ubuntu runtime.
 #
 # The rootfs and the static proot/busybox binaries are not committed: they are
 # tens of megabytes and are reused unchanged from a reference Android terminal
@@ -59,10 +59,16 @@ if [ -n "$PACKS" ]; then
     mkdir -p "$DEST_ASSETS/packs"
     cp -f "$PACKS/common.tar.xz" "$DEST_ASSETS/packs/common.tar.xz"
     chmod 644 "$DEST_ASSETS/packs/common.tar.xz"
+    # Optional browser overlay: Playwright + offline Chromium. Without it the
+    # app still installs; browser_* tools simply report the missing runtime.
+    if [ -f "$PACKS/browser.tar.xz" ]; then
+        cp -f "$PACKS/browser.tar.xz" "$DEST_ASSETS/packs/browser.tar.xz"
+        chmod 644 "$DEST_ASSETS/packs/browser.tar.xz"
+    fi
 fi
 
 cat > "$DEST_ASSETS/NOTICE.txt" <<'EOF'
-Bundled Ubuntu runtime for 茧
+Bundled Ubuntu runtime for 安卓版
 =============================
 
 rootfs.tar.xz
@@ -83,6 +89,19 @@ packs/common.tar.xz
   the unRAR restriction). Source packages are available from
   https://ports.ubuntu.com/ubuntu-ports/ under the Ubuntu archive; each
   package's copyright file is installed under /usr/share/doc.
+  The overlay also contains preinstalled PyPI wheels (numpy, pandas,
+  matplotlib, opencv-python-headless, h5py, lxml, pillow, python-docx,
+  python-pptx, openpyxl, sqlalchemy and others); each wheel keeps its
+  license metadata under /usr/local/lib/python3.12/dist-packages/*.dist-info.
+
+packs/browser.tar.xz (optional)
+  Playwright (Apache-2.0) and its Chromium build. Chromium is distributed
+  under its component licenses; see /opt/browser/chrome-linux/LICENSE inside
+  the installed rootfs.
+
+Launcher icon
+  openmoji:coconut from OpenMoji (https://openmoji.org), CC BY-SA 4.0,
+  used unmodified apart from scaling.
 
 The binaries are executed locally on the device inside the app sandbox; no
 network service is started by the runtime itself.

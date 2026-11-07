@@ -700,7 +700,7 @@ impl WorkspaceManager {
     pub fn display_path(&self, user_id: &str, target: &Path) -> String {
         let normalized_target = normalize_target_path(target);
         if self.single_root {
-            // 本地形态（CLI/蛹）没有 /workspaces 公共路由，模型引用与前端渲染
+            // 本地形态（CLI/桌面版）没有 /workspaces 公共路由，模型引用与前端渲染
             // 都直接使用本地绝对路径，避免云端公共路径形态泄漏到本地会话。
             // canonicalize 会带出 Windows verbatim 前缀，展示路径必须剥掉，
             // 否则 `//?/` 开头的来源会被前端分类器当作网络路径拒绝。

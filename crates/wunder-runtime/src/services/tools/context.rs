@@ -250,7 +250,7 @@ pub(crate) fn collect_allow_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
         build_allow_roots(context.config)
     };
     // Whole-machine access is the desktop's explicit full-access mode. A
-    // workspace-bounded local form (舵机) must keep the boundary, otherwise the
+    // workspace-bounded local form (命令行) must keep the boundary, otherwise the
     // configured workspace means nothing.
     if is_desktop_local_mode(context.config) {
         roots.extend(unrestricted_filesystem_roots());

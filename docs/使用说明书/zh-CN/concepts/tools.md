@@ -70,7 +70,7 @@ updated_at: 2026-10-16
 ## MCP 接入
 
 - 外部 MCP 客户端要配：名称、端点、传输方式、请求头、鉴权、允许的工具、是否打包、工具规格等。
-- 舰体内置 MCP 服务端点 `/wunder/mcp`（streamable-http），暴露 `wunder@excute` 与 `doc2md` 两个工具；对应能力关闭时返回 501。
+- 服务端内置 MCP 服务端点 `/wunder/mcp`（streamable-http），暴露 `wunder@excute` 与 `doc2md` 两个工具；对应能力关闭时返回 501。
 - 独立的 Python FastMCP 服务自带配置与工具集，不属于本引擎。
 
 ## 协议与 provider

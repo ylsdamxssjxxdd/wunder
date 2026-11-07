@@ -1,14 +1,14 @@
 # desktop-bench
 
-蛹的外部自动化体验测试与性能测量工具。默认使用独立后端探针，按 [蛹体验测试方案](../../docs/蛹体验测试方案.md) 持续测试和优化。
+桌面版的外部自动化体验测试与性能测量工具。默认使用独立后端探针，按 [桌面版体验测试方案](../../docs/蛹体验测试方案.md) 持续测试和优化。
 
 保留旧的桌面进程启动、内存和包体积比测作为可选补充。测试输出 JSON/CSV 原始数据及摘要。
 
 ## 脚本
 
-### measure-experience.py — 蛹统一后端体验测试
+### measure-experience.py — 桌面版统一后端体验测试
 
-后续测试和优化以 [蛹体验测试方案](../../docs/蛹体验测试方案.md) 为准。默认外部运行独立 Release 探针，包含 100×100 日志打开、提交、流式/慢消费、停止后继续、队列控制、线程切换、后台执行、目录分页、启动/正常重启恢复和持续运行。不需要最终蛹程序或前端。固定配置可重复执行、比较基线，正确性失败/超时/退化返回非零码。
+后续测试和优化以 [桌面版体验测试方案](../../docs/蛹体验测试方案.md) 为准。默认外部运行独立 Release 探针，包含 100×100 日志打开、提交、流式/慢消费、停止后继续、队列控制、线程切换、后台执行、目录分页、启动/正常重启恢复和持续运行。不需要最终桌面版程序或前端。固定配置可重复执行、比较基线，正确性失败/超时/退化返回非零码。
 
 ```powershell
 python scripts/desktop-bench/measure-experience.py --profile smoke --output target/desktop-experience/smoke-001
@@ -20,7 +20,7 @@ python scripts/desktop-bench/measure-experience.py --profile daily --baseline ta
 
 ### measure-chat-open.py — 聊天打开后端基准
 
-独立测试程序直接调用蛹聊天页使用的原生后端库，不依赖最终蛹 EXE、Slint 或桌面环境。自动准备 100×100 固定夹具、重复测量首次打开/缓存返回/存储读模型/历史分页，采集资源计数并比较基线，失败或性能退化返回非零码。使用方法与性能分析见 [chat-open.md](chat-open.md)。
+独立测试程序直接调用桌面版聊天页使用的原生后端库，不依赖最终桌面版 EXE、Slint 或桌面环境。自动准备 100×100 固定夹具、重复测量首次打开/缓存返回/存储读模型/历史分页，采集资源计数并比较基线，失败或性能退化返回非零码。使用方法与性能分析见 [chat-open.md](chat-open.md)。
 
 ```powershell
 python scripts/desktop-bench/measure-chat-open.py --output target/desktop-chat-open/baseline

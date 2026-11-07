@@ -2073,7 +2073,7 @@ fn resolve_available_model_names(config: &crate::config::Config) -> Vec<String> 
         if !is_llm_model(cfg) {
             continue;
         }
-        // 仅返回已启用的模型：舰桥中未勾选“启用”的模型对蜂巢不可见。
+        // 仅返回已启用的模型：管理端中未勾选“启用”的模型对云端版不可见。
         if cfg.enable == Some(false) {
             continue;
         }

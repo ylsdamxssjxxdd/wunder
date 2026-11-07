@@ -1,7 +1,7 @@
 //! Shared bootstrap contract for the packaged local forms.
 //!
 //! The executable contains the immutable runtime assets; this module defines
-//! the mutable on-disk projection both 蛹 and 舵机 must create before the
+//! the mutable on-disk projection both 桌面版 and 命令行 must create before the
 //! engine starts. Keeping the manifest here prevents the first launched form
 //! from choosing a client-specific layout.
 
@@ -160,7 +160,7 @@ pub fn resolve_home_from_env_or_user() -> PathBuf {
         .join(".wunder")
 }
 
-/// Canonical identity for a local workspace folder shared by 蛹 and 舵机.
+/// Canonical identity for a local workspace folder shared by 桌面版 and 命令行.
 ///
 /// Windows `std::fs::canonicalize` may return the extended `\\\\?\\` spelling,
 /// while command-line arguments and persisted settings normally use the plain
@@ -530,7 +530,7 @@ pub fn release_assets_with_id(
     }
     release_seeds(home, seeds, &mut report)?;
 
-    // Concurrent 蛹/舵机 launches share one manifest. When the lock is held by
+    // Concurrent 桌面版/命令行 launches share one manifest. When the lock is held by
     // another process this pass still releases files (idempotent) but leaves the
     // bookkeeping to the winner.
     let lock = ReleaseManifestLock::acquire(home);

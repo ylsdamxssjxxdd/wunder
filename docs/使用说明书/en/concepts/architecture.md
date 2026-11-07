@@ -10,10 +10,10 @@ All four forms share the same core and engine, differing only at the access laye
 
 | Form | How it is delivered | Interface |
 | --- | --- | --- |
-| Pupa | A desktop app; the engine ships inside the local process and calls in-process by default without local HTTP | Native UI, compiled into the app |
-| Beehive | A web app; its build artifacts are served read-only by a separate web service, not hosted by the Hull itself | Single-page app |
-| Helm | A command-line program; when terminal conditions are not met it degrades to one-shot execution instead of the full-screen interactive interface | Terminal UI |
-| Hull | A server process, mounting Bridge and a few static directories | Bridge (no build step) |
+| Desktop | A desktop app; the engine ships inside the local process and calls in-process by default without local HTTP | Native UI, compiled into the app |
+| Cloud | A web app; its build artifacts are served read-only by a separate web service, not hosted by the Server itself | Single-page app |
+| CLI | A command-line program; when terminal conditions are not met it degrades to one-shot execution instead of the full-screen interactive interface | Terminal UI |
+| Server | A server process, mounting Admin and a few static directories | Admin (no build step) |
 
 ## Message Path
 
@@ -64,13 +64,13 @@ The mechanisms that go with it: a write also produces a projection table and a t
 | Gateway | Not an HTTP gateway, but an access registry plus targeted RPC plus online-presence broadcast; its only transport is `/wunder/gateway/ws` |
 | Channels | Adapter registration; a bounded inbound queue, and a persistent outbound outbox with backoff retry |
 | Interop | Local nodes are outbound-only; one tunnel carries three planes; capabilities are tiered L0–L3, and the default device capability set excludes L3 |
-| MCP | The Hull has a built-in service endpoint at `/wunder/mcp` (streamable-http), and external MCP clients are registered in configuration |
+| MCP | The Server has a built-in service endpoint at `/wunder/mcp` (streamable-http), and external MCP clients are registered in configuration |
 
 ## Runtime Defaults
 
 | Item | Default |
 | --- | --- |
-| Hull listen | `0.0.0.0:8000`, overridable by environment variable or configuration |
+| Server listen | `0.0.0.0:8000`, overridable by environment variable or configuration |
 | Active session cap | 300 (unlimited for administrators) |
 | Session lock | 120 s timeout, 5 s heartbeat |
 | Model / tool timeout | 120 s each |
@@ -78,7 +78,7 @@ The mechanisms that go with it: a write also produces a projection table and a t
 
 ## Limits
 
-- **"The Beehive page is hosted by the Hull."** No. The Hull mounts only Bridge and a few static directories; Beehive's build artifacts are served by a separate web service.
+- **"The Cloud page is hosted by the Server."** No. The Server mounts only Admin and a few static directories; Cloud's build artifacts are served by a separate web service.
 - **"The front end needs several fetches to get the full history."** The front end was never meant to get the full history; it consumes a paginated view and fetches body chunks on demand.
-- **"Pupa calls its own backend over local HTTP."** By default it is a native in-process call; the standalone compatibility bridge is kept only for existing clients.
+- **"Desktop calls its own backend over local HTTP."** By default it is a native in-process call; the standalone compatibility bridge is kept only for existing clients.
 - **"Swarm orchestration is still part of the architecture."** The engine and scheduling surface no longer have this module; only an empty directory remains, and session write permission is always writable.

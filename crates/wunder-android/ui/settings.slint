@@ -1,12 +1,13 @@
-// 茧's settings sheet: one full-screen surface with three pages — the phone's
+// 安卓版's settings sheet: one full-screen surface with three pages — the phone's
 // settings index, the model catalogue and the model editor. The form language
 // and every control (FormField, Action, ThemeSwitch, ConfirmDialog) come from
-// 蛹's shared UI, so the mobile sheet never grows a second visual vocabulary.
+// 桌面版's shared UI, so the mobile sheet never grows a second visual vocabulary.
 
 import { Theme, ModelCard } from "../../../frontend-slint/ui/theme.slint";
 import { I18n } from "../../../frontend-slint/ui/i18n.slint";
 import { Action, FormField, ThemeSwitch, ConfirmDialog } from "../../../frontend-slint/ui/components.slint";
 import { ModelPresets } from "../../../frontend-slint/ui/model_presets.slint";
+import { MobileSession } from "session_model.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
 
 component SheetHeader inherits Rectangle {
@@ -312,70 +313,115 @@ component ModelRow inherits Rectangle {
     }
 }
 
+// One tappable row in the settings index: icon badge, label, current value
+// and a chevron. The row owns the whole width so the hit target matches what
+// the user sees.
+component NavRow inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <string> detail: "";
+    in property <bool> last: false;
+    callback clicked();
+    height: 62px;
+    background: nav-touch.has-hover ? Theme.hover : transparent;
+    nav-touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 12px;
+        spacing: 12px;
+        cross-axis-alignment: center;
+        Rectangle {
+            width: 34px;
+            height: 34px;
+            border-radius: 9px;
+            background: Theme.accent-soft;
+            Image {
+                x: 8px;
+                y: 8px;
+                width: 18px;
+                height: 18px;
+                source: root.icon;
+                colorize: Theme.accent-ink;
+                image-fit: contain;
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text {
+                text: root.label;
+                color: Theme.text;
+                font-size: Theme.font-sm;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.detail;
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                overflow: elide;
+                visible: root.detail != "";
+            }
+        }
+        Image {
+            width: 12px;
+            height: 12px;
+            source: @image-url("../../../frontend-slint/assets/icons/chevron-right.svg");
+            colorize: Theme.border-strong;
+        }
+    }
+    if !root.last : Rectangle {
+        y: parent.height - 1px;
+        x: 60px;
+        width: parent.width - 60px;
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
+component NavCard inherits Rectangle {
+    border-radius: Theme.radius-lg;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        spacing: 0px;
+        @children
+    }
+}
+
 component SettingsHome inherits Rectangle {
     in property <length> inset-top: 0px;
     in property <length> inset-bottom: 0px;
-    in property <string> theme: "terracotta";
-    in property <int> font-size: 14;
-    in property <string> send-key: "enter";
-    in property <string> language: "zh-CN";
-    in property <string> permission-mode: "full_auto";
+    in property <string> version: "";
     in property <string> current-model: "";
     in property <int> model-count: 0;
-    in property <string> workspace: "";
-    in property <string> version: "";
+    in property <int> archived-total: 0;
     in property <string> ubuntu-state: "missing";
-    in property <int> ubuntu-progress: 0;
-    in property <string> ubuntu-stage: "";
-    in property <string> ubuntu-version: "";
-    in property <string> ubuntu-error: "";
-    in property <bool> ubuntu-enabled: false;
     callback close();
-    callback save-theme(string);
-    callback save-font-size(int);
-    callback save-send-key(string);
-    callback save-language(string);
-    callback install-ubuntu();
-    callback set-ubuntu-enabled(bool);
-    callback permission-changed(string);
+    callback open-page(int);
     callback manage-models();
-    callback open-picker(int, string, string);
 
-    pure function send-key-label(value: string) -> string {
-        return value == "ctrl_enter" ? I18n.st_send_ctrl_enter : value == "none" ? I18n.st_send_button : I18n.st_send_enter_direct;
-    }
-    pure function permission-label(value: string) -> string {
-        return value == "auto_edit" ? I18n.cp_permission_write : value == "suggest" ? I18n.cp_permission_command : I18n.cp_permission_full;
-    }
-    pure function ubuntu-action-label() -> string {
-        return root.ubuntu-state == "installed" ? "已安装"
-            : root.ubuntu-state == "installing" ? "安装中…"
-            : root.ubuntu-state == "unsupported" ? "不支持"
-            : root.ubuntu-state == "error" ? "重试"
-            : "安装";
+    pure function model-detail() -> string {
+        if root.current-model != "" {
+            return root.current-model + (root.model-count > 0 ? " · " + root.model-count + " 个配置" : "");
+        }
+        return root.model-count > 0 ? root.model-count + " 个模型配置" : "尚未配置模型";
     }
     pure function ubuntu-detail() -> string {
-        if root.ubuntu-state == "installing" {
-            return root.ubuntu-stage != ""
-                ? root.ubuntu-stage + " · " + root.ubuntu-progress + "%"
-                : "正在安装…";
-        }
-        if root.ubuntu-state == "installed" {
-            return "python、git、rg、ffmpeg、7zip 等常用工具可离线使用";
-        }
-        if root.ubuntu-state == "unsupported" {
-            return root.ubuntu-stage;
-        }
-        if root.ubuntu-state == "error" {
-            return root.ubuntu-error != "" ? root.ubuntu-error : root.ubuntu-stage;
-        }
-        return "首次启动自动解压 Ubuntu 24.04 与常用工具，全程无需联网";
+        return root.ubuntu-state == "installed" ? "Ubuntu 24.04 已就绪"
+            : root.ubuntu-state == "installing" ? "正在安装 Ubuntu 运行环境…"
+            : root.ubuntu-state == "unsupported" ? "当前构建不支持本地运行时"
+            : root.ubuntu-state == "error" ? "安装失败，点击查看"
+            : "未安装，命令使用 Android 系统环境";
     }
 
     VerticalLayout {
         SheetHeader {
             title: I18n.sidebar_settings;
-            subtitle: I18n.st_nav_subtitle;
+            subtitle: "安卓版 · 本地 AI 工作台";
             inset-top: root.inset-top;
             back() => { root.close(); }
         }
@@ -391,81 +437,123 @@ component SettingsHome inherits Rectangle {
                 spacing: 12px;
                 alignment: start;
 
-                SheetCard {
-                    HorizontalLayout {
-                        spacing: 10px;
-                        cross-axis-alignment: center;
-                        VerticalLayout {
-                            horizontal-stretch: 1;
-                            spacing: 2px;
-                            Text {
-                                text: I18n.st_tab_models;
-                                color: Theme.text;
-                                font-size: Theme.font-md;
-                                font-weight: 700;
-                            }
-                            Text {
-                                text: root.current-model != ""
-                                    ? (root.current-model + (root.model-count > 0 ? " · " + root.model-count + " 个配置" : ""))
-                                    : (root.model-count > 0 ? root.model-count + " 个模型配置" : I18n.st_models_empty);
-                                color: Theme.muted;
-                                font-size: Theme.font-xs;
-                                overflow: elide;
-                            }
-                        }
-                        Action {
-                            width: 92px;
-                            label: "管理模型";
-                            show-label: true;
-                            primary: true;
-                            clicked => { root.manage-models(); }
-                        }
+                NavCard {
+                    NavRow {
+                        icon: @image-url("../../../frontend-slint/assets/icons/lc-brain.svg");
+                        label: I18n.st_tab_models;
+                        detail: root.model-detail();
+                        last: true;
+                        clicked => { root.manage-models(); }
                     }
                 }
 
-                SheetCard {
-                    CardTitle {
-                        title: "运行环境";
-                        subtitle: "在手机本地提供 Ubuntu 24.04，让命令工具拥有和电脑一致的 Linux 环境。";
+                Text {
+                    height: 22px;
+                    text: "偏好与运行";
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                    font-weight: 700;
+                    vertical-alignment: bottom;
+                }
+
+                NavCard {
+                    NavRow {
+                        icon: @image-url("../../../frontend-slint/assets/icons/lc-sliders-horizontal.svg");
+                        label: I18n.st_tab_general;
+                        detail: "主题、字号、语言与发送方式";
+                        clicked => { root.open-page(3); }
                     }
-                    SettingRow {
-                        label: "Ubuntu 24.04";
-                        note: root.ubuntu-detail();
-                        Action {
-                            width: 96px;
-                            label: root.ubuntu-action-label();
-                            show-label: true;
-                            primary: root.ubuntu-state != "installed"
-                                && root.ubuntu-state != "installing"
-                                && root.ubuntu-state != "unsupported";
-                            enabled: root.ubuntu-state != "installed"
-                                && root.ubuntu-state != "installing"
-                                && root.ubuntu-state != "unsupported";
-                            clicked => { root.install-ubuntu(); }
-                        }
-                    }
-                    if root.ubuntu-state == "installing" : Rectangle {
-                        height: 6px;
-                        border-radius: 3px;
-                        background: Theme.panel;
-                        Rectangle {
-                            width: max(6px, parent.width * root.ubuntu-progress / 100);
-                            height: parent.height;
-                            border-radius: 3px;
-                            background: Theme.accent;
-                        }
-                    }
-                    SettingRow {
-                        label: "命令在 Ubuntu 中执行";
-                        note: "开启后命令工具通过 proot 进入 Ubuntu；关闭后仍使用 Android 自带的 sh/toybox。";
+                    NavRow {
+                        icon: @image-url("../../../frontend-slint/assets/icons/terminal.svg");
+                        label: I18n.st_tab_runtime;
+                        detail: root.ubuntu-detail();
                         last: true;
-                        ThemeSwitch {
-                            checked: root.ubuntu-enabled;
-                            enabled: root.ubuntu-state == "installed";
-                            toggled => { root.set-ubuntu-enabled(!root.ubuntu-enabled); }
-                        }
+                        clicked => { root.open-page(4); }
                     }
                 }
+
+                Text {
+                    height: 22px;
+                    text: "数据与关于";
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                    font-weight: 700;
+                    vertical-alignment: bottom;
+                }
+
+                NavCard {
+                    NavRow {
+                        icon: @image-url("../../../frontend-slint/assets/icons/lc-archive.svg");
+                        label: "已归档会话";
+                        detail: root.archived-total > 0 ? root.archived-total + " 个会话" : "没有归档会话";
+                        clicked => { root.open-page(5); }
+                    }
+                    NavRow {
+                        icon: @image-url("../../../frontend-slint/assets/icons/fa-circle-question.svg");
+                        label: I18n.st_tab_help;
+                        detail: "安卓版 v" + root.version;
+                        last: true;
+                        clicked => { root.open-page(6); }
+                    }
+                }
+
+                Text {
+                    height: 28px;
+                    text: "本地引擎 · 数据保存在本机";
+                    color: Theme.border-strong;
+                    font-size: Theme.font-2xs;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+// 通用偏好：把桌面版的「通用」分类拆成外观与交互两张卡，仍是一屏内可滚动的
+// 手机表单；所有值即时保存，和桌面版一致。
+component GeneralPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <string> theme: "terracotta";
+    in property <int> font-size: 14;
+    in property <string> send-key: "enter";
+    in property <string> language: "zh-CN";
+    in property <string> permission-mode: "full_auto";
+    callback back();
+    callback save-theme(string);
+    callback save-font-size(int);
+    callback open-picker(int, string, string);
+
+    pure function send-key-label(value: string) -> string {
+        return value == "ctrl_enter" ? I18n.st_send_ctrl_enter
+            : value == "none" ? I18n.st_send_button
+            : I18n.st_send_enter_direct;
+    }
+    pure function permission-label(value: string) -> string {
+        return value == "auto_edit" ? I18n.cp_permission_write
+            : value == "suggest" ? I18n.cp_permission_command
+            : I18n.cp_permission_full;
+    }
+
+    VerticalLayout {
+        SheetHeader {
+            title: I18n.st_tab_general;
+            subtitle: I18n.st_nav_subtitle;
+            inset-top: root.inset-top;
+            back() => { root.back(); }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 14px;
+                padding-bottom: 16px + root.inset-bottom;
+                spacing: 12px;
+                alignment: start;
 
                 SheetCard {
                     CardTitle { title: I18n.st_palette; subtitle: I18n.st_palette_note; }
@@ -552,7 +640,6 @@ component SettingsHome inherits Rectangle {
                                 width: 34px;
                                 height: parent.height;
                                 enabled: root.font-size > 12;
-                                mouse-cursor: pointer;
                                 clicked => { root.save-font-size(root.font-size - 1); }
                             }
                             TouchArea {
@@ -560,7 +647,6 @@ component SettingsHome inherits Rectangle {
                                 width: 34px;
                                 height: parent.height;
                                 enabled: root.font-size < 20;
-                                mouse-cursor: pointer;
                                 clicked => { root.save-font-size(root.font-size + 1); }
                             }
                         }
@@ -568,7 +654,7 @@ component SettingsHome inherits Rectangle {
                 }
 
                 SheetCard {
-                    CardTitle { title: "交互"; }
+                    CardTitle { title: "交互"; subtitle: "输入方式与工具权限"; }
                     SettingRow {
                         label: I18n.st_send_key;
                         PickerField {
@@ -594,13 +680,158 @@ component SettingsHome inherits Rectangle {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+component RuntimePage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <string> ubuntu-state: "missing";
+    in property <int> ubuntu-progress: 0;
+    in property <string> ubuntu-stage: "";
+    in property <string> ubuntu-version: "";
+    in property <string> ubuntu-error: "";
+    in property <bool> ubuntu-enabled: false;
+    callback back();
+    callback install-ubuntu();
+    callback set-ubuntu-enabled(bool);
+
+    pure function action-label() -> string {
+        return root.ubuntu-state == "installed" ? "已安装"
+            : root.ubuntu-state == "installing" ? "安装中…"
+            : root.ubuntu-state == "unsupported" ? "不支持"
+            : root.ubuntu-state == "error" ? "重试"
+            : "安装";
+    }
+    pure function detail() -> string {
+        if root.ubuntu-state == "installing" {
+            return root.ubuntu-stage != ""
+                ? root.ubuntu-stage + " · " + root.ubuntu-progress + "%"
+                : "正在安装…";
+        }
+        if root.ubuntu-state == "installed" {
+            return "apt、python、node、git 等 Linux 工具可直接在手机本地运行";
+        }
+        if root.ubuntu-state == "unsupported" {
+            return root.ubuntu-stage;
+        }
+        if root.ubuntu-state == "error" {
+            return root.ubuntu-error != "" ? root.ubuntu-error : root.ubuntu-stage;
+        }
+        return "首次安装会解压约 62 MB 的 Ubuntu 24.04 根文件系统";
+    }
+
+    VerticalLayout {
+        SheetHeader {
+            title: I18n.st_tab_runtime;
+            subtitle: "手机本地的 Linux 命令环境";
+            inset-top: root.inset-top;
+            back() => { root.back(); }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 14px;
+                padding-bottom: 16px + root.inset-bottom;
+                spacing: 12px;
+                alignment: start;
 
                 SheetCard {
-                    CardTitle { title: I18n.st_tab_help; }
+                    CardTitle {
+                        title: "Ubuntu 24.04";
+                        subtitle: "在手机本地提供与电脑一致的 Linux 命令环境，命令工具通过 proot 运行。";
+                    }
+                    SettingRow {
+                        label: "运行环境";
+                        note: root.detail();
+                        last: root.ubuntu-state != "installed";
+                        Action {
+                            width: 96px;
+                            label: root.action-label();
+                            show-label: true;
+                            primary: root.ubuntu-state != "installed"
+                                && root.ubuntu-state != "installing"
+                                && root.ubuntu-state != "unsupported";
+                            enabled: root.ubuntu-state != "installed"
+                                && root.ubuntu-state != "installing"
+                                && root.ubuntu-state != "unsupported";
+                            clicked => { root.install-ubuntu(); }
+                        }
+                    }
+                    if root.ubuntu-state == "installing" : Rectangle {
+                        height: 6px;
+                        border-radius: 3px;
+                        background: Theme.panel;
+                        Rectangle {
+                            width: max(6px, parent.width * root.ubuntu-progress / 100);
+                            height: parent.height;
+                            border-radius: 3px;
+                            background: Theme.accent;
+                        }
+                    }
+                    if root.ubuntu-state == "installed" : SettingRow {
+                        label: "命令在 Ubuntu 中执行";
+                        note: "关闭后仍使用 Android 自带的 sh/toybox。";
+                        last: true;
+                        ThemeSwitch {
+                            checked: root.ubuntu-enabled;
+                            toggled => { root.set-ubuntu-enabled(!root.ubuntu-enabled); }
+                        }
+                    }
+                }
+
+                SheetCard {
+                    CardTitle { title: "说明"; }
+                    Text {
+                        text: "运行环境只影响命令工具；聊天、模型与本地数据仍在安卓版进程内。安装失败时可在上方卡片重试。";
+                        color: Theme.muted;
+                        font-size: Theme.font-xs;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+}
+
+component AboutPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <string> workspace: "";
+    in property <string> version: "";
+    callback back();
+
+    VerticalLayout {
+        SheetHeader {
+            title: I18n.st_tab_help;
+            subtitle: "版本、工作区与数据";
+            inset-top: root.inset-top;
+            back() => { root.back(); }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 14px;
+                padding-bottom: 16px + root.inset-bottom;
+                spacing: 12px;
+                alignment: start;
+
+                SheetCard {
+                    CardTitle { title: "关于安卓版"; subtitle: "本地 AI 工作台"; }
                     SettingRow {
                         label: "版本";
                         Text {
-                            text: "茧 " + root.version;
+                            text: "安卓版 " + root.version;
                             color: Theme.text;
                             font-size: Theme.font-sm;
                             vertical-alignment: center;
@@ -622,8 +853,265 @@ component SettingsHome inherits Rectangle {
                         last: true;
                     }
                 }
+
+                SheetCard {
+                    CardTitle { title: "开源组件"; }
+                    Text {
+                        text: "Slint · Rust · SQLite · proot Ubuntu。安卓版不收集账号、对话或设备数据，所有会话保存在本机应用目录。";
+                        color: Theme.muted;
+                        font-size: Theme.font-xs;
+                        wrap: word-wrap;
+                    }
+                }
             }
         }
+    }
+}
+
+// 归档管理：列表只读，恢复与永久删除都集中在每行的操作表里，删除再确认。
+component ArchivePage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <[MobileSession]> sessions: [];
+    in property <int> total: 0;
+    callback back();
+    callback restore(string);
+    callback remove(string);
+    callback refresh();
+
+    in-out property <int> sheet-index: -1;
+    in-out property <string> sheet-id: "";
+    in-out property <string> sheet-title: "";
+    in-out property <string> confirm-id: "";
+
+    VerticalLayout {
+        SheetHeader {
+            title: "已归档会话";
+            subtitle: root.total > 0 ? "共 " + root.total + " 个，点击会话可恢复或删除" : "没有归档会话";
+            inset-top: root.inset-top;
+            back() => { root.back(); }
+            Action {
+                width: 34px;
+                height: 34px;
+                icon-size: 16px;
+                icon: @image-url("../../../frontend-slint/assets/icons/rotate-right.svg");
+                label: "刷新";
+                clicked => { root.refresh(); }
+            }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 14px;
+                padding-bottom: 16px + root.inset-bottom;
+                spacing: 8px;
+                alignment: start;
+
+                for session[index] in root.sessions : Rectangle {
+                    height: 72px;
+                    border-radius: Theme.radius-md;
+                    background: row-touch.has-hover ? Theme.hover : Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    row-touch := TouchArea {
+                        clicked => {
+                            root.sheet-id = session.id;
+                            root.sheet-title = session.title;
+                            root.sheet-index = index;
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 8px;
+                        spacing: 10px;
+                        cross-axis-alignment: center;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 3px;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: session.title;
+                                    color: Theme.text;
+                                    font-size: Theme.font-sm;
+                                    font-weight: 600;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: session.time;
+                                    color: Theme.muted;
+                                    font-size: Theme.font-2xs;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            Text {
+                                text: session.preview;
+                                color: Theme.muted;
+                                font-size: Theme.font-xs;
+                                overflow: elide;
+                            }
+                        }
+                        Image {
+                            width: 16px;
+                            height: 16px;
+                            source: @image-url("../../../frontend-slint/assets/icons/ellipsis.svg");
+                            colorize: Theme.muted;
+                        }
+                    }
+                }
+
+                if root.sessions.length == 0 : Rectangle {
+                    height: 160px;
+                    border-radius: Theme.radius-md;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 6px;
+                        Text {
+                            text: "没有归档会话";
+                            color: Theme.text;
+                            font-size: Theme.font-sm;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "在会话菜单里归档的线程会出现在这里";
+                            color: Theme.muted;
+                            font-size: Theme.font-xs;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.sheet-index >= 0 : Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.overlay;
+        TouchArea { clicked => { root.sheet-index = -1; } }
+        Rectangle {
+            x: 8px;
+            y: parent.height - self.height - 8px;
+            width: parent.width - 16px;
+            height: archive-sheet.preferred-height;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            drop-shadow-color: #00000033;
+            drop-shadow-blur: 24px;
+            archive-sheet := VerticalLayout {
+                padding: 8px;
+                padding-bottom: 8px + root.inset-bottom;
+                spacing: 2px;
+                Text {
+                    height: 46px;
+                    text: root.sheet-title;
+                    color: Theme.text;
+                    font-size: Theme.font-md;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Rectangle {
+                    height: 50px;
+                    border-radius: Theme.radius-sm;
+                    background: restore-touch.has-hover ? Theme.hover : transparent;
+                    restore-touch := TouchArea {
+                        clicked => {
+                            root.sheet-index = -1;
+                            root.restore(root.sheet-id);
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        spacing: 12px;
+                        cross-axis-alignment: center;
+                        Image {
+                            width: 18px;
+                            height: 18px;
+                            source: @image-url("../../../frontend-slint/assets/icons/rotate-right.svg");
+                            colorize: Theme.text-secondary;
+                        }
+                        Text {
+                            text: "恢复会话";
+                            color: Theme.text;
+                            font-size: Theme.font-md;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                Rectangle {
+                    height: 50px;
+                    border-radius: Theme.radius-sm;
+                    background: delete-touch.has-hover ? Theme.hover : transparent;
+                    delete-touch := TouchArea {
+                        clicked => {
+                            root.confirm-id = root.sheet-id;
+                            root.sheet-index = -1;
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        spacing: 12px;
+                        cross-axis-alignment: center;
+                        Image {
+                            width: 18px;
+                            height: 18px;
+                            source: @image-url("../../../frontend-slint/assets/icons/trash.svg");
+                            colorize: Theme.danger;
+                        }
+                        Text {
+                            text: "永久删除";
+                            color: Theme.danger;
+                            font-size: Theme.font-md;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                Rectangle {
+                    height: 50px;
+                    border-radius: Theme.radius-sm;
+                    background: cancel-touch.has-hover ? Theme.hover : transparent;
+                    cancel-touch := TouchArea {
+                        clicked => { root.sheet-index = -1; }
+                    }
+                    Text {
+                        width: 100%;
+                        height: 100%;
+                        text: I18n.common_cancel;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-md;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
+    if root.confirm-id != "" : ConfirmDialog {
+        width: 100%;
+        height: 100%;
+        title: I18n.common_confirm_delete;
+        message: "删除后无法恢复该会话及其本地记录。";
+        confirm-label: I18n.common_delete;
+        cancel-label: I18n.common_cancel;
+        danger: true;
+        confirmed => {
+            root.remove(root.confirm-id);
+            root.confirm-id = "";
+        }
+        canceled => { root.confirm-id = ""; }
     }
 }
 
@@ -1151,6 +1639,8 @@ export component MobileSettings inherits Rectangle {
     in property <string> ubuntu-error: "";
     in property <bool> ubuntu-enabled: false;
     in property <[ModelCard]> models: [];
+    in property <[MobileSession]> archived-sessions: [];
+    in property <int> archived-total: 0;
 
     in property <bool> editor-open: false;
     in property <bool> editor-new: false;
@@ -1177,6 +1667,9 @@ export component MobileSettings inherits Rectangle {
     callback probe-model(ModelCard, string);
     callback delete-model(string);
     callback set-default-model(string);
+    callback restore-archived(string);
+    callback delete-archived(string);
+    callback refresh-archived();
 
     background: Theme.panel;
 
@@ -1266,6 +1759,11 @@ export component MobileSettings inherits Rectangle {
             root.draft.max-context = root.editor-probed-context;
         }
     }
+    changed page => {
+        if root.page == 5 {
+            root.refresh-archived();
+        }
+    }
 
     VerticalLayout {
         x: 0px;
@@ -1277,36 +1775,66 @@ export component MobileSettings inherits Rectangle {
         if root.page == 0 : SettingsHome {
             inset-top: root.inset-top;
             inset-bottom: root.inset-bottom;
+            version: root.version;
+            current-model: root.current-model;
+            model-count: root.model-count;
+            archived-total: root.archived-total;
+            ubuntu-state: root.ubuntu-state;
+            close() => { root.close(); }
+            open-page(page) => { root.page = page; }
+            manage-models() => { root.page = 1; }
+        }
+
+        if root.page == 3 : GeneralPage {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
             theme: root.theme;
             font-size: root.font-size;
             send-key: root.send-key;
             language: root.language;
             permission-mode: root.permission-mode;
-            current-model: root.current-model;
-            model-count: root.model-count;
-            workspace: root.workspace;
-            version: root.version;
+            back() => { root.page = 0; }
+            save-theme(value) => {
+                Theme.palette = value;
+                root.save-theme(value);
+            }
+            save-font-size(value) => { root.save-font-size(value); }
+            open-picker(id, title, value) => {
+                root.show-picker(id, title, value);
+            }
+        }
+
+        if root.page == 4 : RuntimePage {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
             ubuntu-state: root.ubuntu-state;
             ubuntu-progress: root.ubuntu-progress;
             ubuntu-stage: root.ubuntu-stage;
             ubuntu-version: root.ubuntu-version;
             ubuntu-error: root.ubuntu-error;
             ubuntu-enabled: root.ubuntu-enabled;
-            close() => { root.close(); }
-            save-theme(value) => {
-                Theme.palette = value;
-                root.save-theme(value);
-            }
-            save-font-size(value) => { root.save-font-size(value); }
-            save-send-key(value) => { root.save-send-key(value); }
-            save-language(value) => { root.save-language(value); }
+            back() => { root.page = 0; }
             install-ubuntu() => { root.install-ubuntu(); }
             set-ubuntu-enabled(value) => { root.set-ubuntu-enabled(value); }
-            permission-changed(value) => { root.permission-changed(value); }
-            manage-models() => { root.page = 1; }
-            open-picker(id, title, value) => {
-                root.show-picker(id, title, value);
-            }
+        }
+
+        if root.page == 5 : ArchivePage {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
+            sessions: root.archived-sessions;
+            total: root.archived-total;
+            back() => { root.page = 0; }
+            restore(id) => { root.restore-archived(id); }
+            remove(id) => { root.delete-archived(id); }
+            refresh() => { root.refresh-archived(); }
+        }
+
+        if root.page == 6 : AboutPage {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
+            workspace: root.workspace;
+            version: root.version;
+            back() => { root.page = 0; }
         }
 
         if root.page == 1 : ModelsPage {
@@ -1353,7 +1881,8 @@ export component MobileSettings inherits Rectangle {
             x: 0px;
             y: parent.height - self.height;
             width: 100%;
-            height: min(parent.height * 0.66, 560px);
+            height: min(parent.height * 0.66,
+                64px + root.picker-options.length * 48px + root.inset-bottom);
             border-top-left-radius: Theme.radius-lg;
             border-top-right-radius: Theme.radius-lg;
             background: Theme.surface;

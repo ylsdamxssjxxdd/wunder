@@ -29,7 +29,7 @@ def main() -> None:
             cwd=ROOT,
             check=True,
         )
-    print("\n资产已同步；蛹需要重新编译才能把新预览图嵌进二进制。")
+    print("\n资产已同步；桌面版需要重新编译才能把新预览图嵌进二进制。")
 
 
 if __name__ == "__main__":

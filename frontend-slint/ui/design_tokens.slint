@@ -1,6 +1,6 @@
 // Single source for the desktop visual language: palette, brushes, status
 // colors, scrims, type scale, radii, spacing and shell layout metrics.
-// The neutral base is the 蜂巢 web shell and is not a theme option; the
+// The neutral base is the 云端版 web shell and is not a theme option; the
 // `palette` global only selects the accent family. Slint pages and Rust
 // controllers must reference these tokens instead of repeating literals;
 // theme.slint re-exports this global together with the shared data structs.
@@ -17,7 +17,7 @@ export global Theme {
     // Chat content font scale: persisted font size (12..=20) divided by 14.
     in-out property <float> font-scale: 1.0;
 
-    // Neutrals: the 蜂巢 web shell, mirroring the `--mz-*` tokens of
+    // Neutrals: the 云端版 web shell, mirroring the `--mz-*` tokens of
     // `messenger-shell.css` one for one. They deliberately do not follow the
     // accent palette — a warm base tone is a theme bug, not a theme choice.
     out property <color> text: #1F2329;
@@ -54,7 +54,7 @@ export global Theme {
     out property <color> activity-off: #E9E8E5;
 
     // Accent: primary / hover / soft / tint family. The default is 橙汁
-    // (#F58A24). 橙汁 is defined here and the 蜂巢 web shell follows it —
+    // (#F58A24). 橙汁 is defined here and the 云端版 web shell follows it —
     // frontend/src/styles/base.css maps the same accent / deep / secondary /
     // soft values, so do not restyle one side alone. The other names are
     // deliberate alternates, and every legacy name resolves to the default.
@@ -135,7 +135,7 @@ export global Theme {
     // ---- Markdown document surface ----
     // A transcript reads as a document, so its block chrome (code fences,
     // quote rails, table rules) gets tokens of its own instead of reusing the
-    // form-control palette. Values mirror the 蜂巢 web renderer.
+    // form-control palette. Values mirror the 云端版 web renderer.
     out property <color> code-bg: #F7F6F3;
     out property <color> code-border: #EAE7E2;
     out property <color> code-header: #F1EFEB;

@@ -1,4 +1,4 @@
-//! Bridge-facing release publishing for client self-updates.
+//! Admin-facing release publishing for client self-updates.
 //!
 //! Clients fetch releases from `{storage.data_root}/releases/` through
 //! `api::updates`. Until now an operator had to shell onto the server and drop

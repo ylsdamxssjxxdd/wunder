@@ -62,7 +62,7 @@ component DockSpinner inherits Rectangle {
     }
 }
 
-// §8.3 model switcher, 对齐蜂巢 ChatComposer: the model button and the context
+// §8.3 model switcher, 对齐云端版 ChatComposer: the model button and the context
 // gauge are one control — the trigger's brain glyph fills with the used share
 // of the window — and the popover carries the numbers, the catalogue and the
 // reasoning-effort pills. Selection applies to the active thread immediately
@@ -151,7 +151,7 @@ component ModelPicker inherits Rectangle {
                 font-size: Theme.font-md; font-weight: 600;
                 vertical-alignment: center; overflow: elide;
             }
-            // 切换中转圈，静止时是下拉箭头（对齐蜂巢 composer-model-spinner）。
+            // 切换中转圈，静止时是下拉箭头（对齐云端版 composer-model-spinner）。
             if root.saving : Rectangle {
                 width: 12px; height: parent.height;
                 DockSpinner { y: (parent.height - self.height) / 2; }
@@ -177,7 +177,7 @@ component ModelPicker inherits Rectangle {
     }
 
     // Popover anchored to the trigger's right edge and drawn upward so it
-    // clears the input card above the action row. 对齐蜂巢 ModelPickerPopover：
+    // clears the input card above the action row. 对齐云端版 ModelPickerPopover：
     // 顶部上下文行 → 可滚动模型列表 → 底部推理力度 pills。
     model_menu := Rectangle {
         visible: root.open;
@@ -286,7 +286,7 @@ component ModelPicker inherits Rectangle {
                 }
             }
             Rectangle { height: 1px; background: Theme.border; }
-            // 推理力度 pills：两行圆角胶囊（对齐蜂巢 composer-model-effort-item）。
+            // 推理力度 pills：两行圆角胶囊（对齐云端版 composer-model-effort-item）。
             VerticalLayout {
                 spacing: 4px;
                 Text {
@@ -1209,7 +1209,7 @@ export component QueueStrip inherits Rectangle {
     }
 }
 
-// Cascading submenus of the plus menu, 对齐蜂巢 ChatComposer: a 268px card
+// Cascading submenus of the plus menu, 对齐云端版 ChatComposer: a 268px card
 // pops out to the right of its menu row, and the height follows the body so
 // every submenu is exactly as tall as its rows.
 component CommandFlyout inherits Rectangle {
@@ -1309,7 +1309,7 @@ component ScreenshotFlyout inherits Rectangle {
 export component Composer inherits Rectangle {
     in-out property <string> draft <=> editor.text;
     in property <bool> busy: false;
-    // Phone shells (茧) hand the plus button to their own sheet: the desktop
+    // Phone shells (安卓版) hand the plus button to their own sheet: the desktop
     // cascade is too small for touch, so tapping the button reports intent and
     // the shell renders a full-width function panel under the input instead.
     in property <bool> mobile: false;
@@ -1348,7 +1348,7 @@ export component Composer inherits Rectangle {
     callback select-model(int, string);
     callback open-model-settings();
     // Project the selected agent's saved quick prompts. This makes the
-    // composer use the same four default prompts as 蜂巢 and preserves a
+    // composer use the same four default prompts as 云端版 and preserves a
     // user's own agent edits without duplicating defaults in the UI.
     in property <[string]> preset-questions: [];
     in property <[ChatAttachment]> attachments: [];
@@ -1437,12 +1437,12 @@ export component Composer inherits Rectangle {
         ? 12px + 20px + root.queue-turns.length * 28px
             + (root.queue-overflow > 0 ? 16px : 0px) + (root.queue-items - 1) * 2px + 6px
         : 0px;
-    // 对齐蜂巢的固定构图: 8px top padding + 100px input card + 6 + 30px action
+    // 对齐云端版的固定构图: 8px top padding + 100px input card + 6 + 30px action
     // row + 10px bottom padding; the attachment row (+36) and the branch line
-    // (+22) only exist while they have content. The phone grows the action row
-    // to a 40px touch band and adds the extra height to the composer slot.
+    // (+22) only exist while they have content. The phone uses a one-line input
+    // (44px) and grows the action row to a 40px touch band: 8 + 44 + 6 + 40 + 10.
     private property <length> action-row-height: root.mobile ? 40px : 30px;
-    height: 154px + (root.mobile ? 10px : 0px)
+    height: (root.mobile ? 108px : 154px)
         + (root.attachments.length > 0 ? 36px : 0px)
         + (root.branch-name != "" ? 22px : 0px) + root.queue-height;
     private property <bool> plus-open: false;
@@ -1451,7 +1451,7 @@ export component Composer inherits Rectangle {
     private property <bool> command-open: false;
     private property <bool> screenshot-open: false;
     private property <bool> permission-open: false;
-    // Keyboard walk over the slash-command flyout (蜂巢同款): arrows move the
+    // Keyboard walk over the slash-command flyout (云端版同款): arrows move the
     // highlight, Enter commits it instead of sending, Escape puts the flyout
     // away until the next real edit. The pinned cascade inside the plus menu
     // stays mouse-only, so this gate is the typed-"/" variant only.
@@ -1459,7 +1459,7 @@ export component Composer inherits Rectangle {
     private property <bool> command-dismissed: false;
     private property <bool> command-keys:
         !root.mobile && !root.plus-open && !root.command-dismissed && root.draft == "/";
-    // 蜂巢同款发送门禁: allow attachment-only and answered-inquiry sends.
+    // 云端版同款发送门禁: allow attachment-only and answered-inquiry sends.
     private property <bool> send-enabled:
         ((root.draft != "" || root.attachments.length > 0 || root.inquiry-ready) && !root.send-blocked);
     // Keep Stop only when there is no user payload to submit. While a reply is
@@ -1516,6 +1516,9 @@ export component Composer inherits Rectangle {
     out property <length> editor-y: editor.absolute-position.y;
     out property <length> editor-width: editor.width;
     out property <length> editor-height: editor.height;
+    public function focus-editor() {
+        editor.focus-input();
+    }
     public function dismiss-popovers() {
         root.model-open = false;
         root.plus-open = false;
@@ -1530,7 +1533,7 @@ export component Composer inherits Rectangle {
         root.permission-open = false;
         root.screenshot-open = false;
     }
-    // 对齐蜂巢 chat-footer (background: transparent; border-top: 0): the band
+    // 对齐云端版 chat-footer (background: transparent; border-top: 0): the band
     // itself paints nothing, so the white rounded input card is the only
     // surface — no white rectangular frame around it.
     background: transparent;
@@ -1568,7 +1571,7 @@ export component Composer inherits Rectangle {
                 background: Theme.surface;
                 border-width: 1px;
                 border-color: self.has-focus ? Theme.accent-ink : Theme.border;
-                scroll-view-padding: 14px;
+                scroll-view-padding: root.mobile ? 11px : 14px;
                 accessible-role: text-input;
                 accessible-value <=> self.text;
                 accessible-placeholder-text: self.placeholder-text;
@@ -1582,7 +1585,7 @@ export component Composer inherits Rectangle {
                 wrap: word-wrap;
                 edited => {
                     // A real edit restarts the flyout walk from the first row
-                    // and revokes an Escape dismissal (蜂巢 resets both when
+                    // and revokes an Escape dismissal (云端版 resets both when
                     // the input changes). Programmatic writes (pick, recall)
                     // never land here, so they cannot reset the walk.
                     root.command-dismissed = false;
@@ -1673,8 +1676,14 @@ export component Composer inherits Rectangle {
                 can-drop(event) => { return DragAction.copy; }
                 dropped(event) => { root.file-drop(event); return DragAction.copy; }
             }
+            // While the phone function panel is open the input is a close
+            // target, not a caret target: one tap puts the tray away and the
+            // next tap types, matching messenger behaviour.
+            if root.mobile && root.mobile-plus-open : TouchArea {
+                clicked => { root.mobile-plus-toggled(); }
+            }
         }
-        // ---- action row (§8.2), 对齐蜂巢 composer-action-row: the bordered
+        // ---- action row (§8.2), 对齐云端版 composer-action-row: the bordered
         // plus square opens the single merged menu, and the right side carries
         // the merged model trigger and the send square. ----
         // 动作行：左侧加号 + 本机硬件状态网格（占据原工作区名的位置，工作区名
@@ -1760,7 +1769,7 @@ export component Composer inherits Rectangle {
                                         root.permission-open = false;
                                         root.screenshot-open = false;
                                     }
-                                    // 级联跟随悬停（蜂巢 hoverPlusSubmenu 同款）：
+                                    // 级联跟随悬停（云端版 hoverPlusSubmenu 同款）：
                                     // 指到有子面板的行即呼出并收掉其余，移开不
                                     // 自动收起，指到无子面板的行才清空。
                                     changed has-hover => {
@@ -2012,6 +2021,9 @@ export component Composer inherits Rectangle {
                 saving: root.model-saving;
                 open <=> root.model-open;
                 opened => {
+                    if root.mobile && root.mobile-plus-open {
+                        root.mobile-plus-toggled();
+                    }
                     root.plus-open = false;
                     root.close-submenus();
                 }

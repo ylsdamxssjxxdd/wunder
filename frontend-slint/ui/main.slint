@@ -679,7 +679,7 @@ export component MainWindow inherits Window {
     in-out property <bool> interlink-approval-open: false;
     callback interlink-approve();
     callback interlink-reject();
-    // ---- working directory (左栏工作目录区, 蜂巢 B2) ----
+    // ---- working directory (左栏工作目录区, 云端版 B2) ----
     // The workspace file tree: one flat row model projected by the native
     // controller (lazy directories, paged) plus the tunnel-derived offline
     // state. `toggle` opens files (pull + open) and expands directories;
@@ -1114,7 +1114,7 @@ export component MainWindow inherits Window {
                 cloud-quota-warn: root.cloud-quota-warn;
                 cloud-quota-expired: root.cloud-connection == "expired";
                 cloud-quota-reconnecting: root.cloud-connection == "reconnecting";
-                // The sidebar hosts the device selector: local (this 蛹) is
+                // The sidebar hosts the device selector: local (this 桌面版) is
                 // always present, cloud appears once an account is signed in.
                 cloud-available: root.cloud-logged-in;
                 local-workspace-count: root.workspaces.length;

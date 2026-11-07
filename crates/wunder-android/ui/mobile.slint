@@ -1,46 +1,308 @@
-// 茧 (Cocoon) — Android shell for the same chat surface as 蛹.
+// wunder 安卓版 (wunder Android) — Android shell for the same chat surface as 桌面版.
 //
-// The visual language must not fork: this file imports 蛹's theme, composer,
+// The visual language must not fork: this file imports 桌面版's theme, composer,
 // timeline and icon assets in place, so a change in `frontend-slint/ui`
 // reaches both shells. Only the shell chrome (single window, drawer, safe
 // area) is mobile specific.
 
 import { I18n } from "../../../frontend-slint/ui/i18n.slint";
 export { I18n }
-import { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric } from "../../../frontend-slint/ui/theme.slint";
-export { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric }
+import { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion, CommandTask, SubagentItem } from "../../../frontend-slint/ui/theme.slint";
+export { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion }
 import { TimelineView } from "../../../frontend-slint/ui/timeline.slint";
-import { Composer } from "../../../frontend-slint/ui/composer.slint";
-import { Action } from "../../../frontend-slint/ui/components.slint";
+import { Composer, CommandOptions, InquiryPanel } from "../../../frontend-slint/ui/composer.slint";
+import { Action, FormField, ConfirmDialog } from "../../../frontend-slint/ui/components.slint";
 import { MobileSettings } from "settings.slint";
-import { ListView } from "std-widgets.slint";
+import { TrajectoryPage, TrajectoryItem, TrajectoryAudit, TrajectorySegment } from "trajectory.slint";
+import { WorkspacePage, WorkspaceFile } from "workspace.slint";
+export { TrajectoryItem, TrajectoryAudit, TrajectorySegment }
+import { MobileSession } from "session_model.slint";
+export { MobileSession }
+import { ListView, ScrollView } from "std-widgets.slint";
 
 // One row of the mobile thread drawer. The projection lives in Rust; this is
 // a flat, bounded card so a long thread list stays cheap to scroll.
-export struct MobileSession {
-    id: string,
-    title: string,
-    preview: string,
-    time: string,
-    status: string,
-    active: bool,
+
+// One square in the phone's function panel: a large icon target with a short
+// caption, sized for thumbs rather than the desktop's 28px menu rows.
+component PlusTile inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> enabled: true;
+    in property <bool> selected: false;
+    callback clicked();
+    horizontal-stretch: 1;
+    height: 86px;
+    border-radius: Theme.radius-md;
+    background: root.selected ? Theme.selected : tile-touch.has-hover ? Theme.hover : Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    tile-touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+    VerticalLayout {
+        alignment: center;
+        spacing: 7px;
+        Rectangle {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            background: root.enabled ? Theme.panel : Theme.input-readonly-bg;
+            Image {
+                x: 11px;
+                y: 11px;
+                width: 22px;
+                height: 22px;
+                source: root.icon;
+                colorize: root.enabled ? Theme.text-secondary : Theme.border-strong;
+                image-fit: contain;
+            }
+        }
+        Text {
+            text: root.label;
+            color: root.enabled ? Theme.text : Theme.muted;
+            font-size: Theme.font-2xs;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+// One selectable row in a phone function-panel sub-list.
+component PanelOption inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    in property <bool> danger: false;
+    callback clicked();
+    height: 48px;
+    border-radius: Theme.radius-sm;
+    background: root.selected ? Theme.accent-soft : option-touch.has-hover ? Theme.hover : transparent;
+    option-touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+    Text {
+        x: 12px;
+        width: parent.width - 44px;
+        height: parent.height;
+        text: root.label;
+        color: root.danger ? Theme.danger : root.selected ? Theme.accent-ink : Theme.text;
+        font-size: Theme.font-sm;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    if root.selected : Image {
+        x: parent.width - 30px;
+        y: (parent.height - 16px) / 2;
+        width: 16px;
+        height: 16px;
+        source: @image-url("../../../frontend-slint/assets/icons/circle-check.svg");
+        colorize: Theme.accent-ink;
+    }
+}
+
+// One action in a bottom action sheet. Icons keep the sheet scannable and
+// mirror the desktop sidebar's row menu.
+component SheetAction inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> danger: false;
+    callback clicked();
+    height: 52px;
+    border-radius: Theme.radius-sm;
+    background: action-touch.has-hover ? Theme.hover : transparent;
+    action-touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 12px;
+        cross-axis-alignment: center;
+        Image {
+            width: 18px;
+            height: 18px;
+            source: root.icon;
+            colorize: root.danger ? Theme.danger : Theme.text-secondary;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.label;
+            color: root.danger ? Theme.danger : Theme.text;
+            font-size: Theme.font-md;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+// Same palette rule as 桌面版's HostHud: the liquid fill and the detail values
+// share one colour ramp, so a reading never appears in two different colours.
+global HudLevels {
+    public pure function color-of(ratio: float) -> color {
+        return ratio >= 0.9 ? #DC2626 : ratio >= 0.8 ? #EA580C : Theme.accent;
+    }
+}
+
+// Compact local-status line above the phone composer: CPU / memory occupancy
+// and the running command / subagent counters. CPU and memory keep the desktop
+// gauge: the icon's liquid fill is the reading, no number sits in the pill.
+// Tapping either gauge opens the same detail card above the row.
+component GaugePill inherits Rectangle {
+    in property <image> icon;
+    in property <string> label: "";
+    in property <float> ratio: 0.0;
+    callback clicked();
+
+    private property <float> fill: Math.clamp(root.ratio, 0.0, 1.0);
+    private property <color> level-color: HudLevels.color-of(self.fill);
+
+    // No pill frame and no text: the glyph itself is the gauge, as in 桌面版.
+    width: 26px;
+    height: 24px;
+    background: transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+
+    glyph := Rectangle {
+        x: (parent.width - 16px) / 2;
+        y: (parent.height - 16px) / 2;
+        width: 16px;
+        height: 16px;
+        Image {
+            x: 0px; y: 0px;
+            width: 16px; height: 16px;
+            source: root.icon;
+            colorize: Theme.muted;
+            image-fit: contain;
+        }
+        // Occupied part: a bottom-up clip window over the same glyph.
+        Rectangle {
+            x: 0px; y: 16px - 16px * root.fill;
+            width: 16px; height: 16px * root.fill;
+            clip: true;
+            Image {
+                x: 0px; y: -16px * (1.0 - root.fill);
+                width: 16px; height: 16px;
+                source: root.icon;
+                colorize: root.level-color;
+                image-fit: contain;
+            }
+        }
+    }
+    TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component HudDetailRow inherits Rectangle {
+    in property <image> icon;
+    in property <string> label: "";
+    in property <string> value: "";
+    in property <string> detail: "";
+    in property <float> ratio: 0.0;
+
+    height: 22px;
+    HorizontalLayout {
+        spacing: 6px;
+        Image {
+            width: 12px; height: 12px;
+            source: root.icon;
+            colorize: Theme.muted;
+            image-fit: contain;
+            vertical-alignment: center;
+        }
+        Text {
+            width: 36px;
+            text: root.label;
+            color: Theme.text-secondary;
+            font-size: Theme.font-2xs;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            text: root.value == "" ? "—" : root.value;
+            color: root.value == "" ? Theme.muted
+                : root.ratio >= 0.8 ? HudLevels.color-of(root.ratio) : Theme.text;
+            font-size: Theme.font-xs;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.detail;
+            color: Theme.muted;
+            font-size: Theme.font-2xs;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            overflow: elide;
+        }
+    }
+}
+
+// Counters keep 桌面版's bare icon+number cell: no frame and no label, so the
+// status row reads as four glyphs rather than four chips.
+component HudPill inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <int> count: 0;
+    in property <bool> active: false;
+    height: 24px;
+    width: pill-row.preferred-width + 6px;
+    background: transparent;
+    accessible-role: text;
+    accessible-label: root.label + " " + root.count;
+    pill-row := HorizontalLayout {
+        padding-left: 3px;
+        padding-right: 3px;
+        spacing: 4px;
+        cross-axis-alignment: center;
+        Image {
+            width: 14px;
+            height: 14px;
+            source: root.icon;
+            colorize: root.active ? Theme.accent-ink : Theme.muted;
+            image-fit: contain;
+        }
+        Text {
+            text: root.count > 9 ? "9+" : "" + root.count;
+            color: root.active ? Theme.accent-ink : Theme.muted;
+            font-size: Theme.font-2xs;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
 }
 
 export component MobileWindow inherits Window {
-    title: "茧";
+    title: "wunder 安卓版";
     background: Theme.panel;
-    // Same face and base size as 蛹's window: the bundled YaHei is registered
+    // Same face and base size as 桌面版's window: the bundled YaHei is registered
     // before the first frame by src/fonts.rs.
     default-font-family: "Microsoft YaHei";
     default-font-size: Theme.font-md;
 
     // ---- thread list -------------------------------------------------
     in-out property <[MobileSession]> sessions: [];
+    in property <[MobileSession]> archived-sessions: [];
+    in property <int> archived-total: 0;
     in-out property <bool> drawer-open: false;
     in-out property <string> thread-title: "";
     in property <string> thread-subtitle: "";
     in property <string> connection-state: "";
     in property <string> toast: "";
+
+    // ---- session actions --------------------------------------------
+    in-out property <bool> session-sheet-open: false;
+    in-out property <string> session-sheet-id: "";
+    in-out property <string> session-sheet-title: "";
+    in-out property <bool> session-sheet-archived: false;
+    in-out property <bool> rename-open: false;
+    in-out property <string> rename-id: "";
+    in-out property <string> rename-title: "";
+    in-out property <bool> delete-archived-open: false;
+    in-out property <string> pending-delete-id: "";
 
     // ---- transcript --------------------------------------------------
     in-out property <[TimelineRow]> rows: [];
@@ -53,6 +315,34 @@ export component MobileWindow inherits Window {
     // virtual-keyboard rect. The window is edge-to-edge, so the activity does
     // not resize itself; the shell shrinks instead.
     in property <length> ime-height: 0px;
+
+    // ---- trajectory --------------------------------------------------
+    in-out property <bool> trajectory-open: false;
+    in-out property <string> trajectory-session-id: "";
+    in-out property <string> trajectory-session-title: "";
+    in property <string> trajectory-title: "";
+    in property <bool> trajectory-loading: false;
+    in property <string> trajectory-error: "";
+    in property <[TrajectoryItem]> trajectory-items: [];
+    in property <TrajectoryAudit> trajectory-audit: { enabled: false, start: "", end: "", summary: "", failed: 0 };
+    in property <[TrajectorySegment]> trajectory-segments: [];
+    in-out property <int> trajectory-filter: 0;
+    in-out property <int> trajectory-expanded: -1;
+
+    // ---- working directory -------------------------------------------
+    in-out property <bool> workspace-open: false;
+    in property <string> workspace-path: "";
+    in property <string> workspace-parent-path: "";
+    in property <int> workspace-total: 0;
+    in property <bool> workspace-loading: false;
+    in property <string> workspace-error: "";
+    in property <[WorkspaceFile]> workspace-entries: [];
+
+    // ---- phone function panel ---------------------------------------
+    in-out property <bool> plus-open: false;
+    // 0 grid, 1 commands, 2 preset questions, 3 approval mode.
+    in-out property <int> plus-view: 0;
+    in property <[string]> preset-questions: [];
 
     // ---- composer ----------------------------------------------------
     in-out property <string> draft: "";
@@ -70,6 +360,25 @@ export component MobileWindow inherits Window {
     in property <string> branch-name: "";
     in-out property <string> reasoning-effort: "default";
     in-out property <string> permission-mode: "full_auto";
+
+    // ---- 问询面板 ----------------------------------------------------
+    in property <[InquiryQuestion]> inquiry-questions: [];
+    in property <int> inquiry-page: 0;
+    in property <int> inquiry-total: 0;
+    in property <bool> inquiry-expanded: false;
+    in property <bool> inquiry-ready: false;
+
+    // ---- 本机状态行 --------------------------------------------------
+    in property <float> host-cpu: 0.0;
+    in property <float> host-memory: 0.0;
+    in property <string> host-cpu-text: "—";
+    in property <string> host-memory-text: "—";
+    in property <string> host-memory-used: "—";
+    in property <string> host-memory-total: "—";
+    in property <int> host-cores: 0;
+    in-out property <bool> host-detail-open: false;
+    in property <int> running-task-count: 0;
+    in property <int> subagent-count: 0;
 
     // ---- settings sheet ---------------------------------------------
     in-out property <bool> settings-open: false;
@@ -102,6 +411,21 @@ export component MobileWindow inherits Window {
     callback close-drawer();
     callback select-session(string);
     callback new-session();
+    callback rename-session(string, string);
+    callback archive-session(string);
+    callback restore-session(string);
+    callback delete-archived-session(string);
+    callback refresh-archived();
+    callback load-trajectory(string, string);
+    callback trajectory-filter-changed(int);
+    // 工作目录
+    callback open-workspace(string);
+    callback refresh-workspace();
+    callback upload-workspace(string);
+    callback download-workspace(string);
+    callback load-more-workspace(string, int);
+    callback plus-panel-opened();
+    callback keyboard-dismiss();
     callback send();
     callback stop();
     callback select-model(int, string);
@@ -112,6 +436,14 @@ export component MobileWindow inherits Window {
     callback copy-text(string);
     callback toggle-row(int);
     callback draft-changed(string);
+    // 问询面板
+    callback inquiry-option-clicked(int, int);
+    callback inquiry-other-edited(int, string);
+    callback inquiry-no-preference(int);
+    callback inquiry-use-recommended(int);
+    callback inquiry-page-move(int);
+    callback inquiry-expanded-toggle();
+    callback inquiry-submit();
     callback open-settings(int);
     callback close-settings();
     callback save-theme(string);
@@ -130,6 +462,101 @@ export component MobileWindow inherits Window {
     private property <length> inset-top: self.safe-area-insets.top;
     private property <length> inset-bottom: self.safe-area-insets.bottom;
     private property <length> header-height: 52px;
+    // Secondary lists fit five 48px rows plus the 46px back header without
+    // scrolling on a standard phone.
+    private property <length> plus-panel-height: root.plus-open
+        ? (root.plus-view == 0 ? 212px : 312px) + root.inset-bottom : 0px;
+
+    function close-sheet() {
+        root.session-sheet-open = false;
+    }
+
+    function show-session-sheet(id: string, title: string, archived: bool) {
+        root.session-sheet-id = id;
+        root.session-sheet-title = title;
+        root.session-sheet-archived = archived;
+        root.keyboard-dismiss();
+        root.session-sheet-open = true;
+    }
+
+    function begin-rename() {
+        root.rename-id = root.session-sheet-id;
+        root.rename-title = root.session-sheet-title;
+        root.session-sheet-open = false;
+        root.rename-open = true;
+    }
+
+    function commit-rename() {
+        if root.rename-title == "" {
+            return;
+        }
+        root.rename-open = false;
+        root.keyboard-dismiss();
+        root.rename-session(root.rename-id, root.rename-title);
+    }
+
+    function open-trajectory() {
+        root.trajectory-session-id = root.session-sheet-id;
+        root.trajectory-session-title = root.session-sheet-title;
+        root.trajectory-expanded = -1;
+        root.session-sheet-open = false;
+        root.trajectory-open = true;
+        root.load-trajectory(root.trajectory-session-id, root.trajectory-session-title);
+    }
+
+    function archive-from-sheet() {
+        root.session-sheet-open = false;
+        root.archive-session(root.session-sheet-id);
+    }
+
+    function restore-from-sheet() {
+        root.session-sheet-open = false;
+        root.restore-session(root.session-sheet-id);
+    }
+
+    function delete-from-sheet() {
+        root.pending-delete-id = root.session-sheet-id;
+        root.session-sheet-open = false;
+        root.delete-archived-open = true;
+    }
+
+    function toggle-plus() {
+        root.plus-open = !root.plus-open;
+        if !root.plus-open {
+            root.plus-view = 0;
+        } else {
+            root.plus-panel-opened();
+        }
+    }
+
+    changed plus-open => {
+        if !root.plus-open {
+            root.plus-view = 0;
+        }
+    }
+
+    changed drawer-open => {
+        if root.drawer-open {
+            root.keyboard-dismiss();
+        }
+    }
+
+    function close-plus() {
+        root.plus-open = false;
+        root.plus-view = 0;
+    }
+
+    function pick-draft(value: string) {
+        root.draft = value;
+        root.close-plus();
+    }
+
+    function show-workspace() {
+        root.close-plus();
+        root.close-drawer();
+        root.workspace-open = true;
+        root.open-workspace("");
+    }
 
     VerticalLayout {
         // The keyboard overlays the window; lift the whole stack above it.
@@ -154,15 +581,15 @@ export component MobileWindow inherits Window {
                 background: transparent;
 
                 HorizontalLayout {
-                    padding-left: 8px;
-                    padding-right: 8px;
+                    padding-left: 12px;
+                    padding-right: 12px;
                     spacing: 4px;
                     cross-axis-alignment: center;
 
                     Action {
-                        width: 34px;
-                        height: 34px;
-                        icon-size: 17px;
+                        width: 36px;
+                        height: 36px;
+                        icon-size: 18px;
                         icon: @image-url("../../../frontend-slint/assets/icons/bars.svg");
                         label: I18n.act_tab_sessions;
                         clicked => { root.open-drawer(); }
@@ -194,12 +621,15 @@ export component MobileWindow inherits Window {
                     }
 
                     Action {
-                        width: 34px;
-                        height: 34px;
-                        icon-size: 17px;
+                        width: 36px;
+                        height: 36px;
+                        icon-size: 18px;
                         icon: @image-url("../../../frontend-slint/assets/icons/fa-pen-to-square.svg");
                         label: I18n.chat_new_thread;
-                        clicked => { root.new-session(); }
+                        clicked => {
+                            root.close-plus();
+                            root.new-session();
+                        }
                     }
                 }
             }
@@ -212,7 +642,7 @@ export component MobileWindow inherits Window {
         }
 
         // ---- transcript ----------------------------------------------
-        // 蛹's TimelineView already owns the reading column, follow-output
+        // 桌面版's TimelineView already owns the reading column, follow-output
         // behaviour and every entry kind; the phone only gives it the screen.
         TimelineView {
             vertical-stretch: 1;
@@ -233,43 +663,363 @@ export component MobileWindow inherits Window {
         }
 
         // ---- composer -------------------------------------------------
-        Composer {
-            // The action bar must sit above the navigation gesture area; the
-            // safe-area strip below owns the inset.
-            draft <=> root.draft;
-            busy: root.loading;
-            generating: root.generating;
-            stopping: root.stopping;
-            models: root.models;
-            model-catalogue-count: root.model-catalogue-count;
-            model-name: root.model-name;
-            model-key: root.model-key;
-            model-saving: root.model-saving;
-            cloud-ready: root.cloud-ready;
-            attachments: root.attachments;
-            send-key: root.send-key;
-            show-host-hud: false;
-            show-cli-action: false;
-            workspace-name: root.workspace-name;
-            branch-name: root.branch-name;
-            reasoning-effort <=> root.reasoning-effort;
-            permission-mode <=> root.permission-mode;
-            send() => { root.send(); }
-            stop() => { root.stop(); }
-            select-model(index, key) => { root.select-model(index, key); }
-            open-model-settings() => { root.open-model-settings(); }
-            reasoning-effort-changed(value) => { root.reasoning-effort-changed(value); }
-            permission-changed(value) => { root.permission-changed(value); }
-            remove-attachment(index) => { root.remove-attachment(index); }
+        // Phone breathing room: the desktop band is flush; on a handset the
+        // input card and its action row need a side gutter so the send square
+        // never sits against the display edge.
+        Rectangle {
+            background: Theme.panel;
+            VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-bottom: 12px;
+                spacing: 6px;
+
+                // CPU / memory are gauges, not numbers: the liquid fill is
+                // the reading, matching 桌面版. Tapping either opens the details.
+                if root.host-detail-open : Rectangle {
+                    height: host-detail-stack.preferred-height + 20px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    host-detail-stack := VerticalLayout {
+                        x: 10px; y: 10px;
+                        width: parent.width - 20px;
+                        spacing: 4px;
+                        HorizontalLayout {
+                            height: 18px;
+                            Text {
+                                text: I18n.hud_detail_title;
+                                color: Theme.text;
+                                font-size: Theme.font-xs;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            close-host-detail := TouchArea {
+                                width: 18px; height: 18px;
+                                clicked => { root.host-detail-open = false; }
+                                Image {
+                                    x: (parent.width - 10px) / 2;
+                                    y: (parent.height - 10px) / 2;
+                                    width: 10px; height: 10px;
+                                    source: @image-url("../../../frontend-slint/assets/icons/xmark.svg");
+                                    colorize: close-host-detail.has-hover ? Theme.text : Theme.muted;
+                                    image-fit: contain;
+                                }
+                            }
+                        }
+                        HudDetailRow {
+                            icon: @image-url("../../../frontend-slint/assets/icons/cpu-chip.svg");
+                            label: I18n.hud_cpu;
+                            value: root.host-cpu-text;
+                            detail: root.host-cores > 0 ? I18n.hud_cores("" + root.host-cores) : "";
+                            ratio: root.host-cpu;
+                        }
+                        HudDetailRow {
+                            icon: @image-url("../../../frontend-slint/assets/icons/fa-memory.svg");
+                            label: I18n.hud_memory;
+                            value: root.host-memory-text;
+                            detail: root.host-memory-used + " / " + root.host-memory-total;
+                            ratio: root.host-memory;
+                        }
+                    }
+                }
+
+                // The local readings stay on one compact line so the phone
+                // action row keeps its width for the input and send controls.
+                HorizontalLayout {
+                    height: 24px;
+                    spacing: 8px;
+                    GaugePill {
+                        icon: @image-url("../../../frontend-slint/assets/icons/cpu-chip.svg");
+                        label: I18n.hud_cpu;
+                        ratio: root.host-cpu;
+                        clicked => { root.host-detail-open = !root.host-detail-open; }
+                    }
+                    GaugePill {
+                        icon: @image-url("../../../frontend-slint/assets/icons/fa-memory.svg");
+                        label: I18n.hud_memory;
+                        ratio: root.host-memory;
+                        clicked => { root.host-detail-open = !root.host-detail-open; }
+                    }
+                    HudPill {
+                        icon: @image-url("../../../frontend-slint/assets/icons/terminal.svg");
+                        label: I18n.hud_tasks_short;
+                        count: root.running-task-count;
+                        active: root.running-task-count > 0;
+                    }
+                    HudPill {
+                        icon: @image-url("../../../frontend-slint/assets/icons/fa-diagram-project.svg");
+                        label: I18n.hud_agents_short;
+                        count: root.subagent-count;
+                        active: root.subagent-count > 0;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+
+                // 问询面板：触摸端直接复用桌面版的卡片，下面跟一个显式的提交键。
+                // 展开全部时用内部滚动兜住高度，不让面板把输入区挤出屏幕。
+                if root.inquiry-total > 0 : Rectangle {
+                    height: min(root.height * 0.46, inquiry-stack.preferred-height);
+                    background: transparent;
+                    inquiry-scroll := ScrollView {
+                        width: 100%;
+                        height: 100%;
+                        horizontal-scrollbar-policy: always-off;
+                        vertical-scrollbar-policy: as-needed;
+                        content-width: self.visible-width;
+                        content-height: max(self.visible-height, inquiry-stack.preferred-height);
+                        inquiry-stack := VerticalLayout {
+                            width: inquiry-scroll.visible-width;
+                            spacing: 8px;
+                            alignment: start;
+                            InquiryPanel {
+                                horizontal-stretch: 1;
+                                questions: root.inquiry-questions;
+                                page: root.inquiry-page;
+                                total: root.inquiry-total;
+                                expanded: root.inquiry-expanded;
+                                option-clicked(row, option) => { root.inquiry-option-clicked(row, option); }
+                                other-edited(row, text) => { root.inquiry-other-edited(row, text); }
+                                no-preference(row) => { root.inquiry-no-preference(row); }
+                                use-recommended(row) => { root.inquiry-use-recommended(row); }
+                                page-move(delta) => { root.inquiry-page-move(delta); }
+                                expanded-toggle() => { root.inquiry-expanded-toggle(); }
+                            }
+                            Rectangle {
+                                height: 42px;
+                                border-radius: Theme.radius-md;
+                                background: root.inquiry-ready
+                                    ? (inquiry-submit-touch.has-hover ? Theme.accent-deep : Theme.accent)
+                                    : Theme.border-strong;
+                                inquiry-submit-touch := TouchArea {
+                                    enabled: root.inquiry-ready;
+                                    clicked => { root.inquiry-submit(); }
+                                }
+                                Text {
+                                    width: 100%;
+                                    height: 100%;
+                                    text: root.inquiry-ready ? I18n.inquiry_submit : I18n.inquiry_submit_blocked;
+                                    color: #ffffff;
+                                    font-size: Theme.font-md;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                composer := Composer {
+                    mobile: true;
+                    mobile-plus-open: root.plus-open;
+                    mobile-plus-toggled() => { root.toggle-plus(); }
+                    draft <=> root.draft;
+                    busy: root.loading;
+                    generating: root.generating;
+                    stopping: root.stopping;
+                    models: root.models;
+                    model-catalogue-count: root.model-catalogue-count;
+                    model-name: root.model-name;
+                    model-key: root.model-key;
+                    model-saving: root.model-saving;
+                    cloud-ready: root.cloud-ready;
+                    attachments: root.attachments;
+                    send-key: root.send-key;
+                    show-host-hud: false;
+                    show-cli-action: false;
+                    workspace-name: root.workspace-name;
+                    branch-name: root.branch-name;
+                    reasoning-effort <=> root.reasoning-effort;
+                    permission-mode <=> root.permission-mode;
+                    send() => {
+                        root.close-plus();
+                        root.send();
+                    }
+                    stop() => { root.stop(); }
+                    select-model(index, key) => { root.select-model(index, key); }
+                    open-model-settings() => { root.open-model-settings(); }
+                    reasoning-effort-changed(value) => { root.reasoning-effort-changed(value); }
+                    permission-changed(value) => { root.permission-changed(value); }
+                    remove-attachment(index) => { root.remove-attachment(index); }
+                }
+            }
+        }
+
+        // ---- phone function panel -------------------------------------
+        // Tapping + no longer opens the desktop cascade: a full-width panel
+        // slides up under the input, exactly like a messenger's attach tray.
+        if root.plus-open : Rectangle {
+            height: root.plus-panel-height;
+            background: Theme.panel;
+
+            Rectangle {
+                y: 0px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            if root.plus-view == 0 : VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 14px;
+                padding-bottom: 10px + root.inset-bottom;
+                spacing: 10px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    PlusTile {
+                        icon: @image-url("../../../frontend-slint/assets/icons/terminal.svg");
+                        label: I18n.cp_commands;
+                        clicked => { root.plus-view = 1; }
+                    }
+                    PlusTile {
+                        icon: @image-url("../../../frontend-slint/assets/icons/lc-wand-sparkles.svg");
+                        label: I18n.ag_preset_questions;
+                        enabled: root.preset-questions.length > 0;
+                        clicked => { root.plus-view = 2; }
+                    }
+                    PlusTile {
+                        icon: @image-url("../../../frontend-slint/assets/icons/lc-shield.svg");
+                        label: I18n.cp_permission;
+                        clicked => { root.plus-view = 3; }
+                    }
+                    PlusTile {
+                        icon: @image-url("../../../frontend-slint/assets/icons/lc-brain.svg");
+                        label: I18n.st_tab_models;
+                        clicked => {
+                            root.close-plus();
+                            root.open-settings(1);
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    PlusTile {
+                        icon: @image-url("../../../frontend-slint/assets/icons/gear.svg");
+                        label: I18n.sidebar_settings;
+                        clicked => {
+                            root.close-plus();
+                            root.open-settings(0);
+                        }
+                    }
+                    PlusTile {
+                        icon: @image-url("../../../frontend-slint/assets/icons/fa-plus.svg");
+                        label: I18n.chat_new_thread;
+                        clicked => {
+                            root.close-plus();
+                            root.new-session();
+                        }
+                    }
+                    PlusTile {
+                        icon: @image-url("../../../frontend-slint/assets/icons/folder-tree.svg");
+                        label: "工作目录";
+                        clicked => { root.show-workspace(); }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+            }
+
+            if root.plus-view != 0 : VerticalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                padding-top: 4px;
+                padding-bottom: 6px + root.inset-bottom;
+                spacing: 0px;
+                Rectangle {
+                    height: 46px;
+                    HorizontalLayout {
+                        spacing: 2px;
+                        cross-axis-alignment: center;
+                        Action {
+                            width: 34px;
+                            height: 34px;
+                            icon-size: 17px;
+                            icon: @image-url("../../../frontend-slint/assets/icons/chevron-left.svg");
+                            label: "返回";
+                            clicked => { root.plus-view = 0; }
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: root.plus-view == 1 ? I18n.cp_commands
+                                : root.plus-view == 2 ? I18n.ag_preset_questions
+                                : I18n.cp_permission;
+                            color: Theme.text;
+                            font-size: Theme.font-md;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                ScrollView {
+                    vertical-stretch: 1;
+                    horizontal-scrollbar-policy: always-off;
+                    VerticalLayout {
+                        spacing: 2px;
+                        if root.plus-view == 1 : VerticalLayout {
+                            spacing: 2px;
+                            for command in CommandOptions.items : PanelOption {
+                                label: command.label;
+                                clicked => { root.pick-draft(command.value); }
+                            }
+                        }
+                        if root.plus-view == 2 : VerticalLayout {
+                            spacing: 2px;
+                            for question in root.preset-questions : PanelOption {
+                                label: question;
+                                clicked => { root.pick-draft(question); }
+                            }
+                        }
+                        if root.plus-view == 3 : PanelOption {
+                            label: I18n.cp_permission_full;
+                            selected: root.permission-mode == "full_auto";
+                            clicked => {
+                                root.permission-mode = "full_auto";
+                                root.permission-changed("full_auto");
+                                root.close-plus();
+                            }
+                        }
+                        if root.plus-view == 3 : PanelOption {
+                            label: I18n.cp_permission_write;
+                            selected: root.permission-mode == "auto_edit";
+                            clicked => {
+                                root.permission-mode = "auto_edit";
+                                root.permission-changed("auto_edit");
+                                root.close-plus();
+                            }
+                        }
+                        if root.plus-view == 3 : PanelOption {
+                            label: I18n.cp_permission_command;
+                            selected: root.permission-mode == "suggest";
+                            clicked => {
+                                root.permission-mode = "suggest";
+                                root.permission-changed("suggest");
+                                root.close-plus();
+                            }
+                        }
+                        if root.plus-view == 3 : Text {
+                            height: 54px;
+                            text: I18n.cp_permission_note;
+                            color: Theme.muted;
+                            font-size: Theme.font-xs;
+                            wrap: word-wrap;
+                            vertical-alignment: top;
+                        }
+                    }
+                }
+            }
         }
 
         // Bottom safe area: a strip of the chat surface under the composer.
         Rectangle {
             // The keyboard replaces the navigation bar, so the gesture inset
-            // must not stack on top of the keyboard height.
-            height: root.ime-height > 0px ? 0px : root.inset-bottom;
+            // must not stack on top of the keyboard height. The open function
+            // panel already carries the inset at its own foot.
+            height: root.ime-height > 0px || root.plus-open ? 0px : root.inset-bottom;
             background: Theme.panel;
-            visible: root.inset-bottom > 0px && root.ime-height == 0px;
+            visible: root.inset-bottom > 0px && root.ime-height == 0px && !root.plus-open;
         }
     }
 
@@ -295,6 +1045,7 @@ export component MobileWindow inherits Window {
 
         VerticalLayout {
             padding-top: root.inset-top;
+            padding-bottom: root.inset-bottom;
             spacing: 0px;
 
             Rectangle {
@@ -319,7 +1070,10 @@ export component MobileWindow inherits Window {
                         icon-size: 16px;
                         icon: @image-url("../../../frontend-slint/assets/icons/fa-plus.svg");
                         label: I18n.chat_new_thread;
-                        clicked => { root.new-session(); }
+                        clicked => {
+                            root.close-plus();
+                            root.new-session();
+                        }
                     }
                 }
             }
@@ -332,17 +1086,17 @@ export component MobileWindow inherits Window {
             ListView {
                 vertical-stretch: 1;
                 for session in root.sessions : Rectangle {
-                    height: 68px;
+                    height: 72px;
                     background: session.active ? Theme.selected : (touch.has-hover ? Theme.hover : transparent);
                     touch := TouchArea {
                         clicked => { root.select-session(session.id); }
                     }
                     HorizontalLayout {
                         padding-left: 16px;
-                        padding-right: 16px;
+                        padding-right: 6px;
                         padding-top: 10px;
                         padding-bottom: 10px;
-                        spacing: 10px;
+                        spacing: 8px;
                         cross-axis-alignment: center;
 
                         // Status dot mirrors the sidebar's running/idle signal.
@@ -383,10 +1137,108 @@ export component MobileWindow inherits Window {
                                 overflow: elide;
                             }
                         }
+
+                        // Trailing actions. An always-visible affordance beats
+                        // a hidden long-press: the row tap still selects the
+                        // thread, this opens rename / trajectory / archive.
+                        Rectangle {
+                            width: 34px;
+                            height: 42px;
+                            border-radius: Theme.radius-sm;
+                            background: more-touch.has-hover ? Theme.hover : transparent;
+                            more-touch := TouchArea {
+                                clicked => {
+                                    root.show-session-sheet(session.id, session.title, false);
+                                }
+                            }
+                            Image {
+                                x: 9px;
+                                y: 13px;
+                                width: 16px;
+                                height: 16px;
+                                source: @image-url("../../../frontend-slint/assets/icons/ellipsis.svg");
+                                colorize: Theme.muted;
+                            }
+                        }
                     }
                 }
             }
 
+            Rectangle {
+                height: 1px;
+                background: Theme.border;
+            }
+            Rectangle {
+                height: 48px;
+                background: workspace-touch.has-hover ? Theme.hover : transparent;
+                workspace-touch := TouchArea {
+                    clicked => { root.show-workspace(); }
+                }
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 10px;
+                    cross-axis-alignment: center;
+                    Image {
+                        width: 17px;
+                        height: 17px;
+                        source: @image-url("../../../frontend-slint/assets/icons/folder-tree.svg");
+                        colorize: Theme.muted;
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        text: "工作目录";
+                        color: Theme.text;
+                        font-size: Theme.font-md;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "文件";
+                        color: Theme.muted;
+                        font-size: Theme.font-2xs;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            Rectangle {
+                height: 1px;
+                background: Theme.border;
+            }
+            Rectangle {
+                height: 48px;
+                background: archived-touch.has-hover ? Theme.hover : transparent;
+                archived-touch := TouchArea {
+                    clicked => {
+                        root.close-drawer();
+                        root.open-settings(5);
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 10px;
+                    cross-axis-alignment: center;
+                    Image {
+                        width: 17px;
+                        height: 17px;
+                        source: @image-url("../../../frontend-slint/assets/icons/lc-archive.svg");
+                        colorize: Theme.muted;
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        text: "已归档会话";
+                        color: Theme.text;
+                        font-size: Theme.font-md;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "" + root.archived-total;
+                        color: Theme.muted;
+                        font-size: Theme.font-2xs;
+                        vertical-alignment: center;
+                    }
+                }
+            }
             Rectangle {
                 height: 1px;
                 background: Theme.border;
@@ -465,6 +1317,8 @@ export component MobileWindow inherits Window {
         ubuntu-error: root.settings-ubuntu-error;
         ubuntu-enabled: root.settings-ubuntu-enabled;
         models: root.models;
+        archived-sessions: root.archived-sessions;
+        archived-total: root.archived-total;
         editor-open: root.editor-open;
         editor-new: root.editor-new;
         editor-default: root.editor-default;
@@ -489,6 +1343,244 @@ export component MobileWindow inherits Window {
         probe-model(card, secret) => { root.probe-model(card, secret); }
         delete-model(key) => { root.delete-model(key); }
         set-default-model(key) => { root.set-default-model(key); }
+        restore-archived(id) => { root.restore-session(id); }
+        delete-archived(id) => { root.delete-archived-session(id); }
+        refresh-archived() => { root.refresh-archived(); }
+    }
+
+    // ---- session action sheet --------------------------------------
+    if root.session-sheet-open : Rectangle {
+        width: 100%;
+        height: parent.height - root.ime-height;
+        background: Theme.overlay;
+        TouchArea {
+            clicked => { root.close-sheet(); }
+        }
+
+        Rectangle {
+            x: 8px;
+            y: parent.height - self.height - 8px;
+            width: parent.width - 16px;
+            height: sheet-body.preferred-height;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            drop-shadow-color: #00000033;
+            drop-shadow-blur: 24px;
+
+            sheet-body := VerticalLayout {
+                padding: 8px;
+                padding-bottom: 8px + root.inset-bottom;
+                spacing: 2px;
+
+                Rectangle {
+                    height: 48px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: root.session-sheet-title;
+                            color: Theme.text;
+                            font-size: Theme.font-md;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: root.session-sheet-archived ? "归档会话" : "会话操作";
+                            color: Theme.muted;
+                            font-size: Theme.font-2xs;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                if !root.session-sheet-archived : SheetAction {
+                    icon: @image-url("../../../frontend-slint/assets/icons/fa-pen-to-square.svg");
+                    label: I18n.common_rename;
+                    clicked => { root.begin-rename(); }
+                }
+                if !root.session-sheet-archived : SheetAction {
+                    icon: @image-url("../../../frontend-slint/assets/icons/fa-route.svg");
+                    label: I18n.sb_thread_trajectory;
+                    clicked => { root.open-trajectory(); }
+                }
+                if !root.session-sheet-archived : SheetAction {
+                    icon: @image-url("../../../frontend-slint/assets/icons/box-archive.svg");
+                    label: I18n.sb_thread_archive;
+                    clicked => { root.archive-from-sheet(); }
+                }
+
+                if root.session-sheet-archived : SheetAction {
+                    icon: @image-url("../../../frontend-slint/assets/icons/rotate-right.svg");
+                    label: "恢复会话";
+                    clicked => { root.restore-from-sheet(); }
+                }
+                if root.session-sheet-archived : SheetAction {
+                    icon: @image-url("../../../frontend-slint/assets/icons/trash.svg");
+                    label: "永久删除";
+                    danger: true;
+                    clicked => { root.delete-from-sheet(); }
+                }
+
+                Rectangle { height: 1px; background: Theme.border; }
+                Rectangle {
+                    height: 52px;
+                    border-radius: Theme.radius-sm;
+                    background: cancel-touch.has-hover ? Theme.hover : transparent;
+                    cancel-touch := TouchArea {
+                        clicked => { root.close-sheet(); }
+                    }
+                    Text {
+                        width: 100%;
+                        height: 100%;
+                        text: I18n.common_cancel;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-md;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- rename dialog ----------------------------------------------
+    if root.rename-open : Rectangle {
+        width: 100%;
+        height: parent.height - root.ime-height;
+        background: Theme.overlay;
+        TouchArea {
+            clicked => {
+                root.rename-open = false;
+                root.keyboard-dismiss();
+            }
+        }
+
+        Rectangle {
+            x: 16px;
+            y: max(root.inset-top + 80px, (parent.height - self.height) / 2);
+            width: parent.width - 32px;
+            height: 184px;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            drop-shadow-color: #00000033;
+            drop-shadow-blur: 24px;
+            TouchArea { }
+
+            VerticalLayout {
+                padding-left: 18px;
+                padding-right: 18px;
+                padding-top: 16px;
+                padding-bottom: 16px;
+                spacing: 10px;
+                Text {
+                    height: 24px;
+                    text: I18n.common_rename;
+                    color: Theme.text;
+                    font-size: Theme.font-md;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                FormField {
+                    label: "会话名称";
+                    placeholder: "输入新的会话名称";
+                    auto-focus: true;
+                    commit-on-blur: false;
+                    text <=> root.rename-title;
+                    committed => { root.commit-rename(); }
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalLayout {
+                    height: 36px;
+                    spacing: 10px;
+                    Rectangle { horizontal-stretch: 1; }
+                    Action {
+                        width: 76px;
+                        label: I18n.common_cancel;
+                        show-label: true;
+                        clicked => {
+                            root.rename-open = false;
+                            root.keyboard-dismiss();
+                        }
+                    }
+                    Action {
+                        width: 84px;
+                        label: I18n.common_save;
+                        show-label: true;
+                        primary: true;
+                        enabled: root.rename-title != "";
+                        clicked => { root.commit-rename(); }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.delete-archived-open : ConfirmDialog {
+        width: 100%;
+        height: parent.height - root.ime-height;
+        title: I18n.common_confirm_delete;
+        message: "删除后无法恢复该会话及其本地记录。";
+        confirm-label: I18n.common_delete;
+        cancel-label: I18n.common_cancel;
+        danger: true;
+        confirmed => {
+            root.delete-archived-open = false;
+            root.delete-archived-session(root.pending-delete-id);
+            root.pending-delete-id = "";
+        }
+        canceled => {
+            root.delete-archived-open = false;
+            root.pending-delete-id = "";
+        }
+    }
+
+    // ---- working directory page -------------------------------------
+    if root.workspace-open : WorkspacePage {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: root.height - root.ime-height;
+        inset-top: root.inset-top;
+        inset-bottom: root.inset-bottom;
+        path: root.workspace-path;
+        parent-path: root.workspace-parent-path;
+        total: root.workspace-total;
+        loading: root.workspace-loading;
+        error: root.workspace-error;
+        entries: root.workspace-entries;
+        back() => { root.workspace-open = false; }
+        refresh() => { root.refresh-workspace(); }
+        open-path(path) => { root.open-workspace(path); }
+        upload(dir) => { root.upload-workspace(dir); }
+        download(path) => { root.download-workspace(path); }
+        load-more() => {
+            root.load-more-workspace(root.workspace-path, root.workspace-entries.length);
+        }
+    }
+
+    // ---- trajectory page --------------------------------------------
+    if root.trajectory-open : TrajectoryPage {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: root.height - root.ime-height;
+        inset-top: root.inset-top;
+        inset-bottom: root.inset-bottom;
+        title: "线程轨迹";
+        session-title: root.trajectory-title != "" ? root.trajectory-title : root.trajectory-session-title;
+        loading: root.trajectory-loading;
+        error: root.trajectory-error;
+        items: root.trajectory-items;
+        audit: root.trajectory-audit;
+        segments: root.trajectory-segments;
+        filter <=> root.trajectory-filter;
+        filter-changed(filter) => { root.trajectory-filter-changed(filter); }
+        expanded <=> root.trajectory-expanded;
+        back() => { root.trajectory-open = false; }
+        retry() => {
+            root.load-trajectory(root.trajectory-session-id, root.trajectory-session-title);
+        }
     }
 
     // ---- toast -------------------------------------------------------

@@ -142,8 +142,8 @@ const handleLogout = async () => {
   if (confirmed) void handleSettingsLogout?.();
 };
 
-// The standalone page shares the bridge renderer. Resolving it beside the API
-// base preserves deployments that publish the hull behind a path prefix.
+// The standalone page shares the admin renderer. Resolving it beside the API
+// base preserves deployments that publish the server behind a path prefix.
 const resolveBridgeUrl = () => {
   const apiUrl = new URL(resolveApiBase() || '/wunder', window.location.href);
   apiUrl.username = '';

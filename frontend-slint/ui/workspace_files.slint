@@ -352,7 +352,7 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                     property <int> chase-finish: PointerChase.finish-serial;
                                     // 悬停行号按 28px 等距行距从指针窗口坐标直接算出，
                                     // 不需要逐行命中测试。越过视口上下沿不算落点；
-                                    // 行尾之后的空白按蜂巢语义归根目录。
+                                    // 行尾之后的空白按云端版语义归根目录。
                                     function update-hover(pointer-y: length) {
                                         if !self.drag-live || root.rows.length == 0 {
                                             return;

@@ -101,7 +101,7 @@ ENTRIES = [
     ('st_param_simulation_speed', '模拟速度', 'Simulation speed'),
     ('st_shell_path', 'shell 路径', 'Shell path'),
     ('st_stress_count', '个数', 'Count'),
-    ('st_wunder_model_hint', '在新浏览器窗口打开舰桥 3D 展示', 'Open the Bridge 3D viewer in a new browser window'),
+    ('st_wunder_model_hint', '在新浏览器窗口打开 3D 展示', 'Open the 3D viewer in a new browser window'),
     ('st_wunder_model_open', '眺望心舰', 'Behold Wunder'),
     ('st_wunder_model_title', '心舰展示', 'Wunder display'),
     ('stc_archives_delete_confirm', '该归档线程及其本地记录将被永久删除，无法恢复。确认删除？', 'Permanently delete this archived thread and its local records? This cannot be undone.'),

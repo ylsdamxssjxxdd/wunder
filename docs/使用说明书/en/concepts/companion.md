@@ -25,7 +25,7 @@ A companion package is a ZIP that holds exactly two things: a manifest and a spr
 - Size limits: the whole ZIP is at most 24 MB, and the single sprite-sheet file is at most 18 MB.
 - Import guards against path traversal inside the archive.
 
-Companion files live in one fixed companion directory (`config/data/companions/global`, overridable through `WUNDER_COMPANIONS_ROOT`); embedded forms such as the Pupa and the Helm pin this directory to their own data directory. The Pupa bundles two sample companion packages and releases them into its local library on first launch; the Beehive and the Bridge ship none, so an empty list there is normal.
+Companion files live in one fixed companion directory (`config/data/companions/global`, overridable through `WUNDER_COMPANIONS_ROOT`); embedded forms such as the Desktop and the CLI pin this directory to their own data directory. The Desktop bundles two sample companion packages and releases them into its local library on first launch; the Cloud and the Admin ship none, so an empty list there is normal.
 
 ## Sprite-Sheet Specification
 
@@ -47,11 +47,11 @@ Companion files live in one fixed companion directory (`config/data/companions/g
 
 | Form | Presentation |
 | --- | --- |
-| Pupa (Windows) | Native floating window: a Win32 layered window for the selected companion, with dragging and the frame clock on a separate message thread that does not occupy the UI thread |
-| Pupa (Linux) | No equivalent floating window; the desktop pet exists only on Windows |
-| Beehive | An in-page overlay that follows the chat state |
-| Bridge | A companion management panel: upload, edit, delete, and export global companions |
-| Helm | No companion UI; it only points the companion directory at the local data directory |
+| Desktop (Windows) | Native floating window: a Win32 layered window for the selected companion, with dragging and the frame clock on a separate message thread that does not occupy the UI thread |
+| Desktop (Linux) | No equivalent floating window; the desktop pet exists only on Windows |
+| Cloud | An in-page overlay that follows the chat state |
+| Admin | A companion management panel: upload, edit, delete, and export global companions |
+| CLI | No companion UI; it only points the companion directory at the local data directory |
 
 ## Scale and Position
 
@@ -61,18 +61,18 @@ Companion files live in one fixed companion directory (`config/data/companions/g
 | Render scale | 0.1–1.8 |
 | Position | Clamped to the screen work area with margins kept; drag results are saved |
 
-The Pupa stores the globally selected companion, the show switch, the scale, the message-hint switch and the position in a local file; the Beehive stores them in the browser, so clearing browser data resets position and preferences.
+The Desktop stores the globally selected companion, the show switch, the scale, the message-hint switch and the position in a local file; the Cloud stores them in the browser, so clearing browser data resets position and preferences.
 
 ## Permissions
 
 - The user side is read-only: four GET endpoints only — the global list, one companion's detail, its sprite sheet, and its exported package (`/wunder/companions/global*`).
 - Adding, changing, and deleting sit on the administrator side (`/wunder/admin/companions*`): list, import, edit and delete, sprite sheet, export package. The import request-body limit matches the ZIP limit, both 24 MB.
-- A "private companion" in the Beehive takes effect only in the current browser and is not uploaded to the server; a global companion is uploaded by an administrator through the Bridge and is then visible to all users. The Bridge is the only upload path.
+- A "private companion" in the Cloud takes effect only in the current browser and is not uploaded to the server; a global companion is uploaded by an administrator through the Admin and is then visible to all users. The Admin is the only upload path.
 
 ## Limits
 
 - A companion is not another kind of agent; it is only the visual shell of an agent, and one agent binds one companion.
-- Users cannot upload a companion to the server from the Beehive; server-side companions are managed by administrators through the Bridge, and private imports stay in the local browser.
-- The Pupa on Linux has no desktop floating window — the overlay is a Win32 implementation with no Linux equivalent.
+- Users cannot upload a companion to the server from the Cloud; server-side companions are managed by administrators through the Admin, and private imports stay in the local browser.
+- The Desktop on Linux has no desktop floating window — the overlay is a Win32 implementation with no Linux equivalent.
 - Companion animation does not affect task execution: the runtime state drives the animation, not the other way around.
-- The Pupa ships sample companion packages; the Beehive and the Bridge's global library ship none, so an administrator uploads them.
+- The Desktop ships sample companion packages; the Cloud and the Admin's global library ship none, so an administrator uploads them.

@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * G2 联调：舰桥「预设智能体」面板 ↔ 真实后端契约。
+ * G2 联调：管理端「预设智能体」面板 ↔ 真实后端契约。
  *
  * 前置：隔离服务端在跑（`python scripts/check-web.py --keep-server`），且其配置里存在
  * `preset_e2e_a` / `preset_e2e_b` 两个预设（`check-web.py` 生成的隔离配置已内置）。
  *
- * 登录方式：舰桥首页是一道「气闸门」，按 [5, 4, 1, 10] 依次点击节点即完成管理员登录
+ * 登录方式：管理端首页是一道「气闸门」，按 [5, 4, 1, 10] 依次点击节点即完成管理员登录
  * （`web/modules/admin-auth.js` 的 `TREE_UNLOCK_SEQUENCE`），没有用户名/密码表单。
  *
  * 断言分两层：
@@ -16,7 +16,7 @@ import { test, expect } from '@playwright/test';
 const ADMIN_ORIGIN = process.env.ADMIN_E2E_ORIGIN || 'http://127.0.0.1:18000';
 const UNLOCK_SEQUENCE = [5, 4, 1, 10];
 
-test('舰桥预设智能体：绑定区块渲染且契约状态自洽', async ({ page }) => {
+test('管理端预设智能体：绑定区块渲染且契约状态自洽', async ({ page }) => {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(String(error)));
 

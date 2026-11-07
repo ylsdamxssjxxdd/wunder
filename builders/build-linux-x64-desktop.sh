@@ -11,8 +11,8 @@ repo_root="${WUNDER_REPO_ROOT:-$(cd -- "$(dirname -- "$0")/.." && pwd)}"
 if [[ "$(uname -m)" == x86_64 ]]; then host_profile=kylin-x86; else host_profile=kylin-arm; fi
 offline_root="${WUNDER_OFFLINE_ROOT:-${WUNDER_BUILDER_ROOT:-$repo_root/../Rust-builder/$host_profile}/offline}"
 sdk="$offline_root/linux-amd64-ubuntu18/root"
-target_dir="${CARGO_TARGET_DIR:-$repo_root/target/linux-amd64-ubuntu18-slint/cargo}"
-output_dir="${WUNDER_OUTPUT_DIR:-$repo_root/target/slint/dist/linux-amd64}"
+target_dir="${CARGO_TARGET_DIR:-$repo_root/target/linux-x64-ubuntu18-slint/cargo}"
+output_dir="${WUNDER_OUTPUT_DIR:-$repo_root/target/slint/dist/linux-x64}"
 manifest="$repo_root/frontend-slint/Cargo.toml"
 max_glibc="${WUNDER_SLINT_LINUX_MAX_GLIBC:-2.27}"
 stage_dir=""
@@ -30,36 +30,36 @@ else
 fi
 export WUNDER_AMD64_SDK_ROOT="$sdk"
 
-fail() { echo "[wunder-slint-amd64-desktop] $*" >&2; exit 2; }
+fail() { echo "[wunder-desktop-x64] $*" >&2; exit 2; }
 require_file() { [[ -f "$1" ]] || fail "required file is missing: $1"; }
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "required command is unavailable: $1"; }
 cleanup() {
   local status=$?
   trap - EXIT
   if [[ -n "$stage_dir" ]]; then
-    case "$stage_dir" in "$output_dir"/.wunder-amd64-package.*) rm -rf -- "$stage_dir" ;; esac
+    case "$stage_dir" in "$output_dir"/.wunder-x64-package.*) rm -rf -- "$stage_dir" ;; esac
   fi
-  if ((status != 0)); then echo "[wunder-slint-amd64-desktop] failed; no new archive was published" >&2; fi
+  if ((status != 0)); then echo "[wunder-desktop-x64] failed; no new archive was published" >&2; fi
   exit "$status"
 }
 trap cleanup EXIT
 
 require_file "$manifest"
-[[ -d "$sdk" ]] || fail "amd64 sysroot is missing: $sdk"
+[[ -d "$sdk" ]] || fail "x64 sysroot is missing: $sdk"
 for tool in grep awk sort sed tail mktemp stat find cut tar; do require_command "$tool"; done
 
 # Build first. The child script also validates the x86_64 ELF and glibc floor.
-bash "$repo_root/builders/build-linux-amd64-offline.sh"
-version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" | head -n 1)"
+bash "$repo_root/builders/build-linux-x64-offline.sh"
+version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$repo_root/config/app_version.json" | head -n 1)"
 [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]] || fail "invalid package version"
-binary="$output_dir/wunder-frontend-slint-$version-linux-amd64"
+binary="$output_dir/wunder-desktop-$version-linux-x64"
 require_file "$binary"
-app_name="wunder-slint-$version-linux-amd64"
+app_name="wunder-desktop-$version-linux-x64"
 mkdir -p "$output_dir"
-stage_dir="$(mktemp -d "$output_dir/.wunder-amd64-package.XXXXXXXX")"
+stage_dir="$(mktemp -d "$output_dir/.wunder-x64-package.XXXXXXXX")"
 appdir="$stage_dir/appdir"
-mkdir -p "$appdir/usr/bin" "$appdir/usr/lib" "$appdir/usr/share/applications" "$appdir/config"
-cp -f "$binary" "$appdir/usr/bin/wunder-frontend-slint"
+mkdir -p "$appdir/usr/bin" "$appdir/usr/lib" "$appdir/usr/share/applications" "$appdir/usr/share/icons/hicolor/256x256/apps" "$appdir/config" "$appdir/images"
+cp -f "$binary" "$appdir/usr/bin/wunder-desktop"
 
 require_file "$repo_root/config/wunder-example.yaml"
 cp -f "$repo_root/config/wunder-example.yaml" "$appdir/config/wunder.yaml"
@@ -68,11 +68,18 @@ for resource in prompts skills preset_worker_cards ppt_templates i18n.messages.j
   if [[ -d "$source" ]]; then cp -a "$source" "$appdir/config/"; fi
   if [[ -f "$source" ]]; then cp -f "$source" "$appdir/config/"; fi
 done
+icon_source="$repo_root/images/eva01-head.png"
+[[ -f "$icon_source" ]] || icon_source="$repo_root/images/wunder.png"
+if [[ -f "$icon_source" ]]; then
+  cp -f "$icon_source" "$appdir/usr/share/icons/hicolor/256x256/apps/wunder.png"
+  cp -f "$icon_source" "$appdir/images/wunder.png"
+fi
 cat > "$appdir/wunder.desktop" <<'EOF'
 [Desktop Entry]
-Name=蛹
+Name=wunder 桌面版
 Comment=本地 AI 工作台
-Exec=wunder-frontend-slint
+Exec=wunder-desktop
+Icon=wunder
 Terminal=false
 Type=Application
 Categories=Utility;
@@ -90,7 +97,7 @@ for library in "${libraries[@]}"; do
   [[ -n "$found" ]] && cp -L -f "$found" "$appdir/usr/lib/$library"
 done
 for library in libX11.so.6 libXtst.so.6 libxcb.so.1 libxcb-xkb.so.1 libxkbcommon.so.0 libxkbcommon-x11.so.0 libasound.so.2; do
-  [[ -f "$appdir/usr/lib/$library" ]] || fail "required bundled X11/XCB library is missing from the amd64 sysroot: $library"
+  [[ -f "$appdir/usr/lib/$library" ]] || fail "required bundled X11/XCB library is missing from the x64 sysroot: $library"
 done
 cat > "$appdir/AppRun" <<'EOF'
 #!/bin/sh
@@ -107,7 +114,7 @@ if [ -z "${WUNDER_HOME:-}" ]; then
     export WUNDER_HOME
   fi
 fi
-exec "$APPDIR/usr/bin/wunder-frontend-slint" "$@"
+exec "$APPDIR/usr/bin/wunder-desktop" "$@"
 EOF
 chmod +x "$appdir/AppRun"
 
@@ -116,4 +123,4 @@ chmod +x "$appdir/AppRun"
 tarball="$stage_dir/$app_name.tar.gz"
 tar --sort=name --numeric-owner -czf "$tarball" -C "$appdir" .
 mv -f -- "$tarball" "$output_dir/$app_name.tar.gz"
-echo "[wunder-slint-amd64-desktop] produced: $output_dir/$app_name.tar.gz ($(stat -c '%s' "$output_dir/$app_name.tar.gz") bytes)"
+echo "[wunder-desktop-x64] produced: $output_dir/$app_name.tar.gz ($(stat -c '%s' "$output_dir/$app_name.tar.gz") bytes)"

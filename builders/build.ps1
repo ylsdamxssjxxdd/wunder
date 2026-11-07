@@ -1,6 +1,6 @@
 param(
   [Alias("t")][ValidateSet("desktop", "cli")][string]$Target = "",
-  [Alias("a")][ValidateSet("linux-arm64", "linux-amd64", "win7-x86")][string]$Arch = "",
+  [Alias("a")][ValidateSet("linux-arm64", "linux-x64", "win7-x86")][string]$Arch = "",
   [switch]$All,
   [string]$KylinBuilderRoot = "",
   [string]$Win7BuilderRoot = "",
@@ -23,13 +23,13 @@ $Win7BuilderRoot = [IO.Path]::GetFullPath($Win7BuilderRoot)
 if ($All) {
   if ($Target -or $Arch) { throw "-All selects every distribution; do not combine it with -Target or -Arch." }
 } elseif (-not $Target -or -not $Arch) {
-  throw "Specify both -t desktop|cli and -a linux-arm64|linux-amd64|win7-x86, or use -All."
+  throw "Specify both -t desktop|cli and -a linux-arm64|linux-x64|win7-x86, or use -All."
 }
 
 function Invoke-LinuxBuild {
   param(
     [ValidateSet("desktop", "cli")][string]$SelectedTarget,
-    [ValidateSet("linux-arm64", "linux-amd64")][string]$SelectedArch
+    [ValidateSet("linux-arm64", "linux-x64")][string]$SelectedArch
   )
 
   if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
@@ -66,7 +66,7 @@ function Invoke-Win7Build {
 }
 
 if ($All) {
-  foreach ($selectedArch in @("linux-arm64", "linux-amd64")) {
+  foreach ($selectedArch in @("linux-arm64", "linux-x64")) {
     Invoke-LinuxBuild -SelectedTarget desktop -SelectedArch $selectedArch
     Invoke-LinuxBuild -SelectedTarget cli -SelectedArch $selectedArch
   }

@@ -531,7 +531,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 archive_dir(&app, menu_api.clone(), path, name);
             }
             MENU_CLEAR => {
-                // 清空只作用于云端工作目录根（对齐蜂巢空白区菜单，云端专属）。
+                // 清空只作用于云端工作目录根（对齐云端版空白区菜单，云端专属）。
                 if !is_cloud_target() {
                     return;
                 }
@@ -1197,7 +1197,7 @@ fn install_selection(app: &MainWindow, api: Arc<NativeDesktop>) {
             return;
         }
         let path = row.path.to_string();
-        // 勾选同样推进锚点，与蜂巢的多选语义一致。
+        // 勾选同样推进锚点，与云端版的多选语义一致。
         ANCHOR.with(|slot| *slot.borrow_mut() = path.clone());
         let picked = SELECTED.with(|slot| {
             let mut list = slot.borrow_mut();
@@ -2157,7 +2157,7 @@ fn archive_dir(app: &MainWindow, api: Arc<NativeDesktop>, path: String, name: St
     });
 }
 
-/// 清空工作目录根，随后整面板刷新（对齐蜂巢空白区菜单）。
+/// 清空工作目录根，随后整面板刷新（对齐云端版空白区菜单）。
 fn clear_root(app: &MainWindow, api: Arc<NativeDesktop>) {
     if app.get_ws_file_busy() {
         return;

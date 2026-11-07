@@ -2175,7 +2175,7 @@ fn format_started_at(ms: f64) -> String {
         .unwrap_or_default()
 }
 
-/// HH:MM:SS.mmm（本地时区），与蜂巢 formatClock 对齐，用于轨迹悬停提示。
+/// HH:MM:SS.mmm（本地时区），与云端版 formatClock 对齐，用于轨迹悬停提示。
 fn format_clock(ms: f64) -> String {
     Local
         .timestamp_millis_opt(ms.round() as i64)
@@ -2820,7 +2820,7 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
     }];
     // Tool details read the same in every surface: overview, what was called,
     // what came back, and the contract the model had to satisfy. The raw event
-    // dump was the odd one out (舰桥/蜂巢 never offered it), and timing already
+    // dump was the odd one out (管理端/云端版 never offered it), and timing already
     // rides the overview, so neither earns a tab here.
     if cell.kind == KIND_TOOL || cell.kind == KIND_SUBTOOL {
         tabs.push(TrajTab {
@@ -3054,7 +3054,7 @@ fn tooltip_for(model: &SnapshotModel, texts: &Texts, record_index: i32) -> Strin
         lines.push(texts.request_label(number));
     }
     lines.push(texts.kind(cell.kind).to_string());
-    // 与蜂巢一致：先给该记录的墙钟区间（本地时区）。
+    // 与云端版一致：先给该记录的墙钟区间（本地时区）。
     if let (Some(start), Some(seconds)) = (cell.started_at, cell.time_seconds) {
         lines.push(format!(
             "{} → {}",
@@ -3063,7 +3063,7 @@ fn tooltip_for(model: &SnapshotModel, texts: &Texts, record_index: i32) -> Strin
         ));
     }
     lines.push(texts.seconds(cell.time_seconds));
-    // 与蜂巢一致：存在指标时补充首字延迟与解码耗时。
+    // 与云端版一致：存在指标时补充首字延迟与解码耗时。
     if let Some(metrics) = &cell.metrics {
         if let (Some(step_start), Some(first_token), Some(completed)) =
             (metrics.step_start, metrics.first_token, metrics.completed)

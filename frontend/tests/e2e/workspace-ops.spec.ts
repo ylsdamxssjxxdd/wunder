@@ -68,7 +68,7 @@ const rowMenu = (page: Page): Locator => page.locator('.workspace-files-menu');
 const rowMenuItem = (page: Page, label: string): Locator =>
   rowMenu(page).locator('.workspace-files-menu-item').filter({ hasText: exactText(label) });
 
-/** 蜂巢主题弹窗（mzConfirm / mzPrompt，替代 ElMessageBox）。 */
+/** 云端版主题弹窗（mzConfirm / mzPrompt，替代 ElMessageBox）。 */
 const messageBox = (page: Page): Locator => page.locator('.mz-dialog');
 const messageBoxButton = (page: Page, label: string): Locator =>
   page.locator('.mz-dialog-foot button').filter({ hasText: exactText(label) });

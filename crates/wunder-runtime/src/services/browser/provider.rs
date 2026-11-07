@@ -143,30 +143,54 @@ pub trait BrowserProvider: Send + Sync {
 
 /// Exclusive registration slot for the active browser provider.
 pub struct BrowserUseRegistry {
-    provider: OnceLock<Arc<dyn BrowserProvider>>,
+    provider: std::sync::RwLock<Option<Arc<dyn BrowserProvider>>>,
 }
 
 impl BrowserUseRegistry {
     pub fn new() -> Self {
         Self {
-            provider: OnceLock::new(),
+            provider: std::sync::RwLock::new(None),
         }
     }
 
     /// Register the one and only provider. A second registration is rejected.
     pub fn register(&self, provider: Arc<dyn BrowserProvider>) -> Result<()> {
         let id = provider.id();
-        self.provider
-            .set(provider)
-            .map_err(|_| anyhow!("browser provider already registered; rejected duplicate '{id}'"))
+        let mut slot = self
+            .provider
+            .write()
+            .unwrap_or_else(|error| error.into_inner());
+        if slot.is_some() {
+            return Err(anyhow!(
+                "browser provider already registered; rejected duplicate '{id}'"
+            ));
+        }
+        *slot = Some(provider);
+        Ok(())
+    }
+
+    /// Install a platform provider, replacing the builtin. The shell calls
+    /// this before the first thread freezes its tool surface.
+    pub fn install(&self, provider: Arc<dyn BrowserProvider>) {
+        let mut slot = self
+            .provider
+            .write()
+            .unwrap_or_else(|error| error.into_inner());
+        *slot = Some(provider);
     }
 
     pub fn provider(&self) -> Option<Arc<dyn BrowserProvider>> {
-        self.provider.get().cloned()
+        self.provider
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
     }
 
     pub fn is_registered(&self) -> bool {
-        self.provider.get().is_some()
+        self.provider
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .is_some()
     }
 }
 
@@ -188,6 +212,14 @@ pub fn browser_registry() -> &'static BrowserUseRegistry {
         }
         registry
     })
+}
+
+/// Install a platform-owned provider (currently the Android WebView host).
+/// Replacing the builtin is intentional: only one provider can own the
+/// model-facing tool surface, and Android must swap it before the first
+/// thread freezes its tools.
+pub fn install_browser_provider(provider: Arc<dyn BrowserProvider>) {
+    browser_registry().install(provider);
 }
 
 /// Resolve the provider selected by `browser.provider`, falling back to the

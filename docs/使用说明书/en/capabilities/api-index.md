@@ -11,12 +11,12 @@ updated_at: 2026-10-16
 | See the files the agent generates | The working directory area in the left sidebar |
 | Customize the agent's style | Settings at the bottom of the left sidebar → Agent → prompt template |
 | Create a scheduled task | Settings at the bottom of the left sidebar → Scheduled tasks → create task |
-| Manage users (administrator) | Bridge → User management |
-| Configure channels (administrator) | Bridge → Channel management |
+| Manage users (administrator) | Admin → User management |
+| Configure channels (administrator) | Admin → Channel management |
 
 ## Chat
 
-Entry point: the workbench (Pupa or Beehive) → the New task button in the left sidebar, or the thread list under the workspace.
+Entry point: the workbench (Desktop or Cloud) → the New task button in the left sidebar, or the thread list under the workspace.
 
 - Ask questions and get answers
 - Upload files for the agent to analyze
@@ -69,7 +69,7 @@ Tool capability boundaries are described in [Tool System](/docs/en/concepts/tool
 
 ## Channel access
 
-Entry point: the Bridge → Channel management.
+Entry point: the Admin → Channel management.
 
 - Bind accounts on Feishu, WeCom, WeChat, QQ, and other platforms
 - Let users on those external platforms reach the agent
@@ -78,7 +78,7 @@ Entry point: the Bridge → Channel management.
 
 When members of an organization already work in Feishu or WeChat, binding a channel lets them talk to the agent inside their existing platform rather than switching tools.
 
-What each admin panel covers is listed in [Bridge Panel Guide](/docs/en/capabilities/admin-panels/).
+What each admin panel covers is listed in [Admin Panel Guide](/docs/en/capabilities/admin-panels/).
 
 ## Scheduled tasks
 
@@ -101,9 +101,9 @@ Entry point: the workbench → Settings at the bottom of the left sidebar.
 
 What each setting means and what to set it to is covered in [System Settings Reference](/docs/en/capabilities/config/).
 
-## Bridge features (administrators only)
+## Admin features (administrators only)
 
-Entry point: open the Bridge address in a browser. The main panels are:
+Entry point: open the Admin address in a browser. The main panels are:
 
 - System settings: global configuration
 - User management: user accounts and quota accounts
@@ -113,4 +113,4 @@ Entry point: open the Bridge address in a browser. The main panels are:
 - Channel monitoring: external channel status
 - Performance monitoring: how the system is running
 
-Panel-by-panel coverage lives in [Bridge Panel Guide](/docs/en/capabilities/admin-panels/), and setting meanings in [System Settings Reference](/docs/en/capabilities/config/).
+Panel-by-panel coverage lives in [Admin Panel Guide](/docs/en/capabilities/admin-panels/), and setting meanings in [System Settings Reference](/docs/en/capabilities/config/).

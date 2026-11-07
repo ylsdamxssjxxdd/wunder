@@ -6,9 +6,9 @@ updated_at: 2026-10-16
 
 ## Scope of responsibility
 
-All execution happens in the engine. A channel does just two things: parse an external message into a unified inbound shape, and deliver the unified outbound shape back into an external protocol. Protocol adaptation stops at the entry; a channel does not copy business logic, does not keep its own storage, and does not change thread semantics. The same task thread can take a message from Beehive, continue it from Feishu, and finish it from Pupa; a channel never creates a second execution path.
+All execution happens in the engine. A channel does just two things: parse an external message into a unified inbound shape, and deliver the unified outbound shape back into an external protocol. Protocol adaptation stops at the entry; a channel does not copy business logic, does not keep its own storage, and does not change thread semantics. The same task thread can take a message from Cloud, continue it from Feishu, and finish it from Desktop; a channel never creates a second execution path.
 
-A form (Pupa / Beehive / Helm / Hull) is the shape of running and access; a channel (Feishu / QQ / WeChat …) is an off-site platform. The two are not one layer. The statement that many entries share one engine holds; what tends to be written wrong is the support level.
+A form (Desktop / Cloud / CLI / Server) is the shape of running and access; a channel (Feishu / QQ / WeChat …) is an off-site platform. The two are not one layer. The statement that many entries share one engine holds; what tends to be written wrong is the support level.
 
 ## Support level
 
@@ -35,7 +35,7 @@ An inbound message is first resolved by binding: candidates are scored by specif
 | account_id match | 2 | Empty means wildcard |
 | channel match | 1 | Empty means wildcard |
 
-A hit yields the target agent and any tool overrides, after which the workspace is decided: empty, as well as the default and __default__ aliases, all point to that user's default agent workspace. In the Hull form, workspaces are flattened per user into a single cloud directory, so files arriving from different channels for the same user land in the same place.
+A hit yields the target agent and any tool overrides, after which the workspace is decided: empty, as well as the default and __default__ aliases, all point to that user's default agent workspace. In the Server form, workspaces are flattened per user into a single cloud directory, so files arriving from different channels for the same user land in the same place.
 
 ## Inbound, outbound, and rate limiting
 
@@ -74,4 +74,4 @@ Verification differs by platform: some loop back a verification token from confi
 - The core capabilities are the same across channels; the differences are only in protocol expression (rich text, attachments, cards) and whether a persistent connection is supported.
 - The inbound queue does not guarantee no loss by queuing forever; it is bounded at 512 with an 80 ms enqueue timeout, and anything beyond goes to backpressure and platform redelivery.
 - A failed outbound delivery is not dropped outright; it uses a persistent queue with exponential backoff and at most 5 retries.
-- Pupa and Helm do not go through the channel layer: Pupa is a native in-process call, and Helm uses its own access path.
+- Desktop and CLI do not go through the channel layer: Desktop is a native in-process call, and CLI uses its own access path.

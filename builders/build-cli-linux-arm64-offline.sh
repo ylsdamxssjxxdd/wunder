@@ -123,7 +123,7 @@ else
   binary="$target_dir/release/wunder-cli"
 fi
 require_file "$binary"
-version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$repo_root/Cargo.toml" | head -n 1)"
+version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$repo_root/config/app_version.json" | head -n 1)"
 [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]] || fail "could not read a safe workspace version"
 release_binary="$output_dir/wunder-cli-$version-linux-arm64"
 cp -f "$binary" "$release_binary"

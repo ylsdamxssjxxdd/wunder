@@ -1,0 +1,524 @@
+// 安卓版's thread trajectory page: a bounded, touch-first ledger of the model and
+// tool activity in one thread. The projection lives in Rust (engine.rs); this
+// file only groups and lays out the already-truncated rows.
+
+import { Theme } from "../../../frontend-slint/ui/theme.slint";
+import { I18n } from "../../../frontend-slint/ui/i18n.slint";
+import { Action } from "../../../frontend-slint/ui/components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export struct TrajectoryItem {
+    // Non-empty on the first row of a user turn.
+    group: string,
+    // 0 user, 1 assistant, 2 tool, 3 subagent, 4 compaction, 5 system, 6 context.
+    kind: int,
+    title: string,
+    summary: string,
+    detail: string,
+    status: string,
+    time: string,
+    failed: bool,
+    // Audit line shown only after the row is expanded:
+    // start clock · duration · token consumption · status.
+    meta: string,
+    // User turn number for the audit summary; 0 for preparation rows.
+    round: int,
+}
+
+// One normalized span on the audit time bar. Values are 0..1 across the
+// loaded window, so the UI never recomputes a time domain.
+export struct TrajectorySegment {
+    offset: float,
+    width: float,
+    kind: int,
+    failed: bool,
+}
+
+// Page-level audit facts: the span, the consumption, and the failure count.
+export struct TrajectoryAudit {
+    enabled: bool,
+    start: string,
+    end: string,
+    summary: string,
+    failed: int,
+}
+
+global TrajTone {
+    public pure function color(kind: int) -> color {
+        return kind == 0 ? Theme.accent
+            : kind == 1 ? Theme.accent-secondary
+            : kind == 2 ? Theme.warning
+            : kind == 3 ? Theme.accent-deep
+            : kind == 4 ? Theme.muted
+            : kind == 5 ? Theme.text-secondary
+            : Theme.border-strong;
+    }
+    public pure function glyph(kind: int) -> string {
+        return kind == 0 ? "我" : kind == 1 ? "AI" : kind == 2 ? "工"
+            : kind == 3 ? "子" : kind == 4 ? "压" : kind == 5 ? "系" : "·";
+    }
+}
+
+component FilterChip inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    callback clicked();
+
+    height: 28px;
+    width: chip-text.preferred-width + 22px;
+    border-radius: 14px;
+    background: root.selected ? Theme.accent-soft : Theme.panel;
+    border-width: 1px;
+    border-color: root.selected ? Theme.accent-secondary : Theme.border;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    chip-text := Text {
+        width: 100%;
+        height: 100%;
+        text: root.label;
+        color: root.selected ? Theme.accent-ink : Theme.text-secondary;
+        font-size: Theme.font-xs;
+        font-weight: root.selected ? 600 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// Time bar + consumption strip. Rows stay one line; this strip is the only
+// always-visible auditing surface on the page.
+component AuditBar inherits Rectangle {
+    in property <TrajectoryAudit> audit;
+    in property <[TrajectorySegment]> segments: [];
+    height: root.audit.enabled ? 84px : 0px;
+    visible: root.audit.enabled;
+    background: Theme.surface;
+
+    VerticalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+        spacing: 5px;
+
+        HorizontalLayout {
+            Text {
+                text: root.audit.start;
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Text {
+                text: root.audit.end;
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+            }
+        }
+
+        track := Rectangle {
+            height: 10px;
+            border-radius: 5px;
+            background: Theme.panel;
+            clip: true;
+            for segment[index] in root.segments : Rectangle {
+                // Zero-duration rows at the very end still get a visible
+                // marker instead of being clipped past the track edge.
+                x: min(track.width - max(3px, track.width * segment.width), track.width * segment.offset);
+                width: max(3px, track.width * segment.width);
+                height: 10px;
+                border-radius: 2px;
+                background: segment.failed ? Theme.danger : TrajTone.color(segment.kind);
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                horizontal-stretch: 1;
+                text: root.audit.summary;
+                color: Theme.text-secondary;
+                font-size: Theme.font-2xs;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            if root.audit.failed > 0 : Text {
+                text: "" + root.audit.failed + " 失败";
+                color: Theme.danger;
+                font-size: Theme.font-2xs;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+        }
+    }
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        width: 100%;
+        background: Theme.border;
+    }
+}
+
+// One-line ledger row. The summary and body are mounted only after the row is
+// tapped, so a long thread scans as a dense list of timestamps and tool names.
+component TrajectoryRow inherits Rectangle {
+    in property <TrajectoryItem> entry;
+    in property <bool> expanded: false;
+    callback toggled();
+    height: body.preferred-height;
+    background: root.expanded ? Theme.selected : Theme.surface;
+
+    body := VerticalLayout {
+        spacing: 0px;
+
+        if root.entry.group != "" : Rectangle {
+            height: 24px;
+            Text {
+                width: 100%;
+                height: 100%;
+                text: root.entry.group;
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                font-weight: 700;
+                vertical-alignment: bottom;
+            }
+        }
+
+        Rectangle {
+            height: line.preferred-height;
+
+            line := HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 7px;
+                padding-bottom: 7px;
+                spacing: 8px;
+                cross-axis-alignment: center;
+
+                Rectangle {
+                    width: 20px;
+                    height: 20px;
+                    border-radius: 6px;
+                    background: (root.entry.failed ? Theme.danger : TrajTone.color(root.entry.kind)).transparentize(0.88);
+                    Text {
+                        width: 100%;
+                        height: 100%;
+                        text: TrajTone.glyph(root.entry.kind);
+                        color: root.entry.failed ? Theme.danger : TrajTone.color(root.entry.kind);
+                        font-size: 9px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.entry.title;
+                    color: root.entry.failed ? Theme.danger : Theme.text;
+                    font-size: Theme.font-sm;
+                    font-weight: 500;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+                if root.entry.failed : Text {
+                    text: "失败";
+                    color: Theme.danger;
+                    font-size: Theme.font-2xs;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.entry.time;
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                    vertical-alignment: center;
+                }
+                Image {
+                    width: 10px;
+                    height: 10px;
+                    source: @image-url("../../../frontend-slint/assets/icons/chevron-down.svg");
+                    colorize: Theme.muted;
+                    transform-rotation: root.expanded ? 180deg : 0deg;
+                }
+            }
+            // Invisible hit area above the labels: tapping anywhere on the
+            // compact line opens or closes the detail.
+            TouchArea {
+                clicked => { root.toggled(); }
+            }
+        }
+
+        if root.expanded : VerticalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            padding-bottom: 10px;
+            spacing: 6px;
+
+            if root.entry.summary != "" : Text {
+                text: root.entry.summary;
+                color: Theme.text-secondary;
+                font-size: Theme.font-xs;
+                wrap: word-wrap;
+                overflow: elide;
+            }
+            if root.entry.meta != "" : Text {
+                text: root.entry.meta;
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                wrap: word-wrap;
+            }
+            if root.entry.detail != "" : Rectangle {
+                height: detail-text.preferred-height + 16px;
+                border-radius: Theme.radius-sm;
+                background: Theme.panel;
+                border-width: 1px;
+                border-color: Theme.border;
+                detail-text := Text {
+                    x: 10px;
+                    y: 8px;
+                    width: parent.width - 20px;
+                    text: root.entry.detail;
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-xs;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: Theme.border;
+        }
+    }
+}
+
+export component TrajectoryPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <string> title: "";
+    in property <string> session-title: "";
+    in property <bool> loading: false;
+    in property <string> error: "";
+    in property <[TrajectoryItem]> items: [];
+    in property <TrajectoryAudit> audit: { enabled: false, start: "", end: "", summary: "", failed: 0 };
+    in property <[TrajectorySegment]> segments: [];
+    // 0 all, 1 conversation, 2 tools, 3 system. The Rust projection applies
+    // the filter so turn group labels survive when their user row is hidden.
+    in-out property <int> filter: 0;
+    in-out property <int> expanded: -1;
+    callback back();
+    callback retry();
+    callback filter-changed(int);
+
+    function select-filter(value: int) {
+        root.filter = value;
+        root.expanded = -1;
+        root.filter-changed(value);
+    }
+
+    background: Theme.panel;
+
+    VerticalLayout {
+        spacing: 0px;
+
+        // Header: back + title + retry.
+        Rectangle {
+            height: 52px + root.inset-top;
+            background: Theme.surface;
+
+            Rectangle {
+                y: root.inset-top;
+                height: 52px;
+                width: parent.width;
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    spacing: 4px;
+                    cross-axis-alignment: center;
+                    Action {
+                        width: 34px;
+                        height: 34px;
+                        icon-size: 17px;
+                        icon: @image-url("../../../frontend-slint/assets/icons/chevron-left.svg");
+                        label: "返回";
+                        clicked => { root.back(); }
+                    }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 1px;
+                        Text {
+                            text: root.title == "" ? "线程轨迹" : root.title;
+                            color: Theme.text;
+                            font-size: Theme.font-lg;
+                            font-weight: 600;
+                            overflow: elide;
+                            horizontal-alignment: left;
+                        }
+                        Text {
+                            text: root.session-title;
+                            color: Theme.muted;
+                            font-size: Theme.font-2xs;
+                            overflow: elide;
+                            horizontal-alignment: left;
+                            visible: root.session-title != "";
+                        }
+                    }
+                    Action {
+                        width: 34px;
+                        height: 34px;
+                        icon-size: 16px;
+                        icon: @image-url("../../../frontend-slint/assets/icons/rotate-right.svg");
+                        label: "刷新轨迹";
+                        enabled: !root.loading;
+                        clicked => { root.retry(); }
+                    }
+                }
+            }
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
+            }
+        }
+
+        AuditBar {
+            audit: root.audit;
+            segments: root.segments;
+        }
+
+        // Touch-first filter strip: one thumb-sized row instead of desktop
+        // dropdowns, with the current result count on the right.
+        Rectangle {
+            height: 40px;
+            background: Theme.surface;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 8px;
+                cross-axis-alignment: center;
+                FilterChip {
+                    label: "全部";
+                    selected: root.filter == 0;
+                    clicked => { root.select-filter(0); }
+                }
+                FilterChip {
+                    label: "对话";
+                    selected: root.filter == 1;
+                    clicked => { root.select-filter(1); }
+                }
+                FilterChip {
+                    label: "工具";
+                    selected: root.filter == 2;
+                    clicked => { root.select-filter(2); }
+                }
+                FilterChip {
+                    label: "系统";
+                    selected: root.filter == 3;
+                    clicked => { root.select-filter(3); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: "" + root.items.length + " 条";
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                    vertical-alignment: center;
+                }
+            }
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                width: 100%;
+                background: Theme.border;
+            }
+        }
+
+        if root.loading : Rectangle {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: center;
+                spacing: 10px;
+                Text {
+                    text: "正在读取线程轨迹…";
+                    color: Theme.muted;
+                    font-size: Theme.font-sm;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "只展示最近的模型调用与工具记录";
+                    color: Theme.border-strong;
+                    font-size: Theme.font-2xs;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        if !root.loading && root.error != "" : Rectangle {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+                padding-left: 32px;
+                padding-right: 32px;
+                Text {
+                    text: root.error;
+                    color: Theme.danger;
+                    font-size: Theme.font-sm;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    Action {
+                        width: 108px;
+                        label: "重试";
+                        show-label: true;
+                        primary: true;
+                        icon: @image-url("../../../frontend-slint/assets/icons/rotate-right.svg");
+                        clicked => { root.retry(); }
+                    }
+                }
+            }
+        }
+
+        if !root.loading && root.error == "" : ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding-top: 2px;
+                padding-bottom: 16px + root.inset-bottom;
+                spacing: 0px;
+                alignment: start;
+                for item[index] in root.items : TrajectoryRow {
+                    entry: item;
+                    expanded: root.expanded == index;
+                    toggled => {
+                        root.expanded = root.expanded == index ? -1 : index;
+                    }
+                }
+                if root.items.length == 0 : Rectangle {
+                    height: 160px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 6px;
+                        Text {
+                            text: root.filter == 0 ? "该线程还没有可展示的轨迹" : "该分类还没有记录";
+                            color: Theme.muted;
+                            font-size: Theme.font-sm;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: I18n.sb_thread_trajectory;
+                            color: Theme.border-strong;
+                            font-size: Theme.font-2xs;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

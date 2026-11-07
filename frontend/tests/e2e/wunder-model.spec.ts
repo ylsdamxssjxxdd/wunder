@@ -51,7 +51,7 @@ async function prepareBridge(page: Page, scope = 'admin') {
   await expect(page.locator('#adminLoginModal')).toHaveAttribute('aria-hidden', 'true');
 }
 
-test('bridge opens on the full model page, rotates, and releases the context on navigation', async ({ page }) => {
+test('admin opens on the full model page, rotates, and releases the context on navigation', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await prepareBridge(page);
@@ -100,7 +100,7 @@ test('bridge opens on the full model page, rotates, and releases the context on 
   expect(errors).toEqual([]);
 });
 
-test('bridge model load failure can be retried', async ({ page }) => {
+test('admin model load failure can be retried', async ({ page }) => {
   let fail = true;
   await page.route('**/third/models/wunder.glb**', async route => {
     if (fail) await route.fulfill({ status: 404, body: '' });
@@ -122,7 +122,7 @@ test('leader scope also lands on the model while retaining its navigation permis
   await expect(page.locator('#navOrgUnits')).toBeVisible();
 });
 
-test('standalone bridge model loads without a management session', async ({ page }) => {
+test('standalone admin model loads without a management session', async ({ page }) => {
   const errors: string[] = [];
   const apiRequests: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -171,7 +171,7 @@ async function openHiveAccountSettings(page: Page) {
   await expect(page.getByTestId('settings-open-wunder-model')).toBeVisible();
 }
 
-test('hive account opens the bridge model in a new window without loading a local viewer', async ({ page, context }) => {
+test('cloud account opens the admin model in a new window without loading a local viewer', async ({ page, context }) => {
   const errors: string[] = [];
   const requests: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -195,7 +195,7 @@ test('hive account opens the bridge model in a new window without loading a loca
   expect(errors).toEqual([]);
 });
 
-test('hive account explains when the browser blocks the model window', async ({ page }) => {
+test('cloud account explains when the browser blocks the model window', async ({ page }) => {
   await openHiveAccountSettings(page);
   await page.evaluate(() => { window.open = () => null; });
   await page.getByTestId('settings-open-wunder-model').click();

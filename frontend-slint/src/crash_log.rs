@@ -76,7 +76,7 @@ fn write_report(info: &std::panic::PanicHookInfo<'_>) {
     );
     let _ = writeln!(
         file,
-        "进程: 蛹 v{} ({} {})",
+        "进程: wunder 桌面版 v{} ({} {})",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH

@@ -640,7 +640,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
                                 background: !bar.reported ? TrajTokens.caption : bar.peak ? TrajTokens.amber : TrajTokens.brand;
                                 opacity: bar.reported ? 1.0 : 0.5;
                             }
-                            // 与舰桥/蜂巢一致：点击时间线段或台账行后，对应柱子
+                            // 与管理端/云端版一致：点击时间线段或台账行后，对应柱子
                             // 保持琥珀色选中环，反向点击柱子亦然（同走 select-span）。
                             property <bool> is-selected: bar.index >= 0 && bar.index == root.selected-index;
                             if bar-touch.has-hover || bar-cell.is-selected : Rectangle {
@@ -980,7 +980,7 @@ export component ThreadTrajectoryDialog inherits Rectangle {
             }
             // details aside
             if root.selected-index >= 0 : details := Rectangle {
-                // 与蜂巢 .tt-details 对齐：clamp(320px, 38%, 440px) +
+                // 与云端版 .tt-details 对齐：clamp(320px, 38%, 440px) +
                 // max-width(100% - 280px) + 左侧 border-2。
                 width: clamp(min(root.details-width, root.width - 280px), 320px, 440px);
                 x: parent.width - self.width;

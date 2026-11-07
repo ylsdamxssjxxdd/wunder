@@ -265,7 +265,7 @@ jobs:
         shell: pwsh
         run: |
           $out = Join-Path $env:GITHUB_WORKSPACE 'release-assets'
-          $desktop = Get-ChildItem -LiteralPath $out -Filter 'wunder-frontend-slint-*-win7-x86.exe' | Select-Object -First 1
+          $desktop = Get-ChildItem -LiteralPath $out -Filter 'wunder-desktop-*-win7-x86.exe' | Select-Object -First 1
           $cli = Get-ChildItem -LiteralPath $out -Filter 'wunder-cli-*-win7-x86.exe' | Select-Object -First 1
           $supplement = Get-ChildItem -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'supplement') -Filter 'wunder-supplement-win7-ia32-common.zip' | Select-Object -First 1
           if (-not $desktop -or -not $cli -or -not $supplement) {
@@ -279,19 +279,19 @@ jobs:
             -OutputDir $out `
             -Compression lzma2/normal
           if ($LASTEXITCODE -ne 0) { throw "Windows installer pack failed: $LASTEXITCODE" }
-          $installer = Get-ChildItem -LiteralPath $out -Filter 'wunder-*-win7-x86-setup.exe' | Select-Object -First 1
+          $installer = Get-ChildItem -LiteralPath $out -Filter 'wunder-desktop-*-win7-x86-setup.exe' | Select-Object -First 1
           if (-not $installer) { throw 'Windows installer was not produced' }
           Write-Host "installer: $($installer.Name) ($([math]::Round($installer.Length / 1MB, 1)) MB)"
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-win7-x86
-          path: release-assets/wunder-frontend-slint-*-win7-x86.exe
+          path: release-assets/wunder-desktop-*-win7-x86.exe
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: installer-win7-x86
-          path: release-assets/wunder-*-win7-x86-setup.exe
+          path: release-assets/wunder-desktop-*-win7-x86-setup.exe
           if-no-files-found: error
           retention-days: 7
 
@@ -301,12 +301,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # arch uses the release naming (amd64/arm64) shared with the offline
+          # arch uses the release naming (x64/arm64) shared with the offline
           # builders, matching the desktop archive names the packager emits.
-          - arch: amd64
+          - arch: x64
+            supplement_arch: amd64
             platform: linux/amd64
             image: wunder-desktop-ubuntu1804-x86_64
           - arch: arm64
+            supplement_arch: arm64
             platform: linux/arm64
             image: wunder-desktop-ubuntu1804-arm64
     runs-on: ubuntu-latest
@@ -338,7 +340,7 @@ jobs:
             -e WUNDER_OUTPUT_DIR=/app/release-assets \
             "${{ matrix.image }}" \
             bash "$build_script"
-          asset="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
+          asset="$(find release-assets -maxdepth 1 -name "wunder-desktop-*-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
           test -n "$asset"
           # Consume the complete listing before deciding: an early `grep -q`
           # exit SIGPIPEs tar under pipefail and fails the step even when the
@@ -350,12 +352,12 @@ jobs:
           set -euo pipefail
           # The installer needs the CLI built below; only the portable file is
           # produced here.
-          desktop="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
+          desktop="$(find release-assets -maxdepth 1 -name "wunder-desktop-*-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
           test -n "$desktop"
           bash builders/pack-portable.sh -a "linux-${{ matrix.arch }}" \
             --desktop-archive "$desktop" \
             --output-dir release-assets
-          test -n "$(find release-assets -maxdepth 1 -name 'wunder-*.portable' -print -quit)"
+          test -n "$(find release-assets -maxdepth 1 -name 'wunder-desktop-*.portable' -print -quit)"
       - name: Build Linux CLI
         shell: bash
         run: |
@@ -427,12 +429,12 @@ jobs:
           set -euo pipefail
           mkdir -p supplement
           gh release download supplement --repo "${GITHUB_REPOSITORY}" \
-            --pattern "wunder-supplement-linux-${{ matrix.arch }}.tar.gz" \
+            --pattern "wunder-supplement-linux-${{ matrix.supplement_arch }}.tar.gz" \
             --dir supplement --clobber
           ls -la supplement
           # 安装包嵌入的补充包必须带 opt/7zip，旧缓存包直接拒绝。awk 消费完整
           # 列表再判定：grep -q 提前退出会让 tar 在 pipefail 下吃 SIGPIPE 误报。
-          tar -tzf "supplement/wunder-supplement-linux-${{ matrix.arch }}.tar.gz" |
+          tar -tzf "supplement/wunder-supplement-linux-${{ matrix.supplement_arch }}.tar.gz" |
             awk '$0 == "opt/7zip/bin/7zz" { found = 1 } END { exit found ? 0 : 1 }' || {
             echo 'supplement is missing opt/7zip/bin/7zz; rebuild the Desktop Supplements release' >&2
             exit 1
@@ -441,9 +443,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          desktop="$(find release-assets -maxdepth 1 -name "wunder-slint-*-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
+          desktop="$(find release-assets -maxdepth 1 -name "wunder-desktop-*-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
           cli="$(find release-assets -maxdepth 1 -name "wunder-cli-*-linux-${{ matrix.arch }}" -print -quit)"
-          supplement="$(find supplement -maxdepth 1 -name "wunder-supplement-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
+          supplement="$(find supplement -maxdepth 1 -name "wunder-supplement-linux-${{ matrix.supplement_arch }}.tar.gz" -print -quit)"
           test -n "$desktop"
           test -n "$cli"
           test -n "$supplement"
@@ -452,20 +454,20 @@ jobs:
             --cli "$cli" \
             --supplement "$supplement" \
             --output-dir release-assets
-          test -n "$(find release-assets -maxdepth 1 -name "wunder-*.run" -print -quit)"
+          test -n "$(find release-assets -maxdepth 1 -name "wunder-desktop-*.run" -print -quit)"
           ls -lh release-assets
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-linux-${{ matrix.arch }}
           # Only the published program: the AppDir tar.gz is a packager input
           # and the .run installer ships through installer-linux-<arch>.
-          path: release-assets/wunder-*.portable
+          path: release-assets/wunder-desktop-*.portable
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: installer-linux-${{ matrix.arch }}
-          path: release-assets/wunder-*.run
+          path: release-assets/wunder-desktop-*.run
           if-no-files-found: error
           retention-days: 7
 
@@ -505,10 +507,10 @@ jobs:
           # an extra or missing form fails with the slot it belongs to.
           test "${#desktops[@]}" -eq 3
           test "${#installers[@]}" -eq 3
-          mapfile -t win_desktop < <(find desktop-assets -maxdepth 1 -type f -name 'wunder-frontend-slint-*-win7-x86.exe')
-          mapfile -t portables < <(find desktop-assets -maxdepth 1 -type f -name 'wunder-*.portable')
-          mapfile -t win_setup < <(find installer-assets -maxdepth 1 -type f -name 'wunder-*-win7-x86-setup.exe')
-          mapfile -t linux_runs < <(find installer-assets -maxdepth 1 -type f -name 'wunder-*.run')
+          mapfile -t win_desktop < <(find desktop-assets -maxdepth 1 -type f -name 'wunder-desktop-*-win7-x86.exe')
+          mapfile -t portables < <(find desktop-assets -maxdepth 1 -type f -name 'wunder-desktop-*.portable')
+          mapfile -t win_setup < <(find installer-assets -maxdepth 1 -type f -name 'wunder-desktop-*-win7-x86-setup.exe')
+          mapfile -t linux_runs < <(find installer-assets -maxdepth 1 -type f -name 'wunder-desktop-*.run')
           test "${#win_desktop[@]}" -eq 1
           test "${#portables[@]}" -eq 2
           test "${#win_setup[@]}" -eq 1
@@ -535,7 +537,7 @@ jobs:
           gh release create nightly \
             --repo "${GITHUB_REPOSITORY}" \
             --title "Wunder Desktop & Installers（Win7 x86 / Ubuntu 18.04 x86_64 / Ubuntu 18.04 ARM64）" \
-            --notes "发布三个桌面程序与三个安装包：Windows 7 32 位、Ubuntu 18.04 x86_64、Ubuntu 18.04 ARM64。安装包默认安装蛹和舵机到用户目录的 .wunder，补充组件可选。" \
+            --notes "发布三个桌面程序与三个安装包：Windows 7 32 位、Ubuntu 18.04 x86_64、Ubuntu 18.04 ARM64。安装包默认安装桌面版和命令行到用户目录的 .wunder，补充组件可选。" \
             --prerelease --latest=false --target "${GITHUB_SHA}"
           find desktop-assets installer-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do
             gh release upload nightly "$asset" --repo "${GITHUB_REPOSITORY}" --clobber

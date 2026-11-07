@@ -1,9 +1,9 @@
 ---
-title: Pupa Interface
+title: Desktop Interface
 summary: The local AI workbench and the default entry for individual users. Its main window has only two pages, chat and settings, with 12 categories in settings; everything else appears as panels and dialogs, including desktop-only capabilities and entries not yet wired up.
 read_when:
-  - You use the Pupa desktop app and want to know where a capability lives
-  - You cannot find the device-interconnection panel or TTS playback in the Pupa
+  - You use the Desktop desktop app and want to know where a capability lives
+  - You cannot find the device-interconnection panel or TTS playback in the Desktop
 source_docs:
   - frontend-slint/ui/theme.slint
   - frontend-slint/ui/main.slint
@@ -13,7 +13,7 @@ source_docs:
 updated_at: 2026-10-16
 ---
 
-# Pupa Interface
+# Desktop Interface
 
 It runs entirely on your own computer: there is no separate backend port and no network relay, and the interface calls the local engine directly. It is the default entry for individual users.
 
@@ -88,13 +88,13 @@ These areas live inside the two pages, not as pages of their own:
 - **Tray and system notifications**: background running and completion reminders
 - **Remote command approval pop-up**: a high-risk confirmation for interconnection commands, with a prominent border, risk level, and source details, plus a "cannot be remembered" prompt
 
-## Capabilities unique to the Pupa
+## Capabilities unique to the Desktop
 
-The Beehive, the Bridge, and the Helm have none of these:
+The Cloud, the Admin, and the CLI have none of these:
 
 | Capability | What it is |
 | --- | --- |
-| **Interactive terminal** | Run commands right inside it; the Beehive, the Bridge, and the Helm have none |
+| **Interactive terminal** | Run commands right inside it; the Cloud, the Admin, and the CLI have none |
 | **Screenshot capture** | A full-screen capture pasted back into the input area |
 | **Tray and system notifications** | Reminders while running in the background and when a task finishes |
 | **Global hotkey** | Bring it up with a system-wide shortcut |
@@ -103,9 +103,9 @@ The Beehive, the Bridge, and the Helm have none of these:
 
 ## Entries not wired up yet
 
-- The **Device interconnection** category in settings is not wired up: the entry exists in code but never renders, so it cannot be opened today. Interconnection in the Pupa lives in only two places — the cloud workspace under "Working directory" in the sidebar, and the remote-command approval pop-up.
-- **Voice output (TTS) is not implemented**: TTS models can be configured in settings, but there is no playback; the voice side is input-only. For spoken output, use the Beehive.
-- **The early desktop shells are no longer maintained**: the Electron / Tauri frontend shells receive no feature updates. This does not affect the Pupa's underlying engine.
+- The **Device interconnection** category in settings is not wired up: the entry exists in code but never renders, so it cannot be opened today. Interconnection in the Desktop lives in only two places — the cloud workspace under "Working directory" in the sidebar, and the remote-command approval pop-up.
+- **Voice output (TTS) is not implemented**: TTS models can be configured in settings, but there is no playback; the voice side is input-only. For spoken output, use the Cloud.
+- **The early desktop shells are no longer maintained**: the Electron / Tauri frontend shells receive no feature updates. This does not affect the Desktop's underlying engine.
 
 ## Resetting the working state
 
@@ -117,12 +117,12 @@ It keeps skills, knowledge bases, long-term memory, user configuration, workspac
 
 It cleans up the working state rather than performing a factory reset.
 
-## Differences from the Beehive
+## Differences from the Cloud
 
-| Item | Pupa | Beehive |
+| Item | Desktop | Cloud |
 | --- | --- | --- |
 | Running mode | A desktop app installed on your own computer | Reached in a browser, in the cloud |
-| Data storage | Local (`~/.wunder`) | Hull storage |
+| Data storage | Local (`~/.wunder`) | Server storage |
 | Interactive terminal | ✅ Yes | ❌ No |
 | Voice input / output | Input ✅, output ❌ | Both directions ✅ |
 | Tray / system notifications / global hotkey / screenshot | ✅ | ❌ |

@@ -192,7 +192,7 @@
 }
 
 .messenger-sidebar-device-label {
-  /* 吃掉剩余宽度：种类标签与箭头才能贴到行右缘（蛹同行语法），不挤在名称后。 */
+  /* 吃掉剩余宽度：种类标签与箭头才能贴到行右缘（桌面版同行语法），不挤在名称后。 */
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -665,7 +665,7 @@ button.messenger-sidebar-workspace-row {
   box-sizing: border-box;
   width: 15px;
   height: 15px;
-  /* 勾选框顶到行内边距上，缩进让给后面的标题（与蛹的多选行同几何）。 */
+  /* 勾选框顶到行内边距上，缩进让给后面的标题（与桌面版的多选行同几何）。 */
   margin: 0 var(--mz-row-gap) 0 0;
   border: 1px solid var(--mz-border-strong);
   border-radius: 4px;

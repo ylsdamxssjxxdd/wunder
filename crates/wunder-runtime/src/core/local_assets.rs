@@ -1,4 +1,4 @@
-//! Embedded immutable assets shared by 蛹 and 舵机.
+//! Embedded immutable assets shared by 桌面版 and 命令行.
 
 use super::local_bootstrap::{
     release_assets_with_id, LocalHomeLayout, ReleasePolicy, ReleaseReport,

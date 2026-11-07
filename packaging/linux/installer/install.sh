@@ -28,9 +28,9 @@ die() {
 
 usage() {
   cat <<'EOF'
-用法: wunder-<版本>-linux-<架构>.run [选项]
+用法: wunder-desktop-<版本>-linux-<架构>.run [选项]
 
-直接运行即可：默认装到 ${WUNDER_HOME:-$HOME/.wunder}，蛹、舵机与全部补充组件默认全选。
+直接运行即可：默认装到 ${WUNDER_HOME:-$HOME/.wunder}，桌面版、命令行与全部补充组件默认全选。
 交互模式只有一屏：取消不需要的补充组件后回车即开始安装。
 
   -y, --yes                不询问确认，按当前选择（默认全选）安装
@@ -41,7 +41,7 @@ usage() {
       --no-desktop-icon    不在桌面创建启动图标
   -h, --help               显示帮助
 
---components 缩小安装范围；交互界面里数字键切换勾选，n 清空后回车则只装蛹和舵机。
+--components 缩小安装范围；交互界面里数字键切换勾选，n 清空后回车则只装桌面版和命令行。
 EOF
 }
 
@@ -66,7 +66,7 @@ write_wunder_desktop_file() {
   cat > "$target" <<EOF
 [Desktop Entry]
 Type=Application
-Name=蛹
+Name=wunder 桌面版
 Comment=本地 AI 工作台
 StartupWMClass=wunder
 Exec="$escaped_exec" %U
@@ -290,11 +290,14 @@ chmod 0755 "$HOME_DIR/bin/wunder-cli"
 rm -rf -- "$HOME_DIR/app/desktop"
 mkdir -p "$HOME_DIR/app/desktop"
 if ! tar -xzf "$PAYLOAD_DIR/wunder-desktop.tar.gz" -C "$HOME_DIR/app/desktop" --no-same-owner; then
-  echo "蛹的程序文件解压失败。请检查磁盘空间后重新运行安装包。" >&2
+  echo "桌面版的程序文件解压失败。请检查磁盘空间后重新运行安装包。" >&2
   exit 1
 fi
-[ -x "$HOME_DIR/app/desktop/AppRun" ] || die "安装包缺少蛹的启动入口。"
+[ -x "$HOME_DIR/app/desktop/AppRun" ] || die "安装包缺少桌面版的启动入口。"
 rm -f -- "$HOME_DIR/bin/wunder-desktop.AppImage"
+# Upgrades from releases that shipped the old executable name must not leave a
+# stale launcher beside the new one.
+rm -f -- "$HOME_DIR/bin/wunder-frontend-slint"
 cat > "$HOME_DIR/bin/wunder-desktop" <<'LAUNCHER'
 #!/bin/sh
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -361,9 +364,11 @@ else
   echo "提示：无法创建 $LOCAL_BIN；请把 $HOME_DIR/bin 加入 PATH。" >&2
 fi
 
-if [ -f "$PAYLOAD_DIR/pupa.png" ]; then
+if [ -f "$PAYLOAD_DIR/eva01-head.png" ]; then
   mkdir -p "$HOME_DIR/images"
-  cp -f -- "$PAYLOAD_DIR/pupa.png" "$HOME_DIR/images/pupa.png"
+  cp -f -- "$PAYLOAD_DIR/eva01-head.png" "$HOME_DIR/images/eva01-head.png"
+  # Older installers wrote the pupa image under this name; drop it on upgrade.
+  rm -f -- "$HOME_DIR/images/pupa.png"
 fi
 
 if [ "$count" -gt 0 ]; then
@@ -416,7 +421,7 @@ desktop_icon_path=""
 data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
 if [ "$DESKTOP_ENTRY" -eq 1 ] || [ "$DESKTOP_ICON" -eq 1 ]; then
   escaped_exec=$(printf '%s' "$HOME_DIR/bin/wunder-desktop" | sed 's/\\/\\\\/g; s/"/\\"/g')
-  icon="$HOME_DIR/images/pupa.png"
+  icon="$HOME_DIR/images/eva01-head.png"
   [ -f "$icon" ] || icon="$HOME_DIR/images/wunder.png"
   [ -f "$icon" ] || icon="wunder"
 
@@ -452,8 +457,8 @@ cp -f -- "$PAYLOAD_DIR/uninstall.sh" "$HOME_DIR/uninstall.sh"
 chmod 0755 "$HOME_DIR/uninstall.sh"
 
 printf '\n完成。\n\n'
-printf '  蛹     %s\n' "$HOME_DIR/bin/wunder-desktop"
-printf '  舵机   %s\n' "$HOME_DIR/bin/wunder-cli"
+printf '  桌面版     %s\n' "$HOME_DIR/bin/wunder-desktop"
+printf '  命令行   %s\n' "$HOME_DIR/bin/wunder-cli"
 if [ "$count" -gt 0 ]; then
   printf '  组件   %s\n' "$components_csv"
 else

@@ -851,8 +851,8 @@ fn resolve_inner_visible_display_path(
     raw.replace('\\', "/")
 }
 
-/// Local forms (舵机 cli / 蛹 desktop) execute tools in-process against the
-/// real workspace folder; only 舰体 (server/api modes) routes through the
+/// Local forms (命令行 cli / 桌面版 desktop) execute tools in-process against the
+/// real workspace folder; only 服务端 (server/api modes) routes through the
 /// sandbox service.
 pub(crate) fn is_local_runtime_mode(server_mode: &str) -> bool {
     matches!(

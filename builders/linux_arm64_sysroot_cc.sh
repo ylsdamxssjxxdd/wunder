@@ -17,7 +17,7 @@ if [[ "$(uname -m)" == x86_64 ]]; then
     shift
   fi
   for path in "$compiler" "$gcc_lib/cc1" "$cross_bin/ld" "$sysroot/usr/lib/aarch64-linux-gnu"; do
-    [[ -e "$path" ]] || { echo "[wunder-arm64-cc] missing cross toolchain path: $path" >&2; exit 2; }
+    [[ -e "$path" ]] || { echo "[wunder-desktop-arm64-cc] missing cross toolchain path: $path" >&2; exit 2; }
   done
   export LD_LIBRARY_PATH="$host_root/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   export PATH="$cross_bin:$host_root/usr/bin:$PATH"

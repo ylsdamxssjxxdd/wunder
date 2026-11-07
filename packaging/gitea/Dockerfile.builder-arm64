@@ -1,4 +1,4 @@
-FROM wunder-slint-arm64-ubuntu18:latest AS tooling
+FROM wunder-builder-arm64-ubuntu18:latest AS tooling
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN sed -i 's@http://ports.ubuntu.com/ubuntu-ports@http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports@g' /etc/apt/sources.list \

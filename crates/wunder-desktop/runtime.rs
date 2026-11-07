@@ -95,7 +95,7 @@ pub struct DesktopSettings {
     pub container_cloud_workspaces: HashMap<i32, String>,
     #[serde(default)]
     pub language: String,
-    /// UI accent palette: "terracotta" (the 蜂巢 default; stored legacy names
+    /// UI accent palette: "terracotta" (the 云端版 default; stored legacy names
     /// like "light" render as it), "hula-green", "forest", "honey", "minimal"
     /// or "tech-blue". The settings card offers the first four.
     #[serde(default = "default_theme")]
@@ -342,7 +342,7 @@ impl DesktopRuntime {
                         language: &language_for_update,
                     },
                 );
-                // Queue and channel switches are shared by 蛹 and 舵机. The
+                // Queue and channel switches are shared by 桌面版 and 命令行. The
                 // native facade starts its dispatcher below; it must not
                 // rewrite the shared YAML according to this process only.
             })
@@ -565,7 +565,7 @@ fn resolve_workspace_root(
 
 /// Build and smoke-test workspaces are created below a repository's `target`
 /// directory. They must never become the persisted desktop workspace after a
-/// test process exits; doing so makes the next蛹 launch point tools at a stale
+/// test process exits; doing so makes the next桌面版 launch point tools at a stale
 /// checkout path instead of the user's `.wunder` home.
 fn is_transient_build_workspace_root(path: &Path) -> bool {
     let mut saw_target = false;
@@ -1129,7 +1129,7 @@ pub(crate) fn refresh_runtime_tool_env(settings: &DesktopSettings, app_dir: &Pat
         let configured = resolve_desktop_tool_bin(&settings.shell_path, app_dir);
         #[cfg(target_os = "android")]
         {
-            // 茧 routes commands into the bundled Ubuntu by setting the shell
+            // 安卓版 routes commands into the bundled Ubuntu by setting the shell
             // to its wrapper. The sandbox forbids execve on app-private files,
             // so the wrapper is read by the system shell instead of executed.
             let ubuntu_wrapper = configured
@@ -1361,7 +1361,7 @@ fn system_shell_bin() -> Option<PathBuf> {
     }
     #[cfg(target_os = "android")]
     {
-        // 茧 has no bash; the platform shell plus toybox is the command
+        // 安卓版 has no bash; the platform shell plus toybox is the command
         // tool's only portable POSIX surface.
         let shell = PathBuf::from("/system/bin/sh");
         shell.is_file().then_some(shell)
@@ -1633,13 +1633,13 @@ fn apply_desktop_defaults(
     }
 
     // The model list is not restored from `desktop.settings.json`: this config
-    // file is shared with 舵机, which writes new entries into it, so the file
+    // file is shared with 命令行, which writes new entries into it, so the file
     // itself is the source of truth for `llm`.
     // A fresh desktop must expose the virtual replay model immediately, just
     // like the web model catalogue. Existing user models are preserved.
     ensure_default_virtual_replay_model(config);
 
-    // Keep the shared local engine switches identical to 舵机. They are
+    // Keep the shared local engine switches identical to 命令行. They are
     // persisted once and are not client-specific startup flags.
     config.channels.enabled = true;
     config.channels.outbox.worker_enabled = true;
@@ -1689,7 +1689,7 @@ fn apply_desktop_defaults(
     }
     ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "计划面板");
     if cfg!(target_os = "android") {
-        // 茧 shares the local engine but has no window manager, mouse or
+        // 安卓版 shares the local engine but has no window manager, mouse or
         // keyboard. The Android shell installs the phone-control host; a
         // persisted desktop switch from an older build must not revive the
         // desktop tool on the phone.
@@ -1714,6 +1714,12 @@ fn apply_desktop_defaults(
         ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "桌面控制");
     }
     config.tools.browser.enabled = true;
+    // 安卓版 runs the phone's system WebView instead of a packaged Chromium; the
+    // Android shell swaps the provider before the first thread is created.
+    #[cfg(target_os = "android")]
+    {
+        config.browser.provider = "android-webview".to_string();
+    }
     // Browser tools now come from the active provider's native surface and are
     // auto-registered, so the legacy Chinese sub-tool whitelist entries are gone.
 
@@ -2112,7 +2118,7 @@ fn migrate_local_workspaces(state: &AppState, user_id: &str, legacy_root: &Path)
 
 /// Merge historic workspace rows which name the same real folder using
 /// different serialized paths (most commonly Windows `\\?\\` versus the plain
-/// canonical path).  蛹 and 舵机 share this database, so leaving both rows
+/// canonical path).  桌面版 and 命令行 share this database, so leaving both rows
 /// splits the same project in the desktop sidebar and causes new CLI threads
 /// to land under a second id. Keep the first row in sidebar order as the stable
 /// id and move all threads before deleting its duplicate. Runtime root bindings
@@ -2314,7 +2320,7 @@ fn log_startup_point(enabled: bool, scope: &str, point: &str, startup_boot: Inst
     ));
 }
 
-/// 蛹 是 GUI 进程，`info!` 在桌面形态没有 subscriber、`eprintln!` 也没有控制台，
+/// 桌面版 是 GUI 进程，`info!` 在桌面形态没有 subscriber、`eprintln!` 也没有控制台，
 /// 启动耗时因此无从查看——用户只能体感"很久"。这里把桌面启动里程碑同时写进
 /// `<home>/logs/startup.log`（按大小轮换，单次启动几十行），报障时直接取该文件。
 fn record_startup_line(line: &str) {

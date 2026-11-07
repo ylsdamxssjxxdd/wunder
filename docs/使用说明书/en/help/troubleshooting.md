@@ -17,7 +17,7 @@ Find the cause by symptom, then read the logs.
 ### Login Fails or Access Denied
 
 - Whether your username and password are correct
-- Whether you used the wrong entry point for the Bridge and the Beehive
+- Whether you used the wrong entry point for the Admin and the Cloud
 - Whether your account is disabled
 
 ### Configuration Changes Not Taking Effect

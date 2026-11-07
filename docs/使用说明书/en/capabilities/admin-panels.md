@@ -1,12 +1,12 @@
 ---
-title: Bridge Panel Guide
+title: Admin Panel Guide
 summary: What each panel in the four groups manages, plus the throughput-test, simulated-model, and random-simulator conventions.
 updated_at: 2026-10-16
 ---
 
-The Bridge is reached at its own address: open the Bridge URL in a browser and sign in with an administrator account, and the management panels are available. The exact address is fixed at deployment time; ask whoever deployed the system or check the deployment documentation. Panels are organized into four groups: system, agent, debug, and documentation.
+The Admin is reached at its own address: open the Admin URL in a browser and sign in with an administrator account, and the management panels are available. The exact address is fixed at deployment time; ask whoever deployed the system or check the deployment documentation. Panels are organized into four groups: system, agent, debug, and documentation.
 
-The Bridge holds the highest privileges in the system:
+The Admin holds the highest privileges in the system:
 
 - Only authorized administrators can access it
 - Administrator passwords should be strong
@@ -76,7 +76,7 @@ The quota actions inside a user's settings:
 - **Deduct quota**: reduces the balance and records the cumulative amount consumed
 - Administrator accounts are not subject to balance limits
 
-The online status in the user list is split by client: Beehive (web), Pupa (desktop), and Helm (command line).
+The online status in the user list is split by client: Cloud (web), Desktop, and CLI (command line).
 
 Adding a new user:
 
@@ -158,7 +158,7 @@ Replay follows the tool-calling mode: `function_call` uses the native tool chann
 
 ### Round conventions of the random simulator
 
-With no replay log available, the random simulator follows conventions carried by the human input of the current turn. They behave identically in every form (蛹, 蜂巢, 舵机):
+With no replay log available, the random simulator follows conventions carried by the human input of the current turn. They behave identically in every form (桌面版, 云端版, 命令行):
 
 - Rounds: the first number in the input sets the model rounds for this turn and may carry an `s` / `轮` / `次` suffix (`12`, `12轮`, `1s` all read as 12 or 1). The value is capped at 2000 and anything below 1 counts as 1. Only the human input of the current turn is read — never history, so context compaction cannot change the plan mid-turn.
 - Spawning a subagent: an input containing `subagent`, the shorthand `s` / `sub`, `子智能体` / `子代理`, or a number followed directly by `s` (`1s`) makes the first model round emit a real subagent dispatch (`spawn` or `batch_spawn`). Such turns span at least two rounds — one to dispatch, one to close — so `1s` still spawns the child before answering.

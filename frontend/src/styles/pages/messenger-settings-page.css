@@ -142,7 +142,7 @@
   mask-image: url('../../assets/fluent-brain.svg');
 }
 
-/* 分类图标与蛹设置导航同一套描边源（lucide / tabler，文件同名）。 */
+/* 分类图标与桌面版设置导航同一套描边源（lucide / tabler，文件同名）。 */
 .messenger-settings-frame-nav-icon-svg-sliders-horizontal {
   -webkit-mask-image: url('../../assets/lc-sliders-horizontal.svg');
   mask-image: url('../../assets/lc-sliders-horizontal.svg');

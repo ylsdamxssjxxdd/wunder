@@ -1,7 +1,7 @@
-//! Interlink tunnel for the resident 舵机 session (互通方案 §7.3, I9).
+//! Interlink tunnel for the resident 命令行 session (互通方案 §7.3, I9).
 //!
 //! The tunnel engine lives in the runtime (`wunder_server::interlink::client`);
-//! this module is only the CLI's own surface: whether a 舵机 may open a link,
+//! this module is only the CLI's own surface: whether a 命令行 may open a link,
 //! how its state is worded in the TUI, and what happens to a remote approval
 //! when nothing can answer it. It starts no chain of its own and never keeps a
 //! second client — the engine's process-wide singleton is the only one.

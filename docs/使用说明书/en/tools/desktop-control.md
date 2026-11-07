@@ -18,7 +18,7 @@ All three must hold:
 2. You are in desktop mode and have explicitly turned the desktop control switch on (it is off by default).
 3. The current model supports vision; otherwise desktop control and the image-reading tool are both filtered out.
 
-Across the forms: the Pupa (desktop mode) lists this tool in its extra-enabled set by default; under the Hull, Beehive, and Helm forms desktop control is unavailable.
+Across the forms: the Desktop (desktop mode) lists this tool in its extra-enabled set by default; under the Server, Cloud, and CLI forms desktop control is unavailable.
 
 ## Arguments
 

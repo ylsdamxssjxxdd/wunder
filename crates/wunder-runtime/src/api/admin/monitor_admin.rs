@@ -102,7 +102,7 @@ async fn admin_monitor(
     let system_ms = stage_started_at.elapsed().as_millis();
     stage_started_at = Instant::now();
     let mut sessions = state.monitor.list_sessions(active_only);
-    // 线程管理页展示「线程名称」：线程名称即用户在蜂巢中的会话标题，监控摘要
+    // 线程管理页展示「线程名称」：线程名称即用户在云端版中的会话标题，监控摘要
     // 本身只带首条问题，这里按所属用户和线程身份批量读取标题回填 thread_name。
     attach_thread_names(&state, &mut sessions).await?;
     let sessions_ms = stage_started_at.elapsed().as_millis();
@@ -195,7 +195,7 @@ async fn admin_monitor(
     Ok(response)
 }
 
-/// 线程管理页展示「线程名称」与「问题」。名称取用户在蜂巢中的会话标题；
+/// 线程管理页展示「线程名称」与「问题」。名称取用户在云端版中的会话标题；
 /// 问题取线程首条用户消息。诊断持久化不保存正文，历史会话的摘要因此没有
 /// 问题字段，这里按线程身份从 canonical 历史批量回填；两处都取不到时，
 /// 名称回退为该线程的问题。

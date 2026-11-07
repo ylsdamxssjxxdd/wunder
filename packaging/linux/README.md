@@ -9,34 +9,34 @@
 - `opt/7zip`：随包附带的 7-Zip 25.01 官方静态命令行版（`bin/7zz`，`bin/7z` 为其符号链接），压缩包归档工具（含 `.7z`/`.rar` 解压）由它提供
 - `opt/browser`：Linux amd64 内置 Google Chrome for Testing 122.0.6261.111；Linux arm64 内置 Playwright Chromium 120.0.6099.28，供 `browser_*` 工具离线使用
 
-补充包设计目标与 Win7 版一致：**统一安装到 `WUNDER_HOME/opt`，蛹与舵机共用一份运行环境**。
+补充包设计目标与 Win7 版一致：**统一安装到 `WUNDER_HOME/opt`，桌面版与命令行共用一份运行环境**。
 
-- 推荐在蛹设置中选择“导入补充包”，默认写入 `~/.wunder/opt/`，导入后蛹新启动的工具立即生效。
-- 手动安装时，关闭使用该补充包的进程，将压缩包解压到 `${WUNDER_HOME:-$HOME/.wunder}`，使其下直接出现 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/7zip`，再启动蛹或舵机。
-- `.run` 安装包与 `-portable` 便携包共用这个可写用户目录；新导入始终写入共享 home，不自动搬迁旧文件。
+- 推荐在桌面版设置中选择“导入补充包”，默认写入 `~/.wunder/opt/`，导入后桌面版新启动的工具立即生效。
+- 手动安装时，关闭使用该补充包的进程，将压缩包解压到 `${WUNDER_HOME:-$HOME/.wunder}`，使其下直接出现 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/7zip`，再启动桌面版或命令行。
+- `.run` 安装包与 `.portable` 便携包共用这个可写用户目录；新导入始终写入共享 home，不自动搬迁旧文件。
 
 ## 安装器打包
 
-先构建蛹（AppDir 目录归档）和舵机（ELF），再准备补充包 `.tar.gz`，然后执行：
+先构建桌面版（AppDir 目录归档）和命令行（ELF），再准备补充包 `.tar.gz`，然后执行：
 
 ```bash
-bash build.sh pack -a linux-amd64
+bash build.sh pack -a linux-x64
 bash build.sh pack -a linux-arm64
 ```
 
-安装器默认使用 `wunder-slint-<版本>-linux-<arch>.tar.gz`（AppDir 的目录归档）作为桌面载荷：安装时直接解压到 `<安装根>/app/desktop`，**不需要 FUSE、不需要 libfuse2、不需要 /dev/fuse，也不经过 AppImage runtime**，因此 Ubuntu 24.04 这类只带 fuse3 的系统装完即可运行，启动也省掉 squashfs 挂载。免安装场景改用 `build.sh portable` 产出的 `wunder-<版本>-<x64|arm64>.portable`：单文件、首次启动解压到同一布局，同样不依赖 FUSE。
+安装器默认使用 `wunder-desktop-<版本>-linux-<x64|arm64>.tar.gz`（AppDir 的目录归档）作为桌面载荷：安装时直接解压到 `<安装根>/app/desktop`，**不需要 FUSE、不需要 libfuse2、不需要 /dev/fuse，也不经过 AppImage runtime**，因此 Ubuntu 24.04 这类只带 fuse3 的系统装完即可运行，启动也省掉 squashfs 挂载。免安装场景改用 `build.sh portable` 产出的 `wunder-desktop-<版本>-linux-<x64|arm64>.portable`：单文件、首次启动解压到同一布局，同样不依赖 FUSE。
 
-Windows 上也可以执行 `build.bat pack -a linux-amd64`；组包器是 Python 3.6+ 脚本，不需要 Docker、Rust 工具链或网络。Windows 上优先复用离线 SDK 的 `Rust-builder/win7/offline/tools/python/python.exe`（Python 3.8.10 embeddable），宿主未安装 Python 也能离线组包；Linux 宿主使用系统 `python3`。输入默认从 `target/slint/dist/linux-<arch>`、`target/cli/dist/linux-<arch>`、`dist/linux-<arch>`、`target/installer/payload/linux-<arch>` 和 `temp_dir/linux-supplement/dist` 查找，可用 `--desktop-archive`、`--cli`、`--supplement` 覆盖。产物是单文件 `target/installer/dist/linux-<arch>/wunder-<版本>-<x64|arm64>.run`，同时生成 `.sha256` 与 `.manifest.json`（`desktopFormat` 字段注明实际载荷形态）。
+Windows 上也可以执行 `build.bat pack -a linux-x64`；组包器是 Python 3.6+ 脚本，不需要 Docker、Rust 工具链或网络。Windows 上优先复用离线 SDK 的 `Rust-builder/win7/offline/tools/python/python.exe`（Python 3.8.10 embeddable），宿主未安装 Python 也能离线组包；Linux 宿主使用系统 `python3`。输入默认从 `target/slint/dist/linux-<arch>`、`target/cli/dist/linux-<arch>`、`dist/linux-<arch>`、`target/installer/payload/linux-<arch>` 和 `temp_dir/linux-supplement/dist` 查找，可用 `--desktop-archive`、`--cli`、`--supplement` 覆盖。产物是单文件 `target/installer/dist/linux-<arch>/wunder-desktop-<版本>-linux-<x64|arm64>.run`，同时生成 `.sha256` 与 `.manifest.json`（`desktopFormat` 字段注明实际载荷形态）。
 
 运行 `.run` 后：
 
 - 默认安装到 `~/.wunder`；改目录用 `--home=PATH`（或预先设置非空的 `WUNDER_HOME`），不再交互询问。
 - 交互模式只有一屏：列出安装目录与补充组件，数字切换勾选、`a` 全选、`n` 清空、`q` 退出，回车即开始安装。首次安装没有额外确认；检测到已有安装时只问一次（替换程序文件和已选组件目录，配置、会话、工作区保留）。
 - 补充组件默认全选（`--yes` 静默安装即装全部）；`--components=python,git` 可只装列出的组件，`--all` 为显式全选（保留给脚本表达）。不带参数且 stdin 不是终端时会拒绝继续，避免在脚本里卡住。
-- 安装过程只输出阶段信息，结束时给出一份固定摘要（蛹 / 舵机 / 组件 / 命令 / 入口 / 卸载）。
+- 安装过程只输出阶段信息，结束时给出一份固定摘要（桌面版 / 命令行 / 组件 / 命令 / 入口 / 卸载）。
 - 安装根会写入 `.wunder-home`。桌面程序本体解压在 `app/desktop`（AppDir 结构，含 `AppRun`、`usr/bin`、`usr/lib` 与默认 `config`），`bin/wunder-desktop` 启动器会导出 `WUNDER_HOME=<安装根>` 后执行 `app/desktop/AppRun`；直接运行 `AppRun` 或 `bin/wunder-cli` 时，运行时也会通过标记文件识别安装根。显式设置的非空 `WUNDER_HOME` 优先。`bin/wunder` 是 `wunder-cli` 的兼容符号链接。
-- 安装器会在 `~/.local/bin` 创建 `wunder-cli`、`wunder-desktop` 和 `desktop` 三个命令链接；若 `~/.profile` 未包含该目录，会追加一段带标记的 `PATH` 设置。新开终端即可直接运行，舵机以启动目录作为工作区（`-C` 可覆盖）。
-- 默认注册名称为“蛹”的应用菜单项，并在 XDG 桌面目录（系统语言为中文时通常是 `~/桌面`，英文为 `~/Desktop`）创建可执行的 `wunder.desktop` 启动图标；`--no-desktop-entry` 和 `--no-desktop-icon` 可分别跳过。重装会先清理上一次安装的入口，卸载时一并移除。
+- 安装器会在 `~/.local/bin` 创建 `wunder-cli`、`wunder-desktop` 和 `desktop` 三个命令链接；若 `~/.profile` 未包含该目录，会追加一段带标记的 `PATH` 设置。新开终端即可直接运行，命令行以启动目录作为工作区（`-C` 可覆盖）。
+- 默认注册名称为“wunder 桌面版”的应用菜单项，并在 XDG 桌面目录（系统语言为中文时通常是 `~/桌面`，英文为 `~/Desktop`）创建可执行的 `wunder.desktop` 启动图标；`--no-desktop-entry` 和 `--no-desktop-icon` 可分别跳过。重装会先清理上一次安装的入口，卸载时一并移除。
 - 配置、会话、工作区、日志和 `opt/` 都在安装根下。选中已存在的组件会先清空对应 `opt/<component>`，用户数据不删除。
 - 卸载执行 `<安装根>/uninstall.sh`，保留用户数据；它只移除指向本安装根的命令链接、安装器追加的 `PATH` 标记块、应用菜单项、桌面图标、`bin`、`app/desktop` 和本次选择的组件。
 

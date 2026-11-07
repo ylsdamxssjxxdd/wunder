@@ -1,6 +1,6 @@
 {
-  "desktop": "蛹 {version}（桌面端）",
-  "cli": "舵机 {version}（命令行）",
+  "desktop": "wunder 桌面版 {version}",
+  "cli": "wunder 命令行 {version}",
   "python": "Python {version} + 常用库",
   "git": "Git {version}",
   "rg": "ripgrep {version}",

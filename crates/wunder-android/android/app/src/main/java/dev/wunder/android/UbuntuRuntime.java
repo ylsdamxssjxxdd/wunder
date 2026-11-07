@@ -23,7 +23,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Bundled proot Ubuntu runtime for 茧.
+ * Bundled proot Ubuntu runtime for 安卓版.
  *
  * <p>The rootfs and the proot/busybox binaries ship inside the APK. The first
  * install copies them into the app's private directory, extracts the rootfs
@@ -44,7 +44,16 @@ public final class UbuntuRuntime {
     /// same tree, so python/git/ffmpeg need no network or package manager.
     private static final String PACK_ASSET = "ubuntu/packs/common.tar.xz";
     private static final String PACK_MARKER = ".wunder_pack_common";
-    private static final String PACK_VERSION = "1";
+    /// v4 expands the pack with the Android image/recovery/network toolbox;
+    /// bumping the marker re-extracts it on devices that already unpacked v3.
+    private static final String PACK_VERSION = "4";
+    /// Optional browser overlay: Playwright plus an offline Chromium build.
+    /// Kept separate from the common pack so device installs without browser
+    /// automation do not pay for several hundred megabytes.
+    private static final String BROWSER_PACK_ASSET = "ubuntu/packs/browser.tar.xz";
+    private static final String BROWSER_PACK_MARKER = ".wunder_pack_browser";
+    private static final String BROWSER_PACK_VERSION = "2";
+    private static final String WHEELS_DIR = "opt/wunder/wheels";
     /// Command name -> native library packaged in jniLibs. The binaries have to
     /// stay in the package-managed library directory: Android rejects execve on
     /// app-private files. Test builds add the Termux proot runtime and its
@@ -89,6 +98,36 @@ public final class UbuntuRuntime {
         return app == null ? "" : wrapperFile().getAbsolutePath();
     }
 
+    /// Host path of the proot python wrapper, or empty until the runtime is
+    /// installed. The browser bridge is spawned by the app process, which has
+    /// no host interpreter, so it launches this script through /system/bin/sh.
+    public static String pythonPath() {
+        if (app == null || !isInstalled()) {
+            return "";
+        }
+        return pythonWrapperFile().getAbsolutePath();
+    }
+
+    /// True when the optional browser overlay is installed. `WUNDER_BROWSER_BIN`
+    /// is only published in that case.
+    public static boolean browserInstalled() {
+        if (app == null || !isInstalled()) {
+            return false;
+        }
+        try {
+            return BROWSER_PACK_VERSION.equals(
+                    readText(new File(rootfsDir(), BROWSER_PACK_MARKER)).trim());
+        } catch (IOException error) {
+            return false;
+        }
+    }
+
+    /// Guest path of the bundled Chromium. proot binds the rootfs at `/`, so
+    /// this is also the path the bridge sees after entering the wrapper.
+    public static String browserExecutablePath() {
+        return "/opt/browser/chrome-linux/chrome";
+    }
+
     /** Start a background install. Safe to call repeatedly; only one install runs. */
     public static void install() {
         if (app == null) {
@@ -98,7 +137,7 @@ public final class UbuntuRuntime {
             if (installing) {
                 return;
             }
-            if (isInstalled() && packsInstalled()) {
+            if (isInstalled() && packsInstalled() && browserPackInstalled()) {
                 detect();
                 return;
             }
@@ -127,13 +166,12 @@ public final class UbuntuRuntime {
                 // process start, not just on the first install.
                 linkTools(new File(app.getFilesDir(), "usr/bin"));
                 writeWrapper();
-                if (!packsInstalled()) {
-                    // The rootfs survived an app update but the bundled tool
-                    // pack was added or replaced; extract it before reporting
-                    // the runtime ready.
+                if (!packsInstalled() || !browserPackInstalled()) {
+                    // The rootfs survived an app update but a bundled pack was
+                    // added or replaced; extract it before reporting ready.
                     state = "missing";
                     progress = 0;
-                    stage = "待安装常用工具";
+                    stage = !packsInstalled() ? "待安装常用工具" : "待安装浏览器组件";
                     lastError = "";
                     return;
                 }
@@ -169,16 +207,19 @@ public final class UbuntuRuntime {
             File files = app.getFilesDir();
             File rootfs = rootfsDir();
             if (isInstalled()) {
-                // A previous version installed the base rootfs before the
-                // offline tool pack existed. Only the pack extraction is left.
-                setStage("准备安装常用工具…", 4);
-                installPacks(files, rootfs, 4, 98);
+                // A previous version installed the base rootfs before an
+                // offline pack existed. Only the missing pack extraction is left.
+                setStage("准备安装补充包…", 4);
+                installPacks(files, rootfs, 4, 88);
+                installBrowserPack(files, rootfs, 88, 98);
+                writeWrapper();
                 if (version.isEmpty()) {
                     version = readVersion(rootfs);
                 }
                 progress = 100;
                 stage = "已安装 " + (version.isEmpty() ? "Ubuntu" : version)
-                        + (packsInstalled() ? " + 常用工具" : "");
+                        + (packsInstalled() ? " + 常用工具" : "")
+                        + (browserPackInstalled() ? " + 浏览器" : "");
                 state = "installed";
                 lastError = "";
                 return;
@@ -190,7 +231,10 @@ public final class UbuntuRuntime {
                 throw new IOException("内置 Ubuntu 仅支持 arm64 设备（当前 " + primaryAbi() + "）");
             }
             long free = new StatFs(files.getAbsolutePath()).getAvailableBytes();
-            long need = hasAsset(PACK_ASSET) ? 750L * 1024 * 1024 : 400L * 1024 * 1024;
+            long need = hasAsset(PACK_ASSET) ? 2000L * 1024 * 1024 : 400L * 1024 * 1024;
+            if (hasAsset(BROWSER_PACK_ASSET)) {
+                need += Math.max(assetLength(BROWSER_PACK_ASSET) * 3, 300L * 1024 * 1024);
+            }
             if (free < need) {
                 throw new IOException("存储空间不足，安装 Ubuntu 至少需要约 "
                         + (need / (1024 * 1024)) + " MB（当前可用 "
@@ -249,10 +293,14 @@ public final class UbuntuRuntime {
             version = readVersion(rootfs);
             progress = 85;
             stage = "Ubuntu 基础环境已就绪，正在安装常用工具…";
-            installPacks(files, rootfs, 85, 100);
+            installPacks(files, rootfs, 85, 94);
+            stage = "正在安装浏览器组件…";
+            installBrowserPack(files, rootfs, 94, 100);
+            writeWrapper();
             progress = 100;
             stage = "已安装 " + (version.isEmpty() ? "Ubuntu" : version)
-                    + (packsInstalled() ? " + 常用工具" : "");
+                    + (packsInstalled() ? " + 常用工具" : "")
+                    + (browserPackInstalled() ? " + 浏览器" : "");
             state = "installed";
             lastError = "";
             Log.i(TAG, "ubuntu runtime installed: " + version + " flags=" + prootFlags);
@@ -435,30 +483,37 @@ public final class UbuntuRuntime {
             return;
         }
         if (!hasAsset(PACK_ASSET)) {
+            // Dev builds without the pack must not re-enter the installer on
+            // every launch; the marker is invalidated as soon as a later build
+            // ships the asset again.
+            writeText(new File(rootfs, PACK_MARKER), "absent\n");
             Log.w(TAG, "offline tool pack missing; runtime starts without common tools");
             return;
         }
         long expected = assetLength(PACK_ASSET);
         long free = new StatFs(files.getAbsolutePath()).getAvailableBytes();
-        if (expected > 0 && free < expected * 2 + 64L * 1024 * 1024) {
+        if (expected > 0 && free < expected * 7 + 256L * 1024 * 1024) {
             throw new IOException("存储空间不足，安装常用工具至少需要约 "
-                    + ((expected * 2 + 64L * 1024 * 1024) / (1024 * 1024)) + " MB");
+                    + ((expected * 7 + 256L * 1024 * 1024) / (1024 * 1024)) + " MB");
         }
         File archives = new File(files, "ubuntu-packs");
         mkdirs(archives);
         File archive = new File(archives, "common.tar.xz");
-        int copyEnd = basePct + Math.max(2, (spanPct - basePct) / 5);
-        int extractBase = basePct + Math.max(3, (spanPct - basePct) / 4);
+        int span = spanPct - basePct;
+        int copyEnd = basePct + Math.max(2, span / 6);
+        int extractBase = basePct + Math.max(3, span / 5);
+        int extractEnd = basePct + Math.max(span * 2 / 3, extractBase - basePct);
         try {
             setStage("写入常用工具包…", basePct);
             copyAsset(app.getAssets(), PACK_ASSET, archive, expected,
                     basePct, copyEnd, "写入常用工具包…");
             setStage("正在安装常用工具…", extractBase);
             extractPack(new File(files, "usr/bin"), archive, rootfs, files,
-                    extractBase, Math.max(extractBase, spanPct - 2));
+                    extractBase, extractEnd, "常用工具");
+            installPythonWheels(files, rootfs, extractEnd, Math.max(extractEnd, spanPct - 1));
             writeText(new File(rootfs, PACK_MARKER), PACK_VERSION + "\n");
-            setStage("常用工具已就绪", spanPct);
-            Log.i(TAG, "offline tool pack installed: python/git/rg/ffmpeg/7zip");
+            setStage("常用工具与 Python 库已就绪", spanPct);
+            Log.i(TAG, "offline packs installed: python/git/rg/ffmpeg/7zip + python libraries");
         } finally {
             //noinspection ResultOfMethodCallIgnored
             archive.delete();
@@ -466,8 +521,89 @@ public final class UbuntuRuntime {
         }
     }
 
+    /**
+     * Install the bundled wheelhouse without a network. The pack carries the
+     * wheels and a pinned requirements file; pip only reads local files, so the
+     * first launch stays fully offline.
+     */
+    private static void installPythonWheels(File files, File rootfs, int basePct, int spanPct)
+            throws IOException {
+        File wheels = new File(rootfs, WHEELS_DIR);
+        File requirements = new File(wheels, "requirements-android.txt");
+        if (!requirements.isFile()) {
+            Log.w(TAG, "python wheelhouse missing; skipping library install");
+            return;
+        }
+        setStage("正在安装 Python 库…", basePct);
+        List<String> command = new ArrayList<>();
+        command.add(binProot().getAbsolutePath());
+        command.add("-0");
+        command.add("-r");
+        command.add(rootfs.getAbsolutePath());
+        File flagsFile = new File(files, "usr/proot.flags");
+        String flags = flagsFile.isFile() ? readText(flagsFile).trim() : "";
+        if (!flags.isEmpty()) {
+            command.add(flags);
+        }
+        command.add("-w");
+        command.add("/");
+        command.add("/usr/bin/env");
+        command.add("-i");
+        command.add("HOME=/root");
+        command.add("PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+        command.add("/bin/bash");
+        command.add("-lc");
+        command.add("python3 -m pip install --break-system-packages --no-cache-dir "
+                + "--disable-pip-version-check --no-index --find-links /opt/wunder/wheels "
+                + "-r /opt/wunder/wheels/requirements-android.txt");
+        ProcessBuilder builder = new ProcessBuilder(command);
+        builder.environment().put("PROOT_LOADER", new File(files, "usr/bin/loader").getAbsolutePath());
+        builder.environment().put("PROOT_TMP_DIR", new File(files, "tmp").getAbsolutePath());
+        File libtalloc = new File(files, "usr/bin/libtalloc.so.2");
+        if (libtalloc.isFile()) {
+            builder.environment().put("LD_LIBRARY_PATH", libtalloc.getParentFile().getAbsolutePath());
+        }
+        builder.redirectErrorStream(true);
+        Process process = builder.start();
+        int count = 0;
+        StringBuilder tail = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                count += 1;
+                if (line.startsWith("ERROR") || line.contains("Successfully installed")) {
+                    tail.append(line).append('\n');
+                    if (tail.length() > 800) {
+                        tail.delete(0, tail.length() - 800);
+                    }
+                }
+                if ((count & 15) == 0) {
+                    setStage("正在安装 Python 库…（" + count + " 行）",
+                            Math.min(spanPct, basePct + count / 20));
+                }
+            }
+        }
+        int exit;
+        try {
+            if (!process.waitFor(1800, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                throw new IOException("安装 Python 库超时");
+            }
+            exit = process.exitValue();
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new IOException("安装 Python 库被中断");
+        }
+        if (exit != 0) {
+            String detail = tail.length() == 0 ? "" : "：" + tail.toString().trim();
+            throw new IOException("安装 Python 库失败（退出码 " + exit + "）" + detail);
+        }
+        Log.i(TAG, "python wheelhouse installed from local wheels");
+    }
+
     private static void extractPack(File bin, File archive, File rootfs, File files,
-                                    int basePct, int spanPct) throws IOException {
+                                    int basePct, int spanPct, String label) throws IOException {
         List<String> command = new ArrayList<>(Arrays.asList(
                 new File(bin, "proot").getAbsolutePath(),
                 "-0", "-r", "/", "--link2symlink", "-w", "/",
@@ -497,7 +633,7 @@ public final class UbuntuRuntime {
                 }
                 if ((count & 255) == 0) {
                     int pct = Math.min(spanPct, basePct + count / 400);
-                    setStage("正在安装常用工具…（" + count + " 项）", pct);
+                    setStage("正在安装" + label + "…（" + count + " 项）", pct);
                 }
             }
         }
@@ -506,14 +642,79 @@ public final class UbuntuRuntime {
             exit = process.waitFor();
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
-            throw new IOException("安装常用工具被中断");
+            throw new IOException("安装" + label + "被中断");
         }
         if (exit != 0) {
             String detail = tail.length() == 0 ? "" : "：" + tail.toString().trim();
-            throw new IOException("安装常用工具失败（退出码 " + exit + "）" + detail);
+            throw new IOException("安装" + label + "失败（退出码 " + exit + "）" + detail);
         }
         if (count == 0) {
-            throw new IOException("常用工具包为空");
+            throw new IOException(label + "包为空");
+        }
+    }
+
+    /**
+     * Optional browser overlay: Playwright wheels and the offline Chromium
+     * tree live under `/opt/browser` (and the Playwright driver under
+     * /usr/local/lib/python3.12/dist-packages). It is a plain tar overlay just
+     * like the common pack, so no package manager runs on the device.
+     */
+    private static void installBrowserPack(File files, File rootfs, int basePct, int spanPct)
+            throws IOException {
+        if (browserPackInstalled()) {
+            setStage("浏览器组件已就绪", spanPct);
+            return;
+        }
+        if (!hasAsset(BROWSER_PACK_ASSET) || !hasAsset(PACK_ASSET)) {
+            writeText(new File(rootfs, BROWSER_PACK_MARKER), "absent\n");
+            Log.w(TAG, "browser pack or its common base missing; browser tools stay unavailable");
+            return;
+        }
+        long expected = assetLength(BROWSER_PACK_ASSET);
+        long free = new StatFs(files.getAbsolutePath()).getAvailableBytes();
+        if (expected > 0 && free < expected * 4 + 128L * 1024 * 1024) {
+            throw new IOException("存储空间不足，安装浏览器组件至少需要约 "
+                    + ((expected * 4 + 128L * 1024 * 1024) / (1024 * 1024)) + " MB");
+        }
+        File archives = new File(files, "ubuntu-packs");
+        mkdirs(archives);
+        File archive = new File(archives, "browser.tar.xz");
+        int copyEnd = basePct + Math.max(2, (spanPct - basePct) / 5);
+        int extractBase = basePct + Math.max(3, (spanPct - basePct) / 4);
+        int extractEnd = Math.max(extractBase, spanPct - 1);
+        try {
+            setStage("写入浏览器组件包…", basePct);
+            copyAsset(app.getAssets(), BROWSER_PACK_ASSET, archive, expected,
+                    basePct, copyEnd, "写入浏览器组件包…");
+            setStage("正在安装浏览器组件…", extractBase);
+            extractPack(new File(files, "usr/bin"), archive, rootfs, files,
+                    extractBase, extractEnd, "浏览器组件");
+            writeText(new File(rootfs, BROWSER_PACK_MARKER), BROWSER_PACK_VERSION + "\n");
+            setStage("浏览器组件已就绪", spanPct);
+            Log.i(TAG, "offline browser pack installed");
+        } finally {
+            //noinspection ResultOfMethodCallIgnored
+            archive.delete();
+        }
+    }
+
+    private static boolean browserPackInstalled() {
+        if (app == null) {
+            return false;
+        }
+        File marker = new File(rootfsDir(), BROWSER_PACK_MARKER);
+        if (!marker.isFile()) {
+            return false;
+        }
+        try {
+            String text = readText(marker).trim();
+            if (BROWSER_PACK_VERSION.equals(text)) {
+                return true;
+            }
+            return "absent".equals(text)
+                    && (!hasAsset(BROWSER_PACK_ASSET) || !hasAsset(PACK_ASSET));
+        } catch (IOException error) {
+            return false;
         }
     }
 
@@ -526,7 +727,11 @@ public final class UbuntuRuntime {
             return false;
         }
         try {
-            return PACK_VERSION.equals(readText(marker).trim());
+            String text = readText(new File(rootfsDir(), PACK_MARKER)).trim();
+            if (PACK_VERSION.equals(text)) {
+                return true;
+            }
+            return "absent".equals(text) && !hasAsset(PACK_ASSET);
         } catch (IOException error) {
             return false;
         }
@@ -638,29 +843,20 @@ public final class UbuntuRuntime {
         }
         File files = app.getFilesDir();
         File wrapper = wrapperFile();
+        File pythonWrapper = pythonWrapperFile();
         File prootFlags = new File(files, "usr/proot.flags");
         String flags = "";
         if (prootFlags.isFile()) {
             flags = readText(prootFlags).trim();
         }
         writeFakeSysdata(rootfsDir());
-        String script = "#!/system/bin/sh\n"
-                + "# Generated by 茧: run a command inside the bundled Ubuntu rootfs.\n"
+        String header = "#!/system/bin/sh\n"
                 + "BIN=\"" + new File(files, "usr/bin").getAbsolutePath() + "\"\n"
                 + "ROOTFS=\"" + rootfsDir().getAbsolutePath() + "\"\n"
                 + "FILES=\"" + files.getAbsolutePath() + "\"\n"
                 + "TMP=\"" + new File(files, "tmp").getAbsolutePath() + "\"\n"
                 + "FLAGS=\"" + flags + "\"\n"
-                + "CMD=\"$2\"\n"
-                + "if [ \"$1\" != \"-lc\" ]; then CMD=\"$*\"; fi\n"
                 + "mkdir -p \"$TMP\" 2>/dev/null\n"
-                + "# Command::current_dir changes the real cwd without updating the\n"
-                + "# inherited PWD variable, so resolve the physical path instead.\n"
-                + "HOST_WD=$(pwd -P 2>/dev/null || pwd)\n"
-                + "GUEST_WD=\"/root\"\n"
-                + "case \"$HOST_WD\" in\n"
-                + "  \"$FILES\"*|/data/data/*|/storage/*|/sdcard*|/data/local/tmp*) GUEST_WD=\"$HOST_WD\" ;;\n"
-                + "esac\n"
                 + "export PROOT_LOADER=\"$BIN/loader\"\n"
                 + "export PROOT_TMP_DIR=\"$TMP\"\n"
                 + "# Test builds stage proot as a dynamically linked Termux binary; its\n"
@@ -670,21 +866,53 @@ public final class UbuntuRuntime {
                 + "BINDS=\"\"\n"
                 + "for p in /dev /proc /sys /data/local/tmp /storage/emulated /sdcard /data/data \"$FILES\"; do\n"
                 + "  if [ -e \"$p\" ]; then BINDS=\"$BINDS -b $p\"; fi\n"
-                + "done\n"
-                + "exec \"$BIN/proot\" -0 -r \"$ROOTFS\" $FLAGS $BINDS \\\n"
+                + "done\n";
+        String proot = "exec \"$BIN/proot\" -0 -r \"$ROOTFS\" $FLAGS $BINDS \\\n"
                 + "  -b \"$ROOTFS/proc/.version:/proc/version\" \\\n"
                 + "  -b \"$ROOTFS/proc/.stat:/proc/stat\" \\\n"
                 + "  -b \"$ROOTFS/proc/.loadavg:/proc/loadavg\" \\\n"
                 + "  -b \"$ROOTFS/proc/.uptime:/proc/uptime\" \\\n"
-                + "  -w \"$GUEST_WD\" \\\n"
+                + "  -w ";
+
+        String shellScript = header
+                + "# Generated by 安卓版: run a command inside the bundled Ubuntu rootfs.\n"
+                + "CMD=\"$2\"\n"
+                + "if [ \"$1\" != \"-lc\" ]; then CMD=\"$*\"; fi\n"
+                + "# Command::current_dir changes the real cwd without updating the\n"
+                + "# inherited PWD variable, so resolve the physical path instead.\n"
+                + "HOST_WD=$(pwd -P 2>/dev/null || pwd)\n"
+                + "GUEST_WD=\"/root\"\n"
+                + "case \"$HOST_WD\" in\n"
+                + "  \"$FILES\"*|/data/data/*|/storage/*|/sdcard*|/data/local/tmp*) GUEST_WD=\"$HOST_WD\" ;;\n"
+                + "esac\n"
+                + proot + "\"$GUEST_WD\" \\\n"
                 + "  /usr/bin/env -i HOME=/root TERM=dumb LANG=C.UTF-8 \\\n"
                 + "  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\\n"
                 + "  WUNDER_UBUNTU=1 \\\n"
                 + "  /bin/bash -lc \"$CMD\"\n";
+
+        // The browser bridge is spawned by the Android host, where no python
+        // exists. This wrapper is read by the system shell (execve on private
+        // files is denied) and runs the rootfs interpreter; the bridge script
+        // itself is reachable because `$FILES` is bound into proot.
+        String pythonScript = header
+                + "# Generated by 安卓版: run the bundled Ubuntu python inside proot.\n"
+                + proot + "\"/root\" \\\n"
+                + "  /usr/bin/env -i HOME=/root TERM=dumb LANG=C.UTF-8 \\\n"
+                + "  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\\n"
+                + "  WUNDER_UBUNTU=1 \\\n"
+                + "  WUNDER_BROWSER_BIN=\"$WUNDER_BROWSER_BIN\" \\\n"
+                + "  PLAYWRIGHT_BROWSERS_PATH=\"$PLAYWRIGHT_BROWSERS_PATH\" \\\n"
+                + "  PYTHONIOENCODING=utf-8 \\\n"
+                + "  /usr/bin/python3 \"$@\"\n";
+
         mkdirs(wrapper.getParentFile());
-        writeText(wrapper, script);
+        writeText(wrapper, shellScript);
         wrapper.setReadable(true, false);
         wrapper.setExecutable(true, false);
+        writeText(pythonWrapper, pythonScript);
+        pythonWrapper.setReadable(true, false);
+        pythonWrapper.setExecutable(true, false);
     }
 
     private static void linkTools(File bin) throws IOException {
@@ -743,6 +971,10 @@ public final class UbuntuRuntime {
         return new File(app.getFilesDir(), "bin/wunder-shell");
     }
 
+    private static File pythonWrapperFile() {
+        return new File(app.getFilesDir(), "bin/wunder-python");
+    }
+
     private static File binProot() {
         return new File(app.getFilesDir(), "usr/bin/proot");
     }
@@ -770,9 +1002,10 @@ public final class UbuntuRuntime {
     }
 
     private static void setStage(String text, int pct) {
+        int clamped = Math.max(0, Math.min(100, pct));
         stage = text;
-        progress = Math.max(0, Math.min(100, pct));
-        Log.i(TAG, pct + "% " + text);
+        progress = clamped;
+        Log.i(TAG, clamped + "% " + text);
     }
 
     private static long assetLength(String name) {

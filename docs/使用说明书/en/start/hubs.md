@@ -1,6 +1,6 @@
 ---
 title: Manual Overview
-summary: The manual's navigation page: start from the Pupa and move into the interfaces, concepts, and other forms by section. Every page in the start and surfaces groups is here.
+summary: The manual's navigation page: start from the Desktop and move into the interfaces, concepts, and other forms by section. Every page in the start and surfaces groups is here.
 read_when:
   - You want the map of the whole manual and where to enter it
   - You are troubleshooting and need to jump to the right form's page
@@ -13,7 +13,7 @@ updated_at: 2026-10-16
 
 # Manual Overview
 
-The starting point is the [Pupa (desktop)](/docs/en/start/desktop/): download the installer and it runs locally, with no Hull to deploy first.
+The starting point is the [Desktop](/docs/en/start/desktop/): download the installer and it runs locally, with no Server to deploy first.
 
 ## Getting started
 
@@ -23,7 +23,7 @@ The starting point is the [Pupa (desktop)](/docs/en/start/desktop/): download th
     <span>Get your first task running in 4 steps.</span>
   </a>
   <a class="docs-card" href="/docs/en/start/desktop/">
-    <strong>Pupa intro</strong>
+    <strong>Desktop intro</strong>
     <span>Download, install, open, go; data stays on your machine, no port taken.</span>
   </a>
   <a class="docs-card" href="/docs/en/start/troubleshooting-first-run/">
@@ -40,15 +40,15 @@ The starting point is the [Pupa (desktop)](/docs/en/start/desktop/): download th
     <span>The four forms' interface division and capability matrix.</span>
   </a>
   <a class="docs-card" href="/docs/en/surfaces/desktop-ui/">
-    <strong>Pupa interface</strong>
+    <strong>Desktop interface</strong>
     <span>The main window's two pages + 12 settings categories + panels and dialogs.</span>
   </a>
   <a class="docs-card" href="/docs/en/surfaces/frontend/">
-    <strong>Beehive interface</strong>
+    <strong>Cloud interface</strong>
     <span>The single-page app in the browser, with two-way voice.</span>
   </a>
   <a class="docs-card" href="/docs/en/surfaces/web-admin/">
-    <strong>Bridge interface</strong>
+    <strong>Admin interface</strong>
     <span>The admin's governance and debugging backend.</span>
   </a>
 </div>
@@ -68,15 +68,15 @@ The starting point is the [Pupa (desktop)](/docs/en/start/desktop/): download th
 
 ## Optional forms
 
-Individual users need only the Pupa; the following are needed only for team collaboration or automation:
+Individual users need only the Desktop; the following are needed only for team collaboration or automation:
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/en/start/server/">
-    <strong>Hull deployment</strong>
-    <span>18000 serves the API and the Bridge; 18001 delivers the Beehive; sandbox on 9001.</span>
+    <strong>Server deployment</strong>
+    <span>18000 serves the API and the Admin; 18001 delivers the Cloud; sandbox on 9001.</span>
   </a>
   <a class="docs-card" href="/docs/en/start/cli/">
-    <strong>Helm usage</strong>
+    <strong>CLI usage</strong>
     <span>An interactive session in the terminal; `exec --json` event stream; the full `cloud` set.</span>
   </a>
 </div>

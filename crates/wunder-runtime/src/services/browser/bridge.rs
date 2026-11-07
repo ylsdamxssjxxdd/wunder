@@ -1102,7 +1102,8 @@ fn build_spawn_command(
     bridge_path: &Path,
     cdp: Option<&CdpOverride>,
 ) -> std::process::Command {
-    let mut command = std::process::Command::new(python_program(config));
+    let program = python_program(config);
+    let mut command = python_command(&program);
     command.arg(bridge_path.to_string_lossy().as_ref());
     if config.headless {
         command.arg("--headless");
@@ -1166,7 +1167,36 @@ fn python_program(config: &EffectiveBrowserConfig) -> String {
     config
         .python_path
         .clone()
+        .or_else(|| {
+            // 安卓版 publishes the proot python wrapper here: the app sandbox has
+            // no host interpreter, so the bridge must enter the bundled
+            // Ubuntu the same way the command tool does.
+            std::env::var("WUNDER_BROWSER_PYTHON")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .or_else(|| {
+            std::env::var("WUNDER_PYTHON_BIN")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
         .unwrap_or_else(|| if cfg!(windows) { "python" } else { "python3" }.to_string())
+}
+
+/// The bridge program, launched the way the platform allows. Android denies
+/// execve on app-private files, so a wrapper script is handed to the system
+/// shell; every other target starts the interpreter directly.
+fn python_command(program: &str) -> std::process::Command {
+    #[cfg(target_os = "android")]
+    {
+        let mut command = std::process::Command::new("/system/bin/sh");
+        command.arg(program);
+        return command;
+    }
+    #[cfg(not(target_os = "android"))]
+    std::process::Command::new(program)
 }
 
 /// A failed cold start earns one CDP retry only when the direct launch itself
@@ -1558,6 +1588,7 @@ pub(crate) fn apply_bridge_environment(
         "PYTHONPATH",
         "LD_LIBRARY_PATH",
         "WUNDER_BROWSER_BIN",
+        "WUNDER_BROWSER_PYTHON",
     ] {
         if let Ok(value) = std::env::var(key) {
             command.env(key, value);

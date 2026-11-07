@@ -1,8 +1,8 @@
 ---
-title: Deploying the Hull (Server)
-summary: An optional form. Multi-tenancy governance, channel integration and agent-app publishing; the Bridge on 18000 and the Beehive delivered on 18001, plus Compose and cargo startup, first login and the post-deployment checklist.
+title: Deploying the Server
+summary: An optional form. Multi-tenancy governance, channel integration and agent-app publishing; the Admin on 18000 and the Cloud delivered on 18001, plus Compose and cargo startup, first login and the post-deployment checklist.
 read_when:
-  - You are deploying the Hull for a team or multiple users
+  - You are deploying the Server for a team or multiple users
   - You need its ports, config precedence, or first-login checklist
 source_docs:
   - crates/wunder-server/src/main.rs
@@ -12,34 +12,34 @@ source_docs:
 updated_at: 2026-10-16
 ---
 
-# Deploying the Hull (Server)
+# Deploying the Server
 
-The Hull (server) is the user-and-agent management platform and an optional form. The Pupa (desktop) is enough for personal use; deploy the Hull only when you need multi-tenancy, user and organization management, channel integration, building and publishing agent apps, and unified gateway scheduling.
+The Server is the user-and-agent management platform and an optional form. The Desktop is enough for personal use; deploy the Server only when you need multi-tenancy, user and organization management, channel integration, building and publishing agent apps, and unified gateway scheduling.
 
 ## Port layout
 
-Once deployed, the Hull provides **three access entries at once** (default ports, all overridable by environment variables):
+Once deployed, the Server provides **three access entries at once** (default ports, all overridable by environment variables):
 
 | Interface | Carrier | Default port |
 | --- | --- | --- |
-| **Hull API** | The Hull service itself | **18000** (overridable with `WUNDER_HOST` / `WUNDER_PORT`) |
-| **Bridge** | The Hull's built-in native admin pages, no build needed | The same port as the Hull, 18000 |
-| **Beehive** | A standalone frontend app, built and delivered by the web-service container | A separate container, **18001** (overridable with `NGINX_PORT`) |
+| **Server API** | The Server service itself | **18000** (overridable with `WUNDER_HOST` / `WUNDER_PORT`) |
+| **Admin** | The Server's built-in native admin pages, no build needed | The same port as the Server, 18000 |
+| **Cloud** | A standalone frontend app, built and delivered by the web-service container | A separate container, **18001** (overridable with `NGINX_PORT`) |
 
-Note: **the Beehive is not hosted by the Hull.** The Hull process only serves the Bridge pages and directories such as avatars and ppt; the Beehive is delivered by a standalone web-service container on 18001.
+Note: **the Cloud is not hosted by the Server.** The Server process only serves the Admin pages and directories such as avatars and ppt; the Cloud is delivered by a standalone web-service container on 18001.
 
 Other related service ports: sandbox mode 9001, onlyoffice 18080, drawio 18081, PostgreSQL 5432, extra-mcp 18004.
 
 ## Prerequisites
 
-| Scenario | Choose the Hull |
+| Scenario | Choose the Server |
 | --- | --- |
 | Several people sharing one system | ✅ |
-| Need an admin backend (the Bridge) | ✅ |
+| Need an admin backend (the Admin) | ✅ |
 | Need to connect channels such as Feishu, WeCom, and QQ Bot | ✅ |
 | Need unified governance, auditing, and quotas | ✅ |
 | Need to build and publish agent apps | ✅ |
-| Just personal use | ❌ Choose the Pupa (desktop) |
+| Just personal use | ❌ Choose the Desktop |
 
 ## Before deploying
 
@@ -62,22 +62,22 @@ docker compose -f docker-compose-x86.yml up -d
 docker compose -f docker-compose-arm.yml up -d
 ```
 
-This starts the Hull service (18000 by default), the sandbox (9001, with `/health`), onlyoffice (18080), drawio (18081), extra-mcp, PostgreSQL (5432), the Beehive frontend build container, and the web-service container (18001).
+This starts the Server service (18000 by default), the sandbox (9001, with `/health`), onlyoffice (18080), drawio (18081), extra-mcp, PostgreSQL (5432), the Cloud frontend build container, and the web-service container (18001).
 
 ## Running locally (cargo)
 
 ```bash
-# 1. Build the Beehive frontend
+# 1. Build the Cloud frontend
 npm run build:frontend
 
-# 2. Start the Hull (reads config/wunder.yaml by default, or the path given by WUNDER_CONFIG_PATH)
+# 2. Start the Server (reads config/wunder.yaml by default, or the path given by WUNDER_CONFIG_PATH)
 cargo run -p wunder-server
 
 # Override the port
 WUNDER_HOST=127.0.0.1 WUNDER_PORT=18000 cargo run -p wunder-server
 ```
 
-Configuration load order: first the file named by `WUNDER_CONFIG_PATH`, else `config/wunder.yaml`; `${ENV}` placeholders in the YAML are expanded; environment variables have the highest priority and take effect last; missing fields are filled in from the example template. Note: the Rust process **does not load `.env`** — `.env` is only consumed by the compose and script layers; set real environment variables for the Hull process itself.
+Configuration load order: first the file named by `WUNDER_CONFIG_PATH`, else `config/wunder.yaml`; `${ENV}` placeholders in the YAML are expanded; environment variables have the highest priority and take effect last; missing fields are filled in from the example template. Note: the Rust process **does not load `.env`** — `.env` is only consumed by the compose and script layers; set real environment variables for the Server process itself.
 
 Known issue: starting directly with `config/wunder-example.yaml` fails to parse and silently falls back to the default configuration — point explicitly at `config/wunder.yaml`, or name it with `WUNDER_CONFIG_PATH`.
 
@@ -85,9 +85,9 @@ Known issue: starting directly with `config/wunder-example.yaml` fails to parse 
 
 | Entry | Address |
 | --- | --- |
-| Bridge (admin interface) | `http://<host>:18000/` |
+| Admin (admin interface) | `http://<host>:18000/` |
 | API | `http://<host>:18000/wunder/*` |
-| Beehive (user interface) | `http://<host>:18001/` |
+| Cloud (user interface) | `http://<host>:18001/` |
 | MCP server | `http://<host>:18000/wunder/mcp` |
 | External workflows | `http://<host>:18000/wunder/external/workflow*` |
 | Health check | `GET http://<host>:18000/wunder/i18n` |
@@ -101,17 +101,17 @@ Passwords are stored with Argon2 encryption; login tokens are opaque random stri
 ## Post-deployment checklist
 
 1. **Change the admin password**
-2. **Bridge → Model configuration**: add LLM / TTS / image / video model endpoints and API keys
-3. **Bridge → Organization management**: confirm the organization tree (up to 4 levels deep), importing `config/org_units.json` if needed
-4. **Bridge → Preset agents**: create preset agent card templates that declare which fields users may customize
-5. **Bridge → User management**: add users or open self-service registration
+2. **Admin → Model configuration**: add LLM / TTS / image / video model endpoints and API keys
+3. **Admin → Organization management**: confirm the organization tree (up to 4 levels deep), importing `config/org_units.json` if needed
+4. **Admin → Preset agents**: create preset agent card templates that declare which fields users may customize
+5. **Admin → User management**: add users or open self-service registration
 6. **For channel integration**: Feishu / WeCom / WeChat / QQ Bot / WhatsApp Cloud / weixin / xmpp (7 provided by default)
-7. **Watch health**: the Bridge's "internal status" page, and the `/wunder/admin/monitor` interface
+7. **Watch health**: the Admin's "internal status" page, and the `/wunder/admin/monitor` interface
 
 ## Multi-tenancy and governance
 
 - Users and organizations managed in layers; permissions assigned by role (admin / leader / user), with data isolated by user and agent
-- Online status shown in three columns: Beehive / Pupa / Helm
+- Online status shown in three columns: Cloud / Desktop / CLI
 - User levels and quotas (up to 200 levels)
 
 ## Channel integration

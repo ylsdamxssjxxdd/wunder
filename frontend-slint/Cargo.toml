@@ -5,6 +5,12 @@ edition = "2021"
 rust-version = "1.92"
 publish = false
 
+# Release executable name. The package and directory keep the frontend-slint
+# name; only the shipped program is called wunder-desktop.
+[[bin]]
+name = "wunder-desktop"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1"
 wunder-desktop = { path = "../crates/wunder-desktop", default-features = false, features = ["sqlite-storage", "desktop-control"] }

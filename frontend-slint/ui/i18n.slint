@@ -251,8 +251,8 @@ export global I18n {
     out property <string> preview_close: zh ? "关闭预览" : "Close preview";
     out property <string> sb_device_local: zh ? "本地" : "Local";
     out property <string> sb_device_cloud: zh ? "云端" : "Cloud";
-    out property <string> sb_device_local_host: zh ? "蛹" : "Pupa";
-    out property <string> sb_device_cloud_host: zh ? "蜂巢" : "Hive";
+    out property <string> sb_device_local_host: zh ? "wunder 桌面版" : "wunder Desktop";
+    out property <string> sb_device_cloud_host: zh ? "wunder 云端版" : "wunder Cloud";
     out property <string> sb_device_select: zh ? "切换设备" : "Switch device";
     public pure function sb_device_workspaces(count: string) -> string { return zh ? "" + count + " 个工作区" : "" + count + " workspaces"; }
     out property <string> sb_device_no_workspaces: zh ? "暂无工作区" : "No workspaces";
@@ -318,12 +318,12 @@ export global I18n {
     out property <string> cp_permission_full: zh ? "完全访问" : "Full access";
     out property <string> cp_permission_write: zh ? "写入自动" : "Auto-edit";
     out property <string> cp_permission_command: zh ? "执行前确认" : "Confirm commands";
-    out property <string> cp_permission_note: zh ? "与运行时 approval_mode 同名：full_auto 直接执行；auto_edit 仅放行编辑；suggest 在执行前确认。蛹本地链路尚未接审批往返，当前选择只记录偏好。" : "Named after the runtime approval_mode: full_auto runs directly, auto_edit allows edits only, suggest confirms before executing. The local desktop path has no approval round-trip yet, so the choice is recorded as a preference only.";
+    out property <string> cp_permission_note: zh ? "与运行时 approval_mode 同名：full_auto 直接执行；auto_edit 仅放行编辑；suggest 在执行前确认。桌面版本地链路尚未接审批往返，当前选择只记录偏好。" : "Named after the runtime approval_mode: full_auto runs directly, auto_edit allows edits only, suggest confirms before executing. The local desktop path has no approval round-trip yet, so the choice is recorded as a preference only.";
     out property <string> cp_model: zh ? "模型" : "Model";
     out property <string> cp_model_pick: zh ? "切换模型" : "Switch model";
     out property <string> cp_model_context: zh ? "上下文 Token" : "Context tokens";
     out property <string> cp_voice_input: zh ? "语音输入" : "Voice input";
-    out property <string> cp_open_cli: zh ? "打开舵机" : "Open CLI";
+    out property <string> cp_open_cli: zh ? "打开命令行" : "Open CLI";
     out property <string> cp_model_search: zh ? "搜索模型" : "Search models";
     out property <string> cp_model_empty: zh ? "还没有可用模型。请到「设置 → 模型设置」添加。" : "No models yet. Add one in Settings → Models.";
     out property <string> cp_model_no_match: zh ? "没有匹配的模型" : "No matching model";
@@ -362,6 +362,8 @@ export global I18n {
     out property <string> hud_network: zh ? "网络" : "Network";
     out property <string> hud_disk: zh ? "磁盘" : "Disk";
     out property <string> hud_detail_title: zh ? "本机状态" : "This machine";
+    out property <string> hud_tasks_short: zh ? "任务" : "Tasks";
+    out property <string> hud_agents_short: zh ? "智能体" : "Agents";
     out property <string> hud_read: zh ? "读" : "R";
     out property <string> hud_write: zh ? "写" : "W";
     public pure function hud_cores(cores: string) -> string { return zh ? "" + cores + " 核" : "" + cores + " cores"; }
@@ -467,7 +469,7 @@ export global I18n {
     out property <string> st_param_simulation_speed: zh ? "模拟速度" : "Simulation speed";
     out property <string> st_shell_path: zh ? "shell 路径" : "Shell path";
     out property <string> st_stress_count: zh ? "个数" : "Count";
-    out property <string> st_wunder_model_hint: zh ? "在新浏览器窗口打开舰桥 3D 展示" : "Open the Bridge 3D viewer in a new browser window";
+    out property <string> st_wunder_model_hint: zh ? "在新浏览器窗口打开 3D 展示" : "Open the 3D viewer in a new browser window";
     out property <string> st_wunder_model_open: zh ? "眺望心舰" : "Behold Wunder";
     out property <string> st_wunder_model_title: zh ? "心舰展示" : "Wunder display";
     out property <string> stc_archives_delete_confirm: zh ? "该归档线程及其本地记录将被永久删除，无法恢复。确认删除？" : "Permanently delete this archived thread and its local records? This cannot be undone.";
@@ -481,6 +483,7 @@ export global I18n {
     out property <string> ed_total_legend: zh ? "○ 累计消耗" : "○ Total usage";
     out property <string> ed_all_tags: zh ? "全部标签" : "All tags";
     out property <string> ed_memory_desc: zh ? "将可复用的长期事实整理为模型友好的记忆索引与详情。" : "Organize reusable long-term facts into model-friendly memory indexes.";
+    out property <string> ed_replicate_desc: zh ? "将当前智能体的记忆复制到目标智能体，覆盖目标已有记忆。" : "Copy this agent's memories to a target agent, overwriting existing ones.";
     out property <string> ed_tool_calls: zh ? "工具调用次数" : "Tool call count";
     out property <string> ed_tool_heatmap: zh ? "工具调用热力图" : "Tool call heatmap";
     out property <string> ed_archived_threads: zh ? "已归档线程" : "Archived threads";
@@ -496,6 +499,7 @@ export global I18n {
     out property <string> ed_index_title: zh ? "索引标题" : "Index title";
     out property <string> ed_total_usage: zh ? "累计消耗" : "Total usage";
     out property <string> ed_edit_memory: zh ? "编辑记忆碎片" : "Edit memory";
+    out property <string> ed_replicate: zh ? "记忆复刻" : "Memory replication";
     out property <string> ed_duration: zh ? "运行时长" : "Run duration";
     out property <string> ed_trend_hint: zh ? "默认显示累计消耗，点击趋势图中的某一天可切换工具调用热力图日期" : "Shows total usage by default; click a day to switch the heatmap date";
     out property <string> epv_yield: zh ? "会话让出" : "Session yield";
@@ -787,8 +791,8 @@ export global I18n {
     out property <string> wd_members_empty: zh ? "暂无成员信息" : "No member info";
     out property <string> so_hint: zh ? "拖动选择截图区域 · 右键或 Esc 取消" : "Drag to select a region · right-click or Esc to cancel";
     out property <string> so_fullscreen: zh ? "全屏" : "Fullscreen";
-    out property <string> tr_title: zh ? "蛹" : "Pupa";
-    out property <string> tr_name: zh ? "蛹" : "Pupa";
+    out property <string> tr_title: zh ? "wunder 桌面版" : "wunder Desktop";
+    out property <string> tr_name: zh ? "wunder 桌面版" : "wunder Desktop";
     out property <string> tr_show_window: zh ? "显示主窗口" : "Show main window";
     out property <string> tr_screenshot: zh ? "截图 (Ctrl+F1)" : "Screenshot (Ctrl+F1)";
     out property <string> tr_fullscreen_shot: zh ? "全屏截图" : "Fullscreen screenshot";
@@ -799,7 +803,7 @@ export global I18n {
     out property <string> tn_notice_quit: zh ? "退出程序" : "Quit";
     out property <string> cn_notice_title: zh ? "智能体任务完成" : "Agent task completed";
     public pure function cn_notice_body(name: string) -> string { return zh ? "智能体 " + name + " 已完成任务" : "Agent " + name + " finished the task"; }
-    out property <string> app_window_title: zh ? "蛹" : "Pupa";
+    out property <string> app_window_title: zh ? "wunder 桌面版" : "wunder Desktop";
     out property <string> wm_minimize: zh ? "最小化" : "Minimize";
     out property <string> wm_maximize: zh ? "最大化" : "Maximize";
     out property <string> wm_restore: zh ? "还原" : "Restore";
@@ -896,6 +900,8 @@ export global I18n {
     out property <string> st_imported: zh ? "已导入：{0}" : "Imported: {0}";
     out property <string> st_reconnect_requested: zh ? "已请求重连，稍后查看运行日志确认" : "Reconnect requested; check run logs shortly";
     out property <string> st_prompt_segment_saved: zh ? "提示词分段已保存" : "Prompt segment saved";
+    out property <string> st_prompt_pack_created: zh ? "提示词包已创建：{0}" : "Prompt pack created: {0}";
+    out property <string> st_prompt_pack_deleted: zh ? "提示词包已删除" : "Prompt pack deleted";
     out property <string> st_file_saved: zh ? "文件已保存" : "File saved";
     out property <string> st_file_created: zh ? "文件已创建" : "File created";
     out property <string> st_file_ops_done: zh ? "文件操作已完成" : "File action completed";
@@ -945,7 +951,7 @@ export global I18n {
     out property <string> il_allow_remote_local: zh ? "允许远程访问本地" : "Allow remote local access";
     out property <string> il_local_access_hint: zh ? "启用设备互通；写入和线程操作仍需本地审批" : "Enable device interlink; writes and thread actions still require local approval";
     out property <string> il_share_catalog: zh ? "共享工作区与线程目录" : "Share workspace and thread catalog";
-    out property <string> il_share_catalog_hint: zh ? "需同时获得舰桥授权；关闭时只共享设备摘要" : "Also requires server grants; otherwise only the device summary is shared";
+    out property <string> il_share_catalog_hint: zh ? "需同时获得管理端授权；关闭时只共享设备摘要" : "Also requires server grants; otherwise only the device summary is shared";
     out property <string> st_title: zh ? "系统设置" : "System settings";
     out property <string> st_subtitle: zh ? "本地运行时、工作目录和模型配置" : "Local runtime, working directory and models";
     out property <string> st_items: zh ? "设置项目" : "Settings";
@@ -992,7 +998,7 @@ export global I18n {
     out property <string> il_refresh: zh ? "刷新" : "Refresh";
     out property <string> il_loading: zh ? "加载中…" : "Loading…";
     out property <string> il_browse_title: zh ? "云端工作区" : "Cloud workspace";
-    out property <string> il_browse_hint: zh ? "输入云端路径浏览舰体上的工作区文件，点击文件夹进入；文件可拉到本地工作区，同名不覆盖，云端单次上限 1 MiB。" : "Enter a cloud path to browse workspace files; click a folder to open it. Files pull into the local workspace without overwriting, one cloud read capped at 1 MiB.";
+    out property <string> il_browse_hint: zh ? "输入云端路径浏览服务端上的工作区文件，点击文件夹进入；文件可拉到本地工作区，同名不覆盖，云端单次上限 1 MiB。" : "Enter a cloud path to browse workspace files; click a folder to open it. Files pull into the local workspace without overwriting, one cloud read capped at 1 MiB.";
     out property <string> il_browse_path_hint: zh ? "例如 / 或 /workspace" : "e.g. / or /workspace";
     out property <string> il_browse_open: zh ? "打开" : "Open";
     out property <string> il_browse_up: zh ? "上一级" : "Up one level";
@@ -1047,7 +1053,7 @@ export global I18n {
     out property <string> pet_in_use: zh ? "当前" : "Current";
     out property <string> cron_new_job: zh ? "新建任务" : "New task";
     out property <string> st_theme: zh ? "主题" : "Theme";
-    out property <string> st_theme_light: zh ? "浅色（蜂巢基调）" : "Light (hive tone)";
+    out property <string> st_theme_light: zh ? "浅色（云端版基调）" : "Light (cloud tone)";
     out property <string> st_send_key: zh ? "发送键" : "Send key";
     out property <string> st_send_enter: zh ? "Enter 发送" : "Enter sends";
     out property <string> st_send_ctrl_enter: zh ? "Ctrl+Enter 发送" : "Ctrl+Enter sends";
@@ -1072,7 +1078,7 @@ export global I18n {
     out property <string> st_language: zh ? "运行时语言" : "Runtime language";
     out property <string> st_language_hint: zh ? "zh-CN 或 en-US" : "zh-CN or en-US";
     out property <string> st_exec_paths: zh ? "执行文件路径" : "Executable paths";
-    out property <string> st_exec_paths_note: zh ? "指定 Python / Git / rg 路径，保存后对新启动的工具生效；留空自动检测。补充包统一导入用户目录 .wunder/opt，与舵机共用；设置 WUNDER_HOME 时使用该目录。" : "Set Python / Git / rg paths for newly started tools; leave empty to auto-detect. Supplements are imported into .wunder/opt in your home and shared with the Helm. WUNDER_HOME overrides this location.";
+    out property <string> st_exec_paths_note: zh ? "指定 Python / Git / rg 路径，保存后对新启动的工具生效；留空自动检测。补充包统一导入用户目录 .wunder/opt，与命令行共用；设置 WUNDER_HOME 时使用该目录。" : "Set Python / Git / rg paths for newly started tools; leave empty to auto-detect. Supplements are imported into .wunder/opt in your home and shared with the CLI. WUNDER_HOME overrides this location.";
     out property <string> st_python_path: zh ? "Python 路径" : "Python path";
     out property <string> st_python_hint: zh ? "留空自动检测，可指向 python 可执行文件" : "Empty auto-detects; may point to a python executable";
     out property <string> st_git_path: zh ? "Git 路径" : "Git path";
@@ -1139,7 +1145,7 @@ export global I18n {
     out property <string> st_diagnostics: zh ? "诊断" : "Diagnostics";
     out property <string> st_help_open: zh ? "打开帮助手册" : "Open help";
     out property <string> st_upd_title: zh ? "软件更新" : "Software updates";
-    out property <string> st_upd_subtitle: zh ? "选择更新源，一键检测并更新全部有新版本的组件（蛹本体、舵机与补充包）" : "Pick a source, then check and update every component that has a newer version (the desktop app, the CLI and the supplement pack)";
+    out property <string> st_upd_subtitle: zh ? "选择更新源，一键检测并更新全部有新版本的组件（桌面版本体、命令行与补充包）" : "Pick a source, then check and update every component that has a newer version (the desktop app, the CLI and the supplement pack)";
     out property <string> st_upd_current: zh ? "当前版本" : "Current version";
     out property <string> st_upd_check: zh ? "检查更新" : "Check for updates";
     out property <string> st_upd_checking: zh ? "正在检查更新…" : "Checking for updates…";
@@ -1152,7 +1158,7 @@ export global I18n {
     out property <string> st_upd_applying: zh ? "正在应用更新…" : "Applying update…";
     out property <string> st_upd_need_login: zh ? "登录云端账号后可在线检查与更新" : "Sign in to your cloud account for online updates";
     out property <string> st_upd_source: zh ? "更新源" : "Update source";
-    out property <string> st_upd_source_note: zh ? "云端账号走登录的舰体；GitHub 拉取公开发布" : "Cloud account uses the signed-in server; GitHub fetches public releases";
+    out property <string> st_upd_source_note: zh ? "云端账号走登录的服务端；GitHub 拉取公开发布" : "Cloud account uses the signed-in server; GitHub fetches public releases";
     out property <string> st_upd_source_cloud: zh ? "云端账号" : "Cloud account";
     out property <string> st_upd_source_github: zh ? "GitHub" : "GitHub";
     out property <string> st_upd_failed_prefix: zh ? "更新失败：" : "Update failed: ";
@@ -1170,7 +1176,7 @@ export global I18n {
     out property <string> st_stress_generate: zh ? "生成压测线程" : "Generate stress thread";
     out property <string> st_stress_running: zh ? "生成中…" : "Generating…";
     out property <string> pm_preview_title: zh ? "提示词预览" : "Prompt preview";
-    out property <string> pm_preview_hint: zh ? "按当前配置拼接后的完整系统提示词" : "The full system prompt assembled from the current configuration";
+    out property <string> pm_preview_hint: zh ? "按当前配置拼接后的完整系统提示词" : "The full system prompt assembled from the current settings";
     out property <string> fl_title: zh ? "文件工作区" : "File workspace";
     out property <string> fl_workspace_title: zh ? "工作目录" : "Workspace directory";
     out property <string> fl_user_container: zh ? "用户目录" : "User directory";
@@ -1260,6 +1266,8 @@ export global I18n {
     out property <string> inquiry_expand: zh ? "展开全部" : "Expand all";
     out property <string> inquiry_collapse: zh ? "收起" : "Collapse";
     out property <string> inquiry_use_recommended: zh ? "使用推荐" : "Use the recommended";
+    out property <string> inquiry_submit: zh ? "提交" : "Submit";
+    out property <string> inquiry_submit_blocked: zh ? "请先完成必选项" : "Answer required fields";
     public pure function inquiry_question_progress(position: string) -> string { return zh ? "第 " + position + " 题" : "Question " + position + ""; }
     out property <string> sub_card_title: zh ? "子智能体" : "Subagent";
     out property <string> sub_status_running: zh ? "运行中" : "Running";
@@ -1292,6 +1300,8 @@ export global I18n {
     out property <string> tl_status_running: zh ? "处理中" : "Processing";
     out property <string> tl_process_loading: zh ? "正在加载…" : "Loading…";
     out property <string> tl_process_retry: zh ? "加载失败，重试" : "Loading failed. Retry";
+    out property <string> tl_md_image_loading: zh ? "图片加载中…" : "Loading image…";
+    out property <string> tl_md_image_error: zh ? "图片加载失败 · " : "Image failed to load · ";
     out property <string> tl_stat_round: zh ? "用户轮次" : "User round";
     public pure function tl_user_round(round: string) -> string { return zh ? "第 " + round + " 个用户轮次" : "User round " + round + ""; }
     out property <string> tl_stat_credits: zh ? "额度" : "Quota";

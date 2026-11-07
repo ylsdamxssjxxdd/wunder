@@ -1,5 +1,5 @@
 //! Bundled CJK face. Slint's shared font collection is created without host
-//! fonts in this fork, so 蛹 injects Microsoft YaHei at startup; 茧 follows the
+//! fonts in this fork, so 桌面版 injects Microsoft YaHei at startup; 安卓版 follows the
 //! same pattern. Without a generic family and a Hani fallback the software
 //! renderer's fallback query matches nothing and panics on first text layout.
 
@@ -33,7 +33,7 @@ pub fn install() {
         collection.set_generic_families(generic, families.iter().copied());
     }
     collection.append_fallbacks(
-        // 蛹 uses the same const-checked constructor; the replacement
+        // 桌面版 uses the same const-checked constructor; the replacement
         // (`Script::from_bytes`) is not re-exported by this fork.
         #[allow(deprecated)]
         fontique::FallbackKey::new(fontique::Script::from_str_unchecked("Hani"), None),

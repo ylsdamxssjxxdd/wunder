@@ -10,7 +10,7 @@
 @import "./chat/workflow.css";
 @import "./chat/input.css";
 @import "./dialogs/user-tools.css";
-/* 蜂巢主题弹窗（mzConfirm / mzPrompt），替代 Element Plus 原生 ElMessageBox 观感。 */
+/* 云端版主题弹窗（mzConfirm / mzPrompt），替代 Element Plus 原生 ElMessageBox 观感。 */
 @import "./dialogs/mz-dialog.css";
 @import "./messenger.css";
 /* Two-column messenger shell (site header + sidebar + chat pane). Loaded after
@@ -21,7 +21,7 @@
 @import "./pages/messenger-polish.css";
 /* Full-screen settings page (方案 §九：12 分类左导航 + 右卡片内容). */
 @import "./pages/messenger-settings-page.css";
-/* 蜂巢设置页内的设备互通卡片。 */
+/* 云端版设置页内的设备互通卡片。 */
 @import "./pages/interlink.css";
 /* 工具管理设置页内的 MCP / 技能 / 知识库工作面板（紧凑设置页布局）。 */
 @import "./pages/messenger-tools-panes.css";

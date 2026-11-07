@@ -1,8 +1,8 @@
-//! 茧 — the Android shell for wunder.
+//! 安卓版 — the Android shell for wunder.
 //!
 //! The crate is a `cdylib` because Android loads it through NativeActivity.
 //! `android_main` is the process entry; everything below the shell is the same
-//! native engine 蛹 uses (`wunder-desktop` → `wunder-runtime` → `wunder-core`).
+//! native engine 桌面版 uses (`wunder-desktop` → `wunder-runtime` → `wunder-core`).
 
 slint::include_modules!();
 
@@ -16,6 +16,8 @@ mod md;
 mod phone;
 mod project;
 mod ubuntu;
+#[cfg(target_os = "android")]
+mod webview;
 
 pub use app::{build, build_preview, open_preview_page};
 

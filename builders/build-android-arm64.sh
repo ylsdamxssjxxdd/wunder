@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build 茧 (wunder-android): Rust cdylib slice(s) + debug APK.
+# Build 安卓版 (wunder-android): Rust cdylib slice(s) + debug APK.
 #
 # Required environment (defaults assume the local dev box):
 #   ANDROID_HOME       Android SDK root              (default ~/android-sdk)
@@ -55,4 +55,23 @@ GRADLE="${GRADLE:-$HOME/gradle/gradle-8.13/bin/gradle}"
 cd android
 "$GRADLE" --no-daemon "-PwunderAbis=$ABIS" assembleDebug
 
-echo "APK: $CRATE/android/app/build/outputs/apk/debug/app-debug.apk"
+VERSION="$(python3 - "$ROOT/config/app_version.json" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])
+PY
+)"
+if [[ "${#ABI_LIST[@]}" -eq 1 ]]; then
+    case "${ABI_LIST[0]}" in
+        arm64-v8a) ARCH_LABEL=arm64 ;;
+        x86_64) ARCH_LABEL=x64 ;;
+        *) echo "unsupported ABI: ${ABI_LIST[0]}" >&2; exit 2 ;;
+    esac
+else
+    ARCH_LABEL=universal
+fi
+OUT_DIR="$ROOT/target/android/dist/android-$ARCH_LABEL"
+mkdir -p "$OUT_DIR"
+APK_OUT="$OUT_DIR/wunder-android-$VERSION-$ARCH_LABEL.apk"
+cp -f "$CRATE/android/app/build/outputs/apk/debug/app-debug.apk" "$APK_OUT"
+
+echo "APK: $APK_OUT"

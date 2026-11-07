@@ -33,6 +33,6 @@ A typical example is the external service often mentioned in the documentation, 
 
 ## Settings and Limits
 
-- Integration order: declare the service in the configuration → confirm in Bridge that the tool list can be fetched → then expose it to the model.
-- Bridge has MCP configuration and debugging entries where you can refresh the tool list and call remote tools directly to verify them.
+- Integration order: declare the service in the configuration → confirm in Admin that the tool list can be fetched → then expose it to the model.
+- Admin has MCP configuration and debugging entries where you can refresh the tool list and call remote tools directly to verify them.
 - MCP tools are not a side channel: they are aggregated with built-in tools, A2A tools, skills, knowledge-base tools, and self-built tools into one tool view. To the model, MCP is just part of the tool catalog.

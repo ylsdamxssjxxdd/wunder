@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""蜂巢（frontend/）与舰桥（web/）的真实浏览器验收通道。
+"""云端版（frontend/）与管理端（web/）的真实浏览器验收通道。
 
 为什么需要它：`vite build` 与 `vue-tsc` 都是静态检查，抓不到「样式表没被 import」「controller 里
 ctx.X 从未赋值导致整页不渲染」这类运行期缺陷（本项目两者都真实发生过）。本脚本起一个**隔离的**
@@ -9,7 +9,7 @@ wunder-server（独立 sqlite / 工作区 / 日志，不碰 config/data），再
 用例：
     shell-layout            两栏壳体几何/配色/左栏工作目录区、无 pageerror
     settings-page           全屏设置页 12 分类、搜索、返回应用
-    admin-shell             舰桥静态站点托管、登录门可见、无脚本错误与资源失败
+    admin-shell             管理端静态站点托管、登录门可见、无脚本错误与资源失败
     admin-preset-bindings   预设智能体面板绑定概览与同步预览取到真实数据
     cloud-full-chain        登录 → 单智能体 → 文件 → 聊天 → 流式回复（需 mock 模型）
     workspace-ops           工作目录 13 项操作逐项走查（上传/新建/重命名/移动/复制/批量/删除/清空/打包/预览/编辑/引用）
@@ -59,9 +59,9 @@ SPECS = {
 SMOKE_SPECS = ["shell-layout", "admin-shell"]
 # 只有聊天全链路需要模型服务；其余用例不拉 mock，避免占用端口。
 MOCK_DEPENDENT_SPECS = {"cloud-full-chain"}
-# 串行执行顺序：先跑会加载蜂巢主视图的用例，把 Vite dev server 的按需编译预热掉。
+# 串行执行顺序：先跑会加载云端版主视图的用例，把 Vite dev server 的按需编译预热掉。
 # 否则聊天全链路排在前头时要一边冷编译一边等模型回复，实测会吃掉整个等待窗口
-# （同一台机器上单跑 11s、跟在舰桥用例后面跑 46s 后超时）。
+# （同一台机器上单跑 11s、跟在管理端用例后面跑 46s 后超时）。
 RUN_ORDER = [
     "shell-layout",
     "settings-page",
@@ -75,7 +75,7 @@ RUN_ORDER = [
 # 而不是把 9 条用例塞进一次调用。实测结论（都记在 docs/云端易用重构-收尾与验收.md §三）：
 # （a）把 9 条用例塞进一次调用时，`cloud-full-chain` 会间歇性失败：客户端停在乐观气泡 +
 #     Requesting，服务端**一个 turn 都没落库**（客户端 / 服务端两侧都无报错）；
-# （b）在同一个服务端上先跑过舰桥预设面板用例之后，再跑 `cloud-full-chain` 会稳定复现 (a)，
+# （b）在同一个服务端上先跑过管理端预设面板用例之后，再跑 `cloud-full-chain` 会稳定复现 (a)，
 #     机制未查明（agent 记录无异常：status=active / silent=0 / 非共享）；
 # （c）`cloud-full-chain` 作为**第一批**（服务端刚起来、尚无管理侧操作）时多次稳定通过。
 # 因此固定为「聊天全链路 → 其余用户侧 → 管理侧」三批，覆盖全部用例且每批稳定。
@@ -342,7 +342,7 @@ def stop(process: subprocess.Popen | None, label: str) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="蜂巢/舰桥真实浏览器验收")
+    parser = argparse.ArgumentParser(description="云端版/管理端真实浏览器验收")
     parser.add_argument("--port", type=int, default=18000, help="隔离服务端端口（默认 18000）")
     parser.add_argument(
         "--config",

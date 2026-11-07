@@ -1,0 +1,12 @@
+// Shared between the shell and its settings sheet: both render the same flat
+// session-row projection. Keeping the struct in its own file avoids a module
+// cycle between mobile.slint and settings.slint.
+
+export struct MobileSession {
+    id: string,
+    title: string,
+    preview: string,
+    time: string,
+    status: string,
+    active: bool,
+}

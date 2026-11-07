@@ -253,7 +253,7 @@ fn rasterize_svg(svg: &[u8]) -> Vec<u8> {
     encoded
 }
 
-/// Embed the app icon (`images/pupa.ico`, multi-size BMP-style entries
+/// Embed the app icon (`images/eva01-head.ico`, multi-size BMP-style entries
 /// that old binutils windres handles) as the exe's icon resource plus a
 /// VERSIONINFO block built from the crate version so Explorer's file
 /// properties show the release number. Resource-only COFF objects from
@@ -272,7 +272,7 @@ fn embed_windows_exe_icon() {
     let ico = std::path::Path::new(&manifest_dir)
         .join("..")
         .join("images")
-        .join("pupa.ico");
+        .join("eva01-head.ico");
     println!("cargo:rerun-if-changed={}", ico.display());
 
     // windres -F takes a BFD target name; the "pei-*" names are PE *image*
@@ -312,11 +312,11 @@ fn embed_windows_exe_icon() {
              BLOCK \"080404b0\"\r\n\
              BEGIN\r\n\
                VALUE \"CompanyName\", \"wunder\"\r\n\
-               VALUE \"FileDescription\", \"wunder Slint Workbench\"\r\n\
+               VALUE \"FileDescription\", \"wunder Desktop\"\r\n\
                VALUE \"FileVersion\", \"{version}\"\r\n\
-               VALUE \"InternalName\", \"wunder-frontend-slint\"\r\n\
-               VALUE \"OriginalFilename\", \"wunder-frontend-slint.exe\"\r\n\
-               VALUE \"ProductName\", \"wunder-frontend-slint\"\r\n\
+               VALUE \"InternalName\", \"wunder-desktop\"\r\n\
+               VALUE \"OriginalFilename\", \"wunder-desktop.exe\"\r\n\
+               VALUE \"ProductName\", \"wunder Desktop\"\r\n\
                VALUE \"ProductVersion\", \"{version}\"\r\n\
              END\r\n\
            END\r\n\

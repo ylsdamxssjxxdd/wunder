@@ -4,7 +4,7 @@ set -euo pipefail
 # Native desktop build for hosts that already run inside Ubuntu 18.04
 # (glibc 2.27), such as CI containers: build the Slint desktop online with the
 # rustup toolchain on PATH, then package the AppDir as a directory archive. The
-# offline release path stays in build-linux-amd64-desktop.sh /
+# offline release path stays in build-linux-x64-desktop.sh /
 # build-linux-arm64-desktop.sh (kylin-arm SDK + cargo vendor); keep the
 # packaging semantics below in sync with build-linux-arm64-desktop.sh, which is
 # the reference implementation.
@@ -15,7 +15,7 @@ max_glibc="${WUNDER_SLINT_LINUX_MAX_GLIBC:-2.27}"
 phase=preflight
 stage_dir=""
 
-fail() { echo "[wunder-slint-native-desktop] $*" >&2; exit 2; }
+fail() { echo "[wunder-desktop-native] $*" >&2; exit 2; }
 require_file() { [[ -f "$1" ]] || fail "required file is missing: $1"; }
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "required command is unavailable: $1"; }
 cleanup() {
@@ -25,17 +25,17 @@ cleanup() {
     case "$stage_dir" in "$output_dir"/.wunder-native-package.*) rm -rf -- "$stage_dir" ;; esac
   fi
   if ((status != 0)); then
-    echo "[wunder-slint-native-desktop] failed during $phase (exit $status); command: ${BASH_COMMAND:-unknown}; no new archive was published" >&2
+    echo "[wunder-desktop-native] failed during $phase (exit $status); command: ${BASH_COMMAND:-unknown}; no new archive was published" >&2
   fi
   exit "$status"
 }
 trap cleanup EXIT
 
-# Normalize the machine into the amd64/arm64 release naming shared with the
-# offline builders.  uname says x86_64/aarch64 while CI passes x86_64/arm64.
+# Normalize the machine into the x64/arm64 release naming shared with the
+# offline builders.  uname says x86_64/aarch64 while CI passes x64/arm64.
 case "${ARCH:-$(uname -m)}" in
-  x86_64|amd64)
-    arch="amd64"
+  x86_64|x64)
+    arch="x64"
     elf_machine="Advanced Micro Devices X86-64"
     ldconfig_tag="x86-64"
     ;;
@@ -56,18 +56,18 @@ for tool in cargo rustc readelf strip ldd awk grep sort sed tail mktemp stat tar
   require_command "$tool"
 done
 
-echo "[wunder-slint-native-desktop] cargo: $(cargo --version)"
-echo "[wunder-slint-native-desktop] rustc: $(rustc --version)"
-echo "[wunder-slint-native-desktop] baseline: $(ldd --version | head -n 1)"
+echo "[wunder-desktop-native] cargo: $(cargo --version)"
+echo "[wunder-desktop-native] rustc: $(rustc --version)"
+echo "[wunder-desktop-native] baseline: $(ldd --version | head -n 1)"
 
 mkdir -p "$target_dir" "$output_dir"
 export CARGO_TARGET_DIR="$target_dir"
 # Online build pinned by the manifest Cargo.lock; --locked keeps CI honest
 # about dependency drift instead of silently re-resolving.
-cargo build --locked --release --manifest-path "$manifest" --bin wunder-frontend-slint
+cargo build --locked --release --manifest-path "$manifest" --bin wunder-desktop
 
 phase=validation
-binary="$target_dir/release/wunder-frontend-slint"
+binary="$target_dir/release/wunder-desktop"
 require_file "$binary"
 machine="$(LC_ALL=C readelf -h "$binary" | LC_ALL=C awk -F: '/Machine:/{gsub(/^[ \t]+/, "", $2); print $2}')"
 [[ "$machine" == "$elf_machine" ]] || fail "expected $arch ELF, got: ${machine:-unknown}"
@@ -75,18 +75,18 @@ required_glibc="$(LC_ALL=C readelf --version-info "$binary" 2>/dev/null | LC_ALL
 [[ -n "$required_glibc" ]] || fail "could not determine executable GLIBC requirement"
 [[ "$(printf '%s\n%s\n' "$max_glibc" "$required_glibc" | sort -V | tail -n 1)" == "$max_glibc" ]] || fail "GLIBC_$required_glibc exceeds release limit GLIBC_$max_glibc"
 
-version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" | head -n 1)"
+version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$repo_root/config/app_version.json" | head -n 1)"
 [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]] || fail "invalid package version: $version"
 
-app_name="wunder-slint-$version-linux-$arch"
+app_name="wunder-desktop-$version-linux-$arch"
 phase=packaging
 stage_dir="$(mktemp -d "$output_dir/.wunder-native-package.XXXXXXXX")"
 appdir="$stage_dir/appdir"
 mkdir -p "$appdir/usr/bin" "$appdir/usr/lib" "$appdir/usr/share/applications" "$appdir/usr/share/icons/hicolor/256x256/apps" "$appdir/config" "$appdir/images"
 # Strip a private copy only; Cargo's release cache remains usable after
 # packaging and can be reused by the next build.
-cp -f "$binary" "$appdir/usr/bin/wunder-frontend-slint"
-strip --strip-all --strip-unneeded "$appdir/usr/bin/wunder-frontend-slint"
+cp -f "$binary" "$appdir/usr/bin/wunder-desktop"
+strip --strip-all --strip-unneeded "$appdir/usr/bin/wunder-desktop"
 
 # Use the example configuration as the distributable seed; runtime state is
 # written outside the pack and no machine-specific paths are packaged.
@@ -97,7 +97,7 @@ for resource in prompts skills preset_worker_cards ppt_templates i18n.messages.j
   if [[ -d "$source" ]]; then cp -a "$source" "$appdir/config/"; fi
   if [[ -f "$source" ]]; then cp -f "$source" "$appdir/config/"; fi
 done
-icon_source="$repo_root/images/pupa.png"
+icon_source="$repo_root/images/eva01-head.png"
 [[ -f "$icon_source" ]] || icon_source="$repo_root/images/wunder.png"
 if [[ -f "$icon_source" ]]; then
   cp -f "$icon_source" "$appdir/usr/share/icons/hicolor/256x256/apps/wunder.png"
@@ -106,9 +106,9 @@ fi
 
 cat > "$appdir/wunder.desktop" <<'EOF'
 [Desktop Entry]
-Name=蛹
+Name=wunder 桌面版
 Comment=本地 AI 工作台
-Exec=wunder-frontend-slint
+Exec=wunder-desktop
 Icon=wunder
 Terminal=false
 Type=Application
@@ -166,7 +166,7 @@ if [ -z "${WUNDER_HOME:-}" ]; then
     export WUNDER_HOME
   fi
 fi
-exec "$APPDIR/usr/bin/wunder-frontend-slint" "$@"
+exec "$APPDIR/usr/bin/wunder-desktop" "$@"
 EOF
 chmod +x "$appdir/AppRun"
 
@@ -175,4 +175,4 @@ chmod +x "$appdir/AppRun"
 tarball="$stage_dir/$app_name.tar.gz"
 tar --sort=name --numeric-owner -czf "$tarball" -C "$appdir" .
 mv -f -- "$tarball" "$output_dir/$app_name.tar.gz"
-echo "[wunder-slint-native-desktop] produced: $output_dir/$app_name.tar.gz ($(stat -c '%s' "$output_dir/$app_name.tar.gz") bytes)"
+echo "[wunder-desktop-native] produced: $output_dir/$app_name.tar.gz ($(stat -c '%s' "$output_dir/$app_name.tar.gz") bytes)"

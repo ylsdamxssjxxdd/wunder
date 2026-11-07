@@ -44,7 +44,7 @@ pub fn tls_roots() -> TlsRoots {
         Some("webpki") => TlsRoots::Webpki,
         Some("platform") => TlsRoots::Platform,
         // Termux has no JVM, so the platform verifier would panic on the first
-        // handshake. Desktop and the 茧 Android app keep the platform store.
+        // handshake. Desktop and the 安卓版 Android app keep the platform store.
         _ if is_termux() => TlsRoots::Webpki,
         _ => TlsRoots::Platform,
     }

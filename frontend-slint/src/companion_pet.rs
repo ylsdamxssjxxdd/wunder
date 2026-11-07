@@ -934,7 +934,7 @@ fn hide_pet(overlay: &mut Overlay, key: &str) {
 
 /// 打开会话: raise the main window the way the tray icon does, land on the
 /// chat page, and open the most recent conversation when none is active. Rows
-/// locked by another live 蛹/舵机 are skipped so the reveal never reports
+/// locked by another live 桌面版/命令行 are skipped so the reveal never reports
 /// THREAD_IN_USE before the user has chosen a conversation.
 fn open_recent_session(app: &MainWindow) {
     let _ = app.show();

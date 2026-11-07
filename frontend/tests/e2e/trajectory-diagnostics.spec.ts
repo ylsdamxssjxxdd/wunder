@@ -27,7 +27,7 @@ async function inspect(page: import('@playwright/test').Page) {
   await expect(page.locator('.tt-details')).not.toContainText('UPSTREAM_TIMEOUT');
 }
 
-test('hive paged trajectory exposes final failure and successful retry details', async ({ page }) => {
+test('cloud paged trajectory exposes final failure and successful retry details', async ({ page }) => {
   const service = new ChatMockService();
   await service.install(page);
   const errors: string[] = [];
@@ -48,7 +48,7 @@ test('hive paged trajectory exposes final failure and successful retry details',
   } finally { await service.dispose(); }
 });
 
-test('bridge inspector matches hive failure and retry semantics', async ({ page }) => {
+test('admin inspector matches cloud failure and retry semantics', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
@@ -72,7 +72,7 @@ test('bridge inspector matches hive failure and retry semantics', async ({ page 
   expect(errors).toEqual([]);
 });
 
-test('hive initial overview compresses idle gaps before paging and hydrates compaction output', async ({ page }) => {
+test('cloud initial overview compresses idle gaps before paging and hydrates compaction output', async ({ page }) => {
   const service = new ChatMockService();
   await service.install(page);
   const errors: string[] = [];

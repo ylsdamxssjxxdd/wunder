@@ -41,7 +41,7 @@ export component ToolButton inherits Rectangle {
     if !root.show-label && root.label != "" : Tooltip { text: @markdown("\{root.label}"); }
 }
 
-// 蜂巢 pill tab: 30px 高、8px 圆角，选中时白底加 1px 描边。描边恒定存在，
+// 云端版 pill tab: 30px 高、8px 圆角，选中时白底加 1px 描边。描边恒定存在，
 // 选中只在颜色上区分，避免边框出现/消失推动文字。
 export component ToolTab inherits Rectangle {
     in property <string> label;
@@ -68,7 +68,7 @@ export component ToolTab inherits Rectangle {
     touch := TouchArea { mouse-cursor: pointer; clicked => { focus.focus(); root.clicked(); } }
 }
 
-// 蜂巢 `.mst-toolbar-count`: 999px 药丸，强调色浅底 + 主色数字。
+// 云端版 `.mst-toolbar-count`: 999px 药丸，强调色浅底 + 主色数字。
 export component ToolCountPill inherits Rectangle {
     in property <string> text;
     height: 18px;

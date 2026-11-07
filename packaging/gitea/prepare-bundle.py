@@ -228,7 +228,7 @@ def main():
 
     labels = {
         "builder": "wunder-offline:docker://" + profile["builder_tag"],
-        # 舵机与蛹共用同一套 Rust 任务镜像，只是路由标签不同；rcho 的离线流水线用这个标签。
+        # 命令行与桌面版共用同一套 Rust 任务镜像，只是路由标签不同；rcho 的离线流水线用这个标签。
         "rcho": "rcho-offline:docker://" + profile["builder_tag"],
         # 安装包标签名固定，值随剖面走：x86_64 指向 Wine 镜像，arm64 指回构建镜像（任务自行跳过）。
         # 少了冒号前的名字，compose 注册出来的就是没有名字的畸形标签，工作流排不到任何 runner。

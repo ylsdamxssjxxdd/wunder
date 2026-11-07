@@ -4,19 +4,19 @@
   --dark-border: #e3e3e3;
   --dark-text: #18181c;
   --dark-muted: #808080;
-  /* 默认强调色 = 橙汁（amber），色值逐项对齐蛹 frontend-slint/ui/design_tokens.slint
+  /* 默认强调色 = 橙汁（amber），色值逐项对齐桌面版 frontend-slint/ui/design_tokens.slint
      的 terracotta 色板：accent #F58A24 / deep #E07A12 / secondary #FFC98A / soft #FDF0DE。
-     橙汁以蛹为准，蜂巢只按自身变量名映射，不另立色值。
+     橙汁以桌面版为准，云端版只按自身变量名映射，不另立色值。
      这里是全站唯一在 :root 上生效的强调色来源；配套变量按同一色阶推导：
-     soft 阶梯 = soft→accent 的等距混色（与蛹的 soft 锚点连续），
+     soft 阶梯 = soft→accent 的等距混色（与桌面版的 soft 锚点连续），
      gradient-* 为同族中间值，disabled 取浅暖灰。 */
   --ui-accent: #f58a24;
   --ui-accent-rgb: 245, 138, 36;
   --ui-accent-secondary: #ffc98a;
   --ui-accent-secondary-rgb: 255, 201, 138;
   --ui-accent-deep: #e07a12;
-  /* 前景强调色。橙汁（默认）刻意不再加深：这套色以蛹的琥珀橙为准，主交互色
-     与品牌色保持同值 #F58A24，hover 取蛹的 deep #E07A12。代价是文字、实心
+  /* 前景强调色。橙汁（默认）刻意不再加深：这套色以桌面版的琥珀橙为准，主交互色
+     与品牌色保持同值 #F58A24，hover 取桌面版的 deep #E07A12。代价是文字、实心
      按钮白字低于 WCAG AA（白底 2.46:1），这是「观感优先于对比度」的产品选择，
      不要为了刷达标单边把 ink 调深。其它色板仍保留各自加深的 ink 档。 */
   --ui-accent-ink: #f58a24;
@@ -42,7 +42,7 @@
 }
 
 :root[data-user-accent='eva-orange'] {
-  /* 默认色板，与 :root 保持一致；橙汁的色值来源是蛹的 terracotta。 */
+  /* 默认色板，与 :root 保持一致；橙汁的色值来源是桌面版的 terracotta。 */
   --ui-accent: #f58a24;
   --ui-accent-rgb: 245, 138, 36;
   --ui-accent-secondary: #ffc98a;

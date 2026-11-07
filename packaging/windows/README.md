@@ -10,18 +10,18 @@
 - `opt/powershell`：随包附带的便携 PowerShell 7.1.7（`pwsh.exe`），是 `执行命令` 工具的默认 shell；可用 `-SkipPowerShell` 跳过，详见「版本选择」
 - `opt/browser`：默认内置 Chrome 109 win32 浏览器，供 `browser_*` 工具开箱使用；可用 `-SkipBrowser` 跳过，详见「内置浏览器」
 
-补充包设计目标：**统一安装到 `WUNDER_HOME/opt`，蛹与舵机共用一份运行环境**。
+补充包设计目标：**统一安装到 `WUNDER_HOME/opt`，桌面版与命令行共用一份运行环境**。
 
 当前约定：
 
-- `build.bat pack -a win7-x86` 生成单文件 `wunder-<版本>-win7-x86-setup.exe`；安装向导把程序本体也作为可勾选项：蛹（桌面端）与舵机（命令行）默认勾选，不勾则不安装对应的 `wunder-desktop.exe`/`wunder-cli.exe`，因此可以只装补充组件。补充组件（Python/Git/ripgrep/ffmpeg/7-Zip/PowerShell 7/内置浏览器）默认全部勾选，一次安装即得完整运行环境；不需要的项可逐条取消。勾选蛹即自动创建开始菜单与桌面快捷方式（不再单列“桌面快捷方式”任务）。页面提供“全选”一键恢复全部勾选，任一项取消会自动回退全选状态。
-- 安装向导允许改安装目录，默认 `%USERPROFILE%\.wunder`。安装根会写入 `.wunder-home`，蛹和舵机启动时以该根作为 `WUNDER_HOME`；显式设置的非空 `WUNDER_HOME` 优先。
+- `build.bat pack -a win7-x86` 生成单文件 `wunder-desktop-<版本>-win7-x86-setup.exe`；安装向导把程序本体也作为可勾选项：wunder 桌面版与 wunder 命令行默认勾选，不勾则不安装对应的 `wunder-desktop.exe`/`wunder-cli.exe`，因此可以只装补充组件。补充组件（Python/Git/ripgrep/ffmpeg/7-Zip/PowerShell 7/内置浏览器）默认全部勾选，一次安装即得完整运行环境；不需要的项可逐条取消。勾选桌面版即自动创建开始菜单与桌面快捷方式（不再单列“桌面快捷方式”任务）。页面提供“全选”一键恢复全部勾选，任一项取消会自动回退全选状态。
+- 安装向导允许改安装目录，默认 `%USERPROFILE%\.wunder`。安装根会写入 `.wunder-home`，桌面版和命令行启动时以该根作为 `WUNDER_HOME`；显式设置的非空 `WUNDER_HOME` 优先。
 - 安装目录同时保存配置、会话、工作区、日志和 `opt/` 补充组件；迁移时复制整个安装根。
 - 选中已存在的组件时，安装器先清空对应 `opt/<component>`，再写入新版本；`config`、`data`、`workspace`、`logs` 等用户数据不会删除。
-- 勾选舵机时，安装完成后 `{安装根}\bin` 会加入当前用户 `PATH`（重复安装不重复追加，卸载时只移除这一项）。新开终端可直接运行 `wunder-cli`；`desktop` 启动蛹，`wunder-desktop` 也可直接运行。
-- 开始菜单使用形态名称：蛹（桌面程序）与舵机（命令行）；桌面快捷方式随勾选“蛹”自动创建；卸载入口仍为“卸载心舰”。
+- 勾选命令行时，安装完成后 `{安装根}\bin` 会加入当前用户 `PATH`（重复安装不重复追加，卸载时只移除这一项）。新开终端可直接运行 `wunder-cli`；`desktop` 启动桌面版，`wunder-desktop` 也可直接运行。
+- 开始菜单使用统一名称：wunder 桌面版与 wunder 命令行；桌面快捷方式随勾选“桌面版”自动创建；卸载入口仍为“卸载心舰”。
 - 卸载器移除 `bin`、`.wunder-home`、安装时选择的组件目录和安装器写入的用户 `PATH` 项，保留用户数据。
-- 补充包仍可单独导入：在蛹设置中选择“导入补充包”，或手动解压到 `WUNDER_HOME`。两端自动识别共享 home 中的 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/7zip`、`opt/powershell` 与 `opt/browser`。
+- 补充包仍可单独导入：在桌面版设置中选择“导入补充包”，或手动解压到 `WUNDER_HOME`。两端自动识别共享 home 中的 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/7zip`、`opt/powershell` 与 `opt/browser`。
 
 ## 安装后的终端命令
 
@@ -32,25 +32,25 @@ wunder-cli
 desktop
 ```
 
-- `wunder-cli` 是舵机；`desktop` 是蛹的启动器（`wunder-desktop` 等价）。安装器通过用户级 `PATH` 暴露命令，已经打开的终端需要重开，或从系统属性重新加载环境变量。
-- 舵机把启动它的目录登记为工作区；需要指定其他目录时使用 `wunder-cli -C <目录>`。工作区数据仍保存在安装根下。
+- `wunder-cli` 是命令行；`desktop` 是桌面版的启动器（`wunder-desktop` 等价）。安装器通过用户级 `PATH` 暴露命令，已经打开的终端需要重开，或从系统属性重新加载环境变量。
+- 命令行把启动它的目录登记为工作区；需要指定其他目录时使用 `wunder-cli -C <目录>`。工作区数据仍保存在安装根下。
 
 ## 静默安装
 
 安装器基于 Inno Setup，原生支持无人值守模式，脚本化部署示例：
 
 ```bat
-wunder-<版本>-win7-x86-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="D:\wunder"
+wunder-desktop-<版本>-win7-x86-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="D:\wunder"
 ```
 
 - `/SILENT` 只显示进度，`/VERYSILENT` 完全无界面；两者都会跳过全部向导页。
-- 组件用 `/TASKS=` 指定，任务名与向导勾选项一致（`desktop`、`cli`、`python`、`git`、`rg`、`ffmpeg`、`sevenzip`、`powershell`、`browser`），例如 `/TASKS="desktop,cli,powershell,sevenzip"`；不传时按向导默认勾选（蛹、舵机与全部补充组件）。`7zip` 的目录名不能直接当任务名——Inno 把任务名按表达式解析，数字开头会报 `Invalid token '7'`，所以任务名固定为 `sevenzip`，安装目录仍是 `opt/7zip`。
+- 组件用 `/TASKS=` 指定，任务名与向导勾选项一致（`desktop`、`cli`、`python`、`git`、`rg`、`ffmpeg`、`sevenzip`、`powershell`、`browser`），例如 `/TASKS="desktop,cli,powershell,sevenzip"`；不传时按向导默认勾选（桌面版、命令行与全部补充组件）。`7zip` 的目录名不能直接当任务名——Inno 把任务名按表达式解析，数字开头会报 `Invalid token '7'`，所以任务名固定为 `sevenzip`，安装目录仍是 `opt/7zip`。
 - 检测到已安装组件时的确认弹窗在静默模式下自动跳过（直接按“清空组件目录后继续”执行）；只有组件目录被占用这类致命错误会中止安装（非零退出码），`/SUPPRESSMSGBOXES` 连错误弹窗也不再显示。
 - 卸载器同样支持静默：`unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`。
 
 ## 安装器打包
 
-先构建蛹和舵机，再准备补充包 zip，然后在仓库根目录执行：
+先构建桌面版和命令行，再准备补充包 zip，然后在仓库根目录执行：
 
 ```bat
 build.bat pack -a win7-x86
@@ -168,7 +168,7 @@ wunder-win7-supplement.json
 
 ## 内置浏览器
 
-Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows 7 的 Chrome 版本）。补充包默认自动准备 Chrome 109 win32 浏览器，导入后蛹的 `browser_*` 工具开箱可用。
+Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows 7 的 Chrome 版本）。补充包默认自动准备 Chrome 109 win32 浏览器，导入后桌面版的 `browser_*` 工具开箱可用。
 
 - 布局：浏览器解到补充包的 `opt/browser/`，默认要求存在 `opt/browser/chrome-win/chrome.exe`；`opt/browser/chrome.exe` 也是运行时认可的回退探测位置。若投喂的压缩包顶层只有一层包裹目录（如 `chrome-win/` 或 `chrome-win32/`），会保留其结构；若解开后找不到 `chrome-win/chrome.exe`，脚本会在解包结果中递归定位 `chrome.exe` 并重排到 `chrome-win/chrome.exe`，仍找不到则报错退出。ia32 档还会校验 `chrome.exe` 的 PE 架构必须是 32 位。
 - 浏览器来源优先级：`-BrowserArchivePath` 显式路径、清单 `browser.archivePath`、仓库中已有的 Chrome 109 缓存；都找不到时，构建脚本自动下载清单中固定版本并校验 SHA-256，再用 7-Zip 解包。若本机没有 7-Zip，请安装 7-Zip 或显式传入已解开的浏览器目录。
@@ -183,13 +183,13 @@ Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows
   - `-BrowserArchivePath` 既接受 `.zip` 压缩包，也接受已解开的浏览器目录；`-SkipBrowser` 可跳过内置浏览器。
 - 获取途径：Chrome 官方旧版离线安装包（win32 的 109.0.5414.x）或可信镜像；解出安装包内的 `chrome.7z`/`chrome-win` 目录即可投喂。浏览器二进制是否允许再分发由投喂者自行确认，本仓库不替使用者做合规结论。
 - CI 构建：`.github/workflows/desktop-supplements.yml` 的 build-win7-ia32 已默认投喂 Chromium 109.0.5414.120 win32（Hibbiki/chromium-win32 发布页 `v109.0.5414.120-r1070088` 的 `mini_installer.sync.exe`，pin 死 URL 并强制 SHA256 校验，浏览器 pin 以字面量并入 win7 缓存键，变更即触发重建）；本地默认构建也使用同一份清单 URL/SHA-256 自动准备浏览器。
-- 运行时如何被发现：在蛹设置中导入补充包后，运行时会自动探测 `WUNDER_HOME/opt/browser/chrome-win/chrome.exe`（回退 `opt/browser/chrome.exe`），`browser_*` 工具直接使用，无需手工修改 `wunder.yaml`。
+- 运行时如何被发现：在桌面版设置中导入补充包后，运行时会自动探测 `WUNDER_HOME/opt/browser/chrome-win/chrome.exe`（回退 `opt/browser/chrome.exe`），`browser_*` 工具直接使用，无需手工修改 `wunder.yaml`。
 
 ## 使用方式
 
-推荐在蛹设置中选择“导入补充包”，导入后新启动的工具立即生效。手动安装步骤：
+推荐在桌面版设置中选择“导入补充包”，导入后新启动的工具立即生效。手动安装步骤：
 
-1. 关闭使用该补充包的蛹、舵机及工具进程。
+1. 关闭使用该补充包的桌面版、命令行及工具进程。
 2. 将 `wunder-supplement-win7-ia32-common.zip` 解压到 `WUNDER_HOME`（默认用户主目录的 `.wunder`）。
 3. 解压后确认共享 home 下出现：
    - `opt/python`
@@ -199,7 +199,7 @@ Win7 最高只支持到 Chrome 109（`109.0.5414.x`，最后一个支持 Windows
    - `opt/7zip`（若打包时未用 `-SkipSevenZip` 跳过）
    - `opt/powershell`（若打包时未用 `-SkipPowerShell` 跳过）
    - `opt/browser`（若打包时投喂了浏览器）
-4. 重新启动蛹或舵机。
+4. 重新启动桌面版或命令行。
 
 两端启动时会自动：
 

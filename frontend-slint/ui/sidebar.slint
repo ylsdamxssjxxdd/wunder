@@ -435,7 +435,7 @@ export component Sidebar inherits Rectangle {
     /// which read as a real identity that had simply failed to load.
     in property <bool> user-ready: true;
     in property <bool> busy;
-    // Device selector: this 蛹 is the local device; the signed-in account is
+    // Device selector: this 桌面版 is the local device; the signed-in account is
     // the cloud device. Only the selected device's workspace tree is shown.
     in property <bool> cloud-available: false;
     in property <int> local-workspace-count: 0;
@@ -1049,7 +1049,7 @@ export component Sidebar inherits Rectangle {
         }
     }
     // Device menu overlay: the outside touch closes it; the two rows switch
-    // between this local 蛹 and the signed-in cloud workspace.
+    // between this local 桌面版 and the signed-in cloud workspace.
     if root.device-menu-open && root.cloud-available : TouchArea {
         y: 40px;
         width: parent.width;

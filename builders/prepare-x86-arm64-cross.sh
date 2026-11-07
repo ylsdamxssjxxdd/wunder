@@ -10,7 +10,7 @@ host_dir="$offline_root/host-tools-amd64"
 dest="$host_dir/root"
 archive="$offline_root/archives/host-tools-amd64-ubuntu18.tar"
 
-fail() { echo "[wunder-x86-arm64-cross] $*" >&2; exit 2; }
+fail() { echo "[wunder-desktop-arm64-cross] $*" >&2; exit 2; }
 
 [[ "$(uname -m)" == x86_64 ]] || fail "this helper is only needed on an x86_64 Linux host"
 if [[ -x "$dest/usr/bin/aarch64-linux-gnu-gcc-7" \
@@ -32,7 +32,7 @@ trap cleanup EXIT
 rm -rf -- "$tmp"
 mkdir -p "$tmp"
 
-echo "[wunder-x86-arm64-cross] extracting aarch64 cross compiler from $archive" >&2
+echo "[wunder-desktop-arm64-cross] extracting aarch64 cross compiler from $archive" >&2
 tar -xf "$archive" -C "$tmp" --wildcards \
   'usr/bin/aarch64-linux-gnu-*' \
   'usr/lib/gcc-cross/aarch64-linux-gnu/7' \

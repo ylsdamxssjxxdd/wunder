@@ -12,7 +12,7 @@ Diversity and strength set the capability surface; speed and efficiency constrai
 
 | Core | Meaning |
 | --- | --- |
-| **Diverse** | Multi-platform, multi-form. One core and engine back the Pupa, Beehive, Helm, and Hull across 32-bit Windows 7, Ubuntu 18.04, and modern Windows / Linux / Docker, in both web and local usage; models, channels, and workspaces extend through the same access layer |
+| **Diverse** | Multi-platform, multi-form. One core and engine back the Desktop, Cloud, CLI, and Server across 32-bit Windows 7, Ubuntu 18.04, and modern Windows / Linux / Docker, in both web and local usage; models, channels, and workspaces extend through the same access layer |
 | **Fast** | Instant startup and a response that never lags. Local forms call the engine in-process without local HTTP; threads and history restore directly from local storage; streaming events are frame-coalesced and projected incrementally, and tools run in parallel where allowed |
 | **Superior** | Strong stability for 24/7 operation and a high degree of intelligence. Queues, caches, views, and context are bounded, with session locks, round caps, quotas, and retry circuit breaking for long runs; goal mode, subagents, the tool chain, long-term memory, and knowledge bases carry complex tasks from decomposition to delivery |
 | **Efficient** | Extremely low CPU and memory use, minimal context consumption. A native Rust process with local SQLite needs no browser runtime, and supplement packages ship a ready-made agent runtime so nothing has to be assembled by hand; tool-result trimming, frozen prompts that reuse cache, one-time memory-index injection, and micro-compaction and history compaction keep token consumption down |
@@ -32,12 +32,12 @@ The nine capabilities expanded page by page — goal, compatibility, context com
 
 | Form | Role |
 | --- | --- |
-| **Pupa** (desktop) | A local AI workbench, the default entry for individuals; a local desktop process that calls the engine in-process, with a local SQLite |
-| **Beehive** (web) | A cloud AI workbench reached from a browser; no process of its own, using the Hull's storage |
-| **Helm** (cli) | A hands-on local entry driven from a terminal and easy to script; a local process with a local SQLite |
-| **Hull** (server) | The user- and agent-management platform: multi-tenancy, units, app build-and-release, and gateway access; a service process plus the engine, with the Bridge built in |
+| **Desktop** (desktop) | A local AI workbench, the default entry for individuals; a local desktop process that calls the engine in-process, with a local SQLite |
+| **Cloud** (web) | A cloud AI workbench reached from a browser; no process of its own, using the Server's storage |
+| **CLI** (cli) | A hands-on local entry driven from a terminal and easy to script; a local process with a local SQLite |
+| **Server** (server) | The user- and agent-management platform: multi-tenancy, units, app build-and-release, and gateway access; a service process plus the engine, with the Admin built in |
 
-The Pupa and the Helm do not depend on the Hull and can run and ship on their own. The Electron / Tauri front-end shells are no longer maintained day to day and are no longer described as a capability.
+The Desktop and the CLI do not depend on the Server and can run and ship on their own. The Electron / Tauri front-end shells are no longer maintained day to day and are no longer described as a capability.
 
 ## Deeper Pages by Topic
 
@@ -63,7 +63,7 @@ The Pupa and the Helm do not depend on the Hull and can run and ship on their ow
 
 ## Reading Paths
 
-- **First time on the Pupa**: [Quickstart](/docs/en/start/quickstart/) → Agent Loop → Tools → Memory → Context Compression.
+- **First time on the Desktop**: [Quickstart](/docs/en/start/quickstart/) → Agent Loop → Tools → Memory → Context Compression.
 - **Administrator / governance**: Multi-user Management → Stability → Observability → Channels → [Configuration Reference](/docs/en/capabilities/config/).
 - **Integration and development**: [Architecture](/docs/en/concepts/architecture/) → [Chat WebSocket](/docs/en/capabilities/chat-ws/) → Streaming Execution.
 
@@ -73,4 +73,4 @@ The Pupa and the Helm do not depend on the Hull and can run and ship on their ow
 - **"Every listed tool is usable"** — it is not. The default usable set is a fixed tier, and `网页搜索` is currently **temporarily withdrawn** (code kept, invisible to model and user); `ptc` has been removed entirely.
 - **"Editing the prompt affects the current conversation at once"** — it does not. Once a thread first fixes its system prompt, it is frozen.
 - **"What the UI shows is the back-end truth"** — the UI consumes a bounded view (pagination plus a byte budget), not the full history. When the content looks wrong, trust the thread ledger.
-- **"Stopping maintenance of the front-end shell stops the Pupa back end"** — they are two different things. The Pupa runs the local native UI with in-process native calls by default, and its execution, tools, and storage semantics still reuse the engine.
+- **"Stopping maintenance of the front-end shell stops the Desktop back end"** — they are two different things. The Desktop runs the local native UI with in-process native calls by default, and its execution, tools, and storage semantics still reuse the engine.

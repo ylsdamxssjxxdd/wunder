@@ -38,7 +38,7 @@ Background tasks all start with a tag; a long run raises an alert, and one loop 
 | Active session cap | 300 by default (constrains non-admins) |
 | Approval cache | 600 seconds |
 
-Session queueing is on by default. With it turned off, sending a message while a run is in progress is immediately judged "user busy" and no queue entry is created either (the Hull warns about this at startup). This is a configuration trade-off, not a failure.
+Session queueing is on by default. With it turned off, sending a message while a run is in progress is immediately judged "user busy" and no queue entry is created either (the Server warns about this at startup). This is a configuration trade-off, not a failure.
 
 ## Session locks and the single writer
 

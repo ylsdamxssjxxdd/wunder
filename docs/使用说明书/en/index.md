@@ -24,26 +24,26 @@ The four forms are built on the same engine:
 
 | Form | Positioning | Who it's for |
 | --- | --- | --- |
-| **Pupa** | Local AI workbench, installed on your own computer | Individual users (the default entry point) |
-| **Beehive** | Cloud AI workbench, opened in a browser | Team members after the Hull is deployed |
-| **Helm** | Manual local entry point, used in a terminal | Command-line users / automation scripts |
-| **Hull** | User and agent management platform, shared by a team | Administrators |
+| **wunder Desktop** | Local AI workbench, installed on your own computer | Individual users (the default entry point) |
+| **wunder Cloud** | Cloud AI workbench, opened in a browser | Team members after the Server is deployed |
+| **wunder CLI** | Manual local entry point, used in a terminal | Command-line users / automation scripts |
+| **wunder Server** | User and agent management platform, shared by a team | Administrators |
 
 See the [form matrix](/docs/en/start/forms/) for the full comparison of tech stack, run model and OS support.
 
-The Pupa and the Helm don't depend on the Hull and can be installed and run on their own. The **Bridge** is the management interface that ships with the Hull, starts alongside it, and is aimed at administrators.
+The Desktop and the CLI don't depend on the Server and can be installed and run on their own. The **Admin** is the management interface that ships with the Server, starts alongside it, and is aimed at administrators.
 
-Deploy the rest as needed: the **Hull (server)** covers shared use, permission management, channel access, and unified publishing — see [Hull deployment](/docs/en/start/server/); the **Beehive (web)** ships with the Hull, and members open it in a browser once it is deployed; the **Helm (cli)** covers terminal and automation scenarios — see [Using the Helm](/docs/en/start/cli/).
+Deploy the rest as needed: the **Server** covers shared use, permission management, channel access, and unified publishing — see [Server deployment](/docs/en/start/server/); the **Cloud (web)** ships with the Server, and members open it in a browser once it is deployed; the **CLI** covers terminal and automation scenarios — see [Using the CLI](/docs/en/start/cli/).
 
 ## Default Entry Point
 
-Individual users start with the Pupa: download and install, and it opens as a local AI workbench.
+Individual users start with the Desktop: download and install, and it opens as a local AI workbench.
 
 ```text
-Download the Pupa → Configure a model → Describe your goal → Get results
+Download Desktop → Configure a model → Describe your goal → Get results
 ```
 
-See [Quick Start](/docs/en/start/quickstart/) and [Pupa quick start](/docs/en/start/desktop/) for the details.
+See [Quick Start](/docs/en/start/quickstart/) and [Desktop quick start](/docs/en/start/desktop/) for the details.
 
 ## Capability Range
 
@@ -62,15 +62,15 @@ See [Quick Start](/docs/en/start/quickstart/) and [Pupa quick start](/docs/en/st
 
 ## Interfaces
 
-- [Pupa interface](/docs/en/surfaces/desktop-ui/): the main window has two pages, "Chat" and "Settings"; everything else appears as panels and dialogs
-- [Beehive interface](/docs/en/surfaces/frontend/): a single-page app in the browser
-- [Bridge interface](/docs/en/surfaces/web-admin/): the administrator's governance and debugging backend
+- [Desktop interface](/docs/en/surfaces/desktop-ui/): the main window has two pages, "Chat" and "Settings"; everything else appears as panels and dialogs
+- [Cloud interface](/docs/en/surfaces/frontend/): a single-page app in the browser
+- [Admin interface](/docs/en/surfaces/web-admin/): the administrator's governance and debugging backend
 - [Interface Overview](/docs/en/surfaces/index/): how the four forms compare
 
 ## Navigation
 
 - **First time** → [Quick Start](/docs/en/start/quickstart/)
-- **Download and install** → [Pupa quick start](/docs/en/start/desktop/)
+- **Download and install** → [Desktop quick start](/docs/en/start/desktop/)
 - **Interface map** → [Interface Overview](/docs/en/surfaces/index/)
 - **Understand the system in depth** → [Core Concepts](/docs/en/concepts/)
 - **Documentation hub** → [Documentation Hub](/docs/en/start/hubs/)

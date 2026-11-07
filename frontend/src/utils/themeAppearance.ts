@@ -37,7 +37,7 @@ export const THEME_PALETTE_LABEL_KEYS: Partial<Record<ThemePalette, string>> = {
 
 /** 预览卡取的两档色值，与 base.css 里同名 `data-user-accent` 块的
  *  `--ui-accent` / `--ui-accent-soft-3` 一致；改色板时两处一起改。
- *  橙汁（eva-orange）的色值以蛹 frontend-slint/ui/design_tokens.slint 的
+ *  橙汁（eva-orange）的色值以桌面版 frontend-slint/ui/design_tokens.slint 的
  *  terracotta 为准：accent #F58A24、soft #FDF0DE。 */
 export type ThemeSwatchPalette = (typeof SELECTABLE_THEME_PALETTES)[number];
 

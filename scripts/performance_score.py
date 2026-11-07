@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Calculate the 蜂巢/蛹/舵机 performance scorecard.
+"""Calculate the 云端版/桌面版/命令行 performance scorecard.
 
 The collector is intentionally separate from product-specific profilers.  A
 profiler, Playwright run, desktop harness, or CLI harness writes the small JSON
@@ -8,7 +8,7 @@ contract accepted here; this script turns those observations into a comparable
 score and a reviewable report.
 
 Examples:
-  python scripts/performance_score.py --shape 蜂巢 --template --output target/beehive-template.json
+  python scripts/performance_score.py --shape 云端版 --template --output target/beehive-template.json
   python scripts/performance_score.py --input target/beehive-run.json \
       --baseline target/beehive-previous/performance-score.json \
       --out-dir target/beehive-score --require-complete
@@ -73,7 +73,7 @@ SCORECARDS: dict[str, tuple[ScenarioSpec, ...]] = {
     # Backend capacity is scored independently from browser interaction.
     "server": (
         ScenarioSpec("S1", "大库日常启动", 40, (lower("storage_startup_p95_ms", "存储就绪 p95", "ms", 2000, 5000), lower("capacity_added_p95_ms", "容量放大附加耗时", "ms", 100, 500)), (gate("index_oids_stable", "已有索引保持"), gate("no_history_scan", "启动不扫描历史"), gate("no_row_rewrite", "启动不重写数据"))),
-        ScenarioSpec("S2", "大库空闲驻留", 25, (lower("server_idle_cpu_percent", "舰体空闲 CPU", "percent", 1, 2), lower("postgres_idle_cpu_percent", "数据库空闲 CPU", "percent", 1, 2)), (gate("idle_window_valid", "无请求空闲窗口有效"),)),
+        ScenarioSpec("S2", "大库空闲驻留", 25, (lower("server_idle_cpu_percent", "服务端空闲 CPU", "percent", 1, 2), lower("postgres_idle_cpu_percent", "数据库空闲 CPU", "percent", 1, 2)), (gate("idle_window_valid", "无请求空闲窗口有效"),)),
         ScenarioSpec("S3", "历史重建预算", 20, (lower("maintenance_duty_ratio", "维护工作时间占比", "ratio", 0.01, 0.02),), (gate("discovery_page_bounded", "发现每批不超过 64 线程"), gate("pending_rotates", "待迁移线程轮转"), gate("durable_resume", "游标重启续跑"))),
         ScenarioSpec("S4", "未完成投影的大线程窗口", 15, (lower("chat_window_p95_ms", "聊天窗口 p95", "ms", 500, 1500), lower("trajectory_window_p95_ms", "轨迹窗口 p95", "ms", 500, 1500)), (gate("opens_without_projection", "不等待历史投影即可打开"), gate("seek_pages_disjoint", "游标分页不重复"), gate("response_bytes_bounded", "响应体有界"), gate("read_does_not_write", "展示读取不写投影"), gate("body_integrity", "原始正文分块完整"))),
     ),
@@ -121,26 +121,26 @@ SCORECARDS: dict[str, tuple[ScenarioSpec, ...]] = {
 
 SHAPE_ALIASES = {
     "server": "server",
-    "舰体": "server",
+    "服务端": "server",
     "beehive": "beehive",
     "web": "beehive",
     "cloud": "beehive",
-    "蜂巢": "beehive",
+    "云端版": "beehive",
     "desktop": "desktop",
     "local": "desktop",
     "pupa": "desktop",
-    "蛹": "desktop",
+    "桌面版": "desktop",
     "cli": "cli",
     "terminal": "cli",
-    "舵机": "cli",
+    "命令行": "cli",
 }
-SHAPE_LABELS = {"beehive": "蜂巢", "desktop": "蛹", "cli": "舵机", "server": "舰体"}
+SHAPE_LABELS = {"beehive": "云端版", "desktop": "桌面版", "cli": "命令行", "server": "服务端"}
 
 
 def shape_key(raw: str) -> str:
     key = SHAPE_ALIASES.get(str(raw).strip().lower())
     if key is None:
-        raise ValueError(f"未知形态 {raw!r}，可选：蜂巢、蛹、舵机、舰体")
+        raise ValueError(f"未知形态 {raw!r}，可选：云端版、桌面版、命令行、服务端")
     return key
 
 
@@ -456,8 +456,8 @@ def markdown(report: Mapping[str, Any], status: str) -> str:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="按性能评分体系计算工作台、舵机或舰体容量评分。")
-    parser.add_argument("--shape", choices=sorted(set(SHAPE_ALIASES)), help="形态：蜂巢、蛹、舵机、舰体，也可用 web/desktop/cli/server")
+    parser = argparse.ArgumentParser(description="按性能评分体系计算工作台、命令行或服务端容量评分。")
+    parser.add_argument("--shape", choices=sorted(set(SHAPE_ALIASES)), help="形态：云端版、桌面版、命令行、服务端，也可用 web/desktop/cli/server")
     parser.add_argument("--input", type=Path, help="实测 JSON 输入")
     parser.add_argument("--baseline", type=Path, help="上一版本原始输入或 performance-score.json")
     parser.add_argument("--out-dir", type=Path, default=Path("target/performance-score"), help="报告输出目录")

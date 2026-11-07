@@ -502,7 +502,7 @@ fn startup_log(point: &str, boot: std::time::Instant) {
             boot.elapsed().as_secs_f64() * 1000.0
         );
         eprintln!("{line}");
-        // 蛹 是 GUI 进程：没有控制台，stderr 会随进程一起消失。启动里程碑同时
+        // 桌面版是 GUI 进程：没有控制台，stderr 会随进程一起消失。启动里程碑同时
         // 落到 <home>/logs/startup.log，报障时只需提供这一个文件。
         use std::io::Write;
         let path = wunder_desktop::local_logs_dir().join("startup.log");
@@ -734,7 +734,7 @@ fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
                     {
                         use winit::platform::windows::WindowAttributesExtWindows as _;
                         return attributes
-                            .with_title("蛹")
+                            .with_title("wunder 桌面版")
                             .with_decorations(false)
                             .with_active(false)
                             .with_skip_taskbar(true)
@@ -742,7 +742,7 @@ fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     #[cfg(not(windows))]
                     return attributes
-                        .with_title("蛹")
+                        .with_title("wunder 桌面版")
                         .with_decorations(false)
                         .with_active(false);
                 }
@@ -750,7 +750,7 @@ fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
                     // A pet overlay: frameless, never activated, and on X11 a
                     // Utility window so it stays out of the taskbar and pager.
                     let attributes = attributes
-                        .with_title("蛹")
+                        .with_title("wunder 桌面版")
                         .with_decorations(false)
                         .with_active(false)
                         .with_resizable(false);
@@ -770,7 +770,7 @@ fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
                         MIN_WINDOW_W,
                         MIN_WINDOW_H,
                     ))
-                    .with_title("蛹")
+                    .with_title("wunder 桌面版")
                     .with_decorations(!frameless)
                     // A frameless window owns its caption buttons in client
                     // content; a latent system button can surface after the

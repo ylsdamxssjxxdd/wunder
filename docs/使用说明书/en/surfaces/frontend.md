@@ -1,9 +1,9 @@
 ---
-title: Beehive Interface
-summary: The cloud AI workbench, provided with the Hull deployment and reached in a browser. Its settings include tools, memory, channels, scheduled tasks, devices, and archive; it supports two-way voice (TTS included) and has no interactive terminal.
+title: Cloud Interface
+summary: The cloud AI workbench, provided with the Server deployment and reached in a browser. Its settings include tools, memory, channels, scheduled tasks, devices, and archive; it supports two-way voice (TTS included) and has no interactive terminal.
 read_when:
-  - You use the Beehive in a browser and want to know where each capability lives
-  - You are checking what the Beehive can do that the Pupa cannot (and vice versa)
+  - You use the Cloud in a browser and want to know where each capability lives
+  - You are checking what the Cloud can do that the Desktop cannot (and vice versa)
 source_docs:
   - frontend/src/router/index.ts
   - frontend/src/api/chat.ts
@@ -13,9 +13,9 @@ source_docs:
 updated_at: 2026-10-16
 ---
 
-# Beehive Interface
+# Cloud Interface
 
-The cloud AI workbench, provided with the Hull: once the Hull is deployed, members open it in a browser and start working. It has no process of its own — concretely, the built pages in `frontend/dist` are served by an nginx container (port 18001 by default); the Hull itself only serves the Bridge's static directory, not the Beehive.
+The cloud AI workbench, provided with the Server: once the Server is deployed, members open it in a browser and start working. It has no process of its own — concretely, the built pages in `frontend/dist` are served by an nginx container (port 18001 by default); the Server itself only serves the Admin's static directory, not the Cloud.
 
 ## Access and sign-in
 
@@ -28,11 +28,11 @@ Open the deployed address in a browser. If you are not signed in you land on the
 - **Thread trajectory**: the execution record of a whole thread
 - **Admin console**: admins get separate user, agent, and system management pages after signing in
 
-The Beehive and the Bridge are two separate interfaces: the Beehive faces users, the Bridge faces admins. The Beehive is itself a team / multi-user setting, where members sign in with a Hull account; for a single machine, the Pupa is recommended.
+The Cloud and the Admin are two separate interfaces: the Cloud faces users, the Admin faces admins. The Cloud is itself a team / multi-user setting, where members sign in with a Server account; for a single machine, the Desktop is recommended.
 
 ## Main area
 
-The Beehive's main area is a three-column chat workspace:
+The Cloud's main area is a three-column chat workspace:
 
 - **Left column**: new task, search, workspace and thread tree, working directory, settings entry
 - **Right column**: chat top bar + timeline + input area
@@ -42,7 +42,7 @@ One agent can hold several independent task threads at once, and there can be se
 
 ## Realtime connectivity
 
-All realtime traffic runs over **a single WebSocket** (`/chat/ws`), which the client multiplexes: new messages, execution progress, and approval prompts all arrive through it. The Beehive does not open several WebSocket channels at once. After a reconnect, the state is filled in by ordinary requests, so you do not have to reload the page.
+All realtime traffic runs over **a single WebSocket** (`/chat/ws`), which the client multiplexes: new messages, execution progress, and approval prompts all arrive through it. The Cloud does not open several WebSocket channels at once. After a reconnect, the state is filled in by ordinary requests, so you do not have to reload the page.
 
 If the network or a proxy blocks that one connection, realtime state stops updating; refreshing the page usually restores it.
 
@@ -54,9 +54,9 @@ The rendering optimization for extremely large threads is a rewritten plan whose
 
 ## Settings categories
 
-The Beehive's settings hang off the chat page as categories and share the same backend capabilities as the Pupa. They include:
+The Cloud's settings hang off the chat page as categories and share the same backend capabilities as the Desktop. They include:
 
-- **General / Account / Models / Agent / Companion / Help** (the same as the Pupa)
+- **General / Account / Models / Agent / Companion / Help** (the same as the Desktop)
 - **Tools**: four tabs — built-in / MCP / skills / knowledge bases
 - **Memory**: long-term memory management
 - **Channels**: channel binding and status
@@ -100,12 +100,12 @@ Type them into the message box:
 - **Empty-thread reuse**: a new thread prefers an empty thread the current agent has not used yet; threads that have sent messages, are running, or were spawned by subagents are never reused
 - **Deletion sync**: after an admin deletes a thread, your side clears the entry and its cache on the next list refresh or switch; clicking a stale entry shows a notice and returns you to the input page
 
-## Differences from the Pupa
+## Differences from the Desktop
 
-| Item | Beehive | Pupa |
+| Item | Cloud | Desktop |
 | --- | --- | --- |
 | Running mode | Reached in a browser, in the cloud | A desktop app installed on your own computer |
-| Data storage | Hull storage | Local |
+| Data storage | Server storage | Local |
 | Interactive terminal | ❌ No | ✅ Yes |
 | Voice input / output | Both directions ✅ (TTS included) | Input ✅, output ❌ |
 | Device interconnection | ✅ Devices category + interconnection view | ⚠️ Cloud workspace + approval pop-up only; settings category not opened |

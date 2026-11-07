@@ -1266,7 +1266,7 @@ async fn the_composer_band_is_filled_and_the_prompt_keeps_its_weight() {
     );
 }
 
-/// codex 用 Esc 中断当前轮次。舵机照做，但将「退出」仍只留给 Ctrl+C：按 Esc 永远不会
+/// codex 用 Esc 中断当前轮次。命令行照做，但将「退出」仍只留给 Ctrl+C：按 Esc 永远不会
 /// 关掉会话，也不会武装退出窗口。
 #[tokio::test]
 async fn esc_interrupts_the_running_round_and_never_closes_the_session() {
@@ -1967,7 +1967,7 @@ async fn durable_replay_and_snapshot_recovery_land_the_same_text() {
     );
 }
 
-/// §3.2/§3.3：舵机直连 runtime 共享 feeder。基线之后的提交即使实时通道没送到，
+/// §3.2/§3.3：命令行直连 runtime 共享 feeder。基线之后的提交即使实时通道没送到，
 /// durable 帧也会折叠进转录；一个线程只允许一个写者。
 #[tokio::test]
 async fn the_durable_feed_folds_commits_behind_the_start_baseline() {
@@ -6310,7 +6310,7 @@ async fn model_add_seeds_the_wizard_with_what_the_caller_already_typed() {
 async fn a_model_registered_for_another_job_is_not_switchable() {
     let root = TempRoot::new("model_switch_guard");
     let mut app = fixture_app(root.path()).await;
-    // 蛹 writes embedding and speech entries into the same engine file.
+    // 桌面版 writes embedding and speech entries into the same engine file.
     app.runtime
         .state
         .config_store

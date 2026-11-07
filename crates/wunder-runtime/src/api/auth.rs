@@ -2557,7 +2557,7 @@ mod tests {
         assert_eq!(normalize_theme_palette("eva-orange"), "eva-orange");
         assert_eq!(normalize_theme_palette("claw-orange"), "claw-orange");
         assert_eq!(normalize_theme_palette("hula-green"), "hula-green");
-        // The 蜂巢 theme card writes exactly these four ids; a palette the
+        // The 云端版 theme card writes exactly these four ids; a palette the
         // server clamps away snaps the UI back to the default on the next
         // load, so every selectable one has to be listed here.
         assert_eq!(normalize_theme_palette("forest"), "forest");

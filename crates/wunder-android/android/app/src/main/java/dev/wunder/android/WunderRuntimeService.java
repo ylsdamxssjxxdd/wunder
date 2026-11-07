@@ -183,7 +183,7 @@ public final class WunderRuntimeService extends Service {
     private Notification buildNotification() {
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
-                .setContentTitle(busy ? "茧正在执行任务" : "茧")
+                .setContentTitle(busy ? "wunder 安卓版正在执行任务" : "wunder 安卓版")
                 .setContentText(busy && !title.isEmpty() ? title : "待机中，点击返回")
                 .setContentIntent(launchIntent())
                 .setCategory(Notification.CATEGORY_SERVICE)

@@ -1,6 +1,6 @@
 ---
-title: Using the Helm (CLI)
-summary: The manual local entry point. An interactive session on a TTY and a one-shot run off it; 11 subcommands, the full set of 22 slash commands, an exec --json event stream, and the complete cloud subcommand family; scheduled tasks and engine queueing are off on the Helm.
+title: Using the CLI
+summary: The manual local entry point. An interactive session on a TTY and a one-shot run off it; 11 subcommands, the full set of 22 slash commands, an exec --json event stream, and the complete cloud subcommand family; scheduled tasks and engine queueing are off on the CLI.
 read_when:
   - You work terminal-driven, scripted, or in CI/CD
   - You need the cloud subcommands to operate device interlink from a shell
@@ -14,21 +14,21 @@ source_docs:
 updated_at: 2026-10-16
 ---
 
-# Using the Helm (CLI)
+# Using the CLI
 
-The manual local entry point, an optional form. For daily use, install the Pupa (desktop); reach for the Helm when you work terminal-driven, scripted, or automated. It calls the engine in-process, reusing the same configuration, tools, and storage rather than standing up a separate execution path.
+The manual local entry point, an optional form. For daily use, install the Desktop; reach for the CLI when you work terminal-driven, scripted, or automated. It calls the engine in-process, reusing the same configuration, tools, and storage rather than standing up a separate execution path.
 
 ## Prerequisites
 
-| Scenario | Choose the Helm |
+| Scenario | Choose the CLI |
 | --- | --- |
 | Prefer working in a terminal | ✅ |
 | Need scripting, automation, CI/CD | ✅ |
 | Need piped output (JSONL) | ✅ |
 | Need the `cloud` subcommands to operate device interlink | ✅ |
-| Don't want to install the Pupa | ✅ |
-| Need a graphical interface | ❌ Choose the Pupa |
-| Need browser access | ❌ Choose the Beehive (ships with the Hull) |
+| Don't want to install the Desktop | ✅ |
+| Need a graphical interface | ❌ Choose the Desktop |
+| Need browser access | ❌ Choose the Cloud (ships with the Server) |
 
 ## Install and launch
 
@@ -121,7 +121,7 @@ wunder-cli exec --json "tidy up the files in the current directory" | jq -c 'sel
 | `/exit` | — | Exit |
 | `/quit` | `/q` | Exit |
 
-There are **no** `cloud`, `cron`, `channel`, `memory`, or `knowledge` slash commands: `cloud` is a subcommand, and the other four have no management interface on the Helm.
+There are **no** `cloud`, `cron`, `channel`, `memory`, or `knowledge` slash commands: `cloud` is a subcommand, and the other four have no management interface on the CLI.
 
 ## Trajectory logs
 
@@ -194,7 +194,7 @@ Use returned `next_before` / `next_after` cursors; `--before` and `--after` are 
 
 ## Capability differences from the other interfaces
 
-### Only the Helm has these
+### Only the CLI has these
 
 - The `exec --json` event-stream scripting contract
 - The full set of `cloud` subcommands
@@ -203,21 +203,21 @@ Use returned `next_before` / `next_after` cursors; `--before` and `--after` are 
 - `completion` shell completions
 - `tool` / `mcp` / `skills` run straight from the command line (without going through the agent main loop)
 
-### The Helm lacks these
+### The CLI lacks these
 
-- **Scheduled tasks are explicitly off**: you can't add, modify, enable, or immediately run a scheduled task; viewing status, listing, deleting, and disabling still work — so you'll see old task lists, but the Helm won't schedule anything new.
-- **Engine queueing is explicitly off too**: sending another message during a run doesn't join a queue; it hits the session lock outright and is judged "this user already has a running session," returning only once the busy window elapses. This is the opposite of the Pupa, which forces the queue open. To interject, queue, or rewrite the next message during a run, use the Pupa or the Beehive.
-- **Channels, knowledge bases, long-term memory, and personas** have **no management interface** on the Helm
-- **No voice input**: the Helm has no ASR; paste images with `Ctrl+V` or drag-and-drop
+- **Scheduled tasks are explicitly off**: you can't add, modify, enable, or immediately run a scheduled task; viewing status, listing, deleting, and disabling still work — so you'll see old task lists, but the CLI won't schedule anything new.
+- **Engine queueing is explicitly off too**: sending another message during a run doesn't join a queue; it hits the session lock outright and is judged "this user already has a running session," returning only once the busy window elapses. This is the opposite of the Desktop, which forces the queue open. To interject, queue, or rewrite the next message during a run, use the Desktop or the Cloud.
+- **Channels, knowledge bases, long-term memory, and personas** have **no management interface** on the CLI
+- **No voice input**: the CLI has no ASR; paste images with `Ctrl+V` or drag-and-drop
 - **No interactive terminal UI**: the host is itself the terminal; shell access goes through the `!` prefix
 - **No screenshot capture, tray, or global hotkeys**
 
 ## Runtime files
 
-By default the Helm keeps runtime files under `~/.wunder`:
+By default the CLI keeps runtime files under `~/.wunder`:
 
 - Runtime configuration and SQLite state: `~/.wunder/cli/WUNDER_TEMP/`
-- Engine configuration YAML: `~/.wunder/config/wunder.yaml`, the same file the Pupa uses; the Helm reads it back, projects its own layers onto it and writes it out, so the model list is visible to both
+- Engine configuration YAML: `~/.wunder/config/wunder.yaml`, the same file the Desktop uses; the CLI reads it back, projects its own layers onto it and writes it out, so the model list is visible to both
 - User tools and skills: `~/.wunder/user_tools/` and `~/.wunder/skills/`
 - Temporary-file API: `WUNDER_TEMP_DIR_ROOT` points to the same `~/.wunder/cli/WUNDER_TEMP/`
 
@@ -229,4 +229,4 @@ When a script needs an isolated runtime directory, override it with `--temp-root
 - Batch tasks: an external scheduler looping over `exec`
 - Pipelines: `cat input.txt | wunder-cli` triggers the non-TTY degradation
 - Combining with `tool` / `mcp` / `skills` for pure tool runs
-- **Scheduled tasks don't belong on the Helm**: it turns cron off; put them on the Pupa or Beehive scheduled-tasks page
+- **Scheduled tasks don't belong on the CLI**: it turns cron off; put them on the Desktop or Cloud scheduled-tasks page

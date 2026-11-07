@@ -30,7 +30,7 @@ case "$COMPOSE_FILE" in
   *) DEPS_DIR=node_modules-linux-x86 ;;
 esac
 if [ -d "$DEPS_DIR" ]; then
-  printf '%s\n' "[offline] 收集前端依赖 $DEPS_DIR（离线构建蜂巢必需）"
+  printf '%s\n' "[offline] 收集前端依赖 $DEPS_DIR（离线构建云端版必需）"
   tar -czf "$OUT/frontend-deps.tar.gz" -C "$REPO_ROOT" "$DEPS_DIR"
 else
   printf '%s\n' "[offline] 跳过前端依赖：未找到 $DEPS_DIR" >&2

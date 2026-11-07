@@ -12,10 +12,10 @@ sdk="$offline_root/linux-amd64-ubuntu18"
 root="$sdk/root"
 debs="$sdk/debs/runtime-amd64"
 
-fail() { echo "[wunder-amd64-runtime-sdk] $*" >&2; exit 2; }
+fail() { echo "[wunder-x64-runtime-sdk] $*" >&2; exit 2; }
 
 [[ "$(uname -m)" == x86_64 ]] || fail "run this one-time SDK preparation on an x86_64 Ubuntu 18.04 environment"
-[[ -d "$root" ]] || fail "Ubuntu 18.04 amd64 cross sysroot is missing: $root"
+[[ -d "$root" ]] || fail "Ubuntu 18.04 x64 cross sysroot is missing: $root"
 [[ -r /etc/os-release ]] || fail "cannot identify Linux distribution"
 . /etc/os-release
 [[ "$ID:$VERSION_ID" == ubuntu:18.04 ]] || fail "Ubuntu 18.04 is required to preserve the GLIBC_2.27 release floor"
@@ -62,7 +62,7 @@ apt-get install --download-only --reinstall --yes --no-install-recommends \
 
 shopt -s nullglob
 archives=("$debs"/*.deb)
-((${#archives[@]})) || fail "apt did not download any amd64 runtime packages"
+((${#archives[@]})) || fail "apt did not download any x64 runtime packages"
 for archive in "${archives[@]}"; do
   dpkg-deb -x "$archive" "$root"
 done
@@ -77,15 +77,15 @@ for library in "${required[@]}"; do
   for candidate in "$root"/usr/lib/x86_64-linux-gnu/"$library" "$root"/lib/x86_64-linux-gnu/"$library"; do
     if [[ -e "$candidate" ]]; then found="$candidate"; break; fi
   done
-  [[ -n "$found" ]] || fail "runtime library was not installed into amd64 sysroot: $library"
+  [[ -n "$found" ]] || fail "runtime library was not installed into x64 sysroot: $library"
   machine="$(LC_ALL=C "$readelf_tool" -h "$found" | LC_ALL=C awk -F: '/Machine:/{print $2}' | LC_ALL=C sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-  [[ "$machine" == "Advanced Micro Devices X86-64" ]] || fail "$library is not an amd64 ELF: ${machine:-unknown}"
+  [[ "$machine" == "Advanced Micro Devices X86-64" ]] || fail "$library is not an x64 ELF: ${machine:-unknown}"
 done
 
 alsa_linker=""
 for candidate in "$root"/usr/lib/x86_64-linux-gnu/libasound.so "$root"/lib/x86_64-linux-gnu/libasound.so; do
   if [[ -e "$candidate" ]]; then alsa_linker="$candidate"; break; fi
 done
-[[ -n "$alsa_linker" ]] || fail "ALSA development linker library was not installed into amd64 sysroot: libasound.so"
+[[ -n "$alsa_linker" ]] || fail "ALSA development linker library was not installed into x64 sysroot: libasound.so"
 
-printf '[wunder-amd64-runtime-sdk] installed %s Ubuntu 18.04 amd64 runtime packages into %s\n' "${#archives[@]}" "$root"
+printf '[wunder-x64-runtime-sdk] installed %s Ubuntu 18.04 x64 runtime packages into %s\n' "${#archives[@]}" "$root"

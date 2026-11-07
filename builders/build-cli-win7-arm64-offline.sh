@@ -90,7 +90,7 @@ blocked="$(printf '%s\n' "$imports" | grep -Ei 'libwinpthread[-_.0-9a-zA-Z]*\.dl
 [[ -z "$blocked" ]] || fail "Win7 产物引入了 MinGW 运行库 DLL 或 Win8+ 符号: $(printf '%s' "$blocked" | tr '\n' ' ')"
 i686-w64-mingw32-strip --strip-all "$exe"
 # The SDK image ships mawk, whose regex lacks [[:space:]]; use grep+cut.
-version="$(grep -m1 '^version *=' "$manifest" | cut -d'"' -f2)"
+version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$repo_root/config/app_version.json" | head -n 1)"
 [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]] || fail 'could not read a safe workspace version'
 release="$output_dir/wunder-cli-$version-win7-x86.exe"
 cp -f "$exe" "$release"

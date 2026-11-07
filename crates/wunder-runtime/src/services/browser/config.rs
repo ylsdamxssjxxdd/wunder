@@ -105,6 +105,21 @@ pub fn effective_browser_config(config: &Config) -> EffectiveBrowserConfig {
     if config.browser.docker.enabled {
         launch_args.extend(config.browser.docker.extra_launch_args.clone());
     }
+    // proot has no /dev/shm mount of its own and the Android GPU stack is not
+    // reachable from the guest Chromium; keep the browser on the software path.
+    // The zygote/sandbox process model cannot start under proot's ptrace
+    // emulation, so renderers are spawned directly.
+    #[cfg(target_os = "android")]
+    for arg in [
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--no-zygote",
+        "--no-sandbox",
+    ] {
+        if !launch_args.iter().any(|existing| existing == arg) {
+            launch_args.push(arg.to_string());
+        }
+    }
     let mut effective = EffectiveBrowserConfig {
         enabled: browser_runtime_enabled(config),
         tool_visible: browser_tools_enabled(config),

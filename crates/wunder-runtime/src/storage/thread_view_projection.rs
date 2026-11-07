@@ -629,7 +629,7 @@ fn command_output(item: &Value) -> Option<String> {
 /// Tool payloads carry a `schema_ref` (catalog version + hash) instead of the
 /// document itself: the catalog holds kilobytes per tool, and every ledger row
 /// would otherwise repeat it. The lazy detail body is read once per opened
-/// entry, so that is the right place to spend one lookup — 蛹, 舰桥 and 蜂巢 all
+/// entry, so that is the right place to spend one lookup — 桌面版, 管理端 and 云端版 all
 /// render `tool_schema` when the body carries it.
 pub(crate) fn attach_tool_schema(payload: &mut Value) {
     if payload.get("tool_schema").is_some() || payload.get("schema").is_some() {

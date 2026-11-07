@@ -23,24 +23,24 @@ mode=native
 usage() {
   cat <<'EOF'
 Usage:
-  build.sh -t desktop|cli -a linux-arm64|linux-amd64|win7-x86 [--native|--docker]
+  build.sh -t desktop|cli -a linux-arm64|linux-x64|win7-x86 [--native|--docker]
   build.sh -all [--native|--docker]
 
 Options:
   -t, -target, --target  Build one program: desktop or cli.
   -a, -arch, --arch      Select one distribution architecture.
                          linux-arm64: Desktop AppDir archive or CLI ELF.
-                         linux-amd64: Desktop AppDir archive or CLI ELF.
+                         linux-x64: Desktop AppDir archive or CLI ELF.
                          win7-x86:    Win7-compatible Desktop or CLI PE
                                       (i686-win7-windows-gnu with -Z build-std).
   -all, --all            Build every distribution available on this host: both programs for
-                         Linux ARM64, Linux amd64 and Win7 x86. Linux Desktop outputs are AppDir archives.
+                         Linux ARM64, Linux x64 and Win7 x86. Linux Desktop outputs are AppDir archives.
   --native         Build directly on this Linux host (default).
   --docker         Run the ARM64 Ubuntu 18.04 build image. Requires Rust-builder/kylin-arm.
 
 Host profiles (chosen from uname -m, override the SDK with WUNDER_BUILDER_ROOT):
   aarch64  Rust-builder/kylin-arm builds every target natively.
-  x86_64   Rust-builder/kylin-x86 builds Linux amd64 natively and cross-builds
+  x86_64   Rust-builder/kylin-x86 builds Linux x64 natively and cross-builds
            Linux ARM64 and Win7 x86 with the SDK toolchains.
 
 On Windows, use build.bat. Its win7-x86 target uses Rust-builder/win7 directly.
@@ -50,7 +50,7 @@ EOF
 normalize_arch() {
   case "$1" in
     linux-arm64|arm64) printf '%s\n' linux-arm64 ;;
-    linux-amd64|amd64|linux-x86_64) printf '%s\n' linux-amd64 ;;
+    linux-x64|x64|linux-x86_64) printf '%s\n' linux-x64 ;;
     win7-x86|win7|win32-x86|win32|windows-x86) printf '%s\n' win7-x86 ;;
     *) return 1 ;;
   esac
@@ -142,11 +142,11 @@ build_one() {
     linux-arm64:cli)
       run_builder "$repo_root/builders/build-cli-linux-arm64-offline.sh" env
       ;;
-    linux-amd64:desktop)
-      run_builder "$repo_root/builders/build-linux-amd64-desktop.sh" env
+    linux-x64:desktop)
+      run_builder "$repo_root/builders/build-linux-x64-desktop.sh" env
       ;;
-    linux-amd64:cli)
-      run_builder "$repo_root/builders/build-cli-linux-amd64-offline.sh" env
+    linux-x64:cli)
+      run_builder "$repo_root/builders/build-cli-linux-x64-offline.sh" env
       ;;
     win7-x86:desktop)
       if [[ "$host_arch" == x86_64 ]]; then
@@ -169,8 +169,8 @@ build_one() {
 if [[ "$build_all" == 1 ]]; then
   build_one desktop linux-arm64
   build_one cli linux-arm64
-  build_one desktop linux-amd64
-  build_one cli linux-amd64
+  build_one desktop linux-x64
+  build_one cli linux-x64
   build_one desktop win7-x86
   build_one cli win7-x86
 else

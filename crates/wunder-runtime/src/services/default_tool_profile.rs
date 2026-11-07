@@ -16,7 +16,7 @@ pub fn authorized_profile_revision(allowed: &HashSet<String>) -> String {
     crate::tools::tool_profile_snapshot(&specs).revision
 }
 
-/// 蛹/舵机随包附带的默认技能：新建智能体默认勾选，用户可自行取消。
+/// 桌面版/命令行随包附带的默认技能：新建智能体默认勾选，用户可自行取消。
 const DEFAULT_SKILL_NAMES: &[&str] = &["技能创建器", "公文写作", "文稿校对", "3D网页", "视频制作", "图纸设计"];
 
 /// 桌面端不对智能体开放选择的内置工具：goal 由运行时按会话自动注入，
@@ -38,7 +38,7 @@ pub fn default_tool_candidates() -> Vec<String> {
                     continue;
                 }
                 // The phone surface only exists on the Android shell, which
-                // installs its device host at startup. 蛹/舵机/舰体 must not
+                // installs its device host at startup. 桌面版/命令行/服务端 must not
                 // advertise a control that has no executor.
                 if crate::tools::is_phone_control_tool_name(&spec.name)
                     && !crate::tools::phone_tools_available()

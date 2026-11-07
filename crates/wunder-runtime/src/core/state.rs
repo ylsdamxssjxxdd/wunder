@@ -331,9 +331,9 @@ impl AppState {
                 .min(i64::MAX as u64) as i64,
             &config.workspace.container_roots,
         ));
-        // 舰体形态：每用户唯一智能体 + 唯一云端工作目录。
+        // 服务端形态：每用户唯一智能体 + 唯一云端工作目录。
         // 只扁平化 agent/container 作用域（目录仍是 root/<user>），
-        // 与 CLI/蛹的 `WUNDER_WORKSPACE_SINGLE_ROOT` 是两件事，不要混用。
+        // 与 CLI/桌面版的 `WUNDER_WORKSPACE_SINGLE_ROOT` 是两件事，不要混用。
         workspace.set_flatten_agent_scope(true);
         workspace.set_deleted_session_log_grace_hours(
             config.observability.deleted_session_log_grace_hours,

@@ -65,7 +65,7 @@ pub fn detail_json(parts: Vec<(&str, Value)>) -> String {
 
 /// Project one stored detail column back into a response value.
 ///
-/// The user and the 舰桥 audit surfaces both use it, so an alert's `trigger`,
+/// The user and the 管理端 audit surfaces both use it, so an alert's `trigger`,
 /// `kind` and `level` reach every consumer as typed fields instead of a JSON
 /// string each client parses on its own. Text that is not valid JSON (a
 /// truncated digest) stays verbatim rather than being dropped.

@@ -18,7 +18,7 @@ target_dir="${CARGO_TARGET_DIR:-$repo_root/target/win7-x86/cargo}"
 cargo_home="${CARGO_HOME:-$repo_root/target/win7-x86/cargo-home}"
 output_dir="${WUNDER_OUTPUT_DIR:-$repo_root/target/slint/dist/win7-x86}"
 
-fail() { echo "[wunder-slint-win7-x86] $*" >&2; exit 2; }
+fail() { echo "[wunder-desktop-win7-x86] $*" >&2; exit 2; }
 require_file() { [[ -f "$1" ]] || fail "required file is missing: $1"; }
 
 require_file "$manifest"
@@ -80,16 +80,16 @@ ar = "i686-w64-mingw32-ar"
 offline = true
 EOF
 
-echo "[wunder-slint-win7-x86] cargo: $(cargo --version)"
+echo "[wunder-desktop-win7-x86] cargo: $(cargo --version)"
 cd "$repo_root"
 # build-std rebuilds std with the win7 vendor gating; --locked pins the
 # application dependency graph while std resolves from the shipped rust-src
 # against the same vendored registry.
 cargo "${WUNDER_VENDORED_CONFIG[@]}" -Z build-std=std,panic_abort build --locked --offline --release \
-  --manifest-path "$manifest" --bin wunder-frontend-slint \
+  --manifest-path "$manifest" --bin wunder-desktop \
   --target "$target" -j "${WUNDER_BUILD_JOBS:-2}"
 
-exe="$target_dir/$target/release/wunder-frontend-slint.exe"
+exe="$target_dir/$target/release/wunder-desktop.exe"
 require_file "$exe"
 i686-w64-mingw32-objdump -f "$exe" > "$target_dir/pe-headers.txt"
 grep -q 'pei-i386' "$target_dir/pe-headers.txt" || fail 'expected a 32-bit Windows PE'
@@ -97,10 +97,10 @@ imports="$(i686-w64-mingw32-objdump -p "$exe")"
 blocked="$(printf '%s\n' "$imports" | grep -Ei 'libwinpthread[-_.0-9a-zA-Z]*\.dll|libgcc_s[-_.0-9a-zA-Z]*\.dll|libstdc\+\+[-_.0-9a-zA-Z]*\.dll|combase\.dll|api-ms-win-|ext-ms-win-|GetDpiForWindow|WaitOnAddress|WakeByAddress|SetThreadDescription' | sort -u || true)"
 [[ -z "$blocked" ]] || fail "Win7 产物引入了 MinGW 运行库 DLL 或 Win8+ 符号: $(printf '%s' "$blocked" | tr '\n' ' ')"
 i686-w64-mingw32-strip --strip-all "$exe"
-version="$(grep -m1 '^version *=' "$manifest" | cut -d'"' -f2)"
+version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$repo_root/config/app_version.json" | head -n 1)"
 [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]] || fail 'invalid package version'
-release="$output_dir/wunder-frontend-slint-$version-win7-x86.exe"
+release="$output_dir/wunder-desktop-$version-win7-x86.exe"
 cp -f "$exe" "$release"
 printf '%s\n' "$imports" > "$output_dir/imports.txt"
-echo "[wunder-slint-win7-x86] Win7 PE import gate passed."
-echo "[wunder-slint-win7-x86] produced: $release"
+echo "[wunder-desktop-win7-x86] Win7 PE import gate passed."
+echo "[wunder-desktop-win7-x86] produced: $release"

@@ -25,5 +25,5 @@ A single user can hold several task threads at once, and scheduling, locks, and 
 
 ## Limits
 
-- With `agent_queue.enabled` turned off, sending another message while a run is in progress is judged "user busy" and no longer enters the queue bar (the Hull warns about this at startup). This is a configuration choice, not a fault.
+- With `agent_queue.enabled` turned off, sending another message while a run is in progress is judged "user busy" and no longer enters the queue bar (the Server warns about this at startup). This is a configuration choice, not a fault.
 - Blocking category quotas and bounded queues are hard caps: when full, the system reports busy and does not wait in a queue.

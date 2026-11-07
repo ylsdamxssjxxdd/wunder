@@ -86,7 +86,7 @@ pub struct GlobalArgs {
     #[arg(long = "lang", alias = "language", global = true)]
     pub language: Option<String>,
 
-    /// Base config path / 基础配置路径（默认 WUNDER_HOME/config/wunder.yaml，与蛹共用）。
+    /// Base config path / 基础配置路径（默认 WUNDER_HOME/config/wunder.yaml，与桌面版共用）。
     #[arg(long = "config", global = true)]
     pub config_path: Option<PathBuf>,
 
@@ -274,7 +274,7 @@ pub enum CloudSubcommand {
         #[arg(value_enum)]
         mode: CloudShareMode,
     },
-    /// Log in to the cloud server / 登录云端舰体。
+    /// Log in to the cloud server / 登录服务端。
     Login(CloudLoginCommand),
 
     /// Log out and remove cloud models / 登出并移除云模型。
@@ -310,7 +310,7 @@ pub enum CloudSubcommand {
     /// Drive a cloud or local thread through the interlink ledger / 经互通台账驱动线程。
     Send(CloudSendCommand),
 
-    /// Watch one thread's live events through the server relay / 经舰体中继旁观线程事件流。
+    /// Watch one thread's live events through the server relay / 经服务端中继旁观线程事件流。
     Watch(CloudWatchCommand),
 
     /// Show the account's interlink audit trail / 查看本账号互通审计。
@@ -562,7 +562,7 @@ pub struct CloudApproveCommand {
 
 #[derive(Debug, Args)]
 pub struct CloudLoginCommand {
-    /// Cloud server address (http://ip:port) / 舰体服务地址（http://ip:port）。
+    /// Cloud server address (http://ip:port) / 服务端地址（http://ip:port）。
     #[arg(long)]
     pub server: String,
 

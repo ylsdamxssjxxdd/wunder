@@ -143,7 +143,7 @@ pub fn resolve_stress_workspace(
 
 /// The catalog row that makes a generated thread openable.
 ///
-/// One definition keeps every entry point (HTTP job, 舵机, 蛹) writing the same
+/// One definition keeps every entry point (HTTP job, 命令行, 桌面版) writing the same
 /// shape: an active session of the launching user in its work area.
 pub fn stress_session_record(
     user_id: &str,

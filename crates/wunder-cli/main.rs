@@ -61,7 +61,7 @@ use wunder_server::user_tools::UserMcpServer;
 use zip::ZipArchive;
 
 const CLI_MIN_MAX_ROUNDS: u32 = 8;
-/// Same ceiling 蛹 puts on the shared model list.
+/// Same ceiling 桌面版 puts on the shared model list.
 const CLI_MODEL_ENTRY_CAP: usize = 200;
 const CLI_CONTEXT_PROBE_TIMEOUT_S: u64 = 15;
 const CLI_DEFAULT_SESSION_TITLE: &str = "\u{65B0}\u{4F1A}\u{8BDD}";
@@ -1893,7 +1893,7 @@ fn sorted_model_names(config: &Config) -> Vec<String> {
     names
 }
 
-/// The engine config file is shared with 蛹, so it also holds embedding, speech
+/// The engine config file is shared with 桌面版, so it also holds embedding, speech
 /// and image entries. Only chat entries are selectable as the session model.
 fn model_is_switchable(entry: &LlmModelConfig) -> bool {
     matches!(
@@ -3221,7 +3221,7 @@ pub(crate) async fn apply_cli_model_config(
             "base_url, api_key and model are required",
         )));
     }
-    // The same bounds 蛹 enforces on this shared entry: an over-long or
+    // The same bounds 桌面版 enforces on this shared entry: an over-long or
     // control-character endpoint must not reach the config file or the shell.
     if model_name.len() > 96
         || base_url.len() > 4096
@@ -3248,7 +3248,7 @@ pub(crate) async fn apply_cli_model_config(
 
     let provider = infer_provider_from_base_url(&base_url);
     // Registering an endpoint must not hijack a working setup: the shared file
-    // already carries models 蛹 chose, so the new one only becomes the session
+    // already carries models 桌面版 chose, so the new one only becomes the session
     // default when nothing usable was configured before.
     let had_usable_default = is_switchable_model(&existing, existing.llm.default.as_str());
     let resolved_max_context = resolve_model_max_context_value(
@@ -3902,7 +3902,7 @@ async fn run_agent_once(
         ThreadOpenLeaseStatus::Acquired { fencing_token } => fencing_token,
         ThreadOpenLeaseStatus::Busy => {
             return Err(anyhow!(
-                "THREAD_IN_USE: 线程正在由其他蛹或舵机实例打开或运行"
+                "THREAD_IN_USE: 线程正在由其他桌面版或命令行实例打开或运行"
             ));
         }
     };
@@ -5078,7 +5078,7 @@ mod tests {
         assert_eq!(
             sorted_model_names(&config),
             vec!["chat-model".to_string(), "legacy-model".to_string()],
-            "a non-chat entry belongs to 蛹's picker, not to the session model list"
+            "a non-chat entry belongs to 桌面版's picker, not to the session model list"
         );
         assert!(is_switchable_model(&config, "legacy-model"));
         assert!(!is_switchable_model(&config, "embedder"));

@@ -44,7 +44,7 @@ def main():
         "--cover",
         "--png",
         "--title",
-        "蛹在线更新机制审计",
+        "桌面版在线更新机制审计",
         "--out",
         str(output),
     ]

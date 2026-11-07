@@ -62,7 +62,7 @@ pub async fn run_main(
     };
     crate::runtime::cli_ui_startup_point("tui_app_ready");
 
-    // Interlink tunnel (互通方案 I9): the TUI is the only resident 舵机 form, so
+    // Interlink tunnel (互通方案 I9): the TUI is the only resident 命令行 form, so
     // it is the only place a node may open its outbound link. One-shot
     // subcommands never reach here, and the same exit path always closes it.
     let tunnel_open = crate::interlink_tunnel::start(runtime).await;

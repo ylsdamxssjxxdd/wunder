@@ -1,4 +1,4 @@
-// 线程轨迹的数据模型（对齐蜂巢 trajectoryModel.ts）：
+// 线程轨迹的数据模型（对齐云端版 trajectoryModel.ts）：
 // 把线程日志快照折叠成 轮次 → 步骤组 → 记录，并给出时间线投影、
 // 请求编号、折叠与虚拟行布局。纯函数实现，不持有 DOM。
 
@@ -281,7 +281,7 @@ function spanDurationSeconds(start, end, explicit, recorded) {
 
 // Stream snapshots may wrap the event body in `data`/`payload.data`.  Keep a
 // single bounded merge so reasoning, compaction summaries and tool metadata
-// are read identically in the bridge and hive projections.
+// are read identically in the admin and cloud projections.
 function eventPayloadOf(payload) {
   if (!isRecord(payload)) return {};
   const nested = isRecord(payload.data) ? payload.data : null;
@@ -359,7 +359,7 @@ function resolveKind(rawKind, payload) {
   if (metaOf(payload).type === "system_prompt") return "system";
   if (rawKind === "assistant_message" || rawKind === "assistant") return "message";
   // Mailbox deliveries are context consumed by the model, not tool calls.
-  // Keep this in the input lane so the bridge and hive use the same projection.
+  // Keep this in the input lane so the admin and cloud use the same projection.
   if (rawKind === "subagent_message") return "context";
   if (rawKind === "subagent" || rawKind === "subagent_run") return "subtool";
   if (

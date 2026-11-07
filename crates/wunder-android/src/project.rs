@@ -2,29 +2,66 @@
 //!
 //! The engine owns this data on worker threads, so it must stay `Send`: rows
 //! are plain strings, and the Slint types (`MdBlock`, `ModelRc`, `Image`) are
-//! built only on the UI thread by [`RowData::to_row`]. 蛹 computes the same
-//! rows in `frontend-slint/src/timeline.rs`, bound to its own window; 茧 keeps
+//! built only on the UI thread by [`RowData::to_row`]. 桌面版 computes the same
+//! rows in `frontend-slint/src/timeline.rs`, bound to its own window; 安卓版 keeps
 //! the same row kinds and field meanings while dropping the desktop
 //! bookkeeping (group bars, process paging, subagent docks).
 
 use crate::md::MarkdownRenderer;
-use crate::{MdBlock, TimelineRow, TurnStatMetric};
+use crate::{
+    MdBlock, PatchCard, PatchLine, ProcessEntry, TimelineRow, TurnStatMetric, WorkflowLine,
+    WorkflowSection,
+};
 use chrono::{Local, TimeZone};
 use slint::{ModelRc, SharedString, VecModel};
 use std::hash::{Hash, Hasher};
-use wunder_desktop::{NativeChatTurn, NativeWorkflowEntry};
+use wunder_desktop::native::NativeMessageStats;
+use wunder_desktop::{
+    NativeChatTurn, NativePatchFile, NativeWorkflowEntry, NativeWorkflowSection,
+};
 
 pub const KIND_USER: i32 = 0;
 pub const KIND_BODY: i32 = 1;
 pub const KIND_REASON: i32 = 2;
 pub const KIND_TOOL: i32 = 3;
+pub const KIND_PROCESS: i32 = 6;
 pub const KIND_FOOTER: i32 = 7;
 pub const KIND_ERROR: i32 = 8;
+
+/// Payload sentinel for the expandable rows inside a work-process fold. The
+/// child is packed as `(bar_row << 12) | child_index`; the fold callback
+/// routes these back to the owning bar without keeping a side table.
+pub const PROCESS_CHILD_BASE: i32 = 1 << 28;
+pub const PROCESS_CHILD_SHIFT: u32 = 12;
+const PROCESS_CHILD_MASK: i32 = (1 << PROCESS_CHILD_SHIFT) - 1;
 
 pub const STATUS_DONE: i32 = 0;
 pub const STATUS_RUNNING: i32 = 1;
 pub const STATUS_FAILED: i32 = 2;
 pub const STATUS_STOPPED: i32 = 3;
+
+/// One row inside a work-process fold. 桌面版 keeps these as child rows of the
+/// process bar; 安卓版 carries the same fields as plain data so the engine thread
+/// stays `Send` and the UI thread builds the Slint model once per change.
+#[derive(Clone, Debug, Default)]
+pub struct ProcessChildData {
+    pub id: String,
+    pub kind: i32,
+    pub text: String,
+    pub blocks_src: String,
+    pub summary: String,
+    pub tool_name: String,
+    pub tool_icon: String,
+    pub target: String,
+    pub detail: String,
+    pub sections: Vec<NativeWorkflowSection>,
+    pub patch: Vec<NativePatchFile>,
+    pub tokens: String,
+    pub duration: String,
+    pub status_kind: i32,
+    pub open: bool,
+    pub payload: i32,
+}
 
 /// One transcript row without any Slint handle. `blocks_src` and
 /// `reasoning_src` carry the Markdown source; the UI thread parses them once
@@ -50,6 +87,19 @@ pub struct RowData {
     pub stats: Vec<(String, String)>,
     pub error_title: String,
     pub error_hint: String,
+    /// Children of a `KIND_PROCESS` bar, in display order.
+    pub process_children: Vec<ProcessChildData>,
+}
+
+/// Decode a fold callback address that points inside a work-process bar.
+pub fn process_child_address(payload: i32) -> Option<(usize, usize)> {
+    if payload < PROCESS_CHILD_BASE {
+        return None;
+    }
+    let packed = payload - PROCESS_CHILD_BASE;
+    let bar = (packed >> PROCESS_CHILD_SHIFT) as usize;
+    let child = (packed & PROCESS_CHILD_MASK) as usize;
+    Some((bar, child))
 }
 
 impl RowData {
@@ -85,6 +135,44 @@ impl RowData {
         self.stats.hash(&mut hasher);
         self.error_title.hash(&mut hasher);
         self.error_hint.hash(&mut hasher);
+        for child in &self.process_children {
+            child.id.hash(&mut hasher);
+            child.kind.hash(&mut hasher);
+            child.text.hash(&mut hasher);
+            child.blocks_src.hash(&mut hasher);
+            child.summary.hash(&mut hasher);
+            child.tool_name.hash(&mut hasher);
+            child.tool_icon.hash(&mut hasher);
+            child.target.hash(&mut hasher);
+            child.detail.hash(&mut hasher);
+            for section in &child.sections {
+                section.title.hash(&mut hasher);
+                section.meta.hash(&mut hasher);
+                section.kind.hash(&mut hasher);
+                for line in &section.lines {
+                    line.ratio.to_bits().hash(&mut hasher);
+                    line.text.hash(&mut hasher);
+                    line.kind.hash(&mut hasher);
+                    line.number.hash(&mut hasher);
+                }
+            }
+            for file in &child.patch {
+                file.path.hash(&mut hasher);
+                file.action.hash(&mut hasher);
+                file.added.hash(&mut hasher);
+                file.deleted.hash(&mut hasher);
+                for line in &file.lines {
+                    line.text.hash(&mut hasher);
+                    line.kind.hash(&mut hasher);
+                    line.number.hash(&mut hasher);
+                }
+            }
+            child.tokens.hash(&mut hasher);
+            child.duration.hash(&mut hasher);
+            child.status_kind.hash(&mut hasher);
+            child.open.hash(&mut hasher);
+            child.payload.hash(&mut hasher);
+        }
         hasher.finish()
     }
 
@@ -105,11 +193,41 @@ impl RowData {
         row.payload = self.payload;
         row.error_title = self.error_title.as_str().into();
         row.error_hint = self.error_hint.as_str().into();
+        row.visible = self.kind != KIND_PROCESS || !self.process_children.is_empty();
         if !self.blocks_src.is_empty() {
             row.blocks = blocks_model(renderer, &self.blocks_src);
         }
         if !self.reasoning_src.is_empty() {
             row.reasoning_blocks = blocks_model(renderer, &self.reasoning_src);
+        }
+        if !self.process_children.is_empty() {
+            let entries: Vec<ProcessEntry> = self
+                .process_children
+                .iter()
+                .map(|child| ProcessEntry {
+                    kind: child.kind,
+                    id: child.id.as_str().into(),
+                    text: child.text.as_str().into(),
+                    blocks: if child.blocks_src.is_empty() {
+                        ModelRc::default()
+                    } else {
+                        blocks_model(renderer, &child.blocks_src)
+                    },
+                    summary: child.summary.as_str().into(),
+                    tool_name: child.tool_name.as_str().into(),
+                    tool_icon: child.tool_icon.as_str().into(),
+                    target: child.target.as_str().into(),
+                    detail: child.detail.as_str().into(),
+                    sections: workflow_sections(&child.sections),
+                    patch: patch_cards(&child.patch),
+                    tokens: child.tokens.as_str().into(),
+                    duration: child.duration.as_str().into(),
+                    status_kind: child.status_kind,
+                    open: child.open,
+                    payload: child.payload,
+                })
+                .collect();
+            row.process_entries = ModelRc::new(VecModel::from(entries));
         }
         if !self.stats.is_empty() {
             row.stats = ModelRc::new(VecModel::from(
@@ -245,40 +363,309 @@ fn blocks_model(renderer: &mut MarkdownRenderer, text: &str) -> ModelRc<MdBlock>
     }
 }
 
-fn tool_row(turn_id: &str, entry: &NativeWorkflowEntry) -> RowData {
-    let mut row = RowData::new(KIND_TOOL, format!("{turn_id}-tool-{}", entry.id));
-    row.tool_name = entry.title.clone();
-    row.summary = entry.preview.clone();
-    row.detail = entry.detail.clone();
-    row.foldable = !entry.detail.is_empty();
-    row.status_kind = status_kind(&entry.state);
-    row.tool_metrics = tool_metrics(&entry.tokens, &entry.duration);
-    // The collapsed row is a single outcome line; the full result is parsed
-    // only after the user unfolds it, exactly like the desktop fold.
-    row.reasoning_src = entry.detail.clone();
-    row
+/// Same bounded projection as 桌面版: 12 sections, 201 lines each. The engine has
+/// already clipped the payload; the caps keep a malformed frame from rebuilding
+/// an unbounded Slint model on the UI thread.
+fn workflow_sections(items: &[NativeWorkflowSection]) -> ModelRc<WorkflowSection> {
+    if items.is_empty() {
+        return ModelRc::default();
+    }
+    ModelRc::new(VecModel::from(
+        items
+            .iter()
+            .take(12)
+            .map(|section| WorkflowSection {
+                title: section.title.as_str().into(),
+                meta: section.meta.as_str().into(),
+                kind: section.kind.as_str().into(),
+                lines: ModelRc::new(VecModel::from(
+                    section
+                        .lines
+                        .iter()
+                        .take(201)
+                        .map(|line| WorkflowLine {
+                            ratio: line.ratio,
+                            text: line.text.as_str().into(),
+                            kind: line.kind.as_str().into(),
+                            number: line.number.as_str().into(),
+                        })
+                        .collect::<Vec<_>>(),
+                )),
+            })
+            .collect::<Vec<_>>(),
+    ))
 }
 
-fn tool_metrics(tokens: &str, duration: &str) -> String {
-    match (tokens.trim().is_empty(), duration.trim().is_empty()) {
-        (true, true) => String::new(),
-        (false, true) => tokens.to_string(),
-        (true, false) => duration.to_string(),
-        (false, false) => format!("{tokens} {duration}"),
+/// File diffs stay flat and pre-bounded, matching 桌面版's patch card budget.
+fn patch_cards(files: &[NativePatchFile]) -> ModelRc<PatchCard> {
+    if files.is_empty() {
+        return ModelRc::default();
+    }
+    ModelRc::new(VecModel::from(
+        files
+            .iter()
+            .take(8)
+            .map(|file| PatchCard {
+                path: file.path.as_str().into(),
+                action: action_label(&file.action).into(),
+                added: file.added.as_str().into(),
+                deleted: file.deleted.as_str().into(),
+                lines: ModelRc::new(VecModel::from(
+                    file.lines
+                        .iter()
+                        .take(200)
+                        .map(|line| PatchLine {
+                            number: line.number.as_str().into(),
+                            text: line.text.as_str().into(),
+                            kind: line.kind.as_str().into(),
+                        })
+                        .collect::<Vec<_>>(),
+                )),
+            })
+            .collect::<Vec<_>>(),
+    ))
+}
+
+fn action_label(action: &str) -> &'static str {
+    match action {
+        "add" => "新增",
+        "delete" => "删除",
+        "move" => "移动",
+        _ => "修改",
+    }
+}
+
+/// Align a raw tool id with 桌面版's Chinese row labels.
+pub(crate) fn tool_label(tool: &str) -> String {
+    let mapped = match tool.trim() {
+        "read_file" | "read files" => "读取文件",
+        "write_file" => "写入文件",
+        "edit_file" | "edit_file2" | "text_editor" => "编辑文件",
+        "apply_patch" => "应用补丁",
+        "list_files" | "list_file" => "列出文件",
+        "glob" | "glob_files" | "文件名匹配" => "文件名匹配",
+        "search_content" | "search_files" => "搜索内容",
+        "web_search" | "web_search_tool" | "web search" | "websearch" | "网页搜索" => "网页搜索",
+        "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" | "网页抓取" => "网页抓取",
+        "execute_command" | "run_command" | "shell" | "运行命令" => "运行命令",
+        "command_session" => "命令会话",
+        "question_panel" | "ask_panel" => "问询面板",
+        "update_plan" | "plan_update" => "计划面板",
+        "read_image" | "view_image" => "读图",
+        "skill_call" | "skill_get" => "技能调用",
+        "schedule_task" => "定时任务",
+        "context_compaction" | "compact" => "上下文压缩",
+        "" => "工具",
+        other => other,
+    };
+    mapped.chars().take(64).collect()
+}
+
+/// Icon key resolved by the shared `ToolIcons` global. This mirrors the common
+/// rules of 桌面版's `tool_icons::workflow_icon`; unknown tools fall back to the
+/// toolbox glyph already used by the desktop.
+pub(crate) fn tool_icon_key(tool: &str) -> &'static str {
+    let text = tool.trim().to_lowercase();
+    if text.contains("compact") || tool.contains("压缩") {
+        return "compress";
+    }
+    if text.contains("browser") || tool.contains("浏览器") {
+        return "window-maximize";
+    }
+    if text.contains("question_panel") || text.contains("ask_panel") || tool.contains("问询") {
+        return "circle-question";
+    }
+    if text.contains("update_plan") || text.contains("plan_update") || tool.contains("计划") {
+        return "table-columns";
+    }
+    if text.contains("skill_") || tool.contains("技能") {
+        return "book-open";
+    }
+    if text.contains("memory") || tool.contains("记忆") {
+        return "memory";
+    }
+    if text.contains("subagent") || text.contains("蜂群") || tool.contains("子智能体") {
+        return "diagram-project";
+    }
+    if text.contains("web_search") || text.contains("search_content") || text.contains("search_files")
+        || tool.contains("搜索")
+    {
+        return "magnifying-glass";
+    }
+    if text.contains("web_fetch") || text.contains("fetch") || tool.contains("抓取") {
+        return "globe";
+    }
+    if text.contains("glob") {
+        return "folder-tree";
+    }
+    if text.contains("list_file") || text.contains("list_files") || text.contains("read_file")
+        || text.contains("read files") || tool.contains("读取") || tool.contains("列出")
+    {
+        return "file-lines";
+    }
+    if text.contains("write_file") || text.contains("edit_file") || text.contains("apply_patch")
+        || text.contains("text_editor") || tool.contains("写入") || tool.contains("编辑")
+        || tool.contains("补丁")
+    {
+        return "file-pen";
+    }
+    if text.contains("shell") || text.contains("command") || tool.contains("命令") {
+        return "terminal";
+    }
+    if text.contains("read_image") || text.contains("view_image") || tool.contains("读图") {
+        return "eye";
+    }
+    "toolbox"
+}
+
+/// Resource target for the chip in the header; only file-like tools expose the
+/// preview as a path (a truncated preview must not become a broken link).
+pub(crate) fn tool_target(entry: &NativeWorkflowEntry) -> String {
+    if matches!(
+        entry.title.as_str(),
+        "read_file"
+            | "读取文件"
+            | "write_file"
+            | "写入文件"
+            | "list_files"
+            | "列出文件"
+            | "list_file"
+            | "read_image"
+            | "view_image"
+            | "读图"
+    ) && entry.preview.chars().count() < 640
+    {
+        return entry.preview.clone();
+    }
+    String::new()
+}
+
+fn tool_child(turn_id: &str, entry: &NativeWorkflowEntry) -> ProcessChildData {
+    ProcessChildData {
+        id: format!("{turn_id}-tool-{}", entry.id),
+        kind: KIND_TOOL,
+        summary: entry.preview.clone(),
+        tool_name: tool_label(&entry.title),
+        tool_icon: tool_icon_key(&entry.title).into(),
+        target: tool_target(entry),
+        detail: entry.detail.clone(),
+        sections: entry.sections.clone(),
+        patch: entry.patch_files.clone(),
+        tokens: entry.tokens.clone(),
+        duration: entry.duration.clone(),
+        status_kind: status_kind(&entry.state),
+        open: false,
+        ..Default::default()
+    }
+}
+
+fn reason_child(turn_id: &str, item_id: &str, text: &str) -> ProcessChildData {
+    ProcessChildData {
+        id: format!("{turn_id}-reason-{item_id}"),
+        kind: KIND_REASON,
+        summary: preview_text(text, 120),
+        tool_name: "思考".into(),
+        detail: text.to_string(),
+        open: false,
+        ..Default::default()
+    }
+}
+
+fn body_child(turn_id: &str, item_id: &str, text: &str) -> ProcessChildData {
+    ProcessChildData {
+        id: format!("{turn_id}-body-{item_id}"),
+        kind: KIND_BODY,
+        text: text.to_string(),
+        blocks_src: text.to_string(),
+        summary: preview_text(text, 120),
+        tool_name: "模型输出".into(),
+        detail: text.to_string(),
+        open: false,
+        ..Default::default()
+    }
+}
+
+/// Footer values mirror 桌面版's `turn_stats`: the icon key selects the glyph, the
+/// value is already formatted, and the order is the same on every shell.
+fn footer_stats(stats: &NativeMessageStats, round: i64) -> Vec<(String, String)> {
+    let mut metrics: Vec<(String, String)> = Vec::new();
+    if round > 0 {
+        metrics.push(("hashtag".into(), round.to_string()));
+    }
+    if !stats.is_empty() {
+        metrics.push((
+            "stopwatch".into(),
+            stats
+                .duration_s
+                .map(duration_text)
+                .unwrap_or_else(|| "-".into()),
+        ));
+        metrics.push((
+            "gauge-high".into(),
+            stats
+                .speed_tps
+                .map(|value| format!("{value:.1} token/s"))
+                .unwrap_or_else(|| "-".into()),
+        ));
+        metrics.push((
+            "layer-group".into(),
+            stats
+                .context_tokens
+                .map(count_text)
+                .unwrap_or_else(|| "--".into()),
+        ));
+        metrics.push((
+            "bolt".into(),
+            stats
+                .consumed_tokens
+                .map(count_text)
+                .unwrap_or_else(|| "--".into()),
+        ));
+        metrics.push((
+            "screwdriver-wrench".into(),
+            stats
+                .tool_calls
+                .map(count_text)
+                .unwrap_or_else(|| "--".into()),
+        ));
+        metrics.push((
+            "coins".into(),
+            stats
+                .credits
+                .map(count_text)
+                .unwrap_or_else(|| "--".into()),
+        ));
+    }
+    metrics
+}
+
+fn status_metric(state: &str) -> Option<(&'static str, String)> {
+    let state = state.trim();
+    match state {
+        "" | "completed" | "complete" | "done" | "ok" | "success" => None,
+        "failed" | "error" | "rejected" => Some(("status-error", "任务失败".into())),
+        "cancelled" | "canceled" | "stopped" | "interrupted" => {
+            Some(("status-stopped", "已停止".into()))
+        }
+        "waiting_input" | "waiting_user_input" | "waiting_approval" => {
+            Some(("status-waiting", "等待确认".into()))
+        }
+        "queued" | "pending" => Some(("status-queued", "排队中".into())),
+        "running" | "in_progress" => Some(("status-running", "处理中".into())),
+        other if other.starts_with("等待") => Some(("status-waiting", "等待确认".into())),
+        other if other.starts_with("失败") => Some(("status-error", "任务失败".into())),
+        other if other.starts_with("已停止") => Some(("status-stopped", "已停止".into())),
+        _ => None,
     }
 }
 
 fn footer_row(turn: &NativeChatTurn) -> Option<RowData> {
-    let stats = &turn.assistant.stats;
-    let mut metrics: Vec<(String, String)> = Vec::new();
-    if let Some(duration) = stats.duration_s.filter(|value| *value > 0.0) {
-        metrics.push(("stopwatch".into(), format!("{duration:.1}s")));
-    }
-    if let Some(tools) = stats.tool_calls.filter(|value| *value > 0.0) {
-        metrics.push(("screwdriver-wrench".into(), format!("{tools:.0}")));
-    }
-    if let Some(tokens) = stats.consumed_tokens.filter(|value| *value > 0.0) {
-        metrics.push(("bolt".into(), format_tokens(tokens)));
+    let mut metrics = footer_stats(
+        &turn.assistant.stats,
+        turn.user.user_round,
+    );
+    if let Some((key, value)) = status_metric(&turn.assistant.state) {
+        metrics.insert(0, (key.into(), value));
     }
     if metrics.is_empty() {
         return None;
@@ -290,17 +677,41 @@ fn footer_row(turn: &NativeChatTurn) -> Option<RowData> {
     Some(row)
 }
 
-fn format_tokens(value: f64) -> String {
-    if value >= 1_000_000.0 {
-        format!("{:.1}M", value / 1_000_000.0)
-    } else if value >= 1_000.0 {
-        format!("{:.1}k", value / 1_000.0)
+fn duration_text(seconds: f64) -> String {
+    let minutes = (seconds / 60.0).floor() as u64;
+    let hours = minutes / 60;
+    if hours > 0 {
+        format!("{hours}h {}m {:.1}s", minutes % 60, seconds % 60.0)
+    } else if minutes > 0 {
+        format!("{minutes}m {:.1}s", seconds % 60.0)
     } else {
-        format!("{value:.0}")
+        format!("{seconds:.1}s")
     }
 }
 
+fn count_text(value: f64) -> String {
+    let value = value.trunc();
+    if value < 1000.0 {
+        return format!("{value:.0}");
+    }
+    let (scaled, unit) = if value >= 1_000_000.0 {
+        (value / 1_000_000.0, "m")
+    } else {
+        (value / 1000.0, "k")
+    };
+    let text = if scaled >= 100.0 {
+        format!("{scaled:.0}")
+    } else {
+        format!("{scaled:.1}")
+    };
+    format!("{}{unit}", text.strip_suffix(".0").unwrap_or(&text))
+}
+
 /// Project one durable user turn into the rows the transcript renders.
+///
+/// The turn's thinking, tools and earlier printed rounds belong to one
+/// collapsible work-process bar; only the newest non-empty round text stays
+/// outside as the answer, matching 桌面版's fold ownership rule.
 pub fn project_turn(turn: &NativeChatTurn) -> Vec<RowData> {
     let mut rows = Vec::new();
 
@@ -309,47 +720,64 @@ pub fn project_turn(turn: &NativeChatTurn) -> Vec<RowData> {
     user.time = clock_time(turn.user.created_at);
     rows.push(user);
 
-    let mut answer_shown = false;
-    for round in &turn.rounds {
+    let final_round = turn
+        .rounds
+        .iter()
+        .rposition(|round| !round.text.trim().is_empty());
+    let mut children: Vec<ProcessChildData> = Vec::new();
+    for (index, round) in turn.rounds.iter().enumerate() {
         if !round.reasoning.trim().is_empty() {
             // Round ordinals restart across continuation executions, and the
             // durable item id is the only stable identity.
-            let reason_id = if round.item_id.is_empty() {
-                format!("{}-reason-{}-{}", turn.root_id, round.execution, round.round)
+            let item_id = if round.item_id.is_empty() {
+                format!("{}-{}", round.execution, round.round)
             } else {
-                format!("{}-reason-{}", turn.root_id, round.item_id)
+                round.item_id.clone()
             };
-            let mut row = RowData::new(KIND_REASON, reason_id);
-            row.tool_name = "思考".into();
-            row.summary = preview_text(&round.reasoning, 120);
-            row.detail = round.reasoning.clone();
-            row.reasoning_src = round.reasoning.clone();
-            row.foldable = true;
-            rows.push(row);
+            children.push(reason_child(&turn.root_id, &item_id, &round.reasoning));
         }
         for entry in &round.items {
-            rows.push(tool_row(&turn.root_id, entry));
+            children.push(tool_child(&turn.root_id, entry));
         }
-        // 蛹 renders every non-empty round text as a body block; `is_answer`
-        // only picks which one owns the footer. Restricting this to the answer
-        // round dropped the visible reply of waiting-input turns after reload.
-        if !round.text.trim().is_empty() {
-            let mut row = RowData::new(
-                KIND_BODY,
-                format!("{}-body-{}-{}", turn.root_id, round.execution, round.round),
-            );
-            row.text = round.text.clone();
-            row.blocks_src = round.text.clone();
-            rows.push(row);
-            answer_shown = true;
+        if Some(index) != final_round && !round.text.trim().is_empty() {
+            let item_id = if round.item_id.is_empty() {
+                format!("{}-{}", round.execution, round.round)
+            } else {
+                round.item_id.clone()
+            };
+            children.push(body_child(&turn.root_id, &item_id, &round.text));
         }
     }
+
+    if !children.is_empty() {
+        let mut bar = RowData::new(KIND_PROCESS, format!("{}-process", turn.root_id));
+        bar.text = format!("工作过程 · {} 步", children.len());
+        bar.summary = if turn.failure.is_some() {
+            "已失败".into()
+        } else if status_kind(&turn.assistant.state) == STATUS_RUNNING {
+            "正在处理…".into()
+        } else {
+            "已完成".into()
+        };
+        bar.status_kind = status_kind(&turn.assistant.state);
+        bar.foldable = true;
+        bar.open = bar.status_kind == STATUS_RUNNING;
+        bar.process_children = children;
+        rows.push(bar);
+    }
+
     // Older threads may not mark an answer round; fall back to the assistant
     // message so the reply is never dropped.
-    if !answer_shown && !turn.assistant.text.trim().is_empty() {
+    let final_text = final_round
+        .map(|index| turn.rounds[index].text.clone())
+        .filter(|text| !text.trim().is_empty())
+        .or_else(|| {
+            (!turn.assistant.text.trim().is_empty()).then(|| turn.assistant.text.clone())
+        });
+    if let Some(text) = final_text {
         let mut row = RowData::new(KIND_BODY, format!("{}-body-final", turn.root_id));
-        row.text = turn.assistant.text.clone();
-        row.blocks_src = turn.assistant.text.clone();
+        row.text = text.clone();
+        row.blocks_src = text;
         rows.push(row);
     }
 
@@ -376,15 +804,27 @@ pub struct LiveTurn {
     pub answer: String,
     pub tools: Vec<LiveTool>,
     pub status: i32,
+    pub phase: String,
     pub failure: Option<String>,
+    pub user_round: i64,
+    pub stats: NativeMessageStats,
+    pub question_panel: Option<serde_json::Value>,
+    /// Bounded output tail per streamed command session, keyed by session#index.
+    pub command_output: std::collections::HashMap<String, String>,
 }
 
 pub struct LiveTool {
     pub id: String,
     pub title: String,
+    pub tool_icon: String,
+    pub summary: String,
     pub state: String,
     pub detail: String,
     pub target: String,
+    pub sections: Vec<NativeWorkflowSection>,
+    pub patch: Vec<NativePatchFile>,
+    pub tokens: String,
+    pub duration: String,
 }
 
 impl LiveTurn {
@@ -396,7 +836,22 @@ impl LiveTurn {
             answer: String::new(),
             tools: Vec::new(),
             status: STATUS_RUNNING,
+            phase: "requesting".into(),
             failure: None,
+            user_round: 0,
+            stats: NativeMessageStats::default(),
+            question_panel: None,
+            command_output: std::collections::HashMap::new(),
+        }
+    }
+
+    fn process_summary(&self) -> &'static str {
+        match self.phase.as_str() {
+            "thinking" | "outputting" => "正在生成回复…",
+            "tool" => "正在执行工具…",
+            "compacting" => "上下文压缩中…",
+            "queued" => "正在排队…",
+            _ => "正在处理…",
         }
     }
 
@@ -408,38 +863,68 @@ impl LiveTurn {
             row.time = Local::now().format("%H:%M").to_string();
             rows.push(row);
         }
+
+        let mut children: Vec<ProcessChildData> = Vec::new();
         if !self.reasoning.is_empty() {
-            let mut row = RowData::new(KIND_REASON, format!("{}-reason", self.root_id));
-            row.tool_name = "思考".into();
+            let mut child = ProcessChildData {
+                id: format!("{}-reason", self.root_id),
+                kind: KIND_REASON,
+                tool_name: "思考".into(),
+                detail: self.reasoning.clone(),
+                status_kind: if self.status == STATUS_RUNNING {
+                    STATUS_RUNNING
+                } else {
+                    STATUS_DONE
+                },
+                ..Default::default()
+            };
             // The fold header shows one outcome line; while streaming it is the
             // tail of the thought, matching the desktop marquee row.
-            row.summary = self
+            child.summary = self
                 .reasoning
                 .lines()
                 .last()
                 .map(|line| preview_text(line, 120))
                 .unwrap_or_default();
-            row.detail = self.reasoning.clone();
-            row.reasoning_src = self.reasoning.clone();
-            row.foldable = true;
-            row.status_kind = if self.status == STATUS_RUNNING {
-                STATUS_RUNNING
-            } else {
-                STATUS_DONE
-            };
-            rows.push(row);
+            children.push(child);
         }
-        for tool in &self.tools {
-            let mut row = RowData::new(KIND_TOOL, format!("{}-tool-{}", self.root_id, tool.id));
-            row.tool_name = tool.title.clone();
-            row.target = tool.target.clone();
-            row.summary = preview_text(&tool.detail, 160);
-            row.detail = tool.detail.clone();
-            row.reasoning_src = tool.detail.clone();
-            row.foldable = !tool.detail.is_empty();
-            row.status_kind = status_kind(&tool.state);
-            rows.push(row);
+        for (index, tool) in self.tools.iter().enumerate() {
+            children.push(ProcessChildData {
+                id: format!("{}-tool-{}", self.root_id, tool.id),
+                kind: KIND_TOOL,
+                tool_name: tool.title.clone(),
+                tool_icon: tool.tool_icon.clone(),
+                target: tool.target.clone(),
+                summary: if tool.summary.is_empty() {
+                    preview_text(&tool.detail, 160)
+                } else {
+                    tool.summary.clone()
+                },
+                detail: tool.detail.clone(),
+                sections: tool.sections.clone(),
+                patch: tool.patch.clone(),
+                tokens: tool.tokens.clone(),
+                duration: tool.duration.clone(),
+                status_kind: status_kind(&tool.state),
+                open: false,
+                payload: -2 - index as i32,
+                ..Default::default()
+            });
         }
+
+        if !children.is_empty() {
+            let mut bar = RowData::new(KIND_PROCESS, format!("{}-process", self.root_id));
+            bar.text = format!("工作过程 · {} 步", children.len());
+            bar.summary = self.process_summary().into();
+            bar.status_kind = self.status;
+            bar.foldable = true;
+            // The live turn is unfolded from its first step; a tap writes the
+            // state back into `live_rows`, and the next publish keeps it.
+            bar.open = true;
+            bar.process_children = children;
+            rows.push(bar);
+        }
+
         if !self.answer.is_empty() {
             let mut row = RowData::new(KIND_BODY, format!("{}-body", self.root_id));
             row.text = self.answer.clone();
@@ -454,11 +939,95 @@ impl LiveTurn {
             row.status_kind = STATUS_FAILED;
             rows.push(row);
         }
+
+        let mut stats = footer_stats(&self.stats, self.user_round);
+        if let Some((key, value)) = live_status_metric(&self.phase) {
+            stats.insert(0, (key.into(), value));
+        }
+        if !stats.is_empty() {
+            let mut row = RowData::new(KIND_FOOTER, format!("{}-footer", self.root_id));
+            row.text = self.answer.clone();
+            row.status_kind = self.status;
+            row.stats = stats;
+            rows.push(row);
+        }
         for row in &mut rows {
-            // Live rows cannot be folded: their index is not stable while the
-            // durable prefix grows, so the fold callback ignores them.
+            // A live row's index is not stable while the durable prefix grows;
+            // its payload only says "live" to the fold callback.
             row.payload = -1;
         }
         rows
+    }
+}
+
+fn live_status_metric(phase: &str) -> Option<(&'static str, String)> {
+    match phase {
+        "requesting" => Some(("status-requesting", "请求中".into())),
+        "thinking" | "outputting" => Some(("status-outputting", "模型输出中".into())),
+        "tool" => Some(("status-tool", "使用工具中".into())),
+        "compacting" => Some(("status-compacting", "上下文压缩中".into())),
+        "queued" => Some(("status-queued", "排队中".into())),
+        "waiting" => Some(("status-waiting", "等待确认".into())),
+        "stopped" => Some(("status-stopped", "已停止".into())),
+        "error" => Some(("status-error", "任务失败".into())),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use slint::Model;
+    use wunder_desktop::{NativePatchFile, NativePatchLine};
+
+    fn entry() -> NativeWorkflowEntry {
+        NativeWorkflowEntry {
+            id: "call-1".into(),
+            title: "read_file".into(),
+            preview: "src/main.rs".into(),
+            detail: "fn main() {}".into(),
+            state: "completed".into(),
+            tokens: "1.2k token".into(),
+            duration: "0.3s".into(),
+            sections: vec![NativeWorkflowSection {
+                title: "src/main.rs".into(),
+                meta: "12 行".into(),
+                kind: "text".into(),
+                lines: vec![wunder_desktop::NativeWorkflowLine {
+                    ratio: 0.0,
+                    text: "fn main() {}".into(),
+                    kind: "text".into(),
+                    number: "1".into(),
+                }],
+            }],
+            patch_files: vec![NativePatchFile {
+                path: "src/main.rs".into(),
+                action: "modify".into(),
+                added: "1".into(),
+                deleted: "1".into(),
+                lines: vec![NativePatchLine {
+                    text: "fn main() {}".into(),
+                    kind: "add".into(),
+                    number: "1".into(),
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn tool_rows_keep_the_desktop_detail_projection() {
+        let child = tool_child("turn", &entry());
+        assert_eq!(child.tool_name, "读取文件");
+        assert_eq!(child.tool_icon, "file-lines");
+        assert_eq!(child.target, "src/main.rs");
+        assert_eq!(workflow_sections(&child.sections).row_count(), 1);
+        assert_eq!(patch_cards(&child.patch).row_count(), 1);
+    }
+
+    #[test]
+    fn tool_target_rejects_a_truncated_preview() {
+        let mut entry = entry();
+        entry.preview = "x".repeat(640);
+        assert!(tool_target(&entry).is_empty());
     }
 }

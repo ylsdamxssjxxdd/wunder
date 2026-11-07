@@ -40,7 +40,7 @@ Use it when the turn has nothing left to do but you want to state explicitly tha
 
 You can give one line of yield note to tell the user the current state; leaving it empty uses the default waiting text. The result state is "yielded", the turn's answer is set to that note, and the stop reason is recorded as a yield.
 
-In desktop mode (Pupa) `会话让出` is listed as a hidden tool and is not exposed to the agent.
+In desktop mode (Desktop) `会话让出` is listed as a hidden tool and is not exposed to the agent.
 
 ## Errors
 
