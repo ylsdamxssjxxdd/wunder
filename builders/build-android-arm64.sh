@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build 安卓版 (wunder-android): Rust cdylib slice(s) + debug APK.
+# Build 安卓版 (wunder-android): Rust cdylib slice(s) + APK.
 #
 # Required environment (defaults assume the local dev box):
 #   ANDROID_HOME       Android SDK root              (default ~/android-sdk)
@@ -8,6 +8,8 @@
 #   GRADLE             Gradle 8.13+ launcher          (default ~/gradle/gradle-8.13/bin/gradle)
 #   WUNDER_ANDROID_ABIS  Comma-separated ABIs         (default arm64-v8a;
 #                        x86_64 is accepted for emulator verification)
+#   WUNDER_ANDROID_BUILD_TYPE  release|debug           (default release; debug keeps
+#                        the local emulator install path)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -64,6 +66,21 @@ fi
 ABIS="${WUNDER_ANDROID_ABIS:-arm64-v8a}"
 IFS=',' read -r -a ABI_LIST <<<"$ABIS"
 
+# Release is the shipping variant; x86_64 emulator runs can still ask for a
+# debug APK (installed over adb with the debug key).
+BUILD_TYPE="${WUNDER_ANDROID_BUILD_TYPE:-release}"
+case "$BUILD_TYPE" in
+    release)
+        GRADLE_TASK=assembleRelease
+        APK_SOURCE=release/app-release.apk
+        ;;
+    debug)
+        GRADLE_TASK=assembleDebug
+        APK_SOURCE=debug/app-debug.apk
+        ;;
+    *) echo "unsupported WUNDER_ANDROID_BUILD_TYPE: $BUILD_TYPE (expected release or debug)" >&2; exit 2 ;;
+esac
+
 cd "$CRATE"
 for ABI in "${ABI_LIST[@]}"; do
     case "$ABI" in
@@ -100,7 +117,7 @@ if [[ -n "${WUNDER_AAPT2:-}" ]]; then
     # aarch64 宿主：AGP 默认会解包 Maven 里的 x86_64 aapt2，这里换成 qemu 包装器。
     gradle_args+=("-Pandroid.aapt2FromMavenOverride=$WUNDER_AAPT2")
 fi
-"$GRADLE" --no-daemon "${gradle_args[@]}" "-PwunderAbis=$ABIS" assembleDebug
+"$GRADLE" --no-daemon "${gradle_args[@]}" "-PwunderAbis=$ABIS" "$GRADLE_TASK"
 
 VERSION="$(python3 - "$ROOT/config/app_version.json" <<'PY'
 import json, sys
@@ -119,6 +136,6 @@ fi
 OUT_DIR="$ROOT/target/android/dist/android-$ARCH_LABEL"
 mkdir -p "$OUT_DIR"
 APK_OUT="$OUT_DIR/wunder-android-$VERSION-$ARCH_LABEL.apk"
-cp -f "$CRATE/android/app/build/outputs/apk/debug/app-debug.apk" "$APK_OUT"
+cp -f "$CRATE/android/app/build/outputs/apk/$APK_SOURCE" "$APK_OUT"
 
-echo "APK: $APK_OUT"
+echo "APK ($BUILD_TYPE): $APK_OUT"

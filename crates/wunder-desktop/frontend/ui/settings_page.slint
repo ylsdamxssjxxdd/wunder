@@ -1419,7 +1419,7 @@ export component SettingsPage inherits Rectangle {
                                     // creation state and lock the config name mid-edit.
                                     if root.model-creating : Action {
                                         height: 32px; icon: @image-url("../assets/icons/save.svg");
-                                        label: I18n.common_save; show-label: true; primary: true;
+                                        label: I18n.common_save; primary: true;
                                         enabled: !root.loading && !root.saving && !root.cloud-locked
                                             && root.model-key-draft != "" && root.model-name-draft != "";
                                         clicked => { root.save-model(); }
@@ -1427,7 +1427,7 @@ export component SettingsPage inherits Rectangle {
                                     if !root.model-creating : Action {
                                         height: 32px; icon: @image-url("../assets/icons/fa-star.svg");
                                         label: root.selected-is-default ? I18n.st_is_default : I18n.st_set_default;
-                                        show-label: true;
+                                        icon-color: root.selected-is-default ? #9a670d : Theme.muted;
                                         enabled: !root.loading && !root.saving && !root.cloud-locked
                                             && root.selected-key != "" && !root.selected-is-default;
                                         clicked => { root.set-default-model(root.selected-key); }
@@ -1440,7 +1440,7 @@ export component SettingsPage inherits Rectangle {
                                         height: 32px;
                                         icon: root.model-creating ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/trash.svg");
                                         label: root.model-creating ? I18n.common_discard : (root.cloud-locked ? I18n.st_cl_remove : I18n.common_delete);
-                                        show-label: true; danger: true;
+                                        danger: true;
                                         enabled: !root.loading && !root.saving && !root.cloud-locked && (root.selected-key != "" || root.model-creating);
                                         clicked => { if root.model-creating { root.discard-model-draft(); } else { root.model-delete-open = true; } }
                                     }

@@ -263,7 +263,11 @@ impl DesktopRuntime {
         }
         desktop_lan::manager().apply_settings(active_lan).await;
         settings.updated_at = now_ts();
-        save_desktop_settings(&settings_path, &settings)?;
+        if !args.background_runtime {
+            // The UI process owns desktop.settings.json. A headless tick must
+            // not rewrite it while the user is editing settings.
+            save_desktop_settings(&settings_path, &settings)?;
+        }
         log_startup_segment(
             startup_enabled,
             "bridge-runtime",
@@ -323,32 +327,39 @@ impl DesktopRuntime {
 
         step_start = Instant::now();
         let config_store = ConfigStore::new(config_path);
-        let workspace_for_update = workspace_root.clone();
-        let state_root_for_update = state_root.clone();
-        let repo_root_for_update = repo_root.clone();
-        let token_for_update = desktop_token.clone();
-        let container_roots_for_update = settings.container_roots.clone();
-        let language_for_update = settings.language.clone();
-        let _config = config_store
-            .update(move |config| {
-                apply_desktop_defaults(
-                    config,
-                    &workspace_for_update,
-                    &state_root_for_update,
-                    &repo_root_for_update,
-                    DesktopDefaultsInput {
-                        desktop_token: &token_for_update,
-                        container_roots: &container_roots_for_update,
-                        language: &language_for_update,
-                    },
-                );
-                // Queue and channel switches are shared by 桌面版 and 命令行. The
-                // native facade starts its dispatcher below; it must not
-                // rewrite the shared YAML according to this process only.
-            })
-            .await
-            .context("apply desktop runtime config failed")?;
-        let config = admin_skills::normalize_server_admin_skill_layout(&config_store).await;
+        if !args.background_runtime {
+            let workspace_for_update = workspace_root.clone();
+            let state_root_for_update = state_root.clone();
+            let repo_root_for_update = repo_root.clone();
+            let token_for_update = desktop_token.clone();
+            let container_roots_for_update = settings.container_roots.clone();
+            let language_for_update = settings.language.clone();
+            let _config = config_store
+                .update(move |config| {
+                    apply_desktop_defaults(
+                        config,
+                        &workspace_for_update,
+                        &state_root_for_update,
+                        &repo_root_for_update,
+                        DesktopDefaultsInput {
+                            desktop_token: &token_for_update,
+                            container_roots: &container_roots_for_update,
+                            language: &language_for_update,
+                        },
+                    );
+                    // Queue and channel switches are shared by 桌面版 and 命令行. The
+                    // native facade starts its dispatcher below; it must not
+                    // rewrite the shared YAML according to this process only.
+                })
+                .await
+                .context("apply desktop runtime config failed")?;
+        }
+        let config = if args.background_runtime {
+            // Read-only: the UI process owns config normalization and writes.
+            config_store.get().await
+        } else {
+            admin_skills::normalize_server_admin_skill_layout(&config_store).await
+        };
         log_startup_segment(
             startup_enabled,
             "bridge-runtime",
@@ -358,14 +369,22 @@ impl DesktopRuntime {
         );
 
         step_start = Instant::now();
+        let mut init_options = AppStateInitOptions::desktop_default()
+            .with_start_thread_runtime(false);
+        if args.background_runtime {
+            // The Android :background tick owns the due-job drain; a second
+            // scheduler loop in that process would race it for the same lease.
+            init_options = init_options.with_start_cron(false);
+        }
         let mut state = AppState::new_with_options(
             config_store.clone(),
             config.clone(),
-            AppStateInitOptions::desktop_default().with_start_thread_runtime(false),
+            init_options,
         )
         .context("initialize desktop state failed")?;
         // Recover stale SQLite tasks before the native queue dispatcher starts.
-        state.runtime_capabilities.thread_runtime_active = args.native_runtime;
+        state.runtime_capabilities.thread_runtime_active =
+            args.native_runtime && !args.background_runtime;
         let state = Arc::new(state);
         log_startup_segment(
             startup_enabled,

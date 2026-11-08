@@ -58,7 +58,6 @@ mod subagent_dock;
 mod thread_trajectory;
 mod timeline;
 mod timeline_text;
-mod tool_icons;
 mod tools_ui;
 mod touch_keyboard;
 mod tray;

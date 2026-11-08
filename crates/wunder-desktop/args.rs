@@ -48,6 +48,11 @@ pub struct DesktopArgs {
     /// Start the embedded runtime for native desktop callers instead of the HTTP bridge.
     #[arg(skip)]
     pub native_runtime: bool,
+
+    /// Headless scheduled-job tick: no cron loop, thread recovery, cloud probe
+    /// or interlink. Used by 安卓版's :background process.
+    #[arg(skip)]
+    pub background_runtime: bool,
 }
 
 impl DesktopArgs {
@@ -63,6 +68,7 @@ impl DesktopArgs {
             open: false,
             bridge_only: true,
             native_runtime: true,
+            background_runtime: false,
         }
     }
 }

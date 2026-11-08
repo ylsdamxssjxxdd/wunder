@@ -9,21 +9,35 @@ slint::include_modules!();
 #[cfg(target_os = "android")]
 mod android_host;
 mod app;
+#[cfg(target_os = "android")]
+mod background;
+#[cfg(target_os = "android")]
+mod backup;
 mod channels;
 mod cloud;
 #[cfg(target_os = "android")]
 mod companion;
+#[cfg(target_os = "android")]
+mod crash;
 mod engine;
 mod fonts;
+#[cfg(target_os = "android")]
+mod intent;
 mod md;
+#[cfg(target_os = "android")]
+mod notifications;
 mod permissions;
-mod update;
 #[cfg(target_os = "android")]
 mod phone;
 mod project;
+#[cfg(target_os = "android")]
+mod screen;
 mod ubuntu;
+mod update;
 #[cfg(target_os = "android")]
 mod webview;
+#[cfg(target_os = "android")]
+mod workspace_docs;
 
 pub use app::{build, build_preview, open_preview_page};
 
@@ -51,6 +65,11 @@ pub extern "C" fn android_main(app: slint::android::AndroidApp) {
         let _ = std::fs::create_dir_all(&cache);
         std::env::set_var("TMPDIR", &cache);
     }
+
+    // Rust panics on engine and stream workers must leave a bounded report
+    // under WUNDER_HOME/logs; there is no console on a release device.
+    #[cfg(target_os = "android")]
+    crash::install();
 
     // `ndk_context` publishes the Application, not the Activity; JNI methods
     // such as requestPermissions need the Activity, which only the AndroidApp

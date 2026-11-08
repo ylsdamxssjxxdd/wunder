@@ -18,6 +18,8 @@ updated_at: 2026-11-08
 
 Give it a goal, and the agent breaks the task down on its own, calls tools, and hands the results back.
 
+The UI is radically minimal: solve the problem fast instead of showing off complexity. It keeps only the information and actions the current task needs, and complex capabilities unfold on demand.
+
 ## Forms
 
 Multiple forms are built on the same engine; Desktop, Android and CLI are the local forms:

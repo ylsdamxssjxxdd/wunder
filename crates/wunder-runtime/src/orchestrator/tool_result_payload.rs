@@ -1229,6 +1229,8 @@ fn project_success_observation_data(tool_name: &str, data: &Value) -> Option<Val
         "goal" => project_goal_success(data),
         "桌面控制" | "desktop_control" => project_desktop_control(data),
         "手机控制" | "phone_control" => project_phone_control(data),
+        "安卓屏幕" | "android_screen" => project_android_screen(data),
+        "安卓通知" | "android_notifications" => project_android_notifications(data),
         "执行命令" | "execute_command" => project_command_success(data),
         "命令会话" | "command_session" => project_command_session_success(data),
         "读取文件" | "read_file" => project_read_file_success(data),
@@ -1992,6 +1994,72 @@ fn project_phone_control(data: &Value) -> Option<Value> {
         .filter(|value| !value.is_empty())
     {
         projected.insert("ui_tree".to_string(), Value::String(tree.to_string()));
+    }
+    if projected.is_empty() {
+        None
+    } else {
+        Some(Value::Object(projected))
+    }
+}
+
+fn project_android_screen(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    let projected = pick_non_empty_fields(
+        map,
+        &[
+            "action",
+            "state",
+            "action_applied",
+            "path",
+            "width",
+            "height",
+            "screenshot_bytes",
+            "authorized",
+            "projecting",
+            "service_running",
+            "screen_width",
+            "screen_height",
+            "message",
+            "code",
+        ],
+    );
+    if projected.is_empty() {
+        None
+    } else {
+        Some(Value::Object(projected))
+    }
+}
+
+fn project_android_notifications(data: &Value) -> Option<Value> {
+    let map = data.as_object()?;
+    let mut projected = pick_non_empty_fields(
+        map,
+        &[
+            "action",
+            "state",
+            "action_applied",
+            "count",
+            "total",
+            "dismissed",
+            "key",
+            "connected",
+            "message",
+            "code",
+        ],
+    );
+    if let Some(items) = map.get("notifications").and_then(Value::as_array) {
+        let bounded = items
+            .iter()
+            .take(50)
+            .filter_map(Value::as_object)
+            .map(|item| {
+                Value::Object(pick_non_empty_fields(
+                    item,
+                    &["package", "title", "text", "post_time", "key", "can_dismiss"],
+                ))
+            })
+            .collect::<Vec<_>>();
+        projected.insert("notifications".to_string(), Value::Array(bounded));
     }
     if projected.is_empty() {
         None
@@ -3597,6 +3665,66 @@ pub(super) fn extract_exit_code(value: &Value) -> Option<i64> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod android_projection_tests {
+    use super::project_success_observation_data;
+    use serde_json::json;
+
+    #[test]
+    fn android_screen_keeps_capture_metadata() {
+        let projected = project_success_observation_data(
+            "android_screen",
+            &json!({
+                "action": "capture",
+                "state": "completed",
+                "action_applied": true,
+                "path": "/tmp/shot.png",
+                "width": 1080,
+                "height": 2400,
+                "screenshot_bytes": 9,
+                "message": ""
+            }),
+        )
+        .expect("android screen projection");
+        assert_eq!(projected["path"], json!("/tmp/shot.png"));
+        assert_eq!(projected["height"], json!(2400));
+        assert_eq!(projected["action_applied"], json!(true));
+        assert!(projected.get("message").is_none());
+    }
+
+    #[test]
+    fn android_notification_lists_stay_bounded() {
+        let items = (0..60)
+            .map(|index| {
+                json!({
+                    "package": "com.example.app",
+                    "title": "title",
+                    "text": "",
+                    "post_time": index,
+                    "key": "key",
+                    "can_dismiss": true
+                })
+            })
+            .collect::<Vec<_>>();
+        let projected = project_success_observation_data(
+            "android_notifications",
+            &json!({
+                "action": "list",
+                "state": "completed",
+                "count": 60,
+                "total": 60,
+                "notifications": items
+            }),
+        )
+        .expect("android notification projection");
+        assert_eq!(
+            projected["notifications"].as_array().map(Vec::len),
+            Some(50)
+        );
+        assert!(projected["notifications"][0].get("text").is_none());
+    }
 }
 
 #[cfg(test)]

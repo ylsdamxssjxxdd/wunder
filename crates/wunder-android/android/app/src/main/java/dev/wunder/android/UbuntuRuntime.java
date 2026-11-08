@@ -210,8 +210,10 @@ public final class UbuntuRuntime {
                 // A previous version installed the base rootfs before an
                 // offline pack existed. Only the missing pack extraction is left.
                 setStage("准备安装补充包…", 4);
-                installPacks(files, rootfs, 4, 88);
-                installBrowserPack(files, rootfs, 88, 98);
+                boolean hasBrowser = hasAsset(BROWSER_PACK_ASSET);
+                int toolsEnd = hasBrowser ? 88 : 98;
+                installPacks(files, rootfs, 4, toolsEnd);
+                installBrowserPack(files, rootfs, toolsEnd, 100);
                 writeWrapper();
                 if (version.isEmpty()) {
                     version = readVersion(rootfs);
@@ -293,9 +295,13 @@ public final class UbuntuRuntime {
             version = readVersion(rootfs);
             progress = 85;
             stage = "Ubuntu 基础环境已就绪，正在安装常用工具…";
-            installPacks(files, rootfs, 85, 94);
-            stage = "正在安装浏览器组件…";
-            installBrowserPack(files, rootfs, 94, 100);
+            boolean hasBrowser = hasAsset(BROWSER_PACK_ASSET);
+            int toolsEnd = hasBrowser ? 94 : 99;
+            installPacks(files, rootfs, 85, toolsEnd);
+            if (hasBrowser) {
+                stage = "正在安装浏览器组件…";
+            }
+            installBrowserPack(files, rootfs, toolsEnd, 100);
             writeWrapper();
             progress = 100;
             stage = "已安装 " + (version.isEmpty() ? "Ubuntu" : version)
@@ -559,6 +565,7 @@ public final class UbuntuRuntime {
         // installs the wheelhouse into /usr/local, which shadows /usr/lib.
         command.add("python3 -m pip install --break-system-packages --ignore-installed "
                 + "--no-cache-dir --disable-pip-version-check --no-index "
+                + "--no-compile --no-deps --progress-bar off "
                 + "--find-links /opt/wunder/wheels "
                 + "-r /opt/wunder/wheels/requirements-android.txt");
         ProcessBuilder builder = new ProcessBuilder(command);
@@ -570,39 +577,67 @@ public final class UbuntuRuntime {
         }
         builder.redirectErrorStream(true);
         Process process = builder.start();
+        // pip can be silent for long stretches while it unpacks the large
+        // binary wheels under proot. Keep the stage text and progress alive so
+        // the first-run screen does not look frozen at 93%.
+        final long startedAt = System.nanoTime();
+        final java.util.concurrent.atomic.AtomicBoolean finished =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        Thread heartbeat = new Thread(() -> {
+            while (!finished.get()) {
+                try {
+                    Thread.sleep(2000);
+                } catch (InterruptedException error) {
+                    return;
+                }
+                if (finished.get()) {
+                    return;
+                }
+                long seconds = (System.nanoTime() - startedAt) / 1_000_000_000L;
+                setStage("正在安装 Python 库…（已 " + seconds + " 秒）",
+                        Math.min(spanPct, basePct + (int) (seconds / 10)));
+            }
+        }, "wunder-python-install-heartbeat");
+        heartbeat.setDaemon(true);
+        heartbeat.start();
         int count = 0;
         StringBuilder tail = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                count += 1;
-                if (line.startsWith("ERROR") || line.contains("Successfully installed")) {
-                    tail.append(line).append('\n');
-                    if (tail.length() > 800) {
-                        tail.delete(0, tail.length() - 800);
+        try {
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    count += 1;
+                    if (line.startsWith("ERROR") || line.contains("Successfully installed")) {
+                        tail.append(line).append('\n');
+                        if (tail.length() > 800) {
+                            tail.delete(0, tail.length() - 800);
+                        }
+                    }
+                    if ((count & 15) == 0) {
+                        setStage("正在安装 Python 库…（" + count + " 行）",
+                                Math.min(spanPct, basePct + count / 20));
                     }
                 }
-                if ((count & 15) == 0) {
-                    setStage("正在安装 Python 库…（" + count + " 行）",
-                            Math.min(spanPct, basePct + count / 20));
+            }
+            int exit;
+            try {
+                if (!process.waitFor(1800, TimeUnit.SECONDS)) {
+                    process.destroyForcibly();
+                    throw new IOException("安装 Python 库超时");
                 }
+                exit = process.exitValue();
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                throw new IOException("安装 Python 库被中断");
             }
-        }
-        int exit;
-        try {
-            if (!process.waitFor(1800, TimeUnit.SECONDS)) {
-                process.destroyForcibly();
-                throw new IOException("安装 Python 库超时");
+            if (exit != 0) {
+                String detail = tail.length() == 0 ? "" : "：" + tail.toString().trim();
+                throw new IOException("安装 Python 库失败（退出码 " + exit + "）" + detail);
             }
-            exit = process.exitValue();
-        } catch (InterruptedException error) {
-            Thread.currentThread().interrupt();
-            throw new IOException("安装 Python 库被中断");
-        }
-        if (exit != 0) {
-            String detail = tail.length() == 0 ? "" : "：" + tail.toString().trim();
-            throw new IOException("安装 Python 库失败（退出码 " + exit + "）" + detail);
+        } finally {
+            finished.set(true);
+            heartbeat.interrupt();
         }
         Log.i(TAG, "python wheelhouse installed from local wheels");
     }

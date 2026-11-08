@@ -87,3 +87,13 @@ test('command session uses the terminal icon in both localized and runtime names
   assert.equal(resolveToolIconClass({ name: '命令会话' }), 'fa-terminal');
   assert.equal(resolveToolIconClass({ name: 'command_session' }), 'fa-terminal');
 });
+
+test('glob tool uses the folder tree icon across canonical and runtime names', () => {
+  for (const name of ['文件名匹配', 'glob', 'glob_files']) {
+    assert.equal(resolveToolIconClass({ name }), 'fa-folder-tree');
+    assert.deepEqual(resolveAbilityVisual({ name, kind: 'tool' }), {
+      icon: 'fa-folder-tree',
+      tone: 'file'
+    });
+  }
+});

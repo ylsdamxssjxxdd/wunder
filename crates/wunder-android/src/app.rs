@@ -10,7 +10,7 @@ use crate::md::MarkdownRenderer;
 use crate::project::{self, RowData};
 use crate::{
     InquiryOption, InquiryQuestion, MobilePermission, MobileSession, MobileWindow, MobileWorkspace,
-    ModelCard, Theme, TimelineRow, WorkspaceFile,
+    ModelCard, Theme, TimelineRow, TurnMark, WorkspaceFile,
 };
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 use std::collections::HashMap;
@@ -255,6 +255,13 @@ pub fn build_preview() -> MobileWindow {
             ))));
         }
     });
+    let weak = ui.as_weak();
+    ui.on_load_prompt_preview(move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_prompt_preview_loading(false);
+            ui.set_prompt_preview(preview_system_prompt().into());
+        }
+    });
     let workspace_root = Rc::new(VecModel::<WorkspaceFile>::from(preview_workspace()));
     ui.set_workspace_entries(ModelRc::from(workspace_root.clone()));
     ui.set_workspace_total(workspace_root.row_count() as i32);
@@ -307,7 +314,7 @@ pub fn build_preview() -> MobileWindow {
     });
     let workspaces_for_create = workspaces.clone();
     let weak = ui.as_weak();
-    ui.on_create_workspace(move |name, icon, color| {
+    ui.on_create_workspace(move |name, icon, color, folder| {
         if let Some(ui) = weak.upgrade() {
             let id: slint::SharedString =
                 format!("preview-ws-{}", workspaces_for_create.row_count() + 1).into();
@@ -322,7 +329,11 @@ pub fn build_preview() -> MobileWindow {
                 name: name.clone(),
                 icon: icon.clone(),
                 color: color.clone(),
-                root: "应用工作区 / preview".into(),
+                root: if folder.is_empty() {
+                    "应用工作区 / preview".into()
+                } else {
+                    folder
+                },
                 thread_count: 0,
                 active: true,
             });
@@ -333,16 +344,25 @@ pub fn build_preview() -> MobileWindow {
         }
     });
     let workspaces_for_update = workspaces.clone();
-    ui.on_update_workspace(move |id, name, icon, color| {
+    ui.on_update_workspace(move |id, name, icon, color, folder| {
         for index in 0..workspaces_for_update.row_count() {
             if let Some(mut workspace) = workspaces_for_update.row_data(index) {
                 if workspace.id == id {
                     workspace.name = name.clone();
                     workspace.icon = icon.clone();
                     workspace.color = color.clone();
+                    if !folder.is_empty() {
+                        workspace.root = folder.clone();
+                    }
                     workspaces_for_update.set_row_data(index, workspace);
                 }
             }
+        }
+    });
+    let weak = ui.as_weak();
+    ui.on_pick_workspace_folder(move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_workspace_picked_folder("/storage/emulated/0/Download/预览工作区".into());
         }
     });
     let workspaces_for_delete = workspaces.clone();
@@ -374,8 +394,27 @@ pub fn build_preview() -> MobileWindow {
     ui
 }
 
-fn preview_workspace() -> Vec<WorkspaceFile> {
-    let rows = [
+/// Representative frozen prompt for the preview binary. The real projection
+/// comes from the engine; this keeps the sheet reviewable without a runtime.
+fn preview_system_prompt() -> &'static str {
+    "你是 wunder 智能体。先确认目标，再拆解任务并逐步执行。\n\n\
+# 行为准则\n\
+- 先理解目标，再调用工具。\n\
+- 每次工具调用后说明结果。\n\
+- 遇到无法完成的操作，如实说明原因。\n\n\
+# 工具\n\
+- 读取文件：read_file\n\
+- 运行命令：execute_command\n\
+- 网页搜索：web_search\n\n\
+# 运行环境\n\
+- 本地工作区：应用私有工作区\n\
+- 运行环境：Ubuntu 24.04（默认内置）\n\n\
+# 输出\n\
+- 使用简洁的中文回复。\n\
+- 代码块标注语言。\n"
+}
+
+fn preview_workspace() -> Vec<WorkspaceFile> {    let rows = [
         ("文档", "文档", true, 0, "文件夹"),
         ("图片", "图片", true, 0, "文件夹"),
         ("运行报告.md", "运行报告.md", false, 4, "12.4 KB"),
@@ -491,7 +530,7 @@ fn preview_trajectory_page() -> serde_json::Value {
                 "kind": "tool_call", "user_round": 1, "status": "completed",
                 "tool_name": "读取文件", "summary": "crates/wunder-desktop/frontend/ui/timeline.slint",
                 "args_preview": "{\"path\":\"crates/wunder-desktop/frontend/ui/timeline.slint\"}",
-                "result_preview": "已读取 64 KB",
+                "result_preview": "eyJhcmdzIjp7InBhdGgiOiJjcmF0ZXMvd3VuZGVyLWRlc2t0b3AvZnJvbnRlbmQvdWkvdGltZWxpbmUuc2xpbnQiLCJvZmZzZXQiOjAsImxpbWl0IjoyMDAsImVuY29kaW5nIjoidXRmLTgiLCJ3cmFwIjoid29yZC13cmFwIiwicmVuZGVyZXIiOiJza2lhIiwiZGV2aWNlIjoiYW5kcm9pZCIsImZvbnQiOiJNaWNyb3NvZnQgWWFIZWkifX0=".repeat(4),
                 "started_at": at(10.0), "completed_at": at(10.8)
             },
             {
@@ -657,6 +696,11 @@ fn wire_callbacks(
     });
 
     let sender = commands.clone();
+    ui.on_load_prompt_preview(move || {
+        let _ = sender.send(Command::LoadPromptPreview);
+    });
+
+    let sender = commands.clone();
     ui.on_open_workspace(move |path| {
         let _ = sender.send(Command::LoadWorkspace {
             path: path.to_string(),
@@ -703,21 +747,33 @@ fn wire_callbacks(
         let _ = sender.send(Command::NewThreadInWorkspace(id.to_string()));
     });
     let sender = commands.clone();
-    ui.on_create_workspace(move |name, icon, color| {
+    ui.on_create_workspace(move |name, icon, color, folder| {
         let _ = sender.send(Command::CreateWorkspace {
             name: name.to_string(),
             icon: icon.to_string(),
             color: color.to_string(),
+            folder: folder.to_string(),
         });
     });
     let sender = commands.clone();
-    ui.on_update_workspace(move |id, name, icon, color| {
+    ui.on_update_workspace(move |id, name, icon, color, folder| {
         let _ = sender.send(Command::UpdateWorkspace {
             id: id.to_string(),
             name: name.to_string(),
             icon: icon.to_string(),
             color: color.to_string(),
+            folder: folder.to_string(),
         });
+    });
+    let weak = ui.as_weak();
+    ui.on_pick_workspace_folder(move || {
+        if let Some(ui) = weak.upgrade() {
+            // Clear first so picking the same folder twice still reaches the
+            // editor through its change handler.
+            ui.set_workspace_picked_folder("".into());
+        }
+        #[cfg(target_os = "android")]
+        crate::android_host::pick_directory();
     });
     let sender = commands.clone();
     ui.on_delete_workspace(move |id| {
@@ -837,6 +893,25 @@ fn wire_callbacks(
     let sender = commands.clone();
     ui.on_open_permission(move |id| {
         let _ = sender.send(Command::OpenPermission(id.to_string()));
+    });
+
+    let sender = commands.clone();
+    ui.on_refresh_backup(move || {
+        let _ = sender.send(Command::RefreshBackup);
+    });
+    let sender = commands.clone();
+    ui.on_backup_now(move || {
+        let _ = sender.send(Command::BackupNow);
+    });
+    let sender = commands.clone();
+    ui.on_restore_backup(move |path| {
+        let _ = sender.send(Command::RestoreBackup {
+            path: path.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_view_crash_log(move || {
+        let _ = sender.send(Command::LoadCrashLog);
     });
 
     let sender = commands.clone();
@@ -1678,6 +1753,29 @@ fn next_env_progress(current: i32, state: &str, reported: i32) -> i32 {
     }
 }
 
+/// Push the projected turn ruler into the shared model only when its visible
+/// content changed; a streaming token usually alters only the last preview.
+fn apply_turn_marks(
+    model: &Rc<VecModel<TurnMark>>,
+    last: &mut Vec<project::TurnMarkData>,
+    marks: Vec<project::TurnMarkData>,
+) {
+    if *last == marks {
+        return;
+    }
+    model.set_vec(
+        marks
+            .iter()
+            .map(|mark| TurnMark {
+                fraction: mark.fraction,
+                user: mark.user.as_str().into(),
+                agent: mark.agent.as_str().into(),
+            })
+            .collect::<Vec<TurnMark>>(),
+    );
+    *last = marks;
+}
+
 fn start_tick(
     ui: &MobileWindow,
     shared: &Arc<Mutex<Shared>>,
@@ -1687,6 +1785,9 @@ fn start_tick(
     let weak = ui.as_weak();
     let shared = shared.clone();
     let model = model.clone();
+    let turn_marks_model = Rc::new(VecModel::<TurnMark>::default());
+    ui.set_turn_marks(ModelRc::from(turn_marks_model.clone()));
+    let mut last_marks: Vec<project::TurnMarkData> = Vec::new();
     let mut ubuntu_ticks = 0u32;
     let mut cache = RowCache::default();
     let mut last_rev = 0u64;
@@ -1702,6 +1803,7 @@ fn start_tick(
     let mut last_archived = 0u64;
     let mut last_presets = 0u64;
     let mut last_trajectory = 0u64;
+    let mut last_prompt_preview = 0u64;
     let mut last_workspace = 0u64;
     let mut last_workspaces = 0u64;
     let mut last_models = 0u64;
@@ -1733,11 +1835,13 @@ fn start_tick(
     let mut memory_editor_was_open = false;
     let mut last_settings = 0u64;
     let mut last_ubuntu = 0u64;
-    // 首装引导：单调进度与「已就绪」停留计时。
+    // 首装引导：单调进度、「已就绪」停留计时与液面动画相位。
     let mut env_progress = 0i32;
     let mut env_ready_at: Option<Instant> = None;
+    let env_phase_origin = Instant::now();
     let mut last_companion = 0u64;
     let mut last_permissions = 0u64;
+    let mut last_backup = u64::MAX;
     let mut last_update = 0u64;
     let mut last_update_progress = -1i32;
     let mut last_update_downloaded = String::new();
@@ -1767,6 +1871,12 @@ fn start_tick(
         if (ime - last_ime).abs() > 0.5 {
             ui.set_ime_height(ime);
             last_ime = ime;
+        }
+        // 首装引导的液面动画相位：只在引导页打开时推进（0..1 循环，4 秒一圈），
+        // 波浪、气泡和高光都读它，页面关闭后不再产生任何属性更新。
+        if ui.get_env_setup_open() {
+            let millis = env_phase_origin.elapsed().as_millis() as u64 % 4000;
+            ui.set_env_setup_phase(millis as f32 / 4000.0);
         }
         // Live command counts move at 1 Hz, not at the render tick.
         host_ticks = host_ticks.wrapping_add(1);
@@ -1831,6 +1941,52 @@ fn start_tick(
             }
             for (ok, name) in crate::android_host::take_save_results() {
                 let _ = commands.send(Command::WorkspaceSaved { ok, name });
+            }
+        }
+        // The folder picker only matters while the workspace catalogue is
+        // open; poll it there so returning from the system picker lands in the
+        // editor without a visible delay.
+        #[cfg(target_os = "android")]
+        if ui.get_workspaces_open() && host_ticks % 6 == 0 {
+            if let Some(result) = crate::android_host::take_picked_directory() {
+                match result {
+                    Ok(path) => ui.set_workspace_picked_folder(path.into()),
+                    Err(message) => {
+                        if let Ok(mut state) = shared.lock() {
+                            state.notify(message);
+                            state.touch();
+                        }
+                    }
+                }
+            }
+        }
+        // System shares are parked by Java in a static queue (the activity may
+        // see them before Rust exists). Move them into the engine queue here
+        // so no JNI work and no file copy ever runs on the render thread.
+        #[cfg(target_os = "android")]
+        if host_ticks % 6 == 0 {
+            for _ in 0..4 {
+                let Some(intent) = crate::intent::take() else {
+                    break;
+                };
+                let command = match intent {
+                    crate::intent::SharedIntent::Text(text) => Command::SharedIntent {
+                        text,
+                        url: String::new(),
+                        files: Vec::new(),
+                    },
+                    crate::intent::SharedIntent::Link(url) => Command::SharedIntent {
+                        text: String::new(),
+                        url,
+                        files: Vec::new(),
+                    },
+                    crate::intent::SharedIntent::Files { files, text } => Command::SharedIntent {
+                        text: text.unwrap_or_default(),
+                        url: String::new(),
+                        files,
+                    },
+                };
+                let _ = commands.send(command);
             }
         }
         // Voice and screenshot results are posted by Java workers; poll them
@@ -2004,6 +2160,12 @@ fn start_tick(
                 } else {
                     model.set_vec(cache.from_iter(active.rows.iter()));
                 }
+                let mark_rows: Vec<&RowData> = active.rows.iter().collect();
+                apply_turn_marks(
+                    &turn_marks_model,
+                    &mut last_marks,
+                    project::turn_marks(&mark_rows),
+                );
             } else {
                 ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(
                     state.sessions.clone(),
@@ -2284,6 +2446,13 @@ fn start_tick(
                 state.trajectory_segments.clone(),
             ))));
             last_trajectory = state.trajectory_rev;
+        }
+
+        if state.prompt_preview_rev != last_prompt_preview {
+            ui.set_prompt_preview_loading(state.prompt_preview_loading);
+            ui.set_prompt_preview(state.prompt_preview.as_str().into());
+            ui.set_prompt_preview_error(state.prompt_preview_error.as_str().into());
+            last_prompt_preview = state.prompt_preview_rev;
         }
 
         if state.workspace_rev != last_workspace {
@@ -2574,7 +2743,8 @@ fn start_tick(
         if ui.get_env_setup_open() {
             if state.ubuntu.state == "installed" {
                 let ready_at = *env_ready_at.get_or_insert_with(Instant::now);
-                if ready_at.elapsed() >= Duration::from_millis(700) {
+                // 液面缓动 850ms，停留要盖过它，用户才能看到液面真正漫到顶。
+                if ready_at.elapsed() >= Duration::from_millis(1150) {
                     ui.set_env_setup_open(false);
                     env_ready_at = None;
                 }
@@ -2623,6 +2793,16 @@ fn start_tick(
             ui.set_permission_items(ModelRc::from(Rc::new(VecModel::from(items))));
             ui.set_permission_summary(state.permission_summary.as_str().into());
             last_permissions = state.permissions_rev;
+        }
+
+        if state.backup_rev != last_backup {
+            ui.set_settings_backup_status(state.backup_message.as_str().into());
+            ui.set_settings_backup_path(state.backup_path.as_str().into());
+            ui.set_settings_backup_busy(state.backup_phase == "busy");
+            ui.set_settings_backup_restart(state.backup_restart);
+            ui.set_settings_crash_log_title(state.crash_log_title.as_str().into());
+            ui.set_settings_crash_log_text(state.crash_log_text.as_str().into());
+            last_backup = state.backup_rev;
         }
 
         if state.update_rev != last_update {
@@ -2702,6 +2882,12 @@ fn start_tick(
         if state.target == 1 && state.cloud_active_rev != last_cloud_rows {
             let rows = cache.from_iter(state.cloud_active.rows.iter());
             model.set_vec(rows);
+            let mark_rows: Vec<&RowData> = state.cloud_active.rows.iter().collect();
+            apply_turn_marks(
+                &turn_marks_model,
+                &mut last_marks,
+                project::turn_marks(&mark_rows),
+            );
             last_cloud_rows = state.cloud_active_rev;
         }
 
@@ -2760,6 +2946,21 @@ fn start_tick(
                     model.remove(total);
                 }
             }
+            // The ruler follows the same visible rows as the transcript: the
+            // durable prefix minus a hidden live twin, then the live tail.
+            let mut mark_rows: Vec<&RowData> = Vec::with_capacity(durable_len + live.len());
+            for row in &state.durable_rows {
+                if !hide_root.is_empty() && belongs_to_turn(row, hide_root) {
+                    continue;
+                }
+                mark_rows.push(row);
+            }
+            mark_rows.extend(live.iter().copied());
+            apply_turn_marks(
+                &turn_marks_model,
+                &mut last_marks,
+                project::turn_marks(&mark_rows),
+            );
             last_live = state.live_rev;
             last_live_active = live_active;
             last_hide_root = hide_root.to_owned();
@@ -2812,7 +3013,9 @@ fn handle_back(
         return true;
     }
     let mut closed = true;
-    if ui.get_device_sheet_open() {
+    if ui.get_prompt_preview_open() {
+        ui.set_prompt_preview_open(false);
+    } else if ui.get_device_sheet_open() {
         ui.set_device_sheet_open(false);
     } else if ui.get_settings_open()
         && ui.get_settings_page() == 14
@@ -3072,8 +3275,17 @@ pub fn install_preview_data(
             granted: false,
             available: true,
         },
+        MobilePermission {
+            id: "all_files".into(),
+            title: "所有文件访问".into(),
+            description: "让工作区可以指向手机存储中的任意文件夹".into(),
+            state_text: "未开启".into(),
+            action_text: "去开启".into(),
+            granted: false,
+            available: true,
+        },
     ]))));
-    ui.set_permission_summary("已开启 3/6 项".into());
+    ui.set_permission_summary("已开启 3/7 项".into());
     ui.set_update_phase("available".into());
     ui.set_update_version("0.4.1".into());
     ui.set_update_notes("修复安卓版返回键、权限管理与流式状态刷新。".into());
@@ -3464,6 +3676,33 @@ pub fn install_preview_data(
             .map(|row| row.to_row(&mut renderer))
             .collect::<Vec<TimelineRow>>(),
     );
+    ui.set_turn_marks(ModelRc::from(Rc::new(VecModel::from(vec![
+        TurnMark {
+            fraction: 0.02,
+            user: "把聊天区搬到手机上，样式和桌面版保持一致。".into(),
+            agent: "先确认聊天组件的复用边界，再处理单窗口约束。".into(),
+        },
+        TurnMark {
+            fraction: 0.28,
+            user: "补充一下加号面板和会话操作。".into(),
+            agent: "加号改为底部功能面板，会话行增加操作入口。".into(),
+        },
+        TurnMark {
+            fraction: 0.55,
+            user: "检查移动端输入区和键盘避让。".into(),
+            agent: "输入区与会话列表已按手机尺寸收紧。".into(),
+        },
+        TurnMark {
+            fraction: 0.78,
+            user: "把运行状态同步到伙伴气泡。".into(),
+            agent: "伙伴动画已跟随线程运行状态切换。".into(),
+        },
+        TurnMark {
+            fraction: 0.96,
+            user: "最后检查一遍回归。".into(),
+            agent: "cargo test 与桌面预览均通过。".into(),
+        },
+    ]))));
     ui.set_stream_revision(1);
 }
 
@@ -3506,6 +3745,11 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_workspaces_open(true);
             ui.set_workspace_overlay(1);
         }
+        "prompt-preview" => {
+            ui.set_rows(ModelRc::default());
+            ui.set_greeting("你好，我是 wunder。把目标交给我，我来拆解并执行。".into());
+            ui.set_loading(false);
+        }
         "drawer" => {
             ui.set_drawer_open(true);
         }
@@ -3515,6 +3759,28 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
         "settings" => {
             ui.set_settings_page(0);
             ui.set_settings_open(true);
+        }
+        "data" => {
+            ui.set_settings_page(15);
+            ui.set_settings_open(true);
+            ui.set_settings_backup_status(
+                "已备份到 /storage/emulated/0/Download/wunder-backup-20261108.zip".into(),
+            );
+            ui.set_settings_backup_path(
+                "/storage/emulated/0/Download/wunder-backup-20261108.zip".into(),
+            );
+            ui.set_settings_restore_path(
+                "/storage/emulated/0/Download/wunder-backup-20261108.zip".into(),
+            );
+            ui.set_settings_crash_log_title("crash-rust-20261108-143012.log".into());
+            ui.set_settings_crash_log_text(
+                "panic 时间: 2026-11-08 14:30:12.418 +08:00\n\
+                 进程: wunder 安卓版 v0.4.0 (android aarch64)\n\
+                 线程: wunder-android-engine\n\
+                 信息: 示例崩溃堆栈仅用于预览布局\n\
+                 位置: crates/wunder-android/src/engine.rs:1:1\n"
+                    .into(),
+            );
         }
         "about" => {
             ui.set_settings_page(6);
@@ -3531,6 +3797,7 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_settings_ubuntu_progress(42);
             ui.set_settings_ubuntu_stage("正在解压 Ubuntu 根文件系统…".into());
             ui.set_env_setup_progress(42);
+            ui.set_env_setup_phase(0.28);
             ui.set_env_setup_open(true);
         }
         "env-setup-error" => {
@@ -3652,6 +3919,10 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_settings_cloud_device_name("Pixel 8".into());
             ui.set_settings_cloud_last_success("刚刚".into());
         }
+        "companion" => {
+            ui.set_settings_page(11);
+            ui.set_settings_open(true);
+        }
         "channels" => {
             ui.set_settings_page(14);
             ui.set_settings_open(true);
@@ -3685,14 +3956,14 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
                 category: "偏好".into(),
             });
         }
-        "trajectory" | "trajectory-tools" => {
+        "trajectory" | "trajectory-tools" | "trajectory-detail" => {
             let filter = if page == "trajectory-tools" { 2 } else { 0 };
             ui.set_trajectory_title("移动端聊天区对齐".into());
             ui.set_trajectory_session_title("预览线程".into());
             ui.set_trajectory_error("".into());
             ui.set_trajectory_loading(false);
             ui.set_trajectory_filter(filter);
-            ui.set_trajectory_expanded(-1);
+            ui.set_trajectory_expanded(if page == "trajectory-detail" { 2 } else { -1 });
             ui.set_trajectory_items(ModelRc::from(Rc::new(VecModel::from(
                 filtered_trajectory(&preview_trajectory(), filter),
             ))));
@@ -3721,6 +3992,25 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             // The preview window is not running yet, so the sheet's
             // `changed editor-open` handler has not been installed; select
             // the editor page explicitly.
+            ui.set_settings_page(2);
+        }
+        "editor-nondefault" => {
+            let card = preview_model_card(
+                "preview-speech",
+                "tts",
+                "预览语音模型",
+                "https://api.example.com/v1",
+                false,
+            );
+            ui.set_settings_page(1);
+            ui.set_settings_open(true);
+            ui.set_editor_key(card.key.clone());
+            ui.set_editor_new(false);
+            ui.set_editor_default(false);
+            ui.set_editor_draft(card);
+            ui.set_editor_secret("".into());
+            ui.set_editor_probe("".into());
+            ui.set_editor_open(true);
             ui.set_settings_page(2);
         }
         _ => {}

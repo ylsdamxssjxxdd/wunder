@@ -1,7 +1,7 @@
 ---
 title: Tools
 summary: How the four layers — tools, skills, capabilities, and user tools — are told apart, canonical names and aliases, dispatch order for dynamic registration, default sets and visibility gates, and the two result-trimming tracks.
-updated_at: 2026-10-16
+updated_at: 2026-11-08
 ---
 
 The agent's ability to act is collectively called "tools," but tools, skills, capabilities, and user tools are four different layers, and conflating them is the most common cause of broken configuration.
@@ -29,7 +29,7 @@ Most of the tool names the model sees are Chinese canonical names, with English 
 | `命令会话` | `command_session`, `write_command_stdin` | `写入文件` | `write_file` |
 | `网页搜索` | `web_search` | `文本编辑` | `edit`, `patch`, `apply_patch`, `应用补丁` |
 | `列出文件` | `list_files` | `搜索内容` | `search_content` |
-| `glob` | — | `技能调用` | `skill_call`, `skill_get` |
+| `文件名匹配` | `glob` | `技能调用` | `skill_call`, `skill_get` |
 | `计划面板` | `update_plan` | `问询面板` | `question_panel`, `ask_panel` |
 | `定时任务` | `schedule_task` | `记忆管理` | `memory_manager`, `memory_manage` |
 | `子智能体控制` | `subagent_control` | `网页抓取` | `web_fetch` |
@@ -56,7 +56,7 @@ Default tool sets, the desktop hidden set, and the desktop extra set all have a 
 
 | Set | Contents |
 | --- | --- |
-| Default built-ins (12) | `定时任务`, `记忆管理`, `执行命令`, `命令会话`, `列出文件`, `glob`, `搜索内容`, `读取文件`, `网页抓取`, `技能调用`, `写入文件`, `文本编辑` |
+| Default built-ins (12) | `定时任务`, `记忆管理`, `执行命令`, `命令会话`, `列出文件`, `文件名匹配`, `搜索内容`, `读取文件`, `网页抓取`, `技能调用`, `写入文件`, `文本编辑` |
 | Default skills | `技能创建器`, `公文写作`, `文稿校对`, `3D网页`, `视频制作` |
 | Desktop hidden (neither selectable nor on by default) | `goal` (`action=get|create|edit|pause|resume|complete|blocked`, injected automatically by the runtime per session), `会话线程控制`, `会话让出` |
 | Desktop extras, on by default | `读图工具`, `桌面控制`, `子智能体控制` |

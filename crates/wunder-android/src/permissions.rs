@@ -54,6 +54,21 @@ const ITEMS: &[Meta] = &[
         title: "安装应用",
         description: "在线更新与安装 APK",
     },
+    Meta {
+        id: "all_files",
+        title: "所有文件访问",
+        description: "让工作区可以指向手机存储中的任意文件夹",
+    },
+    Meta {
+        id: "screen_capture",
+        title: "屏幕采集",
+        description: "允许智能体截取当前屏幕画面（单帧）",
+    },
+    Meta {
+        id: "notification_access",
+        title: "通知读取",
+        description: "读取通知列表，并在需要时清除通知",
+    },
 ];
 
 pub fn snapshot() -> Vec<PermissionItem> {
@@ -128,7 +143,7 @@ mod tests {
             "battery": "unsupported",
             "install_packages": "denied"
         }));
-        assert_eq!(items.len(), 6);
+        assert_eq!(items.len(), 9);
         assert!(items[0].granted);
         assert_eq!(items[0].state_text, "已开启");
         assert_eq!(items[0].action_text, "去管理");
@@ -137,13 +152,13 @@ mod tests {
         assert!(!items[4].available);
         assert_eq!(items[4].state_text, "系统不支持");
         assert_eq!(items[4].action_text, "");
-        assert_eq!(summary(&items), "已开启 2/6 项");
+        assert_eq!(summary(&items), "已开启 2/9 项");
     }
 
     #[test]
     fn missing_states_stay_unknown_instead_of_failing() {
         let items = from_states(&json!({}));
-        assert_eq!(items.len(), 6);
+        assert_eq!(items.len(), 9);
         assert!(items.iter().all(|item| item.state_text == "未知"));
         assert!(items.iter().all(|item| item.available));
     }

@@ -1447,6 +1447,110 @@
     "en-US": "The action was applied but the screen may still be settling. Call wait to observe it again before repeating input.",
     "zh-CN": "动作已执行，但画面可能仍在变化。请先调用 wait 再观察一次，然后再决定是否重复操作。"
   },
+  "tool.android_screen.disabled": {
+    "en-US": "Android screen capture is unavailable: no device host is installed in this process.",
+    "zh-CN": "安卓屏幕采集不可用：当前进程没有安装设备宿主。"
+  },
+  "tool.android_screen.invalid_args": {
+    "en-US": "Invalid Android screen arguments.",
+    "zh-CN": "安卓屏幕参数无效。"
+  },
+  "tool.android_screen.action_required": {
+    "en-US": "action is required (capture/status/request_permission).",
+    "zh-CN": "必须提供 action（capture/status/request_permission）。"
+  },
+  "tool.android_screen.unknown_action": {
+    "en-US": "Unknown screen action; use capture, status or request_permission.",
+    "zh-CN": "未知的屏幕动作，仅支持 capture、status、request_permission。"
+  },
+  "tool.android_screen.permission_required": {
+    "en-US": "Screen capture is not authorized. Call request_permission and have the user confirm the system dialog before capturing.",
+    "zh-CN": "屏幕采集尚未授权：请先调用 request_permission，由用户在系统弹窗中确认后再截图。"
+  },
+  "tool.android_screen.service_unavailable": {
+    "en-US": "The screen-capture foreground service could not start; bring wunder to the foreground and retry.",
+    "zh-CN": "屏幕采集前台服务未能启动：请把 wunder 切到前台后重试。"
+  },
+  "tool.android_screen.capture_failed": {
+    "en-US": "Screen capture failed; verify the permission is still valid and retry.",
+    "zh-CN": "屏幕截图失败：请确认授权仍然有效后重试。"
+  },
+  "tool.android_screen.activity_unavailable": {
+    "en-US": "The wunder activity is not available, so the screen-capture permission dialog cannot be opened. Open the app first.",
+    "zh-CN": "wunder 界面不在前台，无法发起屏幕采集授权；请先打开应用界面再请求。"
+  },
+  "tool.android_screen.action_failed": {
+    "en-US": "The screen action was not applied.",
+    "zh-CN": "屏幕动作未执行。"
+  },
+  "tool.android_screen.summary_capture": {
+    "en-US": "Screen frame saved ({width}x{height}).",
+    "zh-CN": "屏幕截图已保存（{width}x{height}）。"
+  },
+  "tool.android_screen.summary_status_on": {
+    "en-US": "Screen capture is authorized and the foreground service is running.",
+    "zh-CN": "屏幕采集已授权，前台服务运行中。"
+  },
+  "tool.android_screen.summary_status_off": {
+    "en-US": "Screen capture is not authorized.",
+    "zh-CN": "屏幕采集尚未授权。"
+  },
+  "tool.android_screen.summary_permission": {
+    "en-US": "Screen-capture permission was requested. Ask the user to confirm the system dialog, then check status.",
+    "zh-CN": "已请求屏幕采集授权，请在设备上确认系统弹窗，再用 status 查看结果。"
+  },
+  "tool.android_screen.next_step_hint": {
+    "en-US": "Open the returned path with the read_image tool to inspect the frame before deciding the next step.",
+    "zh-CN": "用读取图片（read_image）打开返回的 path 查看画面，再决定下一步。"
+  },
+  "tool.android_notifications.disabled": {
+    "en-US": "Android notifications are unavailable: no device host is installed in this process.",
+    "zh-CN": "安卓通知不可用：当前进程没有安装设备宿主。"
+  },
+  "tool.android_notifications.invalid_args": {
+    "en-US": "Invalid Android notification arguments.",
+    "zh-CN": "安卓通知参数无效。"
+  },
+  "tool.android_notifications.action_required": {
+    "en-US": "action is required (list/dismiss/status).",
+    "zh-CN": "必须提供 action（list/dismiss/status）。"
+  },
+  "tool.android_notifications.unknown_action": {
+    "en-US": "Unknown notification action; use list, dismiss or status.",
+    "zh-CN": "未知的通知动作，仅支持 list、dismiss、status。"
+  },
+  "tool.android_notifications.key_required": {
+    "en-US": "dismiss requires the notification key returned by list.",
+    "zh-CN": "dismiss 需要 list 返回的通知 key。"
+  },
+  "tool.android_notifications.access_required": {
+    "en-US": "Notification access is not granted. Ask the user to enable notification access for wunder in system settings.",
+    "zh-CN": "通知读取尚未授权：请在系统设置中为 wunder 开启通知使用权。"
+  },
+  "tool.android_notifications.dismiss_failed": {
+    "en-US": "The notification could not be dismissed; it may be ongoing or already gone.",
+    "zh-CN": "通知未能清除：它可能仍在进行中或已经被移除。"
+  },
+  "tool.android_notifications.action_failed": {
+    "en-US": "The notification action was not applied.",
+    "zh-CN": "通知动作未执行。"
+  },
+  "tool.android_notifications.summary_list": {
+    "en-US": "Read {count} notifications ({total} total).",
+    "zh-CN": "读取到 {count} 条通知（共 {total} 条）。"
+  },
+  "tool.android_notifications.summary_dismiss": {
+    "en-US": "Notification dismissed.",
+    "zh-CN": "通知已清除。"
+  },
+  "tool.android_notifications.summary_status_on": {
+    "en-US": "Notification listener is connected.",
+    "zh-CN": "通知监听已连接。"
+  },
+  "tool.android_notifications.summary_status_off": {
+    "en-US": "Notification listener is not connected; enable notification access in system settings.",
+    "zh-CN": "通知监听未连接：请在系统设置中开启通知使用权。"
+  },
   "tool.desktop_control.disabled": {
     "en-US": "Desktop control is disabled.",
     "zh-CN": "桌面控制未启用。"
@@ -2146,6 +2250,30 @@
   "tool.spec.phone_control.args.duration_ms": {
     "en-US": "Optional duration in milliseconds for long_press/swipe.",
     "zh-CN": "long_press/swipe 的持续时间（毫秒），可选。"
+  },
+  "tool.spec.android_screen.description": {
+    "en-US": "Capture one frame of this Android screen. action=capture saves the current frame as PNG and returns path, width and height; action=status reports authorization, foreground service and screen size; action=request_permission opens the system screen-capture consent dialog, which the user must confirm while the app is reachable. Authorization ends when the process dies; only the last 4 frames are kept. After capture, open the returned path with the read_image tool. This tool does not record video or simulate touch.",
+    "zh-CN": "采集这台 Android 设备的屏幕单帧画面。action=capture 截取当前画面并保存为 PNG，返回 path、width、height；action=status 查询授权、前台服务与屏幕尺寸；action=request_permission 弹出系统屏幕采集授权框，只能由用户确认，且需要应用界面可用。授权在进程重启后失效，截图只保留最近 4 张。capture 成功后用读取图片（read_image）打开 path 查看画面。该工具不录屏、不模拟触摸。"
+  },
+  "tool.spec.android_screen.args.action": {
+    "en-US": "capture one frame; status reports authorization and service; request_permission opens the system consent dialog.",
+    "zh-CN": "capture 截取一帧；status 查询授权与状态；request_permission 请求屏幕采集授权。"
+  },
+  "tool.spec.android_notifications.description": {
+    "en-US": "Read or dismiss notifications on this Android device. action=list returns recent notifications (newest first, 20 by default, limit 1-50) with package, title, text, post_time, key and can_dismiss; action=dismiss removes one dismissible notification by key; action=status reports whether the listener is connected. The user must enable notification access for wunder in system settings. Only current notifications are covered; no history is read.",
+    "zh-CN": "读取或清除这台 Android 设备的通知。action=list 返回最近通知（最新在前，默认 20 条，limit 1-50），每条包含 package、title、text、post_time、key、can_dismiss；action=dismiss 按 key 清除一条可清除的通知；action=status 查询通知监听是否连接。需要用户先在系统设置中为 wunder 开启通知使用权。只覆盖当前通知，不读取历史。"
+  },
+  "tool.spec.android_notifications.args.action": {
+    "en-US": "list recent notifications; dismiss one by key; status reports the listener connection.",
+    "zh-CN": "list 读取最近通知；dismiss 按 key 清除一条；status 查询监听状态。"
+  },
+  "tool.spec.android_notifications.args.key": {
+    "en-US": "Notification key returned by list; required for dismiss.",
+    "zh-CN": "list 返回的通知 key，dismiss 时必填。"
+  },
+  "tool.spec.android_notifications.args.limit": {
+    "en-US": "Number of notifications returned by list (1-50, default 20).",
+    "zh-CN": "list 返回的条数（1-50，默认 20）。"
   },
   "tool.spec.desktop_control.description": {
     "en-US": "Drive and observe the local desktop. Use bbox together with an action; each action exposes only its own fields. Keyboard actions use key or text, scrolling uses scroll_steps, and drag uses to_bbox. action=wait (with delay_ms) waits then returns a fresh screenshot. Other actions wait at least 240 ms and compare up to three frames before returning the bounded post-action screenshot; verify it before retrying the same action.",

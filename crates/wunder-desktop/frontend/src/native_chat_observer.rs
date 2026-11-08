@@ -722,7 +722,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 let label = crate::timeline_text::tool_label(&item.title);
                 let (target, patch) = crate::timeline_text::tool_target(item);
                 row.tool_name = label.as_str().into();
-                row.tool_icon = crate::tool_icons::workflow_icon(&item.title).into();
+                row.tool_icon = wunder_desktop::tool_icons::workflow_icon(&item.title).into();
                 row.target = target.as_str().into();
                 row.tool_metrics = crate::timeline_text::tool_metrics(item).into();
                 row.tool_metrics_visible = !row.tool_metrics.is_empty();

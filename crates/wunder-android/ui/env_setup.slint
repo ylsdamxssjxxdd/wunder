@@ -1,5 +1,6 @@
-// 首次启动的运行环境部署引导页（安卓版）：全屏不透明，实时展示 Ubuntu/proot
-// 的安装进度，安装完成前不进入聊天界面。安装状态由引擎投影，页面只负责呈现。
+// 首次启动的运行环境部署引导页（安卓版）：全屏不透明，安装过程用「注入 LCL
+// 液体」呈现——液面随进度从底部漫上来，波浪、气泡与高光由引擎 tick 的相位驱动。
+// 安装状态由引擎投影，页面只负责呈现。
 
 import { I18n } from "../../../crates/wunder-desktop/frontend/ui/i18n.slint";
 import { Theme } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
@@ -43,7 +44,7 @@ component SetupTextButton inherits Rectangle {
         width: 100%;
         height: 100%;
         text: root.label;
-        color: Theme.muted;
+        color: #6E5137;
         font-size: Theme.font-sm;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -61,15 +62,51 @@ export component EnvSetupPage inherits Rectangle {
     in property <string> state: "installing";
     in property <int> progress: 0;
     in property <string> stage: "";
-    in property <string> version: "";
     in property <string> error: "";
+    // 0..1 循环相位，由引擎 tick 驱动：液面波动、气泡上升与辉光呼吸都读它。
+    in property <float> phase: 0.0;
     callback retry();
     callback dismiss();
 
-    background: Theme.chat;
+    background: @linear-gradient(180deg, #FCFAF7 0%, #F4ECE2 100%);
     private property <bool> failed: root.state == "error";
     private property <bool> ready: root.state == "installed";
     private property <int> clamped: min(100, max(0, root.progress));
+    private property <float> fill: root.ready ? 1.0 : root.clamped / 100.0;
+    // 液面位置：0% 时沉在屏幕底缘下方，100% 时漫出顶部。整条液面（填充、
+    // 高光、气泡）共用这一份缓动值，分别做动画会让高光落后于实际液面。
+    private property <length> surface-y: root.height - (root.height + 40px) * root.fill;
+    animate surface-y { duration: 850ms; easing: ease-in-out; }
+    // 百分比跟随实际液面而不是目标进度：数字与液面同步涨落，不会数字先到
+    // 100% 而液体还在追赶。
+    private property <int> shown: round(
+        min(1.0, max(0.0, (root.height - root.surface-y) / (root.height + 40px))) * 100.0);
+    // 呼吸辉光：0 → 1 → 0 的三角波。
+    private property <float> pulse: 1.0 - abs(2.0 * root.phase - 1.0);
+    // 浸没程度：液面越过百分比文字（约 56% 屏高）后从 0 平滑到 1，
+    // 数字与阶段文案随之转成奶油白，像隔着液体看字。
+    private property <float> submerged: min(
+        1.0, max(0.0, (root.height * 0.56 - root.surface-y) / 80px));
+    // 完成瞬间的亮屏脉冲：ready 后从 0.5 淡出到 0。
+    private property <float> settle: root.ready ? 0.0 : 0.5;
+    animate settle { duration: 800ms; easing: ease-out; }
+    // 路径命令按像素插值，长度不能直接进字符串，先转成无单位浮点。
+    private property <float> w: root.width / 1px;
+    private property <float> h: root.height / 1px;
+
+    pure function wrap(value: float) -> float {
+        return value - floor(value);
+    }
+
+    // 两个完整周期的波形；整段平移一个周期即可无缝循环。
+    pure function wave-line() -> string {
+        return "M 0 10 C \{root.w * 0.125} 0 \{root.w * 0.375} 20 \{root.w * 0.5} 10 C \{root.w * 0.625} 0 \{root.w * 0.875} 20 \{root.w} 10 C \{root.w * 1.125} 0 \{root.w * 1.375} 20 \{root.w * 1.5} 10 C \{root.w * 1.625} 0 \{root.w * 1.875} 20 \{root.w * 2} 10";
+    }
+
+    // 波形闭合到指定高度，形成从液面到该深度的液体填充。
+    pure function wave-body(bottom: float) -> string {
+        return root.wave-line() + " L \{root.w * 2} \{bottom} L 0 \{bottom} Z";
+    }
 
     // 铺满一层触摸面挡住聊天界面的事件穿透；内容与按钮声明在它之后（上层）。
     block := TouchArea {
@@ -77,6 +114,85 @@ export component EnvSetupPage inherits Rectangle {
         height: 100%;
     }
 
+    // ---- LCL 液体 ------------------------------------------------------
+    // 后层波浪：相位更快、颜色更浅，只在主液面上缘露出几像素，拉开景深。
+    back-wave := Path {
+        visible: root.fill > 0.002;
+        x: -root.width * root.wrap(root.phase * 1.35 + 0.27) - 1px;
+        y: root.surface-y - 16px;
+        width: root.width * 2;
+        height: 74px;
+        commands: root.wave-body(74.0);
+        fill: @linear-gradient(180deg, #FFE3B6 0%, #F8BC68 100%);
+        opacity: 0.45;
+    }
+    // 主液面：从液面一直填到屏幕下方，坐标按屏幕宽度插值，振幅固定像素。
+    wave := Path {
+        visible: root.fill > 0.002;
+        x: -root.width * root.phase - 1px;
+        y: root.surface-y - 10px;
+        width: root.width * 2;
+        height: root.height + 80px;
+        commands: root.wave-body(root.h + 80.0);
+        fill: @linear-gradient(180deg, #FFC46B 0%, #F5972D 48%, #E36A05 100%);
+        opacity: 0.72;
+    }
+    // 液面高光：沿波形描一条亮边，随波浪一起滚动。
+    surface := Path {
+        visible: root.fill > 0.002;
+        x: wave.x;
+        y: wave.y;
+        width: wave.width;
+        height: 30px;
+        commands: root.wave-line();
+        stroke: #FFF6E0;
+        stroke-width: 2px;
+        opacity: 0.55 + 0.35 * root.pulse;
+    }
+    // 液面下的折射亮带：预置渐变，不做实时模糊。
+    Rectangle {
+        visible: root.fill > 0.10;
+        x: 0px;
+        y: root.surface-y + 44px;
+        width: 100%;
+        height: 26px;
+        background: @linear-gradient(90deg, transparent 0%, #FFF6E0AA 24%, #FFF6E0CC 50%, #FFF6E0AA 76%, transparent 100%);
+        opacity: 0.10 + 0.14 * root.pulse;
+    }
+    // 阶段浮标：液面漫过时亮一下，暗示安装推进到了新阶段。
+    for i in 3 : Rectangle {
+        private property <int> threshold: 29 + i * 23;
+        private property <float> since: root.clamped * 1.0 - self.threshold;
+        private property <float> flash: min(1.0, max(0.0, 1.0 - self.since / 9.0));
+        width: 44px;
+        height: 44px;
+        border-radius: 22px;
+        border-width: 1px;
+        border-color: #FFF3D6;
+        background: transparent;
+        // 左右交错排布，避开屏幕中间的大号百分比与阶段文案。
+        x: root.width * (i == 0 ? 0.20 : i == 1 ? 0.78 : 0.30) - self.width / 2;
+        y: root.height * (0.70 - i * 0.24) - self.height / 2;
+        opacity: self.since >= 0.0 ? 0.22 + 0.6 * self.flash * (0.4 + 0.6 * root.pulse) : 0.0;
+    }
+    // 气泡：在液体内部上升，靠近液面渐隐；完成时集体加速上浮。
+    for i in 7 : Rectangle {
+        private property <float> travel: root.wrap(
+            root.phase * (0.35 + Math.mod(i, 3) * 0.16) * (root.ready ? 2.2 : 1.0) + i * 0.143);
+        private property <length> size: 6px + 3px * Math.mod(i, 3);
+        width: self.size;
+        height: self.size;
+        border-radius: self.size / 2;
+        x: root.width * (0.10 + i * 0.13) - self.width / 2
+            + (1.0 - abs(2.0 * root.wrap(root.phase + i * 0.11) - 1.0)) * 12px - 6px;
+        y: root.height - self.travel * (root.height - root.surface-y) - self.height;
+        background: #FFF8EA;
+        border-width: 1px;
+        border-color: #FFE3B8;
+        opacity: root.fill > 0.03 ? 0.20 + 0.35 * (1.0 - self.travel) : 0.0;
+    }
+
+    // ---- 内容 ----------------------------------------------------------
     VerticalLayout {
         y: root.inset-top;
         height: parent.height - root.inset-top - root.inset-bottom;
@@ -94,57 +210,33 @@ export component EnvSetupPage inherits Rectangle {
                 image-fit: contain;
             }
         }
-        Rectangle { height: 18px; }
-        Text {
-            text: root.failed ? I18n.and_env_setup_failed
-                : root.ready ? I18n.and_env_setup_ready
-                : I18n.and_env_setup_title;
+        Rectangle { height: 20px; }
+        if root.failed || root.ready : Text {
+            text: root.failed ? I18n.and_env_setup_failed : I18n.and_env_setup_ready;
             color: root.failed ? Theme.danger : Theme.text;
             font-size: Theme.font-headline;
             font-weight: 700;
             horizontal-alignment: center;
         }
-        Rectangle { height: 8px; }
-        Text {
-            visible: !root.ready;
-            text: I18n.and_env_setup_note;
-            color: Theme.muted;
-            font-size: Theme.font-sm;
-            wrap: word-wrap;
-            horizontal-alignment: center;
-        }
-        Rectangle { height: 28px; }
+        if !root.ready : Rectangle { height: 26px; }
 
-        // ---- 安装中：百分比 + 进度条 + 阶段 ----
+        // ---- 安装中：注入进度 ----
         if !root.failed && !root.ready : VerticalLayout {
             spacing: 0px;
             Text {
-                text: root.clamped + "%";
-                color: Theme.accent-ink;
-                font-size: Theme.font-display;
+                text: root.shown + "%";
+                color: root.submerged > 0.5 ? #FFF3D6 : #8A3E05;
+                animate color { duration: 420ms; easing: ease-in-out; }
+                font-size: 46px;
                 font-weight: 700;
                 horizontal-alignment: center;
             }
-            Rectangle { height: 14px; }
-            Rectangle {
-                height: 8px;
-                border-radius: 4px;
-                background: Theme.border;
-                Rectangle {
-                    // Slint 中未设置 x 的子元素默认在父容器内居中，进度条填充
-                    // 必须显式钉在左侧才能正常生长。
-                    x: 0px;
-                    y: 0px;
-                    width: max(8px, parent.width * root.clamped / 100);
-                    height: parent.height;
-                    border-radius: 4px;
-                    background: Theme.accent;
-                }
-            }
-            Rectangle { height: 12px; }
+            Rectangle { height: 8px; }
+            // 阶段文案保持深色：小字号在水面上方/下方都要可读，水下偏色只给
+            // 大号百分比做。
             Text {
                 text: root.state == "missing" ? I18n.and_env_setup_preparing : root.stage;
-                color: Theme.text-secondary;
+                color: #5E452C;
                 font-size: Theme.font-sm;
                 wrap: word-wrap;
                 horizontal-alignment: center;
@@ -171,40 +263,16 @@ export component EnvSetupPage inherits Rectangle {
             }
         }
 
-        // ---- 完成：短暂停留后自动进入 ----
-        if root.ready : VerticalLayout {
-            spacing: 12px;
-            HorizontalLayout {
-                alignment: center;
-                Rectangle {
-                    width: 44px;
-                    height: 44px;
-                    border-radius: 22px;
-                    background: Theme.accent-soft;
-                    Image {
-                        x: 12px;
-                        y: 12px;
-                        width: 20px;
-                        height: 20px;
-                        source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/check.svg");
-                        colorize: Theme.accent-ink;
-                        image-fit: contain;
-                    }
-                }
-            }
-            Text {
-                visible: root.version != "";
-                text: root.version;
-                color: Theme.text-secondary;
-                font-size: Theme.font-sm;
-                horizontal-alignment: center;
-            }
-            Text {
-                text: I18n.and_env_setup_ready_note;
-                color: Theme.muted;
-                font-size: Theme.font-xs;
-                horizontal-alignment: center;
-            }
-        }
+    }
+
+    // 完成瞬间：整屏奶油白亮一下再散开，给“注满”一个收尾。
+    Rectangle {
+        visible: root.ready;
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: 100%;
+        background: #FFF4D6;
+        opacity: root.settle;
     }
 }

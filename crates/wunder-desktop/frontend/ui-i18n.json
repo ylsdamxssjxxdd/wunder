@@ -463,16 +463,6 @@
   "en": "This permanently deletes every file and folder in the current working directory and cannot be undone. Clear everything?"
  },
  {
-  "key": "and_env_setup_title",
-  "zh": "正在准备运行环境",
-  "en": "Preparing the runtime"
- },
- {
-  "key": "and_env_setup_note",
-  "zh": "首次启动需要部署 Ubuntu 运行环境，安装完成后自动进入。期间请保持应用运行。",
-  "en": "The first launch sets up the Ubuntu runtime. The app opens automatically when it is ready; keep the app running."
- },
- {
   "key": "and_env_setup_preparing",
   "zh": "正在准备…",
   "en": "Preparing…"
@@ -481,11 +471,6 @@
   "key": "and_env_setup_ready",
   "zh": "运行环境已就绪",
   "en": "Runtime ready"
- },
- {
-  "key": "and_env_setup_ready_note",
-  "zh": "即将进入",
-  "en": "Opening the app"
  },
  {
   "key": "and_env_setup_failed",

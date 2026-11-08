@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-11-08T02:23:29.317743+00:00",
+  "generated_at": "2026-11-08T07:40:56.138553+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is a multi-form agent workbench: Desktop is the local AI workbench, Android is the Desktop's phone form, Cloud (web) is the cloud AI workbench, CLI is the manual local entry point, and the Server is the user and agent management platform. / wunder 是多形态的智能体工作台：桌面版（desktop）是本地 AI 工作台，安卓版（android）是桌面版的手机形态，云端版（web）是云端 AI 工作台，命令行（cli）是手工本地操作入口，服务端（server）是用户与智能体管理平台。",
@@ -65,7 +65,7 @@
                   {
                     "slug": "zh-CN/concepts/index",
                     "title": "核心概览",
-                    "summary": "多快好省四个核心、四条设计原则、多个形态、按主题的深入页面，以及已移除与受限的能力。",
+                    "summary": "多快好省四个核心、设计哲学与五条设计原则、多个形态、按主题的深入页面，以及已移除与受限的能力。",
                     "url": "/docs/zh-CN/concepts/"
                   }
                 ]
@@ -637,7 +637,7 @@
                   {
                     "slug": "en/concepts/index",
                     "title": "Core Concepts",
-                    "summary": "The Diverse, Fast, Superior, and Efficient cores, four design principles, multiple forms, deeper pages by topic, and capabilities that are removed or restricted.",
+                    "summary": "The Diverse, Fast, Superior, and Efficient cores, the design philosophy with five design principles, multiple forms, deeper pages by topic, and capabilities that are removed or restricted.",
                     "url": "/docs/en/concepts/"
                   }
                 ]
@@ -1429,7 +1429,7 @@
       "language": "zh-CN",
       "title": "桌面版（desktop）入门",
       "summary": "本地 AI 工作台：安装与启动方式、本地数据布局、主窗两页结构、首次配置步骤、桌面侧独有能力与交互约束。",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
       "tab": "开始",
@@ -1560,8 +1560,8 @@
       "slug": "zh-CN/concepts/index",
       "language": "zh-CN",
       "title": "核心概览",
-      "summary": "多快好省四个核心、四条设计原则、多个形态、按主题的深入页面，以及已移除与受限的能力。",
-      "updated_at": "2026-10-19",
+      "summary": "多快好省四个核心、设计哲学与五条设计原则、多个形态、按主题的深入页面，以及已移除与受限的能力。",
+      "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
       "tab": "开始",
@@ -2401,7 +2401,7 @@
       "language": "zh-CN",
       "title": "工具总览",
       "summary": "内置工具的规范名与英文别名、八个分类对应的说明页、场景到工具的对照，以及统一结果外壳与不套外壳的例外。",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
       "tab": "工具",
@@ -3354,7 +3354,7 @@
       "language": "zh-CN",
       "title": "管理端界面",
       "summary": "服务端自带的治理与调试后台，仅管理员可见。顶层导航 4 组 19 项：系统 4、智能体 6、调试 6、文档 2；另有未落地面板的说明。",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -3400,7 +3400,7 @@
       "language": "zh-CN",
       "title": "桌面版界面",
       "summary": "本地 AI 工作台，个人用户的默认入口。主窗只有对话、设置两页，设置内 12 个分类，其余能力以面板和对话框呈现；含桌面侧独占能力与未开放入口。",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -4316,7 +4316,7 @@
       "language": "zh-CN",
       "title": "工具",
       "summary": "工具、技能、能力、用户工具四层的判定方式，规范名与别名，动态注册的分发顺序，默认集与可见性门槛，以及结果裁剪的两条通道。",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
       "tab": "能力",
@@ -5941,7 +5941,7 @@
       "language": "en",
       "title": "Starting with the Desktop",
       "summary": "The local AI workbench: install and launch, layout of local data, the two-page main window, first-run configuration, capabilities unique to the desktop, and interaction constraints.",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-11-08",
       "read_when": [
         "You are installing or first launching the Desktop",
         "You need to know where its local data lives or how to migrate it"
@@ -6081,8 +6081,8 @@
       "slug": "en/concepts/index",
       "language": "en",
       "title": "Core Concepts",
-      "summary": "The Diverse, Fast, Superior, and Efficient cores, four design principles, multiple forms, deeper pages by topic, and capabilities that are removed or restricted.",
-      "updated_at": "2026-10-19",
+      "summary": "The Diverse, Fast, Superior, and Efficient cores, the design philosophy with five design principles, multiple forms, deeper pages by topic, and capabilities that are removed or restricted.",
+      "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
       "tab": "Getting Started",
@@ -6939,7 +6939,7 @@
       "language": "en",
       "title": "Tools Overview",
       "summary": "Canonical names and English aliases of the built-in tools, the doc pages for each of the eight categories, situations mapped to tools, and the shared result shell plus the exceptions that skip it.",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
       "tab": "Tools",
@@ -7713,7 +7713,7 @@
       "language": "en",
       "title": "Admin Interface",
       "summary": "The governance and debugging console built into the Server, visible to administrators only. Top-level navigation has 4 groups and 19 items: System 4, Agents 6, Debug 6, Docs 2; plus notes on panels never implemented.",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-11-08",
       "read_when": [
         "You administer the Server as an administrator through the Admin",
         "You want to know what the Admin does not have (memory, interconnection, goal editing)"
@@ -7767,7 +7767,7 @@
       "language": "en",
       "title": "Desktop Interface",
       "summary": "The local AI workbench and the default entry for individual users. Its main window has only two pages, chat and settings, with 12 categories in settings; everything else appears as panels and dialogs, including desktop-only capabilities and entries not yet wired up.",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-11-08",
       "read_when": [
         "You use the Desktop desktop app and want to know where a capability lives",
         "You cannot find the device-interconnection panel or TTS playback in the Desktop"
@@ -8692,7 +8692,7 @@
       "language": "en",
       "title": "Tools",
       "summary": "How the four layers — tools, skills, capabilities, and user tools — are told apart, canonical names and aliases, dispatch order for dynamic registration, default sets and visibility gates, and the two result-trimming tracks.",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
       "tab": "Capabilities",

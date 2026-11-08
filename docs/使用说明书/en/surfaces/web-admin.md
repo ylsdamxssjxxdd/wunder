@@ -9,7 +9,7 @@ source_docs:
   - web/app.js
   - web/modules/log.js
   - crates/wunder-server/src/main.rs
-updated_at: 2026-10-16
+updated_at: 2026-11-08
 ---
 
 # Admin Interface
@@ -17,6 +17,8 @@ updated_at: 2026-10-16
 The Admin is the governance and debugging console built into the **Server (the user and agent management platform)**. Regular users never see it after signing in; only administrators get in, and daily conversation happens in the Cloud or the Desktop.
 
 It starts along with the Server, with no separate build step, and shares the Server's port (18000 by default). The Cloud and it are **two separate interfaces**: the Cloud faces users, the Admin faces admins.
+
+The Admin follows the same radically minimal philosophy: information density serves locating and deciding, solving the problem fast instead of showing off complexity.
 
 ## Top-level navigation
 

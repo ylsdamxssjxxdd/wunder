@@ -7,7 +7,7 @@
 
 import { I18n } from "../../../crates/wunder-desktop/frontend/ui/i18n.slint";
 export { I18n }
-import { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion, CommandTask, SubagentItem } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
+import { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion, CommandTask, SubagentItem, TurnMark } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
 export { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion }
 import { TimelineView } from "../../../crates/wunder-desktop/frontend/ui/timeline.slint";
 import { Composer, CommandOptions, InquiryPanel, ModelSetupBanner } from "../../../crates/wunder-desktop/frontend/ui/composer.slint";
@@ -223,6 +223,8 @@ export component MobileWindow inherits Window {
 
     // ---- transcript --------------------------------------------------
     in-out property <[TimelineRow]> rows: [];
+    // Right-edge turn ruler; one tick per user turn, same shape as the desktop.
+    in property <[TurnMark]> turn-marks: [];
     in property <string> greeting: "";
     in property <bool> loading: false;
     in-out property <bool> follow-output: true;
@@ -264,6 +266,9 @@ export component MobileWindow inherits Window {
     // Back dismisses it before leaving the page.
     in-out property <int> workspace-overlay: 0;
     in property <[MobileWorkspace]> workspaces: [];
+    // Latest host path from the system folder picker while the workspace
+    // editor is open.
+    in-out property <string> workspace-picked-folder: "";
     // Active workspace, rendered by the drawer's 工作区 row and the composer.
     in property <string> workspace-icon: "folder";
     in property <string> workspace-color: "blue";
@@ -293,6 +298,11 @@ export component MobileWindow inherits Window {
     // The top-centre model chip opens this sheet; the composer's own trigger
     // is hidden on phones.
     in-out property <bool> model-sheet-open: false;
+    // System prompt preview opened by the greeting's eye button.
+    in-out property <bool> prompt-preview-open: false;
+    in-out property <bool> prompt-preview-loading: false;
+    in-out property <string> prompt-preview: "";
+    in-out property <string> prompt-preview-error: "";
     in property <bool> cloud-ready: true;
     in property <[ChatAttachment]> attachments: [];
     in property <string> send-key: "enter";
@@ -316,10 +326,20 @@ export component MobileWindow inherits Window {
     in property <string> settings-language: "zh-CN";
     in property <string> settings-workspace: "";
     in property <string> settings-version: "";
+    // 数据与恢复页
+    in property <string> settings-backup-status: "";
+    in property <string> settings-backup-path: "";
+    in property <bool> settings-backup-busy: false;
+    in property <bool> settings-backup-restart: false;
+    in property <string> settings-crash-log-title: "";
+    in property <string> settings-crash-log-text: "";
+    in-out property <string> settings-restore-path: "";
     // 首次运行环境部署引导页：安装完成前全屏展示进度，不进入聊天界面。
     in-out property <bool> env-setup-open: false;
     // 单调递增的安装进度（Java 的阶段切换会回退，由 Rust 收敛后投影）。
     in property <int> env-setup-progress: 0;
+    // 液面动画相位（0..1 循环），引导页打开期间由引擎 tick 每帧推进。
+    in property <float> env-setup-phase: 0.0;
     in property <string> settings-ubuntu-state: "missing";
     in property <int> settings-ubuntu-progress: 0;
     in property <string> settings-ubuntu-stage: "";
@@ -488,9 +508,10 @@ export component MobileWindow inherits Window {
     callback refresh-workspaces();
     callback select-workspace(string);
     callback new-task-in-workspace(string);
-    callback create-workspace(string, string, string);
-    callback update-workspace(string, string, string, string);
+    callback create-workspace(string, string, string, string);
+    callback update-workspace(string, string, string, string, string);
     callback delete-workspace(string);
+    callback pick-workspace-folder();
     callback plus-panel-opened();
     callback keyboard-dismiss();
     callback record-voice();
@@ -499,6 +520,7 @@ export component MobileWindow inherits Window {
     callback stop();
     callback select-model(int, string);
     callback open-model-settings();
+    callback load-prompt-preview();
     callback setup-first-model();
     callback permission-changed(string);
     callback remove-attachment(int);
@@ -527,6 +549,10 @@ export component MobileWindow inherits Window {
     callback request-companion-permission();
     callback refresh-permissions();
     callback open-permission(string);
+    callback refresh-backup();
+    callback backup-now();
+    callback restore-backup(string);
+    callback view-crash-log();
     callback check-update();
     callback download-update();
     callback install-update();
@@ -781,15 +807,13 @@ export component MobileWindow inherits Window {
                             alignment: center;
                             spacing: 1px;
                             HorizontalLayout {
-                                height: 32px;
+                                height: 36px;
                                 alignment: center;
                                 Rectangle {
                                     width: min(model-chip-label.preferred-width, 200px) + 44px;
-                                    height: 32px;
-                                    border-radius: 16px;
+                                    height: 36px;
+                                    border-radius: 18px;
                                     background: model-chip-touch.has-hover ? Theme.hover : transparent;
-                                    border-width: 1px;
-                                    border-color: Theme.border;
                                     model-chip-label := Text {
                                         visible: false;
                                         text: root.model-catalogue-count > 0 && root.model-name != ""
@@ -799,7 +823,7 @@ export component MobileWindow inherits Window {
                                     }
                                     Image {
                                         x: 10px;
-                                        y: 8px;
+                                        y: 10px;
                                         width: 16px;
                                         height: 16px;
                                         source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-brain.svg");
@@ -818,15 +842,6 @@ export component MobileWindow inherits Window {
                                         vertical-alignment: center;
                                         overflow: elide;
                                     }
-                                    Image {
-                                        x: parent.width - 20px;
-                                        y: 11px;
-                                        width: 10px;
-                                        height: 10px;
-                                        source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-down.svg");
-                                        colorize: Theme.muted;
-                                        image-fit: contain;
-                                    }
                                     model-chip-touch := TouchArea {
                                         clicked => {
                                             if root.settings-chat-target == 0 {
@@ -836,14 +851,6 @@ export component MobileWindow inherits Window {
                                         }
                                     }
                                 }
-                            }
-                            Text {
-                                text: root.thread-subtitle;
-                                color: Theme.muted;
-                                font-size: Theme.font-2xs;
-                                overflow: elide;
-                                horizontal-alignment: center;
-                                visible: root.thread-subtitle != "";
                             }
                         }
                     }
@@ -875,6 +882,8 @@ export component MobileWindow inherits Window {
         TimelineView {
             vertical-stretch: 1;
             rows: root.rows;
+            turn-marks: root.turn-marks;
+            mobile: true;
             greeting: root.greeting;
             loading: root.loading;
             follow-output <=> root.follow-output;
@@ -882,7 +891,13 @@ export component MobileWindow inherits Window {
             stream-revision: root.stream-revision;
             toggle(index) => { root.toggle-row(index); }
             copy-text(text) => { root.copy-text(text); }
-            preview-prompt() => { }
+            preview-prompt() => {
+                root.prompt-preview = "";
+                root.prompt-preview-error = "";
+                root.prompt-preview-loading = true;
+                root.prompt-preview-open = true;
+                root.load-prompt-preview();
+            }
             load-older() => { }
             process-page(index, direction) => { }
             copy-original(id) => { }
@@ -1031,6 +1046,18 @@ export component MobileWindow inherits Window {
                 spacing: 0px;
                 HorizontalLayout {
                     spacing: 2px;
+                    // Upload from the phone straight into the active
+                    // workspace root; the work-directory page has its own
+                    // per-folder upload button.
+                    PlusTile {
+                        visible: root.settings-chat-target == 0;
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/upload.svg");
+                        label: "上传文件";
+                        clicked => {
+                            root.close-plus();
+                            root.upload-workspace("");
+                        }
+                    }
                     PlusTile {
                         visible: root.settings-chat-target == 0;
                         icon: root.voice-phase == 1
@@ -1321,6 +1348,32 @@ export component MobileWindow inherits Window {
                         font-size: Theme.font-2xs;
                         vertical-alignment: center;
                     }
+                    // New task lives on the workspace row: the drawer now
+                    // shows only this workspace's threads, so its "new"
+                    // affordance belongs with the workspace itself.
+                    Rectangle {
+                        width: 34px;
+                        height: 34px;
+                        border-radius: Theme.radius-sm;
+                        background: ws-new-touch.has-hover ? Theme.hover : transparent;
+                        ws-new-touch := TouchArea {
+                            enabled: root.settings-chat-target == 0;
+                            clicked => {
+                                root.close-plus();
+                                root.new-session();
+                            }
+                        }
+                        Image {
+                            x: 9px;
+                            y: 9px;
+                            width: 16px;
+                            height: 16px;
+                            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-plus.svg");
+                            colorize: root.settings-chat-target == 0
+                                ? (ws-new-touch.has-hover ? Theme.accent-ink : Theme.muted)
+                                : Theme.border-strong;
+                        }
+                    }
                     Image {
                         width: 12px;
                         height: 12px;
@@ -1335,42 +1388,27 @@ export component MobileWindow inherits Window {
                 background: Theme.border;
             }
 
-            Rectangle {
-                height: 56px;
-                background: transparent;
-                HorizontalLayout {
-                    padding-left: 16px;
-                    padding-right: 8px;
-                    spacing: 8px;
-                    cross-axis-alignment: center;
+            if root.sessions.length == 0 : Rectangle {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 6px;
                     Text {
-                        text: I18n.act_tab_sessions;
-                        color: Theme.text;
-                        font-size: Theme.font-xl;
-                        font-weight: 600;
-                        horizontal-stretch: 1;
-                        vertical-alignment: center;
+                        text: "该工作区还没有线程";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-sm;
+                        horizontal-alignment: center;
                     }
-                    Action {
-                        width: 34px;
-                        height: 34px;
-                        icon-size: 16px;
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-plus.svg");
-                        label: I18n.chat_new_thread;
-                        clicked => {
-                            root.close-plus();
-                            root.new-session();
-                        }
+                    Text {
+                        text: "点上方工作区行的 + 新建";
+                        color: Theme.muted;
+                        font-size: Theme.font-2xs;
+                        horizontal-alignment: center;
                     }
                 }
             }
 
-            Rectangle {
-                height: 1px;
-                background: Theme.border;
-            }
-
-            ListView {
+            if root.sessions.length > 0 : ListView {
                 vertical-stretch: 1;
                 for session in root.sessions : Rectangle {
                     height: 72px;
@@ -1562,6 +1600,13 @@ export component MobileWindow inherits Window {
         companion-ids: root.settings-companion-ids;
         permissions: root.permission-items;
         permission-summary: root.permission-summary;
+        backup-status: root.settings-backup-status;
+        backup-path: root.settings-backup-path;
+        backup-busy: root.settings-backup-busy;
+        backup-restart: root.settings-backup-restart;
+        crash-log-title: root.settings-crash-log-title;
+        crash-log-text: root.settings-crash-log-text;
+        restore-path <=> root.settings-restore-path;
         update-phase: root.update-phase;
         update-version: root.update-version;
         update-notes: root.update-notes;
@@ -1690,6 +1735,10 @@ export component MobileWindow inherits Window {
         request-companion-permission() => { root.request-companion-permission(); }
         refresh-permissions() => { root.refresh-permissions(); }
         open-permission(id) => { root.open-permission(id); }
+        refresh-backup() => { root.refresh-backup(); }
+        backup-now() => { root.backup-now(); }
+        restore-backup(path) => { root.restore-backup(path); }
+        view-crash-log() => { root.view-crash-log(); }
         check-update() => { root.check-update(); }
         download-update() => { root.download-update(); }
         install-update() => { root.install-update(); }
@@ -1900,10 +1949,12 @@ export component MobileWindow inherits Window {
                             horizontal-alignment: center;
                         }
                         Text {
-                            text: "当前线程使用的模型";
+                            text: root.workspace-name == "" ? "当前线程使用的模型"
+                                : "工作区 · " + root.workspace-name;
                             color: Theme.muted;
                             font-size: Theme.font-2xs;
                             horizontal-alignment: center;
+                            overflow: elide;
                         }
                     }
                 }
@@ -1999,6 +2050,126 @@ export component MobileWindow inherits Window {
         }
     }
 
+    // ---- system prompt preview --------------------------------------
+    // The greeting's eye button used to be inert on the phone. The sheet
+    // mirrors the desktop preview: frozen prompt of the open thread, loading
+    // and error states, copy, and its own scrollbar for long prompts.
+    if root.prompt-preview-open : Rectangle {
+        width: 100%;
+        height: parent.height - root.ime-height;
+        background: Theme.overlay;
+        TouchArea {
+            clicked => { root.prompt-preview-open = false; }
+        }
+        Rectangle {
+            x: 8px;
+            y: parent.height - self.height - 8px;
+            width: parent.width - 16px;
+            height: min(parent.height - 16px, 560px);
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            drop-shadow-color: #00000033;
+            drop-shadow-blur: 24px;
+            VerticalLayout {
+                padding: 8px;
+                padding-bottom: 8px + root.inset-bottom;
+                spacing: 2px;
+                HorizontalLayout {
+                    height: 4px;
+                    alignment: center;
+                    Rectangle {
+                        width: 40px;
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Theme.border;
+                    }
+                }
+                HorizontalLayout {
+                    height: 44px;
+                    spacing: 6px;
+                    cross-axis-alignment: center;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: "系统提示词";
+                        color: Theme.text;
+                        font-size: Theme.font-md;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    if !root.prompt-preview-loading && root.prompt-preview != "" : Action {
+                        width: 64px;
+                        height: 30px;
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/copy.svg");
+                        label: "复制";
+                        show-label: true;
+                        clicked => { root.copy-text(root.prompt-preview); }
+                    }
+                    Action {
+                        width: 30px;
+                        height: 30px;
+                        icon-size: 15px;
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/xmark.svg");
+                        label: I18n.common_close;
+                        clicked => { root.prompt-preview-open = false; }
+                    }
+                }
+                Text {
+                    height: 18px;
+                    text: "当前线程冻结的系统提示词";
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                    vertical-alignment: center;
+                }
+                if root.prompt-preview-loading : Rectangle {
+                    vertical-stretch: 1;
+                    Text {
+                        width: 100%;
+                        height: 100%;
+                        text: "正在读取系统提示词…";
+                        color: Theme.muted;
+                        font-size: Theme.font-sm;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                if !root.prompt-preview-loading && root.prompt-preview-error != "" : Rectangle {
+                    vertical-stretch: 1;
+                    Text {
+                        x: 12px;
+                        y: 12px;
+                        width: parent.width - 24px;
+                        text: root.prompt-preview-error;
+                        color: Theme.danger;
+                        font-size: Theme.font-sm;
+                        wrap: word-wrap;
+                    }
+                }
+                if !root.prompt-preview-loading && root.prompt-preview-error == "" : prompt-scroll := ScrollView {
+                    vertical-stretch: 1;
+                    horizontal-scrollbar-policy: always-off;
+                    VerticalLayout {
+                        padding: 10px;
+                        if root.prompt-preview == "" : Text {
+                            text: "暂无可用的系统提示词";
+                            color: Theme.muted;
+                            font-size: Theme.font-sm;
+                        }
+                        if root.prompt-preview != "" : Text {
+                            // Pin the wrap width to the viewport; a vertical
+                            // ScrollView otherwise grows to the longest line.
+                            width: prompt-scroll.visible-width - 24px;
+                            text: root.prompt-preview;
+                            color: Theme.text-secondary;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-2xs;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if root.session-sheet-open : Rectangle {
         width: 100%;
         height: parent.height - root.ime-height;
@@ -2006,7 +2177,6 @@ export component MobileWindow inherits Window {
         TouchArea {
             clicked => { root.close-sheet(); }
         }
-
         Rectangle {
             x: 8px;
             y: parent.height - self.height - 8px;
@@ -2194,6 +2364,7 @@ export component MobileWindow inherits Window {
         inset-top: root.inset-top;
         inset-bottom: root.inset-bottom;
         workspaces: root.workspaces;
+        picked-folder: root.workspace-picked-folder;
         overlay <=> root.workspace-overlay;
         back() => {
             root.workspaces-open = false;
@@ -2202,9 +2373,14 @@ export component MobileWindow inherits Window {
         refresh() => { root.refresh-workspaces(); }
         select(id) => { root.select-workspace(id); }
         new-task(id) => { root.new-task-in-workspace(id); }
-        create(name, icon, color) => { root.create-workspace(name, icon, color); }
-        update(id, name, icon, color) => { root.update-workspace(id, name, icon, color); }
+        create(name, icon, color, folder) => {
+            root.create-workspace(name, icon, color, folder);
+        }
+        update(id, name, icon, color, folder) => {
+            root.update-workspace(id, name, icon, color, folder);
+        }
         remove-workspace(id) => { root.delete-workspace(id); }
+        pick-folder() => { root.pick-workspace-folder(); }
     }
 
     // ---- working directory page -------------------------------------
@@ -2271,8 +2447,8 @@ export component MobileWindow inherits Window {
         inset-bottom: root.inset-bottom;
         state: root.settings-ubuntu-state;
         progress: root.env-setup-progress;
+        phase: root.env-setup-phase;
         stage: root.settings-ubuntu-stage;
-        version: root.settings-ubuntu-version;
         error: root.settings-ubuntu-error;
         retry() => { root.env-setup-retry(); }
         dismiss() => { root.env-setup-dismiss(); }

@@ -219,7 +219,7 @@ Two default behaviors are worth separating:
 
 - **The subagent activity indicator**: when a task has spawned subagents, the chat area shows the child runs that are still working; subagents are temporary work units the main agent creates, reclaimed once the task ends.
 
-<!-- topic id="core-overview" block="capabilities" title="Core Concepts" group="Core Capabilities" keywords="Diverse,Fast,Superior,Efficient,multi-platform,multi-form,startup speed,response speed,stability,intelligence,CPU usage,memory usage,context consumption" -->
+<!-- topic id="core-overview" block="capabilities" title="Core Concepts" group="Core Capabilities" keywords="Diverse,Fast,Superior,Efficient,design philosophy,radically minimal,minimalism,multi-platform,multi-form,startup speed,response speed,stability,intelligence,CPU usage,memory usage,context consumption" -->
 
 # Core Concepts
 
@@ -235,6 +235,12 @@ Diversity and strength set the capability surface; speed and efficiency constrai
 | **Fast** | Instant startup and a response that never lags. Local forms call the engine in-process without local HTTP; threads and history restore directly from local storage; streaming events are frame-coalesced and projected incrementally, and tools run in parallel where allowed |
 | **Superior** | Strong stability for 24/7 operation and a high degree of intelligence. Queues, caches, views, and context are bounded, with session locks, round caps, quotas, and retry circuit breaking for long runs; goal mode, subagents, the tool chain, long-term memory, and knowledge bases carry complex tasks from decomposition to delivery |
 | **Efficient** | Extremely low CPU and memory use, minimal context consumption. A native Rust process with local SQLite needs no browser runtime, and supplement packages ship a ready-made agent runtime so nothing has to be assembled by hand; tool-result trimming, frozen prompts that reuse cache, one-time memory-index injection, and micro-compaction and history compaction keep token consumption down |
+
+## Design Philosophy
+
+**Radically minimal: solve the problem fast, not show off complexity.**
+
+The interface keeps only the information and actions the current task needs; complex capabilities unfold on demand, and decoration, status detail, or technical detail never takes over the main path. Complexity stays in the engine — the interface states the result and the next step.
 
 The eleven capabilities expanded page by page — goal, compatibility, context compression, subagents, scheduled tasks, channels, memory, multithreading, streaming and realtime state, stability, and multi-tenancy — live under Capabilities › Core Capabilities.
 
@@ -792,7 +798,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | 问询面板 | ` question\_panel ` | 弹出结构化选项，向用户提问并等待选择 | 收尾与前端协同|
 | 会话让出 | ` sessions\_yield ` | 主动让出当前回合控制权，稍后再被唤起 | 收尾与前端协同|
 | 列出文件 | ` list\_files ` | 列出目录内容 | 工作区与代码|
-| glob | — | 按通配模式查找文件路径 | 工作区与代码|
+| 文件名匹配 | ` glob ` | 按通配模式查找文件路径 | 工作区与代码|
 | 搜索内容 | ` search\_content ` | 在文件中按正则搜索匹配内容 | 工作区与代码|
 | 读取文件 | ` read\_file ` | 读取文件内容，支持分段读取 | 工作区与代码|
 | 写入文件 | ` write\_file ` | 写入或整体覆盖文件 | 工作区与代码|
@@ -838,7 +844,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | Category | Pages|
 | --- | --- |
 | Turn finishing and frontend coordination | Plan Panel / Question Panel / Sessions Yield: Plan Panel / Question Panel / Sessions Yield|
-| Workspace and code | List files / glob / search content / read file / write file / text edit: Workspace Files; execute command / command session: Execute Command; skill call: Skill Call|
+| Workspace and code | List files / file name match / search content / read file / write file / text edit: Workspace Files; execute command / command session: Execute Command; skill call: Skill Call|
 | Web | Web fetch: Web Fetch; browser: Browser Tools|
 | Multimodal | Read image: Read Image; generate image / generate video / generate speech / transcribe speech: canonical names ` 图像生成 ` / ` 视频生成 ` / ` 语音生成 ` / ` 声转文 `, aliases ` generate\_image ` / ` generate\_video ` / ` generate\_speech ` / ` transcribe\_speech `; no dedicated page in this section|
 | Desktop | Desktop control: Desktop Control|

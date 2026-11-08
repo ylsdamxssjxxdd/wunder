@@ -1032,9 +1032,12 @@ const resolveToolIcon = (name, category, runtimeName = "") => {
   const toolName = String(name || "").trim();
   const runtimeToolName = String(runtimeName || "").trim();
   const categoryKey = String(category || "").toLowerCase();
-  const unifiedIcon = resolveToolIconClass(
-    [toolName, runtimeToolName, categoryKey].filter(Boolean).join(" ")
-  );
+  // 传结构化字段：精确名映射只认 name，拼接字符串会让「文件名匹配」等回退成默认图标。
+  const unifiedIcon = resolveToolIconClass({
+    name: toolName,
+    runtimeName: runtimeToolName,
+    category: categoryKey,
+  });
   if (unifiedIcon && unifiedIcon !== "fa-toolbox") {
     return unifiedIcon;
   }

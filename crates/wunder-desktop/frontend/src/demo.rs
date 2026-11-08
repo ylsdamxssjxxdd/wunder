@@ -170,7 +170,7 @@ pub fn install(app: &MainWindow) {
         {
             let mut row = fixture_row(crate::timeline::KIND_TOOL, model.row_count(), "");
             row.tool_name = name.into();
-            row.tool_icon = crate::tool_icons::workflow_icon(name).into();
+            row.tool_icon = wunder_desktop::tool_icons::workflow_icon(name).into();
             row.target = target.into();
             row.summary = "完成 · 演示结果".into();
             row.detail = "演示工具结果\n未连接本地运行时。".into();

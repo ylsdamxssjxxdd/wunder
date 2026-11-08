@@ -121,7 +121,8 @@ const NAME_ICON_OVERRIDES: Record<string, AbilityVisualMeta> = {
   '编辑': { icon: 'fa-file-pen', tone: 'file' },
   str_replace_editor: { icon: 'fa-file-pen', tone: 'file' },
   '文件名匹配': { icon: 'fa-folder-tree', tone: 'file' },
-  glob: { icon: 'fa-folder-tree', tone: 'file' }
+  glob: { icon: 'fa-folder-tree', tone: 'file' },
+  glob_files: { icon: 'fa-folder-tree', tone: 'file' }
 };
 
 const resolveNameIconOverride = (input: AbilityVisualInput): AbilityVisualMeta | null => {

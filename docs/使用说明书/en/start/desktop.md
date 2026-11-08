@@ -10,7 +10,7 @@ source_docs:
   - crates/wunder-desktop/args.rs
   - crates/wunder-desktop/native.rs
   - crates/wunder-desktop/runtime.rs
-updated_at: 2026-10-16
+updated_at: 2026-11-08
 ---
 
 # Starting with the Desktop
@@ -60,6 +60,8 @@ To move to a new machine, copy the whole install root (default `~/.wunder`) acro
 On startup it scans the work tree (up to 4096 items), restores the state of unfinished tasks from last time, and clears session locks and leftover tasks.
 
 ## Interface layout
+
+The UI is radically minimal: it shows only the information and actions the current task needs, and folds complex capabilities into panels and dialogs on demand; it does not pile on decoration, status detail, or technical detail to look sophisticated.
 
 The main window has two switchable pages, Chat and Settings; everything else hangs off them as panels and dialogs.
 

@@ -8,6 +8,7 @@ pub mod native;
 pub mod native_command_tasks;
 pub mod native_host_hud;
 pub mod runtime;
+pub mod tool_icons;
 
 pub use native_command_tasks::{NativeCommandTask, NativeCommandTaskDetail};
 pub use native_host_hud::{HostHud, HostHudSampler};

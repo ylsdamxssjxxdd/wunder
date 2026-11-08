@@ -96,7 +96,11 @@ component FoldSheetCard inherits Rectangle {
     background: Theme.surface;
     border-width: 1px;
     border-color: Theme.border;
-    VerticalLayout {
+    // A hidden body inside a layout can still contribute its preferred height
+    // in this Slint version, which left the folded card as a tall empty box.
+    // Pin the closed height to the title row + bottom padding.
+    height: root.open ? body.preferred-height : 60px;
+    body := VerticalLayout {
         padding-left: 14px;
         padding-right: 14px;
         padding-top: 0px;
@@ -442,6 +446,9 @@ component NavCard inherits Rectangle {
     background: Theme.surface;
     border-width: 1px;
     border-color: Theme.border;
+    // Clip row highlights to the card's rounded corners; without this a
+    // pressed first/last row paints a square corner over the card.
+    clip: true;
     VerticalLayout {
         spacing: 0px;
         @children
@@ -2904,7 +2911,44 @@ component SettingsHome inherits Rectangle {
 
                 Text {
                     height: 22px;
-                    text: "智能体与工具";
+                    text: "系统";
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                    font-weight: 700;
+                    vertical-alignment: bottom;
+                }
+
+                NavCard {
+                    NavRow {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-sliders-horizontal.svg");
+                        label: I18n.st_tab_general;
+                        detail: "主题、字号、语言与发送方式";
+                        clicked => { root.open-page(3); }
+                    }
+                    NavRow {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-circle-user-round.svg");
+                        label: "账号";
+                        detail: root.cloud-logged-in ? root.cloud-username + " · 已登录云端" : "未登录，多端互通不可用";
+                        clicked => { root.open-page(13); }
+                    }
+                    NavRow {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/terminal.svg");
+                        label: I18n.st_tab_runtime;
+                        detail: root.ubuntu-detail();
+                        clicked => { root.open-page(4); }
+                    }
+                    NavRow {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-shield.svg");
+                        label: "权限管理";
+                        detail: root.permissions-detail();
+                        last: true;
+                        clicked => { root.open-page(12); }
+                    }
+                }
+
+                Text {
+                    height: 22px;
+                    text: "智能体";
                     color: Theme.muted;
                     font-size: Theme.font-2xs;
                     font-weight: 700;
@@ -2935,7 +2979,7 @@ component SettingsHome inherits Rectangle {
 
                 Text {
                     height: 22px;
-                    text: "自动化与记忆";
+                    text: "辅助";
                     color: Theme.muted;
                     font-size: Theme.font-2xs;
                     font-weight: 700;
@@ -2953,96 +2997,26 @@ component SettingsHome inherits Rectangle {
                         icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fluent-brain.svg");
                         label: "记忆碎片";
                         detail: root.memory-count > 0 ? root.memory-count + " 条记忆" : "暂无记忆碎片";
-                        last: true;
                         clicked => { root.open-page(10); }
-                    }
-                }
-
-                Text {
-                    height: 22px;
-                    text: "互通与渠道";
-                    color: Theme.muted;
-                    font-size: Theme.font-2xs;
-                    font-weight: 700;
-                    vertical-alignment: bottom;
-                }
-
-                NavCard {
-                    NavRow {
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-circle-user-round.svg");
-                        label: "账号";
-                        detail: root.cloud-logged-in ? root.cloud-username + " · 已登录云端" : "未登录，多端互通不可用";
-                        clicked => { root.open-page(13); }
                     }
                     NavRow {
                         icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-plug.svg");
                         label: "渠道";
                         detail: root.channel-count > 0 ? root.channel-count + " 个渠道账号" : "暂无渠道账号";
-                        last: true;
                         clicked => { root.open-page(14); }
-                    }
-                }
-
-                Text {
-                    height: 22px;
-                    text: "偏好与运行";
-                    color: Theme.muted;
-                    font-size: Theme.font-2xs;
-                    font-weight: 700;
-                    vertical-alignment: bottom;
-                }
-
-                NavCard {
-                    NavRow {
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-sliders-horizontal.svg");
-                        label: I18n.st_tab_general;
-                        detail: "主题、字号、语言与发送方式";
-                        clicked => { root.open-page(3); }
                     }
                     NavRow {
                         icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-paw-print.svg");
                         label: I18n.stc_pet;
                         detail: I18n.stc_pet_note;
-                        clicked => { root.open-page(13); }
+                        clicked => { root.open-page(11); }
                     }
                     NavRow {
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/terminal.svg");
-                        label: I18n.st_tab_runtime;
-                        detail: root.ubuntu-detail();
-                        last: true;
-                        clicked => { root.open-page(4); }
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/database.svg");
+                        label: "数据与恢复";
+                        detail: "本地备份、恢复与崩溃日志";
+                        clicked => { root.open-page(15); }
                     }
-                }
-
-                Text {
-                    height: 22px;
-                    text: "权限与安全";
-                    color: Theme.muted;
-                    font-size: Theme.font-2xs;
-                    font-weight: 700;
-                    vertical-alignment: bottom;
-                }
-
-                NavCard {
-                    NavRow {
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-shield.svg");
-                        label: "权限管理";
-                        detail: root.permissions-detail();
-                        last: true;
-                        clicked => { root.open-page(12); }
-                    }
-                }
-
-                Text {
-                    height: 22px;
-                    text: "数据与关于";
-                    color: Theme.muted;
-                    font-size: Theme.font-2xs;
-                    font-weight: 700;
-                    vertical-alignment: bottom;
-                }
-
-                NavCard {
                     NavRow {
                         icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-archive.svg");
                         label: "已归档会话";
@@ -3058,14 +3032,6 @@ component SettingsHome inherits Rectangle {
                     }
                 }
 
-                Text {
-                    height: 28px;
-                    text: "本地引擎 · 数据保存在本机";
-                    color: Theme.border-strong;
-                    font-size: Theme.font-2xs;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
             }
         }
     }
@@ -3456,7 +3422,7 @@ component CompanionPage inherits Rectangle {
                         label: I18n.pet_scale;
                         PickerField {
                             text: root.scale-label();
-                            picked => { root.open-picker(19, I18n.pet_scale, root.scale-value()); }
+                            picked => { root.open-picker(20, I18n.pet_scale, root.scale-value()); }
                         }
                     }
                     SettingRow {
@@ -4203,12 +4169,27 @@ component ModelEditorPage inherits Rectangle {
             inset-top: root.inset-top;
             back() => { root.back(); }
             Action {
-                width: 76px;
+                width: 30px;
+                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/save.svg");
                 label: I18n.common_save;
-                show-label: true;
                 primary: true;
                 enabled: root.draft.key != "" && root.draft.model != "";
                 clicked => { root.save(root.draft, root.secret); }
+            }
+            if !root.is-new : Action {
+                width: 30px;
+                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-star.svg");
+                label: root.is-default ? I18n.st_is_default : I18n.st_set_default;
+                icon-color: root.is-default ? #9a670d : Theme.muted;
+                enabled: !root.is-default;
+                clicked => { root.set-default(root.original-key); }
+            }
+            if !root.is-new : Action {
+                width: 30px;
+                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trash.svg");
+                label: I18n.common_delete;
+                danger: true;
+                clicked => { root.ask-delete(); }
             }
         }
 
@@ -4530,31 +4511,6 @@ component ModelEditorPage inherits Rectangle {
                         }
                     }
                 }
-
-                SheetCard {
-                    CardTitle { title: "模型操作"; }
-                    HorizontalLayout {
-                        spacing: 10px;
-                        Action {
-                            width: 108px;
-                            label: root.is-default ? I18n.st_is_default : I18n.st_set_default;
-                            show-label: true;
-                            primary: !root.is-default;
-                            selected: root.is-default;
-                            enabled: !root.is-new && !root.is-default;
-                            clicked => { root.set-default(root.original-key); }
-                        }
-                        Rectangle { horizontal-stretch: 1; }
-                        Action {
-                            width: 84px;
-                            label: I18n.common_delete;
-                            show-label: true;
-                            danger: true;
-                            enabled: !root.is-new;
-                            clicked => { root.ask-delete(); }
-                        }
-                    }
-                }
             }
         }
     }
@@ -4726,6 +4682,162 @@ component PermissionPage inherits Rectangle {
     }
 }
 
+// 本地数据面：备份、恢复与崩溃日志。恢复只做校验与解包，真正的覆盖发生在
+// 下一次进程启动，避免和正在运行的 SQLite 连接抢文件。
+component DataPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <string> backup-status: "";
+    in property <string> backup-path: "";
+    in property <bool> backup-busy: false;
+    in property <bool> backup-restart: false;
+    in property <string> crash-log-title: "";
+    in property <string> crash-log-text: "";
+    in-out property <string> restore-path: "";
+    in-out property <bool> confirm-restore: false;
+    callback back();
+    callback backup-now();
+    callback restore-backup(string);
+    callback view-crash-log();
+
+    pure function backup-detail() -> string {
+        if root.backup-status != "" {
+            return root.backup-status;
+        }
+        return root.backup-path != "" ? "最近备份：" + root.backup-path : "还没有本地备份";
+    }
+
+    VerticalLayout {
+        SheetHeader {
+            title: "数据与恢复";
+            subtitle: "本地备份、恢复与崩溃日志";
+            inset-top: root.inset-top;
+            back() => { root.back(); }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 14px;
+                padding-bottom: 24px + root.inset-bottom;
+                spacing: 12px;
+                alignment: start;
+
+                SheetCard {
+                    CardTitle {
+                        title: "本地备份";
+                        subtitle: "打包 config 与本地数据库（含 WAL），不包含工作区文件。";
+                    }
+                    SettingRow {
+                        label: "备份到应用缓存";
+                        note: root.backup-detail();
+                        last: true;
+                        Action {
+                            width: 100px;
+                            label: root.backup-busy ? "处理中…" : "立即备份";
+                            show-label: true;
+                            primary: !root.backup-busy;
+                            enabled: !root.backup-busy;
+                            clicked => { root.backup-now(); }
+                        }
+                    }
+                }
+
+                SheetCard {
+                    CardTitle {
+                        title: "从文件恢复";
+                        subtitle: "恢复会覆盖本地配置与数据库，完成后需要重启应用。";
+                    }
+                    FormField {
+                        label: "备份文件路径";
+                        placeholder: "/storage/emulated/0/Download/wunder-backup-....zip";
+                        text <=> root.restore-path;
+                    }
+                    HorizontalLayout {
+                        height: 38px;
+                        spacing: 8px;
+                        Rectangle { horizontal-stretch: 1; }
+                        Action {
+                            width: 116px;
+                            label: "从文件恢复";
+                            show-label: true;
+                            danger: true;
+                            enabled: !root.backup-busy;
+                            clicked => { root.confirm-restore = true; }
+                        }
+                    }
+                    if root.backup-restart : Rectangle {
+                        height: 42px;
+                        border-radius: Theme.radius-sm;
+                        background: Theme.accent-soft;
+                        Text {
+                            x: 10px;
+                            y: 0px;
+                            width: parent.width - 20px;
+                            height: parent.height;
+                            text: "恢复已就绪：请完全退出并重新打开应用后生效。";
+                            color: Theme.accent-ink;
+                            font-size: Theme.font-xs;
+                            wrap: word-wrap;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                SheetCard {
+                    CardTitle {
+                        title: "崩溃日志";
+                        subtitle: "Java 与 Rust 崩溃都会写入本地 logs 目录，最多保留最近 10 份。";
+                    }
+                    HorizontalLayout {
+                        height: 38px;
+                        spacing: 8px;
+                        Rectangle { horizontal-stretch: 1; }
+                        Action {
+                            width: 138px;
+                            label: "查看最近崩溃日志";
+                            show-label: true;
+                            clicked => { root.view-crash-log(); }
+                        }
+                    }
+                    if root.crash-log-text != "" : MobileTextArea {
+                        label: root.crash-log-title;
+                        read-only: true;
+                        area-height: 220px;
+                        text: root.crash-log-text;
+                    }
+                }
+
+                Text {
+                    text: "备份与恢复只处理本地数据面；工作区文件请通过文件管理器单独备份。";
+                    color: Theme.muted;
+                    font-size: Theme.font-xs;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+
+    if root.confirm-restore : ConfirmDialog {
+        width: 100%;
+        height: 100%;
+        title: "恢复本地数据";
+        message: "将用备份覆盖本地配置与数据库，完成后必须重启应用。恢复期间请勿发送消息。";
+        confirm-label: "恢复";
+        cancel-label: I18n.common_cancel;
+        danger: true;
+        busy: root.backup-busy;
+        confirmed => {
+            root.confirm-restore = false;
+            root.restore-backup(root.restore-path);
+        }
+        canceled => { root.confirm-restore = false; }
+    }
+}
+
 export component MobileSettings inherits Rectangle {
     in property <length> inset-top: 0px;
     in property <length> inset-bottom: 0px;
@@ -4765,6 +4877,14 @@ export component MobileSettings inherits Rectangle {
     in property <int> update-progress: 0;
     in property <string> update-downloaded: "";
     in property <string> update-error: "";
+    // 数据与恢复页
+    in property <string> backup-status: "";
+    in property <string> backup-path: "";
+    in property <bool> backup-busy: false;
+    in property <bool> backup-restart: false;
+    in property <string> crash-log-title: "";
+    in property <string> crash-log-text: "";
+    in-out property <string> restore-path: "";
     in property <[ModelCard]> models: [];
     in property <[MobileSession]> archived-sessions: [];
     in property <int> archived-total: 0;
@@ -4969,6 +5089,10 @@ export component MobileSettings inherits Rectangle {
     callback open-channel-logs(string);
     callback close-channel-logs();
     callback delete-channel-binding(string);
+    callback refresh-backup();
+    callback backup-now();
+    callback restore-backup(string);
+    callback view-crash-log();
 
     background: Theme.panel;
 
@@ -5032,7 +5156,7 @@ export component MobileSettings inherits Rectangle {
         } else if (id == 18) {
             root.picker-options = root.companion-names;
             root.picker-values = root.companion-ids;
-        } else if (id == 19) {
+        } else if (id == 20) {
             root.picker-options = ["迷你", "小", "标准", "大", "特大"];
             root.picker-values = ["0.5", "0.75", "1", "1.25", "1.6"];
         }
@@ -5090,7 +5214,7 @@ export component MobileSettings inherits Rectangle {
         else if (id == 18) {
             root.save-companion(root.companion-enabled, value, root.companion-scale, root.companion-hints);
         }
-        else if (id == 19) {
+        else if (id == 20) {
             root.save-companion(root.companion-enabled, root.companion-selected,
                 value == "0.5" ? 0.5 : value == "0.75" ? 0.75 : value == "1.25" ? 1.25 : value == "1.6" ? 1.6 : 1.0,
                 root.companion-hints);
@@ -5119,6 +5243,19 @@ export component MobileSettings inherits Rectangle {
         if root.page == 5 {
             root.refresh-archived();
         }
+        if root.page == 15 {
+            root.refresh-backup();
+        }
+    }
+
+    // Absorb taps on non-interactive chrome (header gaps, empty page space and
+    // the status-bar strip) so they never reach the chat surface behind the
+    // full-screen sheet. Interactive children are later siblings and win the
+    // hit test over this backdrop.
+    TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { }
     }
 
     VerticalLayout {
@@ -5210,6 +5347,22 @@ export component MobileSettings inherits Rectangle {
             back() => { root.page = 0; }
             refresh() => { root.refresh-permissions(); }
             open(id) => { root.open-permission(id); }
+        }
+
+        if root.page == 15 : DataPage {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
+            backup-status: root.backup-status;
+            backup-path: root.backup-path;
+            backup-busy: root.backup-busy;
+            backup-restart: root.backup-restart;
+            crash-log-title: root.crash-log-title;
+            crash-log-text: root.crash-log-text;
+            restore-path <=> root.restore-path;
+            back() => { root.page = 0; }
+            backup-now() => { root.backup-now(); }
+            restore-backup(path) => { root.restore-backup(path); }
+            view-crash-log() => { root.view-crash-log(); }
         }
 
         if root.page == 5 : ArchivePage {

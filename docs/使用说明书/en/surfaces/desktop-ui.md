@@ -10,12 +10,14 @@ source_docs:
   - crates/wunder-desktop/frontend/ui/settings_page.slint
   - crates/wunder-desktop/frontend/src/native_interlink.rs
   - crates/wunder-desktop/native.rs
-updated_at: 2026-10-16
+updated_at: 2026-11-08
 ---
 
 # Desktop Interface
 
 It runs entirely on your own computer: there is no separate backend port and no network relay, and the interface calls the local engine directly. It is the default entry for individual users.
+
+The UI is radically minimal: it keeps only the information and actions the current task needs, and complex capabilities unfold into panels and dialogs on demand without piling on decoration or status detail.
 
 ## Starting and running
 

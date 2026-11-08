@@ -1,12 +1,20 @@
 use super::NativeDesktop;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use wunder_server::cron::{
     handle_cron_action, list_cron_runs, CronActionRequest, CronJobInput, CronScheduleInput,
 };
 
 /// Cap for run records shown per request. Matches the plan's log/run limit.
 const CRON_RUNS_LIMIT: i64 = 200;
+
+/// Upper bound of jobs one wake may execute. The configured
+/// `cron.max_concurrent_runs` still caps it; this only keeps a single tick from
+/// chasing a long backlog while the caller waits on a phone wake window.
+const CRON_TICK_MAX_RUNS: usize = 4;
 
 #[derive(Clone, Debug)]
 pub struct CronRecord {
@@ -326,6 +334,53 @@ impl NativeDesktop {
             },
         ))?;
         Ok(response)
+    }
+
+    /// Execute due scheduled jobs once and return how many finished.
+    ///
+    /// 安卓版's `:background` process has no scheduler loop and no window: it is
+    /// woken by JobScheduler, ticks, and is gone. The tick therefore claims and
+    /// finishes work on the calling thread instead of leaving a detached job
+    /// behind. A job that outlives `timeout` keeps its lease (the job renews it
+    /// while it runs) and is retried by a later wake; the call returns the
+    /// number of jobs that already finished rather than blocking the Android
+    /// worker thread forever.
+    pub fn tick_cron_now(&self, timeout: Duration) -> Result<usize> {
+        if timeout.is_zero() {
+            return Err(anyhow!("定时唤醒超时必须大于 0"));
+        }
+        let scheduler = self.state().control.cron.clone();
+        let progress = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&progress);
+        let deadline = Instant::now() + timeout;
+        let task = self.runtime.spawn(async move {
+            scheduler
+                .run_due_tick(CRON_TICK_MAX_RUNS, Some(deadline), Some(counter))
+                .await
+        });
+        // Dropping a `JoinHandle` detaches the task instead of aborting it, so a
+        // timed-out tick keeps its in-flight job running until the process
+        // exits and the job's own heartbeat or lease decides the retry.
+        let finished = self
+            .runtime
+            .block_on(async { tokio::time::timeout(timeout, task).await });
+        match finished {
+            Ok(Ok(result)) => {
+                let ran = result?;
+                tracing::info!(ran, "cron tick finished");
+                Ok(ran)
+            }
+            Ok(Err(join_error)) => Err(anyhow!("定时唤醒任务失败：{join_error}")),
+            Err(_) => {
+                let ran = progress.load(Ordering::Relaxed);
+                tracing::warn!(
+                    ran,
+                    timeout_ms = timeout.as_millis() as u64,
+                    "cron tick timed out; unfinished job keeps its lease"
+                );
+                Ok(ran)
+            }
+        }
     }
 }
 

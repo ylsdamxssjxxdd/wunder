@@ -11,7 +11,8 @@ use super::search_content_tool::search_content;
 use super::sessions_yield_tool;
 use super::skill_call;
 use super::{
-    browser_tool, desktop_control, phone_control, read_image_tool, web_fetch_tool, web_search_tool,
+    android_notifications, android_screen, browser_tool, desktop_control, phone_control,
+    read_image_tool, web_fetch_tool, web_search_tool,
 };
 use super::{
     execute_mcp_tool, execute_memory_manager_tool, execute_thread_control_tool, execute_user_tool,
@@ -113,6 +114,15 @@ pub async fn execute_builtin_tool(
         }
         phone_control::TOOL_PHONE_CONTROL => {
             phone_control::tool_phone_control(context, args).await
+        }
+        // Android-only device surfaces. They resolve here so a persisted call
+        // from an older Android session still fails with a readable "disabled"
+        // error on hosts without a device executor, never with "unknown tool".
+        android_screen::TOOL_ANDROID_SCREEN => {
+            android_screen::tool_android_screen(context, args).await
+        }
+        android_notifications::TOOL_ANDROID_NOTIFICATIONS => {
+            android_notifications::tool_android_notifications(context, args).await
         }
         sessions_yield_tool::TOOL_SESSIONS_YIELD => {
             sessions_yield_tool::execute_sessions_yield_tool(context, args).await

@@ -885,6 +885,9 @@ export component TimelineView inherits Rectangle {
     // One mark per user turn: its fractional offset drives the proportional
     // jump, and its pre-bounded preview text feeds the hover card.
     in property <[TurnMark]> turn-marks: [];
+    // Touch shells enlarge the ruler's hit targets and tick weight; the
+    // desktop keeps the compact hover strip.
+    in property <bool> mobile: false;
     in-out property <bool> follow-output: true;
     // A turn is still producing output, so the running entries' rings have to
     // keep turning. Without this the spin timer ticks for the whole session and
@@ -1084,24 +1087,31 @@ export component TimelineView inherits Rectangle {
     // that turn — the user's message over the agent's newest answer — like the
     // web messenger's ruler card.
     marks-strip := Rectangle {
-        x: parent.width - 24px; y: 10px; width: 24px; height: parent.height - 20px;
+        x: parent.width - (root.mobile ? 32px : 24px);
+        y: root.mobile ? 8px : 10px;
+        width: root.mobile ? 32px : 24px;
+        height: parent.height - (root.mobile ? 16px : 20px);
         visible: root.turn-marks.length > 1;
         // Keep the locator tightly grouped at the centre. Long threads compress
         // the rhythm evenly so every tick remains inside the strip instead of
         // clamping into a stack at its top and bottom edges.
-        private property <length> tick-spacing: min(12px,
+        private property <length> tick-spacing: min(root.mobile ? 16px : 12px,
             max(1px, (self.height - 12px) / max(1, root.turn-marks.length - 1)));
         for mark[i] in root.turn-marks : tick-hit := Rectangle {
             width: parent.width;
-            height: 12px;
+            height: root.mobile ? 20px : 12px;
             y: parent.height / 2 + i * marks-strip.tick-spacing
                 - (root.turn-marks.length - 1) * marks-strip.tick-spacing / 2
                 - self.height / 2;
             tick-line := Rectangle {
                 x: parent.width - self.width - 4px;
                 y: (parent.height - self.height) / 2;
-                width: tick-area.has-hover ? 13px : 6px;
-                height: tick-area.has-hover ? 3px : 2px;
+                width: tick-area.has-hover
+                    ? (root.mobile ? 15px : 13px)
+                    : (root.mobile ? 8px : 6px);
+                height: tick-area.has-hover
+                    ? (root.mobile ? 4px : 3px)
+                    : (root.mobile ? 3px : 2px);
                 border-radius: 1px;
                 background: tick-area.has-hover ? Theme.accent : Theme.border-strong;
             }
@@ -1116,7 +1126,7 @@ export component TimelineView inherits Rectangle {
             // The card takes no pointer input, so moving onto it just ends the
             // tick's hover instead of fighting the transcript beneath.
             if tick-area.has-hover && (mark.user != "" || mark.agent != "") : Rectangle {
-                width: min(264px, max(0px, root.width - 40px));
+                width: root.mobile ? min(236px, root.width - 64px) : min(264px, max(0px, root.width - 40px));
                 height: preview-column.preferred-height + 20px;
                 x: -self.width - 8px;
                 y: min(marks-strip.height - self.height - 4px,

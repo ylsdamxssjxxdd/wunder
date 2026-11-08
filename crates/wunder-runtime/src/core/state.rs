@@ -168,6 +168,11 @@ impl AppStateInitOptions {
         self
     }
 
+    pub const fn with_start_cron(mut self, value: bool) -> Self {
+        self.start_cron = Some(value);
+        self
+    }
+
     pub fn resolve_capabilities(self, config: &Config) -> AppRuntimeCapabilities {
         AppRuntimeCapabilities {
             embedded_mode: self.runtime_profile.is_embedded(),

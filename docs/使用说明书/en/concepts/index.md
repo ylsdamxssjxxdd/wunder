@@ -1,7 +1,7 @@
 ---
 title: Core Concepts
-summary: The Diverse, Fast, Superior, and Efficient cores, four design principles, multiple forms, deeper pages by topic, and capabilities that are removed or restricted.
-updated_at: 2026-10-19
+summary: The Diverse, Fast, Superior, and Efficient cores, the design philosophy with five design principles, multiple forms, deeper pages by topic, and capabilities that are removed or restricted.
+updated_at: 2026-11-08
 ---
 
 wunder is a multi-form agent workbench: hand it a goal and the agent breaks the task down, calls tools, and delivers results. The feature list lives in [Tools](/docs/en/tools/) and the [Capability Quick Reference](/docs/en/capabilities/api-index/).
@@ -21,8 +21,11 @@ The nine capabilities expanded page by page — goal, compatibility, context com
 
 ## Design Principles
 
+**Design philosophy: radically minimal — solve the problem fast instead of showing off complexity.** The interface keeps only the information and actions the current task needs, and complex capabilities unfold on demand; decoration, status detail, and technical detail never take over the main path.
+
 | Principle | Meaning |
 | --- | --- |
+| **Radically minimal UI** | Solve the problem fast instead of showing off complexity. The default screen carries only the information and actions the current task needs; complex capabilities unfold on demand |
 | **Everything revolves around the thread** | The thread (= session) is the unit of execution, not "one Q&A". A single agent can hold several independent task threads at once, and scheduling, locks, and realtime state are all isolated per thread |
 | **Everything is a tool** | Everything the model can do is exposed through a unified tool interface; canonical names are mostly Chinese (`读取文件`, `执行命令`, `记忆管理`), and English aliases are normalized before routing |
 | **One engine across forms** | There is only one core and one engine; the forms differ only at the access layer |

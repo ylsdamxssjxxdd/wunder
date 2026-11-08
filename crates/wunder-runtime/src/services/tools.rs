@@ -3,6 +3,8 @@
 // This file is in maintenance mode due to its size and complexity.
 // Do not add new tool business logic directly in `tools.rs`.
 // Implement new capabilities in dedicated modules/files and only wire them here.
+mod android_notifications;
+mod android_screen;
 mod apply_patch_tool;
 mod apply_patch_update;
 mod browser_tool;
@@ -67,6 +69,10 @@ mod web_fetch_tool;
 mod web_fetch_tool_impl;
 mod web_search_tool;
 
+pub use android_notifications::{
+    install_android_notifications_host, AndroidNotificationsHost,
+};
+pub use android_screen::{install_android_screen_host, AndroidScreenHost};
 pub use browser_tool::{
     browser_tool_names, browser_tool_summary_spec, BROWSER_GROUP_NAME, BROWSER_GROUP_NAME_ALIAS,
 };
@@ -78,13 +84,15 @@ pub use command_tool::decode_command_output;
 /// Produce the reduced tool specification the model actually receives.
 pub use prompt_surface::prompt_tool_spec;
 pub use catalog::{
-    browser_tools_available, build_desktop_followup_user_message, build_mcp_tool_alias_entries,
+    android_notifications_tools_enabled, android_screen_tools_enabled, browser_tools_available,
+    build_desktop_followup_user_message, build_mcp_tool_alias_entries,
     build_mcp_tool_alias_entries_for_names, build_phone_followup_user_message,
     build_read_image_followup_user_message, build_runtime_tool_display_map, builtin_aliases,
     builtin_tool_specs, collect_available_tool_names, collect_enabled_tool_names_for_catalog,
     collect_prompt_tool_specs, collect_prompt_tool_specs_with_language,
     current_tool_schema_reference, desktop_tools_available, expand_browser_group_selection,
-    filter_tool_names_by_model_capability, is_browser_group_name, is_browser_tool_name,
+    filter_tool_names_by_model_capability, is_android_notifications_tool_name,
+    is_android_screen_tool_name, is_browser_group_name, is_browser_tool_name,
     is_desktop_control_tool_name, is_phone_control_tool_name, is_read_image_tool_name,
     phone_tools_available, resolve_builtin_tool_schema, resolve_builtin_tool_schema_reference,
     resolve_runtime_tool_display_name, resolve_tool_name, runtime_tool_schema,

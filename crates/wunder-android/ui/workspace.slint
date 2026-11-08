@@ -183,21 +183,37 @@ export component WorkspacePage inherits Rectangle {
                         icon-size: 17px;
                         icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-left.svg");
                         label: "返回";
-                        clicked => { root.back(); }
+                        clicked => {
+                            if root.path != "" {
+                                root.open-path(root.parent-path);
+                            } else {
+                                root.back();
+                            }
+                        }
                     }
                     VerticalLayout {
                         horizontal-stretch: 1;
                         spacing: 1px;
-                        Text {
-                            text: "工作目录";
-                            color: Theme.text;
-                            font-size: Theme.font-lg;
-                            font-weight: 600;
-                            overflow: elide;
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Text {
+                                text: "工作目录";
+                                color: Theme.text;
+                                font-size: Theme.font-lg;
+                                font-weight: 600;
+                                overflow: elide;
+                            }
+                            if root.workspace-name != "" : Text {
+                                horizontal-stretch: 1;
+                                text: root.workspace-name;
+                                color: Theme.muted;
+                                font-size: Theme.font-2xs;
+                                vertical-alignment: bottom;
+                                overflow: elide;
+                            }
                         }
-                        Text {
-                            text: (root.workspace-name == "" ? "工作目录" : root.workspace-name
-                                + (root.path == "" ? "" : " · /" + root.path));
+                        if root.path != "" : Text {
+                            text: "/" + root.path;
                             color: Theme.muted;
                             font-size: Theme.font-2xs;
                             overflow: elide;
@@ -226,65 +242,6 @@ export component WorkspacePage inherits Rectangle {
                 y: parent.height - 1px;
                 height: 1px;
                 background: Theme.border;
-            }
-        }
-
-        // Path strip: one row, thumb-sized back target on the left.
-        Rectangle {
-            height: 42px;
-            background: Theme.surface;
-
-            HorizontalLayout {
-                padding-left: 10px;
-                padding-right: 12px;
-                spacing: 8px;
-                cross-axis-alignment: center;
-
-                if root.path != "" : Rectangle {
-                    height: 30px;
-                    width: up-row.preferred-width + 16px;
-                    border-radius: 15px;
-                    background: up-touch.has-hover ? Theme.hover : Theme.panel;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    up-touch := TouchArea {
-                        clicked => { root.open-path(root.parent-path); }
-                    }
-                    up-row := HorizontalLayout {
-                        padding-left: 8px;
-                        padding-right: 8px;
-                        spacing: 4px;
-                        cross-axis-alignment: center;
-                        Image {
-                            width: 12px;
-                            height: 12px;
-                            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-left.svg");
-                            colorize: Theme.text-secondary;
-                        }
-                        Text {
-                            text: "上级";
-                            color: Theme.text-secondary;
-                            font-size: Theme.font-xs;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
-
-                Text {
-                    horizontal-stretch: 1;
-                    text: root.path == "" ? "工作区根目录" : "/" + root.path;
-                    color: Theme.muted;
-                    font-size: Theme.font-xs;
-                    vertical-alignment: center;
-                    overflow: elide;
-                }
-
-                Text {
-                    text: "" + root.total + " 项";
-                    color: Theme.muted;
-                    font-size: Theme.font-2xs;
-                    vertical-alignment: center;
-                }
             }
         }
 

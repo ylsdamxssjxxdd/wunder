@@ -455,6 +455,11 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 240
+    outputs:
+      android_signing: ${{ steps.signing.outputs.formal }}
+    env:
+      # Shipping variant. Local emulator runs pass WUNDER_ANDROID_BUILD_TYPE=debug.
+      WUNDER_ANDROID_BUILD_TYPE: release
     steps:
       - uses: actions/checkout@v4
       - name: Free disk space for the Android build
@@ -517,7 +522,40 @@ jobs:
           # Pinned debug keystore: every nightly APK keeps the same signature,
           # so a new nightly installs over the previous one without uninstall.
           cp -f packaging/android/debug.keystore "$HOME/.android/debug.keystore"
-      - name: Build arm64 debug APK
+      - name: Configure Android release signing
+        id: signing
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.WUNDER_ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.WUNDER_ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.WUNDER_ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.WUNDER_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # The release keystore is optional. An empty secret must not fail the
+          # build: the pinned compatibility keystore keeps existing installs
+          # upgradeable. Only a configured-but-incomplete secret set errors out.
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "WUNDER_ANDROID_KEYSTORE_BASE64 is not configured; release APK uses packaging/android/debug.keystore as the compatibility signature"
+            echo "formal=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          : "${KEYSTORE_PASSWORD:?WUNDER_ANDROID_KEYSTORE_PASSWORD must be set together with WUNDER_ANDROID_KEYSTORE_BASE64}"
+          : "${KEY_ALIAS:?WUNDER_ANDROID_KEY_ALIAS must be set together with WUNDER_ANDROID_KEYSTORE_BASE64}"
+          : "${KEY_PASSWORD:?WUNDER_ANDROID_KEY_PASSWORD must be set together with WUNDER_ANDROID_KEYSTORE_BASE64}"
+          keystore="$RUNNER_TEMP/wunder-android-release.keystore"
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$keystore"
+          test -s "$keystore"
+          {
+            echo "WUNDER_ANDROID_KEYSTORE=$keystore"
+            echo "WUNDER_ANDROID_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "WUNDER_ANDROID_KEY_ALIAS=$KEY_ALIAS"
+            echo "WUNDER_ANDROID_KEY_PASSWORD=$KEY_PASSWORD"
+            # Guard against a silent fallback when a real key is expected.
+            echo "WUNDER_ANDROID_REQUIRE_RELEASE_SIGNING=1"
+          } >> "$GITHUB_ENV"
+          echo "formal=true" >> "$GITHUB_OUTPUT"
+      - name: Build arm64 release APK
         shell: bash
         env:
           WUNDER_ANDROID_ABIS: arm64-v8a
@@ -601,12 +639,18 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          ANDROID_SIGNING: ${{ needs.build-android-arm64.outputs.android_signing }}
         run: |
           set -euo pipefail
+          if [ "$ANDROID_SIGNING" = "true" ]; then
+            android_note="APK 使用正式签名，可直接覆盖安装同签名旧版。"
+          else
+            android_note="APK 使用固定兼容签名（沿用旧版调试签名），可直接覆盖安装旧版。"
+          fi
           gh release create nightly \
             --repo "${GITHUB_REPOSITORY}" \
             --title "Wunder Desktop Installers（Win7 x86 / Ubuntu 18.04 x86_64 / Ubuntu 18.04 ARM64 / Android arm64）" \
-            --notes "从本页下载对应安装包：Windows 7 32 位 setup、Ubuntu 18.04 x86_64 与 ARM64 的 .run，以及 Android arm64 APK。安装包自带运行环境；APK 为固定调试签名，可直接覆盖安装旧版。" \
+            --notes "从本页下载对应安装包：Windows 7 32 位 setup、Ubuntu 18.04 x86_64 与 ARM64 的 .run，以及 Android arm64 APK。安装包自带运行环境；${android_note}" \
             --prerelease --latest=false --target "${GITHUB_SHA}"
           find installer-assets android-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do
             gh release upload nightly "$asset" --repo "${GITHUB_REPOSITORY}" --clobber

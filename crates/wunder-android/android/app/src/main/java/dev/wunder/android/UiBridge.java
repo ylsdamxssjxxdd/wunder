@@ -22,6 +22,7 @@ import android.os.Build;
 import android.os.Environment;
 import android.os.PowerManager;
 import android.os.SystemClock;
+import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.provider.Settings;
@@ -58,6 +59,8 @@ import java.util.Set;
  */
 public final class UiBridge {
     private static final int REQUEST_PICK_FILES = 0x5701;
+    private static final int REQUEST_PICK_DIRECTORY = 0x5702;
+    private static final int REQUEST_STORAGE_PERMISSION = 0x5703;
     private static final int REQUEST_SAVE_FILE = 0x5702;
     private static final int REQUEST_RECORD_AUDIO = 0x5703;
     // 桌面版 caps one drop at twenty files; keep the same bound on the phone.
@@ -76,6 +79,8 @@ public final class UiBridge {
     // framework class loader, so app classes cannot resolve its JNI symbols.
     private static final Object queueLock = new Object();
     private static ArrayList<String> pickedPaths; // null = no result pending
+    /** Directory tree result: null = none, "" = cancelled, "!msg" = error. */
+    private static String pickedDirectory;
     private static String saveResult; // null or "1|name" / "0|name"
     private static final ArrayList<String> voiceEvents = new ArrayList<>();
     private static final ArrayList<String> screenshotEvents = new ArrayList<>();
@@ -170,9 +175,31 @@ public final class UiBridge {
                     current.getPackageManager().canRequestPackageInstalls()
                             ? "granted"
                             : "denied");
+            result.put("all_files", allFilesState(current));
+            result.put(
+                    "screen_capture",
+                    ScreenCaptureBridge.hasPermission() ? "granted" : "denied");
+            result.put("notification_access", notificationAccessState(current));
         } catch (Exception ignored) {
         }
         return result.toString();
+    }
+
+    private static String notificationAccessState(Context context) {
+        if (WunderNotificationListenerService.isConnected()) {
+            return "granted";
+        }
+        try {
+            android.content.ComponentName component =
+                    new android.content.ComponentName(context, WunderNotificationListenerService.class);
+            String enabled = Settings.Secure.getString(
+                    context.getContentResolver(), "enabled_notification_listeners");
+            return enabled != null && enabled.contains(component.flattenToString())
+                    ? "granted"
+                    : "denied";
+        } catch (Exception ignored) {
+            return "denied";
+        }
     }
 
     /** Last time the installed package was replaced, for nightly update checks. */
@@ -409,6 +436,29 @@ public final class UiBridge {
                             Uri.parse("package:" + activity.getPackageName()));
                     fallback = new Intent(Settings.ACTION_SECURITY_SETTINGS);
                     break;
+                case "screen_capture":
+                    ScreenCaptureBridge.requestPermission(activity);
+                    return;
+                case "notification_access":
+                    primary = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+                    break;
+                case "all_files":
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        primary = new Intent(
+                                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                Uri.parse("package:" + activity.getPackageName()));
+                        fallback = new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
+                    } else {
+                        activity.requestPermissions(
+                                Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q
+                                        ? new String[]{
+                                                Manifest.permission.READ_EXTERNAL_STORAGE,
+                                                Manifest.permission.WRITE_EXTERNAL_STORAGE}
+                                        : new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
+                                REQUEST_STORAGE_PERMISSION);
+                        return;
+                    }
+                    break;
                 default:
                     return;
             }
@@ -468,6 +518,54 @@ public final class UiBridge {
     private static boolean batteryExempt(Context context) {
         PowerManager manager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
         return manager != null && manager.isIgnoringBatteryOptimizations(context.getPackageName());
+    }
+
+    /**
+     * All-files access: Android 11+ gates direct shared-storage paths behind
+     * the special app access; Android 8-10 use the runtime READ/WRITE pair.
+     */
+    private static String allFilesState(Activity current) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return Environment.isExternalStorageManager() ? "granted" : "denied";
+        }
+        boolean read = current.checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED;
+        boolean write = Build.VERSION.SDK_INT > Build.VERSION_CODES.Q
+                || current.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                        == PackageManager.PERMISSION_GRANTED;
+        return read && write ? "granted" : "denied";
+    }
+
+    /**
+     * Open the system folder picker for a workspace root. The tree URI is
+     * converted to the host path the engine and proot both use; the caller
+     * must hold all-files access for paths outside the app sandbox.
+     */
+    public static void pickDirectory() {
+        Activity current = activity.get();
+        if (current == null) {
+            return;
+        }
+        current.runOnUiThread(() -> {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            try {
+                current.startActivityForResult(intent, REQUEST_PICK_DIRECTORY);
+            } catch (Exception ignored) {
+                publishDirectory("!无法打开目录选择器");
+            }
+        });
+    }
+
+    /** Drain the folder picker result; null until the system answers. */
+    public static String takePickedDirectory() {
+        synchronized (queueLock) {
+            String result = pickedDirectory;
+            pickedDirectory = null;
+            return result;
+        }
     }
 
     /** Open the system document picker; picked files come back staged. */
@@ -787,8 +885,135 @@ public final class UiBridge {
     static void handleActivityResult(Activity current, int requestCode, int resultCode, Intent data) {
         if (requestCode == REQUEST_PICK_FILES) {
             stagePickedFiles(current, resultCode, data);
+        } else if (requestCode == REQUEST_PICK_DIRECTORY) {
+            stagePickedDirectory(current, resultCode, data);
         } else if (requestCode == REQUEST_SAVE_FILE) {
             finishSave(current, resultCode, data);
+        }
+    }
+
+    private static void stagePickedDirectory(Activity current, int resultCode, Intent data) {
+        if (resultCode != Activity.RESULT_OK || data == null || data.getData() == null) {
+            publishDirectory("");
+            return;
+        }
+        Uri uri = data.getData();
+        String path = treeUriToPath(uri);
+        if (path == null) {
+            publishDirectory("!暂不支持该目录，请选择内部存储或 SD 卡中的文件夹");
+            return;
+        }
+        File directory = new File(path);
+        if (!directory.isDirectory()) {
+            publishDirectory("!目录不存在或不可访问");
+            return;
+        }
+        if (!hasSharedStorageAccess(current, path)) {
+            publishDirectory("!没有该目录的读写权限，请先在权限管理中开启「所有文件访问」");
+            return;
+        }
+        if (!directory.canRead() || !directory.canWrite()) {
+            publishDirectory("!没有该目录的读写权限，请先在权限管理中开启「所有文件访问」");
+            return;
+        }
+        try {
+            current.getContentResolver().takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        } catch (Exception ignored) {
+            // Direct file access is what matters; a provider that refuses the
+            // persistable grant does not change the resolved host path.
+        }
+        publishDirectory(path);
+    }
+
+    /**
+     * Map a document-tree URI to its host path. Only the external-storage
+     * provider is accepted: arbitrary providers (cloud drives, archives) have
+     * no filesystem path the engine or proot could open.
+     */
+    private static String treeUriToPath(Uri uri) {
+        if (uri == null) {
+            return null;
+        }
+        String authority = uri.getAuthority();
+        if (authority == null) {
+            return null;
+        }
+        String docId;
+        try {
+            docId = DocumentsContract.getTreeDocumentId(uri);
+        } catch (Exception ignored) {
+            return null;
+        }
+        if (docId == null || docId.isEmpty()) {
+            return null;
+        }
+        if (!authority.equals("com.android.externalstorage.documents")) {
+            // The downloads provider uses raw: /storage/... document ids.
+            if (docId.startsWith("raw:")) {
+                return verifyExternalPath(docId.substring(4));
+            }
+            return null;
+        }
+        int colon = docId.indexOf(':');
+        if (colon <= 0) {
+            return null;
+        }
+        String volume = docId.substring(0, colon);
+        String relative = docId.substring(colon + 1);
+        String base;
+        if (volume.equalsIgnoreCase("primary")) {
+            File external = Environment.getExternalStorageDirectory();
+            if (external == null) {
+                return null;
+            }
+            base = external.getAbsolutePath();
+        } else {
+            base = "/storage/" + volume;
+        }
+        File target = relative.isEmpty() ? new File(base) : new File(base, relative);
+        return verifyExternalPath(target.getAbsolutePath());
+    }
+
+    /**
+     * Direct File access to shared storage. The app-specific external folder
+     * needs no grant; everything else is the all-files gate on Android 11+ or
+     * the legacy READ/WRITE pair below it.
+     */
+    private static boolean hasSharedStorageAccess(Activity current, String path) {
+        String packageName = current.getPackageName();
+        if (path.contains("/Android/data/" + packageName + "/")
+                || path.contains("/Android/media/" + packageName + "/")) {
+            return true;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return Environment.isExternalStorageManager();
+        }
+        boolean read = current.checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED;
+        boolean write = Build.VERSION.SDK_INT > Build.VERSION_CODES.Q
+                || current.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                        == PackageManager.PERMISSION_GRANTED;
+        return read && write;
+    }
+
+    /** Keep the resolved path inside shared storage, not an arbitrary mount. */
+    private static String verifyExternalPath(String rawPath) {        if (rawPath == null || rawPath.isEmpty()) {
+            return null;
+        }
+        try {
+            File target = new File(rawPath).getCanonicalFile();
+            if (!target.isAbsolute()) {
+                return null;
+            }
+            String path = target.getAbsolutePath();
+            if (!path.startsWith("/storage/")) {
+                return null;
+            }
+            return path;
+        } catch (Exception ignored) {
+            return null;
         }
     }
 
@@ -978,6 +1203,12 @@ public final class UiBridge {
     private static void publishPick(ArrayList<String> paths) {
         synchronized (queueLock) {
             pickedPaths = new ArrayList<>(paths);
+        }
+    }
+
+    private static void publishDirectory(String path) {
+        synchronized (queueLock) {
+            pickedDirectory = path == null ? "" : path;
         }
     }
 

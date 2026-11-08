@@ -1,7 +1,8 @@
 use super::mcp_pack;
 use super::{
-    browser_tool, desktop_control, multimodal_generation_tool, phone_control, read_image_tool,
-    self_status_tool, sessions_yield_tool, thread_control_tool, web_fetch_tool, web_search_tool,
+    android_notifications, android_screen, browser_tool, desktop_control,
+    multimodal_generation_tool, phone_control, read_image_tool, self_status_tool,
+    sessions_yield_tool, thread_control_tool, web_fetch_tool, web_search_tool,
 };
 use crate::config::Config;
 use crate::core::json_schema::normalize_tool_input_schema;
@@ -1109,6 +1110,15 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             ]),
         },
     ];
+    // Android-only surfaces are listed only after their device host is
+    // installed, so desktop, CLI and server catalogues never advertise tools
+    // that have no executor in this process.
+    if android_screen::android_screen_tools_enabled() {
+        specs.push(android_screen::android_screen_tool_spec(language));
+    }
+    if android_notifications::android_notifications_tools_enabled() {
+        specs.push(android_notifications::android_notifications_tool_spec(language));
+    }
     specs.extend(goal::goal_tool_specs());
     // Browser tools come from the active provider's native surface (dsh parity).
     specs.extend(browser_tool::browser_tool_specs());
@@ -1229,6 +1239,22 @@ pub fn builtin_aliases() -> HashMap<String, String> {
         phone_control::TOOL_PHONE_CONTROL_ALIAS_SHORT.to_string(),
         phone_control::TOOL_PHONE_CONTROL.to_string(),
     );
+    map.insert(
+        android_screen::TOOL_ANDROID_SCREEN_ALIAS.to_string(),
+        android_screen::TOOL_ANDROID_SCREEN.to_string(),
+    );
+    map.insert(
+        android_screen::TOOL_ANDROID_SCREEN_ALIAS_SHORT.to_string(),
+        android_screen::TOOL_ANDROID_SCREEN.to_string(),
+    );
+    map.insert(
+        android_notifications::TOOL_ANDROID_NOTIFICATIONS_ALIAS.to_string(),
+        android_notifications::TOOL_ANDROID_NOTIFICATIONS.to_string(),
+    );
+    map.insert(
+        android_notifications::TOOL_ANDROID_NOTIFICATIONS_ALIAS_SHORT.to_string(),
+        android_notifications::TOOL_ANDROID_NOTIFICATIONS.to_string(),
+    );
     map
 }
 
@@ -1294,6 +1320,22 @@ pub fn is_phone_control_tool_name(name: &str) -> bool {
     phone_control::is_phone_control_tool_name(name)
 }
 
+pub fn android_screen_tools_enabled() -> bool {
+    android_screen::android_screen_tools_enabled()
+}
+
+pub fn is_android_screen_tool_name(name: &str) -> bool {
+    android_screen::is_android_screen_tool_name(name)
+}
+
+pub fn android_notifications_tools_enabled() -> bool {
+    android_notifications::android_notifications_tools_enabled()
+}
+
+pub fn is_android_notifications_tool_name(name: &str) -> bool {
+    android_notifications::is_android_notifications_tool_name(name)
+}
+
 pub async fn build_desktop_followup_user_message(result: &Value) -> Result<Option<Value>> {
     desktop_control::build_followup_user_message(result).await
 }
@@ -1345,6 +1387,16 @@ fn runtime_builtin_tool_allowed(config: &Config, canonical: &str) -> bool {
     }
     if phone_control::is_phone_control_tool_name(canonical)
         && !phone_control::phone_tools_enabled()
+    {
+        return false;
+    }
+    if android_screen::is_android_screen_tool_name(canonical)
+        && !android_screen::android_screen_tools_enabled()
+    {
+        return false;
+    }
+    if android_notifications::is_android_notifications_tool_name(canonical)
+        && !android_notifications::android_notifications_tools_enabled()
     {
         return false;
     }
@@ -1408,6 +1460,8 @@ pub fn filter_tool_names_by_model_capability(
                 && !desktop_control::is_desktop_control_tool_name(name)
                 && !phone_control::is_phone_control_tool_name(&canonical)
                 && !phone_control::is_phone_control_tool_name(name)
+                && !android_screen::is_android_screen_tool_name(&canonical)
+                && !android_screen::is_android_screen_tool_name(name)
         })
         .collect()
 }
@@ -1448,6 +1502,44 @@ mod model_capability_tests {
         assert!(!crate::services::default_tool_profile::default_tool_candidates()
             .contains(&"手机控制".to_string()));
     }
+
+    #[test]
+    fn unsupported_vision_also_removes_android_screen_frames() {
+        let names = HashSet::from(["安卓屏幕".to_string(), "安卓通知".to_string()]);
+        let filtered = filter_tool_names_by_model_capability(names, Some(false));
+        assert!(!filtered.contains("安卓屏幕"));
+        assert!(filtered.contains("安卓通知"));
+    }
+
+    #[test]
+    fn android_device_tools_require_an_installed_host() {
+        let config = crate::config::Config::default();
+        for name in ["安卓屏幕", "android_screen", "screen_capture"] {
+            assert!(!super::runtime_builtin_tool_allowed(&config, name));
+        }
+        for name in ["安卓通知", "android_notifications", "notification_listener"] {
+            assert!(!super::runtime_builtin_tool_allowed(&config, name));
+        }
+        let specs = super::builtin_tool_specs_with_language("zh-CN");
+        assert!(!specs.iter().any(|spec| spec.name == "安卓屏幕"));
+        assert!(!specs.iter().any(|spec| spec.name == "安卓通知"));
+    }
+
+    #[test]
+    fn android_tool_aliases_resolve_to_canonical_names() {
+        assert_eq!(super::resolve_tool_name("android_screen"), "安卓屏幕");
+        assert_eq!(super::resolve_tool_name("screen_capture"), "安卓屏幕");
+        assert_eq!(super::resolve_tool_name("安卓截屏"), "安卓屏幕");
+        assert_eq!(
+            super::resolve_tool_name("android_notifications"),
+            "安卓通知"
+        );
+        assert_eq!(
+            super::resolve_tool_name("notification_listener"),
+            "安卓通知"
+        );
+        assert_eq!(super::resolve_tool_name("通知监听"), "安卓通知");
+    }
 }
 
 pub fn resolve_tool_name(name: &str) -> String {
@@ -1464,6 +1556,10 @@ pub fn resolve_tool_name(name: &str) -> String {
             }
             "手机控制器" | "手机监视器" | "phone_controller" | "phone_monitor" => {
                 Some(phone_control::TOOL_PHONE_CONTROL.to_string())
+            }
+            "安卓截屏" | "屏幕采集" => Some(android_screen::TOOL_ANDROID_SCREEN.to_string()),
+            "安卓通知栏" | "通知监听" => {
+                Some(android_notifications::TOOL_ANDROID_NOTIFICATIONS.to_string())
             }
             _ => None,
         })
@@ -1820,6 +1916,10 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         web_fetch_tool::TOOL_WEB_FETCH => Some(web_fetch_tool::TOOL_WEB_FETCH_ALIAS),
         desktop_control::TOOL_DESKTOP_CONTROL => Some("desktop_control"),
         phone_control::TOOL_PHONE_CONTROL => Some(phone_control::TOOL_PHONE_CONTROL_ALIAS),
+        android_screen::TOOL_ANDROID_SCREEN => Some(android_screen::TOOL_ANDROID_SCREEN_ALIAS),
+        android_notifications::TOOL_ANDROID_NOTIFICATIONS => {
+            Some(android_notifications::TOOL_ANDROID_NOTIFICATIONS_ALIAS)
+        }
         self_status_tool::TOOL_SELF_STATUS => Some(self_status_tool::TOOL_SELF_STATUS_ALIAS),
         read_image_tool::TOOL_READ_IMAGE => Some(read_image_tool::TOOL_READ_IMAGE_ALIAS),
         multimodal_generation_tool::TOOL_GENERATE_SPEECH => {

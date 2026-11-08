@@ -15,6 +15,9 @@ export struct TrajectoryItem {
     title: string,
     summary: string,
     detail: string,
+    // Estimated wrapped line count, computed in Rust from display width so the
+    // detail panel can size itself without relying on text measurement.
+    detail-lines: int,
     status: string,
     time: string,
     failed: bool,
@@ -272,19 +275,36 @@ component TrajectoryRow inherits Rectangle {
                 wrap: word-wrap;
             }
             if root.entry.detail != "" : Rectangle {
-                height: detail-text.preferred-height + 16px;
+                // Long tool results stay inside a bounded panel with their own
+                // scrollbar; the page itself keeps scrolling too. The height
+                // comes from the projected line estimate, not from the text's
+                // preferred height, so a wide or unbroken result cannot
+                // collapse the panel to a single clipped line.
+                height: min(max(root.entry.detail-lines * 18px + 18px, 54px), 236px);
                 border-radius: Theme.radius-sm;
                 background: Theme.panel;
                 border-width: 1px;
                 border-color: Theme.border;
-                detail-text := Text {
-                    x: 10px;
+                detail-scroll := ScrollView {
+                    x: 8px;
                     y: 8px;
-                    width: parent.width - 20px;
-                    text: root.entry.detail;
-                    color: Theme.text-secondary;
-                    font-size: Theme.font-xs;
-                    wrap: word-wrap;
+                    width: parent.width - 16px;
+                    height: parent.height - 16px;
+                    vertical-scrollbar-policy: as-needed;
+                    horizontal-scrollbar-policy: always-off;
+                    VerticalLayout {
+                        padding-right: 4px;
+                        Text {
+                            // Pin the wrap width to the visible viewport: a
+                            // vertical ScrollView otherwise lets the layout
+                            // grow to the longest line and clips it.
+                            width: detail-scroll.visible-width - 12px;
+                            text: root.entry.detail;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            wrap: word-wrap;
+                        }
+                    }
                 }
             }
         }

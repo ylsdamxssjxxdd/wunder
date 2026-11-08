@@ -163,7 +163,7 @@ pub fn subagent_row(card: &NativeSubagentCard) -> TimelineRow {
     };
     row.text = card.title.as_str().into();
     row.summary = summary.as_str().into();
-    row.tool_icon = crate::tool_icons::workflow_icon("subagent_control").into();
+    row.tool_icon = wunder_desktop::tool_icons::workflow_icon("subagent_control").into();
     row.status_kind = status;
     row
 }
@@ -1263,7 +1263,7 @@ impl Timeline {
                 ModelRc::default()
             };
             let status = status_kind(&entry.state);
-            let icon = crate::tool_icons::workflow_icon(&entry.title).to_string();
+            let icon = wunder_desktop::tool_icons::workflow_icon(&entry.title).to_string();
             let sections = crate::timeline_text::sections(&entry.sections);
             self.patch(index, |row| {
                 row.tool_name = label.as_str().into();
@@ -1300,7 +1300,7 @@ impl Timeline {
             self.mark_batch();
         }
         let index = self.push(blank(KIND_TOOL, format!("tool-{}", entry.id)));
-        let icon = crate::tool_icons::workflow_icon(&entry.title).to_string();
+        let icon = wunder_desktop::tool_icons::workflow_icon(&entry.title).to_string();
         let summary = crate::timeline_text::tool_summary(entry);
         let row_summary = crate::timeline_text::tool_row_summary(entry, &target);
         let metrics = crate::timeline_text::tool_metrics(entry);

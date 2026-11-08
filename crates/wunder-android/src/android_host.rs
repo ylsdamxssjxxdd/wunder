@@ -171,6 +171,60 @@ pub fn pick_skill_archive() {
     open_picker(PickTarget::SkillArchive);
 }
 
+/// Open the system folder picker for a workspace root.
+pub fn pick_directory() {
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return;
+    };
+    if let Err(error) = env.call_static_method(&host.ui_bridge, "pickDirectory", "()V", &[]) {
+        clear_java_exception(&mut env);
+        log::error!("open the folder picker: {error}");
+    }
+}
+
+/// Poll the folder picker result. Java returns null until the system answers;
+/// an empty value means the user cancelled.
+pub fn take_picked_directory() -> Option<Result<String, String>> {
+    let host = HOST.get()?;
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return None;
+    };
+    let value = match env.call_static_method(
+        &host.ui_bridge,
+        "takePickedDirectory",
+        "()Ljava/lang/String;",
+        &[],
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            clear_java_exception(&mut env);
+            log::error!("take the picked directory: {error}");
+            return None;
+        }
+    };
+    let Ok(object) = value.l() else {
+        return None;
+    };
+    if object.is_null() {
+        return None;
+    }
+    let object = JString::from(object);
+    let Ok(path) = env.get_string(&object) else {
+        return None;
+    };
+    let path = path.to_string_lossy().into_owned();
+    if path.is_empty() {
+        return None;
+    }
+    match path.strip_prefix('!') {
+        Some(message) => Some(Err(message.to_string())),
+        None => Some(Ok(path)),
+    }
+}
+
 /// Poll the filenames staged by the picker. Java must not call native code
 /// (NativeActivity loads the library through the framework class loader), so
 /// the UI tick pulls the result instead. An empty result still consumes the
@@ -565,6 +619,37 @@ pub fn set_busy(busy: bool, title: &str) {
             JValue::Object(host.app.as_obj()),
             JValue::Bool(busy as u8),
             JValue::Object(&text),
+        ],
+    );
+    if result.is_err() {
+        clear_java_exception(&mut env);
+    }
+}
+
+/// Replace the notification's live phase/detail while the turn keeps running.
+/// The service keeps its foreground notification and wake lock; only the text
+/// and chronometer projection changes.
+pub fn set_turn_status(phase: &str, detail: &str) {
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return;
+    };
+    let Ok(phase) = env.new_string(phase) else {
+        return;
+    };
+    let Ok(detail) = env.new_string(detail) else {
+        return;
+    };
+    let result = env.call_static_method(
+        &host.service,
+        "setTurnStatus",
+        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V",
+        &[
+            JValue::Object(host.app.as_obj()),
+            JValue::Object(&phase),
+            JValue::Object(&detail),
         ],
     );
     if result.is_err() {

@@ -11,11 +11,17 @@ wunder (Xinjian) is a **multi-form agent workbench**:
 
 Download the matching installer from [Releases](https://github.com/ylsdamxssjxxdd/wunder/releases):
 
-- **Windows 7 32-bit**: download the `wunder-desktop-*-win7-x86-setup.exe` installer. It works out of the box; compatibility constraints limit some third-party features.
-- **Linux x64 / arm64**: download the `wunder-desktop-*-linux-*.run` installer. It bundles the Desktop, the CLI, and the runtime, and needs neither FUSE nor administrator rights.
+- **Windows 7 32-bit**: download the `wunder-desktop-*-win7-x86-setup.exe` installer.
+- **Linux x64 / arm64**: download the `wunder-desktop-*-linux-*.run` installer.
 - **Android**: download the `wunder-android-*-arm64.apk` and install it.
 
 On first launch, configure a model on the settings page and you are ready to go.
+
+## Design Philosophy
+
+**Radically minimal: solve the problem fast, not show off complexity.**
+
+The interface keeps only the information and actions needed to finish the task; complex capabilities unfold on demand, and decoration, status detail, or technical detail never takes over the main path. Complexity stays in the engine — the interface states the result and the next step.
 
 ## Interface
 
@@ -62,7 +68,7 @@ Canonical tool names are mostly Chinese (what the model sees), each with English
 | 问询面板 | `question_panel` | Show structured options, ask the user, and wait for a choice | Wrap-up & frontend |
 | 会话让出 | `sessions_yield` | Yield the current turn's control and be woken later | Wrap-up & frontend |
 | 列出文件 | `list_files` | List directory contents | Workspace & code |
-| glob | — | Find file paths by glob pattern | Workspace & code |
+| 文件名匹配 | `glob` | Find file paths by glob pattern | Workspace & code |
 | 搜索内容 | `search_content` | Search file contents by regex | Workspace & code |
 | 读取文件 | `read_file` | Read file contents, with range reads | Workspace & code |
 | 写入文件 | `write_file` | Write or overwrite a file | Workspace & code |

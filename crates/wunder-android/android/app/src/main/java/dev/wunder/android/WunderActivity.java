@@ -5,6 +5,8 @@ import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.KeyEvent;
+import android.view.View;
+import android.view.Window;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
 
@@ -26,7 +28,36 @@ public class WunderActivity extends NativeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Install before any UI work: a failure in the first frame should still
+        // leave a report behind. The handler only appends a file and then
+        // delegates, so the platform's own crash flow is unchanged.
+        CrashHandler.install(this);
+        // MediaProjection consent is delivered to this activity; keep the
+        // bridge's weak activity reference fresh across recreations.
+        ScreenCaptureBridge.attach(this);
+        // Persisted JobScheduler work is the reliable wake on Android 12+;
+        // scheduling on every launch also repairs a job cleared by an OEM.
+        WunderCronJobService.schedule(this);
+        // A cold start from a share sheet carries the payload on the launch
+        // intent. A recreated activity (saved state) must not replay a share
+        // the engine already consumed.
+        if (savedInstanceState == null) {
+            IntentBridge.handleIntent(this, getIntent());
+        }
         registerBackCallback();
+        applyLightSystemBars();
+        // The native window helper may install its own system-ui flags while
+        // the first frame is created; reapply once that work has settled.
+        getWindow().getDecorView().post(this::applyLightSystemBars);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        // WunderActivity is singleTask, so a second share or VIEW link lands
+        // here instead of creating a new activity (and a second engine view).
+        IntentBridge.handleIntent(this, intent);
     }
 
     @Override
@@ -36,6 +67,8 @@ public class WunderActivity extends NativeActivity {
         // one for the dispatcher; Slint's window helper registers its own
         // default-priority callback while the native window is created.
         registerBackCallback();
+        applyLightSystemBars();
+        ScreenCaptureBridge.attach(this);
     }
 
     @Override
@@ -47,7 +80,33 @@ public class WunderActivity extends NativeActivity {
             // created asynchronously, so register again once the window is
             // focused; on newer versions the overlay priority already wins.
             registerBackCallback();
+            applyLightSystemBars();
         }
+    }
+
+    /**
+     * The app paints its own light surface edge-to-edge, so the system bars
+     * need dark icons. Setting the appearance explicitly also keeps the clock
+     * and status icons readable when the platform / OEM theme does not infer
+     * it from the (light) activity theme.
+     */
+    private void applyLightSystemBars() {
+        Window window = getWindow();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            android.view.WindowInsetsController controller = window.getInsetsController();
+            if (controller != null) {
+                int lightBars = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                        | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                controller.setSystemBarsAppearance(lightBars, lightBars);
+            }
+            return;
+        }
+        View decor = window.getDecorView();
+        int flags = decor.getSystemUiVisibility() | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        }
+        decor.setSystemUiVisibility(flags);
     }
 
     private void registerBackCallback() {
@@ -97,7 +156,9 @@ public class WunderActivity extends NativeActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        UiBridge.handleActivityResult(this, requestCode, resultCode, data);
+        if (!ScreenCaptureBridge.handleActivityResult(this, requestCode, resultCode, data)) {
+            UiBridge.handleActivityResult(this, requestCode, resultCode, data);
+        }
     }
 
     @Override

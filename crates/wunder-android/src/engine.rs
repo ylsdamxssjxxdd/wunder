@@ -55,6 +55,7 @@ pub enum Command {
         title: String,
     },
     TrajectoryFilter(i32),
+    LoadPromptPreview,
     LoadWorkspace {
         path: String,
     },
@@ -70,16 +71,26 @@ pub enum Command {
         name: String,
         icon: String,
         color: String,
+        /// Empty = create a managed folder under the app workspace root.
+        folder: String,
     },
     UpdateWorkspace {
         id: String,
         name: String,
         icon: String,
         color: String,
+        /// Empty = keep the current root.
+        folder: String,
     },
     DeleteWorkspace(String),
     UploadWorkspace {
         dir: String,
+        files: Vec<String>,
+    },
+    /// A system share / VIEW payload drained from `IntentBridge`.
+    SharedIntent {
+        text: String,
+        url: String,
         files: Vec<String>,
     },
     DownloadWorkspace {
@@ -320,6 +331,13 @@ pub enum Command {
     OpenChannelLogs(String),
     CloseChannelLogs,
     DeleteChannelBinding(String),
+    // ---- local backup / crash reports ---------------------------------
+    RefreshBackup,
+    BackupNow,
+    RestoreBackup {
+        path: String,
+    },
+    LoadCrashLog,
 }
 
 /// Persisted preferences mirrored into the window on every change.
@@ -803,6 +821,11 @@ pub struct Shared {
     pub trajectory_audit: TrajectoryAudit,
     pub trajectory_segments: Vec<TrajectorySegment>,
     pub trajectory_filter: i32,
+    /// System prompt preview opened by the greeting's eye button.
+    pub prompt_preview: String,
+    pub prompt_preview_loading: bool,
+    pub prompt_preview_error: String,
+    pub prompt_preview_rev: u64,
     pub workspace_rev: u64,
     pub workspace_path: String,
     pub workspace_parent_path: String,
@@ -870,6 +893,16 @@ pub struct Shared {
     /// A late durable replay of the waiting turn must not reopen them.
     pub consumed_inquiries: std::collections::VecDeque<String>,
     pub settings: SettingsView,
+    /// 数据与恢复页：本地备份、待重启的恢复与最近崩溃日志。
+    pub backup_rev: u64,
+    /// idle / busy / done / error.
+    pub backup_phase: String,
+    pub backup_message: String,
+    pub backup_path: String,
+    /// The staged restore is applied on the next process start.
+    pub backup_restart: bool,
+    pub crash_log_title: String,
+    pub crash_log_text: String,
     pub companion: CompanionView,
     pub companion_rev: u64,
     /// Live turn phase (`requesting`/`thinking`/`outputting`/`tool`/`waiting`/
@@ -975,6 +1008,12 @@ fn run(
     // every thread created earlier in this process.
     #[cfg(target_os = "android")]
     crate::phone::install();
+    // Screen capture and notification access are Android-only hosts. Install
+    // them before the first turn freezes the tool surface.
+    #[cfg(target_os = "android")]
+    crate::screen::install();
+    #[cfg(target_os = "android")]
+    crate::notifications::install();
     // Same rule for the browser: swap the builtin Playwright provider for the
     // phone's system WebView before the first thread captures the tool list.
     #[cfg(target_os = "android")]
@@ -984,6 +1023,10 @@ fn run(
     if let Some(name) = crate::android_host::device_name() {
         std::env::set_var("WUNDER_DEVICE_NAME", name);
     }
+    // A staged restore replaces config and databases before SQLite opens them;
+    // applying it while the engine runs would race the live connections.
+    #[cfg(target_os = "android")]
+    crate::backup::apply_pending();
     let desktop = Arc::new(NativeDesktop::start()?);
     // Register as an Android node, not a second desktop, so the cloud and the
     // device directory can tell phones and desktops apart.
@@ -1104,9 +1147,16 @@ fn run(
                     refresh_archived(&desktop, &shared);
                     if current == id {
                         // The archived thread can no longer be selected; fall
-                        // back to the newest remaining thread or a fresh one.
+                        // back to the newest remaining thread in the same
+                        // workspace, or a fresh one there.
+                        let workspace = shared
+                            .lock()
+                            .map(|state| state.selected_workspace.clone())
+                            .unwrap_or_default();
+                        let workspace_arg =
+                            (!workspace.trim().is_empty()).then_some(workspace.as_str());
                         let next = desktop
-                            .list_sessions(None)
+                            .list_sessions(workspace_arg)
                             .ok()
                             .and_then(|list| list.first().map(|session| session.id.clone()));
                         let next = match next {
@@ -1170,6 +1220,7 @@ fn run(
                 state.trajectory_rev = state.trajectory_rev.wrapping_add(1);
                 state.touch();
             }
+            Command::LoadPromptPreview => load_prompt_preview(&desktop, &shared),
             Command::LoadWorkspace { path } => load_workspace(&desktop, &shared, &path),
             Command::LoadMoreWorkspace { path, offset } => {
                 load_workspace_page(&desktop, &shared, &path, offset, true);
@@ -1236,15 +1287,36 @@ fn run(
                     Err(error) => notify(&shared, format!("无法切换工作区：{error}")),
                 }
             }
-            Command::CreateWorkspace { name, icon, color } => {
-                create_workspace(&desktop, &shared, &name, &icon, &color);
+            Command::CreateWorkspace {
+                name,
+                icon,
+                color,
+                folder,
+            } => {
+                if let Some(id) =
+                    create_workspace(&desktop, &shared, &name, &icon, &color, &folder)
+                {
+                    // A new workspace starts a thread so the drawer (filtered
+                    // to the active workspace) is never left with no target
+                    // while the previously open thread belongs elsewhere.
+                    if let Err(error) = open_thread_in_workspace(
+                        &desktop,
+                        &shared,
+                        &generation,
+                        &mut watch_cancel,
+                        Some(&id),
+                    ) {
+                        notify(&shared, format!("无法在该工作区新建会话：{error}"));
+                    }
+                }
             }
             Command::UpdateWorkspace {
                 id,
                 name,
                 icon,
                 color,
-            } => update_workspace(&desktop, &shared, &id, &name, &icon, &color),
+                folder,
+            } => update_workspace(&desktop, &shared, &id, &name, &icon, &color, &folder),
             Command::DeleteWorkspace(id) => {
                 delete_workspace(
                     &desktop,
@@ -1256,6 +1328,38 @@ fn run(
             }
             Command::UploadWorkspace { dir, files } => {
                 upload_workspace(&desktop, &shared, &dir, &files);
+            }
+            Command::SharedIntent { text, url, files } => {
+                let has_text = !text.trim().is_empty();
+                let has_url = !url.trim().is_empty();
+                // Text/link shares land in the composer draft; nothing is
+                // sent automatically. A file share carries an optional caption.
+                let draft = if has_url {
+                    Some(url)
+                } else if has_text {
+                    Some(text)
+                } else {
+                    None
+                };
+                if let Some(draft) = draft {
+                    if let Ok(mut state) = shared.lock() {
+                        state.pending_draft = Some(draft);
+                        state.touch();
+                    }
+                }
+                if files.is_empty() {
+                    if has_text {
+                        notify(&shared, "已把分享文本填入输入框，确认后发送");
+                    } else if has_url {
+                        notify(&shared, "已把分享链接填入输入框，确认后发送");
+                    }
+                } else {
+                    notify(
+                        &shared,
+                        format!("收到 {} 个分享文件，正在加入当前工作区…", files.len()),
+                    );
+                    upload_workspace(&desktop, &shared, "", &files);
+                }
             }
             Command::DownloadWorkspace { path } => download_workspace(&desktop, &shared, &path),
             Command::WorkspaceSaved { ok, name } => {
@@ -1326,6 +1430,7 @@ fn run(
                 crate::cloud::refresh_devices(&desktop, &shared);
                 crate::channels::refresh(&desktop, &shared);
                 refresh_permissions(&shared);
+                refresh_backup(&shared);
             }
             Command::RefreshPermissions => refresh_permissions(&shared),
             Command::OpenPermission(id) => crate::permissions::open(&id),
@@ -1977,6 +2082,10 @@ fn run(
                 }
                 Err(error) => notify(&shared, format!("设置默认模型失败：{error}")),
             },
+            Command::RefreshBackup => refresh_backup(&shared),
+            Command::BackupNow => start_backup(&shared),
+            Command::RestoreBackup { path } => start_restore(&shared, path),
+            Command::LoadCrashLog => load_crash_log(&shared),
         }
     }
     if let Some(cancel) = watch_cancel.take() {
@@ -2181,6 +2290,162 @@ fn refresh_permissions(shared: &Arc<Mutex<Shared>>) {
         state.permissions_rev = state.permissions_rev.wrapping_add(1);
         state.touch();
     }
+}
+
+/// Refresh the newest local archive shown by 设置 → 数据与恢复.
+#[cfg(target_os = "android")]
+fn refresh_backup(shared: &Arc<Mutex<Shared>>) {
+    let latest = crate::backup::latest_backup()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if let Ok(mut state) = shared.lock() {
+        if state.backup_path != latest {
+            state.backup_path = latest;
+            state.backup_rev = state.backup_rev.wrapping_add(1);
+            state.touch();
+        }
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn refresh_backup(_shared: &Arc<Mutex<Shared>>) {}
+
+/// Package config and databases on a worker; the engine loop keeps serving.
+#[cfg(target_os = "android")]
+fn start_backup(shared: &Arc<Mutex<Shared>>) {
+    {
+        let Ok(mut state) = shared.lock() else {
+            return;
+        };
+        if state.backup_phase == "busy" {
+            state.notify("备份或恢复正在进行…");
+            state.touch();
+            return;
+        }
+        state.backup_phase = "busy".into();
+        state.backup_message = "正在打包 config 与本地数据…".into();
+        state.backup_rev = state.backup_rev.wrapping_add(1);
+        state.touch();
+    }
+    let worker_shared = shared.clone();
+    let spawned = thread::Builder::new()
+        .name("wunder-android-backup".into())
+        .spawn(move || {
+            let result = crate::backup::backup();
+            if let Ok(mut state) = worker_shared.lock() {
+                match result {
+                    Ok(path) => {
+                        let path = path.to_string_lossy().into_owned();
+                        state.backup_phase = "done".into();
+                        state.backup_message = format!("已备份到 {path}");
+                        state.backup_path = path;
+                        state.notify("本地备份已完成");
+                    }
+                    Err(error) => {
+                        state.backup_phase = "error".into();
+                        state.backup_message = format!("备份失败：{error:#}");
+                        state.notify(format!("备份失败：{error}"));
+                    }
+                }
+                state.backup_rev = state.backup_rev.wrapping_add(1);
+                state.touch();
+            }
+        });
+    if let Err(error) = spawned {
+        log::warn!("start the backup worker: {error}");
+        if let Ok(mut state) = shared.lock() {
+            state.backup_phase = "error".into();
+            state.backup_message = format!("无法启动备份：{error}");
+            state.backup_rev = state.backup_rev.wrapping_add(1);
+            state.touch();
+        }
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn start_backup(shared: &Arc<Mutex<Shared>>) {
+    notify(shared, "当前构建不支持本地备份");
+}
+
+/// Validate and stage an archive; the engine applies it on the next start.
+#[cfg(target_os = "android")]
+fn start_restore(shared: &Arc<Mutex<Shared>>, path: String) {
+    if path.trim().is_empty() {
+        notify(shared, "请先指定备份文件路径");
+        return;
+    }
+    {
+        let Ok(mut state) = shared.lock() else {
+            return;
+        };
+        if state.backup_phase == "busy" {
+            state.notify("备份或恢复正在进行…");
+            state.touch();
+            return;
+        }
+        state.backup_phase = "busy".into();
+        state.backup_message = "正在校验并解包备份…".into();
+        state.backup_rev = state.backup_rev.wrapping_add(1);
+        state.touch();
+    }
+    let worker_shared = shared.clone();
+    let spawned = thread::Builder::new()
+        .name("wunder-android-restore".into())
+        .spawn(move || {
+            let result = crate::backup::restore(&path);
+            if let Ok(mut state) = worker_shared.lock() {
+                match result {
+                    Ok(crate::backup::RestoreOutcome::Restart) => {
+                        state.backup_phase = "done".into();
+                        state.backup_restart = true;
+                        state.backup_message = "恢复已就绪，重启应用后生效".into();
+                        state.notify("恢复已就绪，请重启应用");
+                    }
+                    Err(error) => {
+                        state.backup_phase = "error".into();
+                        state.backup_message = format!("恢复失败：{error:#}");
+                        state.notify(format!("恢复失败：{error}"));
+                    }
+                }
+                state.backup_rev = state.backup_rev.wrapping_add(1);
+                state.touch();
+            }
+        });
+    if let Err(error) = spawned {
+        log::warn!("start the restore worker: {error}");
+        if let Ok(mut state) = shared.lock() {
+            state.backup_phase = "error".into();
+            state.backup_message = format!("无法启动恢复：{error}");
+            state.backup_rev = state.backup_rev.wrapping_add(1);
+            state.touch();
+        }
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn start_restore(shared: &Arc<Mutex<Shared>>, _path: String) {
+    notify(shared, "当前构建不支持本地恢复");
+}
+
+/// Read the newest Java or Rust crash report for the settings page.
+#[cfg(target_os = "android")]
+fn load_crash_log(shared: &Arc<Mutex<Shared>>) {
+    match crate::crash::latest_report() {
+        Some(report) => {
+            if let Ok(mut state) = shared.lock() {
+                state.crash_log_title = report.name;
+                state.crash_log_text = report.text;
+                state.backup_rev = state.backup_rev.wrapping_add(1);
+                state.touch();
+            }
+        }
+        None => notify(shared, "没有找到崩溃日志"),
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn load_crash_log(shared: &Arc<Mutex<Shared>>) {
+    notify(shared, "当前构建不支持查看崩溃日志");
 }
 
 fn start_update_check(desktop: Arc<NativeDesktop>, shared: Arc<Mutex<Shared>>) {
@@ -2868,7 +3133,20 @@ fn publish_durable(
 }
 
 fn refresh_sessions(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, active: Option<&str>) {
-    let Ok(list) = desktop.list_sessions(None) else {
+    // The drawer mirrors the desktop sidebar: one workspace at a time. Fall
+    // back to the opened thread's workspace before the catalogue arrives.
+    let workspace = shared
+        .lock()
+        .map(|state| {
+            if state.selected_workspace.trim().is_empty() {
+                state.workspace_id.clone()
+            } else {
+                state.selected_workspace.clone()
+            }
+        })
+        .unwrap_or_default();
+    let workspace_arg = (!workspace.trim().is_empty()).then_some(workspace.as_str());
+    let Ok(list) = desktop.list_sessions(workspace_arg) else {
         return;
     };
     let settings = desktop.get_desktop_settings().ok();
@@ -2981,29 +3259,22 @@ fn tool_kind(tab: i32) -> Option<ToolResourceKind> {
     }
 }
 
-/// Category badge used by the phone list. The desktop resolves per-tool keys;
-/// the phone keeps the category glyph so the code stays small and the list
-/// still reads as the same four groups.
-fn tool_visual(category: &str) -> (&'static str, &'static str) {
-    match category {
-        "MCP 工具" => ("plug", "mcp"),
-        "技能" => ("book", "skill"),
-        "知识库" => ("database", "knowledge"),
-        "用户工具" => ("wrench", "shared"),
-        "A2A 工具" => ("share-from-square", "automation"),
-        _ => ("wrench", "terminal"),
-    }
-}
-
 fn mobile_tool(tool: &ToolRecord, enabled: bool) -> MobileTool {
-    let (icon, tone) = tool_visual(&tool.category);
+    // Same icon and badge tone as the desktop agent/tools page: the shared
+    // resolver keeps per-tool glyphs (terminal, file, search, …) instead of one
+    // category glyph for every builtin.
+    let visual = wunder_desktop::tool_icons::tool_card_visual(
+        &tool.name,
+        &tool.description,
+        &tool.category,
+    );
     MobileTool {
         name: tool.name.as_str().into(),
         description: tool.description.as_str().into(),
         category: tool.category.as_str().into(),
         enabled,
-        icon: icon.into(),
-        tone: tone.into(),
+        icon: visual.icon.into(),
+        tone: visual.tone.into(),
     }
 }
 
@@ -4485,6 +4756,10 @@ fn refresh_workspaces(
     shared: &Arc<Mutex<Shared>>,
 ) -> anyhow::Result<()> {
     let list = desktop.list_workspaces()?;
+    // The system DocumentsProvider is read-only and mirrors this catalogue;
+    // push it before the UI lock so Binder readers never wait on the engine.
+    #[cfg(target_os = "android")]
+    crate::workspace_docs::publish(&list);
     let Ok(mut state) = shared.lock() else {
         return Ok(());
     };
@@ -4582,6 +4857,7 @@ fn create_managed_workspace(
     name: &str,
     icon: &str,
     color: &str,
+    folder: &str,
 ) -> anyhow::Result<wunder_desktop::NativeWorkspace> {
     let name = name.trim();
     if name.is_empty() {
@@ -4593,15 +4869,27 @@ fn create_managed_workspace(
     if name.chars().any(char::is_control) {
         anyhow::bail!("工作区名称无效");
     }
-    let base = managed_workspace_base(desktop)?;
-    std::fs::create_dir_all(&base)?;
-    let root = base.join(managed_workspace_slug(name, &base));
-    std::fs::create_dir_all(&root)?;
+    let chosen = folder.trim();
+    // A picked folder is used as-is; an empty choice keeps the managed
+    // app-private folder so quick creation still needs no storage access.
+    let (root, managed) = if chosen.is_empty() {
+        let base = managed_workspace_base(desktop)?;
+        std::fs::create_dir_all(&base)?;
+        (base.join(managed_workspace_slug(name, &base)), true)
+    } else {
+        (std::path::PathBuf::from(chosen), false)
+    };
+    if managed {
+        std::fs::create_dir_all(&root)?;
+    }
     match desktop.create_workspace(name, root.to_string_lossy().as_ref(), icon, color) {
         Ok(workspace) => Ok(workspace),
         Err(error) => {
-            // Leave no orphan folder behind when the record write is rejected.
-            let _ = std::fs::remove_dir(&root);
+            // Leave no orphan managed folder behind when the record write is
+            // rejected. A user-picked folder is never removed.
+            if managed {
+                let _ = std::fs::remove_dir(&root);
+            }
             Err(error)
         }
     }
@@ -4613,15 +4901,20 @@ fn create_workspace(
     name: &str,
     icon: &str,
     color: &str,
-) {
-    match create_managed_workspace(desktop, name, icon, color) {
+    folder: &str,
+) -> Option<String> {
+    match create_managed_workspace(desktop, name, icon, color, folder) {
         Ok(workspace) => {
             if let Err(error) = select_workspace(desktop, shared, &workspace.workspace_id) {
                 log::warn!("select the new workspace failed: {error:#}");
             }
             notify(shared, format!("已创建工作区「{}」", workspace.name));
+            Some(workspace.workspace_id)
         }
-        Err(error) => notify(shared, format!("无法创建工作区：{error}")),
+        Err(error) => {
+            notify(shared, format!("无法创建工作区：{error}"));
+            None
+        }
     }
 }
 
@@ -4632,6 +4925,7 @@ fn update_workspace(
     name: &str,
     icon: &str,
     color: &str,
+    folder: &str,
 ) {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > 40 || name.chars().any(char::is_control) {
@@ -4645,11 +4939,15 @@ fn update_workspace(
             return;
         }
     };
+    let chosen = folder.trim();
     let edit = WorkspaceEdit {
         workspace_id: current.workspace_id.clone(),
         name: name.to_string(),
-        // 安卓版 manages the folder itself; the path never changes on rename.
-        root_path: current.root_path.clone(),
+        root_path: if chosen.is_empty() {
+            current.root_path.clone()
+        } else {
+            chosen.to_string()
+        },
         icon: icon.to_string(),
         color: color.to_string(),
     };
@@ -4658,6 +4956,11 @@ fn update_workspace(
             if let Err(error) = refresh_workspaces(desktop, shared) {
                 log::warn!("refresh workspace catalogue failed: {error:#}");
             }
+            let active = shared
+                .lock()
+                .map(|state| state.session_id.clone())
+                .unwrap_or_default();
+            refresh_sessions(desktop, shared, Some(&active));
             notify(shared, "工作区已更新");
         }
         Err(error) => notify(shared, format!("无法更新工作区：{error}")),
@@ -5312,10 +5615,86 @@ fn load_trajectory(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, id: &st
     state.touch();
 }
 
+/// The greeting's eye button asks for the frozen prompt of the open thread.
+/// Building it can run agent/tool preparation, so keep it off the engine
+/// command loop the same way the desktop shell does.
+fn load_prompt_preview(desktop: &Arc<NativeDesktop>, shared: &Arc<Mutex<Shared>>) {
+    let (session, cloud, cloud_thread) = match shared.lock() {
+        Ok(state) => (
+            state.session_id.clone(),
+            state.target == 1,
+            state.cloud_active.id.clone(),
+        ),
+        Err(_) => return,
+    };
+    {
+        let Ok(mut state) = shared.lock() else {
+            return;
+        };
+        state.prompt_preview.clear();
+        state.prompt_preview_error.clear();
+        state.prompt_preview_loading = true;
+        state.prompt_preview_rev = state.prompt_preview_rev.wrapping_add(1);
+        state.touch();
+    }
+    let desktop = desktop.clone();
+    let shared = shared.clone();
+    thread::Builder::new()
+        .name("wunder-android-prompt-preview".into())
+        .spawn(move || {
+            let result = if cloud {
+                if cloud_thread.trim().is_empty() {
+                    Err(anyhow::anyhow!("云端线程尚未选择"))
+                } else {
+                    desktop.cloud_thread_system_prompt(&cloud_thread)
+                }
+            } else {
+                let session = (!session.trim().is_empty()).then_some(session.as_str());
+                desktop.preview_thread_system_prompt(session, Some(DEFAULT_AGENT_ID))
+            };
+            let Ok(mut state) = shared.lock() else {
+                return;
+            };
+            // A result for a thread the user already left must not replace the
+            // current preview.
+            if cloud != (state.target == 1)
+                || (cloud && state.cloud_active.id != cloud_thread)
+                || (!cloud && state.session_id != session)
+            {
+                return;
+            }
+            state.prompt_preview_loading = false;
+            match result {
+                Ok(prompt) => state.prompt_preview = prompt,
+                Err(error) => state.prompt_preview_error = format!("无法读取系统提示词：{error}"),
+            }
+            state.prompt_preview_rev = state.prompt_preview_rev.wrapping_add(1);
+            state.touch();
+        })
+        .ok();
+}
+
 pub(crate) struct TrajectoryProjection {
     pub(crate) items: Vec<TrajectoryItem>,
     pub(crate) audit: TrajectoryAudit,
     pub(crate) segments: Vec<TrajectorySegment>,
+}
+
+/// Approximate the wrapped line count of a detail dump at the detail font.
+/// ASCII glyphs count one cell and wide glyphs two; 52 cells matches the
+/// phone's detail panel with a safety margin. The cap keeps a malformed
+/// payload from asking for an unbounded panel.
+fn detail_line_estimate(text: &str) -> i32 {
+    const CELLS_PER_LINE: usize = 52;
+    let mut lines = 0usize;
+    for line in text.lines() {
+        let cells: usize = line
+            .chars()
+            .map(|ch| if ch.is_ascii() { 1 } else { 2 })
+            .sum();
+        lines += cells.div_ceil(CELLS_PER_LINE).max(1);
+    }
+    lines.clamp(1, 60) as i32
 }
 
 /// Project the bounded trajectory page into single-line rows plus the
@@ -5429,12 +5808,14 @@ pub(crate) fn trajectory_projection(page: &serde_json::Value) -> TrajectoryProje
         if !status.is_empty() {
             meta.push(format!("状态 {status}"));
         }
+        let detail_lines = detail_line_estimate(&detail);
         items.push(TrajectoryItem {
             group: group.into(),
             kind,
             title: title.into(),
             summary: summary.into(),
             detail: detail.into(),
+            detail_lines,
             status: status.into(),
             time: time.into(),
             failed,
@@ -5875,6 +6256,96 @@ impl Drop for BusyGuard {
     }
 }
 
+#[cfg(target_os = "android")]
+fn turn_phase_label(phase: &str) -> &'static str {
+    match phase {
+        "requesting" => "请求中",
+        "queued" => "排队中",
+        "waiting" => "等待确认",
+        "thinking" => "模型思考中",
+        "outputting" => "模型输出中",
+        "tool" => "执行工具",
+        "compacting" => "压缩上下文",
+        "stopped" => "已停止",
+        "error" => "执行失败",
+        "done" => "已完成",
+        _ => "执行中",
+    }
+}
+
+#[cfg(target_os = "android")]
+fn turn_status_detail(live: &LiveTurn) -> String {
+    match live.phase.as_str() {
+        "requesting" => "正在请求模型…".into(),
+        "queued" => "等待当前任务结束…".into(),
+        "waiting" => "等待你的确认".into(),
+        "thinking" => "正在生成回复…".into(),
+        "outputting" => {
+            let chars = live.answer.chars().count();
+            if chars > 0 {
+                format!("正在生成回复 · 已输出 {chars} 字")
+            } else {
+                "正在生成回复…".into()
+            }
+        }
+        "tool" => live
+            .tools
+            .last()
+            .map(|tool| {
+                let summary = tool.summary.trim();
+                if summary.is_empty() {
+                    format!("工具：{}", tool.title)
+                } else {
+                    format!(
+                        "工具：{} · {}",
+                        tool.title,
+                        truncate_chars(summary.to_string(), 60)
+                    )
+                }
+            })
+            .unwrap_or_else(|| "正在执行工具…".into()),
+        "compacting" => "正在压缩上下文…".into(),
+        "stopped" => "任务已停止".into(),
+        "error" => "任务执行失败".into(),
+        "done" => "任务已完成".into(),
+        _ => "正在执行…".into(),
+    }
+}
+
+/// Coarse key for notification updates: phase, tool identity/state and a
+/// 200-character output bucket. Token deltas stay out of the notification
+/// channel while the elapsed chronometer keeps moving.
+#[cfg(target_os = "android")]
+fn turn_status_key(live: &LiveTurn) -> String {
+    let tool = live
+        .tools
+        .last()
+        .map(|tool| {
+            format!(
+                "{}|{}|{}",
+                tool.title,
+                tool.state,
+                tool.summary.chars().count() / 120
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "{}|{}|{}|{}",
+        live.phase,
+        live.tools.len(),
+        tool,
+        live.answer.chars().count() / 200
+    )
+}
+
+#[cfg(target_os = "android")]
+fn publish_turn_status(live: &LiveTurn) {
+    crate::android_host::set_turn_status(
+        turn_phase_label(&live.phase),
+        &turn_status_detail(live),
+    );
+}
+
 /// Coalesce model deltas into at most one published live frame per UI tick.
 /// Structural or phase changes still publish immediately so 请求中/模型输出中,
 /// tool admissions and question panels never wait for the frame budget.
@@ -5951,6 +6422,10 @@ fn start_stream(
             crate::android_host::set_busy(true, &busy_title);
             #[cfg(target_os = "android")]
             let _busy = BusyGuard;
+            #[cfg(target_os = "android")]
+            publish_turn_status(&live);
+            #[cfg(target_os = "android")]
+            let mut last_turn_status = turn_status_key(&live);
             let mut stream = stream;
             let mut last_publish = Instant::now() - LIVE_PUBLISH_FRAME;
             let mut pending = false;
@@ -5968,6 +6443,14 @@ fn start_stream(
                         apply_event(&mut live, &value);
                         if matches!(raw.as_str(), "question_panel" | "question_panel_clear") {
                             apply_inquiry_event(&shared, &value, &session);
+                        }
+                        #[cfg(target_os = "android")]
+                        {
+                            let status_key = turn_status_key(&live);
+                            if status_key != last_turn_status {
+                                last_turn_status = status_key;
+                                publish_turn_status(&live);
+                            }
                         }
                         pending = true;
                         // A new tool step, a new phase or a turn identity is
@@ -6000,7 +6483,10 @@ fn start_stream(
                             pending = false;
                         }
                     }
-                    Some(NativeChatEvent::Queued) => {}
+                    Some(NativeChatEvent::Queued) => {
+                        #[cfg(target_os = "android")]
+                        crate::android_host::set_turn_status("排队中", "等待当前任务结束…");
+                    }
                     Some(NativeChatEvent::Finished) => {
                         log::info!("chat stream finished session={session}");
                         if pending {
@@ -6789,6 +7275,17 @@ mod tests {
     }
 
     #[test]
+    fn trajectory_detail_line_estimate_counts_wrapped_rows() {
+        assert_eq!(detail_line_estimate(""), 1);
+        assert_eq!(detail_line_estimate("短"), 1);
+        assert_eq!(detail_line_estimate("a\nb"), 2);
+        assert_eq!(detail_line_estimate(&"x".repeat(52)), 1);
+        assert_eq!(detail_line_estimate(&"x".repeat(53)), 2);
+        assert_eq!(detail_line_estimate(&"字".repeat(53)), 3);
+        assert_eq!(detail_line_estimate(&"x".repeat(10_000)), 60);
+    }
+
+    #[test]
     fn trajectory_audit_sums_consumption_and_keeps_the_time_bar() {
         let page = json!({
             "trajectory": [
@@ -6969,6 +7466,10 @@ mod tests {
         assert!(groups[0].tools[0].enabled);
         assert!(!groups[0].tools[1].enabled);
         assert!(!groups[0].all_selected);
+        // Builtins resolve per tool like the desktop settings page, not one
+        // category glyph for the whole group.
+        assert_eq!(groups[0].tools[0].icon.as_str(), "file-lines");
+        assert_eq!(groups[0].tools[1].icon.as_str(), "terminal");
 
         let filtered = agent_groups(&catalog, &[], "WEATHER");
         assert_eq!(filtered.len(), 1);
@@ -6982,8 +7483,6 @@ mod tests {
         assert_eq!(category_for_group("知识库工具"), "知识库");
         assert_eq!(category_for_group("自定义工具"), "用户工具");
         assert_eq!(category_for_group("内置工具"), "内置工具");
-        assert_eq!(tool_visual("技能").1, "skill");
-        assert_eq!(tool_visual("MCP 工具").1, "mcp");
     }
 
     #[test]
@@ -7128,12 +7627,28 @@ mod tests {
         let desktop = NativeDesktop::start_with_args(args).expect("isolated runtime");
         let shared = Arc::new(Mutex::new(Shared::default()));
 
-        let workspace = create_managed_workspace(&desktop, "测试 工作区", "flask", "teal")
+        let workspace = create_managed_workspace(&desktop, "测试 工作区", "flask", "teal", "")
             .expect("create the managed workspace");
         assert!(std::path::Path::new(&workspace.root_path).is_dir());
         assert!(workspace.root_path.replace('\\', "/").contains("/workspaces/"));
         assert_eq!(workspace.name, "测试 工作区");
         assert_eq!(workspace.icon, "flask");
+
+        // A picked host folder is bound as-is instead of creating a managed
+        // folder; this is the path the editor's "选择" button supplies.
+        let picked = root.join("picked-folder");
+        std::fs::create_dir_all(&picked).unwrap();
+        let external = create_managed_workspace(
+            &desktop,
+            "手机目录",
+            "folder",
+            "blue",
+            picked.to_str().unwrap(),
+        )
+        .expect("create the picked folder workspace");
+        assert!(std::path::Path::new(&external.root_path).is_dir());
+        assert!(external.root_path.ends_with("picked-folder"));
+        assert!(!external.root_path.replace('\\', "/").contains("/workspaces/"));
 
         select_workspace(&desktop, &shared, &workspace.workspace_id).expect("select");
         assert_eq!(shared.lock().unwrap().selected_workspace, workspace.workspace_id);
@@ -7155,6 +7670,29 @@ mod tests {
             .unwrap()
             .iter()
             .any(|candidate| candidate.id == session.id));
+
+        // The drawer mirrors the desktop sidebar: a selected workspace hides
+        // threads that live in another one.
+        let other = desktop
+            .list_workspaces()
+            .unwrap()
+            .into_iter()
+            .find(|candidate| candidate.workspace_id != workspace.workspace_id)
+            .expect("the seeded default workspace");
+        let other_session = desktop
+            .create_session(Some(&other.workspace_id))
+            .expect("session in the default workspace");
+        shared.lock().unwrap().selected_workspace = workspace.workspace_id.clone();
+        refresh_sessions(&desktop, &shared, Some(&session.id));
+        let visible = shared
+            .lock()
+            .unwrap()
+            .sessions
+            .iter()
+            .map(|candidate| candidate.id.to_string())
+            .collect::<Vec<_>>();
+        assert!(visible.contains(&session.id));
+        assert!(!visible.contains(&other_session.id));
 
         drop(desktop);
         let _ = std::fs::remove_dir_all(&root);

@@ -29,13 +29,14 @@ use cron::Schedule;
 use serde::{de::Error as _, Deserialize, Deserializer};
 use serde_json::{json, Value};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{oneshot, Notify, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tokio_stream::StreamExt;
-use tracing::error;
+use tracing::{error, info};
 use uuid::Uuid;
 
 use self::policy::{compute_error_backoff_ms, compute_scheduler_sleep_ms};
@@ -2483,6 +2484,72 @@ impl CronScheduler {
         });
     }
 
+    /// One-shot tick for a caller that has no scheduler loop.
+    ///
+    /// 安卓版's `:background` process wakes from an alarm, starts a headless
+    /// native desktop, drains whatever is due and exits. Claims go through the
+    /// same `claim_due_cron_jobs` lease/CAS path as `run_loop`, so a live UI
+    /// process and a waking tick can never execute the same job twice: whoever
+    /// loses the claim sees a valid lease and skips it.
+    pub async fn run_due_once(&self, max_runs: usize) -> Result<usize> {
+        self.run_due_tick(max_runs, None, None).await
+    }
+
+    /// [`Self::run_due_once`] with a deadline and a shared progress counter.
+    ///
+    /// Jobs run one at a time. A single claim is made right before each run,
+    /// never a batch, so `deadline` can stop the tick between jobs without
+    /// leaving a freshly claimed job leased for a whole TTL. `progress` is
+    /// stored after every finished job so a caller that abandons the future on
+    /// timeout can still report how much work actually completed.
+    pub async fn run_due_tick(
+        &self,
+        max_runs: usize,
+        deadline: Option<Instant>,
+        progress: Option<Arc<AtomicUsize>>,
+    ) -> Result<usize> {
+        if max_runs == 0 {
+            return Ok(0);
+        }
+        let config = self.config_store.get().await;
+        if !config.cron.enabled {
+            info!("cron tick skipped: cron.enabled=false");
+            return Ok(0);
+        }
+        // Capacity is shared with every other process: a job already running in
+        // the UI process still occupies a slot.
+        let running = self.count_running_jobs(now_ts()).await?;
+        let capacity = (config.cron.max_concurrent_runs.max(1) as i64 - running).max(0);
+        let capacity = capacity.min(max_runs as i64);
+        let mut ran = 0usize;
+        while (ran as i64) < capacity {
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                info!(ran, "cron tick deadline reached, stop claiming due jobs");
+                break;
+            }
+            let claimed_at = now_ts();
+            let lease_expires_at = cron_lease_expires_at(&config, claimed_at);
+            let jobs = self.claim_due_jobs(claimed_at, 1, lease_expires_at).await?;
+            let Some(job) = jobs.into_iter().next() else {
+                break;
+            };
+            info!(
+                job_id = %job.job_id,
+                runner = %self.runner_id,
+                "cron tick executing due job"
+            );
+            self.execute_job(job, "timer").await;
+            ran += 1;
+            if let Some(progress) = progress.as_ref() {
+                progress.store(ran, Ordering::Relaxed);
+            }
+        }
+        if ran > 0 {
+            info!(ran, "cron tick finished due jobs");
+        }
+        Ok(ran)
+    }
+
     async fn run_loop(self: Arc<Self>) {
         loop {
             let config = self.config_store.get().await;
@@ -3223,6 +3290,27 @@ mod tests {
             .list_cron_runs("cron_user", &job.job_id, 10)
             .unwrap();
         assert_eq!(runs.len(), 1);
+    }
+
+    /// 安卓版's `:background` tick runs against a desktop that has no due job:
+    /// it must report zero, claim nothing, and leave no lease behind.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cron_tick_without_due_jobs_reports_zero() {
+        let (_runtime, state, _dir) = runtime_fixture().await;
+        let ran = state
+            .control
+            .cron
+            .run_due_once(4)
+            .await
+            .expect("a tick without due jobs must succeed");
+        assert_eq!(ran, 0);
+        assert_eq!(
+            state
+                .storage
+                .count_running_cron_jobs(now_ts_test())
+                .unwrap(),
+            0
+        );
     }
 
     #[tokio::test]

@@ -12,7 +12,9 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
 
@@ -30,13 +32,21 @@ public final class WunderRuntimeService extends Service {
     private static final String CHANNEL_ID = "wunder-runtime";
     private static final String ACTION_START = "dev.wunder.android.START";
     private static final String ACTION_STATE = "dev.wunder.android.STATE";
+    private static final String ACTION_STATUS = "dev.wunder.android.STATUS";
     private static final String EXTRA_BUSY = "busy";
     private static final String EXTRA_TITLE = "title";
+    private static final String EXTRA_PHASE = "phase";
+    private static final String EXTRA_DETAIL = "detail";
     private static final int NOTIFICATION_ID = 4101;
     private static final int PERMISSION_REQUEST = 4102;
 
+    private static volatile WunderRuntimeService instance;
+
     private boolean busy;
     private String title = "";
+    private String phase = "";
+    private String detail = "";
+    private long startedAt;
     private PowerManager.WakeLock wakeLock;
 
     /** Start the runtime service, or refresh its notification if it already runs. */
@@ -47,10 +57,36 @@ public final class WunderRuntimeService extends Service {
 
     /** Reflect the engine's activity into the notification and wake lock. */
     public static void setBusy(Context context, boolean busy, String title) {
+        WunderRuntimeService running = instance;
+        if (running != null) {
+            // The service is already foreground. Posting to its main thread
+            // updates the same notification without another background FGS
+            // start, which Android 12+ may reject while the app is hidden.
+            running.runOnMain(() -> running.applyBusy(busy, title));
+            return;
+        }
         Intent intent = new Intent(context, WunderRuntimeService.class)
                 .setAction(ACTION_STATE)
                 .putExtra(EXTRA_BUSY, busy)
                 .putExtra(EXTRA_TITLE, title == null ? "" : title);
+        startCompat(context, intent);
+    }
+
+    /**
+     * Update the live turn status without changing the busy lifetime. The
+     * chronometer is anchored at the first status after {@link #setBusy}, so a
+     * phase change only replaces the text while elapsed time keeps running.
+     */
+    public static void setTurnStatus(Context context, String phase, String detail) {
+        WunderRuntimeService running = instance;
+        if (running != null) {
+            running.runOnMain(() -> running.applyTurnStatus(phase, detail));
+            return;
+        }
+        Intent intent = new Intent(context, WunderRuntimeService.class)
+                .setAction(ACTION_STATUS)
+                .putExtra(EXTRA_PHASE, phase == null ? "" : phase)
+                .putExtra(EXTRA_DETAIL, detail == null ? "" : detail);
         startCompat(context, intent);
     }
 
@@ -89,6 +125,7 @@ public final class WunderRuntimeService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        instance = this;
         createChannel();
         PowerManager manager = (PowerManager) getSystemService(POWER_SERVICE);
         if (manager != null) {
@@ -100,15 +137,55 @@ public final class WunderRuntimeService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && ACTION_STATE.equals(intent.getAction())) {
-            busy = intent.getBooleanExtra(EXTRA_BUSY, busy);
-            String next = intent.getStringExtra(EXTRA_TITLE);
-            title = next == null ? "" : next;
-            applyState();
+        String action = intent == null ? "" : intent.getAction();
+        if (ACTION_STATE.equals(action)) {
+            applyBusy(
+                    intent.getBooleanExtra(EXTRA_BUSY, busy),
+                    intent.getStringExtra(EXTRA_TITLE));
+        } else if (ACTION_STATUS.equals(action)) {
+            applyTurnStatus(
+                    intent.getStringExtra(EXTRA_PHASE),
+                    intent.getStringExtra(EXTRA_DETAIL));
         } else {
             startForegroundCompat();
         }
         return START_STICKY;
+    }
+
+    private void applyBusy(boolean nextBusy, String nextTitle) {
+        busy = nextBusy;
+        if (busy) {
+            title = nextTitle == null ? "" : nextTitle;
+            phase = "";
+            detail = "";
+            startedAt = System.currentTimeMillis();
+        } else {
+            title = "";
+            phase = "";
+            detail = "";
+            startedAt = 0L;
+        }
+        applyState();
+    }
+
+    private void applyTurnStatus(String nextPhase, String nextDetail) {
+        if (!busy) {
+            // The service may have been recreated mid-turn; a status is still
+            // proof that a turn is running.
+            busy = true;
+            startedAt = System.currentTimeMillis();
+        }
+        phase = nextPhase == null ? "" : nextPhase;
+        detail = nextDetail == null ? "" : nextDetail;
+        applyState();
+    }
+
+    private void runOnMain(Runnable action) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            action.run();
+        } else {
+            new Handler(Looper.getMainLooper()).post(action);
+        }
     }
 
     @Override
@@ -124,6 +201,9 @@ public final class WunderRuntimeService extends Service {
 
     @Override
     public void onDestroy() {
+        if (instance == this) {
+            instance = null;
+        }
         releaseWakeLock();
         super.onDestroy();
     }
@@ -181,16 +261,31 @@ public final class WunderRuntimeService extends Service {
     }
 
     private Notification buildNotification() {
+        String body;
+        if (!busy) {
+            body = "待机中，点击返回";
+        } else if (!detail.isEmpty()) {
+            body = detail;
+        } else if (!phase.isEmpty()) {
+            body = phase;
+        } else {
+            body = "正在执行…";
+        }
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
                 .setContentTitle(busy ? "wunder 安卓版正在执行任务" : "wunder 安卓版")
-                .setContentText(busy && !title.isEmpty() ? title : "待机中，点击返回")
+                .setContentText(body)
+                .setSubText(busy && !title.isEmpty() ? title : null)
+                .setStyle(new Notification.BigTextStyle().bigText(body))
                 .setContentIntent(launchIntent())
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
                 .setOngoing(busy)
                 .setOnlyAlertOnce(true)
-                .setShowWhen(false);
+                .setShowWhen(busy)
+                .setWhen(busy && startedAt > 0L ? startedAt : 0L)
+                .setUsesChronometer(busy)
+                .setProgress(0, 0, busy);
         return builder.build();
     }
 

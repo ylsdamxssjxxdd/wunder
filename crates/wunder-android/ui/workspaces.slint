@@ -202,6 +202,10 @@ export component WorkspacesPage inherits Rectangle {
     in property <length> inset-top: 0px;
     in property <length> inset-bottom: 0px;
     in property <[MobileWorkspace]> workspaces: [];
+    // Latest host path returned by the system folder picker. The shell clears
+    // it before opening the picker so picking the same folder twice still
+    // updates the draft.
+    in property <string> picked-folder: "";
     // 0 none, 1 row action sheet, 2 editor sheet, 3 delete confirmation.
     // The shell reads it so Back closes the topmost layer first.
     in-out property <int> overlay: 0;
@@ -210,9 +214,10 @@ export component WorkspacesPage inherits Rectangle {
     callback refresh();
     callback select(string);
     callback new-task(string);
-    callback create(string, string, string);
-    callback update(string, string, string, string);
+    callback create(string, string, string, string);
+    callback update(string, string, string, string, string);
     callback remove-workspace(string);
+    callback pick-folder();
 
     // Editor draft, seeded by the row that opened it.
     private property <bool> editor-new: true;
@@ -220,12 +225,14 @@ export component WorkspacesPage inherits Rectangle {
     private property <string> editor-name: "";
     private property <string> editor-icon: "folder";
     private property <string> editor-color: "blue";
+    private property <string> editor-folder: "";
     private property <string> editor-error: "";
     // Row the action sheet / delete confirmation acts on.
     private property <string> menu-id: "";
     private property <string> menu-name: "";
     private property <string> menu-icon: "folder";
     private property <string> menu-color: "blue";
+    private property <string> menu-root: "";
     private property <string> delete-id: "";
     private property <string> delete-name: "";
 
@@ -237,16 +244,19 @@ export component WorkspacesPage inherits Rectangle {
         root.editor-name = "";
         root.editor-icon = "folder";
         root.editor-color = "blue";
+        // Empty keeps the managed app-private folder.
+        root.editor-folder = "";
         root.editor-error = "";
         root.overlay = 2;
     }
 
-    function open-edit(id: string, name: string, icon: string, color: string) {
+    function open-edit(id: string, name: string, icon: string, color: string, folder: string) {
         root.editor-new = false;
         root.editor-id = id;
         root.editor-name = name;
         root.editor-icon = icon == "" ? "folder" : icon;
         root.editor-color = color == "" ? "blue" : color;
+        root.editor-folder = folder;
         root.editor-error = "";
         root.overlay = 2;
     }
@@ -258,11 +268,18 @@ export component WorkspacesPage inherits Rectangle {
         }
         root.editor-error = "";
         if root.editor-new {
-            root.create(root.editor-name, root.editor-icon, root.editor-color);
+            root.create(root.editor-name, root.editor-icon, root.editor-color, root.editor-folder);
         } else {
-            root.update(root.editor-id, root.editor-name, root.editor-icon, root.editor-color);
+            root.update(root.editor-id, root.editor-name, root.editor-icon, root.editor-color,
+                root.editor-folder);
         }
         root.overlay = 0;
+    }
+
+    changed picked-folder => {
+        if root.overlay == 2 && root.picked-folder != "" {
+            root.editor-folder = root.picked-folder;
+        }
     }
 
     function confirm-remove() {
@@ -356,6 +373,7 @@ export component WorkspacesPage inherits Rectangle {
                         root.menu-name = workspace.name;
                         root.menu-icon = workspace.icon;
                         root.menu-color = workspace.color;
+                        root.menu-root = workspace.root;
                         root.overlay = 1;
                     }
                 }
@@ -475,7 +493,8 @@ export component WorkspacesPage inherits Rectangle {
                     icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/pen.svg");
                     label: "编辑";
                     clicked => {
-                        root.open-edit(root.menu-id, root.menu-name, root.menu-icon, root.menu-color);
+                        root.open-edit(root.menu-id, root.menu-name, root.menu-icon,
+                            root.menu-color, root.menu-root);
                     }
                 }
 
@@ -586,6 +605,68 @@ export component WorkspacesPage inherits Rectangle {
 
                         Text {
                             height: 18px;
+                            text: "文件夹";
+                            color: Theme.muted;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
+                        }
+                        Rectangle {
+                            height: 44px;
+                            border-radius: Theme.radius-sm;
+                            background: Theme.input-bg;
+                            border-width: 1px;
+                            border-color: Theme.input-border;
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 6px;
+                                spacing: 6px;
+                                cross-axis-alignment: center;
+                                Image {
+                                    width: 16px;
+                                    height: 16px;
+                                    source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/folder-open.svg");
+                                    colorize: root.editor-folder == "" ? Theme.muted : Theme.accent-ink;
+                                }
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: root.editor-folder == ""
+                                        ? (root.editor-new ? "自动创建（应用工作区目录）" : "保持当前文件夹")
+                                        : root.editor-folder;
+                                    color: root.editor-folder == "" ? Theme.muted : Theme.text;
+                                    font-size: Theme.font-xs;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                if root.editor-folder != "" : Action {
+                                    width: 30px;
+                                    height: 30px;
+                                    icon-size: 13px;
+                                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/xmark.svg");
+                                    label: "清除";
+                                    clicked => { root.editor-folder = ""; }
+                                }
+                                Action {
+                                    width: 64px;
+                                    height: 30px;
+                                    icon-size: 14px;
+                                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/folder-open.svg");
+                                    label: "选择";
+                                    show-label: true;
+                                    clicked => { root.pick-folder(); }
+                                }
+                            }
+                        }
+                        Text {
+                            text: root.editor-folder == ""
+                                ? "不选择目录时自动创建在应用工作区目录；选择手机目录需要「所有文件访问」权限。"
+                                : "任务将在该文件夹中执行。";
+                            color: Theme.muted;
+                            font-size: Theme.font-2xs;
+                            wrap: word-wrap;
+                        }
+
+                        Text {
+                            height: 18px;
                             text: "图标";
                             color: Theme.muted;
                             font-size: Theme.font-xs;
@@ -618,15 +699,6 @@ export component WorkspacesPage inherits Rectangle {
                                 selected: root.editor-color == key;
                                 picked => { root.editor-color = key; }
                             }
-                        }
-
-                        Text {
-                            text: root.editor-new
-                                ? "文件夹会自动创建在应用工作区目录中，任务在该文件夹里执行。"
-                                : "工作区文件夹保持不变，这里只更新名称、图标和颜色。";
-                            color: Theme.muted;
-                            font-size: Theme.font-2xs;
-                            wrap: word-wrap;
                         }
                     }
                 }

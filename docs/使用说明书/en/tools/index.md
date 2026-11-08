@@ -1,7 +1,7 @@
 ---
 title: Tools Overview
 summary: Canonical names and English aliases of the built-in tools, the doc pages for each of the eight categories, situations mapped to tools, and the shared result shell plus the exceptions that skip it.
-updated_at: 2026-10-16
+updated_at: 2026-11-08
 ---
 
 Canonical tool names the model sees are mostly Chinese, each paired with an English alias, normalized by `resolve_tool_name` (`crates/wunder-runtime/src/services/tools/catalog.rs`). MCP tools (`server@tool`), skill names, knowledge-base names, and user tool aliases are registered dynamically from configuration and are not in the table below.
@@ -14,7 +14,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | 问询面板 | `question_panel` | 弹出结构化选项，向用户提问并等待选择 | 收尾与前端协同 |
 | 会话让出 | `sessions_yield` | 主动让出当前回合控制权，稍后再被唤起 | 收尾与前端协同 |
 | 列出文件 | `list_files` | 列出目录内容 | 工作区与代码 |
-| glob | — | 按通配模式查找文件路径 | 工作区与代码 |
+| 文件名匹配 | `glob` | 按通配模式查找文件路径 | 工作区与代码 |
 | 搜索内容 | `search_content` | 在文件中按正则搜索匹配内容 | 工作区与代码 |
 | 读取文件 | `read_file` | 读取文件内容，支持分段读取 | 工作区与代码 |
 | 写入文件 | `write_file` | 写入或整体覆盖文件 | 工作区与代码 |
@@ -60,7 +60,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | Category | Pages |
 | --- | --- |
 | Turn finishing and frontend coordination | Plan Panel / Question Panel / Sessions Yield: [Plan Panel / Question Panel / Sessions Yield](/docs/en/tools/panels/) |
-| Workspace and code | List files / glob / search content / read file / write file / text edit: [Workspace Files](/docs/en/tools/workspace-files/); execute command / command session: [Execute Command](/docs/en/tools/exec/); skill call: [Skill Call](/docs/en/tools/skill-call/) |
+| Workspace and code | List files / 文件名匹配 / search content / read file / write file / text edit: [Workspace Files](/docs/en/tools/workspace-files/); execute command / command session: [Execute Command](/docs/en/tools/exec/); skill call: [Skill Call](/docs/en/tools/skill-call/) |
 | Web | Web fetch: [Web Fetch](/docs/en/tools/web-fetch/); browser: [Browser Tools](/docs/en/tools/browser/) |
 | Multimodal | Read image: [Read Image](/docs/en/tools/read-image/); generate image / generate video / generate speech / transcribe speech: canonical names `图像生成` / `视频生成` / `语音生成` / `声转文`, aliases `generate_image` / `generate_video` / `generate_speech` / `transcribe_speech`; no dedicated page in this section |
 | Desktop | Desktop control: [Desktop Control](/docs/en/tools/desktop-control/) |

@@ -1,0 +1,123 @@
+name: Android Quality
+
+# Android releases used to be build-only. This gate runs the JNI-facing Java
+# bridges and the native shell on an emulator, plus the crate's host unit
+# tests, so a release build cannot land with a broken instrumentation contract.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "crates/wunder-android/**"
+      - "crates/wunder-runtime/src/services/tools/**"
+      - "config/i18n.messages.json"
+      - "builders/build-android-arm64.sh"
+      - ".github/workflows/android-quality.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_TOOLCHAIN: "1.92.0"
+
+jobs:
+  android-instrumented:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space for the Android build
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Rust + Skia + Gradle caches and the emulator image need more room
+          # than the preinstalled dotnet/ghc trees leave behind.
+          sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          # setup-android splits this input on single spaces only, so keep the
+          # package list on one line.
+          packages: "platforms;android-36 build-tools;36.0.0 ndk;28.2.13676358"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: x86_64-linux-android
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+      - name: Build x86_64 debug APK
+        shell: bash
+        env:
+          WUNDER_ANDROID_ABIS: x86_64
+          WUNDER_ANDROID_BUILD_TYPE: debug
+        run: |
+          # The builder prefers $GRADLE over the local ~/gradle install.
+          export GRADLE="$(command -v gradle)"
+          bash builders/build-android-arm64.sh
+      - name: Enable KVM
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run instrumented tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: >-
+            -no-window -gpu swiftshader_indirect -no-snapshot -noaudio
+            -no-boot-anim
+          script: |
+            cd crates/wunder-android/android
+            gradle -PwunderAbis=x86_64 connectedDebugAndroidTest
+      - name: Upload instrumented test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-instrumented-reports
+          path: |
+            **/build/reports/androidTests/**
+            **/build/outputs/androidTest-results/**
+          if-no-files-found: ignore
+
+  android-rust-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space for the Rust build
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+      - name: Install host build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1-dev libfreetype6-dev libxkbcommon-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Run wunder-android unit tests
+        working-directory: crates/wunder-android
+        run: cargo test -p wunder-android --lib

@@ -345,6 +345,53 @@ pub fn preview_text(text: &str, limit: usize) -> String {
     out
 }
 
+/// One right-edge locator tick: user turn preview + its newest answer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TurnMarkData {
+    pub fraction: f32,
+    pub user: String,
+    pub agent: String,
+}
+
+const MARK_USER_PREVIEW: usize = 80;
+const MARK_AGENT_PREVIEW: usize = 120;
+
+/// Desktop turn-ruler projection for the phone: one tick per user turn, up to
+/// the newest 100 turns, at the row-index fraction of the transcript. The
+/// preview mirrors the desktop card (user text + newest answer), but with
+/// shorter cuts because the phone card is narrower.
+pub fn turn_marks(rows: &[&RowData]) -> Vec<TurnMarkData> {
+    let total = rows.len();
+    if total <= 1 {
+        return Vec::new();
+    }
+    let users: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.kind == KIND_USER)
+        .map(|(index, _)| index)
+        .collect();
+    let first = users.len().saturating_sub(100);
+    let mut marks = Vec::with_capacity(users.len().saturating_sub(first));
+    for (position, &index) in users.iter().enumerate().skip(first) {
+        let end = users.get(position + 1).copied().unwrap_or(total);
+        let user = preview_text(&rows[index].text, MARK_USER_PREVIEW);
+        let agent = ((index + 1)..end)
+            .rev()
+            .find(|row_index| {
+                rows[*row_index].kind == KIND_BODY && !rows[*row_index].text.is_empty()
+            })
+            .map(|row_index| preview_text(&rows[row_index].text, MARK_AGENT_PREVIEW))
+            .unwrap_or_default();
+        marks.push(TurnMarkData {
+            fraction: index as f32 / total as f32,
+            user,
+            agent,
+        });
+    }
+    marks
+}
+
 /// Companion bubble text: drop image/link URLs and inline markdown
 /// punctuation, then collapse whitespace and cap at 96 characters (the same
 /// bubble contract as the desktop pet and the web floating layer).
@@ -555,7 +602,7 @@ pub(crate) fn tool_icon_key(tool: &str) -> &'static str {
     if text.contains("web_fetch") || text.contains("fetch") || tool.contains("抓取") {
         return "globe";
     }
-    if text.contains("glob") {
+    if text.contains("glob") || tool.contains("文件名匹配") {
         return "folder-tree";
     }
     if text.contains("list_file") || text.contains("list_files") || text.contains("read_file")
@@ -1149,6 +1196,35 @@ mod tests {
     }
 
     #[test]
+    fn turn_marks_point_at_user_rows_and_newest_answers() {
+        let mut user_one = RowData::new(KIND_USER, "u1");
+        user_one.text = "第一个问题".into();
+        let mut note = RowData::new(KIND_BODY, "b1");
+        note.text = "中间说明".into();
+        let mut answer_one = RowData::new(KIND_BODY, "b2");
+        answer_one.text = "第一个回答".into();
+        let mut user_two = RowData::new(KIND_USER, "u2");
+        user_two.text = "第二个问题".into();
+        let mut answer_two = RowData::new(KIND_BODY, "b3");
+        answer_two.text = "第二个回答".into();
+        let rows: Vec<&RowData> = vec![
+            &user_one,
+            &note,
+            &answer_one,
+            &user_two,
+            &answer_two,
+        ];
+        let marks = turn_marks(&rows);
+        assert_eq!(marks.len(), 2);
+        assert_eq!(marks[0].user, "第一个问题");
+        assert_eq!(marks[0].agent, "第一个回答");
+        assert!((marks[0].fraction - 0.0).abs() < f32::EPSILON);
+        assert_eq!(marks[1].user, "第二个问题");
+        assert_eq!(marks[1].agent, "第二个回答");
+        assert!((marks[1].fraction - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
     fn tool_rows_keep_the_desktop_detail_projection() {
         let child = tool_child("turn", &entry());
         assert_eq!(child.tool_name, "读取文件");
@@ -1156,6 +1232,13 @@ mod tests {
         assert_eq!(child.target, "src/main.rs");
         assert_eq!(workflow_sections(&child.sections).row_count(), 1);
         assert_eq!(patch_cards(&child.patch).row_count(), 1);
+    }
+
+    #[test]
+    fn glob_tool_rows_use_the_folder_tree_icon() {
+        assert_eq!(tool_icon_key("文件名匹配"), "folder-tree");
+        assert_eq!(tool_icon_key("glob"), "folder-tree");
+        assert_eq!(tool_icon_key("glob_files"), "folder-tree");
     }
 
     #[test]

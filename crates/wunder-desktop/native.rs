@@ -592,6 +592,15 @@ impl NativeDesktop {
         Self::start_with_args(DesktopArgs::native_defaults())
     }
 
+    /// Headless scheduled-job tick used by 安卓版's `:background` process.
+    /// Skips the cron loop, thread recovery, cloud probe and interlink so the
+    /// tick cannot settle or duplicate work owned by the UI process.
+    pub fn start_background() -> Result<Self> {
+        let mut args = DesktopArgs::native_defaults();
+        args.background_runtime = true;
+        Self::start_with_args(args)
+    }
+
     pub fn start_with_args(mut args: DesktopArgs) -> Result<Self> {
         wunder_server::rustls_provider::install_process_default_provider();
         args.native_runtime = true;
@@ -603,47 +612,52 @@ impl NativeDesktop {
         );
         wunder_server::cloud::shared().set_client_kind("desktop");
         let desktop = runtime.block_on(DesktopRuntime::init(&args))?;
-        // Startup self-healing probe: refresh the session, re-synthesize the
-        // cloud models and fire one heartbeat in the background. Returns
-        // immediately; never blocks startup and never logs secrets.
-        runtime.block_on(
-            desktop
-                .state
-                .cloud
-                .startup_probe(&desktop.state.config_store),
-        );
-        // Interlink tunnel (互通方案 I9): one shared client per process. A
-        // no-session start stays a cheap poller; the loop picks up the session
-        // after a later login on its own. `start` takes a blocking lock, so it
-        // must run outside the async executor's worker threads.
-        {
-            let state = Arc::clone(&desktop.state);
-            let user_id = desktop.user_id.clone();
-            // Interlink startup may take a blocking lock while it restores its
-            // durable ledger. Do not wait for it before returning the native
-            // desktop handle: the UI can render immediately and the tunnel
-            // publishes its state asynchronously when ready.
-            runtime.spawn(async move {
-                let _ = tokio::task::spawn_blocking(move || {
-                    wunder_server::interlink::client::start_with_options(
-                        state,
-                        wunder_server::interlink::client::InterlinkLocalOptions {
-                            local_user_id: user_id,
-                            workspace_id: None,
-                            session_base_dir: wunder_server::cloud::session::wunder_home_dir(),
-                        },
-                    );
-                })
-                .await;
-            });
+        if !args.background_runtime {
+            // Startup self-healing probe: refresh the session, re-synthesize
+            // the cloud models and fire one heartbeat in the background.
+            // Returns immediately; never blocks startup and never logs secrets.
+            runtime.block_on(
+                desktop
+                    .state
+                    .cloud
+                    .startup_probe(&desktop.state.config_store),
+            );
+            // Interlink tunnel (互通方案 I9): one shared client per process. A
+            // no-session start stays a cheap poller; the loop picks up the
+            // session after a later login on its own. `start` takes a blocking
+            // lock, so it must run outside the async executor's worker threads.
+            {
+                let state = Arc::clone(&desktop.state);
+                let user_id = desktop.user_id.clone();
+                // Interlink startup may take a blocking lock while it restores
+                // its durable ledger. Do not wait for it before returning the
+                // native desktop handle: the UI can render immediately and the
+                // tunnel publishes its state asynchronously when ready.
+                runtime.spawn(async move {
+                    let _ = tokio::task::spawn_blocking(move || {
+                        wunder_server::interlink::client::start_with_options(
+                            state,
+                            wunder_server::interlink::client::InterlinkLocalOptions {
+                                local_user_id: user_id,
+                                workspace_id: None,
+                                session_base_dir: wunder_server::cloud::session::wunder_home_dir(),
+                            },
+                        );
+                    })
+                    .await;
+                });
+            }
         }
         let instance_id = uuid::Uuid::new_v4().simple().to_string();
         // 本地进程重启后，上一进程来不及收尾的运行痕迹会残留在监视缓存
         // 与受理表里；启动时收敛一次，避免线程目录和已停止的线程永久
-        // 显示“运行中”。
-        let recovered = recover_restarted_threads(&desktop, &instance_id);
-        if recovered > 0 {
-            tracing::info!(recovered, "settled restarted thread status");
+        // 显示“运行中”。A background tick must never settle turns owned by
+        // the live UI process.
+        if !args.background_runtime {
+            let recovered = recover_restarted_threads(&desktop, &instance_id);
+            if recovered > 0 {
+                tracing::info!(recovered, "settled restarted thread status");
+            }
         }
         let open_threads: Arc<Mutex<HashMap<String, u64>>> = Arc::new(Mutex::new(HashMap::new()));
         let chat_snapshot_cache = Arc::new(Mutex::new(HashMap::new()));

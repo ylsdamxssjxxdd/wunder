@@ -1,7 +1,7 @@
 ---
 title: 工具总览
 summary: 内置工具的规范名与英文别名、八个分类对应的说明页、场景到工具的对照，以及统一结果外壳与不套外壳的例外。
-updated_at: 2026-10-16
+updated_at: 2026-11-08
 ---
 
 # 工具总览
@@ -16,7 +16,7 @@ updated_at: 2026-10-16
 | 问询面板 | `question_panel` | 弹出结构化选项，向用户提问并等待选择 | 收尾与前端协同 |
 | 会话让出 | `sessions_yield` | 主动让出当前回合控制权，稍后再被唤起 | 收尾与前端协同 |
 | 列出文件 | `list_files` | 列出目录内容 | 工作区与代码 |
-| glob | — | 按通配模式查找文件路径 | 工作区与代码 |
+| 文件名匹配 | `glob` | 按通配模式查找文件路径 | 工作区与代码 |
 | 搜索内容 | `search_content` | 在文件中按正则搜索匹配内容 | 工作区与代码 |
 | 读取文件 | `read_file` | 读取文件内容，支持分段读取 | 工作区与代码 |
 | 写入文件 | `write_file` | 写入或整体覆盖文件 | 工作区与代码 |
@@ -62,7 +62,7 @@ updated_at: 2026-10-16
 | 分类 | 说明页 |
 | --- | --- |
 | 收尾与前端协同 | 计划面板 / 问询面板 / 会话让出：[计划面板 / 问询面板 / 会话让出](/docs/zh-CN/tools/panels/) |
-| 工作区与代码 | 列出文件 / glob / 搜索内容 / 读取文件 / 写入文件 / 文本编辑：[工作区文件](/docs/zh-CN/tools/workspace-files/)；执行命令 / 命令会话：[执行命令](/docs/zh-CN/tools/exec/)；技能调用：[技能调用](/docs/zh-CN/tools/skill-call/) |
+| 工作区与代码 | 列出文件 / 文件名匹配 / 搜索内容 / 读取文件 / 写入文件 / 文本编辑：[工作区文件](/docs/zh-CN/tools/workspace-files/)；执行命令 / 命令会话：[执行命令](/docs/zh-CN/tools/exec/)；技能调用：[技能调用](/docs/zh-CN/tools/skill-call/) |
 | Web | 网页抓取：[网页抓取](/docs/zh-CN/tools/web-fetch/)；浏览器：[浏览器工具族](/docs/zh-CN/tools/browser/) |
 | 多模态 | 读图工具：[读图工具](/docs/zh-CN/tools/read-image/)；图像生成 / 视频生成 / 语音生成 / 声转文：[多模态生成](/docs/zh-CN/tools/multimodal-generation/) |
 | 桌面 | 桌面控制：[桌面控制](/docs/zh-CN/tools/desktop-control/) |

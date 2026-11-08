@@ -10,11 +10,17 @@ wunder 心舰 是一个多形态的智能体工作台
 ## 快速开始
 从 [Releases](https://github.com/ylsdamxssjxxdd/wunder/releases) 下载对应安装包：
 
-- Windows 7 32 位：下载 `wunder-desktop-*-win7-x86-setup.exe` 安装包，安装后开箱即用；受兼容性限制，部分第三方功能不可用。
-- Linux x64 / arm64：下载 `wunder-desktop-*-linux-*.run` 安装包，自带桌面版、命令行与运行环境，不需要 FUSE 或管理员权限。
-- Android：下载 `wunder-android-*-arm64.apk` 安装即可。
+- Windows 7 32 位：下载 `wunder-desktop-*-win7-x86-setup.exe` 安装包，开箱即用。
+- Linux x64 / arm64：下载 `wunder-desktop-*-linux-*.run` 安装包，开箱即用。
+- Android：下载 `wunder-android-*-arm64.apk` 安装包，开箱即用。
 
 初次运行请先在配置页面配置好模型即可使用
+
+## 设计哲学
+
+**极致精简：能快速解决问题，而不是凸显复杂的元素。**
+
+界面只保留完成任务所需的最少信息与操作；复杂能力按需展开，装饰、状态说明与技术细节不抢占主路径。技术复杂度留在引擎里，界面负责把结果和下一步说清楚。
 
 ## 界面预览
 
@@ -61,7 +67,7 @@ wunder 心舰 是一个多形态的智能体工作台
 | 问询面板 | `question_panel` | 弹出结构化选项，向用户提问并等待选择 | 收尾与前端协同 |
 | 会话让出 | `sessions_yield` | 主动让出当前回合控制权，稍后再被唤起 | 收尾与前端协同 |
 | 列出文件 | `list_files` | 列出目录内容 | 工作区与代码 |
-| glob | — | 按通配模式查找文件路径 | 工作区与代码 |
+| 文件名匹配 | `glob` | 按通配模式查找文件路径 | 工作区与代码 |
 | 搜索内容 | `search_content` | 在文件中按正则搜索匹配内容 | 工作区与代码 |
 | 读取文件 | `read_file` | 读取文件内容，支持分段读取 | 工作区与代码 |
 | 写入文件 | `write_file` | 写入或整体覆盖文件 | 工作区与代码 |
