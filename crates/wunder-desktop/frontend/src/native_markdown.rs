@@ -8,7 +8,7 @@
 //! rebuilt the blocks with empty images and re-decoded everything, which is
 //! what made restored pictures blink between thumbnail and path text.
 use crate::{message_blocks::Blocks, MdBlock};
-use slint::{Model, ModelRc};
+use slint::{Model, ModelRc, VecModel};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
@@ -20,6 +20,15 @@ use wunder_desktop::NativeDesktop;
 /// Decoded thumbnails are at most 640×400 RGBA (~1 MB); the cache stays a
 /// bounded fraction of the session's working set.
 const CACHE_CAPACITY: usize = 32;
+/// Total decoded RGBA kept by the cache. Animated GIFs keep every frame, so
+/// the entry count alone is not a memory bound.
+const CACHE_BYTE_BUDGET: usize = 96 * 1024 * 1024;
+/// Animated GIF bounds: frames are display-sized and the whole animation has
+/// to fit a fixed RGBA budget so a long GIF cannot exhaust the phone's memory.
+const GIF_MAX_FRAMES: usize = 48;
+const GIF_MAX_WIDTH: u32 = 480;
+const GIF_MAX_HEIGHT: u32 = 360;
+const GIF_FRAME_BUDGET: usize = 24 * 1024 * 1024;
 /// Full worker queues are retried on a slow tick; a permanently saturated
 /// worker releases the subscribers instead of parking them forever.
 const RETRY_DELAY: Duration = Duration::from_millis(100);
@@ -30,24 +39,39 @@ struct Pixels {
     height: u32,
     bytes: Vec<u8>,
 }
+
+/// One decoded image. A still has exactly one frame; a GIF keeps every
+/// display-sized frame plus the delay the decoder measured.
+struct Decoded {
+    frames: Vec<Pixels>,
+    delays: Vec<u32>,
+}
+
+/// UI-thread form of [`Decoded`]: Slint images plus delays.
+#[derive(Clone)]
+struct DecodedImage {
+    frames: Vec<slint::Image>,
+    delays: Vec<u32>,
+}
+
 struct Job {
     desktop: Arc<NativeDesktop>,
     agent: String,
     sources: Vec<String>,
-    result: mpsc::SyncSender<Vec<(String, Option<Pixels>)>>,
+    result: mpsc::SyncSender<Vec<(String, Option<Decoded>)>>,
 }
 
 /// The loader's UI-thread state: pixel cache, LRU order and the models
 /// waiting on each in-flight source.
 #[derive(Default)]
 struct Loader {
-    cache: HashMap<String, slint::Image>,
+    cache: HashMap<String, DecodedImage>,
     order: VecDeque<String>,
     inflight: HashMap<String, Vec<ModelRc<MdBlock>>>,
 }
 
 impl Loader {
-    fn cached(&mut self, source: &str) -> Option<slint::Image> {
+    fn cached(&mut self, source: &str) -> Option<DecodedImage> {
         let image = self.cache.get(source)?.clone();
         if let Some(position) = self.order.iter().position(|key| key == source) {
             self.order.remove(position);
@@ -56,12 +80,24 @@ impl Loader {
         Some(image)
     }
 
-    fn remember(&mut self, source: String, image: slint::Image) {
+    fn remember(&mut self, source: String, image: DecodedImage) {
         // The composer's data-URL echo is replaced by the durable stored path
         // at the next history refresh; caching megabytes of URL text would
         // only bloat the key space.
         if source.starts_with("data:") {
             return;
+        }
+        let bytes = decoded_bytes(&image);
+        let held: usize = self
+            .cache
+            .values()
+            .map(decoded_bytes)
+            .fold(0usize, usize::saturating_add);
+        if held.saturating_add(bytes) > CACHE_BYTE_BUDGET {
+            // Block models already hold their own image handles; dropping the
+            // lookup only makes a later projection decode again.
+            self.cache.clear();
+            self.order.clear();
         }
         if self.cache.insert(source.clone(), image).is_some() {
             if let Some(position) = self.order.iter().position(|key| *key == source) {
@@ -86,9 +122,20 @@ fn same_model(a: &ModelRc<MdBlock>, b: &ModelRc<MdBlock>) -> bool {
     std::ptr::eq(a.as_any(), b.as_any())
 }
 
+fn decoded_bytes(image: &DecodedImage) -> usize {
+    image
+        .frames
+        .iter()
+        .map(|frame| {
+            let size = frame.size();
+            size.width as usize * size.height as usize * 4
+        })
+        .fold(0usize, usize::saturating_add)
+}
+
 /// Byte source for one reference: the composer's data URLs decode inline,
 /// everything else resolves through the private workspace remap.
-fn load(desktop: &NativeDesktop, agent: &str, source: &str) -> Option<Pixels> {
+fn load(desktop: &NativeDesktop, agent: &str, source: &str) -> Option<Decoded> {
     if let Some(bytes) = inline_data_bytes(source) {
         return decode(&bytes);
     }
@@ -134,7 +181,16 @@ fn worker() -> &'static mpsc::SyncSender<Job> {
     })
 }
 
-fn decode(bytes: &[u8]) -> Option<Pixels> {
+fn decode(bytes: &[u8]) -> Option<Decoded> {
+    if image::guess_format(bytes).ok() == Some(image::ImageFormat::Gif) {
+        if let Some(animation) = decode_gif(bytes) {
+            return Some(animation);
+        }
+    }
+    Some(Decoded { frames: vec![decode_still(bytes)?], delays: Vec::new() })
+}
+
+fn decode_still(bytes: &[u8]) -> Option<Pixels> {
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .ok()?;
@@ -149,6 +205,61 @@ fn decode(bytes: &[u8]) -> Option<Pixels> {
         height: image.height(),
         bytes: image.into_raw(),
     })
+}
+
+/// Shrink one GIF frame to the display box without ever upscaling a small
+/// animation into megabytes of texture.
+fn bounded_frame(buffer: image::RgbaImage) -> image::RgbaImage {
+    let (width, height) = buffer.dimensions();
+    if width <= GIF_MAX_WIDTH && height <= GIF_MAX_HEIGHT {
+        return buffer;
+    }
+    let ratio = (GIF_MAX_WIDTH as f32 / width as f32)
+        .min(GIF_MAX_HEIGHT as f32 / height as f32);
+    let target_width = ((width as f32 * ratio).round() as u32).max(1);
+    let target_height = ((height as f32 * ratio).round() as u32).max(1);
+    image::DynamicImage::ImageRgba8(buffer)
+        .thumbnail(target_width, target_height)
+        .to_rgba8()
+}
+
+/// Decode every GIF frame up to the display budget. Returns `None` when the
+/// file has a single frame (a static GIF falls through to the still path).
+fn decode_gif(bytes: &[u8]) -> Option<Decoded> {
+    use image::{AnimationDecoder, ImageDecoder};
+    let mut decoder = image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes)).ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    decoder.set_limits(limits).ok()?;
+    let mut frames = Vec::new();
+    let mut delays = Vec::new();
+    let mut total = 0usize;
+    for frame in decoder.into_frames().take(GIF_MAX_FRAMES) {
+        let Ok(frame) = frame else { break };
+        let (numerator, denominator) = frame.delay().numer_denom_ms();
+        let delay = if denominator == 0 {
+            100
+        } else {
+            (numerator as f64 / denominator as f64).round() as u32
+        };
+        let image = bounded_frame(frame.into_buffer());
+        let bytes = image.as_raw().len();
+        if !frames.is_empty() && total.saturating_add(bytes) > GIF_FRAME_BUDGET {
+            break;
+        }
+        total += bytes;
+        frames.push(Pixels {
+            width: image.width(),
+            height: image.height(),
+            bytes: image.into_raw(),
+        });
+        // Browsers treat a missing or sub-frame delay as ~100ms; anything
+        // else is bounded so a huge or zero delay cannot stall or spin.
+        delays.push(if delay < 20 { 100 } else { delay.clamp(40, 1000) });
+    }
+    (frames.len() > 1).then_some(Decoded { frames, delays })
 }
 
 pub fn hydrate(blocks: &mut Blocks, desktop: Arc<NativeDesktop>, agent: String) {
@@ -178,7 +289,7 @@ pub fn hydrate_model(model: slint::ModelRc<MdBlock>, desktop: Arc<NativeDesktop>
             }
             let source = block.image_source.to_string();
             if let Some(image) = loader.cached(&source) {
-                fill(&mut block, image);
+                fill(&mut block, &image);
                 model.set_row_data(index, block);
                 continue;
             }
@@ -218,7 +329,7 @@ fn dispatch(desktop: Arc<NativeDesktop>, agent: String, sources: Vec<String>) {
     send(job, rx, 0);
 }
 
-fn send(job: Job, rx: mpsc::Receiver<Vec<(String, Option<Pixels>)>>, attempt: u32) {
+fn send(job: Job, rx: mpsc::Receiver<Vec<(String, Option<Decoded>)>>, attempt: u32) {
     match worker().try_send(job) {
         Ok(()) => poll(rx),
         Err(mpsc::TrySendError::Full(job)) if attempt < RETRY_LIMIT => {
@@ -240,14 +351,21 @@ fn send(job: Job, rx: mpsc::Receiver<Vec<(String, Option<Pixels>)>>, attempt: u3
 
 /// Deliver one finished job: fill the cache, then patch every subscribed
 /// model. Runs on the UI thread through the polling timer.
-fn deliver(images: Vec<(String, Option<Pixels>)>) {
+fn deliver(images: Vec<(String, Option<Decoded>)>) {
     LOADER.with(|loader| {
         let mut loader = loader.borrow_mut();
-        for (source, pixels) in images {
-            let image = pixels.map(|p| {
-                slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(
-                    &p.bytes, p.width, p.height,
-                ))
+        for (source, decoded) in images {
+            let image = decoded.map(|decoded| DecodedImage {
+                frames: decoded
+                    .frames
+                    .into_iter()
+                    .map(|p| {
+                        slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(
+                            &p.bytes, p.width, p.height,
+                        ))
+                    })
+                    .collect(),
+                delays: decoded.delays,
             });
             if let Some(image) = &image {
                 loader.remember(source.clone(), image.clone());
@@ -274,14 +392,24 @@ fn release(sources: &[String]) {
 /// Store the pixels together with their aspect ratio: the Slint side sizes a
 /// picture from `image-width`/`image-height` before the texture arrives, and a
 /// zero ratio would render every image at the 16:9 default.
-fn fill(block: &mut MdBlock, image: slint::Image) {
-    let size = image.size();
+fn fill(block: &mut MdBlock, image: &DecodedImage) {
+    let Some(first) = image.frames.first() else { return };
+    let size = first.size();
     block.image_width = size.width as f32;
     block.image_height = size.height as f32;
-    block.image = image;
+    block.image = first.clone();
+    if image.frames.len() > 1 {
+        block.image_frames = ModelRc::new(VecModel::from(image.frames.clone()));
+        block.frame_delays = ModelRc::new(VecModel::from(
+            image.delays.iter().map(|delay| *delay as i32).collect::<Vec<_>>(),
+        ));
+    } else {
+        block.image_frames = ModelRc::default();
+        block.frame_delays = ModelRc::default();
+    }
 }
 
-fn apply(model: &ModelRc<MdBlock>, source: &str, image: Option<&slint::Image>) {
+fn apply(model: &ModelRc<MdBlock>, source: &str, image: Option<&DecodedImage>) {
     for index in 0..model.row_count() {
         let Some(mut block) = model.row_data(index) else {
             continue;
@@ -290,7 +418,7 @@ fn apply(model: &ModelRc<MdBlock>, source: &str, image: Option<&slint::Image>) {
             continue;
         }
         if let Some(image) = image {
-            fill(&mut block, image.clone());
+            fill(&mut block, image);
             model.set_row_data(index, block);
         } else {
             // A missing/unsupported image keeps its label but collapses the
@@ -301,7 +429,7 @@ fn apply(model: &ModelRc<MdBlock>, source: &str, image: Option<&slint::Image>) {
     }
 }
 
-fn poll(rx: mpsc::Receiver<Vec<(String, Option<Pixels>)>>) {
+fn poll(rx: mpsc::Receiver<Vec<(String, Option<Decoded>)>>) {
     slint::Timer::single_shot(Duration::from_millis(33), move || match rx.try_recv() {
         Ok(images) => deliver(images),
         Err(mpsc::TryRecvError::Empty) => poll(rx),
@@ -316,9 +444,35 @@ mod tests {
     #[test]
     fn native_image_decoder_keeps_pixels_and_rejects_invalid_data() {
         let image = decode(include_bytes!("../assets/markdown-example.png")).unwrap();
-        assert_eq!((image.width, image.height), (640, 280));
-        assert_eq!(image.bytes.len(), 640 * 280 * 4);
+        assert_eq!(image.frames.len(), 1);
+        assert!(image.delays.is_empty());
+        assert_eq!((image.frames[0].width, image.frames[0].height), (640, 280));
+        assert_eq!(image.frames[0].bytes.len(), 640 * 280 * 4);
         assert!(decode(b"not an image").is_none());
+    }
+
+    #[test]
+    fn gif_decoding_keeps_frames_and_delays() {
+        use image::{Delay, Frame, Rgba, RgbaImage};
+        let frame = |red: u8| {
+            Frame::from_parts(
+                RgbaImage::from_pixel(8, 6, Rgba([red, 0, 0, 255])),
+                0,
+                0,
+                Delay::from_numer_denom_ms(120, 1),
+            )
+        };
+        let mut encoded = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut encoded);
+            encoder.encode_frame(frame(255)).unwrap();
+            encoder.encode_frame(frame(128)).unwrap();
+            encoder.encode_frame(frame(0)).unwrap();
+        }
+        let decoded = decode(&encoded).expect("animated GIF decodes");
+        assert_eq!(decoded.frames.len(), 3);
+        assert_eq!(decoded.delays, vec![120, 120, 120]);
+        assert_eq!((decoded.frames[0].width, decoded.frames[0].height), (8, 6));
     }
 
     #[test]
@@ -335,12 +489,11 @@ mod tests {
     #[test]
     fn cache_evicts_the_oldest_entry_and_skips_data_urls() {
         let mut loader = Loader::default();
-        let pixel = || {
-            slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(
-                &[255, 0, 0, 255],
-                1,
-                1,
-            ))
+        let pixel = || DecodedImage {
+            frames: vec![slint::Image::from_rgba8(
+                slint::SharedPixelBuffer::clone_from_slice(&[255, 0, 0, 255], 1, 1),
+            )],
+            delays: Vec::new(),
         };
         for index in 0..CACHE_CAPACITY + 4 {
             loader.remember(format!("workspaces/pic-{index}.png"), pixel());

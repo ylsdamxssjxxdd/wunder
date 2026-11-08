@@ -124,61 +124,91 @@ component ProcessEntryCard inherits Rectangle {
             }
 
         }
-        if root.entry.open && root.entry.kind != 1 : VerticalLayout {
+        // The fold is laid out from the start and only collapses its height.
+        // A panel created on the expand tap measured wrapped text at its
+        // unwrapped width, so the box stayed one line tall and command output
+        // painted outside its border.
+        detail-fold := VerticalLayout {
+            visible: root.entry.open && root.entry.kind != 1;
+            height: self.visible ? self.preferred-height : 0px;
             padding-left: 44px; padding-right: 24px;
             padding-top: 4px; padding-bottom: 8px;
             spacing: 8px;
-            for patch in root.entry.patch : PatchDiffCard { card: patch; }
-            if root.entry.patch.length == 0 && root.mobile : Rectangle {
-                height: mobile-detail.preferred-height;
+
+            // Command output has neither patch cards nor sections; its plain
+            // fallback stays laid out while folded so the wrapped height is
+            // known before the step is opened.
+            if root.entry.patch.length == 0 && root.entry.sections.length == 0 && root.mobile : Rectangle {
+                height: mobile-fallback.preferred-height;
                 background: Theme.panel; border-width: 1px;
                 border-color: Theme.border; border-radius: Theme.radius-sm;
-                mobile-detail := VerticalLayout {
+                mobile-fallback := VerticalLayout {
                     padding: 10px;
                     WorkflowDetail {
-                        sections: root.entry.sections;
+                        sections: [];
                         fallback: root.entry.detail;
                         copy(text) => { root.copy-text(text); }
                     }
                 }
             }
-            if root.entry.patch.length == 0 && !root.mobile : Rectangle {
-                height: min(240px, detail.preferred-height + 16px);
-                background: Theme.panel; border-width: 1px;
-                border-color: Theme.border; border-radius: Theme.radius-sm;
-                private property <bool> follow-tail: true;
-                private property <string> revision: root.entry.detail;
-                private property <bool> scroll-pending: true;
-                changed revision => { self.scroll-pending = true; }
-                Timer {
-                    interval: 33ms; running: parent.scroll-pending;
-                    triggered => {
-                        parent.scroll-pending = false;
-                        if parent.follow-tail && root.entry.status-kind == 1 {
-                            detail-scroll.content-y = min(0px, detail-scroll.visible-height - detail-scroll.content-height);
+
+            // Patch cards and section details mount on demand; their rows carry
+            // explicit widths and per-line heights, so measuring them after the
+            // tap is safe.
+            if root.entry.open : VerticalLayout {
+                spacing: 8px;
+                for patch in root.entry.patch : PatchDiffCard { card: patch; mobile: root.mobile; }
+                if root.entry.patch.length == 0 && root.mobile && root.entry.sections.length > 0 : Rectangle {
+                    height: mobile-detail.preferred-height;
+                    background: Theme.panel; border-width: 1px;
+                    border-color: Theme.border; border-radius: Theme.radius-sm;
+                    mobile-detail := VerticalLayout {
+                        padding: 10px;
+                        WorkflowDetail {
+                            sections: root.entry.sections;
+                            fallback: root.entry.detail;
+                            copy(text) => { root.copy-text(text); }
                         }
                     }
                 }
-                detail-scroll := ScrollView {
-                    x: 10px; y: 8px; width: parent.width - 20px; height: parent.height - 16px;
-                    horizontal-scrollbar-policy: always-off;
-                    vertical-scrollbar-policy: as-needed;
-                    content-width: self.visible-width;
-                    // A ScrollView only infers its content size from *layout*
-                    // children. This one is a component, so without the explicit
-                    // height `content-height` collapsed to the viewport: the
-                    // scrollbar never appeared and a long output was clipped at
-                    // the 240px cap with no way to reach the rest of it. State
-                    // the height the way the transcript scroll does.
-                    content-height: max(self.visible-height, detail.preferred-height);
-                    detail := WorkflowDetail {
-                        width: detail-scroll.visible-width;
-                        sections: root.entry.sections;
-                        fallback: root.entry.detail;
-                        copy(text) => { root.copy-text(text); }
+                if root.entry.patch.length == 0 && !root.mobile : Rectangle {
+                    height: min(240px, detail.preferred-height + 16px);
+                    background: Theme.panel; border-width: 1px;
+                    border-color: Theme.border; border-radius: Theme.radius-sm;
+                    private property <bool> follow-tail: true;
+                    private property <string> revision: root.entry.detail;
+                    private property <bool> scroll-pending: true;
+                    changed revision => { self.scroll-pending = true; }
+                    Timer {
+                        interval: 33ms; running: parent.scroll-pending;
+                        triggered => {
+                            parent.scroll-pending = false;
+                            if parent.follow-tail && root.entry.status-kind == 1 {
+                                detail-scroll.content-y = min(0px, detail-scroll.visible-height - detail-scroll.content-height);
+                            }
+                        }
                     }
-                    scrolled => {
-                        parent.follow-tail = self.visible-height - self.content-height - self.content-y >= -24px;
+                    detail-scroll := ScrollView {
+                        x: 10px; y: 8px; width: parent.width - 20px; height: parent.height - 16px;
+                        horizontal-scrollbar-policy: always-off;
+                        vertical-scrollbar-policy: as-needed;
+                        content-width: self.visible-width;
+                        // A ScrollView only infers its content size from *layout*
+                        // children. This one is a component, so without the explicit
+                        // height `content-height` collapsed to the viewport: the
+                        // scrollbar never appeared and a long output was clipped at
+                        // the 240px cap with no way to reach the rest of it. State
+                        // the height the way the transcript scroll does.
+                        content-height: max(self.visible-height, detail.preferred-height);
+                        detail := WorkflowDetail {
+                            width: detail-scroll.visible-width;
+                            sections: root.entry.sections;
+                            fallback: root.entry.detail;
+                            copy(text) => { root.copy-text(text); }
+                        }
+                        scrolled => {
+                            parent.follow-tail = self.visible-height - self.content-height - self.content-y >= -24px;
+                        }
                     }
                 }
             }

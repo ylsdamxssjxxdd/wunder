@@ -47,6 +47,13 @@ component DiffRow inherits Rectangle {
 
 export component PatchDiffCard inherits Rectangle {
     in property <PatchCard> card;
+    // Touch shells pan long diff lines horizontally; the desktop keeps the
+    // bounded column and elides anything wider than the reading column.
+    in property <bool> mobile: false;
+    private property <length> viewport: body.width - 20px;
+    private property <length> lines-width: root.mobile
+        ? max(self.viewport, root.card.content-width)
+        : self.viewport;
     // Height follows the content: header row + "变更片段" header + the bounded
     // diff lines + padding.
     height: body.preferred-height;
@@ -95,9 +102,21 @@ export component PatchDiffCard inherits Rectangle {
                 vertical-alignment: center;
             }
         }
-        VerticalLayout {
-            alignment: start; spacing: 0px;
-            for line in root.card.lines : DiffRow { line: line; }
+        // The line area alone pans: the file header and hunk title stay put.
+        // A plain Flickable is enough because the card never scrolls
+        // vertically itself; vertical gestures fall through to the timeline.
+        Flickable {
+            width: root.viewport;
+            height: lines-column.preferred-height;
+            content-width: root.lines-width;
+            content-height: lines-column.preferred-height;
+            interactive: root.mobile && root.lines-width > root.viewport + 2px;
+            mouse-drag-pan-enabled: false;
+            lines-column := VerticalLayout {
+                width: root.lines-width;
+                alignment: start; spacing: 0px;
+                for line in root.card.lines : DiffRow { line: line; }
+            }
         }
     }
 }

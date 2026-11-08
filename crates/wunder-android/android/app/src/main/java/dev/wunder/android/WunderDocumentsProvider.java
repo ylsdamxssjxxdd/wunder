@@ -290,7 +290,11 @@ public final class WunderDocumentsProvider extends DocumentsProvider {
         if (file.isDirectory()) {
             return Document.MIME_TYPE_DIR;
         }
-        String name = file.getName();
+        return mimeTypeOfName(file.getName());
+    }
+
+    /** MIME used both by the provider and by the app's ACTION_VIEW launcher. */
+    public static String mimeTypeOfName(String name) {
         int dot = name.lastIndexOf('.');
         String extension = dot >= 0 && dot + 1 < name.length()
                 ? name.substring(dot + 1).toLowerCase(Locale.ROOT)

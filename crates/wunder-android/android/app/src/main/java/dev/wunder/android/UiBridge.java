@@ -473,6 +473,50 @@ public final class UiBridge {
         });
     }
 
+    /**
+     * Open one workspace file with an installed viewer. The read-only document
+     * provider supplies the content URI, so the file never leaves the sandbox.
+     */
+    public static boolean openWorkspaceFile(String workspaceId, String relativePath) {
+        Activity current = activity.get();
+        if (current == null || workspaceId == null || workspaceId.isEmpty()
+                || relativePath == null || relativePath.isEmpty()) {
+            return false;
+        }
+        String mime = WunderDocumentsProvider.mimeTypeOfName(relativePath);
+        return launchWorkspaceDocument(current, workspaceId, relativePath, mime, false);
+    }
+
+    /** Open the containing folder (or a directory itself) in a file manager. */
+    public static boolean openWorkspaceLocation(String workspaceId, String relativeDir) {
+        Activity current = activity.get();
+        if (current == null || workspaceId == null || workspaceId.isEmpty()) {
+            return false;
+        }
+        String relative = relativeDir == null ? "" : relativeDir;
+        return launchWorkspaceDocument(current, workspaceId, relative,
+                DocumentsContract.Document.MIME_TYPE_DIR, true);
+    }
+
+    private static boolean launchWorkspaceDocument(Activity activity, String workspaceId,
+            String relative, String mime, boolean directory) {
+        String authority = activity.getPackageName() + WunderDocumentsProvider.AUTHORITY_SUFFIX;
+        Uri uri = DocumentsContract.buildDocumentUri(authority, workspaceId + ":" + relative);
+        Intent intent = new Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, mime)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        if (directory) {
+            // Let the file manager browse the folder's children too.
+            intent.addFlags(Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        }
+        try {
+            activity.startActivity(intent);
+            return true;
+        } catch (Exception error) {
+            return false;
+        }
+    }
+
     private static Intent appDetails(Context context) {
         return new Intent(
                 Settings.ACTION_APPLICATION_DETAILS_SETTINGS,

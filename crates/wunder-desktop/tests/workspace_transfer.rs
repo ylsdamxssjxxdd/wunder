@@ -399,6 +399,39 @@ fn local_workspace_folder_crud_stays_inside_the_root() -> Result<(), Box<dyn std
 }
 
 #[test]
+fn local_workspace_move_keeps_files_and_directories_inside_the_root(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let runtime = start_isolated()?;
+    let host = tempfile::tempdir()?;
+    let root = make_folder(host.path(), "local-move");
+    runtime.workspace_local_mkdir(&root, "notes")?;
+    runtime.workspace_local_mkdir(&root, "notes/sub")?;
+    runtime.workspace_local_write(&root, "notes/a.md")?;
+    runtime.workspace_local_mkdir(&root, "archive")?;
+
+    // A file keeps its name when moved into a sibling folder.
+    runtime.workspace_local_move(&root, "notes/a.md", "archive")?;
+    assert!(std::path::Path::new(&root).join("archive/a.md").is_file());
+    assert!(!std::path::Path::new(&root).join("notes/a.md").exists());
+
+    // A directory moves into another folder, then back to the root.
+    runtime.workspace_local_move(&root, "notes", "archive")?;
+    assert!(std::path::Path::new(&root).join("archive/notes/sub").is_dir());
+    runtime.workspace_local_move(&root, "archive/notes", "")?;
+    assert!(std::path::Path::new(&root).join("notes/sub").is_dir());
+
+    // Self, own subtree and outer traversal targets are refused.
+    assert!(runtime.workspace_local_move(&root, "notes", "notes").is_err());
+    assert!(runtime
+        .workspace_local_move(&root, "notes", "notes/sub")
+        .is_err());
+    assert!(runtime
+        .workspace_local_move(&root, "notes", "../outside")
+        .is_err());
+    Ok(())
+}
+
+#[test]
 fn local_copy_uses_selected_directory_and_preserves_self_copy(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = start_isolated()?;

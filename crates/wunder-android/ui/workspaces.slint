@@ -182,7 +182,7 @@ component WorkspaceRow inherits Rectangle {
                 y: 14px;
                 width: 16px;
                 height: 16px;
-                source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/ellipsis.svg");
+                source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/more-vertical.svg");
                 colorize: Theme.muted;
                 image-fit: contain;
             }
@@ -706,6 +706,22 @@ export component WorkspacesPage inherits Rectangle {
                 HorizontalLayout {
                     height: 36px;
                     spacing: 10px;
+                    cross-axis-alignment: center;
+                    // Destructive action lives in the editor too, so deleting a
+                    // workspace is discoverable without hunting for the row menu.
+                    if !root.editor-new : Action {
+                        width: 112px;
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trash.svg");
+                        icon-size: 14px;
+                        label: "删除工作区";
+                        show-label: true;
+                        danger: true;
+                        clicked => {
+                            root.delete-id = root.editor-id;
+                            root.delete-name = root.menu-name == "" ? root.editor-name : root.menu-name;
+                            root.overlay = 3;
+                        }
+                    }
                     Rectangle { horizontal-stretch: 1; }
                     Action {
                         width: 76px;

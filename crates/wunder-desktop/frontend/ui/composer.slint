@@ -1561,7 +1561,9 @@ export component Composer inherits Rectangle {
         HorizontalLayout {
             vertical-stretch: 1;
             spacing: root.mobile ? 8px : 0px;
-            cross-axis-alignment: center;
+            // 桌面端必须 stretch：居中对齐会让编辑器卡片退化为内容高度，
+            // 而卡片高度又绑定父级，最终塌成 0px，整张输入卡不再绘制。
+            cross-axis-alignment: root.mobile ? CrossAxisAlignment.center : CrossAxisAlignment.stretch;
             if root.mobile : Rectangle {
                 width: 40px;
                 height: 40px;

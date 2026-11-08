@@ -378,6 +378,42 @@ pub fn open_permission(id: &str) {
     }
 }
 
+/// Open one workspace file with an installed viewer through the read-only
+/// document provider. Returns false when no activity can handle it.
+pub fn open_workspace_file(workspace_id: &str, relative: &str) -> bool {
+    call_workspace_bool("openWorkspaceFile", workspace_id, relative)
+}
+
+/// Open the containing folder (or a directory itself) in a file manager.
+pub fn open_workspace_location(workspace_id: &str, relative_dir: &str) -> bool {
+    call_workspace_bool("openWorkspaceLocation", workspace_id, relative_dir)
+}
+
+fn call_workspace_bool(method: &str, workspace_id: &str, relative: &str) -> bool {
+    let Some(host) = HOST.get() else {
+        return false;
+    };
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return false;
+    };
+    let (Ok(id), Ok(relative)) = (env.new_string(workspace_id), env.new_string(relative)) else {
+        return false;
+    };
+    match env.call_static_method(
+        &host.ui_bridge,
+        method,
+        "(Ljava/lang/String;Ljava/lang/String;)Z",
+        &[JValue::Object(&id), JValue::Object(&relative)],
+    ) {
+        Ok(value) => value.z().unwrap_or(false),
+        Err(error) => {
+            clear_java_exception(&mut env);
+            log::warn!("{method}: {error}");
+            false
+        }
+    }
+}
+
 /// Install time of the current APK, in Unix milliseconds. The Android update
 /// check compares a same-version nightly release against this value.
 pub fn installed_at_millis() -> i64 {

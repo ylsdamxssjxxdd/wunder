@@ -637,6 +637,7 @@ fn patch_card() -> ModelRc<crate::PatchCard> {
                 action: "更新".into(),
                 added: "200".into(),
                 deleted: "100".into(),
+                content_width: 0.0,
                 lines: ModelRc::from(Rc::new(VecModel::from(
                     (0..200)
                         .map(|line| crate::PatchLine {

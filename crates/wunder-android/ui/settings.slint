@@ -3318,7 +3318,7 @@ component RuntimePage inherits Rectangle {
                 SheetCard {
                     CardTitle { title: "说明"; }
                     Text {
-                        text: "运行环境只影响命令工具；聊天、模型与本地数据仍在安卓版进程内。安装失败时可在上方卡片重试。";
+                        text: "运行环境只影响命令工具；聊天、模型与本地数据仍在安卓版进程内。安装新的安卓版安装包后，Ubuntu 会在下次启动时整棵重建，guest 内自行安装的软件与 /root 下的文件会被清空。";
                         color: Theme.muted;
                         font-size: Theme.font-xs;
                         wrap: word-wrap;
@@ -3710,7 +3710,7 @@ component AboutPage inherits Rectangle {
                     if root.update-phase == "ready" : VerticalLayout {
                         spacing: 8px;
                         Text {
-                            text: "更新已下载。安装会替换应用，聊天记录、工作区与设置会保留。";
+                            text: "更新已下载。安装会替换应用，聊天记录、工作区与设置会保留；Ubuntu 运行环境会在下次启动时重建，guest 内自行安装的软件与 /root 下的文件会被清空。";
                             color: Theme.text-secondary;
                             font-size: Theme.font-xs;
                             wrap: word-wrap;

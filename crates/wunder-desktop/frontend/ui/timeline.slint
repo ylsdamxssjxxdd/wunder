@@ -573,7 +573,7 @@ component FoldEntry inherits Rectangle {
             padding-right: Theme.timeline-padding;
             padding-top: 4px; padding-bottom: 8px;
             spacing: 8px;
-            for card in root.data.patch : PatchDiffCard { card: card; }
+            for card in root.data.patch : PatchDiffCard { card: card; mobile: root.mobile; }
             // A thinking entry shows its own text, unlabelled: the web timeline
             // renders it as a plain block, while a tool result keeps the
             // structured viewer with its "输出" head.

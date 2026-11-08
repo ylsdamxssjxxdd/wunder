@@ -308,6 +308,21 @@ component ImageBlock inherits Rectangle {
         ? min(box-width, 440px / max(0.05, ratio))
         : box-width;
     private property <length> draw-height: block.image-width > 0 ? draw-width * ratio : 220px;
+    // GIF playback: swap the frame on the delay the decoder measured. A new
+    // block (history refresh, row reuse) starts from the first frame again.
+    private property <int> frame: 0;
+    private property <int> frame-count: root.block.image-frames.length;
+    private property <int> frame-delay-ms: root.block.frame-delays.length > 0
+        ? root.block.frame-delays[min(root.frame, root.block.frame-delays.length - 1)]
+        : 100;
+    changed block => { root.frame = 0; }
+    Timer {
+        // 40ms floor keeps a 0-delay GIF from spinning the renderer at full
+        // speed; the cap matches the decoder's own bounds.
+        interval: root.frame-count > 1 ? max(40ms, root.frame-delay-ms * 1ms) : 1000ms;
+        running: root.frame-count > 1;
+        triggered => { root.frame = Math.mod(root.frame + 1, root.frame-count); }
+    }
 
     // A failed image collapses to a one-line notice: a 220px grey box for a
     // broken link would dominate the document it failed to illustrate.
@@ -337,7 +352,9 @@ component ImageBlock inherits Rectangle {
         if block.image.width > 0 : Image {
             width: root.draw-width;
             height: root.draw-height;
-            source: block.image;
+            source: root.frame-count > 1
+                ? root.block.image-frames[min(root.frame, root.frame-count - 1)]
+                : root.block.image;
             image-fit: contain;
         }
         if block.image.width <= 0 : Rectangle {

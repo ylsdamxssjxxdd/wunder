@@ -192,6 +192,104 @@ component SheetAction inherits Rectangle {
     }
 }
 
+// Direct row action in the drawer. Thread rows show rename / trajectory /
+// archive inline instead of hiding three taps behind an ellipsis sheet.
+component RowIconButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> tip;
+    callback clicked();
+
+    width: 28px;
+    height: 32px;
+    border-radius: 6px;
+    background: icon-touch.has-hover ? Theme.hover : transparent;
+    icon-touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+    Image {
+        x: 7px;
+        y: 9px;
+        width: 14px;
+        height: 14px;
+        source: root.icon;
+        colorize: Theme.muted;
+    }
+    accessible-role: button;
+    accessible-label: root.tip;
+}
+
+// Compact file row in the drawer's inline working-directory section. It keeps
+// only the icon and name (no size subtitle); folders navigate, files open the
+// shared action sheet.
+component DrawerFileRow inherits Rectangle {
+    in property <WorkspaceFile> entry;
+    callback open-folder();
+    callback open-file();
+    callback open-actions();
+
+    height: 42px;
+    background: row-touch.has-hover ? Theme.hover : transparent;
+    row-touch := TouchArea {
+        clicked => {
+            if root.entry.dir {
+                root.open-folder();
+            } else {
+                root.open-file();
+            }
+        }
+    }
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 8px;
+        spacing: 8px;
+        cross-axis-alignment: center;
+        Image {
+            width: 16px;
+            height: 16px;
+            source: root.entry.dir ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/folder-open.svg")
+                : root.entry.kind == 1 ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-image.svg")
+                : root.entry.kind == 2 ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-film.svg")
+                : root.entry.kind == 3 ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/file-zipper.svg")
+                : @image-url("../../../crates/wunder-desktop/frontend/assets/icons/file-lines.svg");
+            colorize: root.entry.dir ? Theme.accent-ink : Theme.text-secondary;
+            image-fit: contain;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.entry.name;
+            color: Theme.text;
+            font-size: Theme.font-sm;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+        if root.entry.dir : Image {
+            width: 12px;
+            height: 12px;
+            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-right.svg");
+            colorize: Theme.muted;
+        }
+        // Folders keep tap-to-enter; the ellipsis opens the same action sheet
+        // as files so rename / move / delete also work on directories.
+        Rectangle {
+            width: 26px;
+            height: 30px;
+            border-radius: 6px;
+            background: more-touch.has-hover ? Theme.hover : transparent;
+            more-touch := TouchArea {
+                clicked => { root.open-actions(); }
+            }
+            Image {
+                x: 6px;
+                y: 8px;
+                width: 14px;
+                height: 14px;
+                source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/more-vertical.svg");
+                colorize: Theme.muted;
+            }
+        }
+    }
+}
+
 // Touch knob on one end of the transcript selection. The core computes the
 // caret point; dragging reports window coordinates back so the edge follows
 // the text layout instead of a pixel estimate.
@@ -257,20 +355,18 @@ export component MobileWindow inherits Window {
     in property <int> archived-total: 0;
     in-out property <bool> drawer-open: false;
     in-out property <bool> device-sheet-open: false;
+    // Workspace switcher sheet, opened from the workspace row. The bottom row
+    // deletes the current workspace with an inline confirmation.
+    in-out property <bool> workspace-sheet-open: false;
+    in-out property <bool> workspace-delete-armed: false;
     in-out property <string> thread-title: "";
     in property <string> thread-subtitle: "";
     in property <string> toast: "";
 
     // ---- session actions --------------------------------------------
-    in-out property <bool> session-sheet-open: false;
-    in-out property <string> session-sheet-id: "";
-    in-out property <string> session-sheet-title: "";
-    in-out property <bool> session-sheet-archived: false;
     in-out property <bool> rename-open: false;
     in-out property <string> rename-id: "";
     in-out property <string> rename-title: "";
-    in-out property <bool> delete-archived-open: false;
-    in-out property <string> pending-delete-id: "";
 
     // ---- transcript --------------------------------------------------
     in-out property <[TimelineRow]> rows: [];
@@ -312,6 +408,12 @@ export component MobileWindow inherits Window {
     in property <length> selection-start-y: 0px;
     in property <length> selection-end-x: 0px;
     in property <length> selection-end-y: 0px;
+    // Copy action anchor: horizontal centre of the selection, its top line and
+    // its bottom line. The pill sits above the top line, or below the bottom
+    // one when the header leaves no room.
+    in property <length> selection-bar-x: 0px;
+    in property <length> selection-bar-y: 0px;
+    in property <length> selection-bar-bottom: 0px;
     callback selection-handle-drag(bool, length, length);
     // Height of the soft keyboard, published by the Rust tick from Slint's
     // virtual-keyboard rect. The window is edge-to-edge, so the activity does
@@ -334,15 +436,27 @@ export component MobileWindow inherits Window {
 
     // ---- working directory -------------------------------------------
     in-out property <bool> workspace-open: false;
-    // The page's file action sheet. Kept on the shell so Back can dismiss it
-    // before leaving the directory page.
-    in-out property <bool> workspace-sheet-open: false;
     in property <string> workspace-path: "";
     in property <string> workspace-parent-path: "";
     in property <int> workspace-total: 0;
     in property <bool> workspace-loading: false;
     in property <string> workspace-error: "";
     in property <[WorkspaceFile]> workspace-entries: [];
+    // Shared file action sheet, used by both the drawer's inline list and the
+    // full directory page. It lives on the shell so Back dismisses it first.
+    in-out property <bool> file-sheet-open: false;
+    in-out property <WorkspaceFile> file-pending: {
+        name: "",
+        path: "",
+        dir: false,
+        kind: 5,
+        size-text: "",
+    };
+    in-out property <bool> file-rename-open: false;
+    in-out property <string> file-rename-path: "";
+    in-out property <string> file-rename-name: "";
+    in-out property <bool> file-delete-open: false;
+    in-out property <bool> file-move-open: false;
 
     // ---- workspaces --------------------------------------------------
     in-out property <bool> workspaces-open: false;
@@ -400,6 +514,7 @@ export component MobileWindow inherits Window {
     in property <[ChatAttachment]> attachments: [];
     in property <string> send-key: "enter";
     in property <string> workspace-name: "";
+    in property <string> workspace-id: "";
     in property <string> branch-name: "";
     in-out property <string> permission-mode: "full_auto";
 
@@ -596,6 +711,11 @@ export component MobileWindow inherits Window {
     callback upload-workspace(string);
     callback download-workspace(string);
     callback load-more-workspace(string, int);
+    callback workspace-rename(string, string);
+    callback workspace-move(string, string);
+    callback workspace-delete(string);
+    callback open-workspace-file(string);
+    callback open-workspace-location(string, bool);
     // 工作区
     callback open-workspaces();
     callback refresh-workspaces();
@@ -739,25 +859,6 @@ export component MobileWindow inherits Window {
     private property <length> plus-panel-height: root.plus-open
         ? (root.plus-view == 0 ? 100px : 312px) + root.inset-bottom : 0px;
 
-    function close-sheet() {
-        root.session-sheet-open = false;
-    }
-
-    function show-session-sheet(id: string, title: string, archived: bool) {
-        root.session-sheet-id = id;
-        root.session-sheet-title = title;
-        root.session-sheet-archived = archived;
-        root.keyboard-dismiss();
-        root.session-sheet-open = true;
-    }
-
-    function begin-rename() {
-        root.rename-id = root.session-sheet-id;
-        root.rename-title = root.session-sheet-title;
-        root.session-sheet-open = false;
-        root.rename-open = true;
-    }
-
     function commit-rename() {
         if root.rename-title == "" {
             return;
@@ -767,29 +868,48 @@ export component MobileWindow inherits Window {
         root.rename-session(root.rename-id, root.rename-title);
     }
 
-    function open-trajectory() {
-        root.trajectory-session-id = root.session-sheet-id;
-        root.trajectory-session-title = root.session-sheet-title;
+    function open-thread-trajectory(id: string, title: string) {
+        root.trajectory-session-id = id;
+        root.trajectory-session-title = title;
         root.trajectory-expanded = -1;
-        root.session-sheet-open = false;
         root.trajectory-open = true;
-        root.load-trajectory(root.trajectory-session-id, root.trajectory-session-title);
+        root.load-trajectory(id, title);
     }
 
-    function archive-from-sheet() {
-        root.session-sheet-open = false;
-        root.archive-session(root.session-sheet-id);
+    function rename-thread(id: string, title: string) {
+        root.rename-id = id;
+        root.rename-title = title;
+        root.rename-open = true;
     }
 
-    function restore-from-sheet() {
-        root.session-sheet-open = false;
-        root.restore-session(root.session-sheet-id);
+    function archive-thread(id: string) {
+        root.archive-session(id);
     }
 
-    function delete-from-sheet() {
-        root.pending-delete-id = root.session-sheet-id;
-        root.session-sheet-open = false;
-        root.delete-archived-open = true;
+    function begin-file-rename() {
+        root.file-rename-path = root.file-pending.path;
+        root.file-rename-name = root.file-pending.name;
+        root.file-sheet-open = false;
+        root.file-rename-open = true;
+    }
+
+    function commit-file-rename() {
+        if root.file-rename-name == "" {
+            return;
+        }
+        root.file-rename-open = false;
+        root.keyboard-dismiss();
+        root.workspace-rename(root.file-rename-path, root.file-rename-name);
+    }
+
+    function confirm-file-delete() {
+        root.file-delete-open = false;
+        root.workspace-delete(root.file-pending.path);
+    }
+
+    function move-file(target: string) {
+        root.file-move-open = false;
+        root.workspace-move(root.file-pending.path, target);
     }
 
     function toggle-plus() {
@@ -810,12 +930,18 @@ export component MobileWindow inherits Window {
     changed drawer-open => {
         if root.drawer-open {
             root.keyboard-dismiss();
+        } else {
+            root.workspace-sheet-open = false;
+            root.workspace-delete-armed = false;
         }
     }
 
     changed workspace-open => {
         if !root.workspace-open {
-            root.workspace-sheet-open = false;
+            root.file-sheet-open = false;
+            root.file-rename-open = false;
+            root.file-delete-open = false;
+            root.file-move-open = false;
         }
     }
 
@@ -838,17 +964,14 @@ export component MobileWindow inherits Window {
     function show-workspace() {
         root.close-plus();
         root.close-drawer();
-        root.workspace-sheet-open = false;
         root.workspace-open = true;
-        root.open-workspace("");
+        root.open-workspace(root.workspace-path);
     }
 
-    function show-workspaces() {
-        root.close-plus();
-        root.close-drawer();
-        root.workspace-overlay = 0;
-        root.workspaces-open = true;
-        root.open-workspaces();
+    function show-workspace-sheet() {
+        root.refresh-workspaces();
+        root.workspace-delete-armed = false;
+        root.workspace-sheet-open = true;
     }
 
     // The device row's plus creates a workspace directly, the desktop
@@ -1361,20 +1484,29 @@ export component MobileWindow inherits Window {
 
     // ---- 选文复制 ----------------------------------------------------
     // 长按选中文本后，核心持有选区；手机没有系统编辑菜单，这里补一个浮动
-    // 复制键。按下这个键本身会先清掉选区，所以复制用的是轮询到的那份文本。
+    // 复制键，锚在选区上方（顶部空间不足时落到选区下方）。按下这个键本身
+    // 会先清掉选区，所以复制用的是轮询到的那份文本。
     if root.selection-text != "" && !root.env-setup-open : Rectangle {
-        x: (root.width - self.width) / 2;
-        // Anchored to the composer band's real top edge: the inquiry card and
-        // the function panel change that height, and a fixed offset covered
-        // their buttons.
-        y: max(8px + root.inset-top, composer-band.y - self.height - 12px);
+        private property <bool> anchored: root.selection-bar-bottom > 0px;
+        private property <length> top-limit: root.header-height + root.inset-top + 4px;
+        private property <length> bottom-limit: max(self.top-limit, composer-band.y - self.height - 8px);
+        private property <length> above: root.selection-bar-y - self.height - 10px;
+        private property <length> below: root.selection-bar-bottom + 32px;
+        private property <length> raw-y: self.anchored && self.above >= self.top-limit ? self.above : self.below;
+
+        x: self.anchored
+            ? clamp(root.selection-bar-x - self.width / 2, 8px, root.width - self.width - 8px)
+            : (root.width - self.width) / 2;
+        y: self.anchored
+            ? clamp(self.raw-y, self.top-limit, self.bottom-limit)
+            : composer-band.y - self.height - 12px;
         width: selection-pill.preferred-width;
-        height: 40px;
+        height: 36px;
 
         selection-pill := Rectangle {
             width: parent.width;
             height: parent.height;
-            border-radius: 20px;
+            border-radius: 18px;
             background: Theme.surface;
             border-width: 1px;
             border-color: Theme.border;
@@ -1383,18 +1515,28 @@ export component MobileWindow inherits Window {
             drop-shadow-offset-y: 3px;
 
             HorizontalLayout {
-                padding-left: 14px;
-                padding-right: 16px;
-                spacing: 7px;
+                padding-left: 12px;
+                padding-right: 14px;
+                spacing: 8px;
                 alignment: center;
-                Image {
-                    width: 15px;
-                    height: 15px;
-                    source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/copy.svg");
-                    colorize: Theme.text;
-                    image-fit: contain;
+                cross-axis-alignment: center;
+                // One shared 20px band: the icon centres against the label
+                // instead of hanging above its baseline.
+                Rectangle {
+                    width: 16px;
+                    height: 20px;
+                    Image {
+                        x: 0px;
+                        y: (parent.height - self.height) / 2;
+                        width: 16px;
+                        height: 16px;
+                        source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/copy.svg");
+                        colorize: Theme.text;
+                        image-fit: contain;
+                    }
                 }
                 Text {
+                    height: parent.height;
                     text: "复制";
                     color: Theme.text;
                     font-size: Theme.font-md;
@@ -1451,6 +1593,13 @@ export component MobileWindow inherits Window {
         drop-shadow-color: #00000033;
         drop-shadow-blur: 24px;
         drop-shadow-offset-x: 4px;
+
+        // Swallow taps on the drawer body: only the area outside the panel or
+        // the system back gesture closes it. Without this, empty drawer space
+        // falls through to the dimming layer underneath.
+        TouchArea {
+            clicked => { }
+        }
 
         VerticalLayout {
             padding-top: root.inset-top;
@@ -1534,15 +1683,15 @@ export component MobileWindow inherits Window {
             // the desktop sidebar where the workspace tree follows the device
             // selector. Tapping opens the full catalogue.
             Rectangle {
-                height: 56px;
+                height: 50px;
                 background: workspaces-touch.has-hover ? Theme.hover : transparent;
                 workspaces-touch := TouchArea {
                     enabled: root.settings-chat-target == 0;
-                    clicked => { root.show-workspaces(); }
+                    clicked => { root.show-workspace-sheet(); }
                 }
                 HorizontalLayout {
                     padding-left: 16px;
-                    padding-right: 12px;
+                    padding-right: 6px;
                     spacing: 10px;
                     cross-axis-alignment: center;
                     Image {
@@ -1552,61 +1701,37 @@ export component MobileWindow inherits Window {
                         colorize: WorkspaceVisual.color(root.workspace-color);
                         image-fit: contain;
                     }
-                    VerticalLayout {
+                    HorizontalLayout {
                         horizontal-stretch: 1;
-                        spacing: 1px;
+                        spacing: 6px;
                         Text {
-                            text: "工作区";
+                            horizontal-stretch: 1;
+                            text: root.workspace-name == "" ? "工作区" : root.workspace-name;
                             color: Theme.text;
                             font-size: Theme.font-md;
+                            font-weight: 600;
                             vertical-alignment: center;
                             overflow: elide;
                         }
                         Text {
-                            text: root.workspace-name == "" ? "尚未选择" : root.workspace-name;
+                            text: "· " + root.workspace-thread-count + " 线程";
                             color: Theme.muted;
                             font-size: Theme.font-2xs;
                             vertical-alignment: center;
-                            overflow: elide;
                         }
                     }
-                    Text {
-                        text: "" + root.workspace-thread-count + " 线程";
-                        color: Theme.muted;
-                        font-size: Theme.font-2xs;
-                        vertical-alignment: center;
+                    if root.settings-chat-target == 0 : RowIconButton {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-down.svg");
+                        tip: "切换工作区";
+                        clicked => { root.show-workspace-sheet(); }
                     }
-                    // New task lives on the workspace row: the drawer now
-                    // shows only this workspace's threads, so its "new"
-                    // affordance belongs with the workspace itself.
-                    Rectangle {
-                        width: 34px;
-                        height: 34px;
-                        border-radius: Theme.radius-sm;
-                        background: ws-new-touch.has-hover ? Theme.hover : transparent;
-                        ws-new-touch := TouchArea {
-                            enabled: root.settings-chat-target == 0;
-                            clicked => {
-                                root.close-plus();
-                                root.new-session();
-                            }
+                    if root.settings-chat-target == 0 : RowIconButton {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-plus.svg");
+                        tip: "新建线程";
+                        clicked => {
+                            root.close-plus();
+                            root.new-session();
                         }
-                        Image {
-                            x: 9px;
-                            y: 9px;
-                            width: 16px;
-                            height: 16px;
-                            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-plus.svg");
-                            colorize: root.settings-chat-target == 0
-                                ? (ws-new-touch.has-hover ? Theme.accent-ink : Theme.muted)
-                                : Theme.border-strong;
-                        }
-                    }
-                    Image {
-                        width: 12px;
-                        height: 12px;
-                        source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-right.svg");
-                        colorize: Theme.muted;
                     }
                 }
             }
@@ -1639,7 +1764,7 @@ export component MobileWindow inherits Window {
             if root.sessions.length > 0 : ListView {
                 vertical-stretch: 1;
                 for session in root.sessions : Rectangle {
-                    height: 72px;
+                    height: 54px;
                     background: session.active ? Theme.selected : (touch.has-hover ? Theme.hover : transparent);
                     touch := TouchArea {
                         clicked => { root.select-session(session.id); }
@@ -1647,9 +1772,9 @@ export component MobileWindow inherits Window {
                     HorizontalLayout {
                         padding-left: 16px;
                         padding-right: 6px;
-                        padding-top: 10px;
-                        padding-bottom: 10px;
-                        spacing: 8px;
+                        padding-top: 6px;
+                        padding-bottom: 6px;
+                        spacing: 6px;
                         cross-axis-alignment: center;
 
                         // Status dot mirrors the sidebar's running/idle signal.
@@ -1665,7 +1790,7 @@ export component MobileWindow inherits Window {
 
                         VerticalLayout {
                             horizontal-stretch: 1;
-                            spacing: 3px;
+                            spacing: 1px;
                             HorizontalLayout {
                                 spacing: 6px;
                                 Text {
@@ -1683,34 +1808,26 @@ export component MobileWindow inherits Window {
                                     vertical-alignment: center;
                                 }
                             }
-                            Text {
-                                text: session.preview;
-                                color: Theme.muted;
-                                font-size: Theme.font-sm;
-                                overflow: elide;
-                            }
                         }
 
-                        // Trailing actions. An always-visible affordance beats
-                        // a hidden long-press: the row tap still selects the
-                        // thread, this opens rename / trajectory / archive.
-                        Rectangle {
-                            width: 34px;
-                            height: 42px;
-                            border-radius: Theme.radius-sm;
-                            background: more-touch.has-hover ? Theme.hover : transparent;
-                            more-touch := TouchArea {
-                                clicked => {
-                                    root.show-session-sheet(session.id, session.title, false);
-                                }
+                        // The three actions sit directly on the row and stay a
+                        // tight group, mirroring a compact overflow menu.
+                        HorizontalLayout {
+                            spacing: 0px;
+                            RowIconButton {
+                                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-pen-to-square.svg");
+                                tip: "重命名";
+                                clicked => { root.rename-thread(session.id, session.title); }
                             }
-                            Image {
-                                x: 9px;
-                                y: 13px;
-                                width: 16px;
-                                height: 16px;
-                                source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/ellipsis.svg");
-                                colorize: Theme.muted;
+                            if root.settings-chat-target == 0 : RowIconButton {
+                                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-route.svg");
+                                tip: "线程轨迹";
+                                clicked => { root.open-thread-trajectory(session.id, session.title); }
+                            }
+                            RowIconButton {
+                                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/box-archive.svg");
+                                tip: "归档";
+                                clicked => { root.archive-thread(session.id); }
                             }
                         }
                     }
@@ -1721,17 +1838,20 @@ export component MobileWindow inherits Window {
                 height: 1px;
                 background: Theme.border;
             }
+
+            // Working directory is a first-class section beside the workspace,
+            // not a row that hides the files behind a second page.
             Rectangle {
-                height: 48px;
-                background: workspace-touch.has-hover ? Theme.hover : transparent;
-                workspace-touch := TouchArea {
+                height: 46px;
+                background: workspace-header-touch.has-hover ? Theme.hover : transparent;
+                workspace-header-touch := TouchArea {
                     enabled: root.settings-chat-target == 0;
                     clicked => { root.show-workspace(); }
                 }
                 HorizontalLayout {
                     padding-left: 16px;
-                    padding-right: 16px;
-                    spacing: 10px;
+                    padding-right: 6px;
+                    spacing: 8px;
                     cross-axis-alignment: center;
                     Image {
                         width: 17px;
@@ -1739,18 +1859,123 @@ export component MobileWindow inherits Window {
                         source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/folder-tree.svg");
                         colorize: Theme.muted;
                     }
-                    Text {
+                    VerticalLayout {
                         horizontal-stretch: 1;
-                        text: "工作目录";
-                        color: Theme.text;
-                        font-size: Theme.font-md;
-                        vertical-alignment: center;
+                        spacing: 0px;
+                        Text {
+                            text: "工作目录";
+                            color: Theme.text;
+                            font-size: Theme.font-md;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.settings-chat-target == 0
+                                ? (root.workspace-path == "" ? "工作区根目录" : "/" + root.workspace-path)
+                                : "仅本机";
+                            color: Theme.muted;
+                            font-size: Theme.font-2xs;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
                     }
+                    if root.settings-chat-target == 0 : RowIconButton {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/upload.svg");
+                        tip: "上传文件";
+                        clicked => { root.upload-workspace(root.workspace-path); }
+                    }
+                    if root.settings-chat-target == 0 : RowIconButton {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
+                        tip: "刷新";
+                        clicked => { root.refresh-workspace(); }
+                    }
+                    if root.settings-chat-target == 0 : RowIconButton {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-right.svg");
+                        tip: "打开完整目录";
+                        clicked => { root.show-workspace(); }
+                    }
+                }
+            }
+
+            if root.settings-chat-target == 0 : VerticalLayout {
+                // Share the drawer's flexible height with the thread list, so
+                // a long working directory is not squeezed into four rows.
+                vertical-stretch: 1;
+                spacing: 0px;
+                if root.workspace-path != "" : Rectangle {
+                    height: 34px;
+                    background: up-touch.has-hover ? Theme.hover : transparent;
+                    up-touch := TouchArea {
+                        clicked => { root.open-workspace(root.workspace-parent-path); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 12px;
+                        spacing: 6px;
+                        cross-axis-alignment: center;
+                        Image {
+                            width: 12px;
+                            height: 12px;
+                            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-left.svg");
+                            colorize: Theme.muted;
+                        }
+                        Text {
+                            text: "上一级";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                if root.workspace-loading : Rectangle {
+                    height: 34px;
                     Text {
-                        text: root.settings-chat-target == 0 ? "文件" : "仅本机";
+                        x: 16px;
+                        text: "正在读取工作目录…";
                         color: Theme.muted;
                         font-size: Theme.font-2xs;
                         vertical-alignment: center;
+                    }
+                }
+                if !root.workspace-loading && root.workspace-error != "" : Rectangle {
+                    height: 34px;
+                    Text {
+                        x: 16px;
+                        width: parent.width - 28px;
+                        text: root.workspace-error;
+                        color: Theme.danger;
+                        font-size: Theme.font-2xs;
+                        overflow: elide;
+                        vertical-alignment: center;
+                    }
+                }
+                if !root.workspace-loading && root.workspace-error == "" : ScrollView {
+                    // Keep at least three rows; extra drawer height is shared
+                    // with the thread list and scrolling handles the rest.
+                    vertical-stretch: 1;
+                    min-height: 126px;
+                    vertical-scrollbar-policy: as-needed;
+                    horizontal-scrollbar-policy: always-off;
+                    VerticalLayout {
+                        spacing: 0px;
+                        for entry in root.workspace-entries : DrawerFileRow {
+                            entry: entry;
+                            open-folder() => { root.open-workspace(entry.path); }
+                            open-file() => { root.open-workspace-file(entry.path); }
+                            open-actions() => {
+                                root.file-pending = entry;
+                                root.file-sheet-open = true;
+                            }
+                        }
+                        if root.workspace-entries.length == 0 : Rectangle {
+                            height: 42px;
+                            Text {
+                                x: 16px;
+                                text: "空目录 · 点上方上传按钮";
+                                color: Theme.muted;
+                                font-size: Theme.font-2xs;
+                                vertical-alignment: center;
+                            }
+                        }
                     }
                 }
             }
@@ -2129,6 +2354,161 @@ export component MobileWindow inherits Window {
         }
     }
 
+    // ---- workspace switch sheet ------------------------------------
+    if root.workspace-sheet-open : Rectangle {
+        x: 0px; y: 0px;
+        width: 100%; height: 100%;
+        background: Theme.overlay;
+        TouchArea {
+            clicked => {
+                root.workspace-sheet-open = false;
+                root.workspace-delete-armed = false;
+            }
+        }
+        Rectangle {
+            x: 8px;
+            y: parent.height - self.height - 8px - root.inset-bottom;
+            width: parent.width - 16px;
+            height: min(parent.height * 0.72, 128px + root.workspaces.length * 56px + root.inset-bottom);
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            drop-shadow-color: #00000033;
+            drop-shadow-blur: 24px;
+            TouchArea { }
+            VerticalLayout {
+                padding: 8px;
+                spacing: 2px;
+                HorizontalLayout { height: 4px; alignment: center; Rectangle { width: 40px; height: 4px; border-radius: 2px; background: Theme.border; } }
+                Text {
+                    height: 40px;
+                    text: "切换工作区";
+                    color: Theme.text;
+                    font-size: Theme.font-md;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                ListView {
+                    vertical-stretch: 1;
+                    for workspace in root.workspaces : Rectangle {
+                        height: 56px;
+                        background: workspace.active ? Theme.accent-soft : (workspace-touch.has-hover ? Theme.hover : transparent);
+                        workspace-touch := TouchArea {
+                            clicked => {
+                                root.select-workspace(workspace.id);
+                                root.workspace-sheet-open = false;
+                                root.workspace-delete-armed = false;
+                            }
+                        }
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            spacing: 10px;
+                            cross-axis-alignment: center;
+                            Rectangle {
+                                width: 34px;
+                                height: 34px;
+                                border-radius: 9px;
+                                background: Theme.panel;
+                                Image {
+                                    x: 8px; y: 8px;
+                                    width: 18px; height: 18px;
+                                    source: WorkspaceVisual.icon(workspace.icon);
+                                    colorize: WorkspaceVisual.color(workspace.color);
+                                    image-fit: contain;
+                                }
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 2px;
+                                Text { text: workspace.name; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; overflow: elide; }
+                                Text { text: "" + workspace.thread_count + " 线程"; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                            }
+                            if workspace.active : Image {
+                                width: 16px;
+                                height: 16px;
+                                source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/circle-check.svg");
+                                colorize: Theme.accent-ink;
+                            }
+                        }
+                    }
+                }
+                if root.workspaces.length == 0 : Text {
+                    height: 48px;
+                    text: "暂无工作区";
+                    color: Theme.muted;
+                    font-size: Theme.font-sm;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+                Rectangle { height: 1px; background: Theme.border; }
+                if root.workspace-delete-armed : Rectangle {
+                    height: 46px;
+                    background: Theme.danger.with-alpha(0.08);
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 6px;
+                        spacing: 6px;
+                        cross-axis-alignment: center;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: "删除当前工作区？";
+                            color: Theme.danger;
+                            font-size: Theme.font-2xs;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+                        Action {
+                            width: 56px;
+                            label: "取消";
+                            show-label: true;
+                            clicked => { root.workspace-delete-armed = false; }
+                        }
+                        Action {
+                            width: 56px;
+                            label: "删除";
+                            show-label: true;
+                            danger: true;
+                            clicked => {
+                                root.delete-workspace(root.workspace-id);
+                                root.workspace-delete-armed = false;
+                                root.workspace-sheet-open = false;
+                            }
+                        }
+                    }
+                }
+                if !root.workspace-delete-armed : Rectangle {
+                    height: 42px;
+                    background: delete-touch.has-hover ? Theme.hover : transparent;
+                    delete-touch := TouchArea {
+                        enabled: root.workspace-id != "";
+                        clicked => { root.workspace-delete-armed = true; }
+                    }
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        spacing: 8px;
+                        cross-axis-alignment: center;
+                        Image {
+                            width: 16px;
+                            height: 16px;
+                            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trash.svg");
+                            colorize: root.workspace-id != "" ? Theme.danger : Theme.border-strong;
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: "删除当前工作区";
+                            color: root.workspace-id != "" ? Theme.danger : Theme.muted;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ---- remote approval -------------------------------------------
     if root.settings-approval-open : ConfirmDialog {
         title: "远程操作请求";
@@ -2429,100 +2809,6 @@ export component MobileWindow inherits Window {
         }
     }
 
-    if root.session-sheet-open : Rectangle {
-        width: 100%;
-        height: parent.height - root.ime-height;
-        background: Theme.overlay;
-        TouchArea {
-            clicked => { root.close-sheet(); }
-        }
-        Rectangle {
-            x: 8px;
-            y: parent.height - self.height - 8px;
-            width: parent.width - 16px;
-            height: sheet-body.preferred-height;
-            border-radius: Theme.radius-lg;
-            background: Theme.surface;
-            drop-shadow-color: #00000033;
-            drop-shadow-blur: 24px;
-
-            sheet-body := VerticalLayout {
-                padding: 8px;
-                padding-bottom: 8px + root.inset-bottom;
-                spacing: 2px;
-
-                Rectangle {
-                    height: 48px;
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 2px;
-                        Text {
-                            text: root.session-sheet-title;
-                            color: Theme.text;
-                            font-size: Theme.font-md;
-                            font-weight: 600;
-                            horizontal-alignment: center;
-                            overflow: elide;
-                        }
-                        Text {
-                            text: root.session-sheet-archived ? "归档会话" : "会话操作";
-                            color: Theme.muted;
-                            font-size: Theme.font-2xs;
-                            horizontal-alignment: center;
-                        }
-                    }
-                }
-
-                if !root.session-sheet-archived : SheetAction {
-                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-pen-to-square.svg");
-                    label: I18n.common_rename;
-                    clicked => { root.begin-rename(); }
-                }
-                if !root.session-sheet-archived && root.settings-chat-target == 0 : SheetAction {
-                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-route.svg");
-                    label: I18n.sb_thread_trajectory;
-                    clicked => { root.open-trajectory(); }
-                }
-                if !root.session-sheet-archived : SheetAction {
-                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/box-archive.svg");
-                    label: I18n.sb_thread_archive;
-                    clicked => { root.archive-from-sheet(); }
-                }
-
-                if root.session-sheet-archived : SheetAction {
-                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
-                    label: "恢复会话";
-                    clicked => { root.restore-from-sheet(); }
-                }
-                if root.session-sheet-archived : SheetAction {
-                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trash.svg");
-                    label: "永久删除";
-                    danger: true;
-                    clicked => { root.delete-from-sheet(); }
-                }
-
-                Rectangle { height: 1px; background: Theme.border; }
-                Rectangle {
-                    height: 52px;
-                    border-radius: Theme.radius-sm;
-                    background: cancel-touch.has-hover ? Theme.hover : transparent;
-                    cancel-touch := TouchArea {
-                        clicked => { root.close-sheet(); }
-                    }
-                    Text {
-                        width: 100%;
-                        height: 100%;
-                        text: I18n.common_cancel;
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-md;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-        }
-    }
-
     // ---- rename dialog ----------------------------------------------
     if root.rename-open : Rectangle {
         width: 100%;
@@ -2595,25 +2881,6 @@ export component MobileWindow inherits Window {
         }
     }
 
-    if root.delete-archived-open : ConfirmDialog {
-        width: 100%;
-        height: parent.height - root.ime-height;
-        title: I18n.common_confirm_delete;
-        message: "删除后无法恢复该会话及其本地记录。";
-        confirm-label: I18n.common_delete;
-        cancel-label: I18n.common_cancel;
-        danger: true;
-        confirmed => {
-            root.delete-archived-open = false;
-            root.delete-archived-session(root.pending-delete-id);
-            root.pending-delete-id = "";
-        }
-        canceled => {
-            root.delete-archived-open = false;
-            root.pending-delete-id = "";
-        }
-    }
-
     // ---- workspaces page --------------------------------------------
     if root.workspaces-open : WorkspacesPage {
         x: 0px;
@@ -2657,18 +2924,315 @@ export component MobileWindow inherits Window {
         loading: root.workspace-loading;
         error: root.workspace-error;
         entries: root.workspace-entries;
-        sheet-open <=> root.workspace-sheet-open;
         back() => {
             root.workspace-open = false;
-            root.workspace-sheet-open = false;
         }
         refresh() => { root.refresh-workspace(); }
         open-path(path) => { root.open-workspace(path); }
         upload(dir) => { root.upload-workspace(dir); }
-        download(path) => { root.download-workspace(path); }
+        file-actions(entry) => {
+            root.file-pending = entry;
+            root.file-sheet-open = true;
+        }
+        open-file(entry) => { root.open-workspace-file(entry.path); }
         load-more() => {
             root.load-more-workspace(root.workspace-path, root.workspace-entries.length);
         }
+    }
+
+    // ---- shared file actions ----------------------------------------
+    // One menu for the drawer's inline list and the full directory page.
+    if root.file-sheet-open : Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.overlay;
+        TouchArea {
+            clicked => { root.file-sheet-open = false; }
+        }
+
+        Rectangle {
+            x: 8px;
+            y: parent.height - self.height - 8px - root.inset-bottom;
+            width: parent.width - 16px;
+            height: file-sheet-body.preferred-height;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            drop-shadow-color: #00000033;
+            drop-shadow-blur: 24px;
+            TouchArea { }
+
+            file-sheet-body := VerticalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 2px;
+
+                VerticalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-top: 6px;
+                    padding-bottom: 8px;
+                    spacing: 2px;
+                    Text {
+                        text: root.file-pending.name;
+                        color: Theme.text;
+                        font-size: Theme.font-md;
+                        font-weight: 600;
+                        overflow: elide;
+                    }
+                    if root.file-pending.path != root.file-pending.name : Text {
+                        text: root.file-pending.path;
+                        color: Theme.muted;
+                        font-size: Theme.font-2xs;
+                        overflow: elide;
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.border; }
+
+                if !root.file-pending.dir : SheetAction {
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/log-download.svg");
+                    label: "保存到手机";
+                    clicked => {
+                        root.file-sheet-open = false;
+                        root.download-workspace(root.file-pending.path);
+                    }
+                }
+                SheetAction {
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-pen-to-square.svg");
+                    label: "重命名";
+                    clicked => { root.begin-file-rename(); }
+                }
+                SheetAction {
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/folder-tree.svg");
+                    label: "移动";
+                    clicked => {
+                        root.file-sheet-open = false;
+                        root.file-move-open = true;
+                    }
+                }
+                SheetAction {
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/folder-open.svg");
+                    label: "打开文件位置";
+                    clicked => {
+                        root.file-sheet-open = false;
+                        root.open-workspace-location(root.file-pending.path, root.file-pending.dir);
+                    }
+                }
+                SheetAction {
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trash.svg");
+                    label: "删除";
+                    danger: true;
+                    clicked => {
+                        root.file-sheet-open = false;
+                        root.file-delete-open = true;
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.border; }
+
+                Rectangle {
+                    height: 52px;
+                    border-radius: Theme.radius-sm;
+                    background: file-cancel-touch.has-hover ? Theme.hover : transparent;
+                    file-cancel-touch := TouchArea {
+                        clicked => { root.file-sheet-open = false; }
+                    }
+                    Text {
+                        width: 100%;
+                        height: 100%;
+                        text: "取消";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-md;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
+    // Move targets: workspace root, the current parent and direct subfolders.
+    if root.file-move-open : Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.overlay;
+        TouchArea {
+            clicked => { root.file-move-open = false; }
+        }
+
+        Rectangle {
+            x: 8px;
+            y: parent.height - self.height - 8px - root.inset-bottom;
+            width: parent.width - 16px;
+            height: move-sheet-body.preferred-height;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            drop-shadow-color: #00000033;
+            drop-shadow-blur: 24px;
+            TouchArea { }
+
+            move-sheet-body := VerticalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 2px;
+
+                VerticalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-top: 6px;
+                    padding-bottom: 8px;
+                    spacing: 2px;
+                    Text {
+                        text: "移动「" + root.file-pending.name + "」";
+                        color: Theme.text;
+                        font-size: Theme.font-md;
+                        font-weight: 600;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: "选择目标文件夹";
+                        color: Theme.muted;
+                        font-size: Theme.font-2xs;
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.border; }
+
+                SheetAction {
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/folder-tree.svg");
+                    label: "工作区根目录";
+                    clicked => { root.move-file(""); }
+                }
+                if root.workspace-path != "" : SheetAction {
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-left.svg");
+                    label: "上一级目录";
+                    clicked => { root.move-file(root.workspace-parent-path); }
+                }
+
+                if root.workspace-entries.length > 0 : ScrollView {
+                    height: min(200px, max(52px, root.workspace-entries.length * 52px));
+                    vertical-scrollbar-policy: as-needed;
+                    horizontal-scrollbar-policy: always-off;
+                    VerticalLayout {
+                        spacing: 0px;
+                        for entry in root.workspace-entries : SheetAction {
+                            visible: entry.dir && entry.path != root.file-pending.path;
+                            icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/folder-open.svg");
+                            label: entry.name;
+                            clicked => { root.move-file(entry.path); }
+                        }
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.border; }
+
+                Rectangle {
+                    height: 52px;
+                    border-radius: Theme.radius-sm;
+                    background: move-cancel-touch.has-hover ? Theme.hover : transparent;
+                    move-cancel-touch := TouchArea {
+                        clicked => { root.file-move-open = false; }
+                    }
+                    Text {
+                        width: 100%;
+                        height: 100%;
+                        text: "取消";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-md;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- file rename dialog -----------------------------------------
+    if root.file-rename-open : Rectangle {
+        width: 100%;
+        height: parent.height - root.ime-height;
+        background: Theme.overlay;
+        TouchArea {
+            clicked => {
+                root.file-rename-open = false;
+                root.keyboard-dismiss();
+            }
+        }
+
+        Rectangle {
+            x: 16px;
+            y: max(root.inset-top + 80px, (parent.height - self.height) / 2);
+            width: parent.width - 32px;
+            height: 184px;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            drop-shadow-color: #00000033;
+            drop-shadow-blur: 24px;
+            TouchArea { }
+
+            VerticalLayout {
+                padding-left: 18px;
+                padding-right: 18px;
+                padding-top: 16px;
+                padding-bottom: 16px;
+                spacing: 10px;
+                Text {
+                    height: 24px;
+                    text: "重命名文件";
+                    color: Theme.text;
+                    font-size: Theme.font-md;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                FormField {
+                    label: "文件名称";
+                    placeholder: "输入新的名称";
+                    auto-focus: true;
+                    commit-on-blur: false;
+                    text <=> root.file-rename-name;
+                    committed => { root.commit-file-rename(); }
+                }
+                Rectangle { vertical-stretch: 1; }
+                HorizontalLayout {
+                    height: 36px;
+                    spacing: 10px;
+                    Rectangle { horizontal-stretch: 1; }
+                    Action {
+                        width: 76px;
+                        label: I18n.common_cancel;
+                        show-label: true;
+                        clicked => {
+                            root.file-rename-open = false;
+                            root.keyboard-dismiss();
+                        }
+                    }
+                    Action {
+                        width: 84px;
+                        label: I18n.common_save;
+                        show-label: true;
+                        primary: true;
+                        enabled: root.file-rename-name != "";
+                        clicked => { root.commit-file-rename(); }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.file-delete-open : ConfirmDialog {
+        width: 100%;
+        height: parent.height - root.ime-height;
+        title: "删除文件";
+        message: "删除后无法恢复，文件夹会连同其中内容一起删除。";
+        confirm-label: I18n.common_delete;
+        cancel-label: I18n.common_cancel;
+        danger: true;
+        confirmed => { root.confirm-file-delete(); }
+        canceled => { root.file-delete-open = false; }
     }
 
     // ---- trajectory page --------------------------------------------

@@ -17,7 +17,7 @@ use slint::{ModelRc, SharedString, VecModel};
 use std::hash::{Hash, Hasher};
 use wunder_desktop::native::NativeMessageStats;
 use wunder_desktop::{
-    NativeChatTurn, NativePatchFile, NativeWorkflowEntry, NativeWorkflowSection,
+    NativeChatTurn, NativePatchFile, NativePatchLine, NativeWorkflowEntry, NativeWorkflowSection,
 };
 
 pub const KIND_USER: i32 = 0;
@@ -517,6 +517,7 @@ fn patch_cards(files: &[NativePatchFile]) -> ModelRc<PatchCard> {
                 action: action_label(&file.action).into(),
                 added: file.added.as_str().into(),
                 deleted: file.deleted.as_str().into(),
+                content_width: patch_content_width(&file.lines),
                 lines: ModelRc::new(VecModel::from(
                     file.lines
                         .iter()
@@ -531,6 +532,51 @@ fn patch_cards(files: &[NativePatchFile]) -> ModelRc<PatchCard> {
             })
             .collect::<Vec<_>>(),
     ))
+}
+
+/// Natural width of one diff card's line area. Touch shells pan this area
+/// horizontally, so it covers the longest line instead of letting the row
+/// elide it on the right.
+fn patch_content_width(lines: &[NativePatchLine]) -> f32 {
+    const GUTTER: f32 = 100.0;
+    let longest = lines
+        .iter()
+        .take(200)
+        .map(|line| {
+            line.text
+                .chars()
+                .map(|ch| {
+                    if ch == '\t' {
+                        60.0
+                    } else if is_wide_char(ch) {
+                        12.5
+                    } else {
+                        7.5
+                    }
+                })
+                .sum::<f32>()
+        })
+        .fold(0.0f32, f32::max);
+    (GUTTER + longest).clamp(260.0, 3000.0)
+}
+
+/// CJK and emoji take roughly a full monospace cell; the rest about 0.6.
+fn is_wide_char(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x1100..=0x115F
+            | 0x2E80..=0x303E
+            | 0x3041..=0x33FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xA000..=0xA4CF
+            | 0xAC00..=0xD7A3
+            | 0xF900..=0xFAFF
+            | 0xFE30..=0xFE6F
+            | 0xFF00..=0xFF60
+            | 0xFFE0..=0xFFE6
+            | 0x1F300..=0x1FAFF
+    )
 }
 
 fn action_label(action: &str) -> &'static str {
@@ -1356,6 +1402,16 @@ mod tests {
         assert_eq!(long.chars().count(), 97);
         assert!(long.ends_with('…'));
         assert_eq!(bubble_hint("[未闭合"), "[未闭合");
+    }
+
+    #[test]
+    fn patch_cards_carry_a_natural_width_for_long_lines() {
+        let mut entry = entry();
+        entry.patch_files[0].lines[0].text = "x".repeat(200);
+        let cards = patch_cards(&entry.patch_files);
+        let card = cards.row_data(0).expect("patch card");
+        assert!(card.content_width > 1200.0, "{}", card.content_width);
+        assert_eq!(card.path, "src/main.rs");
     }
 
     #[test]

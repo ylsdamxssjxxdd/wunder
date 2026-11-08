@@ -18,6 +18,7 @@ export struct WorkspaceFile {
 component WorkspaceRow inherits Rectangle {
     in property <WorkspaceFile> entry;
     callback clicked();
+    callback menu();
 
     height: 60px;
     background: row-touch.has-hover ? Theme.hover : transparent;
@@ -73,14 +74,30 @@ component WorkspaceRow inherits Rectangle {
             }
         }
 
-        Image {
-            width: 14px;
-            height: 14px;
-            source: root.entry.dir
-                ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-right.svg")
-                : @image-url("../../../crates/wunder-desktop/frontend/assets/icons/ellipsis.svg");
+        if root.entry.dir : Image {
+            width: 12px;
+            height: 12px;
+            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-right.svg");
             colorize: Theme.muted;
             image-fit: contain;
+        }
+        Rectangle {
+            width: 28px;
+            height: 30px;
+            border-radius: 6px;
+            background: menu-touch.has-hover ? Theme.hover : transparent;
+            menu-touch := TouchArea {
+                clicked => { root.menu(); }
+            }
+            Image {
+                x: 7px;
+                y: 8px;
+                width: 14px;
+                height: 14px;
+                source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/more-vertical.svg");
+                colorize: Theme.muted;
+                image-fit: contain;
+            }
         }
     }
 
@@ -90,40 +107,6 @@ component WorkspaceRow inherits Rectangle {
         width: parent.width - 60px;
         height: 1px;
         background: Theme.border;
-    }
-}
-
-component SheetAction inherits Rectangle {
-    in property <image> icon;
-    in property <string> label;
-    callback clicked();
-
-    height: 52px;
-    border-radius: Theme.radius-sm;
-    background: action-touch.has-hover ? Theme.hover : transparent;
-    action-touch := TouchArea {
-        clicked => { root.clicked(); }
-    }
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        spacing: 12px;
-        cross-axis-alignment: center;
-        Image {
-            width: 18px;
-            height: 18px;
-            source: root.icon;
-            colorize: Theme.text-secondary;
-            image-fit: contain;
-        }
-        Text {
-            horizontal-stretch: 1;
-            text: root.label;
-            color: Theme.text;
-            font-size: Theme.font-md;
-            vertical-alignment: center;
-            overflow: elide;
-        }
     }
 }
 
@@ -146,17 +129,11 @@ export component WorkspacePage inherits Rectangle {
     callback refresh();
     callback open-path(string);
     callback upload(string);
-    callback download(string);
     callback load-more();
-
-    in-out property <bool> sheet-open: false;
-    in-out property <WorkspaceFile> pending: {
-        name: "",
-        path: "",
-        dir: false,
-        kind: 5,
-        size-text: "",
-    };
+    // Files open the shared action sheet owned by the shell, so the inline
+    // drawer list and this page never grow two divergent menus.
+    callback file-actions(WorkspaceFile);
+    callback open-file(WorkspaceFile);
 
     background: Theme.panel;
 
@@ -302,10 +279,10 @@ export component WorkspacePage inherits Rectangle {
                         if entry.dir {
                             root.open-path(entry.path);
                         } else {
-                            root.pending = entry;
-                            root.sheet-open = true;
+                            root.open-file(entry);
                         }
                     }
+                    menu => { root.file-actions(entry); }
                 }
 
                 if root.entries.length < root.total : Rectangle {
@@ -349,88 +326,6 @@ export component WorkspacePage inherits Rectangle {
                             font-size: Theme.font-2xs;
                             horizontal-alignment: center;
                         }
-                    }
-                }
-            }
-        }
-    }
-
-    // File action sheet: the phone equivalent of 桌面版's file context menu.
-    if root.sheet-open : Rectangle {
-        width: 100%;
-        height: 100%;
-        background: Theme.overlay;
-        TouchArea {
-            clicked => { root.sheet-open = false; }
-        }
-
-        Rectangle {
-            x: 8px;
-            y: parent.height - self.height - 8px - root.inset-bottom;
-            width: parent.width - 16px;
-            height: sheet-body.preferred-height;
-            border-radius: Theme.radius-lg;
-            background: Theme.surface;
-            drop-shadow-color: #00000033;
-            drop-shadow-blur: 24px;
-            TouchArea { }
-
-            sheet-body := VerticalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
-                padding-top: 8px;
-                padding-bottom: 8px;
-                spacing: 2px;
-
-                VerticalLayout {
-                    padding-left: 12px;
-                    padding-right: 12px;
-                    padding-top: 6px;
-                    padding-bottom: 8px;
-                    spacing: 2px;
-                    Text {
-                        text: root.pending.name;
-                        color: Theme.text;
-                        font-size: Theme.font-md;
-                        font-weight: 600;
-                        overflow: elide;
-                    }
-                    Text {
-                        text: root.pending.size-text + " · 保存后可分享或继续处理";
-                        color: Theme.muted;
-                        font-size: Theme.font-2xs;
-                        overflow: elide;
-                    }
-                }
-
-                Rectangle { height: 1px; background: Theme.border; }
-
-                SheetAction {
-                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/log-download.svg");
-                    label: "保存到手机";
-                    clicked => {
-                        root.sheet-open = false;
-                        root.download(root.pending.path);
-                    }
-                }
-
-                Rectangle { height: 1px; background: Theme.border; }
-
-                Rectangle {
-                    height: 52px;
-                    border-radius: Theme.radius-sm;
-                    background: cancel-touch.has-hover ? Theme.hover : transparent;
-                    cancel-touch := TouchArea {
-                        clicked => { root.sheet-open = false; }
-                    }
-                    Text {
-                        width: 100%;
-                        height: 100%;
-                        text: "取消";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-md;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
                     }
                 }
             }

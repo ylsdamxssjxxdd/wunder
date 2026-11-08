@@ -25,9 +25,26 @@ export component WorkflowDetail inherits Rectangle {
                 copy-area := TouchArea { mouse-cursor: pointer; clicked => { root.copy(root.fallback); } }
             }
         }
-        if root.sections.length == 0 : TextInput { text: root.fallback; read-only: true; wrap: word-wrap; color: root.foreground; font-size: Theme.font-sm; }
+        // The fallback is laid out like a section line: a definite width and an
+        // explicit height from the wrapped text. As a direct layout child the
+        // text input's height is measured before the width is known, so long
+        // command output spilled below its panel.
+        if root.sections.length == 0 : Rectangle {
+            height: fallback-text.preferred-height;
+            fallback-text := TextInput {
+                width: parent.width;
+                height: self.preferred-height;
+                text: root.fallback;
+                read-only: true;
+                wrap: word-wrap;
+                color: root.foreground;
+                font-size: Theme.font-sm;
+            }
+        }
         for section in root.sections : Rectangle {
             height: content.preferred-height + 20px;
+            // A wrapped line can never paint across the panel border.
+            clip: true;
             background: root.surface; border-width: 1px;
             border-color: section.kind == "error" ? Theme.danger.transparentize(0.55) : root.border; border-radius: 8px;
             content := VerticalLayout {

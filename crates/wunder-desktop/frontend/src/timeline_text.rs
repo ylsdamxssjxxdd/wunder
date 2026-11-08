@@ -3,7 +3,9 @@
 //! the mapping from native workflow sections onto the detail model.
 use crate::{PatchCard, PatchLine, ProcessEntry, TimelineRow, WorkflowLine, WorkflowSection};
 use slint::{ModelRc, VecModel};
-use wunder_desktop::native::{NativePatchFile, NativeWorkflowEntry, NativeWorkflowSection};
+use wunder_desktop::native::{
+    NativePatchFile, NativePatchLine, NativeWorkflowEntry, NativeWorkflowSection,
+};
 
 /// The canonical name of the shell tool. Aliases and streamed command frames
 /// all resolve to it, so one invocation can never read as two different tools.
@@ -522,6 +524,7 @@ pub fn patch_cards(files: &[NativePatchFile]) -> ModelRc<PatchCard> {
                 action: action_label(&file.action).into(),
                 added: file.added.as_str().into(),
                 deleted: file.deleted.as_str().into(),
+                content_width: patch_content_width(&file.lines),
                 lines: ModelRc::new(VecModel::from(
                     file.lines
                         .iter()
@@ -536,6 +539,51 @@ pub fn patch_cards(files: &[NativePatchFile]) -> ModelRc<PatchCard> {
             })
             .collect::<Vec<_>>(),
     ))
+}
+
+/// Natural width of one diff card's line area. Touch shells pan this area
+/// horizontally, so it covers the longest line instead of letting the row
+/// elide it on the right.
+fn patch_content_width(lines: &[NativePatchLine]) -> f32 {
+    const GUTTER: f32 = 100.0;
+    let longest = lines
+        .iter()
+        .take(200)
+        .map(|line| {
+            line.text
+                .chars()
+                .map(|ch| {
+                    if ch == '\t' {
+                        60.0
+                    } else if is_wide_char(ch) {
+                        12.5
+                    } else {
+                        7.5
+                    }
+                })
+                .sum::<f32>()
+        })
+        .fold(0.0f32, f32::max);
+    (GUTTER + longest).clamp(260.0, 3000.0)
+}
+
+/// CJK and emoji take roughly a full monospace cell; the rest about 0.6.
+fn is_wide_char(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x1100..=0x115F
+            | 0x2E80..=0x303E
+            | 0x3041..=0x33FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xA000..=0xA4CF
+            | 0xAC00..=0xD7A3
+            | 0xF900..=0xFAFF
+            | 0xFE30..=0xFE6F
+            | 0xFF00..=0xFF60
+            | 0xFFE0..=0xFFE6
+            | 0x1F300..=0x1FAFF
+    )
 }
 
 /// File action verb for the card header.

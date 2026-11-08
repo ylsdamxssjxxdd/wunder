@@ -106,6 +106,11 @@ export component EnvSetupPage inherits Rectangle {
         return root.wave-line() + " L \{root.w * 2} \{bottom} L 0 \{bottom} Z";
     }
 
+    // 只填充高出基线的波峰，用于后层波浪：水下不留色带。
+    pure function wave-crest() -> string {
+        return root.wave-line() + " L \{root.w * 2} 10 L 0 10 Z";
+    }
+
     // 铺满一层触摸面挡住聊天界面的事件穿透；内容与按钮声明在它之后（上层）。
     block := TouchArea {
         width: 100%;
@@ -113,18 +118,20 @@ export component EnvSetupPage inherits Rectangle {
     }
 
     // ---- LCL 液体 ------------------------------------------------------
-    // 后层波浪：相位更快、颜色更浅，只在主液面上缘露出几像素，拉开景深。
+    // 后层波峰：相位更快、颜色更浅，只画高出主液面的部分，形成层次且
+    // 不会在水下留下一条横向色带。
     back-wave := Path {
         visible: root.fill > 0.002;
         x: -root.width * root.wrap(root.phase * 1.35 + 0.27) - 1px;
         y: root.surface-y - 16px;
         width: root.width * 2;
-        height: 74px;
-        commands: root.wave-body(74.0);
-        fill: @linear-gradient(180deg, #FFE3B6 0%, #F8BC68 100%);
-        opacity: 0.45;
+        height: 24px;
+        commands: root.wave-crest();
+        fill: #FFD9A0;
+        opacity: 0.5;
     }
-    // 主液面：从液面一直填到屏幕下方，坐标按屏幕宽度插值，振幅固定像素。
+    // 主液面：从液面一直填到屏幕下方。Path 填充不支持渐变，主体用纯色，
+    // 深度交给下面贴着液面的矩形渐变。
     wave := Path {
         visible: root.fill > 0.002;
         x: -root.width * root.phase - 1px;
@@ -132,8 +139,17 @@ export component EnvSetupPage inherits Rectangle {
         width: root.width * 2;
         height: root.height + 80px;
         commands: root.wave-body(root.h + 80.0);
-        fill: @linear-gradient(180deg, #FFC46B 0%, #F5972D 48%, #E36A05 100%);
+        fill: #FFC46B;
         opacity: 0.72;
+    }
+    // 水体深度：从液面下方开始由透明渐入深橙，顶部无接缝。
+    Rectangle {
+        visible: root.fill > 0.002;
+        x: 0px;
+        y: root.surface-y + 10px;
+        width: 100%;
+        height: root.height - root.surface-y;
+        background: @linear-gradient(180deg, #E36A0500 0%, #E36A0555 60%, #E36A0599 100%);
     }
     // 气泡：贯穿整层液体，底部淡入、贴近液面淡出，循环时不会突然消失。
     for i in 9 : Rectangle {

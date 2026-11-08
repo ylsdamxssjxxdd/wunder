@@ -734,21 +734,39 @@ fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
                     // on show: no taskbar button, no focus taken from whatever
                     // the user is doing. It also has no minimum size, unlike the
                     // workbench and the other auxiliary windows.
+                    let attributes = attributes
+                        .with_title("wunder 桌面版")
+                        .with_decorations(false)
+                        .with_active(false);
                     #[cfg(windows)]
                     {
                         use winit::platform::windows::WindowAttributesExtWindows as _;
+                        return attributes.with_skip_taskbar(true).with_no_activate(true);
+                    }
+                    #[cfg(target_os = "linux")]
+                    {
+                        // GNOME also counts skip-taskbar windows as application
+                        // windows and may hand a dock click to the toast instead
+                        // of the workbench; a Utility window is filtered out.
+                        use winit::platform::x11::WindowAttributesExtX11 as _;
+                        return attributes
+                            .with_x11_window_type(vec![winit::platform::x11::WindowType::Utility]);
+                    }
+                    #[cfg(not(any(windows, target_os = "linux")))]
+                    return attributes;
+                }
+                if crate::tray::take_notice_window() {
+                    // The tray notice must not become the window a taskbar or
+                    // dock click activates; keep it a Utility top-level on X11.
+                    #[cfg(target_os = "linux")]
+                    {
+                        use winit::platform::x11::WindowAttributesExtX11 as _;
                         return attributes
                             .with_title("wunder 桌面版")
                             .with_decorations(false)
                             .with_active(false)
-                            .with_skip_taskbar(true)
-                            .with_no_activate(true);
+                            .with_x11_window_type(vec![winit::platform::x11::WindowType::Utility]);
                     }
-                    #[cfg(not(windows))]
-                    return attributes
-                        .with_title("wunder 桌面版")
-                        .with_decorations(false)
-                        .with_active(false);
                 }
                 if crate::pet_window::take_overlay_window() {
                     // A pet overlay: frameless, never activated, and on X11 a

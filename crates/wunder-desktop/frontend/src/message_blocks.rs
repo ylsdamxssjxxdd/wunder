@@ -315,6 +315,8 @@ fn blank(kind: i32) -> MdBlock {
         image_width: 0.0,
         image_height: 0.0,
         image_error: false,
+        image_frames: ModelRc::default(),
+        frame_delays: ModelRc::default(),
         resource_name: slint::SharedString::default(),
         space_before: 0.0,
     }

@@ -14,6 +14,15 @@ thread_local! {
     static TRAY: RefCell<Option<AppTray>> = const { RefCell::new(None) };
     static NOTICE: RefCell<Option<TrayNotice>> = const { RefCell::new(None) };
     static NOTICE_TIMER: slint::Timer = slint::Timer::default();
+    /// Set while the notice component is being built. The platform hook reads
+    /// it once to keep the notice out of the taskbar/pager, like the other
+    /// auxiliary top-levels.
+    static NOTICE_WINDOW_PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Claim the pending notice window for the backend's window-attributes hook.
+pub(crate) fn take_notice_window() -> bool {
+    NOTICE_WINDOW_PENDING.with(|pending| pending.replace(false))
 }
 
 pub fn install(app: &MainWindow) {
@@ -98,6 +107,17 @@ pub fn hide(app: &MainWindow) -> bool {
     if !TRAY.with(|slot| slot.borrow().is_some()) {
         return false;
     }
+    // Linux shells keep the dock/taskbar button of a running app, but a window
+    // the client unmapped is withdrawn from the WM: activating that button can
+    // no longer map it, so only the tray icon brought the workbench back.
+    // Iconify instead and let the window manager own both restore paths.
+    #[cfg(not(windows))]
+    if crate::native_window::minimize(app.window()) {
+        app.set_status("已最小化到系统托盘；点击任务栏或托盘图标可恢复窗口".into());
+        announce(HIDDEN_TOOLTIP);
+        show_notice();
+        return true;
+    }
     match app.hide() {
         Ok(()) => {
             app.set_status("已最小化到系统托盘；点击托盘图标可恢复窗口".into());
@@ -143,7 +163,13 @@ fn hide_notice() {
 fn show_notice() {
     let notice = NOTICE.with(|slot| {
         if slot.borrow().is_none() {
-            let Ok(notice) = TrayNotice::new() else {
+            // The adapter — and the native window — is created inside `new()`,
+            // so the platform hook must know before that call that this window
+            // is the tray notice, not an application top-level.
+            NOTICE_WINDOW_PENDING.with(|pending| pending.set(true));
+            let created = TrayNotice::new();
+            NOTICE_WINDOW_PENDING.with(|pending| pending.set(false));
+            let Ok(notice) = created else {
                 return None;
             };
             let weak = notice.as_weak();

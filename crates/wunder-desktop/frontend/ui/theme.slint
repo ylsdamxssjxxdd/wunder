@@ -114,6 +114,11 @@ export struct MdBlock {
     image-width: length,
     image-height: length,
     image-error: bool,
+    // Animated GIF frames and their per-frame delay in milliseconds. Empty for
+    // still images; `image` always holds the first frame so sizing and the
+    // static fallback keep working.
+    image-frames: [image],
+    frame-delays: [int],
     resource-name: string,
     // Gap above the block, computed by Rust from the previous block.
     space-before: length,
@@ -139,7 +144,13 @@ export struct ToolWorkflowEntry { id: string, title: string, preview: string, de
 // One diff card of the timeline (§7.4). Lines stay flat and pre-bounded so a
 // long patch never rebuilds the whole message list while it streams.
 export struct PatchLine { number: string, text: string, kind: string }
-export struct PatchCard { path: string, action: string, added: string, deleted: string, lines: [PatchLine] }
+export struct PatchCard {
+    path: string, action: string, added: string, deleted: string, lines: [PatchLine],
+    // Natural width of the longest diff line in pixels, gutter and padding
+    // included. Touch shells pan the line area at this width so a long code
+    // line is not elided on the right.
+    content-width: length,
+}
 // One flat, pre-projected timeline entry (§7). `kind` selects the component:
 // 0 user bubble, 1 assistant body, 2 reasoning entry, 3 tool entry,
 // 4 tool group bar, 5 zero-height child status marker, 6 process bar,

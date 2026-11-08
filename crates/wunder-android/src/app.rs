@@ -284,6 +284,11 @@ pub fn build_preview() -> MobileWindow {
     ui.on_upload_workspace(|_| {});
     ui.on_download_workspace(|_| {});
     ui.on_load_more_workspace(|_, _| {});
+    ui.on_workspace_rename(|_, _| {});
+    ui.on_workspace_move(|_, _| {});
+    ui.on_workspace_delete(|_| {});
+    ui.on_open_workspace_file(|_| {});
+    ui.on_open_workspace_location(|_, _| {});
     ui.on_open_workspaces(|| {});
     ui.on_refresh_workspaces(|| {});
     let workspaces_for_select = workspaces.clone();
@@ -296,6 +301,7 @@ pub fn build_preview() -> MobileWindow {
                     workspaces_for_select.set_row_data(index, workspace.clone());
                     if workspace.active {
                         ui.set_workspace_name(workspace.name);
+                        ui.set_workspace_id(workspace.id.clone());
                         ui.set_workspace_icon(workspace.icon);
                         ui.set_workspace_color(workspace.color);
                         ui.set_workspace_thread_count(workspace.thread_count);
@@ -319,6 +325,7 @@ pub fn build_preview() -> MobileWindow {
         if let Some(ui) = weak.upgrade() {
             let id: slint::SharedString =
                 format!("preview-ws-{}", workspaces_for_create.row_count() + 1).into();
+            let active_id = id.clone();
             for index in 0..workspaces_for_create.row_count() {
                 if let Some(mut workspace) = workspaces_for_create.row_data(index) {
                     workspace.active = false;
@@ -339,6 +346,7 @@ pub fn build_preview() -> MobileWindow {
                 active: true,
             });
             ui.set_workspace_name(name);
+            ui.set_workspace_id(active_id);
             ui.set_workspace_icon(icon);
             ui.set_workspace_color(color);
             ui.set_workspace_thread_count(0);
@@ -382,6 +390,7 @@ pub fn build_preview() -> MobileWindow {
                 if let Some(first) = kept.first_mut() {
                     first.active = true;
                     ui.set_workspace_name(first.name.clone());
+                    ui.set_workspace_id(first.id.clone());
                     ui.set_workspace_icon(first.icon.clone());
                     ui.set_workspace_color(first.color.clone());
                     ui.set_workspace_thread_count(first.thread_count);
@@ -601,6 +610,9 @@ fn wire_callbacks(
     ui.on_open_drawer(move || {
         let _ = sender.send(Command::RefreshSessions);
         let _ = sender.send(Command::RefreshArchived);
+        // The drawer shows the working directory inline; refresh it alongside
+        // the thread list so the files are never a stale snapshot.
+        let _ = sender.send(Command::RefreshWorkspace);
         if let Some(ui) = weak.upgrade() {
             ui.set_plus_open(false);
             ui.set_drawer_open(true);
@@ -732,6 +744,39 @@ fn wire_callbacks(
         let _ = sender.send(Command::LoadMoreWorkspace {
             path: path.to_string(),
             offset: offset.max(0) as u64,
+        });
+    });
+    let sender = commands.clone();
+    ui.on_workspace_rename(move |path, name| {
+        let _ = sender.send(Command::RenameWorkspaceEntry {
+            path: path.to_string(),
+            name: name.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_workspace_move(move |path, target_dir| {
+        let _ = sender.send(Command::MoveWorkspaceEntry {
+            path: path.to_string(),
+            target_dir: target_dir.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_workspace_delete(move |path| {
+        let _ = sender.send(Command::DeleteWorkspaceEntry {
+            path: path.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_open_workspace_file(move |path| {
+        let _ = sender.send(Command::OpenWorkspaceFile {
+            path: path.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_open_workspace_location(move |path, dir| {
+        let _ = sender.send(Command::OpenWorkspaceLocation {
+            path: path.to_string(),
+            dir,
         });
     });
 
@@ -1604,6 +1649,15 @@ fn inquiry_row(index: usize, question: &engine::InquiryQuestionView) -> InquiryQ
     }
 }
 
+/// One decoded image in UI form: a still has one frame, a GIF keeps every
+/// bounded frame plus its per-frame delay in milliseconds.
+#[derive(Clone)]
+struct CachedImage {
+    frames: Vec<slint::Image>,
+    delays: Vec<i32>,
+    bytes: usize,
+}
+
 /// Caches converted rows by id + content signature. Only the changed tail is
 /// re-projected while a turn streams.
 struct RowCache {
@@ -1611,7 +1665,7 @@ struct RowCache {
     rows: HashMap<String, (u64, TimelineRow)>,
     /// Decoded workspace images by source, shared with every block model the
     /// cache produced. `None` records a failed load.
-    images: HashMap<String, Option<slint::Image>>,
+    images: HashMap<String, Option<CachedImage>>,
     /// Sources seen in a projection but not decoded yet; the tick forwards a
     /// bounded batch to the engine.
     wanted: Vec<String>,
@@ -1656,14 +1710,31 @@ impl RowCache {
             if self.images.contains_key(source) {
                 continue;
             }
-            let image = image.as_ref().map(|pixels| {
-                slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(
-                    &pixels.rgba,
-                    pixels.width,
-                    pixels.height,
-                ))
+            let image = image.as_ref().map(|pixels| CachedImage {
+                frames: pixels
+                    .frames
+                    .iter()
+                    .map(|rgba| {
+                        slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(
+                            rgba,
+                            pixels.width,
+                            pixels.height,
+                        ))
+                    })
+                    .collect(),
+                delays: pixels.delays.iter().map(|delay| *delay as i32).collect(),
+                bytes: pixels
+                    .frames
+                    .len()
+                    .saturating_mul(pixels.width as usize)
+                    .saturating_mul(pixels.height as usize)
+                    .saturating_mul(4),
             });
-            if self.images.len() >= 64 {
+            let held: usize = self.images.values().flatten().map(|image| image.bytes).sum();
+            if self.images.len() >= 64
+                || held.saturating_add(image.as_ref().map_or(0, |image| image.bytes))
+                    > 96 * 1024 * 1024
+            {
                 // Block models keep their own pixel handles; dropping this
                 // lookup only makes a future projection request the source
                 // again.
@@ -1712,10 +1783,21 @@ impl RowCache {
             let source = block.image_source.to_string();
             match self.images.get(&source) {
                 Some(Some(image)) => {
-                    let size = image.size();
-                    block.image = image.clone();
-                    block.image_width = size.width as f32;
-                    block.image_height = size.height as f32;
+                    if let Some(first) = image.frames.first() {
+                        let size = first.size();
+                        block.image = first.clone();
+                        block.image_width = size.width as f32;
+                        block.image_height = size.height as f32;
+                        if image.frames.len() > 1 {
+                            block.image_frames =
+                                ModelRc::new(VecModel::from(image.frames.clone()));
+                            block.frame_delays =
+                                ModelRc::new(VecModel::from(image.delays.clone()));
+                        } else {
+                            block.image_frames = ModelRc::default();
+                            block.frame_delays = ModelRc::default();
+                        }
+                    }
                     model.set_row_data(index, block);
                 }
                 Some(None) => {
@@ -2259,6 +2341,7 @@ fn start_tick(
                 ui.set_thread_title(state.title.as_str().into());
                 ui.set_thread_subtitle(state.subtitle.as_str().into());
                 ui.set_workspace_name(state.workspace.as_str().into());
+                ui.set_workspace_id(state.workspace_id.as_str().into());
                 ui.set_generating(state.generating);
                 ui.set_stopping(state.stopping);
                 ui.set_loading(state.loading);
@@ -2324,6 +2407,7 @@ fn start_tick(
                     .into(),
                 );
                 ui.set_workspace_name("云端工作区".into());
+                ui.set_workspace_id("".into());
                 ui.set_model_name(active.model.as_str().into());
                 ui.set_model_key(active.model.as_str().into());
                 ui.set_generating(false);
@@ -2359,6 +2443,7 @@ fn start_tick(
                 ui.set_thread_title(state.title.as_str().into());
                 ui.set_thread_subtitle(state.subtitle.as_str().into());
                 ui.set_workspace_name(state.workspace.as_str().into());
+                ui.set_workspace_id(state.workspace_id.as_str().into());
                 ui.set_generating(state.generating);
                 ui.set_stopping(state.stopping);
                 ui.set_loading(state.loading);
@@ -3277,6 +3362,20 @@ fn start_tick(
             if (ui.get_selection_end_y() - end.y).abs() > 0.5 {
                 ui.set_selection_end_y(end.y);
             }
+            // The copy action floats next to the selected text: above the
+            // first line, or below the last one when the header is in the way.
+            let center_x = (start.x + end.x) / 2.0;
+            if (ui.get_selection_bar_x() - center_x).abs() > 0.5 {
+                ui.set_selection_bar_x(center_x);
+            }
+            let top = start.y.min(end.y);
+            if (ui.get_selection_bar_y() - top).abs() > 0.5 {
+                ui.set_selection_bar_y(top);
+            }
+            let bottom = start.y.max(end.y);
+            if (ui.get_selection_bar_bottom() - bottom).abs() > 0.5 {
+                ui.set_selection_bar_bottom(bottom);
+            }
         } else if ui.get_selection_handles() {
             ui.set_selection_handles(false);
         }
@@ -3312,10 +3411,21 @@ fn handle_back(
         return true;
     }
     let mut closed = true;
-    if ui.get_prompt_preview_open() {
+    if ui.get_file_rename_open() {
+        ui.set_file_rename_open(false);
+    } else if ui.get_file_delete_open() {
+        ui.set_file_delete_open(false);
+    } else if ui.get_file_move_open() {
+        ui.set_file_move_open(false);
+    } else if ui.get_file_sheet_open() {
+        ui.set_file_sheet_open(false);
+    } else if ui.get_prompt_preview_open() {
         ui.set_prompt_preview_open(false);
     } else if ui.get_device_sheet_open() {
         ui.set_device_sheet_open(false);
+    } else if ui.get_workspace_sheet_open() {
+        ui.set_workspace_sheet_open(false);
+        ui.set_workspace_delete_armed(false);
     } else if ui.get_settings_open()
         && ui.get_settings_page() == 14
         && (ui.get_settings_channel_editor_open() || ui.get_settings_channel_logs_open())
@@ -3325,13 +3435,8 @@ fn handle_back(
         } else {
             ui.invoke_close_channel_logs();
         }
-    } else if ui.get_delete_archived_open() {
-        ui.set_delete_archived_open(false);
-        ui.set_pending_delete_id("".into());
     } else if ui.get_rename_open() {
         ui.set_rename_open(false);
-    } else if ui.get_session_sheet_open() {
-        ui.set_session_sheet_open(false);
     } else if ui.get_model_sheet_open() {
         ui.set_model_sheet_open(false);
     } else if ui.get_trajectory_open() {
@@ -3348,13 +3453,10 @@ fn handle_back(
             ui.set_workspace_overlay(0);
         }
     } else if ui.get_workspace_open() {
-        if ui.get_workspace_sheet_open() {
-            ui.set_workspace_sheet_open(false);
-        } else if !ui.get_workspace_path().is_empty() {
+        if !ui.get_workspace_path().is_empty() {
             ui.invoke_open_workspace(ui.get_workspace_parent_path());
         } else {
             ui.set_workspace_open(false);
-            ui.set_workspace_sheet_open(false);
         }
     } else if ui.get_settings_open() {
         if ui.get_editor_open() {
@@ -3450,7 +3552,7 @@ pub fn install_preview_data(
             icon: "folder".into(),
             color: "blue".into(),
             root: "应用工作区 / 心舰".into(),
-            thread_count: 2,
+            thread_count: 3,
             active: true,
         },
         MobileWorkspace {
@@ -3475,7 +3577,8 @@ pub fn install_preview_data(
     ui.set_workspaces(ModelRc::from(workspaces.clone()));
     ui.set_workspace_icon("folder".into());
     ui.set_workspace_color("blue".into());
-    ui.set_workspace_thread_count(2);
+    ui.set_workspace_id("preview-ws-1".into());
+    ui.set_workspace_thread_count(3);
     ui.set_model_name("预览模型".into());
     ui.set_model_key("preview-chat".into());
     ui.set_preset_questions(ModelRc::from(Rc::new(VecModel::from(vec![
@@ -3897,33 +4000,36 @@ pub fn install_preview_data(
         crate::project::ProcessChildData {
             id: "p-tool".into(),
             kind: KIND_TOOL,
-            tool_name: "读取文件".into(),
-            tool_icon: "file-lines".into(),
+            tool_name: "编辑文件".into(),
+            tool_icon: "file-pen".into(),
             target: "crates/wunder-desktop/frontend/ui/timeline.slint".into(),
-            summary: "已读取 2.4k token".into(),
-            detail: "读取 crates/wunder-desktop/frontend/ui/timeline.slint，共 1176 行。".into(),
-            sections: vec![wunder_desktop::NativeWorkflowSection {
-                title: "crates/wunder-desktop/frontend/ui/timeline.slint".into(),
-                meta: "1176 行".into(),
-                kind: "patch".into(),
+            summary: "已修改 1 个文件".into(),
+            detail: String::new(),
+            patch: vec![wunder_desktop::NativePatchFile {
+                path: "crates/wunder-desktop/frontend/ui/timeline.slint".into(),
+                action: "modify".into(),
+                added: "2".into(),
+                deleted: "1".into(),
                 lines: vec![
-                    wunder_desktop::NativeWorkflowLine {
-                        ratio: 0.0,
-                        text: "@@ -688,7 +688,7 @@ component ProcessBar".into(),
+                    wunder_desktop::NativePatchLine {
+                        text: "@@ -1398,7 +1398,8 @@ component ProcessBar inherits Rectangle".into(),
                         kind: "header".into(),
                         number: String::new(),
                     },
-                    wunder_desktop::NativeWorkflowLine {
-                        ratio: 0.0,
-                        text: "height: root.data.open ? 40px + process-body.height : 34px;".into(),
-                        kind: "add".into(),
-                        number: "701".into(),
+                    wunder_desktop::NativePatchLine {
+                        text: "                        private property <int> scroll-pending: true;".into(),
+                        kind: "context".into(),
+                        number: "1398".into(),
                     },
-                    wunder_desktop::NativeWorkflowLine {
-                        ratio: 0.0,
-                        text: "height: root.data.open ? 36px + process-body.height : 34px;".into(),
+                    wunder_desktop::NativePatchLine {
+                        text: "                        height: min(240px, thinking-column.preferred-height + 16px);".into(),
                         kind: "delete".into(),
-                        number: "701".into(),
+                        number: "1399".into(),
+                    },
+                    wunder_desktop::NativePatchLine {
+                        text: "                        height: min(320px, thinking-column.preferred-height + 16px); // keep the whole wrapped reasoning line reachable".into(),
+                        kind: "add".into(),
+                        number: "1399".into(),
                     },
                 ],
             }],
@@ -3933,7 +4039,19 @@ pub fn install_preview_data(
             open: true,
             ..Default::default()
         },
+        crate::project::ProcessChildData {
+            id: "p-cmd".into(),
+            kind: KIND_TOOL,
+            tool_name: "执行命令".into(),
+            tool_icon: "terminal".into(),
+            summary: "cargo test --lib — 全部通过".into(),
+            detail: "执行 · 完成\n$ cargo test --lib -- --nocapture --test-threads=1\nname\tvalue\tstatus\tduration\towner\tpath\tnotes\tmore\tcolumns\t--verbose\n   Compiling wunder-android v0.4.0 (/home/sjxx/桌面/wunder/crates/wunder-android)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.3s with a deliberately long trailing sentence that must wrap inside the panel\ntest md::tests::thumbnails_keep_pixels_and_reject_garbage ... ok\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\ntest result: ok. 70 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\nexit 0".into(),
+            status_kind: crate::project::STATUS_DONE,
+            open: false,
+            ..Default::default()
+        },
     ];
+    process.text = "工作过程 · 3 步".into();
     rows.push(process);
 
     let mut body = RowData::new(KIND_BODY, "p-body");
@@ -3975,6 +4093,7 @@ pub fn install_preview_data(
             .map(|row| row.to_row(&mut renderer))
             .collect::<Vec<TimelineRow>>(),
     );
+
     ui.set_turn_marks(ModelRc::from(Rc::new(VecModel::from(vec![
         TurnMark {
             fraction: 0.02,
@@ -4051,6 +4170,40 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
         }
         "drawer" => {
             ui.set_drawer_open(true);
+        }
+        "workspace-sheet" => {
+            ui.set_drawer_open(true);
+            ui.set_workspace_sheet_open(true);
+        }
+        "file-actions" => {
+            ui.set_drawer_open(true);
+            if let Some(entry) = preview_workspace().into_iter().find(|entry| !entry.dir) {
+                ui.set_file_pending(entry);
+                ui.set_file_sheet_open(true);
+            }
+        }
+        "file-rename" => {
+            ui.set_drawer_open(true);
+            if let Some(entry) = preview_workspace().into_iter().find(|entry| !entry.dir) {
+                ui.set_file_pending(entry);
+                ui.set_file_rename_path(ui.get_file_pending().path);
+                ui.set_file_rename_name(ui.get_file_pending().name);
+                ui.set_file_rename_open(true);
+            }
+        }
+        "file-move" => {
+            ui.set_drawer_open(true);
+            if let Some(entry) = preview_workspace().into_iter().find(|entry| !entry.dir) {
+                ui.set_file_pending(entry);
+                ui.set_file_move_open(true);
+            }
+        }
+        "file-delete" => {
+            ui.set_drawer_open(true);
+            if let Some(entry) = preview_workspace().into_iter().find(|entry| !entry.dir) {
+                ui.set_file_pending(entry);
+                ui.set_file_delete_open(true);
+            }
         }
         "workspace" => {
             ui.set_workspace_open(true);
@@ -4472,9 +4625,13 @@ mod tests {
 
         cache.images.insert(
             "chart.png".into(),
-            Some(slint::Image::from_rgba8(
-                slint::SharedPixelBuffer::clone_from_slice(&[255, 0, 0, 255], 1, 1),
-            )),
+            Some(CachedImage {
+                frames: vec![slint::Image::from_rgba8(
+                    slint::SharedPixelBuffer::clone_from_slice(&[255, 0, 0, 255], 1, 1),
+                )],
+                delays: Vec::new(),
+                bytes: 4,
+            }),
         );
         cache.hydrate_all();
         // The cached row shares its block model with the published row, so the
@@ -4485,6 +4642,31 @@ mod tests {
         assert_eq!(image.image_width, 1.0);
         assert_eq!(image.image_height, 1.0);
         assert!(cache.take_wanted().is_empty());
+    }
+
+    #[test]
+    fn cached_rows_expose_gif_frames_and_delays() {
+        let mut cache = RowCache::default();
+        let mut data = RowData::new(project::KIND_BODY, "row-gif");
+        data.blocks_src = "![动图](anim.gif)".into();
+        let pixel = |color: [u8; 4]| {
+            slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(
+                &color, 1, 1,
+            ))
+        };
+        cache.images.insert(
+            "anim.gif".into(),
+            Some(CachedImage {
+                frames: vec![pixel([255, 0, 0, 255]), pixel([0, 255, 0, 255])],
+                delays: vec![120],
+                bytes: 8,
+            }),
+        );
+        let row = cache.row(&data);
+        let block = row.blocks.row_data(0).expect("image block");
+        assert_eq!(block.image_frames.row_count(), 2);
+        assert_eq!(block.frame_delays.row_data(0), Some(120));
+        assert_eq!(block.image.size().width, 1);
     }
 
     #[test]

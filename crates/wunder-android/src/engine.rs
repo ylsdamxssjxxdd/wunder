@@ -90,6 +90,24 @@ pub enum Command {
         folder: String,
     },
     DeleteWorkspace(String),
+    RenameWorkspaceEntry {
+        path: String,
+        name: String,
+    },
+    MoveWorkspaceEntry {
+        path: String,
+        target_dir: String,
+    },
+    DeleteWorkspaceEntry {
+        path: String,
+    },
+    OpenWorkspaceFile {
+        path: String,
+    },
+    OpenWorkspaceLocation {
+        path: String,
+        dir: bool,
+    },
     UploadWorkspace {
         dir: String,
         files: Vec<String>,
@@ -773,11 +791,14 @@ pub struct MemoryEditorView {
 }
 
 /// One decoded Markdown image, already bounded to display size by the engine
-/// worker. The UI only wraps it into a `slint::Image`.
+/// worker. A still image has one frame; a GIF keeps every bounded frame and
+/// its per-frame delay so the UI can animate it. The UI only wraps the frames
+/// into `slint::Image`s.
 pub struct SharedImage {
     pub width: u32,
     pub height: u32,
-    pub rgba: Vec<u8>,
+    pub frames: Vec<Vec<u8>>,
+    pub delays: Vec<u32>,
 }
 
 /// 目标横幅：线程当前目标的只读快照与本地计时。
@@ -1317,6 +1338,21 @@ fn run(
                 let path = shared.lock().unwrap().workspace_path.clone();
                 load_workspace(&desktop, &shared, &path);
             }
+            Command::RenameWorkspaceEntry { path, name } => {
+                rename_workspace_entry(&desktop, &shared, &path, &name);
+            }
+            Command::MoveWorkspaceEntry { path, target_dir } => {
+                move_workspace_entry(&desktop, &shared, &path, &target_dir);
+            }
+            Command::DeleteWorkspaceEntry { path } => {
+                delete_workspace_entry(&desktop, &shared, &path);
+            }
+            Command::OpenWorkspaceFile { path } => {
+                open_workspace_entry(&desktop, &shared, &path);
+            }
+            Command::OpenWorkspaceLocation { path, dir } => {
+                open_workspace_location(&desktop, &shared, &path, dir);
+            }
             Command::RefreshWorkspaces => {
                 if let Err(error) = refresh_workspaces(&desktop, &shared) {
                     notify(&shared, format!("无法读取工作区：{error}"));
@@ -1456,7 +1492,16 @@ fn run(
             Command::MarkdownImageLoaded { source, image } => {
                 if let Ok(mut state) = shared.lock() {
                     state.images_inflight.remove(&source);
-                    if state.images.len() >= IMAGE_CACHE_LIMIT {
+                    let incoming = image.as_ref().map(shared_image_bytes).unwrap_or(0);
+                    let held: usize = state
+                        .images
+                        .values()
+                        .flatten()
+                        .map(shared_image_bytes)
+                        .sum();
+                    if state.images.len() >= IMAGE_CACHE_LIMIT
+                        || held.saturating_add(incoming) > IMAGE_CACHE_BUDGET
+                    {
                         state.images.clear();
                     }
                     state.images.insert(source, image);
@@ -2939,8 +2984,9 @@ fn configure_browser_runtime() {
 }
 
 /// First launch after an install extracts the bundled runtime without waiting
-/// for the settings card. Failures stay visible there and are retried only by
-/// an explicit tap, so a broken install does not loop on every launch.
+/// for the settings card; a later APK install reports "missing" again and
+/// rebuilds the whole guest. Failed rebuilds surface as "error" and wait for
+/// an explicit tap instead of looping on every launch.
 #[cfg(target_os = "android")]
 fn maybe_auto_install_ubuntu(desktop: &Arc<NativeDesktop>, shared: &Arc<Mutex<Shared>>) {
     let Some(snapshot) = crate::ubuntu::snapshot() else {
@@ -2949,7 +2995,7 @@ fn maybe_auto_install_ubuntu(desktop: &Arc<NativeDesktop>, shared: &Arc<Mutex<Sh
     if snapshot.state != "missing" {
         return;
     }
-    log::info!("ubuntu runtime missing; starting first-launch extraction");
+    log::info!("ubuntu runtime missing or outdated; starting extraction");
     start_ubuntu_install(desktop.clone(), shared.clone());
 }
 
@@ -5530,9 +5576,15 @@ fn active_workspace_root(
         .map_err(|error| error.to_string())
 }
 
-/// Decoded transcript images kept in the shared slot. Each entry is at most a
-/// 640×400 RGBA thumbnail, so the cap stays around a few MB.
+/// Decoded transcript images kept in the shared slot. Entries are bounded
+/// thumbnails, but GIFs hold every frame, so the cache also enforces a total
+/// RGBA budget instead of trusting the entry count alone.
 const IMAGE_CACHE_LIMIT: usize = 48;
+const IMAGE_CACHE_BUDGET: usize = 64 * 1024 * 1024;
+
+fn shared_image_bytes(image: &SharedImage) -> usize {
+    image.frames.iter().map(Vec::len).sum()
+}
 
 /// Candidate workspace roots for one image source. The active workspace goes
 /// first, then every known workspace: a message may reference an absolute path
@@ -5570,10 +5622,11 @@ fn read_markdown_image(
         let Ok(bytes) = desktop.workspace_image_bytes(root, source) else {
             continue;
         };
-        let image = crate::md::decode_thumbnail(&bytes).map(|(width, height, rgba)| SharedImage {
-            width,
-            height,
-            rgba,
+        let image = crate::md::decode_image(&bytes).map(|decoded| SharedImage {
+            width: decoded.width,
+            height: decoded.height,
+            frames: decoded.frames,
+            delays: decoded.delays,
         });
         if image.is_some() {
             return image;
@@ -5713,6 +5766,162 @@ fn load_workspace_page(
             state.workspace_rev = state.workspace_rev.wrapping_add(1);
             state.touch();
         }
+    }
+}
+
+/// Reload the directory that is currently on screen after a mutation. The
+/// operation always targets a child of that directory, so the same path stays
+/// valid; a failed reload leaves the old rows on screen.
+fn refresh_workspace_after_mutation(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
+    let path = shared
+        .lock()
+        .map(|state| state.workspace_path.clone())
+        .unwrap_or_default();
+    load_workspace(desktop, shared, &path);
+}
+
+fn rename_workspace_entry(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+    path: &str,
+    name: &str,
+) {
+    let root = match active_workspace_root(desktop, shared) {
+        Ok(root) => root,
+        Err(error) => {
+            notify(shared, format!("无法读取工作区设置：{error}"));
+            return;
+        }
+    };
+    match desktop.workspace_local_rename(&root, path, name) {
+        Ok(()) => {
+            notify(shared, "已重命名");
+            refresh_workspace_after_mutation(desktop, shared);
+        }
+        Err(error) => notify(shared, format!("重命名失败：{error:#}")),
+    }
+}
+
+fn move_workspace_entry(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+    path: &str,
+    target_dir: &str,
+) {
+    let root = match active_workspace_root(desktop, shared) {
+        Ok(root) => root,
+        Err(error) => {
+            notify(shared, format!("无法读取工作区设置：{error}"));
+            return;
+        }
+    };
+    match desktop.workspace_local_move(&root, path, target_dir) {
+        Ok(()) => {
+            notify(shared, "已移动");
+            refresh_workspace_after_mutation(desktop, shared);
+        }
+        Err(error) => notify(shared, format!("移动失败：{error:#}")),
+    }
+}
+
+fn delete_workspace_entry(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+    path: &str,
+) {
+    let root = match active_workspace_root(desktop, shared) {
+        Ok(root) => root,
+        Err(error) => {
+            notify(shared, format!("无法读取工作区设置：{error}"));
+            return;
+        }
+    };
+    match desktop.workspace_local_delete(&root, path) {
+        Ok(()) => {
+            notify(shared, "已删除");
+            refresh_workspace_after_mutation(desktop, shared);
+        }
+        Err(error) => notify(shared, format!("删除失败：{error:#}")),
+    }
+}
+
+/// Active workspace id and root for system hand-offs. Unlike the listing
+/// fallback, this never invents a root: the document provider needs a
+/// registered workspace id.
+fn active_workspace_identity(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+) -> Result<(String, String), String> {
+    let (selected, thread_workspace) = shared
+        .lock()
+        .map(|state| (state.selected_workspace.clone(), state.workspace_id.clone()))
+        .unwrap_or_default();
+    for id in [selected, thread_workspace] {
+        if id.trim().is_empty() {
+            continue;
+        }
+        if let Ok(workspace) = desktop.get_workspace(&id) {
+            if !workspace.root_path.trim().is_empty() {
+                return Ok((workspace.workspace_id, workspace.root_path));
+            }
+        }
+    }
+    if let Ok(workspaces) = desktop.list_workspaces() {
+        if let Some(workspace) = workspaces
+            .into_iter()
+            .find(|workspace| !workspace.root_path.trim().is_empty())
+        {
+            return Ok((workspace.workspace_id, workspace.root_path));
+        }
+    }
+    Err("没有可用的工作区".into())
+}
+
+fn open_workspace_entry(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, path: &str) {
+    #[cfg(target_os = "android")]
+    {
+        match active_workspace_identity(desktop, shared) {
+            Ok((workspace_id, _root)) => {
+                if !crate::android_host::open_workspace_file(&workspace_id, path) {
+                    notify(shared, "没有可打开此文件的应用");
+                }
+            }
+            Err(error) => notify(shared, error),
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (desktop, shared, path);
+        notify(shared, "仅安卓版支持用系统应用打开文件");
+    }
+}
+
+fn open_workspace_location(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+    path: &str,
+    dir: bool,
+) {
+    let relative = if dir {
+        path.to_string()
+    } else {
+        parent_workspace_path(path)
+    };
+    #[cfg(target_os = "android")]
+    {
+        match active_workspace_identity(desktop, shared) {
+            Ok((workspace_id, _root)) => {
+                if !crate::android_host::open_workspace_location(&workspace_id, &relative) {
+                    notify(shared, "没有可打开文件管理器的应用");
+                }
+            }
+            Err(error) => notify(shared, error),
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (desktop, shared, relative);
+        notify(shared, "仅安卓版支持打开系统文件管理器");
     }
 }
 
@@ -8347,7 +8556,35 @@ mod tests {
         let roots = markdown_image_roots(&desktop, &shared);
         let image = read_markdown_image(&desktop, &roots, &source).expect("the image decodes");
         assert_eq!((image.width, image.height), (640, 280));
-        assert_eq!(image.rgba.len(), 640 * 280 * 4);
+        assert_eq!(image.frames.len(), 1);
+        assert!(image.delays.is_empty());
+        assert_eq!(image.frames[0].len(), 640 * 280 * 4);
+
+        // A GIF in the same workspace keeps every frame and its delay.
+        use image::{Delay, Frame, Rgba, RgbaImage};
+        let gif_path = std::path::Path::new(&workspace.root_path).join("anim.gif");
+        {
+            let mut encoded = Vec::new();
+            {
+                let mut encoder = image::codecs::gif::GifEncoder::new(&mut encoded);
+                for red in [255u8, 128, 0] {
+                    encoder
+                        .encode_frame(Frame::from_parts(
+                            RgbaImage::from_pixel(8, 6, Rgba([red, 0, 0, 255])),
+                            0,
+                            0,
+                            Delay::from_numer_denom_ms(120, 1),
+                        ))
+                        .unwrap();
+                }
+            }
+            std::fs::write(&gif_path, encoded).unwrap();
+        }
+        let gif_source = gif_path.to_string_lossy().to_string();
+        let gif = read_markdown_image(&desktop, &roots, &gif_source).expect("the GIF decodes");
+        assert_eq!(gif.frames.len(), 3);
+        assert_eq!(gif.delays, vec![120, 120, 120]);
+        assert_eq!((gif.width, gif.height), (8, 6));
 
         drop(desktop);
         let _ = std::fs::remove_dir_all(&root);
