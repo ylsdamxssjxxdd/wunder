@@ -780,7 +780,6 @@ export component MobileWindow inherits Window {
     callback save-model(ModelCard, string);
     callback probe-model(ModelCard, string);
     callback delete-model(string);
-    callback set-default-model(string);
     // 工具管理
     callback refresh-tools();
     callback select-tool-server(int);
@@ -2202,7 +2201,6 @@ export component MobileWindow inherits Window {
         save-model(card, secret) => { root.save-model(card, secret); }
         probe-model(card, secret) => { root.probe-model(card, secret); }
         delete-model(key) => { root.delete-model(key); }
-        set-default-model(key) => { root.set-default-model(key); }
         refresh-tools() => { root.refresh-tools(); }
         select-tool-server(index) => { root.select-tool-server(index); }
         select-tool-resource(tab, index) => { root.select-tool-resource(tab, index); }

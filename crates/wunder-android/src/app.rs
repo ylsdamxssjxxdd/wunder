@@ -1103,11 +1103,6 @@ fn wire_callbacks(
         let _ = sender.send(Command::DeleteModel(key.to_string()));
     });
 
-    let sender = commands.clone();
-    ui.on_set_default_model(move |key| {
-        let _ = sender.send(Command::SetDefaultModel(key.to_string()));
-    });
-
     // ---- tool manager ------------------------------------------------
     let sender = commands.clone();
     ui.on_refresh_tools(move || {
@@ -4497,6 +4492,19 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_settings_open(true);
             ui.set_editor_key(card.key.clone());
             ui.set_editor_new(false);
+            ui.set_editor_default(false);
+            ui.set_editor_draft(card);
+            ui.set_editor_secret("".into());
+            ui.set_editor_probe("".into());
+            ui.set_editor_open(true);
+            ui.set_settings_page(2);
+        }
+        "editor-new" => {
+            let card = preview_model_card("", "llm", "", "", false);
+            ui.set_settings_page(1);
+            ui.set_settings_open(true);
+            ui.set_editor_key("".into());
+            ui.set_editor_new(true);
             ui.set_editor_default(false);
             ui.set_editor_draft(card);
             ui.set_editor_secret("".into());

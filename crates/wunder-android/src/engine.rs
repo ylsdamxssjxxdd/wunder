@@ -167,7 +167,6 @@ pub enum Command {
         secret: String,
     },
     DeleteModel(String),
-    SetDefaultModel(String),
     RefreshUbuntu,
     InstallUbuntu,
     SetUbuntuEnabled(bool),
@@ -2216,11 +2215,49 @@ fn run(
                 let edit = model_edit(&card, &secret, &original_key);
                 match desktop.save_model(edit) {
                     Ok(_) => {
+                        // The switch in the editor is applied in the same save
+                        // instead of forcing a second visit to the model row.
+                        let default_error = if card.is_default {
+                            desktop
+                                .set_default_model(card.key.as_str())
+                                .err()
+                                .map(|error| format!("{error}"))
+                        } else {
+                            None
+                        };
+                        // Stay in the editor after saving: the user can keep
+                        // tuning or set the default without losing the page.
+                        let actual_default = if card.is_default && default_error.is_none() {
+                            true
+                        } else {
+                            desktop
+                                .get_desktop_settings()
+                                .ok()
+                                .and_then(|settings| {
+                                    settings
+                                        .models
+                                        .iter()
+                                        .find(|model| model.key == card.key.as_str())
+                                        .map(|model| model.is_default)
+                                })
+                                .unwrap_or(false)
+                        };
                         {
                             let mut state = shared.lock().unwrap();
-                            state.editor = None;
+                            if let Some(editor) = state.editor.as_mut() {
+                                editor.original_key = card.key.to_string();
+                                let mut saved_card = card.clone();
+                                saved_card.is_default = actual_default;
+                                editor.card = saved_card;
+                                editor.is_default = actual_default;
+                                editor.error.clear();
+                                editor.probing = false;
+                            }
                             state.editor_rev = state.editor_rev.wrapping_add(1);
-                            state.notify("模型已保存");
+                            state.notify(match &default_error {
+                                Some(error) => format!("模型已保存，但设为默认失败：{error}"),
+                                None => "模型已保存".to_string(),
+                            });
                             state.touch();
                         }
                         let active = shared.lock().unwrap().session_id.clone();
@@ -2277,21 +2314,6 @@ fn run(
                     refresh_sessions(&desktop, &shared, Some(&active));
                 }
                 Err(error) => notify(&shared, format!("删除模型失败：{error}")),
-            },
-            Command::SetDefaultModel(key) => match desktop.set_default_model(&key) {
-                Ok(_) => {
-                    if let Ok(mut state) = shared.lock() {
-                        if let Some(editor) = state.editor.as_mut() {
-                            editor.is_default = editor.original_key == key;
-                            state.editor_rev = state.editor_rev.wrapping_add(1);
-                        }
-                        state.notify("已设为默认模型");
-                        state.touch();
-                    }
-                    let active = shared.lock().unwrap().session_id.clone();
-                    refresh_sessions(&desktop, &shared, Some(&active));
-                }
-                Err(error) => notify(&shared, format!("设置默认模型失败：{error}")),
             },
             Command::RefreshBackup => refresh_backup(&shared),
             Command::BackupNow => start_backup(&shared),
@@ -2984,9 +3006,8 @@ fn configure_browser_runtime() {
 }
 
 /// First launch after an install extracts the bundled runtime without waiting
-/// for the settings card; a later APK install reports "missing" again and
-/// rebuilds the whole guest. Failed rebuilds surface as "error" and wait for
-/// an explicit tap instead of looping on every launch.
+/// for the settings card. Failures stay visible there and are retried only by
+/// an explicit tap, so a broken install does not loop on every launch.
 #[cfg(target_os = "android")]
 fn maybe_auto_install_ubuntu(desktop: &Arc<NativeDesktop>, shared: &Arc<Mutex<Shared>>) {
     let Some(snapshot) = crate::ubuntu::snapshot() else {
@@ -2995,7 +3016,7 @@ fn maybe_auto_install_ubuntu(desktop: &Arc<NativeDesktop>, shared: &Arc<Mutex<Sh
     if snapshot.state != "missing" {
         return;
     }
-    log::info!("ubuntu runtime missing or outdated; starting extraction");
+    log::info!("ubuntu runtime missing; starting first-launch extraction");
     start_ubuntu_install(desktop.clone(), shared.clone());
 }
 

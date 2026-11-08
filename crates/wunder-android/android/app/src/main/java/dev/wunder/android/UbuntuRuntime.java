@@ -40,9 +40,6 @@ public final class UbuntuRuntime {
     private static final String ROOTFS_ARCHIVE = "rootfs.tar.xz";
     private static final String ROOTFS_ASSET = "ubuntu/" + ROOTFS_ARCHIVE;
     private static final String INSTALL_MARKER = ".wunder_installed_ok";
-    /// A failed post-update rebuild must not re-enter the installer on every
-    /// launch; the record is keyed by the APK install time it belongs to.
-    private static final String REBUILD_FAILED = "usr/rebuild.failed";
     /// Offline tool pack shipped next to the rootfs. It is extracted into the
     /// same tree, so python/git/ffmpeg need no network or package manager.
     private static final String PACK_ASSET = "ubuntu/packs/common.tar.xz";
@@ -141,8 +138,7 @@ public final class UbuntuRuntime {
             if (installing) {
                 return;
             }
-            boolean stale = isInstalled() && staleInstall();
-            if (isInstalled() && !stale && packsInstalled() && browserPackInstalled()) {
+            if (isInstalled() && packsInstalled() && browserPackInstalled()) {
                 detect();
                 return;
             }
@@ -150,8 +146,7 @@ public final class UbuntuRuntime {
             state = "installing";
             progress = 0;
             lastError = "";
-            stage = stale ? "应用已更新，正在重建 Ubuntu 环境…"
-                    : isInstalled() ? "准备安装常用工具…" : "准备安装 Ubuntu…";
+            stage = isInstalled() ? "准备安装常用工具…" : "准备安装 Ubuntu…";
         }
         Thread worker = new Thread(UbuntuRuntime::installBlocking, "wunder-ubuntu-install");
         worker.setDaemon(true);
@@ -172,25 +167,6 @@ public final class UbuntuRuntime {
                 // process start, not just on the first install.
                 linkTools(new File(app.getFilesDir(), "usr/bin"));
                 writeWrapper();
-                if (staleInstall()) {
-                    // Installing a new APK always rebuilds the guest from the
-                    // bundled archive, so the old environment must not be
-                    // reported as ready. A failed rebuild stays visible as an
-                    // error instead of retrying on every launch.
-                    String failure = rebuildFailure();
-                    if (failure != null) {
-                        state = "error";
-                        progress = 0;
-                        stage = "应用更新后重建 Ubuntu 失败";
-                        lastError = failure.isEmpty() ? "重建失败，请点击重试" : failure;
-                        return;
-                    }
-                    state = "missing";
-                    progress = 0;
-                    stage = "应用已更新，将重建 Ubuntu 环境";
-                    lastError = "";
-                    return;
-                }
                 if (!packsInstalled() || !browserPackInstalled()) {
                     // The rootfs survived an app update but a bundled pack was
                     // added or replaced; extract it before reporting ready.
@@ -231,7 +207,7 @@ public final class UbuntuRuntime {
             }
             File files = app.getFilesDir();
             File rootfs = rootfsDir();
-            if (isInstalled() && !staleInstall()) {
+            if (isInstalled()) {
                 // A previous version installed the base rootfs before an
                 // offline pack existed. Only the missing pack extraction is left.
                 setStage("准备安装补充包…", 4);
@@ -249,7 +225,6 @@ public final class UbuntuRuntime {
                         + (browserPackInstalled() ? " + 浏览器" : "");
                 state = "installed";
                 lastError = "";
-                clearRebuildFailure();
                 return;
             }
             File stageDir = new File(files, "ubuntu-stage");
@@ -309,11 +284,8 @@ public final class UbuntuRuntime {
             String prootFlags = chooseProotFlags(bin, rootfs, files);
             // The marker is the installed-state source of truth: write it only
             // after proot actually started, so a failed probe cannot leave a
-            // broken tree that every later boot reports as ready. It also
-            // carries the APK install time, so installing any new APK rebuilds
-            // this whole environment on the next launch.
-            writeText(new File(rootfs, INSTALL_MARKER),
-                    "wunder ubuntu " + appUpdateTime() + "\n");
+            // broken tree that every later boot reports as ready.
+            writeText(new File(rootfs, INSTALL_MARKER), "wunder ubuntu\n");
             writeText(flags, prootFlags + "\n");
             writeWrapper();
             // The compressed rootfs is only needed for the first install.
@@ -338,14 +310,12 @@ public final class UbuntuRuntime {
                     + (browserPackInstalled() ? " + 浏览器" : "");
             state = "installed";
             lastError = "";
-            clearRebuildFailure();
             Log.i(TAG, "ubuntu runtime installed: " + version + " flags=" + prootFlags);
         } catch (Throwable error) {
             lastError = message(error);
             state = "error";
             progress = 0;
             stage = "安装失败：" + lastError;
-            writeRebuildFailure(lastError);
             Log.e(TAG, "ubuntu install failed", error);
         } finally {
             if (tmp != null) {
@@ -1038,88 +1008,6 @@ public final class UbuntuRuntime {
 
     private static boolean isInstalled() {
         return app != null && new File(rootfsDir(), INSTALL_MARKER).isFile();
-    }
-
-    /// True when the rootfs was built by a different APK install. The marker
-    /// records the APK install time, so a normal launch matches while any APK
-    /// install (update, reinstall or downgrade) forces a full rebuild. Markers
-    /// written by older builds carry no time and rebuild exactly once.
-    private static boolean staleInstall() {
-        if (app == null || !isInstalled()) {
-            return false;
-        }
-        try {
-            String text = readText(new File(rootfsDir(), INSTALL_MARKER)).trim();
-            String prefix = "wunder ubuntu";
-            if (!text.startsWith(prefix)) {
-                return true;
-            }
-            String recorded = text.substring(prefix.length()).trim();
-            if (recorded.isEmpty()) {
-                return true;
-            }
-            return Long.parseLong(recorded) != appUpdateTime();
-        } catch (Exception error) {
-            return true;
-        }
-    }
-
-    private static long appUpdateTime() {
-        if (app == null) {
-            return 0;
-        }
-        try {
-            return app.getPackageManager()
-                    .getPackageInfo(app.getPackageName(), 0).lastUpdateTime;
-        } catch (Exception error) {
-            Log.w(TAG, "read package update time failed", error);
-            return 0;
-        }
-    }
-
-    /// Failure message when the last rebuild failed for the current APK
-    /// install; null means the environment should be rebuilt automatically.
-    private static String rebuildFailure() {
-        if (app == null) {
-            return null;
-        }
-        File marker = new File(app.getFilesDir(), REBUILD_FAILED);
-        if (!marker.isFile()) {
-            return null;
-        }
-        try {
-            String text = readText(marker).trim();
-            int split = text.indexOf('\u001f');
-            if (split <= 0) {
-                return null;
-            }
-            if (Long.parseLong(text.substring(0, split)) != appUpdateTime()) {
-                return null;
-            }
-            return text.substring(split + 1).trim();
-        } catch (Exception error) {
-            return null;
-        }
-    }
-
-    private static void writeRebuildFailure(String message) {
-        if (app == null) {
-            return;
-        }
-        try {
-            writeText(new File(app.getFilesDir(), REBUILD_FAILED),
-                    appUpdateTime() + "\u001f" + message + "\n");
-        } catch (IOException error) {
-            Log.w(TAG, "record rebuild failure failed", error);
-        }
-    }
-
-    private static void clearRebuildFailure() {
-        if (app == null) {
-            return;
-        }
-        //noinspection ResultOfMethodCallIgnored
-        new File(app.getFilesDir(), REBUILD_FAILED).delete();
     }
 
     private static File stagedRootfs() {

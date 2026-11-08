@@ -262,6 +262,9 @@ export component ThemeCheck inherits Rectangle {
 export component ThemeSwitch inherits Rectangle {
     in-out property <bool> checked: false;
     in property <bool> enabled: true;
+    // Optional accent override; the default keeps the shared theme accent.
+    in property <color> checked-color: Theme.accent;
+    in property <color> checked-hover-color: Theme.accent-deep;
     callback toggled();
     width: 36px; height: 20px;
     // Disabled is a whole-control state: a greyed thumb alone is
@@ -282,7 +285,7 @@ export component ThemeSwitch inherits Rectangle {
         border-radius: 10px;
         border-width: root.checked ? 0px : 1px;
         border-color: Theme.input-border;
-        background: root.checked ? (switch-touch.has-hover ? Theme.accent-deep : Theme.accent)
+        background: root.checked ? (switch-touch.has-hover ? root.checked-hover-color : root.checked-color)
             : switch-touch.has-hover ? Theme.border : Theme.hover;
         animate background { duration: 110ms; easing: ease-out; }
     }

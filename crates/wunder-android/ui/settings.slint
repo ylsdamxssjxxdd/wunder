@@ -358,12 +358,12 @@ component ModelRow inherits Rectangle {
             height: 20px;
             width: 36px;
             border-radius: 10px;
-            background: Theme.accent-soft;
+            background: Theme.gold-soft;
             Text {
                 width: 100%;
                 height: 100%;
                 text: I18n.st_models_default_badge;
-                color: Theme.accent-ink;
+                color: Theme.gold-ink;
                 font-size: Theme.font-2xs;
                 font-weight: 700;
                 horizontal-alignment: center;
@@ -3318,7 +3318,7 @@ component RuntimePage inherits Rectangle {
                 SheetCard {
                     CardTitle { title: "说明"; }
                     Text {
-                        text: "运行环境只影响命令工具；聊天、模型与本地数据仍在安卓版进程内。安装新的安卓版安装包后，Ubuntu 会在下次启动时整棵重建，guest 内自行安装的软件与 /root 下的文件会被清空。";
+                        text: "运行环境只影响命令工具；聊天、模型与本地数据仍在安卓版进程内。安装失败时可在上方卡片重试。";
                         color: Theme.muted;
                         font-size: Theme.font-xs;
                         wrap: word-wrap;
@@ -3710,7 +3710,7 @@ component AboutPage inherits Rectangle {
                     if root.update-phase == "ready" : VerticalLayout {
                         spacing: 8px;
                         Text {
-                            text: "更新已下载。安装会替换应用，聊天记录、工作区与设置会保留；Ubuntu 运行环境会在下次启动时重建，guest 内自行安装的软件与 /root 下的文件会被清空。";
+                            text: "更新已下载。安装会替换应用，聊天记录、工作区与设置会保留。";
                             color: Theme.text-secondary;
                             font-size: Theme.font-xs;
                             wrap: word-wrap;
@@ -4136,7 +4136,6 @@ component ModelEditorPage inherits Rectangle {
     callback save(ModelCard, string);
     callback probe-model(ModelCard, string);
     callback remove(string);
-    callback set-default(string);
     callback ask-delete();
     callback open-picker(int, string, string);
 
@@ -4178,14 +4177,6 @@ component ModelEditorPage inherits Rectangle {
             }
             if !root.is-new : Action {
                 width: 30px;
-                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-star.svg");
-                label: root.is-default ? I18n.st_is_default : I18n.st_set_default;
-                icon-color: root.is-default ? #9a670d : Theme.muted;
-                enabled: !root.is-default;
-                clicked => { root.set-default(root.original-key); }
-            }
-            if !root.is-new : Action {
-                width: 30px;
                 icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trash.svg");
                 label: I18n.common_delete;
                 danger: true;
@@ -4223,6 +4214,18 @@ component ModelEditorPage inherits Rectangle {
 
                 SheetCard {
                     CardTitle { title: I18n.st_model_section_basic; }
+                    // Available while creating a model too; save applies it in
+                    // one step instead of requiring a second visit.
+                    SettingRow {
+                        label: "设为默认模型";
+                        note: root.is-default ? "当前已是默认模型" : "保存后新任务默认使用该模型";
+                        ThemeSwitch {
+                            checked <=> root.draft.is-default;
+                            enabled: !root.is-default;
+                            checked-color: Theme.gold;
+                            checked-hover-color: Theme.gold-deep;
+                        }
+                    }
                     FormField {
                         label: I18n.model_key_label;
                         placeholder: I18n.model_key_placeholder;
@@ -5022,7 +5025,6 @@ export component MobileSettings inherits Rectangle {
     callback save-model(ModelCard, string);
     callback probe-model(ModelCard, string);
     callback delete-model(string);
-    callback set-default-model(string);
     callback restore-archived(string);
     callback delete-archived(string);
     callback refresh-archived();
@@ -5598,7 +5600,6 @@ export component MobileSettings inherits Rectangle {
             save(card, token) => { root.save-model(card, token); }
             probe-model(card, token) => { root.probe-model(card, token); }
             remove(key) => { root.delete-model(key); }
-            set-default(key) => { root.set-default-model(key); }
             ask-delete() => { root.confirm-delete = true; }
             open-picker(id, title, value) => {
                 root.show-picker(id, title, value);

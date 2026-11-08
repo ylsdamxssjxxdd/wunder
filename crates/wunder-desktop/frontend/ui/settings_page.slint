@@ -1390,13 +1390,13 @@ export component SettingsPage inherits Rectangle {
                                             // Default models carry the web's hanging bookmark ribbon.
                                             if model.is-default : Rectangle {
                                                 x: parent.width - 44px; y: 0px; width: 32px; height: 19px;
-                                                background: @linear-gradient(180deg, #fef3c7 0%, #fde68a 100%);
-                                                Text { y: 2px; width: parent.width; height: 15px; text: I18n.st_models_default_badge; color: #9a670d; font-size: Theme.font-2xs; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+                                                background: @linear-gradient(180deg, #FFF8E1 0%, #FFE08A 100%);
+                                                Text { y: 2px; width: parent.width; height: 15px; text: I18n.st_models_default_badge; color: Theme.gold-ink; font-size: Theme.font-2xs; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
                                             }
                                             if model.is-default : Rectangle {
                                                 x: parent.width - 32.5px; y: 14.5px; width: 9px; height: 9px;
                                                 transform-rotation: 45deg;
-                                                background: #fde68a;
+                                                background: #FFD54F;
                                             }
                                         }
                                         if root.models.length == 0 : PageState { height: 48px; kind: root.loading ? PageStateKind.loading : PageStateKind.empty; message: root.loading ? I18n.st_models_loading : I18n.st_models_empty; }
@@ -1427,7 +1427,7 @@ export component SettingsPage inherits Rectangle {
                                     if !root.model-creating : Action {
                                         height: 32px; icon: @image-url("../assets/icons/fa-star.svg");
                                         label: root.selected-is-default ? I18n.st_is_default : I18n.st_set_default;
-                                        icon-color: root.selected-is-default ? #9a670d : Theme.muted;
+                                        icon-color: root.selected-is-default ? Theme.gold : Theme.muted;
                                         enabled: !root.loading && !root.saving && !root.cloud-locked
                                             && root.selected-key != "" && !root.selected-is-default;
                                         clicked => { root.set-default-model(root.selected-key); }
