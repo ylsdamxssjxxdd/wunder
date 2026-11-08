@@ -28,17 +28,28 @@ wunder 心舰 是一个多形态的智能体工作台
 
 <img src="docs/images/wunder-pupa.png" alt="wunder 桌面版：本地 AI 工作台界面" width="880">
 
-**🐉 wunder 管理端 web** —— 服务端的治理后台
-
-<img src="docs/images/wunder-bridge.png" alt="wunder 管理端：治理后台界面" width="880">
-
-**🐝 wunder 云端版 web** —— 云端 AI 工作台
-
-<img src="docs/images/wunder-hive.png" alt="wunder 云端版：云端 AI 工作台界面" width="880">
-
-**⚙️ wunder 命令行 cli** —— 终端 TUI 入口
-
-<img src="docs/images/wunder-servo.png" alt="wunder 命令行：终端 TUI 界面" width="880">
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>🐉 wunder 管理端 web</strong> —— 服务端的治理后台<br>
+      <img src="docs/images/wunder-bridge.png" alt="wunder 管理端：治理后台界面" width="420">
+    </td>
+    <td width="50%" valign="top">
+      <strong>🐝 wunder 云端版 web</strong> —— 云端 AI 工作台<br>
+      <img src="docs/images/wunder-hive.png" alt="wunder 云端版：云端 AI 工作台界面" width="420">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>⚙️ wunder 命令行 cli</strong> —— 终端 TUI 入口<br>
+      <img src="docs/images/wunder-servo.png" alt="wunder 命令行：终端 TUI 界面" width="420">
+    </td>
+    <td width="50%" valign="top">
+      <strong>📱 wunder 安卓版 android</strong> —— 手机端本地 AI 工作台<br>
+      <img src="docs/images/wunder-cocoon.png" alt="wunder 安卓版：手机端对话界面" width="170">&nbsp;<img src="docs/images/wunder-cocoon-settings.png" alt="wunder 安卓版：设置与权限管理界面" width="170">
+    </td>
+  </tr>
+</table>
 
 ## 形态矩阵
 

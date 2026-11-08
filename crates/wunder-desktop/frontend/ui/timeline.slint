@@ -491,6 +491,9 @@ component TurnFooter inherits Rectangle {
 component FoldEntry inherits Rectangle {
     in property <TimelineRow> data;
     in property <bool> in-group: false;
+    // Touch shells grow the payload inline: one page scroll, no nested
+    // vertical scroll inside the reasoning / tool detail.
+    in property <bool> mobile: false;
     callback toggle(int);
     callback copy-text(string);
     callback open-resource(string);
@@ -571,7 +574,28 @@ component FoldEntry inherits Rectangle {
             // A thinking entry shows its own text, unlabelled: the web timeline
             // renders it as a plain block, while a tool result keeps the
             // structured viewer with its "输出" head.
-            if root.data.kind == EntryKind.reason && root.data.detail != "" : Rectangle {
+            if root.data.kind == EntryKind.reason && root.data.detail != "" && root.mobile : Rectangle {
+                height: thinking-mobile.preferred-height;
+                border-radius: Theme.radius-sm; background: Theme.panel;
+                border-width: 1px; border-color: Theme.border;
+                thinking-mobile := VerticalLayout {
+                    padding: 10px;
+                    if root.data.reasoning-blocks.length == 0 : TextInput {
+                        text: root.data.detail; read-only: true; wrap: word-wrap;
+                        color: Theme.muted; font-size: Theme.font-sm;
+                    }
+                    for block in root.data.reasoning-blocks : BlockView {
+                        block: block;
+                        column-width: thinking-mobile.width - 20px;
+                        font-scale: 0.92;
+                        copy-text(value) => { root.copy-text(value); }
+                        open-resource(path) => { root.open-resource(path); }
+                        link-clicked(path) => { root.open-resource(path); }
+                        context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
+                    }
+                }
+            }
+            if root.data.kind == EntryKind.reason && root.data.detail != "" && !root.mobile : Rectangle {
                 height: min(240px, thinking-column.preferred-height + 16px);
                 border-radius: Theme.radius-sm; background: Theme.panel;
                 border-width: 1px; border-color: Theme.border;
@@ -628,11 +652,24 @@ component FoldEntry inherits Rectangle {
                     }
                 }
             }
-            if root.data.kind != EntryKind.reason && root.data.detail != "" : Rectangle {
+            if root.data.kind != EntryKind.reason && root.data.detail != "" && root.mobile : Rectangle {
+                height: tool-mobile.preferred-height;
+                border-radius: Theme.radius-sm; background: Theme.panel;
+                border-width: 1px; border-color: Theme.border;
+                tool-mobile := VerticalLayout {
+                    padding: 10px;
+                    WorkflowDetail {
+                        sections: root.data.sections;
+                        fallback: root.data.detail;
+                        copy(text) => { root.copy-text(text); }
+                    }
+                }
+            }
+            if root.data.kind != EntryKind.reason && root.data.detail != "" && !root.mobile : Rectangle {
                 height: min(240px, tool-body.preferred-height + 16px);
                 border-radius: Theme.radius-sm; background: Theme.panel;
                 border-width: 1px; border-color: Theme.border;
-                tool-scroll := ScrollView {
+                ScrollView {
                     horizontal-scrollbar-policy: always-off; vertical-scrollbar-policy: as-needed;
                     x: 10px; y: 8px; width: parent.width - 20px; height: parent.height - 16px;
                     content-height: max(self.visible-height, tool-body.preferred-height);
@@ -697,6 +734,7 @@ component GroupBar inherits Rectangle {
 component ProcessBar inherits Rectangle {
     in property <TimelineRow> data;
     in property <length> process-height: Theme.workflow-height;
+    in property <bool> mobile: false;
     callback toggle(int);
     callback process-page(int, int);
     callback copy-text(string);
@@ -767,6 +805,7 @@ component ProcessBar inherits Rectangle {
     }
     process-body := ToolProcess {
         visible: root.data.open;
+        mobile: root.mobile;
         x: 0px; y: 34px;
         width: parent.width;
         viewport-limit: root.process-height;
@@ -792,6 +831,7 @@ component ProcessBar inherits Rectangle {
 export component TimelineRowView inherits Rectangle {
     in property <TimelineRow> entry;
     in property <length> process-height: Theme.workflow-height;
+    in property <bool> mobile: false;
     callback toggle(int);
     callback process-page(int, int);
     callback copy-text(string);
@@ -848,6 +888,7 @@ export component TimelineRowView inherits Rectangle {
         }
         if root.shown && (root.entry.kind == EntryKind.reason || root.entry.kind == EntryKind.tool) : FoldEntry {
             data: root.entry;
+            mobile: root.mobile;
             in-group: root.entry.group-idx != -1;
             toggle(index) => { root.toggle(index); }
             copy-text(text) => { root.copy-text(text); }
@@ -860,6 +901,7 @@ export component TimelineRowView inherits Rectangle {
         }
         if root.shown && root.entry.kind == EntryKind.process : ProcessBar {
             data: root.entry;
+            mobile: root.mobile;
             process-height: root.process-height;
             toggle(index) => { root.toggle(index); }
             process-page(index, direction) => { root.process-page(index, direction); }
@@ -1061,6 +1103,7 @@ export component TimelineView inherits Rectangle {
             }
             for item in root.rows : TimelineRowView {
                 entry: item;
+                mobile: root.mobile;
                 process-height: min(Theme.workflow-height, root.height * 0.64);
                 toggle(target) => { root.toggle(target); }
                 process-page(index, direction) => { root.process-page(index, direction); }
@@ -1097,35 +1140,49 @@ export component TimelineView inherits Rectangle {
         // clamping into a stack at its top and bottom edges.
         private property <length> tick-spacing: min(root.mobile ? 16px : 12px,
             max(1px, (self.height - 12px) / max(1, root.turn-marks.length - 1)));
+        // Touch scrubbing: press anywhere on the strip, drag to browse ticks,
+        // release on the one to jump to. The desktop keeps per-tick hover and
+        // click; the strip-level touch area is only enabled on mobile.
+        private property <bool> scrub-active: false;
+        private property <int> scrub-index: 0;
+        pure function index-at(y: length) -> int {
+            if root.turn-marks.length == 0 { return 0; }
+            let position = (y - self.height / 2) / self.tick-spacing
+                + (root.turn-marks.length - 1) * 0.5;
+            return clamp(round(position), 0, root.turn-marks.length - 1);
+        }
         for mark[i] in root.turn-marks : tick-hit := Rectangle {
             width: parent.width;
             height: root.mobile ? 20px : 12px;
             y: parent.height / 2 + i * marks-strip.tick-spacing
                 - (root.turn-marks.length - 1) * marks-strip.tick-spacing / 2
                 - self.height / 2;
+            private property <bool> active: tick-area.has-hover
+                || (root.mobile && marks-strip.scrub-active && marks-strip.scrub-index == i);
             tick-line := Rectangle {
                 x: parent.width - self.width - 4px;
                 y: (parent.height - self.height) / 2;
-                width: tick-area.has-hover
-                    ? (root.mobile ? 15px : 13px)
+                width: tick-hit.active
+                    ? (root.mobile ? 17px : 13px)
                     : (root.mobile ? 8px : 6px);
-                height: tick-area.has-hover
+                height: tick-hit.active
                     ? (root.mobile ? 4px : 3px)
                     : (root.mobile ? 3px : 2px);
                 border-radius: 1px;
-                background: tick-area.has-hover ? Theme.accent : Theme.border-strong;
+                background: tick-hit.active ? Theme.accent : Theme.border-strong;
             }
             tick-area := TouchArea {
+                enabled: !root.mobile;
                 mouse-cursor: pointer;
                 clicked => { root.jump-to-turn(mark.fraction); }
                 // Wheel gestures over the strip keep scrolling the transcript.
                 scroll-event(event) => { return reject; }
             }
-            // Preview card: left of the strip, centred on the hovered tick and
+            // Preview card: left of the strip, centred on the active tick and
             // clamped to the strip so a tick near either end still reads whole.
             // The card takes no pointer input, so moving onto it just ends the
             // tick's hover instead of fighting the transcript beneath.
-            if tick-area.has-hover && (mark.user != "" || mark.agent != "") : Rectangle {
+            if tick-hit.active && (mark.user != "" || mark.agent != "") : Rectangle {
                 width: root.mobile ? min(236px, root.width - 64px) : min(264px, max(0px, root.width - 40px));
                 height: preview-column.preferred-height + 20px;
                 x: -self.width - 8px;
@@ -1150,6 +1207,38 @@ export component TimelineView inherits Rectangle {
                         wrap: word-wrap;
                     }
                 }
+            }
+        }
+        // Whole-strip scrub target for touch. It sits above the per-tick hit
+        // areas only on mobile; press shows the nearest preview, dragging
+        // updates it, and releasing jumps to that turn.
+        scrub-touch := TouchArea {
+            enabled: root.mobile;
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    marks-strip.scrub-active = true;
+                    marks-strip.scrub-index = marks-strip.index-at(self.mouse-y);
+                    return EventResult.accept;
+                }
+                if event.kind == PointerEventKind.move && marks-strip.scrub-active {
+                    marks-strip.scrub-index = marks-strip.index-at(self.mouse-y);
+                    return EventResult.accept;
+                }
+                if event.kind == PointerEventKind.up {
+                    if marks-strip.scrub-active {
+                        let index = marks-strip.scrub-index;
+                        marks-strip.scrub-active = false;
+                        if index >= 0 && index < root.turn-marks.length {
+                            root.jump-to-turn(root.turn-marks[index].fraction);
+                        }
+                    }
+                    return EventResult.accept;
+                }
+                if event.kind == PointerEventKind.cancel {
+                    marks-strip.scrub-active = false;
+                    return EventResult.accept;
+                }
+                return EventResult.reject;
             }
         }
     }

@@ -601,24 +601,20 @@ pub fn with_app<R>(f: impl FnOnce(&mut JNIEnv<'_>, &JObject<'_>) -> R) -> Option
 /// Reflect the engine's busy state into the foreground notification and hold a
 /// wake lock while a turn runs. Called from engine threads; a failure only
 /// costs the notification text, never the turn.
-pub fn set_busy(busy: bool, title: &str) {
+pub fn set_busy(busy: bool) {
     let Some(host) = HOST.get() else {
         return;
     };
     let Ok(mut env) = host.vm.attach_current_thread() else {
         return;
     };
-    let Ok(text) = env.new_string(title) else {
-        return;
-    };
     let result = env.call_static_method(
         &host.service,
         "setBusy",
-        "(Landroid/content/Context;ZLjava/lang/String;)V",
+        "(Landroid/content/Context;Z)V",
         &[
             JValue::Object(host.app.as_obj()),
             JValue::Bool(busy as u8),
-            JValue::Object(&text),
         ],
     );
     if result.is_err() {
@@ -626,30 +622,22 @@ pub fn set_busy(busy: bool, title: &str) {
     }
 }
 
-/// Replace the notification's live phase/detail while the turn keeps running.
-/// The service keeps its foreground notification and wake lock; only the text
-/// and chronometer projection changes.
-pub fn set_turn_status(phase: &str, detail: &str) {
+/// Update the count shown as "运行中 N 线程". The service keeps its
+/// foreground notification; only the simple thread count changes.
+pub fn set_running_threads(threads: i32) {
     let Some(host) = HOST.get() else {
         return;
     };
     let Ok(mut env) = host.vm.attach_current_thread() else {
         return;
     };
-    let Ok(phase) = env.new_string(phase) else {
-        return;
-    };
-    let Ok(detail) = env.new_string(detail) else {
-        return;
-    };
     let result = env.call_static_method(
         &host.service,
-        "setTurnStatus",
-        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V",
+        "setRunningThreads",
+        "(Landroid/content/Context;I)V",
         &[
             JValue::Object(host.app.as_obj()),
-            JValue::Object(&phase),
-            JValue::Object(&detail),
+            JValue::Int(threads.max(0)),
         ],
     );
     if result.is_err() {

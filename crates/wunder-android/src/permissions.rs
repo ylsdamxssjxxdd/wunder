@@ -62,7 +62,7 @@ const ITEMS: &[Meta] = &[
     Meta {
         id: "screen_capture",
         title: "屏幕采集",
-        description: "允许智能体截取当前屏幕画面（单帧）",
+        description: "每次截图前由系统确认（单次授权）",
     },
     Meta {
         id: "notification_access",
@@ -102,14 +102,19 @@ fn from_states(states: &Value) -> Vec<PermissionItem> {
                 .unwrap_or("unknown");
             let granted = state == "granted";
             let available = state != "unsupported";
-            let state_text = match state {
-                "granted" => "已开启",
-                "denied" => "未开启",
-                "unsupported" => "系统不支持",
+            let single_use = meta.id == "screen_capture";
+            let state_text = match (state, single_use) {
+                ("granted", true) => "已授权（单次）",
+                ("denied", true) => "按需授权",
+                ("granted", false) => "已开启",
+                ("denied", false) => "未开启",
+                ("unsupported", _) => "系统不支持",
                 _ => "未知",
             };
             let action_text = if !available {
                 ""
+            } else if single_use {
+                "去授权"
             } else if granted {
                 "去管理"
             } else {
@@ -161,5 +166,24 @@ mod tests {
         assert_eq!(items.len(), 9);
         assert!(items.iter().all(|item| item.state_text == "未知"));
         assert!(items.iter().all(|item| item.available));
+    }
+
+    #[test]
+    fn screen_capture_is_labelled_as_single_use() {
+        let granted = from_states(&json!({"screen_capture": "granted"}));
+        let item = granted
+            .iter()
+            .find(|item| item.id == "screen_capture")
+            .unwrap();
+        assert_eq!(item.state_text, "已授权（单次）");
+        assert_eq!(item.action_text, "去授权");
+
+        let denied = from_states(&json!({"screen_capture": "denied"}));
+        let item = denied
+            .iter()
+            .find(|item| item.id == "screen_capture")
+            .unwrap();
+        assert_eq!(item.state_text, "按需授权");
+        assert_eq!(item.action_text, "去授权");
     }
 }

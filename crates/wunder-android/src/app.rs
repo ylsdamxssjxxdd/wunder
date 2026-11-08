@@ -1842,6 +1842,7 @@ fn start_tick(
     let mut last_companion = 0u64;
     let mut last_permissions = 0u64;
     let mut last_backup = u64::MAX;
+    let mut last_context = u64::MAX;
     let mut last_update = 0u64;
     let mut last_update_progress = -1i32;
     let mut last_update_downloaded = String::new();
@@ -2805,6 +2806,13 @@ fn start_tick(
             last_backup = state.backup_rev;
         }
 
+        if state.context_rev != last_context {
+            ui.set_context_usage(state.context_usage);
+            ui.set_context_known(state.context_known);
+            ui.set_context_counts(state.context_counts.as_str().into());
+            last_context = state.context_rev;
+        }
+
         if state.update_rev != last_update {
             ui.set_update_phase(state.update_phase.as_str().into());
             ui.set_update_version(state.update_version.as_str().into());
@@ -3759,6 +3767,20 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
         "settings" => {
             ui.set_settings_page(0);
             ui.set_settings_open(true);
+        }
+        "toast" => {
+            ui.set_toast("已复制到剪贴板".into());
+        }
+        "model-gauge" => {
+            ui.set_context_usage(0.62);
+            ui.set_context_known(true);
+            ui.set_context_counts("32.1k / 51.8k tokens".into());
+        }
+        "model-sheet" => {
+            ui.set_context_usage(0.62);
+            ui.set_context_known(true);
+            ui.set_context_counts("32.1k / 51.8k tokens".into());
+            ui.set_model_sheet_open(true);
         }
         "data" => {
             ui.set_settings_page(15);

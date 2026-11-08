@@ -29,17 +29,28 @@ The interface keeps only the information and actions needed to finish the task; 
 
 <img src="docs/images/wunder-pupa.png" alt="wunder Desktop: local AI workbench interface" width="880">
 
-**🐉 wunder Admin** — the Server's governance console
-
-<img src="docs/images/wunder-bridge.png" alt="wunder Admin: governance console interface" width="880">
-
-**🐝 wunder Cloud** — cloud AI workbench
-
-<img src="docs/images/wunder-hive.png" alt="wunder Cloud: cloud AI workbench interface" width="880">
-
-**⚙️ wunder CLI** — terminal TUI entry point
-
-<img src="docs/images/wunder-servo.png" alt="wunder CLI: terminal TUI interface" width="880">
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>🐉 wunder Admin</strong> — the Server's governance console<br>
+      <img src="docs/images/wunder-bridge.png" alt="wunder Admin: governance console interface" width="420">
+    </td>
+    <td width="50%" valign="top">
+      <strong>🐝 wunder Cloud</strong> — cloud AI workbench<br>
+      <img src="docs/images/wunder-hive.png" alt="wunder Cloud: cloud AI workbench interface" width="420">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>⚙️ wunder CLI</strong> — terminal TUI entry point<br>
+      <img src="docs/images/wunder-servo.png" alt="wunder CLI: terminal TUI interface" width="420">
+    </td>
+    <td width="50%" valign="top">
+      <strong>📱 wunder Android</strong> — local AI workbench on a phone<br>
+      <img src="docs/images/wunder-cocoon.png" alt="wunder Android: phone chat interface" width="170">&nbsp;<img src="docs/images/wunder-cocoon-settings.png" alt="wunder Android: settings and permission management" width="170">
+    </td>
+  </tr>
+</table>
 
 ## Form Matrix
 

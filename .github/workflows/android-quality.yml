@@ -85,8 +85,7 @@ jobs:
             -no-window -gpu swiftshader_indirect -no-snapshot -noaudio
             -no-boot-anim
           script: |
-            cd crates/wunder-android/android
-            gradle -PwunderAbis=x86_64 connectedDebugAndroidTest
+            cd crates/wunder-android/android && gradle -PwunderAbis=x86_64 connectedDebugAndroidTest
       - name: Upload instrumented test reports
         if: always()
         uses: actions/upload-artifact@v4

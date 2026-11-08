@@ -10,6 +10,16 @@ pub struct NativeContextUsage {
     pub capacity: Option<f64>,
 }
 
+impl super::NativeDesktop {
+    /// Used/capacity for one thread, independent of billing totals. The
+    /// Android shell reads this after opening a thread, switching models and
+    /// settling a turn so the brain gauge survives process restarts.
+    pub fn context_usage(&self, session: &str) -> Result<NativeContextUsage> {
+        self.runtime
+            .block_on(snapshot(self.state(), self.user_id(), session))
+    }
+}
+
 impl NativeContextUsage {
     /// Normalize current runtime events and persisted message stats.
     /// Never fall back to billing totals or prompt estimates.

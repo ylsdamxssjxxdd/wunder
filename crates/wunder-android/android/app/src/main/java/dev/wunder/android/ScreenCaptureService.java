@@ -13,20 +13,21 @@ import android.os.IBinder;
 import android.util.Log;
 
 /**
- * Foreground service that keeps a MediaProjection session valid.
+ * Short-lived foreground service for one MediaProjection capture.
  *
  * <p>Android 14+ refuses {@code MediaProjectionManager.getMediaProjection()}
  * unless a foreground service with {@code foregroundServiceType="mediaProjection"}
- * is already running. The bridge starts this service right after the user
- * confirms the consent dialog and keeps it alive only while the projection
- * grant is held; revoking the projection stops the service again.
+ * is already running. The bridge starts this service only for the frame that
+ * consumes a one-shot consent and stops it as soon as the PNG is saved, so the
+ * ongoing notification never outlives the capture.
  *
  * <p>The service never captures by itself: the bridge creates a virtual display
  * per frame, so the notification copy avoids implying continuous recording.
  */
 public final class ScreenCaptureService extends Service {
     private static final String TAG = "wunder";
-    private static final String CHANNEL_ID = "wunder-screen";
+    private static final String CHANNEL_ID = "wunder-screen-capture";
+    private static final String LEGACY_CHANNEL_ID = "wunder-screen";
     private static final int NOTIFICATION_ID = 4201;
     private static volatile boolean running;
 
@@ -69,7 +70,9 @@ public final class ScreenCaptureService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        startForegroundCompat();
+        if (!running) {
+            startForegroundCompat();
+        }
         // The projection grant does not survive the process; a sticky restart
         // would leave an empty notification with no usable session.
         return START_NOT_STICKY;
@@ -78,6 +81,7 @@ public final class ScreenCaptureService extends Service {
     @Override
     public void onDestroy() {
         running = false;
+        stopForeground(STOP_FOREGROUND_REMOVE);
         super.onDestroy();
     }
 
@@ -101,14 +105,15 @@ public final class ScreenCaptureService extends Service {
         } catch (Throwable error) {
             running = false;
             Log.w(TAG, "screen capture foreground notification failed: " + error);
+            stopSelf();
         }
     }
 
     private Notification buildNotification() {
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
-                .setContentTitle("屏幕采集已就绪")
-                .setContentText("仅在智能体截图时读取当前画面")
+                .setContentTitle("正在采集屏幕")
+                .setContentText("仅本次截图读取当前画面")
                 .setContentIntent(launchIntent())
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
@@ -138,11 +143,14 @@ public final class ScreenCaptureService extends Service {
             return;
         }
         NotificationChannel channel = new NotificationChannel(
-                CHANNEL_ID, "屏幕采集", NotificationManager.IMPORTANCE_LOW);
+                CHANNEL_ID, "屏幕采集", NotificationManager.IMPORTANCE_MIN);
         channel.setDescription("屏幕采集会话的运行状态");
         channel.setShowBadge(false);
         channel.setSound(null, null);
         channel.enableVibration(false);
         manager.createNotificationChannel(channel);
+        // Channel importance is immutable after creation; replace the old
+        // low-importance channel so existing installs pick up the quieter one.
+        manager.deleteNotificationChannel(LEGACY_CHANNEL_ID);
     }
 }

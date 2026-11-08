@@ -39,11 +39,11 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Single-frame screen capture on top of MediaProjection.
  *
- * <p>The user grants the projection once through the system consent dialog; the
- * grant is a process-scoped token, so {@code requestPermission} must be called
- * again after a process restart. One {@link MediaProjection} is kept per grant
- * and a fresh virtual display / image reader is created for every frame, which
- * keeps repeated tool calls from re-prompting the user.
+ * <p>The user grants the projection through the system consent dialog. Android
+ * 14+ allows that grant to create one projection and one virtual display, so
+ * every capture consumes a fresh grant: the bridge starts the foreground
+ * service for the frame, releases the projection, and stops the service as
+ * soon as the PNG is saved. A new consent is required for the next capture.
  *
  * <p>Every method returns JSON. Failures are values, not exceptions: the agent
  * needs a readable reason (permission missing, service unavailable) instead of
@@ -102,7 +102,7 @@ final class ScreenCaptureBridge {
         }
     }
 
-    /** True while a projection grant is held; used by the permission page. */
+    /** True while a one-shot projection grant is waiting to be consumed. */
     static boolean hasPermission() {
         synchronized (LOCK) {
             return resultData != null && resultCode == Activity.RESULT_OK;
@@ -172,14 +172,12 @@ final class ScreenCaptureBridge {
                     granted ? Activity.RESULT_OK : Activity.RESULT_CANCELED;
             ScreenCaptureBridge.resultData = granted ? new Intent(data) : null;
         }
-        if (granted) {
-            // Starting here, while the activity is visible, satisfies the
-            // Android 12+ background FGS restriction and the Android 14 rule
-            // that the mediaProjection service must already run.
-            ScreenCaptureService.start(current);
-        } else {
-            ScreenCaptureService.stop(current);
-        }
+        // Do not start the foreground service on consent alone. Android shows
+        // its notification immediately for mediaProjection, so a long-lived
+        // service would leave "screen capture ready" in the shade until the
+        // process dies. The service starts only for the capture that consumes
+        // this one-shot grant.
+        ScreenCaptureService.stop(current);
         return true;
     }
 
@@ -202,8 +200,24 @@ final class ScreenCaptureBridge {
                         "service_unavailable",
                         "The screen-capture foreground service did not start.");
             }
-            return captureFrame(context);
+            try {
+                return captureFrame(context);
+            } finally {
+                // Android 14+ allows one getMediaProjection/createVirtualDisplay
+                // per consent. End the session with the frame so the next
+                // screenshot asks for a fresh grant and the notification does
+                // not outlive the capture.
+                endCaptureSession(context);
+            }
         }
+    }
+
+    private static void endCaptureSession(Context context) {
+        synchronized (LOCK) {
+            releaseProjectionLocked();
+            clearPermissionLocked();
+        }
+        ScreenCaptureService.stop(context);
     }
 
     private static boolean ensureServiceRunning(Context context) {

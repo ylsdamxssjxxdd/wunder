@@ -10,6 +10,9 @@ import { ListView, ScrollView } from "std-widgets.slint";
 
 component ProcessEntryCard inherits Rectangle {
     in property <ProcessEntry> entry;
+    // Mobile grows the detail inline so the chat keeps a single vertical
+    // scroll; desktop keeps the bounded inner scroll.
+    in property <bool> mobile: false;
     callback toggle(int);
     callback copy-text(string);
     callback open-resource(string);
@@ -125,7 +128,20 @@ component ProcessEntryCard inherits Rectangle {
             padding-top: 4px; padding-bottom: 8px;
             spacing: 8px;
             for patch in root.entry.patch : PatchDiffCard { card: patch; }
-            if root.entry.patch.length == 0 : Rectangle {
+            if root.entry.patch.length == 0 && root.mobile : Rectangle {
+                height: mobile-detail.preferred-height;
+                background: Theme.panel; border-width: 1px;
+                border-color: Theme.border; border-radius: Theme.radius-sm;
+                mobile-detail := VerticalLayout {
+                    padding: 10px;
+                    WorkflowDetail {
+                        sections: root.entry.sections;
+                        fallback: root.entry.detail;
+                        copy(text) => { root.copy-text(text); }
+                    }
+                }
+            }
+            if root.entry.patch.length == 0 && !root.mobile : Rectangle {
                 height: min(240px, detail.preferred-height + 16px);
                 background: Theme.panel; border-width: 1px;
                 border-color: Theme.border; border-radius: Theme.radius-sm;
@@ -179,6 +195,9 @@ export component ToolProcess inherits Rectangle {
     in property <int> revision;
     in property <bool> active;
     in property <bool> live;
+    // Touch shells render every loaded step inline and let the transcript's
+    // single ScrollView move them; desktop keeps the capped inner list.
+    in property <bool> mobile: false;
     callback page(int);
     in property <length> viewport-limit: Theme.workflow-height;
     callback toggle(int);
@@ -190,15 +209,17 @@ export component ToolProcess inherits Rectangle {
     // "earlier" button either: scrolling past the top loads the older page,
     // so the list is the only control the reader needs. Only a failed load
     // keeps a strip, because retrying needs an explicit target.
-    height: min(root.viewport-limit, root.viewport-height + page-top.height);
+    height: root.mobile
+        ? page-top.height + mobile-list.preferred-height
+        : min(root.viewport-limit, root.viewport-height + page-top.height);
     Timer {
         interval: 33ms;
-        running: root.active && !root.paged && !root.loading && !root.failed;
+        running: !root.mobile && root.active && !root.paged && !root.loading && !root.failed;
         triggered => { root.page(0); }
     }
     Timer {
         interval: 1500ms;
-        running: root.active && root.live && root.paged && !root.has-newer && !root.loading && !root.failed;
+        running: !root.mobile && root.active && root.live && root.paged && !root.has-newer && !root.loading && !root.failed;
         triggered => { root.page(2); }
     }
     changed revision => {
@@ -238,7 +259,7 @@ export component ToolProcess inherits Rectangle {
     private property <length> last-content-y: 0px;
     changed count => { root.scroll-pending = true; }
     Timer {
-        interval: 33ms; running: root.scroll-pending;
+        interval: 33ms; running: !root.mobile && root.scroll-pending;
         triggered => {
             root.scroll-pending = false;
             if root.page-pending && root.revision < 0 {
@@ -273,14 +294,17 @@ export component ToolProcess inherits Rectangle {
         }
     }
     process-list := ListView {
+        visible: !root.mobile;
         y: page-top.height;
-        width: parent.width; height: parent.height - page-top.height;
+        width: parent.width;
+        height: root.mobile ? 0px : parent.height - page-top.height;
         horizontal-scrollbar-policy: always-off;
         vertical-scrollbar-policy: as-needed;
         content-width: self.visible-width;
         for entry in root.entries : ProcessEntryCard {
             width: process-list.visible-width;
             entry: entry;
+            mobile: root.mobile;
             toggle(index) => { root.toggle(index); }
             copy-text(text) => { root.copy-text(text); }
             open-resource(path) => { root.open-resource(path); }
@@ -304,6 +328,21 @@ export component ToolProcess inherits Rectangle {
                 root.scroll-pending = true;
             }
             root.last-content-y = self.content-y;
+        }
+    }
+    // Mobile: every loaded step is laid out inline, so the transcript owns the
+    // only vertical scroll. No nested list, viewport cap or scrollbar.
+    mobile-list := VerticalLayout {
+        visible: root.mobile;
+        y: page-top.height;
+        width: parent.width;
+        for entry in root.entries : ProcessEntryCard {
+            entry: entry;
+            mobile: true;
+            toggle(index) => { root.toggle(index); }
+            copy-text(text) => { root.copy-text(text); }
+            open-resource(path) => { root.open-resource(path); }
+            show-context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
         }
     }
     // Retry is the one pager affordance left: a failed load cannot be asked

@@ -149,26 +149,33 @@ public class WunderSmokeTest {
      * tests because the notification lives outside the Slint window.
      */
     @Test
-    public void runtimeNotificationTracksLivePhaseAndReturnsToIdle() throws Exception {
+    public void runtimeNotificationShowsRunningThreadCountAndReturnsToIdle() throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         // A background instrumentation process may not start a foreground
         // service on Android 12+; the real turn starts from the visible
         // activity, so the test does the same.
         try (ActivityScenario<WunderActivity> scenario = launchResumed()) {
-            WunderRuntimeService.setBusy(context, true, "冒烟会话");
-            WunderRuntimeService.setTurnStatus(context, "模型输出中", "正在生成回复 · 已输出 120 字");
+            WunderRuntimeService.setBusy(context, true);
+            WunderRuntimeService.setRunningThreads(context, 1);
 
-            Notification busy = waitForRuntimeNotification(context);
+            Notification busy = waitForRuntimeNotification(context, "运行中 1 线程");
             assertEquals(
-                    "wunder 安卓版正在执行任务",
+                    "wunder 安卓版",
                     String.valueOf(busy.extras.getCharSequence(Notification.EXTRA_TITLE)));
             assertEquals(
-                    "正在生成回复 · 已输出 120 字",
+                    "运行中 1 线程",
                     String.valueOf(busy.extras.getCharSequence(Notification.EXTRA_TEXT)));
             assertTrue("busy notification must be ongoing",
                     (busy.flags & Notification.FLAG_ONGOING_EVENT) != 0);
 
-            WunderRuntimeService.setBusy(context, false, "");
+            // Concurrent turns update the same simple line, not a phase log.
+            WunderRuntimeService.setRunningThreads(context, 2);
+            Notification two = waitForRuntimeNotification(context, "运行中 2 线程");
+            assertEquals(
+                    "运行中 2 线程",
+                    String.valueOf(two.extras.getCharSequence(Notification.EXTRA_TEXT)));
+
+            WunderRuntimeService.setBusy(context, false);
             Notification idle = waitForRuntimeNotification(context, "待机中，点击返回");
             assertEquals(
                     "待机中，点击返回",

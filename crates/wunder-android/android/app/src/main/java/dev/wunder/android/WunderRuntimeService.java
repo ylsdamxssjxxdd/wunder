@@ -24,29 +24,25 @@ import android.util.Log;
  * <p>The engine lives in the process, not in a window: a turn that is running
  * when the user leaves the app must keep streaming. An activity cannot provide
  * that guarantee, so the runtime runs under a foreground service with a
- * low-importance notification. The wake lock is held only while a turn is
- * actually running, not while the app is idle.
+ * low-importance notification. The notification stays deliberately quiet: like
+ * 桌面版's title bar, it only says how many threads are running. The wake lock
+ * is held only while work is actually running, not while the app is idle.
  */
 public final class WunderRuntimeService extends Service {
     private static final String TAG = "wunder";
     private static final String CHANNEL_ID = "wunder-runtime";
     private static final String ACTION_START = "dev.wunder.android.START";
     private static final String ACTION_STATE = "dev.wunder.android.STATE";
-    private static final String ACTION_STATUS = "dev.wunder.android.STATUS";
+    private static final String ACTION_THREADS = "dev.wunder.android.THREADS";
     private static final String EXTRA_BUSY = "busy";
-    private static final String EXTRA_TITLE = "title";
-    private static final String EXTRA_PHASE = "phase";
-    private static final String EXTRA_DETAIL = "detail";
+    private static final String EXTRA_THREADS = "threads";
     private static final int NOTIFICATION_ID = 4101;
     private static final int PERMISSION_REQUEST = 4102;
 
     private static volatile WunderRuntimeService instance;
 
     private boolean busy;
-    private String title = "";
-    private String phase = "";
-    private String detail = "";
-    private long startedAt;
+    private int runningThreads;
     private PowerManager.WakeLock wakeLock;
 
     /** Start the runtime service, or refresh its notification if it already runs. */
@@ -55,38 +51,32 @@ public final class WunderRuntimeService extends Service {
         startCompat(context, intent);
     }
 
-    /** Reflect the engine's activity into the notification and wake lock. */
-    public static void setBusy(Context context, boolean busy, String title) {
+    /** Reflect the engine's busy state into the notification and wake lock. */
+    public static void setBusy(Context context, boolean busy) {
         WunderRuntimeService running = instance;
         if (running != null) {
             // The service is already foreground. Posting to its main thread
             // updates the same notification without another background FGS
             // start, which Android 12+ may reject while the app is hidden.
-            running.runOnMain(() -> running.applyBusy(busy, title));
+            running.runOnMain(() -> running.applyBusy(busy));
             return;
         }
         Intent intent = new Intent(context, WunderRuntimeService.class)
                 .setAction(ACTION_STATE)
-                .putExtra(EXTRA_BUSY, busy)
-                .putExtra(EXTRA_TITLE, title == null ? "" : title);
+                .putExtra(EXTRA_BUSY, busy);
         startCompat(context, intent);
     }
 
-    /**
-     * Update the live turn status without changing the busy lifetime. The
-     * chronometer is anchored at the first status after {@link #setBusy}, so a
-     * phase change only replaces the text while elapsed time keeps running.
-     */
-    public static void setTurnStatus(Context context, String phase, String detail) {
+    /** Update the number of running agent threads without changing lifetimes. */
+    public static void setRunningThreads(Context context, int threads) {
         WunderRuntimeService running = instance;
         if (running != null) {
-            running.runOnMain(() -> running.applyTurnStatus(phase, detail));
+            running.runOnMain(() -> running.applyRunningThreads(threads));
             return;
         }
         Intent intent = new Intent(context, WunderRuntimeService.class)
-                .setAction(ACTION_STATUS)
-                .putExtra(EXTRA_PHASE, phase == null ? "" : phase)
-                .putExtra(EXTRA_DETAIL, detail == null ? "" : detail);
+                .setAction(ACTION_THREADS)
+                .putExtra(EXTRA_THREADS, threads);
         startCompat(context, intent);
     }
 
@@ -139,44 +129,28 @@ public final class WunderRuntimeService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? "" : intent.getAction();
         if (ACTION_STATE.equals(action)) {
-            applyBusy(
-                    intent.getBooleanExtra(EXTRA_BUSY, busy),
-                    intent.getStringExtra(EXTRA_TITLE));
-        } else if (ACTION_STATUS.equals(action)) {
-            applyTurnStatus(
-                    intent.getStringExtra(EXTRA_PHASE),
-                    intent.getStringExtra(EXTRA_DETAIL));
+            applyBusy(intent.getBooleanExtra(EXTRA_BUSY, busy));
+        } else if (ACTION_THREADS.equals(action)) {
+            applyRunningThreads(intent.getIntExtra(EXTRA_THREADS, runningThreads));
         } else {
             startForegroundCompat();
         }
         return START_STICKY;
     }
 
-    private void applyBusy(boolean nextBusy, String nextTitle) {
+    private void applyBusy(boolean nextBusy) {
         busy = nextBusy;
         if (busy) {
-            title = nextTitle == null ? "" : nextTitle;
-            phase = "";
-            detail = "";
-            startedAt = System.currentTimeMillis();
+            runningThreads = Math.max(1, runningThreads);
         } else {
-            title = "";
-            phase = "";
-            detail = "";
-            startedAt = 0L;
+            runningThreads = 0;
         }
         applyState();
     }
 
-    private void applyTurnStatus(String nextPhase, String nextDetail) {
-        if (!busy) {
-            // The service may have been recreated mid-turn; a status is still
-            // proof that a turn is running.
-            busy = true;
-            startedAt = System.currentTimeMillis();
-        }
-        phase = nextPhase == null ? "" : nextPhase;
-        detail = nextDetail == null ? "" : nextDetail;
+    private void applyRunningThreads(int threads) {
+        runningThreads = Math.max(0, threads);
+        busy = runningThreads > 0;
         applyState();
     }
 
@@ -261,31 +235,19 @@ public final class WunderRuntimeService extends Service {
     }
 
     private Notification buildNotification() {
-        String body;
-        if (!busy) {
-            body = "待机中，点击返回";
-        } else if (!detail.isEmpty()) {
-            body = detail;
-        } else if (!phase.isEmpty()) {
-            body = phase;
-        } else {
-            body = "正在执行…";
-        }
+        String text = busy
+                ? "运行中 " + Math.max(1, runningThreads) + " 线程"
+                : "待机中，点击返回";
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
-                .setContentTitle(busy ? "wunder 安卓版正在执行任务" : "wunder 安卓版")
-                .setContentText(body)
-                .setSubText(busy && !title.isEmpty() ? title : null)
-                .setStyle(new Notification.BigTextStyle().bigText(body))
+                .setContentTitle("wunder 安卓版")
+                .setContentText(text)
                 .setContentIntent(launchIntent())
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
                 .setOngoing(busy)
                 .setOnlyAlertOnce(true)
-                .setShowWhen(busy)
-                .setWhen(busy && startedAt > 0L ? startedAt : 0L)
-                .setUsesChronometer(busy)
-                .setProgress(0, 0, busy);
+                .setShowWhen(false);
         return builder.build();
     }
 
@@ -310,7 +272,7 @@ public final class WunderRuntimeService extends Service {
         }
         NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID, "运行状态", NotificationManager.IMPORTANCE_LOW);
-        channel.setDescription("任务执行进度与后台运行状态");
+        channel.setDescription("后台任务运行状态");
         channel.setShowBadge(false);
         channel.setSound(null, null);
         channel.enableVibration(false);

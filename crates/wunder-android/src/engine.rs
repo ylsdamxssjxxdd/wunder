@@ -13,6 +13,8 @@ use crate::{
     TrajectorySegment, WorkspaceFile,
 };
 use serde_json::Value;
+#[cfg(target_os = "android")]
+use std::sync::atomic::AtomicI32;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -911,6 +913,15 @@ pub struct Shared {
     /// Normalized final answer or failure message of the settled turn, shown
     /// as the companion's bubble hint.
     pub turn_hint: String,
+    /// Active-thread context gauge: the liquid brain fill and the model
+    /// picker's "used / capacity" line. `used`/`capacity` stay optional so a
+    /// missing runtime event never reads as an empty context.
+    pub context_used: Option<f64>,
+    pub context_capacity: Option<f64>,
+    pub context_usage: f32,
+    pub context_known: bool,
+    pub context_counts: String,
+    pub context_rev: u64,
     pub ubuntu: UbuntuView,
     pub ubuntu_rev: u64,
     /// 用户在本进程内跳过了首装引导（仅失败态可达），避免每次刷新都重新弹出。
@@ -1403,10 +1414,16 @@ fn run(
                 let session = shared.lock().unwrap().session_id.clone();
                 match desktop.set_session_model(&session, &key) {
                     Ok(()) => {
-                        let mut state = shared.lock().unwrap();
-                        state.model_key = key.clone();
-                        state.model_name = key;
-                        state.touch();
+                        {
+                            let mut state = shared.lock().unwrap();
+                            state.model_key = key.clone();
+                            state.model_name = key;
+                            state.touch();
+                        }
+                        // The new model may have a different context window;
+                        // drop the old capacity before re-reading the gauge.
+                        reset_context_usage(&shared);
+                        refresh_context_usage(&desktop, &shared, &session);
                     }
                     Err(error) => notify(&shared, format!("切换模型失败：{error}")),
                 }
@@ -2758,8 +2775,7 @@ fn start_ubuntu_install(desktop: Arc<NativeDesktop>, shared: Arc<Mutex<Shared>>)
         thread::Builder::new()
             .name("wunder-ubuntu-install".into())
             .spawn(move || {
-                crate::android_host::set_busy(true, "正在准备 Ubuntu 运行环境");
-                let _busy = BusyGuard;
+                let _busy = BusyGuard::start();
                 crate::ubuntu::install();
                 let mut last_state = String::new();
                 loop {
@@ -2824,6 +2840,69 @@ fn start_ubuntu_install(desktop: Arc<NativeDesktop>, shared: Arc<Mutex<Shared>>)
     }
 }
 
+fn reset_context_usage(shared: &Arc<Mutex<Shared>>) {
+    if let Ok(mut state) = shared.lock() {
+        state.context_used = None;
+        state.context_capacity = None;
+        state.context_usage = 0.0;
+        state.context_known = false;
+        state.context_counts.clear();
+        state.context_rev = state.context_rev.wrapping_add(1);
+    }
+}
+
+fn apply_context_usage(
+    shared: &Arc<Mutex<Shared>>,
+    usage: wunder_desktop::NativeContextUsage,
+) {
+    if usage.used.is_none() && usage.capacity.is_none() {
+        return;
+    }
+    let Ok(mut state) = shared.lock() else {
+        return;
+    };
+    if let Some(used) = usage.used {
+        state.context_used = Some(used.max(0.0));
+    }
+    if let Some(capacity) = usage.capacity {
+        if capacity > 0.0 {
+            state.context_capacity = Some(capacity);
+        }
+    }
+    let used = state.context_used.unwrap_or(0.0);
+    let capacity = state.context_capacity.unwrap_or(0.0);
+    state.context_known = state.context_used.is_some() && capacity > 0.0;
+    state.context_usage = if state.context_known {
+        (used / capacity).clamp(0.0, 1.0) as f32
+    } else {
+        0.0
+    };
+    let used_text = state
+        .context_used
+        .map(|value| format_tokens(value.max(0.0) as i64))
+        .unwrap_or_else(|| "—".into());
+    let capacity_text = state
+        .context_capacity
+        .map(|value| format_tokens(value.max(0.0) as i64))
+        .unwrap_or_else(|| "—".into());
+    state.context_counts = format!("{used_text} / {capacity_text} tokens");
+    state.context_rev = state.context_rev.wrapping_add(1);
+}
+
+fn refresh_context_usage(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+    session: &str,
+) {
+    if session.trim().is_empty() {
+        return;
+    }
+    match desktop.context_usage(session) {
+        Ok(usage) => apply_context_usage(shared, usage),
+        Err(error) => log::warn!("refresh context usage failed: {error:#}"),
+    }
+}
+
 fn select_session(
     desktop: &Arc<NativeDesktop>,
     shared: &Arc<Mutex<Shared>>,
@@ -2835,6 +2914,9 @@ fn select_session(
     if let Some(cancel) = watch_cancel.take() {
         cancel.cancel();
     }
+    // A switch must not reuse the previous thread's gauge while the new
+    // snapshot is being read.
+    reset_context_usage(shared);
     // The Android app is single-process, so a desktop lease owned by another
     // instance id belongs to a process the system already killed. Drop it
     // instead of letting the first open wait out its 15 s TTL.
@@ -2922,6 +3004,7 @@ fn select_session(
         state.turn_hint.clear();
         state.touch();
     }
+    refresh_context_usage(desktop, shared, session);
     let active = shared.lock().unwrap().session_id.clone();
     refresh_sessions(desktop, shared, Some(&active));
 
@@ -6244,106 +6327,39 @@ fn model_card(record: &wunder_desktop::ModelRecord) -> ModelCard {
     }
 }
 
+/// Stream threads currently executing in this process. The notification mirrors
+/// 桌面版's "运行中 N 线程" title instead of phase detail.
+#[cfg(target_os = "android")]
+static RUNNING_TURNS: AtomicI32 = AtomicI32::new(0);
+
 /// Releases the foreground notification and wake lock on every exit path of a
-/// stream thread, including an unwind.
+/// stream thread, including an unwind. The count stays authoritative when
+/// another thread is still running.
 #[cfg(target_os = "android")]
 struct BusyGuard;
 
 #[cfg(target_os = "android")]
+impl BusyGuard {
+    fn start() -> Self {
+        let running = RUNNING_TURNS.fetch_add(1, Ordering::SeqCst) + 1;
+        crate::android_host::set_busy(true);
+        crate::android_host::set_running_threads(running);
+        Self
+    }
+}
+
+#[cfg(target_os = "android")]
 impl Drop for BusyGuard {
     fn drop(&mut self) {
-        crate::android_host::set_busy(false, "");
-    }
-}
-
-#[cfg(target_os = "android")]
-fn turn_phase_label(phase: &str) -> &'static str {
-    match phase {
-        "requesting" => "请求中",
-        "queued" => "排队中",
-        "waiting" => "等待确认",
-        "thinking" => "模型思考中",
-        "outputting" => "模型输出中",
-        "tool" => "执行工具",
-        "compacting" => "压缩上下文",
-        "stopped" => "已停止",
-        "error" => "执行失败",
-        "done" => "已完成",
-        _ => "执行中",
-    }
-}
-
-#[cfg(target_os = "android")]
-fn turn_status_detail(live: &LiveTurn) -> String {
-    match live.phase.as_str() {
-        "requesting" => "正在请求模型…".into(),
-        "queued" => "等待当前任务结束…".into(),
-        "waiting" => "等待你的确认".into(),
-        "thinking" => "正在生成回复…".into(),
-        "outputting" => {
-            let chars = live.answer.chars().count();
-            if chars > 0 {
-                format!("正在生成回复 · 已输出 {chars} 字")
-            } else {
-                "正在生成回复…".into()
-            }
+        let running = RUNNING_TURNS
+            .fetch_sub(1, Ordering::SeqCst)
+            .saturating_sub(1);
+        if running > 0 {
+            crate::android_host::set_running_threads(running);
+        } else {
+            crate::android_host::set_busy(false);
         }
-        "tool" => live
-            .tools
-            .last()
-            .map(|tool| {
-                let summary = tool.summary.trim();
-                if summary.is_empty() {
-                    format!("工具：{}", tool.title)
-                } else {
-                    format!(
-                        "工具：{} · {}",
-                        tool.title,
-                        truncate_chars(summary.to_string(), 60)
-                    )
-                }
-            })
-            .unwrap_or_else(|| "正在执行工具…".into()),
-        "compacting" => "正在压缩上下文…".into(),
-        "stopped" => "任务已停止".into(),
-        "error" => "任务执行失败".into(),
-        "done" => "任务已完成".into(),
-        _ => "正在执行…".into(),
     }
-}
-
-/// Coarse key for notification updates: phase, tool identity/state and a
-/// 200-character output bucket. Token deltas stay out of the notification
-/// channel while the elapsed chronometer keeps moving.
-#[cfg(target_os = "android")]
-fn turn_status_key(live: &LiveTurn) -> String {
-    let tool = live
-        .tools
-        .last()
-        .map(|tool| {
-            format!(
-                "{}|{}|{}",
-                tool.title,
-                tool.state,
-                tool.summary.chars().count() / 120
-            )
-        })
-        .unwrap_or_default();
-    format!(
-        "{}|{}|{}|{}",
-        live.phase,
-        live.tools.len(),
-        tool,
-        live.answer.chars().count() / 200
-    )
-}
-
-#[cfg(target_os = "android")]
-fn publish_turn_status(live: &LiveTurn) {
-    crate::android_host::set_turn_status(
-        turn_phase_label(&live.phase),
-        &turn_status_detail(live),
-    );
 }
 
 /// Coalesce model deltas into at most one published live frame per UI tick.
@@ -6408,24 +6424,11 @@ fn start_stream(
             return;
         }
     };
-    #[cfg(target_os = "android")]
-    let busy_title = shared
-        .lock()
-        .map(|state| state.title.clone())
-        .unwrap_or_default();
     thread::Builder::new()
         .name("wunder-android-stream".into())
         .spawn(move || {
-            // Both statements live at function scope: the guard must be
-            // dropped when the stream ends, not at the end of this block.
             #[cfg(target_os = "android")]
-            crate::android_host::set_busy(true, &busy_title);
-            #[cfg(target_os = "android")]
-            let _busy = BusyGuard;
-            #[cfg(target_os = "android")]
-            publish_turn_status(&live);
-            #[cfg(target_os = "android")]
-            let mut last_turn_status = turn_status_key(&live);
+            let _busy = BusyGuard::start();
             let mut stream = stream;
             let mut last_publish = Instant::now() - LIVE_PUBLISH_FRAME;
             let mut pending = false;
@@ -6444,13 +6447,11 @@ fn start_stream(
                         if matches!(raw.as_str(), "question_panel" | "question_panel_clear") {
                             apply_inquiry_event(&shared, &value, &session);
                         }
-                        #[cfg(target_os = "android")]
-                        {
-                            let status_key = turn_status_key(&live);
-                            if status_key != last_turn_status {
-                                last_turn_status = status_key;
-                                publish_turn_status(&live);
-                            }
+                        if matches!(raw.as_str(), "context_usage" | "round_usage") {
+                            apply_context_usage(
+                                &shared,
+                                wunder_desktop::NativeContextUsage::from_value(&value),
+                            );
                         }
                         pending = true;
                         // A new tool step, a new phase or a turn identity is
@@ -6483,10 +6484,7 @@ fn start_stream(
                             pending = false;
                         }
                     }
-                    Some(NativeChatEvent::Queued) => {
-                        #[cfg(target_os = "android")]
-                        crate::android_host::set_turn_status("排队中", "等待当前任务结束…");
-                    }
+                    Some(NativeChatEvent::Queued) => {}
                     Some(NativeChatEvent::Finished) => {
                         log::info!("chat stream finished session={session}");
                         if pending {
@@ -6603,6 +6601,7 @@ fn start_stream(
                     state.touch();
                 }
             }
+            refresh_context_usage(&desktop, &shared, &session);
             let active = shared
                 .lock()
                 .map(|state| state.session_id.clone())
