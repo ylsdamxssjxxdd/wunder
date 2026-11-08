@@ -546,7 +546,7 @@ export component MobileWindow inherits Window {
     in-out property <bool> env-setup-open: false;
     // 单调递增的安装进度（Java 的阶段切换会回退，由 Rust 收敛后投影）。
     in property <int> env-setup-progress: 0;
-    // 液面动画相位（0..1 循环），引导页打开期间由引擎 tick 每帧推进。
+    // 液面动画相位（单调递增，以 4s 波浪周期为单位），引导页打开期间由引擎 tick 每帧推进。
     in property <float> env-setup-phase: 0.0;
     in property <string> settings-ubuntu-state: "missing";
     in property <int> settings-ubuntu-progress: 0;
@@ -665,6 +665,9 @@ export component MobileWindow inherits Window {
     in property <string> settings-cloud-last-success: "";
     in property <string> settings-cloud-next-retry: "";
     in property <string> settings-cloud-device-name: "";
+    in property <string> settings-usage-duration: "";
+    in property <string> settings-usage-tokens: "";
+    in property <string> settings-usage-calls: "";
     in property <int> settings-chat-target: 0;
     in property <string> settings-current-device: "本机";
     in property <[MobileDevice]> settings-devices: [];
@@ -958,13 +961,6 @@ export component MobileWindow inherits Window {
     function pick-draft(value: string) {
         root.draft = value;
         root.close-plus();
-    }
-
-    function show-workspace() {
-        root.close-plus();
-        root.close-drawer();
-        root.workspace-open = true;
-        root.open-workspace(root.workspace-path);
     }
 
     function show-workspace-sheet() {
@@ -1842,11 +1838,6 @@ export component MobileWindow inherits Window {
             // not a row that hides the files behind a second page.
             Rectangle {
                 height: 46px;
-                background: workspace-header-touch.has-hover ? Theme.hover : transparent;
-                workspace-header-touch := TouchArea {
-                    enabled: root.settings-chat-target == 0;
-                    clicked => { root.show-workspace(); }
-                }
                 HorizontalLayout {
                     padding-left: 16px;
                     padding-right: 6px;
@@ -1886,11 +1877,6 @@ export component MobileWindow inherits Window {
                         icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
                         tip: "刷新";
                         clicked => { root.refresh-workspace(); }
-                    }
-                    if root.settings-chat-target == 0 : RowIconButton {
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-right.svg");
-                        tip: "打开完整目录";
-                        clicked => { root.show-workspace(); }
                     }
                 }
             }
@@ -2151,6 +2137,9 @@ export component MobileWindow inherits Window {
         cloud-last-success: root.settings-cloud-last-success;
         cloud-next-retry: root.settings-cloud-next-retry;
         cloud-device-name: root.settings-cloud-device-name;
+        usage-duration: root.settings-usage-duration;
+        usage-tokens: root.settings-usage-tokens;
+        usage-calls: root.settings-usage-calls;
         chat-target: root.settings-chat-target;
         current-device: root.settings-current-device;
         devices: root.settings-devices;

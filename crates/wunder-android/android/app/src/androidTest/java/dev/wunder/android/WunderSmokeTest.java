@@ -185,6 +185,40 @@ public class WunderSmokeTest {
         }
     }
 
+    /**
+     * The Ubuntu extraction is not an agent turn: while it runs the notification
+     * must read "正在安装运行环境…" instead of "运行中 1 线程", and take priority
+     * over a concurrent busy state so the install is never mislabelled as running.
+     */
+    @Test
+    public void runtimeNotificationShowsInstallingDuringEnvironmentSetup() throws Exception {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        try (ActivityScenario<WunderActivity> scenario = launchResumed()) {
+            WunderRuntimeService.setBusy(context, true);
+            WunderRuntimeService.setRunningThreads(context, 1);
+            WunderRuntimeService.setInstalling(context, true);
+            Notification installing = waitForRuntimeNotification(context, "正在安装运行环境…");
+            assertEquals(
+                    "正在安装运行环境…",
+                    String.valueOf(installing.extras.getCharSequence(Notification.EXTRA_TEXT)));
+            assertTrue("installing notification must be ongoing",
+                    (installing.flags & Notification.FLAG_ONGOING_EVENT) != 0);
+
+            // Clearing the install falls back to the live thread count, not idle.
+            WunderRuntimeService.setInstalling(context, false);
+            Notification busy = waitForRuntimeNotification(context, "运行中 1 线程");
+            assertEquals(
+                    "运行中 1 线程",
+                    String.valueOf(busy.extras.getCharSequence(Notification.EXTRA_TEXT)));
+
+            WunderRuntimeService.setBusy(context, false);
+            Notification idle = waitForRuntimeNotification(context, "待机中，点击返回");
+            assertEquals(
+                    "待机中，点击返回",
+                    String.valueOf(idle.extras.getCharSequence(Notification.EXTRA_TEXT)));
+        }
+    }
+
     private static Notification waitForRuntimeNotification(Context context) {
         return waitForRuntimeNotification(context, null);
     }

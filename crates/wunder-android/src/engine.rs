@@ -322,6 +322,7 @@ pub enum Command {
     // ---- cloud account / device switch / cloud chat -------------------
     SwitchChatTarget(i32),
     RefreshCloudAccount,
+    RefreshUsage,
     RefreshCloudRemote,
     CloudLogin {
         server: String,
@@ -961,6 +962,10 @@ pub struct Shared {
     pub memory: MemoryView,
     pub memory_editor_rev: u64,
     pub memory_editor: Option<MemoryEditorView>,
+    pub usage_rev: u64,
+    pub usage_duration: String,
+    pub usage_tokens: String,
+    pub usage_calls: String,
     pub target: i32,
     pub target_rev: u64,
     pub cloud_rev: u64,
@@ -2128,6 +2133,7 @@ fn run(
                 crate::cloud::switch_target(&desktop, &shared, target);
             }
             Command::RefreshCloudAccount => crate::cloud::refresh_account(&desktop, &shared),
+            Command::RefreshUsage => refresh_usage(&desktop, &shared),
             Command::RefreshCloudRemote => {
                 crate::cloud::refresh_remote_account(&desktop, &shared);
             }
@@ -3021,7 +3027,7 @@ fn maybe_auto_install_ubuntu(desktop: &Arc<NativeDesktop>, shared: &Arc<Mutex<Sh
 }
 
 /// Extraction can take minutes on a phone. Run it off the engine loop and keep
-/// the foreground service busy meanwhile; the engine only publishes progress.
+/// the foreground service active meanwhile; the engine only publishes progress.
 fn start_ubuntu_install(desktop: Arc<NativeDesktop>, shared: Arc<Mutex<Shared>>) {
     #[cfg(not(target_os = "android"))]
     {
@@ -3033,7 +3039,7 @@ fn start_ubuntu_install(desktop: Arc<NativeDesktop>, shared: Arc<Mutex<Shared>>)
         thread::Builder::new()
             .name("wunder-ubuntu-install".into())
             .spawn(move || {
-                let _busy = BusyGuard::start();
+                let _install = InstallGuard::start();
                 crate::ubuntu::install();
                 let mut last_state = String::new();
                 loop {
@@ -5068,6 +5074,37 @@ fn refresh_memory(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, reset_fi
     }
 }
 
+/// Local runtime usage for the account page, mirroring 桌面版's three tiles
+/// (runtime / consumed tokens / tool calls). Reads the same engine summary the
+/// desktop expert page uses; independent of cloud sign-in.
+fn refresh_usage(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
+    let Ok(value) = desktop.expert_runtime(DEFAULT_AGENT_ID, None) else {
+        return;
+    };
+    let summary = &value["data"]["summary"];
+    let seconds = summary["runtime_seconds"].as_f64().unwrap_or(0.0) as u64;
+    let duration = format!("{}h {}m", seconds / 3600, seconds % 3600 / 60);
+    let tokens = compact_usage(summary["consumed_tokens"].as_f64().unwrap_or(0.0));
+    let calls = compact_usage(summary["tool_calls"].as_f64().unwrap_or(0.0));
+    if let Ok(mut state) = shared.lock() {
+        state.usage_duration = duration;
+        state.usage_tokens = tokens;
+        state.usage_calls = calls;
+        state.usage_rev = state.usage_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+fn compact_usage(value: f64) -> String {
+    if value >= 1_000_000.0 {
+        format!("{:.2}M", value / 1_000_000.0)
+    } else if value >= 1_000.0 {
+        format!("{:.1}K", value / 1_000.0)
+    } else {
+        format!("{value:.0}")
+    }
+}
+
 fn open_memory_editor(shared: &Arc<Mutex<Shared>>, index: i32) {
     let row = if index >= 0 {
         shared
@@ -7071,6 +7108,27 @@ impl Drop for BusyGuard {
         } else {
             crate::android_host::set_busy(false);
         }
+    }
+}
+
+/// Keeps the foreground service and wake lock alive for the Ubuntu install
+/// without counting as an agent thread, so the notification reads "正在安装
+/// 运行环境…" instead of "运行中 1 线程". Released on every exit path.
+#[cfg(target_os = "android")]
+struct InstallGuard;
+
+#[cfg(target_os = "android")]
+impl InstallGuard {
+    fn start() -> Self {
+        crate::android_host::set_installing(true);
+        Self
+    }
+}
+
+#[cfg(target_os = "android")]
+impl Drop for InstallGuard {
+    fn drop(&mut self) {
+        crate::android_host::set_installing(false);
     }
 }
 

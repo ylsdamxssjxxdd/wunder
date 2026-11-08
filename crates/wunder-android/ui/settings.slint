@@ -2377,6 +2377,9 @@ component AccountPage inherits Rectangle {
     in property <string> last-success: "";
     in property <string> next-retry: "";
     in property <string> device-name: "";
+    in property <string> usage-duration: "";
+    in property <string> usage-tokens: "";
+    in property <string> usage-calls: "";
     callback back();
     callback refresh();
     callback login(string, string, string);
@@ -2503,6 +2506,31 @@ component AccountPage inherits Rectangle {
                     }
                     if root.last-error != "" : Text { height: 34px; text: root.last-error; color: Theme.danger; font-size: Theme.font-xs; wrap: word-wrap; }
                     if root.last-success != "" : Text { height: 28px; text: "最近成功：" + root.last-success; color: Theme.muted; font-size: Theme.font-2xs; }
+                }
+
+                SheetCard {
+                    CardTitle { title: "用量统计"; subtitle: "会话、工具与调用使用概况"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        for item in [
+                            { label: "累计运行", value: root.usage-duration },
+                            { label: "累计令牌", value: root.usage-tokens },
+                            { label: "工具调用", value: root.usage-calls }
+                        ] : Rectangle {
+                            horizontal-stretch: 1;
+                            height: 64px;
+                            border-radius: Theme.radius-md;
+                            background: Theme.panel;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            VerticalLayout {
+                                padding: 10px;
+                                spacing: 2px;
+                                Text { height: 15px; text: item.label; color: Theme.muted; font-size: Theme.font-2xs; }
+                                Text { height: 26px; text: item.value; color: Theme.text; font-size: Theme.font-xl; font-weight: 700; overflow: elide; }
+                            }
+                        }
+                    }
                 }
 
                 Text {
@@ -4967,6 +4995,9 @@ export component MobileSettings inherits Rectangle {
     in property <string> cloud-last-success: "";
     in property <string> cloud-next-retry: "";
     in property <string> cloud-device-name: "";
+    in property <string> usage-duration: "";
+    in property <string> usage-tokens: "";
+    in property <string> usage-calls: "";
     in property <int> chat-target: 0;
     in property <string> current-device: "本机";
     in property <[MobileDevice]> devices: [];
@@ -5539,6 +5570,9 @@ export component MobileSettings inherits Rectangle {
             last-success: root.cloud-last-success;
             next-retry: root.cloud-next-retry;
             device-name: root.cloud-device-name;
+            usage-duration: root.usage-duration;
+            usage-tokens: root.usage-tokens;
+            usage-calls: root.usage-calls;
             back() => { root.page = 0; }
             refresh() => { root.cloud-refresh(); }
             login(server, username, password) => { root.cloud-login(server, username, password); }

@@ -71,7 +71,7 @@ fn main() {
             move || {
                 if let Some(ui) = weak.upgrade() {
                     let ms = started.elapsed().as_millis() as u64;
-                    ui.set_env_setup_phase((ms % 4000) as f32 / 4000.0);
+                    ui.set_env_setup_phase(ms as f32 / 4000.0);
                 }
             },
         );
@@ -102,7 +102,7 @@ fn main() {
             move || {
                 if let Some(ui) = weak.upgrade() {
                     let ms = started.elapsed().as_millis() as u64;
-                    ui.set_env_setup_phase((ms % 4000) as f32 / 4000.0);
+                    ui.set_env_setup_phase(ms as f32 / 4000.0);
                     let progress = if one_pass {
                         // 4% → 100% in 10.5s, matching the 120-frame capture.
                         4 + (ms as i32 * 96 / 10_500).min(96)

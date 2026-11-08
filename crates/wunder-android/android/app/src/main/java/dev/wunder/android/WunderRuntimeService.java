@@ -34,8 +34,10 @@ public final class WunderRuntimeService extends Service {
     private static final String ACTION_START = "dev.wunder.android.START";
     private static final String ACTION_STATE = "dev.wunder.android.STATE";
     private static final String ACTION_THREADS = "dev.wunder.android.THREADS";
+    private static final String ACTION_INSTALLING = "dev.wunder.android.INSTALLING";
     private static final String EXTRA_BUSY = "busy";
     private static final String EXTRA_THREADS = "threads";
+    private static final String EXTRA_INSTALLING = "installing";
     private static final int NOTIFICATION_ID = 4101;
     private static final int PERMISSION_REQUEST = 4102;
 
@@ -43,6 +45,7 @@ public final class WunderRuntimeService extends Service {
 
     private boolean busy;
     private int runningThreads;
+    private boolean installing;
     private PowerManager.WakeLock wakeLock;
 
     /** Start the runtime service, or refresh its notification if it already runs. */
@@ -77,6 +80,19 @@ public final class WunderRuntimeService extends Service {
         Intent intent = new Intent(context, WunderRuntimeService.class)
                 .setAction(ACTION_THREADS)
                 .putExtra(EXTRA_THREADS, threads);
+        startCompat(context, intent);
+    }
+
+    /** Reflect the Ubuntu environment install into the notification and wake lock. */
+    public static void setInstalling(Context context, boolean installing) {
+        WunderRuntimeService running = instance;
+        if (running != null) {
+            running.runOnMain(() -> running.applyInstalling(installing));
+            return;
+        }
+        Intent intent = new Intent(context, WunderRuntimeService.class)
+                .setAction(ACTION_INSTALLING)
+                .putExtra(EXTRA_INSTALLING, installing);
         startCompat(context, intent);
     }
 
@@ -132,6 +148,8 @@ public final class WunderRuntimeService extends Service {
             applyBusy(intent.getBooleanExtra(EXTRA_BUSY, busy));
         } else if (ACTION_THREADS.equals(action)) {
             applyRunningThreads(intent.getIntExtra(EXTRA_THREADS, runningThreads));
+        } else if (ACTION_INSTALLING.equals(action)) {
+            applyInstalling(intent.getBooleanExtra(EXTRA_INSTALLING, installing));
         } else {
             startForegroundCompat();
         }
@@ -154,6 +172,11 @@ public final class WunderRuntimeService extends Service {
         applyState();
     }
 
+    private void applyInstalling(boolean nextInstalling) {
+        installing = nextInstalling;
+        applyState();
+    }
+
     private void runOnMain(Runnable action) {
         if (Looper.myLooper() == Looper.getMainLooper()) {
             action.run();
@@ -167,7 +190,7 @@ public final class WunderRuntimeService extends Service {
         // Removing the task while a turn runs is exactly the case the service
         // exists for: keep streaming and let the notification bring the user
         // back. Once idle, release the process and its notification.
-        if (!busy) {
+        if (!busy && !installing) {
             stopSelf();
         }
         super.onTaskRemoved(rootIntent);
@@ -188,7 +211,7 @@ public final class WunderRuntimeService extends Service {
     }
 
     private void applyState() {
-        if (busy) {
+        if (busy || installing) {
             acquireWakeLock();
         } else {
             releaseWakeLock();
@@ -235,9 +258,14 @@ public final class WunderRuntimeService extends Service {
     }
 
     private Notification buildNotification() {
-        String text = busy
-                ? "运行中 " + Math.max(1, runningThreads) + " 线程"
-                : "待机中，点击返回";
+        String text;
+        if (installing) {
+            text = "正在安装运行环境…";
+        } else if (busy) {
+            text = "运行中 " + Math.max(1, runningThreads) + " 线程";
+        } else {
+            text = "待机中，点击返回";
+        }
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
                 .setContentTitle("wunder 安卓版")
@@ -245,7 +273,7 @@ public final class WunderRuntimeService extends Service {
                 .setContentIntent(launchIntent())
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
-                .setOngoing(busy)
+                .setOngoing(busy || installing)
                 .setOnlyAlertOnce(true)
                 .setShowWhen(false);
         return builder.build();

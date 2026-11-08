@@ -63,7 +63,10 @@ export component EnvSetupPage inherits Rectangle {
     in property <int> progress: 0;
     in property <string> stage: "";
     in property <string> error: "";
-    // 0..1 循环相位，由引擎 tick 驱动：液面波动、气泡上升与辉光呼吸都读它。
+    // 单调推进的相位（以 4s 波浪周期为单位，不取模），由引擎 tick 驱动。
+    // 波浪用 wrap(phase) 平移无缝循环；气泡 travel=wrap(phase*speed) 必须靠
+    // 相位单调才能连续上升——若相位取模成 0..1 锯齿，非整数速度的气泡会在
+    // 周期边界瞬移回底部，上升到一半突然重置。
     in property <float> phase: 0.0;
     callback retry();
     callback dismiss();
@@ -134,7 +137,7 @@ export component EnvSetupPage inherits Rectangle {
     // 深度交给下面贴着液面的矩形渐变。
     wave := Path {
         visible: root.fill > 0.002;
-        x: -root.width * root.phase - 1px;
+        x: -root.width * root.wrap(root.phase) - 1px;
         y: root.surface-y - 10px;
         width: root.width * 2;
         height: root.height + 80px;

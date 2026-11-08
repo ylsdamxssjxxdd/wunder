@@ -1330,6 +1330,7 @@ fn wire_callbacks(
     let sender = commands.clone();
     ui.on_cloud_refresh(move || {
         let _ = sender.send(Command::RefreshCloudRemote);
+        let _ = sender.send(Command::RefreshUsage);
     });
     let sender = commands.clone();
     ui.on_cloud_toggle_sync(move |enabled| {
@@ -2064,6 +2065,7 @@ fn start_tick(
     let mut last_memory_seed = 0u64;
     let mut last_target_rev = 0u64;
     let mut last_cloud = 0u64;
+    let mut last_usage = 0u64;
     let mut last_cloud_threads = 0u64;
     let mut last_cloud_active = 0u64;
     let mut last_cloud_rows = 0u64;
@@ -2122,11 +2124,13 @@ fn start_tick(
             ui.set_ime_height(ime);
             last_ime = ime;
         }
-        // 首装引导的液面动画相位：只在引导页打开时推进（0..1 循环，4 秒一圈），
-        // 波浪、气泡和高光都读它，页面关闭后不再产生任何属性更新。
+        // 首装引导的液面动画相位：只在引导页打开时推进，页面关闭后不再产生
+        // 任何属性更新。相位单调递增（以 4s 波浪周期为单位），不取模：气泡
+        // travel=wrap(phase*speed) 只有在相位单调时才连续上升，取模成锯齿会
+        // 让非整数速度的气泡在周期边界瞬移回底部。波浪在 Slint 侧 wrap(phase)。
         if ui.get_env_setup_open() {
-            let millis = env_phase_origin.elapsed().as_millis() as u64 % 4000;
-            ui.set_env_setup_phase(millis as f32 / 4000.0);
+            let cycles = env_phase_origin.elapsed().as_secs_f32() / 4.0;
+            ui.set_env_setup_phase(cycles);
         }
         // Live command counts move at 1 Hz, not at the render tick.
         host_ticks = host_ticks.wrapping_add(1);
@@ -2155,6 +2159,7 @@ fn start_tick(
                 let _ = commands.send(Command::RefreshMemory);
             } else if settings_page == 13 {
                 let _ = commands.send(Command::RefreshCloudAccount);
+                let _ = commands.send(Command::RefreshUsage);
                 let _ = commands.send(Command::RefreshDevices);
             } else if settings_page == 14 {
                 let _ = commands.send(Command::RefreshChannels);
@@ -2475,6 +2480,13 @@ fn start_tick(
             ui.set_settings_cloud_next_retry(state.cloud.next_retry_at.as_str().into());
             ui.set_settings_cloud_device_name(state.cloud.device_name.as_str().into());
             last_cloud = state.cloud_rev;
+        }
+
+        if state.usage_rev != last_usage {
+            ui.set_settings_usage_duration(state.usage_duration.as_str().into());
+            ui.set_settings_usage_tokens(state.usage_tokens.as_str().into());
+            ui.set_settings_usage_calls(state.usage_calls.as_str().into());
+            last_usage = state.usage_rev;
         }
 
         if state.devices_rev != last_devices {
@@ -4387,10 +4399,16 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
         "account" => {
             ui.set_settings_page(13);
             ui.set_settings_open(true);
+            ui.set_settings_usage_duration("3h 42m".into());
+            ui.set_settings_usage_tokens("128.5K".into());
+            ui.set_settings_usage_calls("1.2K".into());
         }
         "account-in" => {
             ui.set_settings_page(13);
             ui.set_settings_open(true);
+            ui.set_settings_usage_duration("3h 42m".into());
+            ui.set_settings_usage_tokens("128.5K".into());
+            ui.set_settings_usage_calls("1.2K".into());
             ui.set_settings_cloud_logged_in(true);
             ui.set_settings_cloud_connection("online".into());
             ui.set_settings_cloud_server("https://cloud.example.com".into());

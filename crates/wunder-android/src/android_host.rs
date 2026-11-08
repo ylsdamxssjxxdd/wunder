@@ -681,6 +681,30 @@ pub fn set_running_threads(threads: i32) {
     }
 }
 
+/// Reflect the Ubuntu environment install into the foreground notification and
+/// hold a wake lock while extraction runs. The notification reads "正在安装运行
+/// 环境…" rather than the agent-thread count, since extraction is not a turn.
+pub fn set_installing(installing: bool) {
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return;
+    };
+    let result = env.call_static_method(
+        &host.service,
+        "setInstalling",
+        "(Landroid/content/Context;Z)V",
+        &[
+            JValue::Object(host.app.as_obj()),
+            JValue::Bool(installing as u8),
+        ],
+    );
+    if result.is_err() {
+        clear_java_exception(&mut env);
+    }
+}
+
 fn try_install(activity: *mut std::ffi::c_void) -> Result<()> {
     if HOST.get().is_some() {
         return Ok(());
