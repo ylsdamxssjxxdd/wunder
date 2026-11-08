@@ -3,7 +3,7 @@ const AUTO_ROTATE_SPEED = 0.08;
 const COORDINATE_INTERVAL_MS = 120;
 const DEFAULT_MODEL = {
   id: "wunder",
-  url: "models/wunder.glb?v=20261018-11",
+  url: "models/wunder.glb?v=20261108-01",
   view: [0.02, -4.88, 0.01],
   // Largest model dimension in world units. The default camera sits at 4.88,
   // so a distant, small subject reads as "gazing at the ship" instead of a

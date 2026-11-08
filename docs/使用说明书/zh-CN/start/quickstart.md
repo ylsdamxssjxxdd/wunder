@@ -10,13 +10,15 @@ updated_at: 2026-10-16
 
 ## 下载安装
 
-从 Releases 下载匹配系统的产物。桌面版面向 32 位 Win7 与 Ubuntu 18.04，也覆盖现代 Windows / Linux。
+从 Releases 下载匹配系统的安装包。桌面版面向 32 位 Win7 与 Ubuntu 18.04，也覆盖现代 Windows / Linux。
 
-- **老系统**（32 位 Win7、Ubuntu 18.04）：下载 `setup` 或 `.run` 安装包，安装后自带完整运行环境，但为了兼容性，部分第三方功能受限。
-- **新系统**：直接下载 `.exe` 或 `.portable` 免安装包，双击即可运行；首次启动解压到 `~/.wunder`，之后直接启动。
-- **Linux 两种选择**：想长期用、要 `wunder-cli` 命令和内置 Python/Git 等组件，用 `.run` 安装包；只想打开就用或需要绿色携带，用 `.portable`。两者都不需要 FUSE、`libfuse2` 或管理员权限，Ubuntu 24.04 等只带 fuse3 的系统可直接运行，用户数据互通。
+- **Windows 7 32 位**：下载 `wunder-desktop-*-win7-x86-setup.exe` 安装包，安装后自带完整运行环境，但为了兼容性，部分第三方功能受限。
+- **Linux x64 / arm64**：下载 `wunder-desktop-*-linux-*.run` 安装包，包含桌面版、`wunder-cli` 命令与可选的内置 Python/Git 等组件；不需要 FUSE、`libfuse2` 或管理员权限，Ubuntu 24.04 等只带 fuse3 的系统可直接安装运行。
+- **Android**：下载 `wunder-android-*-arm64.apk`。
 
-安装或解压后启动即可。
+Release 只发布安装包；补充包由 CI 内部构建并嵌入安装包，不再单独提供，也不再提供 `.portable` 免安装包。
+
+安装后启动即可。
 
 开发环境下也可以直接跑启动脚本（Windows 下是 `run.bat`，或直接执行 `wunder-desktop`）。它同进程原生调用引擎——不占用本机端口，也不需要本机 HTTP/WebSocket 中转。
 

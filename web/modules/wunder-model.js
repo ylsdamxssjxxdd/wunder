@@ -1,9 +1,9 @@
 import { t } from "./i18n.js?v=20261015-06";
-import { mountWunderModelViewer } from "../shared/wunder-model-viewer.js?v=20261019-35";
+import { mountWunderModelViewer } from "../shared/wunder-model-viewer.js?v=20261108-01";
 
 const WUNDER_MODEL = {
   id: "wunder",
-  url: "models/wunder.glb?v=20261018-11",
+  url: "models/wunder.glb?v=20261108-01",
   view: [0.02, -4.88, 0.01],
   size: 0.6,
 };

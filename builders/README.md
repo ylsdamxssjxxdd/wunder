@@ -68,15 +68,15 @@ Linux 安装包是单文件自解压 `.run`，由 Python 3.6+ 组装，不需要
 
 ## CI 发布
 
-`.github/workflows/desktop-nightly.yml` 在每次分支推送时构建三套桌面版和命令行，并从固定的 `supplement` release 下载对应补充包，再用 `builders/pack.ps1` / `builders/pack.sh` 组装安装包。`nightly` release 因此同时包含三个桌面程序和三个安装包：Win7 x86、Linux x64、Linux arm64。打包前会等待同一提交触发的 Desktop Supplements 运行完成，避免旧补充包被打进安装包。
+`.github/workflows/desktop-nightly.yml` 在每次分支推送时构建三套桌面版和命令行，并从隐藏草稿 `supplement` release 下载对应补充包，再用 `builders/pack.ps1` / `builders/pack.sh` 组装安装包。`nightly` release 只发布安装包：Win7 x86 setup、Linux x64/arm64 的 `.run` 与 Android arm64 APK；裸桌面程序、`.portable` 和补充包都不作为公开资产。打包前会等待同一提交触发的 Desktop Supplements 运行完成，避免旧补充包被打进安装包。
 
-同一工作流还包含 `build-android-arm64` 任务：在 ubuntu-latest 上安装 JDK 17、SDK 36、NDK 28.2.13676358 与 Gradle 8.13，从固定的 `android-runtime` release 下载 APK 内嵌的运行时资产（rootfs、common 离线工具包、proot/busybox 库），随后走 `builders/build-android-arm64.sh` 在线构建 arm64 debug APK。产物与桌面程序一起上传到 `nightly` release。
+同一工作流还包含 `build-android-arm64` 任务：在 ubuntu-latest 上安装 JDK 17、SDK 36、NDK 28.2.13676358 与 Gradle 8.13，从隐藏草稿 `android-runtime` release 下载 APK 内嵌的运行时资产（rootfs、common 离线工具包、proot/busybox 库），随后走 `builders/build-android-arm64.sh` 在线构建 arm64 debug APK。APK 与安装包一起上传到 `nightly` release。
 
 运行时资产不入库，由 `packaging/android/pack-runtime.sh` 从已 stage 的应用源码树打包并上传（rootfs 与 proot 库来自 `builders/stage-android-ubuntu.sh` 的参考实现，common 包来自 `builders/build-android-ubuntu-pack.sh`）：
 
 ```bash
 packaging/android/pack-runtime.sh            # 生成 target/android/runtime/
-packaging/android/pack-runtime.sh --publish  # 并上传到 android-runtime release
+packaging/android/pack-runtime.sh --publish  # 并上传到隐藏草稿 android-runtime release
 ```
 
 APK 使用仓库内 `packaging/android/debug.keystore`（标准调试密钥，store 口令 `android`、别名 `androiddebugkey`），与本地及 Gitea 离线套件构建共用同一签名，各渠道的 APK 可互相覆盖安装。

@@ -17,13 +17,15 @@ Individual users start with the **Desktop**: download the matching build and it 
 
 ## Download and install
 
-Download the build that matches your system from Releases. The Desktop targets 32-bit Win7 and Ubuntu 18.04 and also covers modern Windows / Linux.
+Download the matching installer from Releases. The Desktop targets 32-bit Win7 and Ubuntu 18.04 and also covers modern Windows / Linux.
 
-- **Legacy systems** (32-bit Win7, Ubuntu 18.04): download the `setup` or `.run` installer. It ships with a complete runtime, but compatibility constraints limit some third-party features.
-- **Modern systems**: download the `.exe` or the `.portable` single file and run it directly; the first launch unpacks into `~/.wunder`, later launches start right away.
-- **Two Linux options**: use the `.run` installer for long-term use with the `wunder-cli` command and optional bundled Python/Git, or the `.portable` file for a green, carry-anywhere install. Neither needs FUSE, `libfuse2` or administrator rights, both work on fuse3-only systems such as Ubuntu 24.04, and they share the same user data.
+- **Windows 7 32-bit**: download the `wunder-desktop-*-win7-x86-setup.exe` installer. It ships with a complete runtime, but compatibility constraints limit some third-party features.
+- **Linux x64 / arm64**: download the `wunder-desktop-*-linux-*.run` installer. It includes the Desktop, the `wunder-cli` command, and optional bundled Python/Git components; it needs neither FUSE, `libfuse2`, nor administrator rights, and installs directly on fuse3-only systems such as Ubuntu 24.04.
+- **Android**: download the `wunder-android-*-arm64.apk`.
 
-Install or extract it, then launch.
+Releases publish installers only. Supplement packages are built by CI and embedded in the installers; `.portable` builds are no longer published.
+
+Install it, then launch.
 
 In a development environment you can also run the launch script directly (on Windows that's `run.bat`, or run `wunder-desktop` straight). It calls the engine natively in-process — it takes no local port and needs no local HTTP/WebSocket relay.
 

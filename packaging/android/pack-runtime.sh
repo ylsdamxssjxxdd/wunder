@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Package the uncommitted Android runtime inputs into the release archive that
-# .github/workflows/desktop-nightly.yml downloads from the android-runtime
-# release.
+# .github/workflows/desktop-nightly.yml downloads from the hidden draft
+# `android-runtime` release. The packs are CI inputs, not a user-facing download.
 #
 # The APK embeds a Linux rootfs, an offline tool pack and static proot/busybox
 # libraries. None of these are committed (tens to hundreds of megabytes), so
@@ -61,10 +61,16 @@ if [[ "${1:-}" == "--publish" ]]; then
     if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
         gh release create "$TAG" \
             --repo "$REPO" \
-            --title "Wunder Android runtime inputs（arm64 rootfs / 离线工具包 / proot）" \
-            --notes "安卓版 APK 内嵌的运行时资产，由 .github/workflows/desktop-nightly.yml 下载后打进 APK。rootfs 为 Ubuntu 24.04 arm64（proot-distro 导出），common 包为离线工具叠加层，proot/busybox 为静态 arm64 构建；许可信息见包内 NOTICE.txt。" \
-            --latest=false
+            --title "Wunder Android runtime inputs（内部构建，不对外发布）" \
+            --notes "仅由 CI 作为 APK 输入，不对外发布。请下载安装包，不要手动下载本页文件。" \
+            --draft --latest=false
     fi
     gh release upload "$TAG" "$ARCHIVE" "$OUT_DIR/SHA256SUMS" --repo "$REPO" --clobber
+    # Existing releases were public before this switch; force them back to draft
+    # and relabel them as internal CI inputs.
+    gh release edit "$TAG" --repo "$REPO" \
+        --title "Wunder Android runtime inputs（内部构建，不对外发布）" \
+        --notes "仅由 CI 作为 APK 输入，不对外发布。请下载安装包，不要手动下载本页文件。" \
+        --draft
     gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name'
 fi

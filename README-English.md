@@ -9,10 +9,11 @@ wunder (Xinjian) is a **multi-form agent workbench**:
 
 ## Quick Start
 
-Each release publishes the main program, supplement packages, and installers.
+Releases publish installers only. Supplement packages are built by CI and embedded in the installers; `.portable` builds are no longer published.
 
-- **Legacy systems**: download the `setup` or `.run` installer. It ships with a complete runtime, but compatibility constraints limit many third-party features.
-- **Modern systems**: download the `.exe` or the `.portable` single file and run it directly; it needs no extra system packages.
+- **Windows 7 32-bit**: download the `wunder-desktop-*-win7-x86-setup.exe` installer. It ships with a complete runtime, but compatibility constraints limit some third-party features.
+- **Linux x64 / arm64**: download the `wunder-desktop-*-linux-*.run` installer. It includes the Desktop, the CLI, and optional supplement components, and needs neither FUSE nor administrator rights.
+- **Android**: download the `wunder-android-*-arm64.apk`.
 
 On first launch, configure a model on the settings page and you are ready to go.
 
@@ -41,7 +42,7 @@ On first launch, configure a model on the settings page and you are ready to go.
 | 🚀 | wunder Server | Rust + axum 0.8; PostgreSQL | User-and-agent management platform. All users share a single sandbox with no barriers between them | Server daemon, Docker deployment | Linux / Docker |
 | 🐉 | wunder Admin | Plain HTML + CSS + JavaScript (`web/`, no build) | Server's governance console (four nav groups: system, agents, debugging, docs) | Browser access, statically mounted by the Server at `/` | Cross-platform browsers |
 | 🐝 | wunder Cloud | Vue 3 + TypeScript (Vite build, `frontend/`) | Cloud AI workbench (the Server's user frontend) | Browser access; the built `frontend/dist` is mounted read-only into an nginx container and served externally (default port 18001) — **not hosted by the Server** | Cross-platform browsers |
-| 🍯 | wunder Desktop | Rust + Slint 1.18 (default frontend `crates/wunder-desktop/frontend/`, native UI, software rendering); SQLite | Local AI workbench (flagship form, install and go) | Local desktop process calling the engine in-process (no local HTTP); Electron / Tauri shells are no longer maintained | Windows 7 x86 and up; Linux (ubuntu18.04 baseline) x64 / arm64 via the `.run` installer or `.portable` |
+| 🍯 | wunder Desktop | Rust + Slint 1.18 (default frontend `crates/wunder-desktop/frontend/`, native UI, software rendering); SQLite | Local AI workbench (flagship form, install and go) | Local desktop process calling the engine in-process (no local HTTP); Electron / Tauri shells are no longer maintained | Windows 7 x86 and up; Linux (ubuntu18.04 baseline) x64 / arm64 via the `.run` installer |
 | 📱 | wunder Android | Rust + Slint 1.18 (`crates/wunder-android/`, single native Activity shell reusing the Desktop theme, timeline and composer; Skia rendering); SQLite | The Desktop's Android form — local AI workbench on a phone | Native Activity APK calling the shared engine in-process; Ubuntu runtime bundled by default (arm64) | Android 8.0 (API 26) and up; arm64-v8a (the x86_64 slice is for emulator verification only) |
 | ⚙️ | wunder CLI | Rust terminal TUI (ratatui + crossterm); SQLite | Hands-on local entry point (terminal work, scripting, automation) | Local terminal process calling the engine in-process; JSONL output supported | Windows 7 and up (GNU toolchain); Linux amd64 / arm64 (ubuntu18.04 sysroot) |
 

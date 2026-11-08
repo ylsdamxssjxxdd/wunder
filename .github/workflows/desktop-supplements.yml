@@ -326,20 +326,30 @@ jobs:
             test -f "release-assets/$expected" || { echo "missing $expected"; exit 1; }
           done
           printf '%s\n' "${files[@]}"
-      - name: Publish supplement release
+      - name: Publish supplement release as a hidden draft
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # The supplement packs are CI inputs for the installer jobs, not a
+          # user-facing download. Keep them in a draft release so the public
+          # Releases page only shows installers; a contents:write token can
+          # still download draft assets from the main workflow.
           if ! gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --repo "${GITHUB_REPOSITORY}" \
-              --title "Wunder 补充包（Win7 32 位 / Linux x86_64 / Linux ARM64）" \
-              --notes "本地补充包。在桌面版设置中导入，或手动解压到 WUNDER_HOME（默认用户主目录 .wunder），桌面版与命令行共用 Python、Git、rg、ffmpeg 与便携 PowerShell 7 运行环境。" \
-            --latest=false --target "${GITHUB_SHA}"
+              --title "Wunder 补充包（内部构建，不对外发布）" \
+              --notes "仅由 CI 作为安装包输入，不对外发布。请下载安装包，不要手动下载本页文件。" \
+              --draft --latest=false --target "${GITHUB_SHA}"
           fi
           find release-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do
             gh release upload "$RELEASE_TAG" "$asset" --repo "${GITHUB_REPOSITORY}" --clobber
           done
+          # Existing releases were public before this switch; force them back
+          # to draft and relabel them as internal CI inputs.
+          gh release edit "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" \
+            --title "Wunder 补充包（内部构建，不对外发布）" \
+            --notes "仅由 CI 作为安装包输入，不对外发布。请下载安装包，不要手动下载本页文件。" \
+            --draft
           gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name'

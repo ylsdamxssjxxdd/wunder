@@ -163,6 +163,7 @@ jobs:
         run: |
           $dir = Join-Path $env:GITHUB_WORKSPACE 'supplement'
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          # The supplement release is a hidden draft; contents:write can read it.
           gh release download supplement --repo $env:GITHUB_REPOSITORY `
             --pattern 'wunder-supplement-win7-ia32-common.zip' --dir $dir --clobber
           if ($LASTEXITCODE -ne 0) { throw 'failed to download the supplement release asset' }
@@ -284,12 +285,6 @@ jobs:
           Write-Host "installer: $($installer.Name) ($([math]::Round($installer.Length / 1MB, 1)) MB)"
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-win7-x86
-          path: release-assets/wunder-desktop-*-win7-x86.exe
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@v4
-        with:
           name: installer-win7-x86
           path: release-assets/wunder-desktop-*-win7-x86-setup.exe
           if-no-files-found: error
@@ -346,18 +341,6 @@ jobs:
           # exit SIGPIPEs tar under pipefail and fails the step even when the
           # archive is valid.
           tar -tzf "$asset" | awk '$0 == "./AppRun" { found = 1 } END { exit found ? 0 : 1 }'
-      - name: Package portable
-        shell: bash
-        run: |
-          set -euo pipefail
-          # The installer needs the CLI built below; only the portable file is
-          # produced here.
-          desktop="$(find release-assets -maxdepth 1 -name "wunder-desktop-*-linux-${{ matrix.arch }}.tar.gz" -print -quit)"
-          test -n "$desktop"
-          bash builders/pack-portable.sh -a "linux-${{ matrix.arch }}" \
-            --desktop-archive "$desktop" \
-            --output-dir release-assets
-          test -n "$(find release-assets -maxdepth 1 -name 'wunder-desktop-*.portable' -print -quit)"
       - name: Build Linux CLI
         shell: bash
         run: |
@@ -428,6 +411,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p supplement
+          # The supplement release is a hidden draft; contents:write can read it.
           gh release download supplement --repo "${GITHUB_REPOSITORY}" \
             --pattern "wunder-supplement-linux-${{ matrix.supplement_arch }}.tar.gz" \
             --dir supplement --clobber
@@ -456,14 +440,6 @@ jobs:
             --output-dir release-assets
           test -n "$(find release-assets -maxdepth 1 -name "wunder-desktop-*.run" -print -quit)"
           ls -lh release-assets
-      - uses: actions/upload-artifact@v4
-        with:
-          name: desktop-linux-${{ matrix.arch }}
-          # Only the published program: the AppDir tar.gz is a packager input
-          # and the .run installer ships through installer-linux-<arch>.
-          path: release-assets/wunder-desktop-*.portable
-          if-no-files-found: error
-          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: installer-linux-${{ matrix.arch }}
@@ -568,12 +544,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Download desktop artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: desktop-*
-          path: desktop-assets
-          merge-multiple: true
       - name: Download installer artifacts
         uses: actions/download-artifact@v4
         with:
@@ -585,34 +555,25 @@ jobs:
         with:
           name: android-arm64
           path: android-assets
-      - name: Verify three desktop programs, three installers and one APK
+      - name: Verify three installers and one APK
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t desktops < <(find desktop-assets -type f -maxdepth 2 | sort)
           mapfile -t installers < <(find installer-assets -type f -maxdepth 2 | sort)
           mapfile -t android_apks < <(find android-assets -type f -maxdepth 2 | sort)
           # List before asserting: a bare exit 1 cannot say which form drifted.
-          printf 'desktop programs (%d):\n' "${#desktops[@]}"
-          printf '%s\n' "${desktops[@]}"
           printf 'installers (%d):\n' "${#installers[@]}"
           printf '%s\n' "${installers[@]}"
           printf 'android APKs (%d):\n' "${#android_apks[@]}"
           printf '%s\n' "${android_apks[@]}"
-          # 3+3+1 = one Windows program and setup, plus the portable and the
-          # .run for each Linux arch, plus the Android arm64 APK. Pin every
-          # slot by name, not just the totals, so an extra or missing form
-          # fails with the slot it belongs to.
-          test "${#desktops[@]}" -eq 3
+          # 3+1 = Win7 setup and the .run for each Linux arch, plus the Android
+          # arm64 APK. Raw desktop programs, portable builds and supplements
+          # are CI inputs, not published assets.
           test "${#installers[@]}" -eq 3
           test "${#android_apks[@]}" -eq 1
-          mapfile -t win_desktop < <(find desktop-assets -maxdepth 1 -type f -name 'wunder-desktop-*-win7-x86.exe')
-          mapfile -t portables < <(find desktop-assets -maxdepth 1 -type f -name 'wunder-desktop-*.portable')
           mapfile -t win_setup < <(find installer-assets -maxdepth 1 -type f -name 'wunder-desktop-*-win7-x86-setup.exe')
           mapfile -t linux_runs < <(find installer-assets -maxdepth 1 -type f -name 'wunder-desktop-*.run')
           mapfile -t android_apk < <(find android-assets -maxdepth 1 -type f -name 'wunder-android-*-arm64.apk')
-          test "${#win_desktop[@]}" -eq 1
-          test "${#portables[@]}" -eq 2
           test "${#win_setup[@]}" -eq 1
           test "${#linux_runs[@]}" -eq 2
           test "${#android_apk[@]}" -eq 1
@@ -629,7 +590,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -fa nightly -m "Desktop build ${GITHUB_SHA}" "${GITHUB_SHA}"
           git push origin refs/tags/nightly --force
-      - name: Publish three desktop programs, three installers and one APK
+      - name: Publish three installers and one APK
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -637,9 +598,9 @@ jobs:
           set -euo pipefail
           gh release create nightly \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "Wunder Desktop, Android & Installers（Win7 x86 / Ubuntu 18.04 x86_64 / Ubuntu 18.04 ARM64 / Android arm64）" \
-            --notes "发布三个桌面程序、三个安装包与安卓 arm64 APK：Windows 7 32 位、Ubuntu 18.04 x86_64、Ubuntu 18.04 ARM64、Android 8.0+。安装包默认安装桌面版和命令行到用户目录的 .wunder，补充组件可选；APK 为固定调试签名，可直接覆盖安装旧版。" \
+            --title "Wunder Desktop Installers（Win7 x86 / Ubuntu 18.04 x86_64 / Ubuntu 18.04 ARM64 / Android arm64）" \
+            --notes "发布四个安装包：Windows 7 32 位 setup、Ubuntu 18.04 x86_64 与 ARM64 的 .run，以及 Android arm64 APK。补充包由 CI 内部构建并嵌入安装包，不再单独发布；不再提供 .portable 免安装包或裸桌面程序。安装包默认安装桌面版和命令行到用户目录的 .wunder，补充组件可选；APK 为固定调试签名，可直接覆盖安装旧版。" \
             --prerelease --latest=false --target "${GITHUB_SHA}"
-          find desktop-assets installer-assets android-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do
+          find installer-assets android-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do
             gh release upload nightly "$asset" --repo "${GITHUB_REPOSITORY}" --clobber
           done

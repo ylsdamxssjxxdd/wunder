@@ -77,7 +77,7 @@ import {
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20261017-04";
 
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20261015-06";
-import { initWunderModelPanel, toggleWunderModelPanel } from "./modules/wunder-model.js?v=20261019-34";
+import { initWunderModelPanel, toggleWunderModelPanel } from "./modules/wunder-model.js?v=20261108-01";
 
 
 
