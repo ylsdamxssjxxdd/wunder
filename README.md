@@ -8,11 +8,11 @@ wunder 心舰 是一个多形态的智能体工作台
 - 省：cpu/内存占用极低，上下文消耗极低
 
 ## 快速开始
-项目 Release 只发布安装包；补充包由 CI 内部构建并嵌入安装包，不再单独发布，也不再提供 `.portable` 免安装包。
+从 [Releases](https://github.com/ylsdamxssjxxdd/wunder/releases) 下载对应安装包：
 
-- Windows 7 32 位：下载 `wunder-desktop-*-win7-x86-setup.exe` 安装包，安装后具备完整运行环境；为了兼容性，部分第三方功能受限。
-- Linux x64 / arm64：下载 `wunder-desktop-*-linux-*.run` 安装包，包含桌面版、命令行与可选补充组件，不需要 FUSE 或管理员权限。
-- Android：下载 `wunder-android-*-arm64.apk`。
+- Windows 7 32 位：下载 `wunder-desktop-*-win7-x86-setup.exe` 安装包，安装后开箱即用；受兼容性限制，部分第三方功能不可用。
+- Linux x64 / arm64：下载 `wunder-desktop-*-linux-*.run` 安装包，自带桌面版、命令行与运行环境，不需要 FUSE 或管理员权限。
+- Android：下载 `wunder-android-*-arm64.apk` 安装即可。
 
 初次运行请先在配置页面配置好模型即可使用
 

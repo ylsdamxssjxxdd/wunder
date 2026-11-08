@@ -9,11 +9,11 @@ wunder (Xinjian) is a **multi-form agent workbench**:
 
 ## Quick Start
 
-Releases publish installers only. Supplement packages are built by CI and embedded in the installers; `.portable` builds are no longer published.
+Download the matching installer from [Releases](https://github.com/ylsdamxssjxxdd/wunder/releases):
 
-- **Windows 7 32-bit**: download the `wunder-desktop-*-win7-x86-setup.exe` installer. It ships with a complete runtime, but compatibility constraints limit some third-party features.
-- **Linux x64 / arm64**: download the `wunder-desktop-*-linux-*.run` installer. It includes the Desktop, the CLI, and optional supplement components, and needs neither FUSE nor administrator rights.
-- **Android**: download the `wunder-android-*-arm64.apk`.
+- **Windows 7 32-bit**: download the `wunder-desktop-*-win7-x86-setup.exe` installer. It works out of the box; compatibility constraints limit some third-party features.
+- **Linux x64 / arm64**: download the `wunder-desktop-*-linux-*.run` installer. It bundles the Desktop, the CLI, and the runtime, and needs neither FUSE nor administrator rights.
+- **Android**: download the `wunder-android-*-arm64.apk` and install it.
 
 On first launch, configure a model on the settings page and you are ready to go.
 

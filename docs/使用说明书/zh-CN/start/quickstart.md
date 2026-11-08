@@ -10,13 +10,11 @@ updated_at: 2026-10-16
 
 ## 下载安装
 
-从 Releases 下载匹配系统的安装包。桌面版面向 32 位 Win7 与 Ubuntu 18.04，也覆盖现代 Windows / Linux。
+从 [Releases](https://github.com/ylsdamxssjxxdd/wunder/releases) 下载匹配系统的安装包。桌面版面向 32 位 Win7 与 Ubuntu 18.04，也覆盖现代 Windows / Linux。
 
-- **Windows 7 32 位**：下载 `wunder-desktop-*-win7-x86-setup.exe` 安装包，安装后自带完整运行环境，但为了兼容性，部分第三方功能受限。
-- **Linux x64 / arm64**：下载 `wunder-desktop-*-linux-*.run` 安装包，包含桌面版、`wunder-cli` 命令与可选的内置 Python/Git 等组件；不需要 FUSE、`libfuse2` 或管理员权限，Ubuntu 24.04 等只带 fuse3 的系统可直接安装运行。
-- **Android**：下载 `wunder-android-*-arm64.apk`。
-
-Release 只发布安装包；补充包由 CI 内部构建并嵌入安装包，不再单独提供，也不再提供 `.portable` 免安装包。
+- **Windows 7 32 位**：下载 `wunder-desktop-*-win7-x86-setup.exe` 安装包，自带完整运行环境；受兼容性限制，部分第三方功能不可用。
+- **Linux x64 / arm64**：下载 `wunder-desktop-*-linux-*.run` 安装包，包含桌面版、`wunder-cli` 与运行环境；不需要 FUSE、`libfuse2` 或管理员权限，Ubuntu 24.04 等只带 fuse3 的系统可直接安装运行。
+- **Android**：下载 `wunder-android-*-arm64.apk` 安装即可。
 
 安装后启动即可。
 

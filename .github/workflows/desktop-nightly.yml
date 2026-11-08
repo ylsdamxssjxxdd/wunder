@@ -599,7 +599,7 @@ jobs:
           gh release create nightly \
             --repo "${GITHUB_REPOSITORY}" \
             --title "Wunder Desktop Installers（Win7 x86 / Ubuntu 18.04 x86_64 / Ubuntu 18.04 ARM64 / Android arm64）" \
-            --notes "发布四个安装包：Windows 7 32 位 setup、Ubuntu 18.04 x86_64 与 ARM64 的 .run，以及 Android arm64 APK。补充包由 CI 内部构建并嵌入安装包，不再单独发布；不再提供 .portable 免安装包或裸桌面程序。安装包默认安装桌面版和命令行到用户目录的 .wunder，补充组件可选；APK 为固定调试签名，可直接覆盖安装旧版。" \
+            --notes "从本页下载对应安装包：Windows 7 32 位 setup、Ubuntu 18.04 x86_64 与 ARM64 的 .run，以及 Android arm64 APK。安装包自带运行环境；APK 为固定调试签名，可直接覆盖安装旧版。" \
             --prerelease --latest=false --target "${GITHUB_SHA}"
           find installer-assets android-assets -type f -maxdepth 2 -print0 | while IFS= read -r -d '' asset; do
             gh release upload nightly "$asset" --repo "${GITHUB_REPOSITORY}" --clobber

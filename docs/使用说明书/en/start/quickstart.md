@@ -17,13 +17,11 @@ Individual users start with the **Desktop**: download the matching build and it 
 
 ## Download and install
 
-Download the matching installer from Releases. The Desktop targets 32-bit Win7 and Ubuntu 18.04 and also covers modern Windows / Linux.
+Download the matching installer from [Releases](https://github.com/ylsdamxssjxxdd/wunder/releases). The Desktop targets 32-bit Win7 and Ubuntu 18.04 and also covers modern Windows / Linux.
 
-- **Windows 7 32-bit**: download the `wunder-desktop-*-win7-x86-setup.exe` installer. It ships with a complete runtime, but compatibility constraints limit some third-party features.
-- **Linux x64 / arm64**: download the `wunder-desktop-*-linux-*.run` installer. It includes the Desktop, the `wunder-cli` command, and optional bundled Python/Git components; it needs neither FUSE, `libfuse2`, nor administrator rights, and installs directly on fuse3-only systems such as Ubuntu 24.04.
-- **Android**: download the `wunder-android-*-arm64.apk`.
-
-Releases publish installers only. Supplement packages are built by CI and embedded in the installers; `.portable` builds are no longer published.
+- **Windows 7 32-bit**: download the `wunder-desktop-*-win7-x86-setup.exe` installer. It ships with a complete runtime; compatibility constraints limit some third-party features.
+- **Linux x64 / arm64**: download the `wunder-desktop-*-linux-*.run` installer. It includes the Desktop, the `wunder-cli`, and the runtime; it needs neither FUSE, `libfuse2`, nor administrator rights, and installs directly on fuse3-only systems such as Ubuntu 24.04.
+- **Android**: download the `wunder-android-*-arm64.apk` and install it.
 
 Install it, then launch.
 
