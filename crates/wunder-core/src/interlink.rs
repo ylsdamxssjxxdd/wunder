@@ -17,6 +17,8 @@ use serde_json::Value;
 pub const NODE_TYPE_WEB: &str = "web";
 pub const NODE_TYPE_DESKTOP: &str = "desktop";
 pub const NODE_TYPE_CLI: &str = "cli";
+/// Android phone / tablet local node.
+pub const NODE_TYPE_PHONE: &str = "phone";
 /// The cloud itself, presented as a symmetric node to local clients.
 pub const NODE_TYPE_SERVER: &str = "server";
 

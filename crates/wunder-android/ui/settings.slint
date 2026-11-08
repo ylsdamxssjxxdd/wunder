@@ -7,7 +7,12 @@ import { Theme, ModelCard } from "../../../crates/wunder-desktop/frontend/ui/the
 import { I18n } from "../../../crates/wunder-desktop/frontend/ui/i18n.slint";
 import { Action, FormField, ThemeSwitch, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
 import { ModelPresets } from "../../../crates/wunder-desktop/frontend/ui/model_presets.slint";
-import { MobileSession } from "session_model.slint";
+import { TextEditBase } from "../../../crates/wunder-desktop/frontend/ui/textedit-base.slint";
+import { ToolIcons } from "../../../crates/wunder-desktop/frontend/ui/tool_icons.slint";
+import { MobileTool, MobileToolGroup, MobileToolResource, MobileToolFile, MobileMcpDraft, MobileKnowledgeDraft } from "tools_model.slint";
+import { MobileCronJob, MobileCronDraft, MobileCronRun, MobileMemory, MobileMemoryDraft, MobileDevice } from "automation_model.slint";
+import { MobileChannelAccount, MobileChannelCatalog, MobileChannelBinding, MobileChannelLog, MobileChannelDraft } from "channel_model.slint";
+import { MobileSession, MobilePermission } from "session_model.slint";
 import { ListView, ScrollView } from "std-widgets.slint";
 
 component SheetHeader inherits Rectangle {
@@ -443,6 +448,2386 @@ component NavCard inherits Rectangle {
     }
 }
 
+// ---- tool manager / agent shared bits ---------------------------------
+
+component MobileTextArea inherits Rectangle {
+    in property <string> label;
+    in property <string> placeholder: "";
+    in property <bool> read-only: false;
+    in property <length> area-height: 120px;
+    in-out property <string> text;
+    callback edited();
+    height: root.label == "" ? root.area-height : root.area-height + 24px;
+    VerticalLayout {
+        spacing: 4px;
+        if root.label != "" : Text {
+            height: 16px;
+            text: root.label;
+            color: Theme.text;
+            font-size: Theme.font-sm;
+            font-weight: 600;
+        }
+        Rectangle {
+            height: root.area-height;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: edit.has-focus ? Theme.accent-ink : root.read-only ? Theme.input-readonly-border : Theme.input-border;
+            background: root.read-only ? Theme.input-readonly-bg : Theme.input-bg;
+            edit := TextEditBase {
+                x: 1px; y: 1px;
+                width: parent.width - 2px;
+                height: parent.height - 2px;
+                text <=> root.text;
+                read-only: root.read-only;
+                wrap: word-wrap;
+                font-size: Theme.font-sm;
+                foreground: Theme.text;
+                placeholder-text: root.placeholder;
+                placeholder-color: Theme.muted;
+                scroll-view-padding: 8px;
+                selection-background-color: Theme.accent-soft;
+                selection-foreground-color: Theme.text;
+                edited(text) => { root.edited(); }
+            }
+        }
+    }
+}
+
+component MobileTab inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    callback clicked();
+    horizontal-stretch: 1;
+    height: 34px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: root.selected ? Theme.border : transparent;
+    background: root.selected ? Theme.surface : touch.has-hover ? Theme.selected : transparent;
+    Text {
+        width: 100%;
+        height: 100%;
+        text: root.label;
+        color: root.selected ? Theme.text : Theme.text-secondary;
+        font-size: Theme.font-sm;
+        font-weight: root.selected ? 700 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+component ToolBadge inherits Rectangle {
+    in property <string> icon;
+    in property <string> tone;
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    background: ToolIcons.tone-background(root.tone);
+    border-width: 1px;
+    border-color: ToolIcons.tone-border(root.tone);
+    Image {
+        x: 8px; y: 8px;
+        width: 18px; height: 18px;
+        source: ToolIcons.image(root.icon);
+        colorize: ToolIcons.tone-color(root.tone);
+        image-fit: contain;
+    }
+}
+
+component ToolInfoRow inherits Rectangle {
+    in property <MobileTool> tool;
+    height: 56px;
+    HorizontalLayout {
+        spacing: 10px;
+        padding-top: 7px;
+        padding-bottom: 7px;
+        cross-axis-alignment: center;
+        ToolBadge { icon: root.tool.icon; tone: root.tool.tone; }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text {
+                text: root.tool.name;
+                color: Theme.text;
+                font-size: Theme.font-sm;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.tool.description == "" ? I18n.stc_agent_tool_no_desc : root.tool.description;
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+component AgentToolRow inherits Rectangle {
+    in property <MobileTool> tool;
+    in property <bool> editable: true;
+    callback toggled();
+    height: 54px;
+    HorizontalLayout {
+        spacing: 10px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        cross-axis-alignment: center;
+        ToolBadge { icon: root.tool.icon; tone: root.tool.tone; }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text { text: root.tool.name; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; overflow: elide; }
+            Text { text: root.tool.description == "" ? I18n.stc_agent_tool_no_desc : root.tool.description; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+        }
+        ThemeSwitch {
+            checked: root.tool.enabled;
+            enabled: root.editable;
+            toggled => { root.toggled(); }
+        }
+    }
+    TouchArea {
+        x: 0px; y: 0px;
+        width: parent.width - 56px;
+        height: parent.height;
+        enabled: root.editable;
+        mouse-cursor: pointer;
+        clicked => { root.toggled(); }
+    }
+}
+
+component ToolFileRow inherits Rectangle {
+    in property <string> label;
+    in property <string> detail: "";
+    in property <bool> directory: false;
+    in property <bool> parent-row: false;
+    callback clicked();
+    height: 46px;
+    background: touch.has-hover ? Theme.hover : transparent;
+    HorizontalLayout {
+        spacing: 10px;
+        padding-left: 6px;
+        padding-right: 6px;
+        cross-axis-alignment: center;
+        Image {
+            width: 17px; height: 17px;
+            source: root.directory
+                ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/folder-open.svg")
+                : @image-url("../../../crates/wunder-desktop/frontend/assets/icons/file-lines.svg");
+            colorize: root.directory ? Theme.accent-ink : Theme.muted;
+            image-fit: contain;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.label;
+            color: Theme.text;
+            font-size: Theme.font-sm;
+            overflow: elide;
+        }
+        Text {
+            text: root.parent-row ? "" : root.detail;
+            color: Theme.muted;
+            font-size: Theme.font-2xs;
+        }
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+component CatalogCard inherits Rectangle {
+    in property <string> title;
+    in property <[MobileTool]> tools;
+    border-radius: Theme.radius-lg;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 0px;
+        HorizontalLayout {
+            height: 28px;
+            Text {
+                horizontal-stretch: 1;
+                text: root.title;
+                color: Theme.text;
+                font-size: Theme.font-sm;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.tools.length;
+                color: Theme.accent-ink;
+                font-size: Theme.font-xs;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+        }
+        Rectangle { height: 1px; background: Theme.border; }
+        for tool in root.tools : ToolInfoRow { tool: tool; }
+        if root.tools.length == 0 : Text {
+            height: 40px;
+            text: I18n.tm_none;
+            color: Theme.muted;
+            font-size: Theme.font-sm;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// ---- tools page -------------------------------------------------------
+
+component ResourceFiles inherits VerticalLayout {
+    in property <[MobileToolFile]> files;
+    in property <string> directory;
+    in property <bool> has-more;
+    in property <string> empty-text: "";
+    callback open-directory(string);
+    callback open-file(string);
+    callback more();
+    spacing: 0px;
+    if root.directory != "" : ToolFileRow {
+        label: "..";
+        parent-row: true;
+        directory: true;
+        clicked => { root.open-directory(".."); }
+    }
+    for file in root.files : ToolFileRow {
+        label: file.name;
+        detail: file.directory ? I18n.tm_folder : file.size;
+        directory: file.directory;
+        clicked => {
+            if file.directory {
+                root.open-directory(file.path);
+            } else {
+                root.open-file(file.path);
+            }
+        }
+    }
+    if root.files.length == 0 : Text {
+        height: 44px;
+        text: root.empty-text == "" ? "暂无文件" : root.empty-text;
+        color: Theme.muted;
+        font-size: Theme.font-sm;
+        vertical-alignment: center;
+    }
+    if root.has-more : Rectangle {
+        height: 42px;
+        border-radius: Theme.radius-sm;
+        background: touch.has-hover ? Theme.hover : Theme.input-bg;
+        Text {
+            width: 100%; height: 100%;
+            text: I18n.tm_more;
+            color: Theme.accent-ink;
+            font-size: Theme.font-sm;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        touch := TouchArea { clicked => { root.more(); } }
+    }
+}
+
+component ToolEditorSheet inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <int> kind: 0;
+    in property <bool> is-new: true;
+    in property <string> error: "";
+    in-out property <MobileMcpDraft> mcp;
+    in-out property <MobileKnowledgeDraft> kb;
+    callback close();
+    callback save(int, MobileMcpDraft, MobileKnowledgeDraft);
+    callback pick-transport(string);
+    callback pick-type(string);
+
+    pure function transport-label(value: string) -> string {
+        return value == "sse" ? "SSE"
+            : value == "http" ? "HTTP"
+            : value == "streamable-http" ? "Streamable HTTP"
+            : "自动";
+    }
+    pure function kb-type-label(value: string) -> string {
+        return value == "literal" ? I18n.tm_type_literal
+            : value == "ragflow" ? I18n.tm_type_ragflow
+            : I18n.tm_type_vector;
+    }
+
+    x: 0px; y: 0px;
+    width: 100%; height: 100%;
+    background: Theme.panel;
+    VerticalLayout {
+        spacing: 0px;
+        SheetHeader {
+            title: root.kind == 1
+                ? (root.is-new ? I18n.tm_mcp_add_title : I18n.tm_mcp_edit_title)
+                : (root.is-new ? I18n.tm_kb_add_title : I18n.tm_kb_edit_title);
+            subtitle: root.kind == 1 ? I18n.tm_mcp_tip : I18n.tm_kb_tip;
+            inset-top: root.inset-top;
+            back() => { root.close(); }
+            Action {
+                width: 64px;
+                height: 32px;
+                label: I18n.tm_save;
+                show-label: true;
+                primary: true;
+                enabled: root.kind == 1 ? root.mcp.name != "" && root.mcp.endpoint != "" : root.kb.name != "";
+                clicked => { root.save(root.kind, root.mcp, root.kb); }
+            }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding: 14px;
+                padding-bottom: 20px + root.inset-bottom;
+                spacing: 12px;
+                alignment: start;
+
+                if root.kind == 1 : VerticalLayout {
+                    spacing: 12px;
+                    SheetCard {
+                        FormField { label: I18n.tm_name; placeholder: I18n.tm_unique_name_ph; text <=> root.mcp.name; }
+                        FormField { label: I18n.tm_display_name; placeholder: I18n.tm_display_name_ph; text <=> root.mcp.display-name; }
+                        FormField { label: I18n.tm_endpoint; placeholder: "http://127.0.0.1:9000/mcp"; text <=> root.mcp.endpoint; }
+                        SettingRow {
+                            label: I18n.tm_transport;
+                            last: true;
+                            PickerField {
+                                text: root.transport-label(root.mcp.transport);
+                                picked => { root.pick-transport(root.mcp.transport); }
+                            }
+                        }
+                    }
+                    SheetCard {
+                        MobileTextArea { label: I18n.tm_desc; placeholder: I18n.tm_desc_ph; area-height: 96px; text <=> root.mcp.description; }
+                        MobileTextArea { label: I18n.tm_headers; placeholder: "{\"Authorization\":\"Bearer ...\"}"; area-height: 110px; text <=> root.mcp.headers; }
+                    }
+                }
+
+                if root.kind == 2 : VerticalLayout {
+                    spacing: 12px;
+                    SheetCard {
+                        FormField { label: I18n.tm_name; placeholder: I18n.tm_kb_name_ph; text <=> root.kb.name; read-only: !root.is-new; }
+                        SettingRow {
+                            label: I18n.tm_type;
+                            last: true;
+                            PickerField {
+                                text: root.kb-type-label(root.kb.base-type);
+                                enabled: root.is-new;
+                                picked => { root.pick-type(root.kb.base-type); }
+                            }
+                        }
+                        MobileTextArea { label: I18n.tm_desc; placeholder: I18n.tm_desc_ph; area-height: 96px; text <=> root.kb.description; }
+                    }
+                    if root.kb.base-type == "vector" : SheetCard {
+                        FormField { label: I18n.tm_embedding_model; placeholder: I18n.tm_embedding_ph; text <=> root.kb.embedding-model; }
+                        FormField { label: I18n.tm_chunk_size; placeholder: I18n.tm_chunk_size_ph; text <=> root.kb.chunk-size; }
+                        FormField { label: I18n.tm_chunk_overlap; placeholder: I18n.tm_chunk_overlap_ph; text <=> root.kb.chunk-overlap; }
+                        Text { height: 30px; text: I18n.tm_kb_vector_tip; color: Theme.muted; font-size: Theme.font-2xs; wrap: word-wrap; }
+                    }
+                    if root.kb.base-type == "ragflow" : SheetCard {
+                        FormField { label: I18n.tm_dataset_id; placeholder: I18n.tm_dataset_ph; text <=> root.kb.dataset-id; }
+                        Text { height: 30px; text: I18n.tm_kb_ragflow_tip; color: Theme.muted; font-size: Theme.font-2xs; wrap: word-wrap; }
+                    }
+                    if root.kb.base-type == "literal" : SheetCard {
+                        Text { height: 30px; text: I18n.tm_kb_literal_tip; color: Theme.muted; font-size: Theme.font-2xs; wrap: word-wrap; }
+                    }
+                }
+
+                if root.error != "" : Text {
+                    height: 36px;
+                    text: root.error;
+                    color: Theme.danger;
+                    font-size: Theme.font-xs;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}
+
+component ToolFileSheet inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <string> path;
+    in property <bool> read-only: false;
+    in property <string> error: "";
+    in-out property <string> content;
+    callback close();
+    callback save(string, string);
+    x: 0px; y: 0px;
+    width: 100%; height: 100%;
+    background: Theme.panel;
+    VerticalLayout {
+        spacing: 0px;
+        SheetHeader {
+            title: root.path;
+            subtitle: root.read-only ? I18n.tm_readonly : "";
+            inset-top: root.inset-top;
+            back() => { root.close(); }
+            Action {
+                width: 64px;
+                height: 32px;
+                label: I18n.tm_save;
+                show-label: true;
+                primary: true;
+                enabled: !root.read-only;
+                clicked => { root.save(root.path, root.content); }
+            }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            background: Theme.input-bg;
+            border-width: 0px;
+            edit := TextEditBase {
+                x: 10px; y: 10px;
+                width: parent.width - 20px;
+                height: parent.height - 20px;
+                text <=> root.content;
+                read-only: root.read-only;
+                wrap: word-wrap;
+                font-size: Theme.font-sm;
+                foreground: Theme.text;
+                scroll-view-padding: 4px;
+                selection-background-color: Theme.accent-soft;
+                selection-foreground-color: Theme.text;
+                init => {
+                    if !root.read-only { edit.focus(); }
+                }
+            }
+        }
+        if root.error != "" : Text {
+            height: 36px;
+            x: 14px;
+            width: parent.width - 28px;
+            text: root.error;
+            color: Theme.danger;
+            font-size: Theme.font-xs;
+            wrap: word-wrap;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component ToolsPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <[MobileTool]> builtin: [];
+    in property <[MobileTool]> mcp-tools: [];
+    in property <[MobileTool]> skill-tools: [];
+    in property <[MobileTool]> knowledge-tools: [];
+    in property <[MobileToolResource]> servers: [];
+    in property <[MobileToolResource]> skill-resources: [];
+    in property <[MobileToolResource]> bases: [];
+    in property <[MobileTool]> server-tools: [];
+    in property <string> active-server: "";
+    in property <string> active-resource: "";
+    in property <int> resource-tab: 0;
+    in property <bool> resource-editable: true;
+    in property <[MobileToolFile]> files: [];
+    in property <string> directory: "";
+    in property <bool> has-more: false;
+    in property <int> editor-kind: 0;
+    in property <bool> editor-new: false;
+    in property <string> editor-error: "";
+    in-out property <MobileMcpDraft> mcp-draft;
+    in-out property <MobileKnowledgeDraft> kb-draft;
+    in property <bool> file-open: false;
+    in property <string> file-path: "";
+    in-out property <string> file-content: "";
+    in property <bool> file-readonly: false;
+    in property <string> file-error: "";
+    callback back();
+    callback refresh();
+    callback select-server(int);
+    callback select-resource(int, int);
+    callback load-directory(string);
+    callback more-files();
+    callback open-file(string);
+    callback save-file(string, string);
+    callback close-file();
+    callback create-file(string);
+    callback upload-files();
+    callback delete-resource(int, string);
+    callback connect-server(string);
+    callback export-skill(string);
+    callback import-skill();
+    callback open-editor(int, int);
+    callback close-editor();
+    callback save-editor(int, MobileMcpDraft, MobileKnowledgeDraft);
+    callback open-picker(int, string, string);
+
+    private property <int> tab: 0;
+    private property <bool> confirm-delete: false;
+    private property <int> pending-tab: 0;
+    private property <string> pending-name: "";
+    private property <bool> new-file-open: false;
+    private property <string> new-file-name: "";
+
+    background: Theme.panel;
+
+    VerticalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 0px;
+
+        SheetHeader {
+            title: I18n.stc_tools;
+            subtitle: I18n.stc_tools_note;
+            inset-top: root.inset-top;
+            back() => { root.back(); }
+            Action {
+                width: 34px;
+                height: 32px;
+                icon-size: 16px;
+                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
+                label: I18n.common_refresh;
+                clicked => { root.refresh(); }
+            }
+        }
+
+        Rectangle {
+            height: 50px;
+            background: Theme.surface;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 4px;
+                for label[i] in ["概览", "MCP", "技能", "知识库"] : MobileTab {
+                    label: label;
+                    selected: root.tab == i;
+                    clicked => { root.tab = i; }
+                }
+            }
+            Rectangle {
+                y: parent.height - 1px;
+                width: parent.width;
+                height: 1px;
+                background: Theme.border;
+            }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding: 12px;
+                padding-bottom: 20px + root.inset-bottom;
+                spacing: 12px;
+                alignment: start;
+
+                // ---- catalogue -------------------------------------
+                if root.tab == 0 : VerticalLayout {
+                    spacing: 12px;
+                    CatalogCard { title: I18n.tl_cat_builtin; tools: root.builtin; }
+                    CatalogCard { title: I18n.tl_cat_mcp; tools: root.mcp-tools; }
+                    CatalogCard { title: I18n.tm_skills; tools: root.skill-tools; }
+                    CatalogCard { title: I18n.tm_knowledge; tools: root.knowledge-tools; }
+                }
+
+                // ---- MCP servers -----------------------------------
+                if root.tab == 1 : VerticalLayout {
+                    spacing: 12px;
+                    HorizontalLayout {
+                        height: 34px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: I18n.tl_cat_mcp + " · " + root.servers.length;
+                            color: Theme.text;
+                            font-size: Theme.font-md;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+                        Action {
+                            width: 78px;
+                            height: 32px;
+                            icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/plus.svg");
+                            label: I18n.tm_add;
+                            show-label: true;
+                            primary: true;
+                            clicked => { root.open-editor(1, -1); }
+                        }
+                    }
+                    for server[index] in root.servers : Rectangle {
+                        border-radius: Theme.radius-lg;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            spacing: 0px;
+                            Rectangle {
+                                height: 62px;
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 10px;
+                                    cross-axis-alignment: center;
+                                    ToolBadge { icon: "plug"; tone: "mcp"; }
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        spacing: 2px;
+                                        Text { text: server.name; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; overflow: elide; }
+                                        Text { text: server.detail; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                                    }
+                                    Image {
+                                        width: 12px; height: 12px;
+                                        source: root.active-server == server.name
+                                            ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-up.svg")
+                                            : @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-down.svg");
+                                        colorize: Theme.muted;
+                                    }
+                                }
+                                TouchArea {
+                                    clicked => {
+                                        if root.active-server == server.name {
+                                            root.select-server(index);
+                                        } else {
+                                            root.select-server(index);
+                                        }
+                                    }
+                                }
+                            }
+                            if root.active-server == server.name : VerticalLayout {
+                                spacing: 0px;
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                padding-bottom: 10px;
+                                Rectangle { height: 1px; background: Theme.border; }
+                                HorizontalLayout {
+                                    padding-top: 8px;
+                                    padding-bottom: 4px;
+                                    spacing: 8px;
+                                    Action { width: 84px; height: 30px; icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/plug.svg"); label: I18n.tm_connect; show-label: true; primary: true; clicked => { root.connect-server(server.name); } }
+                                    Action { width: 68px; height: 30px; label: I18n.tm_edit; show-label: true; clicked => { root.open-editor(1, index); } }
+                                    Action { width: 68px; height: 30px; label: I18n.common_delete; show-label: true; danger: true; clicked => { root.pending-tab = 1; root.pending-name = server.name; root.confirm-delete = true; } }
+                                }
+                                if root.server-tools.length == 0 : Text {
+                                    height: 34px;
+                                    text: I18n.tm_mcp_tools_tip;
+                                    color: Theme.muted;
+                                    font-size: Theme.font-xs;
+                                    vertical-alignment: center;
+                                }
+                                for tool in root.server-tools : ToolInfoRow { tool: tool; }
+                            }
+                        }
+                    }
+                    if root.servers.length == 0 : Text {
+                        height: 54px;
+                        text: I18n.tm_no_servers;
+                        color: Theme.muted;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // ---- skills ------------------------------------------
+                if root.tab == 2 : VerticalLayout {
+                    spacing: 12px;
+                    HorizontalLayout {
+                        height: 34px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: I18n.tm_skills + " · " + root.skill-resources.length;
+                            color: Theme.text;
+                            font-size: Theme.font-md;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+                        Action {
+                            width: 78px;
+                            height: 32px;
+                            icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/book.svg");
+                            label: I18n.tm_import;
+                            show-label: true;
+                            clicked => { root.import-skill(); }
+                        }
+                    }
+                    for skill[index] in root.skill-resources : Rectangle {
+                        border-radius: Theme.radius-lg;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            spacing: 0px;
+                            Rectangle {
+                                height: 62px;
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 10px;
+                                    cross-axis-alignment: center;
+                                    ToolBadge { icon: "book"; tone: "skill"; }
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        spacing: 2px;
+                                        Text { text: skill.name; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; overflow: elide; }
+                                        Text { text: skill.description; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                                    }
+                                    Text {
+                                        text: skill.readonly ? I18n.tm_global : I18n.tm_local;
+                                        color: skill.readonly ? Theme.text-secondary : Theme.info;
+                                        font-size: Theme.font-2xs;
+                                        font-weight: 600;
+                                    }
+                                }
+                                TouchArea { clicked => { root.select-resource(2, index); } }
+                            }
+                            if root.active-resource == skill.name && root.resource-tab == 2 : VerticalLayout {
+                                spacing: 0px;
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                padding-bottom: 10px;
+                                Rectangle { height: 1px; background: Theme.border; }
+                                HorizontalLayout {
+                                    padding-top: 8px;
+                                    padding-bottom: 4px;
+                                    spacing: 8px;
+                                    Action { width: 64px; height: 30px; icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/file-lines.svg"); label: I18n.tm_export; show-label: true; clicked => { root.export-skill(skill.name); } }
+                                    Action { width: 64px; height: 30px; icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/plus.svg"); label: "新建"; show-label: true; enabled: !skill.readonly; opacity: skill.readonly ? 0.45 : 1; clicked => { root.new-file-name = ""; root.new-file-open = true; } }
+                                    Action { width: 64px; height: 30px; icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/upload.svg"); label: "上传"; show-label: true; enabled: !skill.readonly; opacity: skill.readonly ? 0.45 : 1; clicked => { root.upload-files(); } }
+                                    Action { width: 64px; height: 30px; icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trash.svg"); label: I18n.common_delete; show-label: true; danger: true; enabled: !skill.readonly; opacity: skill.readonly ? 0.45 : 1; clicked => { root.pending-tab = 2; root.pending-name = skill.name; root.confirm-delete = true; } }
+                                }
+                                ResourceFiles {
+                                    files: root.files;
+                                    directory: root.directory;
+                                    has-more: root.has-more;
+                                    empty-text: "暂无文件";
+                                    open-directory(path) => { root.load-directory(path); }
+                                    open-file(path) => { root.open-file(path); }
+                                    more() => { root.more-files(); }
+                                }
+                            }
+                        }
+                    }
+                    if root.skill-resources.length == 0 : Text {
+                        height: 54px;
+                        text: I18n.tm_no_skills;
+                        color: Theme.muted;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // ---- knowledge bases --------------------------------
+                if root.tab == 3 : VerticalLayout {
+                    spacing: 12px;
+                    HorizontalLayout {
+                        height: 34px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: I18n.tm_knowledge + " · " + root.bases.length;
+                            color: Theme.text;
+                            font-size: Theme.font-md;
+                            font-weight: 700;
+                            vertical-alignment: center;
+                        }
+                        Action {
+                            width: 78px;
+                            height: 32px;
+                            icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/plus.svg");
+                            label: I18n.tm_add;
+                            show-label: true;
+                            primary: true;
+                            clicked => { root.open-editor(2, -1); }
+                        }
+                    }
+                    for base[index] in root.bases : Rectangle {
+                        border-radius: Theme.radius-lg;
+                        background: Theme.surface;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            spacing: 0px;
+                            Rectangle {
+                                height: 62px;
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 10px;
+                                    cross-axis-alignment: center;
+                                    ToolBadge { icon: "database"; tone: "knowledge"; }
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        spacing: 2px;
+                                        Text { text: base.name; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; overflow: elide; }
+                                        Text { text: base.description; color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                                    }
+                                }
+                                TouchArea { clicked => { root.select-resource(3, index); } }
+                            }
+                            if root.active-resource == base.name && root.resource-tab == 3 : VerticalLayout {
+                                spacing: 0px;
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                padding-bottom: 10px;
+                                Rectangle { height: 1px; background: Theme.border; }
+                                HorizontalLayout {
+                                    padding-top: 8px;
+                                    padding-bottom: 4px;
+                                    spacing: 8px;
+                                    Action { width: 64px; height: 30px; label: I18n.tm_edit; show-label: true; clicked => { root.open-editor(2, index); } }
+                                    Action { width: 64px; height: 30px; icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/plus.svg"); label: "新建"; show-label: true; enabled: root.resource-editable; opacity: root.resource-editable ? 1 : 0.45; clicked => { root.new-file-name = ""; root.new-file-open = true; } }
+                                    Action { width: 64px; height: 30px; icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/upload.svg"); label: "上传"; show-label: true; enabled: root.resource-editable; opacity: root.resource-editable ? 1 : 0.45; clicked => { root.upload-files(); } }
+                                    Action { width: 64px; height: 30px; icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trash.svg"); label: I18n.common_delete; show-label: true; danger: true; clicked => { root.pending-tab = 3; root.pending-name = base.name; root.confirm-delete = true; } }
+                                }
+                                if !root.resource-editable : Text {
+                                    height: 32px;
+                                    text: "该知识库类型不支持文本文件编辑，请在编辑中切换为字面知识库。";
+                                    color: Theme.muted;
+                                    font-size: Theme.font-2xs;
+                                    wrap: word-wrap;
+                                    vertical-alignment: center;
+                                }
+                                ResourceFiles {
+                                    files: root.files;
+                                    directory: root.directory;
+                                    has-more: root.has-more;
+                                    empty-text: "暂无文件";
+                                    open-directory(path) => { root.load-directory(path); }
+                                    open-file(path) => { root.open-file(path); }
+                                    more() => { root.more-files(); }
+                                }
+                            }
+                        }
+                    }
+                    if root.bases.length == 0 : Text {
+                        height: 54px;
+                        text: I18n.tm_no_kb;
+                        color: Theme.muted;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
+    // New-file name sheet.
+    if root.new-file-open : Rectangle {
+        x: 0px; y: 0px;
+        width: 100%; height: 100%;
+        background: Theme.overlay;
+        TouchArea { clicked => { root.new-file-open = false; } }
+        Rectangle {
+            x: 10px;
+            y: parent.height - self.height - 10px - root.inset-bottom;
+            width: parent.width - 20px;
+            height: new-file-body.preferred-height;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            drop-shadow-color: #00000033;
+            drop-shadow-blur: 24px;
+            new-file-body := VerticalLayout {
+                padding: 14px;
+                spacing: 10px;
+                Text { height: 22px; text: I18n.tm_new_file; color: Theme.text; font-size: Theme.font-md; font-weight: 700; }
+                FormField { label: I18n.tm_name; placeholder: "notes.md"; text <=> root.new-file-name; auto-focus: true; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    Action { width: 68px; height: 32px; label: I18n.common_cancel; show-label: true; clicked => { root.new-file-open = false; } }
+                    Action {
+                        width: 68px;
+                        height: 32px;
+                        label: I18n.tm_save;
+                        show-label: true;
+                        primary: true;
+                        enabled: root.new-file-name != "";
+                        clicked => {
+                            root.create-file(root.new-file-name);
+                            root.new-file-open = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.editor-kind > 0 : ToolEditorSheet {
+        inset-top: root.inset-top;
+        inset-bottom: root.inset-bottom;
+        kind: root.editor-kind;
+        is-new: root.editor-new;
+        error: root.editor-error;
+        mcp <=> root.mcp-draft;
+        kb <=> root.kb-draft;
+        close() => { root.close-editor(); }
+        save(kind, mcp, kb) => { root.save-editor(kind, mcp, kb); }
+        pick-transport(current) => { root.open-picker(12, I18n.tm_transport, current); }
+        pick-type(current) => { root.open-picker(13, I18n.tm_type, current); }
+    }
+
+    if root.file-open : ToolFileSheet {
+        inset-top: root.inset-top;
+        inset-bottom: root.inset-bottom;
+        path: root.file-path;
+        read-only: root.file-readonly;
+        error: root.file-error;
+        content <=> root.file-content;
+        close() => { root.close-file(); }
+        save(path, content) => { root.save-file(path, content); }
+    }
+
+    if root.confirm-delete : ConfirmDialog {
+        title: I18n.common_delete;
+        message: I18n.tm_confirm_delete;
+        confirm-label: I18n.common_delete;
+        cancel-label: I18n.common_cancel;
+        danger: true;
+        confirmed => {
+            root.confirm-delete = false;
+            root.delete-resource(root.pending-tab, root.pending-name);
+        }
+        canceled => { root.confirm-delete = false; }
+    }
+}
+
+// ---- built-in agent ---------------------------------------------------
+
+component AgentPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <string> agent-name: "";
+    in-out property <string> description;
+    in-out property <string> prompt;
+    in property <[MobileToolGroup]> groups: [];
+    in-out property <string> search;
+    in property <[string]> questions: [];
+    callback back();
+    callback refresh();
+    callback search-tools(string);
+    callback save-text(string, string);
+    callback toggle-tool(string, bool, string, string);
+    callback toggle-group(string, bool, string, string);
+    callback add-question(string, string, string);
+    callback remove-question(int, string, string);
+
+    private property <bool> dirty: false;
+    private property <string> question-draft: "";
+
+    Timer {
+        interval: 650ms;
+        running: root.dirty;
+        triggered => {
+            root.dirty = false;
+            root.save-text(root.description, root.prompt);
+        }
+    }
+
+    background: Theme.panel;
+
+    VerticalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 0px;
+
+        SheetHeader {
+            title: I18n.stc_agent;
+            subtitle: "内置智能体 · 工具与预设问题";
+            inset-top: root.inset-top;
+            back() => {
+                if root.dirty {
+                    root.dirty = false;
+                    root.save-text(root.description, root.prompt);
+                }
+                root.back();
+            }
+            Action {
+                width: 34px;
+                height: 32px;
+                icon-size: 16px;
+                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
+                label: I18n.common_refresh;
+                clicked => { root.refresh(); }
+            }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding: 12px;
+                padding-bottom: 24px + root.inset-bottom;
+                spacing: 12px;
+                alignment: start;
+
+                SheetCard {
+                    CardTitle { title: "基本信息"; subtitle: "名称、问候语与额外提示词"; }
+                    FormField { label: I18n.stc_agent_name; text: root.agent-name; read-only: true; strong-label: true; }
+                    FormField {
+                        label: I18n.stc_agent_greeting;
+                        placeholder: I18n.stc_agent_greeting_hint;
+                        strong-label: true;
+                        text <=> root.description;
+                        edited => { root.dirty = true; }
+                    }
+                    MobileTextArea {
+                        label: I18n.stc_agent_extra_prompt;
+                        placeholder: I18n.stc_agent_extra_prompt_hint;
+                        area-height: 150px;
+                        text <=> root.prompt;
+                        edited => { root.dirty = true; }
+                    }
+                }
+
+                SheetCard {
+                    CardTitle { title: I18n.stc_agent_admin_tools; subtitle: I18n.stc_agent_tools_note; }
+                    Rectangle {
+                        height: 34px;
+                        border-radius: Theme.radius-sm;
+                        background: Theme.input-bg;
+                        border-width: 1px;
+                        border-color: search-input.has-focus ? Theme.accent-ink : Theme.input-border;
+                        Image {
+                            x: 9px; y: 10px;
+                            width: 13px; height: 13px;
+                            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/magnifying-glass.svg");
+                            colorize: Theme.muted;
+                            image-fit: contain;
+                        }
+                        search-input := TextInput {
+                            x: 30px; y: 0px;
+                            width: parent.width - 38px;
+                            height: parent.height;
+                            text <=> root.search;
+                            single-line: true;
+                            font-size: Theme.font-sm;
+                            color: Theme.text;
+                            vertical-alignment: center;
+                            edited => { root.search-tools(root.search); }
+                        }
+                        if root.search == "" : Text {
+                            x: 30px; y: 0px;
+                            width: parent.width - 38px;
+                            height: parent.height;
+                            text: I18n.ag_search_tools;
+                            color: Theme.muted;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                        }
+                    }
+                    Rectangle { height: 8px; }
+                    for group in root.groups : Rectangle {
+                        VerticalLayout {
+                            spacing: 0px;
+                            HorizontalLayout {
+                                height: 30px;
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: group.title;
+                                    color: Theme.text-secondary;
+                                    font-size: Theme.font-xs;
+                                    font-weight: 700;
+                                    vertical-alignment: center;
+                                }
+                                Action {
+                                    width: 82px;
+                                    height: 26px;
+                                    label: group.all-selected ? I18n.ew_deselect_all : I18n.ew_select_all;
+                                    show-label: true;
+                                    clicked => { root.toggle-group(group.title, !group.all-selected, root.description, root.prompt); }
+                                }
+                            }
+                            for tool in group.tools : AgentToolRow {
+                                tool: tool;
+                                toggled => { root.toggle-tool(tool.name, !tool.enabled, root.description, root.prompt); }
+                            }
+                            Rectangle { height: 4px; }
+                        }
+                    }
+                    if root.groups.length == 0 : Text {
+                        height: 44px;
+                        text: root.search == "" ? I18n.ag_empty : I18n.ag_no_matching_tool;
+                        color: Theme.muted;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                    }
+                }
+
+                SheetCard {
+                    CardTitle { title: I18n.ag_preset_questions; subtitle: I18n.stc_agent_questions_note; }
+                    for question[index] in root.questions : Rectangle {
+                        height: 40px;
+                        Text {
+                            x: 0px; y: 0px;
+                            width: parent.width - 40px;
+                            height: parent.height;
+                            text: question;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Action {
+                            x: parent.width - 32px; y: 5px;
+                            width: 28px; height: 28px;
+                            icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/xmark.svg");
+                            label: I18n.common_delete;
+                            clicked => { root.remove-question(index, root.description, root.prompt); }
+                        }
+                        Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
+                    }
+                    Rectangle { height: 4px; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            height: 36px;
+                            border-radius: Theme.radius-sm;
+                            background: Theme.input-bg;
+                            border-width: 1px;
+                            border-color: question-input.has-focus ? Theme.accent-ink : Theme.input-border;
+                            question-input := TextInput {
+                                x: 10px; y: 0px;
+                                width: parent.width - 20px;
+                                height: parent.height;
+                                text <=> root.question-draft;
+                                single-line: true;
+                                font-size: Theme.font-sm;
+                                color: Theme.text;
+                                vertical-alignment: center;
+                                accepted => {
+                                    if root.question-draft != "" && root.questions.length < 12 {
+                                        root.add-question(root.question-draft, root.description, root.prompt);
+                                        root.question-draft = "";
+                                    }
+                                }
+                            }
+                            if root.question-draft == "" : Text {
+                                x: 10px; y: 0px;
+                                width: parent.width - 20px;
+                                height: parent.height;
+                                text: I18n.stc_agent_question_placeholder;
+                                color: Theme.muted;
+                                font-size: Theme.font-sm;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                        Action {
+                            width: 34px;
+                            height: 32px;
+                            icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/plus.svg");
+                            label: I18n.stc_agent_question_add;
+                            primary: true;
+                            enabled: root.question-draft != "" && root.questions.length < 12;
+                            clicked => {
+                                root.add-question(root.question-draft, root.description, root.prompt);
+                                root.question-draft = "";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---- cron jobs --------------------------------------------------------
+
+component CronEditorSheet inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <bool> is-new: true;
+    in property <bool> saving: false;
+    in property <string> error: "";
+    in-out property <MobileCronDraft> draft;
+    callback close();
+    callback save(MobileCronDraft);
+    callback open-picker(int, string, string);
+    callback pick-workspace();
+
+    pure function kind-label(value: string) -> string {
+        return value == "every" ? "固定间隔"
+            : value == "cron" ? "Cron 表达式"
+            : "定时一次";
+    }
+    pure function unit-label(value: string) -> string {
+        return value == "hour" ? "小时"
+            : value == "day" ? "天"
+            : value == "second" ? "秒"
+            : "分钟";
+    }
+
+    x: 0px; y: 0px;
+    width: 100%; height: 100%;
+    background: Theme.panel;
+    VerticalLayout {
+        spacing: 0px;
+        SheetHeader {
+            title: root.is-new ? "新建定时任务" : "编辑定时任务";
+            subtitle: "到点自动发起一个回合";
+            inset-top: root.inset-top;
+            back() => { root.close(); }
+            Action {
+                width: 64px;
+                height: 32px;
+                label: I18n.tm_save;
+                show-label: true;
+                primary: true;
+                enabled: !root.saving && root.draft.message != "";
+                clicked => { root.save(root.draft); }
+            }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding: 14px;
+                padding-bottom: 20px + root.inset-bottom;
+                spacing: 12px;
+                alignment: start;
+
+                SheetCard {
+                    FormField { label: "任务名称（可选）"; placeholder: "留空则取执行消息的前 40 字"; text <=> root.draft.name; }
+                    MobileTextArea {
+                        label: "执行消息";
+                        placeholder: "到点后发给智能体的内容";
+                        area-height: 110px;
+                        text <=> root.draft.message;
+                    }
+                }
+
+                SheetCard {
+                    SettingRow {
+                        label: "触发方式";
+                        note: "定时一次按本机时区换算；固定间隔最长 1 天";
+                        PickerField {
+                            text: root.kind-label(root.draft.schedule-kind);
+                            picked => { root.open-picker(14, "触发方式", root.draft.schedule-kind); }
+                        }
+                    }
+                    if root.draft.schedule-kind == "at" : FormField {
+                        label: "执行时间";
+                        placeholder: "YYYY-MM-DD HH:MM";
+                        text <=> root.draft.schedule-at;
+                    }
+                    if root.draft.schedule-kind == "every" : FormField {
+                        label: "间隔";
+                        placeholder: "例如 30";
+                        text <=> root.draft.every;
+                    }
+                    if root.draft.schedule-kind == "every" : SettingRow {
+                        label: "间隔单位";
+                        last: true;
+                        PickerField {
+                            text: root.unit-label(root.draft.interval-unit);
+                            picked => { root.open-picker(15, "间隔单位", root.draft.interval-unit); }
+                        }
+                    }
+                    if root.draft.schedule-kind == "cron" : FormField {
+                        label: "Cron 表达式";
+                        placeholder: "例如 0 9 * * 1-5";
+                        text <=> root.draft.cron-expr;
+                    }
+                    if root.draft.schedule-kind == "cron" : FormField {
+                        label: "时区（可选）";
+                        placeholder: "留空使用本机时区";
+                        text <=> root.draft.timezone;
+                    }
+                    SettingRow {
+                        label: "工作区";
+                        note: "任务在该工作区内执行";
+                        last: true;
+                        PickerField {
+                            text: root.draft.workspace-name == "" ? "请选择工作区" : root.draft.workspace-name;
+                            picked => { root.pick-workspace(); }
+                        }
+                    }
+                }
+
+                SheetCard {
+                    SettingRow {
+                        label: "启用";
+                        note: "关闭后保留配置，不再自动触发";
+                        ThemeSwitch {
+                            checked: root.draft.enabled;
+                            toggled => { root.draft.enabled = !root.draft.enabled; }
+                        }
+                    }
+                    SettingRow {
+                        label: "执行后删除";
+                        note: "只执行一次，完成后自动移除任务";
+                        last: true;
+                        ThemeSwitch {
+                            checked: root.draft.delete-after;
+                            toggled => { root.draft.delete-after = !root.draft.delete-after; }
+                        }
+                    }
+                }
+
+                if root.error != "" : Text {
+                    height: 36px;
+                    text: root.error;
+                    color: Theme.danger;
+                    font-size: Theme.font-xs;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}
+
+component CronRunsSheet inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <bool> loading: false;
+    in property <string> title: "";
+    in property <string> error: "";
+    in property <[MobileCronRun]> runs: [];
+    callback close();
+    x: 0px; y: 0px;
+    width: 100%; height: 100%;
+    background: Theme.panel;
+    VerticalLayout {
+        spacing: 0px;
+        SheetHeader {
+            title: "运行记录";
+            subtitle: root.title;
+            inset-top: root.inset-top;
+            back() => { root.close(); }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding: 14px;
+                padding-bottom: 20px + root.inset-bottom;
+                spacing: 10px;
+                alignment: start;
+                if root.loading : Text { height: 40px; text: "正在加载…"; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
+                if root.error != "" : Text { height: 40px; text: root.error; color: Theme.danger; font-size: Theme.font-xs; wrap: word-wrap; }
+                for run in root.runs : Rectangle {
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 4px;
+                        HorizontalLayout {
+                            height: 20px;
+                            spacing: 8px;
+                            Text {
+                                text: run.status == "success" ? "成功" : run.status == "running" ? "运行中" : "失败";
+                                color: run.status == "success" ? Theme.success : run.status == "running" ? Theme.warning : Theme.danger;
+                                font-size: Theme.font-sm;
+                                font-weight: 700;
+                            }
+                            Text { text: run.trigger == "manual" ? "手动" : "计划"; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; }
+                            Rectangle { horizontal-stretch: 1; }
+                            Text { text: run.created-at + " · " + run.duration; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; }
+                        }
+                        if run.summary != "" : Text { text: run.summary; color: Theme.text-secondary; font-size: Theme.font-xs; wrap: word-wrap; }
+                        if run.error != "" : Text { text: run.error; color: Theme.danger; font-size: Theme.font-xs; wrap: word-wrap; }
+                    }
+                }
+                if !root.loading && root.error == "" && root.runs.length == 0 : Text {
+                    height: 54px;
+                    text: "暂无运行记录";
+                    color: Theme.muted;
+                    font-size: Theme.font-sm;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+component CronPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <[MobileCronJob]> jobs: [];
+    in property <[string]> workspaces: [];
+    in property <[MobileCronRun]> runs: [];
+    in property <bool> runs-open: false;
+    in property <bool> runs-loading: false;
+    in property <string> runs-title: "";
+    in property <bool> editor-open: false;
+    in property <bool> editor-new: true;
+    in property <bool> editor-saving: false;
+    in property <string> editor-error: "";
+    in-out property <MobileCronDraft> draft;
+    callback back();
+    callback refresh();
+    callback toggle(string, bool);
+    callback delete(string);
+    callback run-now(string);
+    callback open-runs(string);
+    callback close-runs();
+    callback open-editor(string);
+    callback close-editor();
+    callback save-editor(MobileCronDraft);
+    callback open-picker(int, string, string);
+    callback pick-workspace();
+
+    private property <string> expanded: "";
+    private property <bool> confirm-delete: false;
+    private property <string> pending-delete: "";
+
+    pure function status-label(value: string) -> string {
+        return value == "success" || value == "成功" ? "成功"
+            : value == "running" || value == "运行中" ? "运行中"
+            : value == "failed" || value == "失败" ? "失败"
+            : "尚未运行";
+    }
+    pure function status-color(value: string) -> color {
+        return value == "success" || value == "成功" ? Theme.success
+            : value == "running" || value == "运行中" ? Theme.warning
+            : value == "failed" || value == "失败" ? Theme.danger
+            : Theme.muted;
+    }
+
+    background: Theme.panel;
+    VerticalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 0px;
+        SheetHeader {
+            title: "定时任务";
+            subtitle: "到点自动发起回合，支持定时一次、固定间隔与 Cron";
+            inset-top: root.inset-top;
+            back() => { root.back(); }
+            Action {
+                width: 34px;
+                height: 32px;
+                icon-size: 16px;
+                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
+                label: I18n.common_refresh;
+                clicked => { root.refresh(); }
+            }
+            Action {
+                width: 34px;
+                height: 32px;
+                icon-size: 16px;
+                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/plus.svg");
+                label: "新建任务";
+                primary: true;
+                clicked => { root.open-editor(""); }
+            }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding: 12px;
+                padding-bottom: 20px + root.inset-bottom;
+                spacing: 10px;
+                alignment: start;
+
+                if root.jobs.length == 0 : Rectangle {
+                    height: 96px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    Text {
+                        x: 16px; y: 16px;
+                        width: parent.width - 32px; height: 26px;
+                        text: "暂无定时任务";
+                        color: Theme.text;
+                        font-size: Theme.font-md;
+                        font-weight: 600;
+                    }
+                    Text {
+                        x: 16px; y: 44px;
+                        width: parent.width - 32px; height: 34px;
+                        text: "新建任务后，智能体会在指定时间自动执行一次回合。";
+                        color: Theme.muted;
+                        font-size: Theme.font-xs;
+                        wrap: word-wrap;
+                    }
+                }
+
+                for job in root.jobs : Rectangle {
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    VerticalLayout {
+                        spacing: 0px;
+                        Rectangle {
+                            height: 68px;
+                            // The row toggle sits *under* the switch/chevron so
+                            // those controls keep their own hit areas.
+                            TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                clicked => {
+                                    root.expanded = root.expanded == job.id ? "" : job.id;
+                                }
+                            }
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                spacing: 10px;
+                                cross-axis-alignment: center;
+                                ToolBadge { icon: "clock"; tone: job.enabled ? "shared" : "terminal"; }
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 3px;
+                                    Text { text: job.name; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; overflow: elide; }
+                                    Text {
+                                        text: job.schedule + (job.next_run == "" ? "" : " · 下次 " + job.next_run);
+                                        color: Theme.muted;
+                                        font-size: Theme.font-2xs;
+                                        overflow: elide;
+                                    }
+                                }
+                                ThemeSwitch {
+                                    checked: job.enabled;
+                                    toggled => { root.toggle(job.id, !job.enabled); }
+                                }
+                                Image {
+                                    width: 12px; height: 12px;
+                                    source: root.expanded == job.id
+                                        ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-up.svg")
+                                        : @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-down.svg");
+                                    colorize: Theme.muted;
+                                }
+                            }
+                        }
+                        if root.expanded == job.id : VerticalLayout {
+                            spacing: 0px;
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            padding-bottom: 10px;
+                            Rectangle { height: 1px; background: Theme.border; }
+                            Rectangle { height: 8px; }
+                            Text {
+                                height: 18px;
+                                text: "工作区：" + (job.workspace_name == "" ? "未绑定" : job.workspace_name) + " · 上次状态：" + root.status-label(job.last_status);
+                                color: root.status-color(job.last_status);
+                                font-size: Theme.font-2xs;
+                                overflow: elide;
+                            }
+                            if job.message != "" : Rectangle {
+                                height: 40px;
+                                Text {
+                                    width: 100%;
+                                    height: 100%;
+                                    text: job.message;
+                                    color: Theme.text-secondary;
+                                    font-size: Theme.font-xs;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            if job.last_error != "" : Rectangle {
+                                height: 34px;
+                                Text {
+                                    width: 100%;
+                                    height: 100%;
+                                    text: job.last_error;
+                                    color: Theme.danger;
+                                    font-size: Theme.font-2xs;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            Rectangle { height: 6px; }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Action { width: 64px; height: 30px; label: "编辑"; show-label: true; clicked => { root.open-editor(job.id); } }
+                                Action { width: 76px; height: 30px; label: "立即运行"; show-label: true; primary: true; clicked => { root.run-now(job.id); } }
+                                Action { width: 76px; height: 30px; label: "运行记录"; show-label: true; clicked => { root.open-runs(job.id); } }
+                                Action { width: 64px; height: 30px; label: I18n.common_delete; show-label: true; danger: true; clicked => { root.pending-delete = job.id; root.confirm-delete = true; } }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.editor-open : CronEditorSheet {
+        inset-top: root.inset-top;
+        inset-bottom: root.inset-bottom;
+        is-new: root.editor-new;
+        saving: root.editor-saving;
+        error: root.editor-error;
+        draft <=> root.draft;
+        close() => { root.close-editor(); }
+        save(draft) => { root.save-editor(draft); }
+        open-picker(id, title, value) => { root.open-picker(id, title, value); }
+        pick-workspace() => { root.pick-workspace(); }
+    }
+
+    if root.runs-open : CronRunsSheet {
+        inset-top: root.inset-top;
+        inset-bottom: root.inset-bottom;
+        loading: root.runs-loading;
+        title: root.runs-title;
+        runs: root.runs;
+        close() => { root.close-runs(); }
+    }
+
+    if root.confirm-delete : ConfirmDialog {
+        title: I18n.common_delete;
+        message: "确定删除此定时任务？已产生的运行记录会一并移除。";
+        confirm-label: I18n.common_delete;
+        cancel-label: I18n.common_cancel;
+        danger: true;
+        confirmed => {
+            root.confirm-delete = false;
+            root.delete(root.pending-delete);
+        }
+        canceled => { root.confirm-delete = false; }
+    }
+}
+
+// ---- memory fragments -------------------------------------------------
+
+component MemoryEditorSheet inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <bool> is-new: true;
+    in property <bool> saving: false;
+    in property <string> error: "";
+    in-out property <MobileMemoryDraft> draft;
+    callback close();
+    callback save(MobileMemoryDraft);
+    callback delete(string);
+
+    private property <bool> confirm-delete: false;
+
+    x: 0px; y: 0px;
+    width: 100%; height: 100%;
+    background: Theme.panel;
+    VerticalLayout {
+        spacing: 0px;
+        SheetHeader {
+            title: root.is-new ? "新建记忆碎片" : "编辑记忆碎片";
+            subtitle: "长期事实与可复用上下文";
+            inset-top: root.inset-top;
+            back() => { root.close(); }
+            Action {
+                width: 64px;
+                height: 32px;
+                label: I18n.tm_save;
+                show-label: true;
+                primary: true;
+                enabled: !root.saving && root.draft.title != "" && root.draft.content != "";
+                clicked => { root.save(root.draft); }
+            }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding: 14px;
+                padding-bottom: 20px + root.inset-bottom;
+                spacing: 12px;
+                alignment: start;
+                SheetCard {
+                    FormField { label: "索引标题"; placeholder: "一句话概括这条记忆"; text <=> root.draft.title; }
+                    FormField { label: "标签"; placeholder: "例如 偏好 / 项目 / session_summary"; text <=> root.draft.category; }
+                    MobileTextArea {
+                        label: "内容";
+                        placeholder: "写下需要长期保留的事实、偏好或约定";
+                        area-height: 180px;
+                        text <=> root.draft.content;
+                    }
+                }
+                if root.error != "" : Text {
+                    height: 36px;
+                    text: root.error;
+                    color: Theme.danger;
+                    font-size: Theme.font-xs;
+                    wrap: word-wrap;
+                }
+                if !root.is-new : Action {
+                    width: 92px;
+                    height: 32px;
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trash.svg");
+                    label: I18n.common_delete;
+                    show-label: true;
+                    danger: true;
+                    clicked => { root.confirm-delete = true; }
+                }
+            }
+        }
+    }
+    if root.confirm-delete : ConfirmDialog {
+        title: I18n.common_delete;
+        message: "确定删除此记忆碎片？删除后模型不会再引用它。";
+        confirm-label: I18n.common_delete;
+        cancel-label: I18n.common_cancel;
+        danger: true;
+        confirmed => {
+            root.confirm-delete = false;
+            root.delete(root.draft.id);
+        }
+        canceled => { root.confirm-delete = false; }
+    }
+}
+
+component MemoryPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <[MobileMemory]> memories: [];
+    in property <[string]> categories: [];
+    in property <string> category: "全部标签";
+    in-out property <string> query: "";
+    in property <bool> loading: false;
+    in property <string> error: "";
+    in property <bool> editor-open: false;
+    in property <bool> editor-new: true;
+    in property <bool> editor-saving: false;
+    in property <string> editor-error: "";
+    in-out property <MobileMemoryDraft> draft;
+    callback back();
+    callback refresh();
+    callback search(string);
+    callback pick-category();
+    callback open-editor(int);
+    callback close-editor();
+    callback save-editor(MobileMemoryDraft);
+    callback delete(string);
+
+    private property <bool> search-pending: false;
+    Timer {
+        interval: 350ms;
+        running: root.search-pending;
+        triggered => {
+            root.search-pending = false;
+            root.search(root.query);
+        }
+    }
+    changed query => { root.search-pending = true; }
+
+    background: Theme.panel;
+    VerticalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 0px;
+        SheetHeader {
+            title: "记忆碎片";
+            subtitle: "整理可复用的长期事实与偏好";
+            inset-top: root.inset-top;
+            back() => { root.back(); }
+            Action {
+                width: 34px;
+                height: 32px;
+                icon-size: 16px;
+                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
+                label: I18n.common_refresh;
+                clicked => { root.refresh(); }
+            }
+            Action {
+                width: 34px;
+                height: 32px;
+                icon-size: 16px;
+                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/plus.svg");
+                label: "新建碎片";
+                primary: true;
+                clicked => { root.open-editor(-1); }
+            }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding: 12px;
+                padding-bottom: 20px + root.inset-bottom;
+                spacing: 10px;
+                alignment: start;
+
+                HorizontalLayout {
+                    height: 38px;
+                    spacing: 8px;
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        height: 38px;
+                        border-radius: Theme.radius-sm;
+                        background: Theme.input-bg;
+                        border-width: 1px;
+                        border-color: search-input.has-focus ? Theme.accent-ink : Theme.input-border;
+                        Image {
+                            x: 9px; y: 12px;
+                            width: 14px; height: 14px;
+                            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/magnifying-glass.svg");
+                            colorize: Theme.muted;
+                            image-fit: contain;
+                        }
+                        search-input := TextInput {
+                            x: 30px; y: 0px;
+                            width: parent.width - 38px;
+                            height: parent.height;
+                            text <=> root.query;
+                            single-line: true;
+                            font-size: Theme.font-sm;
+                            color: Theme.text;
+                            vertical-alignment: center;
+                            accepted => { root.search(root.query); }
+                        }
+                        if root.query == "" : Text {
+                            x: 30px; y: 0px;
+                            width: parent.width - 38px;
+                            height: parent.height;
+                            text: "搜索标题或内容";
+                            color: Theme.muted;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                        }
+                    }
+                    PickerField {
+                        width: 118px;
+                        height: 38px;
+                        text: root.category;
+                        picked => { root.pick-category(); }
+                    }
+                }
+
+                if root.error != "" : Text {
+                    height: 34px;
+                    text: root.error;
+                    color: Theme.danger;
+                    font-size: Theme.font-xs;
+                    wrap: word-wrap;
+                }
+
+                for memory[index] in root.memories : Rectangle {
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 4px;
+                        HorizontalLayout {
+                            height: 16px;
+                            Text { text: memory.category; color: Theme.accent-ink; font-size: Theme.font-2xs; font-weight: 700; }
+                            Rectangle { horizontal-stretch: 1; }
+                            Text { text: memory.time; color: Theme.muted; font-size: Theme.font-2xs; }
+                        }
+                        Text { text: memory.title; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; overflow: elide; }
+                        Text {
+                            height: 34px;
+                            text: memory.content;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            wrap: word-wrap;
+                            max-lines: 2;
+                            overflow: elide;
+                        }
+                        Text { text: memory.source; color: Theme.muted; font-size: Theme.font-2xs; }
+                    }
+                    TouchArea { clicked => { root.open-editor(index); } }
+                }
+
+                if !root.loading && root.error == "" && root.memories.length == 0 : Rectangle {
+                    height: 92px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    Text { x: 16px; y: 16px; width: parent.width - 32px; height: 24px; text: "暂无记忆碎片"; color: Theme.text; font-size: Theme.font-md; font-weight: 600; }
+                    Text {
+                        x: 16px; y: 44px;
+                        width: parent.width - 32px; height: 34px;
+                        text: "把长期有效的偏好、事实与约定记下来，智能体会在后续任务中引用。";
+                        color: Theme.muted;
+                        font-size: Theme.font-xs;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+
+    if root.editor-open : MemoryEditorSheet {
+        inset-top: root.inset-top;
+        inset-bottom: root.inset-bottom;
+        is-new: root.editor-new;
+        saving: root.editor-saving;
+        error: root.editor-error;
+        draft <=> root.draft;
+        close() => { root.close-editor(); }
+        save(draft) => { root.save-editor(draft); }
+        delete(id) => { root.delete(id); }
+    }
+}
+
+// ---- account / multi-device ------------------------------------------
+
+component AccountPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <bool> logged-in: false;
+    in property <bool> expired: false;
+    in property <string> connection: "logged_out";
+    in property <string> server: "";
+    in property <string> username: "";
+    in property <int> balance: 0;
+    in property <int> daily-grant: 0;
+    in property <int> max-concurrent: 0;
+    in property <int> active-concurrent: 0;
+    in property <bool> sync-enabled: false;
+    in property <bool> inbound-enabled: false;
+    in property <bool> full-shadow: false;
+    in property <string> last-error: "";
+    in property <string> last-success: "";
+    in property <string> next-retry: "";
+    in property <string> device-name: "";
+    callback back();
+    callback refresh();
+    callback login(string, string, string);
+    callback logout();
+    callback toggle-sync(bool);
+    callback set-sharing(bool, bool);
+
+    private property <string> server-draft: "";
+    private property <string> user-draft: "";
+    private property <string> password-draft: "";
+
+    init => {
+        root.server-draft = root.server;
+        root.user-draft = root.username;
+    }
+    changed server => { if root.server-draft == "" { root.server-draft = root.server; } }
+    changed username => { if root.user-draft == "" { root.user-draft = root.username; } }
+
+    pure function connection-label(value: string) -> string {
+        return value == "online" ? "在线"
+            : value == "reconnecting" ? "重连中"
+            : value == "expired" ? "登录已过期"
+            : "未登录";
+    }
+
+    background: Theme.panel;
+    VerticalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 0px;
+        SheetHeader {
+            title: "账号";
+            subtitle: "多端互通 · 云端账号与远程访问";
+            inset-top: root.inset-top;
+            back() => { root.back(); }
+            Action {
+                width: 34px;
+                height: 32px;
+                icon-size: 16px;
+                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
+                label: I18n.common_refresh;
+                enabled: root.logged-in;
+                clicked => { root.refresh(); }
+            }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding: 14px;
+                padding-bottom: 24px + root.inset-bottom;
+                spacing: 12px;
+                alignment: start;
+
+                if !root.logged-in : SheetCard {
+                    CardTitle { title: "登录云端"; subtitle: "登录后本机成为可被云端控制的设备，并可切换到云端会话。"; }
+                    FormField { label: "服务地址"; placeholder: "https://your-server"; text <=> root.server-draft; }
+                    FormField { label: "用户名"; placeholder: "用户名"; text <=> root.user-draft; }
+                    FormField { label: "密码"; placeholder: "密码"; secret: true; text <=> root.password-draft; }
+                    Rectangle { height: 8px; }
+                    Action {
+                        width: 96px;
+                        height: 34px;
+                        label: "登录";
+                        show-label: true;
+                        primary: true;
+                        enabled: root.server-draft != "" && root.user-draft != "" && root.password-draft != "";
+                        clicked => {
+                            root.login(root.server-draft, root.user-draft, root.password-draft);
+                            root.password-draft = "";
+                        }
+                    }
+                    if root.last-error != "" : Text {
+                        height: 34px;
+                        text: root.last-error;
+                        color: Theme.danger;
+                        font-size: Theme.font-xs;
+                        wrap: word-wrap;
+                    }
+                }
+
+                if root.logged-in : VerticalLayout {
+                    spacing: 12px;
+                    SheetCard {
+                        CardTitle { title: "云端账号"; subtitle: root.server; }
+                        SettingRow { label: "用户名"; last: true; Text { text: root.username; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; } }
+                        SettingRow { label: "本机设备"; last: true; Text { text: root.device-name; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; } }
+                        SettingRow { label: "连接状态"; last: true;
+                            Text {
+                                text: root.connection-label(root.connection) + (root.next-retry == "" ? "" : " · " + root.next-retry + "重试");
+                                color: root.connection == "online" ? Theme.success : root.connection == "expired" ? Theme.danger : Theme.warning;
+                                font-size: Theme.font-sm;
+                                vertical-alignment: center;
+                            }
+                        }
+                        SettingRow { label: "额度"; note: "每日赠送 " + root.daily-grant + " · 并发 " + root.active-concurrent + "/" + root.max-concurrent; last: true;
+                            Text { text: root.balance; color: Theme.accent-ink; font-size: Theme.font-md; font-weight: 700; vertical-alignment: center; }
+                        }
+                    }
+                    HorizontalLayout {
+                        height: 34px;
+                        spacing: 8px;
+                        Action { width: 84px; height: 32px; label: "刷新额度"; show-label: true; clicked => { root.refresh(); } }
+                        Action { width: 72px; height: 32px; label: "退出登录"; show-label: true; danger: true; clicked => { root.logout(); } }
+                    }
+                    SheetCard {
+                        CardTitle { title: "互通与同步"; subtitle: "允许云端控制本机需要保持登录与远程访问开启。"; }
+                        SettingRow {
+                            label: "同步基础偏好";
+                            note: "主题、头像与发送方式";
+                            ThemeSwitch { checked: root.sync-enabled; toggled => { root.toggle-sync(!root.sync-enabled); } }
+                        }
+                        SettingRow {
+                            label: "允许远程访问本地";
+                            note: "云端与其他已登录设备可向本机发起审批后的操作";
+                            ThemeSwitch { checked: root.inbound-enabled; toggled => { root.set-sharing(!root.inbound-enabled, root.full-shadow); } }
+                        }
+                        SettingRow {
+                            label: "共享工作区与线程目录";
+                            note: "远程设备可浏览工作区与线程目录";
+                            last: true;
+                            ThemeSwitch { checked: root.full-shadow; enabled: root.inbound-enabled; toggled => { root.set-sharing(root.inbound-enabled, !root.full-shadow); } }
+                        }
+                    }
+                    if root.last-error != "" : Text { height: 34px; text: root.last-error; color: Theme.danger; font-size: Theme.font-xs; wrap: word-wrap; }
+                    if root.last-success != "" : Text { height: 28px; text: "最近成功：" + root.last-success; color: Theme.muted; font-size: Theme.font-2xs; }
+                }
+
+                Text {
+                    height: 46px;
+                    text: "在会话抽屉顶部切换「本机 / 云端」。云端可控制已允许远程访问的桌面与手机，本机也可切换到云端会话。";
+                    color: Theme.muted;
+                    font-size: Theme.font-xs;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}
+
+// ---- channels ---------------------------------------------------------
+
+component ChannelEditorSheet inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <bool> is-new: true;
+    in property <string> error: "";
+    in property <[string]> catalog-ids: [];
+    in property <[string]> catalog-names: [];
+    in-out property <MobileChannelDraft> draft;
+    callback close();
+    callback save(MobileChannelDraft);
+    callback pick-channel();
+
+    pure function channel-label(value: string) -> string {
+        return value == "" ? "请选择渠道类型" : value;
+    }
+
+    x: 0px; y: 0px;
+    width: 100%; height: 100%;
+    background: Theme.panel;
+    VerticalLayout {
+        spacing: 0px;
+        SheetHeader {
+            title: root.is-new ? "新建渠道账号" : "编辑渠道账号";
+            subtitle: "凭据只在本机保存";
+            inset-top: root.inset-top;
+            back() => { root.close(); }
+            Action {
+                width: 64px;
+                height: 32px;
+                label: I18n.tm_save;
+                show-label: true;
+                primary: true;
+                enabled: root.draft.channel != "" && root.draft.name != "";
+                clicked => { root.save(root.draft); }
+            }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding: 14px;
+                padding-bottom: 24px + root.inset-bottom;
+                spacing: 12px;
+                alignment: start;
+                SheetCard {
+                    SettingRow {
+                        label: "渠道类型";
+                        last: true;
+                        PickerField { text: root.channel-label(root.draft.channel); picked => { root.pick-channel(); } }
+                    }
+                    FormField { label: "账号名称"; placeholder: "用于区分的名称"; text <=> root.draft.name; }
+                    SettingRow {
+                        label: "启用";
+                        last: true;
+                        ThemeSwitch { checked: root.draft.enabled; toggled => { root.draft.enabled = !root.draft.enabled; } }
+                    }
+                }
+                if root.draft.channel == "feishu" : SheetCard {
+                    FormField { label: "App ID"; placeholder: "cli_xxx"; text <=> root.draft.app-id; }
+                    FormField { label: "App Secret"; placeholder: "已保存则留空"; secret: true; text <=> root.draft.app-secret; }
+                    SettingRow {
+                        label: "接收群聊";
+                        last: true;
+                        ThemeSwitch { checked: root.draft.receive-group-chat; toggled => { root.draft.receive-group-chat = !root.draft.receive-group-chat; } }
+                    }
+                }
+                if root.draft.channel == "wechat" : SheetCard {
+                    FormField { label: "Corp ID"; placeholder: "企业 ID"; text <=> root.draft.corp-id; }
+                    FormField { label: "Agent ID"; placeholder: "应用 AgentId"; text <=> root.draft.wechat-agent-id; }
+                    FormField { label: "Secret"; placeholder: "已保存则留空"; secret: true; text <=> root.draft.wechat-secret; }
+                    FormField { label: "Token"; placeholder: "回调 Token"; text <=> root.draft.wechat-token; }
+                    FormField { label: "EncodingAESKey"; placeholder: "43 位 AES Key"; text <=> root.draft.wechat-aes-key; }
+                    FormField { label: "域名（可选）"; placeholder: "留空使用默认"; text <=> root.draft.domain; }
+                }
+                if root.draft.channel == "wechat_mp" : SheetCard {
+                    FormField { label: "App ID"; placeholder: "公众号 AppID"; text <=> root.draft.app-id; }
+                    FormField { label: "App Secret"; placeholder: "已保存则留空"; secret: true; text <=> root.draft.app-secret; }
+                    FormField { label: "Token"; placeholder: "回调 Token"; text <=> root.draft.wechat-mp-token; }
+                    FormField { label: "EncodingAESKey"; placeholder: "43 位 AES Key"; text <=> root.draft.wechat-mp-aes-key; }
+                    FormField { label: "原始 ID"; placeholder: "gh_xxx"; text <=> root.draft.original-id; }
+                }
+                if root.draft.channel == "weixin" : SheetCard {
+                    Text { height: 34px; text: "微信机器人可手动填写凭据；扫码登录请在桌面版完成。"; color: Theme.muted; font-size: Theme.font-2xs; wrap: word-wrap; }
+                    FormField { label: "API Base"; placeholder: "留空使用默认"; text <=> root.draft.weixin-api-base; }
+                    FormField { label: "Bot Token"; placeholder: "已保存则留空"; secret: true; text <=> root.draft.weixin-bot-token; }
+                    FormField { label: "Bot ID"; placeholder: "ilink_bot_id"; text <=> root.draft.weixin-bot-id; }
+                    FormField { label: "User ID"; placeholder: "ilink_user_id"; text <=> root.draft.weixin-user-id; }
+                }
+                SheetCard {
+                    MobileTextArea {
+                        label: "高级配置 JSON（可选）";
+                        placeholder: "{\"key\":\"value\"}";
+                        area-height: 110px;
+                        text <=> root.draft.config-json;
+                    }
+                }
+                if root.error != "" : Text { height: 36px; text: root.error; color: Theme.danger; font-size: Theme.font-xs; wrap: word-wrap; }
+            }
+        }
+    }
+}
+
+component ChannelLogsSheet inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <string> account: "";
+    in property <[MobileChannelLog]> logs: [];
+    callback close();
+    x: 0px; y: 0px;
+    width: 100%; height: 100%;
+    background: Theme.panel;
+    VerticalLayout {
+        spacing: 0px;
+        SheetHeader {
+            title: "运行日志";
+            subtitle: root.account;
+            inset-top: root.inset-top;
+            back() => { root.close(); }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding: 14px;
+                padding-bottom: 24px + root.inset-bottom;
+                spacing: 8px;
+                alignment: start;
+                for log in root.logs : Rectangle {
+                    border-radius: Theme.radius-md;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 3px;
+                        HorizontalLayout {
+                            height: 18px;
+                            Text { text: log.level; color: log.level == "error" ? Theme.danger : Theme.muted; font-size: Theme.font-2xs; font-weight: 700; }
+                            Text { text: log.event; color: Theme.text-secondary; font-size: Theme.font-2xs; }
+                            Rectangle { horizontal-stretch: 1; }
+                            Text { text: log.time; color: Theme.muted; font-size: Theme.font-2xs; }
+                        }
+                        Text { text: log.message; color: Theme.text; font-size: Theme.font-xs; wrap: word-wrap; }
+                    }
+                }
+                if root.logs.length == 0 : Text { height: 48px; text: "暂无日志"; color: Theme.muted; font-size: Theme.font-sm; vertical-alignment: center; }
+            }
+        }
+    }
+}
+
+component ChannelsPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <[MobileChannelAccount]> accounts: [];
+    in property <[MobileChannelBinding]> bindings: [];
+    in property <[MobileChannelLog]> logs: [];
+    in property <string> selected: "";
+    in property <bool> logs-open: false;
+    in property <bool> editor-open: false;
+    in property <bool> editor-new: true;
+    in property <string> editor-error: "";
+    in property <[string]> catalog-ids: [];
+    in property <[string]> catalog-names: [];
+    in-out property <MobileChannelDraft> draft;
+    callback back();
+    callback refresh();
+    callback add();
+    callback select(string);
+    callback edit(string);
+    callback open-logs(string);
+    callback close-logs();
+    callback delete(string);
+    callback toggle(string, bool);
+    callback delete-binding(string);
+    callback close-editor();
+    callback save(MobileChannelDraft);
+    callback pick-channel();
+
+    private property <bool> confirm-delete: false;
+    private property <string> pending-delete: "";
+
+    background: Theme.panel;
+    VerticalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 0px;
+        SheetHeader {
+            title: "渠道";
+            subtitle: "飞书、企业微信、公众号与微信机器人";
+            inset-top: root.inset-top;
+            back() => { root.back(); }
+            Action {
+                width: 34px;
+                height: 32px;
+                icon-size: 16px;
+                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
+                label: I18n.common_refresh;
+                clicked => { root.refresh(); }
+            }
+            Action {
+                width: 34px;
+                height: 32px;
+                icon-size: 16px;
+                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/plus.svg");
+                label: "新建渠道";
+                primary: true;
+                clicked => { root.add(); }
+            }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding: 12px;
+                padding-bottom: 24px + root.inset-bottom;
+                spacing: 10px;
+                alignment: start;
+
+                if root.accounts.length == 0 : Rectangle {
+                    height: 92px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    Text { x: 16px; y: 16px; width: parent.width - 32px; height: 24px; text: "暂无渠道账号"; color: Theme.text; font-size: Theme.font-md; font-weight: 600; }
+                    Text { x: 16px; y: 44px; width: parent.width - 32px; height: 34px; text: "新建渠道后，消息会进入对应智能体线程。"; color: Theme.muted; font-size: Theme.font-xs; wrap: word-wrap; }
+                }
+
+                for account in root.accounts : Rectangle {
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    VerticalLayout {
+                        spacing: 0px;
+                        Rectangle {
+                            height: 64px;
+                            TouchArea { width: parent.width - 70px; height: parent.height; clicked => { root.select(account.account-id); } }
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                spacing: 10px;
+                                cross-axis-alignment: center;
+                                ToolBadge { icon: "comments"; tone: "shared"; }
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 2px;
+                                    Text { text: account.name; color: Theme.text; font-size: Theme.font-sm; font-weight: 600; overflow: elide; }
+                                    Text { text: account.channel-name + " · " + (account.active ? "已启用" : "已停用") + (account.configured ? "" : " · 待配置"); color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                                }
+                                ThemeSwitch { checked: account.active; toggled => { root.toggle(account.account-id, !account.active); } }
+                            }
+                        }
+                        if root.selected == account.account-id : VerticalLayout {
+                            spacing: 0px;
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            padding-bottom: 10px;
+                            Rectangle { height: 1px; background: Theme.border; }
+                            Rectangle { height: 6px; }
+                            Text { height: 18px; text: "账号 ID：" + account.account-id + " · " + (account.configured ? "已配置" : "待配置") + (account.secret-set ? " · 凭据已保存" : ""); color: Theme.muted; font-size: Theme.font-2xs; overflow: elide; }
+                            if account.summary != "" : Text { height: 30px; text: account.summary; color: Theme.text-secondary; font-size: Theme.font-xs; wrap: word-wrap; }
+                            Rectangle { height: 4px; }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Action { width: 64px; height: 30px; label: "编辑"; show-label: true; clicked => { root.edit(account.account-id); } }
+                                Action { width: 64px; height: 30px; label: "日志"; show-label: true; clicked => { root.open-logs(account.account-id); } }
+                                Action { width: 64px; height: 30px; label: I18n.common_delete; show-label: true; danger: true; clicked => { root.pending-delete = account.account-id; root.confirm-delete = true; } }
+                            }
+                            Text { height: 24px; text: "绑定 " + root.bindings.length; color: Theme.text; font-size: Theme.font-2xs; font-weight: 600; vertical-alignment: bottom; }
+                            for binding in root.bindings : Rectangle {
+                                height: 34px;
+                                Text { x: 0px; y: 0px; width: parent.width - 36px; height: parent.height; text: binding.peer-kind + " · " + binding.peer-id; color: Theme.text-secondary; font-size: Theme.font-2xs; vertical-alignment: center; overflow: elide; }
+                                Action { x: parent.width - 30px; y: 3px; width: 28px; height: 28px; icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/xmark.svg"); label: I18n.common_delete; clicked => { root.delete-binding(binding.binding-id); } }
+                                Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.editor-open : ChannelEditorSheet {
+        inset-top: root.inset-top;
+        inset-bottom: root.inset-bottom;
+        is-new: root.editor-new;
+        error: root.editor-error;
+        catalog-ids: root.catalog-ids;
+        catalog-names: root.catalog-names;
+        draft <=> root.draft;
+        close() => { root.close-editor(); }
+        save(draft) => { root.save(draft); }
+        pick-channel() => { root.pick-channel(); }
+    }
+
+    if root.logs-open : ChannelLogsSheet {
+        inset-top: root.inset-top;
+        inset-bottom: root.inset-bottom;
+        account: root.selected;
+        logs: root.logs;
+        close() => { root.close-logs(); }
+    }
+
+    if root.confirm-delete : ConfirmDialog {
+        title: I18n.common_delete;
+        message: "确定删除此渠道账号？相关绑定会一并移除。";
+        confirm-label: I18n.common_delete;
+        cancel-label: I18n.common_cancel;
+        danger: true;
+        confirmed => { root.confirm-delete = false; root.delete(root.pending-delete); }
+        canceled => { root.confirm-delete = false; }
+    }
+}
+
 component SettingsHome inherits Rectangle {
     in property <length> inset-top: 0px;
     in property <length> inset-bottom: 0px;
@@ -451,6 +2836,18 @@ component SettingsHome inherits Rectangle {
     in property <int> model-count: 0;
     in property <int> archived-total: 0;
     in property <string> ubuntu-state: "missing";
+    in property <string> agent-name: "";
+    in property <int> agent-tool-count: 0;
+    in property <int> tool-total: 0;
+    in property <int> server-count: 0;
+    in property <int> cron-count: 0;
+    in property <int> memory-count: 0;
+    in property <string> permission-summary: "";
+    in property <string> update-phase: "";
+    in property <string> update-version: "";
+    in property <bool> cloud-logged-in: false;
+    in property <string> cloud-username: "";
+    in property <int> channel-count: 0;
     callback close();
     callback open-page(int);
     callback manage-models();
@@ -461,12 +2858,29 @@ component SettingsHome inherits Rectangle {
         }
         return root.model-count > 0 ? root.model-count + " 个模型配置" : "尚未配置模型";
     }
+    pure function agent-detail() -> string {
+        return (root.agent-name == "" ? "内置智能体" : root.agent-name)
+            + (root.agent-tool-count > 0 ? " · " + root.agent-tool-count + " 项工具" : "");
+    }
+    pure function tools-detail() -> string {
+        return root.tool-total + " 项工具 · " + root.server-count + " 个 MCP 服务";
+    }
     pure function ubuntu-detail() -> string {
         return root.ubuntu-state == "installed" ? "Ubuntu 24.04 已就绪"
             : root.ubuntu-state == "installing" ? "正在安装 Ubuntu 运行环境…"
             : root.ubuntu-state == "unsupported" ? "当前构建不支持本地运行时"
             : root.ubuntu-state == "error" ? "安装失败，点击查看"
             : "未安装，命令使用 Android 系统环境";
+    }
+    pure function permissions-detail() -> string {
+        return root.permission-summary != ""
+            ? root.permission-summary
+            : "通知、麦克风、悬浮窗、无障碍、后台运行与安装应用";
+    }
+    pure function help-detail() -> string {
+        return root.update-phase == "available" && root.update-version != ""
+            ? "发现新版本 " + root.update-version
+            : "安卓版 v" + root.version;
     }
 
     VerticalLayout {
@@ -488,13 +2902,84 @@ component SettingsHome inherits Rectangle {
                 spacing: 12px;
                 alignment: start;
 
+                Text {
+                    height: 22px;
+                    text: "智能体与工具";
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                    font-weight: 700;
+                    vertical-alignment: bottom;
+                }
+
                 NavCard {
                     NavRow {
                         icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-brain.svg");
                         label: I18n.st_tab_models;
                         detail: root.model-detail();
-                        last: true;
                         clicked => { root.manage-models(); }
+                    }
+                    NavRow {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-bot.svg");
+                        label: I18n.stc_agent;
+                        detail: root.agent-detail();
+                        clicked => { root.open-page(8); }
+                    }
+                    NavRow {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/tools-outline.svg");
+                        label: I18n.stc_tools;
+                        detail: root.tools-detail();
+                        last: true;
+                        clicked => { root.open-page(7); }
+                    }
+                }
+
+                Text {
+                    height: 22px;
+                    text: "自动化与记忆";
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                    font-weight: 700;
+                    vertical-alignment: bottom;
+                }
+
+                NavCard {
+                    NavRow {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-clock.svg");
+                        label: "定时任务";
+                        detail: root.cron-count > 0 ? root.cron-count + " 个任务" : "暂无定时任务";
+                        clicked => { root.open-page(9); }
+                    }
+                    NavRow {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fluent-brain.svg");
+                        label: "记忆碎片";
+                        detail: root.memory-count > 0 ? root.memory-count + " 条记忆" : "暂无记忆碎片";
+                        last: true;
+                        clicked => { root.open-page(10); }
+                    }
+                }
+
+                Text {
+                    height: 22px;
+                    text: "互通与渠道";
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                    font-weight: 700;
+                    vertical-alignment: bottom;
+                }
+
+                NavCard {
+                    NavRow {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-circle-user-round.svg");
+                        label: "账号";
+                        detail: root.cloud-logged-in ? root.cloud-username + " · 已登录云端" : "未登录，多端互通不可用";
+                        clicked => { root.open-page(13); }
+                    }
+                    NavRow {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-plug.svg");
+                        label: "渠道";
+                        detail: root.channel-count > 0 ? root.channel-count + " 个渠道账号" : "暂无渠道账号";
+                        last: true;
+                        clicked => { root.open-page(14); }
                     }
                 }
 
@@ -515,11 +3000,36 @@ component SettingsHome inherits Rectangle {
                         clicked => { root.open-page(3); }
                     }
                     NavRow {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-paw-print.svg");
+                        label: I18n.stc_pet;
+                        detail: I18n.stc_pet_note;
+                        clicked => { root.open-page(13); }
+                    }
+                    NavRow {
                         icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/terminal.svg");
                         label: I18n.st_tab_runtime;
                         detail: root.ubuntu-detail();
                         last: true;
                         clicked => { root.open-page(4); }
+                    }
+                }
+
+                Text {
+                    height: 22px;
+                    text: "权限与安全";
+                    color: Theme.muted;
+                    font-size: Theme.font-2xs;
+                    font-weight: 700;
+                    vertical-alignment: bottom;
+                }
+
+                NavCard {
+                    NavRow {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-shield.svg");
+                        label: "权限管理";
+                        detail: root.permissions-detail();
+                        last: true;
+                        clicked => { root.open-page(12); }
                     }
                 }
 
@@ -542,7 +3052,7 @@ component SettingsHome inherits Rectangle {
                     NavRow {
                         icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-circle-question.svg");
                         label: I18n.st_tab_help;
-                        detail: "安卓版 v" + root.version;
+                        detail: root.help-detail();
                         last: true;
                         clicked => { root.open-page(6); }
                     }
@@ -820,6 +3330,8 @@ component RuntimePage inherits Rectangle {
                         border-radius: 3px;
                         background: Theme.panel;
                         Rectangle {
+                            // 未设置 x 的子元素默认居中，进度条填充显式钉左。
+                            x: 0px;
                             width: max(6px, parent.width * root.ubuntu-progress / 100);
                             height: parent.height;
                             border-radius: 3px;
@@ -851,12 +3363,203 @@ component RuntimePage inherits Rectangle {
     }
 }
 
+// 系统级悬浮伙伴：开关、形象、大小与气泡即时保存，与桌面版共用伙伴库和
+// companion.overlay.json；悬浮窗权限状态由引擎周期刷新。
+component CompanionPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <bool> enabled: false;
+    in property <string> selected: "";
+    in property <string> selected-name: "";
+    in property <float> scale: 0.5;
+    in property <bool> hints: true;
+    in property <string> permission: "unknown";
+    in property <[string]> names: [];
+    callback back();
+    callback save(bool, string, float, bool);
+    callback request-permission();
+    callback open-picker(int, string, string);
+
+    pure function scale-label() -> string {
+        return root.scale <= 0.5 ? "迷你"
+            : root.scale <= 0.75 ? "小"
+            : root.scale <= 1.0 ? "标准"
+            : root.scale <= 1.25 ? "大"
+            : "特大";
+    }
+    pure function scale-value() -> string {
+        return root.scale <= 0.5 ? "0.5"
+            : root.scale <= 0.75 ? "0.75"
+            : root.scale <= 1.0 ? "1"
+            : root.scale <= 1.25 ? "1.25"
+            : "1.6";
+    }
+
+    VerticalLayout {
+        SheetHeader {
+            title: I18n.stc_pet;
+            subtitle: I18n.stc_pet_note;
+            inset-top: root.inset-top;
+            back() => { root.back(); }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 14px;
+                padding-bottom: 16px + root.inset-bottom;
+                spacing: 12px;
+                alignment: start;
+
+                SheetCard {
+                    CardTitle {
+                        title: "悬浮伙伴";
+                        subtitle: "在其他应用上层显示伙伴，动画随线程运行状态联动。";
+                    }
+                    SettingRow {
+                        label: "启用伙伴";
+                        note: root.enabled ? "伙伴已显示在屏幕上" : "开启后显示在其他应用上层";
+                        ThemeSwitch {
+                            checked: root.enabled;
+                            toggled => { root.save(!root.enabled, root.selected, root.scale, root.hints); }
+                        }
+                    }
+                    SettingRow {
+                        label: "悬浮窗权限";
+                        note: root.permission == "granted" ? "已授权" : "授权后才能显示悬浮伙伴";
+                        last: true;
+                        if root.permission != "granted" : Action {
+                            width: 96px;
+                            label: "去授权";
+                            show-label: true;
+                            primary: true;
+                            clicked => { root.request-permission(); }
+                        }
+                    }
+                }
+
+                SheetCard {
+                    CardTitle { title: "形象与行为"; }
+                    SettingRow {
+                        label: "伙伴形象";
+                        note: root.names.length == 0 ? "伙伴库为空" : "";
+                        PickerField {
+                            text: root.selected-name == "" ? "未选择" : root.selected-name;
+                            enabled: root.names.length > 0;
+                            picked => { root.open-picker(18, "伙伴形象", root.selected); }
+                        }
+                    }
+                    SettingRow {
+                        label: I18n.pet_scale;
+                        PickerField {
+                            text: root.scale-label();
+                            picked => { root.open-picker(19, I18n.pet_scale, root.scale-value()); }
+                        }
+                    }
+                    SettingRow {
+                        label: "气泡提示";
+                        note: "任务完成或失败时弹出消息气泡";
+                        last: true;
+                        ThemeSwitch {
+                            checked: root.hints;
+                            toggled => { root.save(root.enabled, root.selected, root.scale, !root.hints); }
+                        }
+                    }
+                }
+
+                SheetCard {
+                    CardTitle { title: "说明"; }
+                    Text {
+                        text: "点击伙伴打开 wunder，拖动移动位置，长按隐藏。形象来自伙伴库，与桌面版共用；隐藏后可在上方重新开启。";
+                        color: Theme.muted;
+                        font-size: Theme.font-xs;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
+}
+
+component UpdateButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 42px;
+    border-radius: Theme.radius-md;
+    background: !root.enabled ? Theme.border-strong
+        : update-touch.has-hover ? Theme.accent-deep : Theme.accent;
+    update-touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+    Text {
+        width: 100%;
+        height: 100%;
+        text: root.label;
+        color: #ffffff;
+        font-size: Theme.font-md;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+component UpdateSourcePill inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 32px;
+    width: 72px;
+    border-radius: 16px;
+    background: !root.enabled ? Theme.panel
+        : root.selected ? Theme.accent-soft : Theme.surface;
+    border-width: 1px;
+    border-color: root.selected ? Theme.accent : Theme.border;
+    source-touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+    Text {
+        width: 100%;
+        height: 100%;
+        text: root.label;
+        color: root.selected ? Theme.accent-ink : Theme.text-secondary;
+        font-size: Theme.font-xs;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
 component AboutPage inherits Rectangle {
     in property <length> inset-top: 0px;
     in property <length> inset-bottom: 0px;
     in property <string> workspace: "";
     in property <string> version: "";
+    in property <string> update-phase: "idle";
+    in property <string> update-version: "";
+    in property <string> update-notes: "";
+    in property <string> update-source: "";
+    in property <string> update-channel: "cloud";
+    in property <string> update-size: "";
+    in property <int> update-progress: 0;
+    in property <string> update-downloaded: "";
+    in property <string> update-error: "";
+    in property <bool> cloud-logged-in: false;
     callback back();
+    callback check-update();
+    callback download-update();
+    callback install-update();
+    callback select-update-source(string);
+    private property <bool> update-busy: root.update-phase == "checking"
+        || root.update-phase == "downloading"
+        || root.update-phase == "installing";
 
     VerticalLayout {
         SheetHeader {
@@ -902,6 +3605,202 @@ component AboutPage inherits Rectangle {
                         label: "数据与隐私";
                         note: I18n.stc_local_note;
                         last: true;
+                    }
+                }
+
+                SheetCard {
+                    CardTitle {
+                        title: "在线更新";
+                        subtitle: root.update-source != "" ? root.update-source : "检查安卓版新构建";
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        cross-axis-alignment: center;
+                        Text {
+                            text: "更新源";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        UpdateSourcePill {
+                            label: "云端";
+                            selected: root.update-channel == "cloud";
+                            enabled: !root.update-busy;
+                            clicked => { root.select-update-source("cloud"); }
+                        }
+                        UpdateSourcePill {
+                            label: "GitHub";
+                            selected: root.update-channel == "github";
+                            enabled: !root.update-busy;
+                            clicked => { root.select-update-source("github"); }
+                        }
+                    }
+
+                    Text {
+                        text: "云端账号走登录的服务端；GitHub 拉取公开发布。";
+                        color: Theme.muted;
+                        font-size: Theme.font-2xs;
+                        wrap: word-wrap;
+                    }
+
+                    if root.update-channel == "cloud" && !root.cloud-logged-in && root.update-phase != "failed" : Text {
+                        text: "云端更新源需要先登录云端账号（设置 → 账号）；也可以切换到 GitHub 直接检查公开构建。";
+                        color: Theme.warning;
+                        font-size: Theme.font-2xs;
+                        wrap: word-wrap;
+                    }
+
+                    if root.update-phase == "idle" : UpdateButton {
+                        label: "检查更新";
+                        clicked => { root.check-update(); }
+                    }
+
+                    if root.update-phase == "checking" : Text {
+                        text: "正在检查更新…";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-sm;
+                        horizontal-alignment: center;
+                    }
+
+                    if root.update-phase == "up_to_date" : VerticalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: "已是最新版本";
+                            color: Theme.success;
+                            font-size: Theme.font-sm;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                        }
+                        UpdateButton {
+                            label: "重新检查";
+                            clicked => { root.check-update(); }
+                        }
+                    }
+
+                    if root.update-phase == "no_asset" : VerticalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: "当前更新源没有适用于此设备的安装包";
+                            color: Theme.warning;
+                            font-size: Theme.font-sm;
+                            wrap: word-wrap;
+                            horizontal-alignment: center;
+                        }
+                        UpdateButton {
+                            label: "重新检查";
+                            clicked => { root.check-update(); }
+                        }
+                    }
+
+                    if root.update-phase == "available" : VerticalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: "发现新版本 " + root.update-version;
+                            color: Theme.text;
+                            font-size: Theme.font-md;
+                            font-weight: 700;
+                        }
+                        if root.update-notes != "" : Text {
+                            text: root.update-notes;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            wrap: word-wrap;
+                        }
+                        UpdateButton {
+                            label: root.update-size != "" ? "下载更新（" + root.update-size + "）" : "下载更新";
+                            clicked => { root.download-update(); }
+                        }
+                    }
+
+                    if root.update-phase == "downloading" : VerticalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: "正在下载更新 " + root.update-progress + "%";
+                            color: Theme.text;
+                            font-size: Theme.font-sm;
+                            font-weight: 600;
+                        }
+                        Rectangle {
+                            height: 6px;
+                            border-radius: 3px;
+                            background: Theme.border;
+                            Rectangle {
+                                x: 0px;
+                                width: parent.width * root.update-progress / 100;
+                                height: 100%;
+                                border-radius: 3px;
+                                background: Theme.accent;
+                            }
+                        }
+                        if root.update-downloaded != "" : Text {
+                            text: root.update-downloaded;
+                            color: Theme.muted;
+                            font-size: Theme.font-2xs;
+                        }
+                    }
+
+                    if root.update-phase == "ready" : VerticalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: "更新已下载。安装会替换应用，聊天记录、工作区与设置会保留。";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            wrap: word-wrap;
+                        }
+                        UpdateButton {
+                            label: "安装更新";
+                            clicked => { root.install-update(); }
+                        }
+                    }
+
+                    if root.update-phase == "needs_install_permission" : VerticalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: "需要允许 wunder 安装应用。授权后返回，再次点击安装。";
+                            color: Theme.warning;
+                            font-size: Theme.font-xs;
+                            wrap: word-wrap;
+                        }
+                        UpdateButton {
+                            label: "去授权并安装";
+                            clicked => { root.install-update(); }
+                        }
+                    }
+
+                    if root.update-phase == "installing" : Text {
+                        text: "已打开系统安装器，请按提示完成安装；完成后可从桌面重新打开 wunder。";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        wrap: word-wrap;
+                    }
+
+                    if root.update-phase == "failed" : VerticalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: root.update-error != "" ? root.update-error : "检查更新失败";
+                            color: Theme.danger;
+                            font-size: Theme.font-xs;
+                            wrap: word-wrap;
+                        }
+                        UpdateButton {
+                            label: root.update-version != "" ? "重试下载" : "重新检查";
+                            clicked => {
+                                if root.update-version != "" {
+                                    root.download-update();
+                                } else {
+                                    root.check-update();
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "安装包会校验大小与 sha256，并核对包名和签名后才交给系统安装器。";
+                        color: Theme.muted;
+                        font-size: Theme.font-2xs;
+                        wrap: word-wrap;
                     }
                 }
 
@@ -1661,6 +4560,172 @@ component ModelEditorPage inherits Rectangle {
     }
 }
 
+component PermissionRow inherits Rectangle {
+    in property <MobilePermission> item;
+    in property <bool> last: false;
+    callback clicked();
+    height: 70px;
+    background: touch.has-hover && root.item.available ? Theme.hover : transparent;
+    touch := TouchArea {
+        enabled: root.item.available;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 12px;
+        spacing: 12px;
+        cross-axis-alignment: center;
+
+        Rectangle {
+            width: 32px;
+            height: 32px;
+            border-radius: 9px;
+            background: !root.item.available ? Theme.border
+                : root.item.granted ? Theme.success-bg : Theme.danger-bg;
+            if root.item.available : Image {
+                x: 8px;
+                y: 8px;
+                width: 16px;
+                height: 16px;
+                source: root.item.granted
+                    ? @image-url("../../../crates/wunder-desktop/frontend/assets/icons/circle-check.svg")
+                    : @image-url("../../../crates/wunder-desktop/frontend/assets/icons/xmark.svg");
+                colorize: root.item.granted ? Theme.success : Theme.danger;
+                image-fit: contain;
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text {
+                text: root.item.title;
+                color: Theme.text;
+                font-size: Theme.font-md;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: root.item.description;
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                overflow: elide;
+            }
+        }
+
+        VerticalLayout {
+            spacing: 1px;
+            alignment: center;
+            Text {
+                text: root.item.state-text;
+                color: !root.item.available ? Theme.muted
+                    : root.item.granted ? Theme.success : Theme.danger;
+                font-size: Theme.font-xs;
+                font-weight: 600;
+                horizontal-alignment: right;
+            }
+            Text {
+                text: root.item.action-text;
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                horizontal-alignment: right;
+                visible: root.item.action-text != "";
+            }
+        }
+
+        Image {
+            width: 12px;
+            height: 12px;
+            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-right.svg");
+            colorize: Theme.border-strong;
+            visible: root.item.available;
+        }
+    }
+    if !root.last : Rectangle {
+        y: parent.height - 1px;
+        x: 58px;
+        width: parent.width - 58px;
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
+component PermissionPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <[MobilePermission]> items: [];
+    in property <string> summary: "";
+    callback back();
+    callback refresh();
+    callback open(string);
+
+    background: Theme.panel;
+
+    VerticalLayout {
+        spacing: 0px;
+
+        SheetHeader {
+            title: "权限管理";
+            subtitle: root.summary;
+            inset-top: root.inset-top;
+            back() => { root.back(); }
+            Action {
+                width: 34px;
+                height: 32px;
+                icon-size: 16px;
+                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
+                label: I18n.common_refresh;
+                clicked => { root.refresh(); }
+            }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 14px;
+                padding-bottom: 24px + root.inset-bottom;
+                spacing: 12px;
+                alignment: start;
+
+                CardTitle {
+                    title: "应用权限";
+                    subtitle: "点按一项前往系统设置开启或关闭；从系统设置返回后状态会自动刷新。";
+                }
+
+                NavCard {
+                    for item[i] in root.items : PermissionRow {
+                        item: item;
+                        last: i == root.items.length - 1;
+                        clicked => { root.open(item.id); }
+                    }
+                    if root.items.length == 0 : Rectangle {
+                        height: 72px;
+                        Text {
+                            width: 100%;
+                            height: 100%;
+                            text: "正在读取权限状态…";
+                            color: Theme.muted;
+                            font-size: Theme.font-sm;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                Text {
+                    text: "通知、麦克风、悬浮窗、无障碍、后台运行与安装应用分别用于对应功能；拒绝某项不会影响其他能力。";
+                    color: Theme.muted;
+                    font-size: Theme.font-xs;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}
+
 export component MobileSettings inherits Rectangle {
     in property <length> inset-top: 0px;
     in property <length> inset-bottom: 0px;
@@ -1681,9 +4746,129 @@ export component MobileSettings inherits Rectangle {
     in property <string> ubuntu-version: "";
     in property <string> ubuntu-error: "";
     in property <bool> ubuntu-enabled: false;
+    in property <bool> companion-enabled: false;
+    in property <string> companion-selected: "";
+    in property <string> companion-selected-name: "";
+    in property <float> companion-scale: 0.5;
+    in property <bool> companion-hints: true;
+    in property <string> companion-permission: "unknown";
+    in property <[string]> companion-names: [];
+    in property <[string]> companion-ids: [];
+    in property <[MobilePermission]> permissions: [];
+    in property <string> permission-summary: "";
+    in property <string> update-phase: "idle";
+    in property <string> update-version: "";
+    in property <string> update-notes: "";
+    in property <string> update-source: "";
+    in property <string> update-channel: "cloud";
+    in property <string> update-size: "";
+    in property <int> update-progress: 0;
+    in property <string> update-downloaded: "";
+    in property <string> update-error: "";
     in property <[ModelCard]> models: [];
     in property <[MobileSession]> archived-sessions: [];
     in property <int> archived-total: 0;
+
+    // Tool manager projections (same shape as the desktop ToolsPage).
+    in property <[MobileTool]> tools-builtin: [];
+    in property <[MobileTool]> tools-mcp: [];
+    in property <[MobileTool]> tools-skills: [];
+    in property <[MobileTool]> tools-knowledge: [];
+    in property <[MobileToolResource]> tool-servers: [];
+    in property <[MobileToolResource]> tool-skill-resources: [];
+    in property <[MobileToolResource]> tool-bases: [];
+    in property <[MobileTool]> tool-server-tools: [];
+    in property <string> tool-active-server: "";
+    in property <string> tool-active-resource: "";
+    in property <int> tool-resource-tab: 0;
+    in property <bool> tool-resource-editable: false;
+    in property <[MobileToolFile]> tool-files: [];
+    in property <string> tool-directory: "";
+    in property <bool> tool-has-more: false;
+    in property <int> tool-editor-kind: 0;
+    in property <bool> tool-editor-new: false;
+    in property <string> tool-editor-error: "";
+    in-out property <MobileMcpDraft> mcp-draft;
+    in-out property <MobileKnowledgeDraft> kb-draft;
+    in property <bool> tool-file-open: false;
+    in property <string> tool-file-path: "";
+    in-out property <string> tool-file-content: "";
+    in property <bool> tool-file-readonly: false;
+    in property <string> tool-file-error: "";
+
+    // Built-in agent projection.
+    in property <string> agent-name: "";
+    in property <int> agent-tool-count: 0;
+    in-out property <string> agent-description: "";
+    in-out property <string> agent-prompt: "";
+    in property <[MobileToolGroup]> agent-groups: [];
+    in-out property <string> agent-search: "";
+    in property <[string]> agent-questions: [];
+
+    // Cron/memory projections.
+    in property <[MobileCronJob]> cron-jobs: [];
+    in property <[string]> cron-workspaces: [];
+    in property <[MobileCronRun]> cron-runs: [];
+    in property <bool> cron-runs-open: false;
+    in property <bool> cron-runs-loading: false;
+    in property <string> cron-runs-title: "";
+    in property <bool> cron-editor-open: false;
+    in property <bool> cron-editor-new: true;
+    in property <string> cron-editor-error: "";
+    in property <bool> cron-editor-saving: false;
+    in-out property <MobileCronDraft> cron-draft;
+    in property <[MobileMemory]> memories: [];
+    in property <[string]> memory-categories: [];
+    in property <string> memory-category: "全部标签";
+    in-out property <string> memory-query: "";
+    in property <bool> memory-loading: false;
+    in property <string> memory-error: "";
+    in property <bool> memory-editor-open: false;
+    in property <bool> memory-editor-new: true;
+    in property <string> memory-editor-error: "";
+    in property <bool> memory-editor-saving: false;
+    in-out property <MobileMemoryDraft> memory-draft;
+    in property <bool> cloud-logged-in: false;
+    in property <bool> cloud-expired: false;
+    in property <string> cloud-connection: "logged_out";
+    in property <string> cloud-server: "";
+    in property <string> cloud-username: "";
+    in property <int> cloud-balance: 0;
+    in property <int> cloud-daily-grant: 0;
+    in property <int> cloud-max-concurrent: 0;
+    in property <int> cloud-active-concurrent: 0;
+    in property <bool> cloud-sync-enabled: false;
+    in property <bool> cloud-inbound-enabled: false;
+    in property <bool> cloud-full-shadow: false;
+    in property <string> cloud-last-error: "";
+    in property <string> cloud-last-success: "";
+    in property <string> cloud-next-retry: "";
+    in property <string> cloud-device-name: "";
+    in property <int> chat-target: 0;
+    in property <string> current-device: "本机";
+    in property <[MobileDevice]> devices: [];
+    in property <[MobileSession]> cloud-sessions: [];
+    in property <bool> cloud-loading: false;
+    in property <string> cloud-status: "";
+    in property <string> cloud-model: "";
+    in property <bool> approval-open: false;
+    in property <string> approval-id: "";
+    in property <string> approval-from: "";
+    in property <string> approval-kind: "";
+    in property <string> approval-risk: "";
+    in property <string> approval-prompt: "";
+    in property <[MobileChannelAccount]> channel-accounts: [];
+    in property <[MobileChannelCatalog]> channel-catalog: [];
+    in property <[string]> channel-catalog-ids: [];
+    in property <[string]> channel-catalog-names: [];
+    in property <[MobileChannelBinding]> channel-bindings: [];
+    in property <[MobileChannelLog]> channel-logs: [];
+    in property <string> channel-selected: "";
+    in property <bool> channel-logs-open: false;
+    in property <bool> channel-editor-open: false;
+    in property <bool> channel-editor-new: true;
+    in property <string> channel-editor-error: "";
+    in-out property <MobileChannelDraft> channel-draft;
 
     in property <bool> editor-open: false;
     in property <bool> editor-new: false;
@@ -1703,6 +4888,14 @@ export component MobileSettings inherits Rectangle {
     callback save-language(string);
     callback install-ubuntu();
     callback set-ubuntu-enabled(bool);
+    callback save-companion(bool, string, float, bool);
+    callback request-companion-permission();
+    callback refresh-permissions();
+    callback open-permission(string);
+    callback check-update();
+    callback download-update();
+    callback install-update();
+    callback select-update-source(string);
     callback permission-changed(string);
     callback open-model-editor(string);
     callback close-model-editor();
@@ -1713,6 +4906,69 @@ export component MobileSettings inherits Rectangle {
     callback restore-archived(string);
     callback delete-archived(string);
     callback refresh-archived();
+    callback refresh-tools();
+    callback select-tool-server(int);
+    callback select-tool-resource(int, int);
+    callback load-tool-directory(string);
+    callback more-tool-files();
+    callback open-tool-file(string);
+    callback save-tool-file(string, string);
+    callback close-tool-file();
+    callback create-tool-file(string);
+    callback upload-tool-files();
+    callback delete-tool-resource(int, string);
+    callback connect-tool-server(string);
+    callback export-skill(string);
+    callback import-skill();
+    callback open-tool-editor(int, int);
+    callback close-tool-editor();
+    callback save-tool-editor(int, MobileMcpDraft, MobileKnowledgeDraft);
+    callback refresh-agent();
+    callback search-agent-tools(string);
+    callback save-agent-text(string, string);
+    callback toggle-agent-tool(string, bool, string, string);
+    callback toggle-agent-tool-group(string, bool, string, string);
+    callback add-agent-question(string, string, string);
+    callback remove-agent-question(int, string, string);
+    callback refresh-cron();
+    callback toggle-cron(string, bool);
+    callback delete-cron(string);
+    callback run-cron-now(string);
+    callback open-cron-runs(string);
+    callback close-cron-runs();
+    callback open-cron-editor(string);
+    callback close-cron-editor();
+    callback save-cron(MobileCronDraft);
+    callback refresh-memory();
+    callback search-memory(string);
+    callback set-memory-category(string);
+    callback open-memory-editor(int);
+    callback close-memory-editor();
+    callback save-memory(MobileMemoryDraft);
+    callback delete-memory(string);
+    callback cloud-login(string, string, string);
+    callback cloud-logout();
+    callback cloud-refresh();
+    callback cloud-toggle-sync(bool);
+    callback cloud-set-sharing(bool, bool);
+    callback switch-chat-target(int);
+    callback refresh-devices();
+    callback cloud-refresh-threads();
+    callback cloud-new-thread();
+    callback cloud-select-thread(string);
+    callback cloud-rename(string, string);
+    callback cloud-archive(string);
+    callback decide-approval(string, bool);
+    callback refresh-channels();
+    callback select-channel-account(string);
+    callback open-channel-editor(string);
+    callback close-channel-editor();
+    callback save-channel(MobileChannelDraft);
+    callback toggle-channel(string, bool);
+    callback delete-channel(string);
+    callback open-channel-logs(string);
+    callback close-channel-logs();
+    callback delete-channel-binding(string);
 
     background: Theme.panel;
 
@@ -1761,7 +5017,49 @@ export component MobileSettings inherits Rectangle {
         } else if (id == 11) {
             root.picker-options = [I18n.st_param_default_option, "png", "jpeg", "webp"];
             root.picker-values = ["", "png", "jpeg", "webp"];
+        } else if (id == 12) {
+            root.picker-options = ["自动", "SSE", "HTTP", "Streamable HTTP"];
+            root.picker-values = ["auto", "sse", "http", "streamable-http"];
+        } else if (id == 13) {
+            root.picker-options = [I18n.tm_type_vector, I18n.tm_type_literal, I18n.tm_type_ragflow];
+            root.picker-values = ["vector", "literal", "ragflow"];
+        } else if (id == 14) {
+            root.picker-options = ["定时一次", "固定间隔", "Cron 表达式"];
+            root.picker-values = ["at", "every", "cron"];
+        } else if (id == 15) {
+            root.picker-options = ["分钟", "小时", "天", "秒"];
+            root.picker-values = ["minute", "hour", "day", "second"];
+        } else if (id == 18) {
+            root.picker-options = root.companion-names;
+            root.picker-values = root.companion-ids;
+        } else if (id == 19) {
+            root.picker-options = ["迷你", "小", "标准", "大", "特大"];
+            root.picker-values = ["0.5", "0.75", "1", "1.25", "1.6"];
         }
+    }
+
+    function show-workspace-picker() {
+        root.picker = 16;
+        root.picker-title = "工作区";
+        root.picker-options = root.cron-workspaces;
+        root.picker-values = root.cron-workspaces;
+        root.picker-value = root.cron-draft.workspace-name;
+    }
+
+    function show-channel-picker() {
+        root.picker = 19;
+        root.picker-title = "渠道类型";
+        root.picker-options = root.channel-catalog-names;
+        root.picker-values = root.channel-catalog-ids;
+        root.picker-value = root.channel-draft.channel;
+    }
+
+    function show-memory-category-picker() {
+        root.picker = 17;
+        root.picker-title = "标签";
+        root.picker-options = root.memory-categories;
+        root.picker-values = root.memory-categories;
+        root.picker-value = root.memory-category;
     }
 
     function apply-pick(id: int, value: string) {
@@ -1782,6 +5080,21 @@ export component MobileSettings inherits Rectangle {
         else if (id == 9) { root.draft.asr-response-format = value; }
         else if (id == 10) { root.draft.tts-response-format = value; }
         else if (id == 11) { root.draft.image-output-format = value; }
+        else if (id == 12) { root.mcp-draft.transport = value; }
+        else if (id == 13) { root.kb-draft.base-type = value; }
+        else if (id == 14) { root.cron-draft.schedule-kind = value; }
+        else if (id == 15) { root.cron-draft.interval-unit = value; }
+        else if (id == 16) { root.cron-draft.workspace-name = value; }
+        else if (id == 17) { root.set-memory-category(value); }
+        else if (id == 19) { root.channel-draft.channel = value; }
+        else if (id == 18) {
+            root.save-companion(root.companion-enabled, value, root.companion-scale, root.companion-hints);
+        }
+        else if (id == 19) {
+            root.save-companion(root.companion-enabled, root.companion-selected,
+                value == "0.5" ? 0.5 : value == "0.75" ? 0.75 : value == "1.25" ? 1.25 : value == "1.6" ? 1.6 : 1.0,
+                root.companion-hints);
+        }
     }
 
     // Page transitions live here; the draft itself is owned by the window so
@@ -1823,6 +5136,18 @@ export component MobileSettings inherits Rectangle {
             model-count: root.model-count;
             archived-total: root.archived-total;
             ubuntu-state: root.ubuntu-state;
+            agent-name: root.agent-name;
+            agent-tool-count: root.agent-tool-count;
+            tool-total: root.tools-builtin.length + root.tools-mcp.length + root.tools-skills.length + root.tools-knowledge.length;
+            server-count: root.tool-servers.length;
+            cron-count: root.cron-jobs.length;
+            memory-count: root.memories.length;
+            permission-summary: root.permission-summary;
+            update-phase: root.update-phase;
+            update-version: root.update-version;
+            cloud-logged-in: root.cloud-logged-in;
+            cloud-username: root.cloud-username;
+            channel-count: root.channel-accounts.length;
             close() => { root.close(); }
             open-page(page) => { root.page = page; }
             manage-models() => { root.page = 1; }
@@ -1861,6 +5186,32 @@ export component MobileSettings inherits Rectangle {
             set-ubuntu-enabled(value) => { root.set-ubuntu-enabled(value); }
         }
 
+        if root.page == 11 : CompanionPage {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
+            enabled: root.companion-enabled;
+            selected: root.companion-selected;
+            selected-name: root.companion-selected-name;
+            scale: root.companion-scale;
+            hints: root.companion-hints;
+            permission: root.companion-permission;
+            names: root.companion-names;
+            back() => { root.page = 0; }
+            save(enabled, selected, scale, hints) => { root.save-companion(enabled, selected, scale, hints); }
+            request-permission() => { root.request-companion-permission(); }
+            open-picker(id, title, value) => { root.show-picker(id, title, value); }
+        }
+
+        if root.page == 12 : PermissionPage {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
+            items: root.permissions;
+            summary: root.permission-summary;
+            back() => { root.page = 0; }
+            refresh() => { root.refresh-permissions(); }
+            open(id) => { root.open-permission(id); }
+        }
+
         if root.page == 5 : ArchivePage {
             inset-top: root.inset-top;
             inset-bottom: root.inset-bottom;
@@ -1877,7 +5228,197 @@ export component MobileSettings inherits Rectangle {
             inset-bottom: root.inset-bottom;
             workspace: root.workspace;
             version: root.version;
+            update-phase: root.update-phase;
+            update-version: root.update-version;
+            update-notes: root.update-notes;
+            update-source: root.update-source;
+            update-channel: root.update-channel;
+            update-size: root.update-size;
+            update-progress: root.update-progress;
+            update-downloaded: root.update-downloaded;
+            update-error: root.update-error;
+            cloud-logged-in: root.cloud-logged-in;
             back() => { root.page = 0; }
+            check-update() => { root.check-update(); }
+            download-update() => { root.download-update(); }
+            install-update() => { root.install-update(); }
+            select-update-source(source) => { root.select-update-source(source); }
+        }
+
+        if root.page == 7 : ToolsPage {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
+            builtin: root.tools-builtin;
+            mcp-tools: root.tools-mcp;
+            skill-tools: root.tools-skills;
+            knowledge-tools: root.tools-knowledge;
+            servers: root.tool-servers;
+            skill-resources: root.tool-skill-resources;
+            bases: root.tool-bases;
+            server-tools: root.tool-server-tools;
+            active-server: root.tool-active-server;
+            active-resource: root.tool-active-resource;
+            resource-tab: root.tool-resource-tab;
+            resource-editable: root.tool-resource-editable;
+            files: root.tool-files;
+            directory: root.tool-directory;
+            has-more: root.tool-has-more;
+            editor-kind: root.tool-editor-kind;
+            editor-new: root.tool-editor-new;
+            editor-error: root.tool-editor-error;
+            mcp-draft <=> root.mcp-draft;
+            kb-draft <=> root.kb-draft;
+            file-open: root.tool-file-open;
+            file-path: root.tool-file-path;
+            file-content <=> root.tool-file-content;
+            file-readonly: root.tool-file-readonly;
+            file-error: root.tool-file-error;
+            back() => { root.page = 0; }
+            refresh() => { root.refresh-tools(); }
+            select-server(index) => { root.select-tool-server(index); }
+            select-resource(tab, index) => { root.select-tool-resource(tab, index); }
+            load-directory(directory) => { root.load-tool-directory(directory); }
+            more-files() => { root.more-tool-files(); }
+            open-file(path) => { root.open-tool-file(path); }
+            save-file(path, content) => { root.save-tool-file(path, content); }
+            close-file() => { root.close-tool-file(); }
+            create-file(name) => { root.create-tool-file(name); }
+            upload-files() => { root.upload-tool-files(); }
+            delete-resource(tab, name) => { root.delete-tool-resource(tab, name); }
+            connect-server(name) => { root.connect-tool-server(name); }
+            export-skill(name) => { root.export-skill(name); }
+            import-skill() => { root.import-skill(); }
+            open-editor(kind, index) => { root.open-tool-editor(kind, index); }
+            close-editor() => { root.close-tool-editor(); }
+            save-editor(kind, mcp, kb) => { root.save-tool-editor(kind, mcp, kb); }
+            open-picker(id, title, value) => { root.show-picker(id, title, value); }
+        }
+
+        if root.page == 8 : AgentPage {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
+            agent-name: root.agent-name;
+            description <=> root.agent-description;
+            prompt <=> root.agent-prompt;
+            groups: root.agent-groups;
+            search <=> root.agent-search;
+            questions: root.agent-questions;
+            back() => { root.page = 0; }
+            refresh() => { root.refresh-agent(); }
+            search-tools(query) => { root.search-agent-tools(query); }
+            save-text(description, prompt) => { root.save-agent-text(description, prompt); }
+            toggle-tool(name, enabled, description, prompt) => { root.toggle-agent-tool(name, enabled, description, prompt); }
+            toggle-group(title, select, description, prompt) => { root.toggle-agent-tool-group(title, select, description, prompt); }
+            add-question(question, description, prompt) => { root.add-agent-question(question, description, prompt); }
+            remove-question(index, description, prompt) => { root.remove-agent-question(index, description, prompt); }
+        }
+
+        if root.page == 9 : CronPage {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
+            jobs: root.cron-jobs;
+            workspaces: root.cron-workspaces;
+            runs: root.cron-runs;
+            runs-open: root.cron-runs-open;
+            runs-loading: root.cron-runs-loading;
+            runs-title: root.cron-runs-title;
+            editor-open: root.cron-editor-open;
+            editor-new: root.cron-editor-new;
+            editor-saving: root.cron-editor-saving;
+            editor-error: root.cron-editor-error;
+            draft <=> root.cron-draft;
+            back() => { root.page = 0; }
+            refresh() => { root.refresh-cron(); }
+            toggle(id, enabled) => { root.toggle-cron(id, enabled); }
+            delete(id) => { root.delete-cron(id); }
+            run-now(id) => { root.run-cron-now(id); }
+            open-runs(id) => { root.open-cron-runs(id); }
+            close-runs() => { root.close-cron-runs(); }
+            open-editor(id) => { root.open-cron-editor(id); }
+            close-editor() => { root.close-cron-editor(); }
+            save-editor(draft) => { root.save-cron(draft); }
+            open-picker(id, title, value) => { root.show-picker(id, title, value); }
+            pick-workspace() => { root.show-workspace-picker(); }
+        }
+
+        if root.page == 10 : MemoryPage {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
+            memories: root.memories;
+            categories: root.memory-categories;
+            category: root.memory-category;
+            query <=> root.memory-query;
+            loading: root.memory-loading;
+            error: root.memory-error;
+            editor-open: root.memory-editor-open;
+            editor-new: root.memory-editor-new;
+            editor-saving: root.memory-editor-saving;
+            editor-error: root.memory-editor-error;
+            draft <=> root.memory-draft;
+            back() => { root.page = 0; }
+            refresh() => { root.refresh-memory(); }
+            search(query) => { root.search-memory(query); }
+            pick-category() => { root.show-memory-category-picker(); }
+            open-editor(index) => { root.open-memory-editor(index); }
+            close-editor() => { root.close-memory-editor(); }
+            save-editor(draft) => { root.save-memory(draft); }
+            delete(id) => { root.delete-memory(id); }
+        }
+
+        if root.page == 13 : AccountPage {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
+            logged-in: root.cloud-logged-in;
+            expired: root.cloud-expired;
+            connection: root.cloud-connection;
+            server: root.cloud-server;
+            username: root.cloud-username;
+            balance: root.cloud-balance;
+            daily-grant: root.cloud-daily-grant;
+            max-concurrent: root.cloud-max-concurrent;
+            active-concurrent: root.cloud-active-concurrent;
+            sync-enabled: root.cloud-sync-enabled;
+            inbound-enabled: root.cloud-inbound-enabled;
+            full-shadow: root.cloud-full-shadow;
+            last-error: root.cloud-last-error;
+            last-success: root.cloud-last-success;
+            next-retry: root.cloud-next-retry;
+            device-name: root.cloud-device-name;
+            back() => { root.page = 0; }
+            refresh() => { root.cloud-refresh(); }
+            login(server, username, password) => { root.cloud-login(server, username, password); }
+            logout() => { root.cloud-logout(); }
+            toggle-sync(enabled) => { root.cloud-toggle-sync(enabled); }
+            set-sharing(enabled, full-shadow) => { root.cloud-set-sharing(enabled, full-shadow); }
+        }
+
+        if root.page == 14 : ChannelsPage {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
+            accounts: root.channel-accounts;
+            bindings: root.channel-bindings;
+            logs: root.channel-logs;
+            selected: root.channel-selected;
+            logs-open: root.channel-logs-open;
+            editor-open: root.channel-editor-open;
+            editor-new: root.channel-editor-new;
+            editor-error: root.channel-editor-error;
+            catalog-ids: root.channel-catalog-ids;
+            catalog-names: root.channel-catalog-names;
+            draft <=> root.channel-draft;
+            back() => { root.page = 0; }
+            refresh() => { root.refresh-channels(); }
+            add() => { root.open-channel-editor(""); }
+            select(id) => { root.select-channel-account(id); }
+            edit(id) => { root.open-channel-editor(id); }
+            open-logs(id) => { root.open-channel-logs(id); }
+            close-logs() => { root.close-channel-logs(); }
+            delete(id) => { root.delete-channel(id); }
+            toggle(id, enabled) => { root.toggle-channel(id, enabled); }
+            delete-binding(id) => { root.delete-channel-binding(id); }
+            close-editor() => { root.close-channel-editor(); }
+            save(draft) => { root.save-channel(draft); }
+            pick-channel() => { root.show-channel-picker(); }
         }
 
         if root.page == 1 : ModelsPage {

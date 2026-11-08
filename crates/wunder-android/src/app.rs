@@ -9,15 +9,15 @@ use crate::engine::{self, Command, Shared};
 use crate::md::MarkdownRenderer;
 use crate::project::{self, RowData};
 use crate::{
-    InquiryOption, InquiryQuestion, MobileSession, MobileWindow, ModelCard, Theme, TimelineRow,
-    WorkspaceFile,
+    InquiryOption, InquiryQuestion, MobilePermission, MobileSession, MobileWindow, MobileWorkspace,
+    ModelCard, Theme, TimelineRow, WorkspaceFile,
 };
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use wunder_desktop::{HostHud, HostHudSampler};
 
 const TICK: Duration = Duration::from_millis(33);
 const CACHE_LIMIT: usize = 800;
@@ -46,7 +46,8 @@ thread_local! {
 /// and every shared component are identical to the phone build.
 pub fn build_preview() -> MobileWindow {
     let (ui, model) = create_window();
-    install_preview_data(&ui, &model);
+    let workspaces = Rc::new(VecModel::<MobileWorkspace>::from(Vec::new()));
+    install_preview_data(&ui, &model, &workspaces);
     let model_for_toggle = model.clone();
     ui.on_toggle_row(move |index| {
         if let Some((bar, child)) = project::process_child_address(index) {
@@ -201,6 +202,12 @@ pub fn build_preview() -> MobileWindow {
         }
     });
     let weak = ui.as_weak();
+    ui.on_env_setup_dismiss(move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_env_setup_open(false);
+        }
+    });
+    let weak = ui.as_weak();
     ui.on_save_theme(move |value| {
         if let Some(ui) = weak.upgrade() {
             ui.set_settings_theme(value.clone());
@@ -269,6 +276,99 @@ pub fn build_preview() -> MobileWindow {
     ui.on_upload_workspace(|_| {});
     ui.on_download_workspace(|_| {});
     ui.on_load_more_workspace(|_, _| {});
+    ui.on_open_workspaces(|| {});
+    ui.on_refresh_workspaces(|| {});
+    let workspaces_for_select = workspaces.clone();
+    let weak = ui.as_weak();
+    ui.on_select_workspace(move |id| {
+        if let Some(ui) = weak.upgrade() {
+            for index in 0..workspaces_for_select.row_count() {
+                if let Some(mut workspace) = workspaces_for_select.row_data(index) {
+                    workspace.active = workspace.id == id;
+                    workspaces_for_select.set_row_data(index, workspace.clone());
+                    if workspace.active {
+                        ui.set_workspace_name(workspace.name);
+                        ui.set_workspace_icon(workspace.icon);
+                        ui.set_workspace_color(workspace.color);
+                        ui.set_workspace_thread_count(workspace.thread_count);
+                    }
+                }
+            }
+        }
+    });
+    let workspaces_for_new_task = workspaces.clone();
+    ui.on_new_task_in_workspace(move |id| {
+        for index in 0..workspaces_for_new_task.row_count() {
+            if let Some(mut workspace) = workspaces_for_new_task.row_data(index) {
+                workspace.active = workspace.id == id;
+                workspaces_for_new_task.set_row_data(index, workspace);
+            }
+        }
+    });
+    let workspaces_for_create = workspaces.clone();
+    let weak = ui.as_weak();
+    ui.on_create_workspace(move |name, icon, color| {
+        if let Some(ui) = weak.upgrade() {
+            let id: slint::SharedString =
+                format!("preview-ws-{}", workspaces_for_create.row_count() + 1).into();
+            for index in 0..workspaces_for_create.row_count() {
+                if let Some(mut workspace) = workspaces_for_create.row_data(index) {
+                    workspace.active = false;
+                    workspaces_for_create.set_row_data(index, workspace);
+                }
+            }
+            workspaces_for_create.push(MobileWorkspace {
+                id,
+                name: name.clone(),
+                icon: icon.clone(),
+                color: color.clone(),
+                root: "应用工作区 / preview".into(),
+                thread_count: 0,
+                active: true,
+            });
+            ui.set_workspace_name(name);
+            ui.set_workspace_icon(icon);
+            ui.set_workspace_color(color);
+            ui.set_workspace_thread_count(0);
+        }
+    });
+    let workspaces_for_update = workspaces.clone();
+    ui.on_update_workspace(move |id, name, icon, color| {
+        for index in 0..workspaces_for_update.row_count() {
+            if let Some(mut workspace) = workspaces_for_update.row_data(index) {
+                if workspace.id == id {
+                    workspace.name = name.clone();
+                    workspace.icon = icon.clone();
+                    workspace.color = color.clone();
+                    workspaces_for_update.set_row_data(index, workspace);
+                }
+            }
+        }
+    });
+    let workspaces_for_delete = workspaces.clone();
+    let weak = ui.as_weak();
+    ui.on_delete_workspace(move |id| {
+        if let Some(ui) = weak.upgrade() {
+            let mut kept = Vec::new();
+            for index in 0..workspaces_for_delete.row_count() {
+                if let Some(workspace) = workspaces_for_delete.row_data(index) {
+                    if workspace.id != id {
+                        kept.push(workspace);
+                    }
+                }
+            }
+            if !kept.iter().any(|workspace| workspace.active) {
+                if let Some(first) = kept.first_mut() {
+                    first.active = true;
+                    ui.set_workspace_name(first.name.clone());
+                    ui.set_workspace_icon(first.icon.clone());
+                    ui.set_workspace_color(first.color.clone());
+                    ui.set_workspace_thread_count(first.thread_count);
+                }
+            }
+            workspaces_for_delete.set_vec(kept);
+        }
+    });
     ui.on_plus_panel_opened(|| {});
     ui.on_keyboard_dismiss(|| {});
     ui
@@ -472,7 +572,15 @@ fn wire_callbacks(
     let sender = commands.clone();
     let weak = ui.as_weak();
     ui.on_select_session(move |id| {
-        let _ = sender.send(Command::Select(id.to_string()));
+        let cloud = weak
+            .upgrade()
+            .map(|ui| ui.get_settings_chat_target() == 1)
+            .unwrap_or(false);
+        if cloud {
+            let _ = sender.send(Command::CloudSelectThread(id.to_string()));
+        } else {
+            let _ = sender.send(Command::Select(id.to_string()));
+        }
         if let Some(ui) = weak.upgrade() {
             ui.set_drawer_open(false);
             ui.set_plus_open(false);
@@ -480,20 +588,41 @@ fn wire_callbacks(
     });
 
     let sender = commands.clone();
+    let weak = ui.as_weak();
     ui.on_rename_session(move |id, title| {
         let title = title.trim().to_string();
         if title.is_empty() {
             return;
         }
-        let _ = sender.send(Command::RenameSession {
-            id: id.to_string(),
-            title,
-        });
+        if weak
+            .upgrade()
+            .map(|ui| ui.get_settings_chat_target() == 1)
+            .unwrap_or(false)
+        {
+            let _ = sender.send(Command::CloudRename {
+                id: id.to_string(),
+                title,
+            });
+        } else {
+            let _ = sender.send(Command::RenameSession {
+                id: id.to_string(),
+                title,
+            });
+        }
     });
 
     let sender = commands.clone();
+    let weak = ui.as_weak();
     ui.on_archive_session(move |id| {
-        let _ = sender.send(Command::ArchiveSession(id.to_string()));
+        if weak
+            .upgrade()
+            .map(|ui| ui.get_settings_chat_target() == 1)
+            .unwrap_or(false)
+        {
+            let _ = sender.send(Command::CloudArchive(id.to_string()));
+        } else {
+            let _ = sender.send(Command::ArchiveSession(id.to_string()));
+        }
     });
 
     let sender = commands.clone();
@@ -512,7 +641,15 @@ fn wire_callbacks(
     });
 
     let sender = commands.clone();
+    let weak = ui.as_weak();
     ui.on_load_trajectory(move |id, title| {
+        if weak
+            .upgrade()
+            .map(|ui| ui.get_settings_chat_target() == 1)
+            .unwrap_or(false)
+        {
+            return;
+        }
         let _ = sender.send(Command::LoadTrajectory {
             id: id.to_string(),
             title: title.to_string(),
@@ -550,6 +687,44 @@ fn wire_callbacks(
     });
 
     let sender = commands.clone();
+    ui.on_open_workspaces(move || {
+        let _ = sender.send(Command::RefreshWorkspaces);
+    });
+    let sender = commands.clone();
+    ui.on_refresh_workspaces(move || {
+        let _ = sender.send(Command::RefreshWorkspaces);
+    });
+    let sender = commands.clone();
+    ui.on_select_workspace(move |id| {
+        let _ = sender.send(Command::SelectWorkspace(id.to_string()));
+    });
+    let sender = commands.clone();
+    ui.on_new_task_in_workspace(move |id| {
+        let _ = sender.send(Command::NewThreadInWorkspace(id.to_string()));
+    });
+    let sender = commands.clone();
+    ui.on_create_workspace(move |name, icon, color| {
+        let _ = sender.send(Command::CreateWorkspace {
+            name: name.to_string(),
+            icon: icon.to_string(),
+            color: color.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_update_workspace(move |id, name, icon, color| {
+        let _ = sender.send(Command::UpdateWorkspace {
+            id: id.to_string(),
+            name: name.to_string(),
+            icon: icon.to_string(),
+            color: color.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_delete_workspace(move |id| {
+        let _ = sender.send(Command::DeleteWorkspace(id.to_string()));
+    });
+
+    let sender = commands.clone();
     ui.on_trajectory_filter_changed(move |filter| {
         let _ = sender.send(Command::TrajectoryFilter(filter));
     });
@@ -569,7 +744,15 @@ fn wire_callbacks(
     let sender = commands.clone();
     let weak = ui.as_weak();
     ui.on_new_session(move || {
-        let _ = sender.send(Command::NewThread);
+        let cloud = weak
+            .upgrade()
+            .map(|ui| ui.get_settings_chat_target() == 1)
+            .unwrap_or(false);
+        let _ = if cloud {
+            sender.send(Command::CloudNewThread)
+        } else {
+            sender.send(Command::NewThread)
+        };
         if let Some(ui) = weak.upgrade() {
             ui.set_drawer_open(false);
         }
@@ -584,17 +767,38 @@ fn wire_callbacks(
         if draft.is_empty() {
             return;
         }
-        let _ = sender.send(Command::Send(draft));
+        if ui.get_settings_chat_target() == 1 {
+            let _ = sender.send(Command::CloudSend(draft));
+        } else {
+            let _ = sender.send(Command::Send(draft));
+        }
         ui.set_draft("".into());
     });
 
     let sender = commands.clone();
+    let weak = ui.as_weak();
     ui.on_stop(move || {
-        let _ = sender.send(Command::Stop);
+        if weak
+            .upgrade()
+            .map(|ui| ui.get_settings_chat_target() == 1)
+            .unwrap_or(false)
+        {
+            let _ = sender.send(Command::CloudStop);
+        } else {
+            let _ = sender.send(Command::Stop);
+        }
     });
 
     let sender = commands.clone();
+    let weak = ui.as_weak();
     ui.on_select_model(move |_index, key| {
+        if weak
+            .upgrade()
+            .map(|ui| ui.get_settings_chat_target() == 1)
+            .unwrap_or(false)
+        {
+            return;
+        }
         let _ = sender.send(Command::SelectModel(key.to_string()));
     });
 
@@ -606,6 +810,7 @@ fn wire_callbacks(
         let _ = sender.send(Command::LoadSettings);
         let _ = sender.send(Command::RefreshArchived);
         let _ = sender.send(Command::RefreshUbuntu);
+        let _ = sender.send(Command::RefreshCompanion);
         if let Some(ui) = weak.upgrade() {
             ui.set_drawer_open(false);
             ui.set_plus_open(false);
@@ -622,6 +827,33 @@ fn wire_callbacks(
         if let Some(ui) = weak.upgrade() {
             ui.set_settings_open(false);
         }
+    });
+
+    let sender = commands.clone();
+    ui.on_refresh_permissions(move || {
+        let _ = sender.send(Command::RefreshPermissions);
+    });
+
+    let sender = commands.clone();
+    ui.on_open_permission(move |id| {
+        let _ = sender.send(Command::OpenPermission(id.to_string()));
+    });
+
+    let sender = commands.clone();
+    ui.on_check_update(move || {
+        let _ = sender.send(Command::CheckAndroidUpdate);
+    });
+    let sender = commands.clone();
+    ui.on_download_update(move || {
+        let _ = sender.send(Command::DownloadAndroidUpdate);
+    });
+    let sender = commands.clone();
+    ui.on_install_update(move || {
+        let _ = sender.send(Command::InstallAndroidUpdate);
+    });
+    let sender = commands.clone();
+    ui.on_select_update_source(move |source| {
+        let _ = sender.send(Command::SetUpdateSource(source.to_string()));
     });
 
     let sender = commands.clone();
@@ -683,6 +915,36 @@ fn wire_callbacks(
     });
 
     let sender = commands.clone();
+    ui.on_env_setup_retry(move || {
+        let _ = sender.send(Command::InstallUbuntu);
+    });
+    let shared_for_dismiss = shared.clone();
+    let weak = ui.as_weak();
+    ui.on_env_setup_dismiss(move || {
+        if let Ok(mut state) = shared_for_dismiss.lock() {
+            state.env_setup_dismissed = true;
+        }
+        if let Some(ui) = weak.upgrade() {
+            ui.set_env_setup_open(false);
+        }
+    });
+
+    let sender = commands.clone();
+    ui.on_save_companion(move |enabled, selected_id, scale, message_hints| {
+        let _ = sender.send(Command::SaveCompanion {
+            enabled,
+            selected_id: selected_id.to_string(),
+            scale,
+            message_hints,
+        });
+    });
+
+    let sender = commands.clone();
+    ui.on_request_companion_permission(move || {
+        let _ = sender.send(Command::CompanionPermission);
+    });
+
+    let sender = commands.clone();
     ui.on_open_model_editor(move |key| {
         let key = key.to_string();
         let _ = sender.send(Command::OpenModelEditor {
@@ -721,6 +983,329 @@ fn wire_callbacks(
         let _ = sender.send(Command::SetDefaultModel(key.to_string()));
     });
 
+    // ---- tool manager ------------------------------------------------
+    let sender = commands.clone();
+    ui.on_refresh_tools(move || {
+        let _ = sender.send(Command::RefreshTools);
+    });
+    let sender = commands.clone();
+    ui.on_select_tool_server(move |index| {
+        let _ = sender.send(Command::SelectToolServer { index });
+    });
+    let sender = commands.clone();
+    ui.on_select_tool_resource(move |tab, index| {
+        let _ = sender.send(Command::SelectToolResource { tab, index });
+    });
+    let sender = commands.clone();
+    ui.on_load_tool_directory(move |directory| {
+        let _ = sender.send(Command::LoadToolDirectory {
+            directory: directory.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_more_tool_files(move || {
+        let _ = sender.send(Command::MoreToolFiles);
+    });
+    let sender = commands.clone();
+    ui.on_open_tool_file(move |path| {
+        let _ = sender.send(Command::OpenToolFile {
+            path: path.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_save_tool_file(move |path, content| {
+        let _ = sender.send(Command::SaveToolFile {
+            path: path.to_string(),
+            content: content.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_close_tool_file(move || {
+        let _ = sender.send(Command::CloseToolFile);
+    });
+    let sender = commands.clone();
+    ui.on_create_tool_file(move |name| {
+        let _ = sender.send(Command::CreateToolFile {
+            name: name.to_string(),
+        });
+    });
+    ui.on_upload_tool_files(move || {
+        #[cfg(target_os = "android")]
+        crate::android_host::pick_tool_files();
+    });
+    let sender = commands.clone();
+    ui.on_delete_tool_resource(move |tab, name| {
+        let _ = sender.send(Command::DeleteToolResource {
+            tab,
+            name: name.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_connect_tool_server(move |name| {
+        let _ = sender.send(Command::ConnectToolServer {
+            name: name.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_export_skill(move |name| {
+        let _ = sender.send(Command::ExportSkill {
+            name: name.to_string(),
+        });
+    });
+    ui.on_import_skill(move || {
+        #[cfg(target_os = "android")]
+        crate::android_host::pick_skill_archive();
+    });
+    let sender = commands.clone();
+    ui.on_open_tool_editor(move |kind, index| {
+        let _ = sender.send(Command::OpenToolEditor { kind, index });
+    });
+    let sender = commands.clone();
+    ui.on_close_tool_editor(move || {
+        let _ = sender.send(Command::CloseToolEditor);
+    });
+    let sender = commands.clone();
+    ui.on_save_tool_editor(move |kind, mcp, kb| {
+        let _ = sender.send(Command::SaveToolEditor { kind, mcp, kb });
+    });
+
+    // ---- built-in agent ----------------------------------------------
+    let sender = commands.clone();
+    ui.on_refresh_agent(move || {
+        let _ = sender.send(Command::RefreshAgent);
+    });
+    let sender = commands.clone();
+    ui.on_search_agent_tools(move |query| {
+        let _ = sender.send(Command::AgentToolSearch(query.to_string()));
+    });
+    let sender = commands.clone();
+    ui.on_save_agent_text(move |description, prompt| {
+        let _ = sender.send(Command::SaveAgentText {
+            description: description.to_string(),
+            system_prompt: prompt.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_toggle_agent_tool(move |name, enabled, description, prompt| {
+        let _ = sender.send(Command::ToggleAgentTool {
+            name: name.to_string(),
+            enabled,
+            description: description.to_string(),
+            system_prompt: prompt.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_toggle_agent_tool_group(move |title, select, description, prompt| {
+        let _ = sender.send(Command::ToggleAgentToolGroup {
+            title: title.to_string(),
+            select,
+            description: description.to_string(),
+            system_prompt: prompt.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_add_agent_question(move |question, description, prompt| {
+        let _ = sender.send(Command::AddAgentQuestion {
+            question: question.to_string(),
+            description: description.to_string(),
+            system_prompt: prompt.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_remove_agent_question(move |index, description, prompt| {
+        let _ = sender.send(Command::RemoveAgentQuestion {
+            index,
+            description: description.to_string(),
+            system_prompt: prompt.to_string(),
+        });
+    });
+
+    // ---- cron jobs ---------------------------------------------------
+    let sender = commands.clone();
+    ui.on_refresh_cron(move || {
+        let _ = sender.send(Command::RefreshCron);
+    });
+    let sender = commands.clone();
+    ui.on_toggle_cron(move |id, enabled| {
+        let _ = sender.send(Command::ToggleCron {
+            id: id.to_string(),
+            enabled,
+        });
+    });
+    let sender = commands.clone();
+    ui.on_delete_cron(move |id| {
+        let _ = sender.send(Command::DeleteCron { id: id.to_string() });
+    });
+    let sender = commands.clone();
+    ui.on_run_cron_now(move |id| {
+        let _ = sender.send(Command::RunCronNow { id: id.to_string() });
+    });
+    let sender = commands.clone();
+    ui.on_open_cron_runs(move |id| {
+        let _ = sender.send(Command::OpenCronRuns { id: id.to_string() });
+    });
+    let sender = commands.clone();
+    ui.on_close_cron_runs(move || {
+        let _ = sender.send(Command::CloseCronRuns);
+    });
+    let sender = commands.clone();
+    ui.on_open_cron_editor(move |id| {
+        let id = id.to_string();
+        let _ = sender.send(Command::OpenCronEditor {
+            id: if id.is_empty() { None } else { Some(id) },
+        });
+    });
+    let sender = commands.clone();
+    ui.on_close_cron_editor(move || {
+        let _ = sender.send(Command::CloseCronEditor);
+    });
+    let sender = commands.clone();
+    ui.on_save_cron(move |draft| {
+        let _ = sender.send(Command::SaveCron { draft });
+    });
+
+    // ---- memory fragments --------------------------------------------
+    let sender = commands.clone();
+    ui.on_refresh_memory(move || {
+        let _ = sender.send(Command::RefreshMemory);
+    });
+    let sender = commands.clone();
+    ui.on_search_memory(move |query| {
+        let _ = sender.send(Command::MemorySearch(query.to_string()));
+    });
+    let sender = commands.clone();
+    ui.on_set_memory_category(move |category| {
+        let _ = sender.send(Command::MemoryCategory(category.to_string()));
+    });
+    let sender = commands.clone();
+    ui.on_open_memory_editor(move |index| {
+        let _ = sender.send(Command::OpenMemoryEditor { index });
+    });
+    let sender = commands.clone();
+    ui.on_close_memory_editor(move || {
+        let _ = sender.send(Command::CloseMemoryEditor);
+    });
+    let sender = commands.clone();
+    ui.on_save_memory(move |draft| {
+        let _ = sender.send(Command::SaveMemory { draft });
+    });
+    let sender = commands.clone();
+    ui.on_delete_memory(move |id| {
+        let _ = sender.send(Command::DeleteMemory { id: id.to_string() });
+    });
+
+    // ---- cloud account / device switch / approval --------------------
+    let sender = commands.clone();
+    ui.on_cloud_login(move |server, username, password| {
+        let _ = sender.send(Command::CloudLogin {
+            server: server.to_string(),
+            username: username.to_string(),
+            password: password.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_cloud_logout(move || {
+        let _ = sender.send(Command::CloudLogout);
+    });
+    let sender = commands.clone();
+    ui.on_cloud_refresh(move || {
+        let _ = sender.send(Command::RefreshCloudRemote);
+    });
+    let sender = commands.clone();
+    ui.on_cloud_toggle_sync(move |enabled| {
+        let _ = sender.send(Command::CloudSetSync(enabled));
+    });
+    let sender = commands.clone();
+    ui.on_cloud_set_sharing(move |enabled, full_shadow| {
+        let _ = sender.send(Command::CloudSetSharing {
+            enabled,
+            full_shadow,
+        });
+    });
+    let sender = commands.clone();
+    ui.on_switch_chat_target(move |target| {
+        let _ = sender.send(Command::SwitchChatTarget(target));
+    });
+    let sender = commands.clone();
+    ui.on_refresh_devices(move || {
+        let _ = sender.send(Command::RefreshDevices);
+    });
+    let sender = commands.clone();
+    ui.on_cloud_refresh_threads(move || {
+        let _ = sender.send(Command::RefreshCloudThreads);
+    });
+    let sender = commands.clone();
+    ui.on_cloud_new_thread(move || {
+        let _ = sender.send(Command::CloudNewThread);
+    });
+    let sender = commands.clone();
+    ui.on_cloud_select_thread(move |id| {
+        let _ = sender.send(Command::CloudSelectThread(id.to_string()));
+    });
+    let sender = commands.clone();
+    ui.on_cloud_rename(move |id, title| {
+        let _ = sender.send(Command::CloudRename {
+            id: id.to_string(),
+            title: title.to_string(),
+        });
+    });
+    let sender = commands.clone();
+    ui.on_cloud_archive(move |id| {
+        let _ = sender.send(Command::CloudArchive(id.to_string()));
+    });
+    let sender = commands.clone();
+    ui.on_decide_approval(move |id, approve| {
+        let _ = sender.send(Command::DecideApproval {
+            id: id.to_string(),
+            approve,
+        });
+    });
+
+    // ---- channels ----------------------------------------------------
+    let sender = commands.clone();
+    ui.on_refresh_channels(move || {
+        let _ = sender.send(Command::RefreshChannels);
+    });
+    let sender = commands.clone();
+    ui.on_select_channel_account(move |id| {
+        let _ = sender.send(Command::SelectChannelAccount(id.to_string()));
+    });
+    let sender = commands.clone();
+    ui.on_open_channel_editor(move |id| {
+        let _ = sender.send(Command::OpenChannelEditor(id.to_string()));
+    });
+    let sender = commands.clone();
+    ui.on_close_channel_editor(move || {
+        let _ = sender.send(Command::CloseChannelEditor);
+    });
+    let sender = commands.clone();
+    ui.on_save_channel(move |draft| {
+        let _ = sender.send(Command::SaveChannel(draft));
+    });
+    let sender = commands.clone();
+    ui.on_toggle_channel(move |id, enabled| {
+        let _ = sender.send(Command::ToggleChannel {
+            account_id: id.to_string(),
+            enabled,
+        });
+    });
+    let sender = commands.clone();
+    ui.on_delete_channel(move |id| {
+        let _ = sender.send(Command::DeleteChannel(id.to_string()));
+    });
+    let sender = commands.clone();
+    ui.on_open_channel_logs(move |id| {
+        let _ = sender.send(Command::OpenChannelLogs(id.to_string()));
+    });
+    let sender = commands.clone();
+    ui.on_close_channel_logs(move || {
+        let _ = sender.send(Command::CloseChannelLogs);
+    });
+    let sender = commands.clone();
+    ui.on_delete_channel_binding(move |id| {
+        let _ = sender.send(Command::DeleteChannelBinding(id.to_string()));
+    });
+
     let sender = commands.clone();
     ui.on_permission_changed(move |value| {
         let _ = sender.send(Command::PermissionMode(value.to_string()));
@@ -741,6 +1326,20 @@ fn wire_callbacks(
         log::info!("open model settings");
         let _ = sender.send(Command::LoadSettings);
         let _ = sender.send(Command::RefreshUbuntu);
+        if let Some(ui) = weak.upgrade() {
+            ui.set_drawer_open(false);
+            ui.set_settings_page(1);
+            ui.set_settings_open(true);
+        }
+    });
+
+    // 首次配置引导：本机还没有真实模型。打开模型页，并在同一命令序列里新建一个
+    // 草稿编辑器；引擎按顺序处理，所以设置拉取先落地，编辑器随后自动展开。
+    let sender = commands.clone();
+    let weak = ui.as_weak();
+    ui.on_setup_first_model(move || {
+        let _ = sender.send(Command::LoadSettings);
+        let _ = sender.send(Command::OpenModelEditor { key: None });
         if let Some(ui) = weak.upgrade() {
             ui.set_drawer_open(false);
             ui.set_settings_page(1);
@@ -912,43 +1511,115 @@ impl RowCache {
         row
     }
 
-    fn row_items(&mut self, data: &[RowData]) -> Vec<TimelineRow> {
-        data.iter().map(|row| self.row(row)).collect()
+    fn from_iter<'a>(&mut self, data: impl Iterator<Item = &'a RowData>) -> Vec<TimelineRow> {
+        data.map(|row| self.row(row)).collect()
     }
 }
 
-/// True once the durable projection carries the live turn's body or error.
-/// From then on the durable rows are the complete turn and the live tail is
-/// dropped instead of rendered twice.
-fn durable_has_body(rows: &[RowData], root: &str) -> bool {
+/// A running local stream owns the visible transcript. The durable watcher
+/// only publishes commit boundaries (one per model round or tool), so its copy
+/// of the same turn is always behind the live stream; letting that copy shadow
+/// the live footer hid the 请求中/模型输出中 status and froze the work-process
+/// steps between commits.
+fn live_is_authoritative(state: &Shared) -> bool {
+    state.generating && !state.live_rows.is_empty() && state.live_session == state.session_id
+}
+
+/// Root id whose durable rows must be hidden while the live stream owns it.
+/// Before the identity frame arrives the stream's root is still unknown; match
+/// the newest durable running turn carrying the same user message instead, so
+/// the optimistic bubble and its durable twin never render together.
+fn live_owner(state: &Shared) -> Option<String> {
+    if !live_is_authoritative(state) {
+        return None;
+    }
+    if !state.live_root.is_empty() && state.live_root != "live" {
+        return Some(state.live_root.clone());
+    }
+    let text = state
+        .live_rows
+        .iter()
+        .find(|row| row.kind == project::KIND_USER)?
+        .text
+        .clone();
+    project::running_root_for_text(&state.durable_rows, &text)
+}
+
+fn belongs_to_turn(row: &RowData, root: &str) -> bool {
     !root.is_empty()
-        && root != "live"
-        && rows.iter().any(|row| {
-            row.id
+        && (row.id == root
+            || row
+                .id
                 .strip_prefix(root)
-                .and_then(|rest| rest.strip_prefix('-'))
-                .is_some_and(|rest| rest.starts_with("body") || rest.starts_with("error"))
-        })
+                .is_some_and(|rest| rest.starts_with('-')))
+}
+
+/// True once the durable projection carries the live turn's settled body or
+/// error. Only then are the live rows redundant; a body from an earlier model
+/// round must not hide the answer that is still streaming.
+fn durable_covers_live(state: &Shared) -> bool {
+    let root = state.live_root.as_str();
+    if root.is_empty() || root == "live" {
+        return false;
+    }
+    let live_body = state
+        .live_rows
+        .iter()
+        .find(|row| row.kind == project::KIND_BODY)
+        .map(|row| row.text.trim())
+        .filter(|text| !text.is_empty());
+    let live_error = state
+        .live_rows
+        .iter()
+        .find(|row| row.kind == project::KIND_ERROR)
+        .map(|row| row.text.trim())
+        .filter(|text| !text.is_empty());
+    let durable_text = |kind: i32| {
+        state
+            .durable_rows
+            .iter()
+            .filter(move |row| belongs_to_turn(row, root) && row.kind == kind)
+            .map(|row| row.text.trim())
+    };
+    if let Some(text) = live_body {
+        return durable_text(project::KIND_BODY).any(|body| body == text || body.starts_with(text));
+    }
+    if let Some(text) = live_error {
+        return durable_text(project::KIND_ERROR).any(|error| error == text);
+    }
+    durable_text(project::KIND_BODY).next().is_some()
+}
+
+/// The live tail that the transcript should show this frame. While the stream
+/// is attached every live row is kept, and its durable twin is hidden instead;
+/// once the stream settles the durable copy takes over as soon as it carries
+/// the same body.
+fn visible_live_rows<'a>(state: &'a Shared) -> Vec<&'a RowData> {
+    if state.live_rows.is_empty()
+        || (!state.live_session.is_empty() && state.live_session != state.session_id)
+    {
+        return Vec::new();
+    }
+    if live_is_authoritative(state) {
+        return state.live_rows.iter().collect();
+    }
+    if durable_covers_live(state) {
+        return Vec::new();
+    }
+    let durable_ids: std::collections::HashSet<&str> = state
+        .durable_rows
+        .iter()
+        .map(|row| row.id.as_str())
+        .collect();
+    state
+        .live_rows
+        .iter()
+        .filter(|row| !durable_ids.contains(row.id.as_str()))
+        .collect()
 }
 
 /// Same normalization as 桌面版: unknown or legacy theme values fall back to the
 /// default accent instead of leaving the palette unset.
-/// Byte count for the HUD detail card ("9.0G" / "683G"), one decimal under 10.
-fn compact_bytes(value: u64) -> String {
-    let mut amount = value as f64;
-    for unit in ["B", "K", "M", "G"] {
-        if amount < 1024.0 {
-            return if amount < 10.0 {
-                format!("{amount:.1}{unit}")
-            } else {
-                format!("{amount:.0}{unit}")
-            };
-        }
-        amount /= 1024.0;
-    }
-    format!("{amount:.0}T")
-}
-
 fn normalize_palette(theme: &str) -> &'static str {
     match theme.trim() {
         "hula-green" => "hula-green",
@@ -957,6 +1628,53 @@ fn normalize_palette(theme: &str) -> &'static str {
         "minimal" => "minimal",
         "tech-blue" => "tech-blue",
         _ => "terracotta",
+    }
+}
+
+fn permission_row(item: &crate::permissions::PermissionItem) -> MobilePermission {
+    MobilePermission {
+        id: item.id.as_str().into(),
+        title: item.title.as_str().into(),
+        description: item.description.as_str().into(),
+        state_text: item.state_text.as_str().into(),
+        action_text: item.action_text.as_str().into(),
+        granted: item.granted,
+        available: item.available,
+    }
+}
+
+fn update_percent(downloaded: u64, total: u64) -> i32 {
+    if total == 0 {
+        return 0;
+    }
+    (downloaded.min(total).saturating_mul(100) / total) as i32
+}
+
+fn update_progress_text(downloaded: u64, total: u64) -> String {
+    let done = if downloaded == 0 {
+        "0 B".to_string()
+    } else {
+        crate::update::format_size(downloaded)
+    };
+    if total == 0 {
+        format!("已下载 {done}")
+    } else {
+        format!("已下载 {done} / {}", crate::update::format_size(total))
+    }
+}
+
+/// 首装引导只在“还没有可用运行环境”时打开：等待自动安装（missing）或安装中。
+fn env_setup_should_open(state: &str, dismissed: bool) -> bool {
+    !dismissed && matches!(state, "missing" | "installing")
+}
+
+/// 引导页的单调进度：Java 的阶段切换会回退（94 → 85），这里只前进不后退。
+fn next_env_progress(current: i32, state: &str, reported: i32) -> i32 {
+    let reported = reported.clamp(0, 100);
+    if matches!(state, "missing" | "installing") {
+        current.max(reported)
+    } else {
+        reported
     }
 }
 
@@ -974,6 +1692,9 @@ fn start_tick(
     let mut last_rev = 0u64;
     let mut last_rows = 0u64;
     let mut last_live = 0u64;
+    let mut last_live_active = false;
+    let mut last_hide_root = String::new();
+    let mut last_durable_len = 0usize;
     let mut last_toast = 0u64;
     let mut toast_deadline: Option<Instant> = None;
     let mut last_patch = 0u64;
@@ -982,20 +1703,55 @@ fn start_tick(
     let mut last_presets = 0u64;
     let mut last_trajectory = 0u64;
     let mut last_workspace = 0u64;
+    let mut last_workspaces = 0u64;
     let mut last_models = 0u64;
+    let mut last_tools = 0u64;
+    let mut last_tool_editor = 0u64;
+    let mut last_tool_file = 0u64;
+    let mut last_agent = 0u64;
+    let mut last_agent_seed = 0u64;
+    let mut last_cron = 0u64;
+    let mut last_cron_editor = 0u64;
+    let mut last_cron_runs = 0u64;
+    let mut last_memory = 0u64;
+    let mut last_memory_editor = 0u64;
+    let mut last_memory_seed = 0u64;
+    let mut last_target_rev = 0u64;
+    let mut last_cloud = 0u64;
+    let mut last_cloud_threads = 0u64;
+    let mut last_cloud_active = 0u64;
+    let mut last_cloud_rows = 0u64;
+    let mut last_devices = 0u64;
+    let mut last_approval = 0u64;
+    let mut last_channels = 0u64;
+    let mut last_channel_editor = 0u64;
+    let mut channel_editor_was_open = false;
+    let mut last_settings_page = 0;
+    let mut tool_editor_was_open = false;
+    let mut tool_file_was_open = false;
+    let mut cron_editor_was_open = false;
+    let mut memory_editor_was_open = false;
     let mut last_settings = 0u64;
     let mut last_ubuntu = 0u64;
+    // 首装引导：单调进度与「已就绪」停留计时。
+    let mut env_progress = 0i32;
+    let mut env_ready_at: Option<Instant> = None;
+    let mut last_companion = 0u64;
+    let mut last_permissions = 0u64;
+    let mut last_update = 0u64;
+    let mut last_update_progress = -1i32;
+    let mut last_update_downloaded = String::new();
     let mut last_editor = 0u64;
     let mut last_probe = 0u64;
     let mut last_inquiry = 0u64;
     let mut editor_was_open = false;
     let mut last_ime = -1.0f32;
-    let mut last_host: Option<HostHud> = None;
+    #[cfg(target_os = "android")]
+    let mut last_back: Option<Instant> = None;
     let mut host_ticks = 0u32;
     let mut last_voice = 0u64;
     let mut voice_started: Option<Instant> = None;
     let mut last_voice_elapsed = String::new();
-    let sampler = HostHudSampler::start(Duration::from_secs(1));
 
     let timer = Timer::default();
     timer.start(TimerMode::Repeated, TICK, move || {
@@ -1012,32 +1768,66 @@ fn start_tick(
             ui.set_ime_height(ime);
             last_ime = ime;
         }
-        // Hardware readings and live command counts move at 1 Hz, not at the
-        // render tick. Formatting the strings here keeps the phone row cheap.
+        // Live command counts move at 1 Hz, not at the render tick.
         host_ticks = host_ticks.wrapping_add(1);
         if host_ticks % 30 == 0 {
-            let sample = sampler.snapshot();
-            if last_host != Some(sample) {
-                let cpu = sample.cpu_percent.round().clamp(0.0, 100.0) as i32;
-                let memory = sample.memory_percent.round().clamp(0.0, 100.0) as i32;
-                ui.set_host_cpu(cpu as f32 / 100.0);
-                ui.set_host_memory(memory as f32 / 100.0);
-                ui.set_host_cpu_text(format!("{cpu}%").as_str().into());
-                ui.set_host_memory_text(format!("{memory}%").as_str().into());
-                ui.set_host_memory_used(compact_bytes(sample.memory_used).as_str().into());
-                ui.set_host_memory_total(compact_bytes(sample.memory_total).as_str().into());
-                ui.set_host_cores(sample.cores as i32);
-                last_host = Some(sample);
-            }
             let _ = commands.send(Command::RefreshTasks);
+        }
+        // Settings pages 7 (tools) and 8 (agent) are opened inside the Slint
+        // sheet, so the shell detects the page transition and asks the engine
+        // for the matching projection once.
+        let settings_page = ui.get_settings_page();
+        if settings_page != last_settings_page {
+            if settings_page == 7 {
+                let _ = commands.send(Command::RefreshTools);
+            } else if settings_page == 8 {
+                let _ = commands.send(Command::RefreshAgent);
+            } else if settings_page == 9 {
+                let _ = commands.send(Command::RefreshCron);
+            } else if settings_page == 10 {
+                let _ = commands.send(Command::RefreshMemory);
+            } else if settings_page == 13 {
+                let _ = commands.send(Command::RefreshCloudAccount);
+                let _ = commands.send(Command::RefreshDevices);
+            } else if settings_page == 14 {
+                let _ = commands.send(Command::RefreshChannels);
+            } else if settings_page == 11 {
+                let _ = commands.send(Command::RefreshCompanion);
+            } else if settings_page == 12 {
+                let _ = commands.send(Command::RefreshPermissions);
+            } else if settings_page == 6 {
+                let _ = commands.send(Command::CheckAndroidUpdate);
+            }
+            last_settings_page = settings_page;
+        }
+        // The overlay permission is granted in the system settings app; while
+        // the companion page is open, poll so returning to the sheet flips the
+        // permission row without another tap.
+        if settings_page == 11 && host_ticks % 30 == 0 {
+            let _ = commands.send(Command::RefreshCompanion);
+        }
+        // The permission manager polls while visible so returning from a
+        // system settings page updates every row without a manual refresh.
+        if settings_page == 12 && host_ticks % 30 == 0 {
+            let _ = commands.send(Command::RefreshPermissions);
         }
         // The file picker and the legacy save dialog answer on Java threads.
         // Move their results into the engine queue from the UI tick so the
         // JNI callbacks never touch Slint or the engine state directly.
         #[cfg(target_os = "android")]
-        if ui.get_workspace_open() || host_ticks % 30 == 0 {
-            for (dir, files) in crate::android_host::take_picked_uploads() {
-                let _ = commands.send(Command::UploadWorkspace { dir, files });
+        if ui.get_workspace_open() || ui.get_settings_page() == 7 || host_ticks % 30 == 0 {
+            if let Some(picked) = crate::android_host::take_picked() {
+                match picked {
+                    crate::android_host::PickedFiles::Workspace { dir, files } => {
+                        let _ = commands.send(Command::UploadWorkspace { dir, files });
+                    }
+                    crate::android_host::PickedFiles::ToolFiles(files) => {
+                        let _ = commands.send(Command::UploadToolFiles { files });
+                    }
+                    crate::android_host::PickedFiles::SkillArchive(path) => {
+                        let _ = commands.send(Command::ImportSkill { path });
+                    }
+                }
             }
             for (ok, name) in crate::android_host::take_save_results() {
                 let _ = commands.send(Command::WorkspaceSaved { ok, name });
@@ -1068,6 +1858,37 @@ fn start_tick(
                 let _ = commands.send(Command::ScreenshotResult { status });
             }
         }
+        // Back presses are recorded by the activity. Resolve them on the UI
+        // thread so page state, keyboard state and the exit prompt all read
+        // the same snapshot the user is looking at.
+        #[cfg(target_os = "android")]
+        if host_ticks % 3 == 0 {
+            for _ in 0..crate::android_host::take_back_requests() {
+                if !handle_back(&ui, &shared, &mut last_back) {
+                    crate::android_host::finish_activity();
+                    break;
+                }
+            }
+        }
+        // A cancelled or failed system install must return the update card to
+        // a retryable state; otherwise it would stay "installing" forever.
+        #[cfg(target_os = "android")]
+        if host_ticks % 6 == 0 && ui.get_update_phase() == "installing" {
+            if let Some(result) = crate::android_host::take_install_result() {
+                if let Ok(mut state) = shared.lock() {
+                    if state.update_phase == "installing" {
+                        state.update_phase = "ready".into();
+                        state.update_error.clear();
+                        if let Some(message) = result.strip_prefix("failed:") {
+                            let message = message.to_string();
+                            state.notify(format!("安装失败：{message}"));
+                        }
+                        state.update_rev = state.update_rev.wrapping_add(1);
+                        state.touch();
+                    }
+                }
+            }
+        }
         let pending_draft = shared
             .lock()
             .ok()
@@ -1079,23 +1900,37 @@ fn start_tick(
             ui.set_plus_open(false);
             ui.set_plus_view(0);
         }
+        // Cloud session polling and approval intake run at background cadence,
+        // not at the 30 fps render tick.
+        if host_ticks % 45 == 0 && ui.get_settings_chat_target() == 1 {
+            let _ = commands.send(Command::CloudPoll);
+        }
+        if host_ticks % 60 == 0 && ui.get_settings_cloud_logged_in() {
+            let _ = commands.send(Command::PollApprovals);
+        }
+        if host_ticks % 300 == 0 {
+            let _ = commands.send(Command::RefreshCloudAccount);
+            let _ = commands.send(Command::RefreshDevices);
+        }
+        if host_ticks % 1800 == 0 && ui.get_settings_cloud_logged_in() {
+            let _ = commands.send(Command::RefreshCloudRemote);
+        }
         let Ok(state) = shared.lock() else { return };
 
         if state.rev != last_rev {
-            ui.set_thread_title(state.title.as_str().into());
-            ui.set_thread_subtitle(state.subtitle.as_str().into());
-            ui.set_workspace_name(state.workspace.as_str().into());
-            ui.set_connection_state(state.connection.as_str().into());
-            ui.set_generating(state.generating);
-            ui.set_stopping(state.stopping);
-            ui.set_loading(state.loading);
-            ui.set_spinning(state.generating || state.loading);
-            ui.set_model_name(state.model_name.as_str().into());
-            ui.set_model_key(state.model_key.as_str().into());
             ui.set_send_key(state.send_key.as_str().into());
-            ui.set_stream_revision(state.stream_revision);
-            ui.set_running_task_count(state.running_task_count);
-            ui.set_subagent_count(state.subagent_count);
+            if state.target == 0 {
+                ui.set_thread_title(state.title.as_str().into());
+                ui.set_thread_subtitle(state.subtitle.as_str().into());
+                ui.set_workspace_name(state.workspace.as_str().into());
+                ui.set_generating(state.generating);
+                ui.set_stopping(state.stopping);
+                ui.set_loading(state.loading);
+                ui.set_spinning(state.generating || state.loading);
+                ui.set_model_name(state.model_name.as_str().into());
+                ui.set_model_key(state.model_key.as_str().into());
+                ui.set_stream_revision(state.stream_revision);
+            }
             last_rev = state.rev;
         }
 
@@ -1122,11 +1957,269 @@ fn start_tick(
             }
         }
 
-        if state.sessions_rev != last_sessions {
+        if state.target == 0 && state.sessions_rev != last_sessions {
             ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(
                 state.sessions.clone(),
             ))));
             last_sessions = state.sessions_rev;
+        }
+
+        if state.target_rev != last_target_rev {
+            ui.set_settings_chat_target(state.target);
+            if state.target == 1 {
+                ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(
+                    state.cloud_threads.clone(),
+                ))));
+                let active = &state.cloud_active;
+                ui.set_thread_title(
+                    if active.title.is_empty() {
+                        "云端会话"
+                    } else {
+                        active.title.as_str()
+                    }
+                    .into(),
+                );
+                ui.set_thread_subtitle(
+                    if active.status.is_empty() {
+                        "云端".to_string()
+                    } else {
+                        format!("云端 · {}", active.status)
+                    }
+                    .into(),
+                );
+                ui.set_workspace_name("云端工作区".into());
+                ui.set_model_name(active.model.as_str().into());
+                ui.set_model_key(active.model.as_str().into());
+                ui.set_generating(false);
+                ui.set_stopping(false);
+                ui.set_loading(active.loading);
+                ui.set_spinning(active.loading);
+                ui.set_inquiry_questions(ModelRc::default());
+                ui.set_inquiry_page(0);
+                ui.set_inquiry_total(0);
+                ui.set_inquiry_expanded(false);
+                ui.set_inquiry_ready(false);
+                if active.rows.is_empty() {
+                    model.set_vec(Vec::new());
+                } else {
+                    model.set_vec(cache.from_iter(active.rows.iter()));
+                }
+            } else {
+                ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(
+                    state.sessions.clone(),
+                ))));
+                ui.set_thread_title(state.title.as_str().into());
+                ui.set_thread_subtitle(state.subtitle.as_str().into());
+                ui.set_workspace_name(state.workspace.as_str().into());
+                ui.set_generating(state.generating);
+                ui.set_stopping(state.stopping);
+                ui.set_loading(state.loading);
+                ui.set_spinning(state.generating || state.loading);
+                ui.set_model_name(state.model_name.as_str().into());
+                ui.set_model_key(state.model_key.as_str().into());
+                last_rows = u64::MAX;
+                last_live = u64::MAX;
+                last_inquiry = u64::MAX;
+            }
+            last_target_rev = state.target_rev;
+        }
+
+        if state.cloud_rev != last_cloud {
+            ui.set_settings_cloud_logged_in(state.cloud.logged_in);
+            ui.set_settings_cloud_expired(state.cloud.expired);
+            ui.set_settings_cloud_connection(state.cloud.connection.as_str().into());
+            ui.set_settings_cloud_server(state.cloud.server.as_str().into());
+            ui.set_settings_cloud_username(state.cloud.username.as_str().into());
+            ui.set_settings_cloud_balance(state.cloud.balance.min(i32::MAX as i64) as i32);
+            ui.set_settings_cloud_daily_grant(state.cloud.daily_grant.min(i32::MAX as i64) as i32);
+            ui.set_settings_cloud_max_concurrent(state.cloud.max_concurrent.min(i32::MAX as u64) as i32);
+            ui.set_settings_cloud_active_concurrent(
+                state.cloud.active_concurrent.min(i32::MAX as u64) as i32,
+            );
+            ui.set_settings_cloud_sync_enabled(state.cloud.sync_enabled);
+            ui.set_settings_cloud_inbound_enabled(state.cloud.inbound_enabled);
+            ui.set_settings_cloud_full_shadow(state.cloud.full_shadow);
+            ui.set_settings_cloud_last_error(state.cloud.last_error.as_str().into());
+            ui.set_settings_cloud_last_success(state.cloud.last_success_at.as_str().into());
+            ui.set_settings_cloud_next_retry(state.cloud.next_retry_at.as_str().into());
+            ui.set_settings_cloud_device_name(state.cloud.device_name.as_str().into());
+            last_cloud = state.cloud_rev;
+        }
+
+        if state.devices_rev != last_devices {
+            ui.set_settings_devices(ModelRc::from(Rc::new(VecModel::from(
+                state
+                    .devices
+                    .iter()
+                    .map(|device| crate::MobileDevice {
+                        id: device.id.as_str().into(),
+                        kind: device.kind.as_str().into(),
+                        label: device.label.as_str().into(),
+                        status: device.status.as_str().into(),
+                        connected: device.connected,
+                        current: device.current,
+                        selectable: device.selectable,
+                    })
+                    .collect::<Vec<_>>(),
+            ))));
+            let current = state
+                .devices
+                .iter()
+                .find(|device| device.current)
+                .map(|device| device.label.clone())
+                .unwrap_or_else(|| "本机".to_string());
+            ui.set_settings_current_device(current.into());
+            last_devices = state.devices_rev;
+        }
+
+        if state.cloud_threads_rev != last_cloud_threads && state.target == 1 {
+            ui.set_sessions(ModelRc::from(Rc::new(VecModel::from(
+                state.cloud_threads.clone(),
+            ))));
+            last_cloud_threads = state.cloud_threads_rev;
+        }
+
+        if state.target == 1 && state.cloud_active_rev != last_cloud_active {
+            let active = &state.cloud_active;
+            ui.set_thread_title(
+                if active.title.is_empty() {
+                    "云端会话"
+                } else {
+                    active.title.as_str()
+                }
+                .into(),
+            );
+            ui.set_thread_subtitle(
+                if active.status.is_empty() {
+                    "云端".to_string()
+                } else {
+                    format!("云端 · {}", active.status)
+                }
+                .into(),
+            );
+            ui.set_model_name(active.model.as_str().into());
+            ui.set_model_key(active.model.as_str().into());
+            ui.set_generating(matches!(active.status.as_str(), "running" | "queued"));
+            ui.set_stopping(false);
+            ui.set_loading(active.loading);
+            ui.set_spinning(active.loading || active.status == "running");
+            ui.set_stream_revision(state.cloud_active_rev.min(i32::MAX as u64) as i32);
+            last_cloud_active = state.cloud_active_rev;
+        }
+
+        if state.approval_rev != last_approval {
+            match &state.approval {
+                Some(approval) => {
+                    ui.set_settings_approval_open(true);
+                    ui.set_settings_approval_id(approval.id.as_str().into());
+                    ui.set_settings_approval_from(approval.from_node.as_str().into());
+                    ui.set_settings_approval_kind(approval.kind.as_str().into());
+                    ui.set_settings_approval_risk(approval.risk.as_str().into());
+                    ui.set_settings_approval_prompt(approval.prompt.as_str().into());
+                }
+                None => ui.set_settings_approval_open(false),
+            }
+            last_approval = state.approval_rev;
+        }
+
+        if state.channels_rev != last_channels {
+            ui.set_settings_channel_accounts(ModelRc::from(Rc::new(VecModel::from(
+                state
+                    .channels
+                    .accounts
+                    .iter()
+                    .map(|account| crate::MobileChannelAccount {
+                        channel: account.channel.as_str().into(),
+                        channel_name: account.channel_name.as_str().into(),
+                        account_id: account.account_id.as_str().into(),
+                        name: account.name.as_str().into(),
+                        status: account.status.as_str().into(),
+                        active: account.active,
+                        configured: account.configured,
+                        summary: account.summary.as_str().into(),
+                        secret_set: account.secret_set,
+                    })
+                    .collect::<Vec<_>>(),
+            ))));
+            ui.set_settings_channel_catalog(ModelRc::from(Rc::new(VecModel::from(
+                state
+                    .channels
+                    .catalog
+                    .iter()
+                    .map(|item| crate::MobileChannelCatalog {
+                        channel: item.channel.as_str().into(),
+                        name: item.name.as_str().into(),
+                        description: item.description.as_str().into(),
+                    })
+                    .collect::<Vec<_>>(),
+            ))));
+            ui.set_settings_channel_catalog_ids(ModelRc::from(Rc::new(VecModel::from(
+                state
+                    .channels
+                    .catalog
+                    .iter()
+                    .map(|item| item.channel.as_str().into())
+                    .collect::<Vec<slint::SharedString>>(),
+            ))));
+            ui.set_settings_channel_catalog_names(ModelRc::from(Rc::new(VecModel::from(
+                state
+                    .channels
+                    .catalog
+                    .iter()
+                    .map(|item| item.name.as_str().into())
+                    .collect::<Vec<slint::SharedString>>(),
+            ))));
+            ui.set_settings_channel_bindings(ModelRc::from(Rc::new(VecModel::from(
+                state
+                    .channels
+                    .bindings
+                    .iter()
+                    .map(|binding| crate::MobileChannelBinding {
+                        binding_id: binding.binding_id.as_str().into(),
+                        channel: binding.channel.as_str().into(),
+                        account_id: binding.account_id.as_str().into(),
+                        peer_kind: binding.peer_kind.as_str().into(),
+                        peer_id: binding.peer_id.as_str().into(),
+                        agent_id: binding.agent_id.as_str().into(),
+                        enabled: binding.enabled,
+                    })
+                    .collect::<Vec<_>>(),
+            ))));
+            ui.set_settings_channel_logs(ModelRc::from(Rc::new(VecModel::from(
+                state
+                    .channels
+                    .logs
+                    .iter()
+                    .map(|log| crate::MobileChannelLog {
+                        time: log.time.as_str().into(),
+                        level: log.level.as_str().into(),
+                        event: log.event.as_str().into(),
+                        message: log.message.as_str().into(),
+                    })
+                    .collect::<Vec<_>>(),
+            ))));
+            ui.set_settings_channel_selected(state.channels.selected.as_str().into());
+            ui.set_settings_channel_logs_open(state.channels.logs_open);
+            last_channels = state.channels_rev;
+        }
+
+        if state.channel_editor_rev != last_channel_editor {
+            match &state.channel_editor {
+                Some(editor) => {
+                    ui.set_settings_channel_editor_open(true);
+                    ui.set_settings_channel_editor_new(editor.is_new);
+                    ui.set_settings_channel_editor_error(editor.error.as_str().into());
+                    if !channel_editor_was_open {
+                        ui.set_settings_channel_draft(editor.draft.clone());
+                    }
+                    channel_editor_was_open = true;
+                }
+                None => {
+                    ui.set_settings_channel_editor_open(false);
+                    channel_editor_was_open = false;
+                }
+            }
+            last_channel_editor = state.channel_editor_rev;
         }
 
         if state.archived_rev != last_archived {
@@ -1147,7 +2240,7 @@ fn start_tick(
             last_presets = state.preset_rev;
         }
 
-        if state.inquiry_rev != last_inquiry {
+        if state.target == 0 && state.inquiry_rev != last_inquiry {
             match &state.inquiry {
                 Some(panel) => {
                     let rows: Vec<InquiryQuestion> = if panel.expanded {
@@ -1205,10 +2298,229 @@ fn start_tick(
             last_workspace = state.workspace_rev;
         }
 
+        if state.workspaces_rev != last_workspaces {
+            ui.set_workspaces(ModelRc::from(Rc::new(VecModel::from(
+                state.workspaces.clone(),
+            ))));
+            if let Some(active) = state.workspaces.iter().find(|workspace| workspace.active) {
+                ui.set_workspace_icon(active.icon.clone());
+                ui.set_workspace_color(active.color.clone());
+                ui.set_workspace_thread_count(active.thread_count);
+            }
+            last_workspaces = state.workspaces_rev;
+        }
+
         if state.models_rev != last_models {
             ui.set_models(ModelRc::from(Rc::new(VecModel::from(state.models.clone()))));
             ui.set_model_catalogue_count(state.models.len() as i32);
+            // Only the seeded 虚拟模型 (provider `virtual_replay`) is present:
+            // chatting cannot reach a real LLM, so the chat surface offers the
+            // first-run setup banner. The literal mirrors
+            // services::virtual_llm::VIRTUAL_REPLAY_PROVIDER.
+            ui.set_needs_model_setup(
+                !state.models.is_empty()
+                    && state
+                        .models
+                        .iter()
+                        .all(|model| model.provider == "virtual_replay"),
+            );
             last_models = state.models_rev;
+        }
+
+        if state.tools_rev != last_tools {
+            ui.set_settings_tools_builtin(ModelRc::from(Rc::new(VecModel::from(
+                state.tools.builtin.clone(),
+            ))));
+            ui.set_settings_tools_mcp(ModelRc::from(Rc::new(VecModel::from(
+                state.tools.mcp_tools.clone(),
+            ))));
+            ui.set_settings_tools_skills(ModelRc::from(Rc::new(VecModel::from(
+                state.tools.skill_tools.clone(),
+            ))));
+            ui.set_settings_tools_knowledge(ModelRc::from(Rc::new(VecModel::from(
+                state.tools.knowledge_tools.clone(),
+            ))));
+            ui.set_settings_tools_servers(ModelRc::from(Rc::new(VecModel::from(
+                state.tools.servers.clone(),
+            ))));
+            ui.set_settings_tools_skill_resources(ModelRc::from(Rc::new(VecModel::from(
+                state.tools.skills.clone(),
+            ))));
+            ui.set_settings_tools_bases(ModelRc::from(Rc::new(VecModel::from(
+                state.tools.bases.clone(),
+            ))));
+            ui.set_settings_tool_server_tools(ModelRc::from(Rc::new(VecModel::from(
+                state.tools.server_tools.clone(),
+            ))));
+            ui.set_settings_tool_active_server(state.tools.active_server.as_str().into());
+            ui.set_settings_tool_active_resource(state.tools.browse_resource.as_str().into());
+            ui.set_settings_tool_resource_tab(state.tools.browse_tab);
+            ui.set_settings_tool_resource_editable(state.tools.browse_editable);
+            ui.set_settings_tool_files(ModelRc::from(Rc::new(VecModel::from(
+                state.tools.files.clone(),
+            ))));
+            ui.set_settings_tool_directory(state.tools.directory.as_str().into());
+            ui.set_settings_tool_has_more(state.tools.has_more);
+            last_tools = state.tools_rev;
+        }
+
+        if state.tool_editor_rev != last_tool_editor {
+            match &state.tool_editor {
+                Some(editor) => {
+                    ui.set_settings_tool_editor_kind(editor.kind);
+                    ui.set_settings_tool_editor_new(editor.is_new);
+                    ui.set_settings_tool_editor_error(editor.error.as_str().into());
+                    if !tool_editor_was_open {
+                        ui.set_settings_mcp_draft(editor.mcp.clone());
+                        ui.set_settings_kb_draft(editor.kb.clone());
+                    }
+                    tool_editor_was_open = true;
+                }
+                None => {
+                    ui.set_settings_tool_editor_kind(0);
+                    tool_editor_was_open = false;
+                }
+            }
+            last_tool_editor = state.tool_editor_rev;
+        }
+
+        if state.tool_file_rev != last_tool_file {
+            match &state.tool_file {
+                Some(file) => {
+                    if !tool_file_was_open {
+                        ui.set_settings_tool_file_content(file.content.as_str().into());
+                    }
+                    ui.set_settings_tool_file_path(file.path.as_str().into());
+                    ui.set_settings_tool_file_readonly(file.readonly);
+                    ui.set_settings_tool_file_error(file.error.as_str().into());
+                    ui.set_settings_tool_file_open(true);
+                    tool_file_was_open = true;
+                }
+                None => {
+                    ui.set_settings_tool_file_open(false);
+                    tool_file_was_open = false;
+                }
+            }
+            last_tool_file = state.tool_file_rev;
+        }
+
+        if state.agent_rev != last_agent {
+            ui.set_settings_agent_name(state.agent.name.as_str().into());
+            ui.set_settings_agent_tool_count(state.agent.tool_count);
+            let groups: Vec<crate::MobileToolGroup> = state
+                .agent
+                .groups
+                .iter()
+                .map(|group| crate::MobileToolGroup {
+                    title: group.title.as_str().into(),
+                    tools: ModelRc::new(VecModel::from(group.tools.clone())),
+                    all_selected: group.all_selected,
+                })
+                .collect();
+            ui.set_settings_agent_groups(ModelRc::from(Rc::new(VecModel::from(groups))));
+            let questions: Vec<slint::SharedString> = state
+                .agent
+                .preset_questions
+                .iter()
+                .map(|question| question.as_str().into())
+                .collect();
+            ui.set_settings_agent_questions(ModelRc::from(Rc::new(VecModel::from(questions))));
+            if state.agent.seed != last_agent_seed {
+                ui.set_settings_agent_description(state.agent.description.as_str().into());
+                ui.set_settings_agent_prompt(state.agent.system_prompt.as_str().into());
+                ui.set_settings_agent_search(state.agent.search.as_str().into());
+                last_agent_seed = state.agent.seed;
+            }
+            last_agent = state.agent_rev;
+        }
+
+        if state.cron_rev != last_cron {
+            ui.set_settings_cron_jobs(ModelRc::from(Rc::new(VecModel::from(
+                state.cron.jobs.clone(),
+            ))));
+            ui.set_settings_cron_workspaces(ModelRc::from(Rc::new(VecModel::from(
+                state
+                    .cron
+                    .workspaces
+                    .iter()
+                    .map(|workspace| workspace.name.as_str().into())
+                    .collect::<Vec<slint::SharedString>>(),
+            ))));
+            last_cron = state.cron_rev;
+        }
+
+        if state.cron_editor_rev != last_cron_editor {
+            match &state.cron_editor {
+                Some(editor) => {
+                    ui.set_settings_cron_editor_open(true);
+                    ui.set_settings_cron_editor_new(editor.is_new);
+                    ui.set_settings_cron_editor_error(editor.error.as_str().into());
+                    ui.set_settings_cron_editor_saving(editor.saving);
+                    if !cron_editor_was_open {
+                        ui.set_settings_cron_draft(editor.draft.clone());
+                    }
+                    cron_editor_was_open = true;
+                }
+                None => {
+                    ui.set_settings_cron_editor_open(false);
+                    ui.set_settings_cron_editor_saving(false);
+                    cron_editor_was_open = false;
+                }
+            }
+            last_cron_editor = state.cron_editor_rev;
+        }
+
+        if state.cron_runs_rev != last_cron_runs {
+            ui.set_settings_cron_runs_open(state.cron_runs.open);
+            ui.set_settings_cron_runs_loading(state.cron_runs.loading);
+            ui.set_settings_cron_runs_title(state.cron_runs.title.as_str().into());
+            ui.set_settings_cron_runs(ModelRc::from(Rc::new(VecModel::from(
+                state.cron_runs.runs.clone(),
+            ))));
+            last_cron_runs = state.cron_runs_rev;
+        }
+
+        if state.memory_rev != last_memory {
+            ui.set_settings_memories(ModelRc::from(Rc::new(VecModel::from(
+                state.memory.memories.clone(),
+            ))));
+            ui.set_settings_memory_categories(ModelRc::from(Rc::new(VecModel::from(
+                state
+                    .memory
+                    .categories
+                    .iter()
+                    .map(|category| category.as_str().into())
+                    .collect::<Vec<slint::SharedString>>(),
+            ))));
+            ui.set_settings_memory_category(state.memory.category.as_str().into());
+            ui.set_settings_memory_loading(state.memory.loading);
+            ui.set_settings_memory_error(state.memory.error.as_str().into());
+            if state.memory.seed != last_memory_seed {
+                ui.set_settings_memory_query(state.memory.query.as_str().into());
+                last_memory_seed = state.memory.seed;
+            }
+            last_memory = state.memory_rev;
+        }
+
+        if state.memory_editor_rev != last_memory_editor {
+            match &state.memory_editor {
+                Some(editor) => {
+                    ui.set_settings_memory_editor_open(true);
+                    ui.set_settings_memory_editor_new(editor.is_new);
+                    ui.set_settings_memory_editor_error(editor.error.as_str().into());
+                    ui.set_settings_memory_editor_saving(editor.saving);
+                    if !memory_editor_was_open {
+                        ui.set_settings_memory_draft(editor.draft.clone());
+                    }
+                    memory_editor_was_open = true;
+                }
+                None => {
+                    ui.set_settings_memory_editor_open(false);
+                    ui.set_settings_memory_editor_saving(false);
+                    memory_editor_was_open = false;
+                }
+            }
+            last_memory_editor = state.memory_editor_rev;
         }
 
         if state.ubuntu.state == "installing" {
@@ -1227,6 +2539,14 @@ fn start_tick(
             ui.set_settings_language(state.settings.language.as_str().into());
             ui.set_settings_workspace(state.settings.workspace_root.as_str().into());
             ui.set_settings_version(state.settings.version.as_str().into());
+            ui.set_update_channel(
+                if state.settings.update_source == "github" {
+                    "github"
+                } else {
+                    "cloud"
+                }
+                .into(),
+            );
             let theme = ui.global::<Theme>();
             theme.set_palette(normalize_palette(&state.settings.theme).into());
             theme.set_font_scale(state.settings.font_size.clamp(12, 20) as f32 / 14.0);
@@ -1240,7 +2560,102 @@ fn start_tick(
             ui.set_settings_ubuntu_version(state.ubuntu.version.as_str().into());
             ui.set_settings_ubuntu_error(state.ubuntu.error.as_str().into());
             ui.set_settings_ubuntu_enabled(state.ubuntu.enabled);
+            // 首装引导：还没有可用运行环境（等待自动安装或安装中）时全屏展示。
+            env_progress =
+                next_env_progress(env_progress, state.ubuntu.state.as_str(), state.ubuntu.progress);
+            ui.set_env_setup_progress(env_progress);
+            if env_setup_should_open(state.ubuntu.state.as_str(), state.env_setup_dismissed) {
+                ui.set_env_setup_open(true);
+            }
             last_ubuntu = state.ubuntu_rev;
+        }
+
+        // 安装完成先停留片刻展示「已就绪」，再放行聊天界面。
+        if ui.get_env_setup_open() {
+            if state.ubuntu.state == "installed" {
+                let ready_at = *env_ready_at.get_or_insert_with(Instant::now);
+                if ready_at.elapsed() >= Duration::from_millis(700) {
+                    ui.set_env_setup_open(false);
+                    env_ready_at = None;
+                }
+            } else if state.ubuntu.state == "unsupported" {
+                ui.set_env_setup_open(false);
+                env_ready_at = None;
+            } else {
+                env_ready_at = None;
+            }
+        }
+
+        if state.companion_rev != last_companion {
+            ui.set_settings_companion_enabled(state.companion.enabled);
+            ui.set_settings_companion_selected(state.companion.selected_id.as_str().into());
+            let selected_name = state
+                .companion
+                .companions
+                .iter()
+                .find(|choice| choice.id == state.companion.selected_id)
+                .map(|choice| choice.name.as_str())
+                .unwrap_or("");
+            ui.set_settings_companion_selected_name(selected_name.into());
+            ui.set_settings_companion_scale(state.companion.scale);
+            ui.set_settings_companion_hints(state.companion.message_hints);
+            ui.set_settings_companion_permission(state.companion.permission.as_str().into());
+            let names: Vec<slint::SharedString> = state
+                .companion
+                .companions
+                .iter()
+                .map(|choice| choice.name.as_str().into())
+                .collect();
+            let ids: Vec<slint::SharedString> = state
+                .companion
+                .companions
+                .iter()
+                .map(|choice| choice.id.as_str().into())
+                .collect();
+            ui.set_settings_companion_names(ModelRc::from(Rc::new(VecModel::from(names))));
+            ui.set_settings_companion_ids(ModelRc::from(Rc::new(VecModel::from(ids))));
+            last_companion = state.companion_rev;
+        }
+
+        if state.permissions_rev != last_permissions {
+            let items: Vec<MobilePermission> =
+                state.permissions.iter().map(permission_row).collect();
+            ui.set_permission_items(ModelRc::from(Rc::new(VecModel::from(items))));
+            ui.set_permission_summary(state.permission_summary.as_str().into());
+            last_permissions = state.permissions_rev;
+        }
+
+        if state.update_rev != last_update {
+            ui.set_update_phase(state.update_phase.as_str().into());
+            ui.set_update_version(state.update_version.as_str().into());
+            ui.set_update_notes(state.update_notes.as_str().into());
+            ui.set_update_source(state.update_source.as_str().into());
+            ui.set_update_size(state.update_size_text.as_str().into());
+            ui.set_update_error(state.update_error.as_str().into());
+            let percent = update_percent(state.update_progress_bytes.load(Ordering::Relaxed), state.update_size_bytes);
+            ui.set_update_progress(percent);
+            let downloaded = update_progress_text(
+                state.update_progress_bytes.load(Ordering::Relaxed),
+                state.update_size_bytes,
+            );
+            ui.set_update_downloaded(downloaded.as_str().into());
+            last_update_progress = percent;
+            last_update_downloaded = downloaded;
+            last_update = state.update_rev;
+        } else if state.update_phase == "downloading" {
+            // The download worker updates the atomic counter without touching
+            // the revision; poll it here so the progress bar moves smoothly.
+            let bytes = state.update_progress_bytes.load(Ordering::Relaxed);
+            let percent = update_percent(bytes, state.update_size_bytes);
+            if percent != last_update_progress {
+                ui.set_update_progress(percent);
+                last_update_progress = percent;
+            }
+            let text = update_progress_text(bytes, state.update_size_bytes);
+            if text != last_update_downloaded {
+                ui.set_update_downloaded(text.as_str().into());
+                last_update_downloaded = text;
+            }
         }
 
         if state.editor_rev != last_editor {
@@ -1284,39 +2699,57 @@ fn start_tick(
             toast_deadline = None;
         }
 
-        if state.rows_rev != last_rows || state.live_rev != last_live {
-            // The durable watcher and the live stream can describe the same
-            // turn. Drop exact duplicates (the user bubble, an error card) as
-            // soon as they exist in both, and once the durable projection has
-            // the turn's body or error the live rows are redundant entirely.
-            let live: Vec<RowData> = if state.live_rows.is_empty() {
-                Vec::new()
-            } else if durable_has_body(&state.durable_rows, &state.live_root) {
-                Vec::new()
+        if state.target == 1 && state.cloud_active_rev != last_cloud_rows {
+            let rows = cache.from_iter(state.cloud_active.rows.iter());
+            model.set_vec(rows);
+            last_cloud_rows = state.cloud_active_rev;
+        }
+
+        if state.target == 0 && (state.rows_rev != last_rows || state.live_rev != last_live) {
+            // While the local stream is attached its rows are authoritative
+            // for that turn: the durable watcher publishes only commit
+            // boundaries and would replace the live 请求中/模型输出中 footer
+            // and the in-flight work-process steps with a stale copy.
+            let live_active = live_is_authoritative(&state);
+            let live = visible_live_rows(&state);
+            let hide_root = if live_active {
+                live_owner(&state).unwrap_or_default()
             } else {
-                let durable_ids: std::collections::HashSet<&str> = state
+                String::new()
+            };
+            let hide_root = hide_root.as_str();
+            let durable_len = if hide_root.is_empty() {
+                state.durable_rows.len()
+            } else {
+                state
                     .durable_rows
                     .iter()
-                    .map(|row| row.id.as_str())
-                    .collect();
-                state
-                    .live_rows
-                    .iter()
-                    .filter(|row| !durable_ids.contains(row.id.as_str()))
-                    .cloned()
-                    .collect()
+                    .filter(|row| !belongs_to_turn(row, hide_root))
+                    .count()
             };
-            if state.rows_rev != last_rows {
-                let mut rows = Vec::with_capacity(state.durable_rows.len() + live.len());
-                rows.extend(cache.row_items(&state.durable_rows));
-                rows.extend(cache.row_items(&live));
+            // A full rebuild is only needed when the durable prefix or its
+            // visibility changed. A streaming token still patches just the
+            // live tail, so the 33 ms tick never re-hashes the whole history.
+            let full = state.rows_rev != last_rows
+                || live_active != last_live_active
+                || hide_root != last_hide_root.as_str()
+                || durable_len != last_durable_len;
+            if full {
+                let mut rows = Vec::with_capacity(durable_len + live.len());
+                for row in &state.durable_rows {
+                    if !hide_root.is_empty() && belongs_to_turn(row, hide_root) {
+                        continue;
+                    }
+                    rows.push(cache.row(row));
+                }
+                rows.extend(cache.from_iter(live.iter().copied()));
                 model.set_vec(rows);
                 last_rows = state.rows_rev;
+                last_durable_len = durable_len;
             } else {
-                let durable_len = state.durable_rows.len();
                 let total = durable_len + live.len();
                 let have = model.row_count();
-                let rows = cache.row_items(&live);
+                let rows = cache.from_iter(live.iter().copied());
                 for index in durable_len..total.min(have) {
                     model.set_row_data(index, rows[index - durable_len].clone());
                 }
@@ -1328,11 +2761,21 @@ fn start_tick(
                 }
             }
             last_live = state.live_rev;
+            last_live_active = live_active;
+            last_hide_root = hide_root.to_owned();
             last_patch = state.patch_rev;
+            // Re-arm the transcript's follow-output pass for this frame. The
+            // scalar revision is not bumped per token, so streaming frames
+            // publish their own change signal here.
+            ui.set_stream_revision(state.stream_revision);
         } else if state.patch_rev != last_patch {
+            // Durable fold targets are absolute indexes before the hidden
+            // live-root tail, so they map one-to-one onto the model prefix.
             if let Some(index) = state.patch_row {
-                if let Some(data) = state.durable_rows.get(index) {
-                    model.set_row_data(index, cache.row(data));
+                if index < last_durable_len {
+                    if let Some(data) = state.durable_rows.get(index) {
+                        model.set_row_data(index, cache.row(data));
+                    }
                 }
             }
             last_patch = state.patch_rev;
@@ -1344,10 +2787,136 @@ fn start_tick(
     });
 }
 
+/// Handle one Back press from the Android host. Every overlay is a level of
+/// its own: Back closes the topmost one and only the chat root offers the
+/// double-Back exit. Returns false when the activity should finish.
+#[cfg(target_os = "android")]
+fn handle_back(
+    ui: &MobileWindow,
+    shared: &Arc<Mutex<Shared>>,
+    last_back: &mut Option<Instant>,
+) -> bool {
+    // The IME owns the first Back while the keyboard is up, matching every
+    // Android input surface. The UI tick keeps `ime-height` current.
+    if ui.get_ime_height() > 0.5 {
+        crate::android_host::hide_keyboard();
+        *last_back = None;
+        return true;
+    }
+    // 首装部署引导：安装期间返回键不离开页面；只有失败态可以退回聊天。
+    if ui.get_env_setup_open() {
+        if ui.get_settings_ubuntu_state() == "error" {
+            ui.invoke_env_setup_dismiss();
+        }
+        *last_back = None;
+        return true;
+    }
+    let mut closed = true;
+    if ui.get_device_sheet_open() {
+        ui.set_device_sheet_open(false);
+    } else if ui.get_settings_open()
+        && ui.get_settings_page() == 14
+        && (ui.get_settings_channel_editor_open() || ui.get_settings_channel_logs_open())
+    {
+        if ui.get_settings_channel_editor_open() {
+            ui.invoke_close_channel_editor();
+        } else {
+            ui.invoke_close_channel_logs();
+        }
+    } else if ui.get_delete_archived_open() {
+        ui.set_delete_archived_open(false);
+        ui.set_pending_delete_id("".into());
+    } else if ui.get_rename_open() {
+        ui.set_rename_open(false);
+    } else if ui.get_session_sheet_open() {
+        ui.set_session_sheet_open(false);
+    } else if ui.get_model_sheet_open() {
+        ui.set_model_sheet_open(false);
+    } else if ui.get_trajectory_open() {
+        if ui.get_trajectory_expanded() >= 0 {
+            ui.set_trajectory_expanded(-1);
+        } else {
+            ui.set_trajectory_open(false);
+        }
+    } else if ui.get_workspaces_open() {
+        if ui.get_workspace_overlay() > 0 {
+            ui.set_workspace_overlay(0);
+        } else {
+            ui.set_workspaces_open(false);
+            ui.set_workspace_overlay(0);
+        }
+    } else if ui.get_workspace_open() {
+        if ui.get_workspace_sheet_open() {
+            ui.set_workspace_sheet_open(false);
+        } else if !ui.get_workspace_path().is_empty() {
+            ui.invoke_open_workspace(ui.get_workspace_parent_path());
+        } else {
+            ui.set_workspace_open(false);
+            ui.set_workspace_sheet_open(false);
+        }
+    } else if ui.get_settings_open() {
+        if ui.get_editor_open() {
+            ui.invoke_close_model_editor();
+        } else if ui.get_settings_page() == 7 && ui.get_settings_tool_editor_kind() > 0 {
+            ui.invoke_close_tool_editor();
+        } else if ui.get_settings_page() == 7 && ui.get_settings_tool_file_open() {
+            ui.invoke_close_tool_file();
+        } else if ui.get_settings_page() == 9 && ui.get_settings_cron_editor_open() {
+            ui.invoke_close_cron_editor();
+        } else if ui.get_settings_page() == 9 && ui.get_settings_cron_runs_open() {
+            ui.invoke_close_cron_runs();
+        } else if ui.get_settings_page() == 10 && ui.get_settings_memory_editor_open() {
+            ui.invoke_close_memory_editor();
+        } else if ui.get_settings_page() == 8 {
+            // The on-screen back button flushes the agent form; hardware Back
+            // bypasses Slint and must land the same pending text.
+            let _ = crate::engine::acquire()
+                .command_sender()
+                .send(Command::SaveAgentText {
+                    description: ui.get_settings_agent_description().to_string(),
+                    system_prompt: ui.get_settings_agent_prompt().to_string(),
+                });
+            ui.set_settings_page(0);
+        } else if ui.get_settings_page() != 0 {
+            ui.set_settings_page(0);
+        } else {
+            ui.invoke_close_settings();
+        }
+    } else if ui.get_drawer_open() {
+        ui.set_drawer_open(false);
+    } else if ui.get_plus_open() {
+        if ui.get_plus_view() != 0 {
+            ui.set_plus_view(0);
+        } else {
+            ui.set_plus_open(false);
+        }
+    } else {
+        closed = false;
+    }
+    if closed {
+        *last_back = None;
+        return true;
+    }
+    let now = Instant::now();
+    if last_back.is_some_and(|last| now.duration_since(last) <= Duration::from_secs(2)) {
+        return false;
+    }
+    *last_back = Some(now);
+    if let Ok(mut state) = shared.lock() {
+        state.notify("再按一次退出");
+        state.touch();
+    }
+    true
+}
+
 /// Seed the window with a representative transcript for layout review on a
 /// desktop (the `wunder-android-preview` binary). Kept next to the real
 /// projection so preview rows go through the same renderer.
-pub fn install_preview_data(ui: &MobileWindow, model: &Rc<VecModel<TimelineRow>>) {
+pub fn install_preview_data(
+    ui: &MobileWindow,
+    model: &Rc<VecModel<TimelineRow>>,
+    workspaces: &Rc<VecModel<MobileWorkspace>>,
+) {
     use crate::project::{KIND_BODY, KIND_ERROR, KIND_FOOTER, KIND_REASON, KIND_TOOL, KIND_USER};
 
     let sessions = vec![
@@ -1372,7 +2941,39 @@ pub fn install_preview_data(ui: &MobileWindow, model: &Rc<VecModel<TimelineRow>>
     ui.set_thread_title("移动端聊天区对齐".into());
     ui.set_thread_subtitle("running · 心舰".into());
     ui.set_workspace_name("心舰".into());
-    ui.set_connection_state("本地引擎".into());
+    workspaces.set_vec(vec![
+        MobileWorkspace {
+            id: "preview-ws-1".into(),
+            name: "心舰".into(),
+            icon: "folder".into(),
+            color: "blue".into(),
+            root: "应用工作区 / 心舰".into(),
+            thread_count: 2,
+            active: true,
+        },
+        MobileWorkspace {
+            id: "preview-ws-2".into(),
+            name: "文档整理".into(),
+            icon: "flask".into(),
+            color: "teal".into(),
+            root: "应用工作区 / 文档整理".into(),
+            thread_count: 1,
+            active: false,
+        },
+        MobileWorkspace {
+            id: "preview-ws-3".into(),
+            name: "实验场".into(),
+            icon: "robot".into(),
+            color: "orange".into(),
+            root: "应用工作区 / 实验场".into(),
+            thread_count: 0,
+            active: false,
+        },
+    ]);
+    ui.set_workspaces(ModelRc::from(workspaces.clone()));
+    ui.set_workspace_icon("folder".into());
+    ui.set_workspace_color("blue".into());
+    ui.set_workspace_thread_count(2);
     ui.set_model_name("预览模型".into());
     ui.set_model_key("preview-chat".into());
     ui.set_preset_questions(ModelRc::from(Rc::new(VecModel::from(vec![
@@ -1404,16 +3005,6 @@ pub fn install_preview_data(ui: &MobileWindow, model: &Rc<VecModel<TimelineRow>>
     ui.set_inquiry_page(0);
     ui.set_inquiry_total(2);
     ui.set_inquiry_ready(false);
-    ui.set_host_cpu(0.32);
-    ui.set_host_memory(0.58);
-    ui.set_host_cpu_text("32%".into());
-    ui.set_host_memory_text("58%".into());
-    ui.set_host_memory_used("9.3G".into());
-    ui.set_host_memory_total("16G".into());
-    ui.set_host_cores(8);
-    ui.set_running_task_count(1);
-    ui.set_subagent_count(0);
-
     // Settings-page fixtures: enough rows to review the index, the catalogue
     // and the editor on a workstation without starting the engine.
     ui.set_settings_theme("terracotta".into());
@@ -1426,6 +3017,69 @@ pub fn install_preview_data(ui: &MobileWindow, model: &Rc<VecModel<TimelineRow>>
     ui.set_settings_ubuntu_progress(42);
     ui.set_settings_ubuntu_stage("正在解压 Ubuntu 根文件系统…（4200 项）".into());
     ui.set_settings_ubuntu_enabled(true);
+    ui.set_permission_items(ModelRc::from(Rc::new(VecModel::from(vec![
+        MobilePermission {
+            id: "notifications".into(),
+            title: "通知".into(),
+            description: "运行状态、完成提醒与前台服务通知".into(),
+            state_text: "已开启".into(),
+            action_text: "去管理".into(),
+            granted: true,
+            available: true,
+        },
+        MobilePermission {
+            id: "microphone".into(),
+            title: "麦克风".into(),
+            description: "语音输入与转写".into(),
+            state_text: "未开启".into(),
+            action_text: "去开启".into(),
+            granted: false,
+            available: true,
+        },
+        MobilePermission {
+            id: "overlay".into(),
+            title: "悬浮窗".into(),
+            description: "悬浮浏览器与桌面伙伴显示在其他应用上层".into(),
+            state_text: "已开启".into(),
+            action_text: "去管理".into(),
+            granted: true,
+            available: true,
+        },
+        MobilePermission {
+            id: "accessibility".into(),
+            title: "无障碍服务".into(),
+            description: "手机控制、界面读取与屏幕截图".into(),
+            state_text: "未开启".into(),
+            action_text: "去开启".into(),
+            granted: false,
+            available: true,
+        },
+        MobilePermission {
+            id: "battery".into(),
+            title: "电池优化".into(),
+            description: "允许应用在后台持续执行任务".into(),
+            state_text: "已开启".into(),
+            action_text: "去管理".into(),
+            granted: true,
+            available: true,
+        },
+        MobilePermission {
+            id: "install_packages".into(),
+            title: "安装应用".into(),
+            description: "在线更新与安装 APK".into(),
+            state_text: "未开启".into(),
+            action_text: "去开启".into(),
+            granted: false,
+            available: true,
+        },
+    ]))));
+    ui.set_permission_summary("已开启 3/6 项".into());
+    ui.set_update_phase("available".into());
+    ui.set_update_version("0.4.1".into());
+    ui.set_update_notes("修复安卓版返回键、权限管理与流式状态刷新。".into());
+    ui.set_update_source("GitHub · ylsdamxssjxxdd/wunder".into());
+    ui.set_update_channel("github".into());
+    ui.set_update_size("352 MB".into());
     let models = vec![
         preview_model_card(
             "preview-chat",
@@ -1444,6 +3098,269 @@ pub fn install_preview_data(ui: &MobileWindow, model: &Rc<VecModel<TimelineRow>>
     ];
     ui.set_models(ModelRc::from(Rc::new(VecModel::from(models))));
     ui.set_model_catalogue_count(2);
+
+    // Tool manager and agent fixtures for layout review.
+    let tool = |name: &str, description: &str, category: &str, icon: &str, tone: &str, enabled: bool| crate::MobileTool {
+        name: name.into(),
+        description: description.into(),
+        category: category.into(),
+        enabled,
+        icon: icon.into(),
+        tone: tone.into(),
+    };
+    let builtin = vec![
+        tool("read_file", "读取工作区文件内容", "内置工具", "file-lines", "terminal", true),
+        tool("run_shell", "执行本地命令", "内置工具", "terminal", "terminal", true),
+        tool("web_search", "搜索网页", "内置工具", "magnifying-glass", "search", false),
+    ];
+    let mcp_tools = vec![tool("weather_lookup", "查询城市天气", "MCP 工具", "plug", "mcp", false)];
+    let skill_tools = vec![tool("summarize_page", "总结网页正文", "技能", "book", "skill", true)];
+    let knowledge_tools = vec![tool("project_notes", "检索项目笔记", "知识库", "database", "knowledge", false)];
+    ui.set_settings_tools_builtin(ModelRc::from(Rc::new(VecModel::from(builtin.clone()))));
+    ui.set_settings_tools_mcp(ModelRc::from(Rc::new(VecModel::from(mcp_tools.clone()))));
+    ui.set_settings_tools_skills(ModelRc::from(Rc::new(VecModel::from(skill_tools.clone()))));
+    ui.set_settings_tools_knowledge(ModelRc::from(Rc::new(VecModel::from(knowledge_tools.clone()))));
+    ui.set_settings_tools_servers(ModelRc::from(Rc::new(VecModel::from(vec![
+        crate::MobileToolResource {
+            name: "weather".into(),
+            description: "天气 MCP 服务".into(),
+            detail: "https://mcp.example.com/weather".into(),
+            readonly: false,
+        },
+    ]))));
+    ui.set_settings_tools_skill_resources(ModelRc::from(Rc::new(VecModel::from(vec![
+        crate::MobileToolResource {
+            name: "summarize-page".into(),
+            description: "提取网页正文并生成摘要".into(),
+            detail: String::new().into(),
+            readonly: false,
+        },
+        crate::MobileToolResource {
+            name: "release-notes".into(),
+            description: "内置发布说明模板".into(),
+            detail: String::new().into(),
+            readonly: true,
+        },
+    ]))));
+    ui.set_settings_tools_bases(ModelRc::from(Rc::new(VecModel::from(vec![
+        crate::MobileToolResource {
+            name: "project-notes".into(),
+            description: "项目背景与决策记录".into(),
+            detail: "项目背景与决策记录".into(),
+            readonly: false,
+        },
+    ]))));
+    ui.set_settings_tool_active_resource("summarize-page".into());
+    ui.set_settings_tool_resource_tab(2);
+    ui.set_settings_tool_resource_editable(true);
+    ui.set_settings_tool_directory("references".into());
+    ui.set_settings_tool_files(ModelRc::from(Rc::new(VecModel::from(vec![
+        crate::MobileToolFile {
+            name: "guide.md".into(),
+            path: "references/guide.md".into(),
+            directory: false,
+            size: "2.1 KB".into(),
+        },
+        crate::MobileToolFile {
+            name: "examples".into(),
+            path: "references/examples".into(),
+            directory: true,
+            size: String::new().into(),
+        },
+    ]))));
+    ui.set_settings_tool_server_tools(ModelRc::from(Rc::new(VecModel::from(vec![
+        tool("weather_current", "查询当前天气", "MCP 工具", "plug", "mcp", false),
+        tool("weather_forecast", "查询未来天气", "MCP 工具", "plug", "mcp", false),
+    ]))));
+    ui.set_settings_tool_active_server("weather".into());
+    ui.set_settings_agent_name("wunder 内置智能体".into());
+    ui.set_settings_agent_tool_count(4);
+    ui.set_settings_agent_description("你好，我是 wunder，可以帮你拆解任务并调用工具。".into());
+    ui.set_settings_agent_prompt("你是 wunder 智能体。先确认目标，再拆解任务并逐步执行。".into());
+    let agent_group = |title: &str, tools: Vec<crate::MobileTool>| crate::MobileToolGroup {
+        title: title.into(),
+        all_selected: tools.iter().all(|tool| tool.enabled),
+        tools: ModelRc::new(VecModel::from(tools)),
+    };
+    ui.set_settings_agent_groups(ModelRc::from(Rc::new(VecModel::from(vec![
+        agent_group("内置工具", builtin),
+        agent_group("MCP 工具", mcp_tools),
+        agent_group("技能工具", skill_tools),
+        agent_group("知识库工具", knowledge_tools),
+    ]))));
+    ui.set_settings_agent_questions(ModelRc::from(Rc::new(VecModel::from(vec![
+        slint::SharedString::from("总结当前进度"),
+        slint::SharedString::from("检查最近的改动"),
+    ]))));
+
+    // Cron / memory fixtures for layout review.
+    ui.set_settings_cron_workspaces(ModelRc::from(Rc::new(VecModel::from(vec![
+        slint::SharedString::from("默认工作区"),
+        slint::SharedString::from("文档整理"),
+    ]))));
+    ui.set_settings_cron_jobs(ModelRc::from(Rc::new(VecModel::from(vec![
+        crate::MobileCronJob {
+            id: "job-daily".into(),
+            name: "每日进度汇总".into(),
+            enabled: true,
+            schedule: "每天 09:00".into(),
+            next_run: "11-08 09:00".into(),
+            workspace_name: "默认工作区".into(),
+            message: "汇总昨天的改动并发到工作区。".into(),
+            last_status: "success".into(),
+            last_error: String::new().into(),
+        },
+        crate::MobileCronJob {
+            id: "job-weekly".into(),
+            name: "每周清理".into(),
+            enabled: false,
+            schedule: "每周一 08:30".into(),
+            next_run: "—".into(),
+            workspace_name: "文档整理".into(),
+            message: "清理过期的临时文件。".into(),
+            last_status: "failed".into(),
+            last_error: "上次运行失败：工作区不可写".into(),
+        },
+    ]))));
+    ui.set_settings_cron_runs(ModelRc::from(Rc::new(VecModel::from(vec![
+        crate::MobileCronRun {
+            status: "success".into(),
+            trigger: "schedule".into(),
+            summary: "已生成汇总并写入工作区".into(),
+            error: String::new().into(),
+            duration: "3.2s".into(),
+            created_at: "11-07 09:00".into(),
+        },
+        crate::MobileCronRun {
+            status: "failed".into(),
+            trigger: "manual".into(),
+            summary: String::new().into(),
+            error: "工作区不可写".into(),
+            duration: "1.1s".into(),
+            created_at: "11-06 18:20".into(),
+        },
+    ]))));
+    ui.set_settings_memories(ModelRc::from(Rc::new(VecModel::from(vec![
+        crate::MobileMemory {
+            id: "mem-1".into(),
+            title: "发布流程偏好".into(),
+            content: "构建产物先发内测，再替换正式包；发布说明按形态分节。".into(),
+            category: "偏好".into(),
+            source: "手动写入".into(),
+            time: "2026/11/07 10:12".into(),
+        },
+        crate::MobileMemory {
+            id: "mem-2".into(),
+            title: "安卓模拟器验收环境".into(),
+            content: "x86_64 AVD cocoon-test；真机验收看 ABI 与文件选择器。".into(),
+            category: "项目".into(),
+            source: "模型写入".into(),
+            time: "2026/11/06 21:40".into(),
+        },
+    ]))));
+    ui.set_settings_memory_categories(ModelRc::from(Rc::new(VecModel::from(vec![
+        slint::SharedString::from("全部标签"),
+        slint::SharedString::from("偏好"),
+        slint::SharedString::from("项目"),
+    ]))));
+    ui.set_settings_memory_category("全部标签".into());
+    ui.set_settings_memory_query("".into());
+
+    // Cloud / channel / device fixtures.
+    ui.set_settings_cron_workspaces(ModelRc::from(Rc::new(VecModel::from(vec![
+        slint::SharedString::from("默认工作区"),
+    ]))));
+    ui.set_settings_channel_catalog(ModelRc::from(Rc::new(VecModel::from(vec![
+        crate::MobileChannelCatalog { channel: "feishu".into(), name: "飞书".into(), description: "飞书自建应用".into() },
+        crate::MobileChannelCatalog { channel: "wechat".into(), name: "企业微信".into(), description: "企业微信应用".into() },
+        crate::MobileChannelCatalog { channel: "wechat_mp".into(), name: "微信公众号".into(), description: "公众号回调".into() },
+        crate::MobileChannelCatalog { channel: "weixin".into(), name: "微信机器人".into(), description: "微信 ClawBot".into() },
+    ]))));
+    ui.set_settings_channel_accounts(ModelRc::from(Rc::new(VecModel::from(vec![
+        crate::MobileChannelAccount {
+            channel: "feishu".into(),
+            channel_name: "飞书".into(),
+            account_id: "feishu-main".into(),
+            name: "飞书主账号".into(),
+            status: "active".into(),
+            active: true,
+            configured: true,
+            summary: "已连接飞书自建应用".into(),
+            secret_set: true,
+        },
+        crate::MobileChannelAccount {
+            channel: "wechat".into(),
+            channel_name: "企业微信".into(),
+            account_id: "wecom-ops".into(),
+            name: "运营助手".into(),
+            status: "paused".into(),
+            active: false,
+            configured: false,
+            summary: "等待填写 Secret".into(),
+            secret_set: false,
+        },
+    ]))));
+    ui.set_settings_channel_catalog_ids(ModelRc::from(Rc::new(VecModel::from(vec![
+        slint::SharedString::from("feishu"),
+        slint::SharedString::from("wechat"),
+        slint::SharedString::from("wechat_mp"),
+        slint::SharedString::from("weixin"),
+    ]))));
+    ui.set_settings_channel_catalog_names(ModelRc::from(Rc::new(VecModel::from(vec![
+        slint::SharedString::from("飞书"),
+        slint::SharedString::from("企业微信"),
+        slint::SharedString::from("微信公众号"),
+        slint::SharedString::from("微信机器人"),
+    ]))));
+    ui.set_settings_channel_bindings(ModelRc::from(Rc::new(VecModel::from(vec![
+        crate::MobileChannelBinding {
+            binding_id: "bind-1".into(),
+            channel: "feishu".into(),
+            account_id: "feishu-main".into(),
+            peer_kind: "group".into(),
+            peer_id: "oc_demo".into(),
+            agent_id: "__default__".into(),
+            enabled: true,
+        },
+    ]))));
+    ui.set_settings_channel_logs(ModelRc::from(Rc::new(VecModel::from(vec![
+        crate::MobileChannelLog {
+            time: "10:24".into(),
+            level: "info".into(),
+            event: "message".into(),
+            message: "收到一条群消息并创建线程".into(),
+        },
+    ]))));
+    ui.set_settings_devices(ModelRc::from(Rc::new(VecModel::from(vec![
+        crate::MobileDevice {
+            id: "local".into(),
+            kind: "phone".into(),
+            label: "Pixel 8".into(),
+            status: "online".into(),
+            connected: true,
+            current: true,
+            selectable: true,
+        },
+        crate::MobileDevice {
+            id: "cloud".into(),
+            kind: "cloud".into(),
+            label: "云端".into(),
+            status: "online".into(),
+            connected: true,
+            current: false,
+            selectable: true,
+        },
+        crate::MobileDevice {
+            id: "device:desktop".into(),
+            kind: "desktop".into(),
+            label: "工作室桌面".into(),
+            status: "online".into(),
+            connected: true,
+            current: false,
+            selectable: false,
+        },
+    ]))));
+    ui.set_settings_current_device("Pixel 8".into());
 
     let mut rows: Vec<RowData> = Vec::new();
     let mut user = RowData::new(KIND_USER, "p-user");
@@ -1578,16 +3495,195 @@ fn preview_model_card(
 /// reach the sheet without an engine: `settings`, `models` or `editor`.
 pub fn open_preview_page(ui: &MobileWindow, page: &str) {
     match page {
+        "workspaces" => {
+            ui.set_workspaces_open(true);
+        }
+        "workspaces-editor" => {
+            ui.set_workspaces_open(true);
+            ui.set_workspace_overlay(2);
+        }
+        "workspaces-menu" => {
+            ui.set_workspaces_open(true);
+            ui.set_workspace_overlay(1);
+        }
+        "drawer" => {
+            ui.set_drawer_open(true);
+        }
+        "workspace" => {
+            ui.set_workspace_open(true);
+        }
         "settings" => {
             ui.set_settings_page(0);
             ui.set_settings_open(true);
+        }
+        "about" => {
+            ui.set_settings_page(6);
+            ui.set_settings_open(true);
+        }
+        "about-cloud" => {
+            ui.set_settings_page(6);
+            ui.set_settings_open(true);
+            ui.set_update_channel("cloud".into());
+            ui.set_update_source("云端更新源".into());
+        }
+        "env-setup" => {
+            ui.set_settings_ubuntu_state("installing".into());
+            ui.set_settings_ubuntu_progress(42);
+            ui.set_settings_ubuntu_stage("正在解压 Ubuntu 根文件系统…".into());
+            ui.set_env_setup_progress(42);
+            ui.set_env_setup_open(true);
+        }
+        "env-setup-error" => {
+            ui.set_settings_ubuntu_state("error".into());
+            ui.set_settings_ubuntu_error("安装失败：设备剩余空间不足，请清理后重试。".into());
+            ui.set_env_setup_open(true);
+        }
+        "env-setup-ready" => {
+            ui.set_settings_ubuntu_state("installed".into());
+            ui.set_settings_ubuntu_version("Ubuntu 24.04.1 LTS".into());
+            ui.set_env_setup_progress(100);
+            ui.set_env_setup_open(true);
         }
         "models" => {
             ui.set_settings_page(1);
             ui.set_settings_open(true);
         }
-        "hud" => {
-            ui.set_host_detail_open(true);
+        "tools" => {
+            ui.set_settings_page(7);
+            ui.set_settings_open(true);
+        }
+        "tools-file" => {
+            ui.set_settings_page(7);
+            ui.set_settings_open(true);
+            ui.set_settings_tool_file_path("references/guide.md".into());
+            ui.set_settings_tool_file_content(
+                "# 写摘要的约定\n\n1. 先提取正文\n2. 再压缩成三段\n3. 保留关键数据\n"
+                    .into(),
+            );
+            ui.set_settings_tool_file_readonly(false);
+            ui.set_settings_tool_file_open(true);
+        }
+        "tools-editor" => {
+            ui.set_settings_page(7);
+            ui.set_settings_open(true);
+            ui.set_settings_tool_editor_kind(1);
+            ui.set_settings_tool_editor_new(false);
+            ui.set_settings_mcp_draft(crate::MobileMcpDraft {
+                previous: "weather".into(),
+                name: "weather".into(),
+                display_name: "天气服务".into(),
+                endpoint: "https://mcp.example.com/weather".into(),
+                transport: "streamable-http".into(),
+                description: "查询城市天气".into(),
+                headers: "{\"Authorization\":\"Bearer ***\"}".into(),
+            });
+        }
+        "tools-editor-kb" => {
+            ui.set_settings_page(7);
+            ui.set_settings_open(true);
+            ui.set_settings_tool_editor_kind(2);
+            ui.set_settings_tool_editor_new(false);
+            ui.set_settings_kb_draft(crate::MobileKnowledgeDraft {
+                previous: "project-notes".into(),
+                name: "project-notes".into(),
+                description: "项目背景与决策记录".into(),
+                base_type: "vector".into(),
+                embedding_model: "bge-m3".into(),
+                chunk_size: "500".into(),
+                chunk_overlap: "50".into(),
+                dataset_id: "".into(),
+            });
+        }
+        "agent" => {
+            ui.set_settings_page(8);
+            ui.set_settings_open(true);
+        }
+        "cron" => {
+            ui.set_settings_page(9);
+            ui.set_settings_open(true);
+        }
+        "cron-editor" => {
+            ui.set_settings_page(9);
+            ui.set_settings_open(true);
+            ui.set_settings_cron_editor_open(true);
+            ui.set_settings_cron_editor_new(false);
+            ui.set_settings_cron_draft(crate::MobileCronDraft {
+                id: "job-daily".into(),
+                name: "每日进度汇总".into(),
+                schedule_kind: "every".into(),
+                schedule_at: "2026-11-08 09:00".into(),
+                every: "1".into(),
+                interval_unit: "day".into(),
+                cron_expr: String::new().into(),
+                timezone: String::new().into(),
+                message: "汇总昨天的改动并发到工作区。".into(),
+                workspace_name: "默认工作区".into(),
+                delete_after: false,
+                enabled: true,
+            });
+        }
+        "cron-runs" => {
+            ui.set_settings_page(9);
+            ui.set_settings_open(true);
+            ui.set_settings_cron_runs_open(true);
+            ui.set_settings_cron_runs_title("每日进度汇总".into());
+        }
+        "memory" => {
+            ui.set_settings_page(10);
+            ui.set_settings_open(true);
+        }
+        "account" => {
+            ui.set_settings_page(13);
+            ui.set_settings_open(true);
+        }
+        "account-in" => {
+            ui.set_settings_page(13);
+            ui.set_settings_open(true);
+            ui.set_settings_cloud_logged_in(true);
+            ui.set_settings_cloud_connection("online".into());
+            ui.set_settings_cloud_server("https://cloud.example.com".into());
+            ui.set_settings_cloud_username("wunder-demo".into());
+            ui.set_settings_cloud_balance(8600);
+            ui.set_settings_cloud_daily_grant(10000);
+            ui.set_settings_cloud_max_concurrent(4);
+            ui.set_settings_cloud_active_concurrent(1);
+            ui.set_settings_cloud_sync_enabled(true);
+            ui.set_settings_cloud_inbound_enabled(true);
+            ui.set_settings_cloud_device_name("Pixel 8".into());
+            ui.set_settings_cloud_last_success("刚刚".into());
+        }
+        "channels" => {
+            ui.set_settings_page(14);
+            ui.set_settings_open(true);
+        }
+        "channel-editor" => {
+            ui.set_settings_page(14);
+            ui.set_settings_open(true);
+            ui.set_settings_channel_editor_open(true);
+            ui.set_settings_channel_editor_new(false);
+            ui.set_settings_channel_draft(crate::MobileChannelDraft {
+                account_id: "feishu-main".into(),
+                channel: "feishu".into(),
+                name: "飞书主账号".into(),
+                enabled: true,
+                ..crate::MobileChannelDraft::default()
+            });
+        }
+        "devices" => {
+            ui.set_drawer_open(true);
+            ui.set_device_sheet_open(true);
+        }
+        "memory-editor" => {
+            ui.set_settings_page(10);
+            ui.set_settings_open(true);
+            ui.set_settings_memory_editor_open(true);
+            ui.set_settings_memory_editor_new(false);
+            ui.set_settings_memory_draft(crate::MobileMemoryDraft {
+                id: "mem-1".into(),
+                title: "发布流程偏好".into(),
+                content: "构建产物先发内测，再替换正式包；发布说明按形态分节。".into(),
+                category: "偏好".into(),
+            });
         }
         "trajectory" | "trajectory-tools" => {
             let filter = if page == "trajectory-tools" { 2 } else { 0 };
@@ -1660,5 +3756,98 @@ mod tests {
         assert_eq!(conversation[0].group, "第 1 轮");
         assert_eq!(conversation[1].group, "");
         assert_eq!(conversation[2].group, "第 2 轮");
+    }
+
+    fn streaming_state(answer: &str) -> Shared {
+        let mut state = Shared::default();
+        state.session_id = "s".into();
+        state.live_session = "s".into();
+        state.generating = true;
+        state.live_root = "turn-1".into();
+        let mut live = crate::project::LiveTurn::new("hi".into());
+        live.root_id = "turn-1".into();
+        live.answer = answer.into();
+        state.live_rows = live.rows();
+        state.durable_rows = vec![
+            RowData::new(project::KIND_USER, "turn-1-user"),
+            RowData::new(project::KIND_FOOTER, "turn-1-footer"),
+        ];
+        state.durable_rows[0].text = "hi".into();
+        state.durable_rows[1].stats = vec![("hashtag".into(), "1".into())];
+        state
+    }
+
+    #[test]
+    fn the_live_turn_owns_its_status_while_the_stream_is_attached() {
+        let state = streaming_state("partial");
+        assert!(live_is_authoritative(&state));
+        let visible = visible_live_rows(&state);
+        assert!(visible.iter().any(|row| {
+            row.kind == project::KIND_FOOTER
+                && row
+                    .stats
+                    .iter()
+                    .any(|(key, _)| key == "status-requesting")
+        }));
+    }
+
+    #[test]
+    fn pending_identity_still_hides_its_durable_twin() {
+        let mut state = streaming_state("partial");
+        state.live_root = "live".into();
+        state.live_rows = crate::project::LiveTurn::new("hi".into()).rows();
+        state.durable_rows[1].status_kind = project::STATUS_RUNNING;
+        assert_eq!(live_owner(&state).as_deref(), Some("turn-1"));
+    }
+
+    #[test]
+    fn an_earlier_round_body_does_not_retire_the_streaming_answer() {
+        let mut state = streaming_state("current streaming answer");
+        state.generating = false;
+        state.durable_rows.push(RowData::new(
+            project::KIND_BODY,
+            "turn-1-body-final",
+        ));
+        state.durable_rows[2].text = "earlier round".into();
+        assert!(!durable_covers_live(&state));
+        let visible = visible_live_rows(&state);
+        assert!(visible.iter().any(|row| {
+            row.kind == project::KIND_BODY && row.text == "current streaming answer"
+        }));
+    }
+
+    #[test]
+    fn a_settled_durable_body_retires_the_live_tail() {
+        let mut state = streaming_state("answer");
+        state.generating = false;
+        state.durable_rows.push(RowData::new(
+            project::KIND_BODY,
+            "turn-1-body-final",
+        ));
+        state.durable_rows[2].text = "answer".into();
+        assert!(durable_covers_live(&state));
+        assert!(visible_live_rows(&state).is_empty());
+    }
+
+    #[test]
+    fn env_setup_opens_only_before_the_environment_is_usable() {
+        assert!(env_setup_should_open("missing", false));
+        assert!(env_setup_should_open("installing", false));
+        assert!(!env_setup_should_open("installed", false));
+        assert!(!env_setup_should_open("unsupported", false));
+        assert!(!env_setup_should_open("error", false));
+        // 失败后被用户跳过：本进程内不再自动弹出。
+        assert!(!env_setup_should_open("installing", true));
+    }
+
+    #[test]
+    fn env_setup_progress_never_regresses_within_a_run() {
+        // Java 在「验证 proot」后从 94% 退回 85% 开始装补充包。
+        assert_eq!(next_env_progress(94, "installing", 85), 94);
+        assert_eq!(next_env_progress(94, "installing", 97), 97);
+        assert_eq!(next_env_progress(0, "missing", 0), 0);
+        // 新一次安装（错误后重试）从低进度重新开始。
+        assert_eq!(next_env_progress(94, "error", 0), 0);
+        assert_eq!(next_env_progress(0, "installing", 150), 100);
     }
 }

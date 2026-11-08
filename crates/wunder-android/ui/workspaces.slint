@@ -1,0 +1,669 @@
+// 安卓版's workspace picker. Desktop keeps workspaces in the sidebar tree;
+// the phone has no room for a permanent tree, so the same catalogue opens as a
+// page from the drawer's 工作区 row. Selecting a workspace changes where new
+// tasks run and which folder the 工作目录 page browses; creating, renaming and
+// deleting mirror the desktop dialog (including icon and color choices).
+
+import { Theme } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
+import { WorkspaceVisual } from "../../../crates/wunder-desktop/frontend/ui/workspace_visual.slint";
+import { Action, FormField, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
+import { MobileWorkspace } from "workspace_model.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// One icon choice in the workspace editor, matching the desktop dialog cells.
+component WorkspaceIconCell inherits Rectangle {
+    in property <string> icon-key;
+    in property <bool> selected: false;
+    callback picked();
+
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: root.selected ? Theme.accent-soft
+        : cell-touch.has-hover ? Theme.hover : Theme.panel;
+    border-width: 1px;
+    border-color: root.selected ? Theme.accent-ink : Theme.border;
+    cell-touch := TouchArea {
+        clicked => { root.picked(); }
+    }
+    Image {
+        width: 18px;
+        height: 18px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        source: WorkspaceVisual.icon(root.icon-key);
+        colorize: root.selected ? Theme.accent-ink : Theme.text-secondary;
+        image-fit: contain;
+    }
+}
+
+// One palette dot; the selected swatch gains the accent ring.
+component WorkspaceColorDot inherits Rectangle {
+    in property <string> color-key;
+    in property <bool> selected: false;
+    callback picked();
+
+    width: 24px;
+    height: 24px;
+    border-radius: 12px;
+    background: transparent;
+    border-width: root.selected ? 2px : 0px;
+    border-color: Theme.accent-ink;
+    Rectangle {
+        x: 4px;
+        y: 4px;
+        width: parent.width - 8px;
+        height: parent.height - 8px;
+        border-radius: 8px;
+        background: WorkspaceVisual.color(root.color-key);
+    }
+    TouchArea {
+        clicked => { root.picked(); }
+    }
+}
+
+// One row in the workspace action sheet.
+component WorkspaceMenuAction inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> danger: false;
+    callback clicked();
+
+    height: 52px;
+    border-radius: Theme.radius-sm;
+    background: action-touch.has-hover ? Theme.hover : transparent;
+    action-touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+        cross-axis-alignment: center;
+        Image {
+            width: 18px;
+            height: 18px;
+            source: root.icon;
+            colorize: root.danger ? Theme.danger : Theme.text-secondary;
+            image-fit: contain;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.label;
+            color: root.danger ? Theme.danger : Theme.text;
+            font-size: Theme.font-md;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+component WorkspaceRow inherits Rectangle {
+    in property <MobileWorkspace> data;
+    callback picked();
+    callback menu();
+
+    height: 68px;
+    background: root.data.active ? Theme.selected
+        : row-touch.has-hover ? Theme.hover : transparent;
+
+    // Selection indicator, the phone twin of the desktop workspace row bar.
+    Rectangle {
+        x: 0px;
+        y: (parent.height - 18px) / 2;
+        width: 2px;
+        height: 18px;
+        border-radius: 1px;
+        background: root.data.active ? Theme.accent : transparent;
+    }
+
+    row-touch := TouchArea {
+        clicked => { root.picked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 6px;
+        spacing: 12px;
+        cross-axis-alignment: center;
+
+        Rectangle {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: WorkspaceVisual.color(root.data.color).with-alpha(0.14);
+            Image {
+                width: 22px;
+                height: 22px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                source: WorkspaceVisual.icon(root.data.icon);
+                colorize: WorkspaceVisual.color(root.data.color);
+                image-fit: contain;
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text {
+                text: root.data.name;
+                color: Theme.text;
+                font-size: Theme.font-md;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: "" + root.data.thread-count + " 个线程" + (root.data.active ? " · 当前" : "");
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                overflow: elide;
+            }
+        }
+
+        if root.data.active : Image {
+            width: 18px;
+            height: 18px;
+            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/circle-check.svg");
+            colorize: Theme.accent-ink;
+            image-fit: contain;
+        }
+
+        Rectangle {
+            width: 36px;
+            height: 44px;
+            border-radius: Theme.radius-sm;
+            background: menu-touch.has-hover ? Theme.hover : transparent;
+            menu-touch := TouchArea {
+                clicked => { root.menu(); }
+            }
+            Image {
+                x: 10px;
+                y: 14px;
+                width: 16px;
+                height: 16px;
+                source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/ellipsis.svg");
+                colorize: Theme.muted;
+                image-fit: contain;
+            }
+        }
+    }
+
+    Rectangle {
+        y: parent.height - 1px;
+        x: 16px;
+        width: parent.width - 16px;
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
+export component WorkspacesPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <[MobileWorkspace]> workspaces: [];
+    // 0 none, 1 row action sheet, 2 editor sheet, 3 delete confirmation.
+    // The shell reads it so Back closes the topmost layer first.
+    in-out property <int> overlay: 0;
+
+    callback back();
+    callback refresh();
+    callback select(string);
+    callback new-task(string);
+    callback create(string, string, string);
+    callback update(string, string, string, string);
+    callback remove-workspace(string);
+
+    // Editor draft, seeded by the row that opened it.
+    private property <bool> editor-new: true;
+    private property <string> editor-id: "";
+    private property <string> editor-name: "";
+    private property <string> editor-icon: "folder";
+    private property <string> editor-color: "blue";
+    private property <string> editor-error: "";
+    // Row the action sheet / delete confirmation acts on.
+    private property <string> menu-id: "";
+    private property <string> menu-name: "";
+    private property <string> menu-icon: "folder";
+    private property <string> menu-color: "blue";
+    private property <string> delete-id: "";
+    private property <string> delete-name: "";
+
+    background: Theme.panel;
+
+    function open-create() {
+        root.editor-new = true;
+        root.editor-id = "";
+        root.editor-name = "";
+        root.editor-icon = "folder";
+        root.editor-color = "blue";
+        root.editor-error = "";
+        root.overlay = 2;
+    }
+
+    function open-edit(id: string, name: string, icon: string, color: string) {
+        root.editor-new = false;
+        root.editor-id = id;
+        root.editor-name = name;
+        root.editor-icon = icon == "" ? "folder" : icon;
+        root.editor-color = color == "" ? "blue" : color;
+        root.editor-error = "";
+        root.overlay = 2;
+    }
+
+    function submit-editor() {
+        if root.editor-name == "" {
+            root.editor-error = "请输入工作区名称";
+            return;
+        }
+        root.editor-error = "";
+        if root.editor-new {
+            root.create(root.editor-name, root.editor-icon, root.editor-color);
+        } else {
+            root.update(root.editor-id, root.editor-name, root.editor-icon, root.editor-color);
+        }
+        root.overlay = 0;
+    }
+
+    function confirm-remove() {
+        root.remove-workspace(root.delete-id);
+        root.overlay = 0;
+    }
+
+    VerticalLayout {
+        spacing: 0px;
+
+        // Header: back + title + new + refresh.
+        Rectangle {
+            height: 52px + root.inset-top;
+            background: Theme.surface;
+            Rectangle {
+                y: root.inset-top;
+                height: 52px;
+                width: parent.width;
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    spacing: 2px;
+                    cross-axis-alignment: center;
+                    Action {
+                        width: 34px;
+                        height: 34px;
+                        icon-size: 17px;
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-left.svg");
+                        label: "返回";
+                        clicked => { root.back(); }
+                    }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 1px;
+                        Text {
+                            text: "工作区";
+                            color: Theme.text;
+                            font-size: Theme.font-lg;
+                            font-weight: 600;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: "任务在该工作区的文件夹中运行";
+                            color: Theme.muted;
+                            font-size: Theme.font-2xs;
+                            overflow: elide;
+                        }
+                    }
+                    Action {
+                        width: 34px;
+                        height: 34px;
+                        icon-size: 16px;
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-plus.svg");
+                        label: "新建工作区";
+                        clicked => { root.open-create(); }
+                    }
+                    Action {
+                        width: 34px;
+                        height: 34px;
+                        icon-size: 16px;
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/rotate-right.svg");
+                        label: "刷新";
+                        clicked => { root.refresh(); }
+                    }
+                }
+            }
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: Theme.border;
+            }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding-top: 4px;
+                padding-bottom: 16px + root.inset-bottom;
+                spacing: 0px;
+                alignment: start;
+
+                for workspace in root.workspaces : WorkspaceRow {
+                    data: workspace;
+                    picked => {
+                        root.select(workspace.id);
+                        root.back();
+                    }
+                    menu => {
+                        root.menu-id = workspace.id;
+                        root.menu-name = workspace.name;
+                        root.menu-icon = workspace.icon;
+                        root.menu-color = workspace.color;
+                        root.overlay = 1;
+                    }
+                }
+
+                if root.workspaces.length == 0 : Rectangle {
+                    height: 260px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 10px;
+                        Image {
+                            width: 40px;
+                            height: 40px;
+                            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/workspace/folder.svg");
+                            colorize: Theme.border-strong;
+                            image-fit: contain;
+                        }
+                        Text {
+                            text: "还没有工作区";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "点右上角的加号新建一个工作区";
+                            color: Theme.muted;
+                            font-size: Theme.font-2xs;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 74px;
+                    VerticalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        padding-top: 12px;
+                        spacing: 4px;
+                        Text {
+                            text: "工作区是任务的执行目录";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            font-weight: 600;
+                        }
+                        Text {
+                            text: "切换工作区会打开该工作区最近的线程；没有线程时会自动新建。工作目录与后续任务都会使用该工作区的文件夹。";
+                            color: Theme.muted;
+                            font-size: Theme.font-2xs;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- row action sheet -------------------------------------------
+    if root.overlay == 1 : Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.overlay;
+        TouchArea {
+            clicked => { root.overlay = 0; }
+        }
+        Rectangle {
+            x: 8px;
+            y: parent.height - self.height - 8px - root.inset-bottom;
+            width: parent.width - 16px;
+            height: menu-body.preferred-height;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            drop-shadow-color: #00000033;
+            drop-shadow-blur: 24px;
+            TouchArea { }
+
+            menu-body := VerticalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 2px;
+
+                VerticalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-top: 6px;
+                    padding-bottom: 8px;
+                    spacing: 2px;
+                    Text {
+                        text: root.menu-name;
+                        color: Theme.text;
+                        font-size: Theme.font-md;
+                        font-weight: 600;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: "切换、编辑或删除这个工作区";
+                        color: Theme.muted;
+                        font-size: Theme.font-2xs;
+                        overflow: elide;
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.border; }
+
+                WorkspaceMenuAction {
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-plus.svg");
+                    label: "在此工作区新建任务";
+                    clicked => {
+                        root.overlay = 0;
+                        root.new-task(root.menu-id);
+                        root.back();
+                    }
+                }
+
+                WorkspaceMenuAction {
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/pen.svg");
+                    label: "编辑";
+                    clicked => {
+                        root.open-edit(root.menu-id, root.menu-name, root.menu-icon, root.menu-color);
+                    }
+                }
+
+                WorkspaceMenuAction {
+                    icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/trash.svg");
+                    label: "删除";
+                    danger: true;
+                    clicked => {
+                        root.delete-id = root.menu-id;
+                        root.delete-name = root.menu-name;
+                        root.overlay = 3;
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.border; }
+
+                Rectangle {
+                    height: 52px;
+                    border-radius: Theme.radius-sm;
+                    background: cancel-touch.has-hover ? Theme.hover : transparent;
+                    cancel-touch := TouchArea {
+                        clicked => { root.overlay = 0; }
+                    }
+                    Text {
+                        width: 100%;
+                        height: 100%;
+                        text: "取消";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-md;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- create / edit sheet ---------------------------------------
+    if root.overlay == 2 : Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.overlay;
+        TouchArea {
+            clicked => { root.overlay = 0; }
+        }
+        Rectangle {
+            x: 8px;
+            y: parent.height - self.height - 8px - root.inset-bottom;
+            width: parent.width - 16px;
+            height: min(parent.height - 16px - root.inset-bottom, 470px);
+            border-radius: Theme.radius-lg;
+            background: Theme.surface;
+            drop-shadow-color: #00000033;
+            drop-shadow-blur: 24px;
+            TouchArea { }
+
+            VerticalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                padding-top: 10px;
+                padding-bottom: 12px;
+                spacing: 8px;
+
+                HorizontalLayout {
+                    height: 30px;
+                    spacing: 4px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.editor-new ? "新建工作区" : "编辑工作区";
+                        color: Theme.text;
+                        font-size: Theme.font-md;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    Action {
+                        width: 30px;
+                        height: 30px;
+                        icon-size: 15px;
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/xmark.svg");
+                        label: "关闭";
+                        clicked => { root.overlay = 0; }
+                    }
+                }
+
+                ScrollView {
+                    vertical-stretch: 1;
+                    horizontal-scrollbar-policy: always-off;
+                    VerticalLayout {
+                        spacing: 8px;
+                        alignment: start;
+
+                        FormField {
+                            label: "名称";
+                            placeholder: "给这个工作区起个名字";
+                            auto-focus: true;
+                            commit-on-blur: false;
+                            text <=> root.editor-name;
+                            committed => { root.submit-editor(); }
+                        }
+
+                        if root.editor-error != "" : Text {
+                            height: 18px;
+                            text: root.editor-error;
+                            color: Theme.danger;
+                            font-size: Theme.font-2xs;
+                            vertical-alignment: center;
+                        }
+
+                        Text {
+                            height: 18px;
+                            text: "图标";
+                            color: Theme.muted;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
+                        }
+                        GridLayout {
+                            spacing: 6px;
+                            for key[index] in WorkspaceVisual.icon-keys() : WorkspaceIconCell {
+                                row: index >= 8 ? 1 : 0;
+                                col: index >= 8 ? index - 8 : index;
+                                icon-key: key;
+                                selected: root.editor-icon == key;
+                                picked => { root.editor-icon = key; }
+                            }
+                        }
+
+                        Text {
+                            height: 18px;
+                            text: "颜色";
+                            color: Theme.muted;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
+                        }
+                        GridLayout {
+                            spacing: 10px;
+                            for key[index] in WorkspaceVisual.color-keys() : WorkspaceColorDot {
+                                row: index >= 8 ? 1 : 0;
+                                col: index >= 8 ? index - 8 : index;
+                                color-key: key;
+                                selected: root.editor-color == key;
+                                picked => { root.editor-color = key; }
+                            }
+                        }
+
+                        Text {
+                            text: root.editor-new
+                                ? "文件夹会自动创建在应用工作区目录中，任务在该文件夹里执行。"
+                                : "工作区文件夹保持不变，这里只更新名称、图标和颜色。";
+                            color: Theme.muted;
+                            font-size: Theme.font-2xs;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    height: 36px;
+                    spacing: 10px;
+                    Rectangle { horizontal-stretch: 1; }
+                    Action {
+                        width: 76px;
+                        label: "取消";
+                        show-label: true;
+                        clicked => { root.overlay = 0; }
+                    }
+                    Action {
+                        width: 84px;
+                        label: "保存";
+                        show-label: true;
+                        primary: true;
+                        enabled: root.editor-name != "";
+                        clicked => { root.submit-editor(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- delete confirmation ---------------------------------------
+    if root.overlay == 3 : ConfirmDialog {
+        width: 100%;
+        height: 100%;
+        title: "删除工作区";
+        message: "删除「" + root.delete-name + "」后，其中的线程会归档，工作区文件夹和文件不会被删除。";
+        confirm-label: "删除";
+        cancel-label: "取消";
+        danger: true;
+        confirmed => { root.confirm-remove(); }
+        canceled => { root.overlay = 0; }
+    }
+}

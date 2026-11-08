@@ -6,7 +6,7 @@ updated_at: 2026-10-16
 
 # 能力概览
 
-本分区 10 页按功能入口组织：会话入口、会话状态、提示词与个性化、系统设置、工作区路由、管理端面板、微信 iLink 渠道、聊天 WebSocket、MCP 入口、三端互通。
+本分区 10 页按功能入口组织：会话入口、会话状态、提示词与个性化、系统设置、工作区路由、管理端面板、微信 iLink 渠道、聊天 WebSocket、MCP 入口、多端互通。
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/capabilities/api-index/"><strong>功能与能力速查</strong><span>wunder 能做什么，每个能力在哪使用。</span></a>
@@ -18,7 +18,7 @@ updated_at: 2026-10-16
   <a class="docs-card" href="/docs/zh-CN/capabilities/weixin-channel/"><strong>微信 iLink 渠道</strong><span>配 `weixin` 渠道，以及它跟旧微信渠道的区别。</span></a>
   <a class="docs-card" href="/docs/zh-CN/capabilities/chat-ws/"><strong>聊天 WebSocket</strong><span>实时通道也是会话控制通道：启动、续传、观察、取消、回传审批都在同一条连接上。</span></a>
   <a class="docs-card" href="/docs/zh-CN/capabilities/mcp-endpoint/"><strong>MCP 入口</strong><span>分清两个方向：把 wunder 暴露成 MCP 服务，还是接入外部 MCP 服务。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/capabilities/interlink/"><strong>三端互通</strong><span>云端版、桌面版、命令行统一在线状态、跨端工作区互见与双向远程控制。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/capabilities/interlink/"><strong>多端互通</strong><span>云端版、桌面版、命令行统一在线状态、跨端工作区互见与双向远程控制。</span></a>
 </div>
 
 ## 核心能力

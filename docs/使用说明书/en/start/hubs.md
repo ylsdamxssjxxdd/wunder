@@ -37,7 +37,7 @@ The starting point is the [Desktop](/docs/en/start/desktop/): download the insta
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/en/surfaces/index/">
     <strong>Surfaces overview</strong>
-    <span>The four forms' interface division and capability matrix.</span>
+    <span>The forms' interface division and capability matrix.</span>
   </a>
   <a class="docs-card" href="/docs/en/surfaces/desktop-ui/">
     <strong>Desktop interface</strong>

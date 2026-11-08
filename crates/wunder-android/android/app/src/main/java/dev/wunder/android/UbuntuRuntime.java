@@ -553,8 +553,13 @@ public final class UbuntuRuntime {
         command.add("PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
         command.add("/bin/bash");
         command.add("-lc");
-        command.add("python3 -m pip install --break-system-packages --no-cache-dir "
-                + "--disable-pip-version-check --no-index --find-links /opt/wunder/wheels "
+        // apt-installed distributions carry no RECORD file, so any upgrade of
+        // one of them fails at the uninstall step ("Cannot uninstall ...,
+        // RECORD file not found"). --ignore-installed skips uninstalls and
+        // installs the wheelhouse into /usr/local, which shadows /usr/lib.
+        command.add("python3 -m pip install --break-system-packages --ignore-installed "
+                + "--no-cache-dir --disable-pip-version-check --no-index "
+                + "--find-links /opt/wunder/wheels "
                 + "-r /opt/wunder/wheels/requirements-android.txt");
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.environment().put("PROOT_LOADER", new File(files, "usr/bin/loader").getAbsolutePath());

@@ -40,7 +40,7 @@ wunder 的文档分七类，各解决一类问题。写文档时不串味：**�
 
 | 页面 | 内容 |
 | --- | --- |
-| [界面概览](/docs/zh-CN/surfaces/index/) | 四形态分工 + 能力矩阵 |
+| [界面概览](/docs/zh-CN/surfaces/index/) | 多形态界面分工 + 能力矩阵 |
 | [桌面版界面](/docs/zh-CN/surfaces/desktop-ui/) | 主窗两页 + 设置 12 分类 |
 | [云端版界面](/docs/zh-CN/surfaces/frontend/) | 浏览器里的单页应用 |
 | [管理端界面](/docs/zh-CN/surfaces/web-admin/) | 管理员治理后台 |

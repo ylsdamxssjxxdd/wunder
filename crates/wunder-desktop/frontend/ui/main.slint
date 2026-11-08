@@ -12,12 +12,13 @@ import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThrea
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 export { ToastState }
 import { ProcessEntry } from "theme.slint";
-import { Composer, GoalBanner, InquiryPanel, StatusDock } from "composer.slint";
+import { Composer, GoalBanner, InquiryPanel, ModelSetupBanner, StatusDock } from "composer.slint";
 import { TimelineView } from "timeline.slint";
 import { TextMenu, TextMenuState } from "text_menu.slint";
 import { ActivityMonth, ActivityWeek } from "activity_card.slint";
 export { ActivityMonth, ActivityWeek }
-import { Sidebar, WorkspaceVisual } from "sidebar.slint";
+import { Sidebar } from "sidebar.slint";
+import { WorkspaceVisual } from "workspace_visual.slint";
 import { SidebarMetrics, PointerChase } from "drag_row.slint";
 // `PointerChase` is reached from Rust (`pointer_chase.rs`), so it has to be
 // re-exported here; only exported globals exist in the generated bindings.
@@ -100,6 +101,11 @@ export component MainWindow inherits Window {
     out property <length> composer-model-trigger-y: composer.model-trigger-y;
     out property <length> composer-model-trigger-width: composer.model-trigger-width;
     out property <length> composer-model-trigger-height: composer.model-trigger-height;
+    // 首次配置横幅的窗口坐标，供原生 smoke 检查做真实指针点击。
+    out property <length> model-setup-banner-x: setup-banner.absolute-position.x;
+    out property <length> model-setup-banner-y: setup-banner.absolute-position.y;
+    out property <length> model-setup-banner-width: setup-banner.width;
+    out property <length> model-setup-banner-height: setup-banner.height;
     out property <length> composer-model-menu-x: composer.model-menu-x;
     out property <length> composer-model-menu-y: composer.model-menu-y;
     out property <length> composer-model-menu-width: composer.model-menu-width;
@@ -987,6 +993,7 @@ export component MainWindow inherits Window {
     callback refresh-settings();
     callback select-model(int);
     callback create-model();
+    callback setup-first-model();
     callback discard-model-draft();
     callback move-model(int, int);
     callback save-model();
@@ -1020,6 +1027,9 @@ export component MainWindow inherits Window {
     // projection; its size is mirrored here so the picker can tell "empty
     // list" from "nothing configured".
     in-out property <int> model-catalogue-count: 0;
+    // True while the catalogue only holds the seeded 虚拟模型: chatting cannot
+    // reach a real LLM, so the composer band offers the first-run setup path.
+    in-out property <bool> needs-model-setup: false;
     // §8.5 branch of the workspace folder, when the backend can detect one.
     in-out property <string> active-workspace-branch: "";
     // Root folder of the active workspace, used by the composer's "open
@@ -1352,6 +1362,13 @@ export component MainWindow inherits Window {
                             padding-left: 14px;
                             padding-right: 14px;
                             spacing: 0px;
+                            // 首次配置引导：本地聊天还没有任何真实模型。云端线程
+                            // 走自己的模型目录，不显示。用 visible 而不是 if，
+                            // 原生 smoke 检查要读它的窗口坐标做真实点击。
+                            setup-banner := ModelSetupBanner {
+                                visible: root.needs-model-setup && !root.cloud-chat-active;
+                                setup => { root.setup-first-model(); }
+                            }
                             if root.activity-steps-total > 0 : StatusDock {
                                 running: root.activity-running;
                                 steps-done: root.activity-steps-done;

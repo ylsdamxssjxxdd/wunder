@@ -1,7 +1,7 @@
 //! Native entity-page callbacks. All storage and configuration work runs off the UI thread.
 use crate::{AgentCard, MainWindow};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
-use std::{rc::Rc, sync::Arc};
+use std::{cell::Cell, rc::Rc, sync::Arc};
 use wunder_desktop::{AgentRecord, CloudStatusView, DesktopSettings, NativeDesktop, NativeProfile};
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
@@ -762,6 +762,27 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
         app.set_status("已创建模型草稿，填写基础设置后保存".into());
     });
     let weak = app.as_weak();
+    app.on_setup_first_model(move || {
+        let Some(app) = weak.upgrade() else { return };
+        app.set_settings_active_panel(1);
+        app.set_settings_open(true);
+        // on_create_model refuses to run while the settings pull is loading,
+        // so a request that lands mid-pull is parked and replayed by the
+        // refresh completion.
+        if app.get_settings_loading() {
+            FIRST_MODEL_PENDING.with(|flag| flag.set(true));
+            return;
+        }
+        app.invoke_refresh_settings();
+        if app.get_settings_loading() {
+            FIRST_MODEL_PENDING.with(|flag| flag.set(true));
+        } else {
+            // The pull was deferred (unsaved editor draft) or blocked by a
+            // save; the create path parks/reopens the draft on its own.
+            app.invoke_create_model();
+        }
+    });
+    let weak = app.as_weak();
     app.on_discard_model_draft(move || {
         let Some(app) = weak.upgrade() else { return };
         let stashed_key = crate::entity_state::model_draft_row_key();
@@ -926,6 +947,11 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
                     Err(_) => {}
                 }
                 app.set_settings_loading(false);
+                // A first-run setup tap made during the pull lands here; the
+                // page may have been closed again in the meantime.
+                if FIRST_MODEL_PENDING.with(|flag| flag.replace(false)) && app.get_settings_open() {
+                    app.invoke_create_model();
+                }
             });
         });
     });
@@ -1275,6 +1301,10 @@ thread_local! {
     /// list beside it instead of threading a handle through every settings
     /// callback.
     static MODEL_CATALOGUE: Rc<ModelCatalogue> = Rc::new(ModelCatalogue);
+    /// A first-run setup request made while the settings pull was still in
+    /// flight; the refresh completion opens the new-model draft once the
+    /// loading guard clears.
+    static FIRST_MODEL_PENDING: Cell<bool> = Cell::new(false);
 }
 
 /// The UI thread's model catalogue.
@@ -1311,6 +1341,16 @@ impl ModelCatalogue {
             })
             .cloned()
             .collect::<Vec<_>>();
+        // The seeded 虚拟模型 (provider `virtual_replay`) is always present but
+        // cannot reach a real LLM; while it is the only chat entry the composer
+        // band offers the first-run setup path. The literal mirrors
+        // services::virtual_llm::VIRTUAL_REPLAY_PROVIDER.
+        app.set_needs_model_setup(
+            !selectable.is_empty()
+                && selectable
+                    .iter()
+                    .all(|model| model.provider == "virtual_replay"),
+        );
         app.set_model_catalogue_count(selectable.len() as i32);
         app.set_composer_models(model_from(selectable));
         app.set_models(model_from(rows));
@@ -1425,6 +1465,15 @@ mod tests {
         );
         assert_eq!(app.get_model_catalogue_count(), 2);
         assert_eq!(app.get_models().row_count(), 5);
+        assert!(!app.get_needs_model_setup());
+        // Only the seeded virtual replay model: the first-run setup banner
+        // turns on; any real chat entry turns it back off.
+        let mut virtual_only = card("虚拟模型");
+        virtual_only.provider = "virtual_replay".into();
+        super::model_catalogue().set(&app, vec![virtual_only]);
+        assert!(app.get_needs_model_setup());
+        super::model_catalogue().set(&app, vec![card("extra-model")]);
+        assert!(!app.get_needs_model_setup());
         super::select_model_key(&app, "extra-model");
         assert_eq!(app.get_selected_model_key(), "extra-model");
         super::select_model_key(&app, "missing-model");

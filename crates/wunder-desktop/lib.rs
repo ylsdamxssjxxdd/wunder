@@ -28,6 +28,7 @@ pub use native::{
     TARGET_SUPPLEMENT, UPDATE_GITHUB_REPO, UPDATE_RELAUNCH_ENV, UpdateStateView,
     WORKSPACE_COLORS, WORKSPACE_ICONS,
 };
+pub use wunder_server::cloud::update::{is_newer_version, AndroidRelease};
 pub use runtime::DesktopRuntime;
 
 /// Adopt a portable installation root as WUNDER_HOME before any path is

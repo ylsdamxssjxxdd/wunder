@@ -130,6 +130,9 @@ component SheetAction inherits Rectangle {
 export component WorkspacePage inherits Rectangle {
     in property <length> inset-top: 0px;
     in property <length> inset-bottom: 0px;
+    // Workspace whose folder this page browses; shown beside the relative
+    // path so switching workspaces is visible here too.
+    in property <string> workspace-name: "";
     in property <string> path: "";
     // Empty at the root; the engine computes it so Slint needs no string
     // search for the last separator.
@@ -193,7 +196,8 @@ export component WorkspacePage inherits Rectangle {
                             overflow: elide;
                         }
                         Text {
-                            text: root.path == "" ? "根目录" : root.path;
+                            text: (root.workspace-name == "" ? "工作目录" : root.workspace-name
+                                + (root.path == "" ? "" : " · /" + root.path));
                             color: Theme.muted;
                             font-size: Theme.font-2xs;
                             overflow: elide;

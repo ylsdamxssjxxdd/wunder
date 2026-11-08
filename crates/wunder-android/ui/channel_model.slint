@@ -1,0 +1,61 @@
+// Mobile projections for the channel settings page.
+
+export struct MobileChannelAccount {
+    channel: string,
+    channel-name: string,
+    account-id: string,
+    name: string,
+    status: string,
+    active: bool,
+    configured: bool,
+    summary: string,
+    secret-set: bool,
+}
+
+export struct MobileChannelCatalog {
+    channel: string,
+    name: string,
+    description: string,
+}
+
+export struct MobileChannelBinding {
+    binding-id: string,
+    channel: string,
+    account-id: string,
+    peer-kind: string,
+    peer-id: string,
+    agent-id: string,
+    enabled: bool,
+}
+
+export struct MobileChannelLog {
+    time: string,
+    level: string,
+    event: string,
+    message: string,
+}
+
+export struct MobileChannelDraft {
+    account-id: string,
+    channel: string,
+    name: string,
+    enabled: bool,
+    bot-type: string,
+    app-id: string,
+    app-secret: string,
+    corp-id: string,
+    wechat-agent-id: string,
+    wechat-secret: string,
+    wechat-token: string,
+    wechat-aes-key: string,
+    wechat-mp-token: string,
+    wechat-mp-aes-key: string,
+    original-id: string,
+    weixin-api-base: string,
+    weixin-bot-token: string,
+    weixin-bot-id: string,
+    weixin-user-id: string,
+    domain: string,
+    receive-group-chat: bool,
+    config-json: string,
+}

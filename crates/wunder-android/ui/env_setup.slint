@@ -1,0 +1,210 @@
+// 首次启动的运行环境部署引导页（安卓版）：全屏不透明，实时展示 Ubuntu/proot
+// 的安装进度，安装完成前不进入聊天界面。安装状态由引擎投影，页面只负责呈现。
+
+import { I18n } from "../../../crates/wunder-desktop/frontend/ui/i18n.slint";
+import { Theme } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
+
+// 主操作：强调色按钮。
+component SetupButton inherits Rectangle {
+    in property <string> label;
+    callback clicked();
+    height: 44px;
+    border-radius: Theme.radius-md;
+    background: button-touch.pressed || button-touch.has-hover ? Theme.accent-deep : Theme.accent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    Text {
+        width: 100%;
+        height: 100%;
+        text: root.label;
+        color: #ffffff;
+        font-size: Theme.font-md;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    button-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// 次要操作：纯文字按钮。
+component SetupTextButton inherits Rectangle {
+    in property <string> label;
+    callback clicked();
+    height: 40px;
+    background: transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    Text {
+        width: 100%;
+        height: 100%;
+        text: root.label;
+        color: Theme.muted;
+        font-size: Theme.font-sm;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component EnvSetupPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    // missing / installing / error / installed
+    in property <string> state: "installing";
+    in property <int> progress: 0;
+    in property <string> stage: "";
+    in property <string> version: "";
+    in property <string> error: "";
+    callback retry();
+    callback dismiss();
+
+    background: Theme.chat;
+    private property <bool> failed: root.state == "error";
+    private property <bool> ready: root.state == "installed";
+    private property <int> clamped: min(100, max(0, root.progress));
+
+    // 铺满一层触摸面挡住聊天界面的事件穿透；内容与按钮声明在它之后（上层）。
+    block := TouchArea {
+        width: 100%;
+        height: 100%;
+    }
+
+    VerticalLayout {
+        y: root.inset-top;
+        height: parent.height - root.inset-top - root.inset-bottom;
+        padding-left: 32px;
+        padding-right: 32px;
+        alignment: center;
+        spacing: 0px;
+
+        HorizontalLayout {
+            alignment: center;
+            Image {
+                width: 88px;
+                height: 88px;
+                source: @image-url("../../../images/eva01-head.svg");
+                image-fit: contain;
+            }
+        }
+        Rectangle { height: 18px; }
+        Text {
+            text: root.failed ? I18n.and_env_setup_failed
+                : root.ready ? I18n.and_env_setup_ready
+                : I18n.and_env_setup_title;
+            color: root.failed ? Theme.danger : Theme.text;
+            font-size: Theme.font-headline;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+        Rectangle { height: 8px; }
+        Text {
+            visible: !root.ready;
+            text: I18n.and_env_setup_note;
+            color: Theme.muted;
+            font-size: Theme.font-sm;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+        }
+        Rectangle { height: 28px; }
+
+        // ---- 安装中：百分比 + 进度条 + 阶段 ----
+        if !root.failed && !root.ready : VerticalLayout {
+            spacing: 0px;
+            Text {
+                text: root.clamped + "%";
+                color: Theme.accent-ink;
+                font-size: Theme.font-display;
+                font-weight: 700;
+                horizontal-alignment: center;
+            }
+            Rectangle { height: 14px; }
+            Rectangle {
+                height: 8px;
+                border-radius: 4px;
+                background: Theme.border;
+                Rectangle {
+                    // Slint 中未设置 x 的子元素默认在父容器内居中，进度条填充
+                    // 必须显式钉在左侧才能正常生长。
+                    x: 0px;
+                    y: 0px;
+                    width: max(8px, parent.width * root.clamped / 100);
+                    height: parent.height;
+                    border-radius: 4px;
+                    background: Theme.accent;
+                }
+            }
+            Rectangle { height: 12px; }
+            Text {
+                text: root.state == "missing" ? I18n.and_env_setup_preparing : root.stage;
+                color: Theme.text-secondary;
+                font-size: Theme.font-sm;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+            }
+        }
+
+        // ---- 失败：原因 + 重试 / 先进入 ----
+        if root.failed : VerticalLayout {
+            spacing: 12px;
+            Text {
+                text: root.error != "" ? root.error : root.stage;
+                color: Theme.danger;
+                font-size: Theme.font-sm;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+            }
+            SetupButton {
+                label: I18n.and_env_setup_retry;
+                clicked => { root.retry(); }
+            }
+            SetupTextButton {
+                label: I18n.and_env_setup_enter;
+                clicked => { root.dismiss(); }
+            }
+        }
+
+        // ---- 完成：短暂停留后自动进入 ----
+        if root.ready : VerticalLayout {
+            spacing: 12px;
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 44px;
+                    height: 44px;
+                    border-radius: 22px;
+                    background: Theme.accent-soft;
+                    Image {
+                        x: 12px;
+                        y: 12px;
+                        width: 20px;
+                        height: 20px;
+                        source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/check.svg");
+                        colorize: Theme.accent-ink;
+                        image-fit: contain;
+                    }
+                }
+            }
+            Text {
+                visible: root.version != "";
+                text: root.version;
+                color: Theme.text-secondary;
+                font-size: Theme.font-sm;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: I18n.and_env_setup_ready_note;
+                color: Theme.muted;
+                font-size: Theme.font-xs;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}

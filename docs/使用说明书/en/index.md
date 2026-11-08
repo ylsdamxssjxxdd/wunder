@@ -1,6 +1,6 @@
 ---
 title: wunder
-summary: The four forms of wunder, its capability range, parallel tasks and the session queue, plus navigation entries into the manual.
+summary: The forms of wunder, its capability range, parallel tasks and the session queue, plus navigation entries into the manual.
 read_when:
   - You are new to wunder and choosing which form to use
   - You want the entry point to the whole manual
@@ -9,7 +9,7 @@ source_docs:
   - frontend/src/router/index.ts
   - web/index.html
   - crates/wunder-server/src/main.rs
-updated_at: 2026-10-16
+updated_at: 2026-11-08
 ---
 
 # wunder
@@ -20,20 +20,21 @@ Give it a goal, and the agent breaks the task down on its own, calls tools, and 
 
 ## Forms
 
-The four forms are built on the same engine:
+Multiple forms are built on the same engine; Desktop, Android and CLI are the local forms:
 
 | Form | Positioning | Who it's for |
 | --- | --- | --- |
 | **wunder Desktop** | Local AI workbench, installed on your own computer | Individual users (the default entry point) |
+| **wunder Android** | The Desktop's Android form, installed on your phone | Phone users |
 | **wunder Cloud** | Cloud AI workbench, opened in a browser | Team members after the Server is deployed |
 | **wunder CLI** | Manual local entry point, used in a terminal | Command-line users / automation scripts |
 | **wunder Server** | User and agent management platform, shared by a team | Administrators |
 
 See the [form matrix](/docs/en/start/forms/) for the full comparison of tech stack, run model and OS support.
 
-The Desktop and the CLI don't depend on the Server and can be installed and run on their own. The **Admin** is the management interface that ships with the Server, starts alongside it, and is aimed at administrators.
+The Desktop, Android and CLI don't depend on the Server and can be installed and run on their own. The **Admin** is the management interface that ships with the Server, starts alongside it, and is aimed at administrators.
 
-Deploy the rest as needed: the **Server** covers shared use, permission management, channel access, and unified publishing — see [Server deployment](/docs/en/start/server/); the **Cloud (web)** ships with the Server, and members open it in a browser once it is deployed; the **CLI** covers terminal and automation scenarios — see [Using the CLI](/docs/en/start/cli/).
+Deploy the rest as needed: the **Server** covers shared use, permission management, channel access, and unified publishing — see [Server deployment](/docs/en/start/server/); the **Cloud (web)** ships with the Server, and members open it in a browser once it is deployed; the **CLI** covers terminal and automation scenarios — see [Using the CLI](/docs/en/start/cli/); **Android** covers phones and mobile use — install the APK and go.
 
 ## Default Entry Point
 
@@ -65,7 +66,7 @@ See [Quick Start](/docs/en/start/quickstart/) and [Desktop quick start](/docs/en
 - [Desktop interface](/docs/en/surfaces/desktop-ui/): the main window has two pages, "Chat" and "Settings"; everything else appears as panels and dialogs
 - [Cloud interface](/docs/en/surfaces/frontend/): a single-page app in the browser
 - [Admin interface](/docs/en/surfaces/web-admin/): the administrator's governance and debugging backend
-- [Interface Overview](/docs/en/surfaces/index/): how the four forms compare
+- [Interface Overview](/docs/en/surfaces/index/): how the forms compare and divide their interfaces
 
 ## Navigation
 

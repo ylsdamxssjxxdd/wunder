@@ -22,7 +22,7 @@ use wunder_core::interlink::{
     COMMAND_STATUS_FAILED, DIRECTION_C2L, DIRECTION_L2C, ERR_APPROVAL_EXPIRED,
     ERR_APPROVAL_REJECTED, ERR_CAP_DENIED, ERR_NODE_BUSY, ERR_NODE_OFFLINE, ERR_QUEUE_FULL,
     NODE_STATUS_AWAY, NODE_STATUS_BUSY, NODE_STATUS_ONLINE, NODE_TYPE_CLI, NODE_TYPE_DESKTOP,
-    NODE_TYPE_SERVER,
+    NODE_TYPE_PHONE, NODE_TYPE_SERVER,
 };
 
 use crate::api::errors::error_response;
@@ -133,7 +133,10 @@ impl NodeListQuery {
 /// A node is a *device* only when it is a persistent local form (桌面版/命令行).
 /// Volatile web sessions and the synthetic cloud node are directory members.
 fn is_device_node(node: &InterlinkNodeView) -> bool {
-    matches!(node.node_type.as_str(), NODE_TYPE_DESKTOP | NODE_TYPE_CLI)
+    matches!(
+        node.node_type.as_str(),
+        NODE_TYPE_DESKTOP | NODE_TYPE_CLI | NODE_TYPE_PHONE
+    )
 }
 
 /// Same rule as [`crate::services::presence::nodes::online_count`], restricted
@@ -217,7 +220,9 @@ async fn list_nodes(
     // A filter that cannot match a device must not pay for the device read.
     let want_device = want_node_type
         .map(|kind| {
-            kind.eq_ignore_ascii_case(NODE_TYPE_DESKTOP) || kind.eq_ignore_ascii_case(NODE_TYPE_CLI)
+            kind.eq_ignore_ascii_case(NODE_TYPE_DESKTOP)
+                || kind.eq_ignore_ascii_case(NODE_TYPE_CLI)
+                || kind.eq_ignore_ascii_case(NODE_TYPE_PHONE)
         })
         .unwrap_or(true);
     let want_server = want_node_type
@@ -523,6 +528,8 @@ fn server_node(user_id: &str, now: f64) -> InterlinkNodeView {
 fn map_client(client: &str) -> &'static str {
     if client.contains("cli") {
         NODE_TYPE_CLI
+    } else if client.contains("android") || client.contains("phone") {
+        NODE_TYPE_PHONE
     } else {
         NODE_TYPE_DESKTOP
     }
@@ -1956,6 +1963,7 @@ mod tests {
             kind.map(|kind| {
                 kind.eq_ignore_ascii_case(NODE_TYPE_DESKTOP)
                     || kind.eq_ignore_ascii_case(NODE_TYPE_CLI)
+                    || kind.eq_ignore_ascii_case(NODE_TYPE_PHONE)
             })
             .unwrap_or(true)
         };

@@ -10,3 +10,15 @@ export struct MobileSession {
     status: string,
     active: bool,
 }
+
+// One row of the settings permission manager. State labels are projected in
+// Rust so Java only reports raw granted/denied values.
+export struct MobilePermission {
+    id: string,
+    title: string,
+    description: string,
+    state-text: string,
+    action-text: string,
+    granted: bool,
+    available: bool,
+}

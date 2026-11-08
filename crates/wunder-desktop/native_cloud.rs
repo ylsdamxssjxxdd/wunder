@@ -127,6 +127,12 @@ fn friendly_error(error: anyhow::Error, login: bool) -> anyhow::Error {
 }
 
 impl NativeDesktop {
+    /// Select which local surface this process registers as (`desktop`,
+    /// `android`). Must run before login; session files are keyed by kind.
+    pub fn set_cloud_client_kind(&self, client: &str) {
+        shared().set_client_kind(client);
+    }
+
     pub fn cloud_set_local_sharing(
         &self,
         enabled: bool,
@@ -158,6 +164,7 @@ impl NativeDesktop {
         }
         validate_cloud_password(password)?;
         let state = self.state().clone();
+        let client = shared().client_kind();
         let status = self
             .runtime
             .block_on(shared().login(
@@ -165,7 +172,7 @@ impl NativeDesktop {
                 server,
                 username.trim(),
                 password,
-                "desktop",
+                &client,
             ))
             .map_err(|error| friendly_error(error, true))?;
         Ok(CloudStatusView::project(status))

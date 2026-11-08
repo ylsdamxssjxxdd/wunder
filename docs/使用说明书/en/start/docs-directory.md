@@ -48,7 +48,7 @@ wunder's documentation falls into seven categories, each answering a different k
 
 | Page | Content |
 | --- | --- |
-| [Surfaces overview](/docs/en/surfaces/index/) | The four forms' division and capability matrix |
+| [Surfaces overview](/docs/en/surfaces/index/) | The forms' interface division and capability matrix |
 | [Desktop interface](/docs/en/surfaces/desktop-ui/) | The main window's two pages + settings' 12 categories |
 | [Cloud interface](/docs/en/surfaces/frontend/) | The single-page app in the browser |
 | [Admin interface](/docs/en/surfaces/web-admin/) | The admin governance backend |

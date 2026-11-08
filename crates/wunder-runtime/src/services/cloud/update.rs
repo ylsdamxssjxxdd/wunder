@@ -296,11 +296,30 @@ async fn read_update_json(response: reqwest::Response) -> serde_json::Value {
 /// (prereleases and drafts are excluded server-side).
 pub const GITHUB_RELEASES_LATEST: &str = "https://api.github.com/repos";
 
+fn github_repo_is_valid(repo: &str) -> bool {
+    !repo.is_empty()
+        && repo
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.' | '_' | '/'))
+}
+
 /// Parsed subset of the GitHub release payload we rely on.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct GitHubRelease {
     #[serde(default)]
     pub tag_name: String,
+    #[serde(default)]
+    pub body: String,
+    #[serde(default)]
+    pub html_url: String,
+    #[serde(default)]
+    pub published_at: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub prerelease: bool,
+    #[serde(default)]
+    pub draft: bool,
     #[serde(default)]
     pub assets: Vec<GitHubReleaseAsset>,
 }
@@ -313,6 +332,42 @@ pub struct GitHubReleaseAsset {
     pub browser_download_url: String,
     #[serde(default)]
     pub size: u64,
+    /// GitHub reports `sha256:<hex>` for release assets since 2024.
+    #[serde(default)]
+    pub digest: String,
+}
+
+/// One Android APK offered by a public release. The Android shell installs it
+/// through the system package installer; the desktop updater never sees this
+/// type because its packages are executable files, not APKs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AndroidRelease {
+    pub version: String,
+    pub notes: String,
+    pub url: String,
+    /// Server-side release file name; the authenticated cloud download uses
+    /// this instead of a public URL.
+    pub file: String,
+    pub sha256: String,
+    pub size: u64,
+    pub published_at_ms: i64,
+    pub html_url: String,
+}
+
+impl AndroidRelease {
+    /// Flatten a cloud manifest asset into the Android update projection.
+    pub fn from_update_asset(asset: UpdateAsset) -> Self {
+        Self {
+            version: asset.version,
+            notes: asset.notes,
+            url: asset.url,
+            file: asset.file,
+            sha256: asset.sha256,
+            size: asset.size,
+            published_at_ms: asset.published_at.unwrap_or(0).saturating_mul(1000),
+            html_url: String::new(),
+        }
+    }
 }
 
 impl GitHubRelease {
@@ -325,6 +380,17 @@ impl GitHubRelease {
 
     fn manifest_url(&self) -> Option<String> {
         self.asset_url("manifest.json")
+    }
+
+    fn published_ms(&self) -> i64 {
+        let timestamp = if self.published_at.is_empty() {
+            &self.created_at
+        } else {
+            &self.published_at
+        };
+        chrono::DateTime::parse_from_rfc3339(timestamp)
+            .map(|value| value.timestamp_millis())
+            .unwrap_or(0)
     }
 }
 
@@ -352,6 +418,64 @@ pub fn select_github_asset(
         asset.version = normalize_version(&release.tag_name);
     }
     Ok(Some(asset))
+}
+
+/// Pick the newest Android APK across a list of GitHub releases. The APK's own
+/// file name (`wunder-android-<version>-<arch>.apk`) is the version source
+/// because the nightly release uses a moving tag that is not a version.
+/// Releases without a matching asset, drafts and assets without a download URL
+/// are ignored.
+pub fn select_github_android_release(
+    releases: &[GitHubRelease],
+    arch_label: &str,
+) -> Option<AndroidRelease> {
+    let suffix = format!("-{arch_label}.apk");
+    let mut best: Option<AndroidRelease> = None;
+    for release in releases.iter().filter(|release| !release.draft) {
+        for asset in &release.assets {
+            let Some(version) = asset
+                .name
+                .strip_prefix("wunder-android-")
+                .and_then(|rest| rest.strip_suffix(&suffix))
+                .map(str::trim)
+                .filter(|version| !version.is_empty())
+            else {
+                continue;
+            };
+            if asset.browser_download_url.is_empty() {
+                continue;
+            }
+            let digest = asset.digest.trim();
+            let sha256 = digest
+                .strip_prefix("sha256:")
+                .unwrap_or(digest)
+                .trim()
+                .to_ascii_lowercase();
+            let candidate = AndroidRelease {
+                version: version.to_string(),
+                notes: release.body.clone(),
+                url: asset.browser_download_url.clone(),
+                file: asset.name.clone(),
+                sha256,
+                size: asset.size,
+                published_at_ms: release.published_ms(),
+                html_url: release.html_url.clone(),
+            };
+            let replace = match &best {
+                None => true,
+                Some(current) => match compare_release_versions(&candidate.version, &current.version)
+                {
+                    CmpOrdering::Greater => true,
+                    CmpOrdering::Equal => candidate.published_at_ms > current.published_at_ms,
+                    CmpOrdering::Less => false,
+                },
+            };
+            if replace {
+                best = Some(candidate);
+            }
+        }
+    }
+    best
 }
 
 /// A source-agnostic HTTP client for public update sources. Owns its pooled
@@ -387,11 +511,7 @@ impl UpdateSourceClient {
         os_name: &str,
         arch: &str,
     ) -> Result<Option<UpdateAsset>> {
-        let valid_repo = !repo.is_empty()
-            && repo.chars().all(|ch| {
-                ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.' | '_' | '/')
-            });
-        if !valid_repo {
+        if !github_repo_is_valid(repo) {
             bail!("GitHub 更新源仓库标识无效");
         }
         let release = self
@@ -429,6 +549,46 @@ impl UpdateSourceClient {
             .await
             .map_err(|error| anyhow!("更新清单下载失败：{error}"))?;
         select_github_asset(&manifest_text, &release, client, os_name, arch)
+    }
+
+    /// Newest Android APK across the repository's recent releases. Unlike the
+    /// desktop source this does not need a `manifest.json`: the APK file name
+    /// carries the version, and GitHub reports a sha256 digest per asset.
+    /// Nightly releases use a moving tag, so the caller decides whether a
+    /// same-version APK published after the installed build is an update.
+    pub async fn fetch_github_android(
+        &self,
+        repo: &str,
+        arch_label: &str,
+    ) -> Result<Option<AndroidRelease>> {
+        if !github_repo_is_valid(repo) {
+            bail!("GitHub 更新源仓库标识无效");
+        }
+        let response = self
+            .http
+            .get(format!(
+                "{GITHUB_RELEASES_LATEST}/{repo}/releases?per_page=20"
+            ))
+            .header("Accept", "application/vnd.github+json")
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await
+            .map_err(|error| anyhow!("GitHub 更新源不可达：{error}"))?;
+        let status = response.status();
+        if status.as_u16() == 404 {
+            return Ok(None);
+        }
+        if status.as_u16() == 403 {
+            bail!("GitHub 更新源请求过于频繁，请稍后再试");
+        }
+        if !status.is_success() {
+            bail!("GitHub 更新源查询失败：{status}");
+        }
+        let releases: Vec<GitHubRelease> = response
+            .json()
+            .await
+            .map_err(|error| anyhow!("GitHub 发布信息解析失败：{error}"))?;
+        Ok(select_github_android_release(&releases, arch_label))
     }
 
     /// Stream a release asset that publishes an absolute URL (no session;
@@ -632,5 +792,66 @@ mod tests {
         assert!(!update_file_name_is_safe("..\\secrets.yaml"));
         assert!(!update_file_name_is_safe("config/../wunder.yaml"));
         assert!(!update_file_name_is_safe("pkg exe.exe"));
+    }
+
+    #[test]
+    fn android_release_reads_the_asset_digest_and_version_from_the_apk_name() {
+        let releases: Vec<GitHubRelease> = serde_json::from_str(
+            r#"[
+                {
+                    "tag_name": "nightly",
+                    "body": "nightly notes",
+                    "html_url": "https://example.invalid/releases/nightly",
+                    "published_at": "2026-11-08T01:02:03Z",
+                    "prerelease": true,
+                    "assets": [
+                        {"name": "wunder-android-0.4.0-arm64.apk",
+                         "browser_download_url": "https://example.invalid/a-0.4.0.apk",
+                         "size": 10, "digest": "sha256:aaaaaaaa"},
+                        {"name": "wunder-android-0.4.1-arm64.apk",
+                         "browser_download_url": "https://example.invalid/a-0.4.1.apk",
+                         "size": 99, "digest": "sha256:bbbbbbbb"},
+                        {"name": "wunder-android-0.4.2-x64.apk",
+                         "browser_download_url": "https://example.invalid/a-x64.apk",
+                         "size": 5}
+                    ]
+                },
+                {
+                    "tag_name": "android-runtime",
+                    "assets": [
+                        {"name": "wunder-android-runtime-arm64.tar.gz",
+                         "browser_download_url": "https://example.invalid/runtime.tar.gz",
+                         "size": 20}
+                    ]
+                }
+            ]"#,
+        )
+        .unwrap();
+        let release = select_github_android_release(&releases, "arm64").expect("Android release");
+        assert_eq!(release.version, "0.4.1");
+        assert_eq!(release.url, "https://example.invalid/a-0.4.1.apk");
+        assert_eq!(release.sha256, "bbbbbbbb");
+        assert_eq!(release.size, 99);
+        assert_eq!(release.notes, "nightly notes");
+        assert!(release.published_at_ms > 0);
+        assert!(select_github_android_release(&releases, "x64").is_some());
+        assert!(select_github_android_release(&releases, "arm").is_none());
+    }
+
+    #[test]
+    fn android_release_ignores_drafts() {
+        let releases: Vec<GitHubRelease> = serde_json::from_str(
+            r#"[{
+                "tag_name": "draft",
+                "draft": true,
+                "assets": [{
+                    "name": "wunder-android-0.9.0-arm64.apk",
+                    "browser_download_url": "https://example.invalid/draft.apk",
+                    "size": 1
+                }]
+            }]"#,
+        )
+        .unwrap();
+        assert!(select_github_android_release(&releases, "arm64").is_none());
     }
 }

@@ -1,0 +1,54 @@
+// Workspace icon and palette mapping, shared by the desktop sidebar, its
+// workspace dialog and 安卓版's workspace picker. Slint has no string→image or
+// string→color conversion, so the two tables live here as explicit branches.
+
+export global WorkspaceVisual {
+    public pure function icon(name: string) -> image {
+        name == "monitor" ? @image-url("../assets/icons/workspace/monitor.svg")
+        : name == "martini" ? @image-url("../assets/icons/workspace/martini.svg")
+        : name == "cookie" ? @image-url("../assets/icons/workspace/cookie.svg")
+        : name == "pyramid" ? @image-url("../assets/icons/workspace/pyramid.svg")
+        : name == "camera" ? @image-url("../assets/icons/workspace/camera.svg")
+        : name == "heart" ? @image-url("../assets/icons/workspace/heart.svg")
+        : name == "cake" ? @image-url("../assets/icons/workspace/cake.svg")
+        : name == "robot" ? @image-url("../assets/icons/workspace/robot.svg")
+        : name == "gear" ? @image-url("../assets/icons/workspace/gear.svg")
+        : name == "coffee" ? @image-url("../assets/icons/workspace/coffee.svg")
+        : name == "ghost" ? @image-url("../assets/icons/workspace/ghost.svg")
+        : name == "alien" ? @image-url("../assets/icons/workspace/alien.svg")
+        : name == "bell" ? @image-url("../assets/icons/workspace/bell.svg")
+        : name == "flask" ? @image-url("../assets/icons/workspace/flask.svg")
+        : name == "cloud" ? @image-url("../assets/icons/workspace/cloud.svg")
+        : @image-url("../assets/icons/workspace/folder.svg");
+    }
+
+    // Unknown names fall back to gray, matching the desktop sidebar.
+    public pure function color(name: string) -> color {
+        name == "red" ? #CD484F
+        : name == "green" ? #4CAF50
+        : name == "blue" ? #1F76AF
+        : name == "brown" ? #8D6E3C
+        : name == "crimson" ? #A93226
+        : name == "pink" ? #E45B9C
+        : name == "purple" ? #6F6AED
+        : name == "yellow" ? #F5C518
+        : name == "orange" ? #FA8C38
+        : name == "teal" ? #17B8A6
+        : name == "bright-blue" ? #1799FE
+        : name == "gray" ? #9AA0A6
+        : name == "black" ? #1F2329
+        : name == "light-purple" ? #B39DDB
+        : name == "light-green" ? #81C784
+        : #9AA0A6;
+    }
+
+    public pure function icon-keys() -> [string] {
+        ["folder", "monitor", "martini", "cake", "cookie", "pyramid", "alien", "camera", "gear",
+         "coffee", "heart", "robot", "ghost", "bell", "flask"]
+    }
+
+    public pure function color-keys() -> [string] {
+        ["red", "green", "blue", "brown", "crimson", "pink", "purple", "yellow", "orange",
+         "teal", "bright-blue", "gray", "black", "light-purple", "light-green"]
+    }
+}

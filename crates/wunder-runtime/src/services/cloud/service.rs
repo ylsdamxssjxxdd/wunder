@@ -788,10 +788,10 @@ impl CloudService {
     ) -> Result<CloudStatus> {
         let client_kind = normalize_client(client);
         let _file_lock = self.acquire_session_file_lock().await?;
-        let scope = if client_kind == "cli" {
-            "local_cli"
-        } else {
-            "local_desktop"
+        let scope = match client_kind.as_str() {
+            "cli" => "local_cli",
+            "android" => "local_android",
+            _ => "local_desktop",
         };
         let server = normalize_server(server)?;
 
@@ -2112,10 +2112,10 @@ fn urlencode_component(raw: &str) -> String {
 
 fn normalize_client(client: &str) -> String {
     let trimmed = client.trim().to_ascii_lowercase();
-    if trimmed == "cli" {
-        "cli".to_string()
-    } else {
-        "desktop".to_string()
+    match trimmed.as_str() {
+        "cli" => "cli".to_string(),
+        "android" | "phone" => "android".to_string(),
+        _ => "desktop".to_string(),
     }
 }
 
@@ -2134,7 +2134,8 @@ fn normalize_server(server: &str) -> Result<String> {
 }
 
 fn local_device_name(client: &str) -> String {
-    std::env::var("COMPUTERNAME")
+    std::env::var("WUNDER_DEVICE_NAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
         .or_else(|_| std::env::var("HOSTNAME"))
         .ok()
         .map(|value| value.trim().to_string())

@@ -290,11 +290,24 @@ fn blank(kind: i32, id: impl Into<SharedString>) -> TimelineRow {
 }
 
 pub fn status_kind(state: &str) -> i32 {
+    let state = state.trim();
     match state {
-        "running" | "queued" | "pending" | "in_progress" => STATUS_RUNNING,
-        "failed" | "error" | "rejected" | "cancelled" | "canceled" => STATUS_FAILED,
-        "stopped" | "interrupted" => STATUS_STOPPED,
-        _ => STATUS_DONE,
+        "failed" | "error" | "rejected" | "执行失败" | "任务失败" => STATUS_FAILED,
+        "cancelled" | "canceled" | "interrupted" | "stopped" | "已停止" | "已取消"
+        | "已中断" => STATUS_STOPPED,
+        "" | "idle" | "ready" | "none" | "completed" | "complete" | "done" | "ok"
+        | "success" | "任务完成" | "已完成" => STATUS_DONE,
+        _ if state.starts_with("失败") => STATUS_FAILED,
+        _ if state.starts_with("已停止")
+            || state.starts_with("已取消")
+            || state.starts_with("已中断") =>
+        {
+            STATUS_STOPPED
+        }
+        // Every other phrase is a live phase: "running", "streaming",
+        // "正在生成…", "正在排队", "等待用户输入". Treating those as done
+        // collapsed the durable work-process bar and hid its status chip.
+        _ => STATUS_RUNNING,
     }
 }
 
@@ -329,6 +342,53 @@ pub fn preview_text(text: &str, limit: usize) -> String {
     if truncated {
         out.push('…');
     }
+    out
+}
+
+/// Companion bubble text: drop image/link URLs and inline markdown
+/// punctuation, then collapse whitespace and cap at 96 characters (the same
+/// bubble contract as the desktop pet and the web floating layer).
+pub fn bubble_hint(raw: &str) -> String {
+    let without_images = strip_link_pairs(raw, true);
+    let without_links = strip_link_pairs(&without_images, false);
+    let mut text = String::with_capacity(without_links.len());
+    for ch in without_links.chars() {
+        match ch {
+            '`' | '#' | '>' | '*' | '_' | '~' | '-' => text.push(' '),
+            other => text.push(other),
+        }
+    }
+    preview_text(&text, 96)
+}
+
+/// Remove `![alt](url)` / `[label](url)` constructs. An image carries no text
+/// worth reading, so its label goes with it; a link label stays.
+fn strip_link_pairs(input: &str, image: bool) -> String {
+    let opener = if image { "![" } else { "[" };
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(start) = rest.find(opener) {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + opener.len()..];
+        let Some(end) = after.find(']') else {
+            out.push_str(&rest[start..]);
+            return out;
+        };
+        let label = &after[..end];
+        let tail = &after[end + 1..];
+        let tail = match tail.strip_prefix('(') {
+            Some(inner) => match inner.find(')') {
+                Some(close) => &inner[close + 1..],
+                None => "",
+            },
+            None => tail,
+        };
+        if !image {
+            out.push_str(label);
+        }
+        rest = tail;
+    }
+    out.push_str(rest);
     out
 }
 
@@ -639,22 +699,55 @@ fn footer_stats(stats: &NativeMessageStats, round: i64) -> Vec<(String, String)>
     metrics
 }
 
-fn status_metric(state: &str) -> Option<(&'static str, String)> {
+pub(crate) fn status_metric(state: &str) -> Option<(&'static str, String)> {
     let state = state.trim();
     match state {
-        "" | "completed" | "complete" | "done" | "ok" | "success" => None,
-        "failed" | "error" | "rejected" => Some(("status-error", "任务失败".into())),
-        "cancelled" | "canceled" | "stopped" | "interrupted" => {
-            Some(("status-stopped", "已停止".into()))
+        "" | "completed" | "complete" | "done" | "ok" | "success" | "任务完成" | "已完成" => {
+            None
         }
-        "waiting_input" | "waiting_user_input" | "waiting_approval" => {
-            Some(("status-waiting", "等待确认".into()))
+        "failed" | "error" | "rejected" | "执行失败" | "任务失败" => {
+            Some(("status-error", "任务失败".into()))
         }
-        "queued" | "pending" => Some(("status-queued", "排队中".into())),
-        "running" | "in_progress" => Some(("status-running", "处理中".into())),
+        "cancelled" | "canceled" | "stopped" | "interrupted" | "已停止" | "已取消"
+        | "已中断" => Some(("status-stopped", "已停止".into())),
+        "waiting_input" | "waiting_user_input" | "waiting_approval" | "等待用户输入"
+        | "等待确认" => Some(("status-waiting", "等待确认".into())),
+        "queued" | "pending" | "正在排队" | "排队中" => {
+            Some(("status-queued", "排队中".into()))
+        }
+        "running" | "in_progress" | "正在处理…" | "正在处理" => {
+            Some(("status-running", "处理中".into()))
+        }
+        "正在生成…" | "正在生成" | "正在思考…" | "正在思考" | "模型输出中" | "streaming" => {
+            Some(("status-outputting", "模型输出中".into()))
+        }
+        "正在执行工具…" | "正在执行工具" | "使用工具中" => {
+            Some(("status-tool", "使用工具中".into()))
+        }
+        "上下文压缩中…" | "上下文压缩中" | "compacting" => {
+            Some(("status-compacting", "上下文压缩中".into()))
+        }
+        "目标继续执行…" | "目标继续执行" => Some(("status-requesting", "请求中".into())),
         other if other.starts_with("等待") => Some(("status-waiting", "等待确认".into())),
         other if other.starts_with("失败") => Some(("status-error", "任务失败".into())),
-        other if other.starts_with("已停止") => Some(("status-stopped", "已停止".into())),
+        other if other.starts_with("已停止")
+            || other.starts_with("已取消")
+            || other.starts_with("已中断") =>
+        {
+            Some(("status-stopped", "已停止".into()))
+        }
+        // The durable catalogue labels a running turn "正在生成…", but it may
+        // also arrive as a queue phrase with detail such as "正在排队 · 前方 2 名".
+        other if other.starts_with("正在排队") || other.starts_with("任务已排队") => {
+            Some(("status-queued", other.to_owned()))
+        }
+        other if other.starts_with("正在生成") || other.starts_with("正在思考") => {
+            Some(("status-outputting", "模型输出中".into()))
+        }
+        other if other.starts_with("正在执行工具") => {
+            Some(("status-tool", "使用工具中".into()))
+        }
+        other if other.starts_with("正在") => Some(("status-running", other.to_owned())),
         _ => None,
     }
 }
@@ -847,10 +940,12 @@ impl LiveTurn {
 
     fn process_summary(&self) -> &'static str {
         match self.phase.as_str() {
+            "requesting" => "请求中…",
             "thinking" | "outputting" => "正在生成回复…",
             "tool" => "正在执行工具…",
             "compacting" => "上下文压缩中…",
             "queued" => "正在排队…",
+            "waiting" => "等待确认…",
             _ => "正在处理…",
         }
     }
@@ -928,7 +1023,12 @@ impl LiveTurn {
         if !self.answer.is_empty() {
             let mut row = RowData::new(KIND_BODY, format!("{}-body", self.root_id));
             row.text = self.answer.clone();
-            row.blocks_src = self.answer.clone();
+            // Streamed text stays plain while tokens arrive; the whole answer
+            // is parsed once when the turn settles. Re-parsing it on every
+            // delta stalled the phone UI and delayed every status update.
+            if self.status != STATUS_RUNNING {
+                row.blocks_src = self.answer.clone();
+            }
             row.status_kind = self.status;
             rows.push(row);
         }
@@ -960,7 +1060,41 @@ impl LiveTurn {
     }
 }
 
-fn live_status_metric(phase: &str) -> Option<(&'static str, String)> {
+/// Root id of the newest durable turn whose user row matches `text` and whose
+/// rows still carry a running marker. Used while a stream's identity frame is
+/// still in flight, so an older identical message cannot capture the tail.
+pub(crate) fn running_root_for_text(rows: &[RowData], text: &str) -> Option<String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    for (index, row) in rows.iter().enumerate().rev() {
+        if row.kind != KIND_USER || row.text.trim() != text {
+            continue;
+        }
+        let Some(root) = row.id.strip_suffix("-user") else {
+            continue;
+        };
+        let mut running = false;
+        for next in &rows[index + 1..] {
+            if next.kind == KIND_USER {
+                break;
+            }
+            if next.kind == KIND_FOOTER || next.kind == KIND_PROCESS {
+                running = next.status_kind == STATUS_RUNNING;
+                if running {
+                    break;
+                }
+            }
+        }
+        if running {
+            return Some(root.to_owned());
+        }
+    }
+    None
+}
+
+pub(crate) fn live_status_metric(phase: &str) -> Option<(&'static str, String)> {
     match phase {
         "requesting" => Some(("status-requesting", "请求中".into())),
         "thinking" | "outputting" => Some(("status-outputting", "模型输出中".into())),
@@ -1025,9 +1159,65 @@ mod tests {
     }
 
     #[test]
+    fn bubble_hint_strips_markdown_and_caps_at_96_chars() {
+        assert_eq!(
+            bubble_hint("看看 ![图](https://example.com/a.png) 和 [文档](https://example.com) 吧"),
+            "看看 和 文档 吧"
+        );
+        assert_eq!(bubble_hint("**完成**\n\n- 第一步\n- 第二步"), "完成 第一步 第二步");
+        let long = bubble_hint(&"字".repeat(120));
+        assert_eq!(long.chars().count(), 97);
+        assert!(long.ends_with('…'));
+        assert_eq!(bubble_hint("[未闭合"), "[未闭合");
+    }
+
+    #[test]
     fn tool_target_rejects_a_truncated_preview() {
         let mut entry = entry();
         entry.preview = "x".repeat(640);
         assert!(tool_target(&entry).is_empty());
+    }
+
+    #[test]
+    fn running_durable_labels_keep_the_process_and_status_live() {
+        for label in [
+            "正在生成…",
+            "正在排队",
+            "等待用户输入",
+            "正在执行工具…",
+            "正在思考…",
+        ] {
+            assert_eq!(status_kind(label), STATUS_RUNNING, "{label}");
+            assert!(status_metric(label).is_some(), "{label}");
+        }
+        assert_eq!(status_kind("任务完成"), STATUS_DONE);
+        assert_eq!(status_kind("已停止"), STATUS_STOPPED);
+        assert_eq!(status_kind("执行失败"), STATUS_FAILED);
+        assert_eq!(status_metric("正在生成…").unwrap().0, "status-outputting");
+        assert_eq!(status_metric("正在排队").unwrap().0, "status-queued");
+    }
+
+    #[test]
+    fn a_streaming_body_stays_plain_until_the_turn_settles() {
+        let mut live = LiveTurn::new("hi".into());
+        live.answer = "**流式**".into();
+        let rows = live.rows();
+        let body = rows
+            .iter()
+            .find(|row| row.kind == KIND_BODY)
+            .expect("body row");
+        assert!(body.blocks_src.is_empty());
+        let footer = rows
+            .iter()
+            .find(|row| row.kind == KIND_FOOTER)
+            .expect("footer row");
+        assert_eq!(footer.stats[0].0, "status-requesting");
+        live.status = STATUS_DONE;
+        let rows = live.rows();
+        let body = rows
+            .iter()
+            .find(|row| row.kind == KIND_BODY)
+            .expect("body row");
+        assert_eq!(body.blocks_src, "**流式**");
     }
 }

@@ -1,0 +1,13 @@
+// One workspace row as the phone projects it. `active` is the workspace new
+// tasks land in and the working-directory page browses; it is not the
+// workspace of every listed thread, matching the desktop sidebar rule.
+
+export struct MobileWorkspace {
+    id: string,
+    name: string,
+    icon: string,
+    color: string,
+    root: string,
+    thread-count: int,
+    active: bool,
+}

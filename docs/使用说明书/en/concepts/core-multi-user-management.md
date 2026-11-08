@@ -15,7 +15,7 @@ source_docs:
 updated_at: 2026-10-16
 ---
 
-Multi-user governance is a foundational capability of the Server form; the Desktop and the CLI are local, single-machine forms with no account system. Concrete panel operations are covered in the reference section.
+Multi-user governance is a foundational capability of the Server form; the Desktop, Android, and the CLI are local, single-machine forms with no account system. Concrete panel operations are covered in the reference section.
 
 ## Identity checks
 

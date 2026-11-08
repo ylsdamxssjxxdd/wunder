@@ -94,6 +94,14 @@ export global I18n {
     out property <string> dk_folder_name: zh ? "目录名称" : "Folder name";
     out property <string> dk_clear_workspace: zh ? "清空工作目录" : "Clear workspace";
     out property <string> dk_clear_confirm: zh ? "将永久删除当前工作目录中的全部文件与目录，且无法恢复。确认清空？" : "This permanently deletes every file and folder in the current working directory and cannot be undone. Clear everything?";
+    out property <string> and_env_setup_title: zh ? "正在准备运行环境" : "Preparing the runtime";
+    out property <string> and_env_setup_note: zh ? "首次启动需要部署 Ubuntu 运行环境，安装完成后自动进入。期间请保持应用运行。" : "The first launch sets up the Ubuntu runtime. The app opens automatically when it is ready; keep the app running.";
+    out property <string> and_env_setup_preparing: zh ? "正在准备…" : "Preparing…";
+    out property <string> and_env_setup_ready: zh ? "运行环境已就绪" : "Runtime ready";
+    out property <string> and_env_setup_ready_note: zh ? "即将进入" : "Opening the app";
+    out property <string> and_env_setup_failed: zh ? "运行环境安装失败" : "Runtime setup failed";
+    out property <string> and_env_setup_retry: zh ? "重新安装" : "Retry";
+    out property <string> and_env_setup_enter: zh ? "先进入应用" : "Continue to app";
     out property <string> sb_thread_multi_select: zh ? "多选" : "Multi-select";
     out property <string> sb_thread_select_all: zh ? "全选" : "Select all";
     public pure function sb_thread_selected(count: string) -> string { return zh ? "已选 " + count + " 项" : "" + count + " selected"; }
@@ -318,6 +326,8 @@ export global I18n {
     out property <string> cp_model_default_tag: zh ? "默认" : "Default";
     out property <string> cp_model_settings: zh ? "打开模型设置" : "Open model settings";
     out property <string> cp_model_none: zh ? "未选择模型" : "No model selected";
+    out property <string> cp_model_setup_hint: zh ? "还没有配置模型，先添加一个模型再开始对话。" : "No model configured yet. Add one to start chatting.";
+    out property <string> cp_model_setup_action: zh ? "配置模型" : "Set up model";
     out property <string> cp_error_prefix: zh ? "无法" : "Unable to ";
     out property <string> cp_fail_prefix: zh ? "失败" : "Failed";
     out property <string> cp_goal_label: zh ? "目标" : "Goal";

@@ -106,15 +106,15 @@ List the files in the current working directory
 
 When you see the model think → a batch of tools → the final reply landing in the chat area, you're up and running.
 
-## Capabilities unique to the Desktop
+## Capabilities the Desktop covers most fully
 
 None of these exist on the Cloud, the Admin, or the CLI:
 
 - **Interactive terminal** (winpty on Windows, PTY on Linux)
-- **Screenshot capture** (X11 on Linux, Win32 APIs on Windows)
 - **Tray and system notifications**
 - **Global hotkeys**
-- **Voice input**
+
+**Voice input** and **screenshot capture** exist on both the Desktop and Android: the Desktop captures through X11 / Win32, while Android captures the screen through its accessibility service. The window-level interactive terminal, tray, and global hotkeys are specific to the Desktop and do not apply to a phone.
 
 ## Device interlink surfaces
 

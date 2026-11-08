@@ -2,11 +2,17 @@ package dev.wunder.android;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.ClipData;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageInstaller;
 import android.content.pm.PackageManager;
+import android.content.pm.Signature;
+import android.content.pm.SigningInfo;
 import android.database.Cursor;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
@@ -14,11 +20,16 @@ import android.media.MediaRecorder;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.os.PowerManager;
+import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
+import android.provider.Settings;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.MimeTypeMap;
+
+import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -28,10 +39,13 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * Small, process-scoped UI affordances the native shell needs.
@@ -66,6 +80,14 @@ public final class UiBridge {
     private static final ArrayList<String> voiceEvents = new ArrayList<>();
     private static final ArrayList<String> screenshotEvents = new ArrayList<>();
     private static final Object voiceLock = new Object();
+    // Back presses are counted here for the Rust render tick. The activity
+    // consumes the key so the framework never finishes it directly; Rust
+    // closes the topmost page and only exits after a second Back at the root.
+    private static int backRequests;
+    private static long lastBackRequestMs;
+    // Final status of the last package-install session, drained by the Rust
+    // tick so the update card can offer a retry after a cancel or failure.
+    private static String installResult;
     private static volatile boolean voiceRecording;
     private static volatile boolean voiceStopRequested;
     private static boolean pendingVoicePermission;
@@ -90,6 +112,362 @@ public final class UiBridge {
             View decor = current.getWindow().getDecorView();
             imm.hideSoftInputFromWindow(decor.getWindowToken(), 0);
         });
+    }
+
+    /**
+     * Record one Back press for the Rust shell. Called from the activity's
+     * key and OnBackInvoked paths; a single physical press can arrive through
+     * both on some ROMs, so presses within 40 ms collapse into one.
+     */
+    public static void requestBack() {
+        synchronized (queueLock) {
+            long now = SystemClock.uptimeMillis();
+            if (now - lastBackRequestMs < 40) {
+                return;
+            }
+            lastBackRequestMs = now;
+            backRequests++;
+        }
+    }
+
+    /** Drain Back presses. Rust processes them from its 33 ms render tick. */
+    public static int takeBackRequests() {
+        synchronized (queueLock) {
+            int count = backRequests;
+            backRequests = 0;
+            return count;
+        }
+    }
+
+    /** Close the visible activity after the shell accepted a Back-to-exit. */
+    public static void finishActivity() {
+        Activity current = activity.get();
+        if (current != null) {
+            current.runOnUiThread(current::finish);
+        }
+    }
+
+    /**
+     * Raw state of every permission the settings page manages. Values are
+     * {@code granted}, {@code denied} or {@code unsupported}; the Rust side
+     * owns the user-facing labels. Returning one JSON object keeps this call
+     * to a single JNI round-trip.
+     */
+    public static String permissionSnapshot() {
+        Activity current = activity.get();
+        if (current == null) {
+            return "{}";
+        }
+        JSONObject result = new JSONObject();
+        try {
+            result.put("notifications", notificationState(current));
+            result.put("microphone", runtimeState(current, Manifest.permission.RECORD_AUDIO));
+            result.put("overlay", Settings.canDrawOverlays(current) ? "granted" : "denied");
+            result.put("accessibility", accessibilityEnabled(current) ? "granted" : "denied");
+            result.put("battery", batteryExempt(current) ? "granted" : "denied");
+            result.put(
+                    "install_packages",
+                    current.getPackageManager().canRequestPackageInstalls()
+                            ? "granted"
+                            : "denied");
+        } catch (Exception ignored) {
+        }
+        return result.toString();
+    }
+
+    /** Last time the installed package was replaced, for nightly update checks. */
+    public static long installedAtMillis() {
+        Activity current = activity.get();
+        if (current == null) {
+            return 0L;
+        }
+        try {
+            return current.getPackageManager()
+                    .getPackageInfo(current.getPackageName(), 0)
+                    .lastUpdateTime;
+        } catch (Exception ignored) {
+            return 0L;
+        }
+    }
+
+    /**
+     * Hand a downloaded, verified APK to the system package installer.
+     * Returns {@code started}, {@code permission} (unknown-sources settings
+     * opened) or {@code failed:<reason>}. The APK is verified against the
+     * installed package before the installer ever sees it.
+     */
+    public static String installApk(String path) {
+        Activity current = activity.get();
+        if (current == null) {
+            return "failed:no activity";
+        }
+        File apk = new File(path);
+        if (!apk.isFile()) {
+            return "failed:更新包不存在";
+        }
+        if (!current.getPackageManager().canRequestPackageInstalls()) {
+            current.runOnUiThread(() -> {
+                try {
+                    current.startActivity(new Intent(
+                            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:" + current.getPackageName())));
+                } catch (Exception ignored) {
+                    try {
+                        current.startActivity(new Intent(Settings.ACTION_SECURITY_SETTINGS));
+                    } catch (Exception ignoredAgain) {
+                    }
+                }
+            });
+            return "permission";
+        }
+        String verification = verifyUpdateApk(current, apk);
+        if (verification != null) {
+            return "failed:" + verification;
+        }
+        PackageInstaller installer = current.getPackageManager().getPackageInstaller();
+        int sessionId;
+        try {
+            PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(
+                    PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+            params.setAppPackageName(current.getPackageName());
+            sessionId = installer.createSession(params);
+        } catch (Exception error) {
+            return "failed:" + messageOf(error, "无法创建安装会话");
+        }
+        try (PackageInstaller.Session session = installer.openSession(sessionId);
+             InputStream input = new FileInputStream(apk)) {
+            try (OutputStream output = session.openWrite("base.apk", 0, apk.length())) {
+                copy(input, output);
+                session.fsync(output);
+            }
+            Intent result = new Intent(current, InstallResultReceiver.class)
+                    .setAction("dev.wunder.android.INSTALL_RESULT");
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= 31) {
+                // The package installer fills the result extras, so the
+                // platform requires a mutable PendingIntent here.
+                flags |= PendingIntent.FLAG_MUTABLE;
+            }
+            PendingIntent pending = PendingIntent.getBroadcast(current, sessionId, result, flags);
+            session.commit(pending.getIntentSender());
+            return "started";
+        } catch (Exception error) {
+            try {
+                installer.abandonSession(sessionId);
+            } catch (Exception ignored) {
+            }
+            return "failed:" + messageOf(error, "无法启动安装器");
+        }
+    }
+
+    private static String messageOf(Exception error, String fallback) {
+        String message = error.getMessage();
+        return message == null || message.trim().isEmpty() ? fallback : message;
+    }
+
+    /** Record the terminal status of an install session for the Rust tick. */
+    public static void publishInstallResult(String result) {
+        synchronized (queueLock) {
+            installResult = result;
+        }
+    }
+
+    /** Drain the last install-session status, or null when none is pending. */
+    public static String takeInstallResult() {
+        synchronized (queueLock) {
+            String result = installResult;
+            installResult = null;
+            return result;
+        }
+    }
+
+    /**
+     * Refuse an APK that is not this package, is signed by another key, or
+     * claims a lower version. The manifest sha256 already proves integrity;
+     * this proves it belongs to the installed app.
+     */
+    private static String verifyUpdateApk(Activity context, File apk) {
+        PackageManager manager = context.getPackageManager();
+        int flags = Build.VERSION.SDK_INT >= 28
+                ? PackageManager.GET_SIGNING_CERTIFICATES
+                : PackageManager.GET_SIGNATURES;
+        PackageInfo archive;
+        try {
+            archive = manager.getPackageArchiveInfo(apk.getAbsolutePath(), flags);
+        } catch (Exception error) {
+            return "无法读取安装包：" + messageOf(error, "未知错误");
+        }
+        if (archive == null) {
+            return "无法读取安装包";
+        }
+        if (!context.getPackageName().equals(archive.packageName)) {
+            return "安装包包名不一致";
+        }
+        try {
+            PackageInfo installed = manager.getPackageInfo(context.getPackageName(), flags);
+            if (!sameSigners(archive, installed)) {
+                return "安装包签名与当前应用不一致";
+            }
+            long archiveCode = Build.VERSION.SDK_INT >= 28
+                    ? archive.getLongVersionCode()
+                    : archive.versionCode;
+            long installedCode = Build.VERSION.SDK_INT >= 28
+                    ? installed.getLongVersionCode()
+                    : installed.versionCode;
+            if (archiveCode < installedCode) {
+                return "安装包版本低于当前版本";
+            }
+        } catch (Exception error) {
+            return "无法校验安装包：" + messageOf(error, "未知错误");
+        }
+        return null;
+    }
+
+    private static boolean sameSigners(PackageInfo left, PackageInfo right) {
+        Set<String> leftSigners = signerFingerprints(left);
+        Set<String> rightSigners = signerFingerprints(right);
+        return !leftSigners.isEmpty() && leftSigners.equals(rightSigners);
+    }
+
+    private static Set<String> signerFingerprints(PackageInfo info) {
+        if (Build.VERSION.SDK_INT >= 28) {
+            return SignersApi28.fingerprints(info);
+        }
+        Set<String> fingerprints = new HashSet<>();
+        Signature[] signers = info.signatures;
+        if (signers != null) {
+            for (Signature signature : signers) {
+                fingerprints.add(sha256(signature.toByteArray()));
+            }
+        }
+        return fingerprints;
+    }
+
+    /** Isolated so class loading on API 26-27 never resolves SigningInfo. */
+    private static final class SignersApi28 {
+        static Set<String> fingerprints(PackageInfo info) {
+            Set<String> fingerprints = new HashSet<>();
+            SigningInfo signing = info.signingInfo;
+            Signature[] signers = signing == null ? null : signing.getApkContentsSigners();
+            if (signers != null) {
+                for (Signature signature : signers) {
+                    fingerprints.add(sha256(signature.toByteArray()));
+                }
+            }
+            return fingerprints;
+        }
+    }
+
+    private static String sha256(byte[] bytes) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            StringBuilder out = new StringBuilder();
+            for (byte value : digest.digest(bytes)) {
+                out.append(String.format(Locale.ROOT, "%02x", value));
+            }
+            return out.toString();
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    /** Open the system surface that grants or revokes one managed permission. */
+    public static void openPermission(String id) {
+        Activity current = activity.get();
+        if (current == null || id == null) {
+            return;
+        }
+        Activity activity = current;
+        activity.runOnUiThread(() -> {
+            Intent primary;
+            Intent fallback = appDetails(activity);
+            switch (id) {
+                case "notifications":
+                    primary = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                            .putExtra(Settings.EXTRA_APP_PACKAGE, activity.getPackageName());
+                    break;
+                case "microphone":
+                    primary = fallback;
+                    break;
+                case "overlay":
+                    primary = new Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:" + activity.getPackageName()));
+                    break;
+                case "accessibility":
+                    primary = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+                    break;
+                case "battery":
+                    primary = new Intent(
+                            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            Uri.parse("package:" + activity.getPackageName()));
+                    fallback = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                    break;
+                case "install_packages":
+                    primary = new Intent(
+                            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:" + activity.getPackageName()));
+                    fallback = new Intent(Settings.ACTION_SECURITY_SETTINGS);
+                    break;
+                default:
+                    return;
+            }
+            try {
+                activity.startActivity(primary);
+            } catch (Exception ignored) {
+                try {
+                    activity.startActivity(fallback);
+                } catch (Exception ignoredAgain) {
+                }
+            }
+        });
+    }
+
+    private static Intent appDetails(Context context) {
+        return new Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:" + context.getPackageName()));
+    }
+
+    private static String runtimeState(Context context, String permission) {
+        return context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+                ? "granted"
+                : "denied";
+    }
+
+    private static String notificationState(Context context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED) {
+            return "denied";
+        }
+        NotificationManager manager =
+                (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        return manager != null && manager.areNotificationsEnabled() ? "granted" : "denied";
+    }
+
+    private static boolean accessibilityEnabled(Context context) {
+        try {
+            String services = Settings.Secure.getString(
+                    context.getContentResolver(),
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+            if (services == null) {
+                return false;
+            }
+            String prefix = context.getPackageName() + "/";
+            for (String entry : services.split(":")) {
+                if (entry.startsWith(prefix) && entry.contains("WunderAccessibilityService")) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
+    }
+
+    private static boolean batteryExempt(Context context) {
+        PowerManager manager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        return manager != null && manager.isIgnoringBatteryOptimizations(context.getPackageName());
     }
 
     /** Open the system document picker; picked files come back staged. */
@@ -373,6 +751,16 @@ public final class UiBridge {
             }
         });
         return "pending";
+    }
+
+    /** Human-readable device name used when this phone registers with the cloud. */
+    public static String deviceName() {
+        String manufacturer = Build.MANUFACTURER == null ? "" : Build.MANUFACTURER.trim();
+        String model = Build.MODEL == null ? "" : Build.MODEL.trim();
+        String name = manufacturer.isEmpty() ? model
+                : model.toLowerCase(Locale.ROOT).startsWith(manufacturer.toLowerCase(Locale.ROOT))
+                    ? model : manufacturer + " " + model;
+        return name.isEmpty() ? "wunder 安卓版" : name;
     }
 
     /** Drain files staged by the latest picker result, or null if none. */

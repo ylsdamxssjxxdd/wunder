@@ -80,8 +80,9 @@ When the timeline shows tool batches, a "work process" entry for each turn, and 
 
 ## Other forms
 
-The Server, the Cloud, and the CLI are installed per scenario:
+Android, the Server, the Cloud, and the CLI are chosen per scenario:
 
+- **Android**: the Desktop's Android form — the local AI workbench on a phone; install the APK and go. See the [Form matrix](/docs/en/start/forms/).
 - **The Server**: multi-user sharing, permission management, channel integration, and publishing and governing agent apps. See [Server deployment](/docs/en/start/server/).
 - **The Cloud (web)**: the cloud AI workbench delivered with the Server, accessed in a browser; its pages are delivered by a separate web-service container, on 18001 by default. See [Cloud interface](/docs/en/surfaces/frontend/).
 - **The CLI**: the manual local entry point for terminals and automation. See [CLI usage](/docs/en/start/cli/).

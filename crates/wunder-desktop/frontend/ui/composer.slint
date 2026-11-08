@@ -955,6 +955,61 @@ export component GoalBanner inherits Rectangle {
     }
 }
 
+// First-run guidance: the catalogue only holds the seeded 虚拟模型, which
+// cannot reach a real LLM. The whole banner is one tap target; the caller
+// opens the model settings with a fresh draft already in place.
+export component ModelSetupBanner inherits Rectangle {
+    callback setup();
+    height: 42px;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: banner-touch.has-hover ? Theme.accent-soft : Theme.panel;
+    accessible-role: button;
+    accessible-label: I18n.cp_model_setup_action;
+    accessible-action-default => { root.setup(); }
+    HorizontalLayout {
+        padding-left: 14px; padding-right: 8px; spacing: 8px;
+        Rectangle {
+            width: 16px; height: parent.height;
+            // Layout rows top-align fixed-height children, so the glyph rides
+            // its own full-height cell and centers itself.
+            Image {
+                y: (parent.height - 16px) / 2;
+                width: 16px; height: 16px;
+                source: @image-url("../assets/icons/brain.svg");
+                colorize: Theme.accent-ink; image-fit: contain;
+            }
+        }
+        Text {
+            horizontal-stretch: 1; min-width: 0px;
+            text: I18n.cp_model_setup_hint;
+            color: Theme.text; font-size: Theme.font-sm;
+            vertical-alignment: center; overflow: elide;
+        }
+        Rectangle {
+            width: action-label.preferred-width + 26px;
+            height: parent.height;
+            Rectangle {
+                y: (parent.height - 28px) / 2;
+                width: parent.width; height: 28px;
+                border-radius: Theme.radius-sm;
+                background: Theme.accent;
+                action-label := Text {
+                    width: parent.width; height: parent.height;
+                    text: I18n.cp_model_setup_action;
+                    color: #ffffff; font-size: Theme.font-sm; font-weight: 600;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+            }
+        }
+    }
+    banner-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.setup(); }
+    }
+}
+
 // One quiet icon control of a queue row; the tint stays neutral until the
 // pointer is on it, and the caller decides whether the tone is danger.
 component QueueTool inherits Rectangle {
@@ -1382,7 +1437,7 @@ export component Composer inherits Rectangle {
     // (+22) only exist while they have content. The phone uses a one-line input
     // (44px) and grows the action row to a 40px touch band: 8 + 44 + 6 + 40 + 10.
     private property <length> action-row-height: root.mobile ? 40px : 30px;
-    height: (root.mobile ? 108px : 154px)
+    height: (root.mobile ? 70px : 154px)
         + (root.attachments.length > 0 ? 36px : 0px)
         + (root.branch-name != "" ? 22px : 0px) + root.queue-height;
     private property <bool> plus-open: false;
@@ -1501,11 +1556,50 @@ export component Composer inherits Rectangle {
         }
         // The editor owns the input card's background, border and focus ring,
         // so there is one rounded surface and no rectangular frame around it.
-        Rectangle {
+        // Phones put the plus and send squares on this same row; desktop keeps
+        // its separate action row below.
+        HorizontalLayout {
             vertical-stretch: 1;
-            background: transparent;
-            border-width: 0px;
-            editor := TextEditBase {
+            spacing: root.mobile ? 8px : 0px;
+            cross-axis-alignment: center;
+            if root.mobile : Rectangle {
+                width: 40px;
+                height: 40px;
+                mobile-plus-btn := Rectangle {
+                    x: 2px;
+                    y: 2px;
+                    width: 36px;
+                    height: 36px;
+                    border-radius: Theme.radius-md;
+                    background: root.mobile-plus-open ? Theme.accent-soft : Theme.surface;
+                    border-width: 1px;
+                    border-color: root.mobile-plus-open ? Theme.accent-secondary : Theme.border-strong;
+                    drop-shadow-color: #1F23290F; drop-shadow-blur: 2px; drop-shadow-offset-y: 1px;
+                    Image {
+                        x: 8px;
+                        y: 8px;
+                        width: 20px;
+                        height: 20px;
+                        source: root.mobile-plus-open ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/plus-plain.svg");
+                        colorize: root.mobile-plus-open ? Theme.accent-ink : Theme.text-secondary;
+                        image-fit: contain;
+                    }
+                    accessible-role: button;
+                    accessible-label: I18n.cp_more;
+                    accessible-action-default => { root.mobile-plus-toggled(); }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.mobile-plus-toggled(); }
+                    }
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                min-height: root.mobile ? 44px : 0px;
+                background: transparent;
+                border-width: 0px;
+                editor := TextEditBase {
                 x: 0px; y: 0px; width: parent.width; height: parent.height;
                 border-radius: 16px;
                 background: Theme.surface;
@@ -1622,6 +1716,46 @@ export component Composer inherits Rectangle {
             if root.mobile && root.mobile-plus-open : TouchArea {
                 clicked => { root.mobile-plus-toggled(); }
             }
+            }
+            if root.mobile : Rectangle {
+                width: 40px;
+                height: 40px;
+                mobile-send-btn := Rectangle {
+                    x: 2px;
+                    y: 2px;
+                    width: 36px;
+                    height: 36px;
+                    border-radius: Theme.radius-md;
+                    background: root.stop-action
+                        ? (root.stopping ? Theme.border-strong : Theme.accent-ink)
+                        : (root.send-enabled ? (mobile-send-touch.has-hover ? Theme.accent-deep : Theme.accent) : Theme.border-strong);
+                    Image {
+                        x: root.stop-action ? 12px : 10px;
+                        y: root.stop-action ? 12px : 10px;
+                        width: root.stop-action ? 12px : 16px;
+                        height: root.stop-action ? 12px : 16px;
+                        source: root.stop-action ? @image-url("../assets/icons/stop.svg") : @image-url("../assets/icons/arrow-up.svg");
+                        colorize: #ffffff;
+                        image-fit: contain;
+                    }
+                    accessible-role: button;
+                    accessible-label: root.stop-action ? I18n.cp_stop_generation : I18n.cp_send;
+                    accessible-action-default => {
+                        if root.stop-action {
+                            if !root.stopping { root.stop(); }
+                        } else if root.send-enabled {
+                            root.send();
+                        }
+                    }
+                    mobile-send-touch := TouchArea {
+                        enabled: root.stop-action ? !root.stopping : root.send-enabled;
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if root.stop-action { root.stop(); } else { root.send(); }
+                        }
+                    }
+                }
+            }
         }
         // ---- action row (§8.2), 对齐云端版 composer-action-row: the bordered
         // plus square opens the single merged menu, and the right side carries
@@ -1629,7 +1763,9 @@ export component Composer inherits Rectangle {
         // 动作行：左侧加号 + 本机硬件状态网格（占据原工作区名的位置，工作区名
         // 不再单独显示——它仍用于输入框的占位文案），右侧模型触发器与发送方块。
         HorizontalLayout {
-            height: root.action-row-height; spacing: 6px;
+            height: root.mobile ? 0px : root.action-row-height;
+            visible: !root.mobile;
+            spacing: 6px;
             Rectangle {
                 width: root.mobile ? 40px : 24px; height: root.action-row-height;
                 plus-btn := Rectangle {

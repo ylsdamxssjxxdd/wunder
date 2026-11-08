@@ -656,7 +656,7 @@ impl UserStore {
     pub fn is_local_refresh_scope(session_scope: &str) -> bool {
         matches!(
             Self::normalize_session_scope(Some(session_scope)).as_str(),
-            "local_desktop" | "local_cli"
+            "local_desktop" | "local_cli" | "local_android"
         )
     }
 

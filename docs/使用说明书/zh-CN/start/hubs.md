@@ -30,7 +30,7 @@ updated_at: 2026-10-16
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/surfaces/index/">
     <strong>界面概览</strong>
-    <span>四个形态的界面分工与能力矩阵。</span>
+    <span>多形态的界面分工与能力矩阵。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/desktop-ui/">
     <strong>桌面版界面</strong>

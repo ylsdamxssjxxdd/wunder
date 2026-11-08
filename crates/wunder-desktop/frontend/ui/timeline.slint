@@ -377,6 +377,15 @@ component BodyBlock inherits Rectangle {
     body-column := VerticalLayout {
         padding-left: Theme.timeline-padding; padding-right: Theme.timeline-padding;
         padding-top: 6px; padding-bottom: 6px; spacing: 6px;
+        // Streaming bodies publish plain text and are parsed into blocks once
+        // the turn settles; keep those deltas visible without a Markdown pass.
+        if root.data.blocks.length == 0 && root.data.text != "" : Text {
+            width: 100%;
+            text: root.data.text;
+            color: Theme.text;
+            font-size: Theme.font-md;
+            wrap: word-wrap;
+        }
         for block in root.data.blocks : BlockView {
             block: block;
             // The body column is the reading column minus its own padding; it

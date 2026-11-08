@@ -1,6 +1,6 @@
 ---
 title: Core Concepts
-summary: The Diverse, Fast, Superior, and Efficient cores, four design principles, four forms, deeper pages by topic, and capabilities that are removed or restricted.
+summary: The Diverse, Fast, Superior, and Efficient cores, four design principles, multiple forms, deeper pages by topic, and capabilities that are removed or restricted.
 updated_at: 2026-10-19
 ---
 
@@ -12,7 +12,7 @@ Diversity and strength set the capability surface; speed and efficiency constrai
 
 | Core | Meaning |
 | --- | --- |
-| **Diverse** | Multi-platform, multi-form. One core and engine back the Desktop, Cloud, CLI, and Server across 32-bit Windows 7, Ubuntu 18.04, and modern Windows / Linux / Docker, in both web and local usage; models, channels, and workspaces extend through the same access layer |
+| **Diverse** | Multi-platform, multi-form. One core and engine back the Desktop, Android, Cloud, CLI, and Server across 32-bit Windows 7, Ubuntu 18.04, Android, and modern Windows / Linux / Docker, in web, desktop, and mobile usage; models, channels, and workspaces extend through the same access layer |
 | **Fast** | Instant startup and a response that never lags. Local forms call the engine in-process without local HTTP; threads and history restore directly from local storage; streaming events are frame-coalesced and projected incrementally, and tools run in parallel where allowed |
 | **Superior** | Strong stability for 24/7 operation and a high degree of intelligence. Queues, caches, views, and context are bounded, with session locks, round caps, quotas, and retry circuit breaking for long runs; goal mode, subagents, the tool chain, long-term memory, and knowledge bases carry complex tasks from decomposition to delivery |
 | **Efficient** | Extremely low CPU and memory use, minimal context consumption. A native Rust process with local SQLite needs no browser runtime, and supplement packages ship a ready-made agent runtime so nothing has to be assembled by hand; tool-result trimming, frozen prompts that reuse cache, one-time memory-index injection, and micro-compaction and history compaction keep token consumption down |
@@ -25,7 +25,7 @@ The nine capabilities expanded page by page — goal, compatibility, context com
 | --- | --- |
 | **Everything revolves around the thread** | The thread (= session) is the unit of execution, not "one Q&A". A single agent can hold several independent task threads at once, and scheduling, locks, and realtime state are all isolated per thread |
 | **Everything is a tool** | Everything the model can do is exposed through a unified tool interface; canonical names are mostly Chinese (`读取文件`, `执行命令`, `记忆管理`), and English aliases are normalized before routing |
-| **One engine across forms** | There is only one core and one engine; the four forms differ only at the access layer |
+| **One engine across forms** | There is only one core and one engine; the forms differ only at the access layer |
 | **Boundaries and governance are built in** | Prompt freezing, approval tiers, daily quotas, and bounded views with pagination are part of the skeleton, not left to the upper layers |
 
 ## Forms
@@ -33,11 +33,12 @@ The nine capabilities expanded page by page — goal, compatibility, context com
 | Form | Role |
 | --- | --- |
 | **Desktop** (desktop) | A local AI workbench, the default entry for individuals; a local desktop process that calls the engine in-process, with a local SQLite |
+| **Android** (android) | The Desktop's Android form — a local AI workbench on a phone; a single native Activity shell reusing the Desktop UI components, calling the engine in-process with a local SQLite |
 | **Cloud** (web) | A cloud AI workbench reached from a browser; no process of its own, using the Server's storage |
 | **CLI** (cli) | A hands-on local entry driven from a terminal and easy to script; a local process with a local SQLite |
 | **Server** (server) | The user- and agent-management platform: multi-tenancy, units, app build-and-release, and gateway access; a service process plus the engine, with the Admin built in |
 
-The Desktop and the CLI do not depend on the Server and can run and ship on their own. The Electron / Tauri front-end shells are no longer maintained day to day and are no longer described as a capability.
+The Desktop, Android and CLI do not depend on the Server and can run and ship on their own. The Electron / Tauri front-end shells are no longer maintained day to day and are no longer described as a capability.
 
 ## Deeper Pages by Topic
 

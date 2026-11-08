@@ -70,7 +70,10 @@ mod cloud;
 mod cloud_threads;
 #[path = "native_external.rs"]
 mod external;
-pub use cloud_threads::{NativeCloudAgent, NativeCloudThread, NativeCloudThreadView};
+pub use cloud_threads::{
+    NativeCloudAgent, NativeCloudChatRow, NativeCloudThread, NativeCloudThreadSnapshot,
+    NativeCloudThreadView,
+};
 
 #[path = "native_interlink.rs"]
 mod interlink;
@@ -117,6 +120,8 @@ mod settings;
 mod supplement;
 #[path = "native_update.rs"]
 mod update;
+#[path = "native_android_update.rs"]
+mod android_update;
 #[path = "native_workspace.rs"]
 mod workspace;
 pub use catalog::{AgentRecord, AgentSettingsEdit, ToolRecord, DEFAULT_AGENT_ID};

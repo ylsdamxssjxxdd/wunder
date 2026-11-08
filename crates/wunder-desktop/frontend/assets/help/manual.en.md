@@ -41,7 +41,7 @@ The model switcher beside the input box affects only the **current thread**; the
 
 > All conversation data is stored in a local SQLite database; you can browse past threads while offline.
 
-<!-- topic id="forms" block="start" title="Form matrix" group="Getting Started" keywords="form,wunder Desktop,wunder Cloud,wunder CLI,wunder Server" -->
+<!-- topic id="forms" block="start" title="Form matrix" group="Getting Started" keywords="form,wunder Desktop,wunder Android,wunder Cloud,wunder CLI,wunder Server" -->
 
 # Form matrix
 
@@ -53,13 +53,16 @@ wunder is a multi-form agent workbench. One engine is shipped as several program
 | 🐉 | wunder Admin | Plain HTML + CSS + JavaScript (` web/ `, no build step) | wunder Server's admin console (four panel groups: system, agents, debug, docs) | Browser access, statically mounted by wunder Server at ` / ` | Any browser |
 | 🐝 | wunder Cloud | Vue 3 + TypeScript (Vite build, ` frontend/ `) | Cloud AI workbench (wunder Server's user side) | Browser access; build output ` frontend/dist ` is served read-only by the nginx container (default port 18001) and is **not hosted by wunder Server** | Any browser |
 | 🍯 | wunder Desktop | Rust + Slint 1.18 (default frontend ` crates/wunder-desktop/frontend/ `, native UI, software rendering); SQLite | Local AI workbench (the flagship form, works out of the box) | Local desktop process, native in-process calls to the engine (no local network hop); Electron / Tauri shells are no longer maintained | Windows 7 x86 and up; Linux (ubuntu 18.04 baseline) x64 / arm64 AppImage |
+| 📱 | wunder Android | Rust + Slint 1.18 (` crates/wunder-android/ `, single native Activity shell reusing the Desktop theme, timeline and composer; Skia rendering); SQLite | The Desktop's Android form — local AI workbench on a phone | Install the APK and open it; native in-process calls to the shared engine; Ubuntu runtime bundled by default (arm64) | Android 8.0 (API 26) and up; arm64-v8a (the x86_64 slice is for emulator verification only) |
 | ⚙ | wunder CLI | Rust terminal TUI (ratatui + crossterm); SQLite | Manual local entry point (terminal, scriptable, automation) | Local terminal process, direct in-process engine calls, JSONL output supported | Windows 7 and up (GNU toolchain); Linux x64 / arm64 (ubuntu 18.04 sysroot) |
 
-All forms share the same engine (wunder-runtime) and core (wunder-core): threads, tools, storage abstractions, realtime events and permission semantics are one body of code, and the difference is only in the access layer. wunder Desktop and wunder CLI do not depend on wunder Server and can be installed and run on their own.
+All forms share the same engine (wunder-runtime) and core (wunder-core): threads, tools, storage abstractions, realtime events and permission semantics are one body of code, and the difference is only in the access layer. wunder Desktop, wunder Android and wunder CLI do not depend on wunder Server and can be installed and run on their own.
 
 ## Choosing a form
 
 - **Individual users** → wunder Desktop. The local AI workbench, the default entry point for personal use, ready to run after install.
+
+- **Phones and mobile use** → wunder Android. The Desktop's Android form: install the APK and use the same engine and capabilities on a phone.
 
 - **Teams, or anyone working in a browser** → wunder Cloud. wunder Server's user side, provided with wunder Server; once wunder Server is deployed, members reach it in a browser.
 
@@ -228,7 +231,7 @@ Diversity and strength set the capability surface; speed and efficiency constrai
 
 | Core | Meaning |
 | --- | --- |
-| **Diverse** | Multi-platform, multi-form. One core and engine back wunder Desktop, wunder Cloud, wunder CLI, and wunder Server across 32-bit Windows 7, Ubuntu 18.04, and modern Windows / Linux / Docker, in both web and local usage; models, channels, and workspaces extend through the same access layer |
+| **Diverse** | Multi-platform, multi-form. One core and engine back wunder Desktop, wunder Android, wunder Cloud, wunder CLI, and wunder Server across 32-bit Windows 7, Ubuntu 18.04, Android, and modern Windows / Linux / Docker, in web, desktop, and mobile usage; models, channels, and workspaces extend through the same access layer |
 | **Fast** | Instant startup and a response that never lags. Local forms call the engine in-process without local HTTP; threads and history restore directly from local storage; streaming events are frame-coalesced and projected incrementally, and tools run in parallel where allowed |
 | **Superior** | Strong stability for 24/7 operation and a high degree of intelligence. Queues, caches, views, and context are bounded, with session locks, round caps, quotas, and retry circuit breaking for long runs; goal mode, subagents, the tool chain, long-term memory, and knowledge bases carry complex tasks from decomposition to delivery |
 | **Efficient** | Extremely low CPU and memory use, minimal context consumption. A native Rust process with local SQLite needs no browser runtime, and supplement packages ship a ready-made agent runtime so nothing has to be assembled by hand; tool-result trimming, frozen prompts that reuse cache, one-time memory-index injection, and micro-compaction and history compaction keep token consumption down |
@@ -702,7 +705,7 @@ When failures with the same fingerprint repeat, the circuit breaker trips: non-r
 
 # Multi-user Management
 
-Multi-user governance is a foundational capability of the wunder Server form; wunder Desktop and wunder CLI are local, single-machine forms with no account system. Concrete panel operations are covered in the reference section.
+Multi-user governance is a foundational capability of the wunder Server form; wunder Desktop, wunder Android and wunder CLI are local, single-machine forms with no account system. Concrete panel operations are covered in the reference section.
 
 ## Identity checks
 

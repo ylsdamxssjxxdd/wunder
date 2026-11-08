@@ -21,6 +21,29 @@ pub struct NativeCloudThread {
     pub status: String,
 }
 
+/// Flattened cloud chat row for non-Slint clients. Keeps the transport types
+/// (ThreadViewPage/ViewMessage) inside the façade so an Android preview build
+/// does not need to depend on the runtime crate.
+#[derive(Debug, Clone)]
+pub struct NativeCloudChatRow {
+    pub root_turn_id: String,
+    pub status: String,
+    pub user_text: String,
+    pub assistant_text: String,
+    pub reasoning: String,
+    pub workflow_count: i64,
+    pub process_count: Option<i64>,
+    pub failure_message: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct NativeCloudThreadSnapshot {
+    pub status: String,
+    pub model_key: String,
+    pub agent_id: String,
+    pub rows: Vec<NativeCloudChatRow>,
+}
+
 pub struct NativeCloudThreadView {
     pub page: ThreadViewPage,
     pub model_key: String,
@@ -93,6 +116,48 @@ impl NativeDesktop {
             model_key: string(&data["session"], "model_key"),
             reasoning_effort: string(&data["session"], "reasoning_effort"),
             agent_id: string(&data["session"], "agent_id"),
+        })
+    }
+
+    /// Full visible snapshot for non-Slint clients (Android settings/chat).
+    pub fn cloud_thread_snapshot(&self, thread: &str) -> Result<NativeCloudThreadSnapshot> {
+        let view = self.cloud_thread_bootstrap(thread)?;
+        let rows = view
+            .page
+            .chat
+            .iter()
+            .map(|chat| {
+                let assistant_text = if chat.assistant.tail.is_empty() {
+                    chat.assistant.content.clone()
+                } else if chat.assistant.tail_offset == 0 {
+                    chat.assistant.tail.clone()
+                } else if chat.assistant.content.is_empty() {
+                    format!("…\n{}", chat.assistant.tail)
+                } else {
+                    format!("{}\n…\n{}", chat.assistant.content, chat.assistant.tail)
+                };
+                NativeCloudChatRow {
+                    root_turn_id: chat.root_turn_id.clone(),
+                    status: chat.status.clone(),
+                    user_text: chat.user.content.clone(),
+                    assistant_text,
+                    reasoning: chat.assistant.reasoning.clone(),
+                    workflow_count: chat.workflow_count,
+                    process_count: chat.process_count,
+                    failure_message: chat
+                        .assistant
+                        .failure
+                        .as_ref()
+                        .map(|failure| failure.message.clone())
+                        .unwrap_or_default(),
+                }
+            })
+            .collect();
+        Ok(NativeCloudThreadSnapshot {
+            status: view.page.runtime_status,
+            model_key: view.model_key,
+            agent_id: view.agent_id,
+            rows,
         })
     }
 

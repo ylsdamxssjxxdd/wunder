@@ -9,9 +9,15 @@ slint::include_modules!();
 #[cfg(target_os = "android")]
 mod android_host;
 mod app;
+mod channels;
+mod cloud;
+#[cfg(target_os = "android")]
+mod companion;
 mod engine;
 mod fonts;
 mod md;
+mod permissions;
+mod update;
 #[cfg(target_os = "android")]
 mod phone;
 mod project;

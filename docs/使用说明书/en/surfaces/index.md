@@ -1,6 +1,6 @@
 ---
 title: Interface Overview
-summary: Four forms, four interfaces — the Desktop (local AI workbench, the default entry), the Cloud (cloud AI workbench), the CLI (terminal interface), and the Admin (admin governance console); plus main-area notes and the capability matrix.
+summary: Multiple forms, multiple interfaces — the Desktop (local AI workbench, the default entry), Android (the Desktop's phone form), the Cloud (cloud AI workbench), the CLI (terminal interface), and the Admin (admin governance console); plus main-area notes and the capability matrix.
 read_when:
   - You are choosing between the forms and need to know what each interface can do
   - You expect a capability in one interface and want to check whether it exists there at all
@@ -10,18 +10,19 @@ source_docs:
   - frontend/src/router/index.ts
   - web/index.html
   - crates/wunder-cli/tui/app.rs
-updated_at: 2026-10-16
+updated_at: 2026-11-08
 ---
 
 # Interface Overview
 
-Four interfaces map to the four forms. They share one engine but differ in how you open them, what you can do, and how they present. The default entry for individual users is the **Desktop** (local AI workbench, a desktop app); the **Cloud** (cloud AI workbench) ships with the Server and is reached in a browser; the **CLI** (terminal interface) serves manual local operation; the **Admin** (admin governance console) serves governance and debugging.
+Multiple interfaces map to the forms. They share one engine but differ in how you open them, what you can do, and how they present. The default entry for individual users is the **Desktop** (local AI workbench, a desktop app); **Android** is the Desktop's phone form (local AI workbench, install the APK); the **Cloud** (cloud AI workbench) ships with the Server and is reached in a browser; the **CLI** (terminal interface) serves manual local operation; the **Admin** (admin governance console) serves governance and debugging.
 
 ## Interfaces and their users
 
 | Interface | Who uses it | What it is | How to open it |
 | --- | --- | --- | --- |
 | **Desktop** | Individual users | Local AI workbench | Install the desktop app and open it; it uses no port |
+| **Android** | Phone users | The Desktop's phone form, a local AI workbench | Install the APK and open it; data stays on the phone |
 | **Cloud** | Team members | Cloud AI workbench | Open the deployed address in a browser |
 | **CLI** | Terminal and automation users | Manual local entry point | Start it in a terminal |
 | **Admin** | Administrators | Governance and debugging console | Open the Server address in a browser |
@@ -29,6 +30,8 @@ Four interfaces map to the four forms. They share one engine but differ in how y
 ## Main areas
 
 The **Desktop**'s main window has **only two pages**: chat and settings. Everything else sits in panels and dialogs — sidebar, input area, timeline, terminal view, tools dialog, companion dialog, workspace dialog, working directory, thread trajectory, subagent details, channels page, scheduled page, settings sections, activity card, expert data, patch-diff card, screenshot overlay, and tray and system notifications. The settings navigation has **11 categories**: General, Account, Models, Tools, Agent, Companion, Scheduled, Memory, Channels, Archive, and Help. There is **no "Device interconnection" category**.
+
+**Android** is a single-window workbench on a phone: the session drawer and model entry at the top, the timeline in the middle, and the input area with its plus panel at the bottom. Settings cover models, appearance, archive, the local runtime, permission management, online updates, and help. Permission management lists notifications, microphone, overlay, accessibility, battery optimization, and install-apps with one-tap jumps to the matching system settings and an automatic refresh on return; online updates live on the Help & About page and switch between the cloud account and GitHub sources, show download progress, and hand a verified APK to the system installer. The working directory, thread trajectory, voice input, and screenshots also have phone entries. The narrow screen uses a single-column layout and reuses the Desktop's Slint components.
 
 The **Cloud** is a single-page app in the browser whose main area is the messenger: left column + timeline + input area, with chat and the working directory joined together. Settings exist as categories, including tools, memory, channels, scheduled tasks, devices, and archive.
 
@@ -45,7 +48,7 @@ Tool management groups built-in tools, MCP, knowledge bases, skills, and tool vi
 
 ## Capability matrix
 
-What each interface has and lacks; details are on each form's own page.
+The matrix compares the four long-standing interfaces — Desktop, Cloud, Admin, and CLI. Android follows the mobile workbench surface: thread list and timeline, working directory, model and archive settings, voice input, screenshots, and the same tools the agent can call. Details are on each form's own page and in the form matrix.
 
 | Capability | Desktop | Cloud | Admin | CLI |
 | --- | --- | --- | --- | --- |
@@ -67,6 +70,7 @@ What each interface has and lacks; details are on each form's own page.
 ## Choosing by scenario
 
 - **Personal daily use**: install the [Desktop](/docs/en/start/desktop/), which covers local files, desktop control, a terminal, screenshots, voice input, and the tray.
+- **Phones and mobile use**: install Android, the local AI workbench on a phone — see the [Form matrix](/docs/en/start/forms/).
 - **Team collaboration**: once the Server is deployed, members open the [Cloud](/docs/en/surfaces/frontend/) in a browser.
 - **Terminal and automation**: use the [CLI](/docs/en/start/cli/); it supports JSON output and cloud subcommands.
 - **Admin governance**: use the [Admin](/docs/en/surfaces/web-admin/).

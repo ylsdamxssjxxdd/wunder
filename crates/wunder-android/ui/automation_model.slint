@@ -1,0 +1,67 @@
+// Mobile projections for cron jobs and memory fragments. Kept Send-friendly
+// (plain scalars) so the engine thread can own them; the UI tick converts
+// these into Slint models on the main thread.
+
+export struct MobileCronJob {
+    id: string,
+    name: string,
+    enabled: bool,
+    schedule: string,
+    next-run: string,
+    workspace-name: string,
+    message: string,
+    last-status: string,
+    last-error: string,
+}
+
+export struct MobileCronDraft {
+    id: string,
+    name: string,
+    // "at" | "every" | "cron"
+    schedule-kind: string,
+    schedule-at: string,
+    every: string,
+    // "minute" | "hour" | "day" | "second"
+    interval-unit: string,
+    cron-expr: string,
+    timezone: string,
+    message: string,
+    workspace-name: string,
+    delete-after: bool,
+    enabled: bool,
+}
+
+export struct MobileCronRun {
+    status: string,
+    trigger: string,
+    summary: string,
+    error: string,
+    duration: string,
+    created-at: string,
+}
+
+export struct MobileMemory {
+    id: string,
+    title: string,
+    content: string,
+    category: string,
+    source: string,
+    time: string,
+}
+
+export struct MobileMemoryDraft {
+    id: string,
+    title: string,
+    content: string,
+    category: string,
+}
+
+export struct MobileDevice {
+    id: string,
+    kind: string,
+    label: string,
+    status: string,
+    connected: bool,
+    current: bool,
+    selectable: bool,
+}

@@ -308,7 +308,7 @@ pub(crate) struct CloudIdentity {
 }
 
 fn is_local_scope(scope: &str) -> bool {
-    scope == SCOPE_LOCAL_DESKTOP || scope == SCOPE_LOCAL_CLI
+    scope == SCOPE_LOCAL_DESKTOP || scope == SCOPE_LOCAL_CLI || scope == "local_android"
 }
 
 pub(crate) async fn authenticate_cloud(
@@ -562,10 +562,10 @@ async fn register_device(
     let identity = authenticate_cloud_with_registration(&state, &headers, true).await?;
     let client = payload.client.trim().to_ascii_lowercase();
     let name = payload.name.trim().to_string();
-    if !matches!(client.as_str(), "desktop" | "cli") || name.is_empty() {
+    if !matches!(client.as_str(), "desktop" | "cli" | "android") || name.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
-            "client must be desktop or cli and name must not be empty",
+            "client must be desktop, cli or android and name must not be empty",
         ));
     }
     if identity.scope != format!("local_{client}") {

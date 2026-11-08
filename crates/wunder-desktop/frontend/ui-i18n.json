@@ -463,6 +463,46 @@
   "en": "This permanently deletes every file and folder in the current working directory and cannot be undone. Clear everything?"
  },
  {
+  "key": "and_env_setup_title",
+  "zh": "正在准备运行环境",
+  "en": "Preparing the runtime"
+ },
+ {
+  "key": "and_env_setup_note",
+  "zh": "首次启动需要部署 Ubuntu 运行环境，安装完成后自动进入。期间请保持应用运行。",
+  "en": "The first launch sets up the Ubuntu runtime. The app opens automatically when it is ready; keep the app running."
+ },
+ {
+  "key": "and_env_setup_preparing",
+  "zh": "正在准备…",
+  "en": "Preparing…"
+ },
+ {
+  "key": "and_env_setup_ready",
+  "zh": "运行环境已就绪",
+  "en": "Runtime ready"
+ },
+ {
+  "key": "and_env_setup_ready_note",
+  "zh": "即将进入",
+  "en": "Opening the app"
+ },
+ {
+  "key": "and_env_setup_failed",
+  "zh": "运行环境安装失败",
+  "en": "Runtime setup failed"
+ },
+ {
+  "key": "and_env_setup_retry",
+  "zh": "重新安装",
+  "en": "Retry"
+ },
+ {
+  "key": "and_env_setup_enter",
+  "zh": "先进入应用",
+  "en": "Continue to app"
+ },
+ {
   "key": "sb_thread_multi_select",
   "zh": "多选",
   "en": "Multi-select"
@@ -1593,6 +1633,16 @@
   "key": "cp_model_none",
   "zh": "未选择模型",
   "en": "No model selected"
+ },
+ {
+  "key": "cp_model_setup_hint",
+  "zh": "还没有配置模型，先添加一个模型再开始对话。",
+  "en": "No model configured yet. Add one to start chatting."
+ },
+ {
+  "key": "cp_model_setup_action",
+  "zh": "配置模型",
+  "en": "Set up model"
  },
  {
   "key": "cp_error_prefix",

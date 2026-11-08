@@ -31,6 +31,7 @@ mod md_probe;
 mod message_blocks;
 mod model_editor;
 mod model_editor_smoke;
+mod model_setup_smoke;
 mod native_chat;
 mod native_interlink;
 mod native_markdown;
@@ -218,6 +219,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | "--native-restore"
                 | "--native-reasoning-smoke"
                 | "--native-model-smoke"
+                | "--native-setup-smoke"
         )
     ) {
         let directory = std::path::PathBuf::from(
@@ -235,6 +237,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-reasoning-smoke"));
         let models =
             first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-model-smoke"));
+        let setup = first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-setup-smoke"));
         if !restoring {
             args.workspace = Some(directory.join("workspace"));
         }
@@ -242,13 +245,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // The restore phase deliberately runs a read-only guard: the streaming
         // phase's guard writes probe fixtures, and a check that mutates the
         // store cannot prove what survived the restart.
-        if !restoring && !reasoning && !models {
+        if !restoring && !reasoning && !models && !setup {
             native_smoke::check_runtime(&runtime)?;
         }
         native_runtime::install_ready_without_pets(&app, runtime.clone());
         app.show()?;
         startup_log("window_show_return", startup_boot);
-        return if models {
+        return if setup {
+            model_setup_smoke::run(&app, directory)
+        } else if models {
             model_editor_smoke::run(&app, directory, runtime)
         } else if reasoning {
             native_smoke::run_reasoning(&app, directory)

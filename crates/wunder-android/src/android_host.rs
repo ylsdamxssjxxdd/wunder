@@ -23,10 +23,27 @@ struct Host {
 
 static HOST: OnceLock<Host> = OnceLock::new();
 
-/// Workspace-relative directory captured when the picker opens. The picker
-/// runs in another activity, so the path must travel with the selection
-/// instead of being re-read after the user returns.
-static PENDING_UPLOAD_DIR: Mutex<Option<String>> = Mutex::new(None);
+/// What the system document picker was opened for. The picker runs in another
+/// activity, so the target travels with the selection instead of being
+/// re-read after the user returns.
+#[derive(Clone, Debug)]
+enum PickTarget {
+    /// Upload files into this workspace-relative directory.
+    Workspace(String),
+    /// Upload text files into the tool resource the phone is browsing.
+    ToolFiles,
+    /// Import one skill archive (first selected file).
+    SkillArchive,
+}
+
+static PENDING_PICK: Mutex<Option<PickTarget>> = Mutex::new(None);
+
+/// One result of the system document picker, routed by the requester.
+pub enum PickedFiles {
+    Workspace { dir: String, files: Vec<String> },
+    ToolFiles(Vec<String>),
+    SkillArchive(String),
+}
 
 /// Install the host once per process and ask for notification permission on
 /// every activity start (the request is idempotent and only prompts while the
@@ -88,10 +105,44 @@ pub fn hide_keyboard() {
     }
 }
 
-/// Open the system document picker for the workspace at `dir`.
-pub fn pick_files(dir: &str) {
-    if let Ok(mut pending) = PENDING_UPLOAD_DIR.lock() {
-        *pending = Some(dir.to_string());
+/// Drain Back presses recorded by the activity. The UI tick turns them into
+/// page navigation; a second Back on the chat root closes the activity.
+pub fn take_back_requests() -> i32 {
+    let Some(host) = HOST.get() else {
+        return 0;
+    };
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return 0;
+    };
+    match env.call_static_method(&host.ui_bridge, "takeBackRequests", "()I", &[]) {
+        Ok(value) => value.i().unwrap_or(0).max(0),
+        Err(error) => {
+            clear_java_exception(&mut env);
+            log::error!("take back requests: {error}");
+            0
+        }
+    }
+}
+
+/// Close the visible activity after the shell accepted a Back-to-exit. The
+/// engine and its foreground service are process-scoped and settle on their
+/// own; only the window goes away here.
+pub fn finish_activity() {
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return;
+    };
+    if let Err(error) = env.call_static_method(&host.ui_bridge, "finishActivity", "()V", &[]) {
+        clear_java_exception(&mut env);
+        log::error!("finish activity: {error}");
+    }
+}
+
+fn open_picker(target: PickTarget) {
+    if let Ok(mut pending) = PENDING_PICK.lock() {
+        *pending = Some(target);
     }
     let Some(host) = HOST.get() else {
         return;
@@ -105,16 +156,34 @@ pub fn pick_files(dir: &str) {
     }
 }
 
+/// Open the system document picker for the workspace at `dir`.
+pub fn pick_files(dir: &str) {
+    open_picker(PickTarget::Workspace(dir.to_string()));
+}
+
+/// Open the picker for text files of the tool resource being browsed.
+pub fn pick_tool_files() {
+    open_picker(PickTarget::ToolFiles);
+}
+
+/// Open the picker for one skill archive.
+pub fn pick_skill_archive() {
+    open_picker(PickTarget::SkillArchive);
+}
+
 /// Poll the filenames staged by the picker. Java must not call native code
 /// (NativeActivity loads the library through the framework class loader), so
 /// the UI tick pulls the result instead. An empty result still consumes the
-/// pending directory, which covers the user cancelling the picker.
-pub fn take_picked_uploads() -> Vec<(String, Vec<String>)> {
+/// pending target, which covers the user cancelling the picker.
+pub fn take_picked() -> Option<PickedFiles> {
+    // Peek first: Java answers null while its copy thread is still staging the
+    // selection, and consuming the target then would drop the eventual result.
+    let target = PENDING_PICK.lock().ok().and_then(|pending| pending.clone())?;
     let Some(host) = HOST.get() else {
-        return Vec::new();
+        return None;
     };
     let Ok(mut env) = host.vm.attach_current_thread() else {
-        return Vec::new();
+        return None;
     };
     let value = match env.call_static_method(
         &host.ui_bridge,
@@ -126,14 +195,14 @@ pub fn take_picked_uploads() -> Vec<(String, Vec<String>)> {
         Err(error) => {
             clear_java_exception(&mut env);
             log::error!("take picked files: {error}");
-            return Vec::new();
+            return None;
         }
     };
     let Ok(object) = value.l() else {
-        return Vec::new();
+        return None;
     };
     if object.is_null() {
-        return Vec::new();
+        return None;
     }
     let array = JObjectArray::from(object);
     let mut files = Vec::new();
@@ -149,15 +218,17 @@ pub fn take_picked_uploads() -> Vec<(String, Vec<String>)> {
             files.push(path.to_string_lossy().into_owned());
         }
     }
-    let dir = PENDING_UPLOAD_DIR
-        .lock()
-        .ok()
-        .and_then(|mut pending| pending.take())
-        .unwrap_or_default();
+    // The picker answered (including "cancelled" as an empty list); the target
+    // must not leak into the next pick.
+    PENDING_PICK.lock().ok().and_then(|mut pending| pending.take());
     if files.is_empty() {
-        return Vec::new();
+        return None;
     }
-    vec![(dir, files)]
+    match target {
+        PickTarget::Workspace(dir) => Some(PickedFiles::Workspace { dir, files }),
+        PickTarget::ToolFiles => Some(PickedFiles::ToolFiles(files)),
+        PickTarget::SkillArchive => Some(PickedFiles::SkillArchive(files.remove(0))),
+    }
 }
 
 /// Poll the legacy save dialog result. Android 10+ saves synchronously and
@@ -223,6 +294,95 @@ pub fn capture_screenshot() -> String {
 /// Drain screenshot results: `ok|<path>`, `no_service` or `error|<message>`.
 pub fn take_screenshot_events() -> Vec<String> {
     call_string_array("takeScreenshotEvents")
+}
+
+/// Raw permission states as one JSON object. The settings page maps them to
+/// user-facing labels; an unavailable activity yields an empty object.
+pub fn permission_snapshot() -> String {
+    call_string("permissionSnapshot")
+}
+
+/// Open the system settings surface for one managed permission.
+pub fn open_permission(id: &str) {
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return;
+    };
+    let Ok(id) = env.new_string(id) else {
+        return;
+    };
+    let result = env.call_static_method(
+        &host.ui_bridge,
+        "openPermission",
+        "(Ljava/lang/String;)V",
+        &[JValue::Object(&id)],
+    );
+    if result.is_err() {
+        clear_java_exception(&mut env);
+    }
+}
+
+/// Install time of the current APK, in Unix milliseconds. The Android update
+/// check compares a same-version nightly release against this value.
+pub fn installed_at_millis() -> i64 {
+    let Some(host) = HOST.get() else {
+        return 0;
+    };
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return 0;
+    };
+    match env.call_static_method(&host.ui_bridge, "installedAtMillis", "()J", &[]) {
+        Ok(value) => value.j().unwrap_or(0),
+        Err(error) => {
+            clear_java_exception(&mut env);
+            log::error!("read installed-at time: {error}");
+            0
+        }
+    }
+}
+
+/// Drain the terminal status of the last package-install session.
+pub fn take_install_result() -> Option<String> {
+    let result = call_string("takeInstallResult");
+    (!result.is_empty()).then_some(result)
+}
+
+/// Hand a verified update APK to the system package installer. Returns
+/// `started`, `permission` or `failed:<reason>`.
+pub fn install_apk(path: &str) -> String {
+    let Some(host) = HOST.get() else {
+        return "failed:no host".into();
+    };
+    let Ok(mut env) = host.vm.attach_current_thread() else {
+        return "failed:jvm".into();
+    };
+    let result = (|| -> anyhow::Result<String> {
+        let path = env.new_string(path)?;
+        let value = env.call_static_method(
+            &host.ui_bridge,
+            "installApk",
+            "(Ljava/lang/String;)Ljava/lang/String;",
+            &[JValue::Object(&path)],
+        )?;
+        let object = value.l()?;
+        if object.is_null() {
+            return Ok("failed:null".into());
+        }
+        Ok(env
+            .get_string(&JString::from(object))?
+            .to_string_lossy()
+            .into_owned())
+    })();
+    match result {
+        Ok(value) => value,
+        Err(error) => {
+            clear_java_exception(&mut env);
+            log::error!("install Android update: {error:#}");
+            "failed:jni".into()
+        }
+    }
 }
 
 fn call_string(method: &str) -> String {
@@ -330,6 +490,37 @@ pub fn save_file_to_phone(source_path: &str, display_name: &str) -> String {
             clear_java_exception(&mut env);
             log::error!("save a workspace file: {error:#}");
             "failed:jni".into()
+        }
+    }
+}
+
+/// Human-readable phone model used as the cloud device label.
+pub fn device_name() -> Option<String> {
+    let host = HOST.get()?;
+    let mut env = host.vm.attach_current_thread().ok()?;
+    let result = (|| -> Result<String> {
+        let value = env.call_static_method(
+            &host.ui_bridge,
+            "deviceName",
+            "()Ljava/lang/String;",
+            &[],
+        )?;
+        let object = value.l()?;
+        if object.is_null() {
+            return Ok(String::new());
+        }
+        Ok(env
+            .get_string(&JString::from(object))?
+            .to_string_lossy()
+            .into_owned())
+    })();
+    match result {
+        Ok(name) if !name.trim().is_empty() => Some(name.trim().to_string()),
+        Ok(_) => None,
+        Err(error) => {
+            clear_java_exception(&mut env);
+            log::warn!("read the Android device name: {error:#}");
+            None
         }
     }
 }

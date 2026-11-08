@@ -58,6 +58,9 @@ ENTRIES = [
     ("cp_model_default_tag", "默认", "Default"),
     ("cp_model_settings", "打开模型设置", "Open model settings"),
     ("cp_model_none", "未选择模型", "No model selected"),
+    # ---- 未配置模型引导横幅 ----
+    ("cp_model_setup_hint", "还没有配置模型，先添加一个模型再开始对话。", "No model configured yet. Add one to start chatting."),
+    ("cp_model_setup_action", "配置模型", "Set up model"),
 
     # ---- goal banner (§8.1b) ----
     ("cp_error_prefix", "无法", "Unable to "),

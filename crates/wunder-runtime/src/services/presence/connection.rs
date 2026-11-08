@@ -22,7 +22,7 @@ pub fn client_kind_from_scope(scope: Option<&str>) -> &'static str {
         .to_ascii_lowercase()
         .as_str()
     {
-        "local_desktop" => CLIENT_DESKTOP,
+        "local_desktop" | "local_android" => CLIENT_DESKTOP,
         "local_cli" => CLIENT_CLI,
         _ => CLIENT_WEB,
     }
@@ -33,6 +33,9 @@ pub fn client_kind_from_scope(scope: Option<&str>) -> &'static str {
 /// the owning desktop/cli surface online on the admin user list, mirroring the
 /// web surface which is tracked from its websocket connections.
 pub fn client_kind_from_device(client: &str) -> &'static str {
+    // Android phones share the desktop presence bucket until the admin surface
+    // grows a dedicated phone column; the interlink directory still labels
+    // them with the `phone` node type.
     if client.to_ascii_lowercase().contains("cli") {
         CLIENT_CLI
     } else {

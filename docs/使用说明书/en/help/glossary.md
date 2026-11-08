@@ -10,15 +10,16 @@ updated_at: 2026-10-16
 |------|------|------|
 | wunder | wunder | The product itself, the umbrella term for the **multi-form agent workbench**: hand a goal to the agent, and it breaks the task down, calls tools, and delivers results. |
 | Core | core | The foundation: configuration, authentication, storage, and execution policy. |
-| Engine | runtime | The execution layer: task orchestration, thread runtime, tools, channels, and gateway. The Desktop and the CLI depend on the Engine directly, not on the Server. |
+| Engine | runtime | The execution layer: task orchestration, thread runtime, tools, channels, and gateway. The Desktop, Android, and the CLI depend on the Engine directly, not on the Server. |
 | Server | server | The **user and agent management platform**: the server form, aimed at teams and organizations, handling multi-user access, permissions, and channel access, and providing the Cloud. |
 | Admin | bridge | The governance frontend: the system administrator's management interface for system configuration and for user and channel governance. |
 | Channel bridge node | bridge node | A channel bridging node: it carries channel account access and message routing and is managed uniformly by the backend, with no standalone frontend page today. Keep it distinct from the governance frontend "Admin". |
 | Cloud | web | The **cloud AI workbench**: the web form, provided with the Server and opened by users in a browser. |
 | Desktop | desktop | The **local AI workbench**: the desktop form, the default entry point for individual users, running locally with direct access to local files. Formerly Pupa (and earlier Honeycomb). |
+| Android | android | **The Desktop's Android form, a local AI workbench on a phone**: install the APK; a single native Activity shell reuses the Desktop UI components and calls the engine in-process with a local SQLite. |
 | CLI | cli | The **manual local entry point**: the command-line form, aimed at hands-on operation, developers, and automation scripts. |
 
-Server, Admin, Cloud, Desktop, and CLI name concrete forms of wunder; Core and Engine name the underlying layers. Keep the two groups separate. The first mention in the body may pair a form's display name with its short id — for example Cloud (web).
+Server, Admin, Cloud, Desktop, Android, and CLI name concrete forms of wunder; Core and Engine name the underlying layers. Keep the two groups separate. The first mention in the body may pair a form's display name with its short id — for example Cloud (web).
 
 ## User
 

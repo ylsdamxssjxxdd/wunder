@@ -7,16 +7,25 @@ use crate::project::{
     self, LiveTurn, RowData, STATUS_FAILED, STATUS_RUNNING, STATUS_STOPPED,
 };
 use crate::{
-    MobileSession, ModelCard, TrajectoryAudit, TrajectoryItem, TrajectorySegment, WorkspaceFile,
+    MobileChannelDraft, MobileCronDraft, MobileCronJob, MobileCronRun, MobileKnowledgeDraft,
+    MobileMcpDraft, MobileMemory, MobileMemoryDraft, MobileSession, MobileTool, MobileToolFile,
+    MobileToolResource, MobileWorkspace, ModelCard, TrajectoryAudit, TrajectoryItem,
+    TrajectorySegment, WorkspaceFile,
 };
 use serde_json::Value;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
+use std::time::{Duration, Instant};
+use wunder_desktop::native::{
+    NativeKnowledgeDraft, NativeMcpServerDraft, NativeToolFile, NativeToolFiles,
+    NativeToolResource, ToolResourceKind,
+};
 use wunder_desktop::{
-    ModelEdit, NativeChatEvent, NativeChatInput, NativeChatTurn, NativeDesktop, NativeThreadUpdate,
-    NativeThreadWatchCancel, NativeWorkflowEntry, CURRENT_VERSION,
+    AgentSettingsEdit, ModelEdit, NativeChatEvent, NativeChatInput, NativeChatTurn,
+    NativeCronJobEdit, NativeDesktop, NativeThreadUpdate, NativeThreadWatchCancel,
+    NativeWorkflowEntry, ToolRecord, WorkspaceEdit, CURRENT_VERSION, DEFAULT_AGENT_ID,
 };
 
 pub enum Command {
@@ -27,6 +36,12 @@ pub enum Command {
     SelectModel(String),
     RefreshSessions,
     LoadSettings,
+    RefreshPermissions,
+    OpenPermission(String),
+    CheckAndroidUpdate,
+    DownloadAndroidUpdate,
+    InstallAndroidUpdate,
+    SetUpdateSource(String),
     RenameSession {
         id: String,
         title: String,
@@ -48,6 +63,21 @@ pub enum Command {
         offset: u64,
     },
     RefreshWorkspace,
+    RefreshWorkspaces,
+    SelectWorkspace(String),
+    NewThreadInWorkspace(String),
+    CreateWorkspace {
+        name: String,
+        icon: String,
+        color: String,
+    },
+    UpdateWorkspace {
+        id: String,
+        name: String,
+        icon: String,
+        color: String,
+    },
+    DeleteWorkspace(String),
     UploadWorkspace {
         dir: String,
         files: Vec<String>,
@@ -95,6 +125,14 @@ pub enum Command {
     RefreshUbuntu,
     InstallUbuntu,
     SetUbuntuEnabled(bool),
+    RefreshCompanion,
+    SaveCompanion {
+        enabled: bool,
+        selected_id: String,
+        scale: f32,
+        message_hints: bool,
+    },
+    CompanionPermission,
     InquiryOption {
         row: i32,
         option: i32,
@@ -113,6 +151,175 @@ pub enum Command {
     InquiryExpandToggle,
     InquirySubmit,
     RefreshTasks,
+    // ---- tool manager -------------------------------------------------
+    RefreshTools,
+    SelectToolServer {
+        index: i32,
+    },
+    SelectToolResource {
+        tab: i32,
+        index: i32,
+    },
+    LoadToolDirectory {
+        directory: String,
+    },
+    MoreToolFiles,
+    OpenToolFile {
+        path: String,
+    },
+    SaveToolFile {
+        path: String,
+        content: String,
+    },
+    CloseToolFile,
+    CreateToolFile {
+        name: String,
+    },
+    UploadToolFiles {
+        files: Vec<String>,
+    },
+    DeleteToolResource {
+        tab: i32,
+        name: String,
+    },
+    ConnectToolServer {
+        name: String,
+    },
+    ExportSkill {
+        name: String,
+    },
+    ImportSkill {
+        path: String,
+    },
+    SkillImported {
+        error: String,
+    },
+    ToolServerConnected {
+        name: String,
+        error: String,
+    },
+    OpenToolEditor {
+        kind: i32,
+        index: i32,
+    },
+    CloseToolEditor,
+    SaveToolEditor {
+        kind: i32,
+        mcp: MobileMcpDraft,
+        kb: MobileKnowledgeDraft,
+    },
+    // ---- built-in agent ----------------------------------------------
+    RefreshAgent,
+    AgentToolSearch(String),
+    SaveAgentText {
+        description: String,
+        system_prompt: String,
+    },
+    ToggleAgentTool {
+        name: String,
+        enabled: bool,
+        description: String,
+        system_prompt: String,
+    },
+    ToggleAgentToolGroup {
+        title: String,
+        select: bool,
+        description: String,
+        system_prompt: String,
+    },
+    AddAgentQuestion {
+        question: String,
+        description: String,
+        system_prompt: String,
+    },
+    RemoveAgentQuestion {
+        index: i32,
+        description: String,
+        system_prompt: String,
+    },
+    // ---- cron jobs ----------------------------------------------------
+    RefreshCron,
+    ToggleCron {
+        id: String,
+        enabled: bool,
+    },
+    DeleteCron {
+        id: String,
+    },
+    RunCronNow {
+        id: String,
+    },
+    OpenCronRuns {
+        id: String,
+    },
+    CloseCronRuns,
+    OpenCronEditor {
+        id: Option<String>,
+    },
+    CloseCronEditor,
+    SaveCron {
+        draft: MobileCronDraft,
+    },
+    // ---- memory fragments --------------------------------------------
+    RefreshMemory,
+    MemorySearch(String),
+    MemoryCategory(String),
+    OpenMemoryEditor {
+        index: i32,
+    },
+    CloseMemoryEditor,
+    SaveMemory {
+        draft: MobileMemoryDraft,
+    },
+    DeleteMemory {
+        id: String,
+    },
+    // ---- cloud account / device switch / cloud chat -------------------
+    SwitchChatTarget(i32),
+    RefreshCloudAccount,
+    RefreshCloudRemote,
+    CloudLogin {
+        server: String,
+        username: String,
+        password: String,
+    },
+    CloudLogout,
+    CloudSetSync(bool),
+    CloudSetSharing {
+        enabled: bool,
+        full_shadow: bool,
+    },
+    RefreshCloudThreads,
+    CloudNewThread,
+    CloudSelectThread(String),
+    CloudSend(String),
+    CloudStop,
+    CloudPoll,
+    CloudRename {
+        id: String,
+        title: String,
+    },
+    CloudArchive(String),
+    RefreshDevices,
+    PollApprovals,
+    DecideApproval {
+        id: String,
+        approve: bool,
+    },
+    // ---- channels ------------------------------------------------------
+    RefreshChannels,
+    SelectChannelAccount(String),
+    OpenChannelEditor(String),
+    CloseChannelEditor,
+    SaveChannel(MobileChannelDraft),
+    ToggleChannel {
+        account_id: String,
+        enabled: bool,
+    },
+    DeleteChannel(String),
+    OpenChannelLogs(String),
+    CloseChannelLogs,
+    DeleteChannelBinding(String),
 }
 
 /// Persisted preferences mirrored into the window on every change.
@@ -123,6 +330,7 @@ pub struct SettingsView {
     pub send_key: String,
     pub language: String,
     pub workspace_root: String,
+    pub update_source: String,
     pub version: String,
 }
 
@@ -134,9 +342,29 @@ impl Default for SettingsView {
             send_key: "enter".into(),
             language: "zh-CN".into(),
             workspace_root: String::new(),
+            update_source: "cloud".into(),
             version: CURRENT_VERSION.into(),
         }
     }
+}
+
+/// One selectable companion library entry for the settings picker.
+#[derive(Clone, Default)]
+pub struct CompanionChoice {
+    pub id: String,
+    pub name: String,
+}
+
+/// Settings-page projection of the persisted companion overlay state.
+#[derive(Clone, Default)]
+pub struct CompanionView {
+    pub enabled: bool,
+    pub selected_id: String,
+    pub scale: f32,
+    pub message_hints: bool,
+    /// `granted`, `denied` or `unknown` (bridge unavailable / host preview).
+    pub permission: String,
+    pub companions: Vec<CompanionChoice>,
 }
 
 /// One option of a published 问询面板 question, including the user's tick.
@@ -374,6 +602,141 @@ pub struct ModelEditor {
     pub probing: bool,
 }
 
+/// Phone projection of the tool manager. `browse_*` only describes the
+/// resource whose file list is on screen; the lists themselves are bounded by
+/// the native page size (200 entries).
+#[derive(Clone, Default)]
+pub struct ToolsView {
+    pub builtin: Vec<MobileTool>,
+    pub mcp_tools: Vec<MobileTool>,
+    pub skill_tools: Vec<MobileTool>,
+    pub knowledge_tools: Vec<MobileTool>,
+    pub servers: Vec<MobileToolResource>,
+    pub skills: Vec<MobileToolResource>,
+    pub bases: Vec<MobileToolResource>,
+    pub server_tools: Vec<MobileTool>,
+    pub active_server: String,
+    pub browse_tab: i32,
+    pub browse_resource: String,
+    pub browse_readonly: bool,
+    /// False for vector/RAGFlow knowledge bases, which keep their text outside
+    /// the file browser.
+    pub browse_editable: bool,
+    pub directory: String,
+    pub files: Vec<MobileToolFile>,
+    pub has_more: bool,
+    pub error: String,
+}
+
+/// MCP/knowledge form opened from the tools page. The draft is seeded once
+/// per opening; the UI edits it and sends it back on save.
+#[derive(Clone, Default)]
+pub struct ToolEditorView {
+    pub kind: i32,
+    pub is_new: bool,
+    pub mcp: MobileMcpDraft,
+    pub kb: MobileKnowledgeDraft,
+    pub error: String,
+}
+
+/// One text file opened from a skill or knowledge base browser.
+#[derive(Clone, Default)]
+pub struct ToolFileView {
+    pub path: String,
+    pub content: String,
+    pub readonly: bool,
+    pub error: String,
+}
+
+/// Send-friendly copy of one tool group. Slint's `ModelRc` is UI-thread only,
+/// so the engine never stores it; the tick converts this on the main thread.
+#[derive(Clone, Default)]
+pub struct AgentToolGroupView {
+    pub title: String,
+    pub tools: Vec<MobileTool>,
+    pub all_selected: bool,
+}
+
+/// The single built-in agent as the phone edits it.
+#[derive(Clone, Default)]
+pub struct AgentView {
+    pub name: String,
+    pub description: String,
+    pub system_prompt: String,
+    pub tool_names: Vec<String>,
+    pub preset_questions: Vec<String>,
+    pub groups: Vec<AgentToolGroupView>,
+    pub tool_count: i32,
+    pub search: String,
+    /// Bumped when the form should reload description/prompt from storage.
+    pub seed: u64,
+}
+
+#[derive(Clone, Default)]
+pub struct CronWorkspaceRef {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Default)]
+pub struct CronView {
+    pub jobs: Vec<MobileCronJob>,
+    pub workspaces: Vec<CronWorkspaceRef>,
+    pub loading: bool,
+    pub error: String,
+}
+
+#[derive(Clone, Default)]
+pub struct CronEditorView {
+    pub is_new: bool,
+    pub draft: MobileCronDraft,
+    pub error: String,
+    pub saving: bool,
+}
+
+#[derive(Clone, Default)]
+pub struct CronRunsView {
+    pub open: bool,
+    pub loading: bool,
+    pub title: String,
+    pub runs: Vec<MobileCronRun>,
+    pub error: String,
+}
+
+#[derive(Clone)]
+pub struct MemoryView {
+    pub memories: Vec<MobileMemory>,
+    pub categories: Vec<String>,
+    pub query: String,
+    pub category: String,
+    pub loading: bool,
+    pub error: String,
+    /// Bumped when the query should be rebased into the search field.
+    pub seed: u64,
+}
+
+impl Default for MemoryView {
+    fn default() -> Self {
+        Self {
+            memories: Vec::new(),
+            categories: vec!["全部标签".into()],
+            query: String::new(),
+            category: "全部标签".into(),
+            loading: false,
+            error: String::new(),
+            seed: 0,
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct MemoryEditorView {
+    pub is_new: bool,
+    pub draft: MobileMemoryDraft,
+    pub error: String,
+    pub saving: bool,
+}
+
 /// Everything the UI tick reads. Revisions keep the tick cheap: scalar state
 /// and the two row segments are copied only when the engine actually changed
 /// them, so a streaming token never rebuilds the whole transcript model.
@@ -393,16 +756,42 @@ pub struct Shared {
     pub probe_rev: u64,
     pub trajectory_rev: u64,
     pub preset_rev: u64,
+    /// Settings-page permission catalog and its last summary.
+    pub permissions: Vec<crate::permissions::PermissionItem>,
+    pub permission_summary: String,
+    pub permissions_rev: u64,
+    /// Android online update projection. `update_offer` is the verified
+    /// release selected by the check worker; `update_progress_bytes` is shared
+    /// with the download worker so the UI tick can read progress lock-free.
+    pub update_phase: String,
+    pub update_version: String,
+    pub update_notes: String,
+    pub update_source: String,
+    pub update_size_text: String,
+    pub update_size_bytes: u64,
+    pub update_progress_bytes: Arc<AtomicU64>,
+    pub update_error: String,
+    pub update_rev: u64,
+    pub update_offer: Option<crate::update::UpdateOffer>,
+    pub update_path: Option<std::path::PathBuf>,
+    pub update_checked_at: Option<Instant>,
     pub durable_rows: Vec<RowData>,
     /// Retained durable turns behind `durable_rows`. The watcher mixes compact
     /// header updates with detailed turn commits, so rows cannot be projected
     /// from a single update without losing either rounds or earlier turns.
     pub durable_turns: Vec<NativeChatTurn>,
     pub live_rows: Vec<RowData>,
-    /// Root id of the turn the live stream is building. Once the durable
-    /// snapshot carries the same turn, the durable copy is authoritative and
-    /// the live rows are dropped so the transcript never shows a turn twice.
+    /// Root id of the turn the live stream is building. While the stream is
+    /// attached this turn's live rows stay authoritative; the durable watcher
+    /// only sees commit boundaries and must not shadow them.
     pub live_root: String,
+    /// Session that owns `live_rows`. A stream must never paint its tail into
+    /// anything but the thread the user is looking at.
+    pub live_session: String,
+    /// Id of the stream that currently owns `live_rows`. A queued second send
+    /// in the same thread replaces the slot; the older stream keeps receiving
+    /// output but may only surface it through the durable projection.
+    pub live_stream_id: u64,
     pub sessions: Vec<MobileSession>,
     pub archived_sessions: Vec<MobileSession>,
     pub archived_total: i64,
@@ -421,6 +810,12 @@ pub struct Shared {
     pub workspace_total: u64,
     pub workspace_loading: bool,
     pub workspace_error: String,
+    /// Workspace catalogue as the drawer and picker render it.
+    pub workspaces: Vec<MobileWorkspace>,
+    pub workspaces_rev: u64,
+    /// Workspace new tasks land in and the working-directory page browses.
+    /// Follows the opened thread, then the user's explicit pick.
+    pub selected_workspace: String,
     pub voice_rev: u64,
     /// 0 idle, 1 recording, 2 transcribing.
     pub voice_phase: i32,
@@ -428,6 +823,43 @@ pub struct Shared {
     /// the draft by the UI tick, so a late result never overwrites typing.
     pub pending_draft: Option<String>,
     pub models: Vec<ModelCard>,
+    pub tools_rev: u64,
+    pub tools: ToolsView,
+    pub tool_editor_rev: u64,
+    pub tool_editor: Option<ToolEditorView>,
+    pub tool_file_rev: u64,
+    pub tool_file: Option<ToolFileView>,
+    pub agent_rev: u64,
+    pub agent: AgentView,
+    /// Catalog behind `agent.groups`; kept so the search box filters locally
+    /// instead of re-reading the runtime on every keystroke.
+    pub agent_catalog: Vec<ToolRecord>,
+    pub cron_rev: u64,
+    pub cron: CronView,
+    pub cron_editor_rev: u64,
+    pub cron_editor: Option<CronEditorView>,
+    pub cron_runs_rev: u64,
+    pub cron_runs: CronRunsView,
+    pub memory_rev: u64,
+    pub memory: MemoryView,
+    pub memory_editor_rev: u64,
+    pub memory_editor: Option<MemoryEditorView>,
+    pub target: i32,
+    pub target_rev: u64,
+    pub cloud_rev: u64,
+    pub cloud: crate::cloud::CloudView,
+    pub cloud_threads_rev: u64,
+    pub cloud_threads: Vec<MobileSession>,
+    pub cloud_active_rev: u64,
+    pub cloud_active: crate::cloud::CloudActive,
+    pub devices_rev: u64,
+    pub devices: Vec<crate::cloud::DeviceView>,
+    pub approval_rev: u64,
+    pub approval: Option<crate::cloud::ApprovalView>,
+    pub channels_rev: u64,
+    pub channels: crate::channels::ChannelsView,
+    pub channel_editor_rev: u64,
+    pub channel_editor: Option<crate::channels::ChannelEditorView>,
     pub inquiry: Option<InquiryView>,
     pub inquiry_rev: u64,
     /// Live command sessions in the active thread and the child agents a
@@ -438,16 +870,27 @@ pub struct Shared {
     /// A late durable replay of the waiting turn must not reopen them.
     pub consumed_inquiries: std::collections::VecDeque<String>,
     pub settings: SettingsView,
+    pub companion: CompanionView,
+    pub companion_rev: u64,
+    /// Live turn phase (`requesting`/`thinking`/`outputting`/`tool`/`waiting`/
+    /// `done`/`error`/`stopped`); the floating companion maps it onto sprites.
+    pub turn_phase: String,
+    /// Normalized final answer or failure message of the settled turn, shown
+    /// as the companion's bubble hint.
+    pub turn_hint: String,
     pub ubuntu: UbuntuView,
     pub ubuntu_rev: u64,
+    /// 用户在本进程内跳过了首装引导（仅失败态可达），避免每次刷新都重新弹出。
+    pub env_setup_dismissed: bool,
     pub editor: Option<ModelEditor>,
     pub probe_message: String,
     pub probed_context: String,
     pub session_id: String,
+    /// Durable workspace record the active thread is bound to.
+    pub workspace_id: String,
     pub title: String,
     pub subtitle: String,
     pub workspace: String,
-    pub connection: String,
     pub model_name: String,
     pub model_key: String,
     pub send_key: String,
@@ -503,11 +946,12 @@ pub fn acquire() -> &'static EngineHandle {
 
 fn start(shared: Arc<Mutex<Shared>>) -> Sender<Command> {
     let (sender, receiver) = mpsc::channel::<Command>();
+    let worker_sender = sender.clone();
     thread::Builder::new()
         .name("wunder-android-engine".into())
         .stack_size(8 * 1024 * 1024)
         .spawn(move || {
-            if let Err(error) = run(shared.clone(), receiver) {
+            if let Err(error) = run(shared.clone(), receiver, worker_sender) {
                 log::error!("local engine failed: {error:#}");
                 if let Ok(mut state) = shared.lock() {
                     state.notify(format!("本地引擎启动失败：{error:#}"));
@@ -520,7 +964,11 @@ fn start(shared: Arc<Mutex<Shared>>) -> Sender<Command> {
     sender
 }
 
-fn run(shared: Arc<Mutex<Shared>>, commands: mpsc::Receiver<Command>) -> anyhow::Result<()> {
+fn run(
+    shared: Arc<Mutex<Shared>>,
+    commands: mpsc::Receiver<Command>,
+    sender: Sender<Command>,
+) -> anyhow::Result<()> {
     wunder_desktop::install_local_home_env();
     // The phone-control host must exist before the first turn freezes its tool
     // surface; installing it after the engine starts would hide the tool from
@@ -531,12 +979,25 @@ fn run(shared: Arc<Mutex<Shared>>, commands: mpsc::Receiver<Command>) -> anyhow:
     // phone's system WebView before the first thread captures the tool list.
     #[cfg(target_os = "android")]
     crate::webview::install();
+    // The cloud device label must be set before any login registers it.
+    #[cfg(target_os = "android")]
+    if let Some(name) = crate::android_host::device_name() {
+        std::env::set_var("WUNDER_DEVICE_NAME", name);
+    }
     let desktop = Arc::new(NativeDesktop::start()?);
+    // Register as an Android node, not a second desktop, so the cloud and the
+    // device directory can tell phones and desktops apart.
+    #[cfg(target_os = "android")]
+    desktop.set_cloud_client_kind("android");
     // Detect a previously installed Ubuntu rootfs before the first settings
     // card render. The environment itself is optional; a missing one must not
     // hold up the engine.
     #[cfg(target_os = "android")]
     crate::ubuntu::bind();
+    // The floating companion is process-scoped like the engine: it keeps
+    // animating while the activity is gone and the UI tick is suspended.
+    #[cfg(target_os = "android")]
+    crate::companion::install(desktop.clone(), shared.clone());
     #[cfg(target_os = "android")]
     configure_browser_runtime();
     // A killed turn leaves its session execution lock behind for minutes.
@@ -547,7 +1008,6 @@ fn run(shared: Arc<Mutex<Shared>>, commands: mpsc::Receiver<Command>) -> anyhow:
     }
     {
         let mut state = shared.lock().unwrap();
-        state.connection = "本地引擎".into();
         state.permission_mode = "full_auto".into();
         state.loading = true;
         state.touch();
@@ -557,6 +1017,8 @@ fn run(shared: Arc<Mutex<Shared>>, commands: mpsc::Receiver<Command>) -> anyhow:
     refresh_archived(&desktop, &shared);
     refresh_preset_questions(&desktop, &shared);
     refresh_ubuntu(&desktop, &shared);
+    refresh_permissions(&shared);
+    refresh_companion(&desktop, &shared);
     // The bundled runtime is part of the install experience: the first launch
     // after an APK install extracts it in the background instead of waiting for
     // the user to find the settings switch.
@@ -572,7 +1034,10 @@ fn run(shared: Arc<Mutex<Shared>>, commands: mpsc::Receiver<Command>) -> anyhow:
     let session = match initial {
         Some(id) => id.to_string(),
         None => {
-            let created = desktop.create_session(None)?;
+            let workspace = shared.lock().unwrap().selected_workspace.clone();
+            let created = desktop.create_session(
+                (!workspace.trim().is_empty()).then_some(workspace.as_str()),
+            )?;
             refresh_sessions(&desktop, &shared, Some(&created.id));
             created.id
         }
@@ -603,22 +1068,28 @@ fn run(shared: Arc<Mutex<Shared>>, commands: mpsc::Receiver<Command>) -> anyhow:
                     notify(&shared, format!("无法打开会话：{error}"));
                 }
             }
-            Command::NewThread => match desktop.create_session(None) {
-                Ok(created) => {
-                    refresh_sessions(&desktop, &shared, Some(&created.id));
-                    if let Err(error) = select_session(
-                        &desktop,
-                        &shared,
-                        &created.id,
-                        &generation,
-                        &mut watch_cancel,
-                        false,
-                    ) {
-                        notify(&shared, format!("无法打开新会话：{error}"));
-                    }
+            Command::NewThread => {
+                if let Err(error) = open_thread_in_workspace(
+                    &desktop,
+                    &shared,
+                    &generation,
+                    &mut watch_cancel,
+                    None,
+                ) {
+                    notify(&shared, format!("无法新建会话：{error}"));
                 }
-                Err(error) => notify(&shared, format!("无法新建会话：{error}")),
-            },
+            }
+            Command::NewThreadInWorkspace(id) => {
+                if let Err(error) = open_thread_in_workspace(
+                    &desktop,
+                    &shared,
+                    &generation,
+                    &mut watch_cancel,
+                    Some(&id),
+                ) {
+                    notify(&shared, format!("无法在该工作区新建会话：{error}"));
+                }
+            }
             Command::RenameSession { id, title } => match desktop.rename_session(&id, &title) {
                 Ok(()) => {
                     let active = shared.lock().unwrap().session_id.clone();
@@ -640,7 +1111,16 @@ fn run(shared: Arc<Mutex<Shared>>, commands: mpsc::Receiver<Command>) -> anyhow:
                             .and_then(|list| list.first().map(|session| session.id.clone()));
                         let next = match next {
                             Some(id) => Some(id),
-                            None => desktop.create_session(None).ok().map(|session| session.id),
+                            None => {
+                                let workspace = shared.lock().unwrap().selected_workspace.clone();
+                                desktop
+                                    .create_session(
+                                        (!workspace.trim().is_empty())
+                                            .then_some(workspace.as_str()),
+                                    )
+                                    .ok()
+                                    .map(|session| session.id)
+                            }
                         };
                         match next {
                             Some(next) => {
@@ -698,6 +1178,82 @@ fn run(shared: Arc<Mutex<Shared>>, commands: mpsc::Receiver<Command>) -> anyhow:
                 let path = shared.lock().unwrap().workspace_path.clone();
                 load_workspace(&desktop, &shared, &path);
             }
+            Command::RefreshWorkspaces => {
+                if let Err(error) = refresh_workspaces(&desktop, &shared) {
+                    notify(&shared, format!("无法读取工作区：{error}"));
+                }
+            }
+            Command::SelectWorkspace(id) => {
+                match select_workspace(&desktop, &shared, &id) {
+                    Ok(()) => {
+                        let name = shared
+                            .lock()
+                            .map(|state| state.workspace.clone())
+                            .unwrap_or_default();
+                        // The phone header carries no thread title, so a
+                        // selection that only moved the new-task target would
+                        // look like the open thread moved with it. Open the
+                        // workspace's newest thread instead; an empty
+                        // workspace gets a fresh one.
+                        let (current, target) = shared
+                            .lock()
+                            .map(|state| {
+                                (state.workspace_id.clone(), state.selected_workspace.clone())
+                            })
+                            .unwrap_or_default();
+                        if current != target {
+                            let next = desktop
+                                .list_sessions(Some(target.as_str()))
+                                .ok()
+                                .and_then(|sessions| {
+                                    sessions.first().map(|session| session.id.clone())
+                                });
+                            let outcome = match next {
+                                Some(session) => select_session(
+                                    &desktop,
+                                    &shared,
+                                    &session,
+                                    &generation,
+                                    &mut watch_cancel,
+                                    false,
+                                ),
+                                None => open_thread_in_workspace(
+                                    &desktop,
+                                    &shared,
+                                    &generation,
+                                    &mut watch_cancel,
+                                    Some(target.as_str()),
+                                ),
+                            };
+                            if let Err(error) = outcome {
+                                notify(&shared, format!("无法打开该工作区的会话：{error}"));
+                            }
+                        }
+                        if !name.is_empty() {
+                            notify(&shared, format!("已切换到工作区「{name}」"));
+                        }
+                    }
+                    Err(error) => notify(&shared, format!("无法切换工作区：{error}")),
+                }
+            }
+            Command::CreateWorkspace { name, icon, color } => {
+                create_workspace(&desktop, &shared, &name, &icon, &color);
+            }
+            Command::UpdateWorkspace {
+                id,
+                name,
+                icon,
+                color,
+            } => update_workspace(&desktop, &shared, &id, &name, &icon, &color),
+            Command::DeleteWorkspace(id) => {
+                delete_workspace(
+                    &desktop,
+                    &shared,
+                    &id,
+                    &generation,
+                    &mut watch_cancel,
+                );
+            }
             Command::UploadWorkspace { dir, files } => {
                 upload_workspace(&desktop, &shared, &dir, &files);
             }
@@ -751,10 +1307,56 @@ fn run(shared: Arc<Mutex<Shared>>, commands: mpsc::Receiver<Command>) -> anyhow:
                     Err(error) => notify(&shared, format!("切换模型失败：{error}")),
                 }
             }
-            Command::RefreshSessions | Command::LoadSettings => {
+            Command::RefreshSessions => {
                 let active = shared.lock().unwrap().session_id.clone();
                 refresh_sessions(&desktop, &shared, Some(&active));
                 refresh_ubuntu(&desktop, &shared);
+            }
+            Command::LoadSettings => {
+                let active = shared.lock().unwrap().session_id.clone();
+                refresh_sessions(&desktop, &shared, Some(&active));
+                refresh_ubuntu(&desktop, &shared);
+                // The settings index shows agent/tool counts before either
+                // page is opened, so load both projections with the sheet.
+                refresh_agent(&desktop, &shared);
+                refresh_tools(&desktop, &shared);
+                refresh_cron(&desktop, &shared);
+                refresh_memory(&desktop, &shared, true);
+                crate::cloud::refresh_account(&desktop, &shared);
+                crate::cloud::refresh_devices(&desktop, &shared);
+                crate::channels::refresh(&desktop, &shared);
+                refresh_permissions(&shared);
+            }
+            Command::RefreshPermissions => refresh_permissions(&shared),
+            Command::OpenPermission(id) => crate::permissions::open(&id),
+            Command::CheckAndroidUpdate => start_update_check(desktop.clone(), shared.clone()),
+            Command::DownloadAndroidUpdate => {
+                start_update_download(desktop.clone(), shared.clone())
+            }
+            Command::InstallAndroidUpdate => install_update(&shared),
+            Command::SetUpdateSource(source) => {
+                let source = if source == "github" { "github" } else { "cloud" };
+                match desktop.get_desktop_settings() {
+                    Ok(settings) => match desktop.save_preferences(
+                        &settings.theme,
+                        &settings.send_key,
+                        settings.font_size,
+                        source,
+                    ) {
+                        Ok(_) => {
+                            let active = shared.lock().unwrap().session_id.clone();
+                            refresh_sessions(&desktop, &shared, Some(&active));
+                            if let Ok(mut state) = shared.lock() {
+                                // A source switch is an explicit request; do not
+                                // reuse a check result from the previous source.
+                                state.update_checked_at = None;
+                            }
+                            start_update_check(desktop.clone(), shared.clone());
+                        }
+                        Err(error) => notify(&shared, format!("切换更新源失败：{error}")),
+                    },
+                    Err(error) => notify(&shared, format!("读取更新源设置失败：{error}")),
+                }
             }
             Command::RefreshTasks => {
                 let session = shared.lock().unwrap().session_id.clone();
@@ -804,6 +1406,43 @@ fn run(shared: Arc<Mutex<Shared>>, commands: mpsc::Receiver<Command>) -> anyhow:
                     }
                     Err(error) => notify(&shared, format!("切换运行环境失败：{error}")),
                 }
+            }
+            Command::RefreshCompanion => refresh_companion(&desktop, &shared),
+            Command::SaveCompanion {
+                enabled,
+                selected_id,
+                scale,
+                message_hints,
+            } => {
+                let mut selected = selected_id.trim().to_string();
+                if enabled && selected.is_empty() {
+                    // 首次开启还没有形象：选库里的第一个，让开关即刻生效。
+                    selected = desktop
+                        .list_companions()
+                        .ok()
+                        .and_then(|list| list.first().map(|companion| companion.id.clone()))
+                        .unwrap_or_default();
+                }
+                match desktop.save_companion_settings(enabled, &selected, scale, message_hints) {
+                    Ok(_) => {
+                        refresh_companion(&desktop, &shared);
+                        if enabled && selected.is_empty() {
+                            notify(&shared, "伙伴库为空，请先导入伙伴包");
+                        }
+                        #[cfg(target_os = "android")]
+                        if enabled
+                            && !selected.is_empty()
+                            && crate::companion::permission_status() != "granted"
+                        {
+                            crate::companion::request_permission();
+                        }
+                    }
+                    Err(error) => notify(&shared, format!("保存伙伴设置失败：{error}")),
+                }
+            }
+            Command::CompanionPermission => {
+                #[cfg(target_os = "android")]
+                crate::companion::request_permission();
             }
             Command::InquiryOption { row, option } => {
                 let session = shared.lock().unwrap().session_id.clone();
@@ -922,6 +1561,323 @@ fn run(shared: Arc<Mutex<Shared>>, commands: mpsc::Receiver<Command>) -> anyhow:
             }
             Command::OpenModelEditor { key } => {
                 open_model_editor(&desktop, &shared, key.as_deref());
+            }
+            // ---- tool manager -----------------------------------------
+            Command::RefreshTools => refresh_tools(&desktop, &shared),
+            Command::SelectToolServer { index } => {
+                select_tool_server(&desktop, &shared, index);
+            }
+            Command::SelectToolResource { tab, index } => {
+                select_tool_resource(&desktop, &shared, tab, index);
+            }
+            Command::LoadToolDirectory { directory } => {
+                load_tool_directory(&desktop, &shared, &directory);
+            }
+            Command::MoreToolFiles => more_tool_files(&desktop, &shared),
+            Command::OpenToolFile { path } => open_tool_file(&desktop, &shared, &path),
+            Command::SaveToolFile { path, content } => {
+                save_tool_file(&desktop, &shared, &path, &content);
+            }
+            Command::CloseToolFile => close_tool_file(&shared),
+            Command::CreateToolFile { name } => create_tool_file(&desktop, &shared, &name),
+            Command::UploadToolFiles { files } => upload_tool_files(&desktop, &shared, &files),
+            Command::DeleteToolResource { tab, name } => {
+                delete_tool_resource(&desktop, &shared, tab, &name);
+            }
+            Command::ConnectToolServer { name } => {
+                let sender = sender.clone();
+                let api = desktop.clone();
+                thread::spawn(move || {
+                    let error = api
+                        .connect_tool_server(&name)
+                        .err()
+                        .map(|error| format!("{error}"))
+                        .unwrap_or_default();
+                    let _ = sender.send(Command::ToolServerConnected { name, error });
+                });
+            }
+            Command::ToolServerConnected { name, error } => {
+                if error.is_empty() {
+                    notify(&shared, "MCP 服务已连接");
+                    refresh_tools(&desktop, &shared);
+                    load_server_tools(&desktop, &shared, &name);
+                } else {
+                    notify(&shared, format!("连接失败：{error}"));
+                }
+            }
+            Command::ExportSkill { name } => export_skill(&desktop, &shared, &name),
+            Command::ImportSkill { path } => {
+                let sender = sender.clone();
+                let api = desktop.clone();
+                thread::spawn(move || {
+                    let error = api
+                        .import_tool_resource(ToolResourceKind::Skill, &path)
+                        .err()
+                        .map(|error| format!("{error}"))
+                        .unwrap_or_default();
+                    let _ = sender.send(Command::SkillImported { error });
+                });
+            }
+            Command::SkillImported { error } => {
+                if error.is_empty() {
+                    notify(&shared, "技能已导入");
+                    refresh_tools(&desktop, &shared);
+                } else {
+                    notify(&shared, format!("导入技能失败：{error}"));
+                }
+            }
+            Command::OpenToolEditor { kind, index } => {
+                open_tool_editor(&desktop, &shared, kind, index);
+            }
+            Command::CloseToolEditor => close_tool_editor(&shared),
+            Command::SaveToolEditor { kind, mcp, kb } => {
+                save_tool_editor(&desktop, &shared, kind, mcp, kb);
+            }
+            // ---- built-in agent ---------------------------------------
+            Command::RefreshAgent => refresh_agent(&desktop, &shared),
+            Command::AgentToolSearch(query) => search_agent_tools(&shared, &query),
+            Command::SaveAgentText {
+                description,
+                system_prompt,
+            } => {
+                let (tools, questions) = agent_selection(&shared);
+                persist_agent(
+                    &desktop,
+                    &shared,
+                    description,
+                    system_prompt,
+                    tools,
+                    questions,
+                    "智能体设置已保存",
+                );
+            }
+            Command::ToggleAgentTool {
+                name,
+                enabled,
+                description,
+                system_prompt,
+            } => {
+                let (mut tools, questions) = agent_selection(&shared);
+                tools.retain(|tool| tool != &name);
+                if enabled {
+                    tools.push(name);
+                }
+                persist_agent(
+                    &desktop,
+                    &shared,
+                    description,
+                    system_prompt,
+                    tools,
+                    questions,
+                    "工具已更新",
+                );
+            }
+            Command::ToggleAgentToolGroup {
+                title,
+                select,
+                description,
+                system_prompt,
+            } => {
+                let (mut tools, questions) = agent_selection(&shared);
+                let category = category_for_group(&title);
+                match desktop.list_tools() {
+                    Ok(catalog) => {
+                        let names = catalog
+                            .iter()
+                            .filter(|tool| tool.category == category)
+                            .map(|tool| tool.name.clone())
+                            .collect::<Vec<_>>();
+                        tools.retain(|tool| !names.contains(tool));
+                        if select {
+                            tools.extend(names);
+                        }
+                        persist_agent(
+                            &desktop,
+                            &shared,
+                            description,
+                            system_prompt,
+                            tools,
+                            questions,
+                            "工具已更新",
+                        );
+                    }
+                    Err(_) => notify(&shared, "无法读取工具列表"),
+                }
+            }
+            Command::AddAgentQuestion {
+                question,
+                description,
+                system_prompt,
+            } => {
+                let (tools, mut questions) = agent_selection(&shared);
+                let question = question.trim().to_string();
+                if !question.is_empty()
+                    && questions.len() < 12
+                    && !questions.iter().any(|existing| existing == &question)
+                {
+                    questions.push(question);
+                    persist_agent(
+                        &desktop,
+                        &shared,
+                        description,
+                        system_prompt,
+                        tools,
+                        questions,
+                        "预设问题已添加",
+                    );
+                }
+            }
+            Command::RemoveAgentQuestion {
+                index,
+                description,
+                system_prompt,
+            } => {
+                let (tools, mut questions) = agent_selection(&shared);
+                let index = index.max(0) as usize;
+                if index < questions.len() {
+                    questions.remove(index);
+                    persist_agent(
+                        &desktop,
+                        &shared,
+                        description,
+                        system_prompt,
+                        tools,
+                        questions,
+                        "预设问题已删除",
+                    );
+                }
+            }
+            // ---- cron jobs --------------------------------------------
+            Command::RefreshCron => refresh_cron(&desktop, &shared),
+            Command::ToggleCron { id, enabled } => match desktop.toggle_cron_job(&id, enabled) {
+                Ok(()) => {
+                    refresh_cron(&desktop, &shared);
+                    notify(
+                        &shared,
+                        if enabled {
+                            "定时任务已启用"
+                        } else {
+                            "定时任务已停用"
+                        },
+                    );
+                }
+                Err(error) => {
+                    // The switch moved before the command reached us; reload
+                    // the list so the row reflects the persisted state.
+                    refresh_cron(&desktop, &shared);
+                    notify(&shared, format!("无法更新定时任务：{error}"));
+                }
+            },
+            Command::DeleteCron { id } => match desktop.delete_cron_job(&id) {
+                Ok(()) => {
+                    if let Ok(mut state) = shared.lock() {
+                        state.cron_editor = None;
+                        state.cron_editor_rev = state.cron_editor_rev.wrapping_add(1);
+                        state.cron_runs = CronRunsView::default();
+                        state.cron_runs_rev = state.cron_runs_rev.wrapping_add(1);
+                    }
+                    refresh_cron(&desktop, &shared);
+                    notify(&shared, "定时任务已删除");
+                }
+                Err(error) => notify(&shared, format!("无法删除定时任务：{error}")),
+            },
+            Command::RunCronNow { id } => match desktop.run_cron_job_now(&id) {
+                Ok(status) => {
+                    notify(
+                        &shared,
+                        if status == "running" {
+                            "任务正在运行中，未重复排队"
+                        } else {
+                            "已加入立即执行队列"
+                        },
+                    );
+                    refresh_cron(&desktop, &shared);
+                }
+                Err(error) => notify(&shared, format!("无法立即运行任务：{error}")),
+            },
+            Command::OpenCronRuns { id } => open_cron_runs(&desktop, &shared, &id),
+            Command::CloseCronRuns => close_cron_runs(&shared),
+            Command::OpenCronEditor { id } => {
+                open_cron_editor(&desktop, &shared, id.as_deref());
+            }
+            Command::CloseCronEditor => close_cron_editor(&shared),
+            Command::SaveCron { draft } => save_cron(&desktop, &shared, draft),
+            // ---- memory fragments -------------------------------------
+            Command::RefreshMemory => refresh_memory(&desktop, &shared, true),
+            Command::MemorySearch(query) => {
+                if let Ok(mut state) = shared.lock() {
+                    state.memory.query = query;
+                }
+                refresh_memory(&desktop, &shared, false);
+            }
+            Command::MemoryCategory(category) => {
+                if let Ok(mut state) = shared.lock() {
+                    state.memory.category = category;
+                }
+                refresh_memory(&desktop, &shared, false);
+            }
+            Command::OpenMemoryEditor { index } => {
+                open_memory_editor(&shared, index);
+            }
+            Command::CloseMemoryEditor => close_memory_editor(&shared),
+            Command::SaveMemory { draft } => save_memory(&desktop, &shared, draft),
+            Command::DeleteMemory { id } => delete_memory(&desktop, &shared, &id),
+            // ---- cloud account / device switch / cloud chat -----------
+            Command::SwitchChatTarget(target) => {
+                crate::cloud::switch_target(&desktop, &shared, target);
+            }
+            Command::RefreshCloudAccount => crate::cloud::refresh_account(&desktop, &shared),
+            Command::RefreshCloudRemote => {
+                crate::cloud::refresh_remote_account(&desktop, &shared);
+            }
+            Command::CloudLogin {
+                server,
+                username,
+                password,
+            } => crate::cloud::login(&desktop, &shared, &server, &username, &password),
+            Command::CloudLogout => crate::cloud::logout(&desktop, &shared),
+            Command::CloudSetSync(enabled) => {
+                crate::cloud::set_sync(&desktop, &shared, enabled);
+            }
+            Command::CloudSetSharing {
+                enabled,
+                full_shadow,
+            } => crate::cloud::set_sharing(&desktop, &shared, enabled, full_shadow),
+            Command::RefreshCloudThreads => crate::cloud::refresh_threads(&desktop, &shared),
+            Command::CloudNewThread => crate::cloud::new_thread(&desktop, &shared),
+            Command::CloudSelectThread(id) => {
+                crate::cloud::select_thread(&desktop, &shared, &id);
+            }
+            Command::CloudSend(text) => crate::cloud::send(&desktop, &shared, text),
+            Command::CloudStop => crate::cloud::stop(&desktop, &shared),
+            Command::CloudPoll => crate::cloud::poll(&desktop, &shared),
+            Command::CloudRename { id, title } => {
+                crate::cloud::rename(&desktop, &shared, &id, &title);
+            }
+            Command::CloudArchive(id) => crate::cloud::archive(&desktop, &shared, &id),
+            Command::RefreshDevices => crate::cloud::refresh_devices(&desktop, &shared),
+            Command::PollApprovals => crate::cloud::poll_approvals(&desktop, &shared),
+            Command::DecideApproval { id, approve } => {
+                crate::cloud::decide_approval(&desktop, &shared, &id, approve);
+            }
+            Command::RefreshChannels => crate::channels::refresh(&desktop, &shared),
+            Command::SelectChannelAccount(id) => {
+                crate::channels::select(&desktop, &shared, &id);
+            }
+            Command::OpenChannelEditor(id) => {
+                crate::channels::open_editor(&desktop, &shared, &id);
+            }
+            Command::CloseChannelEditor => crate::channels::close_editor(&shared),
+            Command::SaveChannel(draft) => crate::channels::save(&desktop, &shared, draft),
+            Command::ToggleChannel {
+                account_id,
+                enabled,
+            } => crate::channels::toggle(&desktop, &shared, &account_id, enabled),
+            Command::DeleteChannel(id) => crate::channels::delete(&desktop, &shared, &id),
+            Command::OpenChannelLogs(id) => crate::channels::open_logs(&desktop, &shared, &id),
+            Command::CloseChannelLogs => crate::channels::close_logs(&shared),
+            Command::DeleteChannelBinding(id) => {
+                crate::channels::delete_binding(&desktop, &shared, &id);
             }
             Command::CloseModelEditor => {
                 if let Ok(mut state) = shared.lock() {
@@ -1215,6 +2171,262 @@ fn refresh_ubuntu(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
     state.touch();
 }
 
+/// Refresh the settings page's permission catalog from the Android host.
+fn refresh_permissions(shared: &Arc<Mutex<Shared>>) {
+    let items = crate::permissions::snapshot();
+    let summary = crate::permissions::summary(&items);
+    if let Ok(mut state) = shared.lock() {
+        state.permission_summary = summary;
+        state.permissions = items;
+        state.permissions_rev = state.permissions_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+fn start_update_check(desktop: Arc<NativeDesktop>, shared: Arc<Mutex<Shared>>) {
+    let channel = {
+        let Ok(mut state) = shared.lock() else {
+            return;
+        };
+        if matches!(
+            state.update_phase.as_str(),
+            "checking" | "downloading" | "installing"
+        ) {
+            return;
+        }
+        if state
+            .update_checked_at
+            .is_some_and(|checked| checked.elapsed() < Duration::from_secs(5))
+        {
+            return;
+        }
+        state.update_phase = "checking".into();
+        state.update_error.clear();
+        state.update_checked_at = Some(Instant::now());
+        state.update_rev = state.update_rev.wrapping_add(1);
+        state.touch();
+        if state.settings.update_source == "github" {
+            "github".to_string()
+        } else {
+            "cloud".to_string()
+        }
+    };
+    let worker_shared = shared.clone();
+    let check_channel = channel.clone();
+    let spawned = thread::Builder::new()
+        .name("wunder-android-update-check".into())
+        .spawn(move || {
+            let outcome = crate::update::check_offer(&desktop, &check_channel);
+            if let Ok(mut state) = worker_shared.lock() {
+                match outcome {
+                    Ok(crate::update::CheckOutcome::Available(offer)) => {
+                        state.update_phase = "available".into();
+                        state.update_version = offer.release.version.clone();
+                        state.update_notes = offer.notes.clone();
+                        state.update_source = offer.source.clone();
+                        state.update_size_text = offer.size_text.clone();
+                        state.update_size_bytes = offer.release.size;
+                        state.update_progress_bytes.store(0, Ordering::Relaxed);
+                        state.update_error.clear();
+                        state.update_offer = Some(offer);
+                        state.update_path = None;
+                    }
+                    Ok(crate::update::CheckOutcome::UpToDate) => {
+                        state.update_phase = "up_to_date".into();
+                        state.update_version.clear();
+                        state.update_notes.clear();
+                        state.update_source = crate::update::source_label(&check_channel);
+                        state.update_size_text.clear();
+                        state.update_size_bytes = 0;
+                        state.update_progress_bytes.store(0, Ordering::Relaxed);
+                        state.update_error.clear();
+                        state.update_offer = None;
+                        state.update_path = None;
+                    }
+                    Ok(crate::update::CheckOutcome::NoAsset) => {
+                        state.update_phase = "no_asset".into();
+                        state.update_version.clear();
+                        state.update_notes.clear();
+                        state.update_source = crate::update::source_label(&check_channel);
+                        state.update_size_text.clear();
+                        state.update_size_bytes = 0;
+                        state.update_progress_bytes.store(0, Ordering::Relaxed);
+                        state.update_error.clear();
+                        state.update_offer = None;
+                        state.update_path = None;
+                    }
+                    Err(error) => {
+                        state.update_phase = "failed".into();
+                        state.update_version.clear();
+                        state.update_notes.clear();
+                        state.update_source = crate::update::source_label(&check_channel);
+                        state.update_size_text.clear();
+                        state.update_size_bytes = 0;
+                        state.update_error = format!("{error:#}");
+                        state.update_offer = None;
+                        state.update_path = None;
+                    }
+                }
+                state.update_rev = state.update_rev.wrapping_add(1);
+                state.touch();
+            }
+        });
+    if let Err(error) = spawned {
+        log::error!("spawn android update check failed: {error}");
+        if let Ok(mut state) = shared.lock() {
+            state.update_phase = "failed".into();
+            state.update_error = "无法启动更新检查".into();
+            state.update_rev = state.update_rev.wrapping_add(1);
+            state.touch();
+        }
+    }
+}
+
+fn start_update_download(desktop: Arc<NativeDesktop>, shared: Arc<Mutex<Shared>>) {
+    let offer = {
+        let Ok(mut state) = shared.lock() else {
+            return;
+        };
+        if matches!(
+            state.update_phase.as_str(),
+            "checking" | "downloading" | "installing" | "ready"
+        ) {
+            return;
+        }
+        let Some(offer) = state.update_offer.clone() else {
+            return;
+        };
+        state.update_phase = "downloading".into();
+        state.update_error.clear();
+        state.update_progress_bytes.store(0, Ordering::Relaxed);
+        state.update_path = None;
+        state.update_rev = state.update_rev.wrapping_add(1);
+        state.touch();
+        offer
+    };
+    let progress = {
+        let Ok(mut state) = shared.lock() else {
+            return;
+        };
+        state.update_progress_bytes.clone()
+    };
+    let worker_shared = shared.clone();
+    let spawned = thread::Builder::new()
+        .name("wunder-android-update-download".into())
+        .spawn(move || {
+            let result = crate::update::download_offer(&desktop, &offer, &progress);
+            if let Ok(mut state) = worker_shared.lock() {
+                match result {
+                    Ok(path) => {
+                        state.update_phase = "ready".into();
+                        state.update_path = Some(path);
+                        state.update_progress_bytes.store(
+                            state.update_size_bytes,
+                            Ordering::Relaxed,
+                        );
+                        state.update_error.clear();
+                    }
+                    Err(error) => {
+                        state.update_phase = "failed".into();
+                        state.update_path = None;
+                        state.update_error = format!("{error:#}");
+                    }
+                }
+                state.update_rev = state.update_rev.wrapping_add(1);
+                state.touch();
+            }
+        });
+    if let Err(error) = spawned {
+        log::error!("spawn android update download failed: {error}");
+        if let Ok(mut state) = shared.lock() {
+            state.update_phase = "failed".into();
+            state.update_error = "无法启动更新下载".into();
+            state.update_rev = state.update_rev.wrapping_add(1);
+            state.touch();
+        }
+    }
+}
+
+fn install_update(shared: &Arc<Mutex<Shared>>) {
+    let path = {
+        let Ok(mut state) = shared.lock() else {
+            return;
+        };
+        if state.update_phase != "ready" && state.update_phase != "needs_install_permission" {
+            return;
+        }
+        let Some(path) = state.update_path.clone() else {
+            state.update_phase = "failed".into();
+            state.update_error = "更新包不存在，请重新下载".into();
+            state.update_rev = state.update_rev.wrapping_add(1);
+            state.touch();
+            return;
+        };
+        state.update_phase = "installing".into();
+        state.update_error.clear();
+        state.update_rev = state.update_rev.wrapping_add(1);
+        state.touch();
+        path
+    };
+    let outcome = crate::update::install(&path);
+    if let Ok(mut state) = shared.lock() {
+        match outcome {
+            Ok(status) if status == "permission" => {
+                state.update_phase = "needs_install_permission".into();
+                state.update_error = "请允许 wunder 安装应用，返回后再次点击安装".into();
+            }
+            Ok(status) if status == "started" => {
+                state.update_phase = "installing".into();
+                state.update_error.clear();
+            }
+            Ok(status) => {
+                state.update_phase = "failed".into();
+                state.update_error = status
+                    .strip_prefix("failed:")
+                    .unwrap_or(&status)
+                    .to_string();
+            }
+            Err(error) => {
+                state.update_phase = "failed".into();
+                state.update_error = format!("{error:#}");
+            }
+        }
+        state.update_rev = state.update_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+/// Project the persisted companion overlay state plus the library list into
+/// the settings page. The floating controller reads the same projection.
+fn refresh_companion(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
+    let overlay = desktop.companion_overlay_state();
+    let companions = desktop.list_companions().unwrap_or_default();
+    #[cfg(target_os = "android")]
+    let permission = crate::companion::permission_status();
+    #[cfg(not(target_os = "android"))]
+    let permission = "unknown".to_string();
+    let Ok(mut state) = shared.lock() else {
+        return;
+    };
+    state.companion = CompanionView {
+        // 未选形象的开启态在设置页读作关闭，避免「开着却没有伙伴」。
+        enabled: overlay.enabled && !overlay.selected_id.is_empty(),
+        selected_id: overlay.selected_id,
+        scale: overlay.scale,
+        message_hints: overlay.message_hints,
+        permission,
+        companions: companions
+            .into_iter()
+            .map(|companion| CompanionChoice {
+                id: companion.id,
+                name: companion.display_name,
+            })
+            .collect(),
+    };
+    state.companion_rev = state.companion_rev.wrapping_add(1);
+    state.touch();
+}
+
 /// Persist only the shell override; every other runtime path stays as the
 /// user configured it.
 fn save_shell_path(desktop: &NativeDesktop, shell_path: &str) -> anyhow::Result<()> {
@@ -1405,15 +2617,15 @@ fn select_session(
             snapshot.session.title.clone()
         };
         state.workspace = snapshot.session.workspace_name.clone();
-        state.subtitle = [
-            snapshot.session.runtime_status.as_str(),
+        state.workspace_id = snapshot.session.workspace_id.clone().unwrap_or_default();
+        // Opening a thread focuses its workspace, so a later new-task lands in
+        // the same one. An explicit pick made before the open is replaced,
+        // matching the desktop sidebar.
+        state.selected_workspace = state.workspace_id.clone();
+        state.subtitle = status_subtitle(
             snapshot.session.workspace_name.as_str(),
-        ]
-        .iter()
-        .filter(|part| !part.is_empty())
-        .copied()
-        .collect::<Vec<_>>()
-        .join(" · ");
+            &snapshot.session.runtime_status,
+        );
         state.model_key = snapshot
             .session
             .session_model_name
@@ -1437,6 +2649,12 @@ fn select_session(
             "running" | "queued" | "pending"
         );
         state.stopping = false;
+        state.turn_phase = if state.generating {
+            "running".into()
+        } else {
+            String::new()
+        };
+        state.turn_hint.clear();
         state.touch();
     }
     let active = shared.lock().unwrap().session_id.clone();
@@ -1589,22 +2807,41 @@ fn publish_durable(
         if state.session_id != session {
             return;
         }
+        // While the local stream owns this turn its live rows are the truth;
+        // commit boundaries only advance the retained durable copy. Skip the
+        // whole-history re-projection here so a long chat cannot block the UI
+        // tick behind the shared lock during generation.
+        let live_owned = state.generating
+            && state.live_session == session
+            && !state.live_root.is_empty()
+            && state.live_root != "live"
+            && !turns.is_empty()
+            && turns.iter().all(|turn| turn.root_id == state.live_root);
         merge_turns(&mut state.durable_turns, turns);
-        state.subagent_count = running_subagents(&state.durable_turns);
-        let need_detail = candidates.iter().any(|root| {
-            state
-                .durable_turns
-                .iter()
-                .find(|turn| &turn.root_id == root)
-                .is_some_and(|turn| turn.rounds.is_empty())
-        });
-        let rows = project_turns_preserving(&state.durable_turns, &state.durable_rows);
-        state.durable_rows = rows;
-        restore_pending_inquiry(&mut state, session);
-        state.rows_rev = state.rows_rev.wrapping_add(1);
-        state.stream_revision = state.stream_revision.wrapping_add(1);
-        state.touch();
-        need_detail
+        let subagents = running_subagents(&state.durable_turns);
+        if state.subagent_count != subagents {
+            state.subagent_count = subagents;
+            state.touch();
+        }
+        if live_owned {
+            restore_pending_inquiry(&mut state, session);
+            false
+        } else {
+            let need_detail = candidates.iter().any(|root| {
+                state
+                    .durable_turns
+                    .iter()
+                    .find(|turn| &turn.root_id == root)
+                    .is_some_and(|turn| turn.rounds.is_empty())
+            });
+            let rows = project_turns_preserving(&state.durable_turns, &state.durable_rows);
+            state.durable_rows = rows;
+            restore_pending_inquiry(&mut state, session);
+            state.rows_rev = state.rows_rev.wrapping_add(1);
+            state.stream_revision = state.stream_revision.wrapping_add(1);
+            state.touch();
+            need_detail
+        }
     };
     if !need_detail {
         return;
@@ -1645,7 +2882,7 @@ fn refresh_sessions(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, active
             .models
             .iter()
             .find(|model| model.is_default && model.enabled)
-            .map(|model| (model.key.clone(), model.model.clone()))
+            .map(|model| (model.key.clone(), model.key.clone()))
     });
     if let Ok(mut state) = shared.lock() {
         state.sessions = sessions;
@@ -1660,6 +2897,7 @@ fn refresh_sessions(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, active
                 send_key: settings.send_key.clone(),
                 language: settings.language.clone(),
                 workspace_root: settings.workspace_root.clone(),
+                update_source: settings.update_source.clone(),
                 version: CURRENT_VERSION.into(),
             };
             state.settings_rev = state.settings_rev.wrapping_add(1);
@@ -1671,6 +2909,13 @@ fn refresh_sessions(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, active
             }
         }
         state.touch();
+    }
+    // Keep the workspace catalogue's thread counts and active row in step with
+    // the session projection (a new thread, an archive or a rename all land
+    // here). Failures stay in the log: this is a background refresher, not a
+    // user action that needs a toast.
+    if let Err(error) = refresh_workspaces(desktop, shared) {
+        log::warn!("refresh workspace catalogue failed: {error:#}");
     }
 }
 
@@ -1725,9 +2970,1872 @@ fn refresh_preset_questions(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>
     }
 }
 
+// ---- tool manager -----------------------------------------------------
+
+fn tool_kind(tab: i32) -> Option<ToolResourceKind> {
+    match tab {
+        1 => Some(ToolResourceKind::Mcp),
+        2 => Some(ToolResourceKind::Skill),
+        3 => Some(ToolResourceKind::Knowledge),
+        _ => None,
+    }
+}
+
+/// Category badge used by the phone list. The desktop resolves per-tool keys;
+/// the phone keeps the category glyph so the code stays small and the list
+/// still reads as the same four groups.
+fn tool_visual(category: &str) -> (&'static str, &'static str) {
+    match category {
+        "MCP 工具" => ("plug", "mcp"),
+        "技能" => ("book", "skill"),
+        "知识库" => ("database", "knowledge"),
+        "用户工具" => ("wrench", "shared"),
+        "A2A 工具" => ("share-from-square", "automation"),
+        _ => ("wrench", "terminal"),
+    }
+}
+
+fn mobile_tool(tool: &ToolRecord, enabled: bool) -> MobileTool {
+    let (icon, tone) = tool_visual(&tool.category);
+    MobileTool {
+        name: tool.name.as_str().into(),
+        description: tool.description.as_str().into(),
+        category: tool.category.as_str().into(),
+        enabled,
+        icon: icon.into(),
+        tone: tone.into(),
+    }
+}
+
+fn mobile_resource(resource: NativeToolResource) -> MobileToolResource {
+    MobileToolResource {
+        name: resource.name.into(),
+        description: resource.description.into(),
+        detail: resource.detail.into(),
+        readonly: resource.readonly,
+    }
+}
+
+fn mobile_file(file: NativeToolFile) -> MobileToolFile {
+    MobileToolFile {
+        name: file.name.into(),
+        path: file.path.into(),
+        directory: file.directory,
+        size: human_size(file.size).into(),
+    }
+}
+
+fn join_tool_path(directory: &str, name: &str) -> String {
+    if directory.is_empty() {
+        name.to_string()
+    } else {
+        format!("{directory}/{name}")
+    }
+}
+
+fn dedup_text(values: Vec<String>, limit: usize) -> Vec<String> {
+    let mut result = Vec::new();
+    for value in values {
+        let value = value.trim().to_string();
+        if value.is_empty() || result.contains(&value) {
+            continue;
+        }
+        result.push(value);
+        if result.len() >= limit {
+            break;
+        }
+    }
+    result
+}
+
+fn category_for_group(title: &str) -> &str {
+    match title {
+        "技能工具" => "技能",
+        "知识库工具" => "知识库",
+        "自定义工具" => "用户工具",
+        other => other,
+    }
+}
+
+fn agent_groups(
+    catalog: &[ToolRecord],
+    tool_names: &[String],
+    query: &str,
+) -> Vec<AgentToolGroupView> {
+    let query = query.trim().to_lowercase();
+    let mut groups = Vec::new();
+    for category in [
+        "内置工具",
+        "MCP 工具",
+        "A2A 工具",
+        "技能",
+        "知识库",
+        "用户工具",
+    ] {
+        let tools = catalog
+            .iter()
+            .filter(|tool| tool.category == category)
+            .filter(|tool| {
+                query.is_empty()
+                    || tool.name.to_lowercase().contains(&query)
+                    || tool.description.to_lowercase().contains(&query)
+            })
+            .map(|tool| mobile_tool(tool, tool_names.iter().any(|name| name == &tool.name)))
+            .collect::<Vec<_>>();
+        if tools.is_empty() {
+            continue;
+        }
+        let title = match category {
+            "技能" => "技能工具",
+            "知识库" => "知识库工具",
+            "用户工具" => "自定义工具",
+            other => other,
+        };
+        let all_selected = tools.iter().all(|tool| tool.enabled);
+        groups.push(AgentToolGroupView {
+            title: title.into(),
+            tools,
+            all_selected,
+        });
+    }
+    groups
+}
+
+fn agent_selection(shared: &Arc<Mutex<Shared>>) -> (Vec<String>, Vec<String>) {
+    shared
+        .lock()
+        .map(|state| {
+            (
+                state.agent.tool_names.clone(),
+                state.agent.preset_questions.clone(),
+            )
+        })
+        .unwrap_or_default()
+}
+
+fn refresh_tools(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
+    let catalog = match desktop.list_tools() {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            set_tools_error(shared, format!("无法读取工具列表：{error}"));
+            return;
+        }
+    };
+    let manager = match desktop.tool_manager() {
+        Ok(manager) => manager,
+        Err(error) => {
+            set_tools_error(shared, format!("无法读取工具资源：{error}"));
+            return;
+        }
+    };
+    let tools = ToolsView {
+        builtin: catalog
+            .iter()
+            .filter(|tool| tool.category == "内置工具")
+            .map(|tool| mobile_tool(tool, false))
+            .collect(),
+        mcp_tools: catalog
+            .iter()
+            .filter(|tool| tool.category == "MCP 工具")
+            .map(|tool| mobile_tool(tool, false))
+            .collect(),
+        skill_tools: catalog
+            .iter()
+            .filter(|tool| tool.category == "技能")
+            .map(|tool| mobile_tool(tool, false))
+            .collect(),
+        knowledge_tools: catalog
+            .iter()
+            .filter(|tool| tool.category == "知识库")
+            .map(|tool| mobile_tool(tool, false))
+            .collect(),
+        servers: manager.servers.into_iter().map(mobile_resource).collect(),
+        skills: manager.skills.into_iter().map(mobile_resource).collect(),
+        bases: manager.bases.into_iter().map(mobile_resource).collect(),
+        ..ToolsView::default()
+    };
+    if let Ok(mut state) = shared.lock() {
+        state.tools = tools;
+        state.tools_rev = state.tools_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+fn set_tools_error(shared: &Arc<Mutex<Shared>>, message: String) {
+    if let Ok(mut state) = shared.lock() {
+        state.tools.error = message.clone();
+        state.tools_rev = state.tools_rev.wrapping_add(1);
+        state.touch();
+    }
+    notify(shared, message);
+}
+
+fn apply_tool_files(
+    shared: &Arc<Mutex<Shared>>,
+    tab: i32,
+    resource: &str,
+    readonly: bool,
+    directory: &str,
+    files: NativeToolFiles,
+    append: bool,
+) {
+    let Ok(mut state) = shared.lock() else {
+        return;
+    };
+    let entries = files.entries.into_iter().map(mobile_file).collect::<Vec<_>>();
+    state.tools.browse_tab = tab;
+    state.tools.browse_resource = resource.to_string();
+    state.tools.browse_readonly = readonly;
+    state.tools.directory = directory.to_string();
+    if append {
+        state.tools.files.extend(entries);
+    } else {
+        state.tools.files = entries;
+    }
+    state.tools.has_more = files.has_more && state.tools.files.len() < 2000;
+    state.tools.error.clear();
+    state.tools_rev = state.tools_rev.wrapping_add(1);
+    state.touch();
+}
+
+fn select_tool_server(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, index: i32) {
+    let name = shared
+        .lock()
+        .ok()
+        .and_then(|state| {
+            state
+                .tools
+                .servers
+                .get(index.max(0) as usize)
+                .map(|server| server.name.to_string())
+        })
+        .unwrap_or_default();
+    if name.is_empty() {
+        return;
+    }
+    load_server_tools(desktop, shared, &name);
+}
+
+fn load_server_tools(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, name: &str) {
+    match desktop.tool_server_tools(name) {
+        Ok(list) => {
+            if let Ok(mut state) = shared.lock() {
+                state.tools.active_server = name.to_string();
+                state.tools.server_tools = list.iter().map(|tool| mobile_tool(tool, false)).collect();
+                state.tools_rev = state.tools_rev.wrapping_add(1);
+                state.touch();
+            }
+        }
+        Err(error) => notify(shared, format!("无法读取 MCP 工具：{error}")),
+    }
+}
+
+fn select_tool_resource(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+    tab: i32,
+    index: i32,
+) {
+    let (name, readonly) = match shared.lock() {
+        Ok(state) => {
+            let list = if tab == 2 {
+                &state.tools.skills
+            } else {
+                &state.tools.bases
+            };
+            match list.get(index.max(0) as usize) {
+                Some(item) => (item.name.to_string(), item.readonly),
+                None => return,
+            }
+        }
+        Err(_) => return,
+    };
+    let Some(kind) = tool_kind(tab) else {
+        return;
+    };
+    let editable = if kind == ToolResourceKind::Knowledge {
+        desktop
+            .tool_manager()
+            .ok()
+            .and_then(|manager| {
+                manager
+                    .base_configs
+                    .into_iter()
+                    .find(|config| config.name == name)
+            })
+            .map(|config| config.base_type == "literal")
+            .unwrap_or(false)
+    } else {
+        !readonly
+    };
+    match desktop.tool_resource_files(kind, &name, "", 0) {
+        Ok(files) => {
+            if let Ok(mut state) = shared.lock() {
+                state.tools.active_server.clear();
+                state.tools.server_tools.clear();
+                state.tools.browse_editable = editable;
+            }
+            apply_tool_files(shared, tab, &name, readonly, "", files, false);
+        }
+        Err(error) => notify(shared, format!("无法读取资源目录：{error}")),
+    }
+}
+
+fn load_tool_directory(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, directory: &str) {
+    let (tab, resource, current, readonly) = match shared.lock() {
+        Ok(state) => (
+            state.tools.browse_tab,
+            state.tools.browse_resource.to_string(),
+            state.tools.directory.to_string(),
+            state.tools.browse_readonly,
+        ),
+        Err(_) => return,
+    };
+    if resource.is_empty() {
+        return;
+    }
+    let directory = if directory == ".." {
+        current
+            .rsplit_once('/')
+            .map(|(parent, _)| parent.to_string())
+            .unwrap_or_default()
+    } else {
+        directory.to_string()
+    };
+    let Some(kind) = tool_kind(tab) else {
+        return;
+    };
+    match desktop.tool_resource_files(kind, &resource, &directory, 0) {
+        Ok(files) => apply_tool_files(shared, tab, &resource, readonly, &directory, files, false),
+        Err(error) => notify(shared, format!("无法打开目录：{error}")),
+    }
+}
+
+fn more_tool_files(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
+    let (tab, resource, directory, readonly, offset) = match shared.lock() {
+        Ok(state) => (
+            state.tools.browse_tab,
+            state.tools.browse_resource.to_string(),
+            state.tools.directory.to_string(),
+            state.tools.browse_readonly,
+            state.tools.files.len(),
+        ),
+        Err(_) => return,
+    };
+    let Some(kind) = tool_kind(tab) else {
+        return;
+    };
+    match desktop.tool_resource_files(kind, &resource, &directory, offset) {
+        Ok(files) => apply_tool_files(shared, tab, &resource, readonly, &directory, files, true),
+        Err(error) => notify(shared, format!("无法加载更多：{error}")),
+    }
+}
+
+fn reload_tool_files(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
+    let (tab, resource, directory, readonly) = match shared.lock() {
+        Ok(state) => (
+            state.tools.browse_tab,
+            state.tools.browse_resource.to_string(),
+            state.tools.directory.to_string(),
+            state.tools.browse_readonly,
+        ),
+        Err(_) => return,
+    };
+    if resource.is_empty() {
+        return;
+    }
+    let Some(kind) = tool_kind(tab) else {
+        return;
+    };
+    if let Ok(files) = desktop.tool_resource_files(kind, &resource, &directory, 0) {
+        apply_tool_files(shared, tab, &resource, readonly, &directory, files, false);
+    }
+}
+
+fn open_tool_file(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, path: &str) {
+    let (tab, resource, readonly) = match shared.lock() {
+        Ok(state) => (
+            state.tools.browse_tab,
+            state.tools.browse_resource.to_string(),
+            state.tools.browse_readonly,
+        ),
+        Err(_) => return,
+    };
+    let Some(kind) = tool_kind(tab) else {
+        return;
+    };
+    match desktop.read_tool_resource(kind, &resource, path) {
+        Ok(content) => {
+            if let Ok(mut state) = shared.lock() {
+                state.tool_file = Some(ToolFileView {
+                    path: path.to_string(),
+                    content,
+                    readonly,
+                    error: String::new(),
+                });
+                state.tool_file_rev = state.tool_file_rev.wrapping_add(1);
+                state.touch();
+            }
+        }
+        Err(error) => notify(shared, format!("无法打开文件：{error}")),
+    }
+}
+
+fn save_tool_file(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+    path: &str,
+    content: &str,
+) {
+    let (tab, resource, readonly, editable) = match shared.lock() {
+        Ok(state) => (
+            state.tools.browse_tab,
+            state.tools.browse_resource.to_string(),
+            state.tools.browse_readonly,
+            state.tools.browse_editable,
+        ),
+        Err(_) => return,
+    };
+    if readonly {
+        notify(shared, "全局技能只读");
+        return;
+    }
+    if !editable {
+        notify(shared, "该知识库类型不支持文本文件编辑");
+        return;
+    }
+    let Some(kind) = tool_kind(tab) else {
+        return;
+    };
+    match desktop.save_tool_resource(kind, &resource, path, content, false) {
+        Ok(()) => {
+            if let Ok(mut state) = shared.lock() {
+                if let Some(file) = state.tool_file.as_mut() {
+                    file.content = content.to_string();
+                    file.error.clear();
+                }
+                state.tool_file_rev = state.tool_file_rev.wrapping_add(1);
+                state.touch();
+            }
+            reload_tool_files(desktop, shared);
+            notify(shared, "文件已保存");
+        }
+        Err(error) => {
+            let message = format!("保存失败：{error}");
+            if let Ok(mut state) = shared.lock() {
+                if let Some(file) = state.tool_file.as_mut() {
+                    file.error = message.clone();
+                }
+                state.tool_file_rev = state.tool_file_rev.wrapping_add(1);
+                state.touch();
+            }
+            notify(shared, message);
+        }
+    }
+}
+
+fn close_tool_file(shared: &Arc<Mutex<Shared>>) {
+    if let Ok(mut state) = shared.lock() {
+        state.tool_file = None;
+        state.tool_file_rev = state.tool_file_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+fn create_tool_file(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, name: &str) {
+    let name = name.trim();
+    if name.is_empty() {
+        notify(shared, "请输入文件名");
+        return;
+    }
+    let (tab, resource, directory, readonly, editable) = match shared.lock() {
+        Ok(state) => (
+            state.tools.browse_tab,
+            state.tools.browse_resource.to_string(),
+            state.tools.directory.to_string(),
+            state.tools.browse_readonly,
+            state.tools.browse_editable,
+        ),
+        Err(_) => return,
+    };
+    if readonly {
+        notify(shared, "全局技能只读");
+        return;
+    }
+    if !editable {
+        notify(shared, "该知识库类型不支持文本文件编辑");
+        return;
+    }
+    let Some(kind) = tool_kind(tab) else {
+        return;
+    };
+    let target = join_tool_path(&directory, name);
+    match desktop.save_tool_resource(kind, &resource, &target, "", true) {
+        Ok(()) => {
+            reload_tool_files(desktop, shared);
+            notify(shared, "文件已创建");
+        }
+        Err(error) => notify(shared, format!("无法创建文件：{error}")),
+    }
+}
+
+fn upload_tool_files(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, files: &[String]) {
+    let (tab, resource, directory, readonly, editable) = match shared.lock() {
+        Ok(state) => (
+            state.tools.browse_tab,
+            state.tools.browse_resource.to_string(),
+            state.tools.directory.to_string(),
+            state.tools.browse_readonly,
+            state.tools.browse_editable,
+        ),
+        Err(_) => return,
+    };
+    if readonly {
+        notify(shared, "全局技能只读");
+        return;
+    }
+    if !editable {
+        notify(shared, "该知识库类型不支持文本文件编辑");
+        return;
+    }
+    let Some(kind) = tool_kind(tab) else {
+        return;
+    };
+    let mut saved = 0;
+    let mut skipped = 0;
+    for path in files {
+        let source = std::path::Path::new(path);
+        let size = std::fs::metadata(source).map(|meta| meta.len()).unwrap_or(0);
+        let Some(name) = source.file_name().and_then(|name| name.to_str()) else {
+            skipped += 1;
+            continue;
+        };
+        if size > 2 * 1024 * 1024 {
+            skipped += 1;
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(source) else {
+            skipped += 1;
+            continue;
+        };
+        let target = join_tool_path(&directory, name);
+        if desktop
+            .save_tool_resource(kind, &resource, &target, &text, true)
+            .is_ok()
+        {
+            saved += 1;
+        } else {
+            skipped += 1;
+        }
+    }
+    reload_tool_files(desktop, shared);
+    notify(
+        shared,
+        if skipped == 0 {
+            format!("已上传 {saved} 个文件")
+        } else {
+            format!("已上传 {saved} 个文件，跳过 {skipped} 个（非文本或过大）")
+        },
+    );
+}
+
+fn delete_tool_resource(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+    tab: i32,
+    name: &str,
+) {
+    let Some(kind) = tool_kind(tab) else {
+        return;
+    };
+    match desktop.delete_tool_resource(kind, name) {
+        Ok(()) => {
+            if let Ok(mut state) = shared.lock() {
+                state.tool_file = None;
+                state.tool_file_rev = state.tool_file_rev.wrapping_add(1);
+            }
+            refresh_tools(desktop, shared);
+            notify(shared, "已删除");
+        }
+        Err(error) => notify(shared, format!("删除失败：{error}")),
+    }
+}
+
+fn export_skill(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, name: &str) {
+    let target = std::env::temp_dir().join(format!("{name}.zip"));
+    let target_text = target.to_string_lossy().to_string();
+    match desktop.export_tool_skill(name, &target_text) {
+        Ok(()) => {
+            #[cfg(target_os = "android")]
+            {
+                let status = crate::android_host::save_file_to_phone(
+                    &target_text,
+                    &format!("{name}.zip"),
+                );
+                if let Some(reason) = status.strip_prefix("failed:") {
+                    notify(shared, format!("导出失败：{reason}"));
+                } else {
+                    notify(shared, "正在导出技能…");
+                }
+            }
+            #[cfg(not(target_os = "android"))]
+            notify(shared, format!("技能已导出到 {}", target.display()));
+        }
+        Err(error) => notify(shared, format!("导出技能失败：{error}")),
+    }
+}
+
+fn open_tool_editor(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, kind: i32, index: i32) {
+    let manager = match desktop.tool_manager() {
+        Ok(manager) => manager,
+        Err(error) => {
+            notify(shared, format!("无法读取工具配置：{error}"));
+            return;
+        }
+    };
+    let (mcp, kb, is_new) = match kind {
+        1 => {
+            let config = if index >= 0 {
+                manager.server_configs.get(index as usize)
+            } else {
+                None
+            };
+            if index >= 0 && config.is_none() {
+                return;
+            }
+            let mcp = config
+                .map(|config| MobileMcpDraft {
+                    previous: config.name.as_str().into(),
+                    name: config.name.as_str().into(),
+                    display_name: config.display_name.as_str().into(),
+                    endpoint: config.endpoint.as_str().into(),
+                    transport: {
+                        let transport = if config.transport.trim().is_empty() {
+                            "auto"
+                        } else {
+                            config.transport.as_str()
+                        };
+                        transport.into()
+                    },
+                    description: config.description.as_str().into(),
+                    headers: config.headers.as_str().into(),
+                })
+                .unwrap_or_else(|| MobileMcpDraft {
+                    transport: "auto".into(),
+                    ..MobileMcpDraft::default()
+                });
+            (mcp, MobileKnowledgeDraft::default(), index < 0)
+        }
+        2 => {
+            let config = if index >= 0 {
+                manager.base_configs.get(index as usize)
+            } else {
+                None
+            };
+            if index >= 0 && config.is_none() {
+                return;
+            }
+            let kb = config
+                .map(|config| MobileKnowledgeDraft {
+                    previous: config.name.as_str().into(),
+                    name: config.name.as_str().into(),
+                    description: config.description.as_str().into(),
+                    base_type: config.base_type.as_str().into(),
+                    embedding_model: config.embedding_model.as_str().into(),
+                    chunk_size: config.chunk_size.as_str().into(),
+                    chunk_overlap: config.chunk_overlap.as_str().into(),
+                    dataset_id: config.ragflow_dataset_id.as_str().into(),
+                })
+                .unwrap_or_else(|| MobileKnowledgeDraft {
+                    base_type: "vector".into(),
+                    ..MobileKnowledgeDraft::default()
+                });
+            (
+                MobileMcpDraft::default(),
+                kb,
+                index < 0,
+            )
+        }
+        _ => return,
+    };
+    if let Ok(mut state) = shared.lock() {
+        state.tool_editor = Some(ToolEditorView {
+            kind,
+            is_new,
+            mcp,
+            kb,
+            error: String::new(),
+        });
+        state.tool_editor_rev = state.tool_editor_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+fn close_tool_editor(shared: &Arc<Mutex<Shared>>) {
+    if let Ok(mut state) = shared.lock() {
+        state.tool_editor = None;
+        state.tool_editor_rev = state.tool_editor_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+fn save_tool_editor(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+    kind: i32,
+    mcp: MobileMcpDraft,
+    kb: MobileKnowledgeDraft,
+) {
+    let result = match kind {
+        1 => desktop.save_mcp_server(&NativeMcpServerDraft {
+            previous: mcp.previous.to_string(),
+            name: mcp.name.to_string(),
+            display_name: mcp.display_name.to_string(),
+            endpoint: mcp.endpoint.to_string(),
+            transport: mcp.transport.to_string(),
+            description: mcp.description.to_string(),
+            headers: mcp.headers.to_string(),
+        }),
+        2 => desktop.save_knowledge_base(&NativeKnowledgeDraft {
+            previous: kb.previous.to_string(),
+            name: kb.name.to_string(),
+            description: kb.description.to_string(),
+            base_type: kb.base_type.to_string(),
+            embedding_model: kb.embedding_model.to_string(),
+            chunk_size: kb.chunk_size.to_string(),
+            chunk_overlap: kb.chunk_overlap.to_string(),
+            ragflow_dataset_id: kb.dataset_id.to_string(),
+        }),
+        _ => return,
+    };
+    match result {
+        Ok(()) => {
+            if let Ok(mut state) = shared.lock() {
+                state.tool_editor = None;
+                state.tool_editor_rev = state.tool_editor_rev.wrapping_add(1);
+                state.touch();
+            }
+            refresh_tools(desktop, shared);
+            notify(
+                shared,
+                if kind == 1 {
+                    "MCP 服务器已保存"
+                } else {
+                    "知识库已保存"
+                },
+            );
+        }
+        Err(error) => {
+            let message = format!("保存失败：{error}");
+            if let Ok(mut state) = shared.lock() {
+                if let Some(editor) = state.tool_editor.as_mut() {
+                    editor.error = message.clone();
+                }
+                state.tool_editor_rev = state.tool_editor_rev.wrapping_add(1);
+                state.touch();
+            }
+            notify(shared, message);
+        }
+    }
+}
+
+// ---- built-in agent ---------------------------------------------------
+
+fn refresh_agent(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
+    let agent = match desktop.default_agent() {
+        Ok(agent) => agent,
+        Err(error) => {
+            notify(shared, format!("无法读取智能体设置：{error}"));
+            return;
+        }
+    };
+    let catalog = desktop.list_tools().unwrap_or_default();
+    // A fresh load always starts unfiltered; the tick pushes the empty search
+    // back so the field and the list never disagree.
+    let query = String::new();
+    let groups = agent_groups(&catalog, &agent.tool_names, &query);
+    let preset_questions = dedup_text(agent.preset_questions.clone(), 12);
+    if let Ok(mut state) = shared.lock() {
+        let seed = state.agent.seed.wrapping_add(1);
+        state.agent = AgentView {
+            name: agent.name.clone(),
+            description: agent.description.clone(),
+            system_prompt: agent.system_prompt.clone(),
+            tool_names: agent.tool_names.clone(),
+            preset_questions: preset_questions.clone(),
+            groups,
+            tool_count: agent.tool_names.len() as i32,
+            search: query,
+            seed,
+        };
+        state.agent_catalog = catalog;
+        state.preset_questions = preset_questions;
+        state.preset_rev = state.preset_rev.wrapping_add(1);
+        state.agent_rev = state.agent_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+fn search_agent_tools(shared: &Arc<Mutex<Shared>>, query: &str) {
+    let (catalog, tool_names) = match shared.lock() {
+        Ok(state) => (
+            state.agent_catalog.clone(),
+            state.agent.tool_names.clone(),
+        ),
+        Err(_) => return,
+    };
+    let groups = agent_groups(&catalog, &tool_names, query);
+    if let Ok(mut state) = shared.lock() {
+        state.agent.search = query.to_string();
+        state.agent.groups = groups;
+        state.agent_rev = state.agent_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+fn persist_agent(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+    description: String,
+    system_prompt: String,
+    tool_names: Vec<String>,
+    preset_questions: Vec<String>,
+    note: &str,
+) {
+    let current = match desktop.default_agent() {
+        Ok(agent) => agent,
+        Err(error) => {
+            notify(shared, format!("无法读取智能体设置：{error}"));
+            return;
+        }
+    };
+    let icon = {
+        let payload = current.icon_config.to_payload();
+        if payload.trim().is_empty() {
+            None
+        } else {
+            Some(payload)
+        }
+    };
+    let edit = AgentSettingsEdit {
+        name: current.name.clone(),
+        description: description.trim().to_string(),
+        system_prompt,
+        model_name: current.model.clone(),
+        icon_name: current.icon_name.clone(),
+        icon_color: current.icon_color.clone(),
+        icon,
+        tool_names: dedup_text(tool_names, usize::MAX),
+        preset_questions: dedup_text(preset_questions, 12),
+        approval_mode: current.approval_mode.clone(),
+        preview_skill: current.preview_skill,
+        silent: current.silent,
+        prefer_mother: current.prefer_mother,
+    };
+    match desktop.update_agent_settings(DEFAULT_AGENT_ID, edit) {
+        Ok(updated) => {
+            let catalog = desktop.list_tools().unwrap_or_default();
+            let preset_questions = dedup_text(updated.preset_questions.clone(), 12);
+            if let Ok(mut state) = shared.lock() {
+                let query = state.agent.search.clone();
+                let seed = state.agent.seed;
+                let groups = agent_groups(&catalog, &updated.tool_names, &query);
+                state.agent = AgentView {
+                    name: updated.name.clone(),
+                    description: updated.description.clone(),
+                    system_prompt: updated.system_prompt.clone(),
+                    tool_names: updated.tool_names.clone(),
+                    preset_questions: preset_questions.clone(),
+                    groups,
+                    tool_count: updated.tool_names.len() as i32,
+                    search: query,
+                    seed,
+                };
+                state.agent_catalog = catalog;
+                state.preset_questions = preset_questions;
+                state.preset_rev = state.preset_rev.wrapping_add(1);
+                state.agent_rev = state.agent_rev.wrapping_add(1);
+                state.notify(note);
+                state.touch();
+            }
+        }
+        Err(error) => notify(shared, format!("保存智能体设置失败：{error}")),
+    }
+}
+
+// ---- cron jobs --------------------------------------------------------
+
+/// RFC3339 or raw stored time rendered as local "YYYY-MM-DD HH:MM".
+fn format_local_at(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+        return parsed
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string();
+    }
+    trimmed.to_string()
+}
+
+/// Cron run timestamps arrive as RFC3339 with the server offset; render them
+/// in the phone's local zone like the rest of the settings surfaces.
+fn cron_run_time(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+        return parsed
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string();
+    }
+    trimmed.to_string()
+}
+
+fn format_memory_time(updated_at: f64) -> String {
+    chrono::DateTime::from_timestamp(updated_at as i64, 0)
+        .map(|value| {
+            value
+                .with_timezone(&chrono::Local)
+                .format("%Y/%m/%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+/// CronRecord.schedule is the raw backend summary (RFC3339 for one-shot
+/// jobs); the phone renders the same facts as terse local text.
+fn cron_schedule_text(job: &wunder_desktop::CronRecord) -> String {
+    match job.schedule_kind.as_str() {
+        "every" => {
+            let seconds = job.every_s.max(0);
+            if seconds >= 86_400 && seconds % 86_400 == 0 {
+                format!("每 {} 天", seconds / 86_400)
+            } else if seconds >= 3_600 && seconds % 3_600 == 0 {
+                format!("每 {} 小时", seconds / 3_600)
+            } else if seconds >= 60 && seconds % 60 == 0 {
+                format!("每 {} 分钟", seconds / 60)
+            } else {
+                format!("每 {seconds} 秒")
+            }
+        }
+        "cron" => {
+            let expression = job.cron_expr.trim();
+            let timezone = job.timezone.trim();
+            if timezone.is_empty() {
+                format!("Cron {expression}")
+            } else {
+                format!("Cron {expression} · {timezone}")
+            }
+        }
+        _ => {
+            let at = format_local_at(&job.schedule_at);
+            if at.is_empty() {
+                "定时一次".to_string()
+            } else {
+                format!("定时一次 {at}")
+            }
+        }
+    }
+}
+
+/// `next_run` is formatted in UTC by the native façade; show it in the
+/// phone's local zone like every other timestamp in settings.
+fn cron_next_run_text(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed == "未计划" || trimmed == "未知" {
+        return String::new();
+    }
+    if let Ok(parsed) = chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M") {
+        return parsed
+            .and_utc()
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string();
+    }
+    trimmed.to_string()
+}
+
+fn refresh_cron(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
+    match desktop.list_cron_jobs() {
+        Ok(jobs) => {
+            let jobs = jobs
+                .into_iter()
+                .map(|job| {
+                    let schedule = cron_schedule_text(&job);
+                    let next_run = cron_next_run_text(&job.next_run);
+                    MobileCronJob {
+                        id: job.id.into(),
+                        name: job.name.into(),
+                        enabled: job.enabled,
+                        schedule: schedule.into(),
+                        next_run: next_run.into(),
+                        workspace_name: job.workspace_name.into(),
+                        message: job.message.into(),
+                        last_status: job.last_status.into(),
+                        last_error: job.last_error.into(),
+                    }
+                })
+                .collect::<Vec<_>>();
+            let workspaces = desktop
+                .list_workspaces()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|workspace| CronWorkspaceRef {
+                    id: workspace.workspace_id.into(),
+                    name: workspace.name.into(),
+                })
+                .collect::<Vec<_>>();
+            if let Ok(mut state) = shared.lock() {
+                state.cron.jobs = jobs;
+                state.cron.workspaces = workspaces;
+                state.cron.loading = false;
+                state.cron.error.clear();
+                state.cron_rev = state.cron_rev.wrapping_add(1);
+                state.touch();
+            }
+        }
+        Err(error) => {
+            if let Ok(mut state) = shared.lock() {
+                state.cron.loading = false;
+                state.cron.error = format!("无法读取定时任务：{error}");
+                state.cron_rev = state.cron_rev.wrapping_add(1);
+                state.touch();
+            }
+        }
+    }
+}
+
+fn set_cron_editor_error(shared: &Arc<Mutex<Shared>>, message: String) {
+    if let Ok(mut state) = shared.lock() {
+        if let Some(editor) = state.cron_editor.as_mut() {
+            editor.error = message;
+            editor.saving = false;
+        }
+        state.cron_editor_rev = state.cron_editor_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+fn open_cron_editor(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, id: Option<&str>) {
+    let workspaces = match desktop.list_workspaces() {
+        Ok(workspaces) => workspaces,
+        Err(error) => {
+            notify(shared, format!("无法读取工作区列表：{error}"));
+            return;
+        }
+    };
+    let current_workspace = shared
+        .lock()
+        .map(|state| state.workspace_id.clone())
+        .unwrap_or_default();
+    let default_workspace = workspaces
+        .iter()
+        .find(|workspace| workspace.workspace_id == current_workspace)
+        .or_else(|| workspaces.first())
+        .map(|workspace| workspace.name.clone())
+        .unwrap_or_default();
+    let (draft, is_new) = match id {
+        Some(id) if !id.trim().is_empty() => match desktop.get_cron_job(id) {
+            Ok(job) => {
+                let (every_text, interval_unit) = if job.every_s >= 86400 && job.every_s % 86400 == 0
+                {
+                    ((job.every_s / 86400).to_string(), "day")
+                } else if job.every_s >= 3600 && job.every_s % 3600 == 0 {
+                    ((job.every_s / 3600).to_string(), "hour")
+                } else if job.every_s > 0 && job.every_s % 60 == 0 {
+                    ((job.every_s / 60).to_string(), "minute")
+                } else if job.every_s > 0 {
+                    (job.every_s.to_string(), "second")
+                } else {
+                    ("5".to_string(), "minute")
+                };
+                (
+                    MobileCronDraft {
+                        id: job.id.clone().into(),
+                        name: job.name.clone().into(),
+                        schedule_kind: job.schedule_kind.clone().into(),
+                        schedule_at: format_local_at(&job.schedule_at).into(),
+                        every: every_text.into(),
+                        interval_unit: interval_unit.into(),
+                        cron_expr: job.cron_expr.clone().into(),
+                        timezone: job.timezone.clone().into(),
+                        message: job.message.clone().into(),
+                        workspace_name: if job.workspace_name.trim().is_empty() {
+                            default_workspace.as_str().into()
+                        } else {
+                            job.workspace_name.as_str().into()
+                        },
+                        delete_after: job.delete_after_run,
+                        enabled: job.enabled,
+                    },
+                    false,
+                )
+            }
+            Err(error) => {
+                notify(shared, format!("无法读取定时任务：{error}"));
+                return;
+            }
+        },
+        _ => (
+            MobileCronDraft {
+                schedule_kind: "at".into(),
+                schedule_at: (chrono::Local::now() + chrono::Duration::minutes(5))
+                    .format("%Y-%m-%d %H:%M")
+                    .to_string()
+                    .into(),
+                every: "5".into(),
+                interval_unit: "minute".into(),
+                workspace_name: default_workspace.as_str().into(),
+                enabled: true,
+                ..MobileCronDraft::default()
+            },
+            true,
+        ),
+    };
+    if let Ok(mut state) = shared.lock() {
+        state.cron.workspaces = workspaces
+            .into_iter()
+            .map(|workspace| CronWorkspaceRef {
+                id: workspace.workspace_id.into(),
+                name: workspace.name.into(),
+            })
+            .collect();
+        state.cron_editor = Some(CronEditorView {
+            is_new,
+            draft,
+            error: String::new(),
+            saving: false,
+        });
+        state.cron_editor_rev = state.cron_editor_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+fn close_cron_editor(shared: &Arc<Mutex<Shared>>) {
+    if let Ok(mut state) = shared.lock() {
+        state.cron_editor = None;
+        state.cron_editor_rev = state.cron_editor_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+fn save_cron(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, draft: MobileCronDraft) {
+    let message = draft.message.trim().to_string();
+    if message.is_empty() {
+        set_cron_editor_error(shared, "执行消息不能为空".into());
+        return;
+    }
+    let name = {
+        let trimmed = draft.name.trim();
+        if trimmed.is_empty() {
+            message.chars().take(40).collect::<String>()
+        } else {
+            trimmed.to_string()
+        }
+    };
+    let interval_unit = draft.interval_unit.as_str();
+    let unit_seconds = match interval_unit {
+        "hour" => 3600,
+        "day" => 86400,
+        "second" => 1,
+        _ => 60,
+    };
+    let every_s = draft
+        .every
+        .trim()
+        .parse::<i64>()
+        .unwrap_or(0)
+        .checked_mul(unit_seconds)
+        .unwrap_or(0);
+    let schedule_kind = draft.schedule_kind.to_string();
+    if schedule_kind == "every" && !(1..=86_400).contains(&every_s) {
+        set_cron_editor_error(shared, "重复周期必须为正整数，且不超过 1 天".into());
+        return;
+    }
+    let cron_expr = draft.cron_expr.trim().to_string();
+    if schedule_kind == "cron" && cron_expr.is_empty() {
+        set_cron_editor_error(shared, "Cron 表达式不能为空".into());
+        return;
+    }
+    let workspace_id = shared
+        .lock()
+        .ok()
+        .and_then(|state| {
+            state
+                .cron
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.name == draft.workspace_name.as_str())
+                .map(|workspace| workspace.id.to_string())
+        })
+        .unwrap_or_default();
+    if workspace_id.is_empty() {
+        set_cron_editor_error(shared, "请选择工作区".into());
+        return;
+    }
+    let edit = NativeCronJobEdit {
+        job_id: draft.id.trim().to_string(),
+        name,
+        schedule_kind,
+        schedule_at: draft.schedule_at.trim().to_string(),
+        every_s,
+        cron_expr,
+        timezone: draft.timezone.trim().to_string(),
+        message,
+        workspace_id,
+        delete_after_run: draft.delete_after,
+        enabled: draft.enabled,
+    };
+    match desktop.save_cron_job(&edit) {
+        Ok(job) => {
+            if let Ok(mut state) = shared.lock() {
+                state.cron_editor = None;
+                state.cron_editor_rev = state.cron_editor_rev.wrapping_add(1);
+                state.touch();
+            }
+            refresh_cron(desktop, shared);
+            notify(shared, format!("定时任务「{}」已保存", job.name));
+        }
+        Err(error) => set_cron_editor_error(shared, format!("保存失败：{error}")),
+    }
+}
+
+fn open_cron_runs(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, id: &str) {
+    let title = shared
+        .lock()
+        .ok()
+        .and_then(|state| {
+            state
+                .cron
+                .jobs
+                .iter()
+                .find(|job| job.id == id)
+                .map(|job| job.name.to_string())
+        })
+        .unwrap_or_else(|| id.to_string());
+    if let Ok(mut state) = shared.lock() {
+        state.cron_runs = CronRunsView {
+            open: true,
+            loading: true,
+            title,
+            runs: Vec::new(),
+            error: String::new(),
+        };
+        state.cron_runs_rev = state.cron_runs_rev.wrapping_add(1);
+        state.touch();
+    }
+    match desktop.list_cron_job_runs(id) {
+        Ok(runs) => {
+            let runs = runs
+                .into_iter()
+                .map(|run| MobileCronRun {
+                    status: run.status.into(),
+                    trigger: run.trigger.into(),
+                    summary: truncate_chars(run.summary, 160).into(),
+                    error: truncate_chars(run.error, 160).into(),
+                    duration: format_duration(run.duration_ms as f64 / 1000.0).into(),
+                    created_at: cron_run_time(&run.created_at).into(),
+                })
+                .collect();
+            if let Ok(mut state) = shared.lock() {
+                state.cron_runs.loading = false;
+                state.cron_runs.runs = runs;
+                state.cron_runs_rev = state.cron_runs_rev.wrapping_add(1);
+                state.touch();
+            }
+        }
+        Err(error) => {
+            if let Ok(mut state) = shared.lock() {
+                state.cron_runs.loading = false;
+                state.cron_runs.error = format!("无法读取运行记录：{error}");
+                state.cron_runs_rev = state.cron_runs_rev.wrapping_add(1);
+                state.touch();
+            }
+        }
+    }
+}
+
+fn close_cron_runs(shared: &Arc<Mutex<Shared>>) {
+    if let Ok(mut state) = shared.lock() {
+        state.cron_runs = CronRunsView::default();
+        state.cron_runs_rev = state.cron_runs_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+// ---- memory fragments -------------------------------------------------
+
+fn refresh_memory(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, reset_filters: bool) {
+    let (query, category, all) = if reset_filters {
+        if let Ok(mut state) = shared.lock() {
+            state.memory.query.clear();
+            state.memory.category = "全部标签".into();
+            state.memory.seed = state.memory.seed.wrapping_add(1);
+        }
+        (String::new(), "全部标签".to_string(), true)
+    } else {
+        shared
+            .lock()
+            .map(|state| {
+                (
+                    state.memory.query.clone(),
+                    state.memory.category.clone(),
+                    state.memory.category == "全部标签",
+                )
+            })
+            .unwrap_or((String::new(), "全部标签".to_string(), true))
+    };
+    let filter_category = if all { "" } else { category.as_str() };
+    match desktop.expert_memories(DEFAULT_AGENT_ID, &query, filter_category) {
+        Ok(rows) => {
+            let mut categories = vec!["全部标签".to_string()];
+            if all {
+                for row in &rows {
+                    if !row.category.is_empty() && !categories.iter().any(|item| item == &row.category)
+                    {
+                        categories.push(row.category.clone());
+                    }
+                }
+            }
+            let memories = rows
+                .into_iter()
+                .map(|row| MobileMemory {
+                    id: row.id.into(),
+                    title: row.title.into(),
+                    content: row.content.into(),
+                    category: row.category.into(),
+                    source: if row.source == "manual" {
+                        "手动写入".into()
+                    } else {
+                        "模型写入".into()
+                    },
+                    time: format_memory_time(row.updated_at).into(),
+                })
+                .collect::<Vec<_>>();
+            if let Ok(mut state) = shared.lock() {
+                state.memory.memories = memories;
+                if all {
+                    state.memory.categories = categories;
+                }
+                state.memory.loading = false;
+                state.memory.error.clear();
+                state.memory_rev = state.memory_rev.wrapping_add(1);
+                state.touch();
+            }
+        }
+        Err(error) => {
+            if let Ok(mut state) = shared.lock() {
+                state.memory.loading = false;
+                state.memory.error = format!("无法读取记忆碎片：{error}");
+                state.memory_rev = state.memory_rev.wrapping_add(1);
+                state.touch();
+            }
+        }
+    }
+}
+
+fn open_memory_editor(shared: &Arc<Mutex<Shared>>, index: i32) {
+    let row = if index >= 0 {
+        shared
+            .lock()
+            .ok()
+            .and_then(|state| state.memory.memories.get(index as usize).cloned())
+    } else {
+        None
+    };
+    let (draft, is_new) = match row {
+        Some(memory) => {
+            let category = if memory.category.trim().is_empty() {
+                "session_summary".into()
+            } else {
+                memory.category
+            };
+            (
+                MobileMemoryDraft {
+                    id: memory.id,
+                    title: memory.title,
+                    content: memory.content,
+                    category,
+                },
+                false,
+            )
+        }
+        None if index < 0 => (
+            MobileMemoryDraft {
+                category: "session_summary".into(),
+                ..MobileMemoryDraft::default()
+            },
+            true,
+        ),
+        None => return,
+    };
+    if let Ok(mut state) = shared.lock() {
+        state.memory_editor = Some(MemoryEditorView {
+            is_new,
+            draft,
+            error: String::new(),
+            saving: false,
+        });
+        state.memory_editor_rev = state.memory_editor_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+fn close_memory_editor(shared: &Arc<Mutex<Shared>>) {
+    if let Ok(mut state) = shared.lock() {
+        state.memory_editor = None;
+        state.memory_editor_rev = state.memory_editor_rev.wrapping_add(1);
+        state.touch();
+    }
+}
+
+fn save_memory(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, draft: MobileMemoryDraft) {
+    let title = draft.title.trim().to_string();
+    let content = draft.content.trim().to_string();
+    if title.is_empty() || content.is_empty() {
+        if let Ok(mut state) = shared.lock() {
+            if let Some(editor) = state.memory_editor.as_mut() {
+                editor.error = "标题和内容不能为空".into();
+            }
+            state.memory_editor_rev = state.memory_editor_rev.wrapping_add(1);
+            state.touch();
+        }
+        return;
+    }
+    let category = draft.category.trim().to_string();
+    match desktop.save_expert_memory(
+        DEFAULT_AGENT_ID,
+        draft.id.trim(),
+        &title,
+        &content,
+        &category,
+    ) {
+        Ok(()) => {
+            if let Ok(mut state) = shared.lock() {
+                state.memory_editor = None;
+                state.memory_editor_rev = state.memory_editor_rev.wrapping_add(1);
+                state.touch();
+            }
+            refresh_memory(desktop, shared, false);
+            notify(shared, "记忆碎片已保存");
+        }
+        Err(error) => {
+            if let Ok(mut state) = shared.lock() {
+                if let Some(editor) = state.memory_editor.as_mut() {
+                    editor.error = format!("保存失败：{error}");
+                }
+                state.memory_editor_rev = state.memory_editor_rev.wrapping_add(1);
+                state.touch();
+            }
+        }
+    }
+}
+
+fn delete_memory(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, id: &str) {
+    match desktop.delete_expert_memory(DEFAULT_AGENT_ID, id) {
+        Ok(()) => {
+            if let Ok(mut state) = shared.lock() {
+                state.memory_editor = None;
+                state.memory_editor_rev = state.memory_editor_rev.wrapping_add(1);
+                state.touch();
+            }
+            refresh_memory(desktop, shared, false);
+            notify(shared, "记忆碎片已删除");
+        }
+        Err(error) => {
+            if let Ok(mut state) = shared.lock() {
+                if let Some(editor) = state.memory_editor.as_mut() {
+                    editor.error = format!("删除失败：{error}");
+                }
+                state.memory_editor_rev = state.memory_editor_rev.wrapping_add(1);
+                state.touch();
+            }
+        }
+    }
+}
+
 /// Read one directory of the workspace. The listing itself is bounded (200
 /// entries per page) and cheap enough for the engine thread; uploads use the
 /// same path so both entries land in the directory the user is looking at.
+/// Project one durable workspace record onto the phone row. The catalogue is
+/// bounded by the store's own workspace count (users create a handful), so the
+/// full clone on the 33 ms tick stays cheap.
+fn mobile_workspace(record: &wunder_desktop::NativeWorkspace, active: bool) -> MobileWorkspace {
+    MobileWorkspace {
+        id: record.workspace_id.as_str().into(),
+        name: record.name.as_str().into(),
+        icon: record.icon.as_str().into(),
+        color: record.color.as_str().into(),
+        root: record.root_path.as_str().into(),
+        thread_count: record.thread_count.min(i32::MAX as i64) as i32,
+        active,
+    }
+}
+
+/// Reload the catalogue and keep the current selection when it still exists.
+/// The opened thread's workspace wins over a stale selection the first time
+/// this runs after startup.
+fn refresh_workspaces(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+) -> anyhow::Result<()> {
+    let list = desktop.list_workspaces()?;
+    let Ok(mut state) = shared.lock() else {
+        return Ok(());
+    };
+    let preferred = if state.selected_workspace.trim().is_empty() {
+        state.workspace_id.clone()
+    } else {
+        state.selected_workspace.clone()
+    };
+    let selected = list
+        .iter()
+        .find(|workspace| workspace.workspace_id == preferred)
+        .or_else(|| list.first())
+        .map(|workspace| workspace.workspace_id.clone())
+        .unwrap_or_default();
+    state.workspaces = list
+        .iter()
+        .map(|workspace| mobile_workspace(workspace, workspace.workspace_id == selected))
+        .collect();
+    state.selected_workspace = selected;
+    if let Some(active) = state.workspaces.iter().find(|workspace| workspace.active) {
+        state.workspace = active.name.to_string();
+    }
+    state.workspaces_rev = state.workspaces_rev.wrapping_add(1);
+    state.touch();
+    Ok(())
+}
+
+/// Make one workspace the target for new tasks and for 工作目录.
+fn select_workspace(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+    id: &str,
+) -> anyhow::Result<()> {
+    let list = desktop.list_workspaces()?;
+    let cleaned = id.trim();
+    let target = list
+        .iter()
+        .find(|workspace| workspace.workspace_id == cleaned)
+        .ok_or_else(|| anyhow::anyhow!("工作区不存在"))?;
+    let cards = list
+        .iter()
+        .map(|workspace| mobile_workspace(workspace, workspace.workspace_id == cleaned))
+        .collect::<Vec<_>>();
+    let Ok(mut state) = shared.lock() else {
+        return Ok(());
+    };
+    state.workspaces = cards;
+    state.selected_workspace = target.workspace_id.clone();
+    // The composer chip follows the selected workspace, matching the desktop
+    // shell; the thread subtitle keeps its own workspace.
+    state.workspace = target.name.clone();
+    state.workspaces_rev = state.workspaces_rev.wrapping_add(1);
+    state.touch();
+    Ok(())
+}
+
+/// Create a workspace folder under the app's managed workspace root and bind a
+/// durable record to it. 安卓版 has no host folder chooser that proot could
+/// reach, so the folder name is derived from the display name and kept unique.
+fn managed_workspace_base(desktop: &NativeDesktop) -> anyhow::Result<std::path::PathBuf> {
+    let settings = desktop.get_desktop_settings()?;
+    Ok(std::path::PathBuf::from(settings.workspace_root)
+        .join(desktop.user_id())
+        .join("workspaces"))
+}
+
+fn managed_workspace_slug(name: &str, base: &std::path::Path) -> String {
+    let mut cleaned = String::with_capacity(name.len());
+    for ch in name.chars() {
+        if ch.is_control()
+            || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+        {
+            cleaned.push('-');
+        } else {
+            cleaned.push(ch);
+        }
+    }
+    let cleaned = cleaned.trim().trim_matches('.').trim();
+    let stem: String = if cleaned.is_empty() {
+        "workspace".to_string()
+    } else {
+        cleaned.chars().take(40).collect()
+    };
+    let mut candidate = stem.clone();
+    let mut suffix = 2;
+    while base.join(&candidate).exists() {
+        candidate = format!("{stem}-{suffix}");
+        suffix += 1;
+    }
+    candidate
+}
+
+fn create_managed_workspace(
+    desktop: &NativeDesktop,
+    name: &str,
+    icon: &str,
+    color: &str,
+) -> anyhow::Result<wunder_desktop::NativeWorkspace> {
+    let name = name.trim();
+    if name.is_empty() {
+        anyhow::bail!("请输入工作区名称");
+    }
+    if name.chars().count() > 40 {
+        anyhow::bail!("工作区名称不能超过 40 个字符");
+    }
+    if name.chars().any(char::is_control) {
+        anyhow::bail!("工作区名称无效");
+    }
+    let base = managed_workspace_base(desktop)?;
+    std::fs::create_dir_all(&base)?;
+    let root = base.join(managed_workspace_slug(name, &base));
+    std::fs::create_dir_all(&root)?;
+    match desktop.create_workspace(name, root.to_string_lossy().as_ref(), icon, color) {
+        Ok(workspace) => Ok(workspace),
+        Err(error) => {
+            // Leave no orphan folder behind when the record write is rejected.
+            let _ = std::fs::remove_dir(&root);
+            Err(error)
+        }
+    }
+}
+
+fn create_workspace(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+    name: &str,
+    icon: &str,
+    color: &str,
+) {
+    match create_managed_workspace(desktop, name, icon, color) {
+        Ok(workspace) => {
+            if let Err(error) = select_workspace(desktop, shared, &workspace.workspace_id) {
+                log::warn!("select the new workspace failed: {error:#}");
+            }
+            notify(shared, format!("已创建工作区「{}」", workspace.name));
+        }
+        Err(error) => notify(shared, format!("无法创建工作区：{error}")),
+    }
+}
+
+fn update_workspace(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+    id: &str,
+    name: &str,
+    icon: &str,
+    color: &str,
+) {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 40 || name.chars().any(char::is_control) {
+        notify(shared, "工作区名称无效");
+        return;
+    }
+    let current = match desktop.get_workspace(id) {
+        Ok(workspace) => workspace,
+        Err(error) => {
+            notify(shared, format!("无法读取工作区：{error}"));
+            return;
+        }
+    };
+    let edit = WorkspaceEdit {
+        workspace_id: current.workspace_id.clone(),
+        name: name.to_string(),
+        // 安卓版 manages the folder itself; the path never changes on rename.
+        root_path: current.root_path.clone(),
+        icon: icon.to_string(),
+        color: color.to_string(),
+    };
+    match desktop.update_workspace(&edit) {
+        Ok(_) => {
+            if let Err(error) = refresh_workspaces(desktop, shared) {
+                log::warn!("refresh workspace catalogue failed: {error:#}");
+            }
+            notify(shared, "工作区已更新");
+        }
+        Err(error) => notify(shared, format!("无法更新工作区：{error}")),
+    }
+}
+
+/// Delete a workspace binding. Threads are archived (the desktop dialog's
+/// recommended default); its folder and files stay on disk. When the open
+/// thread lived in the deleted workspace, the phone moves to the newest thread
+/// of the next workspace or opens a fresh one there.
+fn delete_workspace(
+    desktop: &Arc<NativeDesktop>,
+    shared: &Arc<Mutex<Shared>>,
+    id: &str,
+    generation: &Arc<AtomicU64>,
+    watch_cancel: &mut Option<NativeThreadWatchCancel>,
+) {
+    let id = id.trim();
+    if id.is_empty() {
+        return;
+    }
+    let list = match desktop.list_workspaces() {
+        Ok(list) => list,
+        Err(error) => {
+            notify(shared, format!("无法读取工作区：{error}"));
+            return;
+        }
+    };
+    if list.len() <= 1 {
+        notify(shared, "至少保留一个工作区");
+        return;
+    }
+    let name = list
+        .iter()
+        .find(|workspace| workspace.workspace_id == id)
+        .map(|workspace| workspace.name.clone())
+        .unwrap_or_default();
+    let current_inside = shared
+        .lock()
+        .map(|state| state.workspace_id == id)
+        .unwrap_or(false);
+    match desktop.delete_workspace(id, false) {
+        Ok(_) => {
+            if let Err(error) = refresh_workspaces(desktop, shared) {
+                log::warn!("refresh workspace catalogue failed: {error:#}");
+            }
+            if current_inside {
+                let next_workspace = shared
+                    .lock()
+                    .map(|state| state.selected_workspace.clone())
+                    .unwrap_or_default();
+                let next_session = desktop
+                    .list_sessions(Some(next_workspace.as_str()))
+                    .ok()
+                    .and_then(|sessions| sessions.first().map(|session| session.id.clone()));
+                if let Some(session) = next_session {
+                    let active = shared.lock().unwrap().session_id.clone();
+                    refresh_sessions(desktop, shared, Some(&active));
+                    if let Err(error) =
+                        select_session(desktop, shared, &session, generation, watch_cancel, false)
+                    {
+                        notify(shared, format!("无法打开会话：{error}"));
+                    }
+                } else if let Err(error) = open_thread_in_workspace(
+                    desktop,
+                    shared,
+                    generation,
+                    watch_cancel,
+                    Some(&next_workspace),
+                ) {
+                    notify(shared, format!("无法新建会话：{error}"));
+                }
+            } else {
+                let active = shared.lock().unwrap().session_id.clone();
+                refresh_sessions(desktop, shared, Some(&active));
+            }
+            notify(shared, format!("已删除工作区「{name}」"));
+        }
+        Err(error) => notify(shared, format!("无法删除工作区：{error}")),
+    }
+}
+
+/// Open the workspace's untouched draft thread, or create a new thread when
+/// there is none. Mirrors the desktop `new-thread` rule: selecting a workspace
+/// and pressing new-task never stacks empty sessions.
+fn open_thread_in_workspace(
+    desktop: &Arc<NativeDesktop>,
+    shared: &Arc<Mutex<Shared>>,
+    generation: &Arc<AtomicU64>,
+    watch_cancel: &mut Option<NativeThreadWatchCancel>,
+    workspace: Option<&str>,
+) -> anyhow::Result<()> {
+    let workspace = match workspace.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(id) => {
+            select_workspace(desktop, shared, id)?;
+            id.to_string()
+        }
+        None => shared
+            .lock()
+            .map(|state| {
+                if state.selected_workspace.trim().is_empty() {
+                    state.workspace_id.clone()
+                } else {
+                    state.selected_workspace.clone()
+                }
+            })
+            .unwrap_or_default(),
+    };
+    let workspace_arg = (!workspace.trim().is_empty()).then_some(workspace.as_str());
+    let draft = desktop
+        .list_sessions(workspace_arg)
+        .ok()
+        .and_then(|sessions| {
+            sessions
+                .into_iter()
+                .find(|session| {
+                    session.draft
+                        && !matches!(
+                            session.runtime_status.as_str(),
+                            "running" | "queued" | "pending"
+                        )
+                })
+                .map(|session| session.id)
+        });
+    let target = match draft {
+        Some(id) => id,
+        None => desktop.create_session(workspace_arg)?.id,
+    };
+    refresh_sessions(desktop, shared, Some(&target));
+    select_session(desktop, shared, &target, generation, watch_cancel, false)
+}
+
+/// The browsing root for the phone's 工作目录. Prefer the workspace the user
+/// selected (or the opened thread focuses); a thread is bound to one durable
+/// workspace record, so its root is the fallback when the selection is stale.
+fn active_workspace_root(
+    desktop: &NativeDesktop,
+    shared: &Arc<Mutex<Shared>>,
+) -> Result<String, String> {
+    let (selected, thread_workspace) = shared
+        .lock()
+        .map(|state| (state.selected_workspace.clone(), state.workspace_id.clone()))
+        .unwrap_or_default();
+    for workspace_id in [selected, thread_workspace] {
+        if workspace_id.trim().is_empty() {
+            continue;
+        }
+        if let Ok(workspace) = desktop.get_workspace(&workspace_id) {
+            if !workspace.root_path.trim().is_empty() {
+                return Ok(workspace.root_path);
+            }
+        }
+    }
+    if let Ok(workspaces) = desktop.list_workspaces() {
+        if let Some(workspace) = workspaces
+            .into_iter()
+            .find(|workspace| !workspace.root_path.trim().is_empty())
+        {
+            return Ok(workspace.root_path);
+        }
+    }
+    log::warn!("no workspace record is available; falling back to the container root");
+    if let Ok(roots) = desktop.container_roots() {
+        if let Some((_, root)) = roots
+            .into_iter()
+            .find(|(container_id, _)| *container_id == 0)
+        {
+            if !root.trim().is_empty() {
+                return Ok(root);
+            }
+        }
+    }
+    desktop
+        .get_desktop_settings()
+        .map(|settings| settings.workspace_root)
+        .map_err(|error| error.to_string())
+}
+
 fn load_workspace(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, path: &str) {
     load_workspace_page(desktop, shared, path, 0, false);
 }
@@ -1741,8 +4849,8 @@ fn load_workspace_page(
     offset: u64,
     append: bool,
 ) {
-    let root = match desktop.get_desktop_settings() {
-        Ok(settings) => settings.workspace_root,
+    let root = match active_workspace_root(desktop, shared) {
+        Ok(root) => root,
         Err(error) => {
             if let Ok(mut state) = shared.lock() {
                 state.workspace_loading = false;
@@ -1835,8 +4943,8 @@ fn upload_workspace(
     if files.is_empty() {
         return;
     }
-    let root = match desktop.get_desktop_settings() {
-        Ok(settings) => settings.workspace_root,
+    let root = match active_workspace_root(desktop, shared) {
+        Ok(root) => root,
         Err(error) => {
             notify(shared, format!("无法读取工作区设置：{error}"));
             return;
@@ -2060,10 +5168,8 @@ fn apply_screenshot(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, status
         return;
     };
     let saved = (|| -> Result<String, String> {
-        let settings = desktop
-            .get_desktop_settings()
-            .map_err(|error| error.to_string())?;
-        let directory = std::path::Path::new(&settings.workspace_root).join("screenshots");
+        let root = active_workspace_root(desktop, shared)?;
+        let directory = std::path::Path::new(&root).join("screenshots");
         std::fs::create_dir_all(&directory).map_err(|error| format!("无法创建截图目录：{error}"))?;
         let now = chrono::Local::now();
         let name = format!(
@@ -2083,8 +5189,8 @@ fn apply_screenshot(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, status
 }
 
 fn download_workspace(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, relative: &str) {
-    let root = match desktop.get_desktop_settings() {
-        Ok(settings) => settings.workspace_root,
+    let root = match active_workspace_root(desktop, shared) {
+        Ok(root) => root,
         Err(error) => {
             notify(shared, format!("无法读取工作区设置：{error}"));
             return;
@@ -2769,6 +5875,11 @@ impl Drop for BusyGuard {
     }
 }
 
+/// Coalesce model deltas into at most one published live frame per UI tick.
+/// Structural or phase changes still publish immediately so 请求中/模型输出中,
+/// tool admissions and question panels never wait for the frame budget.
+const LIVE_PUBLISH_FRAME: Duration = Duration::from_millis(33);
+
 fn start_stream(
     desktop: Arc<NativeDesktop>,
     shared: Arc<Mutex<Shared>>,
@@ -2784,24 +5895,48 @@ fn start_stream(
         inquiry_turn_id,
         attachments: Vec::new(),
     };
-    let stream = match desktop.send_chat(input) {
-        Ok(stream) => stream,
-        Err(error) => {
-            notify(&shared, format!("发送失败：{error}"));
-            return;
-        }
-    };
-    let mut live = LiveTurn::new(text);
-    {
+    // Publish the user bubble and 请求中 before the submit call, so the thread
+    // reacts to the tap even when opening the lease or building the request
+    // takes a moment. The live rows are replaced in place by the first stream
+    // frame; a failed submit removes them again and restores the draft.
+    let mut live = LiveTurn::new(text.clone());
+    let initial_rows = live.rows();
+    let stream_id = {
         let mut state = shared.lock().unwrap();
         state.generating = true;
         state.stopping = false;
+        state.turn_phase = "requesting".into();
+        state.turn_hint.clear();
+        state.live_session = session.clone();
+        state.live_stream_id = state.live_stream_id.wrapping_add(1);
+        let stream_id = state.live_stream_id;
         state.live_root = live.root_id.clone();
-        state.live_rows = live.rows();
+        state.live_rows = initial_rows;
         state.live_rev = state.live_rev.wrapping_add(1);
         state.stream_revision = state.stream_revision.wrapping_add(1);
+        update_live_subtitle(&mut state, &live);
         state.touch();
-    }
+        stream_id
+    };
+    let stream = match desktop.send_chat(input) {
+        Ok(stream) => stream,
+        Err(error) => {
+            if let Ok(mut state) = shared.lock() {
+                if state.live_stream_id == stream_id {
+                    state.live_rows.clear();
+                    state.live_root.clear();
+                    state.live_session.clear();
+                    state.generating = false;
+                    state.pending_draft = Some(text);
+                    state.live_rev = state.live_rev.wrapping_add(1);
+                    state.stream_revision = state.stream_revision.wrapping_add(1);
+                    state.notify(format!("发送失败：{error}"));
+                    state.touch();
+                }
+            }
+            return;
+        }
+    };
     #[cfg(target_os = "android")]
     let busy_title = shared
         .lock()
@@ -2817,16 +5952,60 @@ fn start_stream(
             #[cfg(target_os = "android")]
             let _busy = BusyGuard;
             let mut stream = stream;
+            let mut last_publish = Instant::now() - LIVE_PUBLISH_FRAME;
+            let mut pending = false;
             loop {
                 match stream.blocking_recv() {
                     Some(NativeChatEvent::Event(value)) => {
+                        let phase_before = live.phase.clone();
+                        let root_before = live.root_id.clone();
+                        let tools_before = live.tools.len();
+                        let raw = value
+                            .get("event")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned();
                         apply_event(&mut live, &value);
-                        apply_inquiry_event(&shared, &value, &session);
-                        publish_live(&shared, &live);
+                        if matches!(raw.as_str(), "question_panel" | "question_panel_clear") {
+                            apply_inquiry_event(&shared, &value, &session);
+                        }
+                        pending = true;
+                        // A new tool step, a new phase or a turn identity is
+                        // structural: publish at once. Token deltas inside the
+                        // same phase are coalesced onto the next frame.
+                        let structural = live.phase != phase_before
+                            || live.root_id != root_before
+                            || live.tools.len() != tools_before
+                            || matches!(
+                                raw.as_str(),
+                                "native_turn_identity"
+                                    | "native_execution_identity"
+                                    | "native_execution_started"
+                                    | "native_execution_status"
+                                    | "turn_terminal"
+                                    | "question_panel"
+                                    | "question_panel_clear"
+                                    | "error"
+                                    | "tool_call"
+                                    | "tool_start"
+                                    | "tool_result"
+                                    | "tool_output"
+                                    | "compaction"
+                                    | "compaction_start"
+                                    | "compaction_completed"
+                            );
+                        if structural || last_publish.elapsed() >= LIVE_PUBLISH_FRAME {
+                            publish_live(&shared, &session, stream_id, &mut live);
+                            last_publish = Instant::now();
+                            pending = false;
+                        }
                     }
                     Some(NativeChatEvent::Queued) => {}
                     Some(NativeChatEvent::Finished) => {
                         log::info!("chat stream finished session={session}");
+                        if pending {
+                            publish_live(&shared, &session, stream_id, &mut live);
+                        }
                         // A stream that produced neither text nor an error is
                         // an empty turn, not a successful reply. Surface it so
                         // the transcript cannot end in silence.
@@ -2835,7 +6014,7 @@ fn start_stream(
                             && live.tools.is_empty()
                         {
                             live.failure = Some("模型未返回内容，请重试".into());
-                            publish_live(&shared, &live);
+                            publish_live(&shared, &session, stream_id, &mut live);
                         }
                         break;
                     }
@@ -2843,7 +6022,7 @@ fn start_stream(
                         log::warn!("chat stream failed session={session}: {message}");
                         notify(&shared, message.clone());
                         live.failure = Some(message);
-                        publish_live(&shared, &live);
+                        publish_live(&shared, &session, stream_id, &mut live);
                         break;
                     }
                     None => {
@@ -2853,19 +6032,43 @@ fn start_stream(
                         let message = "对话已中断，请重试".to_string();
                         notify(&shared, message.clone());
                         live.failure = Some(message);
-                        publish_live(&shared, &live);
+                        publish_live(&shared, &session, stream_id, &mut live);
                         break;
                     }
+                }
+            }
+            // The floating companion reads the settled phase and bubble hint
+            // from the shared projection. A newer stream or a thread switch
+            // owns the slot now; this late result must not paint over it.
+            if let Ok(mut state) = shared.lock() {
+                if state.live_stream_id == stream_id && state.session_id == session {
+                    state.turn_phase = if live.failure.is_some() {
+                        "error".into()
+                    } else {
+                        live.phase.clone()
+                    };
+                    state.turn_hint =
+                        project::bubble_hint(live.failure.as_deref().unwrap_or(&live.answer));
                 }
             }
             // The compact post-finish snapshot carries no rounds, so it must
             // not overwrite the durable projection: load the detailed turns so
             // the settled turn keeps its work-process rows.
-            let title = desktop
-                .open_chat_snapshot(&session)
-                .ok()
-                .map(|snapshot| snapshot.session.title)
+            let snapshot = desktop.open_chat_snapshot(&session).ok();
+            let title = snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.session.title.clone())
                 .filter(|title| !title.trim().is_empty());
+            let snapshot_status = snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.session.runtime_status.clone())
+                .filter(|status| {
+                    !matches!(
+                        status.as_str(),
+                        "" | "idle" | "ready" | "running" | "queued" | "pending" | "streaming"
+                    )
+                })
+                .unwrap_or_default();
             if let Ok(turns) = desktop.load_chat_turns(&session) {
                 if let Ok(mut state) = shared.lock() {
                     if state.session_id == session {
@@ -2879,6 +6082,10 @@ fn start_stream(
                         if let Some(title) = title {
                             state.title = title;
                         }
+                        if state.live_stream_id == stream_id {
+                            state.subtitle =
+                                status_subtitle(state.workspace.as_str(), &snapshot_status);
+                        }
                     }
                 }
             }
@@ -2889,24 +6096,100 @@ fn start_stream(
                 // the rows that the durable copy already carries. When the
                 // stream never received a turn identity, fall back to matching
                 // the settled body/error text instead of the root id.
-                let covered = live_covered(&state.durable_rows, &live);
-                if covered || state.live_rows.is_empty() {
-                    state.live_rows.clear();
-                    state.live_root.clear();
+                if state.live_stream_id == stream_id && state.live_session == session {
+                    let visible = state.session_id == session;
+                    let covered = visible && live_covered(&state.durable_rows, &live);
+                    // Leaving the thread does not stop the turn: drop the
+                    // hidden tail instead of holding it for the next selection,
+                    // but never touch the generating flag of the thread the
+                    // user is actually looking at.
+                    if covered || !visible || state.live_rows.is_empty() {
+                        state.live_rows.clear();
+                        state.live_root.clear();
+                    }
+                    state.live_session.clear();
+                    state.live_rev = state.live_rev.wrapping_add(1);
+                    if visible {
+                        state.generating = false;
+                        state.stopping = false;
+                    }
+                    state.stream_revision = state.stream_revision.wrapping_add(1);
+                    state.touch();
                 }
-                state.live_rev = state.live_rev.wrapping_add(1);
-                state.generating = false;
-                state.stopping = false;
-                state.stream_revision = state.stream_revision.wrapping_add(1);
-                state.touch();
             }
+            let active = shared
+                .lock()
+                .map(|state| state.session_id.clone())
+                .unwrap_or_default();
+            refresh_sessions(&desktop, &shared, Some(&active));
         })
         .ok();
 }
 
-fn publish_live(shared: &Arc<Mutex<Shared>>, live: &LiveTurn) {
+/// Thread subtitle from a durable runtime status phrase. English runtime
+/// values (`running`, `idle`, `completed`) become the same Chinese labels the
+/// transcript footer uses; an idle or settled thread keeps only the workspace.
+fn status_subtitle(workspace: &str, status: &str) -> String {
+    let label = project::status_metric(status)
+        .map(|(_, value)| value)
+        .unwrap_or_default();
+    join_status(workspace, &label)
+}
+
+fn join_status(workspace: &str, label: &str) -> String {
+    [label, workspace]
+        .iter()
+        .filter(|part| !part.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// Mirror the live phase into the thread subtitle so the header reflects the
+/// same 请求中/模型输出中/使用工具中 status as the transcript footer. Returns
+/// whether the subtitle changed, so steady streaming frames do not bump the
+/// scalar revision on every token.
+fn update_live_subtitle(state: &mut Shared, live: &LiveTurn) -> bool {
+    let Some((_, label)) = project::live_status_metric(&live.phase) else {
+        return false;
+    };
+    let subtitle = join_status(state.workspace.as_str(), &label);
+    if state.subtitle == subtitle {
+        return false;
+    }
+    state.subtitle = subtitle;
+    true
+}
+
+fn publish_live(
+    shared: &Arc<Mutex<Shared>>,
+    session: &str,
+    stream_id: u64,
+    live: &mut LiveTurn,
+) {
+    // The identity frame can trail an early status frame. Adopt the durable
+    // root of the just-submitted turn as soon as it appears, so the live rows
+    // and the durable copy of the same turn share one identity and the tick
+    // can hide the stale copy instead of rendering both.
+    if live.root_id == "live" {
+        if let Ok(state) = shared.lock() {
+            if state.session_id == session {
+                if let Some(root) = project::running_root_for_text(&state.durable_rows, &live.user) {
+                    live.root_id = root;
+                }
+            }
+        }
+    }
     let mut rows = live.rows();
     if let Ok(mut state) = shared.lock() {
+        // A replaced stream (another submit took the live slot, or the user
+        // switched threads) must not paint its tail into the transcript.
+        if state.live_stream_id != stream_id
+            || state.session_id != session
+            || state.live_session != session
+        {
+            return;
+        }
         // A fold tap writes straight into the published live rows. Carry those
         // choices across stream frames by row/child identity; the live turn is
         // the only writer of these ids, so no stale turn can match them.
@@ -2934,10 +6217,19 @@ fn publish_live(shared: &Arc<Mutex<Shared>>, live: &LiveTurn) {
                 }
             }
         }
+        state.live_session = session.to_owned();
         state.live_root = live.root_id.clone();
         state.live_rows = rows;
+        state.turn_phase = live.phase.clone();
+        // Selecting a thread mid-run reads a snapshot that may still say
+        // idle. A live frame proves the turn is running, so it re-asserts the
+        // busy flag instead of leaving the status footer non-authoritative.
+        state.generating = true;
         state.live_rev = state.live_rev.wrapping_add(1);
         state.stream_revision = state.stream_revision.wrapping_add(1);
+        if update_live_subtitle(&mut state, live) {
+            state.touch();
+        }
     }
 }
 
@@ -2955,25 +6247,50 @@ fn durable_has_body(rows: &[RowData], root: &str) -> bool {
 /// True once the durable projection carries the just-finished live turn.
 /// Matching by root id is preferred; matching the settled text keeps the
 /// fallback working for streams that failed before publishing an identity.
+/// An intermediate round's body must not count as coverage, or the answer the
+/// user just watched is cleared before the final commit lands.
 fn live_covered(rows: &[RowData], live: &LiveTurn) -> bool {
-    if durable_has_body(rows, &live.root_id) {
-        return true;
-    }
+    let root = live.root_id.as_str();
+    let belongs = |row: &RowData| {
+        !root.is_empty()
+            && root != "live"
+            && (row.id == root
+                || row
+                    .id
+                    .strip_prefix(root)
+                    .is_some_and(|rest| rest.starts_with('-')))
+    };
     if !live.answer.trim().is_empty() {
+        let answer = live.answer.trim();
+        if root.is_empty() || root == "live" {
+            // Identity-less streams fall back to the settled text; the durable
+            // watcher may have committed the same answer under its own root.
+            return rows
+                .iter()
+                .rev()
+                .find(|row| row.kind == project::KIND_BODY)
+                .is_some_and(|row| row.text.trim() == answer);
+        }
         return rows
             .iter()
-            .rev()
-            .find(|row| row.kind == project::KIND_BODY)
-            .is_some_and(|row| row.text.trim() == live.answer.trim());
+            .filter(|row| belongs(row) && row.kind == project::KIND_BODY)
+            .any(|row| row.text.trim() == answer);
     }
     if let Some(message) = &live.failure {
+        let message = message.trim();
+        if root.is_empty() || root == "live" {
+            return rows
+                .iter()
+                .rev()
+                .find(|row| row.kind == project::KIND_ERROR)
+                .is_some_and(|row| row.text.trim() == message);
+        }
         return rows
             .iter()
-            .rev()
-            .find(|row| row.kind == project::KIND_ERROR)
-            .is_some_and(|row| row.text.trim() == message.trim());
+            .filter(|row| belongs(row) && row.kind == project::KIND_ERROR)
+            .any(|row| row.text.trim() == message);
     }
-    false
+    durable_has_body(rows, root)
 }
 
 fn apply_event(live: &mut LiveTurn, value: &Value) {
@@ -3202,7 +6519,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                     duration: entry.duration,
                 });
             }
-            live.phase = if pending { "tool" } else { "thinking" }.into();
+            live.phase = if pending { "tool" } else { "requesting" }.into();
         }
         "command_session_start"
         | "command_session_delta"
@@ -3347,7 +6664,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                     duration: String::new(),
                 });
             }
-            live.phase = "compacting".into();
+            live.phase = if running { "compacting" } else { "requesting" }.into();
         }
         "question_panel" => {
             live.question_panel = Some(data.clone());
@@ -3355,6 +6672,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
         }
         "question_panel_clear" => {
             live.question_panel = None;
+            live.phase = "requesting".into();
         }
         "turn_terminal" => {
             if let Some(stats) = event_message_stats(data) {
@@ -3583,6 +6901,31 @@ mod tests {
     }
 
     #[test]
+    fn intermediate_round_body_never_counts_as_final_coverage() {
+        let mut live = LiveTurn::new("hi".into());
+        live.root_id = "turn-1".into();
+        live.answer = "final answer".into();
+        let mut body = RowData::new(project::KIND_BODY, "turn-1-body-final");
+        body.text = "earlier round".into();
+        assert!(!live_covered(&[body], &live));
+        let mut settled = RowData::new(project::KIND_BODY, "turn-1-body-final");
+        settled.text = "final answer".into();
+        assert!(live_covered(&[settled], &live));
+    }
+
+    #[test]
+    fn pending_identity_adopts_the_running_durable_root() {
+        let mut user = RowData::new(project::KIND_USER, "turn-9-user");
+        user.text = "hi".into();
+        let mut footer = RowData::new(project::KIND_FOOTER, "turn-9-footer");
+        footer.status_kind = project::STATUS_RUNNING;
+        assert_eq!(
+            project::running_root_for_text(&[user, footer], "hi").as_deref(),
+            Some("turn-9")
+        );
+    }
+
+    #[test]
     fn question_panel_event_unwraps_two_envelopes_and_queues_the_panel() {
         let shared = Arc::new(Mutex::new(Shared::default()));
         shared.lock().unwrap().session_id = "s".into();
@@ -3601,5 +6944,219 @@ mod tests {
         assert_eq!(panel.turn_id, "turn-1");
         assert_eq!(panel.questions.len(), 1);
         assert!(panel.questions[0].options[0].recommended);
+    }
+
+    fn tool_record(name: &str, category: &str) -> ToolRecord {
+        ToolRecord {
+            name: name.into(),
+            description: format!("{name} description"),
+            category: category.into(),
+        }
+    }
+
+    #[test]
+    fn agent_groups_follow_desktop_categories_and_selection() {
+        let catalog = vec![
+            tool_record("read_file", "内置工具"),
+            tool_record("run_shell", "内置工具"),
+            tool_record("summarize", "技能"),
+            tool_record("weather", "MCP 工具"),
+        ];
+        let groups = agent_groups(&catalog, &["read_file".to_string()], "");
+        let titles = groups.iter().map(|g| g.title.as_str()).collect::<Vec<_>>();
+        assert_eq!(titles, ["内置工具", "MCP 工具", "技能工具"]);
+        assert_eq!(groups[0].tools.len(), 2);
+        assert!(groups[0].tools[0].enabled);
+        assert!(!groups[0].tools[1].enabled);
+        assert!(!groups[0].all_selected);
+
+        let filtered = agent_groups(&catalog, &[], "WEATHER");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].tools[0].name.as_str(), "weather");
+        assert!(!filtered[0].all_selected);
+    }
+
+    #[test]
+    fn group_titles_map_back_to_tool_categories() {
+        assert_eq!(category_for_group("技能工具"), "技能");
+        assert_eq!(category_for_group("知识库工具"), "知识库");
+        assert_eq!(category_for_group("自定义工具"), "用户工具");
+        assert_eq!(category_for_group("内置工具"), "内置工具");
+        assert_eq!(tool_visual("技能").1, "skill");
+        assert_eq!(tool_visual("MCP 工具").1, "mcp");
+    }
+
+    #[test]
+    fn agent_text_fields_are_trimmed_deduped_and_bounded() {
+        let values = vec![
+            " a ".to_string(),
+            String::new(),
+            "b".to_string(),
+            "a".to_string(),
+            "c".to_string(),
+        ];
+        assert_eq!(dedup_text(values, 2), ["a", "b"]);
+        assert_eq!(join_tool_path("", "x.md"), "x.md");
+        assert_eq!(join_tool_path("notes", "x.md"), "notes/x.md");
+    }
+
+    fn cron_record(kind: &str) -> wunder_desktop::CronRecord {
+        wunder_desktop::CronRecord {
+            id: "job-1".into(),
+            name: "测试任务".into(),
+            enabled: true,
+            schedule: String::new(),
+            next_run: String::new(),
+            last_status: "未运行".into(),
+            last_error: String::new(),
+            workspace_id: "ws".into(),
+            workspace_name: "默认工作区".into(),
+            message: "hello".into(),
+            delete_after_run: false,
+            schedule_kind: kind.into(),
+            schedule_at: "2026-11-07T23:14:00+08:00".into(),
+            every_s: 3600,
+            cron_expr: "0 9 * * 1-5".into(),
+            timezone: "Asia/Shanghai".into(),
+        }
+    }
+
+    #[test]
+    fn cron_schedule_text_is_human_readable() {
+        assert_eq!(cron_schedule_text(&cron_record("every")), "每 1 小时");
+        assert!(cron_schedule_text(&cron_record("cron")).contains("Cron 0 9 * * 1-5"));
+        assert!(cron_schedule_text(&cron_record("at")).contains("定时一次"));
+    }
+
+    #[test]
+    fn cron_timestamps_are_rebased_to_local_time() {
+        let raw = "2026-11-07T15:25:09.541+00:00";
+        let expected = chrono::DateTime::parse_from_rfc3339(raw)
+            .unwrap()
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string();
+        assert_eq!(cron_run_time(raw), expected);
+        assert_eq!(cron_run_time(""), "");
+
+        let next = "2026-11-07 15:14";
+        let expected_next = chrono::NaiveDateTime::parse_from_str(next, "%Y-%m-%d %H:%M")
+            .unwrap()
+            .and_utc()
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string();
+        assert_eq!(cron_next_run_text(next), expected_next);
+        assert_eq!(cron_next_run_text("未计划"), "");
+    }
+
+    #[test]
+    fn managed_workspace_folders_are_sanitized_and_deduplicated() {
+        let base = std::env::temp_dir().join(format!(
+            "wunder-workspace-slug-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        assert_eq!(managed_workspace_slug("我的/项目", &base), "我的-项目");
+        assert_eq!(managed_workspace_slug(" .. ", &base), "workspace");
+        std::fs::create_dir_all(base.join("项目")).unwrap();
+        assert_eq!(managed_workspace_slug("项目", &base), "项目-2");
+        std::fs::create_dir_all(base.join("项目-2")).unwrap();
+        assert_eq!(managed_workspace_slug("项目", &base), "项目-3");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn workspace_cards_follow_the_record_and_selection() {
+        let record = wunder_desktop::NativeWorkspace {
+            workspace_id: "ws_one".into(),
+            name: "文档整理".into(),
+            root_path: "/tmp/workspaces/one".into(),
+            icon: "flask".into(),
+            color: "teal".into(),
+            sort_index: 0,
+            created_at: 0.0,
+            updated_at: 0.0,
+            thread_count: 3,
+        };
+        let card = mobile_workspace(&record, true);
+        assert_eq!(card.id.as_str(), "ws_one");
+        assert_eq!(card.name.as_str(), "文档整理");
+        assert_eq!(card.icon.as_str(), "flask");
+        assert_eq!(card.color.as_str(), "teal");
+        assert_eq!(card.thread_count, 3);
+        assert!(card.active);
+        assert!(!mobile_workspace(&record, false).active);
+    }
+
+    // Runtime startup projects process-wide state; keep this fixture
+    // serialized and isolated under its own WUNDER_HOME.
+    #[test]
+    fn a_created_workspace_owns_its_folder_and_new_threads() {
+        static FIXTURE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = FIXTURE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = std::env::temp_dir().join(format!(
+            "wunder-android-workspace-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let config = root.join("runtime/config");
+        std::fs::create_dir_all(&config).unwrap();
+        std::fs::write(config.join("wunder.yaml"), "{}\n").unwrap();
+        let settings = serde_json::json!({
+            "workspace_root": "", "desktop_token": "", "updated_at": 0,
+            "lan_mesh": {"enabled": false},
+            "llm": {"default": "test-model", "models": {
+                "test-model": {"provider": "openai", "model": "test-model", "model_type": "llm",
+                               "base_url": "http://127.0.0.1:9/v1", "timeout_s": 5,
+                               "support_vision": false}}}
+        });
+        std::fs::write(
+            config.join("desktop.settings.json"),
+            serde_json::to_vec(&settings).unwrap(),
+        )
+        .unwrap();
+        std::env::set_var("WUNDER_HOME", root.join("runtime"));
+        let mut args = wunder_desktop::args::DesktopArgs::native_defaults();
+        args.temp_root = Some(root.join("runtime").canonicalize().unwrap());
+        args.workspace = Some(root.join("workspace"));
+        let desktop = NativeDesktop::start_with_args(args).expect("isolated runtime");
+        let shared = Arc::new(Mutex::new(Shared::default()));
+
+        let workspace = create_managed_workspace(&desktop, "测试 工作区", "flask", "teal")
+            .expect("create the managed workspace");
+        assert!(std::path::Path::new(&workspace.root_path).is_dir());
+        assert!(workspace.root_path.replace('\\', "/").contains("/workspaces/"));
+        assert_eq!(workspace.name, "测试 工作区");
+        assert_eq!(workspace.icon, "flask");
+
+        select_workspace(&desktop, &shared, &workspace.workspace_id).expect("select");
+        assert_eq!(shared.lock().unwrap().selected_workspace, workspace.workspace_id);
+        refresh_workspaces(&desktop, &shared).expect("refresh");
+        assert!(shared
+            .lock()
+            .unwrap()
+            .workspaces
+            .iter()
+            .find(|card| card.id == workspace.workspace_id)
+            .is_some_and(|card| card.active));
+
+        let session = desktop
+            .create_session(Some(&workspace.workspace_id))
+            .expect("session in the new workspace");
+        assert_eq!(session.workspace_name, "测试 工作区");
+        assert!(desktop
+            .list_sessions(Some(&workspace.workspace_id))
+            .unwrap()
+            .iter()
+            .any(|candidate| candidate.id == session.id));
+
+        drop(desktop);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

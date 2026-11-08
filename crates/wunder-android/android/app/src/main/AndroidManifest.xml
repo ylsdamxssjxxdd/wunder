@@ -13,6 +13,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- The permission manager offers the direct battery-optimization exemption
+         dialog so long agent turns are not frozen by the system. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Online updates hand a verified APK to the system package installer. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Voice input records a short clip locally and transcribes it through
          the configured ASR model; nothing is kept unless the user sends it. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -54,6 +59,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Final status of an online-update install session. Explicitly
+             addressed by the PendingIntent; never exported. -->
+        <receiver
+            android:name=".InstallResultReceiver"
+            android:exported="false" />
 
         <!-- The user enables this service explicitly in system accessibility
              settings. Only the system may bind it because of the BIND

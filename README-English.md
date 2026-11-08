@@ -2,7 +2,7 @@
 
 wunder (Xinjian) is a **multi-form agent workbench**:
 
-- **Diverse**: multiple platforms — 32-bit Windows 7 and Ubuntu 18.04 — and multiple forms — web and local.
+- **Diverse**: multiple platforms — 32-bit Windows 7 and Ubuntu 18.04 — and multiple forms — web, local, and mobile.
 - **Fast**: starts instantly and responds without lag.
 - **Superior**: stable enough to run 24/7, with a high degree of intelligence.
 - **Efficient**: extremely low CPU and memory use and minimal context consumption, plus a ready-made agent runtime — set up once and forget it.
@@ -42,11 +42,12 @@ On first launch, configure a model on the settings page and you are ready to go.
 | 🐉 | wunder Admin | Plain HTML + CSS + JavaScript (`web/`, no build) | Server's governance console (four nav groups: system, agents, debugging, docs) | Browser access, statically mounted by the Server at `/` | Cross-platform browsers |
 | 🐝 | wunder Cloud | Vue 3 + TypeScript (Vite build, `frontend/`) | Cloud AI workbench (the Server's user frontend) | Browser access; the built `frontend/dist` is mounted read-only into an nginx container and served externally (default port 18001) — **not hosted by the Server** | Cross-platform browsers |
 | 🍯 | wunder Desktop | Rust + Slint 1.18 (default frontend `crates/wunder-desktop/frontend/`, native UI, software rendering); SQLite | Local AI workbench (flagship form, install and go) | Local desktop process calling the engine in-process (no local HTTP); Electron / Tauri shells are no longer maintained | Windows 7 x86 and up; Linux (ubuntu18.04 baseline) x64 / arm64 via the `.run` installer or `.portable` |
+| 📱 | wunder Android | Rust + Slint 1.18 (`crates/wunder-android/`, single native Activity shell reusing the Desktop theme, timeline and composer; Skia rendering); SQLite | The Desktop's Android form — local AI workbench on a phone | Native Activity APK calling the shared engine in-process; Ubuntu runtime bundled by default (arm64) | Android 8.0 (API 26) and up; arm64-v8a (the x86_64 slice is for emulator verification only) |
 | ⚙️ | wunder CLI | Rust terminal TUI (ratatui + crossterm); SQLite | Hands-on local entry point (terminal work, scripting, automation) | Local terminal process calling the engine in-process; JSONL output supported | Windows 7 and up (GNU toolchain); Linux amd64 / arm64 (ubuntu18.04 sysroot) |
 
-All forms share one engine (wunder-runtime) and one core (wunder-core): threads, tools, storage abstractions, realtime events, and permission semantics are a single codebase — only the access layer differs. wunder Desktop and wunder CLI run standalone without the Server.
+All forms share one engine (wunder-runtime) and one core (wunder-core): threads, tools, storage abstractions, realtime events, and permission semantics are a single codebase — only the access layer differs. wunder Desktop, wunder Android and wunder CLI run standalone without the Server.
 
-<img src="docs/images/wunder-architecture.png" alt="wunder: four forms over a shared engine" width="880">
+<img src="docs/images/wunder-architecture.png" alt="wunder: multiple forms over a shared engine" width="880">
 
 One agent can own multiple independent task threads at the same time; scheduling, locks, and live status are isolated per thread. Workspaces can coexist as a local directory, the cloud directory `/workspaces/<user>/workspace`, and remote-device workspaces.
 

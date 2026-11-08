@@ -1,9 +1,9 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-11-07T04:35:15.511065+00:00",
+  "generated_at": "2026-11-08T00:52:44.310917+00:00",
   "site": {
     "name": "使用说明书",
-    "description": "wunder is a multi-form agent workbench: Desktop is the local AI workbench, Cloud (web) is the cloud AI workbench, CLI is the manual local entry point, and the Server is the user and agent management platform. / wunder 是多形态的智能体工作台：桌面版（desktop）是本地 AI 工作台，云端版（web）是云端 AI 工作台，命令行（cli）是手工本地操作入口，服务端（server）是用户与智能体管理平台。",
+    "description": "wunder is a multi-form agent workbench: Desktop is the local AI workbench, Android is the Desktop's phone form, Cloud (web) is the cloud AI workbench, CLI is the manual local entry point, and the Server is the user and agent management platform. / wunder 是多形态的智能体工作台：桌面版（desktop）是本地 AI 工作台，安卓版（android）是桌面版的手机形态，云端版（web）是云端 AI 工作台，命令行（cli）是手工本地操作入口，服务端（server）是用户与智能体管理平台。",
     "default_language": "zh-CN",
     "home_page": "zh-CN/index",
     "home_url": "/docs/",
@@ -31,7 +31,7 @@
                   {
                     "slug": "zh-CN/index",
                     "title": "wunder 心舰",
-                    "summary": "wunder 的四个形态、能力范围、任务并行与会话队列，以及说明书导航入口。",
+                    "summary": "wunder 的多个形态、能力范围、任务并行与会话队列，以及说明书导航入口。",
                     "url": "/docs/"
                   }
                 ]
@@ -54,7 +54,7 @@
                   {
                     "slug": "zh-CN/start/forms",
                     "title": "形态矩阵",
-                    "summary": "五个程序形态的技术栈、定位、运行方式与系统支持，以及按场景选择形态的依据。",
+                    "summary": "六个程序形态的技术栈、定位、运行方式与系统支持，以及按场景选择形态的依据。",
                     "url": "/docs/zh-CN/start/forms/"
                   }
                 ]
@@ -65,7 +65,7 @@
                   {
                     "slug": "zh-CN/concepts/index",
                     "title": "核心概览",
-                    "summary": "多快好省四个核心、四条设计原则、四个形态、按主题的深入页面，以及已移除与受限的能力。",
+                    "summary": "多快好省四个核心、四条设计原则、多个形态、按主题的深入页面，以及已移除与受限的能力。",
                     "url": "/docs/zh-CN/concepts/"
                   }
                 ]
@@ -298,7 +298,7 @@
                   {
                     "slug": "zh-CN/surfaces/index",
                     "title": "界面概览",
-                    "summary": "四个形态对应四个界面：桌面版（本地 AI 工作台，默认入口）、云端版（云端 AI 工作台）、命令行（终端界面）、管理端（治理后台）；含主区域说明与能力矩阵。",
+                    "summary": "多个形态对应多套界面：桌面版（本地 AI 工作台，默认入口）、安卓版（手机上的本地 AI 工作台）、云端版（云端 AI 工作台）、命令行（终端界面）、管理端（治理后台）；含主区域说明与能力矩阵。",
                     "url": "/docs/zh-CN/surfaces/"
                   }
                 ]
@@ -420,11 +420,11 @@
                 ]
               },
               {
-                "group": "三端互通",
+                "group": "多端互通",
                 "pages": [
                   {
                     "slug": "zh-CN/capabilities/interlink",
-                    "title": "三端互通",
+                    "title": "多端互通",
                     "summary": "本地工作台登录云端后的设备管理、工作区访问与线程控制。",
                     "url": "/docs/zh-CN/capabilities/interlink/"
                   }
@@ -436,7 +436,7 @@
                   {
                     "slug": "zh-CN/concepts/architecture",
                     "title": "系统架构",
-                    "summary": "四个形态共用一份核心与引擎，消息在会话内的固定链路、存储选型、有界视图、对外接口与运行默认值。",
+                    "summary": "多个形态共用一份核心与引擎，消息在会话内的固定链路、存储选型、有界视图、对外接口与运行默认值。",
                     "url": "/docs/zh-CN/concepts/architecture/"
                   },
                   {
@@ -603,7 +603,7 @@
                   {
                     "slug": "en/index",
                     "title": "wunder",
-                    "summary": "The four forms of wunder, its capability range, parallel tasks and the session queue, plus navigation entries into the manual.",
+                    "summary": "The forms of wunder, its capability range, parallel tasks and the session queue, plus navigation entries into the manual.",
                     "url": "/docs/en/"
                   }
                 ]
@@ -626,7 +626,7 @@
                   {
                     "slug": "en/start/forms",
                     "title": "Form matrix",
-                    "summary": "How the program forms compare on tech stack, purpose, run model and OS support, plus which form to pick for your scenario.",
+                    "summary": "How the six program forms compare on tech stack, purpose, run model and OS support, plus which form to pick for your scenario.",
                     "url": "/docs/en/start/forms/"
                   }
                 ]
@@ -637,7 +637,7 @@
                   {
                     "slug": "en/concepts/index",
                     "title": "Core Concepts",
-                    "summary": "The Diverse, Fast, Superior, and Efficient cores, four design principles, four forms, deeper pages by topic, and capabilities that are removed or restricted.",
+                    "summary": "The Diverse, Fast, Superior, and Efficient cores, four design principles, multiple forms, deeper pages by topic, and capabilities that are removed or restricted.",
                     "url": "/docs/en/concepts/"
                   }
                 ]
@@ -853,7 +853,7 @@
                   {
                     "slug": "en/surfaces/index",
                     "title": "Interface Overview",
-                    "summary": "Four forms, four interfaces — the Desktop (local AI workbench, the default entry), the Cloud (cloud AI workbench), the CLI (terminal interface), and the Admin (admin governance console); plus main-area notes and the capability matrix.",
+                    "summary": "Multiple forms, multiple interfaces — the Desktop (local AI workbench, the default entry), Android (the Desktop's phone form), the Cloud (cloud AI workbench), the CLI (terminal interface), and the Admin (admin governance console); plus main-area notes and the capability matrix.",
                     "url": "/docs/en/surfaces/"
                   }
                 ]
@@ -991,7 +991,7 @@
                   {
                     "slug": "en/concepts/architecture",
                     "title": "Architecture",
-                    "summary": "One core and engine shared by the four forms, the fixed path a message takes inside a session, storage choices, bounded views, external interfaces, and runtime defaults.",
+                    "summary": "One core and engine shared by the forms, the fixed path a message takes inside a session, storage choices, bounded views, external interfaces, and runtime defaults.",
                     "url": "/docs/en/concepts/architecture/"
                   },
                   {
@@ -1306,8 +1306,8 @@
       "slug": "zh-CN/index",
       "language": "zh-CN",
       "title": "wunder 心舰",
-      "summary": "wunder 的四个形态、能力范围、任务并行与会话队列，以及说明书导航入口。",
-      "updated_at": "2026-10-16",
+      "summary": "wunder 的多个形态、能力范围、任务并行与会话队列，以及说明书导航入口。",
+      "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
       "tab": "开始",
@@ -1502,7 +1502,7 @@
         {
           "id": "section-13",
           "level": 2,
-          "text": "桌面版独有的能力"
+          "text": "桌面版更完整的能力"
         },
         {
           "id": "section-14",
@@ -1529,8 +1529,8 @@
       "slug": "zh-CN/start/forms",
       "language": "zh-CN",
       "title": "形态矩阵",
-      "summary": "五个程序形态的技术栈、定位、运行方式与系统支持，以及按场景选择形态的依据。",
-      "updated_at": "2026-10-16",
+      "summary": "六个程序形态的技术栈、定位、运行方式与系统支持，以及按场景选择形态的依据。",
+      "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
       "tab": "开始",
@@ -1560,7 +1560,7 @@
       "slug": "zh-CN/concepts/index",
       "language": "zh-CN",
       "title": "核心概览",
-      "summary": "多快好省四个核心、四条设计原则、四个形态、按主题的深入页面，以及已移除与受限的能力。",
+      "summary": "多快好省四个核心、四条设计原则、多个形态、按主题的深入页面，以及已移除与受限的能力。",
       "updated_at": "2026-10-19",
       "read_when": [],
       "source_docs": [],
@@ -3226,8 +3226,8 @@
       "slug": "zh-CN/surfaces/index",
       "language": "zh-CN",
       "title": "界面概览",
-      "summary": "四个形态对应四个界面：桌面版（本地 AI 工作台，默认入口）、云端版（云端 AI 工作台）、命令行（终端界面）、管理端（治理后台）；含主区域说明与能力矩阵。",
-      "updated_at": "2026-10-16",
+      "summary": "多个形态对应多套界面：桌面版（本地 AI 工作台，默认入口）、安卓版（手机上的本地 AI 工作台）、云端版（云端 AI 工作台）、命令行（终端界面）、管理端（治理后台）；含主区域说明与能力矩阵。",
+      "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -4121,22 +4121,22 @@
     "zh-CN/capabilities/interlink": {
       "slug": "zh-CN/capabilities/interlink",
       "language": "zh-CN",
-      "title": "三端互通",
+      "title": "多端互通",
       "summary": "本地工作台登录云端后的设备管理、工作区访问与线程控制。",
       "updated_at": "2026-10-17",
       "read_when": [],
       "source_docs": [],
       "tab": "能力",
-      "group": "三端互通",
+      "group": "多端互通",
       "group_path": [
-        "三端互通"
+        "多端互通"
       ],
       "url": "/docs/zh-CN/capabilities/interlink/",
       "headings": [
         {
           "id": "section-1",
           "level": 1,
-          "text": "三端互通"
+          "text": "多端互通"
         },
         {
           "id": "section-2",
@@ -4203,8 +4203,8 @@
       "slug": "zh-CN/concepts/architecture",
       "language": "zh-CN",
       "title": "系统架构",
-      "summary": "四个形态共用一份核心与引擎，消息在会话内的固定链路、存储选型、有界视图、对外接口与运行默认值。",
-      "updated_at": "2026-10-16",
+      "summary": "多个形态共用一份核心与引擎，消息在会话内的固定链路、存储选型、有界视图、对外接口与运行默认值。",
+      "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
       "tab": "能力",
@@ -5803,8 +5803,8 @@
       "slug": "en/index",
       "language": "en",
       "title": "wunder",
-      "summary": "The four forms of wunder, its capability range, parallel tasks and the session queue, plus navigation entries into the manual.",
-      "updated_at": "2026-10-16",
+      "summary": "The forms of wunder, its capability range, parallel tasks and the session queue, plus navigation entries into the manual.",
+      "updated_at": "2026-11-08",
       "read_when": [
         "You are new to wunder and choosing which form to use",
         "You want the entry point to the whole manual"
@@ -6023,7 +6023,7 @@
         {
           "id": "section-13",
           "level": 2,
-          "text": "Capabilities unique to the Desktop"
+          "text": "Capabilities the Desktop covers most fully"
         },
         {
           "id": "section-14",
@@ -6050,8 +6050,8 @@
       "slug": "en/start/forms",
       "language": "en",
       "title": "Form matrix",
-      "summary": "How the program forms compare on tech stack, purpose, run model and OS support, plus which form to pick for your scenario.",
-      "updated_at": "2026-10-16",
+      "summary": "How the six program forms compare on tech stack, purpose, run model and OS support, plus which form to pick for your scenario.",
+      "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
       "tab": "Getting Started",
@@ -6081,7 +6081,7 @@
       "slug": "en/concepts/index",
       "language": "en",
       "title": "Core Concepts",
-      "summary": "The Diverse, Fast, Superior, and Efficient cores, four design principles, four forms, deeper pages by topic, and capabilities that are removed or restricted.",
+      "summary": "The Diverse, Fast, Superior, and Efficient cores, four design principles, multiple forms, deeper pages by topic, and capabilities that are removed or restricted.",
       "updated_at": "2026-10-19",
       "read_when": [],
       "source_docs": [],
@@ -7567,8 +7567,8 @@
       "slug": "en/surfaces/index",
       "language": "en",
       "title": "Interface Overview",
-      "summary": "Four forms, four interfaces — the Desktop (local AI workbench, the default entry), the Cloud (cloud AI workbench), the CLI (terminal interface), and the Admin (admin governance console); plus main-area notes and the capability matrix.",
-      "updated_at": "2026-10-16",
+      "summary": "Multiple forms, multiple interfaces — the Desktop (local AI workbench, the default entry), Android (the Desktop's phone form), the Cloud (cloud AI workbench), the CLI (terminal interface), and the Admin (admin governance console); plus main-area notes and the capability matrix.",
+      "updated_at": "2026-11-08",
       "read_when": [
         "You are choosing between the forms and need to know what each interface can do",
         "You expect a capability in one interface and want to check whether it exists there at all"
@@ -8584,8 +8584,8 @@
       "slug": "en/concepts/architecture",
       "language": "en",
       "title": "Architecture",
-      "summary": "One core and engine shared by the four forms, the fixed path a message takes inside a session, storage choices, bounded views, external interfaces, and runtime defaults.",
-      "updated_at": "2026-10-16",
+      "summary": "One core and engine shared by the forms, the fixed path a message takes inside a session, storage choices, bounded views, external interfaces, and runtime defaults.",
+      "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
       "tab": "Capabilities",

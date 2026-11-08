@@ -1,0 +1,53 @@
+// Mobile projections for the tool manager and the built-in agent editor.
+// These mirror the desktop ToolCard/ExpertToolGroup shapes without importing
+// the desktop ToolsPage, which is a mouse-first master-detail surface.
+
+export struct MobileTool {
+    name: string,
+    description: string,
+    category: string,
+    enabled: bool,
+    icon: string,
+    tone: string,
+}
+
+export struct MobileToolGroup {
+    title: string,
+    tools: [MobileTool],
+    all-selected: bool,
+}
+
+export struct MobileToolResource {
+    name: string,
+    description: string,
+    detail: string,
+    readonly: bool,
+}
+
+export struct MobileToolFile {
+    name: string,
+    path: string,
+    directory: bool,
+    size: string,
+}
+
+export struct MobileMcpDraft {
+    previous: string,
+    name: string,
+    display-name: string,
+    endpoint: string,
+    transport: string,
+    description: string,
+    headers: string,
+}
+
+export struct MobileKnowledgeDraft {
+    previous: string,
+    name: string,
+    description: string,
+    base-type: string,
+    embedding-model: string,
+    chunk-size: string,
+    chunk-overlap: string,
+    dataset-id: string,
+}

@@ -1,16 +1,17 @@
 ---
 title: Architecture
-summary: One core and engine shared by the four forms, the fixed path a message takes inside a session, storage choices, bounded views, external interfaces, and runtime defaults.
-updated_at: 2026-10-16
+summary: One core and engine shared by the forms, the fixed path a message takes inside a session, storage choices, bounded views, external interfaces, and runtime defaults.
+updated_at: 2026-11-08
 ---
 
-All four forms share the same core and engine, differing only at the access layer. Real execution happens inside sessions, and the interface reads a bounded display view that is paginated and carries a byte budget.
+All forms — Desktop, Android, Cloud, CLI, and Server — share the same core and engine, differing only at the access layer. Real execution happens inside sessions, and the interface reads a bounded display view that is paginated and carries a byte budget.
 
 ## Forms and Delivery
 
 | Form | How it is delivered | Interface |
 | --- | --- | --- |
 | Desktop | A desktop app; the engine ships inside the local process and calls in-process by default without local HTTP | Native UI, compiled into the app |
+| Android | An APK; the engine ships inside the local process and calls the shared engine in-process | Native UI (Slint), reusing the Desktop components |
 | Cloud | A web app; its build artifacts are served read-only by a separate web service, not hosted by the Server itself | Single-page app |
 | CLI | A command-line program; when terminal conditions are not met it degrades to one-shot execution instead of the full-screen interactive interface | Terminal UI |
 | Server | A server process, mounting Admin and a few static directories | Admin (no build step) |
