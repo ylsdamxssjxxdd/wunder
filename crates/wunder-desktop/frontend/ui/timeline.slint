@@ -370,6 +370,8 @@ component FooterStats inherits Rectangle {
 // ---- assistant body block (§7.3 A): page text, no bubble ----
 component BodyBlock inherits Rectangle {
     in property <TimelineRow> data;
+    // Touch shells pan wide tables; the desktop reading column keeps fitting.
+    in property <bool> mobile: false;
     callback copy-text(string);
     callback open-resource(string);
     callback show-context-menu(length, length, bool);
@@ -388,6 +390,7 @@ component BodyBlock inherits Rectangle {
         }
         for block in root.data.blocks : BlockView {
             block: block;
+            mobile: root.mobile;
             // The body column is the reading column minus its own padding; it
             // is definite here, so a block can wrap without the 1.18
             // preferred-width measurement bug shrinking the timeline.
@@ -586,6 +589,7 @@ component FoldEntry inherits Rectangle {
                     }
                     for block in root.data.reasoning-blocks : BlockView {
                         block: block;
+                        mobile: root.mobile;
                         column-width: thinking-mobile.width - 20px;
                         font-scale: 0.92;
                         copy-text(value) => { root.copy-text(value); }
@@ -639,6 +643,7 @@ component FoldEntry inherits Rectangle {
                         }
                         for block in root.data.reasoning-blocks : BlockView {
                             block: block;
+                            mobile: root.mobile;
                             column-width: thinking-scroll.visible-width - 8px;
                             font-scale: 0.92;
                             copy-text(value) => { root.copy-text(value); }
@@ -874,6 +879,7 @@ export component TimelineRowView inherits Rectangle {
         }
         if root.shown && root.entry.kind == EntryKind.body : BodyBlock {
             data: root.entry;
+            mobile: root.mobile;
             copy-text(text) => { root.copy-text(text); }
             open-resource(path) => { root.open-resource(path); }
             show-context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }

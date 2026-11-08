@@ -89,6 +89,14 @@ packs/common.tar.xz
   the unRAR restriction). Source packages are available from
   https://ports.ubuntu.com/ubuntu-ports/ under the Ubuntu archive; each
   package's copyright file is installed under /usr/share/doc.
+  Fonts are bundled for Latin, CJK and emoji rendering: DejaVu
+  (Bitstream Vera license), Liberation (SIL OFL 1.1), Noto Color Emoji
+  (SIL OFL 1.1, Apache-2.0) and WenQuanYi Micro Hei (Apache-2.0 or
+  GPL-3.0-or-later with font embedding exception); see the matching
+  /usr/share/doc/*/copyright files inside the rootfs.
+  The overlay also provides the common runtime CLI set (curl, wget,
+  zip/unzip, procps, psmisc, lsof, bc, bzip2, time, python alias and
+  iproute2) under the licenses of their respective Ubuntu packages.
   The overlay also contains preinstalled PyPI wheels (numpy, pandas,
   matplotlib, opencv-python-headless, h5py, lxml, pillow, python-docx,
   python-pptx, openpyxl, sqlalchemy and others); each wheel keeps its

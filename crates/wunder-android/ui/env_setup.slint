@@ -81,21 +81,19 @@ export component EnvSetupPage inherits Rectangle {
     // 100% 而液体还在追赶。
     private property <int> shown: round(
         min(1.0, max(0.0, (root.height - root.surface-y) / (root.height + 40px))) * 100.0);
-    // 呼吸辉光：0 → 1 → 0 的三角波。
-    private property <float> pulse: 1.0 - abs(2.0 * root.phase - 1.0);
-    // 浸没程度：液面越过百分比文字（约 56% 屏高）后从 0 平滑到 1，
-    // 数字与阶段文案随之转成奶油白，像隔着液体看字。
-    private property <float> submerged: min(
-        1.0, max(0.0, (root.height * 0.56 - root.surface-y) / 80px));
-    // 完成瞬间的亮屏脉冲：ready 后从 0.5 淡出到 0。
-    private property <float> settle: root.ready ? 0.0 : 0.5;
-    animate settle { duration: 800ms; easing: ease-out; }
     // 路径命令按像素插值，长度不能直接进字符串，先转成无单位浮点。
     private property <float> w: root.width / 1px;
     private property <float> h: root.height / 1px;
 
     pure function wrap(value: float) -> float {
         return value - floor(value);
+    }
+
+    // 伪随机散布：x 与相位各用一套「线性 + 二次」系数，避免两者线性相关
+    // 导致气泡连成斜线。
+    pure function scatter(i: int, linear: float, quad: float, offset: float) -> float {
+        let n = i * 1.0;
+        return root.wrap(n * linear + n * n * quad + offset);
     }
 
     // 两个完整周期的波形；整段平移一个周期即可无缝循环。
@@ -137,59 +135,42 @@ export component EnvSetupPage inherits Rectangle {
         fill: @linear-gradient(180deg, #FFC46B 0%, #F5972D 48%, #E36A05 100%);
         opacity: 0.72;
     }
-    // 液面高光：沿波形描一条亮边，随波浪一起滚动。
-    surface := Path {
-        visible: root.fill > 0.002;
-        x: wave.x;
-        y: wave.y;
-        width: wave.width;
-        height: 30px;
-        commands: root.wave-line();
-        stroke: #FFF6E0;
-        stroke-width: 2px;
-        opacity: 0.55 + 0.35 * root.pulse;
-    }
-    // 液面下的折射亮带：预置渐变，不做实时模糊。
-    Rectangle {
-        visible: root.fill > 0.10;
-        x: 0px;
-        y: root.surface-y + 44px;
-        width: 100%;
-        height: 26px;
-        background: @linear-gradient(90deg, transparent 0%, #FFF6E0AA 24%, #FFF6E0CC 50%, #FFF6E0AA 76%, transparent 100%);
-        opacity: 0.10 + 0.14 * root.pulse;
-    }
-    // 阶段浮标：液面漫过时亮一下，暗示安装推进到了新阶段。
-    for i in 3 : Rectangle {
-        private property <int> threshold: 29 + i * 23;
-        private property <float> since: root.clamped * 1.0 - self.threshold;
-        private property <float> flash: min(1.0, max(0.0, 1.0 - self.since / 9.0));
-        width: 44px;
-        height: 44px;
-        border-radius: 22px;
-        border-width: 1px;
-        border-color: #FFF3D6;
-        background: transparent;
-        // 左右交错排布，避开屏幕中间的大号百分比与阶段文案。
-        x: root.width * (i == 0 ? 0.20 : i == 1 ? 0.78 : 0.30) - self.width / 2;
-        y: root.height * (0.70 - i * 0.24) - self.height / 2;
-        opacity: self.since >= 0.0 ? 0.22 + 0.6 * self.flash * (0.4 + 0.6 * root.pulse) : 0.0;
-    }
-    // 气泡：在液体内部上升，靠近液面渐隐；完成时集体加速上浮。
-    for i in 7 : Rectangle {
+    // 气泡：贯穿整层液体，底部淡入、贴近液面淡出，循环时不会突然消失。
+    for i in 9 : Rectangle {
         private property <float> travel: root.wrap(
-            root.phase * (0.35 + Math.mod(i, 3) * 0.16) * (root.ready ? 2.2 : 1.0) + i * 0.143);
+            root.phase * (0.35 + Math.mod(i, 3) * 0.16)
+            + root.scatter(i, 0.4142, 0.0069, 0.53));
         private property <length> size: 6px + 3px * Math.mod(i, 3);
         width: self.size;
         height: self.size;
         border-radius: self.size / 2;
-        x: root.width * (0.10 + i * 0.13) - self.width / 2
+        x: root.width * (0.06 + 0.88 * root.scatter(i, 0.618, 0.0041, 0.07)) - self.width / 2
             + (1.0 - abs(2.0 * root.wrap(root.phase + i * 0.11) - 1.0)) * 12px - 6px;
         y: root.height - self.travel * (root.height - root.surface-y) - self.height;
         background: #FFF8EA;
         border-width: 1px;
         border-color: #FFE3B8;
-        opacity: root.fill > 0.03 ? 0.20 + 0.35 * (1.0 - self.travel) : 0.0;
+        opacity: root.fill > 0.03
+            ? 0.55 * min(1.0, self.travel * 5.0) * min(1.0, (1.0 - self.travel) * 5.0)
+            : 0.0;
+    }
+    // 注满后的气泡潮：像汽水开盖一样，密集的小气泡高速涌上来。
+    for i in 120 : Rectangle {
+        private property <float> travel: root.wrap(
+            root.phase * (7.0 + Math.mod(i, 5) * 1.1)
+            + root.scatter(i, 0.4142, 0.0069, 0.53));
+        private property <length> size: 3px + 2px * Math.mod(i, 4);
+        width: self.size;
+        height: self.size;
+        border-radius: self.size / 2;
+        x: root.width * (0.04 + 0.92 * root.scatter(i, 0.618, 0.0041, 0.07)) - self.width / 2;
+        y: root.height - self.travel * (root.height - root.surface-y) - self.height;
+        background: #FFF8EA;
+        border-width: 1px;
+        border-color: #FFE3B8;
+        opacity: root.ready
+            ? 0.85 * min(1.0, self.travel * 6.0) * min(1.0, (1.0 - self.travel) * 6.0)
+            : 0.0;
     }
 
     // ---- 内容 ----------------------------------------------------------
@@ -225,8 +206,7 @@ export component EnvSetupPage inherits Rectangle {
             spacing: 0px;
             Text {
                 text: root.shown + "%";
-                color: root.submerged > 0.5 ? #FFF3D6 : #8A3E05;
-                animate color { duration: 420ms; easing: ease-in-out; }
+                color: #8A3E05;
                 font-size: 46px;
                 font-weight: 700;
                 horizontal-alignment: center;
@@ -263,16 +243,5 @@ export component EnvSetupPage inherits Rectangle {
             }
         }
 
-    }
-
-    // 完成瞬间：整屏奶油白亮一下再散开，给“注满”一个收尾。
-    Rectangle {
-        visible: root.ready;
-        x: 0px;
-        y: 0px;
-        width: 100%;
-        height: 100%;
-        background: #FFF4D6;
-        opacity: root.settle;
     }
 }

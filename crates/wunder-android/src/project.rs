@@ -935,22 +935,20 @@ pub fn project_turn(turn: &NativeChatTurn) -> Vec<RowData> {
     rows
 }
 
-/// Rows for the turn currently streaming. The durable projection replaces
-/// them as soon as the runtime commits the turn.
-pub struct LiveTurn {
-    pub root_id: String,
-    pub user: String,
-    pub reasoning: String,
-    pub answer: String,
-    pub tools: Vec<LiveTool>,
+/// One streamed step of the live turn, in arrival order. A reasoning segment
+/// ends as soon as the model acts (a tool call, the answer, or a new round),
+/// so the live process mirrors the durable per-round thinking entries instead
+/// of folding every thought of the turn into the first one.
+pub enum LiveStep {
+    Reasoning(LiveReason),
+    Tool(LiveTool),
+}
+
+pub struct LiveReason {
+    pub id: String,
+    pub text: String,
     pub status: i32,
-    pub phase: String,
-    pub failure: Option<String>,
-    pub user_round: i64,
-    pub stats: NativeMessageStats,
-    pub question_panel: Option<serde_json::Value>,
-    /// Bounded output tail per streamed command session, keyed by session#index.
-    pub command_output: std::collections::HashMap<String, String>,
+    round: i64,
 }
 
 pub struct LiveTool {
@@ -967,14 +965,39 @@ pub struct LiveTool {
     pub duration: String,
 }
 
+/// Rows for the turn currently streaming. The durable projection replaces
+/// them as soon as the runtime commits the turn.
+pub struct LiveTurn {
+    pub root_id: String,
+    pub user: String,
+    pub answer: String,
+    /// Thinking and tool entries in the order the model produced them.
+    pub steps: Vec<LiveStep>,
+    pub status: i32,
+    pub phase: String,
+    pub failure: Option<String>,
+    pub user_round: i64,
+    pub stats: NativeMessageStats,
+    pub question_panel: Option<serde_json::Value>,
+    /// Bounded output tail per streamed command session, keyed by session#index.
+    pub command_output: std::collections::HashMap<String, String>,
+    /// Model round the events currently arriving belong to. A new round (or a
+    /// continuation execution) opens a fresh reasoning entry.
+    pub round: i64,
+    /// Execution id of the current run (`native_execution_started`). Late
+    /// frames from an earlier execution must not decorate this turn.
+    pub execution: String,
+    active_reason: Option<usize>,
+    reason_serial: u32,
+}
+
 impl LiveTurn {
     pub fn new(user: String) -> Self {
         Self {
             root_id: "live".into(),
             user,
-            reasoning: String::new(),
             answer: String::new(),
-            tools: Vec::new(),
+            steps: Vec::new(),
             status: STATUS_RUNNING,
             phase: "requesting".into(),
             failure: None,
@@ -982,7 +1005,82 @@ impl LiveTurn {
             stats: NativeMessageStats::default(),
             question_panel: None,
             command_output: std::collections::HashMap::new(),
+            round: 0,
+            execution: String::new(),
+            active_reason: None,
+            reason_serial: 0,
         }
+    }
+
+    pub fn tool_count(&self) -> usize {
+        self.steps
+            .iter()
+            .filter(|step| matches!(step, LiveStep::Tool(_)))
+            .count()
+    }
+
+    pub fn tool_mut(&mut self, id: &str) -> Option<&mut LiveTool> {
+        self.steps.iter_mut().find_map(|step| match step {
+            LiveStep::Tool(tool) if tool.id == id => Some(tool),
+            _ => None,
+        })
+    }
+
+    pub fn push_tool(&mut self, tool: LiveTool) {
+        self.steps.push(LiveStep::Tool(tool));
+    }
+
+    /// Finish the active reasoning entry. Called when the model acts, a new
+    /// round begins, or the turn ends; the entry keeps its text and stops
+    /// spinning.
+    pub fn close_reason(&mut self, status: i32) {
+        if let Some(index) = self.active_reason.take() {
+            if let Some(LiveStep::Reasoning(reason)) = self.steps.get_mut(index) {
+                reason.status = status;
+            }
+        }
+    }
+
+    /// Append one reasoning delta. `replace` is used by the full-text
+    /// `reasoning` frame, `append` by stream deltas.
+    pub fn append_reasoning(&mut self, round: i64, text: &str, replace: bool) {
+        if self.active_reason.is_some() && self.reason_round() == round {
+            if let Some(index) = self.active_reason {
+                if let Some(LiveStep::Reasoning(reason)) = self.steps.get_mut(index) {
+                    if replace {
+                        reason.text = text.to_owned();
+                    } else {
+                        reason.text.push_str(text);
+                    }
+                    self.phase = "thinking".into();
+                    return;
+                }
+            }
+        }
+        self.close_reason(STATUS_DONE);
+        let id = format!("{}-reason-{}", self.root_id, self.reason_serial);
+        self.reason_serial += 1;
+        self.steps.push(LiveStep::Reasoning(LiveReason {
+            id,
+            text: text.to_owned(),
+            status: if self.status == STATUS_RUNNING {
+                STATUS_RUNNING
+            } else {
+                STATUS_DONE
+            },
+            round,
+        }));
+        self.active_reason = Some(self.steps.len() - 1);
+        self.phase = "thinking".into();
+    }
+
+    fn reason_round(&self) -> i64 {
+        self.active_reason
+            .and_then(|index| match self.steps.get(index) {
+                Some(LiveStep::Reasoning(reason)) => Some(reason.round),
+                _ => None,
+            })
+            .unwrap_or(-1)
     }
 
     fn process_summary(&self) -> &'static str {
@@ -1007,51 +1105,57 @@ impl LiveTurn {
         }
 
         let mut children: Vec<ProcessChildData> = Vec::new();
-        if !self.reasoning.is_empty() {
-            let mut child = ProcessChildData {
-                id: format!("{}-reason", self.root_id),
-                kind: KIND_REASON,
-                tool_name: "思考".into(),
-                detail: self.reasoning.clone(),
-                status_kind: if self.status == STATUS_RUNNING {
-                    STATUS_RUNNING
-                } else {
-                    STATUS_DONE
-                },
-                ..Default::default()
-            };
-            // The fold header shows one outcome line; while streaming it is the
-            // tail of the thought, matching the desktop marquee row.
-            child.summary = self
-                .reasoning
-                .lines()
-                .last()
-                .map(|line| preview_text(line, 120))
-                .unwrap_or_default();
-            children.push(child);
-        }
-        for (index, tool) in self.tools.iter().enumerate() {
-            children.push(ProcessChildData {
-                id: format!("{}-tool-{}", self.root_id, tool.id),
-                kind: KIND_TOOL,
-                tool_name: tool.title.clone(),
-                tool_icon: tool.tool_icon.clone(),
-                target: tool.target.clone(),
-                summary: if tool.summary.is_empty() {
-                    preview_text(&tool.detail, 160)
-                } else {
-                    tool.summary.clone()
-                },
-                detail: tool.detail.clone(),
-                sections: tool.sections.clone(),
-                patch: tool.patch.clone(),
-                tokens: tool.tokens.clone(),
-                duration: tool.duration.clone(),
-                status_kind: status_kind(&tool.state),
-                open: false,
-                payload: -2 - index as i32,
-                ..Default::default()
-            });
+        for (index, step) in self.steps.iter().enumerate() {
+            match step {
+                LiveStep::Reasoning(reason) => {
+                    let mut child = ProcessChildData {
+                        id: reason.id.clone(),
+                        kind: KIND_REASON,
+                        tool_name: "思考".into(),
+                        detail: reason.text.clone(),
+                        status_kind: if reason.status == STATUS_RUNNING
+                            && self.status != STATUS_RUNNING
+                        {
+                            self.status
+                        } else {
+                            reason.status
+                        },
+                        open: false,
+                        payload: -2 - index as i32,
+                        ..Default::default()
+                    };
+                    // The fold header shows one outcome line; while streaming
+                    // it is the tail of the thought, matching the desktop row.
+                    child.summary = reason
+                        .text
+                        .lines()
+                        .last()
+                        .map(|line| preview_text(line, 120))
+                        .unwrap_or_default();
+                    children.push(child);
+                }
+                LiveStep::Tool(tool) => children.push(ProcessChildData {
+                    id: format!("{}-tool-{}", self.root_id, tool.id),
+                    kind: KIND_TOOL,
+                    tool_name: tool.title.clone(),
+                    tool_icon: tool.tool_icon.clone(),
+                    target: tool.target.clone(),
+                    summary: if tool.summary.is_empty() {
+                        preview_text(&tool.detail, 160)
+                    } else {
+                        tool.summary.clone()
+                    },
+                    detail: tool.detail.clone(),
+                    sections: tool.sections.clone(),
+                    patch: tool.patch.clone(),
+                    tokens: tool.tokens.clone(),
+                    duration: tool.duration.clone(),
+                    status_kind: status_kind(&tool.state),
+                    open: false,
+                    payload: -2 - index as i32,
+                    ..Default::default()
+                }),
+            }
         }
 
         if !children.is_empty() {
@@ -1278,6 +1382,52 @@ mod tests {
         assert_eq!(status_kind("执行失败"), STATUS_FAILED);
         assert_eq!(status_metric("正在生成…").unwrap().0, "status-outputting");
         assert_eq!(status_metric("正在排队").unwrap().0, "status-queued");
+    }
+
+    #[test]
+    fn live_reasoning_entries_split_on_rounds_and_tool_steps() {
+        let mut live = LiveTurn::new("hi".into());
+        live.append_reasoning(1, "第一段", false);
+        live.append_reasoning(1, " 继续", false);
+        assert_eq!(live.steps.len(), 1);
+        live.close_reason(STATUS_DONE);
+        live.push_tool(LiveTool {
+            id: "call-1".into(),
+            title: "读取文件".into(),
+            tool_icon: "file-lines".into(),
+            summary: "src/main.rs".into(),
+            state: "completed".into(),
+            detail: String::new(),
+            target: String::new(),
+            sections: Vec::new(),
+            patch: Vec::new(),
+            tokens: String::new(),
+            duration: String::new(),
+        });
+        live.append_reasoning(1, "第二段", false);
+        assert_eq!(live.steps.len(), 3);
+
+        let rows = live.rows();
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .expect("process bar");
+        assert_eq!(bar.process_children.len(), 3);
+        assert_eq!(bar.process_children[0].kind, KIND_REASON);
+        assert_eq!(bar.process_children[0].detail, "第一段 继续");
+        assert_eq!(bar.process_children[0].status_kind, STATUS_DONE);
+        assert_eq!(bar.process_children[1].kind, KIND_TOOL);
+        assert_eq!(bar.process_children[2].kind, KIND_REASON);
+        assert_eq!(bar.process_children[2].status_kind, STATUS_RUNNING);
+
+        // A settled turn must not leave the newest thought spinning.
+        live.status = STATUS_DONE;
+        let rows = live.rows();
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .expect("process bar");
+        assert_eq!(bar.process_children[2].status_kind, STATUS_DONE);
     }
 
     #[test]

@@ -29,12 +29,27 @@ export struct TrajectoryItem {
 }
 
 // One normalized span on the audit time bar. Values are 0..1 across the
-// loaded window, so the UI never recomputes a time domain.
+// loaded window, so the UI never recomputes a time domain. Lanes mirror the
+// desktop timeline: 0 input, 1 model, 2 tool/subagent.
 export struct TrajectorySegment {
     offset: float,
     width: float,
     kind: int,
+    lane: int,
+    // First row of a user turn; draws the desktop-style boundary line.
+    boundary: bool,
     failed: bool,
+}
+
+// One per-step duration bar. The ratio is relative to the longest step in the
+// loaded window; unreported steps render as a baseline tick.
+export struct TrajectoryBar {
+    ratio: float,
+    kind: int,
+    failed: bool,
+    reported: bool,
+    peak: bool,
+    label: string,
 }
 
 // Page-level audit facts: the span, the consumption, and the failure count.
@@ -42,6 +57,9 @@ export struct TrajectoryAudit {
     enabled: bool,
     start: string,
     end: string,
+    span: string,
+    // Longest single step, used as the histogram's default caption.
+    peak: string,
     summary: string,
     failed: int,
 }
@@ -92,49 +110,185 @@ component FilterChip inherits Rectangle {
     }
 }
 
-// Time bar + consumption strip. Rows stay one line; this strip is the only
-// always-visible auditing surface on the page.
+// Time range + three-lane timeline + per-step duration histogram. This strip
+// is the only always-visible auditing surface on the page. Bars stay touch-
+// sized and scroll horizontally when a thread has many steps.
 component AuditBar inherits Rectangle {
     in property <TrajectoryAudit> audit;
     in property <[TrajectorySegment]> segments: [];
-    height: root.audit.enabled ? 84px : 0px;
+    in property <[TrajectoryBar]> bars: [];
+    in-out property <int> selected-bar: -1;
+    height: root.audit.enabled ? (root.bars.length > 0 ? 140px : 76px) : 0px;
     visible: root.audit.enabled;
     background: Theme.surface;
 
+    // A reload or filter change swaps the whole bar list; drop the stale
+    // selection so the caption never describes a different step.
+    changed bars => {
+        root.selected-bar = -1;
+    }
+
     VerticalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
+        padding-left: 12px;
+        padding-right: 12px;
         padding-top: 8px;
         padding-bottom: 8px;
-        spacing: 5px;
+        spacing: 4px;
 
+        // Clock range with the total elapsed time in the middle.
         HorizontalLayout {
+            spacing: 6px;
             Text {
                 text: root.audit.start;
                 color: Theme.muted;
                 font-size: Theme.font-2xs;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            if root.audit.span != "" : Text {
+                text: "总耗时 " + root.audit.span;
+                color: Theme.text-secondary;
+                font-size: Theme.font-2xs;
+                font-weight: 600;
+                vertical-alignment: center;
             }
             Rectangle { horizontal-stretch: 1; }
             Text {
                 text: root.audit.end;
                 color: Theme.muted;
                 font-size: Theme.font-2xs;
+                vertical-alignment: center;
             }
         }
 
+        // Compact three-lane timeline: input / model / tool, with quarter grid
+        // lines. Lanes keep overlapping model and tool work visible instead of
+        // drawing every span on one line.
         track := Rectangle {
-            height: 10px;
-            border-radius: 5px;
+            height: 22px;
+            border-radius: 4px;
             background: Theme.panel;
             clip: true;
+            Rectangle {
+                x: track.width * 0.25;
+                width: 0.5px;
+                height: 100%;
+                background: Theme.border;
+                opacity: 0.55;
+            }
+            Rectangle {
+                x: track.width * 0.5;
+                width: 0.5px;
+                height: 100%;
+                background: Theme.border;
+                opacity: 0.55;
+            }
+            Rectangle {
+                x: track.width * 0.75;
+                width: 0.5px;
+                height: 100%;
+                background: Theme.border;
+                opacity: 0.55;
+            }
+            Rectangle { y: 7px; width: 100%; height: 1px; background: Theme.border; opacity: 0.35; }
+            Rectangle { y: 14px; width: 100%; height: 1px; background: Theme.border; opacity: 0.35; }
+            for segment[index] in root.segments : Rectangle {
+                visible: segment.boundary;
+                x: track.width * segment.offset;
+                width: 0.5px;
+                height: 100%;
+                background: Theme.border-strong;
+                opacity: 0.55;
+            }
             for segment[index] in root.segments : Rectangle {
                 // Zero-duration rows at the very end still get a visible
                 // marker instead of being clipped past the track edge.
-                x: min(track.width - max(3px, track.width * segment.width), track.width * segment.offset);
-                width: max(3px, track.width * segment.width);
-                height: 10px;
-                border-radius: 2px;
+                x: min(track.width - max(2px, track.width * segment.width), track.width * segment.offset);
+                y: 1px + segment.lane * 7px;
+                width: max(2px, track.width * segment.width);
+                height: 5px;
+                border-radius: 1.5px;
                 background: segment.failed ? Theme.danger : TrajTone.color(segment.kind);
+            }
+        }
+
+        if root.bars.length > 0 : HorizontalLayout {
+            spacing: 6px;
+            Text {
+                text: "单步耗时";
+                color: Theme.muted;
+                font-size: Theme.font-2xs;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Text {
+                text: root.selected-bar >= 0 && root.selected-bar < root.bars.length
+                    ? root.bars[root.selected-bar].label
+                    : root.audit.peak != ""
+                        ? "峰值 " + root.audit.peak + " · 点按柱查看"
+                        : "点按柱查看单步耗时";
+                color: root.selected-bar >= 0 ? Theme.text-secondary : Theme.muted;
+                font-size: Theme.font-2xs;
+                overflow: elide;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+        }
+
+        if root.bars.length > 0 : Rectangle {
+            height: 42px;
+            clip: true;
+            chart-scroll := ScrollView {
+                width: 100%;
+                height: 100%;
+                vertical-scrollbar-policy: always-off;
+                horizontal-scrollbar-policy: as-needed;
+                mouse-drag-pan-enabled: true;
+                content-width: max(self.visible-width, 8px + 7px * root.bars.length);
+                content-height: self.visible-height;
+                HorizontalLayout {
+                    width: max(chart-scroll.visible-width, 8px + 7px * root.bars.length);
+                    padding-left: 4px;
+                    padding-right: 4px;
+                    padding-top: 2px;
+                    padding-bottom: 10px;
+                    spacing: 1px;
+                    for bar[i] in root.bars : bar-cell := Rectangle {
+                        horizontal-stretch: 1;
+                        min-width: 5px;
+                        // Baseline under every step, so unreported durations
+                        // still read as a tick rather than an empty gap.
+                        Rectangle {
+                            y: parent.height - 1px;
+                            width: 100%;
+                            height: 1px;
+                            background: Theme.border;
+                        }
+                        bar-fill := Rectangle {
+                            y: parent.height - self.height;
+                            width: 100%;
+                            height: bar.reported ? max(2px, parent.height * max(0.04, bar.ratio)) : 2px;
+                            border-radius: 1px;
+                            background: bar.failed ? Theme.danger : bar.peak ? Theme.warning : TrajTone.color(bar.kind);
+                            opacity: bar.reported ? 1.0 : 0.45;
+                        }
+                        if bar-touch.has-hover || root.selected-bar == i : Rectangle {
+                            x: -2px;
+                            y: bar-fill.y - 2px;
+                            width: parent.width + 4px;
+                            height: bar-fill.height + 4px;
+                            border-radius: 3px;
+                            border-width: 1px;
+                            border-color: root.selected-bar == i ? Theme.warning : bar.peak ? Theme.warning : TrajTone.color(bar.kind);
+                            background: transparent;
+                        }
+                        bar-touch := TouchArea {
+                            clicked => { root.selected-bar = i; }
+                        }
+                        accessible-role: button;
+                        accessible-label: bar.label;
+                    }
+                }
             }
         }
 
@@ -324,8 +478,9 @@ export component TrajectoryPage inherits Rectangle {
     in property <bool> loading: false;
     in property <string> error: "";
     in property <[TrajectoryItem]> items: [];
-    in property <TrajectoryAudit> audit: { enabled: false, start: "", end: "", summary: "", failed: 0 };
+    in property <TrajectoryAudit> audit: { enabled: false, start: "", end: "", span: "", peak: "", summary: "", failed: 0 };
     in property <[TrajectorySegment]> segments: [];
+    in property <[TrajectoryBar]> bars: [];
     // 0 all, 1 conversation, 2 tools, 3 system. The Rust projection applies
     // the filter so turn group labels survive when their user row is hidden.
     in-out property <int> filter: 0;
@@ -408,6 +563,7 @@ export component TrajectoryPage inherits Rectangle {
         AuditBar {
             audit: root.audit;
             segments: root.segments;
+            bars: root.bars;
         }
 
         // Touch-first filter strip: one thumb-sized row instead of desktop

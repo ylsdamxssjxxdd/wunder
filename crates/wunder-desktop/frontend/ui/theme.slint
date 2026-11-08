@@ -103,6 +103,11 @@ export struct MdBlock {
     // Normalised column widths, summing to 1.
     widths: [float],
     cells: [MdCell],
+    // Natural column widths in pixels for touch shells, and their sum. A
+    // phone cannot squeeze six columns into one screen, so the table pans
+    // horizontally at this width instead of clipping its right side.
+    column-widths: [float],
+    table-width: length,
     // Images and document cards.
     image: image,
     image-source: string,

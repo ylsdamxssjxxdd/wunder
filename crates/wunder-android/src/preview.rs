@@ -60,8 +60,22 @@ fn main() {
         std::mem::forget(timer);
     }
     if page.as_deref() == Some("env-setup-finish") {
-        // 安装中 → 完成的收尾：验证亮屏脉冲与气泡加速。
+        // 安装中 → 完成的收尾：验证气泡潮；相位要持续推进，气泡才会流动。
         wunder_android::open_preview_page(&ui, "env-setup");
+        let weak = ui.as_weak();
+        let started = std::time::Instant::now();
+        let phase_timer = slint::Timer::default();
+        phase_timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_millis(33),
+            move || {
+                if let Some(ui) = weak.upgrade() {
+                    let ms = started.elapsed().as_millis() as u64;
+                    ui.set_env_setup_phase((ms % 4000) as f32 / 4000.0);
+                }
+            },
+        );
+        std::mem::forget(phase_timer);
         let weak = ui.as_weak();
         let timer = slint::Timer::default();
         timer.start(

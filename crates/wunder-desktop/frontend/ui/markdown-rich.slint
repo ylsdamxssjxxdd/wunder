@@ -195,62 +195,100 @@ component CodeBlock inherits Rectangle {
     }
 }
 
-component TableBlock inherits Rectangle {
-    // Help browser zoom; the chat transcript keeps 1.0.
-    in property <float> font-scale: 1.0;
+// The rows themselves. Split out so the touch layout can pan the same grid at
+// its natural width instead of rebuilding the cells for a second container.
+component TableGrid inherits VerticalLayout {
     in property <MdBlock> block;
-    in property <length> content-width;
+    in property <length> total-width;
+    // True when `column-widths` (natural pixels) names the columns; false
+    // keeps the normalised ratios that fill the reading column.
+    in property <bool> pixel-columns: false;
+    in property <float> font-scale: 1.0;
     callback link-clicked(string);
     callback context-menu(length, length, bool);
 
     private property <int> columns: max(1, block.columns);
     private property <int> rows: Math.ceil(block.cells.length / max(1, block.columns));
 
-    width: content-width;
-    height: grid.preferred-height;
-    background: transparent;
+    width: total-width;
+    for r in rows : Rectangle {
+        // Row background lives here, not on the cells: a cell only needs to
+        // be tall enough for its own text, and the tallest one decides the row.
+        height: row.preferred-height;
+        background: r == 0 ? Theme.table-head : (Math.mod(r, 2) == 0 ? Theme.table-zebra : transparent);
 
-    grid := VerticalLayout {
-        width: content-width;
-        for r in rows : Rectangle {
-            // Row background lives here, not on the cells: a cell only needs to
-            // be tall enough for its own text, and the tallest one decides the
-            // row.
-            height: row.preferred-height;
-            background: r == 0 ? Theme.table-head : (Math.mod(r, 2) == 0 ? Theme.table-zebra : transparent);
+        row := HorizontalLayout {
+            width: parent.width;
+            for c in columns : Rectangle {
+                private property <length> cw: root.pixel-columns
+                    ? block.column-widths[c] * 1px : root.total-width * block.widths[c];
+                width: cw;
+                height: cell-text.preferred-height + 17px;
 
-            row := HorizontalLayout {
-                width: parent.width;
-                for c in columns : Rectangle {
-                    private property <length> cw: content-width * block.widths[c];
-                    width: cw;
-                    height: cell-text.preferred-height + 17px;
-
-                    cell-text := StyledText {
-                        x: 10px;
-                        y: 8px;
-                        width: cw - 20px;
-                        height: self.preferred-height;
-                        vertical-alignment: top;
-                        horizontal-alignment: block.cells[r * columns + c].align == 1
-                            ? center
-                            : block.cells[r * columns + c].align == 2 ? end : start;
-                        text: block.cells[r * columns + c].text;
-                        default-color: r == 0 ? Theme.text : Theme.text-secondary;
-                        default-font-size: Theme.font-body * root.font-scale - 1px;
-                        link-color: Theme.link;
-                        link-clicked(url) => { root.link-clicked(url); }
-                        context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
-                    }
+                cell-text := StyledText {
+                    x: 10px;
+                    y: 8px;
+                    width: cw - 20px;
+                    height: self.preferred-height;
+                    vertical-alignment: top;
+                    horizontal-alignment: block.cells[r * columns + c].align == 1
+                        ? center
+                        : block.cells[r * columns + c].align == 2 ? end : start;
+                    text: block.cells[r * columns + c].text;
+                    default-color: r == 0 ? Theme.text : Theme.text-secondary;
+                    default-font-size: Theme.font-body * root.font-scale - 1px;
+                    link-color: Theme.link;
+                    link-clicked(url) => { root.link-clicked(url); }
+                    context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
                 }
             }
+        }
 
-            if r < rows - 1 : Rectangle {
-                y: parent.height - 1px;
-                width: parent.width;
-                height: 1px;
-                background: Theme.border;
-            }
+        if r < rows - 1 : Rectangle {
+            y: parent.height - 1px;
+            width: parent.width;
+            height: 1px;
+            background: Theme.border;
+        }
+    }
+}
+
+component TableBlock inherits Rectangle {
+    // Help browser zoom; the chat transcript keeps 1.0.
+    in property <float> font-scale: 1.0;
+    in property <MdBlock> block;
+    in property <length> content-width;
+    // Touch shells pan a table that is wider than the column: squeezing six
+    // columns into a phone clipped the right side with no way to reach it.
+    in property <bool> mobile: false;
+    callback link-clicked(string);
+    callback context-menu(length, length, bool);
+
+    private property <bool> wide: root.mobile && block.table-width > content-width + 2px;
+    private property <length> total-width: root.wide ? block.table-width : content-width;
+
+    width: content-width;
+    height: table-grid.preferred-height;
+    background: transparent;
+
+    // A Flickable instead of a ScrollView: the transcript already scrolls
+    // vertically, and this one only owns a horizontal gesture. When the table
+    // fits, it stays inert and every gesture goes to the transcript.
+    grid := Flickable {
+        width: content-width;
+        height: root.height;
+        content-width: root.total-width;
+        content-height: root.height;
+        interactive: root.wide;
+        mouse-drag-pan-enabled: false;
+        table-grid := TableGrid {
+            width: root.total-width;
+            block: root.block;
+            total-width: root.total-width;
+            pixel-columns: root.wide;
+            font-scale: root.font-scale;
+            link-clicked(url) => { root.link-clicked(url); }
+            context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
         }
     }
 }
@@ -402,6 +440,8 @@ export component BlockView inherits Rectangle {
     /// Multiplies every font size in the block. 1.0 for the transcript; the
     /// help browser drives it from its 80–160% zoom control.
     in property <float> font-scale: 1.0;
+    /// Touch layout: wide tables pan horizontally instead of being clipped.
+    in property <bool> mobile: false;
     callback link-clicked(string);
     callback copy-text(string);
     callback open-resource(string);
@@ -467,6 +507,7 @@ export component BlockView inherits Rectangle {
             block: block;
             content-width: inner;
             font-scale: root.font-scale;
+            mobile: root.mobile;
             link-clicked(url) => { root.link-clicked(url); }
             context-menu(x, y, selected) => { root.context-menu(x, y, selected); }
         }

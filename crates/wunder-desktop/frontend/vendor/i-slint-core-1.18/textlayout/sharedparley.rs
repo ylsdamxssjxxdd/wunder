@@ -16,7 +16,7 @@ use crate::{
     },
     renderer::RendererSealed,
     textlayout::{TextHorizontalAlignment, TextOverflow, TextVerticalAlignment, TextWrap},
-    window::WindowAdapter,
+    window::{WindowAdapter, WindowInner},
 };
 use alloc::rc::Rc;
 use alloc::vec::Vec;
@@ -353,6 +353,47 @@ pub fn text_range_at(
         },
     )
     .flatten()
+}
+
+/// Caret rectangle, in the block's own logical coordinates, at `byte_offset`.
+/// The transcript's selection handles use this to sit on the glyph edge they
+/// adjust; unlike [`text_input_cursor_rect_for_byte_offset`] it addresses a
+/// read-only `StyledText` block rather than a focused text input.
+#[cfg(feature = "std")]
+pub fn styled_text_cursor_rect_for_byte_offset(
+    window: &crate::api::Window,
+    text: Pin<&crate::items::StyledTextItem>,
+    item_rc: &crate::item_tree::ItemRc,
+    byte_offset: usize,
+    affinity: crate::items::TextCursorAffinity,
+) -> Option<LogicalRect> {
+    let window_inner = WindowInner::from_pub(window);
+    let renderer = window_inner.window_adapter();
+    let scale_factor = renderer.renderer().scale_factor()?;
+    let cache = renderer.renderer().text_layout_cache();
+    let (width, height) = (text.width(), text.height());
+    let text: Pin<&dyn crate::item_rendering::RenderText> = text;
+    let layout_builder = shaping_builder(text, Some(item_rc), text.wrap(), scale_factor);
+    let (horizontal_align, vertical_align) = text.alignment();
+    with_text_layout(
+        cache,
+        Some(item_rc),
+        text,
+        &layout_builder,
+        LayoutOptions {
+            horizontal_align,
+            vertical_align,
+            max_height: Some(height),
+            max_width: Some(width),
+            max_lines: text.line_limit(),
+            text_overflow: text.overflow(),
+        },
+        window,
+        |layout| {
+            layout.cursor_rect_for_byte_offset(byte_offset, affinity, PhysicalLength::new(1.0))
+                / scale_factor
+        },
+    )
 }
 
 fn link_in_layout(layout: &Layout, cursor: PhysicalPoint) -> Option<std::string::String> {

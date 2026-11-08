@@ -25,6 +25,7 @@ component ProcessEntryCard inherits Rectangle {
             padding-top: 6px; padding-bottom: 6px; spacing: 6px;
             for block in root.entry.blocks : BlockView {
                 block: block;
+                mobile: root.mobile;
                 column-width: root.width - 48px;
                 copy-text(text) => { root.copy-text(text); }
                 open-resource(path) => { root.open-resource(path); }

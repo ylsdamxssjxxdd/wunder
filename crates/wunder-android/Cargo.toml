@@ -24,6 +24,9 @@ anyhow = "1"
 lz4_flex = { version = "=0.11.6", default-features = false, features = ["std", "safe-decode"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 pulldown-cmark = "0.10"
+# Markdown images arrive as bounded bytes from the workspace; decode them into
+# the thumbnail the transcript renders instead of leaving "图片加载中" forever.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 serde_json = "1"
 log = "0.4"
 wunder-desktop = { path = "../wunder-desktop", default-features = false, features = ["sqlite-storage"] }

@@ -7640,6 +7640,7 @@ dependencies = [
  "i-slint-backend-winit",
  "i-slint-core",
  "i-slint-renderer-software",
+ "image",
  "jni 0.21.1",
  "jni 0.22.4",
  "log",

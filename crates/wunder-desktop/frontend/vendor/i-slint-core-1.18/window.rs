@@ -855,12 +855,16 @@ impl WindowInner {
         event = self.click_state.check_repeat(event, self.context());
 
         // A left press ends any selection; a press that lands in a selectable text starts a
-        // new one, from that text's own handler (see `crate::text_selection`).
-        if matches!(
-            event,
-            MouseEvent::Pressed { button: crate::items::PointerEventButton::Left, .. }
-        ) {
-            crate::text_selection::pressed();
+        // new one, from that text's own handler (see `crate::text_selection`). A press on a
+        // selection handle keeps the selection so the shell's knob owns the drag.
+        if let MouseEvent::Pressed {
+            position,
+            button: crate::items::PointerEventButton::Left,
+            ..
+        } = &event
+        {
+            let window_adapter = self.window_adapter();
+            crate::text_selection::pressed_at(&window_adapter.window(), *position);
         }
 
         // While a selection is being dragged, the pointer belongs to it: the text that began the

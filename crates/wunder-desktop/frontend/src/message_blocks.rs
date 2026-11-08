@@ -308,6 +308,8 @@ fn blank(kind: i32) -> MdBlock {
         columns: 0,
         widths: ModelRc::default(),
         cells: ModelRc::default(),
+        column_widths: ModelRc::default(),
+        table_width: 0.0,
         image: slint::Image::default(),
         image_source: slint::SharedString::default(),
         image_width: 0.0,

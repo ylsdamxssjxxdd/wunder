@@ -66,9 +66,13 @@ jobs:
       - uses: msys2/setup-msys2@v2
         id: msys2
         with:
-          location: ${{ runner.temp }}\wunder-win7-msys2
+          # windows-latest already ships MSYS2 at C:\msys64; reusing it avoids
+          # the flaky GitHub-hosted MSYS2 download that returns HTTP 504.
+          location: C:\msys64
+          release: false
           msystem: MINGW32
-          update: true
+          update: false
+          suppress-deprecation-warnings: msystem-mingw32
           install: >-
             mingw-w64-i686-gcc
             mingw-w64-i686-binutils

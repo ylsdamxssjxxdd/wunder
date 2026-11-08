@@ -242,9 +242,10 @@ pub fn build_preview() -> MobileWindow {
             ui.set_trajectory_loading(false);
             ui.set_trajectory_filter(0);
             ui.set_trajectory_items(ModelRc::from(Rc::new(VecModel::from(preview_trajectory()))));
-            let (audit, segments) = preview_trajectory_audit();
+            let (audit, segments, bars) = preview_trajectory_audit();
             ui.set_trajectory_audit(audit);
             ui.set_trajectory_segments(ModelRc::from(Rc::new(VecModel::from(segments))));
+            ui.set_trajectory_bars(ModelRc::from(Rc::new(VecModel::from(bars))));
         }
     });
     let weak = ui.as_weak();
@@ -572,9 +573,13 @@ fn preview_trajectory() -> Vec<crate::TrajectoryItem> {
     engine::trajectory_projection(&preview_trajectory_page()).items
 }
 
-fn preview_trajectory_audit() -> (crate::TrajectoryAudit, Vec<crate::TrajectorySegment>) {
+fn preview_trajectory_audit() -> (
+    crate::TrajectoryAudit,
+    Vec<crate::TrajectorySegment>,
+    Vec<crate::TrajectoryBar>,
+) {
     let projection = engine::trajectory_projection(&preview_trajectory_page());
-    (projection.audit, projection.segments)
+    (projection.audit, projection.segments, projection.bars)
 }
 
 fn create_window() -> (MobileWindow, Rc<VecModel<TimelineRow>>) {
@@ -1510,6 +1515,35 @@ fn wire_callbacks(
         let _ = sender.send(Command::InquirySubmit);
     });
 
+    // ---- 目标横幅 / 计划面板 ------------------------------------------
+    let sender = commands.clone();
+    ui.on_goal_save(move |text| {
+        let _ = sender.send(Command::GoalEdit(text.to_string()));
+    });
+    let sender = commands.clone();
+    let weak = ui.as_weak();
+    ui.on_goal_pause_toggle(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        let resume = ui.get_goal_paused()
+            || ui.get_goal_phase() == "blocked"
+            || ui.get_goal_activation() == "disarmed";
+        let _ = sender.send(if resume {
+            Command::GoalResume
+        } else {
+            Command::GoalPause
+        });
+    });
+    let sender = commands.clone();
+    ui.on_goal_clear(move || {
+        let _ = sender.send(Command::GoalClear);
+    });
+    let weak = ui.as_weak();
+    ui.on_activity_plan_dismiss(move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_activity_plan_expanded(false);
+        }
+    });
+
     // The transcript's copy buttons and the message selection both land here;
     // the Android backend forwards the text to the system clipboard. Give the
     // tap visible feedback: the system clipboard has no toast of its own in a
@@ -1529,6 +1563,22 @@ fn wire_callbacks(
             state.notify("已复制");
             state.touch();
         }
+    });
+
+    // Dragging one of the floating knobs moves that end of the selection; the
+    // core owns the text layout and reports the new handle point next tick.
+    let weak = ui.as_weak();
+    ui.on_selection_handle_drag(move |start, x, y| {
+        let Some(ui) = weak.upgrade() else { return };
+        i_slint_core::text_selection::move_handle(
+            ui.window(),
+            if start {
+                i_slint_core::text_selection::SelectionHandle::Start
+            } else {
+                i_slint_core::text_selection::SelectionHandle::End
+            },
+            i_slint_core::lengths::LogicalPoint::new(x, y),
+        );
     });
 }
 
@@ -1559,6 +1609,12 @@ fn inquiry_row(index: usize, question: &engine::InquiryQuestionView) -> InquiryQ
 struct RowCache {
     renderer: MarkdownRenderer,
     rows: HashMap<String, (u64, TimelineRow)>,
+    /// Decoded workspace images by source, shared with every block model the
+    /// cache produced. `None` records a failed load.
+    images: HashMap<String, Option<slint::Image>>,
+    /// Sources seen in a projection but not decoded yet; the tick forwards a
+    /// bounded batch to the engine.
+    wanted: Vec<String>,
 }
 
 impl Default for RowCache {
@@ -1566,6 +1622,8 @@ impl Default for RowCache {
         Self {
             renderer: MarkdownRenderer::new(),
             rows: HashMap::new(),
+            images: HashMap::new(),
+            wanted: Vec::new(),
         }
     }
 }
@@ -1582,12 +1640,95 @@ impl RowCache {
             self.rows.clear();
         }
         let row = data.to_row(&mut self.renderer);
+        self.hydrate_row(&row);
         self.rows.insert(data.id.clone(), (signature, row.clone()));
         row
     }
 
     fn from_iter<'a>(&mut self, data: impl Iterator<Item = &'a RowData>) -> Vec<TimelineRow> {
         data.map(|row| self.row(row)).collect()
+    }
+
+    /// Merge freshly decoded images into the cache. The pixels are shared with
+    /// every block model, so this only records new sources.
+    fn sync_images(&mut self, images: &HashMap<String, Option<crate::engine::SharedImage>>) {
+        for (source, image) in images {
+            if self.images.contains_key(source) {
+                continue;
+            }
+            let image = image.as_ref().map(|pixels| {
+                slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(
+                    &pixels.rgba,
+                    pixels.width,
+                    pixels.height,
+                ))
+            });
+            if self.images.len() >= 64 {
+                // Block models keep their own pixel handles; dropping this
+                // lookup only makes a future projection request the source
+                // again.
+                self.images.clear();
+            }
+            self.images.insert(source.clone(), image);
+        }
+    }
+
+    fn take_wanted(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.wanted)
+    }
+
+    /// Patch every cached row; called after new images landed. The rows share
+    /// their block models with the published UI model, so the pictures appear
+    /// without rebuilding the transcript.
+    fn hydrate_all(&mut self) {
+        let rows: Vec<TimelineRow> = self.rows.values().map(|(_, row)| row.clone()).collect();
+        for row in &rows {
+            self.hydrate_row(row);
+        }
+    }
+
+    fn hydrate_row(&mut self, row: &TimelineRow) {
+        self.hydrate_model(&row.blocks);
+        self.hydrate_model(&row.reasoning_blocks);
+        for entry in row.process_entries.iter() {
+            self.hydrate_model(&entry.blocks);
+        }
+    }
+
+    fn hydrate_model(&mut self, model: &ModelRc<crate::MdBlock>) {
+        if model.row_count() == 0 {
+            return;
+        }
+        for index in 0..model.row_count() {
+            let Some(mut block) = model.row_data(index) else {
+                continue;
+            };
+            if block.kind != crate::md::block::IMAGE || block.image_source.is_empty() {
+                continue;
+            }
+            if block.image.size().width > 0 || block.image_error {
+                continue;
+            }
+            let source = block.image_source.to_string();
+            match self.images.get(&source) {
+                Some(Some(image)) => {
+                    let size = image.size();
+                    block.image = image.clone();
+                    block.image_width = size.width as f32;
+                    block.image_height = size.height as f32;
+                    model.set_row_data(index, block);
+                }
+                Some(None) => {
+                    block.image_error = true;
+                    model.set_row_data(index, block);
+                }
+                None => {
+                    if !self.wanted.iter().any(|held| held == &source) {
+                        self.wanted.push(source);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1738,6 +1879,32 @@ fn update_progress_text(downloaded: u64, total: u64) -> String {
     }
 }
 
+/// 目标横幅的计时文案：省略前导的零单位，与桌面版一致。
+fn goal_elapsed(seconds: i64) -> String {
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let rest = seconds % 60;
+    if hours > 0 {
+        format!("{hours}小时{minutes}分{rest}秒")
+    } else if minutes > 0 {
+        format!("{minutes}分{rest}秒")
+    } else {
+        format!("{rest}秒")
+    }
+}
+
+/// 状态胶囊指向的步骤：执行中的优先，否则第一个未完成的；全部完成时为空。
+fn plan_current(steps: &[crate::engine::PlanStepView]) -> (String, i32) {
+    let index = steps
+        .iter()
+        .position(|step| step.status == "in_progress")
+        .or_else(|| steps.iter().position(|step| step.status != "completed"));
+    match index {
+        Some(index) => (steps[index].step.clone(), index as i32 + 1),
+        None => (String::new(), 0),
+    }
+}
+
 /// 首装引导只在“还没有可用运行环境”时打开：等待自动安装（missing）或安装中。
 fn env_setup_should_open(state: &str, dismissed: bool) -> bool {
     !dismissed && matches!(state, "missing" | "installing")
@@ -1849,6 +2016,8 @@ fn start_tick(
     let mut last_editor = 0u64;
     let mut last_probe = 0u64;
     let mut last_inquiry = 0u64;
+    let mut last_goal = 0u64;
+    let mut last_activity = 0u64;
     let mut editor_was_open = false;
     let mut last_ime = -1.0f32;
     #[cfg(target_os = "android")]
@@ -1857,6 +2026,9 @@ fn start_tick(
     let mut last_voice = 0u64;
     let mut voice_started: Option<Instant> = None;
     let mut last_voice_elapsed = String::new();
+    let mut last_images = 0u64;
+    let mut last_selection = String::new();
+    let mut selection_lost_at: Option<Instant> = None;
 
     let timer = Timer::default();
     timer.start(TimerMode::Repeated, TICK, move || {
@@ -1883,6 +2055,13 @@ fn start_tick(
         host_ticks = host_ticks.wrapping_add(1);
         if host_ticks % 30 == 0 {
             let _ = commands.send(Command::RefreshTasks);
+            // 目标横幅的本地秒表：只在目标真正执行时前进。
+            if let Ok(mut state) = shared.lock() {
+                if state.goal.active() && !state.goal.paused() {
+                    state.goal.seconds = state.goal.seconds.saturating_add(1);
+                    state.goal_rev = state.goal_rev.wrapping_add(1);
+                }
+            }
         }
         // Settings pages 7 (tools) and 8 (agent) are opened inside the Slint
         // sheet, so the shell detects the page transition and asks the engine
@@ -2156,6 +2335,12 @@ fn start_tick(
                 ui.set_inquiry_total(0);
                 ui.set_inquiry_expanded(false);
                 ui.set_inquiry_ready(false);
+                // 目标与计划只属于本机会话。
+                ui.set_goal_visible(false);
+                ui.set_goal_active(false);
+                ui.set_goal_paused(false);
+                ui.set_activity_steps_total(0);
+                ui.set_activity_plan_steps(ModelRc::default());
                 if active.rows.is_empty() {
                     model.set_vec(Vec::new());
                 } else {
@@ -2184,6 +2369,9 @@ fn start_tick(
                 last_live = u64::MAX;
                 last_inquiry = u64::MAX;
             }
+            // 切回本机时强制重新投影目标与计划。
+            last_goal = u64::MAX;
+            last_activity = u64::MAX;
             last_target_rev = state.target_rev;
         }
 
@@ -2403,6 +2591,50 @@ fn start_tick(
             last_presets = state.preset_rev;
         }
 
+        // 目标横幅：本机线程的目标状态，随引擎观察实时更新。
+        if state.target == 0 && state.goal_rev != last_goal {
+            let goal = &state.goal;
+            ui.set_goal_visible(goal.visible());
+            ui.set_goal_active(goal.active());
+            ui.set_goal_paused(goal.paused());
+            ui.set_goal_objective(goal.objective.as_str().into());
+            ui.set_goal_phase(goal.phase.as_str().into());
+            ui.set_goal_activation(goal.activation.as_str().into());
+            ui.set_goal_rounds(
+                format!("{}/{}", goal.rounds_started, goal.max_goal_rounds).into(),
+            );
+            ui.set_goal_elapsed(goal_elapsed(goal.seconds).into());
+            last_goal = state.goal_rev;
+        }
+
+        // 计划面板：步骤清单、完成数、当前步骤与展开态。
+        if state.target == 0 && state.plan_rev != last_activity {
+            let plan = &state.plan;
+            let total = plan.steps.len() as i32;
+            let done = plan
+                .steps
+                .iter()
+                .filter(|step| step.status == "completed")
+                .count() as i32;
+            let (current, position) = plan_current(&plan.steps);
+            ui.set_activity_running(plan.running);
+            ui.set_activity_steps_done(done);
+            ui.set_activity_steps_total(total);
+            ui.set_activity_plan_explanation(plan.explanation.as_str().into());
+            ui.set_activity_plan_current(current.into());
+            ui.set_activity_plan_position(position);
+            let rows: Vec<crate::PlanStep> = plan
+                .steps
+                .iter()
+                .map(|step| crate::PlanStep {
+                    step: step.step.as_str().into(),
+                    status: step.status.as_str().into(),
+                })
+                .collect();
+            ui.set_activity_plan_steps(ModelRc::from(Rc::new(VecModel::from(rows))));
+            last_activity = state.plan_rev;
+        }
+
         if state.target == 0 && state.inquiry_rev != last_inquiry {
             match &state.inquiry {
                 Some(panel) => {
@@ -2445,6 +2677,9 @@ fn start_tick(
             ui.set_trajectory_audit(state.trajectory_audit.clone());
             ui.set_trajectory_segments(ModelRc::from(Rc::new(VecModel::from(
                 state.trajectory_segments.clone(),
+            ))));
+            ui.set_trajectory_bars(ModelRc::from(Rc::new(VecModel::from(
+                state.trajectory_bars.clone(),
             ))));
             last_trajectory = state.trajectory_rev;
         }
@@ -2744,8 +2979,8 @@ fn start_tick(
         if ui.get_env_setup_open() {
             if state.ubuntu.state == "installed" {
                 let ready_at = *env_ready_at.get_or_insert_with(Instant::now);
-                // 液面缓动 850ms，停留要盖过它，用户才能看到液面真正漫到顶。
-                if ready_at.elapsed() >= Duration::from_millis(1150) {
+                // 液面缓动 850ms，再留约 0.6s 给完成时的气泡潮。
+                if ready_at.elapsed() >= Duration::from_millis(1500) {
                     ui.set_env_setup_open(false);
                     env_ready_at = None;
                 }
@@ -2988,6 +3223,62 @@ fn start_tick(
                 }
             }
             last_patch = state.patch_rev;
+        }
+
+        // Markdown images: merge decoded thumbnails, patch the cached block
+        // models in place, then ask the engine for the remaining sources in a
+        // bounded batch. The engine owns the workspace boundary and decoder.
+        if state.images_rev != last_images {
+            last_images = state.images_rev;
+            cache.sync_images(&state.images);
+            cache.hydrate_all();
+        }
+        for source in cache.take_wanted().into_iter().take(4) {
+            let _ = commands.send(Command::LoadMarkdownImage { source });
+        }
+
+        // The long-press selection lives in the core's text layer; poll it so
+        // the copy action can float above the composer. The grace window keeps
+        // the bar alive while its own tap clears the selection on press.
+        let selection = i_slint_core::text_selection::selection_text().unwrap_or_default();
+        if !selection.is_empty() {
+            selection_lost_at = None;
+            let changed = ui.get_selection_text().as_str() != selection.as_str();
+            last_selection = selection;
+            if changed {
+                let value = last_selection.as_str().into();
+                ui.set_selection_text(value);
+            }
+        } else if !last_selection.is_empty() {
+            let lost = *selection_lost_at.get_or_insert_with(Instant::now);
+            if lost.elapsed() >= Duration::from_millis(700) {
+                last_selection.clear();
+                selection_lost_at = None;
+                ui.set_selection_text("".into());
+            }
+        }
+
+        // Two draggable knobs on the selection edges. Positions come from the
+        // core's text layout, so they follow wrapping and scrolling; only the
+        // changed values are pushed to avoid repainting the overlay.
+        if let Some((start, end)) = i_slint_core::text_selection::handle_positions(ui.window()) {
+            if !ui.get_selection_handles() {
+                ui.set_selection_handles(true);
+            }
+            if (ui.get_selection_start_x() - start.x).abs() > 0.5 {
+                ui.set_selection_start_x(start.x);
+            }
+            if (ui.get_selection_start_y() - start.y).abs() > 0.5 {
+                ui.set_selection_start_y(start.y);
+            }
+            if (ui.get_selection_end_x() - end.x).abs() > 0.5 {
+                ui.set_selection_end_x(end.x);
+            }
+            if (ui.get_selection_end_y() - end.y).abs() > 0.5 {
+                ui.set_selection_end_y(end.y);
+            }
+        } else if ui.get_selection_handles() {
+            ui.set_selection_handles(false);
         }
     });
     // Slint cancels a dropped timer, so it must outlive `build`.
@@ -3646,7 +3937,7 @@ pub fn install_preview_data(
     rows.push(process);
 
     let mut body = RowData::new(KIND_BODY, "p-body");
-    let text = "聊天区现在复用了桌面版的同一套组件：\n\n- `TimelineView` 负责消息流\n- `Composer` 负责输入与模型选择\n\n代码块样式也保持一致：\n\n```rust\nlet rows = project::project_turn(&turn);\n```\n\n> 手机上只保留单窗口与抽屉。";
+    let text = "聊天区现在复用了桌面版的同一套组件：\n\n- `TimelineView` 负责消息流\n- `Composer` 负责输入与模型选择\n\n| 文件 | 行数 | 修改类型 | 说明 | 状态 | 最后提交 |\n| --- | --- | --- | --- | --- | --- |\n| crates/wunder-desktop/frontend/ui/timeline.slint | 1284 | 修改 | 时间线组件与折叠交互调整 | 已提交 | 2026-11-08 18:00:00 |\n| crates/wunder-desktop/frontend/src/timeline.rs | 3315 | 修改 | 实时投影与视图缓存同步 | 待验证 | 2026-11-08 17:42:11 |\n| crates/wunder-android/src/project.rs | 1306 | 新增 | 手机端行数据投影 | 已提交 | 2026-11-08 16:20:33 |\n\n代码块样式也保持一致：\n\n```rust\nlet rows = project::project_turn(&turn);\n```\n\n> 手机上只保留单窗口与抽屉。";
     body.text = text.into();
     body.blocks_src = text.into();
     rows.push(body);
@@ -3770,6 +4061,30 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
         }
         "toast" => {
             ui.set_toast("已复制到剪贴板".into());
+        }
+        "goal-plan" | "goal-plan-expanded" => {
+            ui.set_goal_visible(true);
+            ui.set_goal_active(true);
+            ui.set_goal_phase("active".into());
+            ui.set_goal_activation("armed".into());
+            ui.set_goal_objective("整理工作区结构并补齐文档".into());
+            ui.set_goal_rounds("2/8".into());
+            ui.set_goal_elapsed("1分12秒".into());
+            ui.set_activity_steps_total(5);
+            ui.set_activity_steps_done(2);
+            ui.set_activity_running(true);
+            ui.set_activity_plan_explanation("先梳理目录，再补文档".into());
+            ui.set_activity_plan_current("核对模块清单".into());
+            ui.set_activity_plan_position(3);
+            let steps = vec![
+                crate::PlanStep { step: "扫描工作区".into(), status: "completed".into() },
+                crate::PlanStep { step: "合并重复模块".into(), status: "completed".into() },
+                crate::PlanStep { step: "核对模块清单".into(), status: "in_progress".into() },
+                crate::PlanStep { step: "补齐接口文档".into(), status: "pending".into() },
+                crate::PlanStep { step: "回归测试".into(), status: "pending".into() },
+            ];
+            ui.set_activity_plan_steps(ModelRc::from(Rc::new(VecModel::from(steps))));
+            ui.set_activity_plan_expanded(page == "goal-plan-expanded");
         }
         "model-gauge" => {
             ui.set_context_usage(0.62);
@@ -3989,9 +4304,10 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_trajectory_items(ModelRc::from(Rc::new(VecModel::from(
                 filtered_trajectory(&preview_trajectory(), filter),
             ))));
-            let (audit, segments) = preview_trajectory_audit();
+            let (audit, segments, bars) = preview_trajectory_audit();
             ui.set_trajectory_audit(audit);
             ui.set_trajectory_segments(ModelRc::from(Rc::new(VecModel::from(segments))));
+            ui.set_trajectory_bars(ModelRc::from(Rc::new(VecModel::from(bars))));
             ui.set_trajectory_open(true);
         }
         "editor" => {
@@ -4142,6 +4458,36 @@ mod tests {
     }
 
     #[test]
+    fn cached_rows_pick_up_decoded_images_without_reprojection() {
+        let mut cache = RowCache::default();
+        let mut data = RowData::new(project::KIND_BODY, "row-1");
+        let text = "![图](chart.png)";
+        data.text = text.into();
+        data.blocks_src = text.into();
+        let row = cache.row(&data);
+        let image = row.blocks.row_data(0).expect("image block");
+        assert_eq!(image.kind, crate::md::block::IMAGE);
+        assert_eq!(image.image.size().width, 0);
+        assert_eq!(cache.take_wanted(), vec!["chart.png".to_string()]);
+
+        cache.images.insert(
+            "chart.png".into(),
+            Some(slint::Image::from_rgba8(
+                slint::SharedPixelBuffer::clone_from_slice(&[255, 0, 0, 255], 1, 1),
+            )),
+        );
+        cache.hydrate_all();
+        // The cached row shares its block model with the published row, so the
+        // picture appears without rebuilding the transcript.
+        let row = cache.row(&data);
+        let image = row.blocks.row_data(0).expect("image block");
+        assert_eq!(image.image.size().width, 1);
+        assert_eq!(image.image_width, 1.0);
+        assert_eq!(image.image_height, 1.0);
+        assert!(cache.take_wanted().is_empty());
+    }
+
+    #[test]
     fn env_setup_opens_only_before_the_environment_is_usable() {
         assert!(env_setup_should_open("missing", false));
         assert!(env_setup_should_open("installing", false));
@@ -4161,5 +4507,27 @@ mod tests {
         // 新一次安装（错误后重试）从低进度重新开始。
         assert_eq!(next_env_progress(94, "error", 0), 0);
         assert_eq!(next_env_progress(0, "installing", 150), 100);
+    }
+
+    #[test]
+    fn goal_elapsed_drops_leading_zero_units() {
+        assert_eq!(goal_elapsed(0), "0秒");
+        assert_eq!(goal_elapsed(65), "1分5秒");
+        assert_eq!(goal_elapsed(3725), "1小时2分5秒");
+    }
+
+    #[test]
+    fn plan_current_prefers_running_then_first_unfinished() {
+        let step = |status: &str| crate::engine::PlanStepView {
+            step: format!("步骤-{status}"),
+            status: status.into(),
+        };
+        let running = vec![step("completed"), step("in_progress"), step("pending")];
+        assert_eq!(plan_current(&running), ("步骤-in_progress".into(), 2));
+        let pending = vec![step("completed"), step("pending")];
+        assert_eq!(plan_current(&pending), ("步骤-pending".into(), 2));
+        let done = vec![step("completed"), step("completed")];
+        assert_eq!(plan_current(&done), (String::new(), 0));
+        assert_eq!(plan_current(&[]), (String::new(), 0));
     }
 }

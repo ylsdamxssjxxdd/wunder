@@ -222,10 +222,13 @@ impl MarkdownRenderer {
             }
         }
 
+        let column_widths = column_pixels(&weights);
         let mut row = blank(block::TABLE);
         row.space_before = space_before(block::TABLE, 0, *prev, false);
         row.columns = columns as i32;
         row.widths = float_model(&normalize(weights));
+        row.column_widths = float_model(&column_widths);
+        row.table_width = column_widths.iter().sum();
         row.cells = cell_model(cells);
         row.quoted = quoted;
         rows.push(row);
@@ -344,6 +347,16 @@ fn normalize(mut weights: Vec<f32>) -> Vec<f32> {
     weights.into_iter().map(|weight| weight / total).collect()
 }
 
+/// Natural column widths in pixels for the touch table layout: the widest
+/// cell at body-font scale, clamped so one long path cannot dominate and a
+/// narrow column still shows a few characters.
+fn column_pixels(weights: &[f32]) -> Vec<f32> {
+    weights
+        .iter()
+        .map(|weight| (weight * 7.5 + 26.0).clamp(64.0, 260.0))
+        .collect()
+}
+
 /// Display width in terminal cells: CJK and emoji take two.
 fn display_width(text: &str) -> usize {
     text.chars()
@@ -391,6 +404,8 @@ fn blank(kind: i32) -> MdBlock {
         columns: 0,
         widths: float_model(&[]),
         cells: cell_model(Vec::new()),
+        column_widths: float_model(&[]),
+        table_width: 0.0,
         image: slint::Image::default(),
         image_source: SharedString::default(),
         image_width: 0.0,
@@ -506,6 +521,11 @@ mod tests {
             widths[0] > widths[1],
             "the wider column should get more room: {widths:?}"
         );
+        // Touch layout: natural pixels summing to the table width.
+        let natural: Vec<f32> = table.column_widths.iter().collect();
+        assert_eq!(natural.len(), 2);
+        assert!((natural.iter().sum::<f32>() - table.table_width).abs() < 0.01);
+        assert!(natural[0] > natural[1]);
     }
 
     #[test]

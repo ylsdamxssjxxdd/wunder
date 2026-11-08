@@ -4,12 +4,12 @@
 //! the UI only copies the latest projection on its 33 ms tick.
 
 use crate::project::{
-    self, LiveTurn, RowData, STATUS_FAILED, STATUS_RUNNING, STATUS_STOPPED,
+    self, LiveTurn, RowData, STATUS_DONE, STATUS_FAILED, STATUS_RUNNING, STATUS_STOPPED,
 };
 use crate::{
     MobileChannelDraft, MobileCronDraft, MobileCronJob, MobileCronRun, MobileKnowledgeDraft,
     MobileMcpDraft, MobileMemory, MobileMemoryDraft, MobileSession, MobileTool, MobileToolFile,
-    MobileToolResource, MobileWorkspace, ModelCard, TrajectoryAudit, TrajectoryItem,
+    MobileToolResource, MobileWorkspace, ModelCard, TrajectoryAudit, TrajectoryBar, TrajectoryItem,
     TrajectorySegment, WorkspaceFile,
 };
 use serde_json::Value;
@@ -21,8 +21,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use wunder_desktop::native::{
-    NativeKnowledgeDraft, NativeMcpServerDraft, NativeToolFile, NativeToolFiles,
-    NativeToolResource, ToolResourceKind,
+    NativeChatCommand, NativeGoal, NativeKnowledgeDraft, NativeMcpServerDraft, NativeToolFile,
+    NativeToolFiles, NativeToolResource, ToolResourceKind,
 };
 use wunder_desktop::{
     AgentSettingsEdit, ModelEdit, NativeChatEvent, NativeChatInput, NativeChatTurn,
@@ -36,6 +36,11 @@ pub enum Command {
     Send(String),
     Stop,
     SelectModel(String),
+    /// 目标横幅的编辑/暂停/恢复/清除，复用斜杠命令管线。
+    GoalEdit(String),
+    GoalResume,
+    GoalPause,
+    GoalClear,
     RefreshSessions,
     LoadSettings,
     RefreshPermissions,
@@ -97,6 +102,16 @@ pub enum Command {
     },
     DownloadWorkspace {
         path: String,
+    },
+    /// Decode one Markdown image for the transcript. The UI only knows the
+    /// source string; the engine owns the workspace boundary and the decoder.
+    LoadMarkdownImage {
+        source: String,
+    },
+    /// A decoder worker finished one Markdown image; `None` is a failed load.
+    MarkdownImageLoaded {
+        source: String,
+        image: Option<SharedImage>,
     },
     WorkspaceSaved {
         ok: bool,
@@ -757,6 +772,55 @@ pub struct MemoryEditorView {
     pub saving: bool,
 }
 
+/// One decoded Markdown image, already bounded to display size by the engine
+/// worker. The UI only wraps it into a `slint::Image`.
+pub struct SharedImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// 目标横幅：线程当前目标的只读快照与本地计时。
+#[derive(Default, Clone)]
+pub struct GoalView {
+    pub objective: String,
+    /// active | paused | blocked | complete
+    pub phase: String,
+    /// armed | disarmed
+    pub activation: String,
+    pub rounds_started: i64,
+    pub max_goal_rounds: i64,
+    pub seconds: i64,
+}
+
+impl GoalView {
+    pub(crate) fn active(&self) -> bool {
+        self.phase == "active" && self.activation == "armed"
+    }
+
+    pub(crate) fn paused(&self) -> bool {
+        self.phase == "paused"
+    }
+
+    pub(crate) fn visible(&self) -> bool {
+        !self.objective.trim().is_empty() && !self.phase.is_empty() && self.phase != "complete"
+    }
+}
+
+#[derive(Default, Clone, PartialEq)]
+pub struct PlanStepView {
+    pub step: String,
+    pub status: String,
+}
+
+/// 计划面板：最近一次计划清单与是否有回合正在执行。
+#[derive(Default, Clone)]
+pub struct PlanView {
+    pub explanation: String,
+    pub steps: Vec<PlanStepView>,
+    pub running: bool,
+}
+
 /// Everything the UI tick reads. Revisions keep the tick cheap: scalar state
 /// and the two row segments are copied only when the engine actually changed
 /// them, so a streaming token never rebuilds the whole transcript model.
@@ -812,6 +876,13 @@ pub struct Shared {
     /// in the same thread replaces the slot; the older stream keeps receiving
     /// output but may only surface it through the durable projection.
     pub live_stream_id: u64,
+    /// Decoded Markdown images keyed by their message source. `None` records a
+    /// failed load so a broken reference is not retried on every projection.
+    pub images: std::collections::HashMap<String, Option<SharedImage>>,
+    /// Sources a decoder worker is currently reading; duplicate requests while
+    /// one is in flight are dropped instead of queued.
+    pub images_inflight: std::collections::HashSet<String>,
+    pub images_rev: u64,
     pub sessions: Vec<MobileSession>,
     pub archived_sessions: Vec<MobileSession>,
     pub archived_total: i64,
@@ -822,6 +893,7 @@ pub struct Shared {
     pub trajectory_items: Vec<TrajectoryItem>,
     pub trajectory_audit: TrajectoryAudit,
     pub trajectory_segments: Vec<TrajectorySegment>,
+    pub trajectory_bars: Vec<TrajectoryBar>,
     pub trajectory_filter: i32,
     /// System prompt preview opened by the greeting's eye button.
     pub prompt_preview: String,
@@ -887,6 +959,11 @@ pub struct Shared {
     pub channel_editor: Option<crate::channels::ChannelEditorView>,
     pub inquiry: Option<InquiryView>,
     pub inquiry_rev: u64,
+    /// 目标横幅与计划面板（输入带上沿）。
+    pub goal: GoalView,
+    pub goal_rev: u64,
+    pub plan: PlanView,
+    pub plan_rev: u64,
     /// Live command sessions in the active thread and the child agents a
     /// finished turn still owns; both feed the composer's status pills.
     pub running_task_count: i32,
@@ -1373,6 +1450,20 @@ fn run(
                 }
             }
             Command::DownloadWorkspace { path } => download_workspace(&desktop, &shared, &path),
+            Command::LoadMarkdownImage { source } => {
+                start_markdown_image(&desktop, &shared, &sender, source)
+            }
+            Command::MarkdownImageLoaded { source, image } => {
+                if let Ok(mut state) = shared.lock() {
+                    state.images_inflight.remove(&source);
+                    if state.images.len() >= IMAGE_CACHE_LIMIT {
+                        state.images.clear();
+                    }
+                    state.images.insert(source, image);
+                    state.images_rev = state.images_rev.wrapping_add(1);
+                    state.touch();
+                }
+            }
             Command::WorkspaceSaved { ok, name } => {
                 if ok {
                     notify(&shared, format!("已保存 {name}"));
@@ -1390,6 +1481,46 @@ fn run(
             Command::CaptureScreenshot => start_screenshot(&shared),
             Command::ScreenshotResult { status } => apply_screenshot(&desktop, &shared, &status),
             Command::Send(text) => {
+                // Slash commands are local UI/engine commands, not model
+                // messages. NativeDesktop::send_chat rejects them on purpose,
+                // so route them here before opening a stream.
+                if let Some(command) = NativeChatCommand::parse(&text) {
+                    match command {
+                        NativeChatCommand::Help => {
+                            notify(
+                                &shared,
+                                "/new 新建线程 · /stop 停止生成 · /goal 目标 · /goal resume 继续 · /goal pause 暂停 · /goal clear 清除 · /compact 压缩上下文",
+                            );
+                        }
+                        NativeChatCommand::New => {
+                            if let Err(error) = open_thread_in_workspace(
+                                &desktop,
+                                &shared,
+                                &generation,
+                                &mut watch_cancel,
+                                None,
+                            ) {
+                                notify(&shared, format!("无法新建会话：{error}"));
+                            }
+                        }
+                        NativeChatCommand::Stop => stop_generation(&desktop, &shared),
+                        compact @ NativeChatCommand::Compact => {
+                            let busy = shared
+                                .lock()
+                                .map(|state| state.generating)
+                                .unwrap_or(false);
+                            if busy {
+                                notify(&shared, "请先停止当前任务再压缩上下文");
+                            } else {
+                                run_chat_command(desktop.clone(), shared.clone(), compact);
+                            }
+                        }
+                        other => {
+                            run_chat_command(desktop.clone(), shared.clone(), other);
+                        }
+                    }
+                    continue;
+                }
                 let session = shared.lock().unwrap().session_id.clone();
                 if session.is_empty() {
                     notify(&shared, "会话尚未就绪");
@@ -1401,14 +1532,18 @@ fn run(
                     .and_then(|(_text, turn_id)| turn_id);
                 start_stream(desktop.clone(), shared.clone(), session, text, inquiry_turn_id);
             }
-            Command::Stop => {
-                let session = shared.lock().unwrap().session_id.clone();
-                if let Err(error) = desktop.cancel_chat(&session) {
-                    notify(&shared, format!("停止失败：{error}"));
-                }
-                let mut state = shared.lock().unwrap();
-                state.stopping = true;
-                state.touch();
+            Command::Stop => stop_generation(&desktop, &shared),
+            Command::GoalEdit(text) => {
+                run_chat_command(desktop.clone(), shared.clone(), NativeChatCommand::GoalEdit(text));
+            }
+            Command::GoalResume => {
+                run_chat_command(desktop.clone(), shared.clone(), NativeChatCommand::GoalResume);
+            }
+            Command::GoalPause => {
+                run_chat_command(desktop.clone(), shared.clone(), NativeChatCommand::GoalPause);
+            }
+            Command::GoalClear => {
+                run_chat_command(desktop.clone(), shared.clone(), NativeChatCommand::GoalClear);
             }
             Command::SelectModel(key) => {
                 let session = shared.lock().unwrap().session_id.clone();
@@ -1970,7 +2105,21 @@ fn run(
             Command::CloudSelectThread(id) => {
                 crate::cloud::select_thread(&desktop, &shared, &id);
             }
-            Command::CloudSend(text) => crate::cloud::send(&desktop, &shared, text),
+            Command::CloudSend(text) => {
+                if let Some(command) = NativeChatCommand::parse(&text) {
+                    match command {
+                        NativeChatCommand::Help => notify(
+                            &shared,
+                            "云端模式：/new 新建会话 · /stop 停止生成；/goal、/compact 请切到本机会话使用",
+                        ),
+                        NativeChatCommand::New => crate::cloud::new_thread(&desktop, &shared),
+                        NativeChatCommand::Stop => crate::cloud::stop(&desktop, &shared),
+                        _ => notify(&shared, "云端模式暂不支持该命令，请切到本机会话使用"),
+                    }
+                    continue;
+                }
+                crate::cloud::send(&desktop, &shared, text)
+            }
             Command::CloudStop => crate::cloud::stop(&desktop, &shared),
             Command::CloudPoll => crate::cloud::poll(&desktop, &shared),
             Command::CloudRename { id, title } => {
@@ -2115,6 +2264,48 @@ fn notify(shared: &Arc<Mutex<Shared>>, message: impl Into<String>) {
     if let Ok(mut state) = shared.lock() {
         state.notify(message);
         state.touch();
+    }
+}
+
+fn stop_generation(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
+    let session = shared.lock().unwrap().session_id.clone();
+    if session.is_empty() {
+        notify(shared, "会话尚未就绪");
+        return;
+    }
+    if let Err(error) = desktop.cancel_chat(&session) {
+        notify(shared, format!("停止失败：{error}"));
+    }
+    if let Ok(mut state) = shared.lock() {
+        state.stopping = true;
+        state.touch();
+    }
+}
+
+/// Goal/compaction commands do real engine work, so they run on a worker
+/// thread and report their outcome through the existing toast surface.
+fn run_chat_command(
+    desktop: Arc<NativeDesktop>,
+    shared: Arc<Mutex<Shared>>,
+    command: NativeChatCommand,
+) {
+    let session = shared.lock().unwrap().session_id.clone();
+    if session.is_empty() {
+        notify(&shared, "请先进入一个会话后再使用命令");
+        return;
+    }
+    let spawned = thread::Builder::new()
+        .name("wunder-android-command".into())
+        .spawn(move || {
+            match desktop.execute_chat_command(&session, command) {
+                Ok(message) => notify(&shared, message),
+                Err(error) => notify(&shared, format!("命令执行失败：{error}")),
+            }
+            let active = session;
+            refresh_sessions(&desktop, &shared, Some(&active));
+        });
+    if let Err(error) = spawned {
+        log::error!("spawn android chat command failed: {error}");
     }
 }
 
@@ -2981,6 +3172,16 @@ fn select_session(
         state.model_name = state.model_key.clone();
         state.durable_rows = project_turns(&initial_turns);
         state.durable_turns = initial_turns.clone();
+        // 目标随线程恢复；计时从 0 重新开始。
+        state.goal = GoalView {
+            objective: snapshot.session.goal.objective.clone(),
+            phase: snapshot.session.goal.phase.clone(),
+            activation: snapshot.session.goal.activation.clone(),
+            rounds_started: snapshot.session.goal.rounds_started,
+            max_goal_rounds: snapshot.session.goal.max_goal_rounds,
+            seconds: 0,
+        };
+        state.goal_rev = state.goal_rev.wrapping_add(1);
         state.inquiry = pending_inquiry(&initial_turns, session, &state.consumed_inquiries);
         state.inquiry_rev = state.inquiry_rev.wrapping_add(1);
         state.live_rows.clear();
@@ -3002,6 +3203,10 @@ fn select_session(
             String::new()
         };
         state.turn_hint.clear();
+        // 计划面板恢复该线程最后一次发布的清单。
+        let (plan_explanation, plan_steps) = plan_from_turns(&state.durable_turns);
+        let plan_running = state.generating;
+        set_plan(&mut state, plan_explanation, plan_steps, plan_running);
         state.touch();
     }
     refresh_context_usage(desktop, shared, session);
@@ -3031,6 +3236,9 @@ fn select_session(
                         }
                         publish_durable(&desktop, &shared, &session, turns);
                     }
+                    Some(NativeThreadUpdate::Goal(goal)) => {
+                        update_goal(&shared, &goal);
+                    }
                     Some(NativeThreadUpdate::Failed(message)) => {
                         notify(&shared, message);
                     }
@@ -3041,6 +3249,99 @@ fn select_session(
         })
         .ok();
     Ok(())
+}
+
+/// 目标更新：objective 变化或从非活跃变为活跃时重置本地计时。
+fn update_goal(shared: &Arc<Mutex<Shared>>, goal: &NativeGoal) {
+    let Ok(mut state) = shared.lock() else {
+        return;
+    };
+    let objective_changed = state.goal.objective != goal.objective;
+    let was_active = state.goal.active();
+    state.goal.objective = goal.objective.clone();
+    state.goal.phase = goal.phase.clone();
+    state.goal.activation = goal.activation.clone();
+    state.goal.rounds_started = goal.rounds_started;
+    state.goal.max_goal_rounds = goal.max_goal_rounds;
+    if objective_changed || (state.goal.active() && !was_active) {
+        state.goal.seconds = 0;
+    }
+    state.goal_rev = state.goal_rev.wrapping_add(1);
+    state.touch();
+}
+
+/// 取最近一轮带计划的回合（桌面语义一致），供锁外计算、锁内写入。
+fn plan_from_turns(turns: &[NativeChatTurn]) -> (String, Vec<PlanStepView>) {
+    let Some(plan) = turns.iter().rev().find_map(|turn| turn.plan.as_ref()) else {
+        return (String::new(), Vec::new());
+    };
+    let steps = plan
+        .steps
+        .iter()
+        .take(32)
+        .map(|step| PlanStepView {
+            step: step.step.clone(),
+            status: step.status.clone(),
+        })
+        .collect();
+    (plan.explanation.clone(), steps)
+}
+
+fn set_plan(state: &mut Shared, explanation: String, steps: Vec<PlanStepView>, running: bool) {
+    if state.plan.explanation == explanation
+        && state.plan.steps == steps
+        && state.plan.running == running
+    {
+        return;
+    }
+    state.plan = PlanView {
+        explanation,
+        steps,
+        running,
+    };
+    state.plan_rev = state.plan_rev.wrapping_add(1);
+    state.touch();
+}
+
+/// 流内的计划事件：工具每次发布整份清单，整体替换；最多保留 32 步。
+fn apply_plan_event(shared: &Arc<Mutex<Shared>>, value: &serde_json::Value) {
+    let envelope = value.get("data").unwrap_or(value);
+    let data = envelope.get("data").unwrap_or(envelope);
+    let explanation = data
+        .get("explanation")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let steps: Vec<PlanStepView> = data
+        .get("plan")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .take(32)
+                .filter_map(|entry| {
+                    Some(PlanStepView {
+                        step: entry.get("step")?.as_str()?.to_string(),
+                        status: entry
+                            .get("status")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("pending")
+                            .to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let Ok(mut state) = shared.lock() else {
+        return;
+    };
+    state.plan = PlanView {
+        explanation,
+        steps,
+        running: true,
+    };
+    state.plan_rev = state.plan_rev.wrapping_add(1);
+    state.touch();
 }
 
 fn running_subagents(turns: &[NativeChatTurn]) -> i32 {
@@ -3185,6 +3486,10 @@ fn publish_durable(
             let rows = project_turns_preserving(&state.durable_turns, &state.durable_rows);
             state.durable_rows = rows;
             restore_pending_inquiry(&mut state, session);
+            // 落库是权威时同步计划面板；实时流期间由 plan_update 事件接管。
+            let (plan_explanation, plan_steps) = plan_from_turns(&state.durable_turns);
+            let plan_running = state.generating;
+            set_plan(&mut state, plan_explanation, plan_steps, plan_running);
             state.rows_rev = state.rows_rev.wrapping_add(1);
             state.stream_revision = state.stream_revision.wrapping_add(1);
             state.touch();
@@ -3209,6 +3514,9 @@ fn publish_durable(
         let rows = project_turns_preserving(&state.durable_turns, &state.durable_rows);
         state.durable_rows = rows;
         restore_pending_inquiry(&mut state, session);
+        let (plan_explanation, plan_steps) = plan_from_turns(&state.durable_turns);
+        let plan_running = state.generating;
+        set_plan(&mut state, plan_explanation, plan_steps, plan_running);
         state.rows_rev = state.rows_rev.wrapping_add(1);
         state.stream_revision = state.stream_revision.wrapping_add(1);
         state.touch();
@@ -5222,6 +5530,97 @@ fn active_workspace_root(
         .map_err(|error| error.to_string())
 }
 
+/// Decoded transcript images kept in the shared slot. Each entry is at most a
+/// 640×400 RGBA thumbnail, so the cap stays around a few MB.
+const IMAGE_CACHE_LIMIT: usize = 48;
+
+/// Candidate workspace roots for one image source. The active workspace goes
+/// first, then every known workspace: a message may reference an absolute path
+/// in the workspace it was produced in while the user reads another thread.
+fn markdown_image_roots(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) -> Vec<String> {
+    let mut roots = Vec::new();
+    if let Ok(root) = active_workspace_root(desktop, shared) {
+        roots.push(root);
+    }
+    if let Ok(list) = desktop.list_workspaces() {
+        for workspace in list {
+            if !workspace.root_path.trim().is_empty() && !roots.contains(&workspace.root_path) {
+                roots.push(workspace.root_path);
+            }
+        }
+    }
+    if let Ok(containers) = desktop.container_roots() {
+        for (_, root) in containers {
+            if !root.trim().is_empty() && !roots.contains(&root) {
+                roots.push(root);
+            }
+        }
+    }
+    roots
+}
+
+/// Read and decode one image, trying each root in order. Every attempt still
+/// goes through the workspace boundary check.
+fn read_markdown_image(
+    desktop: &NativeDesktop,
+    roots: &[String],
+    source: &str,
+) -> Option<SharedImage> {
+    for root in roots {
+        let Ok(bytes) = desktop.workspace_image_bytes(root, source) else {
+            continue;
+        };
+        let image = crate::md::decode_thumbnail(&bytes).map(|(width, height, rgba)| SharedImage {
+            width,
+            height,
+            rgba,
+        });
+        if image.is_some() {
+            return image;
+        }
+    }
+    None
+}
+
+/// Queue one image decode on a worker. The engine loop stays free for stop,
+/// send and settings commands while a large JPEG decodes.
+fn start_markdown_image(
+    desktop: &Arc<NativeDesktop>,
+    shared: &Arc<Mutex<Shared>>,
+    sender: &Sender<Command>,
+    source: String,
+) {
+    let source = source.trim().to_owned();
+    if source.is_empty() {
+        return;
+    }
+    let roots = match shared.lock() {
+        Ok(mut state) => {
+            if state.images.contains_key(&source) || !state.images_inflight.insert(source.clone())
+            {
+                return;
+            }
+            drop(state);
+            markdown_image_roots(desktop, shared)
+        }
+        Err(_) => return,
+    };
+    let api = desktop.clone();
+    let sender = sender.clone();
+    let failed_source = source.clone();
+    let spawned = thread::Builder::new()
+        .name("wunder-android-image".into())
+        .spawn(move || {
+            let image = read_markdown_image(&api, &roots, &source);
+            let _ = sender.send(Command::MarkdownImageLoaded { source, image });
+        });
+    if spawned.is_err() {
+        if let Ok(mut state) = shared.lock() {
+            state.images_inflight.remove(&failed_source);
+        }
+    }
+}
+
 fn load_workspace(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, path: &str) {
     load_workspace_page(desktop, shared, path, 0, false);
 }
@@ -5667,6 +6066,7 @@ fn load_trajectory(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, id: &st
         state.trajectory_items.clear();
         state.trajectory_audit = TrajectoryAudit::default();
         state.trajectory_segments.clear();
+        state.trajectory_bars.clear();
         state.trajectory_filter = 0;
         state.trajectory_rev = state.trajectory_rev.wrapping_add(1);
         state.touch();
@@ -5689,6 +6089,7 @@ fn load_trajectory(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, id: &st
             state.trajectory_items = projection.items;
             state.trajectory_audit = projection.audit;
             state.trajectory_segments = projection.segments;
+            state.trajectory_bars = projection.bars;
         }
         Err(error) => {
             state.trajectory_error = format!("无法读取线程轨迹：{error:#}");
@@ -5761,6 +6162,29 @@ pub(crate) struct TrajectoryProjection {
     pub(crate) items: Vec<TrajectoryItem>,
     pub(crate) audit: TrajectoryAudit,
     pub(crate) segments: Vec<TrajectorySegment>,
+    pub(crate) bars: Vec<TrajectoryBar>,
+}
+
+/// One timed row before it is normalized into a timeline span and a duration
+/// bar. `title` labels the bar when the user taps it.
+struct TrajectorySpanPoint {
+    start: f64,
+    duration: f64,
+    kind: i32,
+    lane: i32,
+    boundary: bool,
+    failed: bool,
+    time: String,
+    title: String,
+}
+
+/// Mirror the desktop three-lane timeline: input, model, tool/subagent.
+fn trajectory_lane(kind: i32) -> i32 {
+    match kind {
+        1 | 4 => 1,
+        2 | 3 => 2,
+        _ => 0,
+    }
 }
 
 /// Approximate the wrapped line count of a detail dump at the detail font.
@@ -5792,7 +6216,7 @@ pub(crate) fn trajectory_projection(page: &serde_json::Value) -> TrajectoryProje
     let mut current_turn = i64::MIN;
     let mut span_start = f64::INFINITY;
     let mut span_end = f64::NEG_INFINITY;
-    let mut spans: Vec<(f64, f64, i32, bool)> = Vec::with_capacity(rows.len());
+    let mut spans: Vec<TrajectorySpanPoint> = Vec::with_capacity(rows.len());
     let mut tokens = 0i64;
     let mut tools = 0i32;
     let mut runs = 0i32;
@@ -5891,6 +6315,7 @@ pub(crate) fn trajectory_projection(page: &serde_json::Value) -> TrajectoryProje
         if !status.is_empty() {
             meta.push(format!("状态 {status}"));
         }
+        let boundary = !group.is_empty() && turn > 0;
         let detail_lines = detail_line_estimate(&detail);
         items.push(TrajectoryItem {
             group: group.into(),
@@ -5921,7 +6346,20 @@ pub(crate) fn trajectory_projection(page: &serde_json::Value) -> TrajectoryProje
         if started.is_finite() && started > 0.0 {
             span_start = span_start.min(started);
             span_end = span_end.max(started + duration.max(0.0));
-            spans.push((started, duration.max(0.0), kind, failed));
+            let (time, title) = items
+                .last()
+                .map(|item| (item.time.to_string(), item.title.to_string()))
+                .unwrap_or_default();
+            spans.push(TrajectorySpanPoint {
+                start: started,
+                duration: duration.max(0.0),
+                kind,
+                lane: trajectory_lane(kind),
+                boundary,
+                failed,
+                time,
+                title,
+            });
         }
     }
 
@@ -5930,24 +6368,60 @@ pub(crate) fn trajectory_projection(page: &serde_json::Value) -> TrajectoryProje
             items,
             audit: TrajectoryAudit::default(),
             segments: Vec::new(),
+            bars: Vec::new(),
         };
     }
     let span = (span_end - span_start).max(0.0);
     let domain = if span > 0.0 { span } else { 1.0 };
     let segments = spans
-        .into_iter()
-        .map(|(start, duration, kind, failed)| TrajectorySegment {
-            offset: ((start - span_start) / domain).clamp(0.0, 1.0) as f32,
-            width: (duration / domain).clamp(0.0, 1.0) as f32,
-            kind,
-            failed,
+        .iter()
+        .map(|point| TrajectorySegment {
+            offset: ((point.start - span_start) / domain).clamp(0.0, 1.0) as f32,
+            width: (point.duration / domain).clamp(0.0, 1.0) as f32,
+            kind: point.kind,
+            lane: point.lane,
+            boundary: point.boundary,
+            failed: point.failed,
+        })
+        .collect();
+    // Per-step duration histogram. Only model / tool / subagent work consumes
+    // time in a way the chart is meant to compare; prompts and system rows
+    // stay on the timeline but get no bar.
+    let max_duration = spans
+        .iter()
+        .filter(|point| matches!(point.kind, 1 | 2 | 3))
+        .map(|point| point.duration)
+        .fold(0.0, f64::max);
+    let bars = spans
+        .iter()
+        .filter(|point| matches!(point.kind, 1 | 2 | 3))
+        .map(|point| {
+            let reported = point.duration > 0.0;
+            let mut label = Vec::new();
+            if !point.time.is_empty() {
+                label.push(point.time.clone());
+            }
+            label.push(point.title.clone());
+            label.push(if reported {
+                format_duration(point.duration)
+            } else {
+                "耗时未知".to_string()
+            });
+            TrajectoryBar {
+                ratio: if reported && max_duration > 0.0 {
+                    (point.duration / max_duration).clamp(0.0, 1.0) as f32
+                } else {
+                    0.0
+                },
+                kind: point.kind,
+                failed: point.failed,
+                reported,
+                peak: reported && point.duration >= max_duration,
+                label: label.join(" · ").into(),
+            }
         })
         .collect();
     let mut summary = Vec::new();
-    let span_text = format_duration(span);
-    if !span_text.is_empty() {
-        summary.push(span_text);
-    }
     if tokens > 0 {
         summary.push(format!("消耗 {}", format_tokens(tokens)));
     }
@@ -5964,10 +6438,18 @@ pub(crate) fn trajectory_projection(page: &serde_json::Value) -> TrajectoryProje
             enabled: true,
             start: format_clock(span_start).into(),
             end: format_clock(span_end).into(),
+            span: format_duration(span).into(),
+            peak: if max_duration > 0.0 {
+                format_duration(max_duration)
+            } else {
+                String::new()
+            }
+            .into(),
             summary: summary.join(" · ").into(),
             failed: failed_count,
         },
         segments,
+        bars,
     }
 }
 
@@ -6437,7 +6919,7 @@ fn start_stream(
                     Some(NativeChatEvent::Event(value)) => {
                         let phase_before = live.phase.clone();
                         let root_before = live.root_id.clone();
-                        let tools_before = live.tools.len();
+                        let tools_before = live.tool_count();
                         let raw = value
                             .get("event")
                             .and_then(Value::as_str)
@@ -6453,13 +6935,24 @@ fn start_stream(
                                 wunder_desktop::NativeContextUsage::from_value(&value),
                             );
                         }
+                        // 计划工具每次发布整份清单，实时覆盖计划面板；回合结束后
+                        // 由落库投影接管。
+                        if raw == "plan_update"
+                            || value
+                                .get("data")
+                                .and_then(|data| data.get("source_event"))
+                                .and_then(Value::as_str)
+                                .is_some_and(|kind| kind == "plan_update")
+                        {
+                            apply_plan_event(&shared, &value);
+                        }
                         pending = true;
                         // A new tool step, a new phase or a turn identity is
                         // structural: publish at once. Token deltas inside the
                         // same phase are coalesced onto the next frame.
                         let structural = live.phase != phase_before
                             || live.root_id != root_before
-                            || live.tools.len() != tools_before
+                            || live.tool_count() != tools_before
                             || matches!(
                                 raw.as_str(),
                                 "native_turn_identity"
@@ -6495,7 +6988,7 @@ fn start_stream(
                         // the transcript cannot end in silence.
                         if live.answer.trim().is_empty()
                             && live.failure.is_none()
-                            && live.tools.is_empty()
+                            && live.tool_count() == 0
                         {
                             live.failure = Some("模型未返回内容，请重试".into());
                             publish_live(&shared, &session, stream_id, &mut live);
@@ -6801,6 +7294,35 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
     } else {
         raw
     };
+    // Round identity of the model frame. A reasoning entry belongs to one
+    // round; the next round (or continuation execution) opens a new one.
+    let round = data["model_round"].as_i64().unwrap_or(live.round);
+    let model_frame = matches!(
+        kind,
+        "llm_output_delta"
+            | "llm_output"
+            | "llm_request"
+            | "delta"
+            | "final"
+            | "reasoning"
+            | "reasoning_delta"
+    );
+    if let Some(execution) = data
+        .get("turn_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+    {
+        if live.execution.is_empty() {
+            live.execution = execution.to_owned();
+        } else if live.execution != execution && model_frame {
+            // A late frame from an execution this turn already replaced must
+            // not reopen an older round's thinking or answer.
+            return;
+        }
+    }
+    if round > live.round && live.round > 0 && model_frame {
+        live.close_reason(STATUS_DONE);
+    }
 
     if let Some(round) = data["user_round"]
         .as_i64()
@@ -6821,8 +7343,19 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
             }
         }
         "native_execution_started" => {
+            // Background goal executions restart model_round at one while the
+            // same user turn keeps its earlier steps.
+            live.close_reason(STATUS_DONE);
+            live.round = 0;
             live.status = STATUS_RUNNING;
             live.phase = "requesting".into();
+            if let Some(execution) = data
+                .get("turn_id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+            {
+                live.execution = execution.to_owned();
+            }
             if let Some(root) = data
                 .get("root_turn_id")
                 .and_then(Value::as_str)
@@ -6838,13 +7371,16 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                     live.phase = "queued".into();
                 }
                 "waiting_input" | "waiting_user_input" | "waiting_approval" => {
+                    live.close_reason(STATUS_DONE);
                     live.phase = "waiting".into();
                 }
                 "cancelled" | "canceled" | "interrupted" | "stopped" => {
+                    live.close_reason(STATUS_STOPPED);
                     live.status = STATUS_STOPPED;
                     live.phase = "stopped".into();
                 }
                 "failed" | "error" | "rejected" => {
+                    live.close_reason(STATUS_FAILED);
                     live.status = STATUS_FAILED;
                     live.phase = "error".into();
                 }
@@ -6863,8 +7399,8 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 .and_then(Value::as_str)
                 .or_else(|| data.get("reasoning").and_then(Value::as_str))
             {
-                live.reasoning = text.to_owned();
-                live.phase = "thinking".into();
+                live.append_reasoning(round, text, true);
+                live.round = live.round.max(round);
             }
         }
         "reasoning_delta" => {
@@ -6873,11 +7409,13 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 .and_then(Value::as_str)
                 .or_else(|| data.get("reasoning_delta").and_then(Value::as_str))
             {
-                live.reasoning.push_str(delta);
-                live.phase = "thinking".into();
+                live.append_reasoning(round, delta, false);
+                live.round = live.round.max(round);
             }
         }
         "llm_request" => {
+            // Admission of a model call: the previous thought is finished.
+            live.close_reason(STATUS_DONE);
             live.phase = "requesting".into();
         }
         "llm_output_delta" | "delta" => {
@@ -6886,8 +7424,8 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 .and_then(Value::as_str)
                 .filter(|text| !text.is_empty())
             {
-                live.reasoning.push_str(reasoning);
-                live.phase = "thinking".into();
+                live.append_reasoning(round, reasoning, false);
+                live.round = live.round.max(round);
             }
             if let Some(delta) = data
                 .get("delta")
@@ -6895,6 +7433,8 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 .or_else(|| data.get("content").and_then(Value::as_str))
             {
                 if !delta.is_empty() {
+                    live.close_reason(STATUS_DONE);
+                    live.round = live.round.max(round);
                     live.answer.push_str(delta);
                     live.phase = "outputting".into();
                 }
@@ -6906,7 +7446,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 .and_then(Value::as_str)
                 .filter(|text| !text.is_empty())
             {
-                live.reasoning.push_str(reasoning);
+                live.append_reasoning(round, reasoning, false);
             }
             if let Some(answer) = data
                 .get("answer")
@@ -6914,12 +7454,14 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 .or_else(|| data.get("content").and_then(Value::as_str))
                 .filter(|answer| !answer.is_empty())
             {
+                live.close_reason(STATUS_DONE);
                 live.answer = answer.to_owned();
             }
             if let Some(stats) = event_message_stats(data) {
                 live.stats = stats;
             }
             if kind == "final" {
+                live.close_reason(project::STATUS_DONE);
                 live.status = project::STATUS_DONE;
                 live.phase = "done".into();
             }
@@ -6942,6 +7484,12 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
         }
         "tool_call" | "tool_start" | "tool_result" | "tool_output" => {
             let pending = matches!(kind, "tool_call" | "tool_start");
+            if pending {
+                // The model acted: its current thinking entry is complete. A
+                // late result frame of an older call must not close a newer
+                // thought, so only admission closes it.
+                live.close_reason(STATUS_DONE);
+            }
             let id = data
                 .get("tool_call_id")
                 .or_else(|| data.get("item_id"))
@@ -6974,7 +7522,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
             let label = project::tool_label(&entry.title);
             let icon = project::tool_icon_key(&entry.title).to_string();
             let target = project::tool_target(&entry);
-            if let Some(existing) = live.tools.iter_mut().find(|tool| tool.id == entry.id) {
+            if let Some(existing) = live.tool_mut(&entry.id) {
                 existing.title = label;
                 existing.tool_icon = icon;
                 existing.state = entry.state;
@@ -6990,7 +7538,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 existing.tokens = entry.tokens;
                 existing.duration = entry.duration;
             } else {
-                live.tools.push(project::LiveTool {
+                live.push_tool(project::LiveTool {
                     id: entry.id,
                     title: label,
                     tool_icon: icon,
@@ -7011,6 +7559,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
         | "command_session_status"
         | "command_session_exit"
         | "command_session_summary" => {
+            live.close_reason(STATUS_DONE);
             let session = data
                 .get("command_session_id")
                 .and_then(Value::as_str)
@@ -7092,12 +7641,12 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                     .map(|line| line.trim().chars().take(120).collect::<String>())
                     .filter(|line| !line.is_empty())
                     .unwrap_or_else(|| status_label.to_string());
-                if let Some(existing) = live.tools.iter_mut().find(|tool| tool.id == id) {
+                if let Some(existing) = live.tool_mut(&id) {
                     existing.state = state.into();
                     existing.summary = summary;
                     existing.detail = detail;
                 } else {
-                    live.tools.push(project::LiveTool {
+                    live.push_tool(project::LiveTool {
                         id,
                         title: tool.to_owned(),
                         tool_icon: "terminal".into(),
@@ -7118,6 +7667,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
         | "compaction_completed"
         | "compaction_start"
         | "compaction_progress" => {
+            live.close_reason(STATUS_DONE);
             let summary = data
                 .get("summary_text")
                 .and_then(Value::as_str)
@@ -7131,11 +7681,11 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 .unwrap_or("compaction")
                 .to_owned();
             let state = if running { "running" } else { "completed" };
-            if let Some(existing) = live.tools.iter_mut().find(|tool| tool.id == id) {
+            if let Some(existing) = live.tool_mut(&id) {
                 existing.state = state.into();
                 existing.summary = summary.to_owned();
             } else {
-                live.tools.push(project::LiveTool {
+                live.push_tool(project::LiveTool {
                     id,
                     title: "上下文压缩".into(),
                     tool_icon: "compress".into(),
@@ -7152,6 +7702,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
             live.phase = if running { "compacting" } else { "requesting" }.into();
         }
         "question_panel" => {
+            live.close_reason(STATUS_DONE);
             live.question_panel = Some(data.clone());
             live.phase = "waiting".into();
         }
@@ -7177,6 +7728,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 }
                 _ => (project::STATUS_DONE, "done"),
             };
+            live.close_reason(kind_status);
             live.status = kind_status;
             live.phase = phase.into();
             if matches!(status, "failed" | "error" | "rejected") {
@@ -7190,6 +7742,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
             }
         }
         "error" => {
+            live.close_reason(STATUS_FAILED);
             if let Some(message) = data
                 .get("message")
                 .or_else(|| data.get("error_message"))
@@ -7315,14 +7868,58 @@ mod tests {
         let projection = trajectory_projection(&page);
         assert!(projection.audit.enabled);
         assert_eq!(projection.audit.failed, 1);
+        assert_eq!(projection.audit.span.as_str(), "23.0s");
+        assert_eq!(projection.audit.peak.as_str(), "4.2s");
         assert!(projection.audit.summary.contains("消耗 2.1k"));
         assert!(projection.audit.summary.contains("工具 1"));
         assert!(projection.audit.summary.contains("模型 2"));
         assert!(projection.audit.summary.contains("2 轮"));
         assert_eq!(projection.segments.len(), 4);
+        assert_eq!(projection.segments[0].lane, 0);
+        assert_eq!(projection.segments[1].lane, 1);
+        assert_eq!(projection.segments[2].lane, 2);
+        assert_eq!(projection.segments[3].lane, 1);
+        assert!(projection.segments[0].boundary);
+        assert!(!projection.segments[1].boundary);
+        assert!(!projection.segments[2].boundary);
+        assert!(projection.segments[3].boundary);
         assert!((projection.segments[0].offset - 0.0).abs() < f32::EPSILON);
         assert!((projection.segments[3].offset - 20.0 / 23.0).abs() < 0.001);
         assert!((projection.segments[3].width - 3.0 / 23.0).abs() < 0.001);
+        assert_eq!(projection.bars.len(), 3);
+        assert!(projection.bars[0].reported && projection.bars[0].peak);
+        assert!((projection.bars[0].ratio - 1.0).abs() < f32::EPSILON);
+        assert_eq!(projection.bars[1].kind, 2);
+        assert!(projection.bars[1].failed);
+        assert!((projection.bars[1].ratio - 0.8 / 4.2).abs() < 0.001);
+        assert!((projection.bars[2].ratio - 3.0 / 4.2).abs() < 0.001);
+        assert!(projection.bars[0].label.contains("4.2s"));
+        assert!(projection.bars[0].label.contains("模型回复"));
+    }
+
+    #[test]
+    fn trajectory_bars_mark_unreported_steps_and_lanes() {
+        let page = json!({
+            "trajectory": [
+                {
+                    "kind": "tool_call", "user_round": 1, "status": "completed",
+                    "tool_name": "shell", "started_at": 100.0
+                },
+                {
+                    "kind": "assistant_message", "user_round": 1, "status": "completed",
+                    "started_at": 110.0, "completed_at": 112.0
+                }
+            ]
+        });
+        let projection = trajectory_projection(&page);
+        assert_eq!(projection.segments[0].lane, 2);
+        assert_eq!(projection.segments[1].lane, 1);
+        assert_eq!(projection.bars.len(), 2);
+        assert!(!projection.bars[0].reported);
+        assert_eq!(projection.bars[0].ratio, 0.0);
+        assert!(projection.bars[0].label.contains("耗时未知"));
+        assert!(projection.bars[1].reported && projection.bars[1].peak);
+        assert!((projection.bars[1].ratio - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -7388,12 +7985,57 @@ mod tests {
                 "arguments": {"command": "ls -la"}
             }}
         }));
-        assert_eq!(live.tools.len(), 1);
-        assert_eq!(live.tools[0].title, "运行命令");
-        assert_eq!(live.tools[0].tool_icon, "terminal");
-        assert_eq!(live.tools[0].summary, "ls -la");
-        assert_eq!(live.tools[0].state, "running");
+        assert_eq!(live.tool_count(), 1);
+        let tool = match &live.steps[0] {
+            project::LiveStep::Tool(tool) => tool,
+            _ => panic!("tool step"),
+        };
+        assert_eq!(tool.title, "运行命令");
+        assert_eq!(tool.tool_icon, "terminal");
+        assert_eq!(tool.summary, "ls -la");
+        assert_eq!(tool.state, "running");
         assert_eq!(live.phase, "tool");
+    }
+
+    #[test]
+    fn live_thinking_entries_split_at_tools_and_rounds() {
+        let mut live = LiveTurn::new("hi".into());
+        apply_event(
+            &mut live,
+            &json!({"event":"reasoning_delta","data":{"model_round":1,"delta":"第一段"}}),
+        );
+        apply_event(
+            &mut live,
+            &json!({"event":"tool_call","data":{
+                "tool":"shell","tool_call_id":"call-1","arguments":{"command":"ls"}
+            }}),
+        );
+        apply_event(
+            &mut live,
+            &json!({"event":"reasoning_delta","data":{"model_round":2,"delta":"第二段"}}),
+        );
+        apply_event(
+            &mut live,
+            &json!({"event":"llm_output_delta","data":{"model_round":2,"delta":"答案"}}),
+        );
+
+        let rows = live.rows();
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == project::KIND_PROCESS)
+            .expect("process bar");
+        assert_eq!(bar.process_children.len(), 3);
+        assert_eq!(bar.process_children[0].detail, "第一段");
+        assert_eq!(bar.process_children[0].status_kind, project::STATUS_DONE);
+        assert_eq!(bar.process_children[1].kind, project::KIND_TOOL);
+        assert_eq!(bar.process_children[2].detail, "第二段");
+        assert_eq!(bar.process_children[2].status_kind, project::STATUS_DONE);
+        // The answer starts a new phase; no thought is left spinning.
+        assert!(bar
+            .process_children
+            .iter()
+            .filter(|child| child.kind == project::KIND_REASON)
+            .all(|child| child.status_kind != project::STATUS_RUNNING));
     }
 
     #[test]
@@ -7692,6 +8334,20 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(visible.contains(&session.id));
         assert!(!visible.contains(&other_session.id));
+
+        // A Markdown image referenced by its absolute workspace path decodes
+        // into the shared slot the transcript hydrates from.
+        let image_path = std::path::Path::new(&workspace.root_path).join("chart.png");
+        std::fs::write(
+            &image_path,
+            include_bytes!("../../wunder-desktop/frontend/assets/markdown-example.png"),
+        )
+        .unwrap();
+        let source = image_path.to_string_lossy().to_string();
+        let roots = markdown_image_roots(&desktop, &shared);
+        let image = read_markdown_image(&desktop, &roots, &source).expect("the image decodes");
+        assert_eq!((image.width, image.height), (640, 280));
+        assert_eq!(image.rgba.len(), 640 * 280 * 4);
 
         drop(desktop);
         let _ = std::fs::remove_dir_all(&root);

@@ -7,14 +7,14 @@
 
 import { I18n } from "../../../crates/wunder-desktop/frontend/ui/i18n.slint";
 export { I18n }
-import { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion, CommandTask, SubagentItem, TurnMark } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
+import { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion, CommandTask, SubagentItem, TurnMark, PlanStep } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
 export { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion }
 import { TimelineView } from "../../../crates/wunder-desktop/frontend/ui/timeline.slint";
-import { Composer, CommandOptions, InquiryPanel, ModelSetupBanner } from "../../../crates/wunder-desktop/frontend/ui/composer.slint";
+import { Composer, CommandOptions, GoalBanner, InquiryPanel, ModelSetupBanner, StatusDock } from "../../../crates/wunder-desktop/frontend/ui/composer.slint";
 import { Action, FormField, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
 import { MobileSettings } from "settings.slint";
 import { EnvSetupPage } from "env_setup.slint";
-import { TrajectoryPage, TrajectoryItem, TrajectoryAudit, TrajectorySegment } from "trajectory.slint";
+import { TrajectoryPage, TrajectoryItem, TrajectoryAudit, TrajectorySegment, TrajectoryBar } from "trajectory.slint";
 import { WorkspacePage, WorkspaceFile } from "workspace.slint";
 import { WorkspacesPage } from "workspaces.slint";
 import { MobileWorkspace } from "workspace_model.slint";
@@ -192,6 +192,57 @@ component SheetAction inherits Rectangle {
     }
 }
 
+// Touch knob on one end of the transcript selection. The core computes the
+// caret point; dragging reports window coordinates back so the edge follows
+// the text layout instead of a pixel estimate.
+component SelectionKnob inherits Rectangle {
+    in property <bool> start-handle: false;
+    in property <length> knob-x: 0px;
+    in property <length> knob-y: 0px;
+    callback dragged(bool, length, length);
+
+    width: 40px;
+    height: 40px;
+    // `knob-y` is the caret line's centre. The circle hangs 12px below it so
+    // it does not cover the glyphs; the drag reports the line point back.
+    private property <length> circle-drop: 12px;
+    x: knob-x - self.width / 2;
+    y: knob-y + circle-drop - self.height / 2;
+
+    Rectangle {
+        x: 12px;
+        y: 12px;
+        width: 16px;
+        height: 16px;
+        border-radius: 8px;
+        background: Theme.accent;
+        border-width: 2px;
+        border-color: #FFFFFF;
+        drop-shadow-color: #00000033;
+        drop-shadow-blur: 5px;
+        drop-shadow-offset-y: 1px;
+    }
+
+    TouchArea {
+        width: parent.width;
+        height: parent.height;
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down || event.kind == PointerEventKind.move {
+                root.dragged(
+                    root.start-handle,
+                    root.x + self.mouse-x,
+                    root.y + self.mouse-y - root.circle-drop,
+                );
+                return EventResult.accept;
+            }
+            if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
+                return EventResult.accept;
+            }
+            return EventResult.reject;
+        }
+    }
+}
+
 export component MobileWindow inherits Window {
     title: "wunder 安卓版";
     background: Theme.panel;
@@ -226,10 +277,42 @@ export component MobileWindow inherits Window {
     // Right-edge turn ruler; one tick per user turn, same shape as the desktop.
     in property <[TurnMark]> turn-marks: [];
     in property <string> greeting: "";
+    // ---- 目标横幅 / 计划面板（本机线程） ------------------------------
+    in property <bool> goal-visible: false;
+    in property <bool> goal-active: false;
+    in property <bool> goal-paused: false;
+    in property <string> goal-objective: "";
+    in property <string> goal-phase: "";
+    in property <string> goal-activation: "";
+    in property <string> goal-rounds: "";
+    in property <string> goal-elapsed: "";
+    in-out property <bool> goal-editing: false;
+    in-out property <string> goal-edit-draft: "";
+    in property <int> activity-steps-total: 0;
+    in property <int> activity-steps-done: 0;
+    in property <bool> activity-running: false;
+    in property <string> activity-plan-explanation: "";
+    in property <[PlanStep]> activity-plan-steps: [];
+    in property <string> activity-plan-current: "";
+    in property <int> activity-plan-position: 0;
+    in-out property <bool> activity-plan-expanded: false;
+
     in property <bool> loading: false;
     in-out property <bool> follow-output: true;
     in property <bool> spinning: false;
     in property <int> stream-revision: 0;
+    // Text the transcript selection currently covers. The engine polls the
+    // core's selection while it exists; the floating copy action reads this
+    // value because tapping the action itself clears the selection first.
+    in-out property <string> selection-text: "";
+    // Selection geometry in window coordinates: two draggable knobs sit on the
+    // caret at either edge so the range can be adjusted after the long press.
+    in property <bool> selection-handles: false;
+    in property <length> selection-start-x: 0px;
+    in property <length> selection-start-y: 0px;
+    in property <length> selection-end-x: 0px;
+    in property <length> selection-end-y: 0px;
+    callback selection-handle-drag(bool, length, length);
     // Height of the soft keyboard, published by the Rust tick from Slint's
     // virtual-keyboard rect. The window is edge-to-edge, so the activity does
     // not resize itself; the shell shrinks instead.
@@ -243,8 +326,9 @@ export component MobileWindow inherits Window {
     in property <bool> trajectory-loading: false;
     in property <string> trajectory-error: "";
     in property <[TrajectoryItem]> trajectory-items: [];
-    in property <TrajectoryAudit> trajectory-audit: { enabled: false, start: "", end: "", summary: "", failed: 0 };
+    in property <TrajectoryAudit> trajectory-audit: { enabled: false, start: "", end: "", span: "", peak: "", summary: "", failed: 0 };
     in property <[TrajectorySegment]> trajectory-segments: [];
+    in property <[TrajectoryBar]> trajectory-bars: [];
     in-out property <int> trajectory-filter: 0;
     in-out property <int> trajectory-expanded: -1;
 
@@ -531,6 +615,11 @@ export component MobileWindow inherits Window {
     callback open-model-settings();
     callback load-prompt-preview();
     callback setup-first-model();
+    // 目标横幅与计划面板
+    callback goal-save(string);
+    callback goal-pause-toggle();
+    callback goal-clear();
+    callback activity-plan-dismiss();
     callback permission-changed(string);
     callback remove-attachment(int);
     callback copy-text(string);
@@ -946,7 +1035,7 @@ export component MobileWindow inherits Window {
         // Phone breathing room: the desktop band is flush; on a handset the
         // input card and its action row need a side gutter so the send square
         // never sits against the display edge.
-        Rectangle {
+        composer-band := Rectangle {
             background: Theme.panel;
             VerticalLayout {
                 padding-left: 12px;
@@ -958,6 +1047,34 @@ export component MobileWindow inherits Window {
                 // 云端线程用自己的模型目录，不显示。
                 if root.needs-model-setup && root.settings-chat-target == 0 : ModelSetupBanner {
                     setup() => { root.setup-first-model(); }
+                }
+
+                // 计划胶囊：有计划步骤时常驻；展开的清单浮在它上方。
+                if root.activity-steps-total > 0 : StatusDock {
+                    running: root.activity-running;
+                    steps-done: root.activity-steps-done;
+                    steps-total: root.activity-steps-total;
+                    plan-explanation: root.activity-plan-explanation;
+                    plan-steps: root.activity-plan-steps;
+                    current-step: root.activity-plan-current;
+                    current-position: root.activity-plan-position;
+                    expanded <=> root.activity-plan-expanded;
+                    dismiss => { root.activity-plan-dismiss(); }
+                }
+
+                // 目标横幅：目标存在且未完成时常驻，可编辑、暂停、清除。
+                if root.goal-visible && root.goal-objective != "" : GoalBanner {
+                    objective: root.goal-objective;
+                    elapsed: root.goal-elapsed;
+                    phase: root.goal-phase;
+                    activation: root.goal-activation;
+                    rounds: root.goal-rounds;
+                    paused: root.goal-paused;
+                    editing <=> root.goal-editing;
+                    edit-draft <=> root.goal-edit-draft;
+                    save(text) => { root.goal-save(text); }
+                    pause-toggle => { root.goal-pause-toggle(); }
+                    clear => { root.goal-clear(); }
                 }
 
                 // 问询面板：触摸端直接复用桌面版的卡片，下面跟一个显式的提交键。
@@ -1033,7 +1150,8 @@ export component MobileWindow inherits Window {
                     mobile-plus-toggled() => { root.toggle-plus(); }
                     draft <=> root.draft;
                     busy: root.loading;
-                    generating: root.generating;
+                    // 目标续跑期间也显示停止按钮，与桌面版一致。
+                    generating: root.generating || root.goal-active;
                     stopping: root.stopping;
                     models: root.models;
                     model-catalogue-count: root.model-catalogue-count;
@@ -1239,6 +1357,79 @@ export component MobileWindow inherits Window {
             background: Theme.panel;
             visible: root.inset-bottom > 0px && root.ime-height == 0px && !root.plus-open;
         }
+    }
+
+    // ---- 选文复制 ----------------------------------------------------
+    // 长按选中文本后，核心持有选区；手机没有系统编辑菜单，这里补一个浮动
+    // 复制键。按下这个键本身会先清掉选区，所以复制用的是轮询到的那份文本。
+    if root.selection-text != "" && !root.env-setup-open : Rectangle {
+        x: (root.width - self.width) / 2;
+        // Anchored to the composer band's real top edge: the inquiry card and
+        // the function panel change that height, and a fixed offset covered
+        // their buttons.
+        y: max(8px + root.inset-top, composer-band.y - self.height - 12px);
+        width: selection-pill.preferred-width;
+        height: 40px;
+
+        selection-pill := Rectangle {
+            width: parent.width;
+            height: parent.height;
+            border-radius: 20px;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-color: #0F172933;
+            drop-shadow-blur: 12px;
+            drop-shadow-offset-y: 3px;
+
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 16px;
+                spacing: 7px;
+                alignment: center;
+                Image {
+                    width: 15px;
+                    height: 15px;
+                    source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/copy.svg");
+                    colorize: Theme.text;
+                    image-fit: contain;
+                }
+                Text {
+                    text: "复制";
+                    color: Theme.text;
+                    font-size: Theme.font-md;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        TouchArea {
+            clicked => {
+                root.copy-text(root.selection-text);
+                root.selection-text = "";
+            }
+        }
+    }
+
+    // ---- 选区手柄 ----------------------------------------------------
+    // 两个手柄落在选区两端的文字行上；位置由核心按文本排版计算，滚动与换行
+    // 都会跟随。拖动只移动对应的一端，不会重新开始选文。
+    if root.selection-handles && !root.env-setup-open
+        && root.selection-start-y > root.header-height + root.inset-top
+        && root.selection-start-y < composer-band.y
+        && root.selection-start-x > -8px && root.selection-start-x < root.width + 8px : SelectionKnob {
+        start-handle: true;
+        knob-x: root.selection-start-x;
+        knob-y: root.selection-start-y;
+        dragged(start, x, y) => { root.selection-handle-drag(start, x, y); }
+    }
+    if root.selection-handles && !root.env-setup-open
+        && root.selection-end-y > root.header-height + root.inset-top
+        && root.selection-end-y < composer-band.y
+        && root.selection-end-x > -8px && root.selection-end-x < root.width + 8px : SelectionKnob {
+        knob-x: root.selection-end-x;
+        knob-y: root.selection-end-y;
+        dragged(start, x, y) => { root.selection-handle-drag(start, x, y); }
     }
 
     // ---- thread drawer ----------------------------------------------
@@ -2495,6 +2686,7 @@ export component MobileWindow inherits Window {
         items: root.trajectory-items;
         audit: root.trajectory-audit;
         segments: root.trajectory-segments;
+        bars: root.trajectory-bars;
         filter <=> root.trajectory-filter;
         filter-changed(filter) => { root.trajectory-filter-changed(filter); }
         expanded <=> root.trajectory-expanded;
@@ -2526,9 +2718,11 @@ export component MobileWindow inherits Window {
     // Light floating card below the header, matching 桌面版's ToastHost. The
     // old bottom-anchored black strip read like a system error and covered the
     // composer; short feedback belongs near the top and stays out of the way.
+    // 系统提示：屏幕正中、半透明深色，尽量不遮挡视线；卡片没有触摸区，
+    // 下层操作照常可用。
     if root.toast != "" : Rectangle {
         x: 0px;
-        y: root.inset-top + root.header-height + 10px;
+        y: (parent.height - self.height) / 2;
         width: parent.width;
         height: toast-card.height;
         background: transparent;
@@ -2538,12 +2732,12 @@ export component MobileWindow inherits Window {
             width: min(parent.width - 32px, 520px);
             height: max(44px, toast-text.preferred-height + 24px);
             border-radius: 12px;
-            background: Theme.surface;
+            background: #1F2329B0;
             border-width: 1px;
-            border-color: Theme.border;
-            drop-shadow-color: #00000018;
-            drop-shadow-blur: 12px;
-            drop-shadow-offset-y: 3px;
+            border-color: #FFFFFF26;
+            drop-shadow-color: #00000014;
+            drop-shadow-blur: 10px;
+            drop-shadow-offset-y: 2px;
 
             Rectangle {
                 x: 0px;
@@ -2560,7 +2754,7 @@ export component MobileWindow inherits Window {
                 width: parent.width - 32px;
                 height: parent.height;
                 text: root.toast;
-                color: Theme.text;
+                color: #FFFFFF;
                 font-size: Theme.font-sm;
                 wrap: word-wrap;
                 horizontal-alignment: left;

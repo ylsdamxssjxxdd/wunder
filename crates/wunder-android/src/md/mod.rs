@@ -24,3 +24,33 @@ pub mod project;
 pub mod source;
 
 pub use project::MarkdownRenderer;
+
+/// Decode workspace image bytes into a bounded RGBA thumbnail. The transcript
+/// never needs full resolution, and a phone photo would otherwise cost tens of
+/// MB of texture per message.
+pub fn decode_thumbnail(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    reader.limits(limits);
+    let image = reader.decode().ok()?.thumbnail(640, 400).to_rgba8();
+    Some((image.width(), image.height(), image.into_raw()))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn thumbnails_keep_pixels_and_reject_garbage() {
+        let image = super::decode_thumbnail(include_bytes!(
+            "../../../wunder-desktop/frontend/assets/markdown-example.png"
+        ))
+        .expect("decode the sample image");
+        assert_eq!((image.0, image.1), (640, 280));
+        assert_eq!(image.2.len(), 640 * 280 * 4);
+        assert!(super::decode_thumbnail(b"not an image").is_none());
+    }
+}

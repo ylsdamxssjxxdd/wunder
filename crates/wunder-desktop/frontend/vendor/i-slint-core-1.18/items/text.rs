@@ -28,6 +28,8 @@ use crate::platform::Clipboard;
 #[cfg(feature = "rtti")]
 use crate::rtti::*;
 use crate::string::string_to_float;
+#[cfg(target_os = "android")]
+use crate::timers::{Timer, TimerMode};
 use crate::window::{InputMethodProperties, InputMethodRequest, WindowAdapter, WindowInner};
 use crate::{Callback, Coord, Property, SharedString, SharedVector};
 use alloc::{rc::Rc, string::String};
@@ -258,6 +260,14 @@ pub struct StyledTextItem {
     pressed: core::cell::Cell<bool>,
     /// What a selection covers of this text, as last drawn, with the colour behind it.
     shown_selection: core::cell::RefCell<Option<(core::ops::Range<usize>, Color)>>,
+    /// Touch products select on a long press, not on every press: a press that
+    /// turns into a drag belongs to the surrounding scroll view. The timer is
+    /// armed on press and cancelled by movement or release; the origin lets a
+    /// small finger jitter keep the timer alive.
+    #[cfg(target_os = "android")]
+    long_press_timer: Timer,
+    #[cfg(target_os = "android")]
+    long_press_origin: core::cell::Cell<Option<LogicalPoint>>,
 }
 
 impl StyledTextItem {
@@ -352,7 +362,83 @@ impl Item for StyledTextItem {
             self_rc.map_to_window(self_rc.geometry().origin + position.to_vector())
         };
         match event {
-            #[cfg(feature = "shared-parley")]
+            #[cfg(all(target_os = "android", feature = "shared-parley"))]
+            MouseEvent::Pressed { position, button: PointerEventButton::Left, .. } => {
+                // Touch products select on a long press, not on every press:
+                // until the timer fires nothing is selected, a drag is taken
+                // over by the scroll view (which cancels this grab with
+                // `Exit`), and a quick release only follows a link.
+                let self_weak = self_rc.downgrade();
+                let position = *position;
+                self.pressed.set(false);
+                self.long_press_origin.set(Some(position));
+                let adapter = window_adapter.clone();
+                let ctx = WindowInner::from_pub(window_adapter.window()).context();
+                self.long_press_timer.start_on(
+                    ctx,
+                    TimerMode::SingleShot,
+                    ctx.platform().long_press_interval(crate::InternalToken),
+                    move || {
+                        let Some(item_rc) = self_weak.upgrade() else { return };
+                        let Some(text) = item_rc.downcast::<StyledTextItem>() else { return };
+                        text.as_pin_ref().long_press_origin.set(None);
+                        let pressed = crate::text_selection::press(
+                            &item_rc,
+                            text.as_pin_ref(),
+                            &adapter,
+                            position,
+                            2,
+                        );
+                        text.as_pin_ref().pressed.set(pressed);
+                    },
+                );
+                *cursor = super::MouseCursorInner::BuiltIn(if find_link(&position).is_some() {
+                    super::BuiltInMouseCursor::Pointer
+                } else {
+                    super::BuiltInMouseCursor::Text
+                });
+                // Hold the press so a drag can cancel it with `Exit`; the
+                // scroll view's filter still takes over once the finger moves.
+                InputEventResult::GrabMouse
+            }
+            #[cfg(all(target_os = "android", feature = "shared-parley"))]
+            MouseEvent::Moved { position, .. }
+                if self.long_press_origin.get().is_some_and(|origin| {
+                    let dx = position.x - origin.x;
+                    let dy = position.y - origin.y;
+                    dx * dx + dy * dy > 64.0
+                }) =>
+            {
+                // The finger is panning, not holding: hand the gesture to the
+                // scroll view and forget the pending selection.
+                self.long_press_timer.stop();
+                self.long_press_origin.set(None);
+                InputEventResult::EventIgnored
+            }
+            #[cfg(all(target_os = "android", feature = "shared-parley"))]
+            MouseEvent::Released { position, button: PointerEventButton::Left, .. } => {
+                self.long_press_timer.stop();
+                let armed = self.long_press_origin.take().is_some();
+                if self.pressed.get() {
+                    self.pressed.set(false);
+                    crate::text_selection::release();
+                } else if armed {
+                    if let Some(link) = find_link(position) {
+                        *cursor = super::MouseCursorInner::BuiltIn(
+                            super::BuiltInMouseCursor::Pointer,
+                        );
+                        Self::FIELD_OFFSETS.link_clicked().apply_pin(self).call(&(link.into(),));
+                    }
+                }
+                InputEventResult::EventAccepted
+            }
+            #[cfg(all(target_os = "android", feature = "shared-parley"))]
+            MouseEvent::Exit => {
+                self.long_press_timer.stop();
+                self.long_press_origin.set(None);
+                InputEventResult::EventIgnored
+            }
+            #[cfg(all(feature = "shared-parley", not(target_os = "android")))]
             MouseEvent::Pressed {
                 position,
                 button: PointerEventButton::Left,

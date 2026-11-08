@@ -195,6 +195,193 @@ pub(crate) fn pressed() {
     clear();
 }
 
+/// Which end of the selection a handle drag moves.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SelectionHandle {
+    Start,
+    End,
+}
+
+/// How close a press has to be to a handle to belong to the shell's knob
+/// instead of starting a new selection. It covers the whole 40px touch box of
+/// the knob, so a press anywhere on it never clears the selection first.
+const HANDLE_HIT_RADIUS: f32 = 40.0;
+
+/// Window-space points of the two selection handles: the caret line centre at
+/// each edge. `None` when nothing is selected. Touch shells overlay draggable
+/// knobs on these points; the core stays the single owner of the selection.
+pub fn handle_positions(window: &crate::api::Window) -> Option<(LogicalPoint, LogicalPoint)> {
+    let (start_item, start_offset, end_item, end_offset) = SELECTION.with(|current| {
+        let mut slot = current.borrow_mut();
+        let selection = slot.as_mut()?;
+        let scope = selection.scope.upgrade()?;
+        let mut parts = Vec::new();
+        let start = resolve(&mut selection.start, &scope, &mut parts)?;
+        let end = resolve(&mut selection.end, &scope, &mut parts)?;
+        Some((start, selection.start.offset, end, selection.end.offset))
+    })?;
+    Some((
+        edge_handle(
+            window,
+            &start_item,
+            start_offset,
+            crate::items::TextCursorAffinity::NextCharacter,
+        )?,
+        edge_handle(
+            window,
+            &end_item,
+            end_offset,
+            crate::items::TextCursorAffinity::PreviousCharacter,
+        )?,
+    ))
+}
+
+/// One handle: the centre of the caret line at `offset` in its text block.
+fn edge_handle(
+    window: &crate::api::Window,
+    item: &ItemRc,
+    offset: usize,
+    affinity: crate::items::TextCursorAffinity,
+) -> Option<LogicalPoint> {
+    let text = item.downcast::<StyledTextItem>()?;
+    let rect = crate::textlayout::sharedparley::styled_text_cursor_rect_for_byte_offset(
+        window,
+        text.as_pin_ref(),
+        item,
+        offset,
+        affinity,
+    )?;
+    // The knobs sit at the caret line's vertical centre: the line bottom is
+    // already outside the hit band of the shaped paragraph. The rectangle is
+    // item-local and `map_to_window` takes parent coordinates, so fold in the
+    // item's origin.
+    let local = item.geometry().origin + rect.center().to_vector();
+    Some(item.map_to_window(local))
+}
+
+/// The selection may survive a press on one of its handles: the shell's knob
+/// owns that drag, so the edge can move instead of the selection starting over.
+pub(crate) fn pressed_at(window: &crate::api::Window, position: LogicalPoint) {
+    if let Some((start, end)) = handle_positions(window) {
+        let near = |handle: LogicalPoint| {
+            let dx = position.x - handle.x;
+            let dy = position.y - handle.y;
+            dx * dx + dy * dy <= HANDLE_HIT_RADIUS * HANDLE_HIT_RADIUS
+        };
+        if near(start) || near(end) {
+            return;
+        }
+    }
+    pressed();
+}
+
+/// Move one edge to the text under `position` (window coordinates). The edge
+/// is clamped at the opposite edge, so a drag shrinks at most to an empty
+/// selection and never inverts it.
+pub fn move_handle(
+    window: &crate::api::Window,
+    handle: SelectionHandle,
+    position: LogicalPoint,
+) {
+    let window_adapter = WindowInner::from_pub(window).window_adapter();
+    let Some((parts, start_item, end_item, start_offset, end_offset)) =
+        SELECTION.with(|current| {
+            let mut slot = current.borrow_mut();
+            let selection = slot.as_mut()?;
+            let scope = selection.scope.upgrade()?;
+            let mut parts = Vec::new();
+            // `resolve` only fills `parts` when an edge's item was rebuilt, so
+            // always collect: the handle drag needs the reading order.
+            collect(&scope, &mut parts);
+            let start = resolve(&mut selection.start, &scope, &mut parts)?;
+            let end = resolve(&mut selection.end, &scope, &mut parts)?;
+            Some((parts, start, end, selection.start.offset, selection.end.offset))
+        })
+    else {
+        return;
+    };
+
+    let Some(target) = item_at(&parts, position) else { return };
+    let Some(text) = target.downcast::<StyledTextItem>() else { return };
+    let local = window_to_item_position(&target, position);
+    let Some(range) =
+        text.as_pin_ref()
+            .range_at(&target, &window_adapter, local, TextUnit::Character)
+    else {
+        return;
+    };
+    let Some(ordinal) = parts.iter().position(|part| part == &target) else { return };
+    let start_ordinal = parts.iter().position(|part| part == &start_item).unwrap_or(0);
+    let end_ordinal = parts.iter().position(|part| part == &end_item).unwrap_or(0);
+
+    let new_edge = match handle {
+        SelectionHandle::Start if (ordinal, range.start) > (end_ordinal, end_offset) => Edge {
+            item: end_item.downgrade(),
+            ordinal: end_ordinal,
+            offset: end_offset,
+        },
+        SelectionHandle::End if (ordinal, range.start) < (start_ordinal, start_offset) => Edge {
+            item: start_item.downgrade(),
+            ordinal: start_ordinal,
+            offset: start_offset,
+        },
+        _ => Edge { item: target.downgrade(), ordinal, offset: range.start },
+    };
+    SELECTION.with(|current| {
+        let mut slot = current.borrow_mut();
+        let Some(selection) = slot.as_mut() else { return };
+        match handle {
+            SelectionHandle::Start => selection.start = new_edge,
+            SelectionHandle::End => selection.end = new_edge,
+        }
+    });
+    changed();
+}
+
+/// The text block under `position`, or the nearest one vertically when the
+/// pointer is beyond the first or last block: a handle drag past the viewport
+/// keeps extending the edge instead of stopping.
+fn item_at(parts: &[ItemRc], position: LogicalPoint) -> Option<ItemRc> {
+    if let Some(item) = parts
+        .iter()
+        .find(|part| is_text(part) && window_rect(part).contains(position))
+    {
+        return Some(item.clone());
+    }
+    parts
+        .iter()
+        .filter(|part| is_text(part))
+        .min_by(|a, b| {
+            let da = vertical_distance(window_rect(a), position);
+            let db = vertical_distance(window_rect(b), position);
+            da.partial_cmp(&db).unwrap_or(core::cmp::Ordering::Equal)
+        })
+        .cloned()
+}
+
+fn vertical_distance(rect: LogicalRect, position: LogicalPoint) -> f32 {
+    if position.y < rect.min_y() {
+        rect.min_y() - position.y
+    } else if position.y > rect.max_y() {
+        position.y - rect.max_y()
+    } else {
+        0.0
+    }
+}
+
+/// Window point → the item's own coordinate system. The transcript has no
+/// rotation or scale transforms, so folding the item and ancestor origins is
+/// enough and is the inverse of what `map_to_window` added.
+fn window_to_item_position(item: &ItemRc, position: LogicalPoint) -> LogicalPoint {
+    let mut local = position;
+    let mut current = Some(item.clone());
+    while let Some(node) = current {
+        local -= node.geometry().origin.to_vector();
+        current = node.parent_item(ParentItemTraversalMode::StopAtPopups);
+    }
+    local
+}
+
 /// Starts selecting at `position`, in `text`'s coordinates. `click_count` counts repeats, so the
 /// first press selects by character, the second by word and the third by paragraph.
 pub(crate) fn press(

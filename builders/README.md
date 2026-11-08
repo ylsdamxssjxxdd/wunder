@@ -216,7 +216,7 @@ bash builders/build-kylin-x86-sdk-docker.sh
 
 ## 安卓版的离线 Ubuntu 工具包
 
-`builders/build-android-ubuntu-pack.sh` 在构建机上用 QEMU binfmt + chroot 以 APK 内的 rootfs 为基线，安装 python、git、ripgrep、7zip、静态 ffmpeg，以及一套安卓镜像/恢复/网络工具箱：`adb`、`simg2img`、`erofs-utils`、`debugfs`、`squashfs-tools`、`mtools`/`dosfstools`/`exfatprogs`/`ntfs-3g`、`testdisk`/`photorec`、`ddrescue`、`binwalk`、`foremost`、`sqlite3`、`nmap`、`rsync`、`tmux`、`binutils`、`patchelf`、`upx` 等。工具只做文件级操作：proot 没有块设备、FUSE 和 raw socket，`fastboot`、`mount`、`tcpdump`、USB/蓝牙控制这类依赖内核权限的操作不可用。然后只打包相对基线新增或变化的文件。设备端 `UbuntuRuntime` 把包直接解压回同一 rootfs，全程不访问网络。
+`builders/build-android-ubuntu-pack.sh` 在构建机上用 QEMU binfmt + chroot 以 APK 内的 rootfs 为基线，安装 python、git、ripgrep、7zip、静态 ffmpeg、fontconfig 与常用字体（DejaVu、Liberation、Noto Color Emoji、文泉驿微米黑，覆盖拉丁/等宽/中文/emoji）、常用运行时命令（curl、wget、zip/unzip、procps、psmisc、lsof、bc、bzip2、time、python 别名、iproute2），以及一套安卓镜像/恢复/网络工具箱：`adb`、`simg2img`、`erofs-utils`、`debugfs`、`squashfs-tools`、`mtools`/`dosfstools`/`exfatprogs`/`ntfs-3g`、`testdisk`/`photorec`、`ddrescue`、`binwalk`、`foremost`、`sqlite3`、`nmap`、`rsync`、`tmux`、`binutils`、`patchelf`、`upx` 等。工具只做文件级操作：proot 没有块设备、FUSE 和 raw socket，`fastboot`、`mount`、`tcpdump`、USB/蓝牙控制这类依赖内核权限的操作不可用。然后只打包相对基线新增或变化的文件。设备端 `UbuntuRuntime` 把包直接解压回同一 rootfs，全程不访问网络。
 
 ```bash
 # arm64（默认）；x86_64 用于模拟器，需显式传 WUNDER_PACK_ABI=x86_64
