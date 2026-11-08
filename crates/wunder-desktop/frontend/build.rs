@@ -23,6 +23,9 @@ fn main() {
         println!("cargo:rerun-if-changed=assets/icons/{icon}");
     }
     println!("cargo:rerun-if-changed=assets/fonts/msyh.ttc");
+    // Window, tray and notification icons are embedded from these assets.
+    println!("cargo:rerun-if-changed=assets/app-icon.png");
+    println!("cargo:rerun-if-changed=assets/app-icon.rgba");
     let raw = std::fs::read("assets/fonts/msyh.ttc").expect("read bundled Microsoft YaHei");
     let compressed = lz4_flex::compress_prepend_size(&raw);
     let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));

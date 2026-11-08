@@ -10,7 +10,7 @@
 #
 # Usage:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\generate_windows_icon.ps1 `
-#     -Source images\asset-154424-transparent.png -Target images\asset-154424-transparent.ico
+#     -Source images\eva01-head.png -Target images\eva01-head.ico
 
 [CmdletBinding()]
 param(
