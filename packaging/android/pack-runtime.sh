@@ -2,6 +2,8 @@
 # Package the uncommitted Android runtime inputs into the release archive that
 # .github/workflows/desktop-nightly.yml downloads from the hidden draft
 # `android-runtime` release. The packs are CI inputs, not a user-facing download.
+# CI reads the draft with the RELEASE_TOKEN secret because GITHUB_TOKEN cannot
+# see draft releases.
 #
 # The APK embeds a Linux rootfs, an offline tool pack and static proot/busybox
 # libraries. None of these are committed (tens to hundreds of megabytes), so

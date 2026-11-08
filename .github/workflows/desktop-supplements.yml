@@ -329,13 +329,15 @@ jobs:
       - name: Publish supplement release as a hidden draft
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           set -euo pipefail
+          : "${GH_TOKEN:?RELEASE_TOKEN secret is not configured}"
           # The supplement packs are CI inputs for the installer jobs, not a
           # user-facing download. Keep them in a draft release so the public
-          # Releases page only shows installers; a contents:write token can
-          # still download draft assets from the main workflow.
+          # Releases page only shows installers. Draft releases are invisible
+          # to GITHUB_TOKEN, so both publish and download use the repo-scoped
+          # RELEASE_TOKEN secret.
           if ! gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --repo "${GITHUB_REPOSITORY}" \

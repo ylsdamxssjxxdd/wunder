@@ -159,11 +159,13 @@ jobs:
       - name: Download Windows supplement
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
+          if (-not $env:GH_TOKEN) { throw 'RELEASE_TOKEN secret is not configured' }
           $dir = Join-Path $env:GITHUB_WORKSPACE 'supplement'
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          # The supplement release is a hidden draft; contents:write can read it.
+          # The supplement release is a hidden draft; GITHUB_TOKEN cannot read
+          # drafts, so this step uses the repo-scoped RELEASE_TOKEN secret.
           gh release download supplement --repo $env:GITHUB_REPOSITORY `
             --pattern 'wunder-supplement-win7-ia32-common.zip' --dir $dir --clobber
           if ($LASTEXITCODE -ne 0) { throw 'failed to download the supplement release asset' }
@@ -407,11 +409,13 @@ jobs:
       - name: Download Linux supplement
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           set -euo pipefail
+          : "${GH_TOKEN:?RELEASE_TOKEN secret is not configured}"
           mkdir -p supplement
-          # The supplement release is a hidden draft; contents:write can read it.
+          # The supplement release is a hidden draft; GITHUB_TOKEN cannot read
+          # drafts, so this step uses the repo-scoped RELEASE_TOKEN secret.
           gh release download supplement --repo "${GITHUB_REPOSITORY}" \
             --pattern "wunder-supplement-linux-${{ matrix.supplement_arch }}.tar.gz" \
             --dir supplement --clobber
@@ -482,10 +486,13 @@ jobs:
       - name: Download Android runtime inputs
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           set -euo pipefail
+          : "${GH_TOKEN:?RELEASE_TOKEN secret is not configured}"
           mkdir -p android-runtime
+          # The runtime release is a hidden draft; GITHUB_TOKEN cannot read
+          # drafts, so this step uses the repo-scoped RELEASE_TOKEN secret.
           gh release download android-runtime --repo "${GITHUB_REPOSITORY}" \
             --pattern 'wunder-android-runtime-arm64.tar.gz' \
             --pattern 'SHA256SUMS' \
