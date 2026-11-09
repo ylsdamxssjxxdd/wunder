@@ -2195,6 +2195,8 @@ fn project_read_file_success(data: &Value) -> Option<Value> {
                 "result_read",
                 "path",
                 "content",
+                "text",
+                "text_bytes",
                 "offset",
                 "next_offset",
                 "bytes_read",

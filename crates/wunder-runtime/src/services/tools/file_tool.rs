@@ -19,7 +19,7 @@ use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use walkdir::WalkDir;
@@ -1298,29 +1298,49 @@ fn parse_saved_result_read_args(args: &Value) -> Result<Option<SavedResultReadAr
     }))
 }
 
-/// Handle payloads are stored as JSON text, so reading one hands back the whole
-/// document with every quote and newline escaped a second time. When that
-/// document carries a plain text field, surface it unescaped: the caller wants
-/// the command output, not another layer of JSON quoting.
-fn attach_unwrapped_text(object: &mut Map<String, Value>) {
-    const MAX_UNWRAPPED_BYTES: usize = 16 * 1024;
-    let Some(raw) = object.get("content").and_then(Value::as_str) else {
-        return;
-    };
-    let Ok(parsed) = serde_json::from_str::<Value>(raw) else {
-        return;
-    };
-    let Some(text) = saved_result_text(&parsed) else {
-        return;
-    };
-    let (bounded, _) = truncate_utf8_output(text, MAX_UNWRAPPED_BYTES);
-    object.insert("unwrapped_text".to_string(), Value::String(bounded));
+/// Handle reads page through the serialized JSON payload, so a caller asking for
+/// one page gets JSON-escaped text with the envelope's own metadata in the way.
+/// When the whole payload is small and carries plain text, hand that text back
+/// directly; larger payloads keep the byte-paged raw view.
+const MAX_TEXT_VIEW_PAYLOAD_BYTES: u64 = 128 * 1024;
+const MAX_TEXT_VIEW_BYTES: usize = 32 * 1024;
+
+fn saved_result_text_view(
+    root: &Path,
+    user_id: &str,
+    session_id: &str,
+    workspace_id: &str,
+    handle: &str,
+) -> Option<Value> {
+    let (document, total_bytes) = tool_result_store::read_document(
+        root,
+        user_id,
+        session_id,
+        workspace_id,
+        handle,
+        MAX_TEXT_VIEW_PAYLOAD_BYTES,
+    )
+    .ok()
+    .flatten()?;
+    let parsed = serde_json::from_str::<Value>(&document).ok()?;
+    let text = saved_result_text(&parsed)?;
+    // Never truncate here: a truncated text view would have no cursor, and the
+    // caller could not ask for the rest (offset 0 always lands on this branch).
+    if text.len() > MAX_TEXT_VIEW_BYTES {
+        return None;
+    }
+    Some(json!({
+        "result_read": true,
+        "text": text,
+        "text_bytes": text.len(),
+        "total_bytes": total_bytes,
+    }))
 }
 
 /// Pull the human-readable text out of a stored tool result. Single-value
 /// payloads (file reads, fetches) carry it directly; command payloads nest one
 /// row per executed command under `data.results`.
-fn saved_result_text(parsed: &Value) -> Option<&str> {
+fn saved_result_text(parsed: &Value) -> Option<String> {
     let data = parsed.get("data");
     for holder in data.into_iter().chain(std::iter::once(parsed)) {
         for key in ["content", "stdout", "stderr", "text"] {
@@ -1329,24 +1349,37 @@ fn saved_result_text(parsed: &Value) -> Option<&str> {
                 .and_then(Value::as_str)
                 .filter(|text| !text.trim().is_empty())
             {
-                return Some(text);
+                return Some(text.to_string());
             }
         }
     }
-    data.and_then(|data| data.get("results"))
+    let mut parts: Vec<String> = Vec::new();
+    for row in data
+        .and_then(|data| data.get("results"))
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .find_map(|row| {
-            row.get("stdout")
-                .and_then(Value::as_str)
-                .filter(|text| !text.trim().is_empty())
-                .or_else(|| {
-                    row.get("stderr")
-                        .and_then(Value::as_str)
-                        .filter(|text| !text.trim().is_empty())
-                })
-        })
+    {
+        if let Some(text) = row
+            .get("stdout")
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+        {
+            parts.push(text.to_string());
+        }
+        if let Some(text) = row
+            .get("stderr")
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+        {
+            parts.push("stderr: ".to_string() + text);
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n"))
+    }
 }
 
 fn saved_result_read_failure(code: &str, error: impl Into<String>) -> Value {
@@ -1369,6 +1402,17 @@ async fn read_saved_result(context: &ToolContext<'_>, args: SavedResultReadArgs)
     let session_id = context.session_id.to_string();
     let workspace_id = context.workspace_id.to_string();
     let result = blocking::run_fs("tools.result.read", move || {
+        if args.query.is_none() && args.offset == 0 {
+            if let Some(view) = saved_result_text_view(
+                &root,
+                &user_id,
+                &session_id,
+                &workspace_id,
+                &args.handle,
+            ) {
+                return Ok(view);
+            }
+        }
         let mut data = tool_result_store::read(
             &root,
             &user_id,
@@ -1383,7 +1427,6 @@ async fn read_saved_result(context: &ToolContext<'_>, args: SavedResultReadArgs)
             .as_object_mut()
             .ok_or_else(|| anyhow!("Saved tool result reader returned an invalid response."))?;
         object.insert("result_read".to_string(), Value::Bool(true));
-        attach_unwrapped_text(object);
         Ok(data)
     })
     .await;
@@ -2283,71 +2326,34 @@ mod saved_result_read_tests {
     use super::*;
 
     #[test]
-    fn doubly_encoded_saved_result_text_is_unwrapped() {
-        let inner = json!({
-            "ok": true,
-            "data": {"stdout": "line one\nline two\n", "exit_code": 0}
-        })
-        .to_string();
-        let mut object = Map::new();
-        object.insert("content".to_string(), Value::String(inner));
-        attach_unwrapped_text(&mut object);
-        assert_eq!(
-            object.get("unwrapped_text").and_then(Value::as_str),
-            Some("line one\nline two\n")
-        );
+    fn saved_result_text_reads_direct_fields_first() {
+        let parsed = json!({"ok": true, "data": {"content": "plain body\n", "bytes": 11}});
+        assert_eq!(saved_result_text(&parsed).as_deref(), Some("plain body\n"));
     }
 
     #[test]
-    fn unparsable_or_blank_saved_result_text_is_left_alone() {
-        let mut object = Map::new();
-        object.insert("content".to_string(), Value::String("not json".to_string()));
-        attach_unwrapped_text(&mut object);
-        assert!(object.get("unwrapped_text").is_none());
-
-        let mut object = Map::new();
-        object.insert(
-            "content".to_string(),
-            Value::String(json!({"ok": true, "data": {"stdout": "   "}}).to_string()),
-        );
-        attach_unwrapped_text(&mut object);
-        assert!(object.get("unwrapped_text").is_none());
-    }
-
-    #[test]
-    fn unwrapped_text_is_bounded() {
-        let long = "a".repeat(20 * 1024);
-        let mut object = Map::new();
-        object.insert(
-            "content".to_string(),
-            Value::String(json!({"data": {"stdout": long}}).to_string()),
-        );
-        attach_unwrapped_text(&mut object);
-        let text = object
-            .get("unwrapped_text")
-            .and_then(Value::as_str)
-            .expect("unwrapped");
-        assert!(text.starts_with('a'));
-        // The bound holds apart from the short truncation notice.
-        assert!(text.len() < 17 * 1024, "unwrapped bytes: {}", text.len());
-    }
-
-    #[test]
-    fn command_envelope_unwraps_its_result_stream() {
-        let inner = json!({
+    fn saved_result_text_joins_command_rows() {
+        let parsed = json!({
             "ok": true,
             "data": {
-                "results": [{"command": "run", "returncode": 0, "stdout": "out text\n", "stderr": ""}]
+                "results": [
+                    {"command": "run", "returncode": 0, "stdout": "out text\n", "stderr": ""},
+                    {"command": "run2", "returncode": 2, "stdout": "", "stderr": "boom\n"}
+                ]
             }
-        })
-        .to_string();
-        let mut object = Map::new();
-        object.insert("content".to_string(), Value::String(inner));
-        attach_unwrapped_text(&mut object);
+        });
         assert_eq!(
-            object.get("unwrapped_text").and_then(Value::as_str),
-            Some("out text\n")
+            saved_result_text(&parsed).as_deref(),
+            Some("out text\n\nstderr: boom\n")
         );
+    }
+
+    #[test]
+    fn saved_result_text_ignores_blank_payloads() {
+        let blank = json!({"ok": true, "data": {"stdout": "   "}});
+        assert!(saved_result_text(&blank).is_none());
+        let empty = json!({"ok": true, "data": {}});
+        assert!(saved_result_text(&empty).is_none());
     }
 
     #[test]

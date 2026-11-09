@@ -157,6 +157,39 @@ pub(crate) fn read(
     }
 }
 
+/// Read the whole payload when it fits `max_bytes`, so callers can hand back a
+/// plain text view instead of a JSON-escaped byte page. Returns `Ok(None)` when
+/// the payload is too large to load in one piece.
+pub(crate) fn read_document(
+    root: &Path,
+    user_id: &str,
+    session_id: &str,
+    workspace_id: &str,
+    handle: &str,
+    max_bytes: u64,
+) -> Result<Option<(String, u64)>> {
+    let id = parse_handle(handle)?;
+    let _lock = acquire(root)?;
+    let path = root.join(&id).with_extension("result");
+    let mut file = open_regular(&path).map_err(|_| unavailable())?;
+    let header = Header::read(&mut file).map_err(|_| unavailable())?;
+    if header.owner != owner_key(user_id, session_id, workspace_id) {
+        return Err(unavailable());
+    }
+    if header.expires_at <= now_seconds() {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(unavailable());
+    }
+    if header.bytes > max_bytes {
+        return Ok(None);
+    }
+    file.seek(SeekFrom::Start(HEADER_BYTES as u64))
+        .map_err(|error| io_failure("seek result", error))?;
+    let text = read_utf8(&mut file, header.bytes as usize)?;
+    Ok(Some((text, header.bytes)))
+}
+
 fn read_page(
     mut file: File,
     handle: &str,
@@ -605,6 +638,48 @@ mod tests {
         assert!(stored.expires_at > now_seconds());
         let page = read_fixture(root.path(), &stored.handle, 0, usize::MAX).unwrap();
         assert!(page["content"].as_str().unwrap().len() <= MAX_READ_BYTES);
+    }
+
+    #[test]
+    fn read_document_returns_whole_payload_only_within_budget() {
+        let root = tempfile::tempdir().unwrap();
+        let value = json!({"ok": true, "data": {"stdout": "one\ntwo\n"}});
+        let stored = save_fixture(root.path(), &value);
+        let (document, bytes) = read_document(
+            root.path(),
+            "user-a",
+            "thread-a",
+            "workspace-a",
+            &stored.handle,
+            stored.bytes,
+        )
+        .unwrap()
+        .expect("payload fits the budget");
+        assert_eq!(document, serde_json::to_string(&value).unwrap());
+        assert_eq!(bytes, stored.bytes);
+
+        // Below the payload size the caller must fall back to byte paging.
+        assert!(read_document(
+            root.path(),
+            "user-a",
+            "thread-a",
+            "workspace-a",
+            &stored.handle,
+            stored.bytes - 1,
+        )
+        .unwrap()
+        .is_none());
+
+        // Other owners never see the payload.
+        assert!(read_document(
+            root.path(),
+            "user-b",
+            "thread-a",
+            "workspace-a",
+            &stored.handle,
+            stored.bytes,
+        )
+        .is_err());
     }
 
     #[test]

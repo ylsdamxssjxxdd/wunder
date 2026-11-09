@@ -1470,7 +1470,8 @@ export component MainWindow inherits Window {
         z: 1000;
         width: root.width;
         title: root.title;
-        icon: @image-url("../assets/app-icon.png");
+        // 16px 标题栏用 32px 小尺寸图：1x 时缩小仍保留绿天线，2x 时直接原生显示。
+        icon: @image-url("../assets/app-icon-32.png");
         maximized: root.maximized;
         drag-requested => { root.window-drag-requested(); }
         minimize-requested => { root.window-minimize-requested(); }
