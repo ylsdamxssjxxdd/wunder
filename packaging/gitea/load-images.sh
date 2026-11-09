@@ -55,14 +55,36 @@ for archive in images/*.tar.gz; do
     docker load --input "$archive"
 done
 # 载入后立即判架构：跨架构镜像在老 daemon 上往往要到任务容器启动才报错，那时已经晚了。
+# 唯一的例外是 arm64 套件里的 Win7 安装包镜像：它是 amd64，由宿主 binfmt 模拟运行。
 for image in $(sed -n 's/.*"image": "\([^"]*\)".*/\1/p' images/manifest.json 2>/dev/null | sort -u); do
     actual="$(docker image inspect --format '{{.Architecture}}' "$image" 2>/dev/null || true)"
     [[ -z "$actual" ]] && { echo "镜像未载入成功: $image" >&2; exit 2; }
-    [[ "$actual" == "$image_arch" ]] || {
-        echo "镜像 $image 的架构是 $actual，套件要求 $image_arch。" >&2
+    expected="$image_arch"
+    if [[ "$image_arch" == arm64 && "$image" == wunder-offline-installer:* ]]; then
+        expected=amd64
+    fi
+    [[ "$actual" == "$expected" ]] || {
+        echo "镜像 $image 的架构是 $actual，套件要求 $expected。" >&2
         exit 2
     }
 done
+
+# ARM64 剖面带 binfmt/：注册 x86_64/i386 的 qemu 解释器，让安装包任务能 docker run amd64 镜像。
+if [[ -d binfmt ]]; then
+    bash binfmt/register.sh
+    installer_image="$(quote_trim "$(env_value INSTALLER_IMAGE)")"
+    if [[ -n "$installer_image" ]]; then
+        emulated_arch="$(docker run --rm --security-opt seccomp=unconfined \
+            --entrypoint uname "$installer_image" -m 2>/dev/null || true)"
+        [[ "$emulated_arch" == x86_64 ]] || {
+            echo "安装包镜像无法在 ARM 上模拟运行（uname 返回 '${emulated_arch:-<空>}'，应为 x86_64）。" >&2
+            echo '检查 binfmt 注册与 Docker 是否能执行 amd64 镜像：' >&2
+            echo "  docker run --rm --security-opt seccomp=unconfined --entrypoint uname $installer_image -m" >&2
+            exit 2
+        }
+        echo "Win7 安装包镜像模拟自检通过（uname: $emulated_arch）"
+    fi
+fi
 
 bash prepare-sdk.sh
 

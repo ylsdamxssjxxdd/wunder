@@ -126,8 +126,7 @@ ARM64 剖面同日未在 ARM 机器上重跑，见文末边界。
   `concurrency`，也没有可脚本化的取消接口，界面上的 Cancel 仍是唯一的手动收口。
 - Wine 组出的 setup.exe 没有在真实 Windows 7/10 机器上装过（本机无 Windows 宿主），证据只有
   PE 头、Inno 载荷标记与 Wine 下的静默安装；对外正式交付仍以 GitHub 的 Windows runner 产物为准。
-  ARM worker 上没有可用的 i386 Wine，`win7-installer` 任务在该类机器上打印 SKIP 后成功退出，
-  所以 arm64 剖面把该标签指向构建镜像本身，不留未注册的标签。
+  arm64 剖面现在随包带 amd64 的 Wine 镜像，靠宿主 binfmt 模拟组包，不再跳过该任务。
 - arm64 剖面的**真机验收还没做**：本机是 x86_64，arm64 容器只能靠 qemu-user 执行，而 qemu-user 下
   `uname -m` 返回宿主架构（aarch64 的判定会失真），所以架构分派只能用桩 `uname` 复现，全量 cargo 构建、
   `-Z build-std` 与 AppDir 组包的真实耗时必须在 ARM 服务器上看 Actions 状态。
@@ -138,9 +137,11 @@ ARM64 剖面同日未在 ARM 机器上重跑，见文末边界。
   `--security-opt seccomp=unconfined`；升级到 Docker ≥20.10.10 后可去掉。
 - `gitea/act_runner:0.2.11` 跑本轮工作流（matrix + needs + 任务级令牌发布 + `prune.py`）尚未在真实运行里验证；
   它跑过的是上一代 rcho 三目标矩阵。老 runner 会把带表达式的步骤名显示成 `%!t(string=...)`，只影响显示。
-- ARM 侧的 Release 比 x86_64 侧少一个 `wunder-<版本>-win7-x86-setup.exe`：Inno Setup 要在 Wine 里跑 i386
-  的 `ISCC.exe`，aarch64 宿主没有可用的 i386 Wine，`win7-installer` 任务按架构打印 SKIP（成功退出，不影响
-  其余任务）。桌面上线要出这个安装包，仍以 x86_64 那一侧的运行为准。
+- ARM 侧的 Release 现在也带 `wunder-<版本>-win7-x86-setup.exe`：套件内置 amd64 的 Wine + Inno Setup
+  镜像，宿主执行 `binfmt/register.sh` 注册 qemu-x86_64/i386 后由模拟运行；`load-images.sh` 会用容器的
+  `uname -m` 自检。这套链路还没在真实 ARM 服务器上跑过完整安装包任务，目前只有 amd64 原生构建与
+  binfmt 机制的证据；Wine + LZMA2 在模拟下的耗时也待实测（任务超时可调 `WUNDER_INNO_COMPRESSION`）。
+  若模拟不可用，installer 任务会明确失败，不再静默跳过。
 - rcho 的三目标结论来自 `--network none` 的容器实测，还不是真实 Actions 运行：它的 `publish.py`/`prune.py`
   依赖任务级短期令牌，只有推送后在 Gitea 里才拿得到，因此发布与留存链路尚未在本机验证过；
   三个矩阵任务共用 `runner_capacity` 的真实并发调度也未实测。

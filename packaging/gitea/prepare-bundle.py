@@ -34,11 +34,12 @@ PROFILES = {
         "container_seccomp_opt": "--security-opt seccomp=unconfined ",
         "builder_dockerfile": "Dockerfile.builder-arm64",
         "builder_tag": "wunder-offline-builder:20261103-arm64-mounted",
-        # ARM 宿主没有可用的 i386 Wine：win7 的桌面与 CLI 仍然在 ARM 上原生交叉
-        # （build-std + SDK 内的 aarch64 版 MinGW 便携包），只有 Inno Setup 安装包组不了，
-        # 所以该标签仍指向构建镜像，任务按 uname 判定后打印 SKIP 并成功退出。
+        # Win7 桌面与 CLI 在 ARM 上仍原生交叉（build-std + SDK 内的 aarch64 版 MinGW 便携包），
+        # 只有 Inno Setup 安装包需要 Wine：套件带 amd64 的 Wine 安装镜像，任务在 qemu-x86_64
+        # binfmt 模拟下运行（见 binfmt/register.sh）；arm64 剖面因此必须随包导出 amd64 镜像。
         "installer_dockerfile": None,
-        "installer_tag": None,
+        "installer_tag": "wunder-offline-installer:20261103-amd64-wine",
+        "installer_arch": "amd64",
         # cargo-home-* 要留在归档里：rcho 的只读 SDK 视图靠把这几个名字换成可写目录来绕开 :ro，
         # 一个都不带的话 prepare-view.sh 会直接报「SDK 布局里没有可转换的目录」。
         "sdk_required": ["rust/toolchains", "cargo-vendor-slint", "linux-arm64-ubuntu18/root",
@@ -66,6 +67,7 @@ PROFILES = {
         # Win7 安装包要在 Wine 下跑 ISCC.exe 组，交给独立的第四个镜像（Ubuntu 22.04 基线）。
         "installer_dockerfile": "Dockerfile.installer-amd64",
         "installer_tag": "wunder-offline-installer:20261103-amd64-wine",
+        "installer_arch": "amd64",
         # host-tools-amd64 带 .complete 标记与已解压的 aarch64 交叉编译器，
         # rcho 的 prepare_x86_cross_toolchain.sh 会直接短路，不必再带 1.4G 的 archives 归档。
         "sdk_required": ["rust/toolchains", "cargo-vendor-slint", "linux-amd64-ubuntu18/root",
@@ -228,6 +230,9 @@ def main():
     parser.add_argument("--android-dir", type=Path,
                         help="准备好的安卓工具链与 APK 内嵌资产目录（SDK/NDK/JDK/Gradle/rootfs/补充包），"
                              "导出时整体复制进套件的 android/；不提供则留空目录，安卓任务会因缺输入而失败")
+    parser.add_argument("--binfmt-dir", type=Path,
+                        help="含 qemu-i386-static 与 qemu-x86_64-static 的 aarch64 解释器目录；"
+                             "arm64 剖面用它在宿主模拟 amd64 的 Win7 安装包镜像，导出到套件的 binfmt/")
     args = parser.parse_args()
 
     source = Path(__file__).resolve().parent
@@ -241,7 +246,8 @@ def main():
         "builder": "wunder-offline:docker://" + profile["builder_tag"],
         # 命令行与桌面版共用同一套 Rust 任务镜像，只是路由标签不同；rcho 的离线流水线用这个标签。
         "rcho": "rcho-offline:docker://" + profile["builder_tag"],
-        # 安装包标签名固定，值随剖面走：x86_64 指向 Wine 镜像，arm64 指回构建镜像（任务自行跳过）。
+        # 安装包标签名固定，值随剖面走：x86_64 原生跑 Wine 镜像，arm64 也指向同一个 amd64
+        # 镜像，由宿主的 qemu binfmt 模拟执行（见 binfmt/register.sh）。
         # 少了冒号前的名字，compose 注册出来的就是没有名字的畸形标签，工作流排不到任何 runner。
         "installer": "wunder-offline-installer:docker://" + (profile["installer_tag"] or profile["builder_tag"]),
     }
@@ -294,6 +300,25 @@ def main():
          + sha256(prebuilt_archive) + "  supplement-prebuilt.tar.gz\n").encode())
 
     (output / "runner.yaml").write_text(render_runner(source, profile, labels), encoding="utf-8")
+    installer_foreign = (profile["installer_tag"] is not None
+                         and profile["installer_arch"] != profile["architecture"])
+    if installer_foreign:
+        if args.binfmt_dir is None:
+            raise RuntimeError("arm64 剖面需要 --binfmt-dir（aarch64 的 qemu-i386-static / "
+                               "qemu-x86_64-static），否则 Win7 安装包无法在 ARM 上模拟运行")
+        binfmt_target = output / "binfmt"
+        shutil.copytree(source / "binfmt", binfmt_target, dirs_exist_ok=True)
+        for name in ("qemu-i386-static", "qemu-x86_64-static"):
+            binary = args.binfmt_dir.resolve() / name
+            if not binary.is_file():
+                raise RuntimeError("缺少 binfmt 解释器: " + str(binary))
+            header = binary.read_bytes()[:20]
+            if header[:4] != b"\x7fELF" or header[18:20] != b"\xb7\x00":
+                raise RuntimeError("binfmt 解释器不是 aarch64 ELF: " + str(binary))
+            shutil.copy2(binary, binfmt_target / name)
+            (binfmt_target / name).chmod(0o755)
+        (binfmt_target / "register.sh").chmod(0o755)
+        (binfmt_target / "install-service.sh").chmod(0o755)
     android_target = output / "android"
     if args.android_dir is not None:
         android_source = args.android_dir.resolve()
@@ -333,21 +358,27 @@ def main():
         if not has_image(profile["installer_tag"]):
             raise RuntimeError("安装包镜像缺失: " + profile["installer_tag"])
         archives.append((profile["installer_tag"],
-                         "installer-" + profile["architecture"] + ".tar.gz"))
+                         "installer-" + profile["installer_arch"] + ".tar.gz"))
     for image, filename in archives:
         archive = images / filename
         # 这里不用 --platform：交付用的镜像都是本地已存在的单架构副本（老套件 docker load 回来的
         # 也是单架构），加了平台断言反而会被 containerd 存储判成「不提供该平台」；
         # 架构直接读镜像配置，与剖面对不上就停，避免把跨架构镜像写进套件。
+        # 安装包镜像在 arm64 剖面里是 amd64（宿主 binfmt 模拟），单独按 installer_arch 校验。
         inspection = json.loads(subprocess.check_output(["docker", "image", "inspect", image]))[0]
-        if inspection["Architecture"] != profile["architecture"]:
-            raise RuntimeError("image architecture is not " + profile["architecture"] + ": " + image)
+        expected_arch = (profile["installer_arch"] if image == profile["installer_tag"]
+                         else profile["architecture"])
+        if inspection["Architecture"] != expected_arch:
+            raise RuntimeError("image architecture is not " + expected_arch + ": " + image)
         print("Exporting " + image, flush=True)
         export_stream(["docker", "save", image], archive)
         digest = sha256(archive)
         checksums.append(digest + "  images/" + filename)
-        manifest.append({"image": image, "id": inspection["Id"], "architecture": profile["architecture"],
-                         "file": filename, "bytes": archive.stat().st_size, "sha256": digest})
+        entry = {"image": image, "id": inspection["Id"], "architecture": inspection["Architecture"],
+                 "file": filename, "bytes": archive.stat().st_size, "sha256": digest}
+        if inspection["Architecture"] != profile["architecture"]:
+            entry["emulated"] = True
+        manifest.append(entry)
     (images / "SHA256SUMS").write_bytes(("\n".join(checksums) + "\n").encode("utf-8"))
     (images / "manifest.json").write_bytes((json.dumps(manifest, indent=2) + "\n").encode("utf-8"))
     print("Offline deployment prepared: " + str(output))

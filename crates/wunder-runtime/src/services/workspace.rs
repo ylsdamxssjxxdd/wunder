@@ -446,6 +446,15 @@ impl WorkspaceManager {
             .load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    /// Opt a single manager into the local single-root layout. Test builds never
+    /// inherit `WUNDER_WORKSPACE_SINGLE_ROOT`, so local-mode assertions switch
+    /// layout here instead of through process-wide environment.
+    #[cfg(test)]
+    pub(crate) fn set_single_root(&mut self, enabled: bool) {
+        self.single_root = enabled;
+        self.temp_cleanup_idle_ttl_s = effective_temp_cleanup_idle_ttl_s(enabled);
+    }
+
     pub fn scoped_user_id(&self, user_id: &str, agent_id: Option<&str>) -> String {
         let safe_user = self.safe_user_id(user_id);
         if self.single_root {
@@ -3284,13 +3293,25 @@ fn cleanup_expired_deleted_session_logs(
 }
 
 fn workspace_single_root_enabled() -> bool {
-    let Some(raw) = env::var(WORKSPACE_SINGLE_ROOT_ENV).ok() else {
-        return false;
-    };
-    matches!(
-        raw.trim().to_ascii_lowercase().as_str(),
-        "1" | "true" | "yes" | "on"
-    )
+    #[cfg(test)]
+    {
+        // The desktop and CLI forms set this env var for the whole process, so a
+        // test run started from inside them inherits a local-mode layout and
+        // every multi-root assertion silently flips. Test builds therefore start
+        // from multi-root; a test that wants local mode calls
+        // `WorkspaceManager::set_single_root` on its own manager.
+        false
+    }
+    #[cfg(not(test))]
+    {
+        let Some(raw) = env::var(WORKSPACE_SINGLE_ROOT_ENV).ok() else {
+            return false;
+        };
+        matches!(
+            raw.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    }
 }
 
 /// Insert one recently modified file into a bounded "newest N" keeper.

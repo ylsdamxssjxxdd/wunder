@@ -2,19 +2,20 @@
 
 本包面向已有 Docker Engine 与 Docker Compose 的 Linux 服务器，一套脚本按 `--arch` 导出两种剖面：
 `arm64`（ARM64 宿主，amd64 与 Win7 32 位都靠 SDK 内的交叉工具链原生完成）与
-`amd64`（x86_64 宿主，arm64 与 Win7 32 位同样靠交叉）。两者都不需要 QEMU，都保持 Ubuntu 18.04 / glibc 2.27 基线。
-桌面版（wunder）两个剖面都出 Linux 桌面归档 + `.portable` + `.run` 与 Win7 的桌面/CLI PE；
-只有 Win7 的 Inno Setup 安装包必须在 x86_64 上用 Wine 组，ARM 剖面会跳过那一个任务。
+`amd64`（x86_64 宿主，arm64 与 Win7 32 位同样靠交叉）。两者都保持 Ubuntu 18.04 / glibc 2.27 基线。
+桌面版（wunder）两个剖面都出 Linux 桌面归档 + `.portable` + `.run`、Win7 的桌面/CLI PE 与 Inno Setup 安装包：
+x86_64 剖面原生跑 Wine；arm64 剖面随包带 amd64 的 Wine 镜像，由宿主 qemu-x86_64/i386 binfmt 模拟执行。
 arm64 剖面默认配老版 Runner（`gitea/act_runner:0.2.11`）与 `compose.v1.yaml`，专为只有老 Docker Engine 的机器（如麒麟 V10 的 18.09）。
 
 ## 启动
 
 1. 把整个目录复制到服务器的可写目录，保留 `compose.yaml`、`images/`、`rust-builder/` 的相对位置。
-2. 执行 `bash load-images.sh`。它先按 `.env` 的 `CI_PLATFORM` 校验宿主架构（x86_64 套件不能在 ARM 机上装，反之亦然），
-   再校验 daemon 的 API 版本是否满足 `.env` 的 `RUNNER_MIN_DOCKER_API`，然后校验并加载 `images/` 里的三或四个镜像
-   （x86_64 剖面多一个 Wine 安装包镜像），接着校验、解压 `rust-builder/offline-sdk.tar.gz` 与
+2. 执行 `sudo bash load-images.sh`。它先按 `.env` 的 `CI_PLATFORM` 校验宿主架构（x86_64 套件不能在 ARM 机上装，反之亦然），
+   再校验 daemon 的 API 版本是否满足 `.env` 的 `RUNNER_MIN_DOCKER_API`，然后校验并加载 `images/` 里的四个镜像
+   （arm64 的安装包镜像是 amd64，`load-images.sh` 会注册 binfmt 并用 `uname -m` 自检模拟是否可用），
+   接着校验、解压 `rust-builder/offline-sdk.tar.gz` 与
    `rust-builder/supplement-prebuilt.tar.gz`，自动把 SDK 的宿主机绝对路径记进 `.env`，最后预建固定名字的网络与卷。
-   不需要手工改 Runner 挂载路径。
+   不需要手工改 Runner 挂载路径。移动过套件目录后要重跑一次，让 binfmt 的解释器路径重新钉住。
 3. 编辑 `.env`，把 `GITEA_PUBLIC_URL` 改成浏览器可访问的地址（如 `http://<服务器地址>:3000/`）；
    `GITEA_SSH_HOST` 只填主机名或地址。HTTP/SSH 端口默认 3000/2222。
 4. 起服务：`docker compose up -d`（Compose v2），只有 Python 版 `docker-compose` 1.29.x 的机器改用
@@ -44,12 +45,22 @@ docker compose logs --tail=100 gitea bootstrap runner
   用静态二进制包替换，绕开发行版软件源，失败自动回滚（`--rollback /var/backups/docker-upgrade-<时间戳>`）。
   24.0.9 的 API 是 1.43，高于新版 Runner 的 1.40 下限，升完可以直接改用 `docker.gitea.com/runner:5.2.3`。
   注意 `docker load` 的归档是 OCI 格式并保留 legacy `manifest.json`，18.09 也能载入。
+- **ARM 模拟 Windows 安装包**：arm64 套件带 amd64 的 Wine + Inno Setup 镜像，并附带
+  `binfmt/register.sh` 与 qemu-x86_64/i386 解释器；在 ARM 宿主上 `sudo bash binfmt/register.sh`
+  注册 binfmt 后，安装包任务直接 `docker run` 这个 amd64 镜像（容器里 `uname -m` 仍是 x86_64），
+  Release 里同样有 setup.exe。注册会把解释器绝对路径钉住（F 标志），移动套件目录后要重跑；
+  Wine + LZMA2 在 qemu 模拟下比原生慢，安装包阶段若超时再调 `WUNDER_INNO_COMPRESSION`。
+  `load-images.sh` 会自动注册并做一次 `uname -m` 自检，失败会直接报错而不是让任务静默跳过。
+  binfmt 注册不跨重启：`sudo bash binfmt/install-service.sh` 会装一个开机 oneshot 单元重新注册；
+  套件目录移动后也要重跑一次（解释器路径在注册时钉住）。
+  改完 `runner.yaml`/`.env` 的标签后重启 runner 生效；若安装包任务仍排队，在管理端删掉旧 runner
+  让它用 `data/bootstrap/runner-token` 重新注册。
 - **android arm64 与老 seccomp 的冲突**：套件里的 `qemu-x86_64-static` 是 Ubuntu 22.04 的静态构建（自带
   glibc 2.35），启动建线程走 `clone3`；Docker 18.09/19.03 的默认 seccomp 对 `clone3` 直接返回 EPERM，
   任务会在第一次调用 NDK clang 时 abort（`qemu: qemu_thread_create: Operation not permitted`）。
   arm64 剖面因此给任务容器加了 `--security-opt seccomp=unconfined`；升到 Docker ≥20.10.10 后默认 profile
   对 `clone3` 返回 ENOSYS（glibc 回退到 `clone`），可以把 `runner.yaml` 里这个选项删掉恢复默认沙箱。
-  amd64 剖面不用 qemu，不受影响。
+  amd64 剖面不用 qemu，不受影响（ARM 模拟安装包同样依赖这个选项）。
 
 ## 剖面、标签与挂载
 
@@ -61,7 +72,7 @@ docker compose logs --tail=100 gitea bootstrap runner
 Runner 注册三个标签，前两个指向同一个任务镜像，只是给两个仓库各留一条路由：
 - `wunder-offline` → 任务镜像（Ubuntu 18.04 + Rust/Slint 交叉工具链 + git + `/opt/offline-ci`），构建 Linux 桌面/CLI、Win7 32 位交叉，并复用预制补充包。
 - `rcho-offline` → 同一个镜像，供 rcho 的离线流水线使用。rcho 仓库自带 `.gitea/workflows/offline.yml` 与 `packaging/gitea/ci/`，推到同一实例即可构建 Linux x64/arm64 与 Win7 x86；检出前只能调用镜像里烘焙的 `/opt/offline-ci/checkout.py`，检出后一律改用仓库内脚本。因为 rcho 的构建器会往 SDK 的 `cargo-home-*` 写配置，它的 `prepare-view.sh` 把只读 SDK 组织成 `/ci-cache` 下的可写视图（只读内容用符号链接引用），任何情况下都不向 `/opt/offline-sdk` 写入。
-- `wunder-offline-installer` → x86_64 剖面指向带 Wine + Inno Setup 的第四个镜像；arm64 剖面没有可用的 i386 Wine，该标签指回构建镜像，任务按宿主架构自行跳过。标签名必须留着，否则 `runs-on: wunder-offline-installer` 排不到 runner、任务永久排队。
+- `wunder-offline-installer` → 两个剖面都指向 amd64 的 Wine + Inno Setup 镜像；x86_64 原生运行，arm64 由宿主 binfmt（qemu-x86_64/i386）模拟运行，ARM Release 里同样有 setup.exe。标签名必须留着，否则 `runs-on: wunder-offline-installer` 排不到 runner、任务永久排队。
 
 `runner.yaml` 是模板，`@TOKEN@` 由 `prepare-bundle.py` 渲染，套件里拿到的是已渲染值；标签与卷名必须和 `.env`/`compose.yaml` 同源。
 `<STACK_PREFIX>-sdk` 卷把离线目录只读挂到 `/opt/offline-sdk`，Runner 与它创建的每个任务容器都带这个挂载；
@@ -92,9 +103,8 @@ git push gitea main
   aarch64 用 `build-win7-arm64-offline.sh`（SDK 内 aarch64 宿主版便携包 + `nightly-*-aarch64` 的 rust-src 走
   `-Z build-std`），两条通道的产物名、`imports.txt` 与 Win7 导入门禁一致。
 - `win7-installer`（`needs: win7`）：在带 Wine + Inno Setup 的第四个镜像里跑 `ISCC.exe`，用交接 PE 与预置的
-  `wunder-supplement-win7-ia32-common.zip` 组出 `wunder-desktop-<版本>-win7-x86-setup.exe`。ARM 宿主跑不了 i386 Wine，
-  脚本按 `uname -m` 打印 SKIP 并成功退出（所以 arm64 剖面把该标签指向构建镜像本身，不留空标签）——
-  ARM 侧的 Release 与 x86_64 侧只差这一个安装包。
+  `wunder-supplement-win7-ia32-common.zip` 组出 `wunder-desktop-<版本>-win7-x86-setup.exe`。x86_64 宿主原生运行
+  该镜像；ARM 宿主由随包的 qemu-x86_64/i386 binfmt 模拟运行同一个 amd64 镜像，两个剖面的 Release 都带这一附件。
 - `android`（x86_64 或 aarch64 worker）：`wunder-android-<版本>-arm64.apk`，内嵌 proot Ubuntu rootfs、离线
   工具补充包 `common.tar.xz` 与 proot/busybox 运行库。工具链（Android SDK 36、NDK 28.2、Temurin JDK 17、
   Gradle 8.13 与预热缓存）和 APK 资产放在套件 `android/` 目录，由 `<前缀>-android` 卷只读挂载到任务容器的
@@ -165,10 +175,10 @@ git push gitea main
   启动凭据在 `data/bootstrap/`。备份先 `docker compose stop` 再拷 `data/`。发布留存由仓库工作流负责：
   每个发布步骤在 `publish.py` 之后跑 `ci/prune.py`，按 `KEEP_CI_RELEASES`（示例工作流设 5）只留最近的
   `ci-*` 发布并连带删除其附件与标签，手工 `v*` 标签永不触碰；上限是**每个仓库**各自计算，
-  且只在有产物发布的任务里执行。wunder 一次运行约 1.4–1.8 GB（ARM 剖面无 setup.exe，落在 1.4 GB 上下），
+  且只在有产物发布的任务里执行。wunder 一次运行约 1.4–1.8 GB（两个剖面都含 setup.exe），
   默认留存约 7–9 GB；要更紧就把 `KEEP_CI_RELEASES` 改小。
 - 套件本身的体积：arm64 的 `rust-builder/offline-sdk.tar.gz` 约 1.3 GB、`supplement-prebuilt.tar.gz` 约 1.1 GB、
-  镜像约 350 MB；解压后 SDK 约 5.4 GB。首次 Rust 全量构建在 8 核 ARM 上耗时明显，之后复用
+  镜像约 1.2 GB（含 amd64 安装包镜像）；解压后 SDK 约 5.4 GB。首次 Rust 全量构建在 8 核 ARM 上耗时明显，之后复用
   `<STACK_PREFIX>-build-cache`（实测该卷会涨到几十 GB，清理它等于丢增量编译，不影响发布数据）。
 
 ## 导出与维护
@@ -183,6 +193,7 @@ python3 packaging/gitea/prepare-bundle.py --arch amd64 \
 python3 packaging/gitea/prepare-bundle.py --arch arm64 \
     --sdk ../Rust-builder/kylin-arm/offline \
     --supplement-prebuilt /path/to/prebuilt \
+    --binfmt-dir /path/to/binfmt-arm64 \
     --output /media/<disk>/gitea-arm64
 ```
 
@@ -191,6 +202,10 @@ python3 packaging/gitea/prepare-bundle.py --arch arm64 \
 流式 gzip 导出镜像与 SDK 归档，
 镜像版本/ID/大小/SHA256 记在 `images/manifest.json`，SDK 与补充包缓存校验和记在 `rust-builder/SHA256SUMS`。
 仅更新配置或镜像时可加 `--reuse-sdk-archive` 复用已校验的归档（不会重新收集 SDK 变更）。
+
+arm64 剖面的 `--binfmt-dir` 里放 aarch64 的 `qemu-i386-static` 与 `qemu-x86_64-static`（可直接从
+`qemu-user-static_*_arm64.deb` 的 `usr/bin/` 取出），导出时会连同 `binfmt/register.sh` 写进套件；
+准备机还需已有 amd64 的安装包镜像（先在 x86_64 剖面构建/载入 `wunder-offline-installer:*` 即可）。
 
 在 x86_64 准备机上导出 arm64 剖面时要加 `--skip-build`（`Dockerfile.builder-arm64` 的基镜像与 apt 源都在
 arm 侧准备机上），任务镜像从上一版套件 `docker load` 回来后再补一层 `COPY ci /opt/offline-ci`：

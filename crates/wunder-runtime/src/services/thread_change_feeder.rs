@@ -444,12 +444,40 @@ mod tests {
         )
         .await
         .expect("start feed");
-        // Let the initial bounded replay finish. No historical frame is pending.
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(75), receiver.recv())
-                .await
-                .is_err()
+        // Barrier: drive one published commit through the feed first. Receiving
+        // it proves the initial read finished and the feeder is idle, which a
+        // fixed sleep cannot guarantee on a loaded test runner.
+        let first = state
+            .thread_store
+            .append_canonical(
+                &thread,
+                vec![CanonicalRecord::Event(CanonicalEvent::ItemCompleted(item(
+                    "barrier-item",
+                    CanonicalItemKind::AssistantMessage,
+                )))],
+            )
+            .await
+            .expect("persist barrier item");
+        state.kernel.orchestrator.change_hub.publish(
+            "feeder-thread",
+            first.persisted_through.end_ordinal_exclusive as i64,
         );
+        let ThreadChangeFrame::Change { data, .. } = next_frame(&mut receiver).await else {
+            panic!("expected barrier frame");
+        };
+        assert_eq!(data["payload"]["item_id"], "barrier-item");
+        // A single commit can project more than one row, so drain until the feed
+        // goes quiet; the window below has to measure an idle feeder.
+        let drained = std::time::Instant::now();
+        while tokio::time::timeout(std::time::Duration::from_millis(150), receiver.recv())
+            .await
+            .is_ok()
+        {
+            assert!(
+                drained.elapsed() < std::time::Duration::from_secs(5),
+                "feeder never went quiet after the barrier commit"
+            );
+        }
         let outcome = state
             .thread_store
             .append_canonical(

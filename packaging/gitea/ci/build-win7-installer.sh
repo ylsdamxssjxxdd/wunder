@@ -7,9 +7,15 @@ host_arch="$(uname -m)"
 mkdir -p release-assets
 find release-assets -maxdepth 1 -type f -delete
 if [[ "$host_arch" != x86_64 ]]; then
-    # Wine 跑 i386 Windows 程序依赖 x86 宿主；ARM worker 上明确跳过而不是失败。
-    echo "SKIP: Win7 安装包需要 x86_64 worker（Wine + ISCC），当前宿主是 $host_arch。"
+    # 这里只防错配：ARM 套件会把本任务指到 amd64 的 Wine 镜像，容器里 uname 仍是 x86_64；
+    # 若仍是原生 aarch64 镜像，说明 runner.yaml 的 installer 标签没换成 Wine 镜像。
+    echo "SKIP: Win7 安装包需要 x86_64 任务镜像（Wine + ISCC），当前容器报告 $host_arch。" >&2
+    echo "      ARM 套件应把 wunder-offline-installer 标签指向 amd64 的 Wine 镜像并注册 binfmt。" >&2
     exit 0
+fi
+if ! grep -q '^vendor_id' /proc/cpuinfo 2>/dev/null; then
+    # uname 是模拟架构（x86_64），/proc/cpuinfo 仍是 ARM：说明在 qemu 下跑。
+    echo "NOTE: 检测到 qemu 模拟运行，ISCC 压缩会比原生慢很多；超时可设 WUNDER_INNO_COMPRESSION=zip。"
 fi
 
 # 同 build.sh：只有明确判出「已被更新的提交取代」（退出码 10）才让路，脚本自身出错照常组包。

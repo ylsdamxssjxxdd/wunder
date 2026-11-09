@@ -84,7 +84,14 @@ fn finish(child: &mut FixtureChild) {
     let started = Instant::now();
     loop {
         if let Some(status) = child.0.try_wait().unwrap() {
-            assert!(status.success(), "storage child failed: {status}");
+            if !status.success() {
+                // The child's panic message is the only useful signal here.
+                let mut stderr = String::new();
+                if let Some(mut pipe) = child.0.stderr.take() {
+                    let _ = std::io::Read::read_to_string(&mut pipe, &mut stderr);
+                }
+                panic!("storage child failed: {}\n{}", status, stderr);
+            }
             return;
         }
         assert!(
@@ -135,10 +142,22 @@ fn local_process_fixture() {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         if mode == "handoff" {
-            store
-                .append_canonical(&thread, vec![record()])
-                .await
-                .unwrap();
+            // Takeover after the parent released its writer. The release is a
+            // file lock, so the new owner can lose the race by a few scheduler
+            // ticks; retry briefly instead of failing the handoff outright.
+            let started = Instant::now();
+            loop {
+                match store.append_canonical(&thread, vec![record()]).await {
+                    Ok(_) => break,
+                    Err(error) => {
+                        assert!(
+                            started.elapsed() < Duration::from_secs(10),
+                            "takeover append stayed blocked: {error:?}"
+                        );
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                    }
+                }
+            }
             store.flush(&thread).await.unwrap();
             store.shutdown(&thread).await.unwrap();
         } else {

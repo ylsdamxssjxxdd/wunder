@@ -56,9 +56,10 @@ jobs:
           fi
 
   win7-installer:
-    # Win7 安装包用 Inno Setup 组，Linux 宿主上靠 Wine 跑 ISCC.exe，所以是独立的第四个任务镜像。
-    # 输入（桌面与 CLI 的 i386 PE）由 win7 任务写进 /ci-cache 的交接目录，必须等它完成；
-    # ARM worker 上没有可用的 i386 Wine，脚本按 uname 判定后打印 SKIP 并成功退出。
+    # Win7 安装包用 Inno Setup 组，Linux 宿主上靠 Wine 跑 ISCC.exe，所以是独立的任务镜像。
+    # 输入（桌面与 CLI 的 i386 PE）由 win7 任务写进 /ci-cache 的交接目录，必须等它完成。
+    # x86_64 worker 直接跑 amd64 的 Wine 镜像；ARM worker 用套件 binfmt 模拟同一个镜像
+    # （qemu-x86_64/i386，见 kit 的 binfmt/register.sh），不再跳过。
     needs: win7
     runs-on: wunder-offline-installer
     timeout-minutes: 360

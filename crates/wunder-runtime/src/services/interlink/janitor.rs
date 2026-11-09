@@ -283,8 +283,15 @@ mod tests {
         );
         let value = snapshot();
         assert!(value["live_channels"].as_i64().unwrap() >= 1);
-        assert_eq!(value["channels"][0]["device_id"], "dev-janitor");
-        assert_eq!(value["rtt_p50_ms"], 12);
+        // The registry is process-wide, so other tests may register channels at
+        // the same time; locate our entry instead of assuming array order.
+        let channels = value["channels"].as_array().expect("channels array");
+        let mine = channels
+            .iter()
+            .find(|entry| entry["device_id"] == serde_json::json!("dev-janitor"))
+            .expect("registered channel is reported");
+        assert_eq!(mine["rtt_ms"], 12);
+        assert!(value["rtt_p50_ms"].is_number() || value["rtt_p50_ms"].is_null());
         assert!(value["commands"]["queued_total"].is_number());
         let _ = before;
         reg.unregister("dev-janitor", "ch_janitor");
