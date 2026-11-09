@@ -188,9 +188,9 @@ export component MainWindow inherits Window {
     callback window-maximize-requested();
     callback window-close-requested();
     title: root.title-inquiry-count > 0
-        ? I18n.app_window_title + " · " + I18n.wm_status_inquiry("" + root.title-inquiry-count)
+        ? I18n.wm_status_inquiry("" + root.title-inquiry-count)
         : root.title-running-count > 0
-        ? I18n.app_window_title + " · " + I18n.wm_status_running("" + root.title-running-count)
+        ? I18n.wm_status_running("" + root.title-running-count)
         : I18n.app_window_title + " · " + I18n.wm_status_idle;
     // Open as a compact workbench centered on the active monitor. The native
     // bootstrap fits it to the monitor work area after mapping and keeps the

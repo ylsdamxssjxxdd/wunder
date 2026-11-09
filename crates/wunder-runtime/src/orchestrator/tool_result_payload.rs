@@ -2955,6 +2955,9 @@ fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
         "query_mode",
         "path",
         "strategy",
+        // Whether the exact phrase missed and only terms matched: without it the
+        // caller cannot tell a real phrase hit from a fallback match.
+        "fallback_applied",
         "returned_match_count",
         "matched_file_count",
         "timeout_hit",

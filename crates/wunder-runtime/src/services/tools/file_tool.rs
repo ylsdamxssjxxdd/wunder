@@ -1685,9 +1685,13 @@ pub(crate) fn read_files_inner(
                         .get(anchor.saturating_sub(1))
                         .copied()
                         .unwrap_or(lines[0]);
+                    // Keep the excerpt small enough to survive the outer output
+                    // budget: a full-budget excerpt would be truncated again and
+                    // the caller would still see nothing usable.
                     let budget = file_output_budget
                         .unwrap_or(DEFAULT_READ_OUTPUT_BUDGET_BYTES)
                         .saturating_sub(96)
+                        .min(4096)
                         .max(256);
                     let (excerpt, omitted) = truncate_utf8_output(long_line, budget);
                     if omitted > 0 {
@@ -1695,7 +1699,12 @@ pub(crate) fn read_files_inner(
                         output_budget_omitted_bytes =
                             output_budget_omitted_bytes.saturating_add(omitted);
                         if let Value::Object(ref mut map) = summary {
+                            // The row *was* rendered, just partially: report the
+                            // anchor line so `read_lines: 0` no longer reads as
+                            // "the file is empty".
                             map.insert("long_line_excerpt".to_string(), Value::Bool(true));
+                            map.insert("effective_ranges".to_string(), json!(vec![(anchor, anchor)]));
+                            map.insert("read_lines".to_string(), Value::from(1u64));
                         }
                     }
                     file_output.push(excerpt);

@@ -101,11 +101,13 @@ pub(crate) fn build_execute_command_failure_data(
                 payload.insert("returncode".to_string(), returncode);
             }
         }
+        // Keep both streams: build and test tools report the diagnosis on stderr
+        // and the summary on stdout, and dropping stdout here forced a full
+        // re-run of the failing command just to see the other half.
         if let Some(stderr) = compact_command_output(last.get("stderr").and_then(Value::as_str)) {
             payload.insert("stderr".to_string(), Value::String(stderr));
-        } else if let Some(stdout) =
-            compact_command_output(last.get("stdout").and_then(Value::as_str))
-        {
+        }
+        if let Some(stdout) = compact_command_output(last.get("stdout").and_then(Value::as_str)) {
             payload.insert("stdout".to_string(), Value::String(stdout));
         }
     }
@@ -280,6 +282,35 @@ mod tests {
             Some(&Value::String("TOOL_FAILED".to_string()))
         );
         assert_eq!(meta.get("retryable"), Some(&Value::Bool(true)));
+    }
+
+    #[test]
+    fn build_execute_command_failure_data_keeps_a_stdout_tail_as_well() {
+        let payload = build_execute_command_failure_data(
+            &[json!({
+                "command": "cargo test",
+                "command_index": 0,
+                "returncode": 101,
+                "stdout": "running 3 tests\ntest result: FAILED. 1 passed; 2 failed\n",
+                "stderr": "thread 'x' panicked at src/lib.rs\nerror: test failed\n"
+            })],
+            1,
+            false,
+            0,
+            false,
+        );
+        assert!(
+            payload["stderr"]
+                .as_str()
+                .is_some_and(|text| text.contains("panicked")),
+            "stderr: {payload}"
+        );
+        assert!(
+            payload["stdout"]
+                .as_str()
+                .is_some_and(|text| text.contains("test result: FAILED")),
+            "stdout dropped: {payload}"
+        );
     }
 
     #[test]
