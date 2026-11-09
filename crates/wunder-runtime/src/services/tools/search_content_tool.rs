@@ -114,6 +114,13 @@ impl SearchStrategy {
             Self::LiteralTermsFallback => "literal_terms_fallback",
         }
     }
+
+    /// True only when the engine answered looser than the literal phrase: the
+    /// phrase missed and individual terms matched instead. An explicit regex or
+    /// an explicit `|` disjunction is what the caller asked for, not a fallback.
+    fn is_literal_terms_fallback(self) -> bool {
+        matches!(self, Self::LiteralTermsFallback)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -2165,7 +2172,7 @@ fn build_search_summary(
         query_mode: attempt.query_mode.as_str().to_string(),
         query_mode_inferred: params.query_mode_inferred,
         strategy: attempt.strategy.as_str().to_string(),
-        fallback_applied: attempt.strategy == SearchStrategy::LiteralTermsFallback,
+        fallback_applied: attempt.strategy.is_literal_terms_fallback(),
         returned_match_count: hits.len(),
         matched_file_count: matched_files.len(),
         top_files,
@@ -2238,7 +2245,10 @@ fn build_model_search_success(
 ) -> Value {
     let truncation_reasons = search_truncation_reasons(flags);
     let truncated = !truncation_reasons.is_empty();
-    let phrase_fallback = attempt.strategy == SearchStrategy::LiteralTermsFallback;
+    // Term-level hits look like phrase hits in the payload, so the caller has to
+    // be told which one it got. Regex and explicit `|` searches are intentional
+    // and must not be labelled as a fallback.
+    let phrase_fallback = attempt.strategy.is_literal_terms_fallback();
     let summary_text = if returned_match_count == 0 {
         format!(
             "No hits in local workspace files (engine: {}).",
@@ -2530,6 +2540,15 @@ mod tests {
         .expect("params");
         assert_eq!(params.query_mode, QueryMode::Literal);
         assert!(!params.query_mode_inferred);
+    }
+
+    #[test]
+    fn only_term_fallback_counts_as_a_fallback() {
+        assert!(SearchStrategy::LiteralTermsFallback.is_literal_terms_fallback());
+        // A regex query or an explicit `|` search is what the caller asked for.
+        assert!(!SearchStrategy::Regex.is_literal_terms_fallback());
+        assert!(!SearchStrategy::LiteralDisjunction.is_literal_terms_fallback());
+        assert!(!SearchStrategy::LiteralExact.is_literal_terms_fallback());
     }
 
     #[test]

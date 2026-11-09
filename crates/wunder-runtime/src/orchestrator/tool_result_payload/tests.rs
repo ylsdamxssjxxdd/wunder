@@ -262,8 +262,21 @@ fn self_status_and_command_success_drop_runtime_details() {
 
 #[test]
 fn large_command_output_is_a_summary_with_saved_result_recovery() {
-    let stdout = "output-line\n".repeat(400);
-    let stderr = "warning-line\n".repeat(300);
+    // Each stream has to clear the inline budget on its own (8 KiB); a smaller
+    // fixture would be projected verbatim and never exercise the fold.
+    let mut stdout = String::new();
+    stdout.push_str(&"out-early-aaaaaaaaaaaaaaaa\n".repeat(200));
+    stdout.push_str(&"out-middle-bbbbbbbbbbbbbb\n".repeat(200));
+    stdout.push_str(&"out-late-cccccccccccccccc\n".repeat(200));
+    let mut stderr = String::new();
+    stderr.push_str(&"warn-early-aaaaaaaaaaaaaaaa\n".repeat(200));
+    stderr.push_str(&"warn-middle-bbbbbbbbbbbbbb\n".repeat(200));
+    stderr.push_str(&"warn-late-cccccccccccccccc\n".repeat(200));
+    let stdout_bytes = stdout.len() as u64;
+    let stderr_bytes = stderr.len() as u64;
+    let stdout_lines = stdout.lines().count() as u64;
+    assert!(stdout_bytes > 8192);
+    assert!(stderr_bytes > 8192);
     let handle = "tool-result:0123456789abcdef0123456789abcdef";
     let result = ToolResultPayload::from_value(json!({
         "ok": true,
@@ -278,8 +291,8 @@ fn large_command_output_is_a_summary_with_saved_result_recovery() {
                 "stderr": stderr,
                 "output_meta": {
                     "truncated": false,
-                    "stdout": {"truncated": false, "total_bytes": 4800},
-                    "stderr": {"truncated": false, "total_bytes": 3900}
+                    "stdout": {"truncated": false, "total_bytes": stdout_bytes},
+                    "stderr": {"truncated": false, "total_bytes": stderr_bytes}
                 }
             }]
         },
@@ -288,18 +301,53 @@ fn large_command_output_is_a_summary_with_saved_result_recovery() {
     let observation = result.to_compact_payload("execute_command");
     assert_eq!(observation["data"]["exit_code"], 0);
     assert_eq!(observation["data"]["truncated"], true);
-    assert_eq!(
-        observation["data"]["stdout_summary"],
-        json!({"bytes": 4800, "captured_lines": 400, "omitted": true})
-    );
-    assert_eq!(
-        observation["data"]["stderr_summary"],
-        json!({"bytes": 3900, "captured_lines": 300, "omitted": true})
+    let stdout_summary = &observation["data"]["stdout_summary"];
+    assert_eq!(stdout_summary["bytes"], json!(stdout_bytes));
+    assert_eq!(stdout_summary["captured_lines"], json!(stdout_lines));
+    assert_eq!(stdout_summary["omitted"], json!(true));
+    // A folded stream keeps a head and tail so the caller need not re-read it.
+    let head = stdout_summary["head"].as_str().expect("head preview");
+    let tail = stdout_summary["tail"].as_str().expect("tail preview");
+    assert!(head.starts_with("out-early-"), "head: {head}");
+    assert!(head.lines().count() <= 3, "head lines: {head}");
+    assert!(tail.ends_with("-cccccccccccccccc"), "tail: {tail}");
+    assert!(
+        observation["data"]["stderr_summary"]["head"]
+            .as_str()
+            .is_some_and(|text| text.starts_with("warn-early-"))
     );
     assert!(observation["data"].get("stdout").is_none());
     assert!(observation["data"].get("stderr").is_none());
     assert_eq!(observation["result_handle"], handle);
-    assert!(!observation.to_string().contains("output-line"));
+    // Only a bounded head/tail is inline; the middle of the stream stays behind
+    // the handle.
+    assert!(!observation.to_string().contains("out-middle-"));
+    assert!(!observation.to_string().contains("warn-middle-"));
+}
+
+#[test]
+fn ordinary_command_output_below_the_budget_stays_inline() {
+    // The inline budget used to be 2 KiB, which folded ordinary `rg`/`git`
+    // output and forced a handle round-trip. Keep daily-sized output verbatim.
+    let stdout = "x".repeat(7 * 1024);
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "action": "execute_command",
+        "state": "completed",
+        "summary": "Executed 1 commands.",
+        "data": {
+            "results": [{
+                "command": "rg needle",
+                "returncode": 0,
+                "stdout": stdout,
+                "stderr": ""
+            }]
+        }
+    }));
+    let observation = result.to_compact_payload("execute_command");
+    assert_eq!(observation["data"]["stdout"], json!(stdout));
+    assert!(observation["data"].get("stdout_summary").is_none());
+    assert!(observation["data"].get("truncated").is_none());
 }
 
 #[test]

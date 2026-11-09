@@ -461,11 +461,8 @@ export component Sidebar inherits Rectangle {
     callback file-search-edit(string);
     callback file-search-accept(string);
     callback file-search-cancel();
-    in-out property <bool> file-selecting;
     in property <int> file-selected-count: 0;
-    callback file-select();
     callback file-selection-action(int);
-    callback file-check(int);
     // Modifier pick and the internal move drag lifecycle, mirrored from the
     // panel (see workspace_files.slint for the hover index semantics).
     callback file-pick(int, bool, bool);
@@ -905,7 +902,6 @@ export component Sidebar inherits Rectangle {
             key-action(action) => { root.file-key(action); }
             toggle(index) => { root.file-toggle(index); }
             pick(index, ctrl, shift) => { root.file-pick(index, ctrl, shift); }
-            check(index) => { root.file-check(index); }
             refresh => { root.file-refresh(); }
             connect => { root.file-connect(); }
             menu(index, action) => { root.file-menu(index, action); }
@@ -913,7 +909,6 @@ export component Sidebar inherits Rectangle {
             drag-hover(index) => { root.file-drag-hover(index); }
             drag-drop(index) => { root.file-drag-drop(index); }
             drop(event) => { root.file-drop(event); }
-            select => { root.file-select(); }
             selection-action(action) => { root.file-selection-action(action); }
             search-edit(text) => { root.file-search-edit(text); }
             search-accept(text) => { root.file-search-accept(text); }
@@ -922,7 +917,6 @@ export component Sidebar inherits Rectangle {
             search-query <=> root.file-search-query;
             search-busy: root.file-search-busy;
             search-active: root.file-search-active;
-            selecting <=> root.file-selecting;
             selected-count: root.file-selected-count;
             dragging: root.file-dragging;
             drop-path: root.file-drop-path;

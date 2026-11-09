@@ -111,8 +111,8 @@ export component WorkspaceFilesPanel inherits Rectangle {
     in-out property <string> search-query;
     in property <bool> search-busy;
     in property <bool> search-active;
-    // Multi-select state: the bar under the head and the row check tiles.
-    in-out property <bool> selecting;
+    // Working-set size; rows highlight via `selected` and batch actions live in
+    // the row context menu — there is no separate multi-select mode.
     in property <int> selected-count;
     // Internal move drag: `dragging` gates the drop highlights, `drop-path` /
     // `drop-root` name the hovered target (root is `""`, so it needs its own
@@ -124,13 +124,11 @@ export component WorkspaceFilesPanel inherits Rectangle {
     callback search-edit(string);
     callback search-accept(string);
     callback search-cancel();
-    callback select();
     callback selection-action(int);
     callback toggle(int);
     // Modifier click: ctrl (or meta) toggles the row in the working set,
     // shift extends a range from the last picked row.
     callback pick(int, bool, bool);
-    callback check(int);
     // Internal move drag lifecycle, all reported by the row that owns the
     // gesture: begin at the drag threshold, hover with the row index under
     // the pointer, drop with the last hover index (-3 cancels).
@@ -172,11 +170,6 @@ export component WorkspaceFilesPanel inherits Rectangle {
                     tip: I18n.wf_search;
                     actionable: root.local || !root.offline;
                     clicked => { root.search-open = true; }
-                }
-                if !root.search-open && !root.resource-mode : ToolButton {
-                    glyph: @image-url("../assets/icons/list-check.svg");
-                    tip: I18n.wf_select;
-                    clicked => { root.select(); }
                 }
                 if !root.search-open : ToolButton {
                     glyph: @image-url("../assets/icons/rotate-right.svg");
@@ -231,17 +224,6 @@ export component WorkspaceFilesPanel inherits Rectangle {
                     }
                 }
             }
-            if root.selecting && !root.search-active : HorizontalLayout {
-                height: 26px; spacing: 6px;
-                Text {
-                    text: I18n.wf_selected_count("\{root.selected-count}");
-                    color: Theme.text-secondary; font-size: Theme.font-xs; vertical-alignment: center;
-                }
-                Rectangle { horizontal-stretch: 1; min-width: 0px; }
-                Button { text: I18n.common_cancel; clicked => { root.selection-action(0); } }
-                Button { text: I18n.wf_batch_download; enabled: root.selected-count > 0 && !root.busy; clicked => { root.selection-action(1); } }
-                Button { text: I18n.common_delete; enabled: root.selected-count > 0 && !root.busy; clicked => { root.selection-action(2); } }
-            }
             if root.rows.length > 0 && root.error != "" && !root.offline : Text {
                 text: root.error; color: Theme.danger; font-size: Theme.font-xs;
                 wrap: word-wrap;
@@ -260,7 +242,7 @@ export component WorkspaceFilesPanel inherits Rectangle {
                             root.search-query = ""; root.search-open = false; root.search-cancel();
                             return accept;
                         }
-                        if event.text == Key.Escape && root.selecting {
+                        if event.text == Key.Escape && root.selected-count > 0 {
                             root.selection-action(0);
                             return accept;
                         }
@@ -466,6 +448,11 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                         Menu {
                                             MenuItem { title: I18n.wf_menu_refresh; activated => { root.refresh(); } }
                                             MenuSeparator {}
+                                            // Batch actions appear only when the right-clicked row is
+                                            // part of a multi-row working set (Ctrl/Shift picked).
+                                            if root.selected-count > 1 && row.selected : MenuItem { title: I18n.wf_batch_download; enabled: !root.busy; activated => { root.selection-action(1); } }
+                                            if root.selected-count > 1 && row.selected : MenuItem { title: I18n.wf_batch_delete; enabled: root.writeable; activated => { root.selection-action(2); } }
+                                            if root.selected-count > 1 && row.selected : MenuSeparator {}
                                             MenuItem { title: root.local ? I18n.wf_menu_open : I18n.wf_menu_preview; activated => { root.menu(index, 0); } }
                                             // 所在位置只在本地工作区有意义：云端行没有对应的宿主目录。
                                             if !root.resource-mode && root.local && row.kind == 0 : MenuItem { title: I18n.wf_menu_reveal_file; activated => { root.menu(index, 10); } }
@@ -482,24 +469,6 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                             padding-left: SidebarMetrics.row-padding + row.depth * 12px;
                                             padding-right: SidebarMetrics.row-padding;
                                             spacing: SidebarMetrics.icon-gap;
-                                            // Selection tile: the only toggle target in
-                                            // multi-select mode, so browsing keeps working.
-                                            if root.selecting && !root.search-active && row.kind != 2 : Rectangle {
-                                                width: 18px;
-                                                if row.selected : Image {
-                                                    x: 3px; y: 8px; width: 12px; height: 12px;
-                                                    source: @image-url("../assets/icons/check.svg"); colorize: Theme.accent-ink;
-                                                }
-                                                if !row.selected : Rectangle {
-                                                    x: 3px; y: 8px; width: 12px; height: 12px;
-                                                    border-radius: 3px; border-width: 1px;
-                                                    border-color: Theme.border-strong; background: Theme.surface;
-                                                }
-                                                TouchArea {
-                                                    mouse-cursor: pointer;
-                                                    clicked => { root.check(index); }
-                                                }
-                                            }
                                             // 行首簇：展开指示与文件/文件夹图标放在一个普通 Rectangle
                                             // 里手工排，不再套一层布局。原因不是布局不认 `y:`（它认），
                                             // 而是布局里没写 `y` 的固定尺寸项会被顶对齐，而布局的

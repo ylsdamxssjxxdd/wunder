@@ -718,11 +718,8 @@ export component MainWindow inherits Window {
     callback ws-file-search-edit(string);
     callback ws-file-search-accept(string);
     callback ws-file-search-cancel();
-    in-out property <bool> ws-file-selecting: false;
     in-out property <int> ws-file-selected-count: 0;
-    callback ws-file-select();
     callback ws-file-selection-action(int);
-    callback ws-file-check(int);
     // Modifier pick (row index, ctrl, shift) and the internal move drag
     // lifecycle (begin row, hovered row index, last hover index at release).
     callback ws-file-pick(int, bool, bool);
@@ -1180,9 +1177,7 @@ export component MainWindow inherits Window {
                 file-local: root.ws-file-local;
                 file-toggle(index) => { root.ws-file-toggle(index); }
                 file-pick(index, ctrl, shift) => { root.ws-file-pick(index, ctrl, shift); }
-                file-check(index) => { root.ws-file-check(index); }
                 file-refresh => { root.ws-file-refresh(); }
-                file-select => { root.ws-file-select(); }
                 file-selection-action(action) => { root.ws-file-selection-action(action); }
                 file-search-edit(text) => { root.ws-file-search-edit(text); }
                 file-search-accept(text) => { root.ws-file-search-accept(text); }
@@ -1191,7 +1186,6 @@ export component MainWindow inherits Window {
                 file-search-query <=> root.ws-file-search-query;
                 file-search-busy: root.ws-file-search-busy;
                 file-search-active: root.ws-file-search-active;
-                file-selecting <=> root.ws-file-selecting;
                 file-selected-count: root.ws-file-selected-count;
                 file-connect => { root.settings-open = true; root.settings-active-panel = 13; root.refresh-settings(); }
                 file-menu(index, action) => { root.ws-file-menu(index, action); }

@@ -4502,10 +4502,13 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         if session.is_empty() {
             return;
         }
-        let default_name = trajectory_export_filename_now(&session);
-        let Some(path) = crate::file_dialog::save_file("导出线程日志", &default_name) else {
+        let Some(directory) = crate::file_dialog::pick_directory("导出线程日志") else {
             return;
         };
+        let path = std::path::Path::new(&directory)
+            .join(trajectory_export_filename_now(&session))
+            .to_string_lossy()
+            .into_owned();
         let (tx, rx) = sync_channel(1);
         let backend = backend.clone();
         std::thread::spawn(move || {

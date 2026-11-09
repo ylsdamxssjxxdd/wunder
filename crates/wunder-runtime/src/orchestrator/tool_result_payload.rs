@@ -2443,7 +2443,15 @@ fn compact_subagent_message(value: &Value) -> Value {
     Value::Object(projected)
 }
 
-const COMMAND_MODEL_OUTPUT_MAX_BYTES: usize = 2 * 1024;
+/// Inline budget for one command stream. Below it the model gets the text; above
+/// it the text moves to the saved-result handle. Kept at 8 KiB because a 2 KiB
+/// cut folded ordinary `rg`/`ls`/`git` output and cost an extra handle read nearly
+/// every time, while 8 KiB still bounds one observation.
+const COMMAND_MODEL_OUTPUT_MAX_BYTES: usize = 8 * 1024;
+/// A folded stream keeps a short head and tail so the caller can orient itself
+/// without a second round-trip through the handle.
+const COMMAND_PREVIEW_LINES: usize = 3;
+const COMMAND_PREVIEW_LINE_CHARS: usize = 200;
 
 fn project_command_stream(
     row: &Map<String, Value>,
@@ -2473,15 +2481,47 @@ fn project_command_stream(
         .and_then(|meta| meta.get("total_bytes"))
         .and_then(Value::as_u64)
         .unwrap_or(text.len() as u64);
+    // Orient the caller without a handle round-trip: keep the first and last
+    // lines of the folded stream inline.
+    let (preview_head, preview_tail) = command_output_preview(text);
     projected.insert(
         format!("{stream}_summary"),
         json!({
             "bytes": total_bytes,
             "captured_lines": text.lines().count(),
             "omitted": true,
+            "head": preview_head,
+            "tail": preview_tail,
         }),
     );
     true
+}
+
+/// First and last few lines of a folded stream, each bounded by characters so a
+/// single minified line cannot blow the observation budget back open.
+fn command_output_preview(text: &str) -> (String, String) {
+    fn take(lines: &[&str]) -> String {
+        lines
+            .iter()
+            .map(|line| {
+                line.chars()
+                    .take(COMMAND_PREVIEW_LINE_CHARS)
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+    let all = text.lines().collect::<Vec<_>>();
+    let head_end = all.len().min(COMMAND_PREVIEW_LINES);
+    let tail_start = all.len().saturating_sub(COMMAND_PREVIEW_LINES);
+    let head = take(&all[..head_end]);
+    let tail = if tail_start >= head_end {
+        take(&all[tail_start..])
+    } else {
+        // Short output: the head already covers it, do not duplicate it.
+        String::new()
+    };
+    (head, tail)
 }
 
 fn project_command_row(row: &Map<String, Value>) -> Value {

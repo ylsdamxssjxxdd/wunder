@@ -5,7 +5,10 @@ use super::{
 };
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use wunder_server::{stable_core::thread_view::ChatViewRow, storage::StorageBackend};
+use wunder_server::{
+    stable_core::thread_view::{ChatViewRow, ViewMessage},
+    storage::StorageBackend,
+};
 
 /// Child-run cards one turn projects. A turn spawning more children than the
 /// cap keeps the newest cards; the runtime list view remains the full index.
@@ -296,6 +299,44 @@ pub(super) fn load_turn(
     Ok(projected)
 }
 
+/// Whether a projected row carries only the head of its durable body.
+///
+/// The chat view keeps `content` to a byte-bounded preview and leaves the rest
+/// to the lazy `body` reference. Because the preview is byte bounded, a long
+/// Chinese answer stops mid-sentence instead of degrading to a whole paragraph.
+fn preview_is_partial(message: &ViewMessage) -> bool {
+    !message.item_id.is_empty()
+        && message
+            .body
+            .as_ref()
+            .is_some_and(|body| body.bytes > message.content.len())
+}
+
+/// Restore the whole message text for a projected row.
+///
+/// The desktop renders and copies the answer the row carries, so a row whose
+/// preview stops short of its durable body is resolved once from the indexed
+/// item. Reading the item (instead of paging the body) keeps the repair to a
+/// single lookup per truncated message.
+fn durable_text(
+    storage: &dyn StorageBackend,
+    user: &str,
+    session: &str,
+    message: &ViewMessage,
+) -> String {
+    if !preview_is_partial(message) {
+        return message.content.clone();
+    }
+    let Ok(Some(item)) = storage.get_thread_item(user, session, &message.item_id, false) else {
+        return message.content.clone();
+    };
+    let payload = item.get("payload").unwrap_or(&item);
+    payload
+        .get("content")
+        .and_then(wunder_server::stable_core::thread_view::message_content_text)
+        .unwrap_or_else(|| message.content.clone())
+}
+
 fn load_turn_header(
     storage: &dyn StorageBackend,
     user: &str,
@@ -306,7 +347,7 @@ fn load_turn_header(
     if id.is_empty() {
         return None;
     }
-    let mut user_text = chat.user.content.clone();
+    let mut user_text = durable_text(storage, user, session, &chat.user);
     let mut user_attachments = chat
         .user
         .attachments
@@ -355,7 +396,7 @@ fn load_turn_header(
     };
     let assistant = NativeMessage {
         turn_id: id.to_string(),
-        text: chat.assistant.content.clone(),
+        text: durable_text(storage, user, session, &chat.assistant),
         mine: false,
         created_at: chat.updated_time,
         state: state_label.to_string(),
@@ -683,6 +724,39 @@ fn item_round(item: &Value) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A row that carries only the head of its body must be repaired, otherwise
+    /// the answer is rendered (and copied) cut at the byte-bounded preview.
+    #[test]
+    fn preview_shorter_than_the_durable_body_is_partial() {
+        use wunder_server::stable_core::thread_view::BodyRef;
+        let body = |bytes: usize| {
+            Some(BodyRef {
+                body_id: "fixture-root:text-1|content".into(),
+                revision: 1,
+                bytes,
+            })
+        };
+        let mut message = ViewMessage {
+            item_id: "fixture-root:text-1".into(),
+            content: "截断的预览".to_owned(),
+            body: body(4096),
+            ..ViewMessage::default()
+        };
+        assert!(preview_is_partial(&message));
+        message.body = body(message.content.len());
+        assert!(!preview_is_partial(&message));
+        message.body = body(4096);
+        message.item_id.clear();
+        assert!(
+            !preview_is_partial(&message),
+            "a row without identity cannot be repaired"
+        );
+        message.item_id = "fixture-root:text-1".into();
+        message.body = None;
+        assert!(!preview_is_partial(&message));
+    }
+
     #[test]
     fn multipart_user_message_keeps_text_and_attachments() {
         let root = json!({"turn_id":"fixture-root", "status":"completed", "user_turn_index":3});

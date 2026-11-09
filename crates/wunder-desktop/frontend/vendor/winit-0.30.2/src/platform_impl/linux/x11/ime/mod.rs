@@ -56,6 +56,11 @@ pub(crate) struct Ime {
     // The actual meat of this struct is boxed away, since it needs to have a fixed location in
     // memory so we can pass a pointer to it around.
     inner: Box<ImeInner>,
+    // The window that currently holds X focus. A context (re)created while its window is
+    // already focused must take IC focus immediately: the FocusIn that would normally call
+    // XSetICFocus may have arrived before the context existed, leaving IMEs (fcitx/sogou)
+    // detached after a blur/refocus cycle.
+    focused_window: Option<ffi::Window>,
 }
 
 impl Ime {
@@ -97,7 +102,7 @@ impl Ime {
                 result?;
             }
             inner.im = Some(input_method);
-            Ok(Ime { xconn, inner })
+            Ok(Ime { xconn, inner, focused_window: None })
         } else {
             Err(ImeCreationError::OpenFailure(Box::new(inner.potential_input_methods)))
         }
@@ -153,6 +158,13 @@ impl Ime {
         };
 
         self.inner.contexts.insert(window, context);
+        // If the window already holds X focus, the FocusIn that would set IC focus has
+        // already passed; focus the fresh context now so the IME attaches immediately.
+        if self.focused_window == Some(window) {
+            if let Some(Some(context)) = self.inner.contexts.get_mut(&window) {
+                let _ = context.focus(&self.xconn);
+            }
+        }
         Ok(!self.is_destroyed())
     }
 
@@ -179,8 +191,19 @@ impl Ime {
     }
 
     pub fn focus(&mut self, window: ffi::Window) -> Result<bool, XError> {
+        self.focused_window = Some(window);
         if self.is_destroyed() {
             return Ok(false);
+        }
+        let allowed = matches!(self.inner.contexts.get(&window), Some(Some(context)) if context.is_allowed());
+        if allowed {
+            // IME servers (fcitx/sogou) can drop the input context on focus-out; a bare
+            // XSetICFocus on the stale IC then never re-attaches. Rebuild the context so the
+            // server sees a fresh IC; create_context takes IC focus because the window is
+            // now the focused one.
+            let _ = self.remove_context(window);
+            let _ = self.create_context(window, true);
+            return Ok(true);
         }
         if let Some(&mut Some(ref mut context)) = self.inner.contexts.get_mut(&window) {
             context.focus(&self.xconn).map(|_| true)
@@ -190,6 +213,9 @@ impl Ime {
     }
 
     pub fn unfocus(&mut self, window: ffi::Window) -> Result<bool, XError> {
+        if self.focused_window == Some(window) {
+            self.focused_window = None;
+        }
         if self.is_destroyed() {
             return Ok(false);
         }

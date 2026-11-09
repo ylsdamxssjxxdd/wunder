@@ -218,7 +218,6 @@ fn reflect_target(app: &MainWindow) {
     BATCH_PATHS.with(|slot| slot.borrow_mut().clear());
     ANCHOR.with(|slot| *slot.borrow_mut() = String::new());
     DRAG_MOVE.with(|slot| *slot.borrow_mut() = None);
-    app.set_ws_file_selecting(false);
     app.set_ws_file_selected_count(0);
     app.set_ws_file_dragging(false);
     app.set_ws_file_drop_path("".into());
@@ -320,6 +319,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         let Some(app) = weak.upgrade() else {
             return;
         };
+        // 普通点击结束多选：选中集只由 Ctrl/Shift 维护。
+        if SELECTED.with(|slot| !slot.borrow().is_empty()) {
+            SELECTED.with(|slot| slot.borrow_mut().clear());
+            sync_selection(&app);
+        }
         let Some(row) = app.get_ws_file_rows().row_data(index as usize) else {
             return;
         };
@@ -1169,54 +1173,10 @@ fn reveal_dir(app: &MainWindow, api: Arc<NativeDesktop>, path: &str) {
 
 // -------------------------------------------------------------- selection
 
-/// Multi-select: the working set feeds the row check tiles and the two batch
-/// actions (download fan-out, delete under one shared confirmation).
+/// Multi-select: the working set feeds the row highlight and the two batch
+/// actions (download fan-out, delete under one shared confirmation) offered by
+/// the row context menu.
 fn install_selection(app: &MainWindow, api: Arc<NativeDesktop>) {
-    let weak = app.as_weak();
-    app.on_ws_file_select(move || {
-        let Some(app) = weak.upgrade() else {
-            return;
-        };
-        SELECTED.with(|slot| slot.borrow_mut().clear());
-        app.set_ws_file_selecting(true);
-        sync_selection(&app);
-    });
-
-    let weak = app.as_weak();
-    app.on_ws_file_check(move |index| {
-        let Some(app) = weak.upgrade() else {
-            return;
-        };
-        if !app.get_ws_file_selecting() {
-            return;
-        }
-        let Some(row) = app.get_ws_file_rows().row_data(index as usize) else {
-            return;
-        };
-        if row.kind == 2 {
-            return;
-        }
-        let path = row.path.to_string();
-        // 勾选同样推进锚点，与云端版的多选语义一致。
-        ANCHOR.with(|slot| *slot.borrow_mut() = path.clone());
-        let picked = SELECTED.with(|slot| {
-            let mut list = slot.borrow_mut();
-            if let Some(position) = list.iter().position(|item| item == &path) {
-                list.remove(position);
-                return true;
-            }
-            if list.len() >= MAX_SELECTED {
-                return false;
-            }
-            list.push(path);
-            true
-        });
-        if !picked {
-            app.set_status(format!("一次最多选择 {MAX_SELECTED} 项").into());
-        }
-        sync_selection(&app);
-    });
-
     let weak = app.as_weak();
     let action_api = api.clone();
     app.on_ws_file_selection_action(move |action| {
@@ -1226,7 +1186,6 @@ fn install_selection(app: &MainWindow, api: Arc<NativeDesktop>) {
         match action {
             0 => {
                 SELECTED.with(|slot| slot.borrow_mut().clear());
-                app.set_ws_file_selecting(false);
                 sync_selection(&app);
             }
             1 => batch_download(&app, action_api.clone()),
@@ -1311,7 +1270,6 @@ fn pick_row(app: &MainWindow, index: i32, ctrl: bool, shift: bool) {
                     *list = range.to_vec();
                 }
             });
-            app.set_ws_file_selecting(true);
             sync_selection(app);
             ANCHOR.with(|slot| *slot.borrow_mut() = path);
             return;
@@ -1337,7 +1295,6 @@ fn pick_row(app: &MainWindow, index: i32, ctrl: bool, shift: bool) {
     } else {
         SELECTED.with(|slot| *slot.borrow_mut() = vec![path.clone()]);
     }
-    app.set_ws_file_selecting(true);
     sync_selection(app);
     ANCHOR.with(|slot| *slot.borrow_mut() = path);
 }
@@ -1532,9 +1489,6 @@ fn perform_move(
                 SELECTED.with(|slot| {
                     slot.borrow_mut().retain(|item| !moved.contains(item));
                 });
-                if SELECTED.with(|slot| slot.borrow().is_empty()) {
-                    app.set_ws_file_selecting(false);
-                }
                 sync_selection(&app);
             }
             let mut message = format!("已移动 {done}/{total} 项");
@@ -1737,7 +1691,6 @@ fn batch_delete(app: &MainWindow, api: Arc<NativeDesktop>, paths: Vec<String>) {
                 return;
             }
             SELECTED.with(|slot| slot.borrow_mut().clear());
-            app.set_ws_file_selecting(false);
             app.set_ws_file_selected_count(0);
             let mut message = format!("已删除 {done}/{total} 项");
             if !failed.is_empty() {
@@ -3060,7 +3013,6 @@ mod tests {
         });
         pick_row(&app, 0, true, false);
         pick_row(&app, 3, true, false);
-        assert!(app.get_ws_file_selecting());
         assert_eq!(app.get_ws_file_selected_count(), 2);
         // 锚点在 d.md：Shift 点首行 → 覆盖整段。
         pick_row(&app, 0, false, true);
@@ -3075,7 +3027,6 @@ mod tests {
         assert!(SELECTED.with(|slot| slot.borrow().contains(&"notes".to_string())));
         SELECTED.with(|slot| slot.borrow_mut().clear());
         ANCHOR.with(|slot| *slot.borrow_mut() = String::new());
-        app.set_ws_file_selecting(false);
         PANEL.with(|slot| *slot.borrow_mut() = None);
     }
 
