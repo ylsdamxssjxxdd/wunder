@@ -1034,7 +1034,8 @@ async fn persist_screenshot_to_user_container(
             return;
         }
     };
-    if let Some(parent) = dest.parent() {
+    let parent = dest.parent().map(Path::to_path_buf);
+    if let Some(parent) = parent.as_deref() {
         if let Err(err) = fs::create_dir_all(parent).await {
             warn!(
                 "desktop screenshot persist skipped: create dir failed user_id={} error={err}",
@@ -1048,6 +1049,15 @@ async fn persist_screenshot_to_user_container(
             "desktop screenshot persist skipped: copy failed user_id={} error={err}",
             context.user_id
         );
+        return;
+    }
+    // The user container keeps a copy so a picture stays reachable after the
+    // temp frames rotate, but nothing ever pruned this directory: one file per
+    // action grows without bound across a long session. Apply the same
+    // newest-N policy the temp frames already use.
+    if let Some(parent) = parent.as_deref() {
+        let keep = context.config.tools.desktop_control.max_frames.max(2);
+        prune_dir_frames(parent, keep);
     }
 }
 
@@ -1055,6 +1065,11 @@ fn cleanup_old_frames(path: &Path, max_frames: usize) {
     let Some(dir) = path.parent() else {
         return;
     };
+    prune_dir_frames(dir, max_frames);
+}
+
+/// Keep only the newest `max_frames` files in `dir`.
+fn prune_dir_frames(dir: &Path, max_frames: usize) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -2606,6 +2621,31 @@ mod tests {
         // 退化输入不能产生 0 或负数。
         assert_eq!(fit_normalized_size(0, 0, 1000, 1000), (1000, 1000));
         assert_eq!(fit_normalized_size(-8, 600, 1000, 1000), (1000, 1000));
+    }
+
+    /// 持久化到用户目录的截图同样要有界，否则一次会话里每个动作都会
+    /// 留一张约 150 KB 的副本，越用越多。
+    #[test]
+    fn prune_dir_frames_bounds_the_persisted_copies() {
+        let dir = std::env::temp_dir().join(format!("wunder-dc-prune-{}", Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).expect("create dir");
+        for index in 0..5 {
+            std::fs::write(dir.join(format!("desktop_shot_{index}.png")), b"x").expect("write");
+        }
+        prune_dir_frames(&dir, 3);
+        let remaining = std::fs::read_dir(&dir)
+            .expect("read dir")
+            .filter_map(|entry| entry.ok())
+            .count();
+        assert_eq!(remaining, 3);
+        // 目录里不足上限时不删任何文件。
+        prune_dir_frames(&dir, 8);
+        let remaining = std::fs::read_dir(&dir)
+            .expect("read dir")
+            .filter_map(|entry| entry.ok())
+            .count();
+        assert_eq!(remaining, 3);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 真机校验：截图的实际像素尺寸必须等于按屏幕长宽比推导出的归一化尺寸，
