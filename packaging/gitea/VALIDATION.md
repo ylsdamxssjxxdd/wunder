@@ -131,6 +131,11 @@ ARM64 剖面同日未在 ARM 机器上重跑，见文末边界。
 - arm64 剖面的**真机验收还没做**：本机是 x86_64，arm64 容器只能靠 qemu-user 执行，而 qemu-user 下
   `uname -m` 返回宿主架构（aarch64 的判定会失真），所以架构分派只能用桩 `uname` 复现，全量 cargo 构建、
   `-Z build-std` 与 AppDir 组包的真实耗时必须在 ARM 服务器上看 Actions 状态。
+- 麒麟 V10 的 Docker 18.09/19.03 默认 seccomp 对 `clone3` 返回 EPERM，套件里的静态
+  `qemu-x86_64-static`（glibc 2.35）连 `--version` 都会在建线程时 abort（`qemu: qemu_thread_create:
+  Operation not permitted`）；已在本机用同样的 seccomp 规则复现，并确认 `seccomp=unconfined` 下
+  aarch64 `.S` 能经包装器编出目标文件。arm64 剖面的任务容器因此固定加
+  `--security-opt seccomp=unconfined`；升级到 Docker ≥20.10.10 后可去掉。
 - `gitea/act_runner:0.2.11` 跑本轮工作流（matrix + needs + 任务级令牌发布 + `prune.py`）尚未在真实运行里验证；
   它跑过的是上一代 rcho 三目标矩阵。老 runner 会把带表达式的步骤名显示成 `%!t(string=...)`，只影响显示。
 - ARM 侧的 Release 比 x86_64 侧少一个 `wunder-<版本>-win7-x86-setup.exe`：Inno Setup 要在 Wine 里跑 i386

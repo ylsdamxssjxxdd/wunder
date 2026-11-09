@@ -44,6 +44,12 @@ docker compose logs --tail=100 gitea bootstrap runner
   用静态二进制包替换，绕开发行版软件源，失败自动回滚（`--rollback /var/backups/docker-upgrade-<时间戳>`）。
   24.0.9 的 API 是 1.43，高于新版 Runner 的 1.40 下限，升完可以直接改用 `docker.gitea.com/runner:5.2.3`。
   注意 `docker load` 的归档是 OCI 格式并保留 legacy `manifest.json`，18.09 也能载入。
+- **android arm64 与老 seccomp 的冲突**：套件里的 `qemu-x86_64-static` 是 Ubuntu 22.04 的静态构建（自带
+  glibc 2.35），启动建线程走 `clone3`；Docker 18.09/19.03 的默认 seccomp 对 `clone3` 直接返回 EPERM，
+  任务会在第一次调用 NDK clang 时 abort（`qemu: qemu_thread_create: Operation not permitted`）。
+  arm64 剖面因此给任务容器加了 `--security-opt seccomp=unconfined`；升到 Docker ≥20.10.10 后默认 profile
+  对 `clone3` 返回 ENOSYS（glibc 回退到 `clone`），可以把 `runner.yaml` 里这个选项删掉恢复默认沙箱。
+  amd64 剖面不用 qemu，不受影响。
 
 ## 剖面、标签与挂载
 

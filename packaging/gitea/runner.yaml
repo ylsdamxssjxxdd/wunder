@@ -22,7 +22,10 @@ cache:
 container:
   network: "@STACK_PREFIX@-ci"
   privileged: false
-  options: "--volume @STACK_PREFIX@-build-cache:/ci-cache --volume @STACK_PREFIX@-sdk:/opt/offline-sdk:ro --volume @STACK_PREFIX@-android:/opt/android:ro"
+  # clone3：老 Docker（18.09/19.03）默认 seccomp 直接 EPERM，arm64 剖面里的静态
+  # qemu-x86_64-static 自带 glibc 2.35，启动建线程就会 abort；upgrade-docker.sh 升到
+  # ≥20.10.10 后可去掉该选项恢复默认沙箱（见 README「只有老 Docker」一节）。
+  options: "@CONTAINER_SECCOMP_OPT@--volume @STACK_PREFIX@-build-cache:/ci-cache --volume @STACK_PREFIX@-sdk:/opt/offline-sdk:ro --volume @STACK_PREFIX@-android:/opt/android:ro"
   valid_volumes:
     - "@STACK_PREFIX@-build-cache"
     - "@STACK_PREFIX@-sdk"

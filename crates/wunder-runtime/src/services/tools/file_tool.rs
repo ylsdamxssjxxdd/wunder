@@ -1303,7 +1303,7 @@ fn parse_saved_result_read_args(args: &Value) -> Result<Option<SavedResultReadAr
 /// When the whole payload is small and carries plain text, hand that text back
 /// directly; larger payloads keep the byte-paged raw view.
 const MAX_TEXT_VIEW_PAYLOAD_BYTES: u64 = 128 * 1024;
-const MAX_TEXT_VIEW_BYTES: usize = 32 * 1024;
+const MAX_TEXT_VIEW_BYTES: usize = 16 * 1024;
 
 fn saved_result_text_view(
     root: &Path,
@@ -1311,6 +1311,8 @@ fn saved_result_text_view(
     session_id: &str,
     workspace_id: &str,
     handle: &str,
+    offset: u64,
+    limit: usize,
 ) -> Option<Value> {
     let (document, total_bytes) = tool_result_store::read_document(
         root,
@@ -1324,17 +1326,33 @@ fn saved_result_text_view(
     .flatten()?;
     let parsed = serde_json::from_str::<Value>(&document).ok()?;
     let text = saved_result_text(&parsed)?;
-    // Never truncate here: a truncated text view would have no cursor, and the
-    // caller could not ask for the rest (offset 0 always lands on this branch).
-    if text.len() > MAX_TEXT_VIEW_BYTES {
-        return None;
-    }
+    let (page, start, has_more) = text_page(&text, offset, limit);
     Some(json!({
         "result_read": true,
-        "text": text,
-        "text_bytes": text.len(),
+        "text": page,
+        "text_offset": start,
+        "next_offset": if has_more { json!(start + page.len()) } else { Value::Null },
+        "has_more": has_more,
+        "total_text_bytes": text.len(),
         "total_bytes": total_bytes,
     }))
+}
+
+/// Slice a UTF-8 page out of the extracted text. Offsets are text bytes, kept on
+/// character boundaries so a multibyte glyph never splits across pages.
+fn text_page(text: &str, offset: u64, limit: usize) -> (String, usize, bool) {
+    let total = text.len();
+    let mut start = (offset as usize).min(total);
+    while start > 0 && !text.is_char_boundary(start) {
+        start -= 1;
+    }
+    let mut end = start
+        .saturating_add(limit.clamp(4, MAX_TEXT_VIEW_BYTES))
+        .min(total);
+    while end > start && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (text[start..end].to_string(), start, end < total)
 }
 
 /// Pull the human-readable text out of a stored tool result. Single-value
@@ -1382,6 +1400,81 @@ fn saved_result_text(parsed: &Value) -> Option<String> {
     }
 }
 
+/// Literal search over the extracted text, so a query on a handle matches whole
+/// lines instead of JSON-escaped byte fragments.
+fn text_query_view(
+    root: &Path,
+    user_id: &str,
+    session_id: &str,
+    workspace_id: &str,
+    handle: &str,
+    query: &str,
+) -> Option<Value> {
+    const QUERY_CONTEXT_LINES: usize = 3;
+    const MAX_QUERY_MATCHES: usize = 16;
+    let (document, total_bytes) = tool_result_store::read_document(
+        root,
+        user_id,
+        session_id,
+        workspace_id,
+        handle,
+        MAX_TEXT_VIEW_PAYLOAD_BYTES,
+    )
+    .ok()
+    .flatten()?;
+    let parsed = serde_json::from_str::<Value>(&document).ok()?;
+    let text = saved_result_text(&parsed)?;
+    let lines = text.lines().collect::<Vec<_>>();
+    let (ranges, match_count) =
+        text_query_windows(&lines, query, QUERY_CONTEXT_LINES, MAX_QUERY_MATCHES);
+    let mut blocks = Vec::new();
+    let mut budget = MAX_TEXT_VIEW_BYTES;
+    for (start, end) in &ranges {
+        let block = lines[start.saturating_sub(1)..*end].join("\n");
+        if block.len() > budget && !blocks.is_empty() {
+            break;
+        }
+        budget = budget.saturating_sub(block.len().saturating_add(5));
+        blocks.push(block);
+    }
+    Some(json!({
+        "result_read": true,
+        "query": query,
+        "match_count": match_count,
+        "matches_truncated": match_count > ranges.len(),
+        "ranges": ranges.iter().map(|(start, end)| json!([start, end])).collect::<Vec<_>>(),
+        "text": blocks.join("\n...\n"),
+        "total_text_bytes": text.len(),
+        "total_bytes": total_bytes,
+    }))
+}
+
+/// Matching line windows for a literal query, merged so nearby hits share one
+/// window. Returns the windows (1-based, inclusive) and the total hit count.
+fn text_query_windows(
+    lines: &[&str],
+    query: &str,
+    context: usize,
+    max_matches: usize,
+) -> (Vec<(usize, usize)>, usize) {
+    let mut match_count = 0usize;
+    let mut ranges = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if !line.contains(query) {
+            continue;
+        }
+        match_count += 1;
+        if ranges.len() < max_matches {
+            let line = index + 1;
+            ranges.push((
+                line.saturating_sub(context).max(1),
+                line.saturating_add(context).min(lines.len()),
+            ));
+        }
+    }
+    (merge_read_ranges(ranges), match_count)
+}
+
 fn saved_result_read_failure(code: &str, error: impl Into<String>) -> Value {
     build_failed_tool_result(
         error,
@@ -1402,16 +1495,27 @@ async fn read_saved_result(context: &ToolContext<'_>, args: SavedResultReadArgs)
     let session_id = context.session_id.to_string();
     let workspace_id = context.workspace_id.to_string();
     let result = blocking::run_fs("tools.result.read", move || {
-        if args.query.is_none() && args.offset == 0 {
+        if args.query.is_none() {
             if let Some(view) = saved_result_text_view(
                 &root,
                 &user_id,
                 &session_id,
                 &workspace_id,
                 &args.handle,
+                args.offset,
+                args.limit,
             ) {
                 return Ok(view);
             }
+        } else if let Some(view) = text_query_view(
+            &root,
+            &user_id,
+            &session_id,
+            &workspace_id,
+            &args.handle,
+            args.query.as_deref().unwrap_or_default(),
+        ) {
+            return Ok(view);
         }
         let mut data = tool_result_store::read(
             &root,
@@ -2346,6 +2450,39 @@ mod saved_result_read_tests {
             saved_result_text(&parsed).as_deref(),
             Some("out text\n\nstderr: boom\n")
         );
+    }
+
+    #[test]
+    fn text_pages_stay_on_character_boundaries() {
+        let text = "一二三\n";
+        let (page, start, has_more) = text_page(text, 0, 4);
+        assert_eq!(start, 0);
+        // Four bytes would split the first glyph, so the page stops at three.
+        assert_eq!(page, "一");
+        assert!(has_more);
+
+        let (page, start, has_more) = text_page(text, 4, 8);
+        assert_eq!(start, 3);
+        assert_eq!(page, "二三\n");
+        assert!(!has_more);
+
+        let (page, start, has_more) = text_page(text, 99, 8);
+        assert_eq!(start, text.len());
+        assert_eq!(page, "");
+        assert!(!has_more);
+    }
+
+    #[test]
+    fn text_query_windows_merge_nearby_hits() {
+        let lines: Vec<&str> = vec!["a", "hit one", "b", "c", "hit two", "d", "e"];
+        let (ranges, count) = text_query_windows(&lines, "hit", 1, 16);
+        assert_eq!(count, 2);
+        assert_eq!(ranges, vec![(1, 6)]);
+
+        let (ranges, count) = text_query_windows(&lines, "hit", 0, 1);
+        assert_eq!(count, 2);
+        // Only the first window is kept, but every hit is counted.
+        assert_eq!(ranges, vec![(2, 2)]);
     }
 
     #[test]

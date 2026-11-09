@@ -27,6 +27,11 @@ PROFILES = {
         # 镜像清单、compose v1/v2 与 load-images.sh 的下限校验都以它为准。
         "runner_image": LEGACY_RUNNER,
         "runner_min_api": "1.24",
+        # 麒麟 V10 的 Docker 18.09/19.03 默认 seccomp 对 clone3 返回 EPERM，套件里的静态
+        # qemu-x86_64-static（glibc 2.35）连 --version 都会在建线程时 abort；任务容器放开
+        # seccomp。升到 Docker ≥20.10.10（默认 profile 对 clone3 返回 ENOSYS，glibc 会回退
+        # clone）后可去掉。amd64 剖面不用 qemu，保持默认沙箱。
+        "container_seccomp_opt": "--security-opt seccomp=unconfined ",
         "builder_dockerfile": "Dockerfile.builder-arm64",
         "builder_tag": "wunder-offline-builder:20261103-arm64-mounted",
         # ARM 宿主没有可用的 i386 Wine：win7 的桌面与 CLI 仍然在 ARM 上原生交叉
@@ -53,6 +58,7 @@ PROFILES = {
         "stack_prefix": "offline-gitea-x86",
         "runner_image": RUNNER,
         "runner_min_api": "1.40",
+        "container_seccomp_opt": "",
         # 基镜像是 builders/build-kylin-x86-sdk-docker.sh 产出的 x86_64 SDK 镜像，
         # 已带 gcc/cmake/ninja/nasm/clang 与交叉工具链，套件只补 git 和 CI 脚本。
         "builder_dockerfile": "Dockerfile.builder-amd64",
@@ -128,6 +134,7 @@ def token_replacements(profile, labels):
         "@RCHO_LABEL@": labels["rcho"],
         "@INSTALLER_LABEL@": labels["installer"],
         "@STACK_PREFIX@": profile["stack_prefix"],
+        "@CONTAINER_SECCOMP_OPT@": profile["container_seccomp_opt"],
     }
 
 
@@ -137,7 +144,7 @@ def render_text(source_text, profile, labels):
         text = text.replace(token, value)
     leftover = [token for token in ("@RUNNER_CAPACITY@", "@STACK_PREFIX@", "@BUILDER_LABEL@",
                                     "@RCHO_LABEL@", "@INSTALLER_LABEL@", "@WUNDER_BUILD_JOBS@",
-                                    "@WUNDER_SQUASHFS_PROCESSORS@") if token in text]
+                                    "@WUNDER_SQUASHFS_PROCESSORS@", "@CONTAINER_SECCOMP_OPT@") if token in text]
     if leftover:
         raise RuntimeError("模板里还有未渲染的占位符: " + ", ".join(leftover))
     return text
