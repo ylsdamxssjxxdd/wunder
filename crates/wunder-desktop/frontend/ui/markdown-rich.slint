@@ -278,11 +278,17 @@ component TableBlock inherits Rectangle {
         width: content-width;
         height: root.height;
         content-width: root.total-width;
-        content-height: root.height;
+        // The scrollable height comes from the grid, not from `root.height`:
+        // taking it from the parent closed a binding loop
+        // (root.height -> table-grid.preferred-height -> table-grid.height ->
+        // grid.height -> root.height) and left later blocks laid out against a
+        // stale table height.
+        content-height: table-grid.preferred-height;
         interactive: root.wide;
         mouse-drag-pan-enabled: false;
         table-grid := TableGrid {
             width: root.total-width;
+            height: self.preferred-height;
             block: root.block;
             total-width: root.total-width;
             pixel-columns: root.wide;

@@ -523,6 +523,35 @@ mod tests {
         assert_eq!(table.rows[0].len(), 2);
     }
 
+    /// A table must not swallow the blocks that follow it. Content after a
+    /// table used to disappear from the transcript, which looked like the reply
+    /// had been cut off mid-message.
+    #[test]
+    fn blocks_after_a_table_are_kept() {
+        let blocks = parse(
+            "| 项目 | 表现 |\n| --- | --- |\n| 执行命令 | 正常 |\n\n### 建议修复优先级\n\n1. 先修复 stdout\n\n| 第二张 | 表 |\n| --- | --- |\n| a | b |\n\n结尾段落。\n",
+        );
+        let kinds = blocks
+            .iter()
+            .map(|block| match block {
+                Block::Table(_) => "table",
+                Block::Heading { .. } => "heading",
+                Block::List(_) => "list",
+                Block::Paragraph(_) => "paragraph",
+                _ => "other",
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec!["table", "heading", "list", "table", "paragraph"],
+            "blocks: {kinds:?}"
+        );
+        assert!(
+            matches!(blocks.last(), Some(Block::Paragraph(_))),
+            "trailing paragraph lost: {kinds:?}"
+        );
+    }
+
     #[test]
     fn an_inline_image_splits_the_paragraph_around_it() {
         let blocks = parse("前面 ![图](a.png) 后面\n");

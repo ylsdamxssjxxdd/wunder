@@ -673,6 +673,45 @@ fn test_failed_execute_command_observation_uses_single_concise_error() {
 }
 
 #[test]
+fn test_failed_execute_command_observation_keeps_both_streams() {
+    // Build/test tools report diagnostics on stderr and a summary on stdout.
+    // Dropping stdout here used to force a full re-run of the failing command.
+    let payload = ToolResultPayload {
+        ok: false,
+        data: json!({
+            "command": "cargo test",
+            "returncode": 101,
+            "stdout": "running 3 tests\ntest result: FAILED. 1 passed; 2 failed\n",
+            "stderr": "thread 'x' panicked at src/lib.rs:12:5\nerror: test failed\n",
+            "error_meta": {
+                "code": "TOOL_EXEC_NON_ZERO_EXIT",
+                "hint": "命令返回非 0，请先根据 stderr 修正后再重试。",
+                "retryable": false,
+                "retry_after_ms": null
+            }
+        }),
+        error: "命令退出码 101。".to_string(),
+        sandbox: false,
+        timestamp: Utc::now(),
+        meta: Some(json!({
+            "error_code": "TOOL_EXEC_NON_ZERO_EXIT",
+            "error_retryable": false,
+            "duration_ms": 320
+        })),
+    };
+
+    let compacted = payload.to_compact_payload("执行命令");
+    let error = compacted
+        .get("error")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(error.contains("stderr: "), "error: {error}");
+    assert!(error.contains("panicked"), "error: {error}");
+    assert!(error.contains("stdout: "), "error: {error}");
+    assert!(error.contains("test result: FAILED"), "error: {error}");
+}
+
+#[test]
 fn test_compact_payload_strips_ids_and_budget_noise() {
     let payload = ToolResultPayload {
         ok: true,

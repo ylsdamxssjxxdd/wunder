@@ -2238,9 +2238,17 @@ fn build_model_search_success(
 ) -> Value {
     let truncation_reasons = search_truncation_reasons(flags);
     let truncated = !truncation_reasons.is_empty();
+    let phrase_fallback = attempt.strategy == SearchStrategy::LiteralTermsFallback;
     let summary_text = if returned_match_count == 0 {
         format!(
             "No hits in local workspace files (engine: {}).",
+            engine.engine.as_str()
+        )
+    } else if phrase_fallback {
+        // Reported explicitly so the caller does not trust these hits as a
+        // phrase match: the exact phrase missed and only individual terms hit.
+        format!(
+            "Found {returned_match_count} term matches in {matched_file_count} files (engine: {}); the full phrase did not match, so results are term-level only.",
             engine.engine.as_str()
         )
     } else {
@@ -2261,6 +2269,8 @@ fn build_model_search_success(
             "scope": scope,
             "scope_note": scope_note,
             "query_mode": attempt.query_mode.as_str(),
+            "strategy": attempt.strategy.as_str(),
+            "fallback_applied": phrase_fallback,
             "engine": engine.engine.as_str(),
             "ripgrep_program": engine.rg_program.clone(),
             "fallback_reason": engine.fallback_reason.clone(),

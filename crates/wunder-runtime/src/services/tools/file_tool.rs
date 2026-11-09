@@ -502,12 +502,29 @@ fn parse_read_file_spec_object(
     }
 
     let mode = parse_read_mode(obj);
-    let pattern = obj
+    // `query` is the handle-read spelling of a content probe. Accepting it here
+    // as a literal pattern keeps one mental model for both read paths instead of
+    // failing with "query requires a tool-result: path".
+    let pattern_source = obj
         .get("pattern")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
+        .map(|value| (value, false))
+        .or_else(|| {
+            obj.get("query")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| (value, true))
+        });
+    let pattern = pattern_source.map(|(value, _)| value.to_string());
+    let pattern_forced_literal = pattern_source.is_some_and(|(_, forced)| forced);
+    let pattern_literal = pattern_forced_literal
+        || obj
+            .get("query_mode")
+            .and_then(Value::as_str)
+            .is_some_and(|mode| mode.eq_ignore_ascii_case("literal"));
     if let Some(pattern) = pattern.as_deref() {
         if pattern.len() > 512 {
             return Err(ReadSpecParseError::invalid_args(
@@ -520,10 +537,6 @@ fn parse_read_file_spec_object(
                     .to_string(),
             ));
         }
-        let pattern_literal = obj
-            .get("query_mode")
-            .and_then(Value::as_str)
-            .is_some_and(|mode| mode.eq_ignore_ascii_case("literal"));
         let expression = if pattern_literal {
             regex::escape(pattern)
         } else {
@@ -568,10 +581,7 @@ fn parse_read_file_spec_object(
         mode,
         indentation,
         pattern,
-        pattern_literal: obj
-            .get("query_mode")
-            .and_then(Value::as_str)
-            .is_some_and(|mode| mode.eq_ignore_ascii_case("literal")),
+        pattern_literal,
         pattern_case_sensitive: obj
             .get("case_sensitive")
             .and_then(Value::as_bool)
@@ -1219,9 +1229,8 @@ fn parse_saved_result_read_args(args: &Value) -> Result<Option<SavedResultReadAr
                 "Saved tool results must use a single top-level path; files cannot contain a tool-result: handle."
             ));
         }
-        if args.get("query").is_some() {
-            return Err(anyhow!("query requires a tool-result: path."));
-        }
+        // `query` is also accepted on regular files as a literal content search
+        // (see `parse_read_spec`); only a missing handle is worth returning here.
         return Ok(None);
     };
     if handle == "tool-result:" {
@@ -1665,6 +1674,31 @@ pub(crate) fn read_files_inner(
                             &params,
                         ));
                     }
+                }
+                // A single line larger than the whole output budget cannot be
+                // expressed as a line window, so dropping it returned no text at
+                // all and left no continuation path (minified bundles, one-line
+                // JSON, compressed logs). Emit a bounded excerpt instead.
+                if file_output.is_empty() && !lines.is_empty() {
+                    let anchor = spec.ranges.first().map(|(start, _)| *start).unwrap_or(1);
+                    let long_line = lines
+                        .get(anchor.saturating_sub(1))
+                        .copied()
+                        .unwrap_or(lines[0]);
+                    let budget = file_output_budget
+                        .unwrap_or(DEFAULT_READ_OUTPUT_BUDGET_BYTES)
+                        .saturating_sub(96)
+                        .max(256);
+                    let (excerpt, omitted) = truncate_utf8_output(long_line, budget);
+                    if omitted > 0 {
+                        output_budget_hit = true;
+                        output_budget_omitted_bytes =
+                            output_budget_omitted_bytes.saturating_add(omitted);
+                        if let Value::Object(ref mut map) = summary {
+                            map.insert("long_line_excerpt".to_string(), Value::Bool(true));
+                        }
+                    }
+                    file_output.push(excerpt);
                 }
                 let joined = file_output.join("\n---\n");
                 format!(">>> {}\n{}", raw_path, joined)
@@ -2262,10 +2296,20 @@ mod saved_result_read_tests {
             "files": [{ "path": "tool-result:sample" }]
         }))
         .is_err());
+        // `query` is a handle-read spelling of a content probe. On a regular file
+        // it must behave as a literal pattern instead of erroring out, so the two
+        // read paths share one mental model.
         assert!(parse_saved_result_read_args(&json!({
             "path": "sample.txt", "query": "sample"
         }))
-        .is_err());
+        .expect("query on a regular file is not a handle read")
+        .is_none());
+        let query_specs = parse_read_file_specs(&json!({
+            "path": "sample.txt", "query": "sample"
+        }))
+        .expect("query resolves to a literal pattern");
+        assert_eq!(query_specs[0].pattern.as_deref(), Some("sample"));
+        assert!(query_specs[0].pattern_literal);
     }
 }
 

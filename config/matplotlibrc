@@ -1,5 +1,7 @@
 # Matplotlib defaults for CJK-friendly rendering in sandbox.
 font.family: sans-serif
 # Keep CJK fonts first, emoji fallbacks later to avoid missing glyph warnings.
-font.sans-serif: FangSong_GB2312, SimSun, STFangsong, FangSong, SimHei, KaiTi, Microsoft YaHei, Noto Sans SC, Noto Sans CJK SC, Noto Serif SC, Noto Sans, Source Han Sans SC, Source Han Sans CN, WenQuanYi Zen Hei, Segoe UI Emoji, Segoe UI Symbol, Segoe UI, Noto Color Emoji, DejaVu Sans
+# Matplotlib registers only face #0 of a .ttc, so Noto Sans CJK SC (face #2) is
+# invisible to it; the "CJK JP" entry is the usable name for the same collection.
+font.sans-serif: Noto Sans CJK JP, Noto Sans CJK SC, Noto Sans SC, Source Han Sans SC, Source Han Sans CN, WenQuanYi Zen Hei, Microsoft YaHei, SimHei, FangSong_GB2312, SimSun, STFangsong, FangSong, KaiTi, Noto Sans, Segoe UI Emoji, Segoe UI Symbol, Segoe UI, Noto Color Emoji, DejaVu Sans
 axes.unicode_minus: False

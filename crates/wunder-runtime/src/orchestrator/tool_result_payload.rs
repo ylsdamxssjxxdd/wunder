@@ -502,12 +502,27 @@ fn extract_diagnostic_message(value: &Value) -> Option<String> {
 }
 
 fn extract_execute_command_failure_detail(map: &Map<String, Value>) -> Option<String> {
-    let (stream, output) = ["stderr", "stdout"].into_iter().find_map(|key| {
-        map.get(key)
-            .and_then(Value::as_str)
-            .filter(|text| !text.trim().is_empty())
-            .map(|text| (key, text))
-    })?;
+    // A failing command usually writes both streams (build and test tools put
+    // diagnostics on stderr and the summary on stdout). Reporting only the
+    // preferred stream forces the caller to re-run the command just to see the
+    // other half, so keep a short excerpt of each non-empty stream.
+    let mut details = Vec::new();
+    for stream in ["stderr", "stdout"] {
+        if let Some(detail) = summarize_command_failure_stream(map, stream) {
+            details.push(detail);
+        }
+    }
+    if details.is_empty() {
+        return None;
+    }
+    Some(details.join("\n"))
+}
+
+fn summarize_command_failure_stream(map: &Map<String, Value>, stream: &str) -> Option<String> {
+    let output = map
+        .get(stream)
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())?;
     let lines = output
         .lines()
         .map(str::trim_end)

@@ -1,6 +1,5 @@
 use crate::i18n;
 use anyhow::Result;
-#[cfg(windows)]
 use encoding_rs::GBK;
 use std::fs::File;
 use std::io::Read;
@@ -61,14 +60,9 @@ fn looks_like_binary(bytes: &[u8]) -> bool {
         return false;
     }
 
-    #[cfg(windows)]
-    {
-        let (decoded, _, had_errors) = GBK.decode(bytes);
-        if !had_errors && text_score(&decoded) >= LOW_TEXT_SCORE_THRESHOLD {
-            return false;
-        }
-    }
-
+    // Control bytes never appear in GBK/GB18030 payloads (lead bytes are
+    // 0x81..=0xFE, trail bytes 0x40..=0xFE), so reject them before the optional
+    // GB decode and keep random archives from being accepted as CJK text.
     let control_ratio = bytes
         .iter()
         .filter(|byte| is_binary_control(**byte))
@@ -76,6 +70,13 @@ fn looks_like_binary(bytes: &[u8]) -> bool {
         / bytes.len() as f64;
     if control_ratio >= CONTROL_BYTE_RATIO_THRESHOLD {
         return true;
+    }
+
+    // GBK/GB18030 text is common in zh-CN environments (legacy .txt/.csv/.ini
+    // written by Windows tools). It used to be decoded only on Windows builds,
+    // so the same file was readable on win7 but reported as "binary" on Linux.
+    if decode_gb_text(bytes).is_some() {
+        return false;
     }
 
     text_score(&String::from_utf8_lossy(bytes)) < LOW_TEXT_SCORE_THRESHOLD
@@ -114,16 +115,31 @@ fn decode_text_bytes(bytes: &[u8]) -> String {
 
     let utf8_lossy = String::from_utf8_lossy(bytes).to_string();
 
-    #[cfg(windows)]
-    {
-        let (decoded, _, had_errors) = GBK.decode(bytes);
-        let gbk_text = decoded.into_owned();
-        if !had_errors || text_score(&gbk_text) > text_score(&utf8_lossy) {
+    if let Some(gbk_text) = decode_gb_text(bytes) {
+        if text_score(&gbk_text) >= text_score(&utf8_lossy) {
             return gbk_text;
         }
     }
 
     utf8_lossy
+}
+
+/// Decode GBK/GB18030 bytes (they are the same decoder in `encoding_rs`).
+/// Returns `None` unless the whole buffer decodes cleanly and actually contains
+/// multi-byte text, so arbitrary binary payloads are not mistaken for CJK text.
+fn decode_gb_text(bytes: &[u8]) -> Option<String> {
+    let (decoded, _, had_errors) = GBK.decode(bytes);
+    if had_errors {
+        return None;
+    }
+    let text = decoded.into_owned();
+    if !text.chars().any(|ch| !ch.is_ascii()) {
+        return None;
+    }
+    if text_score(&text) < LOW_TEXT_SCORE_THRESHOLD {
+        return None;
+    }
+    Some(text)
 }
 
 fn detect_binary_image_mime(path: &Path, bytes: &[u8]) -> Option<&'static str> {
@@ -196,5 +212,24 @@ mod tests {
         let svg = br#"<svg xmlns="http://www.w3.org/2000/svg"><text>x</text></svg>"#;
         assert_eq!(detect_binary_image_mime(Path::new("chart.svg"), svg), None);
         assert!(!looks_like_binary(svg));
+    }
+
+    // GBK text used to be decode-gated behind `cfg(windows)`, so the same legacy
+    // zh-CN file was readable on win7 and reported as binary on Linux.
+    #[test]
+    fn decodes_gbk_text_on_every_platform() {
+        let original = "简体中文 GBK 测试\n第二行\n";
+        let (encoded, _, had_errors) = GBK.encode(original);
+        assert!(!had_errors);
+        assert!(!looks_like_binary(&encoded));
+        assert_eq!(decode_text_bytes(&encoded), original);
+    }
+
+    #[test]
+    fn still_rejects_binary_control_payloads() {
+        let payload = (0u16..512)
+            .map(|index| ((index % 250) + 1) as u8)
+            .collect::<Vec<_>>();
+        assert!(looks_like_binary(&payload));
     }
 }

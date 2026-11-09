@@ -587,3 +587,103 @@ fn command_output_decoder_recovers_gbk_chinese() {
         "中文输出正常"
     );
 }
+
+/// Legacy zh-CN text files are GBK/GB18030, and a minified bundle is one huge
+/// line. Both used to make `read_file` return either "binary" or no text at all.
+#[tokio::test]
+async fn read_file_handles_gbk_long_line_and_query_alias() {
+    let fixture = ToolFixture::new();
+
+    let gbk_path = fixture.workspace_path("legacy/说明.txt");
+    std::fs::create_dir_all(gbk_path.parent().expect("parent dir")).expect("create legacy dir");
+    let (encoded, _, had_errors) = encoding_rs::GBK.encode("第一行中文\n第二行中文\n");
+    assert!(!had_errors);
+    std::fs::write(&gbk_path, &encoded).expect("write gbk file");
+
+    let gbk_payload = invoke(&fixture, "read_file", json!({"path": "legacy/说明.txt"})).await;
+    assert_eq!(gbk_payload["ok"], true, "gbk read failed: {gbk_payload}");
+    assert!(
+        gbk_payload["data"]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("第一行中文"),
+        "gbk content: {gbk_payload}"
+    );
+
+    let long_line = "X".repeat(300_000);
+    std::fs::write(
+        fixture.workspace_path("bundle.min.js"),
+        long_line.clone() + "\n",
+    )
+    .expect("write long line");
+    let long_read = invoke(&fixture, "read_file", json!({"path": "bundle.min.js"})).await;
+    assert_eq!(long_read["ok"], true, "long line read failed: {long_read}");
+    let long_content = long_read["data"]["content"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        long_content.contains("truncated read output"),
+        "long line content len: {}",
+        long_content.len()
+    );
+
+    invoke(
+        &fixture,
+        "write_file",
+        json!({"path": "notes.txt", "content": "alpha\nneedle beta\ngamma\n"}),
+    )
+    .await;
+    let query_read = invoke(
+        &fixture,
+        "read_file",
+        json!({"path": "notes.txt", "query": "needle"}),
+    )
+    .await;
+    assert_eq!(
+        query_read["ok"], true,
+        "query alias on a regular file failed: {query_read}"
+    );
+    assert!(
+        query_read["data"]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("needle beta"),
+        "query content: {query_read}"
+    );
+}
+
+/// A phrase that only matches term-by-term must say so, otherwise the caller
+/// cannot tell a real phrase hit from a fallback match.
+#[tokio::test]
+async fn search_content_reports_phrase_fallback_strategy() {
+    let fixture = ToolFixture::new();
+    invoke(
+        &fixture,
+        "write_file",
+        json!({"path": "search/target.txt", "content": "alpha\nbeta\ngamma\n"}),
+    )
+    .await;
+
+    let result = invoke(
+        &fixture,
+        "search_content",
+        json!({"query": "alpha beta", "path": "search", "query_mode": "literal"}),
+    )
+    .await;
+    assert_eq!(result["ok"], true, "search failed: {result}");
+    let data = &result["data"];
+    assert!(
+        data["strategy"].is_string(),
+        "missing strategy field: {result}"
+    );
+    assert!(
+        data["fallback_applied"].is_boolean(),
+        "missing fallback_applied field: {result}"
+    );
+    assert_ne!(
+        data["strategy"].as_str(),
+        Some("literal_exact"),
+        "phrase hits must report an exact strategy: {result}"
+    );
+}
