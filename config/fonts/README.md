@@ -4,6 +4,11 @@
 `.otf`、`.ttf`、`.ttc` 文件只读挂载到 `wunder-server`、`wunder-sandbox` 和
 `extra-mcp` 的 `/usr/share/fonts/wunder`，并为 OnlyOffice 挂载自定义字体目录。
 
+视频制作技能用的 8 个 OFL 字体放在本目录的 `video/` 下（整个目录不进 git）。
+云端挂载后技能从 `/usr/share/fonts/wunder/video` 读取；补充包构建时用
+`packaging/fonts/fetch_video_fonts.py` 从 `config/fonts/video` 复制（没有时按
+`packaging/fonts/video-fonts.json` 的固定 URL 和 SHA-256 下载），再打进补充包。
+
 Matplotlib 的中文默认字体由 `config/matplotlibrc` 配置，舰体与沙盒通过
 `MATPLOTLIBRC` 加载。普通绘图沿用默认字体即可，无需为每幅图重新探测字体或指定路径。
 只有任务明确要求某个字族时，才先在执行绘图的同一 Python 解释器中验证：

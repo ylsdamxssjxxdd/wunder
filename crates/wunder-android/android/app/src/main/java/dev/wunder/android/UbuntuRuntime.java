@@ -46,8 +46,9 @@ public final class UbuntuRuntime {
     private static final String PACK_MARKER = ".wunder_pack_common";
     /// v6 adds the common runtime CLI set (curl/wget/zip/unzip, procps,
     /// psmisc, lsof, bc, bzip2, time, python alias, iproute2) on top of the
-    /// v5 fonts; bumping the marker re-extracts it on devices at v5 or older.
-    private static final String PACK_VERSION = "6";
+    /// v5 fonts; v7 adds scipy and the video-skill fonts. Bumping the marker
+    /// re-extracts the pack on devices with an older version.
+    private static final String PACK_VERSION = "7";
     /// Optional browser overlay: Playwright plus an offline Chromium build.
     /// Kept separate from the common pack so device installs without browser
     /// automation do not pay for several hundred megabytes.

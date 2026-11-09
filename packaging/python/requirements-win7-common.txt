@@ -50,6 +50,8 @@ python-docx==1.1.2
 python-pptx==1.0.2
 pytz==2026.1.post1
 requests==2.32.3
+# 1.9.1 is the last scipy release with a cp38-win32 wheel; 1.9.2+ dropped 32-bit Windows.
+scipy==1.9.1
 seaborn==0.13.2
 sqlalchemy==2.0.36
 six==1.17.0

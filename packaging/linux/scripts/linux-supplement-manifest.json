@@ -88,6 +88,7 @@
       "cv2",
       "h5py",
       "seaborn",
+      "scipy",
       "pyecharts",
       "playwright",
       "pefile"
@@ -197,6 +198,16 @@
     "simhei.ttf",
     "arial.ttf"
   ],
+  "videoFonts": [
+    "NotoSerifSC-VF.ttf",
+    "NotoSansSC-VF.ttf",
+    "CormorantGaramond.ttf",
+    "CormorantGaramond-Italic.ttf",
+    "Lora.ttf",
+    "Lora-Italic.ttf",
+    "JetBrainsMono.ttf",
+    "CourierPrime-Regular.ttf"
+  ],
   "install": {
     "extractInto": "desktop install root (Win7-style install dir) or the directory holding the portable launcher",
     "pythonRoot": "opt/python",
@@ -204,6 +215,7 @@
     "rgRoot": "opt/rg",
     "ffmpegRoot": "opt/ffmpeg",
     "sevenZipRoot": "opt/7zip",
-    "browserRoot": "opt/browser"
+    "browserRoot": "opt/browser",
+    "videoFontsRoot": "opt/fonts/video"
   }
 }

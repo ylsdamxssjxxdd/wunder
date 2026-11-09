@@ -10,7 +10,8 @@
     "rgRoot": "opt\\rg",
     "ffmpegRoot": "opt\\ffmpeg",
     "powershellRoot": "opt\\powershell",
-    "sevenZipRoot": "opt\\7zip"
+    "sevenZipRoot": "opt\\7zip",
+    "videoFontsRoot": "opt\\fonts\\video"
   },
   "browser": {
     "enabled": true,
@@ -73,6 +74,7 @@
           "cv2",
           "h5py",
           "seaborn",
+          "scipy",
           "pyecharts",
           "playwright",
           "pefile"
@@ -191,6 +193,16 @@
       }
     }
   },
+  "videoFonts": [
+    "NotoSerifSC-VF.ttf",
+    "NotoSansSC-VF.ttf",
+    "CormorantGaramond.ttf",
+    "CormorantGaramond-Italic.ttf",
+    "Lora.ttf",
+    "Lora-Italic.ttf",
+    "JetBrainsMono.ttf",
+    "CourierPrime-Regular.ttf"
+  ],
   "ffmpeg": {
     "version": "4.4.1",
     "flavor": "static ffmpeg (ffmpeg-static)",

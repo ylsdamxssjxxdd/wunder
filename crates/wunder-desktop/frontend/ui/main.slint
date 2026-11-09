@@ -1401,16 +1401,13 @@ export component MainWindow inherits Window {
                     // tool has steps — the turn's phase text already reads on
                     // the timeline rows, and queue position is folded into the
                     // timeline too, so the old banners are gone.
-                    // The whole input band shares the transcript's reading column:
-                    // a layout child may not re-declare width (that is a binding
-                    // loop), so the row stays full width and centres its band.
-                    // The band owns the composer card's 14px side inset, so the
-                    // status dock, goal banner and inquiry card share the card's
-                    // edges instead of riding the wider band.
+                    // The input band follows the transcript's full available width.
+                    // Its 14px side inset also aligns the status dock, goal banner
+                    // and inquiry card with the composer card.
                     Rectangle {
                         height: input-band.preferred-height;
                         input-band := VerticalLayout {
-                            width: min(parent.width, Theme.timeline-column-width);
+                            width: parent.width;
                             x: (parent.width - self.width) / 2;
                             padding-left: 14px;
                             padding-right: 14px;

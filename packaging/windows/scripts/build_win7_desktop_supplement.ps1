@@ -88,6 +88,8 @@ param(
 
   [string]$SevenZipArchivePath = '',
 
+  [string]$VideoFontsDir = '',
+
   [switch]$SkipPrune,
   [switch]$SkipGitPrune,
 
@@ -826,6 +828,7 @@ $rgRoot     = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -N
 $ffmpegRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'ffmpegRoot' -Default 'opt\ffmpeg'))
 $powershellRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'powershellRoot' -Default 'opt\powershell'))
 $sevenZipRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'sevenZipRoot' -Default 'opt\7zip'))
+$videoFontsRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'videoFontsRoot' -Default 'opt\fonts\video'))
 
 Write-Step "repo root : $repoRoot"
 Write-Step "build root: $buildRootEffective"
@@ -990,6 +993,36 @@ if ($installBrowser -and (-not $SkipBrowser)) {
   }
 } elseif ($installBrowser) {
   Write-Step 'skipping Playwright browsers (-SkipBrowser)'
+}
+
+# ---------------------------------------------------------------------------
+# 视频制作 skill fonts (opt/fonts/video; not tracked in git)
+# ---------------------------------------------------------------------------
+$videoFonts = @(Get-PropertyValue -Object $manifest -Name 'videoFonts' -Default @())
+if ($videoFonts.Count -gt 0) {
+  $fontsSource = $VideoFontsDir
+  if (-not [string]::IsNullOrWhiteSpace($fontsSource) -and -not (Test-Path -LiteralPath $fontsSource -PathType Container)) {
+    Fail "video fonts dir not found: $fontsSource"
+  }
+  if ([string]::IsNullOrWhiteSpace($fontsSource)) {
+    $candidate = Join-Path $repoRoot 'config\fonts\video'
+    if (Test-Path -LiteralPath $candidate -PathType Container) { $fontsSource = $candidate }
+  }
+  $fontsCache = Join-Path $downDir 'video-fonts'
+  $fetchScript = Join-Path $repoRoot 'packaging\fonts\fetch_video_fonts.py'
+  if (-not (Test-Path -LiteralPath $fetchScript)) { Fail "video font fetcher missing: $fetchScript" }
+  $fetchArgs = @($fetchScript, '--dest', $fontsCache, '--licenses', (Join-Path $repoRoot 'config\skills\视频制作\engine\fonts'))
+  if (-not [string]::IsNullOrWhiteSpace($fontsSource)) { $fetchArgs += @('--source-dir', $fontsSource) }
+  Write-Step "staging video fonts: $(if ([string]::IsNullOrWhiteSpace($fontsSource)) { 'pinned Google Fonts URLs' } else { $fontsSource })"
+  Invoke-Python -PythonExe $pythonExe -Arguments $fetchArgs
+  Ensure-Directory $videoFontsRoot
+  Copy-Item -Path (Join-Path $fontsCache '*.ttf') -Destination $videoFontsRoot -Force
+  Copy-Item -Path (Join-Path $fontsCache 'OFL-*.txt') -Destination $videoFontsRoot -Force -ErrorAction SilentlyContinue
+  $stagedFonts = @(Get-ChildItem -LiteralPath $videoFontsRoot -Filter '*.ttf')
+  if ($stagedFonts.Count -lt $videoFonts.Count) {
+    Fail "video fonts incomplete: $($stagedFonts.Count)/$($videoFonts.Count) in $videoFontsRoot"
+  }
+  Write-Step "bundled video fonts: $($stagedFonts.Count) ttf at opt/fonts/video"
 }
 
 # ---------------------------------------------------------------------------
@@ -1254,12 +1287,13 @@ Contents:
   opt/ffmpeg   ffmpeg __FFVER__ (when bundled)
   opt/7zip     7-Zip __SZVER__ console (7z.exe + 7z.dll, when bundled)
   opt/browser  Chrome __BROWSERVER__ win32 at __BROWSEREXE__ (when bundled)
+  opt/fonts/video  视频制作 skill 的 8 个 OFL 字体
 
 Use Import supplement in the wunder Desktop settings to install into WUNDER_HOME.
 For manual installation, close processes using this runtime and unpack into
 WUNDER_HOME (default: .wunder in your user home). wunder Desktop and wunder CLI share
-opt/python, opt/git, opt/rg, opt/ffmpeg, opt/powershell and opt/7zip, and
-prepend their bins to PATH.
+opt/python, opt/git, opt/rg, opt/ffmpeg, opt/powershell, opt/7zip and
+opt/fonts/video, and prepend their bins to PATH.
 
 Shell: when opt/powershell/pwsh.exe starts, the command tool runs it as the
 default shell and falls back to the system Windows PowerShell only if the

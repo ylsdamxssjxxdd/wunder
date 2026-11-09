@@ -8,11 +8,12 @@
 - `opt/ffmpeg`：给音视频抽帧、抽音轨与转码使用的内置静态 ffmpeg
 - `opt/7zip`：随包附带的 7-Zip 25.01 官方静态命令行版（`bin/7zz`，`bin/7z` 为其符号链接），压缩包归档工具（含 `.7z`/`.rar` 解压）由它提供
 - `opt/browser`：Linux amd64 内置 Google Chrome for Testing 122.0.6261.111；Linux arm64 内置 Playwright Chromium 120.0.6099.28，供 `browser_*` 工具离线使用
+- `opt/fonts/video`：视频制作技能用的 8 个 OFL 字体（构建时从 `config/fonts/video` 复制，缺失时按 `packaging/fonts/video-fonts.json` 的固定 URL 和 SHA-256 下载；字体不随仓库分发）
 
 补充包设计目标与 Win7 版一致：**统一安装到 `WUNDER_HOME/opt`，桌面版与命令行共用一份运行环境**。
 
 - 推荐在桌面版设置中选择“导入补充包”，默认写入 `~/.wunder/opt/`，导入后桌面版新启动的工具立即生效。
-- 手动安装时，关闭使用该补充包的进程，将压缩包解压到 `${WUNDER_HOME:-$HOME/.wunder}`，使其下直接出现 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/7zip`，再启动桌面版或命令行。
+- 手动安装时，关闭使用该补充包的进程，将压缩包解压到 `${WUNDER_HOME:-$HOME/.wunder}`，使其下直接出现 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/7zip`、`opt/fonts/video`，再启动桌面版或命令行。
 - `.run` 安装包与 `.portable` 便携包共用这个可写用户目录；新导入始终写入共享 home，不自动搬迁旧文件。
 
 ## 安装器打包

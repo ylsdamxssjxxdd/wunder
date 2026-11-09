@@ -3056,7 +3056,8 @@ fn extract_observation_data(value: &Value, tool_name: &str) -> Value {
 }
 
 fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
-    if !map.contains_key("hits") || !map.contains_key("query") {
+    let has_matches = map.contains_key("hits") || map.contains_key("paths");
+    if !has_matches || !map.contains_key("query") {
         return None;
     }
     let mut compacted = Map::new();
@@ -3075,7 +3076,7 @@ fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
         "match_limit_hit",
         "file_limit_hit",
     ] {
-        if let Some(value) = map.get(key) {
+        if let Some(value) = map.get(key).filter(|value| !value.is_null()) {
             compacted.insert(key.to_string(), value.clone());
         }
     }

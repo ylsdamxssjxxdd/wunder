@@ -1432,12 +1432,10 @@ export component Composer inherits Rectangle {
         ? 12px + 20px + root.queue-turns.length * 28px
             + (root.queue-overflow > 0 ? 16px : 0px) + (root.queue-items - 1) * 2px + 6px
         : 0px;
-    // 对齐云端版的固定构图: 8px top padding + 100px input card + 6 + 30px action
-    // row + 10px bottom padding; the attachment row (+36) and the branch line
-    // (+22) only exist while they have content. The phone uses a one-line input
-    // (44px) and grows the action row to a 40px touch band: 8 + 44 + 6 + 40 + 10.
-    private property <length> action-row-height: root.mobile ? 40px : 30px;
-    height: (root.mobile ? 70px : 154px)
+    // Desktop adds 6px of breathing room inside the 36px action band, in
+    // addition to the 6px gap after the editor. Mobile keeps its touch band.
+    private property <length> action-row-height: root.mobile ? 40px : 36px;
+    height: (root.mobile ? 70px : 160px)
         + (root.attachments.length > 0 ? 36px : 0px)
         + (root.branch-name != "" ? 22px : 0px) + root.queue-height;
     private property <bool> plus-open: false;

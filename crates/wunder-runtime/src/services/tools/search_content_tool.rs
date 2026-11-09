@@ -2365,7 +2365,12 @@ fn build_model_search_success(
                 Value::Null
             },
             "matched_file_count": matched_file_count,
-            "returned_match_count": returned_match_count,
+            // paths 模式只回文件清单，命中行数没有意义，留 null 由投影层过滤掉。
+            "returned_match_count": if params.files_only {
+                Value::Null
+            } else {
+                json!(returned_match_count)
+            },
             "truncated": truncated,
             "truncation_reasons": truncation_reasons,
             "elapsed_ms": elapsed_ms,

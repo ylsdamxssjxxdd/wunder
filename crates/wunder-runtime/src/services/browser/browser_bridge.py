@@ -388,8 +388,9 @@ READABLE_JS = """(opts) => {
     const direct = el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('title');
     if (direct && direct.trim()) return direct.trim();
     if (el.labels && el.labels.length) {
-      const text = String(el.labels[0].innerText || '');
-      if (text.trim()) return text;
+      // label 的 innerText 会把控件周围的空白一起带出来（'名称 ' / ' 同意条款'）。
+      const text = String(el.labels[0].innerText || '').trim();
+      if (text) return text;
     }
     const name = el.getAttribute('name');
     return name && name.trim() ? name.trim() : '';
@@ -444,7 +445,12 @@ READABLE_JS = """(opts) => {
       } else if (kind === 'submit' || kind === 'button' || kind === 'reset') {
         push('- button' + named + ' "' + String(el.value || '') + '"');
       } else if (kind !== 'hidden' && kind !== 'file') {
-        const value = String(el.value || '');
+        // select 的 value 是 option 的 value 属性（常是 1/2/abc 这类编码），
+        // 真正可读的是选中项的文字。
+        const selected = el.tagName === 'SELECT' && el.selectedOptions && el.selectedOptions.length
+          ? String(el.selectedOptions[0].textContent || '')
+          : '';
+        const value = selected.trim() ? selected : String(el.value || '');
         const shown = kind === 'password' && value ? '***' : value;
         push('- ' + (el.tagName === 'SELECT' ? 'selectbox' : 'textbox') + named + ' = "' + shown + '"');
       }

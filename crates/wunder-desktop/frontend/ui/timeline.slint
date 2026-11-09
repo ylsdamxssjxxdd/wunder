@@ -982,11 +982,9 @@ export component TimelineView inherits Rectangle {
     callback fork-thread(int);
     callback open-resource(string);
     vertical-stretch: 1;
-    // Reading column: the transcript is one centred column of at most
-    // `timeline-column-width`, so a wide window leaves page margins instead of
-    // stretching every line across the whole pane. The turn ruler keeps the
-    // viewport edge, exactly like the web messenger's chat lane.
-    private property <length> column-width: min(rows-scroll.visible-width, Theme.timeline-column-width);
+    // The transcript follows the available pane width. Individual timeline
+    // entries keep their own 24px side padding, and the ruler stays at the edge.
+    private property <length> column-width: rows-scroll.visible-width;
     private property <length> transcript-height: rows-scroll.content-height;
     private property <length> transcript-visible-height: rows-scroll.visible-height;
     private property <int> follow-passes: 2;

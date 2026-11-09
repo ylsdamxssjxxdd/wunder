@@ -70,6 +70,7 @@ emit(
     sevenzip=data["7zip"],
     browser=data.get("browser", {}),
     fonts=data.get("fonts", []),
+    videoFonts=data.get("videoFonts", []),
     install=data["install"],
 )
 PYEOF
@@ -296,6 +297,24 @@ PYEOF
   done <<< "$font_list"
 fi
 
+# 视频制作 skill 的 8 个 OFL 字体：优先用部署机 config/fonts/video 的本地副本，
+# 没有就按 packaging/fonts/video-fonts.json 的固定 URL + SHA-256 下载。字体不进 git。
+video_fonts_rel="$(json_field install.videoFontsRoot)"
+[[ -n "$video_fonts_rel" && "$video_fonts_rel" != "null" ]] || video_fonts_rel="opt/fonts/video"
+video_fonts_cache="$build_root/video-fonts"
+video_fonts_source=""
+if [[ -d "$repo_root/config/fonts/video" ]]; then video_fonts_source="$repo_root/config/fonts/video"; fi
+log "staging video fonts: ${video_fonts_source:-pinned Google Fonts URLs}"
+fetch_args=(--dest "$video_fonts_cache" --licenses "$repo_root/config/skills/视频制作/engine/fonts")
+[[ -z "$video_fonts_source" ]] || fetch_args+=(--source-dir "$video_fonts_source")
+python3 "$repo_root/packaging/fonts/fetch_video_fonts.py" "${fetch_args[@]}"
+mkdir -p "$package_root/$video_fonts_rel"
+cp -f "$video_fonts_cache"/*.ttf "$package_root/$video_fonts_rel"/
+if compgen -G "$video_fonts_cache/OFL-*.txt" >/dev/null; then
+  cp -f "$video_fonts_cache"/OFL-*.txt "$package_root/$video_fonts_rel"/
+fi
+log "bundled video fonts: $(find "$package_root/$video_fonts_rel" -maxdepth 1 -name '*.ttf' | wc -l) ttf at $video_fonts_rel"
+
 log "building Git $git_version from source"
 obtain_file "$git_tarball_url" "$downloads_dir/$git_tarball_file" "$git_tarball_sha256"
 git_src="$stage_dir/git-$git_version"
@@ -414,7 +433,7 @@ Usage:
 2. For manual installation, extract into WUNDER_HOME (default: ~/.wunder),
    including when wunder Desktop is distributed as an AppImage.
 3. Ensure the target now contains opt/python, opt/git, opt/rg, opt/ffmpeg,
-   opt/7zip (and opt/browser on amd64).
+   opt/7zip, opt/fonts/video (and opt/browser on amd64).
 4. Start wunder Desktop or wunder CLI; both prepend the shared opt/python,
    opt/git, opt/rg, opt/ffmpeg and opt/7zip to PATH automatically.
 EOF
@@ -480,6 +499,10 @@ output = {
         "root": manifest["install"].get("browserRoot", "opt/browser"),
         "executable": (manifest["install"].get("browserRoot", "opt/browser") + "/" + ((manifest.get("browser", {}).get("archives", {}).get(arch, {}).get("executable") or manifest.get("browser", {}).get("executable", "")))) if os.path.isdir(os.path.join(os.path.dirname(destination), manifest["install"].get("browserRoot", "opt/browser"))) else None,
         "url": manifest.get("browser", {}).get("archives", {}).get(arch, {}).get("url") if isinstance(manifest.get("browser", {}).get("archives", {}).get(arch), dict) else None,
+    },
+    "videoFonts": {
+        "root": manifest["install"].get("videoFontsRoot", "opt/fonts/video"),
+        "packages": manifest.get("videoFonts", []),
     },
     "install": manifest["install"],
 }

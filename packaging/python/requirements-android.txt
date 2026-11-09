@@ -46,6 +46,7 @@ python-docx==1.1.2
 python-pptx==1.0.2
 pytz==2024.2
 requests==2.32.3
+scipy==1.14.1
 seaborn==0.13.2
 simplejson==4.2.0
 six==1.17.0

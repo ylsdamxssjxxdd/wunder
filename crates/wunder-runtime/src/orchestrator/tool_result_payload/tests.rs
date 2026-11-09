@@ -2166,11 +2166,15 @@ fn search_observation_keeps_files_only_paths() {
         "files_only": true,
         "paths": ["src/a.rs", "src/b.rs"],
         "matched_file_count": 2,
-        "returned_match_count": 0
+        "returned_match_count": null
     }));
 
     let compacted = payload.to_compact_payload("搜索内容");
     let data = &compacted["data"];
     assert_eq!(data["files_only"], json!(true), "{compacted}");
     assert_eq!(data["paths"], json!(["src/a.rs", "src/b.rs"]), "{compacted}");
+    assert!(
+        data.get("returned_match_count").is_none(),
+        "paths 模式不该再报命中行数: {compacted}"
+    );
 }

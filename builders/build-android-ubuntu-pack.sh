@@ -15,6 +15,7 @@
 #   WUNDER_PACK_OUT       output archive (default /tmp/wunder-packs/common-<abi>.tar.xz)
 #   WUNDER_PACK_PACKAGES  apt package list (default: base + Android image/recovery/network toolbox)
 #   WUNDER_PY_REQUIREMENTS  pip requirements (default packaging/python/requirements-android.txt)
+#   WUNDER_VIDEO_FONTS_DIR  视频制作字体源目录（默认 config/fonts/video；没有时按固定 URL 下载）
 #   WUNDER_PACK_FFMPEG_URL  static ffmpeg archive override
 #   WUNDER_PACK_WORK      build directory (default /tmp/wunder-pack-<abi>)
 #
@@ -41,6 +42,8 @@ file xxd hexedit libarchive-tools lzop \
 curl wget unzip zip procps psmisc lsof bc bzip2 time python-is-python3 iproute2 \
 fontconfig fonts-dejavu-core fonts-liberation fonts-noto-color-emoji fonts-wqy-microhei}"
 PY_REQUIREMENTS="${WUNDER_PY_REQUIREMENTS:-$ROOT/packaging/python/requirements-android.txt}"
+VIDEO_FONTS_DIR="${WUNDER_VIDEO_FONTS_DIR:-$ROOT/config/fonts/video}"
+VIDEO_FONTS_SCRIPT="$ROOT/packaging/fonts/fetch_video_fonts.py"
 
 case "$ABI" in
     arm64)
@@ -188,6 +191,10 @@ if find "$WHEELS" -type f ! -name '*.whl' ! -name 'requirements-android.txt' | g
     echo "wheelhouse contains a source archive" >&2
     exit 2
 fi
+if ! compgen -G "$WHEELS/scipy-*.whl" >/dev/null; then
+    echo "wheelhouse is missing the scipy wheel required by 视频制作/audio.py" >&2
+    exit 2
+fi
 
 # Ubuntu's ffmpeg package drags in Mesa/LLVM for filter acceleration, which is
 # useless in a terminal runtime. Use the static upstream build instead: it is
@@ -201,6 +208,21 @@ FFPROBE_SRC="$(find "$WORK/ffmpeg" -type f -name ffprobe | head -1)"
 [ -n "$FFMPEG_SRC" ] && [ -n "$FFPROBE_SRC" ] || { echo "static ffmpeg archive is incomplete" >&2; exit 2; }
 install -m 755 "$FFMPEG_SRC" "$WORK/work/usr/local/bin/ffmpeg"
 install -m 755 "$FFPROBE_SRC" "$WORK/work/usr/local/bin/ffprobe"
+
+# 视频制作 skill 的 8 个 OFL 字体：优先从部署机 config/fonts/video 复制，
+# 没有就按 packaging/fonts/video-fonts.json 的固定 URL + SHA-256 下载。
+echo "==> video fonts"
+[ -f "$VIDEO_FONTS_SCRIPT" ] || { echo "missing video font fetcher: $VIDEO_FONTS_SCRIPT" >&2; exit 2; }
+VIDEO_FONTS_CACHE="$WORK/video-fonts"
+fetch_args=(--dest "$VIDEO_FONTS_CACHE" --licenses "$ROOT/config/skills/视频制作/engine/fonts")
+[[ -d "$VIDEO_FONTS_DIR" ]] && fetch_args+=(--source-dir "$VIDEO_FONTS_DIR")
+python3 "$VIDEO_FONTS_SCRIPT" "${fetch_args[@]}"
+sudo -n mkdir -p "$WORK/work/usr/share/fonts/wunder/video"
+sudo -n cp -f "$VIDEO_FONTS_CACHE"/*.ttf "$WORK/work/usr/share/fonts/wunder/video/"
+sudo -n cp -f "$VIDEO_FONTS_CACHE"/OFL-*.txt "$WORK/work/usr/share/fonts/wunder/video/" 2>/dev/null || true
+[ "$(find "$WORK/work/usr/share/fonts/wunder/video" -maxdepth 1 -name '*.ttf' | wc -l)" -ge 8 ] \
+    || { echo "video fonts incomplete under /usr/share/fonts/wunder/video" >&2; exit 2; }
+run_guest "fc-cache -f >/dev/null"
 
 echo "==> verify tools"
 run_guest "python3 --version; git --version; rg --version | head -1; ffmpeg -version | head -1; 7z i | head -2"
@@ -218,6 +240,9 @@ run_guest "fc-list | grep -qi 'DejaVu Sans' || { echo 'DejaVu Sans missing'; exi
 fc-list | grep -qi 'Liberation Sans' || { echo 'Liberation Sans missing'; exit 1; }; \
 fc-list | grep -qi 'WenQuanYi Micro Hei' || { echo 'WenQuanYi Micro Hei missing'; exit 1; }; \
 fc-list | grep -qi 'Noto Color Emoji' || { echo 'Noto Color Emoji missing'; exit 1; }; \
+fc-list | grep -qi 'Noto Serif SC' || { echo 'Noto Serif SC missing'; exit 1; }; \
+fc-list | grep -qi 'Cormorant Garamond' || { echo 'Cormorant Garamond missing'; exit 1; }; \
+fc-list | grep -qi 'JetBrains Mono' || { echo 'JetBrains Mono missing'; exit 1; }; \
 fc-match -f '%{family}\n' ':charset=4e2d' | grep -qi 'WenQuanYi' \
     || { echo 'no CJK fallback for U+4E2D'; exit 1; }; \
 fc-match -f '%{family}\n' ':charset=1f9d1' | grep -qi 'Noto Color Emoji' \
