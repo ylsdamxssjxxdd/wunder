@@ -1987,6 +1987,7 @@ fn project_desktop_control(data: &Value) -> Option<Value> {
             // Reported when native input was delivered but the screenshot
             // failed; the action must not be treated as unconfirmed.
             "observation_error",
+            "observation_change_ratio",
             // Recovery instruction for that case, since no followup image
             // message is produced when there is no frame.
             "next_step",

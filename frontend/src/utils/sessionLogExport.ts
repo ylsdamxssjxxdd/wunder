@@ -1,6 +1,6 @@
 import { exportThreadLog } from '@/api/chat';
 import { getCurrentLanguage } from '@/i18n';
-import { saveObjectUrlAsFile } from '@/utils/workspaceResourceCards';
+import { saveBlobAsDownload } from '@/utils/downloadBlob';
 
 type SessionRoundEvent = {
   event?: unknown;
@@ -539,9 +539,7 @@ const downloadTextAsFile = (payload: string, filename: string) => {
   const blob = new Blob([payload], {
     type: 'application/x-ndjson;charset=utf-8'
   });
-  const objectUrl = URL.createObjectURL(blob);
-  saveObjectUrlAsFile(objectUrl, filename);
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  saveBlobAsDownload(blob, filename);
 };
 
 export const exportSingleSessionLog = async (
@@ -551,9 +549,7 @@ export const exportSingleSessionLog = async (
   const response = await exportThreadLog(sessionId);
   const filename = `${sanitizeFilenamePart(options.filenamePrefix || sessionId, 'thread')}-${Date.now()}.jsonl`;
   const blob = response.data as Blob;
-  const url = URL.createObjectURL(blob);
-  saveObjectUrlAsFile(url, filename);
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  saveBlobAsDownload(blob, filename);
   return { filename, sessionId };
 
 };

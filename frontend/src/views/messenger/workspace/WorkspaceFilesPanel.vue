@@ -253,7 +253,7 @@ import {
   resolveWorkspacePreviewUnsupportedHint,
   resolveWorkspaceResourcePreviewKind
 } from '@/utils/workspaceResourcePreview';
-import { saveObjectUrlAsFile } from '@/utils/workspaceResourceCards';
+import { saveBlobAsDownload, saveObjectUrlAsDownload } from '@/utils/downloadBlob';
 import { hasWorkspaceDragPaths } from '@/components/chat/workspaceDrag';
 import { mzConfirm, mzPrompt } from '@/utils/mzDialog';
 import WorkspaceNewFileDialog, {
@@ -1588,9 +1588,9 @@ const downloadSelection = async (paths: string[]) => {
       try {
         // Directories are packaged as a zip; files are streamed as-is.
         if (kindByPath.get(path) === 'dir') {
-          await downloadWorkspaceDirectoryArchive(path);
+          await downloadWorkspaceDirectoryArchive(path, undefined, { notify: false });
         } else {
-          await downloadWorkspacePath(path);
+          await downloadWorkspacePath(path, undefined, { notify: false });
         }
         done += 1;
       } catch (error) {
@@ -1877,9 +1877,7 @@ const downloadRemoteFile = async (path: string, name: string) => {
     const blob = outcome.payload.bytes
       ? new Blob([outcome.payload.bytes])
       : new Blob([outcome.payload.text], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    saveObjectUrlAsFile(url, name || 'download');
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    saveBlobAsDownload(blob, name || 'download');
   } catch (error) {
     if (request === directoryAbort && !request.signal.aborted) {
       ElMessage.error(resolveWorkspaceErrorMessage(error, t('messenger.filesArea.downloadFailed')));
@@ -1903,14 +1901,12 @@ const handlePreviewDownload = async () => {
   // 远程文件不落云端存储：已取回的内容直接另存为本地文件。
   if (remoteInterlinkActive.value) {
     if (preview.previewUrl) {
-      saveObjectUrlAsFile(preview.previewUrl, preview.title || 'download');
+      saveObjectUrlAsDownload(preview.previewUrl, preview.title || 'download');
       return;
     }
     if (preview.content) {
       const blob = new Blob([preview.content], { type: 'text/plain;charset=utf-8' });
-      const textUrl = URL.createObjectURL(blob);
-      saveObjectUrlAsFile(textUrl, preview.title || 'download');
-      window.setTimeout(() => URL.revokeObjectURL(textUrl), 1000);
+      saveBlobAsDownload(blob, preview.title || 'download');
       return;
     }
     ElMessage.warning(t('interlink.workspace.downloadUnavailable'));

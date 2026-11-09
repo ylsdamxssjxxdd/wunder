@@ -631,6 +631,7 @@ import {
 import { clearWorkspaceDragPaths, hasWorkspaceDragPaths, readWorkspaceDragPaths, setWorkspaceDragPaths } from './workspaceDrag';
 
 import { getRuntimeConfig } from '@/config/runtime';
+import { saveBlobAsDownload } from '@/utils/downloadBlob';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
@@ -3580,15 +3581,9 @@ const getFilenameFromHeaders = (headers, fallback) => {
   return match ? match[1] : fallback;
 };
 
+// 只下载、不打开：本面板自己给成功提示，所以关掉通用提示避免重复。
 const saveBlob = (blob, filename) => {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename || t('workspace.download.defaultName');
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  saveBlobAsDownload(blob, filename || t('workspace.download.defaultName'), { notify: false });
 };
 
 const downloadEntry = async (entry) => {

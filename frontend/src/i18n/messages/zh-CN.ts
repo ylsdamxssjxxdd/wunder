@@ -27,6 +27,7 @@ export default {
   'common.clear': '清空',
   'common.upload': '上传',
   'common.download': '下载',
+  'common.downloaded': '已下载 {name}',
   'common.import': '导入',
   'common.export': '导出',
   'common.view': '查看',

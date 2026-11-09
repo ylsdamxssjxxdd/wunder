@@ -38,6 +38,7 @@ export default {
   'common.clear': 'Clear',
   'common.upload': 'Upload',
   'common.download': 'Download',
+  'common.downloaded': 'Downloaded {name}',
   'common.import': 'Import',
   'common.export': 'Export',
   'common.view': 'View',

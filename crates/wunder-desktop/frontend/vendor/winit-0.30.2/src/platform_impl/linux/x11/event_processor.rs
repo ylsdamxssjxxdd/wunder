@@ -66,7 +66,21 @@ pub struct EventProcessor {
     pub active_window: Option<xproto::Window>,
     /// Latest modifiers we've sent for the user to trigger change in event.
     pub modifiers: Cell<ModifiersState>,
-    pub xfiltered_modifiers: VecDeque<c_ulong>,
+    /// Dispatch an already-scheduled IME echo even if Xlib filters it again.
+    pub force_process_echo: bool,
+    /// Identities of key events already handed to the IME for forwarding,
+    /// mapped to the sequence in which they were forwarded. A key event that
+    /// matches one of these is the IME's echo of that key.
+    pub(super) filtered_key_ids: VecDeque<(c_ulong, u32, u8)>,
+    pub(super) filtered_key_seq: std::collections::HashMap<(c_ulong, u32, u8), u64>,
+    pub(super) next_filtered_key_seq: u64,
+    /// Identities of key events already dispatched to the window.
+    pub(super) delivered_key_ids: VecDeque<(c_ulong, u32, u8)>,
+    pub(super) delivered_key_id_set: std::collections::HashSet<(c_ulong, u32, u8)>,
+    // Track filtered modifiers by keycode: X serials are not unique for events
+    // delivered in quick succession, and matching those serials makes replay
+    // trigger for ordinary input.
+    pub xfiltered_modifiers: VecDeque<u8>,
     pub xmodmap: util::ModifierKeymap,
     pub is_composing: bool,
 }
@@ -78,26 +92,15 @@ impl EventProcessor {
     {
         self.process_xevent(xev, &mut callback);
 
-        let window_target = Self::window_target_mut(&mut self.target);
+        self.process_pending_ime_requests();
+        self.drain_ime_events(&mut callback);
+    }
 
-        // Handle IME requests.
-        while let Ok(request) = self.ime_receiver.try_recv() {
-            let ime = match window_target.ime.as_mut() {
-                Some(ime) => ime,
-                None => continue,
-            };
-            let ime = ime.get_mut();
-            match request {
-                ImeRequest::Position(window_id, x, y) => {
-                    ime.send_xim_spot(window_id, x, y);
-                },
-                ImeRequest::Allow(window_id, allowed) => {
-                    ime.set_ime_allowed(window_id, allowed);
-                },
-            }
-        }
-
-        // Drain IME events.
+    /// Deliver IME preedit/commit events queued by the XIM server.
+    pub fn drain_ime_events<T: 'static, F>(&mut self, callback: &mut F)
+    where
+        F: FnMut(&RootAEL, Event<T>),
+    {
         while let Ok((window, event)) = self.ime_event_receiver.try_recv() {
             let window_id = mkwid(window as xproto::Window);
             let event = match event {
@@ -125,6 +128,26 @@ impl EventProcessor {
         }
     }
 
+    /// Apply pending `set_ime_allowed`/position requests from the window.
+    pub fn process_pending_ime_requests(&mut self) {
+        let window_target = Self::window_target_mut(&mut self.target);
+        while let Ok(request) = self.ime_receiver.try_recv() {
+            let ime = match window_target.ime.as_mut() {
+                Some(ime) => ime,
+                None => continue,
+            };
+            let ime = ime.get_mut();
+            match request {
+                ImeRequest::Position(window_id, x, y) => {
+                    ime.send_xim_spot(window_id, x, y);
+                },
+                ImeRequest::Allow(window_id, allowed) => {
+                    ime.set_ime_allowed(window_id, allowed);
+                },
+            }
+        }
+    }
+
     /// XFilterEvent tells us when an event has been discarded by the input method.
     /// Specifically, this involves all of the KeyPress events in compose/pre-edit sequences,
     /// along with an extra copy of the KeyRelease events. This also prevents backspace and
@@ -145,20 +168,36 @@ impl EventProcessor {
     {
         let event_type = xev.get_type();
 
-        if self.filter_event(xev) {
-            if event_type == xlib::KeyPress || event_type == xlib::KeyRelease {
-                let xev: &XKeyEvent = xev.as_ref();
-                if self.xmodmap.is_modifier(xev.keycode as u8) {
-                    // Don't grow the buffer past the `MAX_MOD_REPLAY_LEN`. This could happen
-                    // when the modifiers are consumed entirely or serials are altered.
-                    //
-                    // Both cases shouldn't happen in well behaving clients.
-                    if self.xfiltered_modifiers.len() == MAX_MOD_REPLAY_LEN {
-                        self.xfiltered_modifiers.pop_back();
+        // Forward key events to the IME only while it is actually allowed on the
+        // focused window. XIM servers filter and re-inject every forwarded key
+        // asynchronously; with the IME disabled that only duplicates input and
+        // lets the re-injection reorder keys. Echoes were already through the
+        // IME and are dispatched as-is.
+        let filtered = if event_type == xlib::KeyPress || event_type == xlib::KeyRelease {
+            if self.force_process_echo {
+                false
+            } else {
+                let filtered = self.forwarding_keys_to_ime() && self.filter_event(xev);
+                if filtered {
+                    self.record_filtered_key(Self::key_event_identity(xev));
+                    let xev: &XKeyEvent = xev.as_ref();
+                    if self.xmodmap.is_modifier(xev.keycode as u8) {
+                        // Don't grow the buffer past the `MAX_MOD_REPLAY_LEN`. This could happen
+                        // when the modifiers are consumed entirely.
+                        if self.xfiltered_modifiers.len() == MAX_MOD_REPLAY_LEN {
+                            self.xfiltered_modifiers.pop_back();
+                        }
+                        self.xfiltered_modifiers.push_front(xev.keycode as u8);
                     }
-                    self.xfiltered_modifiers.push_front(xev.serial);
                 }
+                filtered
             }
+        } else {
+            self.filter_event(xev)
+        };
+
+        // Don't process the event if it was filtered.
+        if filtered {
             return;
         }
 
@@ -330,6 +369,140 @@ impl EventProcessor {
         };
 
         result != 0
+    }
+
+    /// Whether key events for the focused window are currently forwarded to
+    /// the IME, and therefore come back as asynchronous XIM echoes.
+    pub fn forwarding_keys_to_ime(&self) -> bool {
+        let window = self.active_window.map(|window| window as XWindow);
+        Self::window_target(&self.target)
+            .ime
+            .as_ref()
+            .and_then(|ime| window.map(|window| ime.borrow().is_ime_allowed(window)))
+            .unwrap_or(false)
+    }
+
+    /// Identity of a key event as delivered by the IME.
+    ///
+    /// XIM forwards keep the X server timestamp and keycode of the key that
+    /// produced them, but libX11 can hand the same echoed key back more than
+    /// once when its fabricated-serial tracking loses a burst.
+    pub fn key_event_identity(event: &XEvent) -> (c_ulong, u32, u8) {
+        let key: &XKeyEvent = event.as_ref();
+        (key.time, key.keycode, event.get_type() as u8)
+    }
+
+    /// Hand a physical key to the IME and record its forwarding order.
+    /// Returns whether the IME consumed it (its echo will arrive later).
+    pub fn filter_key_event(&mut self, xev: &mut XEvent) -> bool {
+        if !self.forwarding_keys_to_ime() {
+            return false;
+        }
+        let filtered = self.filter_event(xev);
+        if filtered {
+            self.record_filtered_key(Self::key_event_identity(xev));
+            let key: &XKeyEvent = xev.as_ref();
+            if self.xmodmap.is_modifier(key.keycode as u8) {
+                if self.xfiltered_modifiers.len() == MAX_MOD_REPLAY_LEN {
+                    self.xfiltered_modifiers.pop_back();
+                }
+                self.xfiltered_modifiers.push_front(key.keycode as u8);
+            }
+        }
+        filtered
+    }
+
+    /// Give a key event its forwarding order slot without forwarding it.
+    pub fn order_key_event(&mut self, xev: &XEvent) {
+        self.record_filtered_key(Self::key_event_identity(xev));
+    }
+
+    /// Let Xlib complete the XIM round-trip for an echo we plan to replay
+    /// later. The call must happen in arrival order: skipping it desyncs the
+    /// fabricated-serial bookkeeping and the IME stops filtering the next
+    /// keystrokes.
+    pub fn acknowledge_echo(&mut self, xev: &mut XEvent) {
+        self.filter_event(xev);
+    }
+
+    /// Mark a key event as dispatched. Returns false for a duplicate echo.
+    pub fn record_delivered_key(&mut self, xev: &XEvent) -> bool {
+        let key: &XKeyEvent = xev.as_ref();
+        if key.keycode == 0 {
+            return true;
+        }
+        const MAX_TRACKED: usize = 256;
+        let id = Self::key_event_identity(xev);
+        if !self.delivered_key_id_set.insert(id) {
+            return false;
+        }
+        self.delivered_key_ids.push_back(id);
+        if self.delivered_key_ids.len() > MAX_TRACKED {
+            if let Some(expired) = self.delivered_key_ids.pop_front() {
+                self.delivered_key_id_set.remove(&expired);
+            }
+        }
+        true
+    }
+
+    fn record_filtered_key(&mut self, id: (c_ulong, u32, u8)) {
+        const MAX_TRACKED: usize = 256;
+        if self.filtered_key_seq.insert(id, self.next_filtered_key_seq).is_none() {
+            self.next_filtered_key_seq += 1;
+            self.filtered_key_ids.push_back(id);
+            if self.filtered_key_ids.len() > MAX_TRACKED {
+                if let Some(expired) = self.filtered_key_ids.pop_front() {
+                    self.filtered_key_seq.remove(&expired);
+                }
+            }
+        }
+    }
+
+    /// Whether this key event is an echo of a key already given to the IME.
+    pub fn is_filtered_key(&self, event: &XEvent) -> bool {
+        self.filtered_key_seq.contains_key(&Self::key_event_identity(event))
+    }
+
+    /// Restore the physical order of key events before they are dispatched.
+    ///
+    /// Xlib delivers IME-forwarded keys by pushing them back onto the head of
+    /// the event queue (`XPutBackEvent`). When an IME forwards several keys in
+    /// one protocol read, that turns the batch into a LIFO stack, so fast
+    /// typing would reach the window in reverse order. Each key was tagged
+    /// with its forwarding sequence when handed to the IME, which restores the
+    /// order the keys were actually pressed even when X timestamps collide.
+    ///
+    /// Runs of key events are sorted by that sequence. IME commit events
+    /// (keycode 0) delimit the runs so their position relative to the
+    /// surrounding input is preserved.
+    pub fn sort_ime_echoes(&self, events: &mut [XEvent]) {
+        let self_seq = &self.filtered_key_seq;
+        let is_sortable = |event: &XEvent| {
+            let event_type = event.get_type();
+            if event_type != xlib::KeyPress && event_type != xlib::KeyRelease {
+                return false;
+            }
+            let key: &XKeyEvent = event.as_ref();
+            key.keycode != 0
+        };
+
+        let mut start = 0;
+        while start < events.len() {
+            if !is_sortable(&events[start]) {
+                start += 1;
+                continue;
+            }
+            let mut end = start + 1;
+            while end < events.len() && is_sortable(&events[end]) {
+                end += 1;
+            }
+            if end - start > 1 {
+                events[start..end].sort_by_key(|event| {
+                    self_seq.get(&Self::key_event_identity(event)).copied().unwrap_or(u64::MAX)
+                });
+            }
+            start = end;
+        }
     }
 
     pub fn init_device(&self, device: xinput::DeviceId) {
@@ -929,7 +1102,7 @@ impl EventProcessor {
         // itself are out of sync due to XkbState being delivered before XKeyEvent, since it's
         // being replayed by the XIM, thus we should replay ourselves.
         let replay = if let Some(position) =
-            self.xfiltered_modifiers.iter().rev().position(|&s| s == xev.serial)
+            self.xfiltered_modifiers.iter().rev().position(|&s| s == xev.keycode as u8)
         {
             // We don't have to replay modifiers pressed before the current event if some events
             // were not forwarded to us, since their state is irrelevant.

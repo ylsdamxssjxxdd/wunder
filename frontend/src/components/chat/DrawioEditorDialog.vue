@@ -157,7 +157,8 @@ import {
 } from '@/api/workspace';
 import type { QueryParams } from '@/api/types';
 import { getCurrentLanguage, useI18n } from '@/i18n';
-import { getFilenameFromHeaders, saveObjectUrlAsFile } from '@/utils/workspaceResourceCards';
+import { saveBlobAsDownload } from '@/utils/downloadBlob';
+import { getFilenameFromHeaders } from '@/utils/workspaceResourceCards';
 
 const props = defineProps<{
   visible: boolean;
@@ -501,14 +502,12 @@ const handleDownload = async () => {
   if (!props.path || loading.value || saving.value) return;
   try {
     const response = await downloadWunderWorkspaceFile(requestParams());
-    const objectUrl = URL.createObjectURL(response.data);
     const fallbackName = props.path.split('/').pop() || 'download';
     const filename = getFilenameFromHeaders(
       response.headers as Record<string, unknown>,
       fallbackName
     );
-    saveObjectUrlAsFile(objectUrl, filename);
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    saveBlobAsDownload(response.data as Blob, filename);
   } catch (error) {
     const source = error as {
       response?: { data?: { detail?: string; error?: string } | string };

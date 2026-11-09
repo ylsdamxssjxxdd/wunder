@@ -27,7 +27,9 @@ import {
 } from '@/api/workspace';
 import type { QueryParams } from '@/api/types';
 import { resolveApiError } from '@/utils/apiError';
-import { getFilenameFromHeaders, saveObjectUrlAsFile } from '@/utils/workspaceResourceCards';
+import { saveBlobAsDownload } from '@/utils/downloadBlob';
+import type { DownloadFeedbackOptions } from '@/utils/downloadBlob';
+import { getFilenameFromHeaders } from '@/utils/workspaceResourceCards';
 import {
   joinWorkspacePath,
   normalizeWorkspaceEntries,
@@ -232,13 +234,20 @@ export const clearWorkspaceRoot = async (): Promise<void> => {
 const resolveDownloadFilename = (headers: unknown, fallback: string): string =>
   getFilenameFromHeaders((headers || {}) as Record<string, unknown>, fallback) || fallback;
 
-const triggerBlobDownload = (blob: Blob, filename: string): void => {
-  const objectUrl = URL.createObjectURL(blob);
-  saveObjectUrlAsFile(objectUrl, filename);
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+/** 单个文件/打包目录的落盘出口：只下载，不打开、不交给本机程序。 */
+const triggerBlobDownload = (
+  blob: Blob,
+  filename: string,
+  options: DownloadFeedbackOptions = {}
+): void => {
+  saveBlobAsDownload(blob, filename, options);
 };
 
-export const downloadWorkspacePath = async (path: string, fallbackName?: string): Promise<void> => {
+export const downloadWorkspacePath = async (
+  path: string,
+  fallbackName?: string,
+  options: DownloadFeedbackOptions = {}
+): Promise<void> => {
   const normalized = normalizeWorkspaceRelativePath(path);
   const response = await downloadWorkspaceFile(
     { path: normalized },
@@ -248,12 +257,13 @@ export const downloadWorkspacePath = async (path: string, fallbackName?: string)
     response.headers,
     fallbackName || normalized.split('/').pop() || 'download'
   );
-  triggerBlobDownload(response.data as Blob, filename);
+  triggerBlobDownload(response.data as Blob, filename, options);
 };
 
 export const downloadWorkspaceDirectoryArchive = async (
   path: string,
-  fallbackName?: string
+  fallbackName?: string,
+  options: DownloadFeedbackOptions = {}
 ): Promise<void> => {
   const normalized = normalizeWorkspaceRelativePath(path);
   const response = await downloadWorkspaceArchive(
@@ -264,7 +274,7 @@ export const downloadWorkspaceDirectoryArchive = async (
     response.headers,
     fallbackName || `${normalized ? normalized.split('/').pop() : 'workspace'}.zip`
   );
-  triggerBlobDownload(response.data as Blob, filename);
+  triggerBlobDownload(response.data as Blob, filename, options);
 };
 
 export const fetchWorkspacePathBlob = async (

@@ -52,6 +52,7 @@ import { confirmWithFallback } from '@/utils/confirm';
 import { hydrateExternalMarkdownImages, renderMarkdown } from '@/utils/markdown';
 import { mzPrompt } from '@/utils/mzDialog';
 import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
+import { saveBlobAsDownload } from '@/utils/downloadBlob';
 import { buildWorkspacePublicPath, normalizeWorkspaceOwnerId, resolveMarkdownWorkspacePath } from '@/utils/messageWorkspacePath';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
 import { extractPromptToolingPreview } from '@/utils/promptToolingPreview';
@@ -6017,7 +6018,6 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
               throw new Error(`HTTP ${response.status}`);
           }
           const blob = await response.blob();
-          const objectUrl = URL.createObjectURL(blob);
           // Extract filename from URL
           let filename = 'image';
           try {
@@ -6036,8 +6036,9 @@ function installMessengerControllerWorkspaceResourceHydration(ctx: MessengerCont
               const ext = blob.type.split('/')[1] || 'png';
               filename = `image.${ext}`;
           }
-          saveObjectUrlAsFile(objectUrl, filename);
-          URL.revokeObjectURL(objectUrl);
+          // 交给浏览器下载器落盘（含“已下载”提示）；不要在点击后立刻 revoke，
+          // 那会让刚开始的下载拿不到数据。
+          saveBlobAsDownload(blob, filename);
       }
       catch (error) {
           ElMessage.error(ctx.t('chat.resourceDownloadFailed'));

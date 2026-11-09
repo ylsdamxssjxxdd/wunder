@@ -7,7 +7,7 @@
  */
 
 import { APP_VERSION } from '@/config/appVersion';
-import { saveObjectUrlAsFile } from '@/utils/workspaceResourceCards';
+import { saveBlobAsDownload } from '@/utils/downloadBlob';
 
 export type ClientDiagnosticsContext = {
   language?: string;
@@ -86,8 +86,6 @@ export const exportClientDiagnostics = (context: ClientDiagnosticsContext = {}):
   const blob = new Blob([JSON.stringify(snapshot, null, 2)], {
     type: 'application/json;charset=utf-8'
   });
-  const objectUrl = URL.createObjectURL(blob);
-  saveObjectUrlAsFile(objectUrl, filename);
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  saveBlobAsDownload(blob, filename);
   return filename;
 };

@@ -1,5 +1,6 @@
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { normalizeDependencyNames } from '@/utils/agentDependencyStatus';
+import { saveBlobAsDownload } from '@/utils/downloadBlob';
 
 type WorkerCardSchemaVersion = 'wunder/worker-card@1' | 'wunder/worker-card@2';
 type WorkerCardAbilityKind = 'tool' | 'skill';
@@ -148,14 +149,7 @@ const resolveWorkerCardPromptText = (value: unknown): string => {
 const createDownload = (filename: string, payload: string) => {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
   const blob = new Blob(['\uFEFF', payload], { type: 'application/json;charset=utf-8' });
-  const url = window.URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  window.URL.revokeObjectURL(url);
+  saveBlobAsDownload(blob, filename);
 };
 
 const normalizeAbilityKind = (value: unknown): WorkerCardAbilityKind =>

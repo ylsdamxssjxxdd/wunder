@@ -226,6 +226,16 @@ impl Ime {
         }
     }
 
+    pub fn is_ime_allowed(&self, window: ffi::Window) -> bool {
+        if self.is_destroyed() {
+            false
+        } else if let Some(Some(context)) = self.inner.contexts.get(&window) {
+            context.is_allowed()
+        } else {
+            false
+        }
+    }
+
     pub fn send_xim_spot(&mut self, window: ffi::Window, x: i16, y: i16) {
         if self.is_destroyed() {
             return;

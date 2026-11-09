@@ -129,7 +129,8 @@ import {
 import { showApiError } from '@/utils/apiError';
 import { emitUserToolsUpdated } from '@/utils/userToolsEvents';
 import { invalidateAllUserToolsCaches } from '@/utils/userToolsCache';
-import { getFilenameFromHeaders, saveObjectUrlAsFile } from '@/utils/workspaceResourceCards';
+import { saveBlobAsDownload } from '@/utils/downloadBlob';
+import { getFilenameFromHeaders } from '@/utils/workspaceResourceCards';
 import { useI18n } from '@/i18n';
 
 const SUPPORTED_SKILL_ARCHIVE_SUFFIXES = [
@@ -332,9 +333,7 @@ const exportSkill = async () => {
       }
     });
     const filename = getFilenameFromHeaders(response.headers, `${skill.name}.zip`);
-    const objectUrl = URL.createObjectURL(response.data);
-    saveObjectUrlAsFile(objectUrl, filename);
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    saveBlobAsDownload(response.data as Blob, filename, { notify: false });
     ElMessage.success(t('userTools.skills.export.success'));
   } catch (error) {
     showApiError(error, t('userTools.skills.export.failed'));

@@ -24,6 +24,7 @@ use x11rb::protocol::xkb;
 use x11rb::protocol::xproto::{self, ConnectionExt as _};
 use x11rb::x11_utils::X11Error as LogicalError;
 use x11rb::xcb_ffi::ReplyOrIdError;
+use x11_dl::xlib::XEvent;
 
 use crate::error::{EventLoopError, OsError as RootOsError};
 use crate::event::{Event, StartCause, WindowEvent};
@@ -328,6 +329,12 @@ impl<T: 'static> EventLoop<T> {
             first_touch: None,
             active_window: None,
             modifiers: Default::default(),
+            force_process_echo: false,
+            filtered_key_ids: VecDeque::new(),
+            filtered_key_seq: Default::default(),
+            next_filtered_key_seq: 0,
+            delivered_key_ids: VecDeque::new(),
+            delivered_key_id_set: Default::default(),
             is_composing: false,
         };
 
@@ -577,23 +584,121 @@ impl<T: 'static> EventLoop<T> {
     where
         F: FnMut(Event<T>, &RootAEL),
     {
-        let mut xev = MaybeUninit::uninit();
+        // With the IME allowed, every physical key goes through XFilterEvent.
+        // Keys the IME takes come back as echoes, injected at the head of the
+        // queue (`XPutBackEvent`), which reverses a burst. Both those echoes and
+        // the keys the IME leaves untouched are buffered under a forwarding
+        // sequence and replayed in the order the keys were pressed.
+        let mut ordered: Vec<XEvent> = Vec::new();
+        let mut last_forwarded: Option<std::time::Instant> = None;
+        const ECHO_SETTLE: std::time::Duration = std::time::Duration::from_millis(10);
+        loop {
+            let mut events: Vec<XEvent> = Vec::new();
+            let mut xev = MaybeUninit::uninit();
+            while unsafe { self.event_processor.poll_one_event(xev.as_mut_ptr()) } {
+                events.push(unsafe { xev.assume_init() });
+            }
 
-        while unsafe { self.event_processor.poll_one_event(xev.as_mut_ptr()) } {
-            let mut xev = unsafe { xev.assume_init() };
-            self.event_processor.process_event(&mut xev, |window_target, event| {
-                if let Event::WindowEvent {
-                    window_id: crate::window::WindowId(wid),
-                    event: WindowEvent::RedrawRequested,
-                } = event
-                {
-                    let window_target = EventProcessor::window_target(window_target);
-                    window_target.redraw_sender.send(wid).unwrap();
+            for mut xev in events {
+                let is_key = matches!(
+                    xev.get_type(),
+                    x11_dl::xlib::KeyPress | x11_dl::xlib::KeyRelease
+                );
+                let keycode = if is_key {
+                    let key: &x11_dl::xlib::XKeyEvent = xev.as_ref();
+                    key.keycode
                 } else {
-                    callback(event, window_target);
+                    0
+                };
+
+                if is_key && keycode != 0 {
+                    if self.event_processor.is_filtered_key(&xev) {
+                        self.event_processor.acknowledge_echo(&mut xev);
+                        ordered.push(xev);
+                    } else if self.event_processor.forwarding_keys_to_ime() {
+                        // Give the key to the IME here, inline: only filtered
+                        // keys may be held back, or the IME never sees them.
+                        last_forwarded = Some(std::time::Instant::now());
+                        if !self.event_processor.filter_key_event(&mut xev) {
+                            self.event_processor.order_key_event(&xev);
+                            ordered.push(xev);
+                        } else {
+                            // The IME may answer with preedit/commit data that
+                            // never reaches the window through a key echo.
+                            self.event_processor.process_pending_ime_requests();
+                            let mut deliver = |target: &RootAEL, event: Event<T>| callback(event, target);
+                            self.event_processor.drain_ime_events(&mut deliver);
+                        }
+                    } else {
+                        self.flush_ordered_keys(&mut ordered, callback);
+                        self.dispatch_event(&mut xev, callback);
+                    }
+                } else {
+                    if is_key {
+                        self.flush_ordered_keys(&mut ordered, callback);
+                    }
+                    self.dispatch_event(&mut xev, callback);
                 }
-            });
+            }
+
+            if ordered.is_empty() {
+                break;
+            }
+            if self.event_processor.poll() {
+                continue;
+            }
+
+            // XIM echoes trickle in asynchronously after their keys, and a
+            // burst comes back reversed, so hold the replay until no key has
+            // been forwarded for a moment. Then everything a burst produced is
+            // sorted as one run instead of being split across flushes.
+            let settled = last_forwarded
+                .map(|at| at.elapsed() >= ECHO_SETTLE)
+                .unwrap_or(true);
+            if !settled {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                continue;
+            }
+
+            self.flush_ordered_keys(&mut ordered, callback);
         }
+    }
+
+    fn flush_ordered_keys<F>(&mut self, ordered: &mut Vec<XEvent>, callback: &mut F)
+    where
+        F: FnMut(Event<T>, &RootAEL),
+    {
+        if ordered.is_empty() {
+            return;
+        }
+        self.event_processor.sort_ime_echoes(ordered);
+        let batch = std::mem::take(ordered);
+        for mut xev in batch {
+            if !self.event_processor.record_delivered_key(&xev) {
+                continue;
+            }
+            self.event_processor.force_process_echo = true;
+            self.dispatch_event(&mut xev, callback);
+            self.event_processor.force_process_echo = false;
+        }
+    }
+
+    fn dispatch_event<F>(&mut self, xev: &mut XEvent, callback: &mut F)
+    where
+        F: FnMut(Event<T>, &RootAEL),
+    {
+        self.event_processor.process_event(xev, |window_target, event| {
+            if let Event::WindowEvent {
+                window_id: crate::window::WindowId(wid),
+                event: WindowEvent::RedrawRequested,
+            } = event
+            {
+                let window_target = EventProcessor::window_target(window_target);
+                window_target.redraw_sender.send(wid).unwrap();
+            } else {
+                callback(event, window_target);
+            }
+        });
     }
 
     fn control_flow(&self) -> ControlFlow {

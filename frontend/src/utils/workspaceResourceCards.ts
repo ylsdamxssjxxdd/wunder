@@ -1,3 +1,6 @@
+import { saveObjectUrlAsDownload } from '@/utils/downloadBlob';
+import type { DownloadFeedbackOptions } from '@/utils/downloadBlob';
+
 export const WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS = 160;
 
 export const resolveWorkspaceLoadingLabel = (
@@ -404,13 +407,13 @@ export const bindWorkspaceImagePreviewState = (
   decoder.src = objectUrl;
 };
 
-export const saveObjectUrlAsFile = (url: string, filename: string) => {
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename || 'download';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+/** 兼容旧调用点：已经持有 object URL 时直接另存为本地文件，并给出“已下载”提示。 */
+export const saveObjectUrlAsFile = (
+  url: string,
+  filename: string,
+  options: DownloadFeedbackOptions = {}
+) => {
+  saveObjectUrlAsDownload(url, filename, options);
 };
 
 export const resetWorkspaceImageCardState = (

@@ -254,7 +254,7 @@ struct DesktopScreenshot {
     norm_width: i32,
     norm_height: i32,
     size_bytes: usize,
-    fingerprint: u64,
+    signature: FrameSignature,
 }
 
 /// A screen-space rectangle owned by this process. The agent window itself
@@ -307,54 +307,131 @@ impl PixelRect {
     }
 }
 
-fn masked_fingerprint(
+/// Coarse signature of one frame: the picture is cut into 16x16 cells and each
+/// cell keeps its average colour.
+///
+/// Exact fingerprint equality looked correct but made every desktop that blinks
+/// a caret, spins a progress indicator or ticks a clock report
+/// `observation_stable: false` forever, and the model dutifully answered
+/// "still changing, call wait" on a screen that was already settled. Comparing
+/// cells tolerates those sub-percent animations while still catching a real
+/// redraw.
+const FRAME_CELL_PX: usize = 16;
+/// Per-channel difference that still counts as the same cell; absorbs
+/// antialiasing and lossy downscaling.
+const FRAME_CELL_CHANNEL_TOLERANCE: i16 = 12;
+/// Share of compared cells that may change while the frame still counts as
+/// settled. 0.4% of a 1280x720 frame is about 14 cells.
+const FRAME_STABLE_CHANGED_RATIO: f64 = 0.004;
+
+#[derive(Clone, Default, PartialEq)]
+struct FrameSignature {
+    cols: usize,
+    rows: usize,
+    cells: Vec<Option<[u8; 3]>>,
+}
+
+impl FrameSignature {
+    /// Share of comparable cells that differ. Masked cells are skipped, so the
+    /// agent's own window cannot make the ratio meaningless.
+    fn changed_ratio(&self, other: &Self) -> f64 {
+        if self.cols != other.cols || self.rows != other.rows {
+            return 1.0;
+        }
+        let mut compared = 0usize;
+        let mut changed = 0usize;
+        for (left, right) in self.cells.iter().zip(other.cells.iter()) {
+            let (Some(left), Some(right)) = (left, right) else {
+                continue;
+            };
+            compared += 1;
+            if (0..3).any(|index| {
+                (i16::from(left[index]) - i16::from(right[index])).abs()
+                    > FRAME_CELL_CHANNEL_TOLERANCE
+            }) {
+                changed += 1;
+            }
+        }
+        if compared == 0 {
+            // Nothing is comparable (the agent window covers the whole screen):
+            // never call a masked-out view settled.
+            return 1.0;
+        }
+        changed as f64 / compared as f64
+    }
+}
+
+fn frame_signature(
     rgba: &[u8],
     width: usize,
     height: usize,
     masks: &[(usize, usize, usize, usize)],
-) -> u64 {
+) -> FrameSignature {
     if width == 0 || height == 0 {
-        return 0;
+        return FrameSignature::default();
     }
+    let cols = (width + FRAME_CELL_PX - 1) / FRAME_CELL_PX;
+    let rows = (height + FRAME_CELL_PX - 1) / FRAME_CELL_PX;
     let inside = |x: usize, y: usize| {
         masks
             .iter()
             .any(|&(x0, y0, x1, y1)| x >= x0 && x < x1 && y >= y0 && y < y1)
     };
-    // If the agent window covers almost the whole screen there is no reliable
-    // external frame left to compare; fall back to the full frame instead of
-    // reporting a mask-only view as stable.
-    let visible_pixels = (0..height)
-        .flat_map(|y| (0..width).map(move |x| (x, y)))
-        .filter(|&(x, y)| !inside(x, y))
-        .count();
-    let use_masks = visible_pixels * 10 >= width * height;
-    let mut hasher = DefaultHasher::new();
-    for y in 0..height {
-        let row = y * width;
-        for x in 0..width {
-            if use_masks && inside(x, y) {
+    let mut cells = Vec::with_capacity(cols.saturating_mul(rows));
+    for row in 0..rows {
+        for col in 0..cols {
+            let x0 = col * FRAME_CELL_PX;
+            let y0 = row * FRAME_CELL_PX;
+            let x1 = (x0 + FRAME_CELL_PX).min(width);
+            let y1 = (y0 + FRAME_CELL_PX).min(height);
+            if inside((x0 + x1) / 2, (y0 + y1) / 2) {
+                cells.push(None);
                 continue;
             }
-            let offset = (row + x) * 4;
-            hasher.write(&rgba[offset..offset + 4]);
+            let mut sums = [0u64; 3];
+            let mut count = 0u64;
+            for y in y0..y1 {
+                let row_offset = y * width;
+                for x in x0..x1 {
+                    let offset = (row_offset + x) * 4;
+                    sums[0] += u64::from(rgba[offset]);
+                    sums[1] += u64::from(rgba[offset + 1]);
+                    sums[2] += u64::from(rgba[offset + 2]);
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                cells.push(None);
+                continue;
+            }
+            cells.push(Some([
+                (sums[0] / count) as u8,
+                (sums[1] / count) as u8,
+                (sums[2] / count) as u8,
+            ]));
         }
     }
-    hasher.finish()
+    FrameSignature { cols, rows, cells }
 }
 
 #[derive(Default)]
 struct FrameStabilityTracker {
-    previous_fingerprint: Option<u64>,
+    previous: Option<FrameSignature>,
     quiet_since_ms: u64,
+    last_changed_ratio: f64,
 }
 
 impl FrameStabilityTracker {
-    fn observe(&mut self, fingerprint: u64, elapsed_ms: u64) -> bool {
-        if self.previous_fingerprint != Some(fingerprint) {
-            self.previous_fingerprint = Some(fingerprint);
+    fn observe(&mut self, signature: &FrameSignature, elapsed_ms: u64) -> bool {
+        let changed_ratio = match self.previous.as_ref() {
+            Some(previous) => previous.changed_ratio(signature),
+            None => 1.0,
+        };
+        self.last_changed_ratio = changed_ratio;
+        if changed_ratio > FRAME_STABLE_CHANGED_RATIO {
             self.quiet_since_ms = elapsed_ms;
         }
+        self.previous = Some(signature.clone());
         elapsed_ms.saturating_sub(self.quiet_since_ms) >= OBSERVATION_QUIET_WINDOW_MS
     }
 }
@@ -531,16 +608,22 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
     // that into a tool error would hide the applied action and invite the model
     // to repeat a click on a screen it never saw, so the two outcomes are
     // reported separately and the action stays truthful.
-    let (screenshot, observation_settled_ms, observation_stable, observation_error) = match
-        observation
-    {
-        Ok((screenshot, settled_ms, stable)) => (Some(screenshot), settled_ms, stable, None),
+    let (
+        screenshot,
+        observation_settled_ms,
+        observation_stable,
+        observation_change_ratio,
+        observation_error,
+    ) = match observation {
+        Ok((screenshot, settled_ms, stable, changed_ratio)) => {
+            (Some(screenshot), settled_ms, stable, changed_ratio, None)
+        }
         Err(err) => {
             warn!(
                 "desktop observation failed after {}: {err}",
                 payload.action_raw
             );
-            (None, 0, false, Some(err.to_string()))
+            (None, 0, false, 0.0, Some(err.to_string()))
         }
     };
     let elapsed_ms = started_at.elapsed().as_millis() as u64;
@@ -577,6 +660,12 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
         "normalized_height": norm_height,
         "elapsed_ms": elapsed_ms,
     });
+    if !observation_stable {
+        // Tell the model how much actually moved: a caret flicker and a busy
+        // progress bar both land here, but only one of them is worth a retry.
+        data["observation_change_ratio"] =
+            json!((observation_change_ratio * 1000.0).round() / 1000.0);
+    }
     if let Some(error) = observation_error.as_deref() {
         data["observation_error"] = json!(error);
         // Without a frame there is no followup message, so the model only sees
@@ -943,7 +1032,7 @@ async fn capture_stable_screenshot(
     delay_after_action: bool,
     expected_screen: Option<(i32, i32)>,
     norm: (i32, i32),
-) -> Result<(DesktopScreenshot, u64, bool)> {
+) -> Result<(DesktopScreenshot, u64, bool, f64)> {
     let started = Instant::now();
     if delay_after_action {
         sleep(Duration::from_millis(MIN_OBSERVATION_SETTLE_MS)).await;
@@ -955,7 +1044,7 @@ async fn capture_stable_screenshot(
     let mut previous =
         capture_screenshot(capture_timeout_ms, expected_screen, norm).await?;
     let mut tracker = FrameStabilityTracker::default();
-    tracker.observe(previous.fingerprint, started.elapsed().as_millis() as u64);
+    tracker.observe(&previous.signature, started.elapsed().as_millis() as u64);
     let mut stable = false;
     for _ in 0..MAX_OBSERVATION_PROBES {
         let Some(probe_timeout_ms) =
@@ -977,7 +1066,7 @@ async fn capture_stable_screenshot(
             }
             Err(_) => break,
         };
-        stable = tracker.observe(current.fingerprint, started.elapsed().as_millis() as u64);
+        stable = tracker.observe(&current.signature, started.elapsed().as_millis() as u64);
         // Probe images are only used for settling detection; retaining them
         // would consume the configured frame budget and evict real action
         // observations. Keep the newest image, which is the one returned.
@@ -990,7 +1079,12 @@ async fn capture_stable_screenshot(
             break;
         }
     }
-    Ok((previous, started.elapsed().as_millis() as u64, stable))
+    Ok((
+        previous,
+        started.elapsed().as_millis() as u64,
+        stable,
+        tracker.last_changed_ratio,
+    ))
 }
 
 fn observation_probe_timeout_ms(elapsed_ms: u64, capture_timeout_ms: u64) -> Option<u64> {
@@ -1137,8 +1231,7 @@ fn capture_screenshot_blocking(
             )
         })
         .collect();
-    let fingerprint =
-        masked_fingerprint(&resized, norm_width as usize, norm_height as usize, &masks);
+    let signature = frame_signature(&resized, norm_width as usize, norm_height as usize, &masks);
     let dir = resolve_temp_dir()?.join("desktop_control");
     std::fs::create_dir_all(&dir)
         .map_err(|err| anyhow!(format!("create temp dir failed: {err}")))?;
@@ -1153,7 +1246,7 @@ fn capture_screenshot_blocking(
         norm_width,
         norm_height,
         size_bytes: png.len(),
-        fingerprint,
+        signature,
     })
 }
 
@@ -2385,15 +2478,23 @@ mod tests {
         image.save(path).expect("save test png");
     }
 
+    fn signature_of(value: u8) -> FrameSignature {
+        FrameSignature {
+            cols: 2,
+            rows: 1,
+            cells: vec![Some([value, value, value]), Some([value, value, value])],
+        }
+    }
+
     #[test]
     fn desktop_stability_waits_through_delayed_visual_change() {
         let mut tracker = FrameStabilityTracker::default();
-        assert!(!tracker.observe(1, 320));
-        assert!(!tracker.observe(1, 440));
-        assert!(!tracker.observe(2, 560));
-        assert!(!tracker.observe(2, 680));
-        assert!(!tracker.observe(2, 800));
-        assert!(tracker.observe(2, 920));
+        assert!(!tracker.observe(&signature_of(0), 320));
+        assert!(!tracker.observe(&signature_of(0), 440));
+        assert!(!tracker.observe(&signature_of(200), 560));
+        assert!(!tracker.observe(&signature_of(200), 680));
+        assert!(!tracker.observe(&signature_of(200), 800));
+        assert!(tracker.observe(&signature_of(200), 920));
     }
 
     #[test]
@@ -2401,7 +2502,7 @@ mod tests {
         let mut tracker = FrameStabilityTracker::default();
         for probe in 0..=MAX_OBSERVATION_PROBES {
             assert!(!tracker.observe(
-                probe as u64,
+                &signature_of(if probe % 2 == 0 { 0 } else { 200 }),
                 MIN_OBSERVATION_SETTLE_MS + probe as u64 * OBSERVATION_PROBE_INTERVAL_MS,
             ));
         }
@@ -2410,9 +2511,35 @@ mod tests {
     #[test]
     fn desktop_stability_requires_a_full_quiet_window() {
         let mut tracker = FrameStabilityTracker::default();
-        assert!(!tracker.observe(1, 0));
-        assert!(!tracker.observe(1, OBSERVATION_QUIET_WINDOW_MS - 1));
-        assert!(tracker.observe(1, OBSERVATION_QUIET_WINDOW_MS));
+        assert!(!tracker.observe(&signature_of(200), 0));
+        assert!(!tracker.observe(&signature_of(200), OBSERVATION_QUIET_WINDOW_MS - 1));
+        assert!(tracker.observe(&signature_of(200), OBSERVATION_QUIET_WINDOW_MS));
+    }
+
+    /// 光标闪烁、秒级时钟、旋转指示器都会让整帧哈希失效，
+    /// 于是每次动作都被判定成「画面仍在变化」。少量格子变化必须容忍。
+    #[test]
+    fn desktop_stability_tolerates_a_blinking_caret() {
+        let width = 320usize;
+        let height = 180usize;
+        let mut frame = vec![0u8; width * height * 4];
+        let mut tracker = FrameStabilityTracker::default();
+        let base = frame_signature(&frame, width, height, &[]);
+        assert!(!tracker.observe(&base, 0));
+
+        // 每帧翻转一个格子（约 1/180 区域内的一小块），模拟闪烁光标。
+        for (probe, elapsed) in [(1u64, 120u64), (2, 240), (3, 360)] {
+            let offset = (20 * width + 20) * 4;
+            let on = probe % 2 == 1;
+            frame[offset..offset + 4].copy_from_slice(if on {
+                &[255, 255, 255, 255]
+            } else {
+                &[0, 0, 0, 255]
+            });
+            let signature = frame_signature(&frame, width, height, &[]);
+            let settled = tracker.observe(&signature, elapsed);
+            assert_eq!(settled, elapsed >= OBSERVATION_QUIET_WINDOW_MS);
+        }
     }
 
     #[test]
@@ -2521,44 +2648,42 @@ mod tests {
     }
 
     #[test]
-    fn masked_fingerprint_ignores_agent_window_repaint() {
-        let width = 8usize;
-        let height = 8usize;
-        let masks = [(0usize, 0usize, 4usize, 4usize)];
+    fn frame_signature_ignores_agent_window_repaint() {
+        let width = 64usize;
+        let height = 64usize;
+        let masks = [(0usize, 0usize, 32usize, 32usize)];
         let mut frame_a = vec![0u8; width * height * 4];
         let mut frame_b = frame_a.clone();
-        for y in 0..4 {
-            for x in 0..4 {
+        for y in 0..32 {
+            for x in 0..32 {
                 let offset = (y * width + x) * 4;
                 frame_a[offset..offset + 4].copy_from_slice(&[255, 0, 0, 255]);
                 frame_b[offset..offset + 4].copy_from_slice(&[0, 255, 0, 255]);
             }
         }
-        assert_eq!(
-            masked_fingerprint(&frame_a, width, height, &masks),
-            masked_fingerprint(&frame_b, width, height, &masks)
-        );
+        let a = frame_signature(&frame_a, width, height, &masks);
+        let b = frame_signature(&frame_b, width, height, &masks);
+        assert_eq!(a.changed_ratio(&b), 0.0);
 
-        let offset = (0 * width + 4) * 4;
-        frame_b[offset..offset + 4].copy_from_slice(&[255, 255, 255, 255]);
-        assert_ne!(
-            masked_fingerprint(&frame_a, width, height, &masks),
-            masked_fingerprint(&frame_b, width, height, &masks)
-        );
+        // 遮罩之外的真实重绘必须被检出（整格变化，而不是抗锯齿级别的单像素）。
+        for y in 32..48 {
+            for x in 32..48 {
+                let offset = (y * width + x) * 4;
+                frame_b[offset..offset + 4].copy_from_slice(&[255, 255, 255, 255]);
+            }
+        }
+        let b = frame_signature(&frame_b, width, height, &masks);
+        assert!(a.changed_ratio(&b) > FRAME_STABLE_CHANGED_RATIO);
     }
 
     #[test]
-    fn masked_fingerprint_falls_back_when_mask_covers_screen() {
-        let width = 8usize;
-        let height = 8usize;
-        let masks = [(0usize, 0usize, 8usize, 8usize)];
-        let frame_a = vec![0u8; width * height * 4];
-        let mut frame_b = frame_a.clone();
-        frame_b[0..4].copy_from_slice(&[255, 255, 255, 255]);
-        assert_ne!(
-            masked_fingerprint(&frame_a, width, height, &masks),
-            masked_fingerprint(&frame_b, width, height, &masks)
-        );
+    fn frame_signature_never_calls_a_fully_masked_view_settled() {
+        let width = 32usize;
+        let height = 32usize;
+        let masks = [(0usize, 0usize, 32usize, 32usize)];
+        let a = frame_signature(&vec![0u8; width * height * 4], width, height, &masks);
+        let b = frame_signature(&vec![255u8; width * height * 4], width, height, &masks);
+        assert_eq!(a.changed_ratio(&b), 1.0);
     }
 
     #[test]
