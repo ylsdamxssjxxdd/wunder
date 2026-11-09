@@ -142,9 +142,9 @@ pub fn desktop_control_tool_spec(language: &str) -> ToolSpec {
         input_schema: json!({"type":"object", "$defs": defs, "oneOf": [
             input_branch(json!({"enum": pointer_actions}), base(), &["action", "bbox"]),
             input_branch(json!({"enum": ["scroll_down", "scroll_up"]}), scroll, &["action", "bbox"]),
-            input_branch(json!({"const": "press_key"}), press, &["action", "bbox", "key"]),
+            input_branch(json!({"const": "press_key"}), press, &["action", "key"]),
             input_branch(json!({"const": "type_text"}), typing, &["action", "bbox", "text"]),
-            input_branch(json!({"const": "wait"}), wait, &["action", "bbox"]),
+            input_branch(json!({"const": "wait"}), wait, &["action"]),
             input_branch(json!({"const": "move_mouse"}), move_mouse, &["action", "bbox"]),
             input_branch(json!({"const": "drag_drop"}), drag, &["action", "bbox", "to_bbox"])
         ]}),
@@ -235,7 +235,9 @@ impl DesktopAction {
 }
 
 struct DesktopControlArgs {
-    bbox: BBox,
+    /// `wait` and `press_key` never move the pointer, so a coordinate is
+    /// optional there; every pointer action still requires one.
+    bbox: Option<BBox>,
     action: DesktopAction,
     action_raw: String,
     key: Option<String>,
@@ -251,8 +253,6 @@ struct DesktopScreenshot {
     download_url: String,
     norm_width: i32,
     norm_height: i32,
-    screen_width: i32,
-    screen_height: i32,
     size_bytes: usize,
     fingerprint: u64,
 }
@@ -384,11 +384,24 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
     let started_at = Instant::now();
     let config = context.config.tools.desktop_control.clone();
 
-    let norm_width = config.norm_width.max(1);
-    let norm_height = config.norm_height.max(1);
-
     let (screen_width, screen_height) = screen_size()?;
-    if payload.bbox.out_of_bounds(norm_width, norm_height) {
+    // The configured width/height pair is a bounding box, not a target aspect
+    // ratio: the observation keeps the screen aspect so the model judges
+    // positions on an undistorted picture. A 1920x1080 desktop therefore
+    // normalizes to 1000x563 instead of a stretched square, which also cuts
+    // the image-token cost of every screenshot by roughly 44%.
+    let (norm_width, norm_height) = fit_normalized_size(
+        screen_width,
+        screen_height,
+        config.norm_width.max(1),
+        config.norm_height.max(1),
+    );
+
+    if payload
+        .bbox
+        .as_ref()
+        .is_some_and(|bbox| bbox.out_of_bounds(norm_width, norm_height))
+    {
         return Err(anyhow!(format!(
             "{} (normalized {norm_width}x{norm_height})",
             crate::i18n::t("tool.desktop_control.bbox_out_of_range")
@@ -406,11 +419,16 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
     }
     let screen_max_x = (screen_width - 1).max(0);
     let screen_max_y = (screen_height - 1).max(0);
-    let (cx_norm_raw, cy_norm_raw) = payload.bbox.center();
-    let cx_norm = cx_norm_raw.clamp(0, norm_width);
-    let cy_norm = cy_norm_raw.clamp(0, norm_height);
-    let cx = map_coord(cx_norm, norm_width, screen_max_x);
-    let cy = map_coord(cy_norm, norm_height, screen_max_y);
+    let (cx, cy) = match payload.bbox.as_ref() {
+        Some(bbox) => {
+            let (cx_norm, cy_norm) = bbox.center();
+            (
+                map_coord(cx_norm.clamp(0, norm_width), norm_width, screen_max_x),
+                map_coord(cy_norm.clamp(0, norm_height), norm_height, screen_max_y),
+            )
+        }
+        None => (0, 0),
+    };
     let wait_action = matches!(payload.action, DesktopAction::Wait);
     let wait_ms = payload.delay_ms.min(MAX_WAIT_MS);
     if wait_action {
@@ -502,73 +520,102 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
     // Even an explicit wait may end while the application is still updating.
     // It skips only the initial action delay; the same quiet-window check
     // still prevents a fresh but unsettled frame from being called stable.
-    let (screenshot, observation_settled_ms, observation_stable) = capture_stable_screenshot(
+    let observation = capture_stable_screenshot(
         &config,
         !wait_action,
         Some((screen_width, screen_height)),
+        (norm_width, norm_height),
     )
-    .await?;
-    // Intermediate stability probes have already been discarded. The model
-    // receives only this latest post-action frame: the preceding frame
-    // doubles vision context while making ordinary visual differences look
-    // like an unconfirmed action result.
-    cleanup_old_frames(&screenshot.path, config.max_frames.max(2));
-    persist_screenshot_to_user_container(context, &screenshot).await;
+    .await;
+    // Native input has already been delivered when the capture fails. Turning
+    // that into a tool error would hide the applied action and invite the model
+    // to repeat a click on a screen it never saw, so the two outcomes are
+    // reported separately and the action stays truthful.
+    let (screenshot, observation_settled_ms, observation_stable, observation_error) = match
+        observation
+    {
+        Ok((screenshot, settled_ms, stable)) => (Some(screenshot), settled_ms, stable, None),
+        Err(err) => {
+            warn!(
+                "desktop observation failed after {}: {err}",
+                payload.action_raw
+            );
+            (None, 0, false, Some(err.to_string()))
+        }
+    };
     let elapsed_ms = started_at.elapsed().as_millis() as u64;
-    let (summary, prompt_key) = if wait_action {
-        (
-            format!("Waited {wait_ms}ms and captured a desktop screenshot."),
-            "tool.desktop_control.followup_prompt_wait",
-        )
-    } else {
-        (
-            format!("Completed desktop action {}.", payload.action_raw),
-            "tool.desktop_control.followup_prompt",
-        )
+    let (summary, prompt) = match screenshot.as_ref() {
+        Some(_) => {
+            let prompt_key = if !observation_stable {
+                "tool.desktop_control.followup_prompt_unsettled"
+            } else if wait_action {
+                "tool.desktop_control.followup_prompt_wait"
+            } else {
+                "tool.desktop_control.followup_prompt"
+            };
+            let summary = if wait_action {
+                format!("Waited {wait_ms}ms and captured a desktop screenshot.")
+            } else {
+                format!("Completed desktop action {}.", payload.action_raw)
+            };
+            (summary, crate::i18n::t(prompt_key))
+        }
+        None => (
+            format!(
+                "Desktop action {} was applied, but the screenshot failed.",
+                payload.action_raw
+            ),
+            crate::i18n::t("tool.desktop_control.followup_prompt_no_frame"),
+        ),
     };
-    let prompt_key = if observation_stable {
-        prompt_key
-    } else {
-        "tool.desktop_control.followup_prompt_unsettled"
-    };
-    let prompt = build_followup_prompt(
-        crate::i18n::t(prompt_key),
-        screenshot.norm_width,
-        screenshot.norm_height,
-    );
+    let mut data = json!({
+        "action": payload.action_raw,
+        "action_applied": true,
+        "observation_stable": observation_stable,
+        "observation_settled_ms": observation_settled_ms,
+        "normalized_width": norm_width,
+        "normalized_height": norm_height,
+        "elapsed_ms": elapsed_ms,
+    });
+    if let Some(error) = observation_error.as_deref() {
+        data["observation_error"] = json!(error);
+        // Without a frame there is no followup message, so the model only sees
+        // this tool result: the recovery instruction has to travel inside it.
+        data["next_step"] = json!(prompt);
+    }
+    if let Some(screenshot) = screenshot.as_ref() {
+        // Intermediate stability probes have already been discarded. The model
+        // receives only this latest post-action frame: the preceding frame
+        // doubles vision context while making ordinary visual differences look
+        // like an unconfirmed action result.
+        cleanup_old_frames(&screenshot.path, config.max_frames.max(2));
+        persist_screenshot_to_user_container(context, screenshot).await;
+        data["screenshot_path"] = json!(screenshot.path.to_string_lossy().to_string());
+        data["screenshot_artifact"] = json!({
+            "id": screenshot.download_url,
+            "mime": "image/png",
+            "bytes": screenshot.size_bytes,
+        });
+        data["followup_prompt"] = json!(build_followup_prompt(
+            prompt.clone(),
+            screenshot.norm_width,
+            screenshot.norm_height,
+        ));
+    }
     Ok(build_model_tool_success(
         "desktop_control",
         "completed",
         summary,
-        json!({
-            "action": payload.action_raw,
-            "center_norm": [cx_norm, cy_norm],
-            "center_screen": [cx, cy],
-            "wait_ms": wait_ms,
-            "observation_settled_ms": observation_settled_ms,
-            "observation_stable": observation_stable,
-            "normalized_width": screenshot.norm_width,
-            "normalized_height": screenshot.norm_height,
-            "screen_width": screenshot.screen_width,
-            "screen_height": screenshot.screen_height,
-            "screenshot_path": screenshot.path.to_string_lossy().to_string(),
-            "screenshot_download_url": screenshot.download_url,
-            "screenshot_artifact": {
-                "id": screenshot.download_url,
-                "mime": "image/png",
-                "bytes": screenshot.size_bytes,
-            },
-            "screenshot_bytes": screenshot.size_bytes,
-            "elapsed_ms": elapsed_ms,
-            "action_applied": true,
-            "screenshot_after_action": true,
-            "followup_prompt": prompt,
-        }),
+        data,
     ))
 }
 
 pub async fn build_followup_user_message(result_data: &Value) -> Result<Option<Value>> {
-    let payload = parse_followup_payload(result_data)?;
+    // An action can be applied without producing a frame (capture failure);
+    // there is nothing visual to attach and the tool result already says so.
+    let Some(payload) = parse_followup_payload(result_data)? else {
+        return Ok(None);
+    };
     let current_data_url = read_screenshot_data_url(&payload.current_path).await?;
     let mut content = vec![json!({ "type": "text", "text": payload.prompt })];
     content.push(json!({
@@ -581,16 +628,18 @@ pub async fn build_followup_user_message(result_data: &Value) -> Result<Option<V
     })))
 }
 
-fn parse_followup_payload(result_data: &Value) -> Result<FollowupPayload> {
+fn parse_followup_payload(result_data: &Value) -> Result<Option<FollowupPayload>> {
     let obj = result_data
         .as_object()
         .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.capture_failed")))?;
-    let current_path = obj
+    let Some(current_path) = obj
         .get("screenshot_path")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.capture_failed")))?;
+    else {
+        return Ok(None);
+    };
     let prompt = obj
         .get("followup_prompt")
         .and_then(Value::as_str)
@@ -598,10 +647,10 @@ fn parse_followup_payload(result_data: &Value) -> Result<FollowupPayload> {
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
         .unwrap_or_else(|| crate::i18n::t("tool.desktop_control.followup_prompt"));
-    Ok(FollowupPayload {
+    Ok(Some(FollowupPayload {
         current_path: PathBuf::from(current_path),
         prompt,
-    })
+    }))
 }
 
 async fn read_screenshot_data_url(path: &Path) -> Result<String> {
@@ -647,10 +696,7 @@ fn parse_desktop_control_args(args: &Value) -> Result<DesktopControlArgs> {
             "field '{extra}' is not valid for desktop action '{action_raw}'"
         ));
     }
-    let bbox_value = obj
-        .get("bbox")
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_control.bbox_required")))?;
-    let bbox = parse_bbox(bbox_value)?;
+    let bbox = obj.get("bbox").map(parse_bbox).transpose()?;
     let delay_ms = optional_u64_field(obj, "delay_ms")?.unwrap_or(0);
     let duration_ms = optional_u64_field(obj, "duration_ms")?.unwrap_or(0);
     let scroll_steps = optional_i32_field(obj, "scroll_steps")?.unwrap_or(1);
@@ -677,6 +723,10 @@ fn parse_desktop_control_args(args: &Value) -> Result<DesktopControlArgs> {
             return Err(anyhow!(crate::i18n::t(
                 "tool.desktop_control.to_bbox_required"
             )));
+        }
+        DesktopAction::Wait | DesktopAction::PressKey => {}
+        _ if bbox.is_none() => {
+            return Err(anyhow!(crate::i18n::t("tool.desktop_control.bbox_required")));
         }
         _ => {}
     }
@@ -820,13 +870,49 @@ fn map_coord(value: i32, src_max: i32, dst_max: i32) -> i32 {
     mapped.clamp(0, dst_max)
 }
 
+/// Fit the screen aspect into the configured normalization box.
+///
+/// The old behaviour stretched every screen into `norm_width x norm_height`,
+/// so a 16:9 desktop arrived as a vertically stretched square: the model had
+/// to judge positions on a distorted picture while paying for 1.78x the pixels
+/// it needed. Keeping the aspect fixes both sides — the picture stays
+/// recognisable and a 1920x1080 screen normalizes to 1000x563.
+pub fn fit_normalized_size(
+    screen_width: i32,
+    screen_height: i32,
+    box_width: i32,
+    box_height: i32,
+) -> (i32, i32) {
+    let box_width = box_width.max(1);
+    let box_height = box_height.max(1);
+    if screen_width <= 0 || screen_height <= 0 {
+        return (box_width, box_height);
+    }
+    // Integer cross-multiplication compares screen_w/box_w with screen_h/box_h
+    // without floating point, so the result is exact for every resolution.
+    let screen_landscape_ratio = i64::from(screen_width) * i64::from(box_height);
+    let box_ratio = i64::from(screen_height) * i64::from(box_width);
+    if screen_landscape_ratio >= box_ratio {
+        let height = (i64::from(box_width) * i64::from(screen_height)
+            + i64::from(screen_width) / 2)
+            / i64::from(screen_width);
+        let height = i32::try_from(height.max(1)).unwrap_or(box_height);
+        (box_width, height.min(box_height))
+    } else {
+        let width = (i64::from(box_height) * i64::from(screen_width)
+            + i64::from(screen_height) / 2)
+            / i64::from(screen_height);
+        let width = i32::try_from(width.max(1)).unwrap_or(box_width);
+        (width.min(box_width), box_height)
+    }
+}
+
 async fn capture_screenshot(
-    config: &DesktopControlConfig,
     timeout_ms: u64,
     expected_screen: Option<(i32, i32)>,
+    norm: (i32, i32),
 ) -> Result<DesktopScreenshot> {
-    let norm_width = config.norm_width.max(1);
-    let norm_height = config.norm_height.max(1);
+    let (norm_width, norm_height) = norm;
     let screenshot = match blocking::run_external_with_timeout(
         "tools.desktop_control.capture_screenshot",
         Duration::from_millis(timeout_ms.max(1)),
@@ -856,6 +942,7 @@ async fn capture_stable_screenshot(
     config: &DesktopControlConfig,
     delay_after_action: bool,
     expected_screen: Option<(i32, i32)>,
+    norm: (i32, i32),
 ) -> Result<(DesktopScreenshot, u64, bool)> {
     let started = Instant::now();
     if delay_after_action {
@@ -865,7 +952,8 @@ async fn capture_stable_screenshot(
     // share one wall-clock budget instead of multiplying capture_timeout_ms
     // by the probe count on a slow desktop.
     let capture_timeout_ms = config.capture_timeout_ms.max(100);
-    let mut previous = capture_screenshot(config, capture_timeout_ms, expected_screen).await?;
+    let mut previous =
+        capture_screenshot(capture_timeout_ms, expected_screen, norm).await?;
     let mut tracker = FrameStabilityTracker::default();
     tracker.observe(previous.fingerprint, started.elapsed().as_millis() as u64);
     let mut stable = false;
@@ -878,7 +966,7 @@ async fn capture_stable_screenshot(
         sleep(Duration::from_millis(OBSERVATION_PROBE_INTERVAL_MS)).await;
         let current = match tokio::time::timeout(
             Duration::from_millis(probe_timeout_ms),
-            capture_screenshot(config, probe_timeout_ms, expected_screen),
+            capture_screenshot(probe_timeout_ms, expected_screen, norm),
         )
         .await
         {
@@ -1049,8 +1137,6 @@ fn capture_screenshot_blocking(
         download_url,
         norm_width,
         norm_height,
-        screen_width,
-        screen_height,
         size_bytes: png.len(),
         fingerprint,
     })
@@ -2394,7 +2480,7 @@ mod tests {
             "action": "left_click"
         }))
         .expect("recover serialized bbox array");
-        assert_eq!(payload.bbox.center(), (50, 75));
+        assert_eq!(payload.bbox.expect("bbox").center(), (50, 75));
     }
 
     #[test]
@@ -2406,7 +2492,7 @@ mod tests {
             "action": "drag_drop"
         }))
         .expect("recover serialized drag coordinates");
-        assert_eq!(payload.bbox.center(), (10, 20));
+        assert_eq!(payload.bbox.expect("bbox").center(), (10, 20));
         assert_eq!(payload.to_bbox.expect("destination").center(), (80, 90));
     }
 
@@ -2504,6 +2590,58 @@ mod tests {
             y2: 700
         }
         .out_of_bounds(800, 600));
+    }
+
+    /// 归一化空间必须保留屏幕长宽比：16:9 桌面不能被压成正方形，
+    /// 否则模型要在变形的画面上判断位置，还多付 78% 的像素。
+    #[test]
+    fn normalized_space_keeps_the_screen_aspect() {
+        assert_eq!(fit_normalized_size(1920, 1080, 1000, 1000), (1000, 563));
+        assert_eq!(fit_normalized_size(2560, 1440, 1000, 1000), (1000, 563));
+        assert_eq!(fit_normalized_size(3840, 1080, 1000, 1000), (1000, 281));
+        // 竖屏反过来锁定高度。
+        assert_eq!(fit_normalized_size(1080, 1920, 1000, 1000), (563, 1000));
+        // 与归一化框同比例时尺寸不变。
+        assert_eq!(fit_normalized_size(1280, 1280, 1000, 1000), (1000, 1000));
+        // 退化输入不能产生 0 或负数。
+        assert_eq!(fit_normalized_size(0, 0, 1000, 1000), (1000, 1000));
+        assert_eq!(fit_normalized_size(-8, 600, 1000, 1000), (1000, 1000));
+    }
+
+    /// 真机校验：截图的实际像素尺寸必须等于按屏幕长宽比推导出的归一化尺寸，
+    /// 而不是被拉伸成正方形。
+    /// 运行：cargo test -p wunder-runtime --lib --features desktop-control -- --ignored
+    #[test]
+    #[ignore = "requires a live desktop session"]
+    fn live_capture_matches_fitted_normalized_size() {
+        let (screen_w, screen_h) = screen_size().expect("screen size");
+        let (norm_w, norm_h) = fit_normalized_size(screen_w, screen_h, 1000, 1000);
+        let shot = capture_screenshot_blocking(norm_w, norm_h, Some((screen_w, screen_h)))
+            .expect("capture screenshot");
+        let decoded = image::open(&shot.path).expect("decode screenshot");
+        println!(
+            "screen {screen_w}x{screen_h} -> normalized {norm_w}x{norm_h}, png {} bytes",
+            shot.size_bytes
+        );
+        assert_eq!(decoded.width(), norm_w as u32);
+        assert_eq!(decoded.height(), norm_h as u32);
+        let _ = std::fs::remove_file(&shot.path);
+    }
+
+    /// wait 与 press_key 不移动指针，因此不需要坐标；其他动作缺坐标必须报错，
+    /// 而不是默认点到屏幕左上角。
+    #[test]
+    fn coordinate_is_optional_only_for_pointer_free_actions() {
+        let wait = parse_desktop_control_args(&json!({"action": "wait", "delay_ms": 200}))
+            .expect("wait without bbox");
+        assert!(wait.bbox.is_none());
+        assert_eq!(wait.delay_ms, 200);
+        assert!(parse_desktop_control_args(&json!({"action": "press_key", "key": "enter"})).is_ok());
+        assert!(parse_desktop_control_args(&json!({"action": "left_click"})).is_err());
+        assert!(parse_desktop_control_args(&json!({"action": "type_text", "text": "hi"})).is_err());
+        assert!(
+            parse_desktop_control_args(&json!({"action": "scroll_down", "scroll_steps": 3})).is_err()
+        );
     }
 
     #[test]

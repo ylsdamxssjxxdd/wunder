@@ -1620,8 +1620,8 @@
     "zh-CN": "\n\n（思考已达设定上限，已停止思考并继续生成）"
   },
   "tool.desktop_control.bbox_out_of_range": {
-    "en-US": "Target coordinates are outside the normalized screenshot space, which is a fixed 1000x1000. Coordinates must stay within 0..1000 on both axes. Re-read normalized_width/normalized_height from the latest screenshot, or call wait first to obtain one.",
-    "zh-CN": "目标坐标超出归一化截图范围，归一化空间固定为 1000x1000，两个坐标轴都必须落在 0..1000 内。请按最近一次截图返回的 normalized_width/normalized_height 重新给出坐标，尚未截图时可先调用 wait 取一张。"
+    "en-US": "Target coordinates are outside the normalized screenshot space; both axes must stay within 0..normalized_width and 0..normalized_height as reported by the latest result (for example 1000x563). Re-read the latest screenshot dimensions and retry, or call wait first to obtain one.",
+    "zh-CN": "目标坐标超出归一化截图范围，两个坐标轴都必须落在 0..normalized_width 与 0..normalized_height 之内（结果中以 normalized_width/normalized_height 报告，例如 1000x563）。请按最近一次截图的尺寸重新给出坐标，尚未截图时可先调用 wait 取一张。"
   },
   "tool.desktop_control.screen_changed": {
     "en-US": "The desktop resolution changed while the action was running, so the coordinate mapping is stale. Call wait to capture a fresh screenshot and retry.",
@@ -2276,12 +2276,12 @@
     "zh-CN": "list 返回的条数（1-50，默认 20）。"
   },
   "tool.spec.desktop_control.description": {
-    "en-US": "Drive and observe the local desktop. Use bbox together with an action; each action exposes only its own fields. Keyboard actions use key or text, scrolling uses scroll_steps, and drag uses to_bbox. action=wait (with delay_ms) waits then returns a fresh screenshot. Other actions wait at least 240 ms and compare up to three frames before returning the bounded post-action screenshot; verify it before retrying the same action.",
-    "zh-CN": "操作并观察本机桌面。用 bbox 配合 action 指定目标与动作；每个动作只接受自己的字段。键盘动作用 key 或 text，滚动用 scroll_steps，拖拽用 to_bbox；action=wait（配合 delay_ms）先等待再返回一张新截图。其他动作至少等待 240 毫秒并最多比较三帧，画面稳定后返回有界的动作后截图；重试相同动作前必须先核对截图。"
+    "en-US": "Drive and observe the local desktop. Pair bbox with action; each action only accepts its own fields. Keyboard actions use key or text, scrolling uses scroll_steps, drag uses to_bbox. action=wait (with delay_ms) waits then returns a fresh screenshot and needs no coordinates. Other actions wait about 320 ms, then compare frames until the screen is still (at most about 2 s) before returning the post-action screenshot; verify it before retrying the same action.",
+    "zh-CN": "操作并观察本机桌面。用 bbox 配合 action 指定目标与动作；每个动作只接受自己的字段。键盘动作用 key 或 text，滚动用 scroll_steps，拖拽用 to_bbox；action=wait（配合 delay_ms）先等待再返回一张新截图，不需要坐标。其他动作先等约 320 毫秒，再逐帧比对直到画面静止（最多约 2 秒），然后返回动作后的截图；重试相同动作前必须先核对截图。"
   },
   "tool.spec.desktop_control.args.bbox": {
-    "en-US": "Target bbox in the normalized space of the latest screenshot. Format: [x1,y1,x2,y2] or [cx,cy]. The normalized space is a fixed 1000x1000, so valid range is 0..1000 on both axes (also reported as normalized_width/normalized_height in each result); out-of-range coordinates are rejected instead of being clamped.",
-    "zh-CN": "最近一次截图的归一化坐标中的目标框，格式：[x1,y1,x2,y2] 或 [cx,cy]。归一化空间固定为 1000x1000，两个坐标轴的有效范围都是 0..1000（结果里也以 normalized_width/normalized_height 报告）；越界坐标会被拒绝而不是钳到边缘。"
+    "en-US": "Target bbox in the normalized space of the latest screenshot. Format: [x1,y1,x2,y2] or [cx,cy]. The normalized space keeps the screen aspect: width is 1000 and height follows the screen (a 1920x1080 desktop is 1000x563), reported as normalized_width/normalized_height in every result. Out-of-range coordinates are rejected instead of clamped. wait and press_key need no coordinates.",
+    "zh-CN": "最近一次截图的归一化坐标中的目标框，格式：[x1,y1,x2,y2] 或 [cx,cy]。归一化空间保持屏幕长宽比，宽度为 1000、高度按屏幕比例（如 1920x1080 屏幕为 1000x563），具体尺寸见结果中的 normalized_width/normalized_height；越界坐标会被拒绝而不是钳到边缘。wait 与 press_key 不需要坐标。"
   },
   "tool.spec.desktop_control.args.action": {
     "en-US": "Action: left_click/left_double_click/right_click/middle_click/left_hold/right_hold/middle_hold/left_release/right_release/middle_release/scroll_down/scroll_up/press_key/type_text/wait/move_mouse/drag_drop.",
@@ -3462,5 +3462,9 @@
   "tool.title.文件名匹配": {
     "en-US": "File Glob Match",
     "zh-CN": "文件名通配匹配"
+  },
+  "tool.desktop_control.followup_prompt_no_frame": {
+    "en-US": "The desktop action was applied, but this observation could not capture a screenshot. Do not repeat the same action; call wait to see the current screen first.",
+    "zh-CN": "桌面动作已经执行，但这次没能截到图。不要重复执行相同动作，请先调用 wait 观察当前画面再决定下一步。"
   }
 }

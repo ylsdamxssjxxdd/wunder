@@ -1346,11 +1346,21 @@ fn text_page(text: &str, offset: u64, limit: usize) -> (String, usize, bool) {
     while start > 0 && !text.is_char_boundary(start) {
         start -= 1;
     }
-    let mut end = start
-        .saturating_add(limit.clamp(4, MAX_TEXT_VIEW_BYTES))
-        .min(total);
+    let page_limit = limit.clamp(4, MAX_TEXT_VIEW_BYTES);
+    let mut end = start.saturating_add(page_limit).min(total);
     while end > start && !text.is_char_boundary(end) {
         end -= 1;
+    }
+    // End on a line boundary so a continuation page never starts mid-token. A
+    // single line longer than the page still gets cut by bytes, and the cut has
+    // to keep at least half a page or the feed would crawl.
+    if end < total {
+        if let Some(newline) = text[start..end].rfind('\n') {
+            let aligned = start + newline + 1;
+            if aligned > start + page_limit / 2 {
+                end = aligned;
+            }
+        }
     }
     (text[start..end].to_string(), start, end < total)
 }
@@ -2470,6 +2480,22 @@ mod saved_result_read_tests {
         assert_eq!(start, text.len());
         assert_eq!(page, "");
         assert!(!has_more);
+    }
+
+    #[test]
+    fn text_pages_prefer_line_boundaries() {
+        let text = "line1\nline2\nline3\n";
+        let (page, start, has_more) = text_page(text, 0, 10);
+        assert_eq!(start, 0);
+        // Ten bytes would cut inside "line2"; the page ends after "line1".
+        assert_eq!(page, "line1\n");
+        assert!(has_more);
+
+        // A single long line has no boundary to snap to, so it is cut by bytes.
+        let wide = "x".repeat(64);
+        let (page, _, has_more) = text_page(&wide, 0, 16);
+        assert_eq!(page.len(), 16);
+        assert!(has_more);
     }
 
     #[test]

@@ -1967,7 +1967,24 @@ fn project_self_status(data: &Value) -> Option<Value> {
 
 fn project_desktop_control(data: &Value) -> Option<Value> {
     let map = data.as_object()?;
-    let mut projected = pick_non_empty_fields(map, &["action", "observation_stable"]);
+    let mut projected = pick_non_empty_fields(
+        map,
+        &[
+            "action",
+            "observation_stable",
+            // The coordinate space the next bbox must use. Without it a model
+            // that lost the followup text has to spend a whole `wait` call to
+            // learn 1000x563 again.
+            "normalized_width",
+            "normalized_height",
+            // Reported when native input was delivered but the screenshot
+            // failed; the action must not be treated as unconfirmed.
+            "observation_error",
+            // Recovery instruction for that case, since no followup image
+            // message is produced when there is no frame.
+            "next_step",
+        ],
+    );
     projected.insert(
         "action_applied".to_string(),
         map.get("action_applied")
@@ -3757,6 +3774,47 @@ mod android_projection_tests {
         assert_eq!(projected["height"], json!(2400));
         assert_eq!(projected["action_applied"], json!(true));
         assert!(projected.get("message").is_none());
+    }
+
+    #[test]
+    fn desktop_control_projection_keeps_coordinate_space_and_observation_error() {
+        let projected = project_success_observation_data(
+            "desktop_control",
+            &json!({
+                "action": "left_click",
+                "action_applied": true,
+                "observation_stable": true,
+                "normalized_width": 1000,
+                "normalized_height": 563,
+                "center_norm": [10, 20],
+                "center_screen": [19, 38],
+                "screenshot_bytes": 424860,
+                "screenshot_download_url": "/wunder/temp_dir/download?filename=x.png",
+                "screenshot_artifact": {"id": "x.png", "mime": "image/png", "bytes": 424860}
+            }),
+        )
+        .expect("desktop projection");
+        assert_eq!(projected["normalized_height"], json!(563));
+        assert_eq!(projected["screenshot_artifact"]["id"], json!("x.png"));
+        assert!(projected.get("center_screen").is_none());
+        assert!(projected.get("screenshot_bytes").is_none());
+
+        let failed = project_success_observation_data(
+            "desktop_control",
+            &json!({
+                "action": "left_click",
+                "action_applied": true,
+                "observation_stable": false,
+                "observation_error": "capture failed",
+                "next_step": "call wait first",
+                "normalized_width": 1000,
+                "normalized_height": 563
+            }),
+        )
+        .expect("desktop projection without frame");
+        assert_eq!(failed["observation_error"], json!("capture failed"));
+        assert_eq!(failed["next_step"], json!("call wait first"));
+        assert_eq!(failed["action_applied"], json!(true));
     }
 
     #[test]
