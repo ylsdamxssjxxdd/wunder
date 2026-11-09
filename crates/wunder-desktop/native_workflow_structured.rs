@@ -497,11 +497,7 @@ fn memory_operation_line(action: &str, args: &Value, data: &Value) -> String {
     };
     let subject = ["title", "query", "memory_id", "id"]
         .iter()
-        .find_map(|key| {
-            args[*key]
-                .as_str()
-                .or_else(|| data[*key].as_str())
-        })
+        .find_map(|key| args[*key].as_str().or_else(|| data[*key].as_str()))
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| format!("「{}」", value.chars().take(104).collect::<String>()))

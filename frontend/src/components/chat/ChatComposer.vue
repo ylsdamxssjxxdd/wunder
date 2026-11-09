@@ -288,7 +288,7 @@
           </div>
         </div>
 
-        <ComposerStatusBar />
+        <ComposerStatusBar :session-id="targetSessionId" />
       </div>
 
         <div class="composer-action-group composer-action-group--end">
@@ -408,6 +408,10 @@ const props = defineProps({
     type: String,
     default: ''
   },
+  sessionId: {
+    type: String,
+    default: ''
+  },
   voiceSupported: {
     type: Boolean,
     default: false
@@ -519,6 +523,7 @@ const DRAFT_PERSIST_DEBOUNCE_MS = 240;
 let draftPersistTimer: ReturnType<typeof setTimeout> | null = null;
 const { t } = useI18n();
 const chatStore = useChatStore();
+const targetSessionId = computed(() => String(props.sessionId || chatStore.activeSessionId || '').trim());
 
 const IMAGE_MIME_TYPES = new Set([
   'image/png',
@@ -650,7 +655,7 @@ const hasBackupSendModifier = (event: KeyboardEvent): boolean =>
 // Active durable session record; shared by the reasoning-effort sync watcher and
 // the toolbar context-usage projection (same source as `activeSessionRecord`).
 const resolveCurrentSession = (): Record<string, unknown> | null => {
-  const activeSessionId = String(chatStore.activeSessionId || '').trim();
+  const activeSessionId = targetSessionId.value;
   if (!activeSessionId) {
     return null;
   }
@@ -698,7 +703,7 @@ const reasoningEffortCompactLabel = computed(() => {
 // 占用统计只有 `sessionContextUsage.ts` 一份实现：模型触发器上的大脑、百分比和
 // 浮层里的明细都读同一个投影，同一屏不会漂出两个百分比。
 const contextUsage = useSessionContextUsage({
-  scope: () => `${String(chatStore.activeSessionId || '').trim()}:${composerModelName.value}`,
+  scope: () => `${targetSessionId.value}:${composerModelName.value}`,
   messages: () => (Array.isArray(props.contextMessages) ? props.contextMessages : []),
   session: () => resolveCurrentSession(),
   loading: () => Boolean(props.loading),
@@ -1174,7 +1179,7 @@ const focusComposerInputAtEnd = () => {
   });
 };
 
-const activeQueueSessionId = computed(() => String(chatStore.activeSessionId || '').trim());
+const activeQueueSessionId = computed(() => targetSessionId.value);
 
 // 撤下一条还没开跑的轮次：引擎侧它从未进过会话历史，本地占位必须一起消失。
 const handleQueueTurnWithdrawn = (item: { clientMessageId?: string }) => {
@@ -2367,7 +2372,7 @@ const handleSend = async () => {
   const payloadAttachments = buildAttachmentPayload();
   if (!content && payloadAttachments.length === 0 && !hasInquirySelection.value) return;
   chatDebugLog('messenger.send', 'composer-send-emit', {
-    activeSessionId: String(chatStore.activeSessionId || '').trim(),
+    activeSessionId: targetSessionId.value,
     messageCount: Array.isArray(props.contextMessages) ? props.contextMessages.length : 0,
     contentLength: content.length,
     attachmentCount: payloadAttachments.length,
@@ -2503,7 +2508,7 @@ watch(
 );
 
 watch(
-  () => [String(chatStore.activeSessionId || '').trim(), props.reasoningEffort] as const,
+  () => [targetSessionId.value, props.reasoningEffort] as const,
   () => {
     const session = resolveCurrentSession();
     reasoningEffort.value = normalizeReasoningEffort(
@@ -2556,7 +2561,7 @@ watch(
     chatDebugLog('chat.composer', 'loading-prop-change', {
       from: previous,
       to: next,
-      sessionId: String(chatStore.activeSessionId || '').trim(),
+      sessionId: targetSessionId.value,
       canSendOrStop: canSendOrStop.value,
       attachmentBusy: attachmentBusy.value,
       voiceRecording: voiceRecording.value

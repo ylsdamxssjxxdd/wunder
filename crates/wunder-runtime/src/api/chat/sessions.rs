@@ -72,6 +72,10 @@ pub(super) fn router() -> Router<Arc<AppState>> {
             post(restore_session),
         )
         .route(
+            "/wunder/chat/sessions/{session_id}/fork",
+            post(fork_session),
+        )
+        .route(
             "/wunder/chat/sessions/{session_id}/title",
             post(update_session_title),
         )
@@ -125,6 +129,12 @@ struct CreateSessionRequest {
     title: Option<String>,
     #[serde(default)]
     agent_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ForkSessionRequest {
+    #[serde(default, alias = "userRound", alias = "through_round")]
+    user_round: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -231,6 +241,113 @@ async fn create_session(
             .workspace
             .load_session_context_tokens(&resolved.user.user_id, &session_id),
     );
+    Ok(Json(json!({ "data": payload })))
+}
+
+fn build_forked_session_record(
+    source: &crate::storage::ChatSessionRecord,
+    session_id: String,
+    now: f64,
+) -> crate::storage::ChatSessionRecord {
+    crate::storage::ChatSessionRecord {
+        session_id,
+        user_id: source.user_id.clone(),
+        title: source.title.clone(),
+        status: CHAT_SESSION_STATUS_ACTIVE.to_string(),
+        created_at: now,
+        updated_at: now,
+        last_message_at: now,
+        agent_id: source.agent_id.clone(),
+        workspace_id: source.workspace_id.clone(),
+        tool_overrides: source.tool_overrides.clone(),
+        parent_session_id: None,
+        parent_message_id: None,
+        spawn_label: None,
+        spawned_by: None,
+    }
+}
+
+async fn fork_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+    Json(payload): Json<ForkSessionRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let source_session_id = session_id.trim().to_string();
+    let through_round = payload
+        .user_round
+        .filter(|round| *round > 0)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, i18n::t("error.param_required")))?;
+    let source = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &source_session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let now = now_ts();
+    let target_session_id = format!("sess_{}", Uuid::new_v4().simple());
+    let record = build_forked_session_record(&source, target_session_id.clone(), now);
+    state
+        .user_store
+        .upsert_chat_session(&record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let storage = state.storage.clone();
+    let user_id = resolved.user.user_id.clone();
+    let source_for_fork = source_session_id.clone();
+    let target_for_fork = target_session_id.clone();
+    if let Err(err) = crate::core::blocking::run_db("api.chat.fork_session", move || {
+        storage.fork_thread_log(&user_id, &source_for_fork, &target_for_fork, through_round)
+    })
+    .await
+    {
+        let _ = state
+            .user_store
+            .delete_chat_session(&resolved.user.user_id, &target_session_id);
+        warn!(error = %err, "session fork failed");
+        return Err(error_response(StatusCode::CONFLICT, err.to_string()));
+    }
+
+    let model_override = state
+        .workspace
+        .load_session_model_override(&resolved.user.user_id, &source_session_id);
+    if let Err(err) = state.workspace.save_session_model_override(
+        &resolved.user.user_id,
+        &target_session_id,
+        model_override.as_deref(),
+    ) {
+        warn!(error = %err, "forked session model override was not copied");
+    }
+    let reasoning_effort = state
+        .workspace
+        .load_session_reasoning_effort(&resolved.user.user_id, &source_session_id);
+    if let Err(err) = state.workspace.save_session_reasoning_effort(
+        &resolved.user.user_id,
+        &target_session_id,
+        &reasoning_effort,
+    ) {
+        warn!(error = %err, "forked session reasoning effort was not copied");
+    }
+    let context_tokens = state
+        .workspace
+        .load_session_context_tokens(&resolved.user.user_id, &source_session_id);
+    state.workspace.save_session_context_tokens(
+        &resolved.user.user_id,
+        &target_session_id,
+        context_tokens,
+    );
+
+    let config = state.config_store.get().await;
+    let agent_record =
+        fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
+    let runtime = resolve_session_model_runtime_with_override(
+        &config,
+        agent_record.as_ref(),
+        model_override.as_deref(),
+    );
+    let mut payload = session_payload(&record);
+    insert_session_goal_payload(&mut payload, None);
+    insert_session_runtime_fields(&mut payload, runtime.as_ref(), context_tokens);
     Ok(Json(json!({ "data": payload })))
 }
 
@@ -1963,9 +2080,9 @@ fn resolve_pagination(query: &SessionListQuery) -> (i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_session_running_state, build_projected_queue_assistant_message,
-        build_projected_queue_user_message, has_active_queue_task,
-        is_session_stream_active_or_queued, item_page_cursor_after_merge,
+        apply_session_running_state, build_forked_session_record,
+        build_projected_queue_assistant_message, build_projected_queue_user_message,
+        has_active_queue_task, is_session_stream_active_or_queued, item_page_cursor_after_merge,
         merge_persisted_transcript_metrics, merge_visible_transcript_page, normalize_before_seq,
         project_queued_session_messages, raw_item_page_from_loaded_history,
         summarize_transcript_messages, RunningTurnHint,
@@ -1984,6 +2101,37 @@ mod tests {
         let storage: Arc<dyn StorageBackend> =
             Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
         UserStore::new(storage)
+    }
+
+    #[test]
+    fn forked_session_is_an_independent_work_thread_with_inherited_settings() {
+        let source = crate::storage::ChatSessionRecord {
+            session_id: "source".into(),
+            user_id: "fixture-user".into(),
+            title: "fixture title".into(),
+            status: "archived".into(),
+            created_at: 1.0,
+            updated_at: 2.0,
+            last_message_at: 3.0,
+            agent_id: Some("fixture-agent".into()),
+            workspace_id: Some("fixture-workspace".into()),
+            tool_overrides: vec!["fixture_tool".into()],
+            parent_session_id: Some("fixture-parent".into()),
+            parent_message_id: Some("fixture-message".into()),
+            spawn_label: Some("fixture-label".into()),
+            spawned_by: Some("fixture-spawn".into()),
+        };
+        let fork = build_forked_session_record(&source, "target".into(), 10.0);
+        assert_eq!(fork.user_id, source.user_id);
+        assert_eq!(fork.title, source.title);
+        assert_eq!(fork.agent_id, source.agent_id);
+        assert_eq!(fork.workspace_id, source.workspace_id);
+        assert_eq!(fork.tool_overrides, source.tool_overrides);
+        assert_eq!(fork.status, "active");
+        assert_eq!(fork.created_at, 10.0);
+        assert_eq!(fork.parent_session_id, None);
+        assert_eq!(fork.parent_message_id, None);
+        assert_eq!(fork.spawned_by, None);
     }
 
     #[test]

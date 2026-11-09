@@ -36,7 +36,9 @@ export global SidebarMetrics {
 export global DragPreview {
     in-out property <bool> active: false;
     in-out property <length> pointer-y: 0px;
+    in-out property <length> pointer-x: 0px;
     in-out property <length> anchor-y: 0px;
+    in-out property <length> anchor-x: 0px;
     in-out property <length> source-y: -1px;
     in-out property <int> source-index: -1;
     in-out property <int> source-kind: -1;
@@ -89,6 +91,8 @@ export component DragRow inherits Rectangle {
     out property <bool> hover: touch.has-hover;
     callback activate();
     callback move-by(int);
+    callback drop-to-chat();
+    in property <length> split-drop-x: 100000px;
     // 这一行实例是否是当前手势的发起者（吸顶副本与真实行共用 row-index，
     // 只靠行号无法区分两者，收尾必须认发起者）。
     private property <bool> owns-gesture: false;
@@ -128,7 +132,11 @@ export component DragRow inherits Rectangle {
             // SidebarMetrics 逐行累加解析落点，行格顶缘才是那套几何的原点。
             // 用按下点会把「按在行内哪个位置」当成已经走过的距离，短距离
             // 拖拽整格落空（插入缝线画在一处、松手却回到原位）。
-            root.move-by(round((DragPreview.pointer-y - DragPreview.source-y) / 1px));
+            if root.row-kind == 1 && DragPreview.pointer-x >= root.split-drop-x {
+                root.drop-to-chat();
+            } else {
+                root.move-by(round((DragPreview.pointer-y - DragPreview.source-y) / 1px));
+            }
         } else {
             root.activate();
         }
@@ -147,12 +155,20 @@ export component DragRow inherits Rectangle {
     // 追踪通道喂位置：事件流断掉之后，靠它继续把指针位置与激活阈值推进。
     // 全局属性不能直接 `changed`，先绑到本地再观察。
     private property <length> chase-y: PointerChase.pointer-y;
+    private property <length> chase-x: PointerChase.pointer-x;
     private property <int> chase-finish: PointerChase.finish-serial;
+    changed chase-x => {
+        if root.owns-gesture {
+            DragPreview.pointer-x = PointerChase.pointer-x;
+            if abs(DragPreview.pointer-x - DragPreview.anchor-x) > 6px { DragPreview.active = true; }
+        }
+    }
     changed chase-y => {
         if root.owns-gesture && DragPreview.source-index == root.row-index {
             DragPreview.pointer-y = PointerChase.pointer-y;
             if !DragPreview.active
-                && abs(DragPreview.pointer-y - DragPreview.anchor-y) > 6px {
+                && (abs(DragPreview.pointer-y - DragPreview.anchor-y) > 6px
+                    || abs(DragPreview.pointer-x - DragPreview.anchor-x) > 6px) {
                 DragPreview.active = true;
             }
         }
@@ -181,6 +197,8 @@ export component DragRow inherits Rectangle {
             if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                 DragPreview.anchor-y = root.absolute-position.y + self.mouse-y;
                 DragPreview.pointer-y = DragPreview.anchor-y;
+                DragPreview.anchor-x = root.absolute-position.x + self.mouse-x;
+                DragPreview.pointer-x = DragPreview.anchor-x;
                 // 被抓住那一「行格」的顶缘：组头行在格内还让出 4px 气口，
                 // 落点算法是从行格顶缘起算的，这里必须减去这层内缩，否则
                 // 参照系跟着按下点漂移。
@@ -213,8 +231,10 @@ export component DragRow inherits Rectangle {
         // fast path; the chase feed below keeps it correct when the stream
         // stops mid-gesture.
         moved => {
+            DragPreview.pointer-x = root.absolute-position.x + self.mouse-x;
             DragPreview.pointer-y = root.absolute-position.y + self.mouse-y;
-            if self.pressed && abs(DragPreview.pointer-y - DragPreview.anchor-y) > 6px {
+            if self.pressed && (abs(DragPreview.pointer-y - DragPreview.anchor-y) > 6px
+                || abs(DragPreview.pointer-x - DragPreview.anchor-x) > 6px) {
                 DragPreview.active = true;
             }
         }

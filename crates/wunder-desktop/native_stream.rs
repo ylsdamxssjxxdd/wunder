@@ -83,11 +83,10 @@ pub(super) fn start(
         // sender was dropped, the subscriber saw a closed channel, and the
         // turn ended with neither a reply nor an error. Convert it into a
         // visible failure instead of silence.
-        let result = std::panic::AssertUnwindSafe(run(
-            state, user, input, lease_proof, &output, &token,
-        ))
-        .catch_unwind()
-        .await;
+        let result =
+            std::panic::AssertUnwindSafe(run(state, user, input, lease_proof, &output, &token))
+                .catch_unwind()
+                .await;
         match result {
             Ok(Ok(())) => {
                 let _ = output.send(NativeChatEvent::Finished).await;

@@ -276,6 +276,12 @@ public final class WunderRuntimeService extends Service {
                 .setOngoing(busy || installing)
                 .setOnlyAlertOnce(true)
                 .setShowWhen(false);
+        if (Build.VERSION.SDK_INT >= 31) {
+            // Android 16 defers non-media FGS notifications for ~10 s. The
+            // notification is the only progress surface while the app is in
+            // the background, so publish each state change immediately.
+            builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
+        }
         return builder.build();
     }
 

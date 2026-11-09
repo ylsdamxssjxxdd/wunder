@@ -9,12 +9,14 @@
       <MessengerAgentBubble
         :controller="controller"
         :item="turn.user"
+        :session-id="sessionId"
       />
     </div>
     <div class="messenger-turn-assistant" data-turn-slot="assistant">
       <MessengerAgentBubble
         :controller="controller"
         :item="turn.assistant"
+        :session-id="sessionId"
       />
     </div>
   </section>
@@ -34,6 +36,7 @@ import type { MessengerControllerContext } from '../controller/messengerControll
  */
 defineProps<{
   controller: MessengerControllerContext;
+  sessionId?: string;
   turn: {
     key: string;
     rootTurnId: string;

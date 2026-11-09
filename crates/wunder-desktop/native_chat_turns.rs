@@ -48,7 +48,9 @@ pub struct NativeChatFailure {
 }
 
 impl NativeChatFailure {
-    fn from_view(view: &Option<wunder_server::stable_core::thread_view::ThreadFailureView>) -> Option<Self> {
+    fn from_view(
+        view: &Option<wunder_server::stable_core::thread_view::ThreadFailureView>,
+    ) -> Option<Self> {
         let view = view.as_ref()?;
         let message = view.message.trim();
         if message.is_empty() {

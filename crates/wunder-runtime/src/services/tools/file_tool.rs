@@ -22,7 +22,7 @@ use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use walkdir::WalkDir;
+
 pub(crate) async fn list_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     if let Some(result) = execute_in_sandbox(context, "列出文件", args).await {
         return Ok(result);
@@ -63,6 +63,26 @@ pub(crate) async fn list_files(context: &ToolContext<'_>, args: &Value) -> Resul
             ));
         }
     };
+    let exclude_patterns = match super::fs_walk::parse_exclude_patterns(args) {
+        Ok(patterns) => patterns,
+        Err(message) => {
+            return Ok(build_failed_tool_result(
+                message,
+                json!({}),
+                ToolErrorMeta::new(
+                    "TOOL_LIST_INVALID_ARGS",
+                    Some(
+                        "exclude 接受 glob 字符串或字符串数组，例如 \"dist\" 或 [\"dist\", \"vendor\"]。"
+                            .to_string(),
+                    ),
+                    false,
+                    None,
+                ),
+                false,
+            ));
+        }
+    };
+    let include_ignored = super::fs_walk::parse_include_ignored(args);
     let workspace = context.workspace.clone();
     let user_id = context.workspace_id.to_string();
     let extra_roots = collect_read_roots(context);
@@ -78,6 +98,8 @@ pub(crate) async fn list_files(context: &ToolContext<'_>, args: &Value) -> Resul
             folders_first,
             pagination.start,
             pagination.limit,
+            &exclude_patterns,
+            include_ignored,
         )
     })
     .await
@@ -169,6 +191,8 @@ pub(crate) fn list_files_inner(
     folders_first: bool,
     page_start: usize,
     page_limit: usize,
+    exclude_patterns: &[String],
+    include_ignored: bool,
 ) -> Result<Value> {
     let root = resolve_tool_path(workspace, user_id, path, extra_roots)?;
     if !root.exists() {
@@ -201,22 +225,62 @@ pub(crate) fn list_files_inner(
         // Deep pagination must always be able to advance: never let the
         // look-ahead cap fall below the end of the requested page.
         .max(page_start.saturating_add(page_limit).saturating_add(1));
+    let exclude = match super::fs_walk::ExcludeFilter::new(exclude_patterns) {
+        Ok(filter) => filter.map(std::sync::Arc::new),
+        Err(message) => {
+            return Ok(build_failed_tool_result(
+                message,
+                json!({ "exclude": exclude_patterns }),
+                ToolErrorMeta::new(
+                    "TOOL_LIST_INVALID_ARGS",
+                    Some(
+                        "exclude 接受 glob 字符串或字符串数组，例如 \"dist\" 或 [\"dist\", \"vendor\"]。"
+                            .to_string(),
+                    ),
+                    false,
+                    None,
+                ),
+                false,
+            ));
+        }
+    };
     let mut entries: Vec<(String, bool)> = Vec::new();
     let mut scan_limited = false;
     let unrestricted_paths = roots_allow_any_path(extra_roots);
     let _ = unrestricted_paths;
-    for entry in WalkDir::new(&root)
-        .min_depth(1)
-        .max_depth(walk_depth)
-        .into_iter()
-        .filter_map(|item| item.ok())
+    let mut builder = super::fs_walk::walk_builder(&root, include_ignored);
+    builder.max_depth(Some(walk_depth));
     {
+        let exclude = exclude.clone();
+        let root_ref = root.clone();
+        builder.filter_entry(move |entry| {
+            if entry.depth() == 0 {
+                return true;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(exclude) = exclude.as_deref() {
+                let rel = entry.path().strip_prefix(&root_ref).unwrap_or(entry.path());
+                let rel_path = rel.to_string_lossy().replace('\\', "/");
+                if exclude.is_match(&rel_path, &name) {
+                    return false;
+                }
+            }
+            if !entry.file_type().is_some_and(|kind| kind.is_dir()) {
+                return true;
+            }
+            !super::fs_walk::prunes_dir(&name, include_ignored)
+        });
+    }
+    for entry in builder.build().filter_map(|item| item.ok()) {
+        if entry.depth() == 0 {
+            continue;
+        }
         if entries.len() >= scan_cap {
             scan_limited = true;
             break;
         }
         let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
-        let is_dir = entry.file_type().is_dir();
+        let is_dir = entry.file_type().is_some_and(|kind| kind.is_dir());
         let mut display = rel.to_string_lossy().replace('\\', "/");
         if is_dir {
             display.push('/');
@@ -262,6 +326,8 @@ pub(crate) fn list_files_inner(
             "dir_count": dir_count,
             "file_count": file_count,
             "scan_limited": scan_limited,
+            "exclude": exclude_patterns,
+            "include_ignored": include_ignored,
         }),
         has_more.then(|| {
             if top_level_only {

@@ -401,6 +401,7 @@ export component Sidebar inherits Rectangle {
     callback workspace-menu(int, int);
     callback new-workspace();
     callback move-row(int, int);
+    callback drop-thread-to-chat(int);
     callback archive-thread(string);
     // Multi-select (web alignment): the tree enters selection mode from a
     // context menu, clicks toggle rows, the bar at the tree's foot
@@ -619,8 +620,10 @@ export component Sidebar inherits Rectangle {
                         row-kind: row.kind;
                         workspace-id: row.workspace-id;
                         actions-width: 84px;
+                        split-drop-x: root.absolute-position.x + root.width + 6px;
                         activate => { root.select-row(ri); }
                         move-by(travel) => { root.move-row(ri, travel); }
+                        drop-to-chat => { root.drop-thread-to-chat(ri); }
                         ThreadRow {
                             height: parent.height;
                             width: parent.width;

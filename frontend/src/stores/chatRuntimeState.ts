@@ -176,6 +176,7 @@ export const sessionDetailSnapshotCache = new Map<string, SessionDetailSnapshotC
 export const sessionHydratedMessageVersion = new Map<string, string>();
 export const sessionDetailPrefetchInFlight = new Map();
 export const sessionSubagentsInFlight = new Map();
+export const sessionSubagentsTrailingInFlight = new Map();
 export const sessionSubagentsCache = new Map<string, { cachedAt: number; items: unknown[] }>();
 export const sessionDetailWarmState = new Map();
 export const sessionHistoryState = new Map();
@@ -966,6 +967,7 @@ export const purgeUnavailableSession = (store, sessionId) => {
   sessionDetailWarmState.delete(targetId);
   sessionDetailPrefetchInFlight.delete(targetId);
   sessionSubagentsInFlight.delete(targetId);
+  sessionSubagentsTrailingInFlight.delete(targetId);
   sessionSubagentsCache.delete(targetId);
   sessionHistoryState.delete(targetId);
   sessionWorkflowState.delete(targetId);

@@ -14,8 +14,6 @@ ARCH=$(cat "$PAYLOAD_DIR/arch" 2>/dev/null || echo "unknown")
 HOME_DIR="${WUNDER_HOME:-$HOME/.wunder}"
 COMPONENTS_FILE="$PAYLOAD_DIR/components.txt"
 SELECTED_FILE="$PAYLOAD_DIR/../.selected"
-ASSUME_YES=0
-SELECT_ALL=0
 COMPONENTS_GIVEN=0
 COMPONENTS_ARG=""
 DESKTOP_ENTRY=1
@@ -30,33 +28,17 @@ usage() {
   cat <<'EOF'
 用法: wunder-desktop-<版本>-linux-<架构>.run [选项]
 
-直接运行即可：默认装到 ${WUNDER_HOME:-$HOME/.wunder}，桌面版、命令行与全部补充组件默认全选。
-交互模式只有一屏：取消不需要的补充组件后回车即开始安装。
+直接运行即可，安装过程没有任何提问：桌面版、命令行与全部补充组件一起装到
+默认安装目录，并创建应用菜单项和桌面启动图标。检测到已有安装时原地升级：
+只替换程序文件与组件目录，配置、会话、工作区保留。
 
-  -y, --yes                不询问确认，按当前选择（默认全选）安装
-      --components=LIST    只安装列出的补充组件，逗号分隔；例如 python,git
-      --all                安装全部补充组件（与默认行为一致，保留给脚本显式表达）
-      --home=PATH          安装目录，同时保存用户数据，默认 ${WUNDER_HOME:-$HOME/.wunder}
+  --home=PATH          改安装目录（配置、会话、工作区也放在这里），默认 ~/.wunder
+      --components=LIST 高级用法：只安装列出的补充组件，逗号分隔，例如 python,git
       --no-desktop-entry   不创建应用菜单项
       --no-desktop-icon    不在桌面创建启动图标
-  -h, --help               显示帮助
-
---components 缩小安装范围；交互界面里数字键切换勾选，n 清空后回车则只装桌面版和命令行。
+      --no-progress        不显示进度条（设置 NO_COLOR 或重定向到文件时自动关闭）
+  -h, --help           显示帮助
 EOF
-}
-
-human_size() {
-  bytes=${1:-0}
-  case "$bytes" in
-    ''|*[!0-9]*) bytes=0 ;;
-  esac
-  if [ "$bytes" -ge 1073741824 ]; then
-    awk -v b="$bytes" 'BEGIN { printf "%.1f GB", b / 1073741824 }'
-  elif [ "$bytes" -ge 1048576 ]; then
-    awk -v b="$bytes" 'BEGIN { printf "%.0f MB", b / 1048576 }'
-  else
-    awk -v b="$bytes" 'BEGIN { printf "%.0f KB", b / 1024 }'
-  fi
 }
 
 write_wunder_desktop_file() {
@@ -105,17 +87,104 @@ component_path() {
   awk -F'|' -v key="$1" '$1 == key { print $3; exit }' "$COMPONENTS_FILE"
 }
 
-is_selected() {
-  grep -Fxq -- "$1" "$SELECTED_FILE" 2>/dev/null
+component_bytes() {
+  awk -F'|' -v key="$1" '$1 == key { print $5; exit }' "$COMPONENTS_FILE"
+}
+
+human_size() {
+  bytes=${1:-0}
+  case "$bytes" in
+    ''|*[!0-9]*) bytes=0 ;;
+  esac
+  if [ "$bytes" -ge 1073741824 ]; then
+    awk -v b="$bytes" 'BEGIN { printf "%.1f GB", b / 1073741824 }'
+  elif [ "$bytes" -ge 1048576 ]; then
+    awk -v b="$bytes" 'BEGIN { printf "%.0f MB", b / 1048576 }'
+  else
+    awk -v b="$bytes" 'BEGIN { printf "%.0f KB", b / 1024 }'
+  fi
+}
+
+# ---- 进度显示 -------------------------------------------------------------
+# .run 头部用 WUNDER_PROGRESS_* 传入进度区间（默认 55 → 100），这里只负责在
+# 自己的区间里推进。进度写 stderr，stdout 留给最终摘要。
+PROGRESS_BASE=${WUNDER_PROGRESS_BASE:-0}
+PROGRESS_WEIGHT=${WUNDER_PROGRESS_WEIGHT:-100}
+PROGRESS_LIVE=${WUNDER_PROGRESS_LIVE:-0}
+PROGRESS_ON=${WUNDER_PROGRESS:-1}
+if [ "$PROGRESS_ON" -eq 1 ] && [ -t 2 ]; then
+  PROGRESS_LIVE=1
+else
+  PROGRESS_LIVE=0
+fi
+PROGRESS_LAST_TICK=""
+PROGRESS_OPEN=0
+
+progress_bar() {
+  width=$1
+  percent=$2
+  filled=$((percent * width / 100))
+  [ "$filled" -gt "$width" ] && filled=$width
+  out=""
+  i=0
+  while [ "$i" -lt "$width" ]; do
+    if [ "$i" -lt "$filled" ]; then out="$out#"; else out="$out-"; fi
+    i=$((i + 1))
+  done
+  printf '%s' "$out"
+}
+
+progress_draw() {
+  [ "$PROGRESS_ON" -eq 1 ] || return 0
+  percent=$1
+  label=$2
+  [ "$percent" -gt 100 ] && percent=100
+  [ "$percent" -lt 0 ] && percent=0
+  if [ "$PROGRESS_LIVE" -eq 1 ]; then
+    printf '\r\033[K  [%s] %3d%%  %s' "$(progress_bar 24 "$percent")" "$percent" "$label" >&2
+    PROGRESS_OPEN=1
+  else
+    tick=$((percent / 10))
+    if [ "$tick" != "$PROGRESS_LAST_TICK" ]; then
+      PROGRESS_LAST_TICK=$tick
+      printf '  [%s] %3d%%  %s\n' "$(progress_bar 24 "$percent")" "$percent" "$label" >&2
+    fi
+  fi
+}
+
+progress_stage() {
+  offset=$1
+  label=$2
+  progress_draw $((PROGRESS_BASE + offset * PROGRESS_WEIGHT / 100)) "$label"
+}
+
+progress_done() {
+  if [ "$PROGRESS_OPEN" -eq 1 ]; then
+    # 光标离开进度行：先清掉这一行，再换行，后续摘要从行首开始。
+    printf '\r\033[K\n' >&2
+    PROGRESS_OPEN=0
+  fi
+}
+
+# 按当前阶段已落盘字节推进；du 不可用时静默跳过，不影响安装。
+progress_watch() {
+  offset=$1
+  label=$2
+  total=$3
+  target=$4
+  while [ ! -f "$target" ]; do
+    used=$(du -sb --apparent-size "$5" 2>/dev/null | cut -f1)
+    used=${used:-0}
+    [ "$used" -gt "$total" ] && used=$total
+    if [ "$total" -gt 0 ]; then
+      progress_stage $((offset + used * (100 - offset) / total)) "$label"
+    fi
+    sleep 1
+  done
 }
 
 select_one() {
-  is_selected "$1" || printf '%s\n' "$1" >> "$SELECTED_FILE"
-}
-
-unselect_one() {
-  grep -Fvx -- "$1" "$SELECTED_FILE" > "$SELECTED_FILE.tmp" 2>/dev/null || true
-  mv -f -- "$SELECTED_FILE.tmp" "$SELECTED_FILE"
+  grep -Fxq -- "$1" "$SELECTED_FILE" 2>/dev/null || printf '%s\n' "$1" >> "$SELECTED_FILE"
 }
 
 selected_count() {
@@ -124,8 +193,8 @@ selected_count() {
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    -y|--yes) ASSUME_YES=1 ;;
-    --all) SELECT_ALL=1 ;;
+    # 历史参数：安装已无交互、默认全选，保留以便旧脚本继续可用。
+    -y|--yes|--all) ;;
     --components=*) COMPONENTS_ARG=${1#*=}; COMPONENTS_GIVEN=1 ;;
     --components)
       shift
@@ -141,6 +210,8 @@ while [ "$#" -gt 0 ]; do
       ;;
     --no-desktop-entry) DESKTOP_ENTRY=0 ;;
     --no-desktop-icon) DESKTOP_ICON=0 ;;
+    # 进度条由 .run 头部控制，这里只负责让参数不报错。
+    --progress|--no-progress) ;;
     -h|--help) usage; exit 0 ;;
     *) die "未知参数：$1" ;;
   esac
@@ -162,18 +233,12 @@ HOME_DIR=${HOME_DIR%/}
 
 [ -f "$COMPONENTS_FILE" ] || die "安装包缺少组件清单。"
 
-# Components start fully selected: a plain run installs a complete
-# workstation. --components narrows the set, the interactive screen and `n`
-# clear it, and --all stays as the explicit non-interactive shortcut.
+# 运行即装全：载荷里带的就是完整工作站，安装过程不再提问、不再让人挑组件。
 select_all_components() {
   cut -d'|' -f1 "$COMPONENTS_FILE" | while IFS= read -r key; do
     [ -n "$key" ] && printf '%s\n' "$key"
   done
 }
-
-if [ "$COMPONENTS_GIVEN" -eq 1 ] && [ "$SELECT_ALL" -eq 1 ]; then
-  die "--components 与 --all 不能同时使用"
-fi
 
 if [ "$COMPONENTS_GIVEN" -eq 1 ]; then
   : > "$SELECTED_FILE"
@@ -189,87 +254,39 @@ if [ "$COMPONENTS_GIVEN" -eq 1 ]; then
     select_one "$key"
   done
   IFS=$old_ifs
-elif [ "$SELECT_ALL" -eq 1 ]; then
-  select_all_components > "$SELECTED_FILE"
 else
   select_all_components > "$SELECTED_FILE"
-  if [ "$ASSUME_YES" -eq 0 ]; then
-    [ -t 0 ] || die "非交互环境请使用 --yes --components=... 或 --all"
-    # One screen, one decision: the menu shows the target directory and the
-    # current selection (everything, by default), and Enter starts the install.
-    # There is no second summary and no extra confirmation for a first install.
-    if [ -s "$COMPONENTS_FILE" ]; then
-      printf '\n心舰 Wunder %s · %s\n' "$VERSION" "$ARCH"
-      printf '安装到 %s（配置、会话和工作区也在这里；--home=PATH 可改）\n' "$HOME_DIR"
-      while :; do
-        printf '\n'
-        index=0
-        while IFS='|' read -r key label path version bytes files; do
-          [ -n "$key" ] || continue
-          index=$((index + 1))
-          mark=' '
-          is_selected "$key" && mark='x'
-          printf '  %2d) [%s] %s  %s\n' "$index" "$mark" "$label" "$(human_size "$bytes")"
-        done < "$COMPONENTS_FILE"
-        printf '\n数字切换，a 全选，n 清空，回车开始安装，q 退出\n> '
-        if ! IFS= read -r answer; then
-          answer=q
-        fi
-        case "$answer" in
-          '') break ;;
-          q|Q) echo "已取消。"; exit 0 ;;
-          a|A) select_all_components > "$SELECTED_FILE" ;;
-          n|N) : > "$SELECTED_FILE" ;;
-          *)
-            case "$answer" in
-              *[!0-9]*) ;;
-              *)
-                key=$(awk -F'|' -v n="$answer" 'NF { i++; if (i == n) { print $1; exit } }' "$COMPONENTS_FILE")
-                if [ -n "$key" ]; then
-                  if is_selected "$key"; then
-                    unselect_one "$key"
-                  else
-                    select_one "$key"
-                  fi
-                fi
-                ;;
-            esac
-            ;;
-        esac
-      done
-    fi
-  fi
 fi
 
 count=$(selected_count)
 
-# A reinstall replaces only program files and the selected component folders.
-# Ask once, and only when something would actually be replaced: a first install
-# goes straight through without any extra confirmation.
-replacing=0
-if [ -f "$HOME_DIR/bin/install-manifest.txt" ]; then
-  replacing=1
-else
-  while IFS= read -r key; do
-    [ -n "$key" ] || continue
-    if [ -d "$HOME_DIR/$(component_path "$key")" ]; then
-      replacing=1
-      break
-    fi
-  done < "$SELECTED_FILE"
-fi
-if [ "$replacing" -eq 1 ] && [ "$ASSUME_YES" -eq 0 ]; then
-  printf '\n%s 已有心舰，将替换程序文件和已选组件目录，配置、会话、工作区保留。继续？[Y/n] ' "$HOME_DIR"
-  if ! IFS= read -r reply; then
-    reply=y
-  fi
-  case "$reply" in
-    n|N) echo "已取消。"; exit 0 ;;
+# 补充组件总量：用于进度百分比与“清理旧文件”的提示。
+total_components=0
+while IFS= read -r key; do
+  [ -n "$key" ] || continue
+  bytes=$(component_bytes "$key")
+  case "$bytes" in
+    ''|*[!0-9]*) bytes=0 ;;
   esac
-fi
+  total_components=$((total_components + bytes))
+done < "$SELECTED_FILE"
+total_cleanup=$total_components
+for existing in "$HOME_DIR/app/desktop" "$HOME_DIR/bin/wunder-cli"; do
+  [ -e "$existing" ] || continue
+  size=$(du -sb --apparent-size "$existing" 2>/dev/null | cut -f1)
+  total_cleanup=$((total_cleanup + ${size:-0}))
+done
 
-printf '\n正在安装…\n'
+# 已有安装直接原地升级：只替换程序文件与本次组件目录，用户数据不参与。
+printf '\n心舰 Wunder %s · %s\n安装到 %s\n' "$VERSION" "$ARCH" "$HOME_DIR"
+if [ -f "$HOME_DIR/bin/install-manifest.txt" ]; then
+  printf '检测到已有安装，升级程序文件与组件目录（配置、会话、工作区保留）。\n'
+fi
 mkdir -p "$HOME_DIR/bin" "$HOME_DIR/opt"
+
+# 阶段划分（占安装区间百分比）：清理 0-3，命令行 3-10，桌面版 10-40，
+# 命令链接与图标 40-45，补充组件 45-100。
+progress_stage 0 "清理旧文件（$(human_size "$total_cleanup")）"
 
 # Replacing a component means emptying its own folder only; config, sessions,
 # workspaces, logs and every unselected component stay untouched.
@@ -280,19 +297,36 @@ while IFS= read -r key; do
     rm -rf -- "$HOME_DIR/$path"
   fi
 done < "$SELECTED_FILE"
+progress_stage 3 "清理旧文件（$(human_size "$total_cleanup")）"
 
 cp -f -- "$PAYLOAD_DIR/wunder-cli" "$HOME_DIR/bin/wunder-cli"
 chmod 0755 "$HOME_DIR/bin/wunder-cli"
+progress_stage 10 "安装命令行"
 
 # The desktop payload is a plain tree archive of the AppDir. Expanding it at
 # install time needs no FUSE, no /dev/fuse and no AppImage runtime, so
 # fuse3-only systems (Ubuntu 24.04 and newer) work without extra packages.
 rm -rf -- "$HOME_DIR/app/desktop"
 mkdir -p "$HOME_DIR/app/desktop"
+desktop_bytes=$(wc -c < "$PAYLOAD_DIR/wunder-desktop.tar.gz" | tr -d ' ')
+desktop_bytes=${desktop_bytes:-0}
+if [ "$PROGRESS_ON" -eq 1 ]; then
+  progress_watch 10 "安装桌面版（$(human_size "$desktop_bytes")）" "$desktop_bytes" \
+    "$PAYLOAD_DIR/../.desktop-done" "$HOME_DIR/app/desktop" &
+  DESKTOP_WATCH_PID=$!
+fi
 if ! tar -xzf "$PAYLOAD_DIR/wunder-desktop.tar.gz" -C "$HOME_DIR/app/desktop" --no-same-owner; then
+  [ -n "${DESKTOP_WATCH_PID:-}" ] && kill "$DESKTOP_WATCH_PID" 2>/dev/null || true
+  progress_done
   echo "桌面版的程序文件解压失败。请检查磁盘空间后重新运行安装包。" >&2
   exit 1
 fi
+if [ -n "${DESKTOP_WATCH_PID:-}" ]; then
+  : > "$PAYLOAD_DIR/../.desktop-done"
+  wait "$DESKTOP_WATCH_PID" 2>/dev/null || true
+  DESKTOP_WATCH_PID=""
+fi
+progress_stage 40 "安装桌面版（$(human_size "$desktop_bytes")）"
 [ -x "$HOME_DIR/app/desktop/AppRun" ] || die "安装包缺少桌面版的启动入口。"
 rm -f -- "$HOME_DIR/bin/wunder-desktop.AppImage"
 # Upgrades from releases that shipped the old executable name must not leave a
@@ -370,6 +404,7 @@ if [ -f "$PAYLOAD_DIR/eva01-head.png" ]; then
   # Older installers wrote the pupa image under this name; drop it on upgrade.
   rm -f -- "$HOME_DIR/images/pupa.png"
 fi
+progress_stage 45 "配置命令与桌面入口"
 
 if [ "$count" -gt 0 ]; then
   members=""
@@ -379,10 +414,22 @@ if [ "$count" -gt 0 ]; then
     [ -n "$path" ] || die "组件清单缺少路径：$key"
     members="$members $path"
   done < "$SELECTED_FILE"
-  echo "安装补充组件..."
+  progress_stage 45 "安装补充组件（$(human_size "$total_components")）"
+  if [ "$PROGRESS_ON" -eq 1 ]; then
+    progress_watch 45 "安装补充组件（$(human_size "$total_components")）" "$total_components" \
+      "$PAYLOAD_DIR/../.supplement-done" "$HOME_DIR/opt" &
+    SUPPLEMENT_WATCH_PID=$!
+  fi
   if ! tar -xzf "$PAYLOAD_DIR/supplement.tar.gz" -C "$HOME_DIR" --no-same-owner $members; then
+    [ -n "${SUPPLEMENT_WATCH_PID:-}" ] && kill "$SUPPLEMENT_WATCH_PID" 2>/dev/null || true
+    progress_done
     echo "补充组件解压失败。请检查磁盘空间后重新运行安装包；再次安装会先清理本次留下的目录。" >&2
     exit 1
+  fi
+  if [ -n "${SUPPLEMENT_WATCH_PID:-}" ]; then
+    : > "$PAYLOAD_DIR/../.supplement-done"
+    wait "$SUPPLEMENT_WATCH_PID" 2>/dev/null || true
+    SUPPLEMENT_WATCH_PID=""
   fi
   while IFS= read -r key; do
     path=$(component_path "$key")
@@ -456,13 +503,16 @@ printf 'desktop_icon=%s\n' "$desktop_icon_path" >> "$HOME_DIR/bin/install-manife
 cp -f -- "$PAYLOAD_DIR/uninstall.sh" "$HOME_DIR/uninstall.sh"
 chmod 0755 "$HOME_DIR/uninstall.sh"
 
+progress_stage 100 "安装完成"
+progress_done
+
 printf '\n完成。\n\n'
 printf '  桌面版     %s\n' "$HOME_DIR/bin/wunder-desktop"
 printf '  命令行   %s\n' "$HOME_DIR/bin/wunder-cli"
 if [ "$count" -gt 0 ]; then
   printf '  组件   %s\n' "$components_csv"
 else
-  printf '  组件   未安装，重新运行安装包可勾选\n'
+  printf '  组件   未安装（--components 为空）\n'
 fi
 if [ "$LINKS_READY" -eq 1 ]; then
   printf '  命令   wunder-desktop、wunder-cli、desktop（新开终端生效）\n'

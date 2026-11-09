@@ -27,7 +27,7 @@ impl Orchestrator {
             ));
         }
         self.scheduling.mark_suspended(session_id);
-        self.monitor.mark_queued(session_id, None);
+        self.monitor.mark_running(session_id, None);
         let turn_id = self
             .thread_runtime
             .snapshot(session_id)
@@ -37,7 +37,7 @@ impl Orchestrator {
                 emitter,
                 round,
                 self.thread_runtime
-                    .set_status(session_id, turn_id, ThreadRuntimeStatus::Queued),
+                    .set_status(session_id, turn_id, ThreadRuntimeStatus::Running),
             )
             .await;
         }

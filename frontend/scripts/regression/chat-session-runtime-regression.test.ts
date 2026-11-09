@@ -9,6 +9,7 @@ import {
   isThreadRuntimeBusy,
   normalizeThreadRuntimeStatus
 } from '../../src/utils/chatSessionRuntime';
+import { isSubagentItemActive } from '../../src/utils/subagentRuntime';
 
 const ensureBrowserRuntimeStub = (): void => {
   const root = globalThis as typeof globalThis & {
@@ -89,6 +90,23 @@ test('active subagents keep a thread busy without reopening parent stream state'
   assert.equal(hasActiveSubagentsAfterLatestUser(messages), true);
   assert.equal(hasStreamingAssistantMessage(messages), false);
   assert.equal(hasRunningAssistantMessage(messages), true);
+});
+
+test('terminal or unknown subagent states do not keep a completed thread busy', () => {
+  assert.equal(isSubagentItemActive({
+    session_id: 'child-session',
+    run_id: 'child-run',
+    status: 'running',
+    terminal: true,
+    failed: false
+  }), false);
+  assert.equal(isSubagentItemActive({
+    session_id: 'child-session',
+    run_id: 'child-run',
+    status: '',
+    terminal: false,
+    failed: false
+  }), false);
 });
 
 test('assistant waiting for first output keeps the thread busy before streaming flags arrive', () => {

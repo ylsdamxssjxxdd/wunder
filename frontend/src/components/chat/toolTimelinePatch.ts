@@ -13,6 +13,10 @@
 
 import type { RawToolRun } from './toolWorkflowRunModel';
 import { extractWorkflowCallArgs } from './toolWorkflowCallDebug';
+import {
+  extractToolResultDataObject,
+  parseToolWorkflowResultObject
+} from './toolWorkflowResultPayload';
 import type {
   ToolWorkflowPatchFileView,
   ToolWorkflowPatchLine,
@@ -458,32 +462,102 @@ const countTextLines = (text: string): number => {
   return parts.length;
 };
 
+const toCount = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.trunc(value));
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed)) return Math.max(0, parsed);
+  }
+  return null;
+};
+
+/** 补丁语法的 +/- 计数（`+++` / `---` 是文件头，不是内容行）。 */
+const countPatchText = (text: string): TimelineDiffStats => {
+  let added = 0;
+  let deleted = 0;
+  for (const row of String(text || '').split('\n')) {
+    if (row.startsWith('+') && !row.startsWith('+++')) added += 1;
+    else if (row.startsWith('-') && !row.startsWith('---')) deleted += 1;
+  }
+  return { added, deleted };
+};
+
 /**
- * 工具条目行内的 diff 统计：编辑 / 写入 / 补丁类工具返回 +/- 行数，其他返回 null。
- * 只做行计数，不构建 diff 行视图；与 `buildTimelinePatchView` 同一参数来源与上限，
- * 供时间线折叠态在文件名旁直接展示改动规模。
+ * 结果侧 `files[]` 的权威行数：apply_patch 与文本编辑共用同一结构。
+ * 折叠行不能只靠调用参数推断——流式参数预览会被截断，历史记录也可能只保留
+ * 结果，于是「文件名旁没有 +/-」其实来自两侧来源不同，而不是真的没有改动。
  */
-export const buildTimelineDiffStats = (run: RawToolRun): TimelineDiffStats | null => {
-  if (isApplyPatchToolName(run.toolName)) {
-    const patchText = resolvePatchInputText(run);
-    if (!patchText) return null;
+const resolveResultDiffStats = (run: RawToolRun): TimelineDiffStats | null => {
+  for (const item of [run.resultItem, run.outputItem]) {
+    if (!item) continue;
+    const data = extractToolResultDataObject(parseToolWorkflowResultObject(item.detail));
+    const files = Array.isArray(data?.files)
+      ? (data.files as unknown[]).slice(0, PATCH_FILE_LIMIT)
+      : [];
+    if (!files.length) continue;
     let added = 0;
     let deleted = 0;
-    for (const row of patchText.split('\n')) {
-      if (row.startsWith('+') && !row.startsWith('+++')) added += 1;
-      else if (row.startsWith('-') && !row.startsWith('---')) deleted += 1;
+    let declared = false;
+    for (const value of files) {
+      const file = asObject(value);
+      if (!file) continue;
+      const fileAdded = toCount(file.added_lines);
+      const fileDeleted = toCount(file.deleted_lines);
+      if (fileAdded !== null || fileDeleted !== null) {
+        declared = true;
+        added += fileAdded ?? 0;
+        deleted += fileDeleted ?? 0;
+        continue;
+      }
+      // 旧记录只保留 diff_blocks：按行种类回数。
+      const blocks = Array.isArray(file.diff_blocks) ? file.diff_blocks : [];
+      for (const block of blocks) {
+        const lines = Array.isArray(asObject(block)?.lines) ? (asObject(block)?.lines as unknown[]) : [];
+        for (const line of lines) {
+          const kind = String(asObject(line)?.kind || '').trim().toLowerCase();
+          if (kind === 'add') added += 1;
+          if (kind === 'delete') deleted += 1;
+        }
+      }
     }
-    return added > 0 || deleted > 0 ? { added, deleted } : null;
+    if (added > 0 || deleted > 0) return { added, deleted };
+    // 结果声明了行数但都是 0（例如改回原文）：如实显示「没有改动」。
+    if (declared) return null;
   }
-  if (!isTimelineEditToolRun(run)) return null;
+  return null;
+};
+
+/**
+ * 工具条目行内的 diff 统计：编辑 / 写入 / 补丁类工具返回 +/- 行数，其他返回 null。
+ * 只做行计数，不构建 diff 行视图；供时间线折叠态在文件名旁直接展示改动规模。
+ * 口径优先取结果侧权威行数，缺结果时退回调用参数（含 `input` 补丁语法）。
+ */
+export const buildTimelineDiffStats = (run: RawToolRun): TimelineDiffStats | null => {
+  const patchTool = isApplyPatchToolName(run.toolName);
+  if (!patchTool && !isTimelineEditToolRun(run)) return null;
+  const fromResult = resolveResultDiffStats(run);
+  if (fromResult) return fromResult;
+  if (patchTool) {
+    const patchText = resolvePatchInputText(run);
+    if (!patchText) return null;
+    const counted = countPatchText(patchText);
+    return counted.added > 0 || counted.deleted > 0 ? counted : null;
+  }
   const edit = resolveEditLikeArgs(run);
-  if (!edit) return null;
-  if (edit.kind === 'replace' && edit.oldText === edit.newText) return null;
-  if (!edit.oldText && !edit.newText) return null;
-  const added = countTextLines(edit.newText);
-  // replace 的删除行是旧文本；create/write/insert 没有旧文本可删。
-  const deleted = edit.kind === 'replace' ? countTextLines(edit.oldText) : 0;
-  return added > 0 || deleted > 0 ? { added, deleted } : null;
+  if (edit) {
+    if (edit.kind === 'replace' && edit.oldText === edit.newText) return null;
+    if (edit.oldText || edit.newText) {
+      const added = countTextLines(edit.newText);
+      // replace 的删除行是旧文本；create/write/insert 没有旧文本可删。
+      const deleted = edit.kind === 'replace' ? countTextLines(edit.oldText) : 0;
+      return added > 0 || deleted > 0 ? { added, deleted } : null;
+    }
+  }
+  // 文本编辑也接受 `input` 补丁语法（没有 old/new 字段）。
+  const inputPatch = resolvePatchInputText(run);
+  if (!inputPatch) return null;
+  const counted = countPatchText(inputPatch);
+  return counted.added > 0 || counted.deleted > 0 ? counted : null;
 };
 
 /** 组装补丁卡片视图；非补丁/编辑工具或没有可解析参数时返回 null。 */

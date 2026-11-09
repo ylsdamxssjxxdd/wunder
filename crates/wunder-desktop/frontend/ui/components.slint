@@ -371,6 +371,7 @@ export component ThemeSlider inherits Rectangle {
         border-radius: 2px;
         background: Theme.border;
         Rectangle {
+            x: 0px; y: 0px;
             width: parent.width * root.ratio; height: parent.height;
             border-radius: 2px;
             background: !root.enabled ? Theme.input-readonly-border

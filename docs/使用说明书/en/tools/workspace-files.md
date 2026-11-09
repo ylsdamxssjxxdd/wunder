@@ -12,9 +12,15 @@ Five common operations in the local workspace map to five tools: list a director
 
 Give a path and it lists the directory; you can limit how many levels deep to look and how many entries to return at once. Directory entries are marked with a trailing slash, and large listings are paginated; the result tells you whether another page exists and gives the cursor for continuing.
 
+Dependency and build-cache directories (`node_modules`, `target`, `.cargo`, ...) and `.gitignore` hits are skipped by default; pass `include_ignored=true` to see them, and `exclude` to subtract more globs.
+
+## Finding files by pattern
+
+`glob` matches file names and never returns directories. It applies the same default ignores (`include_ignored=true` opts out, `exclude` subtracts more), orders results by modification time, returns at most 100 paths, and reports the total while sampling across top-level entries when the cap is exceeded.
+
 ## Searching content
 
-It searches a directory by keyword and returns the files and positions that match. You can restrict the file type, choose case-sensitive or regular-expression matching, and include a few lines of context before and after each hit; you can also cap how many hits and how many files are scanned. When the result is truncated it says why, and to preview the search plan without running it for real you can turn on a dry run.
+It searches a directory by keyword and returns the files and positions that match. You can restrict the file type, choose case-sensitive or regular-expression matching, and include a few lines of context before and after each hit; you can also cap how many hits and how many files are scanned. When the result is truncated it says why, and to preview the search plan without running it for real you can turn on a dry run. Pass `mode=paths` for a file list only (like `rg -l`), which returns `paths` instead of per-line hits; a hit line longer than 400 characters is truncated and marked `content_truncated`.
 
 ## Reading a file
 

@@ -30,7 +30,7 @@ Use it when several reasonable routes exist and the user has to decide before wo
 
 It can ask 1 to 4 questions, each with 1 to 4 options; an option can be a label plus description plus a recommended flag, or just a string. Each question can be set to multiple choice, single choice by default. The old flat single-question form (question, options, and a multiple-choice flag at the top level) is still accepted. An option whose label contains "recommended", or that carries the recommended flag, is recognized as the recommended choice.
 
-More than 4 questions keeps only the first 4; a question with no options is dropped entirely; if everything is dropped, it reports an error.
+More than 4 questions keeps only the first 4; a question with no options is dropped entirely; if everything is dropped, it reports an error. Dropped questions never vanish silently: `dropped_questions` and the hint name the position, what is missing, and which fields were supplied. Options can also be one string separated by `|` or `，`.
 
 The panel is sent in a "stay open" form, and the turn ends there: the closing text tells the user to answer in the panel, and the stop reason is recorded as the question panel: opening the panel ends the turn and waits for the user's next message.
 

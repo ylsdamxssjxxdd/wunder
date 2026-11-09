@@ -1471,7 +1471,15 @@ impl Item for TextInput {
                         .anchor_position_byte_offset
                         .set(self.as_ref().cursor_position_byte_offset());
                 }
-                WindowInner::from_pub(window_adapter.window()).set_text_input_focused(false);
+                // 窗口失焦不等于输入框失焦：只投影焦点标志、不发送 Disable。
+                // 这样重新聚焦时 XSetICFocus 沿用的还是同一个输入上下文，
+                // fcitx/搜狗会恢复之前选中的输入法；销毁重建会掉回直接输入。
+                let window_inner = WindowInner::from_pub(window_adapter.window());
+                if matches!(reason, FocusReason::WindowActivation) {
+                    window_inner.set_text_input_focused_projection(false);
+                } else {
+                    window_inner.set_text_input_focused(false);
+                }
                 if !self.read_only() {
                     // commit the preedit text on android
                     #[cfg(target_os = "android")]

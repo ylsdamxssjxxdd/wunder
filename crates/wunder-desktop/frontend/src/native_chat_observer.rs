@@ -784,6 +784,8 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             &turn.assistant,
             turn.subagents.iter().any(|card| card.is_running()),
         );
+        footer.user_round = turn.assistant.user_round.min(i32::MAX as i64) as i32;
+        footer.status_kind = crate::timeline::status_kind(turn.assistant.state.as_str());
         if let Some(body) = answer_at {
             footer.text = rows[body].text.clone();
         }
@@ -920,6 +922,8 @@ pub(crate) fn project_cloud_history(
         );
         footer.summary = answer.id.clone();
         footer.text = answer.text.clone();
+        footer.user_round = chat.user_round.min(i32::MAX as i64) as i32;
+        footer.status_kind = crate::timeline::status_kind(chat.status.as_str());
         footer.stats = ModelRc::new(VecModel::from(crate::timeline::stat_metrics(
             &crate::turn_stats::with_status(
                 crate::turn_stats::metrics(&chat.assistant.stats.clone().unwrap_or(Value::Null)),
@@ -1084,6 +1088,7 @@ fn user_display_source(message: &wunder_desktop::NativeMessage) -> String {
 
 fn blank_row(kind: i32, id: String) -> TimelineRow {
     TimelineRow {
+        user_round: 0,
         kind,
         id: id.into(),
         visible: true,

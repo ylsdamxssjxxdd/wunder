@@ -500,6 +500,38 @@ fn draw_rows(app: &mut TuiApp, width: u16, height: u16) -> Vec<String> {
 }
 
 #[tokio::test]
+async fn enter_dispatches_the_highlighted_slash_completion() {
+    let root = TempRoot::new("slash_completion_enter");
+    let mut app = fixture_app(root.path()).await;
+    app.input = "/".to_string();
+    app.input_cursor = app.input.len();
+
+    app.on_key(key(KeyCode::Down))
+        .await
+        .expect("highlight the second command");
+    assert_eq!(app.popup_selected_index, 1);
+    app.on_key(key(KeyCode::Enter))
+        .await
+        .expect("dispatch the highlighted command");
+
+    assert!(app.input.is_empty());
+    assert!(
+        app.logs.iter().any(|entry| entry.text == "status"),
+        "the second candidate is /status: {:?}",
+        app.logs
+            .iter()
+            .map(|entry| entry.text.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !app.logs
+            .iter()
+            .any(|entry| entry.text.contains("unknown command: /")),
+        "the raw slash must not be submitted"
+    );
+}
+
+#[tokio::test]
 async fn live_reasoning_streams_inline_and_stays_available_in_the_transcript() {
     let root = TempRoot::new("reasoning_projection");
     let mut app = fixture_app(root.path()).await;
@@ -2670,6 +2702,40 @@ async fn a_drag_across_the_transcript_marks_rows_and_the_release_copies_them() {
     let lines = copied[0].lines().count();
     assert!(lines >= 2, "the drag covered two rows: {:?}", copied[0]);
     assert!(copied[0].contains("Ran cargo test"), "{:?}", copied[0]);
+}
+
+#[tokio::test]
+async fn a_drag_on_a_soft_wrapped_row_selects_only_its_own_text() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let root = TempRoot::new("wrapped_selection");
+    let mut app = fixture_app(root.path()).await;
+    raw_single_line_cards(&mut app, &["alpha beta gamma delta epsilon zeta"]);
+    let before = draw_rows(&mut app, 16, 12);
+    let row = before
+        .iter()
+        .position(|line| line.starts_with("delta"))
+        .unwrap_or_else(|| panic!("the second visual row is visible: {before:?}"));
+    let _clipboard_turn = ClipboardSeam::arm();
+
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), row, 0);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), row, 5);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), row, 5);
+
+    assert_eq!(
+        ClipboardSeam::copied().as_slice(),
+        &["delta".to_string()],
+        "a soft wrap must not turn the gesture into a whole-line selection"
+    );
+    assert_eq!(app.focus_area, FocusArea::Input);
+    assert_eq!(app.transcript_selected, None);
+
+    app.on_key(key(KeyCode::Char('/')))
+        .await
+        .expect("type a slash after selecting");
+    assert_eq!(app.input, "/");
+    assert!(!app.transcript_search_is_editing());
+    assert!(!app.popup_view().lines.is_empty());
 }
 
 /// Two clicks take the word under the pointer, three take the line, and each release

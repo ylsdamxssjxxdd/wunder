@@ -730,16 +730,29 @@ pub struct TuiApp {
     /// later frame so the key path never waits on storage. The session id and
     /// token ride along so a stale probe (taken before a switch) is dropped.
     lease_validation_rx: Option<tokio::sync::oneshot::Receiver<(String, u64, Result<bool>)>>,
-    /// In-flight system clipboard reads (Ctrl+V) and writes (Ctrl+O).
+    /// In-flight system clipboard reads and writes; completion is polled on a later frame.
     clipboard_paste_rx: Option<tokio::sync::oneshot::Receiver<Result<ClipboardSnapshot>>>,
-    clipboard_write_rx: Option<tokio::sync::oneshot::Receiver<(usize, Result<()>)>>,
+    clipboard_write_rx: Option<tokio::sync::oneshot::Receiver<ClipboardWriteOutcome>>,
     /// `!cmd` runs detached; each finished command lands here for the drain.
     pending_shell_results: Vec<tokio::sync::oneshot::Receiver<Result<Value>>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClipboardWriteKind {
+    #[cfg(not(test))]
+    Selection,
+    LastReply,
+}
+
+#[derive(Debug)]
+struct ClipboardWriteOutcome {
+    characters: usize,
+    result: Result<()>,
+    kind: ClipboardWriteKind,
+}
+
 /// One copy result in the composer gap. `expires_at: None` is the shape a pending
-/// (not yet confirmed) copy would take; today every write confirms synchronously, so
-/// live copies always carry a deadline.
+/// (not yet confirmed) copy would take; completed writes always carry a deadline.
 #[derive(Debug, Clone, Copy)]
 struct CopyFeedback {
     characters: usize,
@@ -3167,7 +3180,7 @@ impl TuiApp {
         self.wheel.reset();
         let notice = match mode {
             MouseMode::Capture => {
-                "mouse mode: capture (clicks select cards, open details and place the cursor; the wheel scrolls the transcript)"
+                "mouse mode: capture (drag to select text, click details or place the cursor; the wheel scrolls the transcript)"
             }
             MouseMode::Native => {
                 "mouse mode: native (the terminal keeps its own selection, copy and scrollback wheel)"
@@ -3203,6 +3216,9 @@ impl TuiApp {
     fn set_focus_area(&mut self, focus: FocusArea) {
         if self.focus_area == focus {
             return;
+        }
+        if focus == FocusArea::Input && self.transcript_search_is_editing() {
+            self.cancel_transcript_search();
         }
         self.focus_area = focus;
         match self.focus_area {
@@ -3808,7 +3824,7 @@ impl TuiApp {
     /// transcript search is being edited: the row is the query's, and a control the reader
     /// cannot act on with the same keys would only compete with it for their attention.
     fn gap_search_editing(&self) -> bool {
-        self.transcript_search.editing
+        self.transcript_search.editing && self.focus_area == FocusArea::Transcript
     }
 
     /// Everything that retires the control for one frame: the tail is already visible, a
@@ -5542,6 +5558,14 @@ impl TuiApp {
                 self.flush_key_paste_burst_if_due(true);
                 self.flush_pending_paste();
 
+                if self.model_wizard.is_none() && !self.popup_lines_full().is_empty() {
+                    let slash_command = self.input.trim_start().starts_with('/');
+                    self.apply_first_suggestion();
+                    if !slash_command {
+                        return Ok(());
+                    }
+                }
+
                 let raw_line = std::mem::take(&mut self.input);
                 self.input_cursor = 0;
                 // Submitting empties the draft, so the gesture that made it is retired with
@@ -6027,15 +6051,23 @@ impl TuiApp {
             );
             return;
         };
+        self.start_clipboard_write(text, ClipboardWriteKind::LastReply);
+    }
+
+    fn start_clipboard_write(&mut self, text: String, kind: ClipboardWriteKind) {
         if self.clipboard_write_rx.is_some() {
             return;
         }
-
-        let chars = text.chars().count();
+        let characters = text.chars().count();
         let (tx, rx) = tokio::sync::oneshot::channel();
         let frames = self.frame_requester.clone();
         tokio::task::spawn_blocking(move || {
-            let _ = tx.send((chars, write_system_clipboard_text(text.as_str())));
+            let result = write_system_clipboard_text(text.as_str());
+            let _ = tx.send(ClipboardWriteOutcome {
+                characters,
+                result,
+                kind,
+            });
             frames.schedule_frame();
         });
         self.clipboard_write_rx = Some(rx);
@@ -6054,28 +6086,35 @@ impl TuiApp {
             }
         };
         self.clipboard_write_rx = None;
-        let (chars, result) = outcome;
-        match result {
-            Ok(()) => {
-                self.push_log(
-                    LogKind::Info,
-                    crate::locale::tr(
-                        self.display_language.as_str(),
-                        &format!("已复制最后一条回复（{chars} 字符）"),
-                        &format!("copied the last reply ({chars} chars)"),
-                    ),
-                );
-            }
-            Err(error) => {
-                self.push_log(
-                    LogKind::Error,
-                    crate::locale::tr(
-                        self.display_language.as_str(),
-                        &format!("复制失败: {error}"),
-                        &format!("copy failed: {error}"),
-                    ),
-                );
-            }
+        match outcome.kind {
+            #[cfg(not(test))]
+            ClipboardWriteKind::Selection => match outcome.result {
+                Ok(()) => self.show_copy_feedback(outcome.characters),
+                Err(_) => self.show_copy_failure(),
+            },
+            ClipboardWriteKind::LastReply => match outcome.result {
+                Ok(()) => {
+                    let chars = outcome.characters;
+                    self.push_log(
+                        LogKind::Info,
+                        crate::locale::tr(
+                            self.display_language.as_str(),
+                            &format!("已复制最后一条回复（{chars} 字符）"),
+                            &format!("copied the last reply ({chars} chars)"),
+                        ),
+                    );
+                }
+                Err(error) => {
+                    self.push_log(
+                        LogKind::Error,
+                        crate::locale::tr(
+                            self.display_language.as_str(),
+                            &format!("复制失败: {error}"),
+                            &format!("copy failed: {error}"),
+                        ),
+                    );
+                }
+            },
         }
         self.request_redraw();
     }
@@ -6697,6 +6736,9 @@ impl TuiApp {
                 self.copy_transcript_selection();
                 return;
             }
+            if self.transcript_search_is_editing() {
+                self.cancel_transcript_search();
+            }
             self.focus_area = FocusArea::Input;
             self.paste_from_system_clipboard();
             return;
@@ -6814,6 +6856,9 @@ impl TuiApp {
             // The composer answers first and counts its own clicks: a double click here
             // never chains with one in the transcript, and the gesture is cut before the
             // caret is placed, so the second press takes a word and the third a line.
+            if self.transcript_search_is_editing() {
+                self.cancel_transcript_search();
+            }
             self.focus_area = FocusArea::Input;
             self.transcript_selection = None;
             if let Some(hit) = self.input_hit(mouse) {
@@ -6832,8 +6877,8 @@ impl TuiApp {
         let Some(point) = self.transcript_point(mouse) else {
             return;
         };
-        self.focus_area = FocusArea::Transcript;
-        // A press anywhere retires the other region's mark: one pointer, one selection.
+        // Pointer selection does not move keyboard focus or the keyboard's selected card.
+        // In particular, a following `/` still belongs to the composer, not transcript search.
         self.clear_input_selection();
         // Shift+click extends, it does not restart: the anchor stays where the reader put
         // it. codex also drops the click counter here, so a shift+click never feeds a
@@ -6849,7 +6894,6 @@ impl TuiApp {
         }
         self.transcript_selection = None;
         if let Some(index) = self.transcript_hit.rows.get(point.row).copied().flatten() {
-            self.transcript_selected = Some(index);
             let next = self
                 .transcript_hit
                 .rows
@@ -6857,7 +6901,7 @@ impl TuiApp {
                 .copied()
                 .flatten();
             let is_card_last_row = next.is_none_or(|next| next != index);
-            if is_card_last_row && self.toggle_selected_card() {
+            if is_card_last_row && self.toggle_card(index) {
                 self.reset_pointer_clicks();
                 return;
             }
@@ -6990,31 +7034,28 @@ impl TuiApp {
         self.publish_clipboard_text(text.as_str());
     }
 
-    /// The one clipboard channel. Under tests the write goes to the seam
-    /// `CLIPBOARD_WRITER` holds so a test can read back what a gesture would have copied
-    /// without touching the machine's real clipboard; a real run hands it to the terminal.
-    /// Both marks — transcript and composer — come through here, so there is exactly one
-    /// seam to arm and never a second static.
+    /// The one selection clipboard channel. Production writes run beside the event loop so
+    /// a slow clipboard owner cannot freeze pointer and keyboard handling. Tests use the
+    /// synchronous `CLIPBOARD_WRITER` seam instead of touching the machine clipboard.
     fn publish_clipboard_text(&mut self, text: &str) {
         if text.is_empty() {
             return;
         }
-        #[cfg(test)]
-        let writer = *CLIPBOARD_WRITER
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
         #[cfg(not(test))]
-        let writer: Option<fn(&str) -> anyhow::Result<()>> = Some(write_system_clipboard_text);
-        let outcome = match writer {
-            Some(write) => write(text),
-            None => Ok(()),
-        };
-        match outcome {
-            // A successful copy says nothing on the transcript — the mark is the feedback —
-            // but the gap row above the draft carries the character count for a moment, so
-            // a copy that never reached the terminal is distinguishable from a silent one.
-            Ok(()) => self.show_copy_feedback(text.chars().count()),
-            Err(_) => self.show_copy_failure(),
+        self.start_clipboard_write(text.to_string(), ClipboardWriteKind::Selection);
+        #[cfg(test)]
+        {
+            let writer = *CLIPBOARD_WRITER
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let outcome = match writer {
+                Some(write) => write(text),
+                None => Ok(()),
+            };
+            match outcome {
+                Ok(()) => self.show_copy_feedback(text.chars().count()),
+                Err(_) => self.show_copy_failure(),
+            }
         }
         self.request_redraw();
     }

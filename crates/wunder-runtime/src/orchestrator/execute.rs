@@ -2137,7 +2137,7 @@ impl Orchestrator {
                         if !answer.is_empty() {
                             break;
                         }
-                        if stop_after_index.map(|stop| stop == index).unwrap_or(false) {
+                        if result.ok && stop_after_index.map(|stop| stop == index).unwrap_or(false) {
                             should_finish = true;
                             break;
                         }

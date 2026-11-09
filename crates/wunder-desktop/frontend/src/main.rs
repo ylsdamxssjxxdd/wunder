@@ -8,6 +8,7 @@ pub(crate) mod avatar_assets;
 mod avatar_ui;
 mod channel_ui;
 mod chat_process;
+mod chat_split;
 mod cloud_threads;
 mod code_highlight;
 mod command_tasks;

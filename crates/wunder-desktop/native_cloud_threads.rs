@@ -103,6 +103,19 @@ impl NativeDesktop {
             status: "active".to_string(),
         })
     }
+    pub fn cloud_thread_fork(&self, thread: &str, user_round: i64) -> Result<NativeCloudThread> {
+        let result = self
+            .runtime
+            .block_on(self.state().cloud.cloud_thread_fork(thread, user_round))?;
+        let id = string(&result, "id");
+        anyhow::ensure!(!id.is_empty(), "cloud fork returned no thread id");
+        Ok(NativeCloudThread {
+            id,
+            title: string(&result, "title"),
+            status: "active".to_string(),
+        })
+    }
+
     pub fn cloud_thread_view(&self, thread: &str) -> Result<ThreadViewPage> {
         Ok(self.cloud_thread_bootstrap(thread)?.page)
     }

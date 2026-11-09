@@ -1,4 +1,4 @@
-use super::{build_model_tool_success, context::ToolContext};
+use super::{build_model_tool_success, build_model_tool_success_with_hint, context::ToolContext};
 use crate::i18n;
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
@@ -107,7 +107,8 @@ pub(crate) async fn execute_question_panel_tool(
     context: &ToolContext<'_>,
     args: &Value,
 ) -> Result<Value> {
-    let questions = normalize_question_panel_questions(args)?;
+    let parsed = normalize_question_panel_questions(args)?;
+    let questions = parsed.questions;
     let questions_json = questions
         .iter()
         .map(question_panel_question_json)
@@ -121,11 +122,23 @@ pub(crate) async fn execute_question_panel_tool(
             }),
         );
     }
-    Ok(build_model_tool_success(
+    // 被丢掉的题不能静默消失：提示里说清是第几题、缺了什么，模型下一轮才能补上。
+    let hint = if parsed.dropped.is_empty() {
+        None
+    } else {
+        let mut hint = String::from("Dropped questions without usable options: ");
+        hint.push_str(&parsed.dropped.join("; "));
+        Some(hint)
+    };
+    Ok(build_model_tool_success_with_hint(
         "question_panel",
         "awaiting_input",
         "Opened a question panel and is waiting for user input.",
-        json!({ "questions": questions_json }),
+        json!({
+            "questions": questions_json,
+            "dropped_questions": parsed.dropped,
+        }),
+        hint,
     ))
 }
 
@@ -141,9 +154,15 @@ fn question_panel_question_json(question: &QuestionPanelQuestion) -> Value {
     })
 }
 
-fn normalize_question_panel_questions(args: &Value) -> Result<Vec<QuestionPanelQuestion>> {
+#[derive(Debug)]
+struct QuestionPanelParse {
+    questions: Vec<QuestionPanelQuestion>,
+    dropped: Vec<String>,
+}
+
+fn normalize_question_panel_questions(args: &Value) -> Result<QuestionPanelParse> {
     let Some(obj) = args.as_object() else {
-        return Err(anyhow!(i18n::t("tool.question_panel.options_required")));
+        return Err(question_panel_options_error(&[], args));
     };
     let raw_items = match obj.get("questions").and_then(Value::as_array) {
         Some(items) => items.clone(),
@@ -157,6 +176,7 @@ fn normalize_question_panel_questions(args: &Value) -> Result<Vec<QuestionPanelQ
         }
     };
     let mut questions = Vec::new();
+    let raw_items_for_error = raw_items.clone();
     for item in raw_items.into_iter().take(MAX_QUESTION_PANEL_QUESTIONS) {
         let Value::Object(record) = item else {
             continue;
@@ -195,10 +215,109 @@ fn normalize_question_panel_questions(args: &Value) -> Result<Vec<QuestionPanelQ
             multiple,
         });
     }
+    let checked = raw_items_for_error
+        .iter()
+        .take(MAX_QUESTION_PANEL_QUESTIONS)
+        .collect::<Vec<_>>();
+    let dropped = question_panel_problems(&checked);
     if questions.is_empty() {
-        return Err(anyhow!(i18n::t("tool.question_panel.options_required")));
+        return Err(question_panel_options_error(&checked, args));
     }
-    Ok(questions)
+    Ok(QuestionPanelParse { questions, dropped })
+}
+
+/// 选项缺失时不要只回一句「每个问题至少要给出一个选项」：把解析到什么、第几题
+/// 缺字段、正确形状一起回给模型，才能一次改对而不是反复猜。
+fn question_panel_options_error(checked: &[&Value], args: &Value) -> anyhow::Error {
+    let mut details = question_panel_problems(checked);
+    if details.is_empty() {
+        let keys = args
+            .as_object()
+            .map(|obj| obj.keys().cloned().collect::<Vec<_>>().join("、"))
+            .unwrap_or_default();
+        let mut line = String::from("没有可渲染的问题项，实际字段有 ");
+        line.push_str(&keys);
+        details.push(line);
+    }
+    let mut message = i18n::t("tool.question_panel.options_required");
+    message.push('。');
+    message.push_str(&details.join("；"));
+    message.push_str("。正确形状：questions 数组，每项含 question 与 options（options 至少 1 项，可写字符串数组，也可写用 | 分隔的一整串）。");
+    anyhow!(message)
+}
+
+/// 逐项说明「第几题、什么问题、实际有什么字段」，供错误与丢弃提示共用。
+fn question_panel_problems(items: &[&Value]) -> Vec<String> {
+    let mut details = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        let position = index + 1;
+        match item {
+            Value::Object(record) => {
+                let option_count = record
+                    .get("options")
+                    .or_else(|| record.get("routes"))
+                    .or_else(|| record.get("choices"))
+                    .map(option_item_count)
+                    .unwrap_or(0);
+                if option_count > 0 {
+                    continue;
+                }
+                let question = record
+                    .get("question")
+                    .or_else(|| record.get("title"))
+                    .or_else(|| record.get("header"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                let mut line = String::from("第 ");
+                line.push_str(&position.to_string());
+                line.push_str(" 题缺少 options");
+                if !question.is_empty() {
+                    line.push_str("（题目：");
+                    line.push_str(question);
+                    line.push('）');
+                }
+                let keys = record.keys().cloned().collect::<Vec<_>>();
+                if !keys.is_empty() {
+                    line.push_str("，实际字段有 ");
+                    line.push_str(&keys.join("、"));
+                }
+                details.push(line);
+            }
+            other => {
+                let mut line = String::from("第 ");
+                line.push_str(&position.to_string());
+                line.push_str(" 项不是对象（实际是 ");
+                line.push_str(value_kind(other));
+                line.push('）');
+                details.push(line);
+            }
+        }
+    }
+    details
+}
+
+/// options 既可能是数组，也可能是 `甲|乙` 这样的整串；两种都算数。
+fn option_item_count(value: &Value) -> usize {
+    match value {
+        Value::Array(items) => items.len(),
+        Value::String(text) => text
+            .split(['|', '，'])
+            .filter(|part| !part.trim().is_empty())
+            .count(),
+        _ => 0,
+    }
+}
+
+fn value_kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "布尔值",
+        Value::Number(_) => "数字",
+        Value::String(_) => "字符串",
+        Value::Array(_) => "数组",
+        Value::Object(_) => "对象",
+    }
 }
 
 fn first_panel_value(obj: &serde_json::Map<String, Value>, keys: &[&str]) -> Value {
@@ -209,7 +328,15 @@ fn first_panel_value(obj: &serde_json::Map<String, Value>, keys: &[&str]) -> Val
 }
 
 fn normalize_question_panel_options(value: Option<&Value>) -> Vec<QuestionPanelOption> {
-    let items = value.and_then(Value::as_array).cloned().unwrap_or_default();
+    // options 既接受对象/字符串数组，也接受用 | 或，分隔的一整串，少写一层嵌套。
+    let items = match value {
+        Some(Value::Array(items)) => items.clone(),
+        Some(Value::String(text)) => text
+            .split(['|', '，'])
+            .map(|part| Value::String(part.trim().to_string()))
+            .collect(),
+        _ => Vec::new(),
+    };
     let mut normalized = Vec::new();
     for item in items {
         let (label, description, recommended) = match item {
@@ -286,7 +413,7 @@ mod tests {
                 }
             ]
         }))
-        .expect("questions");
+        .expect("questions").questions;
         assert_eq!(questions.len(), 2);
         assert_eq!(questions[0].options.len(), 2);
         assert!(questions[0].options[1].recommended);
@@ -302,7 +429,7 @@ mod tests {
             "routes": [{ "label": "继续（推荐）" }],
             "allow_multiple": false
         }))
-        .expect("legacy questions");
+        .expect("legacy questions").questions;
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].question, "旧版单题");
         // 标题里写「推荐」也要被识别成推荐项。
@@ -317,12 +444,47 @@ mod tests {
                 { "question": "有选项的一题", "options": ["甲"] }
             ]
         }))
-        .expect("kept questions");
+        .expect("kept questions").questions;
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].question, "有选项的一题");
 
         let err = normalize_question_panel_questions(&json!({ "questions": [] }))
             .expect_err("no usable question");
         assert!(err.to_string().contains("选项"));
+    }
+
+    #[test]
+    fn question_panel_accepts_pipe_separated_options() {
+        let questions = normalize_question_panel_questions(&json!({
+            "questions": [{ "question": "选哪个方向", "options": "甲|乙" }]
+        }))
+        .expect("questions").questions;
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].options.len(), 2);
+        assert_eq!(questions[0].options[1].label, "乙");
+    }
+
+    #[test]
+    fn question_panel_reports_dropped_questions_instead_of_hiding_them() {
+        let parsed = normalize_question_panel_questions(&json!({
+            "questions": [
+                { "question": "有选项的一题", "options": ["甲"] },
+                { "question": "没有选项的一题", "hint": "漏了 options" }
+            ]
+        }))
+        .expect("one usable question");
+        assert_eq!(parsed.questions.len(), 1);
+        assert_eq!(parsed.dropped.len(), 1);
+        assert!(parsed.dropped[0].contains("第 2 题缺少 options"), "{:?}", parsed.dropped);
+        assert!(parsed.dropped[0].contains("没有选项的一题"), "{:?}", parsed.dropped);
+    }
+
+    #[test]
+    fn question_panel_error_keeps_a_shape_hint() {
+        let err = normalize_question_panel_questions(&json!({ "question": "无选项" }))
+            .expect_err("no usable question");
+        let text = err.to_string();
+        assert!(text.contains("第 1 题缺少 options"), "{}", text);
+        assert!(text.contains("正确形状"), "{}", text);
     }
 }

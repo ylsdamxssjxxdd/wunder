@@ -338,7 +338,7 @@ impl TuiApp {
 
     /// Leave the search editor and restore the scroll the reader was at before opening it.
     /// Every card the search opened goes back the way it was found.
-    fn cancel_transcript_search(&mut self) {
+    pub(super) fn cancel_transcript_search(&mut self) {
         self.forget_search_expansions();
         let search = &mut self.transcript_search;
         search.editing = false;
@@ -663,7 +663,7 @@ impl TuiApp {
     /// frame, and a stale hit paints nothing rather than marking the wrong text.
     pub(crate) fn paint_transcript_search_marks(&self, lines: &mut [Line<'static>]) {
         let search = &self.transcript_search;
-        if !search.editing || search.matches.is_empty() || lines.is_empty() {
+        if !self.gap_search_editing() || search.matches.is_empty() || lines.is_empty() {
             return;
         }
         for (ordinal, hit) in search.matches.iter().enumerate() {

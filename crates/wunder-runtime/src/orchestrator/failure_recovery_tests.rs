@@ -82,6 +82,18 @@ impl Fixture {
                     } else {
                         json!({"choices":[{"message":message,"finish_reason":"tool_calls"}]}).to_string()
                     }
+                } else if scenario == "question_panel_retry" {
+                    let arguments = if index == 0 {
+                        "{\"questions\":[question\":\"Choose\",\"options\":[\"A\"]]}"
+                    } else {
+                        "{\"questions\":[{\"question\":\"Choose\",\"options\":[\"A\",\"B\"]}]}"
+                    };
+                    let message = json!({"role":"assistant","tool_calls":[{"id":"call_question","type":"function","function":{"name":"question_panel","arguments":arguments}}]});
+                    if stream {
+                        format!("data: {}\n\ndata: [DONE]\n\n", json!({"choices":[{"delta":message,"finish_reason":"tool_calls"}]}))
+                    } else {
+                        json!({"choices":[{"message":message,"finish_reason":"tool_calls"}]}).to_string()
+                    }
                 } else if stream {
                     format!("data: {}\n\ndata: [DONE]\n\n", json!({"choices":[{"delta":{"content":"completed"},"finish_reason":"stop"}]}))
                 } else {
@@ -98,6 +110,7 @@ impl Fixture {
         config.tools.builtin.enabled = vec![
             resolve_tool_name("read_file"),
             resolve_tool_name("write_file"),
+            resolve_tool_name("question_panel"),
         ];
         config.storage.backend = "sqlite".into();
         config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
@@ -141,7 +154,7 @@ impl Fixture {
     fn request(&self, tools: bool) -> WunderRequest {
         let mut request: WunderRequest = serde_json::from_value(json!({
             "user_id":"fixture-user", "session_id":"fixture-thread", "question":"input",
-            "skip_tool_calls":!tools, "tool_names":["read_file", "write_file"],
+            "skip_tool_calls":!tools, "tool_names":["read_file", "write_file", "question_panel"],
         }))
         .unwrap();
         request.is_admin = true;
@@ -156,6 +169,27 @@ impl Fixture {
             .unwrap();
         assert_eq!(page.runtime_status, expected);
     }
+}
+
+#[test]
+fn failed_question_panel_call_is_returned_to_the_model_before_waiting() {
+    run_test(|| {
+        Box::pin(async {
+            for stream in [false, true] {
+                let fixture = Fixture::new("question_panel_retry", stream).await;
+                let result = fixture
+                    .state
+                    .kernel
+                    .orchestrator
+                    .run(fixture.request(true))
+                    .await
+                    .unwrap();
+                assert_eq!(result.stop_reason.as_deref(), Some("question_panel"));
+                assert_eq!(fixture.requests.lock().len(), 2);
+                fixture.assert_settled("waiting_input");
+            }
+        })
+    });
 }
 
 #[test]

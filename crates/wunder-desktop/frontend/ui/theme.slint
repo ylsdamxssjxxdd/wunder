@@ -203,6 +203,10 @@ export struct ProcessEntry {
     kind: int, id: string, text: string, blocks: [MdBlock],
     summary: string, tool-name: string, tool-icon: string, target: string,
     detail: string, sections: [WorkflowSection], patch: [PatchCard],
+    // Collapsed-row change size of an edit-style call, pre-formatted as plain
+    // counts ("12" / "3"). Empty means that side has no change, so a tool row
+    // shows only the number that applies instead of a meaningless "+0 −0".
+    diff-add: string, diff-del: string,
     tokens: string, duration: string, status-kind: int, open: bool, payload: int
 }
 
@@ -257,6 +261,8 @@ export struct TimelineRow {
     process-idx: int,
     process-open: bool,
     payload: int,
+    // Durable user-round boundary used by the assistant footer's fork action.
+    user-round: int,
     patch: [PatchCard],
     // End-of-turn status and metrics (user round / duration / speed / context
     // occupancy / consumed tokens / tool calls / quota). Built by

@@ -194,7 +194,7 @@
 
     <!--
       轮次统计行（§7.3 A，桌面端 BodyBlock 的 `height: 22px` 尾部行）：
-      左侧是图标 12px + 数值 11px muted 的统计，右侧是 22×22 的复制图标按钮
+      左侧是图标 12px + 数值 11px muted 的统计，右侧是 22×22 的分叉与复制按钮
       （不再显示保存 / 点赞 / 踩一下 / 播放语音）。
       它刻意留在正文块**之外**：正文为空（排队 / 刚起流）时状态药丸仍要可见，
       这是云端运行时的既有契约。
@@ -202,6 +202,20 @@
     <div v-if="!isGreeting" class="timeline-body-footer">
       <MessageStats :message="statsMessage" />
       <span class="timeline-body-footer-gap" aria-hidden="true"></span>
+      <button
+        v-if="canForkAgentMessage(message)"
+        class="timeline-body-action"
+        type="button"
+        :disabled="Boolean(controller.agentMessageForkingKey?.value)"
+        :title="t('chat.message.fork')"
+        :aria-label="t('chat.message.fork')"
+        @click="forkAgentMessage(message, activeSessionId)"
+      >
+        <i
+          :class="isAgentMessageForking(message) ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-code-fork'"
+          aria-hidden="true"
+        ></i>
+      </button>
       <button
         class="timeline-body-action"
         type="button"
@@ -248,7 +262,7 @@ import { buildAssistantDisplayContent } from '@/utils/assistantFailureNotice';
  * 内容）→ 正文块（**全宽、无气泡**，左右内边距 24px、上下 6px，hover 底 `hover`
  * 45%）与工具批次（折叠条 + 每条目 20px 沟槽：1px 连接线 + 6px 节点圆点）按到达
  * 顺序交错铺开 → 轮次统计行（高 22px、间距 12px、图标 12px + 数值 11px muted，
- * 右侧仅复制）。子智能体统一由输入区的状态入口展示。
+ * 右侧为分叉与复制）。子智能体统一由输入区的状态入口展示。
  *
  * 性能：
  * - 工具投影走 `createToolWorkflowRenderBatcher` 按帧合并（33ms），
@@ -259,6 +273,7 @@ import { buildAssistantDisplayContent } from '@/utils/assistantFailureNotice';
 const props = defineProps<{
   controller: MessengerControllerContext;
   item: { key: string; sourceIndex: number; message: Record<string, any> };
+  sessionId?: string;
 }>();
 
 const controller = props.controller;
@@ -267,7 +282,7 @@ const t = (key: string, params?: Record<string, unknown>): string => String(tran
 const chatStore = controller.chatStore;
 const message = computed<Record<string, any>>(() => props.item.message);
 
-const activeSessionId = computed(() => String(chatStore.activeSessionId || ''));
+const activeSessionId = computed(() => String(props.sessionId || chatStore.activeSessionId || '').trim());
 const conversationKey = computed(() => String(controller.sessionHub?.activeConversationKey || ''));
 const runtimeMessageId = computed(() => String(message.value.__runtime_message_id || message.value.message_id || ''));
 const runtimeUserTurnId = computed(() =>
@@ -301,6 +316,9 @@ const MARKDOWN_STREAM_THROTTLE_MS = controller.MARKDOWN_STREAM_THROTTLE_MS;
 const currentContainerId = controller.currentContainerId;
 const openResourcePreview = controller.openResourcePreview;
 const copyMessageContent = controller.copyMessageContent;
+const canForkAgentMessage = controller.canForkAgentMessage;
+const forkAgentMessage = controller.forkAgentMessage;
+const isAgentMessageForking = controller.isAgentMessageForking;
 const hasUserImageAttachments = controller.hasUserImageAttachments;
 const hasUserAudioAttachments = controller.hasUserAudioAttachments;
 const resolveUserImageAttachments = controller.resolveUserImageAttachments;
@@ -529,7 +547,7 @@ watch(
 }
 
 /* 轮次统计行：高 22px、间距 12px、图标 12px + 数值 11px muted（见 MessageStats 的
-   `.messenger-message-stats`），右侧仅保留「复制」图标按钮 22×22 圆角 6。 */
+   `.messenger-message-stats`），右侧为「分叉 / 复制」图标按钮 22×22 圆角 6。 */
 .timeline-body-footer {
   display: flex;
   align-items: center;
@@ -583,7 +601,7 @@ watch(
   color: currentColor;
 }
 
-/* 复制按钮：仅图标 22×22（去掉文字标签），hover 才显形。 */
+/* 轮次操作：仅图标 22×22（去掉文字标签），hover 才显形。 */
 .timeline-body-action {
   flex: 0 0 auto;
   display: inline-flex;
@@ -609,9 +627,13 @@ watch(
   opacity: 1;
 }
 
-.timeline-body-action:hover {
+.timeline-body-action:hover:not(:disabled) {
   background: var(--mz-timeline-hover, #f6f5f3);
   color: var(--mz-text-secondary, #3d3d3d);
+}
+
+.timeline-body-action:disabled {
+  cursor: wait;
 }
 
 .timeline-body-footer :deep(.messenger-message-footer-copy.timeline-body-icon-action) {

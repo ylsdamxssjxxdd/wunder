@@ -53,7 +53,13 @@
         @click="sidebarDrawerOpen = false"
       ></div>
 
-      <section class="messenger-main">
+      <section
+        class="messenger-main"
+        :class="{ 'is-split-drop-target': singleDropActive }"
+        @dragover="handleSingleSplitDragOver"
+        @dragleave="singleDropActive = false"
+        @drop="handleSingleSplitDrop"
+      >
         <!-- 壳体不再有顶部条：窄视口抽屉入口 / 折叠后的展开入口与「回到顶部」都挂在主区浮层上。 -->
         <button
           v-if="(isSidebarDrawer && !sidebarDrawerOpen) || sidebarCollapsed"
@@ -75,6 +81,24 @@
         >
           <i class="fa-solid fa-angles-up" aria-hidden="true"></i>
         </button>
+        <button
+          v-if="splitCount === 1 && hasActiveThread && !localThreadActive"
+          class="messenger-split-enter"
+          type="button"
+          :title="t('messenger.split.two')"
+          :aria-label="t('messenger.split.two')"
+          @click="splitCount = 2"
+        >
+          <i class="fa-solid fa-table-columns" aria-hidden="true"></i>
+        </button>
+        <MessengerChatSplitView
+          v-if="splitCount !== 1"
+          v-model:count="splitCount"
+          :controller="controller"
+          :active-session-id="String(chatStore.activeSessionId || '')"
+          :secondary-session-id="splitSecondaryId"
+        />
+        <template v-else>
 
         <!-- 刻度与滚动视口同排：`.messenger-chat-lane` 给刻度留出独立通道，
              刻度不再悬浮在滚动容器右缘的滚动条上。 -->
@@ -183,6 +207,7 @@
             />
           </div>
         </footer>
+        </template>
       </section>
     </div>
 
@@ -272,6 +297,8 @@ import { chatPerf } from '@/utils/chatPerf';
 import { computed as vueComputed, ref as vueRef } from 'vue';
 import { defineRecoverableAsyncComponent } from '@/utils/asyncComponentRecovery';
 import MessengerMessagePanel from '@/views/messenger/sections/MessengerMessagePanel.vue';
+import MessengerChatSplitView from '@/views/messenger/sections/MessengerChatSplitView.vue';
+import { CHAT_THREAD_DRAG_TYPE, type ChatSplitCount } from '@/views/messenger/chatSplitLayout';
 import MessengerSidebar from '@/views/messenger/sections/MessengerSidebar.vue';
 import MessengerTurnRuler from '@/views/messenger/sections/MessengerTurnRuler.vue';
 import MessengerSettingsOverlay from '@/views/messenger/sections/MessengerSettingsOverlay.vue';
@@ -315,6 +342,26 @@ const chatStore = controller.chatStore;
 // ------------------------------------------------------------- shell state
 
 const hasActiveThread = vueComputed(() => Boolean(String(chatStore.activeSessionId || '')));
+const splitCount = vueRef<ChatSplitCount>(1);
+const splitSecondaryId = vueRef('');
+const singleDropActive = vueRef(false);
+const hasThreadDrag = (event: DragEvent): boolean =>
+  Array.from(event.dataTransfer?.types || []).includes(CHAT_THREAD_DRAG_TYPE);
+const handleSingleSplitDragOver = (event: DragEvent) => {
+  if (splitCount.value !== 1 || !hasThreadDrag(event) || localThreadActive.value) return;
+  event.preventDefault();
+  singleDropActive.value = true;
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+};
+const handleSingleSplitDrop = (event: DragEvent) => {
+  singleDropActive.value = false;
+  if (splitCount.value !== 1) return;
+  const id = String(event.dataTransfer?.getData(CHAT_THREAD_DRAG_TYPE) || '').trim();
+  if (!id) return;
+  event.preventDefault();
+  splitSecondaryId.value = id;
+  splitCount.value = 2;
+};
 const localThreadTarget = vueRef('');
 const localThreadWorkspaceId = vueRef('');
 const localThreadId = vueRef('');

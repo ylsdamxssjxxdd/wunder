@@ -119,3 +119,19 @@ test('invalid bootstrap still fails even with an existing transcript', async () 
     assert.equal(f.views.threadViewSlots('fixture-a')![0].assistant.content, 'answer 2');
   } finally { f.cleanup(); }
 });
+
+
+test('detached split hydration fills a status-only entry without stealing foreground', async () => {
+  const f = await fixture();
+  try {
+    f.store.activeSessionId = 'foreground';
+    f.views.beginThreadView('fixture-background');
+    const pending = f.loader.openThreadViewDetached(f.store, 'fixture-background');
+    await f.tick();
+    assert.equal(f.pending.length, 1);
+    f.pending[0].reply(page('fixture-background'));
+    assert.equal((await pending).id, 'fixture-background');
+    assert.equal(f.store.activeSessionId, 'foreground');
+    assert.equal(f.views.threadViewSlots('fixture-background')![0].assistant.content, 'answer 1');
+  } finally { f.cleanup(); }
+});

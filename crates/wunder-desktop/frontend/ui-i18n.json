@@ -636,6 +636,11 @@
   "en": "Copy"
  },
  {
+  "key": "common_fork",
+  "zh": "从此处分叉",
+  "en": "Fork from here"
+ },
+ {
   "key": "common_rename",
   "zh": "重命名",
   "en": "Rename"
@@ -7461,6 +7466,11 @@
   "key": "wf_batch_download",
   "zh": "批量下载",
   "en": "Download"
+ },
+ {
+  "key": "wf_batch_delete",
+  "zh": "删除所选",
+  "en": "Delete selected"
  },
  {
   "key": "wf_connect_cloud",

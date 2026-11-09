@@ -34,7 +34,7 @@ The Desktop covers single-user local scenarios; sharing among several people run
 
 ## Install and launch
 
-Download and run the installer for your system. It installs the Desktop and CLI by default; optional Python/Git/rg/ffmpeg/browser components are opt-in. The install directory defaults to `~/.wunder` and can be changed to any writable directory. The installer writes `.wunder-home` at the install root, and both local forms use that root as `WUNDER_HOME`; an explicit non-empty `WUNDER_HOME` still wins.
+Download and run the installer for your system. On Linux the `.run` installs everything without asking a single question: Desktop, CLI and all optional components (Python/Git/rg/ffmpeg/browser) in one pass, plus the menu entry and desktop icon; a progress bar tracks unpacking, desktop, components and finishes at 100%; installing again upgrades in place and keeps config, sessions and workspaces. The Windows wizard preselects everything and its component page can restore that with "select all". The install directory defaults to `~/.wunder` and can be changed to any writable directory (`--home=PATH` on Linux). The installer writes `.wunder-home` at the install root, and both local forms use that root as `WUNDER_HOME`; an explicit non-empty `WUNDER_HOME` still wins.
 
 - **Executable**: `bin/wunder-desktop.exe` (Windows) or `bin/wunder-desktop` (Linux) after installation; development builds use `wunder-desktop`
 - **Terminal commands**: the installer adds the install root's `bin` to the user PATH (Windows) or creates command links under `~/.local/bin` (Linux); after opening a new terminal, `wunder-cli` (CLI) and `desktop` / `wunder-desktop` (Desktop) run directly

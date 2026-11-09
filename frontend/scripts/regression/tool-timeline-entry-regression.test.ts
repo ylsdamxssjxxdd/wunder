@@ -310,6 +310,35 @@ test('edit and write entries carry inline +/- line stats beside the target chip'
   assert.deepEqual(patch.diffStats, { added: 2, deleted: 1 });
 });
 
+test('edit entries keep the +/- stats when only the result carries the numbers', () => {
+  // 流式参数预览被截断时调用侧解析不出 old/new：结果侧 files[] 才是权威口径，
+  // 否则折叠行会只剩文件名，看不出改了多大。
+  const truncated = buildTimelineToolEntry(baseRun({
+    toolName: '文本编辑',
+    toolDisplayName: '文本编辑',
+    toolRuntimeName: '文本编辑',
+    callItem: callItem('{"args":{"file_path":"src/a.rs","old_string":"const A = 1;","new_str'),
+    resultItem: callItem({
+      result: { data: { files: [{ path: 'src/a.rs', action: 'update', added_lines: 7, deleted_lines: 3 }] } }
+    })
+  }), t);
+  assert.deepEqual(truncated.diffStats, { added: 7, deleted: 3 });
+
+  // 没有 old/new 字段的 `input` 补丁语法按 +/- 行计数。
+  const patchInput = buildTimelineToolEntry(baseRun({
+    toolName: '文本编辑',
+    toolDisplayName: '文本编辑',
+    toolRuntimeName: '文本编辑',
+    callItem: callItem({
+      args: {
+        file_path: 'src/a.rs',
+        input: '*** Begin Patch\n*** Update File: src/a.rs\n@@\n-old\n+new\n+extra\n*** End Patch'
+      }
+    })
+  }), t);
+  assert.deepEqual(patchInput.diffStats, { added: 2, deleted: 1 });
+});
+
 test('failed edit entries drop the inline +/- stats', () => {
   // 失败的编辑没有改出这组行数，条目行不再显示统计。
   const failed = buildTimelineToolEntry(baseRun({

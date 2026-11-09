@@ -748,7 +748,11 @@ pub(crate) fn cleanup_session(
     session_id: &str,
 ) {
     workspace.purge_session_data(user_id, session_id);
-    let _ = storage.delete_chat_session(user_id, session_id);
+    if let Ok(Some(mut record)) = storage.get_chat_session(user_id, session_id) {
+        record.status = "closed".to_string();
+        record.updated_at = now_ts();
+        let _ = storage.upsert_chat_session(&record);
+    }
     if let Some(monitor) = monitor {
         let _ = monitor.forget_session(session_id);
     }
@@ -782,4 +786,52 @@ pub(crate) async fn load_session_messages(
     })
     .await
     .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::SqliteStorage;
+    use std::collections::HashMap;
+
+    #[test]
+    fn cleanup_closes_child_without_deleting_inspectable_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            dir.path().join("fixture.db").to_string_lossy().into(),
+        ));
+        storage.ensure_initialized().unwrap();
+        storage
+            .upsert_chat_session(&ChatSessionRecord {
+                session_id: "child".into(),
+                user_id: "owner".into(),
+                title: "Fixture".into(),
+                status: "active".into(),
+                created_at: 1.0,
+                updated_at: 1.0,
+                last_message_at: 1.0,
+                agent_id: None,
+                workspace_id: None,
+                tool_overrides: vec![],
+                parent_session_id: Some("parent".into()),
+                parent_message_id: None,
+                spawn_label: None,
+                spawned_by: Some("model".into()),
+            })
+            .unwrap();
+        let workspace = WorkspaceManager::new(
+            dir.path().to_string_lossy().as_ref(),
+            storage.clone(),
+            0,
+            &HashMap::new(),
+        );
+
+        cleanup_session(&storage, &workspace, None, "owner", "child");
+
+        let record = storage
+            .get_chat_session("owner", "child")
+            .unwrap()
+            .expect("child record remains readable for detail views");
+        assert_eq!(record.status, "closed");
+    }
 }

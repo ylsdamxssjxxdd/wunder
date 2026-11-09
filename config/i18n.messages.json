@@ -2320,8 +2320,8 @@
     "zh-CN": "返回给用户的最终回复。若有图片/文件/报告等产出，必须在回复的最后附上 Markdown 语法将图片或链接展示出来，例如：![雷达图](/workspaces/{user_id}/radar_chart.png) 或 ![xx作文](/workspaces/{user_id}/美好的一天.docx)，这样用户就能在前端或其他渠道看到图片或下载文件。"
   },
   "tool.spec.glob.description": {
-    "en-US": "Find files, not directories, whose paths match a glob pattern, including hidden and ignored files. Returns up to 100 paths in modification-time order; a larger result is sampled across top-level entries.",
-    "zh-CN": "查找路径匹配 glob 模式的文件（不含目录），包含隐藏与忽略的文件。按修改时间排序返回至多 100 条路径；结果超过上限时在顶层目录间抽样。"
+    "en-US": "Find files, not directories, whose paths match a glob pattern. Hidden files are visible; dependency and build-cache directories (node_modules, target, .cargo, ...) and .gitignore rules are skipped by default - pass include_ignored=true to walk everything, and exclude to subtract extra glob patterns. Returns up to 100 paths in modification-time order; a larger result is sampled across top-level entries.",
+    "zh-CN": "查找路径匹配 glob 模式的文件（不含目录），隐藏文件可见。默认剪掉 node_modules、target、.cargo 等依赖/构建目录并尊重 .gitignore，可用 include_ignored=true 放开；用 exclude 追加要排除的 glob。按修改时间排序返回至多 100 条路径；超过上限时在顶层目录间抽样。"
   },
   "tool.spec.glob.args.pattern": {
     "en-US": "Required. Glob pattern such as \"*.rs\" or \"src/**/*.rs\". A pattern without a separator matches the file name at any depth.",
@@ -2404,8 +2404,8 @@
     "zh-CN": "目录排在文件前面，且结果被截断时优先保留目录；默认 true。设为 false 可保留原始遍历顺序。"
   },
   "tool.spec.list.description": {
-    "en-US": "List files and folders in a directory. Directories are returned before files so an architecture survey survives observation truncation; pass top_level_only for only the direct children. Use search_content to search file contents instead of listing directories.",
-    "zh-CN": "列出目录下的文件与子目录，默认目录优先，超长列表被截断时也优先保留目录；只想看顶层直接子项请传 top_level_only。搜索文件内容请改用 search_content，不要用列目录代替。"
+    "en-US": "List files and folders in a directory. Directories are returned before files so an architecture survey survives observation truncation; pass top_level_only for only the direct children. Dependency and build-cache directories plus .gitignore rules are skipped by default (include_ignored=true to walk everything); exclude subtracts extra glob patterns. Use search_content to search file contents instead of listing directories.",
+    "zh-CN": "列出目录下的文件与子目录，默认目录优先，超长列表被截断时也优先保留目录；只想看顶层直接子项请传 top_level_only。默认剪掉 node_modules、target、.cargo 等依赖/构建目录并尊重 .gitignore（include_ignored=true 放开），可用 exclude 追加排除。搜索文件内容请改用 search_content，不要用列目录代替。"
   },
   "tool.spec.plan.args.explanation": {
     "en-US": "Optional. Short explanation for the plan.",
@@ -2436,8 +2436,8 @@
     "zh-CN": "展示给用户的问题正文。一句话说清要决定什么，不要把选项写进问题里。"
   },
   "tool.spec.question_panel.args.options": {
-    "en-US": "Options for this question, 1-4 items. Keep each label short (a few words) and put the reasoning in description.",
-    "zh-CN": "该题的选项列表，1-4 项。标题保持几个词的短度，理由与影响写进 description。"
+    "en-US": "Options for this question, 1-4 items. Either a string array ([\"A\",\"B\"]) or one string separated by | or ，(\"A|B\"). Keep each label short (a few words) and put the reasoning in description.",
+    "zh-CN": "该题的选项列表，1-4 项。可以直接写字符串数组（[\"甲\",\"乙\"]），也可以写用 | 或，分隔的一整串（\"甲|乙\"）。标题保持几个词的短度，理由与影响写进 description。"
   },
   "tool.spec.question_panel.args.options.label": {
     "en-US": "Short option label.",
@@ -3052,8 +3052,8 @@
     "zh-CN": "可选的 rg 风格别名，等价于 max_matches/head_limit，用于限制返回的命中条数。"
   },
   "tool.spec.search.description": {
-    "en-US": "Search file contents in the local workspace with a ripgrep-style regular expression. Returns matching lines with line numbers, grouped by file, and is capped by max_matches (default 200). Narrow the scope with path or include (glob). query is required; use query_mode=regex for alternation such as `foo|bar`, not `foo OR bar`. This tool searches local filesystem text files only, never the web.",
-    "zh-CN": "在本地工作区中用 ripgrep 风格的正则表达式搜索文件内容。返回带行号、按文件分组的命中行，并受 max_matches 限制（默认 200）。用 path 或 include（glob）收窄范围。query 必填；需要 `foo|bar` 这类并列表达式时用 query_mode=regex，不要在 query 中写 `foo OR bar`。本工具只搜索本地文件系统中的纯文本文件，不联网。"
+    "en-US": "Search file contents in the local workspace with a ripgrep-style regular expression. Returns matching lines with line numbers, grouped by file, capped by max_matches (default 200); a hit line longer than 400 characters is truncated and marked content_truncated. Pass mode=paths for a file list only (like rg -l), which returns paths instead of per-line hits. Narrow the scope with path or include (glob). query is required; use query_mode=regex for alternation such as `foo|bar`, not `foo OR bar`. This tool searches local filesystem text files only, never the web.",
+    "zh-CN": "在本地工作区中用 ripgrep 风格的正则表达式搜索文件内容。返回带行号、按文件分组的命中行，并受 max_matches 限制（默认 200）；单行命中正文超过 400 字符会截断并标记 content_truncated。只要文件清单（等价 rg -l）请传 mode=paths，此时返回 paths 而不是逐行命中。用 path 或 include（glob）收窄范围。query 必填；需要 `foo|bar` 这类并列表达式时用 query_mode=regex，不要在 query 中写 `foo OR bar`。本工具只搜索本地文件系统中的纯文本文件，不联网。"
   },
   "tool.spec.write.args.content": {
     "en-US": "Required string file content. Use an explicit empty string only when you intend to clear the file.",
@@ -3466,5 +3466,29 @@
   "tool.desktop_control.followup_prompt_no_frame": {
     "en-US": "The desktop action was applied, but this observation could not capture a screenshot. Do not repeat the same action; call wait to see the current screen first.",
     "zh-CN": "桌面动作已经执行，但这次没能截到图。不要重复执行相同动作，请先调用 wait 观察当前画面再决定下一步。"
+  },
+  "tool.spec.glob.args.exclude": {
+    "zh-CN": "可选，追加要排除的 glob，字符串或字符串数组，例如 \"*.min.js\" 或 [\"dist\", \"vendor\"]。不含分隔符的模式匹配文件/目录名，含分隔符的匹配相对路径；命中的目录整棵子树剪掉。",
+    "en-US": "Optional extra globs to subtract, as a string or string array, e.g. \"*.min.js\" or [\"dist\", \"vendor\"]. Patterns without a separator match file or directory names; patterns with a separator match the path relative to the search root; a matched directory prunes its whole subtree."
+  },
+  "tool.spec.glob.args.include_ignored": {
+    "zh-CN": "可选，默认 false：剪掉 node_modules、target、.cargo 等目录并尊重 .gitignore。设 true 时遍历原始目录树（版本控制元数据目录仍跳过）。目标就在这些目录里时用它。",
+    "en-US": "Optional, default false: skip dependency/build-cache directories and honor .gitignore. Set true to walk the raw tree (version-control metadata directories are still skipped). Use it when the target lives inside those directories."
+  },
+  "tool.spec.list.args.exclude": {
+    "zh-CN": "可选，追加要排除的 glob（字符串或字符串数组），命中的文件与目录都不返回，命中的目录整棵子树剪掉。",
+    "en-US": "Optional extra globs (string or string array) to subtract; matched files and directories are omitted, and a matched directory prunes its subtree."
+  },
+  "tool.spec.list.args.include_ignored": {
+    "zh-CN": "可选，默认 false：剪掉 node_modules、target、.cargo 等目录并尊重 .gitignore。需要看到这些目录时设 true。",
+    "en-US": "Optional, default false: skip dependency/build-cache directories and honor .gitignore. Set true to see them."
+  },
+  "tool.spec.search.args.mode": {
+    "zh-CN": "可选，content（默认）返回逐行命中；paths 只返回匹配的文件清单（等价 rg -l，适合「哪些文件提到 X」这类问题），响应里用 paths 而不是 hits。",
+    "en-US": "Optional. content (default) returns per-line hits; paths returns only the matching file list (like rg -l, for \"which files mention X\"), with paths instead of hits in the response."
+  },
+  "tool.spec.search.args.files_only": {
+    "zh-CN": "可选，等价 mode=paths 的布尔写法。",
+    "en-US": "Optional boolean alias of mode=paths."
   }
 }

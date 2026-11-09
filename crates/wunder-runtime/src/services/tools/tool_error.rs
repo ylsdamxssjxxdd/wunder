@@ -69,6 +69,48 @@ pub(crate) fn with_error_meta(data: Value, meta: ToolErrorMeta) -> Value {
     payload
 }
 
+/// 超时后唯一可靠的探活证据就是“有没有产出”。
+///
+/// 有 stdout/stderr 说明命令确实跑起来了，副作用（写文件、发请求、动远端状态）
+/// 可能已经发生，这时报 `unknown` 会让模型以为“什么都没做”而直接重跑；
+/// 只有完全没有任何输出时，才真的无从判断。
+pub(crate) fn command_timeout_outcome(data: &Value) -> &'static str {
+    let produced_output = ["stdout", "stderr"].iter().any(|key| {
+        data.get(*key)
+            .and_then(Value::as_str)
+            .is_some_and(|text| !strip_runtime_timeout_note(text).trim().is_empty())
+    });
+    if produced_output {
+        "likely_applied"
+    } else {
+        "unknown"
+    }
+}
+
+/// 超时后执行层会往 stderr 补一行 `timeout after 2s`，那是我们自己的标记，
+/// 不是命令的输出；把它当证据会让所有超时都误判成“已执行”。
+fn strip_runtime_timeout_note(raw: &str) -> String {
+    const PREFIX: &str = "timeout after ";
+    let mut kept: Vec<&str> = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        let is_note = trimmed == "timeout"
+            || trimmed
+                .strip_prefix(PREFIX)
+                .and_then(|rest| rest.strip_suffix('s'))
+                .is_some_and(|seconds| {
+                    !seconds.is_empty()
+                        && seconds
+                            .chars()
+                            .all(|c| c.is_ascii_digit() || c == '.')
+                });
+        if !is_note {
+            kept.push(line);
+        }
+    }
+    kept.join("\n")
+}
+
 pub(crate) fn build_execute_command_failure_data(
     results: &[Value],
     command_count: usize,
@@ -104,10 +146,10 @@ pub(crate) fn build_execute_command_failure_data(
         // Keep both streams: build and test tools report the diagnosis on stderr
         // and the summary on stdout, and dropping stdout here forced a full
         // re-run of the failing command just to see the other half.
-        if let Some(stderr) = compact_command_output(last.get("stderr").and_then(Value::as_str)) {
+        if let Some(stderr) = compacted_text(last.get("stderr").and_then(Value::as_str)) {
             payload.insert("stderr".to_string(), Value::String(stderr));
         }
-        if let Some(stdout) = compact_command_output(last.get("stdout").and_then(Value::as_str)) {
+        if let Some(stdout) = compacted_text(last.get("stdout").and_then(Value::as_str)) {
             payload.insert("stdout".to_string(), Value::String(stdout));
         }
     }
@@ -130,7 +172,11 @@ pub(crate) fn build_execute_command_failure_data(
     }
     if timed_out {
         payload.insert("timed_out".to_string(), Value::Bool(true));
-        payload.insert("execution_outcome".to_string(), json!("unknown"));
+        let outcome = results
+            .last()
+            .map(command_timeout_outcome)
+            .unwrap_or("unknown");
+        payload.insert("execution_outcome".to_string(), json!(outcome));
     }
     if command_count > 1 {
         payload.insert(
@@ -166,8 +212,8 @@ fn compact_command_diagnostic(row: &Value) -> Option<Value> {
             diagnostic.insert(key.to_string(), value.clone());
         }
     }
-    if let Some(output) = compact_command_output(row.get("stderr").and_then(Value::as_str))
-        .or_else(|| compact_command_output(row.get("stdout").and_then(Value::as_str)))
+    if let Some(output) = compacted_text(row.get("stderr").and_then(Value::as_str))
+        .or_else(|| compacted_text(row.get("stdout").and_then(Value::as_str)))
     {
         diagnostic.insert("output".to_string(), Value::String(output));
     }
@@ -178,34 +224,72 @@ pub(crate) fn build_execute_command_failure_message(results: &[Value], timed_out
     if timed_out {
         return "命令执行超时。".to_string();
     }
-    if let Some(returncode) = results
-        .last()
-        .and_then(|item| item.get("returncode"))
-        .and_then(Value::as_i64)
-    {
-        let mut message = format!("命令退出码 {returncode}。");
-        if let Some(last) = results.last() {
-            let stderr_blank = last
-                .get("stderr")
-                .and_then(Value::as_str)
-                .map(|text| text.trim().is_empty())
-                .unwrap_or(true);
-            let stdout_has_output = last
-                .get("stdout")
-                .and_then(Value::as_str)
-                .is_some_and(|text| !text.trim().is_empty());
-            if stderr_blank && stdout_has_output {
-                message.push_str(
-                    "stdout 已有部分输出，所需信息可能已在其中，可基于它继续而不必重跑。",
-                );
+    let Some(last) = results.last() else {
+        return "命令执行失败。".to_string();
+    };
+    let Some(returncode) = last.get("returncode").and_then(Value::as_i64) else {
+        return "命令执行失败。".to_string();
+    };
+    let mut message = String::from("命令退出码 ");
+    message.push_str(&returncode.to_string());
+    message.push('。');
+    let stderr_raw = last.get("stderr").and_then(Value::as_str);
+    let stdout_raw = last.get("stdout").and_then(Value::as_str);
+    let stderr_blank = stderr_raw.map(|text| text.trim().is_empty()).unwrap_or(true);
+    if stderr_blank {
+        if let Some(stdout) = compact_command_output(stdout_raw) {
+            if stdout.total_lines > 0 {
+                message.push_str("stdout 共 ");
+                message.push_str(&stdout.total_lines.to_string());
+                message.push_str(" 行");
+                if stdout.omitted_lines > 0 {
+                    message.push_str("（仅保留前 ");
+                    message.push_str(&COMPACT_HEAD_LINES.to_string());
+                    message.push_str(" 行与后 ");
+                    message.push_str(&COMPACT_TAIL_LINES.to_string());
+                    message.push_str(" 行，中间 ");
+                    message.push_str(&stdout.omitted_lines.to_string());
+                    message.push_str(" 行省略）");
+                }
+                message.push_str("，所需信息可能已在其中，可基于它继续而不必重跑。");
             }
         }
-        return message;
+    } else if let Some(stderr) = compact_command_output(stderr_raw) {
+        if stderr.omitted_lines > 0 {
+            message.push_str("stderr 共 ");
+            message.push_str(&stderr.total_lines.to_string());
+            message.push_str(" 行（仅保留头部与尾部，中间 ");
+            message.push_str(&stderr.omitted_lines.to_string());
+            message.push_str(" 行省略）。");
+        }
     }
-    "命令执行失败。".to_string()
+    if let Some(note) = broken_pipe_note(stderr_raw, Some(returncode)) {
+        message.push_str(note);
+    }
+    message
 }
 
-fn compact_command_output(raw: Option<&str>) -> Option<String> {
+/// 失败命令摘要保留的行数：头尾各留几行。
+///
+/// 只留尾部会让调用方以为「输出前半截丢了」，只留头部又看不到真正的报错，所以
+/// 头尾都留，并把总行数与省略行数一起说清楚。
+const COMPACT_HEAD_LINES: usize = 3;
+const COMPACT_TAIL_LINES: usize = 3;
+const COMPACT_MAX_CHARS: usize = 480;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CompactedOutput {
+    pub(crate) text: String,
+    pub(crate) total_lines: usize,
+    pub(crate) kept_lines: usize,
+    pub(crate) omitted_lines: usize,
+}
+
+fn compacted_text(raw: Option<&str>) -> Option<String> {
+    compact_command_output(raw).map(|output| output.text)
+}
+
+fn compact_command_output(raw: Option<&str>) -> Option<CompactedOutput> {
     let text = raw.map(str::trim).filter(|value| !value.is_empty())?;
     let lines = text
         .lines()
@@ -215,21 +299,66 @@ fn compact_command_output(raw: Option<&str>) -> Option<String> {
     if lines.is_empty() {
         return None;
     }
-    let start = lines.len().saturating_sub(3);
-    let mut joined = lines[start..].join("\n");
-    const MAX_CHARS: usize = 320;
-    if joined.chars().count() > MAX_CHARS {
-        joined = joined
-            .chars()
-            .rev()
-            .take(MAX_CHARS)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect::<String>();
-        joined = format!("...{joined}");
+    let total_lines = lines.len();
+    let budget = COMPACT_HEAD_LINES + COMPACT_TAIL_LINES;
+    if total_lines <= budget {
+        return Some(CompactedOutput {
+            text: lines.join("\n"),
+            total_lines,
+            kept_lines: total_lines,
+            omitted_lines: 0,
+        });
     }
-    Some(joined)
+    let half = COMPACT_MAX_CHARS / 2;
+    let head = trim_tail_chars(&lines[..COMPACT_HEAD_LINES].join("\n"), half);
+    let tail = trim_head_chars(&lines[total_lines - COMPACT_TAIL_LINES..].join("\n"), half);
+    let omitted_lines = total_lines - budget;
+    let mut marker = String::from("...(");
+    marker.push_str(&omitted_lines.to_string());
+    marker.push_str(" lines omitted)...");
+    let mut text = head;
+    text.push('\n');
+    text.push_str(&marker);
+    text.push('\n');
+    text.push_str(&tail);
+    Some(CompactedOutput {
+        text,
+        total_lines,
+        kept_lines: budget,
+        omitted_lines,
+    })
+}
+
+fn trim_tail_chars(raw: &str, limit: usize) -> String {
+    if raw.chars().count() <= limit {
+        return raw.to_string();
+    }
+    let mut text = raw.chars().take(limit).collect::<String>();
+    text.push_str(" ...");
+    text
+}
+
+fn trim_head_chars(raw: &str, limit: usize) -> String {
+    if raw.chars().count() <= limit {
+        return raw.to_string();
+    }
+    let skipped = raw.chars().count() - limit;
+    let mut text = String::from("... ");
+    text.push_str(&raw.chars().skip(skipped).collect::<String>());
+    text
+}
+
+/// SIGPIPE（下游 head/cut 提前关管道）常被误读成「命令本身出了问题」。
+fn broken_pipe_note(stderr: Option<&str>, returncode: Option<i64>) -> Option<&'static str> {
+    let stderr_says_pipe = stderr.is_some_and(|text| {
+        let lowered = text.to_ascii_lowercase();
+        lowered.contains("broken pipe") || lowered.contains("epipe")
+    });
+    if returncode == Some(141) || stderr_says_pipe {
+        Some("管道被下游提前关闭（SIGPIPE/EPIPE），通常是 head、cut 一类截断所致，不代表命令本身失败；要全量输出就别在命令里截断。")
+    } else {
+        None
+    }
 }
 
 fn ensure_object_payload(data: Value) -> Value {
@@ -332,7 +461,7 @@ mod tests {
         assert_eq!(payload["returncode"], json!(1));
         assert_eq!(
             payload["stderr"],
-            json!("  File \"/tmp/draw_heart.py\", line 6\n    y = 1\nIndentationError: unindent does not match any outer indentation level")
+            json!("Traceback (most recent call last):\n  File \"/tmp/draw_heart.py\", line 6\n    y = 1\nIndentationError: unindent does not match any outer indentation level")
         );
         assert!(payload.get("stdout").is_none());
         assert_eq!(payload["diagnostics"][0]["command_index"], json!(0));
@@ -353,7 +482,55 @@ mod tests {
             false,
         );
         assert!(message.contains("命令退出码 1。"));
-        assert!(message.contains("stdout 已有部分输出"));
+        assert!(message.contains("stdout 共 2 行"));
+        assert!(message.contains("可基于它继续而不必重跑"));
+    }
+
+    #[test]
+    fn failure_message_reports_omitted_lines_instead_of_hiding_them() {
+        let stdout = (1..=20)
+            .map(|index| format!("line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let message = build_execute_command_failure_message(
+            &[json!({
+                "command": "make",
+                "returncode": 2,
+                "stdout": stdout,
+                "stderr": ""
+            })],
+            false,
+        );
+        assert!(message.contains("stdout 共 20 行"), "{message}");
+        assert!(message.contains("中间 14 行省略"), "{message}");
+    }
+
+    #[test]
+    fn compact_output_keeps_head_and_tail() {
+        let stdout = (1..=10)
+            .map(|index| format!("line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let compacted = compact_command_output(Some(&stdout)).expect("compacted");
+        assert_eq!(compacted.total_lines, 10);
+        assert_eq!(compacted.omitted_lines, 4);
+        assert!(compacted.text.starts_with("line 1"), "{}", compacted.text);
+        assert!(compacted.text.ends_with("line 10"), "{}", compacted.text);
+        assert!(compacted.text.contains("4 lines omitted"), "{}", compacted.text);
+    }
+
+    #[test]
+    fn broken_pipe_is_called_out_instead_of_looking_like_a_failure() {
+        let message = build_execute_command_failure_message(
+            &[json!({
+                "command": "grep -rn foo . | head -30",
+                "returncode": 141,
+                "stdout": "",
+                "stderr": ""
+            })],
+            false,
+        );
+        assert!(message.contains("SIGPIPE"), "{message}");
     }
 
     #[test]

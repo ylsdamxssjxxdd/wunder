@@ -31,7 +31,7 @@ When dispatching, you can also specify:
 - `run_timeout_seconds`: the timeout of a single run; in a synchronous dispatch it is also the wait duration.
 - `fork_turns`: copy the most recent rounds of user context, 0–16, 0 by default.
 - `context_summary`: attach a background summary.
-- `cleanup`: how to wrap up, `keep` (the default, kept and inspectable) or `delete` (cleaned up).
+- `cleanup`: how to wrap up, `keep` (the default) or `delete` (runtime state is cleaned up and the child is closed; its history remains inspectable).
 
 ## Context inheritance
 
@@ -57,5 +57,5 @@ An interrupt only requests cancellation of the run and does not change session s
 - A target must share the same root as the caller, and the root thread cannot be a dispatch target; nesting depth is capped at 32 levels.
 - A batch holds at most 64 tasks; beyond that the whole batch is rejected rather than truncated.
 - Each child thread's outbound messages and receipt cache are bounded, and a full one is treated as a rejection; a list holds at most 200 entries, 50 by default.
-- Result previews and status messages in an entry are truncated to 160 characters; the full content is available from the history or that child thread's trail.
+- Model-facing result previews and status messages in an entry are truncated to 4000 characters; the full content is available from the history or that child thread's trail.
 - In Desktop this tool is on by default as an extra; the other forms require an administrator to select it.

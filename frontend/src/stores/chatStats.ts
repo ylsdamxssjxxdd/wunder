@@ -843,8 +843,15 @@ export const normalizeMessageSubagent = (payload): MessageSubagentItem | null =>
     source.label ?? source.spawn_label ?? source.spawnLabel ?? source.title ?? ''
   ).trim();
   const title = label || sessionId || runId || '瀛愭櫤鑳戒綋';
-  const status = normalizeSubagentEventStatus(source.status);
+  const sourceStatus = normalizeSubagentEventStatus(source.status);
   const active = isSubagentItemActive(source);
+  const terminal =
+    normalizeSubagentRuntimeFlag(source.terminal) ||
+    (!active && (isSubagentStatusSuccessful(sourceStatus) || isSubagentStatusFailed(sourceStatus)));
+  const failed = normalizeSubagentRuntimeFlag(source.failed) || isSubagentStatusFailed(sourceStatus);
+  const status = terminal && !active && !isSubagentStatusSuccessful(sourceStatus) && !isSubagentStatusFailed(sourceStatus)
+    ? failed ? 'failed' : 'completed'
+    : sourceStatus;
   const assistantMessage = pickSubagentTextValue(
     normalizedDetail.assistant_message,
     source.assistant_message,
@@ -878,11 +885,10 @@ export const normalizeMessageSubagent = (payload): MessageSubagentItem | null =>
     label,
     status,
     summary,
-    terminal:
-      normalizeSubagentRuntimeFlag(source.terminal) ||
-      (!active && (isSubagentStatusSuccessful(status) || isSubagentStatusFailed(status))),
-    failed: normalizeSubagentRuntimeFlag(source.failed) || isSubagentStatusFailed(status),
-    canTerminate: normalizeSubagentRuntimeFlag(source.can_terminate ?? source.canTerminate ?? active),
+    terminal,
+    failed,
+    canTerminate: !terminal && !failed &&
+      normalizeSubagentRuntimeFlag(source.can_terminate ?? source.canTerminate ?? active),
     updated_at: updatedAt,
     updated_at_ms: updatedAtMs,
     parent_user_round: normalizeStreamRound(

@@ -458,6 +458,7 @@ component TurnFooter inherits Rectangle {
     in property <TimelineRow> data;
     callback copy-text(string);
     callback copy-original(string);
+    callback fork-thread(int);
     function copy-answer() {
         if root.data.id.starts-with("cloud-footer-") { root.copy-original(root.data.summary); }
         else { root.copy-text(root.data.text); }
@@ -466,7 +467,27 @@ component TurnFooter inherits Rectangle {
     footer-row := HorizontalLayout {
         x: Theme.timeline-padding; y: 4px; width: parent.width - 2 * Theme.timeline-padding;
         spacing: 8px;
-        FooterStats { metrics: root.data.stats; available-width: root.width - 2 * Theme.timeline-padding - 30px; horizontal-stretch: 1; }
+        FooterStats { metrics: root.data.stats; available-width: root.width - 2 * Theme.timeline-padding - 60px; horizontal-stretch: 1; }
+        Rectangle {
+            visible: root.data.user-round > 0 && root.data.status-kind != 1;
+            width: 22px; height: 22px; border-radius: Theme.radius-tag;
+            accessible-role: button; accessible-label: I18n.common_fork;
+            accessible-action-default => { root.fork-thread(root.data.user-round); }
+            forward-focus: fork-focus;
+            background: fork-area.has-hover ? Theme.selected : transparent;
+            Image {
+                x: 5px; y: 5px; width: 12px; height: 12px;
+                source: @image-url("../assets/icons/fork.svg"); colorize: Theme.muted;
+            }
+            fork-focus := FocusScope {
+                key-pressed(event) => {
+                    if event.text == " " || event.text == Key.Return { root.fork-thread(root.data.user-round); return accept; }
+                    return reject;
+                }
+            }
+            fork-area := TouchArea { mouse-cursor: pointer; clicked => { fork-focus.focus(); root.fork-thread(root.data.user-round); } }
+            Tooltip { text: @markdown("\{I18n.common_fork}"); }
+        }
         Rectangle {
             visible: root.data.text != "";
             width: 22px; height: 22px; border-radius: Theme.radius-tag;
@@ -841,6 +862,7 @@ export component TimelineRowView inherits Rectangle {
     callback process-page(int, int);
     callback copy-text(string);
     callback copy-original(string);
+    callback fork-thread(int);
     callback open-resource(string);
     callback show-context-menu(length, length, bool);
     width: 100%;
@@ -891,6 +913,7 @@ export component TimelineRowView inherits Rectangle {
             data: root.entry;
             copy-text(text) => { root.copy-text(text); }
             copy-original(id) => { root.copy-original(id); }
+            fork-thread(round) => { root.fork-thread(round); }
         }
         if root.shown && (root.entry.kind == EntryKind.reason || root.entry.kind == EntryKind.tool) : FoldEntry {
             data: root.entry;
@@ -956,6 +979,7 @@ export component TimelineView inherits Rectangle {
     callback process-page(int, int);
     callback copy-text(string);
     callback copy-original(string);
+    callback fork-thread(int);
     callback open-resource(string);
     vertical-stretch: 1;
     // Reading column: the transcript is one centred column of at most
@@ -1115,6 +1139,7 @@ export component TimelineView inherits Rectangle {
                 process-page(index, direction) => { root.process-page(index, direction); }
                 copy-text(text) => { root.copy-text(text); }
                 copy-original(id) => { root.copy-original(id); }
+                fork-thread(round) => { root.fork-thread(round); }
                 open-resource(id) => { root.open-resource(id); }
                 show-context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
             }

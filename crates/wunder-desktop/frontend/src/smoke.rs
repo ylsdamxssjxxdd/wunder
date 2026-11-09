@@ -43,6 +43,16 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         app.get_page() == crate::DesktopPage::Messages,
         "shell did not start on the chat page",
     )?;
+    click(app, app.get_split_button_x(), app.get_split_button_y())?;
+    require(
+        app.get_split_count() == 2,
+        "split entry did not open two panes",
+    )?;
+    snapshot(app, &directory.join("native-split-two.png"))?;
+    app.invoke_split_layout(4);
+    require(app.get_split_count() == 4, "four-grid layout did not open")?;
+    snapshot(app, &directory.join("native-split-four.png"))?;
+    app.invoke_split_layout(1);
     click(
         app,
         app.get_settings_button_x(),

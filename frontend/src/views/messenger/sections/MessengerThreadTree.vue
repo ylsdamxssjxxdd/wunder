@@ -161,6 +161,7 @@ import { getRuntime, getSessionMessages, hasRuntimeControllers } from '@/stores/
 import { useTaskListPages } from '@/views/messenger/useTaskListPages';
 import { formatDateTime } from '@/utils/formatDateTime';
 import { usePersistentStableListOrder } from '@/views/messenger/stableListOrder';
+import { CHAT_THREAD_DRAG_TYPE } from '../chatSplitLayout';
 import type { AgentRuntimeState } from '@/views/messenger/model';
 
 // §5.2 thread rows are 28px tall so the row height is also the virtual window step.
@@ -456,6 +457,7 @@ const handleDragStart = (event: DragEvent, id: string) => {
   dragId.value = id;
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData(CHAT_THREAD_DRAG_TYPE, id);
     event.dataTransfer.setData('text/plain', id);
   }
 };

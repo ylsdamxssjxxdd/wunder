@@ -2,6 +2,13 @@
 use serde_json::{json, Value};
 use wunder_core::thread_view::{preview, BodyRef, ChatViewRow, TrajectoryViewRow, ViewMessage};
 
+pub(crate) fn is_withdrawn_queue_turn(turn: &Value) -> bool {
+    turn.pointer("/control/stop_reason")
+        .or_else(|| turn.get("stop_reason"))
+        .and_then(Value::as_str)
+        == Some("user_withdrew_queued_turn")
+}
+
 /// Only bounded plan presentation belongs in a chat page; tool arguments and
 /// results remain in the process ledger. The item status describes the update
 /// operation, while each step owns its own progress status.

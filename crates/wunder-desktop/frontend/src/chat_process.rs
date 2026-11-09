@@ -245,6 +245,17 @@ pub(crate) fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, directi
         if let Some(tool) = item.tool {
             let (target, patch) = crate::timeline_text::tool_target(&tool);
             let summary = crate::timeline_text::tool_row_summary(&tool, &target);
+            let status = crate::timeline::status_kind(&tool.state);
+            // A failed or stopped call produced no change, so its row keeps no
+            // change size beside the file chip.
+            let (diff_add, diff_del) = if matches!(
+                status,
+                crate::timeline::STATUS_FAILED | crate::timeline::STATUS_STOPPED
+            ) {
+                (String::new(), String::new())
+            } else {
+                crate::timeline_text::diff_stats(&tool.patch_files)
+            };
             entries.push(ProcessEntry {
                 kind: crate::timeline::KIND_TOOL,
                 id: format!("tool-{}", tool.id).into(),
@@ -259,9 +270,11 @@ pub(crate) fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, directi
                 } else {
                     ModelRc::default()
                 },
+                diff_add: diff_add.into(),
+                diff_del: diff_del.into(),
                 tokens: tool.tokens.into(),
                 duration: tool.duration.into(),
-                status_kind: crate::timeline::status_kind(&tool.state),
+                status_kind: status,
                 ..Default::default()
             });
         }

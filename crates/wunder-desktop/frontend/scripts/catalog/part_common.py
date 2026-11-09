@@ -34,6 +34,7 @@ ENTRIES = [
     ("common_new", "新建", "New"),
     ("common_open", "打开", "Open"),
     ("common_copy", "复制", "Copy"),
+    ("common_fork", "从此处分叉", "Fork from here"),
     ("common_rename", "重命名", "Rename"),
     ("common_confirm", "确认", "Confirm"),
     ("common_search", "搜索", "Search"),

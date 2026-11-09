@@ -80,7 +80,13 @@ component ProcessEntryCard inherits Rectangle {
                 }
                 if root.entry.target != "" : Rectangle {
                     y: 4px; height: 18px;
-                    width: min(target-text.preferred-width + 14px, root.width < 650px ? 108px : 180px);
+                    // Narrow shells give part of the chip's width to the change
+                    // size, so a phone row keeps the file name, the counts and
+                    // the metrics without pushing anything off the edge.
+                    width: min(target-text.preferred-width + 14px,
+                        root.width < 650px
+                            ? (root.entry.diff-add != "" || root.entry.diff-del != "" ? 76px : 108px)
+                            : 180px);
                     border-radius: Theme.radius-tag;
                     background: target-hit.has-hover ? Theme.selected : Theme.hover;
                     accessible-role: button; accessible-label: root.entry.target;
@@ -102,6 +108,23 @@ component ProcessEntryCard inherits Rectangle {
                         clicked => { target-focus.focus(); root.open-resource(root.entry.target); }
                     }
                     Tooltip { text: @markdown("\{root.entry.target}"); }
+                }
+                // Change size of an edit / patch call sits right beside the
+                // file chip, so the folded row already tells how much of the
+                // file moved without opening the diff card.
+                if root.entry.diff-add != "" : Text {
+                    width: self.preferred-width; height: parent.height;
+                    text: "+" + root.entry.diff-add;
+                    color: Theme.success; font-size: Theme.font-xs;
+                    font-family: Theme.font-mono; font-weight: 600;
+                    vertical-alignment: center;
+                }
+                if root.entry.diff-del != "" : Text {
+                    width: self.preferred-width; height: parent.height;
+                    text: "−" + root.entry.diff-del;
+                    color: Theme.danger; font-size: Theme.font-xs;
+                    font-family: Theme.font-mono; font-weight: 600;
+                    vertical-alignment: center;
                 }
                 Text {
                     horizontal-stretch: 1; min-width: 0px; height: parent.height;

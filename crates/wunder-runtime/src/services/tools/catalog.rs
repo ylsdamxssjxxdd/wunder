@@ -490,6 +490,14 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .min(1)
                     .max(500)
                     .optional(),
+                super::schema::array("exclude")
+                    .desc(t("tool.spec.list.args.exclude"))
+                    .items(super::schema::string("_"))
+                    .optional(),
+                super::schema::boolean("include_ignored")
+                    .desc(t("tool.spec.list.args.include_ignored"))
+                    .default_value(json!(false))
+                    .optional(),
             ]),
         },
         ToolSpec {
@@ -500,6 +508,14 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 super::schema::string("pattern").desc(t("tool.spec.glob.args.pattern")),
                 super::schema::string("path")
                     .desc(t("tool.spec.glob.args.path"))
+                    .optional(),
+                super::schema::array("exclude")
+                    .desc(t("tool.spec.glob.args.exclude"))
+                    .items(super::schema::string("_"))
+                    .optional(),
+                super::schema::boolean("include_ignored")
+                    .desc(t("tool.spec.glob.args.include_ignored"))
+                    .default_value(json!(false))
                     .optional(),
             ]),
         },
@@ -547,6 +563,13 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .desc(t("tool.spec.search.args.context_after"))
                     .min(0)
                     .max(20)
+                    .optional(),
+                super::schema::string("mode")
+                    .desc(t("tool.spec.search.args.mode"))
+                    .enums(vec!["content", "paths"])
+                    .optional(),
+                super::schema::boolean("files_only")
+                    .desc(t("tool.spec.search.args.files_only"))
                     .optional(),
             ]),
         },

@@ -214,14 +214,18 @@ fn count_lines(text: &str) -> usize {
 fn preview(patch: &str) -> Vec<NativePatchFile> {
     let mut cards: Vec<NativePatchFile> = Vec::new();
     let mut card: Option<NativePatchFile> = None;
+    // Line counts of the card being built. They are counted over the whole
+    // preview, not only over the retained lines, so the header still states the
+    // call's real size when the line area is capped.
+    let (mut added, mut deleted) = (0u64, 0u64);
     for value in patch.lines() {
         // The submitted patch format separates files with "*** " headers.
         if let Some(title) = value.strip_prefix("*** ") {
-            if let Some(finished) = card.take() {
-                if !finished.lines.is_empty() {
-                    cards.push(finished);
-                }
+            if let Some(finished) = close_preview(card.take(), added, deleted) {
+                cards.push(finished);
             }
+            added = 0;
+            deleted = 0;
             if cards.len() >= MAX_FILES {
                 break;
             }
@@ -237,10 +241,7 @@ fn preview(patch: &str) -> Vec<NativePatchFile> {
         let Some(current) = card.as_mut() else {
             continue;
         };
-        if current.lines.len() >= MAX_LINES {
-            continue;
-        }
-        let (kind, text) = if let Some(text) = value.strip_prefix('+') {
+        let (kind, text): (&str, &str) = if let Some(text) = value.strip_prefix('+') {
             ("add", text)
         } else if let Some(text) = value.strip_prefix('-') {
             ("delete", text)
@@ -249,18 +250,40 @@ fn preview(patch: &str) -> Vec<NativePatchFile> {
         } else {
             ("context", value)
         };
+        match kind {
+            "add" => added = added.saturating_add(1),
+            "delete" => deleted = deleted.saturating_add(1),
+            _ => {}
+        }
+        if current.lines.len() >= MAX_LINES {
+            continue;
+        }
         current.lines.push(NativePatchLine {
             text: text.chars().take(2048).collect(),
             kind: kind.into(),
             number: String::new(),
         });
     }
-    if let Some(finished) = card.take() {
-        if !finished.lines.is_empty() {
-            cards.push(finished);
-        }
+    if let Some(finished) = close_preview(card.take(), added, deleted) {
+        cards.push(finished);
     }
     cards
+}
+
+/// Seal one preview card with its counted size; a card without lines is not a
+/// card and is dropped.
+fn close_preview(
+    card: Option<NativePatchFile>,
+    added: u64,
+    deleted: u64,
+) -> Option<NativePatchFile> {
+    let mut card = card?;
+    if card.lines.is_empty() {
+        return None;
+    }
+    card.added = added.to_string();
+    card.deleted = deleted.to_string();
+    Some(card)
 }
 
 /// Only the tools that actually produce file diffs get a card.
@@ -318,6 +341,16 @@ mod tests {
         assert_eq!(cards.len(), 2);
         assert_eq!(cards[0].path, "sample.txt");
         assert_eq!(cards[0].action, "preview");
+        // A pending preview states the call's real size, so the folded tool row
+        // can show it before the result lands.
+        assert_eq!(
+            (cards[0].added.as_str(), cards[0].deleted.as_str()),
+            ("1", "1")
+        );
+        assert_eq!(
+            (cards[1].added.as_str(), cards[1].deleted.as_str()),
+            ("1", "0")
+        );
         assert!(cards[0].lines.iter().all(|line| line.number.is_empty()));
         assert_eq!(cards[1].lines.len(), 1);
     }
@@ -349,7 +382,10 @@ mod tests {
             let cards = project(tool, &payload, &Value::Null);
             assert_eq!(cards.len(), 1, "{tool}");
             assert_eq!(cards[0].action, "update");
-            assert_eq!((cards[0].added.as_str(), cards[0].deleted.as_str()), ("1", "1"));
+            assert_eq!(
+                (cards[0].added.as_str(), cards[0].deleted.as_str()),
+                ("1", "1")
+            );
             assert_eq!(cards[0].lines[2].kind, "delete");
             assert_eq!(cards[0].lines[3].number, "3");
         }
@@ -363,8 +399,15 @@ mod tests {
             assert_eq!(cards.len(), 1, "{tool}");
             assert_eq!(cards[0].path, "sample.txt");
             assert_eq!(cards[0].action, "preview");
-            assert_eq!((cards[0].added.as_str(), cards[0].deleted.as_str()), ("3", "2"));
-            let kinds: Vec<_> = cards[0].lines.iter().map(|line| line.kind.as_str()).collect();
+            assert_eq!(
+                (cards[0].added.as_str(), cards[0].deleted.as_str()),
+                ("3", "2")
+            );
+            let kinds: Vec<_> = cards[0]
+                .lines
+                .iter()
+                .map(|line| line.kind.as_str())
+                .collect();
             assert_eq!(kinds, ["delete", "delete", "add", "add", "add"]);
             assert!(cards[0].lines.iter().all(|line| line.number.is_empty()));
         }
@@ -373,7 +416,10 @@ mod tests {
         assert_eq!(cards.len(), 1);
         // String args beyond the parse budget degrade to no preview instead
         // of a partial read.
-        let oversized = format!("{{\"file_path\":\"x\",\"old_string\":\"{}\"}}", "a".repeat(600 * 1024));
+        let oversized = format!(
+            "{{\"file_path\":\"x\",\"old_string\":\"{}\"}}",
+            "a".repeat(600 * 1024)
+        );
         assert!(project("文本编辑", &json!({}), &Value::String(oversized)).is_empty());
     }
 
@@ -394,7 +440,7 @@ mod tests {
         let created = project(
             "str_replace_editor",
             &json!({}),
-            &json!({"command":"create","file_path":"sample.txt","file_text":"first\nsecond"})
+            &json!({"command":"create","file_path":"sample.txt","file_text":"first\nsecond"}),
         );
         assert_eq!(created.len(), 1);
         assert_eq!(created[0].added, "2");

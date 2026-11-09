@@ -2,6 +2,7 @@ type SubagentLike = Record<string, unknown>;
 
 const ACTIVE_STATUSES = new Set([
   'accepted',
+  'cancelling',
   'in_progress',
   'inprogress',
   'loading',
@@ -56,19 +57,14 @@ export const isSubagentStatusSuccessful = (value: unknown): boolean =>
 
 export const isSubagentItemActive = (item: SubagentLike | null | undefined): boolean => {
   if (!item || typeof item !== 'object') return false;
+  if (normalizeSubagentRuntimeFlag(item.terminal) || normalizeSubagentRuntimeFlag(item.failed)) return false;
   const status = normalizeSubagentRuntimeStatus(
     item.status ?? (item.agent_state as SubagentLike | undefined)?.status
   );
   if (isSubagentStatusActive(status)) return true;
-  if (status === 'timeout') {
-    return !normalizeSubagentRuntimeFlag(item.terminal) && !normalizeSubagentRuntimeFlag(item.failed);
-  }
+  if (status === 'timeout') return true;
   if (isSubagentStatusFailed(status) || isSubagentStatusSuccessful(status)) return false;
-  if (normalizeSubagentRuntimeFlag(item.terminal) || normalizeSubagentRuntimeFlag(item.failed)) return false;
-  if (normalizeSubagentRuntimeFlag(item.reply_pending) || normalizeSubagentRuntimeFlag(item.replyPending)) {
-    return true;
-  }
-  return Boolean(String(item.session_id ?? item.sessionId ?? item.run_id ?? item.runId ?? '').trim());
+  return normalizeSubagentRuntimeFlag(item.reply_pending) || normalizeSubagentRuntimeFlag(item.replyPending);
 };
 
 export const hasActiveSubagentItems = (items: unknown): boolean =>

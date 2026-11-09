@@ -641,6 +641,7 @@ impl<'a> CanonicalThreadLog<'a> {
         after: Option<i64>,
         limit: i64,
     ) -> Result<Vec<Value>> {
+        use super::thread_view_projection as p;
         let order = if after.is_some() { "ASC" } else { "DESC" };
         let mut stmt=conn.prepare(&format!("SELECT turn_id FROM queue.canonical_turn_admissions WHERE thread_id=?1 AND turn_id=root_turn_id AND (?2 IS NULL OR user_round<?2) AND (?3 IS NULL OR user_round>?3) ORDER BY user_round {order} LIMIT ?4"))?;
         let ids = stmt
@@ -648,12 +649,15 @@ impl<'a> CanonicalThreadLog<'a> {
                 r.get::<_, String>(0)
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        ids.into_iter()
+        let mut turns = ids
+            .into_iter()
             .map(|id| {
                 Self::turn(conn, session, &id)?
                     .ok_or_else(|| anyhow!("turn disappeared from snapshot"))
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        turns.retain(|turn| !p::is_withdrawn_queue_turn(turn));
+        Ok(turns)
     }
     /// The timeline is a bounded timing rail independent of ledger pagination:
     /// the newest 1024 visible items, metadata only, re-sorted ascending. The

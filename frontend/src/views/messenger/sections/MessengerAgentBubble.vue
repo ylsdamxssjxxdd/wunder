@@ -11,6 +11,7 @@
         v-if="!isUser"
         :controller="controller"
         :item="item"
+        :session-id="sessionId"
       />
 
       <div
@@ -18,13 +19,13 @@
         class="messenger-message-bubble messenger-markdown"
       >
         <MessageMarkdownBody
-          :cache-key="`agent:${String(sessionHub.activeConversationKey || '')}:${resolveAgentMessageKey(item.message, item.sourceIndex)}:c${currentContainerId}`"
+          :cache-key="`agent:${sessionId || String(sessionHub.activeConversationKey || '')}:${resolveAgentMessageKey(item.message, item.sourceIndex)}:c${currentContainerId}`"
           :content="String(item.message.content || '')"
           :message="item.message"
           :runtime-message-id="String(item.message.__runtime_message_id || item.message.message_id || '')"
           :runtime-user-turn-id="String(item.message.__runtime_user_turn_id || item.message.user_turn_id || item.message.userTurnId || '')"
           :runtime-model-turn-id="String(item.message.__runtime_model_turn_id || item.message.model_turn_id || item.message.modelTurnId || '')"
-          :session-id="String(chatStore.activeSessionId || '')"
+          :session-id="sessionId || String(chatStore.activeSessionId || '')"
           :item-id="String(item.message.item_id || '')"
           :content-truncated="
             item.message.content_truncated === true
@@ -137,6 +138,7 @@ import { uiMessageStatus } from '@/realtime/chat/threadViewStore';
 const props = defineProps<{
   controller: MessengerControllerContext;
   item: { key: string; sourceIndex: number; message: Record<string, any> };
+  sessionId?: string;
 }>();
 
 const isUser = computed(() => String(props.item.message?.role || '') === 'user');

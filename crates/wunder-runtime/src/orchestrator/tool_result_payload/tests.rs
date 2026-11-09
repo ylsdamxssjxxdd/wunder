@@ -721,6 +721,53 @@ fn test_failed_execute_command_observation_uses_single_concise_error() {
 }
 
 #[test]
+fn timed_out_command_with_output_is_reported_as_likely_applied() {
+    // 超时前已经产生输出，说明命令确实执行过；这里若仍报 unknown，
+    // 模型会误以为“什么都没发生”而直接重跑，把副作用做两遍。
+    let payload = ToolResultPayload {
+        ok: false,
+        data: json!({
+            "command": "python3 migrate.py",
+            "timed_out": true,
+            "stdout": "step 1 done\n",
+            "execution_outcome": "likely_applied",
+            "error_meta": {
+                "code": "TOOL_EXEC_TIMEOUT",
+                "hint": "Verify the outcome before retrying; side effects may already have occurred.",
+                "retryable": false,
+                "retry_after_ms": null
+            }
+        }),
+        error: "命令执行超时。".to_string(),
+        sandbox: true,
+        timestamp: Utc::now(),
+        meta: Some(json!({ "error_code": "TOOL_EXEC_TIMEOUT" })),
+    };
+
+    let compacted = payload.to_compact_payload("执行命令");
+    assert_eq!(
+        compacted.get("execution_outcome").and_then(Value::as_str),
+        Some("likely_applied")
+    );
+    assert_eq!(
+        compacted.get("retryable").and_then(Value::as_bool),
+        Some(false)
+    );
+    let error = compacted
+        .get("error")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        error.contains("Output was produced before the timeout"),
+        "unexpected error text: {error}"
+    );
+    assert!(
+        !error.contains("Outcome unknown"),
+        "likely_applied 不应继续提示结果未知: {error}"
+    );
+}
+
+#[test]
 fn test_failed_execute_command_observation_keeps_both_streams() {
     // Build/test tools report diagnostics on stderr and a summary on stdout.
     // Dropping stdout here used to force a full re-run of the failing command.

@@ -1,10 +1,14 @@
 //! `glob` tool: locate files by glob pattern.
 //!
-//! dsh-aligned behaviour: returns files (not directories) whose path matches a
-//! glob pattern, including hidden and ignored entries, ordered by modification
-//! time (most recently modified first). The result is capped; when the cap is
-//! exceeded the paths are sampled across top-level directories so every subtree
-//! stays represented and the total match count is reported.
+//! Returns files (not directories) whose path matches a glob pattern, ordered by
+//! modification time (most recently modified first). The result is capped; when
+//! the cap is exceeded the paths are sampled across top-level directories so
+//! every subtree stays represented and the total match count is reported.
+//!
+//! Defaults keep the result usable on real repositories: dependency and build
+//! cache directories (`node_modules`, `target`, `.cargo`, …) plus everything
+//! ignored by `.gitignore` are pruned. Pass `include_ignored=true` to walk the
+//! raw tree, and `exclude` to subtract extra glob patterns.
 
 use super::{
     build_model_tool_success_with_hint, collect_read_roots, resolve_tool_path,
@@ -18,18 +22,17 @@ use anyhow::Result;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::SystemTime;
-use walkdir::WalkDir;
+
+use super::fs_walk::{self, ExcludeFilter};
 
 /// Canonical tool name.
 pub(crate) const TOOL_GLOB: &str = "文件名匹配";
 
 /// Hard cap on returned paths, matching the dsh glob tool.
 const GLOB_MAX_RESULTS: usize = 100;
-
-/// Version-control directories pruned from the walk.
-const GLOB_VCS_EXCLUDES: &[&str] = &[".git", ".svn", ".hg", ".bzr", ".jj", ".sl"];
 
 pub(crate) async fn glob_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let args = super::recover_tool_args_value(args);
@@ -70,6 +73,26 @@ pub(crate) async fn glob_files(context: &ToolContext<'_>, args: &Value) -> Resul
             ));
         }
     };
+    let exclude_patterns = match fs_walk::parse_exclude_patterns(&args) {
+        Ok(patterns) => patterns,
+        Err(message) => {
+            return Ok(build_failed_tool_result(
+                message,
+                json!({ "exclude": args.get("exclude").cloned().unwrap_or(Value::Null) }),
+                ToolErrorMeta::new(
+                    "TOOL_GLOB_INVALID_EXCLUDE",
+                    Some(
+                        "exclude 接受 glob 字符串或字符串数组，例如 \"*.min.js\" 或 [\"dist\", \"vendor\"]。"
+                            .to_string(),
+                    ),
+                    false,
+                    None,
+                ),
+                false,
+            ));
+        }
+    };
+    let include_ignored = fs_walk::parse_include_ignored(&args);
     let pattern = pattern.to_string();
     let raw_path = args
         .get("path")
@@ -89,6 +112,8 @@ pub(crate) async fn glob_files(context: &ToolContext<'_>, args: &Value) -> Resul
             &pattern,
             &raw_path,
             &matcher,
+            &exclude_patterns,
+            include_ignored,
         )
     })
     .await
@@ -107,6 +132,8 @@ fn glob_files_inner(
     pattern: &str,
     raw_path: &str,
     matcher: &GlobMatcher,
+    exclude_patterns: &[String],
+    include_ignored: bool,
 ) -> Result<Value> {
     let root = resolve_tool_path(workspace, user_id, raw_path, extra_roots)?;
     if !root.exists() {
@@ -124,18 +151,34 @@ fn glob_files_inner(
             false,
         ));
     }
+    let exclude = match ExcludeFilter::new(exclude_patterns) {
+        Ok(filter) => filter.map(Arc::new),
+        Err(message) => {
+            return Ok(build_failed_tool_result(
+                message,
+                json!({ "exclude": exclude_patterns }),
+                ToolErrorMeta::new(
+                    "TOOL_GLOB_INVALID_EXCLUDE",
+                    Some(
+                        "exclude 接受 glob 字符串或字符串数组，例如 \"*.min.js\" 或 [\"dist\", \"vendor\"]。"
+                            .to_string(),
+                    ),
+                    false,
+                    None,
+                ),
+                false,
+            ));
+        }
+    };
+    let mut builder = fs_walk::walk_builder(&root, include_ignored);
+    {
+        let exclude = exclude.clone();
+        let root = root.clone();
+        builder.filter_entry(move |entry| entry_allowed(entry, &root, exclude.as_deref(), include_ignored));
+    }
     let mut hits: Vec<GlobHit> = Vec::new();
-    let walker = WalkDir::new(&root).into_iter().filter_entry(|entry| {
-        if entry.depth() == 0 || !entry.file_type().is_dir() {
-            return true;
-        }
-        match entry.file_name().to_str() {
-            Some(name) => !GLOB_VCS_EXCLUDES.contains(&name),
-            None => true,
-        }
-    });
-    for entry in walker.filter_map(|item| item.ok()) {
-        if !entry.file_type().is_file() {
+    for entry in builder.build().filter_map(|item| item.ok()) {
+        if entry.depth() == 0 || !entry.file_type().is_some_and(|kind| kind.is_file()) {
             continue;
         }
         let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
@@ -177,6 +220,19 @@ fn glob_files_inner(
     } else {
         format!("Found {total} files matching {pattern}.")
     };
+    // 0 命中时最可能的原因就是目录被默认忽略或列进了 .gitignore，直接把逃生口写出来。
+    let hint = if truncated {
+        Some(format!(
+            "Matched {total} files; showing {returned} sampled across top-level entries. Narrow the pattern or path to see the rest."
+        ))
+    } else if total == 0 && !include_ignored {
+        Some(
+            "No match under the default ignore rules (.gitignore plus dependency/build cache directories). Pass include_ignored=true if the target lives in node_modules, target, .cargo or is gitignored."
+                .to_string(),
+        )
+    } else {
+        None
+    };
     Ok(build_model_tool_success_with_hint(
         TOOL_GLOB,
         "completed",
@@ -189,13 +245,35 @@ fn glob_files_inner(
             "count": returned,
             "total_matched": total,
             "truncated": truncated,
+            "exclude": exclude_patterns,
+            "include_ignored": include_ignored,
         }),
-        truncated.then(|| {
-            format!(
-                "Matched {total} files; showing {returned} sampled across top-level entries. Narrow the pattern or path to see the rest."
-            )
-        }),
+        hint,
     ))
+}
+
+/// 目录剪枝与 `exclude` 过滤：目录被排除时整棵子树都不进入遍历。
+fn entry_allowed(
+    entry: &ignore::DirEntry,
+    root: &Path,
+    exclude: Option<&ExcludeFilter>,
+    include_ignored: bool,
+) -> bool {
+    if entry.depth() == 0 {
+        return true;
+    }
+    let name = entry.file_name().to_string_lossy().to_string();
+    if let Some(exclude) = exclude {
+        let rel = entry.path().strip_prefix(root).unwrap_or(entry.path());
+        let rel_path = rel.to_string_lossy().replace('\\', "/");
+        if exclude.is_match(&rel_path, &name) {
+            return false;
+        }
+    }
+    if !entry.file_type().is_some_and(|kind| kind.is_dir()) {
+        return true;
+    }
+    !fs_walk::prunes_dir(&name, include_ignored)
 }
 
 /// Round-robin sampling across top-level directories, preserving the incoming

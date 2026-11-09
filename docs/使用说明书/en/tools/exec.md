@@ -44,4 +44,4 @@ A long-lived background command session is managed by the `command_session` tool
 
 - A non-zero exit, a timeout, a working directory that is missing or not a directory, a disallowed command, or exceeding the command budget all fail.
 - On a timeout or a non-zero exit, the collected output is still kept in the result, so you can keep diagnosing.
-- The administrator event details add up to 4 diagnostics, each with the command, its index, the exit code, and a bounded tail of output; the failure message sent to the model is compressed into one error line plus a next-step hint.
+- The administrator event details add up to 4 diagnostics, each with the command, its index, the exit code, and a bounded tail of output; the failure message sent to the model is compressed into one error line plus a next-step hint. That summary keeps the first and last 3 lines and reports total and omitted line counts instead of keeping only the tail; exit code 141 or a broken-pipe stderr is called out as a downstream head/cut closing the pipe (SIGPIPE), not a command failure.

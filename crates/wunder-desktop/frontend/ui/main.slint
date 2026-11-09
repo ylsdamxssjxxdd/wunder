@@ -14,12 +14,13 @@ export { ToastState }
 import { ProcessEntry } from "theme.slint";
 import { Composer, GoalBanner, InquiryPanel, ModelSetupBanner, StatusDock } from "composer.slint";
 import { TimelineView } from "timeline.slint";
+import { ChatSplitWorkspace } from "chat_split.slint";
 import { TextMenu, TextMenuState } from "text_menu.slint";
 import { ActivityMonth, ActivityWeek } from "activity_card.slint";
 export { ActivityMonth, ActivityWeek }
 import { Sidebar } from "sidebar.slint";
 import { WorkspaceVisual } from "workspace_visual.slint";
-import { SidebarMetrics, PointerChase } from "drag_row.slint";
+import { SidebarMetrics, PointerChase, DragPreview } from "drag_row.slint";
 // `PointerChase` is reached from Rust (`pointer_chase.rs`), so it has to be
 // re-exported here; only exported globals exist in the generated bindings.
 export { SidebarMetrics, PointerChase }
@@ -452,6 +453,42 @@ export component MainWindow inherits Window {
     in-out property <int> active-thread-count: 0;
     in-out property <string> active-thread-status: "idle";
     in-out property <[TimelineRow]> timeline: [];
+    in-out property <int> split-count: 1;
+    in-out property <float> split-column-ratio: 0.5;
+    in-out property <float> split-row-ratio: 0.5;
+    in-out property <string> split-session-0;
+    in-out property <string> split-session-1;
+    in-out property <string> split-session-2;
+    in-out property <string> split-session-3;
+    in-out property <string> split-title-0;
+    in-out property <string> split-title-1;
+    in-out property <string> split-title-2;
+    in-out property <string> split-title-3;
+    in-out property <[TimelineRow]> split-rows-0: [];
+    in-out property <[TimelineRow]> split-rows-1: [];
+    in-out property <[TimelineRow]> split-rows-2: [];
+    in-out property <[TimelineRow]> split-rows-3: [];
+    in-out property <string> split-draft-0;
+    in-out property <string> split-draft-1;
+    in-out property <string> split-draft-2;
+    in-out property <string> split-draft-3;
+    in-out property <bool> split-loading-0;
+    in-out property <bool> split-loading-1;
+    in-out property <bool> split-loading-2;
+    in-out property <bool> split-loading-3;
+    in-out property <bool> split-busy-0;
+    in-out property <bool> split-busy-1;
+    in-out property <bool> split-busy-2;
+    in-out property <bool> split-busy-3;
+    callback split-layout(int);
+    callback split-close(int);
+    callback split-activate(int);
+    callback split-send(int);
+    callback split-stop(int);
+    callback split-drop-row(int, int);
+    callback split-toggle-row(int, int);
+    callback split-select-model(int, string);
+    callback split-thread-update-ready();
     in-out property <[AgentCard]> agents: [];
     in-out property <[ToolCard]> tools: [];
     in-out property <bool> cron-loading: false;
@@ -739,6 +776,21 @@ export component MainWindow inherits Window {
     function apply-sidebar-width(start-width: length, start-x: length, current-x: length) {
         root.sidebar-width = clamp(start-width + (current-x - start-x), 170px, 420px);
     }
+    function drop-thread-on-split(row: int) {
+        if root.split-count == 1 {
+            root.split-drop-row(1, row);
+            return;
+        }
+        if root.split-count == 2 {
+            root.split-drop-row(DragPreview.pointer-x < split_workspace.absolute-position.x
+                + split_workspace.width * root.split-column-ratio ? 0 : 1, row);
+            return;
+        }
+        root.split-drop-row((DragPreview.pointer-y < split_workspace.absolute-position.y
+            + split_workspace.height * root.split-row-ratio ? 0 : 2)
+            + (DragPreview.pointer-x < split_workspace.absolute-position.x
+            + split_workspace.width * root.split-column-ratio ? 0 : 1), row);
+    }
     // The working-directory prompt dialog (rename / new dir / new file /
     // delete / cloud-approval confirm), driven by the native controller.
     in-out property <bool> ws-prompt-open: false;
@@ -887,6 +939,7 @@ export component MainWindow inherits Window {
     in-out property <string> reasoning-effort: "default";
     callback stop-generation();
     callback select-thread-model(string);
+    callback fork-thread(string, int);
     callback copy-raw(string);
     /// Copy the transcript's text selection. The selection lives in the text
     /// layout, so only Rust can read it.
@@ -1037,6 +1090,8 @@ export component MainWindow inherits Window {
     // and a real click needs the layout's own numbers rather than a repeated
     // guess about where the overlay lands. Both surfaces start below the
     // window's title strip, so every y carries the titlebar offset.
+    out property <length> split-button-x: root.width - 27px;
+    out property <length> split-button-y: Theme.titlebar-height + 25px;
     out property <length> settings-button-x: root.sidebar-width / 2;
     out property <length> settings-button-y: Theme.titlebar-height + sidebar_view.height - 20px;
     out property <length> settings-back-x: (root.width - min(1080px, root.width - 72px)) / 2
@@ -1132,6 +1187,7 @@ export component MainWindow inherits Window {
                 workspace-menu(workspace, action) => { root.workspace-menu(workspace, action); }
                 new-workspace => { root.new-workspace(); }
                 move-row(index, travel) => { root.move-row(index, travel); }
+                drop-thread-to-chat(index) => { root.drop-thread-on-split(index); }
                 archive-thread(id) => {
                     root.archive-thread(id);
                 }
@@ -1283,7 +1339,9 @@ export component MainWindow inherits Window {
                 }
             }
             Rectangle {
-                horizontal-stretch: 1;
+                horizontal-stretch: root.split-count == 1 ? 1 : 0;
+                max-width: root.split-count == 1 ? root.width : 0px;
+                visible: root.split-count == 1;
                 background: Theme.chat;
                 VerticalLayout {
                     spacing: 0px;
@@ -1327,6 +1385,7 @@ export component MainWindow inherits Window {
                             load-older => { root.timeline-load-older(); }
                             copy-text(text) => { root.copy-raw(text); }
                             copy-original(id) => { root.cloud-copy-original(id); }
+                            fork-thread(round) => { root.fork-thread(root.active-session-id, round); }
                             open-resource(id) => { root.timeline-open(id); }
                             show-context-menu(x, y, selected) => {
                                 TextMenuState.anchor-x = x;
@@ -1459,6 +1518,62 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+            split_workspace := ChatSplitWorkspace {
+                horizontal-stretch: 1;
+                visible: root.split-count > 1;
+                count <=> root.split-count;
+                column-ratio <=> root.split-column-ratio;
+                row-ratio <=> root.split-row-ratio;
+                session-0 <=> root.split-session-0; session-1 <=> root.split-session-1;
+                session-2 <=> root.split-session-2; session-3 <=> root.split-session-3;
+                title-0 <=> root.split-title-0; title-1 <=> root.split-title-1;
+                title-2 <=> root.split-title-2; title-3 <=> root.split-title-3;
+                rows-0: root.split-rows-0; rows-1: root.split-rows-1;
+                rows-2: root.split-rows-2; rows-3: root.split-rows-3;
+                draft-0 <=> root.split-draft-0; draft-1 <=> root.split-draft-1;
+                draft-2 <=> root.split-draft-2; draft-3 <=> root.split-draft-3;
+                loading-0: root.split-loading-0; loading-1: root.split-loading-1;
+                loading-2: root.split-loading-2; loading-3: root.split-loading-3;
+                busy-0: root.split-busy-0; busy-1: root.split-busy-1;
+                busy-2: root.split-busy-2; busy-3: root.split-busy-3;
+                active-session: root.active-session-id;
+                stream-revision: root.stream-updates;
+                models: root.cloud-chat-active ? root.cloud-thread-models : root.composer-models;
+                model-count: root.cloud-chat-active ? root.cloud-thread-models.length : root.model-catalogue-count;
+                model-name: root.selected-model-key != "" ? root.selected-model-key : root.selected-agent-model;
+                model-key: root.selected-model-key;
+                attachments: root.pending-attachments;
+                send-key: root.runtime-send-key;
+                layout-changed(count) => { root.split-layout(count); }
+                close-pane(slot) => { root.split-close(slot); }
+                activate-pane(slot) => { root.split-activate(slot); }
+                send-pane(slot) => { root.split-send(slot); }
+                stop-pane(slot) => { root.split-stop(slot); }
+                toggle-row(slot, index) => { root.split-toggle-row(slot, index); }
+                select-pane-model(slot, key) => { root.split-select-model(slot, key); }
+                fork-thread(session, round) => { root.fork-thread(session, round); }
+                copy-text(text) => { root.copy-raw(text); }
+                open-resource(id) => { root.timeline-open(id); }
+            }
+        }
+    }
+
+    if root.split-count == 1 && root.active-session-id != "" : Action {
+        x: root.width - 42px; y: Theme.titlebar-height + 10px; z: 300;
+        width: 30px; height: 30px;
+        icon: @image-url("../assets/icons/fa-table-columns.svg");
+        clicked => { root.split-layout(2); }
+    }
+    if DragPreview.active && DragPreview.pointer-x >= root.sidebar-width + 6px : Rectangle {
+        x: clamp(DragPreview.pointer-x + 10px, root.sidebar-width + 8px, root.width - 188px);
+        y: clamp(DragPreview.pointer-y - 12px, Theme.titlebar-height + 8px, root.height - 34px);
+        width: 180px; height: 26px; z: 180;
+        border-radius: Theme.radius-md; background: Theme.surface;
+        border-width: 1px; border-color: Theme.accent-ink;
+        Text {
+            x: 8px; width: parent.width - 16px; height: parent.height;
+            text: DragPreview.source-label; color: Theme.text; font-size: Theme.font-sm;
+            vertical-alignment: center; overflow: elide;
         }
     }
 

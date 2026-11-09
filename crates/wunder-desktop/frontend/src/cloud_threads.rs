@@ -1170,6 +1170,31 @@ pub(crate) fn archive(app: &MainWindow, api: Arc<NativeDesktop>, id: String) {
     });
 }
 
+pub(crate) fn fork(app: &MainWindow, api: Arc<NativeDesktop>, thread: String, user_round: i32) {
+    if thread.is_empty() || user_round <= 0 || app.get_cloud_thread_busy() {
+        return;
+    }
+    app.set_cloud_thread_busy(true);
+    let account = ACCOUNT_GENERATION.load(Ordering::Acquire);
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let result = api.cloud_thread_fork(&thread, user_round as i64);
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if ACCOUNT_GENERATION.load(Ordering::Acquire) != account {
+                return;
+            }
+            app.set_cloud_thread_busy(false);
+            match result {
+                Ok(thread) => {
+                    PENDING_SELECTION.with(|slot| *slot.borrow_mut() = Some(thread.id));
+                    refresh(&app, api, None);
+                }
+                Err(error) => app.set_status(format!("无法分叉云端线程：{error}").into()),
+            }
+        });
+    });
+}
+
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     let backend = api.clone();

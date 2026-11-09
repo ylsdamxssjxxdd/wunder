@@ -104,6 +104,8 @@ mod expert;
 pub use expert::ExpertMemory;
 #[path = "native_activity.rs"]
 mod activity;
+#[path = "native_android_update.rs"]
+mod android_update;
 #[path = "native_channels.rs"]
 mod channels;
 #[path = "native_cli.rs"]
@@ -120,8 +122,6 @@ mod settings;
 mod supplement;
 #[path = "native_update.rs"]
 mod update;
-#[path = "native_android_update.rs"]
-mod android_update;
 #[path = "native_workspace.rs"]
 mod workspace;
 pub use catalog::{AgentRecord, AgentSettingsEdit, ToolRecord, DEFAULT_AGENT_ID};
@@ -131,16 +131,16 @@ pub use channels::{
     WeixinQrLoginStatus,
 };
 pub use cloud::{validate_cloud_password, CloudStatusView};
-pub use update::{
-    UpdateStateView, CURRENT_VERSION, RELAUNCH_ENV as UPDATE_RELAUNCH_ENV, TARGET_CLI,
-    TARGET_DESKTOP, TARGET_SUPPLEMENT, UPDATE_GITHUB_REPO,
-};
 pub use cron::{CronRecord, CronRunRecord, NativeCronJobEdit};
 pub use profile::NativeProfile;
 pub use settings::{
     DesktopSettings, LanPeerRecord, LanSettings, ModelEdit, ModelProbeOutcome, ModelRecord,
 };
 pub use supplement::SupplementImportReport;
+pub use update::{
+    UpdateStateView, CURRENT_VERSION, RELAUNCH_ENV as UPDATE_RELAUNCH_ENV, TARGET_CLI,
+    TARGET_DESKTOP, TARGET_SUPPLEMENT, UPDATE_GITHUB_REPO,
+};
 pub use workspace::{
     NativeWorkspace, WorkspaceDeleteSummary, WorkspaceEdit, WorkspacePathReport, WORKSPACE_COLORS,
     WORKSPACE_ICONS,
@@ -720,7 +720,11 @@ impl NativeDesktop {
                     drop(state);
                     let sessions = heartbeat_threads
                         .lock()
-                        .map(|set| set.iter().map(|(session, token)| (session.clone(), *token)).collect::<Vec<_>>())
+                        .map(|set| {
+                            set.iter()
+                                .map(|(session, token)| (session.clone(), *token))
+                                .collect::<Vec<_>>()
+                        })
                         .unwrap_or_default();
                     for (session, token) in sessions {
                         // The SQLite write runs outside the operation lock so a
@@ -1640,6 +1644,57 @@ impl NativeDesktop {
         Ok(self.session_with_stats(record, &workspaces))
     }
 
+    pub fn fork_session(&self, session_id: &str, user_round: i64) -> Result<NativeSession> {
+        anyhow::ensure!(user_round > 0, "分叉轮次无效");
+        let source = self
+            .desktop
+            .state
+            .user_store
+            .get_chat_session(self.user_id(), session_id.trim())?
+            .ok_or_else(|| anyhow!("线程不存在"))?;
+        let now = now_ts();
+        let id = format!("native_{}", uuid::Uuid::new_v4().simple());
+        let record = wunder_server::storage::ChatSessionRecord {
+            session_id: id.clone(),
+            user_id: source.user_id.clone(),
+            title: source.title.clone(),
+            status: "active".into(),
+            created_at: now,
+            updated_at: now,
+            last_message_at: now,
+            agent_id: source.agent_id.clone(),
+            workspace_id: source.workspace_id.clone(),
+            tool_overrides: source.tool_overrides.clone(),
+            parent_session_id: None,
+            parent_message_id: None,
+            spawn_label: None,
+            spawned_by: None,
+        };
+        self.desktop.state.user_store.upsert_chat_session(&record)?;
+        if let Err(error) = self.desktop.state.storage.fork_thread_log(
+            self.user_id(),
+            session_id.trim(),
+            &id,
+            user_round,
+        ) {
+            let _ = self
+                .desktop
+                .state
+                .user_store
+                .delete_chat_session(self.user_id(), &id);
+            return Err(error);
+        }
+        let workspace = &self.desktop.state.workspace;
+        let model = workspace.load_session_model_override(self.user_id(), session_id.trim());
+        let _ = workspace.save_session_model_override(self.user_id(), &id, model.as_deref());
+        let effort = workspace.load_session_reasoning_effort(self.user_id(), session_id.trim());
+        let _ = workspace.save_session_reasoning_effort(self.user_id(), &id, &effort);
+        let tokens = workspace.load_session_context_tokens(self.user_id(), session_id.trim());
+        workspace.save_session_context_tokens(self.user_id(), &id, tokens);
+        let workspaces = self.workspace_lookup();
+        Ok(self.session_with_stats(record, &workspaces))
+    }
+
     pub fn rename_session(&self, session_id: &str, title: &str) -> Result<()> {
         let title = title.trim();
         if title.is_empty() || title.chars().count() > 120 || title.chars().any(char::is_control) {
@@ -2076,6 +2131,29 @@ mod thread_switch_tests {
             row.draft,
             "a turn-less thread stays a reusable draft in the catalogue"
         );
+    }
+
+    #[test]
+    fn forked_native_thread_keeps_only_the_selected_completed_prefix() {
+        let _serial = serial();
+        let desktop = start_isolated();
+        let generated = desktop
+            .generate_stress_threads(3, 1, 1, None, |_, _, _| {})
+            .expect("source history");
+        let source_id = generated[0].session_id.clone();
+        let fork = desktop.fork_session(&source_id, 2).expect("fork session");
+        assert_ne!(fork.id, source_id);
+        let source = desktop.open_chat_snapshot(&source_id).expect("source view");
+        let target = desktop.open_chat_snapshot(&fork.id).expect("fork view");
+        assert_eq!(source.turns.len(), 3);
+        assert_eq!(target.turns.len(), 2);
+        for index in 0..2 {
+            assert_eq!(target.turns[index].user.text, source.turns[index].user.text);
+            assert_eq!(
+                target.turns[index].assistant.text,
+                source.turns[index].assistant.text
+            );
+        }
     }
 }
 

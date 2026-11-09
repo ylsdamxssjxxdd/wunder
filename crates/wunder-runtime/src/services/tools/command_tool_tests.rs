@@ -91,6 +91,39 @@ async fn local_command_timeout_preserves_side_effect_and_requires_verification()
     let remote = build_sandbox_command_result(json!({"timed_out":true,"exit_code":-1}));
     assert_eq!(remote["error_meta"]["retryable"], false);
     assert_eq!(remote["data"]["execution_outcome"], "unknown");
+    // 超时前没有任何输出 = 真的无从判断，保持 unknown。
+    let blank = build_sandbox_command_result(json!({
+        "timed_out": true,
+        "exit_code": -1,
+        "stdout": "  \n"
+    }));
+    assert_eq!(blank["data"]["execution_outcome"], "unknown");
+    // 超时前只有执行层补的 `timeout after 2s` 标记，不算命令产出。
+    let note_only = build_sandbox_command_result(json!({
+        "timed_out": true,
+        "exit_code": -1,
+        "stderr": "timeout after 2s"
+    }));
+    assert_eq!(note_only["data"]["execution_outcome"], "unknown");
+    // 真输出 + 标记同时存在时，仍要认出“命令确实跑过”。
+    let mixed = build_sandbox_command_result(json!({
+        "timed_out": true,
+        "exit_code": -1,
+        "stdout": "step 1 done\n",
+        "stderr": "timeout after 2s"
+    }));
+    assert_eq!(mixed["data"]["execution_outcome"], "likely_applied");
+    // 超时前已经有输出 = 命令确实跑过，副作用可能已落盘，不能再让模型当没执行。
+    let progressed = build_sandbox_command_result(json!({
+        "timed_out": true,
+        "exit_code": -1,
+        "stdout": "step 1 done\n"
+    }));
+    assert_eq!(progressed["data"]["execution_outcome"], "likely_applied");
+    assert!(progressed["data"]["next_step_hint"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("副作用"));
 }
 
 #[tokio::test]

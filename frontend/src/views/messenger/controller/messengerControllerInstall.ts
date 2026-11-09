@@ -85,6 +85,7 @@ import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
 import { preloadAgentSettingsPanels, preloadMessengerSettingsPanels } from '@/views/messenger/lazyPanels';
 import { MessageConversationKind, hasRetainedAgentConversationContext, hasRetainedMessageConversationContext, hasRetainedMessageConversationContext as resolveRetainedMessageConversationContext, resolveMessageConversationKind } from '@/views/messenger/messageConversationRetention';
+import { canForkAgentMessage, resolveAgentMessageForkRound } from '@/views/messenger/messageFork';
 import { createMessageViewportRuntime } from '@/views/messenger/messageViewportRuntime';
 import { buildMessageVirtualWindow, createMessageVirtualHeightEstimator, resolveVirtualOffsetTop } from '@/views/messenger/messageVirtualWindow';
 import { defaultMessengerOrderPreferences, loadMessengerOrderPreferences, saveMessengerOrderPreferences } from '@/views/messenger/messengerOrderSync';
@@ -9409,6 +9410,35 @@ function installMessengerControllerMessageMarkdownVoice(ctx: MessengerController
 
 
   ctx.resolveWorldVoiceActionLabel = (message: Record<string, unknown>): string => ctx.isWorldVoicePlaying(message) ? ctx.t('messenger.world.voice.pause') : ctx.t('messenger.world.voice.play');
+
+  ctx.agentMessageForkingKey = ref('');
+  ctx.resolveAgentMessageForkRound = resolveAgentMessageForkRound;
+  ctx.canForkAgentMessage = canForkAgentMessage;
+  ctx.isAgentMessageForking = (message: Record<string, unknown>): boolean => {
+      const key = String(message?.item_id || message?.message_id || message?.root_turn_id || message?.turn_id || resolveAgentMessageForkRound(message) || '');
+      return Boolean(key) && ctx.agentMessageForkingKey.value === key;
+  };
+  ctx.forkAgentMessage = async (message: Record<string, unknown>, sourceSessionId = '') => {
+      if (ctx.agentMessageForkingKey.value || !canForkAgentMessage(message)) return;
+      const sessionId = String(sourceSessionId || ctx.chatStore.activeSessionId || '').trim();
+      const userRound = resolveAgentMessageForkRound(message);
+      if (!sessionId || !userRound) return;
+      const key = String(message?.item_id || message?.message_id || message?.root_turn_id || message?.turn_id || userRound);
+      ctx.agentMessageForkingKey.value = key;
+      try {
+          const forked = await ctx.chatStore.forkSession(sessionId, userRound);
+          const forkedId = String(forked?.id || '').trim();
+          if (!forkedId) throw new Error(ctx.t('chat.error.forkFailed'));
+          await ctx.openAgentSession(forkedId, String(forked?.agent_id || ''));
+          ElMessage.success(ctx.t('chat.message.forkSuccess'));
+      }
+      catch (error) {
+          showApiError(error, ctx.t('chat.error.forkFailed'));
+      }
+      finally {
+          if (ctx.agentMessageForkingKey.value === key) ctx.agentMessageForkingKey.value = '';
+      }
+  };
 
   ctx.shouldShowAgentResumeButton = (message: Record<string, unknown>): boolean => {
       if (String(message?.role || '') !== 'assistant')

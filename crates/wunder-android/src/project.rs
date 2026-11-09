@@ -204,27 +204,39 @@ impl RowData {
             let entries: Vec<ProcessEntry> = self
                 .process_children
                 .iter()
-                .map(|child| ProcessEntry {
-                    kind: child.kind,
-                    id: child.id.as_str().into(),
-                    text: child.text.as_str().into(),
-                    blocks: if child.blocks_src.is_empty() {
-                        ModelRc::default()
-                    } else {
-                        blocks_model(renderer, &child.blocks_src)
-                    },
-                    summary: child.summary.as_str().into(),
-                    tool_name: child.tool_name.as_str().into(),
-                    tool_icon: child.tool_icon.as_str().into(),
-                    target: child.target.as_str().into(),
-                    detail: child.detail.as_str().into(),
-                    sections: workflow_sections(&child.sections),
-                    patch: patch_cards(&child.patch),
-                    tokens: child.tokens.as_str().into(),
-                    duration: child.duration.as_str().into(),
-                    status_kind: child.status_kind,
-                    open: child.open,
-                    payload: child.payload,
+                .map(|child| {
+                    // A failed or stopped call produced no change: its row keeps
+                    // no change size beside the file chip.
+                    let (diff_add, diff_del) =
+                        if matches!(child.status_kind, STATUS_FAILED | STATUS_STOPPED) {
+                            (String::new(), String::new())
+                        } else {
+                            patch_diff(&child.patch)
+                        };
+                    ProcessEntry {
+                        kind: child.kind,
+                        id: child.id.as_str().into(),
+                        text: child.text.as_str().into(),
+                        blocks: if child.blocks_src.is_empty() {
+                            ModelRc::default()
+                        } else {
+                            blocks_model(renderer, &child.blocks_src)
+                        },
+                        summary: child.summary.as_str().into(),
+                        tool_name: child.tool_name.as_str().into(),
+                        tool_icon: child.tool_icon.as_str().into(),
+                        target: child.target.as_str().into(),
+                        detail: child.detail.as_str().into(),
+                        sections: workflow_sections(&child.sections),
+                        patch: patch_cards(&child.patch),
+                        diff_add: diff_add.as_str().into(),
+                        diff_del: diff_del.as_str().into(),
+                        tokens: child.tokens.as_str().into(),
+                        duration: child.duration.as_str().into(),
+                        status_kind: child.status_kind,
+                        open: child.open,
+                        payload: child.payload,
+                    }
                 })
                 .collect();
             row.process_entries = ModelRc::new(VecModel::from(entries));
@@ -532,6 +544,29 @@ fn patch_cards(files: &[NativePatchFile]) -> ModelRc<PatchCard> {
             })
             .collect::<Vec<_>>(),
     ))
+}
+
+/// Collapsed-row change size of an edit / patch call: the per-file counts the
+/// patch cards already carry, summed. Empty means "no change on that side", so
+/// the row never prints a meaningless "+0 −0".
+pub fn patch_diff(files: &[NativePatchFile]) -> (String, String) {
+    let (mut added, mut deleted) = (0u64, 0u64);
+    for file in files.iter().take(8) {
+        added = added.saturating_add(file.added.trim().parse::<u64>().unwrap_or(0));
+        deleted = deleted.saturating_add(file.deleted.trim().parse::<u64>().unwrap_or(0));
+    }
+    (
+        if added > 0 {
+            added.to_string()
+        } else {
+            String::new()
+        },
+        if deleted > 0 {
+            deleted.to_string()
+        } else {
+            String::new()
+        },
+    )
 }
 
 /// Natural width of one diff card's line area. Touch shells pan this area
@@ -1382,6 +1417,44 @@ mod tests {
         assert_eq!(child.target, "src/main.rs");
         assert_eq!(workflow_sections(&child.sections).row_count(), 1);
         assert_eq!(patch_cards(&child.patch).row_count(), 1);
+    }
+
+    #[test]
+    fn process_rows_carry_the_change_size_of_an_edit_call() {
+        let child = tool_child("turn", &entry());
+        let (diff_add, diff_del) = patch_diff(&child.patch);
+        assert_eq!((diff_add.as_str(), diff_del.as_str()), ("1", "1"));
+        // A tool that changed no file keeps both sides empty so the row never
+        // prints "+0 −0".
+        assert_eq!(
+            patch_diff(&[]),
+            (String::new(), String::new()),
+            "no file change means no diff label"
+        );
+        let bar = RowData {
+            kind: KIND_PROCESS,
+            id: "bar-1".into(),
+            process_children: vec![child],
+            ..Default::default()
+        };
+        let row = bar.to_row(&mut MarkdownRenderer::default());
+        let entries = row.process_entries;
+        let first = entries.row_data(0).expect("process entry");
+        assert_eq!(first.diff_add.as_str(), "1");
+        assert_eq!(first.diff_del.as_str(), "1");
+        // A failed call never reads as a real change, even though it retains its
+        // pending preview card.
+        let mut failed = tool_child("turn", &entry());
+        failed.status_kind = STATUS_FAILED;
+        let bar = RowData {
+            kind: KIND_PROCESS,
+            id: "bar-2".into(),
+            process_children: vec![failed],
+            ..Default::default()
+        };
+        let row = bar.to_row(&mut MarkdownRenderer::default());
+        let first = row.process_entries.row_data(0).expect("process entry");
+        assert!(first.diff_add.is_empty() && first.diff_del.is_empty());
     }
 
     #[test]

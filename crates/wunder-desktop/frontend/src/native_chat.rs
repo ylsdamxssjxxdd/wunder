@@ -20,7 +20,7 @@ use std::{
 use wunder_desktop::native::NativeChatCommand;
 use wunder_desktop::{
     NativeChatAttachment, NativeChatEvent, NativeChatInput, NativeDesktop, NativeQueueTurn,
-    NativeStream,
+    NativeSession, NativeStream,
 };
 
 #[path = "native_chat_commands.rs"]
@@ -757,11 +757,13 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         send_seq: 0,
     }));
     observer::install(app, state.clone());
+    crate::chat_split::install(app, desktop_preview.clone());
     CHAT_STATE.with(|slot| *slot.borrow_mut() = Rc::downgrade(&state));
     bind_refresh(app, state.clone());
     bind_selection(app, state.clone());
     bind_history_paging(app, state.clone());
     bind_new_thread(app, state.clone());
+    bind_fork_thread(app, state.clone());
     bind_send(app, state.clone());
     let launch_weak = app.as_weak();
     let launch_desktop = state.borrow().desktop.clone();
@@ -975,6 +977,7 @@ fn publish_timeline_with_follow(
         app.set_turn_marks(live.marks_model());
     }
     live.sync_turn_marks();
+    crate::chat_split::sync_active(app, live.model());
     // One monotonic view revision covers live frames and durable history
     // refreshes alike. TimelineView uses it to schedule a bounded follow-tail
     // correction instead of polling content-y forever.
@@ -2034,6 +2037,32 @@ fn find_untouched_thread(app: &MainWindow, workspace_id: Option<&str>) -> Option
         .map(|row| row.id.to_string())
 }
 
+fn open_created_session(app: &MainWindow, session: NativeSession) {
+    let row = Conversation {
+        id: session.id.clone().into(),
+        agent_id: crate::navigation_ui::agent_key(session.agent_id.as_deref()).into(),
+        workspace_id: session.workspace_id.clone().unwrap_or_default().into(),
+        title: session.title.into(),
+        time: format_time(session.updated_at).into(),
+        consumed_tokens: format_count_i64(session.consumed_tokens).into(),
+        tool_calls: session.tool_calls.to_string().into(),
+        quota_used: format_count_i64(session.quota_used).into(),
+        runtime_phase: Phase::of(session.runtime_status.as_str()).code(),
+        runtime_status: session.runtime_status.into(),
+        locked: session.locked,
+        draft: session.draft,
+        ..Default::default()
+    };
+    let mut rows = app.get_conversations().iter().collect::<Vec<_>>();
+    rows.insert(0, row);
+    rows.truncate(100);
+    update_active_thread_filter(app, rows.iter().cloned());
+    app.set_conversations(ModelRc::new(VecModel::from(rows)));
+    crate::navigation_ui::project(app);
+    app.set_page(crate::DesktopPage::Messages);
+    app.invoke_select_conversation(0);
+}
+
 fn bind_new_thread(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
     // Workspace-first: a new task opens in the selected workspace (§5.2.1);
@@ -2105,35 +2134,45 @@ fn bind_new_thread(app: &MainWindow, state: Rc<RefCell<State>>) {
                     }
                 });
                 match result {
-                    Ok(session) => {
-                        // Pin the new thread above older activity before the
-                        // next refresh re-sorts the list.
-                        let row = Conversation {
-                            id: session.id.clone().into(),
-                            agent_id: crate::navigation_ui::agent_key(session.agent_id.as_deref())
-                                .into(),
-                            workspace_id: session.workspace_id.clone().unwrap_or_default().into(),
-                            title: session.title.into(),
-                            time: format_time(session.updated_at).into(),
-                            consumed_tokens: format_count_i64(session.consumed_tokens).into(),
-                            tool_calls: session.tool_calls.to_string().into(),
-                            quota_used: format_count_i64(session.quota_used).into(),
-                            runtime_phase: Phase::of(session.runtime_status.as_str()).code(),
-                            runtime_status: session.runtime_status.into(),
-                            locked: session.locked,
-                            draft: session.draft,
-                            ..Default::default()
-                        };
-                        let mut rows = app.get_conversations().iter().collect::<Vec<_>>();
-                        rows.insert(0, row);
-                        rows.truncate(100);
-                        update_active_thread_filter(&app, rows.iter().cloned());
-                        app.set_conversations(ModelRc::new(VecModel::from(rows)));
-                        crate::navigation_ui::project(&app);
-                        app.set_page(crate::DesktopPage::Messages);
-                        app.invoke_select_conversation(0);
-                    }
+                    Ok(session) => open_created_session(&app, session),
                     Err(error) => app.set_status(format!("无法新建会话：{error}").into()),
+                }
+            });
+        });
+    });
+}
+
+fn bind_fork_thread(app: &MainWindow, state: Rc<RefCell<State>>) {
+    let weak = app.as_weak();
+    app.on_fork_thread(move |session, round| {
+        let Some(app) = weak.upgrade() else { return };
+        let session = session.to_string();
+        if round <= 0 || session.is_empty() {
+            return;
+        }
+        let desktop = state.borrow().desktop.clone();
+        if app.get_cloud_chat_active() {
+            crate::cloud_threads::fork(&app, desktop, session, round);
+            return;
+        }
+        if app.get_creating_session() {
+            return;
+        }
+        app.set_creating_session(true);
+        state.borrow_mut().creating_since = Some(Instant::now());
+        let weak = app.as_weak();
+        std::thread::spawn(move || {
+            let result = desktop.fork_session(&session, round as i64);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_creating_session(false);
+                CHAT_STATE.with(|slot| {
+                    if let Some(state) = slot.borrow().upgrade() {
+                        state.borrow_mut().creating_since = None;
+                    }
+                });
+                match result {
+                    Ok(session) => open_created_session(&app, session),
+                    Err(error) => app.set_status(format!("无法分叉线程：{error}").into()),
                 }
             });
         });

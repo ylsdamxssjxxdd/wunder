@@ -716,7 +716,11 @@ fn cloud_op_outcome(record: &Value) -> CloudOpOutcome {
     if clean(record.get("status")) == "succeeded" {
         let result = payload_with(record, "path");
         let path = clean(result.get("path"));
-        let path = if path.is_empty() { path } else { cloud_path(&path) };
+        let path = if path.is_empty() {
+            path
+        } else {
+            cloud_path(&path)
+        };
         CloudOpOutcome::Done(path)
     } else {
         let code = clean(record.get("error_code"));

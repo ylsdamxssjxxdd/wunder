@@ -1996,8 +1996,8 @@ pub(super) fn localize_cli_notice(language: &str, text: &str) -> String {
         "- max_context: auto probe unavailable (or keep existing)" => {
             "- max_context: 自动探测不可用（或保留现有值）".to_string()
         }
-        "mouse mode: capture (clicks select cards, open details and place the cursor; the wheel scrolls the transcript)" => {
-            "鼠标模式：capture（点击选中卡片、展开详情、定位输入光标，滚轮滚动转录）".to_string()
+        "mouse mode: capture (drag to select text, click details or place the cursor; the wheel scrolls the transcript)" => {
+            "鼠标模式：capture（划选文本、点击展开详情或定位输入光标，滚轮滚动转录）".to_string()
         }
         "mouse mode: native (the terminal keeps its own selection, copy and wheel)" => {
             "鼠标模式：native（选择、复制与滚轮交回终端）".to_string()

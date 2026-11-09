@@ -14,6 +14,9 @@ pub fn install(app: &MainWindow) {
     // the first native frame cannot show a fabricated running thread.
     app.set_chat_loading(false);
     app.set_connected(true);
+    app.set_profile_ready(true);
+    app.set_threads_ready(true);
+    app.set_active_session_id("t1".into());
     app.set_status("本地演示".into());
     app.set_selected_workspace(0);
     app.set_workspaces(ModelRc::new(VecModel::from(vec![
@@ -227,6 +230,7 @@ pub fn install(app: &MainWindow) {
     app.on_timeline_last_answer(move || {
         demo_last_answer(&answer_models[slot(&answer_active)]).into()
     });
+    let split_models = models.clone();
     let weak = app.as_weak();
     let toggle_active = active.clone();
     app.on_timeline_toggle(move |payload| {
@@ -287,6 +291,138 @@ pub fn install(app: &MainWindow) {
                 crate::timeline_text::sync_process_child(model, &row);
                 model.set_row_data(payload, row);
             }
+        }
+    });
+
+    let weak = app.as_weak();
+    let layout_models = split_models.clone();
+    let layout_active = active.clone();
+    app.on_split_layout(move |count| {
+        let Some(app) = weak.upgrade() else { return };
+        if count <= 1 {
+            app.set_split_count(1);
+            return;
+        }
+        if app.get_split_count() == 1 {
+            let active_slot = slot(&layout_active);
+            app.set_split_session_0(format!("t{}", active_slot + 1).into());
+            app.set_split_title_0(
+                app.get_sidebar_rows()
+                    .iter()
+                    .find(|row| row.kind == 1 && row.payload == active_slot as i32)
+                    .map(|row| row.title)
+                    .unwrap_or_default(),
+            );
+            app.set_split_rows_0(ModelRc::from(layout_models[active_slot].clone()));
+            app.set_split_draft_0(app.get_draft());
+        }
+        app.set_split_count(if count >= 4 { 4 } else { 2 });
+    });
+    let weak = app.as_weak();
+    let drop_models = split_models.clone();
+    app.on_split_drop_row(move |slot, row| {
+        let Some(app) = weak.upgrade() else { return };
+        let Some(thread) = app.get_sidebar_rows().row_data(row.max(0) as usize) else {
+            return;
+        };
+        let model_index = thread.payload.max(0) as usize;
+        let Some(model) = drop_models.get(model_index) else {
+            return;
+        };
+        match slot {
+            0 => {
+                app.set_split_session_0(thread.thread_id);
+                app.set_split_title_0(thread.title);
+                app.set_split_rows_0(ModelRc::from(model.clone()));
+            }
+            1 => {
+                app.set_split_session_1(thread.thread_id);
+                app.set_split_title_1(thread.title);
+                app.set_split_rows_1(ModelRc::from(model.clone()));
+            }
+            2 => {
+                app.set_split_session_2(thread.thread_id);
+                app.set_split_title_2(thread.title);
+                app.set_split_rows_2(ModelRc::from(model.clone()));
+            }
+            _ => {
+                app.set_split_session_3(thread.thread_id);
+                app.set_split_title_3(thread.title);
+                app.set_split_rows_3(ModelRc::from(model.clone()));
+            }
+        }
+    });
+    let weak = app.as_weak();
+    app.on_split_close(move |slot| {
+        let Some(app) = weak.upgrade() else { return };
+        match slot {
+            0 => {
+                app.set_split_session_0("".into());
+                app.set_split_rows_0(ModelRc::default());
+            }
+            1 => {
+                app.set_split_session_1("".into());
+                app.set_split_rows_1(ModelRc::default());
+            }
+            2 => {
+                app.set_split_session_2("".into());
+                app.set_split_rows_2(ModelRc::default());
+            }
+            _ => {
+                app.set_split_session_3("".into());
+                app.set_split_rows_3(ModelRc::default());
+            }
+        }
+    });
+    let weak = app.as_weak();
+    app.on_split_activate(move |slot| {
+        let Some(app) = weak.upgrade() else { return };
+        let id = match slot {
+            0 => app.get_split_session_0(),
+            1 => app.get_split_session_1(),
+            2 => app.get_split_session_2(),
+            _ => app.get_split_session_3(),
+        };
+        if let Some(row) = app
+            .get_sidebar_rows()
+            .iter()
+            .find(|row| row.thread_id == id)
+        {
+            app.invoke_select_conversation(row.payload);
+        }
+    });
+    let weak = app.as_weak();
+    app.on_split_send(move |slot| {
+        let Some(app) = weak.upgrade() else { return };
+        let text = match slot {
+            0 => app.get_split_draft_0(),
+            1 => app.get_split_draft_1(),
+            2 => app.get_split_draft_2(),
+            _ => app.get_split_draft_3(),
+        };
+        app.set_draft(text);
+        app.invoke_send_message();
+        let rows = app.get_timeline();
+        match slot {
+            0 => app.set_split_rows_0(rows),
+            1 => app.set_split_rows_1(rows),
+            2 => app.set_split_rows_2(rows),
+            _ => app.set_split_rows_3(rows),
+        }
+        match slot {
+            0 => app.set_split_draft_0("".into()),
+            1 => app.set_split_draft_1("".into()),
+            2 => app.set_split_draft_2("".into()),
+            _ => app.set_split_draft_3("".into()),
+        }
+    });
+    app.on_split_stop(|_| {});
+    app.on_split_select_model(|_, _| {});
+    let weak = app.as_weak();
+    app.on_split_toggle_row(move |slot, index| {
+        if let Some(app) = weak.upgrade() {
+            app.invoke_split_activate(slot);
+            app.invoke_timeline_toggle(index);
         }
     });
 }
@@ -353,6 +489,11 @@ fn demo_stats(
 
 fn fixture_row(kind: i32, index: usize, text: &str) -> TimelineRow {
     TimelineRow {
+        user_round: if kind == crate::timeline::KIND_FOOTER {
+            1
+        } else {
+            0
+        },
         kind,
         id: format!("demo-{index}").into(),
         visible: true,

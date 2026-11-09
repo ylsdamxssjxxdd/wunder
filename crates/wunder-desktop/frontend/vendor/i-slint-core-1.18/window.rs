@@ -2383,6 +2383,13 @@ impl WindowInner {
         self.pinned_fields.text_input_focused.set(value)
     }
 
+    /// Projects the text-input focus flag without touching the IME association.
+    /// Window deactivation keeps the input context alive so the IME server's
+    /// selected input method survives a blur/refocus cycle.
+    pub(crate) fn set_text_input_focused_projection(&self, value: bool) {
+        self.pinned_fields.text_input_focused.set(value)
+    }
+
     /// Returns true if the window is visible
     pub fn is_visible(&self) -> bool {
         self.strong_component_ref.borrow().is_some()

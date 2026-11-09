@@ -346,8 +346,15 @@ fn compact_failure_observation_payload(map: &mut Map<String, Value>) -> bool {
         return false;
     }
     let raw_data = map.get("data").cloned().unwrap_or(Value::Null);
-    if raw_data.get("execution_outcome").and_then(Value::as_str) == Some("unknown") {
-        map.insert("execution_outcome".to_string(), json!("unknown"));
+    // 超时类失败要把“结果是否已生效”的判断留给模型，`unknown` 和
+    // `likely_applied` 都必须透传出去，否则模型会把已生效的动作再重跑一遍。
+    let execution_outcome = raw_data
+        .get("execution_outcome")
+        .and_then(Value::as_str)
+        .filter(|value| matches!(*value, "unknown" | "likely_applied"))
+        .map(str::to_string);
+    if let Some(outcome) = execution_outcome {
+        map.insert("execution_outcome".to_string(), json!(outcome));
         map.insert("retryable".to_string(), Value::Bool(false));
         if let Some(code) = raw_data.pointer("/error_meta/code").and_then(Value::as_str) {
             map.insert(
@@ -391,11 +398,16 @@ fn build_compact_failure_error_message(error: &str, data: &Value) -> String {
     if let Some(detail) = extract_compact_failure_detail(data) {
         push_compact_error_fragment(&mut fragments, &detail);
     }
-    if data.get("execution_outcome").and_then(Value::as_str) == Some("unknown") {
-        push_compact_error_fragment(
+    match data.get("execution_outcome").and_then(Value::as_str) {
+        Some("unknown") => push_compact_error_fragment(
             &mut fragments,
             "Outcome unknown; verify side effects before retrying.",
-        );
+        ),
+        Some("likely_applied") => push_compact_error_fragment(
+            &mut fragments,
+            "Output was produced before the timeout, so the command did run; verify its side effects instead of rerunning it.",
+        ),
+        _ => {}
     }
     fragments.join(" ")
 }

@@ -56,7 +56,11 @@ const AUTO_TARGETS: [&str; 3] = [TARGET_CLI, TARGET_SUPPLEMENT, TARGET_DESKTOP];
 fn cli_binary_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    let name = if cfg!(windows) { "wunder-cli.exe" } else { "wunder-cli" };
+    let name = if cfg!(windows) {
+        "wunder-cli.exe"
+    } else {
+        "wunder-cli"
+    };
     Some(dir.join(name))
 }
 
@@ -206,21 +210,16 @@ impl UpdateState {
                 self.error = format!("{error:#}");
             }
             Ok(latest) => {
-                let staged_valid = self
-                    .staged_path
-                    .as_ref()
-                    .is_some_and(|path| path.is_file())
+                let staged_valid = self.staged_path.as_ref().is_some_and(|path| path.is_file())
                     && self.staged_target == self.target;
                 let staged_newest = staged_valid
-                    && !latest
-                        .as_ref()
-                        .is_some_and(|asset| is_newer_version(&asset.version, &self.staged_version));
-                let candidate = latest
-                    .clone()
-                    .filter(|asset| {
-                        self.local_version.is_empty()
-                            || is_newer_version(&asset.version, &self.local_version)
+                    && !latest.as_ref().is_some_and(|asset| {
+                        is_newer_version(&asset.version, &self.staged_version)
                     });
+                let candidate = latest.clone().filter(|asset| {
+                    self.local_version.is_empty()
+                        || is_newer_version(&asset.version, &self.local_version)
+                });
                 if staged_newest {
                     self.phase = "staged".into();
                 } else if let Some(asset) = candidate {
@@ -347,7 +346,10 @@ impl NativeDesktop {
         // stack two checks; the UI poller observes "checking" right away.
         {
             let mut state = self.lock_update();
-            if matches!(state.phase.as_str(), "checking" | "downloading" | "applying") {
+            if matches!(
+                state.phase.as_str(),
+                "checking" | "downloading" | "applying"
+            ) {
                 bail!("更新操作正在进行中");
             }
             state.phase = "checking".into();
@@ -386,13 +388,12 @@ impl NativeDesktop {
                     state.error = "请先登录云端账号".into();
                     bail!(state.error.clone());
                 }
-                self.runtime.block_on(
-                    wunder_server::cloud::shared().fetch_latest_update(
+                self.runtime
+                    .block_on(wunder_server::cloud::shared().fetch_latest_update(
                         target,
                         std::env::consts::OS,
                         std::env::consts::ARCH,
-                    ),
-                )
+                    ))
             }
         };
         let mut state = self.lock_update();
@@ -603,15 +604,16 @@ impl NativeDesktop {
                 state.staged_target.clone(),
             )
         };
-        let applied_note = match self.apply_staged_by_target(&staged_path, &staged_sha, &staged_target) {
-            Ok(note) => note,
-            Err(error) => {
-                let mut state = self.lock_update();
-                state.phase = "failed".into();
-                state.error = format!("{error:#}");
-                return Err(anyhow!(state.error.clone()));
-            }
-        };
+        let applied_note =
+            match self.apply_staged_by_target(&staged_path, &staged_sha, &staged_target) {
+                Ok(note) => note,
+                Err(error) => {
+                    let mut state = self.lock_update();
+                    state.phase = "failed".into();
+                    state.error = format!("{error:#}");
+                    return Err(anyhow!(state.error.clone()));
+                }
+            };
         let mut state = self.lock_update();
         if staged_target == TARGET_DESKTOP {
             // The staged package is consumed by the relaunched binary's
@@ -660,7 +662,9 @@ impl NativeDesktop {
                     let _ = fs::remove_file(dir.join(format!("{}.old", name.to_string_lossy())));
                     let _ = fs::remove_file(dir.join(format!("{}.new", name.to_string_lossy())));
                 }
-                if let Some(name) = cli_binary_path().and_then(|cli| cli.file_name().map(|n| n.to_string_lossy().into_owned())) {
+                if let Some(name) = cli_binary_path()
+                    .and_then(|cli| cli.file_name().map(|n| n.to_string_lossy().into_owned()))
+                {
                     let _ = fs::remove_file(dir.join(format!("{name}.old")));
                     let _ = fs::remove_file(dir.join(format!("{name}.new")));
                 }
@@ -816,8 +820,7 @@ fn copy_and_verify(from: &Path, to: &Path, expected_sha: &str) -> Result<()> {
 /// supplement packages have no compile-time baseline and always restore.
 fn staging_restores(meta: &StagingMeta, package: &Path) -> bool {
     package.is_file()
-        && (meta.target() != TARGET_DESKTOP
-            || is_newer_version(&meta.version, CURRENT_VERSION))
+        && (meta.target() != TARGET_DESKTOP || is_newer_version(&meta.version, CURRENT_VERSION))
 }
 
 #[cfg(test)]
@@ -906,7 +909,11 @@ mod tests {
             "valid marker parses"
         );
         fs::write(home.join("opt/supplement.json"), br#"{"built_at":"x"}"#).unwrap();
-        assert_eq!(read_supplement_version(&home), None, "marker without the field");
+        assert_eq!(
+            read_supplement_version(&home),
+            None,
+            "marker without the field"
+        );
         fs::write(home.join("opt/supplement.json"), b"not json").unwrap();
         assert_eq!(read_supplement_version(&home), None);
         let _ = fs::remove_dir_all(&dir);
@@ -914,7 +921,8 @@ mod tests {
 
     #[test]
     fn staged_packages_restore_only_when_the_startup_gate_accepts_them() {
-        let dir = std::env::temp_dir().join(format!("wunder-update-restore-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("wunder-update-restore-{}", std::process::id()));
         let package = dir.join("pkg.bin");
         write_fixture(&package, b"staged-bytes");
         let meta = |target: &str, version: &str| -> StagingMeta {

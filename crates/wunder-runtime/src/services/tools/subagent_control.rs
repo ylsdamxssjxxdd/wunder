@@ -18,7 +18,7 @@ use targeting::*;
 const SUBAGENT_WAIT_DEFAULT_POLL_S: f64 = 1.0;
 const SUBAGENT_WAIT_MIN_POLL_S: f64 = 0.2;
 const SUBAGENT_WAIT_MAX_POLL_S: f64 = 5.0;
-const SUBAGENT_SUMMARY_MAX_CHARS: usize = 160;
+const SUBAGENT_SUMMARY_MAX_CHARS: usize = 4000;
 
 #[derive(Debug, Deserialize)]
 struct SubagentControlArgs {
@@ -460,7 +460,7 @@ fn validate_action_fields(args: &Value, action: &str) -> Result<()> {
 
 #[cfg(test)]
 mod action_validation_tests {
-    use super::validate_action_fields;
+    use super::{compact_subagent_item_for_model, validate_action_fields};
     use serde_json::json;
 
     #[test]
@@ -481,6 +481,25 @@ mod action_validation_tests {
         )
         .expect("wait selector and timing fields are valid");
     }
+
+    #[test]
+    fn model_summary_preserves_substantial_results_with_a_bounded_cap() {
+        let result = "文".repeat(3000);
+        let item = compact_subagent_item_for_model(&json!({
+            "session_id": "child",
+            "run_id": "run",
+            "status": "success",
+            "result_preview": "short",
+            "result": result,
+        }));
+        assert_eq!(item["summary"].as_str().unwrap().chars().count(), 3000);
+
+        let oversized = compact_subagent_item_for_model(&json!({
+            "run_id": "run",
+            "result": "x".repeat(5000),
+        }));
+        assert_eq!(oversized["summary"].as_str().unwrap().chars().count(), 4001);
+    }
 }
 
 fn compact_subagent_item_for_model(item: &Value) -> Value {
@@ -488,8 +507,8 @@ fn compact_subagent_item_for_model(item: &Value) -> Value {
     // remain available to the UI/audit stream; the model only needs stable
     // identifiers, state and a short explanation for its next decision.
     let summary = item
-        .get("result_preview")
-        .or_else(|| item.get("result"))
+        .get("result")
+        .or_else(|| item.get("result_preview"))
         .or_else(|| item.pointer("/agent_state/message"))
         .or_else(|| item.get("error"));
     let summary = summary

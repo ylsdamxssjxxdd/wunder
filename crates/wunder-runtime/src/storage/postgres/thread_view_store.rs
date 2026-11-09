@@ -169,7 +169,9 @@ fn roots(
             WHERE thread_id=$1 AND root_turn_id=root.root_turn_id AND visible
             ORDER BY ordinal DESC LIMIT 1) process ON TRUE
         ORDER BY root.user_round {order}"), &[&session,&before,&after,&((limit+1) as i64),&include_input])?
-        .into_iter().map(turn).collect()
+        .into_iter().map(turn).collect::<Result<Vec<_>>>()?;
+    turns.retain(|turn| !p::is_withdrawn_queue_turn(turn));
+    Ok(turns)
 }
 
 fn message(item: &Value, seq: i64) -> ViewMessage {

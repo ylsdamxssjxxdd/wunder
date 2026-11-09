@@ -15,7 +15,7 @@ use super::{
     execute_in_sandbox, recover_tool_args_value, resolve_tool_name,
     tool_error::{
         build_execute_command_failure_data, build_execute_command_failure_message,
-        build_failed_tool_result, tool_timeout_meta, ToolErrorMeta,
+        build_failed_tool_result, command_timeout_outcome, tool_timeout_meta, ToolErrorMeta,
     },
     ToolContext, ToolEventEmitter,
 };
@@ -1758,7 +1758,13 @@ fn build_sandbox_command_result(mut data: Value) -> Value {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     if timed_out {
-        data["execution_outcome"] = json!("unknown");
+        let outcome = command_timeout_outcome(&data);
+        data["execution_outcome"] = json!(outcome);
+        if outcome == "likely_applied" {
+            data["next_step_hint"] = json!(
+                "命令在超时前已产生输出，说明它确实执行过；重试前先核实是否已经产生副作用（文件、进程、远端状态）。"
+            );
+        }
         return build_failed_tool_result(
             i18n::t("tool.exec.timeout"),
             data,

@@ -1367,6 +1367,24 @@ impl CloudService {
         .await
     }
 
+    pub async fn cloud_thread_fork(&self, thread: &str, user_round: i64) -> Result<Value> {
+        anyhow::ensure!(user_round > 0, "invalid fork round");
+        let thread = urlencode_component(thread);
+        self.interlink_data(
+            |session| {
+                self.http
+                    .post(format!(
+                        "{}/wunder/chat/sessions/{thread}/fork",
+                        session.server
+                    ))
+                    .bearer_auth(&session.token)
+                    .json(&json!({"user_round":user_round}))
+            },
+            "thread fork",
+        )
+        .await
+    }
+
     pub async fn cloud_thread_models(&self) -> Result<Value> {
         self.interlink_data(
             |session| {

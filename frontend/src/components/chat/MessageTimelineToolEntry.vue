@@ -31,13 +31,14 @@
           {{ target.label }}
         </button>
       </span>
+      <!-- 改动规模：与补丁卡片头部同口径，只显示真正存在的一侧，避免「+0 −0」。 -->
       <span
         v-if="entry.diffStats"
         class="tl-entry-diff"
         :title="t('chat.timeline.entryDiffStats', { added: entry.diffStats.added, deleted: entry.diffStats.deleted })"
       >
-        <span class="tl-entry-diff-add">+{{ entry.diffStats.added }}</span>
-        <span class="tl-entry-diff-del">-{{ entry.diffStats.deleted }}</span>
+        <span v-if="entry.diffStats.added > 0" class="tl-entry-diff-add">+{{ entry.diffStats.added }}</span>
+        <span v-if="entry.diffStats.deleted > 0" class="tl-entry-diff-del">−{{ entry.diffStats.deleted }}</span>
       </span>
       <span
         v-if="entry.summary"

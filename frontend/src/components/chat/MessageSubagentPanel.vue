@@ -147,7 +147,7 @@ const statusText = (value: unknown, item: SubagentPanelItem | null = null) => {
   }
   if (status === 'cancelling') return '终止中';
   if (status === 'queued' || status === 'accepted') return '排队中';
-  return '运行中';
+  return '状态未知';
 };
 
 const statusClass = (value: unknown, item: SubagentPanelItem | null = null) => {
@@ -157,7 +157,7 @@ const statusClass = (value: unknown, item: SubagentPanelItem | null = null) => {
   if (isSubagentStatusFailed(status) || status === 'timeout') {
     return 'is-failed';
   }
-  return 'is-running';
+  return 'is-unknown';
 };
 
 const resolveItemDetail = (item: SubagentPanelItem): Record<string, unknown> => {
@@ -369,6 +369,11 @@ const terminate = async (item: SubagentPanelItem) => {
   background: rgba(185, 28, 28, 0.12);
   color: #b91c1c;
 }
+
+.subagent-panel__status.is-unknown {
+  background: rgba(107, 114, 128, 0.12);
+  color: #4b5563;
+}
 </style>
 
 <style>
@@ -461,5 +466,10 @@ const terminate = async (item: SubagentPanelItem) => {
 .subagent-panel__dialog .subagent-panel__status.is-failed {
   background: rgba(185, 28, 28, 0.12);
   color: #b91c1c;
+}
+
+.subagent-panel__status.is-unknown {
+  background: rgba(107, 114, 128, 0.12);
+  color: #4b5563;
 }
 </style>

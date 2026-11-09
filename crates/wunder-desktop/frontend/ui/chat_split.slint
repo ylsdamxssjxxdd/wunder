@@ -1,0 +1,247 @@
+import { Theme, TimelineRow, ModelCard, ChatAttachment } from "theme.slint";
+import { I18n } from "i18n.slint";
+import { TimelineView } from "timeline.slint";
+import { Composer } from "composer.slint";
+import { Action } from "components.slint";
+
+component SplitPane inherits Rectangle {
+    in property <int> slot;
+    in property <string> session-id;
+    in property <string> title;
+    in property <[TimelineRow]> rows: [];
+    in-out property <string> draft;
+    in property <bool> active;
+    in property <bool> busy;
+    in property <bool> loading;
+    in property <int> stream-revision: 0;
+    in property <[ModelCard]> models: [];
+    in property <int> model-count: 0;
+    in property <string> model-name: "";
+    in property <string> model-key: "";
+    in property <[ChatAttachment]> attachments: [];
+    in property <string> send-key: "enter";
+    callback close();
+    callback activate();
+    callback send();
+    callback stop();
+    callback toggle(int);
+    callback copy-text(string);
+    callback fork-thread(string, int);
+    callback open-resource(string);
+    callback select-model(string);
+    background: Theme.chat;
+    clip: true;
+
+    VerticalLayout {
+        spacing: 0px;
+        Rectangle {
+            height: 32px;
+            background: Theme.sidebar;
+            border-width: active ? 1px : 0px;
+            border-color: active ? Theme.accent-soft : transparent;
+            HorizontalLayout {
+                padding-left: 12px; padding-right: 4px; spacing: 8px;
+                Rectangle {
+                    width: 7px; height: 7px; y: (parent.height - 7px) / 2;
+                    border-radius: 4px; background: busy ? Theme.accent-ink : Theme.border-strong;
+                }
+                Text {
+                    horizontal-stretch: 1; min-width: 0px; height: parent.height;
+                    text: title; color: Theme.text; font-size: Theme.font-sm; font-weight: 600;
+                    vertical-alignment: center; overflow: elide;
+                }
+                Action {
+                    width: 24px; height: 24px; y: 4px;
+                    icon: @image-url("../assets/icons/xmark.svg");
+                    clicked => { root.close(); }
+                }
+            }
+            TouchArea { clicked => { root.activate(); } }
+        }
+        TimelineView {
+            vertical-stretch: 1;
+            rows: root.rows;
+            loading: root.loading;
+            loading-text: I18n.st_runtime_loading;
+            show-activity: false;
+            spinning: root.busy;
+            stream-revision: root.stream-revision;
+            toggle(index) => { root.toggle(index); }
+            copy-text(text) => { root.copy-text(text); }
+            fork-thread(round) => { root.fork-thread(root.session-id, round); }
+            open-resource(id) => { root.open-resource(id); }
+        }
+        Composer {
+            draft <=> root.draft;
+            busy: root.loading;
+            generating: root.busy;
+            models: root.models;
+            model-catalogue-count: root.model-count;
+            model-name: root.model-name;
+            model-key: root.model-key;
+            attachments: root.attachments;
+            send-key: root.send-key;
+            show-host-hud: false;
+            show-cli-action: false;
+            send => { root.send(); }
+            stop => { root.stop(); }
+            select-model(index, key) => { root.select-model(key); }
+        }
+    }
+}
+
+export component ChatSplitWorkspace inherits Rectangle {
+    in-out property <int> count: 2;
+    in-out property <float> column-ratio: 0.5;
+    in-out property <float> row-ratio: 0.5;
+    in-out property <string> session-0;
+    in-out property <string> session-1;
+    in-out property <string> session-2;
+    in-out property <string> session-3;
+    in-out property <string> title-0;
+    in-out property <string> title-1;
+    in-out property <string> title-2;
+    in-out property <string> title-3;
+    in property <[TimelineRow]> rows-0: [];
+    in property <[TimelineRow]> rows-1: [];
+    in property <[TimelineRow]> rows-2: [];
+    in property <[TimelineRow]> rows-3: [];
+    in-out property <string> draft-0;
+    in-out property <string> draft-1;
+    in-out property <string> draft-2;
+    in-out property <string> draft-3;
+    in property <bool> loading-0;
+    in property <bool> loading-1;
+    in property <bool> loading-2;
+    in property <bool> loading-3;
+    in property <bool> busy-0;
+    in property <bool> busy-1;
+    in property <bool> busy-2;
+    in property <bool> busy-3;
+    in property <string> active-session;
+    in property <int> stream-revision;
+    in property <[ModelCard]> models: [];
+    in property <int> model-count: 0;
+    in property <string> model-name: "";
+    in property <string> model-key: "";
+    in property <[ChatAttachment]> attachments: [];
+    in property <string> send-key: "enter";
+    callback layout-changed(int);
+    callback close-pane(int);
+    callback activate-pane(int);
+    callback send-pane(int);
+    callback stop-pane(int);
+    callback toggle-row(int, int);
+    callback select-pane-model(int, string);
+    callback copy-text(string);
+    callback fork-thread(string, int);
+    callback open-resource(string);
+
+    function pane-x(slot: int) -> length {
+        return count == 2 ? (slot == 0 ? 0px : grid.width * column-ratio)
+            : (slot == 0 || slot == 2 ? 0px : grid.width * column-ratio);
+    }
+    function pane-y(slot: int) -> length {
+        return count == 4 && slot >= 2 ? grid.height * row-ratio : 0px;
+    }
+    function pane-width(slot: int) -> length {
+        return count == 2 ? (slot == 0 ? grid.width * column-ratio - 1px : grid.width * (1 - column-ratio))
+            : (slot == 0 || slot == 2 ? grid.width * column-ratio - 1px : grid.width * (1 - column-ratio));
+    }
+    function pane-height(slot: int) -> length {
+        return count == 2 ? grid.height : (slot < 2 ? grid.height * row-ratio - 1px : grid.height * (1 - row-ratio));
+    }
+
+    VerticalLayout {
+        spacing: 0px;
+        Rectangle {
+            height: 38px; background: Theme.sidebar;
+            Text {
+                x: 14px; width: parent.width - 132px; height: parent.height;
+                text: I18n.zh ? "将左侧线程拖入分区" : "Drag a thread from the sidebar into a pane";
+                color: Theme.muted; font-size: Theme.font-xs; vertical-alignment: center; overflow: elide;
+            }
+            HorizontalLayout {
+                x: parent.width - 118px; width: 110px; height: parent.height;
+                padding-top: 6px; padding-bottom: 6px; spacing: 3px;
+                Action { width: 26px; label: "1"; show-label: true; clicked => { root.layout-changed(1); } }
+                Action { width: 26px; label: "2"; show-label: true; selected: root.count == 2; clicked => { root.layout-changed(2); } }
+                Action { width: 26px; label: "4"; show-label: true; selected: root.count == 4; clicked => { root.layout-changed(4); } }
+            }
+        }
+        grid := Rectangle {
+            vertical-stretch: 1; clip: true; background: Theme.border;
+            for slot in 4 : Rectangle {
+                x: root.pane-x(slot); y: root.pane-y(slot);
+                width: max(0px, root.pane-width(slot)); height: max(0px, root.pane-height(slot));
+                visible: slot < root.count;
+                if (slot == 0 ? root.session-0 : slot == 1 ? root.session-1 : slot == 2 ? root.session-2 : root.session-3) == "" : Rectangle {
+                    background: Theme.chat;
+                    VerticalLayout {
+                        alignment: center; spacing: 10px;
+                        Text {
+                            text: I18n.zh ? "拖入线程以填充此分区" : "Drop a thread to fill this pane";
+                            color: Theme.muted; font-size: Theme.font-sm; horizontal-alignment: center;
+                        }
+                    }
+                }
+            }
+            SplitPane {
+                slot: 0; x: root.pane-x(0); y: 0px; width: root.pane-width(0); height: root.pane-height(0);
+                visible: root.session-0 != ""; session-id: root.session-0; title: root.title-0; rows: root.rows-0;
+                draft <=> root.draft-0; active: root.active-session == root.session-0; busy: root.busy-0; loading: root.loading-0;
+                stream-revision: root.stream-revision; models: root.models; model-count: root.model-count;
+                model-name: root.active-session == root.session-0 ? root.model-name : ""; model-key: root.model-key;
+                attachments: root.active-session == root.session-0 ? root.attachments : []; send-key: root.send-key;
+                close => { root.close-pane(0); } activate => { root.activate-pane(0); } send => { root.send-pane(0); } stop => { root.stop-pane(0); }
+                toggle(index) => { root.toggle-row(0, index); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
+                select-model(key) => { root.select-pane-model(0, key); }
+            }
+            SplitPane {
+                slot: 1; x: root.pane-x(1); y: root.pane-y(1); width: root.pane-width(1); height: root.pane-height(1);
+                visible: root.session-1 != ""; session-id: root.session-1; title: root.title-1; rows: root.rows-1;
+                draft <=> root.draft-1; active: root.active-session == root.session-1; busy: root.busy-1; loading: root.loading-1;
+                stream-revision: root.stream-revision; models: root.models; model-count: root.model-count;
+                model-name: root.active-session == root.session-1 ? root.model-name : ""; model-key: root.model-key;
+                attachments: root.active-session == root.session-1 ? root.attachments : []; send-key: root.send-key;
+                close => { root.close-pane(1); } activate => { root.activate-pane(1); } send => { root.send-pane(1); } stop => { root.stop-pane(1); }
+                toggle(index) => { root.toggle-row(1, index); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
+                select-model(key) => { root.select-pane-model(1, key); }
+            }
+            if root.count == 4 : SplitPane {
+                slot: 2; x: root.pane-x(2); y: root.pane-y(2); width: root.pane-width(2); height: root.pane-height(2);
+                visible: root.session-2 != ""; session-id: root.session-2; title: root.title-2; rows: root.rows-2;
+                draft <=> root.draft-2; active: root.active-session == root.session-2; busy: root.busy-2; loading: root.loading-2;
+                stream-revision: root.stream-revision; models: root.models; model-count: root.model-count;
+                model-name: root.active-session == root.session-2 ? root.model-name : ""; model-key: root.model-key;
+                attachments: root.active-session == root.session-2 ? root.attachments : []; send-key: root.send-key;
+                close => { root.close-pane(2); } activate => { root.activate-pane(2); } send => { root.send-pane(2); } stop => { root.stop-pane(2); }
+                toggle(index) => { root.toggle-row(2, index); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
+                select-model(key) => { root.select-pane-model(2, key); }
+            }
+            if root.count == 4 : SplitPane {
+                slot: 3; x: root.pane-x(3); y: root.pane-y(3); width: root.pane-width(3); height: root.pane-height(3);
+                visible: root.session-3 != ""; session-id: root.session-3; title: root.title-3; rows: root.rows-3;
+                draft <=> root.draft-3; active: root.active-session == root.session-3; busy: root.busy-3; loading: root.loading-3;
+                stream-revision: root.stream-revision; models: root.models; model-count: root.model-count;
+                model-name: root.active-session == root.session-3 ? root.model-name : ""; model-key: root.model-key;
+                attachments: root.active-session == root.session-3 ? root.attachments : []; send-key: root.send-key;
+                close => { root.close-pane(3); } activate => { root.activate-pane(3); } send => { root.send-pane(3); } stop => { root.stop-pane(3); }
+                toggle(index) => { root.toggle-row(3, index); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
+                select-model(key) => { root.select-pane-model(3, key); }
+            }
+            column-handle := TouchArea {
+                x: grid.width * root.column-ratio - 4px; y: 0px; width: 8px; height: grid.height;
+                mouse-cursor: ew-resize;
+                moved => { if self.pressed { root.column-ratio = clamp((self.absolute-position.x + self.mouse-x - grid.absolute-position.x) / grid.width, 0.25, 0.75); } }
+                double-clicked => { root.column-ratio = 0.5; }
+            }
+            if root.count == 4 : TouchArea {
+                x: 0px; y: grid.height * root.row-ratio - 4px; width: grid.width; height: 8px;
+                mouse-cursor: ns-resize;
+                moved => { if self.pressed { root.row-ratio = clamp((self.absolute-position.y + self.mouse-y - grid.absolute-position.y) / grid.height, 0.25, 0.75); } }
+                double-clicked => { root.row-ratio = 0.5; }
+            }
+        }
+    }
+}

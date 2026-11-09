@@ -17,9 +17,7 @@ use anyhow::{bail, Result};
 use std::path::Path;
 use std::sync::atomic::AtomicU64;
 use std::sync::OnceLock;
-use wunder_server::cloud::update::{
-    AndroidRelease, UpdateAsset, UpdateSourceClient,
-};
+use wunder_server::cloud::update::{AndroidRelease, UpdateAsset, UpdateSourceClient};
 
 static SOURCE_CLIENT: OnceLock<UpdateSourceClient> = OnceLock::new();
 
@@ -94,9 +92,9 @@ impl NativeDesktop {
         if cloud.session().is_none() {
             bail!("请先登录云端账号");
         }
-        let (written, sha256) = self.runtime.block_on(
-            cloud.download_update_file(&release.file, dest, progress),
-        )?;
+        let (written, sha256) =
+            self.runtime
+                .block_on(cloud.download_update_file(&release.file, dest, progress))?;
         verify_download(release, written, &sha256)?;
         Ok(sha256)
     }

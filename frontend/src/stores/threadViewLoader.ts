@@ -1,5 +1,5 @@
 import { getThreadViewBootstrap, getThreadViewChatPage } from '@/api/chat';
-import { beginThreadView, commitThreadView, failThreadView, threadViewSlots, threadViewHistory, threadViewWindow, threadViewGeneration, threadViewHasNewerPage, threadViewStatus } from '@/realtime/chat/threadViewStore';
+import { beginThreadView, commitThreadView, failThreadView, threadViewSlots, threadViewHistory, threadViewWindow, threadViewGeneration, threadViewHasNewerPage, threadViewStatus, threadViewCommitted } from '@/realtime/chat/threadViewStore';
 import { clearSessionWatcher, setSessionLoading } from './chatRuntimeControls';
 import { getHistoryState, cacheSessionMessages, ensureRuntime } from './chatRuntimeState';
 import { threadViewStoreMessages } from './chatGreeting';
@@ -19,6 +19,7 @@ const prefetches=new Map<string,AbortController>();
 const prefetched=new Map<string,{data:any,time:number}>();
 const pageRequests = new Map<string, AbortController>();
 const pageRetryAfter = new Map<string, number>();
+const detachedOpens = new Map<string, Promise<any>>();
 export function resetThreadViewLoads() {
   for (const request of pageRequests.values()) request.abort();
   pageRequests.clear();
@@ -105,6 +106,45 @@ export async function openThreadView(store: any, key: string, options: any = {})
   inFlightOpens.set(key, task);
   task.promise = openThreadViewInternal(store, key, task);
   return task.promise;
+}
+
+/** Hydrate another visible split pane without stealing the foreground watcher. */
+export async function openThreadViewDetached(store: any, key: string) {
+  const sessionId = String(key || '').trim();
+  if (!sessionId) return null;
+  if (store.activeSessionId === sessionId || threadViewCommitted(sessionId)) {
+    return store.sessions.find((item: any) => item.id === sessionId) || null;
+  }
+  const existing = detachedOpens.get(sessionId);
+  if (existing) return existing;
+  const request = (async () => {
+    const generation = beginThreadView(sessionId);
+    try {
+      const response = await getThreadViewBootstrap(sessionId, { kind: 'chat' });
+      const data = response.data.data;
+      if (!commitThreadView(sessionId, data.page, generation) &&
+          !threadViewHasNewerPage(sessionId, data.page, generation)) {
+        throw new Error('线程展示响应无效，请重试');
+      }
+      const session = patchSessionRuntimeFields(data.session);
+      const index = store.sessions.findIndex((item: any) => item.id === sessionId);
+      if (index >= 0) store.sessions[index] = { ...store.sessions[index], ...session };
+      else store.sessions.unshift(session);
+      cacheSessionMessages(sessionId, threadViewStoreMessages(store, sessionId, session.created_at));
+      ensureRuntime(sessionId);
+      syncChatThreadShell(store, sessionId);
+      return session;
+    } catch (error) {
+      failThreadView(sessionId, generation, error);
+      throw error;
+    }
+  })();
+  detachedOpens.set(sessionId, request);
+  try {
+    return await request;
+  } finally {
+    if (detachedOpens.get(sessionId) === request) detachedOpens.delete(sessionId);
+  }
 }
 
 export const olderThreadView = (store: any, key: string) => pageThreadView(store, key, false);

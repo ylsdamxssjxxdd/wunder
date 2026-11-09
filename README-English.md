@@ -4,8 +4,8 @@ wunder (Xinjian) is a **multi-form agent workbench**:
 
 - **Diverse**: multiple platforms — 32-bit Windows 7 and Ubuntu 18.04 — and multiple forms — web, local, and mobile.
 - **Fast**: starts instantly and responds without lag.
-- **Superior**: stable enough to run 24/7, with a high degree of intelligence.
-- **Efficient**: extremely low CPU and memory use and minimal context consumption, plus a ready-made agent runtime — set up once and forget it.
+- **Superior**: stable enough to run 24/7, with a high degree of intelligence, and ships a ready-made agent runtime (a browser, video production components, and more).
+- **Efficient**: extremely low CPU and memory use, and minimal context consumption.
 
 ## Quick Start
 
@@ -17,11 +17,11 @@ Download the matching installer from [Releases](https://github.com/ylsdamxssjxxd
 
 On first launch, configure a model on the settings page and you are ready to go.
 
-## Design Philosophy
+## Development Process
 
-**Radically minimal: solve the problem fast, not show off complexity.**
+**Bootstrap: wunder is developed with wunder.**
 
-The interface keeps only the information and actions needed to finish the task; complex capabilities unfold on demand, and decoration, status detail, or technical detail never takes over the main path. Complexity stays in the engine — the interface states the result and the next step.
+**Minimal: aimed at solving the problem fast — the interface keeps only the information and actions needed to finish the task.**
 
 ## Interface
 

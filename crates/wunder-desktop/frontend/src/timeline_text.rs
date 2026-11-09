@@ -2,7 +2,7 @@
 //! target chip, the bounded patch cards handed to `patch_diff_card.slint`, and
 //! the mapping from native workflow sections onto the detail model.
 use crate::{PatchCard, PatchLine, ProcessEntry, TimelineRow, WorkflowLine, WorkflowSection};
-use slint::{ModelRc, VecModel};
+use slint::{Model, ModelRc, VecModel};
 use wunder_desktop::native::{
     NativePatchFile, NativePatchLine, NativeWorkflowEntry, NativeWorkflowSection,
 };
@@ -225,8 +225,64 @@ pub fn sections(items: &[NativeWorkflowSection]) -> ModelRc<WorkflowSection> {
     ))
 }
 
+/// Collapsed-row change size of an edit / patch call: the added and deleted
+/// line counts the cards already carry, summed over the cards' files. The row
+/// only formats them; an empty string means "that side has no change", so the
+/// header never shows a meaningless "+0 −0".
+pub fn diff_stats(files: &[NativePatchFile]) -> (String, String) {
+    let mut added = 0u64;
+    let mut deleted = 0u64;
+    for file in files {
+        added = added.saturating_add(file.added.trim().parse::<u64>().unwrap_or(0));
+        deleted = deleted.saturating_add(file.deleted.trim().parse::<u64>().unwrap_or(0));
+    }
+    format_diff(added, deleted)
+}
+
+/// The same numbers once the patch cards are built; the live stream updates
+/// only the row's card model, so the row derives its counts from it.
+fn card_diff(cards: &ModelRc<PatchCard>) -> (String, String) {
+    let mut added = 0u64;
+    let mut deleted = 0u64;
+    for card in cards.iter() {
+        added = added.saturating_add(card.added.trim().parse::<u64>().unwrap_or(0));
+        deleted = deleted.saturating_add(card.deleted.trim().parse::<u64>().unwrap_or(0));
+    }
+    format_diff(added, deleted)
+}
+
+/// A failed or stopped call did not produce this change, so its row keeps no
+/// change size — the pending preview must not read as a real diff.
+fn change_size(row: &TimelineRow) -> (String, String) {
+    if matches!(
+        row.status_kind,
+        crate::timeline::STATUS_FAILED | crate::timeline::STATUS_STOPPED
+    ) {
+        return (String::new(), String::new());
+    }
+    card_diff(&row.patch)
+}
+
+/// A side without change stays empty so the row shows only the number that
+/// applies instead of a meaningless "+0 −0".
+fn format_diff(added: u64, deleted: u64) -> (String, String) {
+    (
+        if added > 0 {
+            added.to_string()
+        } else {
+            String::new()
+        },
+        if deleted > 0 {
+            deleted.to_string()
+        } else {
+            String::new()
+        },
+    )
+}
+
 pub fn process_entry(row: &TimelineRow) -> ProcessEntry {
     let body = row.kind == crate::timeline::KIND_BODY;
+    let (diff_add, diff_del) = change_size(row);
     ProcessEntry {
         kind: row.kind,
         id: row.id.clone(),
@@ -251,6 +307,8 @@ pub fn process_entry(row: &TimelineRow) -> ProcessEntry {
         },
         sections: row.sections.clone(),
         patch: row.patch.clone(),
+        diff_add: diff_add.into(),
+        diff_del: diff_del.into(),
         tokens: row.tokens.clone(),
         duration: row.duration.clone(),
         status_kind: row.status_kind,
@@ -649,6 +707,44 @@ pub fn tool_metrics(entry: &NativeWorkflowEntry) -> String {
 mod tests {
     use super::*;
     use slint::Model;
+
+    #[test]
+    fn folded_row_states_the_change_size_beside_the_file_chip() {
+        let files = vec![
+            NativePatchFile {
+                added: "3".into(),
+                deleted: "1".into(),
+                ..Default::default()
+            },
+            NativePatchFile {
+                added: "2".into(),
+                deleted: "0".into(),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(diff_stats(&files).0, "5");
+        assert_eq!(diff_stats(&files).1, "1");
+        // A tool with no file change keeps both sides empty, so the row never
+        // prints "+0 −0".
+        assert_eq!(diff_stats(&[]), (String::new(), String::new()));
+        let row = TimelineRow {
+            id: "fixture-edit".into(),
+            kind: crate::timeline::KIND_TOOL,
+            patch: patch_cards(&files),
+            ..Default::default()
+        };
+        let entry = process_entry(&row);
+        assert_eq!(entry.diff_add.as_str(), "5");
+        assert_eq!(entry.diff_del.as_str(), "1");
+        // A failed call keeps its pending preview card but never reads as a
+        // real change.
+        let failed = TimelineRow {
+            status_kind: crate::timeline::STATUS_FAILED,
+            ..row
+        };
+        let entry = process_entry(&failed);
+        assert!(entry.diff_add.is_empty() && entry.diff_del.is_empty());
+    }
 
     #[test]
     fn command_summary_uses_only_invocation_and_never_result_text() {

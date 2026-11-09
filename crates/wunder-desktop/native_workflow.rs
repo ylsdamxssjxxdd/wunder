@@ -149,7 +149,11 @@ fn is_skill_tool(tool: &str) -> bool {
 /// Memory calls share one tool schema; the folded row names the concrete
 /// operation instead of the raw action enum.
 fn memory_call_preview(args: &Value) -> String {
-    let action = args["action"].as_str().unwrap_or_default().trim().to_lowercase();
+    let action = args["action"]
+        .as_str()
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
     let verb = match action.as_str() {
         "list" => "列出记忆",
         "get" | "read" | "detail" => "读取记忆",
@@ -172,7 +176,8 @@ fn memory_call_preview(args: &Value) -> String {
 
 /// A collapsed row describes invocation arguments only. Results can contain
 /// arbitrary `path`, `query` or `content` fields that are not the call target.
-fn call_preview(tool: &str, data: &Value) -> String {    let args = data.get("args").or_else(|| data.get("arguments"));
+fn call_preview(tool: &str, data: &Value) -> String {
+    let args = data.get("args").or_else(|| data.get("arguments"));
     let parsed = args
         .and_then(Value::as_str)
         .filter(|value| value.len() <= 8192)

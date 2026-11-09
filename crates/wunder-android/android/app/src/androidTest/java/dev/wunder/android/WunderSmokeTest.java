@@ -155,33 +155,42 @@ public class WunderSmokeTest {
         // service on Android 12+; the real turn starts from the visible
         // activity, so the test does the same.
         try (ActivityScenario<WunderActivity> scenario = launchResumed()) {
-            WunderRuntimeService.setBusy(context, true);
-            WunderRuntimeService.setRunningThreads(context, 1);
+            // The activity starts the runtime service; wait for its first
+            // notification before driving state so the assertions do not race
+            // process startup or the system's FGS notification policy.
+            waitForRuntimeNotification(context);
+            try {
+                WunderRuntimeService.setBusy(context, true);
+                WunderRuntimeService.setRunningThreads(context, 1);
 
-            Notification busy = waitForRuntimeNotification(context, "运行中 1 线程");
-            assertEquals(
-                    "wunder 安卓版",
-                    String.valueOf(busy.extras.getCharSequence(Notification.EXTRA_TITLE)));
-            assertEquals(
-                    "运行中 1 线程",
-                    String.valueOf(busy.extras.getCharSequence(Notification.EXTRA_TEXT)));
-            assertTrue("busy notification must be ongoing",
-                    (busy.flags & Notification.FLAG_ONGOING_EVENT) != 0);
+                Notification busy = waitForRuntimeNotification(context, "运行中 1 线程");
+                assertEquals(
+                        "wunder 安卓版",
+                        String.valueOf(busy.extras.getCharSequence(Notification.EXTRA_TITLE)));
+                assertEquals(
+                        "运行中 1 线程",
+                        String.valueOf(busy.extras.getCharSequence(Notification.EXTRA_TEXT)));
+                assertTrue("busy notification must be ongoing",
+                        (busy.flags & Notification.FLAG_ONGOING_EVENT) != 0);
 
-            // Concurrent turns update the same simple line, not a phase log.
-            WunderRuntimeService.setRunningThreads(context, 2);
-            Notification two = waitForRuntimeNotification(context, "运行中 2 线程");
-            assertEquals(
-                    "运行中 2 线程",
-                    String.valueOf(two.extras.getCharSequence(Notification.EXTRA_TEXT)));
+                // Concurrent turns update the same simple line, not a phase log.
+                WunderRuntimeService.setRunningThreads(context, 2);
+                Notification two = waitForRuntimeNotification(context, "运行中 2 线程");
+                assertEquals(
+                        "运行中 2 线程",
+                        String.valueOf(two.extras.getCharSequence(Notification.EXTRA_TEXT)));
 
-            WunderRuntimeService.setBusy(context, false);
-            Notification idle = waitForRuntimeNotification(context, "待机中，点击返回");
-            assertEquals(
-                    "待机中，点击返回",
-                    String.valueOf(idle.extras.getCharSequence(Notification.EXTRA_TEXT)));
-            assertFalse("idle notification must not be ongoing",
-                    (idle.flags & Notification.FLAG_ONGOING_EVENT) != 0);
+                WunderRuntimeService.setBusy(context, false);
+                Notification idle = waitForRuntimeNotification(context, "待机中，点击返回");
+                assertEquals(
+                        "待机中，点击返回",
+                        String.valueOf(idle.extras.getCharSequence(Notification.EXTRA_TEXT)));
+                assertFalse("idle notification must not be ongoing",
+                        (idle.flags & Notification.FLAG_ONGOING_EVENT) != 0);
+            } finally {
+                // A failed assertion must not leak busy state into later tests.
+                WunderRuntimeService.setBusy(context, false);
+            }
         }
     }
 
@@ -194,28 +203,36 @@ public class WunderSmokeTest {
     public void runtimeNotificationShowsInstallingDuringEnvironmentSetup() throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         try (ActivityScenario<WunderActivity> scenario = launchResumed()) {
-            WunderRuntimeService.setBusy(context, true);
-            WunderRuntimeService.setRunningThreads(context, 1);
-            WunderRuntimeService.setInstalling(context, true);
-            Notification installing = waitForRuntimeNotification(context, "正在安装运行环境…");
-            assertEquals(
-                    "正在安装运行环境…",
-                    String.valueOf(installing.extras.getCharSequence(Notification.EXTRA_TEXT)));
-            assertTrue("installing notification must be ongoing",
-                    (installing.flags & Notification.FLAG_ONGOING_EVENT) != 0);
+            waitForRuntimeNotification(context);
+            try {
+                WunderRuntimeService.setBusy(context, true);
+                WunderRuntimeService.setRunningThreads(context, 1);
+                WunderRuntimeService.setInstalling(context, true);
+                Notification installing = waitForRuntimeNotification(context, "正在安装运行环境…");
+                assertEquals(
+                        "正在安装运行环境…",
+                        String.valueOf(installing.extras.getCharSequence(Notification.EXTRA_TEXT)));
+                assertTrue("installing notification must be ongoing",
+                        (installing.flags & Notification.FLAG_ONGOING_EVENT) != 0);
 
-            // Clearing the install falls back to the live thread count, not idle.
-            WunderRuntimeService.setInstalling(context, false);
-            Notification busy = waitForRuntimeNotification(context, "运行中 1 线程");
-            assertEquals(
-                    "运行中 1 线程",
-                    String.valueOf(busy.extras.getCharSequence(Notification.EXTRA_TEXT)));
+                // Clearing the install falls back to the live thread count, not idle.
+                WunderRuntimeService.setInstalling(context, false);
+                Notification busy = waitForRuntimeNotification(context, "运行中 1 线程");
+                assertEquals(
+                        "运行中 1 线程",
+                        String.valueOf(busy.extras.getCharSequence(Notification.EXTRA_TEXT)));
 
-            WunderRuntimeService.setBusy(context, false);
-            Notification idle = waitForRuntimeNotification(context, "待机中，点击返回");
-            assertEquals(
-                    "待机中，点击返回",
-                    String.valueOf(idle.extras.getCharSequence(Notification.EXTRA_TEXT)));
+                WunderRuntimeService.setBusy(context, false);
+                Notification idle = waitForRuntimeNotification(context, "待机中，点击返回");
+                assertEquals(
+                        "待机中，点击返回",
+                        String.valueOf(idle.extras.getCharSequence(Notification.EXTRA_TEXT)));
+            } finally {
+                // A failed assertion must not leave installing=true behind:
+                // the service is process-scoped and later tests read it.
+                WunderRuntimeService.setInstalling(context, false);
+                WunderRuntimeService.setBusy(context, false);
+            }
         }
     }
 

@@ -191,19 +191,13 @@ impl Ime {
     }
 
     pub fn focus(&mut self, window: ffi::Window) -> Result<bool, XError> {
+        // Keep the existing context: recreating it would reset the IME server's
+        // per-context input method (fcitx/sogou falls back to direct input and
+        // the user has to switch again). A context that does not exist yet is
+        // focused by create_context once the Enable request arrives.
         self.focused_window = Some(window);
         if self.is_destroyed() {
             return Ok(false);
-        }
-        let allowed = matches!(self.inner.contexts.get(&window), Some(Some(context)) if context.is_allowed());
-        if allowed {
-            // IME servers (fcitx/sogou) can drop the input context on focus-out; a bare
-            // XSetICFocus on the stale IC then never re-attaches. Rebuild the context so the
-            // server sees a fresh IC; create_context takes IC focus because the window is
-            // now the focused one.
-            let _ = self.remove_context(window);
-            let _ = self.create_context(window, true);
-            return Ok(true);
         }
         if let Some(&mut Some(ref mut context)) = self.inner.contexts.get_mut(&window) {
             context.focus(&self.xconn).map(|_| true)

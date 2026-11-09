@@ -7213,12 +7213,11 @@ const hasActiveSubagentItems = (subagents: unknown): boolean => {
   return subagents.some((item) => {
     if (!item || typeof item !== 'object') return false;
     const record = item as Record<string, unknown>;
+    if (normalizeFlag(record.terminal) || normalizeFlag(record.failed)) return false;
     const status = normalizeText(record.status ?? asRecord(record.agent_state).status);
     if (ACTIVE_SUBAGENT_STATUSES.has(status)) return true;
     if (SUCCESS_WORKFLOW_STATUSES.has(status) || FAILED_WORKFLOW_STATUSES.has(status)) return false;
-    if (normalizeFlag(record.terminal) || normalizeFlag(record.failed)) return false;
-    if (normalizeFlag(record.reply_pending ?? record.replyPending)) return true;
-    return Boolean(firstText(record.session_id, record.sessionId, record.run_id, record.runId));
+    return normalizeFlag(record.reply_pending ?? record.replyPending);
   });
 };
 

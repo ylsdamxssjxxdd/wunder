@@ -106,6 +106,7 @@ import { ElMessage } from 'element-plus';
 
 import MessageSubagentPanel from '@/components/chat/MessageSubagentPanel.vue';
 import { getSessionCommandSessions, terminateSessionCommandSession } from '@/api/chat';
+import { getSessionMessages } from '@/stores/chatRuntimeState';
 import { useI18n } from '@/i18n';
 import { useChatStore } from '@/stores/chat';
 import {
@@ -114,6 +115,7 @@ import {
 } from '@/stores/commandSessions';
 import { normalizeMessageSubagents } from '@/stores/chatStats';
 import { onSubagentPoolChanged } from '@/utils/subagentPoolEvents';
+import { isSubagentItemActive } from '@/utils/subagentRuntime';
 
 const MAX_ROWS = 6;
 const OUTPUT_LINES = 10;
@@ -121,17 +123,21 @@ const OUTPUT_CHARS = 1200;
 
 type DockKind = 'tasks' | 'subagents';
 
+const props = defineProps<{ sessionId?: string }>();
 const { t } = useI18n();
 const chatStore = useChatStore();
 const commandStore = useCommandSessionStore();
-const sessionId = computed(() => String(chatStore.activeSessionId || '').trim());
+const sessionId = computed(() => String(props.sessionId || chatStore.activeSessionId || '').trim());
 const tasks = computed(() => commandStore.listBySession(sessionId.value).filter(task => task.status === 'running'));
 const visibleTasks = computed(() => tasks.value.slice(0, MAX_ROWS));
 const taskCount = computed(() => tasks.value.length);
 const loadedSubagents = ref<Record<string, unknown>[]>([]);
 const projectedSubagents = computed<Record<string, unknown>[]>(() => {
   void chatStore.runtimeProjectionVersionBySession?.[sessionId.value];
-  const messages = Array.isArray(chatStore.messages) ? chatStore.messages : [];
+  const cached = sessionId.value === String(chatStore.activeSessionId || '').trim()
+    ? chatStore.messages
+    : getSessionMessages(sessionId.value);
+  const messages = Array.isArray(cached) ? cached : [];
   return normalizeMessageSubagents(messages.flatMap(message =>
     Array.isArray(message?.subagents) ? message.subagents : []
   ));
@@ -241,14 +247,14 @@ const terminateTask = async (task: CommandSessionRuntimeEntry) => {
   }
 };
 
-const loadSubagents = async (target: string) => {
+const loadSubagents = async (target: string, force = false) => {
   const serial = ++subagentLoadSerial;
   if (!target) {
     loadedSubagents.value = [];
     return;
   }
   try {
-    const items = await chatStore.refreshSessionSubagents(target);
+    const items = await chatStore.refreshSessionSubagents(target, { force });
     if (serial === subagentLoadSerial && sessionId.value === target) {
       loadedSubagents.value = normalizeMessageSubagents(items);
     }
@@ -258,11 +264,16 @@ const loadSubagents = async (target: string) => {
 };
 
 const removeSubagentListener = onSubagentPoolChanged(changedSession => {
-  if (changedSession === sessionId.value) void loadSubagents(changedSession);
+  if (changedSession === sessionId.value) void loadSubagents(changedSession, true);
 });
 const clock = setInterval(() => {
   if (taskCount.value > 0) nowMs.value = Date.now();
 }, 1000);
+const subagentReconcile = setInterval(() => {
+  if (subagents.value.some(item => isSubagentItemActive(item)) && sessionId.value) {
+    void loadSubagents(sessionId.value, true);
+  }
+}, 3000);
 watch(sessionId, target => {
   expandedTaskIds.value = new Set();
   terminatingTaskIds.value = new Set();
@@ -273,6 +284,7 @@ watch(sessionId, target => {
 }, { immediate: true });
 onBeforeUnmount(() => {
   clearInterval(clock);
+  clearInterval(subagentReconcile);
   clearCloseTimer('tasks');
   clearCloseTimer('subagents');
   removeSubagentListener();

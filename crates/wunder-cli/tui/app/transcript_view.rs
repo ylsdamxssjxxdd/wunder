@@ -133,9 +133,13 @@ impl TuiApp {
     /// Enter on a selected card opens or closes its fold. Returns whether it acted, so the
     /// caller can fall back to the key's other meaning.
     pub fn toggle_selected_card(&mut self) -> bool {
-        let Some(index) = self.transcript_selected else {
-            return false;
-        };
+        self.transcript_selected
+            .is_some_and(|index| self.toggle_card(index))
+    }
+
+    /// A disclosure click addresses its card directly. It does not change the keyboard's
+    /// selected card or paint the whole card as though its text were selected.
+    pub fn toggle_card(&mut self, index: usize) -> bool {
         if !self.card_is_collapsible(index) {
             return false;
         }

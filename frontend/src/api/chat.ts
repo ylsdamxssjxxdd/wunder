@@ -162,6 +162,8 @@ export const getSessionSubagents = (
 export const deleteSession = (id: string) => api.delete(`/chat/sessions/${id}`);
 export const archiveSession = (id: string) => api.post(`/chat/sessions/${id}/archive`);
 export const restoreSession = (id: string) => api.post(`/chat/sessions/${id}/restore`);
+export const forkSession = (id: string, payload: { user_round: number }) =>
+  api.post(`/chat/sessions/${encodeURIComponent(id)}/fork`, payload, { timeout: 30_000 });
 export const renameSession = (id: string, payload: unknown) =>
   api.post(`/chat/sessions/${id}/title`, payload);
 export const sendMessage = (id: string, payload: unknown) => api.post(`/chat/sessions/${id}/messages`, payload);

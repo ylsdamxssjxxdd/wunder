@@ -30,9 +30,10 @@ Windows 上也可以执行 `build.bat pack -a linux-x64`；组包器是 Python 3
 
 运行 `.run` 后：
 
-- 默认安装到 `~/.wunder`；改目录用 `--home=PATH`（或预先设置非空的 `WUNDER_HOME`），不再交互询问。
-- 交互模式只有一屏：列出安装目录与补充组件，数字切换勾选、`a` 全选、`n` 清空、`q` 退出，回车即开始安装。首次安装没有额外确认；检测到已有安装时只问一次（替换程序文件和已选组件目录，配置、会话、工作区保留）。
-- 补充组件默认全选（`--yes` 静默安装即装全部）；`--components=python,git` 可只装列出的组件，`--all` 为显式全选（保留给脚本表达）。不带参数且 stdin 不是终端时会拒绝继续，避免在脚本里卡住。
+- 运行 `.run` 后直接装完，全程没有任何提问：桌面版、命令行与全部补充组件（Python、Git、ripgrep、FFmpeg、7-Zip、内置浏览器）一次装好，并创建应用菜单项与桌面启动图标。有没有终端、有没有 stdin 都一样，`curl … | sh` 之类的方式也能跑通。
+- 默认安装到 `~/.wunder`；改目录用 `--home=PATH`（或预先设置非空的 `WUNDER_HOME`）。检测到已有安装时原地升级：只替换程序文件与组件目录，配置、会话、工作区保留，不再二次确认。
+- 默认显示进度条：解压安装包（0–55%）、清理旧文件、命令行、桌面版、命令与桌面入口、补充组件（到 100%），按已落盘字节推进，最后一行 `100% 安装完成` 后接固定摘要。进度只写 stderr，`> install.log` 之类的重定向不会污染摘要；终端里原地刷新，非终端按 10% 一档换行输出。
+- 只有在需要更小体积时才用 `--components=python,git` 只装列出的组件；`--no-desktop-entry`、`--no-desktop-icon` 可分别跳过菜单项与桌面图标；`--no-progress`（或设置 `NO_COLOR`）关闭进度条。`-y`/`--yes`/`--all` 仍然接受但已无作用（安装本来就无交互、默认全选）。
 - 安装过程只输出阶段信息，结束时给出一份固定摘要（桌面版 / 命令行 / 组件 / 命令 / 入口 / 卸载）。
 - 安装根会写入 `.wunder-home`。桌面程序本体解压在 `app/desktop`（AppDir 结构，含 `AppRun`、`usr/bin`、`usr/lib` 与默认 `config`），`bin/wunder-desktop` 启动器会导出 `WUNDER_HOME=<安装根>` 后执行 `app/desktop/AppRun`；直接运行 `AppRun` 或 `bin/wunder-cli` 时，运行时也会通过标记文件识别安装根。显式设置的非空 `WUNDER_HOME` 优先。`bin/wunder` 是 `wunder-cli` 的兼容符号链接。
 - 安装器会在 `~/.local/bin` 创建 `wunder-cli`、`wunder-desktop` 和 `desktop` 三个命令链接；若 `~/.profile` 未包含该目录，会追加一段带标记的 `PATH` 设置。新开终端即可直接运行，命令行以启动目录作为工作区（`-C` 可覆盖）。

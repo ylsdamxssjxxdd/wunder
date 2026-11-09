@@ -1490,6 +1490,14 @@ fn select_winner_item(items: &[SubagentRuntimeItem]) -> Option<Value> {
 }
 
 fn build_dispatch_summary(items: &[SubagentRuntimeItem]) -> Option<String> {
+    fn model_summary(item: &SubagentRuntimeItem) -> Option<String> {
+        let run = item.run.as_ref();
+        let result = run.and_then(|record| record.result.as_deref());
+        let error = run.and_then(|record| record.error.as_deref());
+        let summary = result.or(error).or(item.summary.as_deref())?;
+        Some(truncate_text(summary, 4000))
+    }
+
     let winner = items.iter().find(|item| item.status == "success");
     if let Some(item) = winner {
         let label = item
@@ -1498,11 +1506,8 @@ fn build_dispatch_summary(items: &[SubagentRuntimeItem]) -> Option<String> {
             .as_deref()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or(item.session.title.as_str());
-        let summary = item.summary.as_deref().unwrap_or("completed");
-        return Some(format!(
-            "{label}: {}",
-            truncate_text(summary, AUTO_WAKE_OBSERVATION_MAX_CHARS)
-        ));
+        let summary = model_summary(item).unwrap_or_else(|| "completed".to_string());
+        return Some(format!("{label}: {summary}"));
     }
     let lines = items
         .iter()
@@ -1513,11 +1518,8 @@ fn build_dispatch_summary(items: &[SubagentRuntimeItem]) -> Option<String> {
                 .as_deref()
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or(item.session.title.as_str());
-            let summary = item.summary.as_deref()?;
-            Some(format!(
-                "{label}: {}",
-                truncate_text(summary, AUTO_WAKE_OBSERVATION_MAX_CHARS)
-            ))
+            let summary = model_summary(item)?;
+            Some(format!("{label}: {summary}"))
         })
         .collect::<Vec<_>>();
     if lines.is_empty() {

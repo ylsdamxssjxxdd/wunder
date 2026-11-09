@@ -113,7 +113,7 @@ import { useCommandSessionStore } from './commandSessions';
 import { hasRetainedMessageConversationContext as hasRetainedConversationContext } from '@/views/messenger/messageConversationRetention';
 
 import { HISTORY_PAGE_LIMIT } from './chatRuntimeControls';
-import { SESSION_SUBAGENTS_CACHE_TTL_MS, cacheSessionMessages, getSessionMessages, notifySessionSnapshot, resolveChatHttpStatus, resolveSessionKey, sessionSubagentsCache, sessionSubagentsInFlight, touchSessionUpdatedAt } from './chatRuntimeState';
+import { SESSION_SUBAGENTS_CACHE_TTL_MS, cacheSessionMessages, getSessionMessages, notifySessionSnapshot, resolveChatHttpStatus, resolveSessionKey, sessionSubagentsCache, sessionSubagentsInFlight, sessionSubagentsTrailingInFlight, touchSessionUpdatedAt } from './chatRuntimeState';
 import { attachSubagentsToMessages } from './chatStats';
 
 export const chatSubagentFeedbackActions = {
@@ -137,7 +137,19 @@ export const chatSubagentFeedbackActions = {
       }
       const inFlight = sessionSubagentsInFlight.get(targetSessionId);
       if (inFlight) {
-        return inFlight;
+        if (!force) return inFlight;
+        const existingTrailing = sessionSubagentsTrailingInFlight.get(targetSessionId);
+        if (existingTrailing) return existingTrailing;
+        const trailing = inFlight
+          .catch(() => [])
+          .then(() => this.refreshSessionSubagents(targetSessionId, { force: true }))
+          .finally(() => {
+            if (sessionSubagentsTrailingInFlight.get(targetSessionId) === trailing) {
+              sessionSubagentsTrailingInFlight.delete(targetSessionId);
+            }
+          });
+        sessionSubagentsTrailingInFlight.set(targetSessionId, trailing);
+        return trailing;
       }
       const request = getSessionSubagents(targetSessionId)
         .then(({ data }) => {
@@ -159,7 +171,9 @@ export const chatSubagentFeedbackActions = {
           return items;
         })
         .finally(() => {
-          sessionSubagentsInFlight.delete(targetSessionId);
+          if (sessionSubagentsInFlight.get(targetSessionId) === request) {
+            sessionSubagentsInFlight.delete(targetSessionId);
+          }
         });
       sessionSubagentsInFlight.set(targetSessionId, request);
       return request;

@@ -19,8 +19,6 @@ use super::TuiApp;
 use crate::tui::text_tabs;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
-use ratatui::widgets::Wrap;
 use std::collections::BTreeMap;
 #[cfg(test)]
 use std::sync::Mutex;
@@ -56,15 +54,136 @@ impl SelectionUnit {
     }
 }
 
-/// How many visual rows one logical line takes once the paragraph has wrapped it. The
-/// line is measured as projected text — tabs expanded to their eight-column stops — because
-/// that is exactly what the frame renders and what the terminal then shows. The renderer
-/// measures with this same call, so the row map cannot drift from the frame.
-fn paragraph_visual_rows(line: &Line<'static>, width: u16) -> usize {
-    Paragraph::new(text_tabs::expand_line(line))
-        .wrap(Wrap { trim: false })
-        .line_count(width.max(1))
-        .max(1)
+/// Absolute display-column bounds of one visual row after wrapping. The columns refer to
+/// the logical line before wrapping, so a selection can cut through any visual row without
+/// selecting the whole logical line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct DisplayRow {
+    pub start_column: usize,
+    pub end_column: usize,
+}
+
+#[derive(Clone, Copy)]
+struct DisplayCell {
+    column: usize,
+    width: usize,
+    whitespace: bool,
+}
+
+/// Wrap a logical line with the same first-fit word wrapping as `Paragraph`, retaining the
+/// source column of every visual row. Tabs are expanded first because the transcript renderer
+/// makes the same projection before wrapping.
+fn display_rows(line: &Line<'static>, width: u16) -> Vec<DisplayRow> {
+    let width = usize::from(width.max(1));
+    let expanded = text_tabs::expand_line(line);
+    let mut cells = Vec::new();
+    let mut column = 0usize;
+    for span in &expanded.spans {
+        for grapheme in span.styled_graphemes(ratatui::style::Style::default()) {
+            let cell_width = unicode_width::UnicodeWidthStr::width(grapheme.symbol);
+            cells.push(DisplayCell {
+                column,
+                width: cell_width,
+                whitespace: grapheme.symbol == "\u{200b}"
+                    || grapheme.symbol.chars().all(char::is_whitespace)
+                        && grapheme.symbol != "\u{00a0}",
+            });
+            column += cell_width;
+        }
+    }
+    if column <= width {
+        return vec![DisplayRow {
+            start_column: 0,
+            end_column: column,
+        }];
+    }
+
+    let mut rows = Vec::new();
+    let mut pending_line: Vec<DisplayCell> = Vec::new();
+    let mut pending_word: Vec<DisplayCell> = Vec::new();
+    let mut pending_whitespace: std::collections::VecDeque<DisplayCell> =
+        std::collections::VecDeque::new();
+    let mut line_width = 0usize;
+    let mut word_width = 0usize;
+    let mut whitespace_width = 0usize;
+    let mut non_whitespace_previous = false;
+
+    let flush = |rows: &mut Vec<DisplayRow>, line: &mut Vec<DisplayCell>| {
+        let row = match (line.first(), line.last()) {
+            (Some(first), Some(last)) => DisplayRow {
+                start_column: first.column,
+                end_column: last.column + last.width,
+            },
+            _ => DisplayRow {
+                start_column: 0,
+                end_column: 0,
+            },
+        };
+        rows.push(row);
+        line.clear();
+    };
+
+    for cell in cells {
+        if cell.width > width {
+            continue;
+        }
+        let word_found = non_whitespace_previous && cell.whitespace;
+        let untrimmed_overflow =
+            pending_line.is_empty() && word_width + whitespace_width + cell.width > width;
+        if word_found || untrimmed_overflow {
+            pending_line.extend(pending_whitespace.drain(..));
+            line_width += whitespace_width;
+            pending_line.append(&mut pending_word);
+            line_width += word_width;
+            whitespace_width = 0;
+            word_width = 0;
+        }
+
+        let line_full = line_width >= width;
+        let pending_word_overflow =
+            cell.width > 0 && line_width + whitespace_width + word_width >= width;
+        if line_full || pending_word_overflow {
+            let mut remaining_width = width.saturating_sub(line_width);
+            flush(&mut rows, &mut pending_line);
+            line_width = 0;
+            while let Some(whitespace) = pending_whitespace.front() {
+                if whitespace.width > remaining_width {
+                    break;
+                }
+                whitespace_width -= whitespace.width;
+                remaining_width -= whitespace.width;
+                pending_whitespace.pop_front();
+            }
+            if cell.whitespace && pending_whitespace.is_empty() {
+                continue;
+            }
+        }
+
+        if cell.whitespace {
+            whitespace_width += cell.width;
+            pending_whitespace.push_back(cell);
+        } else {
+            word_width += cell.width;
+            pending_word.push(cell);
+        }
+        non_whitespace_previous = !cell.whitespace;
+    }
+
+    if pending_line.is_empty() && pending_word.is_empty() && !pending_whitespace.is_empty() {
+        flush(&mut rows, &mut pending_line);
+    }
+    pending_line.extend(pending_whitespace);
+    pending_line.append(&mut pending_word);
+    if !pending_line.is_empty() {
+        flush(&mut rows, &mut pending_line);
+    }
+    if rows.is_empty() {
+        rows.push(DisplayRow {
+            start_column: 0,
+            end_column: 0,
+        });
+    }
+    rows
 }
 
 /// Where a visual row came from: the logical line under it and which row of that line
@@ -91,14 +210,11 @@ pub(super) struct TranscriptHitMap {
     pub rows: Vec<Option<usize>>,
     /// Logical line and row-of-line behind each addressable visual row, same length.
     pub origins: Vec<RowOrigin>,
-    /// Visual rows taken by each logical line of the window.
-    pub line_rows: Vec<usize>,
+    /// Logical display-column bounds behind each visual row of each window line.
+    pub display_rows: Vec<Vec<DisplayRow>>,
     /// Stable identity of each window line, `None` for a line no card owns (the empty
     /// transcript's placeholder).
     pub line_identities: Vec<Option<LineIdentity>>,
-    /// Projected display width of each window line. A pointer right of the text answers
-    /// at the end of that line, not at the end of the frame.
-    pub line_widths: Vec<u16>,
     /// Where each stable line is shown this frame: the window line it was painted as.
     /// A stable address absent from this map is not on screen right now.
     pub line_slots: BTreeMap<LineIdentity, usize>,
@@ -123,8 +239,7 @@ pub(super) fn build_transcript_hit_map(
     // with the same number, which is what keeps this walk honest.
     let mut line_identities: Vec<Option<LineIdentity>> = vec![None; lines.len()];
     let mut line_entries: Vec<Option<usize>> = vec![None; lines.len()];
-    let mut line_rows: Vec<usize> = Vec::with_capacity(lines.len());
-    let mut line_widths: Vec<u16> = Vec::with_capacity(lines.len());
+    let mut wrapped_rows: Vec<Vec<DisplayRow>> = Vec::with_capacity(lines.len());
     let mut line_slots: BTreeMap<LineIdentity, usize> = BTreeMap::new();
     let mut entry_cursor = 0usize;
     let mut line_within_cell = 0usize;
@@ -151,16 +266,15 @@ pub(super) fn build_transcript_hit_map(
             line_entries[line] = Some(index);
             line_within_cell += 1;
         }
-        line_rows.push(paragraph_visual_rows(source, width));
-        line_widths.push(u16::try_from(text_tabs::line_display_width(source)).unwrap_or(u16::MAX));
+        wrapped_rows.push(display_rows(source, width));
     }
 
     // Visual axis: a wrapped line contributes one entry per row it paints, and the card
     // behind those rows is the card that owns the line.
     let mut rows: Vec<Option<usize>> = Vec::with_capacity(limit);
     let mut origins: Vec<RowOrigin> = Vec::with_capacity(limit);
-    for (line, count) in line_rows.iter().enumerate() {
-        for row_in_line in 0..*count {
+    for (line, line_rows) in wrapped_rows.iter().enumerate() {
+        for row_in_line in 0..line_rows.len() {
             if origins.len() >= limit {
                 break;
             }
@@ -175,17 +289,15 @@ pub(super) fn build_transcript_hit_map(
     TranscriptHitMap {
         rows,
         origins,
-        line_rows,
+        display_rows: wrapped_rows,
         line_identities,
-        line_widths,
         line_slots,
         scroll,
     }
 }
 
-/// One end of a selection, in stable identity space. `column` is `None` when the whole
-/// line is meant: a line the paragraph wrapped into several rows cannot be addressed by
-/// column, and a line pick wants all of it anyway.
+/// One end of a selection, in stable identity space. `column` is `None` only for a whole
+/// logical line picked by a triple click; ordinary and word selections always name a column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SelectionPoint {
     pub cell_id: u64,
@@ -255,32 +367,25 @@ impl TuiApp {
         Some(self.transcript_hit.scroll + area_row)
     }
 
-    /// The stable address of the text a pointer row names. Display columns are what a
-    /// pointer reports; a wrapped line splits them across its rows, so only a line that
-    /// fits on one row can be addressed by column.
+    /// The stable address of the text a pointer row names. A visual row reports its own
+    /// offset into the logical line, so wrapping never turns a character selection into a
+    /// whole-line selection.
     pub(super) fn stable_anchor(&self, point: WindowPoint) -> Option<SelectionPoint> {
         let origin = *self.transcript_hit.origins.get(point.row)?;
-        let identity = *self.transcript_hit.line_identities.get(origin.line)?;
-        let identity = identity?;
-        let rows_in_line = *self.transcript_hit.line_rows.get(origin.line)?;
-        let column = if rows_in_line == 1 && origin.row_in_line == 0 {
-            // Clamped to the line the reader clicked, so a pointer right of the text
-            // answers at its end instead of at the far edge of the frame.
-            let line_end = usize::from(
-                *self
-                    .transcript_hit
-                    .line_widths
-                    .get(origin.line)
-                    .unwrap_or(&0),
-            );
-            Some(point.column.min(line_end))
-        } else {
-            None
-        };
+        let identity = (*self.transcript_hit.line_identities.get(origin.line)?)?;
+        let row = self
+            .transcript_hit
+            .display_rows
+            .get(origin.line)?
+            .get(origin.row_in_line)?;
+        let column = row
+            .start_column
+            .saturating_add(point.column)
+            .min(row.end_column);
         Some(SelectionPoint {
             cell_id: identity.cell_id,
             line_within_cell: identity.line_within_cell,
-            column,
+            column: Some(column),
         })
     }
 
@@ -547,9 +652,8 @@ impl TuiApp {
     ///
     /// The lines here are the cache's logical text (tabs intact) while the bounds are
     /// display columns, so each bound maps back through the same tab projection the frame
-    /// used and the copy keeps its tabs. A character is included when the display column
-    /// it starts at falls inside the range; a line the paragraph wrapped still copies
-    /// whole, because its rows cannot be addressed by column at all.
+    /// used and the copy keeps its tabs. Soft-wrapped rows cut at their own columns without
+    /// introducing a newline into the copied logical line.
     pub(super) fn transcript_selection_text(&self, lines: &[Line<'static>]) -> String {
         let Some(range) = self.resolve_selection() else {
             return String::new();
@@ -577,19 +681,16 @@ impl TuiApp {
         out.join("\n")
     }
 
-    /// The URL under a pointer column, which is what a Ctrl+click opens. A line the
-    /// paragraph wrapped cannot be addressed by column, so it yields nothing.
+    /// The URL under a pointer column, including a URL that soft-wrapped onto another row.
     pub(super) fn url_at_point(
         &self,
         lines: &[Line<'static>],
         point: WindowPoint,
     ) -> Option<String> {
         let origin = *self.transcript_hit.origins.get(point.row)?;
-        if self.transcript_hit.line_rows.get(origin.line) != Some(&1) {
-            return None;
-        }
+        let column = self.stable_anchor(point)?.column?;
         let text = line_text(lines.get(origin.line)?);
-        url_containing_column(text.as_str(), point.column)
+        url_containing_column(text.as_str(), column)
     }
 
     pub(super) fn word_bounds_at(
@@ -598,9 +699,7 @@ impl TuiApp {
         point: WindowPoint,
     ) -> Option<(usize, usize)> {
         let origin = *self.transcript_hit.origins.get(point.row)?;
-        if self.transcript_hit.line_rows.get(origin.line) != Some(&1) {
-            return None;
-        }
+        let column = self.stable_anchor(point)?.column?;
         let text = line_text(lines.get(origin.line)?);
         let chars: Vec<char> = text.chars().collect();
         if chars.is_empty() {
@@ -608,7 +707,7 @@ impl TuiApp {
         }
         // The pointer column resolves through the shared projection: a column inside a
         // tab's padding or a wide character answers with that character, not its neighbour.
-        let mut index = text_tabs::logical_index_at(&text, point.column);
+        let mut index = text_tabs::logical_index_at(&text, column);
         if index >= chars.len() {
             index = chars.len() - 1;
         }
@@ -816,6 +915,79 @@ pub(super) fn url_containing_column(text: &str, column: usize) -> Option<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wrapped_rows_match_the_paragraph_and_keep_logical_columns() {
+        let line = Line::from("alpha beta gamma delta epsilon zeta");
+        let rows = display_rows(&line, 16);
+        let paragraph_rows = ratatui::widgets::Paragraph::new(line.clone())
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .line_count(16);
+        assert_eq!(rows.len(), paragraph_rows);
+        assert_eq!(
+            rows,
+            vec![
+                DisplayRow {
+                    start_column: 0,
+                    end_column: 16,
+                },
+                DisplayRow {
+                    start_column: 17,
+                    end_column: 30,
+                },
+                DisplayRow {
+                    start_column: 31,
+                    end_column: 35,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_long_word_wraps_at_the_viewport_boundary() {
+        let rows = display_rows(&Line::from("abcdefghijkl"), 5);
+        assert_eq!(
+            rows,
+            vec![
+                DisplayRow {
+                    start_column: 0,
+                    end_column: 5,
+                },
+                DisplayRow {
+                    start_column: 5,
+                    end_column: 10,
+                },
+                DisplayRow {
+                    start_column: 10,
+                    end_column: 12,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn row_counts_match_paragraph_for_mixed_text_and_widths() {
+        for text in [
+            "alpha  beta   gamma delta",
+            "中文 selection with 换行 and words",
+            "combining e\u{301} text with spaces",
+            "gate\tvalue\twith tabs and a longer tail",
+            "     leading and trailing     ",
+        ] {
+            let line = Line::from(text);
+            for width in 1..=24u16 {
+                let expected = ratatui::widgets::Paragraph::new(text_tabs::expand_line(&line))
+                    .wrap(ratatui::widgets::Wrap { trim: false })
+                    .line_count(width)
+                    .max(1);
+                assert_eq!(
+                    display_rows(&line, width).len(),
+                    expected,
+                    "text={text:?}, width={width}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn a_url_is_only_found_by_the_column_it_covers() {

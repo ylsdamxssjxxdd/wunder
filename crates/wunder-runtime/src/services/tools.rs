@@ -25,6 +25,7 @@ mod edit_args;
 mod edit_tool;
 mod file_tool;
 mod freeform;
+mod fs_walk;
 mod glob_tool;
 mod knowledge_tool;
 mod line_diff;

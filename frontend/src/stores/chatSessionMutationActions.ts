@@ -8,6 +8,7 @@ import {
   controlSessionSubagents as controlSessionSubagentsApi,
   createSession,
   deleteSession as deleteSessionApi,
+  forkSession as forkSessionApi,
   getSession,
   getSessionGoal,
   getSessionEvents,
@@ -196,6 +197,27 @@ export const chatSessionMutationActions = {
       writeSessionListCache(restoredAgentId, filterSessionsByAgent(restoredAgentId, this.sessions));
       syncDemoChatCache({ sessions: this.sessions });
       return restored;
+    },
+    async forkSession(sessionId, userRound) {
+      const targetId = resolveSessionKey(sessionId);
+      const round = Number(userRound);
+      if (!targetId || !Number.isSafeInteger(round) || round <= 0) return null;
+      const { data } = await forkSessionApi(targetId, { user_round: round });
+      const forked = data?.data || null;
+      const forkedId = resolveSessionKey(forked?.id);
+      if (!forked || !forkedId) return null;
+      const index = this.sessions.findIndex((item) => resolveSessionKey(item?.id) === forkedId);
+      if (index >= 0) {
+        this.sessions[index] = { ...this.sessions[index], ...forked, id: forkedId };
+      } else {
+        this.sessions.unshift({ ...forked, id: forkedId });
+      }
+      const agentId = String(forked.agent_id || '').trim();
+      this.sessionOrderPromotion = { sessionId: forkedId, agentId };
+      this.sessionOrderRevision += 1;
+      writeSessionListCache(agentId, filterSessionsByAgent(agentId, this.sessions));
+      syncDemoChatCache({ sessions: this.sessions });
+      return forked;
     },
     async deleteSession(sessionId) {
       const targetId = sessionId || this.activeSessionId;

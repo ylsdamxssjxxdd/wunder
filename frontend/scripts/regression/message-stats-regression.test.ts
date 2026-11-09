@@ -1157,6 +1157,23 @@ test('message stats keeps compaction status scoped to the assistant bubble that 
   assert.equal(compactionEntries[0]?.value, 'Compacting');
 });
 
+test('terminal subagent flags settle stale running status and termination controls', async () => {
+  ensureBrowserRuntimeStub();
+  const { normalizeMessageSubagent } = await import('../../src/stores/chatStats');
+  const item = normalizeMessageSubagent({
+    session_id: 'child-session',
+    run_id: 'child-run',
+    status: 'running',
+    terminal: true,
+    failed: false,
+    can_terminate: true
+  });
+
+  assert.equal(item.status, 'completed');
+  assert.equal(item.terminal, true);
+  assert.equal(item.canTerminate, false);
+});
+
 test('message stats keeps orphan subagent ownership away from a stopped assistant bubble', async () => {
   ensureBrowserRuntimeStub();
   const { attachSubagentsToMessages } = await import('../../src/stores/chatStats');

@@ -265,6 +265,7 @@ impl ThreadRuntime {
                 "session_id": task.session_id,
                 "turn_id": turn_id,
                 "status": "cancelled",
+                "stop_reason": "user_withdrew_queued_turn",
                 "error": "user_withdrew_queued_turn"
             });
             let _ = self
@@ -502,6 +503,60 @@ mod tests {
         assert_eq!(items[0]["content"], json!("first"));
         assert_eq!(items[0]["position"], json!(0));
         assert_eq!(items[1]["position"], json!(1));
+    }
+
+    #[tokio::test]
+    async fn withdrawn_queue_turn_is_not_rendered_as_stopped_history() {
+        let (_root, state) = build_state("queue-withdraw-view").await;
+        let active = state
+            .storage
+            .accept_thread_turn("user-a", "session-a", &json!({"content":"still running"}))
+            .unwrap();
+        state
+            .storage
+            .update_thread_turn(
+                "user-a",
+                "session-a",
+                active["turn_id"].as_str().unwrap(),
+                "running",
+                "",
+                &json!({}),
+            )
+            .unwrap();
+        let withdrawn = state
+            .storage
+            .accept_thread_turn(
+                "user-a",
+                "session-a",
+                &json!({"content":"edit queued input"}),
+            )
+            .unwrap();
+        let turn_id = withdrawn["turn_id"].as_str().unwrap();
+        park_task(
+            &state,
+            "task-withdraw",
+            "user-a",
+            "session-a",
+            "edit queued input",
+            100.0,
+            json!({"config_overrides":{"__thread_log_turn_id":turn_id}}),
+        );
+
+        state
+            .kernel
+            .thread_runtime
+            .cancel_queued_task("user-a", "session-a", "task-withdraw")
+            .await
+            .expect("withdraw queued turn");
+
+        let page = state
+            .storage
+            .thread_view_page("user-a", "session-a", "chat", None, 12)
+            .unwrap();
+        assert_eq!(page.chat.len(), 1);
+        assert_eq!(page.chat[0].root_turn_id, active["turn_id"]);
+        assert_eq!(page.chat[0].status, "running");
+        assert_eq!(page.chat[0].user.content, "still running");
     }
 
     #[tokio::test]

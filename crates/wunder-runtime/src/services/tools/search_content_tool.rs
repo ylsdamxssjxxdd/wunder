@@ -146,6 +146,8 @@ struct SearchParams {
     /// Rust scanner instead of failing.
     engine_explicit: bool,
     output_budget_bytes: Option<usize>,
+    /// `mode=paths`：只回文件清单，不回逐行命中（等价 rg -l）。
+    files_only: bool,
 }
 
 #[derive(Debug, Copy, Clone, Default)]
@@ -501,7 +503,12 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         fallback_reason,
     };
 
-    let mut hits = rank_search_hits(raw_hits, selected_attempt, params.case_sensitive);
+    let hits = rank_search_hits(raw_hits, selected_attempt, params.case_sensitive);
+    let (mut hits, min_matched_terms) = if selected_attempt.strategy.is_literal_terms_fallback() {
+        filter_hits_by_term_coverage(hits, &selected_attempt.match_terms)
+    } else {
+        (hits, None)
+    };
     if hits.len() > params.max_matches {
         hits.truncate(params.max_matches);
     }
@@ -540,6 +547,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
             candidate_limit_hit,
             output_budget_hit,
         },
+        min_matched_terms,
         elapsed_ms,
     ))
 }
@@ -594,6 +602,7 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
         .output_budget_bytes
         .map(|value| value.clamp(MIN_OUTPUT_BUDGET_BYTES, MAX_OUTPUT_BUDGET_BYTES));
     let (engine, engine_explicit) = parse_search_engine(args);
+    let files_only = parse_files_only(args);
 
     Ok(SearchParams {
         query,
@@ -613,7 +622,21 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
         engine,
         engine_explicit,
         output_budget_bytes,
+        files_only,
     })
+}
+
+/// `mode=paths|files|files_only` 或 `files_only=true`：只要文件清单。
+fn parse_files_only(args: &Value) -> bool {
+    if let Some(mode) = args.get("mode").and_then(Value::as_str) {
+        let normalized = mode.trim().to_ascii_lowercase();
+        if matches!(normalized.as_str(), "paths" | "files" | "files_only" | "list") {
+            return true;
+        }
+    }
+    args.get("files_only")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn parse_search_query(args: &Value) -> (String, QuerySource) {
@@ -1943,6 +1966,32 @@ fn build_focus_points(hits: &[SearchHit], limit: usize) -> Vec<String> {
     focus_points
 }
 
+/// Keep only the fallback hits that matched at least half of the query words.
+///
+/// A phrase miss degrades to `word1|word2|...`, and one shared word is enough
+/// to match: searching `quiet window probe skipped` also returned a line whose
+/// only overlap was "window". Requiring half the words removes that noise while
+/// still degrading to the looser OR result whenever the stricter one is empty.
+fn filter_hits_by_term_coverage(
+    hits: Vec<SearchHit>,
+    terms: &[String],
+) -> (Vec<SearchHit>, Option<usize>) {
+    if terms.len() < 3 || hits.is_empty() {
+        return (hits, None);
+    }
+    let threshold = (terms.len() + 1) / 2;
+    let strong: Vec<SearchHit> = hits
+        .iter()
+        .filter(|hit| hit.matched_terms.len() >= threshold)
+        .cloned()
+        .collect();
+    if strong.is_empty() {
+        (hits, None)
+    } else {
+        (strong, Some(threshold))
+    }
+}
+
 fn rank_search_hits(
     mut hits: Vec<SearchHit>,
     attempt: &SearchAttempt,
@@ -2182,13 +2231,27 @@ fn build_search_summary(
     }
 }
 
+/// 单条命中的正文与上下文行上限：整行代码/JSON 常常几百上千字符，全量回传既
+/// 挤占上下文又没什么信息量，截断后用 content_chars / content_truncated 说明。
+const MAX_HIT_CONTENT_CHARS: usize = 400;
+const MAX_CONTEXT_LINE_CHARS: usize = 200;
+
+fn truncate_hit_chars(raw: &str, limit: usize) -> String {
+    if raw.chars().count() <= limit {
+        return raw.to_string();
+    }
+    let mut text = raw.chars().take(limit).collect::<String>();
+    text.push('…');
+    text
+}
+
 fn compact_context_lines(lines: &[ContextLine]) -> Vec<Value> {
     lines
         .iter()
         .map(|line| {
             json!({
                 "line": line.line,
-                "content": line.content,
+                "content": truncate_hit_chars(&line.content, MAX_CONTEXT_LINE_CHARS),
             })
         })
         .collect()
@@ -2197,10 +2260,15 @@ fn compact_context_lines(lines: &[ContextLine]) -> Vec<Value> {
 fn compact_search_hits_for_model(hits: &[SearchHit]) -> Vec<Value> {
     hits.iter()
         .map(|hit| {
+            let content = truncate_hit_chars(&hit.content, MAX_HIT_CONTENT_CHARS);
+            let content_chars = hit.content.chars().count();
+            let content_truncated = content.chars().count() < content_chars;
             json!({
                 "path": hit.path,
                 "line": hit.line,
-                "content": hit.content,
+                "content": content,
+                "content_chars": content_chars,
+                "content_truncated": content_truncated,
                 "before": compact_context_lines(&hit.before),
                 "after": compact_context_lines(&hit.after),
             })
@@ -2241,6 +2309,7 @@ fn build_model_search_success(
     scanned_files: usize,
     engine: &SearchEngineTrace,
     flags: SearchResultFlags,
+    min_matched_terms: Option<usize>,
     elapsed_ms: u128,
 ) -> Value {
     let truncation_reasons = search_truncation_reasons(flags);
@@ -2252,6 +2321,11 @@ fn build_model_search_success(
     let summary_text = if returned_match_count == 0 {
         format!(
             "No hits in local workspace files (engine: {}).",
+            engine.engine.as_str()
+        )
+    } else if params.files_only {
+        format!(
+            "Found {matched_file_count} files containing the query (engine: {}).",
             engine.engine.as_str()
         )
     } else if phrase_fallback {
@@ -2281,6 +2355,7 @@ fn build_model_search_success(
             "query_mode": attempt.query_mode.as_str(),
             "strategy": attempt.strategy.as_str(),
             "fallback_applied": phrase_fallback,
+            "min_matched_terms": min_matched_terms,
             "engine": engine.engine.as_str(),
             "ripgrep_program": engine.rg_program.clone(),
             "fallback_reason": engine.fallback_reason.clone(),
@@ -2294,7 +2369,17 @@ fn build_model_search_success(
             "truncated": truncated,
             "truncation_reasons": truncation_reasons,
             "elapsed_ms": elapsed_ms,
-            "hits": compact_search_hits_for_model(&hits),
+            "files_only": params.files_only,
+            "paths": if params.files_only {
+                json!(collect_matched_files(&hits))
+            } else {
+                Value::Null
+            },
+            "hits": if params.files_only {
+                Value::Array(Vec::new())
+            } else {
+                json!(compact_search_hits_for_model(&hits))
+            },
         }),
         summary.next_hint,
     )
@@ -2384,6 +2469,37 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::tempdir;
+
+    #[test]
+    fn files_only_mode_accepts_mode_and_boolean_aliases() {
+        assert!(parse_files_only(&json!({ "mode": "paths" })));
+        assert!(parse_files_only(&json!({ "mode": "files" })));
+        assert!(parse_files_only(&json!({ "files_only": true })));
+        assert!(!parse_files_only(&json!({ "mode": "content" })));
+        assert!(!parse_files_only(&json!({})));
+    }
+
+    #[test]
+    fn compact_hits_mark_truncated_long_lines() {
+        let long = "x".repeat(MAX_HIT_CONTENT_CHARS + 50);
+        let hit = SearchHit {
+            path: "src/main.rs".to_string(),
+            line: 7,
+            content: long,
+            segments: Vec::new(),
+            matched_terms: Vec::new(),
+            before: Vec::new(),
+            after: Vec::new(),
+        };
+        let compacted = compact_search_hits_for_model(&[hit]);
+        let content = compacted[0]["content"].as_str().expect("content");
+        assert_eq!(content.chars().count(), MAX_HIT_CONTENT_CHARS + 1);
+        assert_eq!(compacted[0]["content_truncated"], json!(true));
+        assert_eq!(
+            compacted[0]["content_chars"].as_u64().expect("chars"),
+            (MAX_HIT_CONTENT_CHARS + 50) as u64
+        );
+    }
 
     #[test]
     fn literal_mode_treats_query_as_case_insensitive_literal() {
@@ -2624,6 +2740,43 @@ mod tests {
     }
 
     #[test]
+    fn fallback_hits_must_cover_half_the_terms_to_survive() {
+        let terms: Vec<String> = ["alphaDoc", "betaRef", "gammaNode", "deltaPoint"]
+            .iter()
+            .map(|term| (*term).to_string())
+            .collect();
+        let hit = |matched: &[&str]| SearchHit {
+            path: "src/lib.rs".to_string(),
+            line: 1,
+            content: "placeholder".to_string(),
+            segments: vec![],
+            matched_terms: matched.iter().map(|term| (*term).to_string()).collect(),
+            before: vec![],
+            after: vec![],
+        };
+
+        // 只共享一个词的命中是噪声，四个词要求至少命中两个。
+        let (kept, threshold) = filter_hits_by_term_coverage(
+            vec![hit(&["alphaDoc"]), hit(&["alphaDoc", "gammaNode"])],
+            &terms,
+        );
+        assert_eq!(threshold, Some(2));
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].matched_terms.len(), 2);
+
+        // 全都覆盖不足时退回宽松结果，而不是空手而归。
+        let (loose, threshold) = filter_hits_by_term_coverage(vec![hit(&["alphaDoc"])], &terms);
+        assert_eq!(threshold, None);
+        assert_eq!(loose.len(), 1);
+
+        // 词太少时没有区分度，不做过滤。
+        let (unfiltered, threshold) =
+            filter_hits_by_term_coverage(vec![hit(&["alphaDoc"])], &terms[..2].to_vec());
+        assert_eq!(threshold, None);
+        assert_eq!(unfiltered.len(), 1);
+    }
+
+    #[test]
     fn limit_hits_by_output_budget_truncates_hits() {
         let hit1 = SearchHit {
             path: "a.rs".to_string(),
@@ -2779,6 +2932,7 @@ mod tests {
             engine: SearchEngine::Rust,
             engine_explicit: true,
             output_budget_bytes: Some(4096),
+            files_only: false,
         };
         let attempt = build_search_attempt(
             SearchStrategy::LiteralExact,
@@ -2872,6 +3026,7 @@ mod tests {
             engine: SearchEngine::Auto,
             engine_explicit: false,
             output_budget_bytes: None,
+            files_only: false,
         };
         let attempt = build_search_attempt(
             SearchStrategy::LiteralExact,
@@ -2924,6 +3079,7 @@ mod tests {
             engine: SearchEngine::Auto,
             engine_explicit: false,
             output_budget_bytes: Some(4096),
+            files_only: false,
         };
         let attempt = build_search_attempt(
             SearchStrategy::LiteralExact,
@@ -2988,6 +3144,7 @@ mod tests {
                 candidate_limit_hit: false,
                 output_budget_hit: true,
             },
+            None,
             42,
         );
         assert_eq!(response.get("ok").and_then(Value::as_bool), Some(true));
@@ -3082,6 +3239,7 @@ mod tests {
             engine: SearchEngine::Rg,
             engine_explicit: false,
             output_budget_bytes: None,
+            files_only: false,
         };
         let rg_hint = build_zero_hit_search_hint(&params, 0, SearchEngine::Rg);
         assert!(rg_hint.contains("ripgrep"));

@@ -170,6 +170,7 @@ pub fn subagent_row(card: &NativeSubagentCard) -> TimelineRow {
 
 fn blank(kind: i32, id: String) -> TimelineRow {
     TimelineRow {
+        user_round: 0,
         kind,
         id: id.into(),
         visible: true,
@@ -1925,8 +1926,16 @@ impl Timeline {
             return;
         };
         let row = self.model.row_data(index).unwrap();
-        if row.stats.iter().ne(stats.iter().cloned()) {
-            self.patch(index, |row| row.stats = ModelRc::new(VecModel::from(stats)));
+        let user_round = stats
+            .iter()
+            .find(|metric| metric.key == "hashtag")
+            .and_then(|metric| metric.value.parse::<i32>().ok())
+            .unwrap_or(0);
+        if row.stats.iter().ne(stats.iter().cloned()) || row.user_round != user_round {
+            self.patch(index, |row| {
+                row.stats = ModelRc::new(VecModel::from(stats));
+                row.user_round = user_round;
+            });
         }
     }
 
@@ -2016,6 +2025,7 @@ impl Timeline {
                 entry.kind == KIND_SUBAGENT && entry.status_kind == STATUS_RUNNING
             })
         });
+        let footer_status = status_kind(state);
         let state = crate::turn_stats::resolve_status(state, has_running_subagent);
         let metric = crate::turn_stats::with_status(
             crate::turn_stats::with_user_round(Vec::new(), round),
@@ -2025,6 +2035,9 @@ impl Timeline {
         prefix.append(&mut stats);
         if row.stats.iter().collect::<Vec<_>>() != prefix {
             self.set_turn_stats(prefix);
+        }
+        if row.status_kind != footer_status {
+            self.patch(index, |row| row.status_kind = footer_status);
         }
         if state == "已停止" || state == "等待用户输入" || state == "等待确认" {
             self.patch(self.process_bar, |bar| bar.summary = state.into());

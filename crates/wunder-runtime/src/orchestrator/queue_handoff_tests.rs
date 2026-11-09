@@ -65,6 +65,14 @@ async fn queue_handoff_parks_original_turn_and_keeps_cancel_available() {
     .await
     .unwrap();
     assert!(!paused.is_finished());
+    let suspended = orchestrator
+        .get_tool_session_runtime_snapshot("session-a")
+        .unwrap();
+    assert_eq!(suspended["thread_status"], "running");
+    assert_eq!(
+        state.monitor.get_record("session-a").unwrap()["status"],
+        "running"
+    );
     let lock_b = match state
         .storage
         .try_acquire_session_lock("session-b", "user-b", "agent-b", 60.0, 1)

@@ -128,6 +128,7 @@ export global I18n {
     out property <string> common_new: zh ? "新建" : "New";
     out property <string> common_open: zh ? "打开" : "Open";
     out property <string> common_copy: zh ? "复制" : "Copy";
+    out property <string> common_fork: zh ? "从此处分叉" : "Fork from here";
     out property <string> common_rename: zh ? "重命名" : "Rename";
     out property <string> common_confirm: zh ? "确认" : "Confirm";
     out property <string> common_search: zh ? "搜索" : "Search";
@@ -1474,6 +1475,8 @@ export global I18n {
     out property <string> wf_search_placeholder: zh ? "搜索文件名" : "Search file names";
     out property <string> wf_searching: zh ? "搜索中…" : "Searching…";
     out property <string> wf_search_empty: zh ? "没有匹配的文件" : "No matching files";
+    out property <string> wf_select: zh ? "多选" : "Select";
+    public pure function wf_selected_count(count: string) -> string { return zh ? "已选 " + count + " 项" : "" + count + " selected"; }
     out property <string> wf_batch_download: zh ? "批量下载" : "Download";
     out property <string> wf_batch_delete: zh ? "删除所选" : "Delete selected";
     out property <string> wf_connect_cloud: zh ? "连接云端工作目录" : "Connect to the cloud workspace";

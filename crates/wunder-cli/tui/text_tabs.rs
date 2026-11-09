@@ -43,17 +43,6 @@ pub(crate) fn projected_width(text: &str) -> usize {
     column
 }
 
-/// Projected display width of a whole line, indents and spans included.
-pub(crate) fn line_display_width(line: &Line<'_>) -> usize {
-    let mut column = 0usize;
-    for span in &line.spans {
-        for ch in span.content.chars() {
-            column += char_advance(ch, column);
-        }
-    }
-    column
-}
-
 /// Project one logical line into display text: every tab becomes the spaces that carry
 /// it to its eight-column stop, styles, indents and alignment untouched. A line without
 /// tabs comes back equal to itself, so callers never need to test for tabs first.

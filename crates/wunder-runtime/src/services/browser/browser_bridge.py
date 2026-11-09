@@ -402,6 +402,23 @@ READABLE_JS = """(opts) => {
     const isHeading = /^H[1-6]$/.test(el.tagName);
     if (isHeading) { push('## ' + (el.innerText || el.textContent || '')); return; }
     else if (el.tagName === 'LI') { push('- ' + (el.innerText || el.textContent || '')); return; }
+    else if (el.tagName === 'TABLE') {
+      // Walking a table cell by cell flattens it into a column of loose values,
+      // so "12ms" no longer says which row it belongs to. Emit one line per row
+      // with cells joined, which keeps the pairing readable in plain text.
+      const rows = [];
+      for (const tr of el.querySelectorAll('tr')) {
+        const cells = [];
+        for (const cell of tr.children) {
+          if (cell.tagName !== 'TD' && cell.tagName !== 'TH') continue;
+          const value = String(cell.innerText || cell.textContent || '')
+            .split('\\n').join(' ').trim();
+          cells.push(value);
+        }
+        if (cells.some((value) => value)) rows.push(cells.join(' | '));
+      }
+      if (rows.length && push(rows.join('\\n'))) return;
+    }
     else if (el.childNodes && el.childNodes.length === 0) push(el.innerText || el.textContent || '');
     if (el.shadowRoot) walk(el.shadowRoot, depth + 1);
     for (const child of el.childNodes || []) { if (truncated || stopped) break; walk(child, depth + 1); }

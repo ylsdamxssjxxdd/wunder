@@ -2071,4 +2071,47 @@ mod tests {
         let mode = args.iter().position(|arg| arg == "--mode").unwrap();
         assert_eq!(args[mode + 1], "launch");
     }
+
+    /// READABLE_JS 是普通（非 raw）Python 字符串：JS 里要写 `'\n'` 就必须在源码里写成
+    /// `'\\n'`。写成单反斜杠时 Python 会先把它变成真实换行，JS 字符串在源码中途断开，
+    /// 整段 READABLE_JS 都变成语法错误 —— 表现为 observe_text 全面失效，而不只是表格。
+    /// 这里直接在嵌入的原始源码上守住这条不变量，避免同类转义错误再次静默生效。
+    #[test]
+    fn readable_js_escapes_stay_doubled_for_python() {
+        let source = super::BRIDGE_SCRIPT;
+        let start = source
+            .find("READABLE_JS = ")
+            .expect("browser_bridge.py 里应存在 READABLE_JS 定义");
+        let open_quote = source[start..]
+            .find("\"\"\"")
+            .map(|offset| start + offset)
+            .expect("READABLE_JS 应使用三引号");
+        let body_start = open_quote + 3;
+        let close_quote = source[body_start..]
+            .find("\"\"\"")
+            .map(|offset| body_start + offset)
+            .expect("READABLE_JS 应有结束三引号");
+        let region = &source[body_start..close_quote];
+
+        let bytes = region.as_bytes();
+        let mut violations = Vec::new();
+        for (index, character) in region.char_indices() {
+            if character != '\\' {
+                continue;
+            }
+            // 只审视 Python 会消费的转义，JS 正则里的 \d \s \w 不受影响。
+            if !matches!(bytes.get(index + 1), Some(b'n' | b'r' | b't')) {
+                continue;
+            }
+            if index == 0 || bytes.get(index - 1) != Some(&b'\\') {
+                violations.push(region[..index].matches('\n').count() + 2);
+            }
+        }
+
+        assert!(
+            violations.is_empty(),
+            "READABLE_JS 内出现单反斜杠转义（行 {:?}），Python 会先解成真实字符并破坏 JS 语法",
+            violations
+        );
+    }
 }
