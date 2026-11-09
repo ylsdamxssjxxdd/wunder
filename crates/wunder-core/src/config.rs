@@ -1712,7 +1712,11 @@ fn default_browser_docker_downloads_root() -> String {
 }
 
 fn default_desktop_control_norm_width() -> i32 {
-    1000
+    // Normalization keeps the screen aspect and fits inside this box, so a
+    // 1920x1080 desktop becomes 1280x720. 1280 is the width where ordinary UI
+    // text stays readable for the model without paying for a full-resolution
+    // frame on every observation.
+    1280
 }
 
 fn default_desktop_control_norm_height() -> i32 {

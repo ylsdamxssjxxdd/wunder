@@ -583,17 +583,21 @@ const OBSERVATION_SEARCH_HIT_LIMIT: usize = 12;
 const OBSERVATION_SEARCH_CONTENT_HEAD_CHARS: usize = 360;
 const OBSERVATION_SEARCH_CONTEXT_LINE_LIMIT: usize = 2;
 const OBSERVATION_SEARCH_CONTEXT_LINE_CHARS: usize = 220;
-pub(super) const OBSERVATION_MIN_TOKEN_BUDGET: i64 = 256;
-const OBSERVATION_STATUS_TOKEN_BUDGET: i64 = 512;
-const OBSERVATION_LIST_TOKEN_BUDGET: i64 = 2_000;
-const OBSERVATION_COMMAND_TOKEN_BUDGET: i64 = 4_000;
-const OBSERVATION_DOCUMENT_TOKEN_BUDGET: i64 = 6_000;
+// A tool observation that fits in a couple of hundred tokens is usually a
+// clipped one: the model then pays a second round-trip to reread the same
+// thing. Keep the floor high enough that ordinary results arrive whole; the
+// real ceiling is still the turn budget below.
+pub(super) const OBSERVATION_MIN_TOKEN_BUDGET: i64 = 512;
+const OBSERVATION_STATUS_TOKEN_BUDGET: i64 = 768;
+const OBSERVATION_LIST_TOKEN_BUDGET: i64 = 3_000;
+const OBSERVATION_COMMAND_TOKEN_BUDGET: i64 = 6_000;
+const OBSERVATION_DOCUMENT_TOKEN_BUDGET: i64 = 8_000;
 // A skill load promises SKILL.md plus its resource index (up to 48 KiB on the
 // first page, 64 KiB hard cap), so its observation budget must be able to carry
 // that whole payload. Otherwise the one-call load would be clipped here and
 // force the model back into a cursor round-trip.
 const OBSERVATION_SKILL_TOKEN_BUDGET: i64 = 16_000;
-const OBSERVATION_DEFAULT_TOKEN_BUDGET: i64 = 4_000;
+const OBSERVATION_DEFAULT_TOKEN_BUDGET: i64 = 6_000;
 // Packaged MCP calls are provider-owned and may contain arbitrary JSON or
 // base64 content blocks. Keep their model projection small before the generic
 // observation budget runs; audit/event payloads still retain the raw result.
@@ -607,8 +611,8 @@ const MCP_RESULT_MAX_TEXT_CHARS: usize = 4_000;
 // Content target for one turn's tool observations. It must be able to host the
 // largest single-tool promise (a skill load: 16k tokens), otherwise the target
 // would clip a payload the tool itself already agreed to return.
-pub(super) const OBSERVATION_TURN_TARGET_TOKENS: i64 = 16_000;
-pub(super) const OBSERVATION_TURN_MAX_TOKENS: i64 = 20_000;
+pub(super) const OBSERVATION_TURN_TARGET_TOKENS: i64 = 24_000;
+pub(super) const OBSERVATION_TURN_MAX_TOKENS: i64 = 32_000;
 const OBSERVATION_READ_FILE_LIMIT: usize = 8;
 // Keep list-like/browser observations small even when a provider returns an
 // unbounded page. The complete provider payload remains in the event stream;
@@ -700,7 +704,10 @@ fn fit_observation_payload_to_token_budget(
     tool_name: &str,
     token_budget: i64,
 ) {
-    let token_budget = token_budget.max(OBSERVATION_MIN_TOKEN_BUDGET);
+    // An explicit budget is a caller contract: compaction deliberately shrinks
+    // observations far below the per-result floor. Keep only a hard floor of
+    // one token so the envelope is never erased.
+    let token_budget = token_budget.max(1);
     let original_tokens = observation_token_count(payload);
     if original_tokens <= token_budget {
         return;
@@ -1974,7 +1981,7 @@ fn project_desktop_control(data: &Value) -> Option<Value> {
             "observation_stable",
             // The coordinate space the next bbox must use. Without it a model
             // that lost the followup text has to spend a whole `wait` call to
-            // learn 1000x563 again.
+            // learn 1280x720 again.
             "normalized_width",
             "normalized_height",
             // Reported when native input was delivered but the screenshot

@@ -2406,13 +2406,19 @@ mod observation_budget_tests {
 
     #[test]
     fn observation_budgets_allocate_the_whole_batch_before_rendering() {
+        let document_cap = default_observation_token_budget("read_file");
+        let target = OBSERVATION_TURN_TARGET_TOKENS;
         for (count, expected_each, expected_total) in [
-            (1, 6_000, 6_000),
-            (2, 6_000, 12_000),
-            (20, 800, 16_000),
+            (1, document_cap, document_cap),
+            (2, document_cap, document_cap * 2),
+            (20, target / 20, target),
             // Protocol envelopes are mandatory, even beyond the soft content
             // ceiling. Do not omit a result to make this count appear bounded.
-            (100, OBSERVATION_MIN_TOKEN_BUDGET, 25_600),
+            (
+                100,
+                OBSERVATION_MIN_TOKEN_BUDGET,
+                100 * OBSERVATION_MIN_TOKEN_BUDGET,
+            ),
         ] {
             let budgets = document_budgets(count);
             assert_eq!(budgets.per_result.len(), count);
@@ -2441,13 +2447,19 @@ mod observation_budget_tests {
             1_000,
             Some(8_192),
         );
-        // Caps sum to 10_512, below the 16k content target, so every tool keeps
+        // The caps sum stays below the turn content target, so every tool keeps
         // its full per-tool budget.
-        assert_eq!(budgets.per_result, [512, 6_000, 4_000]);
-        assert_eq!(budgets.total_tokens, 10_512);
+        let caps = [
+            default_observation_token_budget("self_status"),
+            default_observation_token_budget("read_file"),
+            default_observation_token_budget("execute_command"),
+        ];
+        assert_eq!(budgets.per_result, caps);
+        assert_eq!(budgets.total_tokens, caps.iter().sum::<i64>());
 
         let uneven = document_budgets(3);
-        assert_eq!(uneven.per_result, [5_334, 5_333, 5_333]);
+        let each = OBSERVATION_TURN_TARGET_TOKENS / 3;
+        assert_eq!(uneven.per_result, [each, each, each]);
         let empty = document_budgets(0);
         assert!(empty.per_result.is_empty());
         assert_eq!(empty.total_tokens, 0);
@@ -2473,7 +2485,10 @@ mod observation_budget_tests {
             Some(1_024),
         );
         assert_eq!(below_protocol_reserve.available_context_tokens, 976);
-        assert_eq!(below_protocol_reserve.total_tokens, 5_120);
+        assert_eq!(
+            below_protocol_reserve.total_tokens,
+            20 * OBSERVATION_MIN_TOKEN_BUDGET
+        );
         assert_eq!(
             below_protocol_reserve.total_tokens,
             below_protocol_reserve.protocol_reserve_tokens

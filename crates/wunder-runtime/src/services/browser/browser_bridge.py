@@ -197,15 +197,47 @@ SNAPSHOT_JS = """(opts) => {
     return tabindex !== null && tabindex !== '-1';
   }
 
-  function lineFor(format, role, name, ref) {
+  // A form field without its current value is unusable: the model cannot tell
+  // whether its own typing landed, so it either retypes or pays for a
+  // screenshot. Report the value as state after the name; passwords stay
+  // masked because names and state both reach the model transcript.
+  function quoteValue(value) {
+    const text = String(value == null ? '' : value).replace(/\\s+/g, ' ').trim();
+    if (!text) return '';
+    const clipped = text.length > 120 ? text.slice(0, 117) + '...' : text;
+    return ' = "' + clipped.replace(/"/g, '\\"') + '"';
+  }
+
+  function stateOf(el, role) {
+    if (el instanceof HTMLInputElement) {
+      const type = (el.type || 'text').toLowerCase();
+      if (type === 'checkbox' || type === 'radio') return el.checked ? ' checked' : ' unchecked';
+      if (type === 'password') return el.value ? ' = "********"' : '';
+      if (['submit', 'button', 'reset', 'file', 'image'].includes(type)) return '';
+      return quoteValue(el.value);
+    }
+    if (el instanceof HTMLTextAreaElement) return quoteValue(el.value);
+    if (el instanceof HTMLSelectElement) {
+      const option = el.selectedOptions && el.selectedOptions[0];
+      return option ? quoteValue(option.text) : '';
+    }
+    const editable = el.getAttribute && el.getAttribute('contenteditable');
+    if (editable !== null && editable !== 'false') {
+      return quoteValue((el.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 120));
+    }
+    return '';
+  }
+
+  function lineFor(format, role, name, ref, state) {
     const safeName = name || role;
+    const suffix = state || '';
     if (format === 'aria') {
-      return '- role=' + role + ' name="' + safeName + '" [ref=' + ref + ']';
+      return '- role=' + role + ' name="' + safeName + '"' + suffix + ' [ref=' + ref + ']';
     }
     if (format === 'ai') {
-      return role + ' "' + safeName + '" [ref=' + ref + ']';
+      return role + ' "' + safeName + '"' + suffix + ' [ref=' + ref + ']';
     }
-    return '- ' + role + ' "' + safeName + '" [ref=' + ref + ']';
+    return '- ' + role + ' "' + safeName + '"' + suffix + ' [ref=' + ref + ']';
   }
 
   // selectorPrefix carries the shadow-host chain (`>>>`), because Playwright's
@@ -240,7 +272,7 @@ SNAPSHOT_JS = """(opts) => {
         if (opts.interactive) {
           localCounter += 1;
           const ref = opts.ref_prefix + 'e' + (opts.ref_start + localCounter);
-          if (!push(lineFor(opts.fmt, role, name, ref))) return;
+          if (!push(lineFor(opts.fmt, role, name, ref, stateOf(node, role)))) return;
           refs.push({
             ref: ref,
             role: role,

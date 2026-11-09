@@ -388,7 +388,7 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
     // The configured width/height pair is a bounding box, not a target aspect
     // ratio: the observation keeps the screen aspect so the model judges
     // positions on an undistorted picture. A 1920x1080 desktop therefore
-    // normalizes to 1000x563 instead of a stretched square, which also cuts
+    // normalizes to 1280x720 instead of a stretched square, which also cuts
     // the image-token cost of every screenshot by roughly 44%.
     let (norm_width, norm_height) = fit_normalized_size(
         screen_width,
@@ -876,7 +876,7 @@ fn map_coord(value: i32, src_max: i32, dst_max: i32) -> i32 {
 /// so a 16:9 desktop arrived as a vertically stretched square: the model had
 /// to judge positions on a distorted picture while paying for 1.78x the pixels
 /// it needed. Keeping the aspect fixes both sides — the picture stays
-/// recognisable and a 1920x1080 screen normalizes to 1000x563.
+/// recognisable and a 1920x1080 screen normalizes to 1280x720.
 pub fn fit_normalized_size(
     screen_width: i32,
     screen_height: i32,
@@ -2648,6 +2648,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 生产默认值（config 的 norm_width/norm_height 缺省）用于真机校验。
+    const DEFAULT_NORM_WIDTH_FOR_TEST: i32 = 1280;
+
     /// 真机校验：截图的实际像素尺寸必须等于按屏幕长宽比推导出的归一化尺寸，
     /// 而不是被拉伸成正方形。
     /// 运行：cargo test -p wunder-runtime --lib --features desktop-control -- --ignored
@@ -2655,7 +2658,12 @@ mod tests {
     #[ignore = "requires a live desktop session"]
     fn live_capture_matches_fitted_normalized_size() {
         let (screen_w, screen_h) = screen_size().expect("screen size");
-        let (norm_w, norm_h) = fit_normalized_size(screen_w, screen_h, 1000, 1000);
+        let (norm_w, norm_h) = fit_normalized_size(
+            screen_w,
+            screen_h,
+            DEFAULT_NORM_WIDTH_FOR_TEST,
+            DEFAULT_NORM_WIDTH_FOR_TEST,
+        );
         let shot = capture_screenshot_blocking(norm_w, norm_h, Some((screen_w, screen_h)))
             .expect("capture screenshot");
         let decoded = image::open(&shot.path).expect("decode screenshot");
