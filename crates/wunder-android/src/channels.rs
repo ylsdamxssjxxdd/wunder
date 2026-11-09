@@ -23,7 +23,6 @@ pub struct MobileChannelAccount {
     pub original_id: String,
     pub weixin_bot_id: String,
     pub weixin_user_id: String,
-    pub bot_type: String,
     pub domain: String,
 }
 
@@ -64,16 +63,6 @@ pub struct ChannelsView {
     pub logs_account: String,
     pub loading: bool,
     pub error: String,
-}
-
-impl ChannelsView {
-    pub fn channel_name(&self, channel: &str) -> String {
-        self.catalog
-            .iter()
-            .find(|item| item.channel == channel)
-            .map(|item| item.name.clone())
-            .unwrap_or_else(|| channel.to_string())
-    }
 }
 
 #[derive(Clone, Default)]
@@ -462,7 +451,6 @@ fn account_from(card: ChannelAccountCard, catalog: &[MobileChannelCatalog]) -> M
         original_id: card.original_id,
         weixin_bot_id: card.weixin_bot_id,
         weixin_user_id: card.weixin_user_id,
-        bot_type: card.bot_type,
         domain: card.domain,
     }
 }

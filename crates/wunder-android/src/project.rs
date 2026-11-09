@@ -260,6 +260,8 @@ fn blank(kind: i32, id: impl Into<SharedString>) -> TimelineRow {
     TimelineRow {
         kind,
         id: id.into(),
+        // 安卓版没有分叉动作；0 让共享时间线的分叉按钮保持隐藏。
+        user_round: 0,
         visible: true,
         text: SharedString::default(),
         time: SharedString::default(),

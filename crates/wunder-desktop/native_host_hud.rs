@@ -21,6 +21,7 @@
 //! 按总和算真实上下行会被稀释到 0.1% 以下，图标永远是空的。取单块网卡自身的占用
 //! 率，读数才跟着真正在用的那条链路走。
 
+#[cfg(any(test, windows, target_os = "linux"))]
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -140,12 +141,14 @@ impl Drop for HostHudSampler {
     }
 }
 
+#[cfg(any(test, windows, target_os = "linux"))]
 fn cores() -> u32 {
     std::thread::available_parallelism()
         .map(|count| count.get() as u32)
         .unwrap_or(1)
 }
 
+#[cfg(any(test, windows, target_os = "linux"))]
 fn percent(used: u64, total: u64) -> f32 {
     if total == 0 {
         0.0
@@ -155,6 +158,7 @@ fn percent(used: u64, total: u64) -> f32 {
 }
 
 /// 一块网卡的一次观测：累计收发字节与链路速率（bit/s，0 表示未知）。
+#[cfg(any(test, windows, target_os = "linux"))]
 pub(crate) struct LinkSample {
     pub id: String,
     pub received: u64,
@@ -162,6 +166,7 @@ pub(crate) struct LinkSample {
     pub speed_bps: u64,
 }
 
+#[cfg(any(test, windows, target_os = "linux"))]
 #[derive(Default)]
 struct LinkState {
     received: u64,
@@ -169,6 +174,7 @@ struct LinkState {
 }
 
 /// 一块网卡在两次采样之间的读数：占用率 + 链路速率 + 双向实时速率。
+#[cfg(any(test, windows, target_os = "linux"))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct LinkReading {
     /// 收发合计占链路带宽的百分比（0..=100）。
@@ -182,11 +188,13 @@ pub(crate) struct LinkReading {
 }
 
 /// 逐网卡的差值状态。取「占用率最大的那块」，返回它自己的完整读数。
+#[cfg(any(test, windows, target_os = "linux"))]
 #[derive(Default)]
 pub(crate) struct LinkMeter {
     links: HashMap<String, LinkState>,
 }
 
+#[cfg(any(test, windows, target_os = "linux"))]
 impl LinkMeter {
     pub(crate) fn update(&mut self, dt: f64, rows: &[LinkSample]) -> Option<LinkReading> {
         if rows.is_empty() {

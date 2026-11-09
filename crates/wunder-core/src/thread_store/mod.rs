@@ -462,6 +462,30 @@ pub trait ThreadStore: ThreadMetadataStore + ThreadHistoryReader {
 
 pub type ThreadStoreResult<T> = Result<T, ThreadStoreError>;
 
+pub fn fork_thread_title<'a>(
+    source_title: &str,
+    existing_titles: impl IntoIterator<Item = &'a str>,
+) -> String {
+    let source = source_title.trim();
+    let source = source.split(" · 分叉").next().unwrap_or(source).trim();
+    let source = if source.is_empty() {
+        "新会话"
+    } else {
+        source
+    };
+    let existing = existing_titles
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    let first = format!("{source} · 分叉");
+    if !existing.contains(first.as_str()) {
+        return first;
+    }
+    (2..=existing.len() + 1)
+        .map(|index| format!("{source} · 分叉 {index}"))
+        .find(|candidate| !existing.contains(candidate.as_str()))
+        .unwrap_or_else(|| format!("{source} · 分叉 {}", existing.len() + 2))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThreadStoreError {
     InvalidId { kind: &'static str, value: String },
@@ -516,6 +540,23 @@ mod tests {
         assert_eq!(serde_json::to_string(&id).unwrap(), "\"thread-a\"");
         let decoded: ThreadId = serde_json::from_str("\"thread-a\"").unwrap();
         assert_eq!(decoded, id);
+    }
+
+    #[test]
+    fn fork_titles_are_numbered_without_stacking_suffixes() {
+        assert_eq!(fork_thread_title("需求讨论", []), "需求讨论 · 分叉");
+        assert_eq!(
+            fork_thread_title("需求讨论", ["需求讨论", "需求讨论 · 分叉"]),
+            "需求讨论 · 分叉 2"
+        );
+        assert_eq!(
+            fork_thread_title(
+                "需求讨论 · 分叉 2",
+                ["需求讨论 · 分叉", "需求讨论 · 分叉 3"]
+            ),
+            "需求讨论 · 分叉 2"
+        );
+        assert_eq!(fork_thread_title("  ", []), "新会话 · 分叉");
     }
 
     #[test]

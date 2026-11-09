@@ -247,12 +247,13 @@ async fn create_session(
 fn build_forked_session_record(
     source: &crate::storage::ChatSessionRecord,
     session_id: String,
+    title: String,
     now: f64,
 ) -> crate::storage::ChatSessionRecord {
     crate::storage::ChatSessionRecord {
         session_id,
         user_id: source.user_id.clone(),
-        title: source.title.clone(),
+        title,
         status: CHAT_SESSION_STATUS_ACTIVE.to_string(),
         created_at: now,
         updated_at: now,
@@ -284,9 +285,17 @@ async fn fork_session(
         .get_chat_session(&resolved.user.user_id, &source_session_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let (existing, _) = state
+        .user_store
+        .list_chat_sessions_by_status(&resolved.user.user_id, None, None, None, 0, 1000)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let title = wunder_core::thread_store::fork_thread_title(
+        &source.title,
+        existing.iter().map(|item| item.title.as_str()),
+    );
     let now = now_ts();
     let target_session_id = format!("sess_{}", Uuid::new_v4().simple());
-    let record = build_forked_session_record(&source, target_session_id.clone(), now);
+    let record = build_forked_session_record(&source, target_session_id.clone(), title, now);
     state
         .user_store
         .upsert_chat_session(&record)
@@ -2121,9 +2130,14 @@ mod tests {
             spawn_label: Some("fixture-label".into()),
             spawned_by: Some("fixture-spawn".into()),
         };
-        let fork = build_forked_session_record(&source, "target".into(), 10.0);
+        let fork = build_forked_session_record(
+            &source,
+            "target".into(),
+            "fixture title · 分叉".into(),
+            10.0,
+        );
         assert_eq!(fork.user_id, source.user_id);
-        assert_eq!(fork.title, source.title);
+        assert_eq!(fork.title, "fixture title · 分叉");
         assert_eq!(fork.agent_id, source.agent_id);
         assert_eq!(fork.workspace_id, source.workspace_id);
         assert_eq!(fork.tool_overrides, source.tool_overrides);

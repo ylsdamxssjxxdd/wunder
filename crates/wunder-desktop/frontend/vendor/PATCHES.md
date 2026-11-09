@@ -277,7 +277,15 @@ deltas).
   software redraw. On focus gain, the adapter therefore forces and presents a
   complete frame in the focus-message turn; this keeps the custom border
   opaque on Win7 and removes the corresponding edge flash on newer Windows.
-- `winit` 0.30.2 retains its upstream licensing information. Its Win32
+- `winit` 0.30.2 retains its upstream licensing information. On X11, each
+  window keeps one preedit-capable XIM context for its whole lifetime.
+  `set_ime_allowed` now changes only the logical enabled state and IC focus;
+  it no longer destroys the XIC and replaces it with a none-style context.
+  Fcitx stores the selected input method (including Sogou) on that context,
+  so both control-level focus changes and window deactivation now return to
+  the same input method. XIM server restart still recreates contexts, while
+  preserving their enabled state and cursor position.
+- Its Win32
   undecorated-window styles remove `WS_CAPTION`, `WS_SYSMENU`, and native
   caption boxes while retaining `WS_SIZEBOX`; Winit's default concealed
   caption is susceptible to appearing after a Win7 frame refresh and stealing

@@ -403,6 +403,23 @@ fn advance(
                 app.invoke_timeline_counts().rows == 0,
                 "new session contains messages",
             )?;
+            let active = app.get_active_session_id();
+            for _ in 0..32 {
+                app.invoke_split_layout(2);
+                app.invoke_split_layout(4);
+                app.invoke_split_layout(1);
+            }
+            ensure(
+                app.get_active_session_id() == active,
+                "split cycling changed the active session",
+            )?;
+            ensure(
+                app.get_split_session_0().is_empty()
+                    && app.get_split_session_1().is_empty()
+                    && app.get_split_session_2().is_empty()
+                    && app.get_split_session_3().is_empty(),
+                "single view retained stale split slots",
+            )?;
             app.set_draft("native-long".into());
         }
         2 => {

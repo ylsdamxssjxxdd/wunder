@@ -62,7 +62,6 @@ pub struct DeviceView {
 #[derive(Clone, Default)]
 pub struct ApprovalView {
     pub id: String,
-    pub command_id: String,
     pub kind: String,
     pub risk: String,
     pub from_node: String,
@@ -474,7 +473,6 @@ pub fn poll_approvals(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
     let pending: Vec<NativeInterlinkApproval> = desktop.interlink_pending_approvals();
     let next = pending.first().map(|approval| ApprovalView {
         id: approval.approval_id.clone(),
-        command_id: approval.command_id.clone(),
         kind: approval.kind.clone(),
         risk: approval.risk.clone(),
         from_node: approval.from_node.clone(),

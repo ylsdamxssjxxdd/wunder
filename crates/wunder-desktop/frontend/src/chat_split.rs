@@ -12,6 +12,7 @@ struct Slot {
     turns: Vec<NativeChatTurn>,
     cancel: Option<NativeThreadWatchCancel>,
     receiver: std::sync::mpsc::Receiver<NativeThreadUpdate>,
+    generation: u64,
 }
 
 impl Slot {
@@ -22,6 +23,7 @@ impl Slot {
             turns: Vec::new(),
             cancel: None,
             receiver,
+            generation: 0,
         }
     }
 
@@ -29,6 +31,7 @@ impl Slot {
         if let Some(cancel) = self.cancel.take() {
             cancel.cancel();
         }
+        self.generation = self.generation.wrapping_add(1);
         self.session.clear();
         self.turns.clear();
         self.receiver = std::sync::mpsc::sync_channel(8).1;
@@ -51,6 +54,7 @@ struct PendingEntry {
 thread_local! {
     static SLOTS: RefCell<Vec<Slot>> = RefCell::new((0..4).map(|_| Slot::empty()).collect());
     static PENDING: RefCell<HashMap<usize, PendingEntry>> = RefCell::new(HashMap::new());
+    static DRAFTS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
 }
 
 fn session(app: &MainWindow, slot: usize) -> String {
@@ -103,6 +107,23 @@ fn set_draft(app: &MainWindow, slot: usize, value: String) {
     }
 }
 
+fn cache_drafts(app: &MainWindow) {
+    for slot in 0..4 {
+        let id = session(app, slot);
+        if !id.is_empty() {
+            DRAFTS.with(|drafts| drafts.borrow_mut().insert(id, draft(app, slot)));
+        }
+    }
+}
+
+fn restore_draft(app: &MainWindow, slot: usize) {
+    let id = session(app, slot);
+    let saved = DRAFTS
+        .with(|drafts| drafts.borrow().get(&id).cloned())
+        .unwrap_or_default();
+    set_draft(app, slot, saved);
+}
+
 fn set_loading(app: &MainWindow, slot: usize, value: bool) {
     match slot {
         0 => app.set_split_loading_0(value),
@@ -132,6 +153,17 @@ fn publish_model(app: &MainWindow, slot: usize, rows: ModelRc<TimelineRow>) {
 
 fn publish_rows(app: &MainWindow, slot: usize, rows: Vec<TimelineRow>) {
     publish_model(app, slot, ModelRc::new(VecModel::from(rows)));
+}
+
+fn clear_pane(app: &MainWindow, slot: usize) {
+    PENDING.with(|pending| pending.borrow_mut().remove(&slot));
+    SLOTS.with(|slots| slots.borrow_mut()[slot].clear());
+    set_session(app, slot, "");
+    set_title(app, slot, "");
+    set_draft(app, slot, String::new());
+    publish_rows(app, slot, Vec::new());
+    set_loading(app, slot, false);
+    set_busy(app, slot, false);
 }
 
 fn publish_slot(app: &MainWindow, index: usize) {
@@ -170,6 +202,7 @@ fn activate(app: &MainWindow, slot: usize) {
         return;
     }
     if let Some(index) = app.get_conversations().iter().position(|row| row.id == id) {
+        cache_drafts(app);
         app.invoke_select_conversation(index as i32);
     }
 }
@@ -237,6 +270,7 @@ fn open_slot(app: &MainWindow, desktop: Arc<NativeDesktop>, slot: usize, row: us
         return;
     };
     let id = conversation.id.to_string();
+    cache_drafts(app);
     if app.get_split_count() == 1 {
         app.set_split_count(2);
         let active = app.get_active_session_id().to_string();
@@ -267,6 +301,7 @@ fn open_slot(app: &MainWindow, desktop: Arc<NativeDesktop>, slot: usize, row: us
         .find(|index| *index != slot && session(app, *index) == id);
     SLOTS.with(|slots| slots.borrow_mut()[slot].clear());
     set_session(app, slot, &id);
+    restore_draft(app, slot);
     set_title(app, slot, &conversation.title);
     publish_rows(app, slot, Vec::new());
     set_loading(app, slot, true);
@@ -292,18 +327,21 @@ fn open_slot(app: &MainWindow, desktop: Arc<NativeDesktop>, slot: usize, row: us
             }
         }
     }
+    normalize_layout(app);
     let (sender, receiver) = std::sync::mpsc::sync_channel(8);
     SLOTS.with(|slots| {
         let mut slots = slots.borrow_mut();
         slots[slot].session = id.clone();
         slots[slot].receiver = receiver;
     });
+    let generation = SLOTS.with(|slots| slots.borrow()[slot].generation);
     let weak = app.as_weak();
     let wake_weak = weak.clone();
     std::thread::spawn(move || {
         let result = desktop.load_chat_headers(&id);
         let _ = weak.upgrade_in_event_loop(move |app| {
-            if session(&app, slot) != id {
+            let current = SLOTS.with(|slots| slots.borrow()[slot].generation == generation);
+            if !current || session(&app, slot) != id {
                 return;
             }
             match result {
@@ -338,6 +376,17 @@ fn open_slot(app: &MainWindow, desktop: Arc<NativeDesktop>, slot: usize, row: us
             }
         });
     });
+}
+
+fn normalize_layout(app: &MainWindow) {
+    let open = (0..4)
+        .filter(|slot| !session(app, *slot).is_empty())
+        .count();
+    if open <= 1 {
+        app.invoke_split_layout(1);
+    } else {
+        app.set_split_count(if open == 2 { 2 } else { 4 });
+    }
 }
 
 pub(crate) fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
@@ -390,13 +439,18 @@ pub(crate) fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     app.on_split_layout(move |count| {
         let Some(app) = weak.upgrade() else { return };
         if count == 1 {
+            cache_drafts(&app);
+            let active = app.get_active_session_id();
+            for slot in 0..4 {
+                if active == session(&app, slot) {
+                    app.set_draft(draft(&app, slot).into());
+                }
+            }
             app.set_split_count(1);
             PENDING.with(|pending| pending.borrow_mut().clear());
-            SLOTS.with(|slots| {
-                for slot in slots.borrow_mut().iter_mut() {
-                    slot.clear();
-                }
-            });
+            for slot in 0..4 {
+                clear_pane(&app, slot);
+            }
             return;
         }
         let count = if count >= 4 { 4 } else { 2 };
@@ -421,17 +475,15 @@ pub(crate) fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     app.on_split_close(move |slot| {
         let Some(app) = weak.upgrade() else { return };
         let slot = slot.clamp(0, 3) as usize;
-        PENDING.with(|pending| pending.borrow_mut().remove(&slot));
-        SLOTS.with(|slots| slots.borrow_mut()[slot].clear());
-        set_session(&app, slot, "");
-        set_title(&app, slot, "");
-        set_draft(&app, slot, String::new());
-        publish_rows(&app, slot, Vec::new());
-        set_loading(&app, slot, false);
-        set_busy(&app, slot, false);
-        if (0..app.get_split_count()).all(|index| session(&app, index as usize).is_empty()) {
-            app.set_split_count(1);
+        let closed_active = app.get_active_session_id() == session(&app, slot);
+        cache_drafts(&app);
+        clear_pane(&app, slot);
+        if closed_active {
+            if let Some(next) = (0..4).find(|index| !session(&app, *index).is_empty()) {
+                activate(&app, next);
+            }
         }
+        normalize_layout(&app);
     });
     let weak = app.as_weak();
     let drop_desktop = desktop.clone();

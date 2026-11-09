@@ -384,6 +384,17 @@ READABLE_JS = """(opts) => {
     if (bounded.length < line.length) stopped = true;
   }
 
+  function fieldLabel(el) {
+    const direct = el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('title');
+    if (direct && direct.trim()) return direct.trim();
+    if (el.labels && el.labels.length) {
+      const text = String(el.labels[0].innerText || '');
+      if (text.trim()) return text;
+    }
+    const name = el.getAttribute('name');
+    return name && name.trim() ? name.trim() : '';
+  }
+
   function walk(node, depth) {
     if (!node || truncated || stopped) return;
     if (depth > 128) { truncated = true; return; }
@@ -406,18 +417,38 @@ READABLE_JS = """(opts) => {
       // Walking a table cell by cell flattens it into a column of loose values,
       // so "12ms" no longer says which row it belongs to. Emit one line per row
       // with cells joined, which keeps the pairing readable in plain text.
-      const rows = [];
+      let emittedRows = 0;
       for (const tr of el.querySelectorAll('tr')) {
         const cells = [];
         for (const cell of tr.children) {
           if (cell.tagName !== 'TD' && cell.tagName !== 'TH') continue;
-          const value = String(cell.innerText || cell.textContent || '')
-            .split('\\n').join(' ').trim();
-          cells.push(value);
+          cells.push(String(cell.innerText || cell.textContent || ''));
         }
-        if (cells.some((value) => value)) rows.push(cells.join(' | '));
+        if (cells.some((value) => value.trim())) {
+          push(cells.join(' | '));
+          emittedRows += 1;
+        }
       }
-      if (rows.length && push(rows.join('\\n'))) return;
+      // push() 不返回值，不能靠它决定是否继续；否则同一张表会被再走一遍子节点，
+      // 行列关系又丢一次。
+      if (emittedRows > 0) return;
+    }
+    else if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
+      // 表单控件的值只存在 value 里，纯文本遍历看不到；补这一行，模型才能确认
+      // 自己填进去的内容真的生效了。
+      const kind = String(el.getAttribute('type') || (el.tagName === 'SELECT' ? 'select' : 'text')).toLowerCase();
+      const label = fieldLabel(el);
+      const named = label ? ' "' + label + '"' : '';
+      if (kind === 'checkbox' || kind === 'radio') {
+        push('- ' + kind + named + ' ' + (el.checked ? '已勾选' : '未勾选'));
+      } else if (kind === 'submit' || kind === 'button' || kind === 'reset') {
+        push('- button' + named + ' "' + String(el.value || '') + '"');
+      } else if (kind !== 'hidden' && kind !== 'file') {
+        const value = String(el.value || '');
+        const shown = kind === 'password' && value ? '***' : value;
+        push('- ' + (el.tagName === 'SELECT' ? 'selectbox' : 'textbox') + named + ' = "' + shown + '"');
+      }
+      return;
     }
     else if (el.childNodes && el.childNodes.length === 0) push(el.innerText || el.textContent || '');
     if (el.shadowRoot) walk(el.shadowRoot, depth + 1);

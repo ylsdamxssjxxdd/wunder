@@ -1144,6 +1144,13 @@ fn parent_folder(target: &Path) -> &Path {
 }
 
 /// Hand a resolved host path to the OS default application.
+#[cfg(target_os = "android")]
+fn open_in_os(target: &Path) -> Result<()> {
+    bail!("安卓版不支持由宿主打开工作区文件：{}", target.display())
+}
+
+/// Hand a resolved host path to the OS default application.
+#[cfg(not(target_os = "android"))]
 fn open_in_os(target: &Path) -> Result<()> {
     #[cfg(windows)]
     shell_execute("open", target.as_os_str(), None)?;
@@ -1157,6 +1164,15 @@ fn open_in_os(target: &Path) -> Result<()> {
 /// Show a resolved host path where it lives: Windows highlights the item in
 /// its parent folder, macOS asks `open` to reveal it, Linux can only open the
 /// parent folder.
+#[cfg(target_os = "android")]
+fn reveal_in_os(target: &Path) -> Result<()> {
+    bail!("安卓版不支持由宿主定位工作区文件：{}", target.display())
+}
+
+/// Show a resolved host path where it lives: Windows highlights the item in
+/// its parent folder, macOS asks `open` to reveal it, Linux can only open the
+/// parent folder.
+#[cfg(not(target_os = "android"))]
 fn reveal_in_os(target: &Path) -> Result<()> {
     #[cfg(windows)]
     {

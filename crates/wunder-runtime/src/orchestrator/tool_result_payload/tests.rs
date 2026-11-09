@@ -2133,3 +2133,44 @@ fn read_file_projection_reports_one_truncation_reason() {
     assert_eq!(compacted["continuation_required"], true);
     assert_eq!(compacted["continuation_hint"], "read a narrower window");
 }
+
+#[test]
+fn failure_summary_keeps_the_stream_head_with_focus_window() {
+    let mut map = serde_json::Map::new();
+    let stdout = (1..=10)
+        .map(|index| ["E", &index.to_string()].concat())
+        .collect::<Vec<_>>()
+        .join("\n");
+    map.insert("stdout".to_string(), json!(stdout));
+
+    let summary = summarize_command_failure_stream(&map, "stdout").expect("summary");
+    assert!(summary.starts_with("stdout: E1 | E2"), "{summary}");
+    assert!(summary.contains("lines omitted"), "{summary}");
+    assert!(summary.ends_with("E10"), "{summary}");
+}
+
+#[test]
+fn failure_summary_stays_plain_for_short_streams() {
+    let mut map = serde_json::Map::new();
+    map.insert("stdout".to_string(), json!("only one line"));
+    let summary = summarize_command_failure_stream(&map, "stdout").expect("summary");
+    assert_eq!(summary, "stdout: only one line");
+}
+
+#[test]
+fn search_observation_keeps_files_only_paths() {
+    let payload = ToolResultPayload::from_value(json!({
+        "hits": [],
+        "query": "needle",
+        "path": "src",
+        "files_only": true,
+        "paths": ["src/a.rs", "src/b.rs"],
+        "matched_file_count": 2,
+        "returned_match_count": 0
+    }));
+
+    let compacted = payload.to_compact_payload("搜索内容");
+    let data = &compacted["data"];
+    assert_eq!(data["files_only"], json!(true), "{compacted}");
+    assert_eq!(data["paths"], json!(["src/a.rs", "src/b.rs"]), "{compacted}");
+}

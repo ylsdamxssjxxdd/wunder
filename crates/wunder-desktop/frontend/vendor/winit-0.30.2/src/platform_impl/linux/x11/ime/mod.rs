@@ -119,14 +119,17 @@ impl Ime {
     pub fn create_context(
         &mut self,
         window: ffi::Window,
-        with_preedit: bool,
+        allowed: bool,
     ) -> Result<bool, ImeContextCreationError> {
         let context = if self.is_destroyed() {
             // Create empty entry in map, so that when IME is rebuilt, this window has a context.
             None
         } else {
             let im = self.inner.im.as_ref().unwrap();
-            let style = if with_preedit { im.preedit_style } else { im.none_style };
+            let style = im.preedit_style;
+            if allowed && matches!(style, Style::None(_)) {
+                debug!("failed to create IME context with preedit support.")
+            }
 
             let context = unsafe {
                 ImeContext::new(
@@ -134,24 +137,13 @@ impl Ime {
                     im.im,
                     style,
                     window,
+                    allowed,
                     None,
                     self.inner.event_sender.clone(),
                 )?
             };
 
-            // Check the state on the context, since it could fail to enable or disable preedit.
-            let event = if matches!(style, Style::None(_)) {
-                if with_preedit {
-                    debug!("failed to create IME context with preedit support.")
-                }
-                ImeEvent::Disabled
-            } else {
-                if !with_preedit {
-                    debug!("failed to create IME context without preedit support.")
-                }
-                ImeEvent::Enabled
-            };
-
+            let event = if context.is_allowed() { ImeEvent::Enabled } else { ImeEvent::Disabled };
             self.inner.event_sender.send((window, event)).expect("Failed to send enabled event");
 
             Some(context)
@@ -162,7 +154,9 @@ impl Ime {
         // already passed; focus the fresh context now so the IME attaches immediately.
         if self.focused_window == Some(window) {
             if let Some(Some(context)) = self.inner.contexts.get_mut(&window) {
-                let _ = context.focus(&self.xconn);
+                if context.is_allowed() {
+                    let _ = context.focus(&self.xconn);
+                }
             }
         }
         Ok(!self.is_destroyed())
@@ -191,16 +185,16 @@ impl Ime {
     }
 
     pub fn focus(&mut self, window: ffi::Window) -> Result<bool, XError> {
-        // Keep the existing context: recreating it would reset the IME server's
-        // per-context input method (fcitx/sogou falls back to direct input and
-        // the user has to switch again). A context that does not exist yet is
-        // focused by create_context once the Enable request arrives.
         self.focused_window = Some(window);
         if self.is_destroyed() {
             return Ok(false);
         }
         if let Some(&mut Some(ref mut context)) = self.inner.contexts.get_mut(&window) {
-            context.focus(&self.xconn).map(|_| true)
+            if context.is_allowed() {
+                context.focus(&self.xconn).map(|_| true)
+            } else {
+                Ok(false)
+            }
         } else {
             Ok(false)
         }
@@ -244,16 +238,30 @@ impl Ime {
             return;
         }
 
+        let window_focused = self.focused_window == Some(window);
         if let Some(&mut Some(ref mut context)) = self.inner.contexts.get_mut(&window) {
             if allowed == context.is_allowed() {
+                if allowed && window_focused {
+                    let _ = context.focus(&self.xconn);
+                }
                 return;
             }
+
+            // Focus changes must not replace the XIC: fcitx keeps the selected
+            // input method on that server-side context.
+            context.set_allowed(allowed);
+            if context.is_allowed() {
+                if window_focused {
+                    let _ = context.focus(&self.xconn);
+                }
+            } else {
+                let _ = context.unfocus(&self.xconn);
+            }
+            let event = if context.is_allowed() { ImeEvent::Enabled } else { ImeEvent::Disabled };
+            self.inner.event_sender.send((window, event)).expect("Failed to send enabled event");
+            return;
         }
 
-        // Remove context for that window.
-        let _ = self.remove_context(window);
-
-        // Create new context supporting IME input.
         let _ = self.create_context(window, allowed);
     }
 }

@@ -1,15 +1,15 @@
-diff --git a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-core-1.18.0/.cargo-ok b/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-core-1.18.0/.cargo-ok
+diff --git a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/.cargo-ok b/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/.cargo-ok
 deleted file mode 100644
-index 5f8b795..0000000
---- a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-core-1.18.0/.cargo-ok
+index 5f8b7958..00000000
+--- a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/.cargo-ok
 +++ /dev/null
 @@ -1 +0,0 @@
 -{"v":1}
 \ No newline at end of file
-diff --git a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-core-1.18.0/Cargo.toml b/i-slint-core-1.18/Cargo.toml
-index b86f7de..b9202c7 100644
---- a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-core-1.18.0/Cargo.toml
-+++ b/i-slint-core-1.18/Cargo.toml
+diff --git a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/Cargo.toml b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/Cargo.toml
+index b86f7de3..b9202c75 100644
+--- a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/Cargo.toml
++++ b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/Cargo.toml
 @@ -55,7 +55,6 @@ box-shadow-cache = []
  default = [
      "std",
@@ -26,10 +26,10 @@ index b86f7de..b9202c7 100644
      "i-slint-common/locale-decimal-separator",
      "i-slint-common/color-parsing",
      "i-slint-common/markdown",
-diff --git a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-core-1.18.0/Cargo.toml.orig b/i-slint-core-1.18/Cargo.toml.orig
-index 3711a08..7960b5e 100644
---- a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-core-1.18.0/Cargo.toml.orig
-+++ b/i-slint-core-1.18/Cargo.toml.orig
+diff --git a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/Cargo.toml.orig b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/Cargo.toml.orig
+index 3711a08a..7960b5e2 100644
+--- a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/Cargo.toml.orig
++++ b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/Cargo.toml.orig
 @@ -35,7 +35,6 @@ std = [
    "chrono/wasmbind",
    "chrono/clock",
@@ -47,10 +47,72 @@ index 3711a08..7960b5e 100644
  
  # System tray (`SystemTrayIcon`) support. On Linux/BSD this pulls `ksni`; on
  # other platforms it gates the native backend. When disabled, `SystemTrayIcon`
-diff --git a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-core-1.18.0/graphics/bitmapfont.rs b/i-slint-core-1.18/graphics/bitmapfont.rs
-index 118dbf6..9a0715f 100644
---- a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-core-1.18.0/graphics/bitmapfont.rs
-+++ b/i-slint-core-1.18/graphics/bitmapfont.rs
+diff --git a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/cursor.rs b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/cursor.rs
+index 568db577..59a8ac22 100644
+--- a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/cursor.rs
++++ b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/cursor.rs
+@@ -33,6 +33,57 @@ impl Default for MouseCursorInner {
+     }
+ }
+ 
++std::thread_local! {
++    /// What the pointer looked like after the last dispatched event.
++    static LAST: core::cell::Cell<&'static str> = const { core::cell::Cell::new("default") };
++}
++
++/// Records the cursor a mouse event resolved to.
++pub(crate) fn record(cursor: &MouseCursorInner) {
++    let name = match cursor {
++        MouseCursorInner::BuiltIn(cursor) => builtin_name(cursor),
++        MouseCursorInner::CustomMouseCursor { .. } => "custom",
++    };
++    LAST.with(|last| last.set(name));
++}
++
++/// The name of the cursor the last mouse event resolved to. The windowing backend turns it into
++/// an operating-system cursor, which a screenshot cannot capture; tests read it here instead.
++pub fn last_mouse_cursor() -> &'static str {
++    LAST.with(|last| last.get())
++}
++
++fn builtin_name(cursor: &BuiltInMouseCursor) -> &'static str {
++    match cursor {
++        BuiltInMouseCursor::Default => "default",
++        BuiltInMouseCursor::None => "none",
++        BuiltInMouseCursor::Help => "help",
++        BuiltInMouseCursor::Pointer => "pointer",
++        BuiltInMouseCursor::Progress => "progress",
++        BuiltInMouseCursor::Wait => "wait",
++        BuiltInMouseCursor::Crosshair => "crosshair",
++        BuiltInMouseCursor::Text => "text",
++        BuiltInMouseCursor::Alias => "alias",
++        BuiltInMouseCursor::Copy => "copy",
++        BuiltInMouseCursor::Move => "move",
++        BuiltInMouseCursor::NoDrop => "no-drop",
++        BuiltInMouseCursor::NotAllowed => "not-allowed",
++        BuiltInMouseCursor::Grab => "grab",
++        BuiltInMouseCursor::Grabbing => "grabbing",
++        BuiltInMouseCursor::ColResize => "col-resize",
++        BuiltInMouseCursor::RowResize => "row-resize",
++        BuiltInMouseCursor::NResize => "n-resize",
++        BuiltInMouseCursor::EResize => "e-resize",
++        BuiltInMouseCursor::SResize => "s-resize",
++        BuiltInMouseCursor::WResize => "w-resize",
++        BuiltInMouseCursor::NeResize => "ne-resize",
++        BuiltInMouseCursor::NwResize => "nw-resize",
++        BuiltInMouseCursor::SeResize => "se-resize",
++        BuiltInMouseCursor::SwResize => "sw-resize",
++        _ => "other",
++    }
++}
++
+ /// Maps a custom cursor's hotspot from the source image into a buffer rendered at
+ /// `rendered_size` pixels, clamped to stay inside it.
+ pub fn scaled_hotspot(hotspot: i32, source_size: u32, rendered_size: u32) -> u32 {
+diff --git a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/graphics/bitmapfont.rs b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/graphics/bitmapfont.rs
+index 118dbf60..9a0715f8 100644
+--- a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/graphics/bitmapfont.rs
++++ b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/graphics/bitmapfont.rs
 @@ -20,8 +20,15 @@ pub struct BitmapGlyph {
      /// The horizontal distance to the next glyph
      /// This is a fixed point number that is shifted by 6 bits
@@ -69,10 +131,380 @@ index 118dbf6..9a0715f 100644
      pub data: Slice<'static, u8>,
  }
  
-diff --git a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-core-1.18.0/items.rs b/i-slint-core-1.18/items.rs
-index 0cebe94..8533812 100644
---- a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-core-1.18.0/items.rs
-+++ b/i-slint-core-1.18/items.rs
+diff --git a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/item_rendering.rs b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/item_rendering.rs
+index c1112669..23f4f676 100644
+--- a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/item_rendering.rs
++++ b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/item_rendering.rs
+@@ -237,7 +237,17 @@ pub fn render_item_children(
+             };
+ 
+             if matches!(render_result, RenderingResult::ContinueRenderingChildren) {
+-                render_item_children(renderer, component, index as isize, window_adapter);
++                // Nothing below this item can produce pixels when the
++                // accumulated clip is empty (a row scrolled out of the
++                // transcript viewport, a folded row) or an enclosing opacity
++                // made the subtree transparent. Without this, every row of a
++                // non-virtualized scroll column is walked item by item on each
++                // frame, so scroll cost grows with the whole history.
++                let subtree_invisible = renderer.global_alpha_transparent()
++                    || (item.as_ref().clips_children() && renderer.get_current_clip().is_empty());
++                if !subtree_invisible {
++                    render_item_children(renderer, component, index as isize, window_adapter);
++                }
+             }
+             renderer.restore_state();
+             VisitChildrenResult::CONTINUE
+@@ -506,6 +516,11 @@ pub trait RenderText: RenderString {
+     fn wrap(self: Pin<&Self>) -> TextWrap;
+     fn overflow(self: Pin<&Self>) -> TextOverflow;
+     fn is_markdown(self: Pin<&Self>) -> bool;
++    /// The bytes a selection covers, with paragraphs counted as if joined by newlines, and the
++    /// colour to fill behind them. `None` for text that can't be selected.
++    fn selection(self: Pin<&Self>) -> Option<(core::ops::Range<usize>, Color)> {
++        None
++    }
+ }
+ 
+ impl HasFont for (SharedString, Brush) {
+diff --git a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/items/flickable.rs b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/items/flickable.rs
+index 14abdd3f..c2f55500 100644
+--- a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/items/flickable.rs
++++ b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/items/flickable.rs
+@@ -141,6 +141,16 @@ impl Item for Flickable {
+         self_rc: &ItemRc,
+         _: &mut super::MouseCursorInner,
+     ) -> InputEventFilterResult {
++        // A drag selecting text owns the pointer: the view must not start panning under it, or
++        // the selection would stop at the edge of the block it began in. Until the drag has
++        // selected something, the press still goes through so a click stays a click.
++        if let Some(selecting) = crate::text_selection::drag_in(self_rc) {
++            return if selecting || matches!(event, MouseEvent::Wheel { .. }) {
++                InputEventFilterResult::Intercept
++            } else {
++                InputEventFilterResult::ForwardEvent
++            };
++        }
+         if let Some(pos) = event.position() {
+             let geometry = Self::geometry_without_virtual_keyboard(self_rc);
+ 
+diff --git a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/items/text.rs b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/items/text.rs
+index 41153470..e3607959 100644
+--- a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/items/text.rs
++++ b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/items/text.rs
+@@ -28,6 +28,8 @@ use crate::platform::Clipboard;
+ #[cfg(feature = "rtti")]
+ use crate::rtti::*;
+ use crate::string::string_to_float;
++#[cfg(target_os = "android")]
++use crate::timers::{Timer, TimerMode};
+ use crate::window::{InputMethodProperties, InputMethodRequest, WindowAdapter, WindowInner};
+ use crate::{Callback, Coord, Property, SharedString, SharedVector};
+ use alloc::{rc::Rc, string::String};
+@@ -248,8 +250,55 @@ pub struct StyledTextItem {
+     pub vertical_alignment: Property<TextVerticalAlignment>,
+     pub max_lines: Property<i32>,
+     pub link_clicked: Callback<StringArg>,
++    /// Right click, in window coordinates, plus whether there is a selection to act on. The
++    /// application owns the menu; this only reports that one should open.
++    pub context_menu: Callback<(f32, f32, bool)>,
+     pub link_color: Property<Color>,
+     pub cached_rendering_data: CachedRenderingData,
++    /// Set while a press in this text is selecting: the drag then keeps extending the selection
++    /// even once the pointer has left this item.
++    pressed: core::cell::Cell<bool>,
++    /// What a selection covers of this text, as last drawn, with the colour behind it.
++    shown_selection: core::cell::RefCell<Option<(core::ops::Range<usize>, Color)>>,
++    /// Touch products select on a long press, not on every press: a press that
++    /// turns into a drag belongs to the surrounding scroll view. The timer is
++    /// armed on press and cancelled by movement or release; the origin lets a
++    /// small finger jitter keep the timer alive.
++    #[cfg(target_os = "android")]
++    long_press_timer: Timer,
++    #[cfg(target_os = "android")]
++    long_press_origin: core::cell::Cell<Option<LogicalPoint>>,
++}
++
++impl StyledTextItem {
++    /// The text as one string, its paragraphs joined by newlines, matching the offsets
++    /// [`Self::range_at`] reports.
++    pub(crate) fn plain(self: Pin<&Self>) -> alloc::string::String {
++        crate::styled_text::get_raw_text(&self.text()).into_owned()
++    }
++
++    /// The byte range a press at `position` (this item's coordinates) selects.
++    #[cfg(feature = "shared-parley")]
++    pub(crate) fn range_at(
++        self: Pin<&Self>,
++        self_rc: &ItemRc,
++        window_adapter: &Rc<dyn WindowAdapter>,
++        position: LogicalPoint,
++        unit: crate::textlayout::sharedparley::TextUnit,
++    ) -> Option<core::ops::Range<usize>> {
++        let window_inner = WindowInner::from_pub(window_adapter.window());
++        let scale_factor = crate::lengths::ScaleFactor::new(window_inner.scale_factor());
++        crate::textlayout::sharedparley::text_range_at(
++            scale_factor,
++            self,
++            self_rc,
++            LogicalSize::from_lengths(self.width(), self.height()),
++            position * scale_factor,
++            unit,
++            window_adapter.window(),
++            None,
++        )
++    }
+ }
+ 
+ impl Item for StyledTextItem {
+@@ -306,7 +355,154 @@ impl Item for StyledTextItem {
+                 None,
+             )
+         };
++        // A press starts a selection and grabs the pointer, so the drag keeps coming here even
++        // after it leaves this item; `crate::text_selection` works out which text is under it.
++        #[cfg(feature = "shared-parley")]
++        let in_window = |position: &LogicalPoint| {
++            self_rc.map_to_window(self_rc.geometry().origin + position.to_vector())
++        };
+         match event {
++            #[cfg(all(target_os = "android", feature = "shared-parley"))]
++            MouseEvent::Pressed { position, button: PointerEventButton::Left, .. } => {
++                // Touch products select on a long press, not on every press:
++                // until the timer fires nothing is selected, a drag is taken
++                // over by the scroll view (which cancels this grab with
++                // `Exit`), and a quick release only follows a link.
++                let self_weak = self_rc.downgrade();
++                let position = *position;
++                self.pressed.set(false);
++                self.long_press_origin.set(Some(position));
++                let adapter = window_adapter.clone();
++                let ctx = WindowInner::from_pub(window_adapter.window()).context();
++                self.long_press_timer.start_on(
++                    ctx,
++                    TimerMode::SingleShot,
++                    ctx.platform().long_press_interval(crate::InternalToken),
++                    move || {
++                        let Some(item_rc) = self_weak.upgrade() else { return };
++                        let Some(text) = item_rc.downcast::<StyledTextItem>() else { return };
++                        text.as_pin_ref().long_press_origin.set(None);
++                        let pressed = crate::text_selection::press(
++                            &item_rc,
++                            text.as_pin_ref(),
++                            &adapter,
++                            position,
++                            2,
++                        );
++                        text.as_pin_ref().pressed.set(pressed);
++                    },
++                );
++                *cursor = super::MouseCursorInner::BuiltIn(if find_link(&position).is_some() {
++                    super::BuiltInMouseCursor::Pointer
++                } else {
++                    super::BuiltInMouseCursor::Text
++                });
++                // Hold the press so a drag can cancel it with `Exit`; the
++                // scroll view's filter still takes over once the finger moves.
++                InputEventResult::GrabMouse
++            }
++            #[cfg(all(target_os = "android", feature = "shared-parley"))]
++            MouseEvent::Moved { position, .. }
++                if self.long_press_origin.get().is_some_and(|origin| {
++                    let dx = position.x - origin.x;
++                    let dy = position.y - origin.y;
++                    dx * dx + dy * dy > 64.0
++                }) =>
++            {
++                // The finger is panning, not holding: hand the gesture to the
++                // scroll view and forget the pending selection.
++                self.long_press_timer.stop();
++                self.long_press_origin.set(None);
++                InputEventResult::EventIgnored
++            }
++            #[cfg(all(target_os = "android", feature = "shared-parley"))]
++            MouseEvent::Released { position, button: PointerEventButton::Left, .. } => {
++                self.long_press_timer.stop();
++                let armed = self.long_press_origin.take().is_some();
++                if self.pressed.get() {
++                    self.pressed.set(false);
++                    crate::text_selection::release();
++                } else if armed {
++                    if let Some(link) = find_link(position) {
++                        *cursor = super::MouseCursorInner::BuiltIn(
++                            super::BuiltInMouseCursor::Pointer,
++                        );
++                        Self::FIELD_OFFSETS.link_clicked().apply_pin(self).call(&(link.into(),));
++                    }
++                }
++                InputEventResult::EventAccepted
++            }
++            #[cfg(all(target_os = "android", feature = "shared-parley"))]
++            MouseEvent::Exit => {
++                self.long_press_timer.stop();
++                self.long_press_origin.set(None);
++                InputEventResult::EventIgnored
++            }
++            #[cfg(all(feature = "shared-parley", not(target_os = "android")))]
++            MouseEvent::Pressed {
++                position,
++                button: PointerEventButton::Left,
++                click_count,
++                ..
++            } => {
++                let pressed = crate::text_selection::press(
++                    self_rc,
++                    self,
++                    window_adapter,
++                    *position,
++                    *click_count,
++                );
++                self.pressed.set(pressed);
++                *cursor = super::MouseCursorInner::BuiltIn(
++                    if find_link(position).is_some() {
++                        super::BuiltInMouseCursor::Pointer
++                    } else {
++                        super::BuiltInMouseCursor::Text
++                    },
++                );
++                if pressed {
++                    InputEventResult::GrabMouse
++                } else {
++                    InputEventResult::EventAccepted
++                }
++            }
++            #[cfg(feature = "shared-parley")]
++            MouseEvent::Pressed { position, button: PointerEventButton::Right, .. } => {
++                // The menu itself belongs to the application; all this does is keep (or drop)
++                // the selection and tell the UI where the click was, in window coordinates.
++                let has_selection =
++                    crate::text_selection::right_press(self_rc, window_adapter, *position);
++                let at = self_rc.map_to_window(*position);
++                Self::FIELD_OFFSETS
++                    .context_menu()
++                    .apply_pin(self)
++                    .call(&(at.x, at.y, has_selection));
++                *cursor = super::MouseCursorInner::BuiltIn(super::BuiltInMouseCursor::Text);
++                InputEventResult::EventAccepted
++            }
++            #[cfg(feature = "shared-parley")]
++            MouseEvent::Moved { position, .. }
++                if self.pressed.get() && crate::text_selection::dragging() =>
++            {
++                crate::text_selection::drag_to(window_adapter, in_window(position));
++                *cursor = super::MouseCursorInner::BuiltIn(super::BuiltInMouseCursor::Text);
++                InputEventResult::EventAccepted
++            }
++            #[cfg(feature = "shared-parley")]
++            MouseEvent::Released { position, button: PointerEventButton::Left, .. }
++                if self.pressed.get() =>
++            {
++                self.pressed.set(false);
++                // A click that selected nothing is still a click: follow the link under it.
++                if !crate::text_selection::release() {
++                    if let Some(link) = find_link(position) {
++                        *cursor =
++                            super::MouseCursorInner::BuiltIn(super::BuiltInMouseCursor::Pointer);
++                        Self::FIELD_OFFSETS.link_clicked().apply_pin(self).call(&(link.into(),));
++                    }
++                }
++                InputEventResult::EventAccepted
++            }
+             #[cfg(feature = "shared-parley")]
+             MouseEvent::Released {
+                 position,
+@@ -324,9 +520,13 @@ impl Item for StyledTextItem {
+             MouseEvent::Moved { position, .. }
+             | MouseEvent::Pressed { position, .. }
+             | MouseEvent::Released { position, .. } => {
+-                if find_link(position).is_some() {
+-                    *cursor = super::MouseCursorInner::BuiltIn(super::BuiltInMouseCursor::Pointer);
+-                }
++                // Over the glyphs the pointer turns into a text caret, the way it does in a
++                // browser; a link still wins, because clicking it does something else.
++                *cursor = super::MouseCursorInner::BuiltIn(if find_link(position).is_some() {
++                    super::BuiltInMouseCursor::Pointer
++                } else {
++                    super::BuiltInMouseCursor::Text
++                });
+                 InputEventResult::EventAccepted
+             }
+             _ => InputEventResult::EventIgnored,
+@@ -366,6 +566,9 @@ impl Item for StyledTextItem {
+         self_rc: &ItemRc,
+         size: LogicalSize,
+     ) -> RenderingResult {
++        // Resolved per frame: the selection lives outside the items, so an item only knows what
++        // of it is covered when it is about to be drawn.
++        *self.shown_selection.borrow_mut() = crate::text_selection::covered(self_rc);
+         (*backend).draw_text(self, self_rc, size, &self.cached_rendering_data);
+         RenderingResult::ContinueRenderingChildren
+     }
+@@ -445,6 +648,12 @@ impl RenderText for StyledTextItem {
+     fn is_markdown(self: Pin<&Self>) -> bool {
+         true
+     }
++
++    fn selection(self: Pin<&Self>) -> Option<(core::ops::Range<usize>, Color)> {
++        // Read here while drawing, which is what makes a selection change repaint this text.
++        crate::text_selection::track();
++        self.shown_selection.borrow().clone()
++    }
+ }
+ 
+ impl StyledTextItem {
+@@ -1225,7 +1434,7 @@ impl Item for TextInput {
+         self_rc: &ItemRc,
+     ) -> FocusEventResult {
+         match event {
+-            FocusEvent::FocusIn(_reason) => {
++            FocusEvent::FocusIn(reason) => {
+                 if !self.enabled() {
+                     return FocusEventResult::FocusIgnored;
+                 }
+@@ -1234,13 +1443,21 @@ impl Item for TextInput {
+                 WindowInner::from_pub(window_adapter.window()).set_text_input_focused(true);
+                 // FIXME: This should be tracked by a PropertyTracker in window and toggled when read_only() toggles.
+                 if !self.read_only() {
+-                    if let Some(w) = window_adapter.internal(crate::InternalToken) {
++                    // Android hides the IME when the activity leaves the
++                    // foreground. The activation FocusIn must restore the
++                    // focus state but not pop the keyboard back up; the next
++                    // tap goes through ensure_focus_and_ime instead.
++                    let show_ime = !(cfg!(target_os = "android")
++                        && *reason == FocusReason::WindowActivation);
++                    if show_ime
++                        && let Some(w) = window_adapter.internal(crate::InternalToken)
++                    {
+                         w.input_method_request(InputMethodRequest::Enable(
+                             self.ime_properties(window_adapter, self_rc),
+                         ));
+                     }
+ 
+-                    if cfg!(not(target_vendor = "apple")) && *_reason == FocusReason::TabNavigation
++                    if cfg!(not(target_vendor = "apple")) && *reason == FocusReason::TabNavigation
+                     {
+                         self.select_all(window_adapter, self_rc);
+                     }
+@@ -1254,7 +1471,15 @@ impl Item for TextInput {
+                         .anchor_position_byte_offset
+                         .set(self.as_ref().cursor_position_byte_offset());
+                 }
+-                WindowInner::from_pub(window_adapter.window()).set_text_input_focused(false);
++                // 窗口失焦不等于输入框失焦：只投影焦点标志、不发送 Disable。
++                // 这样重新聚焦时 XSetICFocus 沿用的还是同一个输入上下文，
++                // fcitx/搜狗会恢复之前选中的输入法；销毁重建会掉回直接输入。
++                let window_inner = WindowInner::from_pub(window_adapter.window());
++                if matches!(reason, FocusReason::WindowActivation) {
++                    window_inner.set_text_input_focused_projection(false);
++                } else {
++                    window_inner.set_text_input_focused(false);
++                }
+                 if !self.read_only() {
+                     // commit the preedit text on android
+                     #[cfg(target_os = "android")]
+diff --git a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/items.rs b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/items.rs
+index 0cebe94d..8533812d 100644
+--- a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/items.rs
++++ b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/items.rs
 @@ -2242,6 +2242,20 @@ macro_rules! declare_builtin_structs {
  
  i_slint_common::for_each_builtin_structs!(declare_builtin_structs);
@@ -94,10 +526,167 @@ index 0cebe94..8533812 100644
  #[test]
  fn builtin_struct_field_defaults() {
      // Fields without a declared default value take the zero value of their type,
-diff --git a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-core-1.18.0/partial_renderer.rs b/i-slint-core-1.18/partial_renderer.rs
-index ec58837..e98f2d3 100644
---- a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-core-1.18.0/partial_renderer.rs
-+++ b/i-slint-core-1.18/partial_renderer.rs
+diff --git a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/lib.rs b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/lib.rs
+index fc4197cb..1b684abf 100644
+--- a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/lib.rs
++++ b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/lib.rs
+@@ -60,6 +60,7 @@ pub mod sharedvector;
+ pub mod slice;
+ pub mod string;
+ pub mod styled_text;
++pub mod text_selection;
+ pub mod textlayout;
+ pub mod timers;
+ pub mod translations;
+diff --git a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/model/repeater.rs b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/model/repeater.rs
+index 381a29ab..c45f2255 100644
+--- a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/model/repeater.rs
++++ b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/model/repeater.rs
+@@ -143,7 +143,11 @@ pub struct RepeaterLayoutState {
+     /// The content_y value from the previous layout pass.
+     /// It is used to detect if we are scrolling up or down
+     pub previous_content_y: Coord,
+-    /// The y position of the item at `offset`.
++    /// The content-space y of the item at `offset`: the running sum of the
++    /// actual row heights above the window. Updated incrementally with the
++    /// measured heights of the rows the window moves past, so mixed row
++    /// heights scroll without the shifts a uniform average would produce.
++    /// Only a seek past unmeasured rows must fall back to an estimate.
+     pub anchor_y: Coord,
+ }
+ 
+@@ -318,6 +322,10 @@ fn update_visible_instances(
+ 
+     if state.offset >= row_count {
+         state.offset = row_count - 1;
++        // The window pointed past the (shrunken) model. The heights of the
++        // rows above the clamped offset are unknown in the new content, so
++        // the anchor can only be re-estimated here; scrolling on is exact.
++        state.anchor_y = element_height * state.offset as Coord;
+     }
+ 
+     let one_and_a_half_screen = listview_height * 3 as Coord / 2 as Coord;
+@@ -328,14 +336,18 @@ fn update_visible_instances(
+         > -content_y_value + one_and_a_half_screen
+         || (props.computes_content_height() && last_item_bottom + element_height < -content_y_value)
+     {
+-        // Jumping more than 1.5 screens: random seek.
++        // Jumping more than 1.5 screens: random seek. The heights of the
++        // skipped rows are unknown, so the anchor starts from an estimate;
++        // contiguous scrolling from here is exact again.
+         ops.splice(0, ops.len(), 0);
+         state.offset = ((-content_y_value / element_height).floor() as usize).min(row_count - 1);
++        state.anchor_y = element_height * state.offset as Coord;
+         (state.offset, 0 as Coord)
+     } else if content_y_value < state.previous_content_y {
+         // Scrolled down: find the new offset by walking existing instances.
+         let mut it_y = first_item_y + content_y_value;
+         let mut new_off = state.offset;
++        let mut walked = 0 as Coord;
+         for i in 0..ops.len() {
+             changed |= ops.ensure_updated(i, new_off);
+             let h = ops.height(i).unwrap_or(0 as Coord);
+@@ -343,8 +355,13 @@ fn update_visible_instances(
+                 break;
+             }
+             it_y += h;
++            walked += h;
+             new_off += 1;
+         }
++        // The rows the window advanced past join the anchor prefix with
++        // their measured heights, so the next pass keeps the content exactly
++        // where the previous one put it regardless of mixed row heights.
++        state.anchor_y = first_item_y + walked;
+         (new_off, it_y)
+     } else {
+         // Scrolled up: will instantiate items before offset in the loop below.
+@@ -356,7 +373,9 @@ fn update_visible_instances(
+         // Fill gap before new_offset using already-instantiated items.
+         while new_offset > state.offset && new_offset_y > 0 as Coord {
+             new_offset -= 1;
+-            new_offset_y -= ops.height(new_offset - state.offset).unwrap_or(0 as Coord);
++            let h = ops.height(new_offset - state.offset).unwrap_or(0 as Coord);
++            new_offset_y -= h;
++            state.anchor_y -= h;
+         }
+         // If there is still a gap, create new instances before the current ones.
+         let mut prepend_count = 0;
+@@ -364,7 +383,9 @@ fn update_visible_instances(
+             new_offset -= 1;
+             ops.splice(0, 0, 1);
+             changed |= ops.ensure_updated(0, new_offset);
+-            new_offset_y -= ops.height(0).unwrap_or(0 as Coord);
++            let h = ops.height(0).unwrap_or(0 as Coord);
++            new_offset_y -= h;
++            state.anchor_y -= h;
+             prepend_count += 1;
+         }
+         if prepend_count > 0 {
+@@ -420,10 +441,15 @@ fn update_visible_instances(
+             break;
+         }
+ 
+-        // Recompute coordinates for the scrollbar.
++        // Recompute coordinates for the scrollbar. The anchor already holds
++        // the exact sum of the heights above the window; compose the total
++        // from that sum, the laid-out window and an estimate for the rows
++        // below it, so the end of the model sits at the true bottom.
+         state.cached_item_height = (y - new_offset_y) / ops.len() as Coord;
+-        state.anchor_y = state.cached_item_height * state.offset as Coord;
+-        props.content_height_set(LogicalLength::new(state.cached_item_height * row_count as Coord));
++        let remaining_rows = row_count.saturating_sub(idx);
++        props.content_height_set(LogicalLength::new(
++            state.anchor_y + (y - new_offset_y) + element_height * remaining_rows as Coord,
++        ));
+         props.content_width_set(LogicalLength::new(content_width_value));
+         let new_content_y = -state.anchor_y + new_offset_y;
+         // Important: Use get_internal here, the content_y may have a binding on it (especially
+@@ -550,8 +576,12 @@ impl<T: RepeatedItemTree> ModelChangeListener for RepeaterTracker<T> {
+         let mut inner = self.inner.borrow_mut();
+         if index < inner.layout_state.offset {
+             if index + count <= inner.layout_state.offset {
+-                // Entirely before the visible range: shift the offset.
++                // Entirely before the visible range: shift the offset. The
++                // inserted heights are unknown, so the anchor grows by the
++                // estimate until the rows are measured.
+                 inner.layout_state.offset += count;
++                inner.layout_state.anchor_y +=
++                    inner.layout_state.cached_item_height * count as Coord;
+                 self.is_dirty.set(true);
+                 for c in inner.instances.iter_mut() {
+                     c.0 = RepeatedInstanceState::Dirty;
+@@ -581,16 +611,25 @@ impl<T: RepeatedItemTree> ModelChangeListener for RepeaterTracker<T> {
+         let mut inner = self.inner.borrow_mut();
+         if index < inner.layout_state.offset {
+             if index + count <= inner.layout_state.offset {
+-                // Entirely before the visible range: shift the offset.
++                // Entirely before the visible range: shift the offset. The
++                // removed heights are unknown, so the anchor shrinks by the
++                // estimate until the surrounding rows are re-measured.
+                 inner.layout_state.offset -= count;
++                inner.layout_state.anchor_y = (inner.layout_state.anchor_y
++                    - inner.layout_state.cached_item_height * count as Coord)
++                    .max(0 as Coord);
+                 self.is_dirty.set(true);
+                 for c in inner.instances.iter_mut() {
+                     c.0 = RepeatedInstanceState::Dirty;
+                 }
+                 return;
+             }
+-            count -= inner.layout_state.offset - index;
++            let removed_before = inner.layout_state.offset - index;
++            count -= removed_before;
+             inner.layout_state.offset = index;
++            inner.layout_state.anchor_y = (inner.layout_state.anchor_y
++                - inner.layout_state.cached_item_height * removed_before as Coord)
++                .max(0 as Coord);
+             index = 0;
+         } else {
+             index -= inner.layout_state.offset;
+diff --git a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/partial_renderer.rs b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/partial_renderer.rs
+index ec588377..e98f2d32 100644
+--- a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/partial_renderer.rs
++++ b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/partial_renderer.rs
 @@ -268,7 +268,13 @@ impl core::fmt::Debug for DirtyRegion {
  
  impl DirtyRegion {
@@ -131,10 +720,998 @@ index ec58837..e98f2d3 100644
              self.dirty_region.draw_intersects(screen_geom)
          })
      }
-diff --git a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-core-1.18.0/window.rs b/i-slint-core-1.18/window.rs
-index f7f5622..04f210d 100644
---- a/C:/Users/sjxx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/i-slint-core-1.18.0/window.rs
-+++ b/i-slint-core-1.18/window.rs
+diff --git a/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/text_selection.rs b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/text_selection.rs
+new file mode 100644
+index 00000000..bc65af3a
+--- /dev/null
++++ b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/text_selection.rs
+@@ -0,0 +1,787 @@
++// Copyright © SixtyFPS GmbH <info@slint.dev>
++// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
++
++//! Mouse selection over the `StyledText` blocks of a scrollable view.
++//!
++//! A press in a selectable text starts a selection and grabs the pointer, so the drag keeps
++//! arriving at that item even once it has left it; this module then works out which text is
++//! under the pointer. The selection itself is kept here, not in the items: it is a pair of
++//! `(text, byte offset)` ends, which is enough for every text to work out what of it is covered
++//! when it is drawn, in any order, and without the items having to know about each other.
++//!
++//! Reading order is the layout's: blocks stack top to bottom, so comparing the window-space
++//! top-left corner of two items orders them. Texts level with each other (a table row, say)
++//! are joined by a space when copied, the rest by a line break.
++//!
++//! An end also remembers its ordinal in that order. A streaming view replaces every block item
++//! on each update, which kills the `ItemWeak` but keeps the ordinals — so an open selection is
++//! re-bound to the new items instead of disappearing mid-answer.
++//!
++//! Only `StyledText` takes part. `TextInput` has its own selection, and plain `Text` is used
++//! for UI chrome that nobody selects.
++
++use alloc::boxed::Box;
++use alloc::rc::Rc;
++use alloc::string::String;
++use alloc::vec::Vec;
++use core::cell::RefCell;
++use core::ops::Range;
++use core::pin::Pin;
++use core::time::Duration;
++
++use crate::Property;
++use crate::graphics::Color;
++use crate::item_tree::{ItemRc, ItemWeak, ParentItemTraversalMode};
++use crate::items::{Flickable, StyledTextItem};
++use crate::lengths::{LogicalPoint, LogicalRect};
++use crate::platform::Clipboard;
++use crate::textlayout::sharedparley::TextUnit;
++use crate::timers::{Timer, TimerMode};
++use crate::window::{WindowAdapter, WindowInner};
++
++/// One end of a selection: a text, and a byte offset into its plain text.
++#[derive(Clone)]
++struct Edge {
++    item: ItemWeak,
++    /// Where that text sat in reading order, counted among the texts of the same scope. Only
++    /// used when `item` no longer upgrades, which a view rebuild does to every block.
++    ordinal: usize,
++    offset: usize,
++}
++
++struct Selection {
++    /// The container the selection runs through, so a text elsewhere in the window is unaffected.
++    scope: ItemWeak,
++    start: Edge,
++    end: Edge,
++    color: Color,
++}
++
++struct Drag {
++    scope: ItemWeak,
++    /// The texts of the view in reading order, as they were when the press began. The view does
++    /// not scroll itself during a drag (see `drag_in`), so the order stays valid; the rectangles
++    /// are read fresh each time, because the auto-scroll below does move the content.
++    parts: Vec<ItemRc>,
++    anchor: Edge,
++    color: Color,
++    /// Where the pointer was last seen, in window coordinates. Held down at the edge of the
++    /// viewport, the auto-scroll timer replays this until the button comes up.
++    pointer: LogicalPoint,
++    /// Repeating while the drag lasts; dropped — and so stopped — with the `Drag`. Never read:
++    /// it is here for its `Drop`.
++    #[allow(dead_code)]
++    autoscroll: Timer,
++}
++
++/// How often the auto-scroll advances, and how far per tick at full speed.
++const AUTOSCROLL_TICK: Duration = Duration::from_millis(16);
++/// How close to the viewport edge the pointer has to be for the content to start moving.
++const AUTOSCROLL_EDGE: f32 = 26.0;
++const AUTOSCROLL_MAX_STEP: f32 = 26.0;
++
++std::thread_local! {
++    static SELECTION: RefCell<Option<Selection>> = const { RefCell::new(None) };
++    static DRAG: RefCell<Option<Drag>> = const { RefCell::new(None) };
++    /// The text the context menu was opened on, with the colour to highlight with. `select-all`
++    /// is called from the menu and has no item of its own, so it works from here.
++    static CONTEXT: RefCell<Option<Context>> = const { RefCell::new(None) };
++    /// Bumped whenever the selection changes. Drawing reads it, which is what schedules the
++    /// repaint of the texts whose highlight differs.
++    static CHANGES: Pin<Box<Property<u32>>> = Box::pin(Property::new(0));
++}
++
++/// What the context menu was opened on: the item whose view `select-all` walks, and the text to
++/// copy. The text is snapshotted because pressing a menu item is itself a left press, and that
++/// ends the selection before the item's action runs.
++struct Context {
++    item: ItemWeak,
++    color: Color,
++    text: Option<String>,
++}
++
++/// Makes the current evaluation (a draw, in practice) depend on the selection.
++pub(crate) fn track() {
++    CHANGES.with(|changes| {
++        changes.as_ref().get();
++    });
++}
++
++fn changed() {
++    CHANGES.with(|changes| {
++        changes.as_ref().set(changes.as_ref().get_untracked().wrapping_add(1));
++    });
++}
++
++fn window_rect(item: &ItemRc) -> LogicalRect {
++    let geometry = item.geometry();
++    LogicalRect::new(item.map_to_window(geometry.origin), geometry.size)
++}
++
++fn corner(rect: LogicalRect) -> (f32, f32) {
++    (rect.min_y(), rect.min_x())
++}
++
++fn is_text(item: &ItemRc) -> bool {
++    item.downcast::<StyledTextItem>().is_some()
++}
++
++fn collect(scope: &ItemRc, parts: &mut Vec<ItemRc>) {
++    fn push(parts: &mut Vec<ItemRc>, item: &ItemRc) {
++        // Every text of the view, on screen or not: a scrolled-out block still has its place in
++        // reading order, and leaving it out would both shift the ordinals and make a selection
++        // that reaches past the viewport unrepresentable.
++        if is_text(item) {
++            parts.push(item.clone());
++        }
++    }
++    push(parts, scope);
++    scope.visit_descendants(|item| {
++        push(parts, item);
++        core::ops::ControlFlow::<()>::Continue(())
++    });
++    // Stable, so texts that share a corner (cells of one table row, or a view that has not been
++    // laid out yet) keep the item tree's order, which is the document's.
++    parts.sort_by(|a, b| {
++        corner(window_rect(a)).partial_cmp(&corner(window_rect(b))).unwrap_or(core::cmp::Ordering::Equal)
++    });
++}
++
++/// Binds an end to a live item. After a rebuild the weak reference is dead but the ordinal still
++/// names the same place in the document, so the selection moves onto the new items instead of
++/// being lost every time a streaming answer adds a block.
++fn resolve(edge: &mut Edge, scope: &ItemRc, parts: &mut Vec<ItemRc>) -> Option<ItemRc> {
++    if let Some(item) = edge.item.upgrade() {
++        return Some(item);
++    }
++    if parts.is_empty() {
++        collect(scope, parts);
++    }
++    let item = parts.get(edge.ordinal)?.clone();
++    edge.item = item.downgrade();
++    Some(item)
++}
++
++/// The scroll container a text sits in, if any: a selection runs through its siblings only.
++fn scope_of(item: &ItemRc) -> ItemRc {
++    let mut parent = item.parent_item(ParentItemTraversalMode::StopAtPopups);
++    while let Some(current) = parent {
++        if current.downcast::<Flickable>().is_some() {
++            return current;
++        }
++        parent = current.parent_item(ParentItemTraversalMode::StopAtPopups);
++    }
++    item.clone()
++}
++
++fn set(selection: Selection) {
++    SELECTION.with(|current| *current.borrow_mut() = Some(selection));
++    changed();
++}
++
++/// Forgets the selection unless a press is building a new one.
++pub(crate) fn clear() {
++    if DRAG.with(|drag| drag.borrow().is_some()) {
++        return;
++    }
++    if SELECTION.with(|current| current.borrow_mut().take()).is_some() {
++        changed();
++    }
++}
++
++/// A left press anywhere ends the previous drag (which may have lost its text) and its selection.
++pub(crate) fn pressed() {
++    DRAG.with(|drag| drag.borrow_mut().take());
++    clear();
++}
++
++/// Which end of the selection a handle drag moves.
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++pub enum SelectionHandle {
++    Start,
++    End,
++}
++
++/// How close a press has to be to a handle to belong to the shell's knob
++/// instead of starting a new selection. It covers the whole 40px touch box of
++/// the knob, so a press anywhere on it never clears the selection first.
++const HANDLE_HIT_RADIUS: f32 = 40.0;
++
++/// Window-space points of the two selection handles: the caret line centre at
++/// each edge. `None` when nothing is selected. Touch shells overlay draggable
++/// knobs on these points; the core stays the single owner of the selection.
++pub fn handle_positions(window: &crate::api::Window) -> Option<(LogicalPoint, LogicalPoint)> {
++    let (start_item, start_offset, end_item, end_offset) = SELECTION.with(|current| {
++        let mut slot = current.borrow_mut();
++        let selection = slot.as_mut()?;
++        let scope = selection.scope.upgrade()?;
++        let mut parts = Vec::new();
++        let start = resolve(&mut selection.start, &scope, &mut parts)?;
++        let end = resolve(&mut selection.end, &scope, &mut parts)?;
++        Some((start, selection.start.offset, end, selection.end.offset))
++    })?;
++    Some((
++        edge_handle(
++            window,
++            &start_item,
++            start_offset,
++            crate::items::TextCursorAffinity::NextCharacter,
++        )?,
++        edge_handle(
++            window,
++            &end_item,
++            end_offset,
++            crate::items::TextCursorAffinity::PreviousCharacter,
++        )?,
++    ))
++}
++
++/// One handle: the centre of the caret line at `offset` in its text block.
++fn edge_handle(
++    window: &crate::api::Window,
++    item: &ItemRc,
++    offset: usize,
++    affinity: crate::items::TextCursorAffinity,
++) -> Option<LogicalPoint> {
++    let text = item.downcast::<StyledTextItem>()?;
++    let rect = crate::textlayout::sharedparley::styled_text_cursor_rect_for_byte_offset(
++        window,
++        text.as_pin_ref(),
++        item,
++        offset,
++        affinity,
++    )?;
++    // The knobs sit at the caret line's vertical centre: the line bottom is
++    // already outside the hit band of the shaped paragraph. The rectangle is
++    // item-local and `map_to_window` takes parent coordinates, so fold in the
++    // item's origin.
++    let local = item.geometry().origin + rect.center().to_vector();
++    Some(item.map_to_window(local))
++}
++
++/// The selection may survive a press on one of its handles: the shell's knob
++/// owns that drag, so the edge can move instead of the selection starting over.
++pub(crate) fn pressed_at(window: &crate::api::Window, position: LogicalPoint) {
++    if let Some((start, end)) = handle_positions(window) {
++        let near = |handle: LogicalPoint| {
++            let dx = position.x - handle.x;
++            let dy = position.y - handle.y;
++            dx * dx + dy * dy <= HANDLE_HIT_RADIUS * HANDLE_HIT_RADIUS
++        };
++        if near(start) || near(end) {
++            return;
++        }
++    }
++    pressed();
++}
++
++/// Move one edge to the text under `position` (window coordinates). The edge
++/// is clamped at the opposite edge, so a drag shrinks at most to an empty
++/// selection and never inverts it.
++pub fn move_handle(
++    window: &crate::api::Window,
++    handle: SelectionHandle,
++    position: LogicalPoint,
++) {
++    let window_adapter = WindowInner::from_pub(window).window_adapter();
++    let Some((parts, start_item, end_item, start_offset, end_offset)) =
++        SELECTION.with(|current| {
++            let mut slot = current.borrow_mut();
++            let selection = slot.as_mut()?;
++            let scope = selection.scope.upgrade()?;
++            let mut parts = Vec::new();
++            // `resolve` only fills `parts` when an edge's item was rebuilt, so
++            // always collect: the handle drag needs the reading order.
++            collect(&scope, &mut parts);
++            let start = resolve(&mut selection.start, &scope, &mut parts)?;
++            let end = resolve(&mut selection.end, &scope, &mut parts)?;
++            Some((parts, start, end, selection.start.offset, selection.end.offset))
++        })
++    else {
++        return;
++    };
++
++    let Some(target) = item_at(&parts, position) else { return };
++    let Some(text) = target.downcast::<StyledTextItem>() else { return };
++    let local = window_to_item_position(&target, position);
++    let Some(range) =
++        text.as_pin_ref()
++            .range_at(&target, &window_adapter, local, TextUnit::Character)
++    else {
++        return;
++    };
++    let Some(ordinal) = parts.iter().position(|part| part == &target) else { return };
++    let start_ordinal = parts.iter().position(|part| part == &start_item).unwrap_or(0);
++    let end_ordinal = parts.iter().position(|part| part == &end_item).unwrap_or(0);
++
++    let new_edge = match handle {
++        SelectionHandle::Start if (ordinal, range.start) > (end_ordinal, end_offset) => Edge {
++            item: end_item.downgrade(),
++            ordinal: end_ordinal,
++            offset: end_offset,
++        },
++        SelectionHandle::End if (ordinal, range.start) < (start_ordinal, start_offset) => Edge {
++            item: start_item.downgrade(),
++            ordinal: start_ordinal,
++            offset: start_offset,
++        },
++        _ => Edge { item: target.downgrade(), ordinal, offset: range.start },
++    };
++    SELECTION.with(|current| {
++        let mut slot = current.borrow_mut();
++        let Some(selection) = slot.as_mut() else { return };
++        match handle {
++            SelectionHandle::Start => selection.start = new_edge,
++            SelectionHandle::End => selection.end = new_edge,
++        }
++    });
++    changed();
++}
++
++/// The text block under `position`, or the nearest one vertically when the
++/// pointer is beyond the first or last block: a handle drag past the viewport
++/// keeps extending the edge instead of stopping.
++fn item_at(parts: &[ItemRc], position: LogicalPoint) -> Option<ItemRc> {
++    if let Some(item) = parts
++        .iter()
++        .find(|part| is_text(part) && window_rect(part).contains(position))
++    {
++        return Some(item.clone());
++    }
++    parts
++        .iter()
++        .filter(|part| is_text(part))
++        .min_by(|a, b| {
++            let da = vertical_distance(window_rect(a), position);
++            let db = vertical_distance(window_rect(b), position);
++            da.partial_cmp(&db).unwrap_or(core::cmp::Ordering::Equal)
++        })
++        .cloned()
++}
++
++fn vertical_distance(rect: LogicalRect, position: LogicalPoint) -> f32 {
++    if position.y < rect.min_y() {
++        rect.min_y() - position.y
++    } else if position.y > rect.max_y() {
++        position.y - rect.max_y()
++    } else {
++        0.0
++    }
++}
++
++/// Window point → the item's own coordinate system. The transcript has no
++/// rotation or scale transforms, so folding the item and ancestor origins is
++/// enough and is the inverse of what `map_to_window` added.
++fn window_to_item_position(item: &ItemRc, position: LogicalPoint) -> LogicalPoint {
++    let mut local = position;
++    let mut current = Some(item.clone());
++    while let Some(node) = current {
++        local -= node.geometry().origin.to_vector();
++        current = node.parent_item(ParentItemTraversalMode::StopAtPopups);
++    }
++    local
++}
++
++/// Starts selecting at `position`, in `text`'s coordinates. `click_count` counts repeats, so the
++/// first press selects by character, the second by word and the third by paragraph.
++pub(crate) fn press(
++    item: &ItemRc,
++    text: Pin<&StyledTextItem>,
++    window_adapter: &Rc<dyn WindowAdapter>,
++    position: LogicalPoint,
++    click_count: u8,
++) -> bool {
++    let scope = scope_of(item);
++    let mut parts = Vec::new();
++    collect(&scope, &mut parts);
++    let Some(index) = parts.iter().position(|part| part == item) else { return false };
++
++    let unit = match click_count % 3 {
++        0 => TextUnit::Character,
++        1 => TextUnit::Word,
++        _ => TextUnit::Paragraph,
++    };
++    let Some(range) = text.range_at(item, window_adapter, position, unit) else { return false };
++
++    let color = text.link_color().with_alpha(0.35);
++    // A left press only needs the scope for `Ctrl+A` to walk; the menu's copy
++    // buffer is filled by `right_press`.
++    let context = Context { item: item.downgrade(), color, text: None };
++    CONTEXT.with(|slot| *slot.borrow_mut() = Some(context));
++    let anchor = Edge { item: item.downgrade(), ordinal: index, offset: range.start };
++    let empty = range.start == range.end;
++    if !empty {
++        set(Selection {
++            scope: scope.downgrade(),
++            start: Edge { item: item.downgrade(), ordinal: index, offset: range.start },
++            end: Edge { item: item.downgrade(), ordinal: index, offset: range.end },
++            color,
++        });
++    }
++
++    // One timer for the whole drag: while the pointer rests near the edge of the viewport it
++    // keeps scrolling, so a selection can reach past what is on screen. Dropped in `release`.
++    let autoscroll = Timer::default();
++    let weak_window = Rc::downgrade(window_adapter);
++    let weak_scope = scope.downgrade();
++    autoscroll.start(TimerMode::Repeated, AUTOSCROLL_TICK, move || {
++        let (Some(window), Some(scope)) = (weak_window.upgrade(), weak_scope.upgrade()) else {
++            return;
++        };
++        autoscroll_tick(&scope, &window);
++    });
++
++    DRAG.with(|drag| {
++        *drag.borrow_mut() = Some(Drag {
++            scope: scope.downgrade(),
++            parts,
++            anchor,
++            color,
++            pointer: item.map_to_window(position),
++            autoscroll,
++        })
++    });
++    true
++}
++
++/// Records a right press on `item` and drops the selection unless the press landed inside it —
++/// a right click outside the highlight starts from nothing, the way it does in a browser.
++/// Returns whether there is still something to copy.
++pub(crate) fn right_press(
++    item: &ItemRc,
++    window_adapter: &Rc<dyn WindowAdapter>,
++    position: LogicalPoint,
++) -> bool {
++    let color = item.downcast::<StyledTextItem>().map_or(
++        Color::from_argb_u8(90, 0, 120, 215),
++        |text| text.as_pin_ref().link_color().with_alpha(0.35),
++    );
++    let inside = item
++        .downcast::<StyledTextItem>()
++        .and_then(|text| {
++            text.as_pin_ref().range_at(item, window_adapter, position, TextUnit::Character)
++        })
++        .and_then(|range| covered(item).map(|(span, _)| span.contains(&range.start)))
++        .unwrap_or(false);
++    if !inside {
++        clear();
++    }
++    // Recorded after the drop, so the snapshot matches what the menu is told:
++    // a right click outside the highlight leaves nothing to copy.
++    let context = Context {
++        item: item.downgrade(),
++        color,
++        text: inside.then(selected_text).flatten(),
++    };
++    CONTEXT.with(|slot| *slot.borrow_mut() = Some(context));
++    inside
++}
++
++/// `Ctrl+A` from the window level: a focused text input selects its own content, so it keeps
++/// the shortcut; anywhere else the whole view the last press was in gets selected.
++pub(crate) fn select_all_in_view(window: &WindowInner) -> bool {
++    let input_focused = window
++        .focus_item
++        .borrow()
++        .upgrade()
++        .is_some_and(|item| item.downcast::<crate::items::TextInput>().is_some());
++    if input_focused {
++        return false;
++    }
++    select_all()
++}
++
++/// Selects every text of the view the context menu was opened on.
++pub fn select_all() -> bool {
++    let target = CONTEXT.with(|context| {
++        let context = context.borrow();
++        let context = context.as_ref()?;
++        Some((scope_of(&context.item.upgrade()?), context.color))
++    });
++    let Some((scope, color)) = target else { return false };
++
++    let mut parts = Vec::new();
++    collect(&scope, &mut parts);
++    let (Some(first), Some(last)) = (parts.first(), parts.last()) else { return false };
++    let last_len =
++        last.downcast::<StyledTextItem>().map_or(0, |text| text.as_pin_ref().plain().len());
++    set(Selection {
++        scope: scope.downgrade(),
++        start: Edge { item: first.downgrade(), ordinal: 0, offset: 0 },
++        end: Edge { item: last.downgrade(), ordinal: parts.len() - 1, offset: last_len },
++        color,
++    });
++    true
++}
++
++/// Whether a press is currently dragging a selection.
++pub(crate) fn dragging() -> bool {
++    DRAG.with(|drag| drag.borrow().is_some())
++}
++
++/// Whether a selection drag is running in `scope`, and if so whether it has selected anything
++/// yet. The scroll container uses this to keep the pointer while a selection is being dragged.
++pub(crate) fn drag_in(scope: &ItemRc) -> Option<bool> {
++    DRAG.with(|drag| {
++        let drag = drag.borrow();
++        let drag = drag.as_ref()?;
++        if drag.scope.upgrade().as_ref() != Some(scope) {
++            return None;
++        }
++        Some(SELECTION.with(|selection| selection.borrow().is_some()))
++    })
++}
++
++/// Whether `item` is still part of `scope`'s tree. A rebuild moves every block into a fresh
++/// component, so the items collected when the press began can be stale even though they are
++/// still alive (the drag itself holds them).
++fn belongs_to(item: &ItemRc, scope: &ItemRc) -> bool {
++    let mut current = Some(item.clone());
++    while let Some(node) = current {
++        if &node == scope {
++            return true;
++        }
++        current = node.parent_item(ParentItemTraversalMode::StopAtPopups);
++    }
++    false
++}
++
++/// Re-reads the texts of the view when the ones from the press are gone.
++fn refresh(drag: &mut Drag) {
++    let Some(scope) = drag.scope.upgrade() else { return };
++    // A model update replaces the rows wholesale, so one surviving text is enough to trust the
++    // whole list; probing every part on each mouse move would cost a tree walk per block.
++    if drag.parts.first().is_some_and(|first| belongs_to(first, &scope)) {
++        return;
++    }
++    drag.parts.clear();
++    collect(&scope, &mut drag.parts);
++    // The press-time anchor died with the old items; its ordinal still names the same text.
++    if drag.anchor.item.upgrade().is_none() {
++        if let Some(item) = drag.parts.get(drag.anchor.ordinal) {
++            drag.anchor.item = item.downgrade();
++        }
++    }
++}
++
++/// Extends the selection to `pointer`, in window coordinates.
++pub(crate) fn drag_to(window_adapter: &Rc<dyn WindowAdapter>, pointer: LogicalPoint) {
++    let target = DRAG.with(|drag| {
++        let mut drag = drag.borrow_mut();
++        let drag = drag.as_mut()?;
++        refresh(drag);
++        drag.pointer = pointer;
++        Some((drag.scope.clone(), drag.parts.clone(), drag.anchor.clone(), drag.color))
++    });
++    let Some((scope, parts, anchor, color)) = target else { return };
++    if parts.is_empty() {
++        return;
++    }
++
++    // The text under the pointer, or else the closest one: past the last line of a block the
++    // drag belongs to the next block, above the first one to its start.
++    let mut hit: Option<(usize, LogicalPoint)> = None;
++    for (index, part) in parts.iter().enumerate() {
++        let rect = window_rect(part);
++        if rect.contains(pointer) {
++            hit = Some((index, pointer - rect.origin.to_vector()));
++            break;
++        }
++    }
++    let (index, local) = match hit {
++        Some(hit) => hit,
++        None => {
++            let mut best = 0;
++            for (index, part) in parts.iter().enumerate() {
++                if window_rect(part).max_y() <= pointer.y {
++                    best = index;
++                }
++            }
++            let rect = window_rect(&parts[best]);
++            let y = pointer.y.max(rect.min_y()).min(rect.max_y() - 1.0);
++            (best, LogicalPoint::new(pointer.x, y) - rect.origin.to_vector())
++        }
++    };
++
++    let part = &parts[index];
++    let Some(text) = part.downcast::<StyledTextItem>() else { return };
++    let Some(range) = text.as_pin_ref().range_at(part, window_adapter, local, TextUnit::Character)
++    else {
++        return;
++    };
++    let offset = range.start;
++
++    let edge = Edge { item: part.downgrade(), ordinal: index, offset };
++    let (start, end) = if index < anchor.ordinal || (index == anchor.ordinal && offset < anchor.offset)
++    {
++        (edge, anchor)
++    } else {
++        (anchor, edge)
++    };
++    set(Selection { scope, start, end, color });
++}
++
++/// Advances the content under a held drag. Returns whether anything moved, which is also the
++/// signal that the selection has to be recomputed.
++fn scroll_step(scope: &ItemRc, pointer: LogicalPoint) -> bool {
++    let Some(flickable) = scope.downcast::<Flickable>() else { return false };
++    let flickable = flickable.as_pin_ref();
++    let rect = window_rect(scope);
++
++    // Positive below the bottom edge, negative above the top one, and scaled by how far out the
++    // pointer is, so the closer to the border the slower the creep.
++    let overshoot = if pointer.y < rect.min_y() + AUTOSCROLL_EDGE {
++        pointer.y - (rect.min_y() + AUTOSCROLL_EDGE)
++    } else if pointer.y > rect.max_y() - AUTOSCROLL_EDGE {
++        pointer.y - (rect.max_y() - AUTOSCROLL_EDGE)
++    } else {
++        return false;
++    };
++    let step = (overshoot * 0.4).clamp(-AUTOSCROLL_MAX_STEP, AUTOSCROLL_MAX_STEP);
++    if step.abs() < 0.5 {
++        return false;
++    }
++
++    let limit = (flickable.content_height().get() - scope.geometry().height()).max(0.);
++    let current = flickable.content_y().get();
++    // `content-y` is the content's offset inside the viewport: scrolling down moves the content
++    // up, so it becomes more negative. `step` is positive below the viewport edge.
++    let next = (current - step).clamp(-limit, 0.);
++    if (next - current).abs() < 0.5 {
++        return false;
++    }
++    flickable.content_y.set(crate::lengths::LogicalLength::new(next));
++    true
++}
++
++fn autoscroll_tick(scope: &ItemRc, window: &Rc<dyn WindowAdapter>) {
++    let pointer = DRAG.with(|drag| drag.borrow().as_ref().map(|drag| drag.pointer));
++    let Some(pointer) = pointer else { return };
++    if scroll_step(scope, pointer) {
++        // The texts moved under a pointer that did not: what is selected changed with them.
++        drag_to(window, pointer);
++    }
++}
++
++/// Ends the drag. Returns whether anything is selected.
++pub(crate) fn release() -> bool {
++    DRAG.with(|drag| drag.borrow_mut().take());
++    SELECTION.with(|current| current.borrow().is_some())
++}
++
++/// The selection as plain text, in reading order.
++fn selected_text() -> Option<String> {
++    let scope = SELECTION.with(|current| {
++        let current = current.borrow();
++        let current = current.as_ref()?;
++        current.scope.upgrade()
++    })?;
++    let (start, start_offset, end, end_offset) = SELECTION.with(|current| {
++        let mut slot = current.borrow_mut();
++        let selection = slot.as_mut()?;
++        let mut parts = Vec::new();
++        let start = resolve(&mut selection.start, &scope, &mut parts)?;
++        let end = resolve(&mut selection.end, &scope, &mut parts)?;
++        Some((start, selection.start.offset, end, selection.end.offset))
++    })?;
++    let mut parts = Vec::new();
++    collect(&scope, &mut parts);
++    let index_of = |item: &ItemRc| parts.iter().position(|part| part == item);
++    let (start_index, end_index) = (index_of(&start)?, index_of(&end)?);
++
++    let mut text = String::new();
++    let mut previous: Option<LogicalRect> = None;
++    for index in start_index..=end_index {
++        let part = &parts[index];
++        let Some(item) = part.downcast::<StyledTextItem>() else { continue };
++        let plain = item.as_pin_ref().plain();
++        let len = plain.len();
++        let from = if index == start_index { start_offset.min(len) } else { 0 };
++        let to = if index == end_index { end_offset.min(len) } else { len };
++        if from >= to {
++            continue;
++        }
++        let rect = window_rect(part);
++        if let Some(before) = previous {
++            // Texts side by side on a line read apart; stacked ones read as a new line.
++            let level = rect.min_y() < before.max_y() && before.min_y() < rect.max_y();
++            text.push(if level { ' ' } else { '\n' });
++        }
++        text.push_str(plain.get(from..to).unwrap_or_default());
++        previous = Some(rect);
++    }
++    (!text.is_empty()).then_some(text)
++}
++
++/// The selection as plain text, for a host that wants to show or act on it without going
++/// through the clipboard.
++pub fn selection_text() -> Option<String> {
++    selected_text()
++}
++
++/// Copies the selection, unless a text input with a selection of its own has the focus: that
++/// one copies itself. Returns whether the selection was copied.
++pub(crate) fn copy(window: &WindowInner) -> bool {
++    let input_selecting = window.focus_item.borrow().upgrade().is_some_and(|item| {
++        item.downcast::<crate::items::TextInput>()
++            .is_some_and(|input| input.as_pin_ref().has_selection())
++    });
++    if input_selecting {
++        return false;
++    }
++    let Some(text) = selected_text() else { return false };
++    window.context().platform().set_clipboard_text(&text, Clipboard::DefaultClipboard);
++    true
++}
++
++/// Copies the current selection. Public for a host that owns the context menu and wants to run
++/// the action from its own UI thread; `copy` above is the same thing from inside the window.
++pub fn copy_selection(window: &crate::api::Window) -> bool {
++    copy(WindowInner::from_pub(window))
++}
++
++/// Runs the context menu's `copy`. The menu item is a left press, which ends the selection before
++/// its action runs, so this copies the text snapshotted when the menu opened instead of whatever
++/// is selected now.
++pub fn copy_context(window: &crate::api::Window) -> bool {
++    let text = CONTEXT.with(|context| context.borrow().as_ref().and_then(|c| c.text.clone()));
++    let Some(text) = text else { return false };
++    WindowInner::from_pub(window)
++        .context()
++        .platform()
++        .set_clipboard_text(&text, Clipboard::DefaultClipboard);
++    true
++}
++
++/// What of `item` the selection covers, and the colour behind it. Called while drawing, so the
++/// highlight follows the selection without anything having to invalidate the items.
++pub(crate) fn covered(item: &ItemRc) -> Option<(Range<usize>, Color)> {
++    track();
++    let mut parts = Vec::new();
++    let resolved = SELECTION.with(|current| {
++        let mut slot = current.borrow_mut();
++        let selection = slot.as_mut()?;
++        let scope = selection.scope.upgrade()?;
++        let start = resolve(&mut selection.start, &scope, &mut parts)?;
++        let end = resolve(&mut selection.end, &scope, &mut parts)?;
++        Some((start, selection.start.offset, end, selection.end.offset, selection.color))
++    });
++    let (start_item, start_offset, end_item, end_offset, color) = resolved?;
++
++    let this = corner(window_rect(item));
++    if item == &start_item && item == &end_item {
++        let (from, to) = (start_offset.min(end_offset), start_offset.max(end_offset));
++        return (from < to).then_some((from..to, color));
++    }
++    let len = item.downcast::<StyledTextItem>().map_or(0, |text| text.as_pin_ref().plain().len());
++    let start = corner(window_rect(&start_item));
++    let end = corner(window_rect(&end_item));
++
++    if item == &start_item {
++        return (start_offset < len).then_some((start_offset..len, color));
++    }
++    if item == &end_item {
++        return (end_offset > 0).then_some((0..end_offset.min(len), color));
++    }
++    (this > start && this < end && len > 0).then_some((0..len, color))
++}
+diff --git a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/textlayout/sharedparley/shaping.rs b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/textlayout/sharedparley/shaping.rs
+index a3dc4758..65219451 100644
+--- a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/textlayout/sharedparley/shaping.rs
++++ b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/textlayout/sharedparley/shaping.rs
+@@ -308,14 +308,21 @@ pub(super) fn create_text_paragraphs(
+             }
+         }
+         PlainOrStyledText::Styled(rich_text) => {
++            // The byte range is what hit-testing and selection measure offsets against, so it has
++            // to be the paragraph's place in the text `get_raw_text` produces: its paragraphs
++            // joined by newlines. Leaving it at `0..0` (as upstream does) makes every offset
++            // land at the start of the block.
++            let mut start = 0;
+             for paragraph in rich_text.paragraphs {
++                let end = start + paragraph.text.len();
+                 paragraphs.push(paragraph_from_text(
+                     font_context,
+                     &paragraph.text,
+-                    0..0,
++                    start..end,
+                     paragraph.formatting,
+                     paragraph.links,
+                 ));
++                start = end + 1;
+             }
+         }
+     };
+diff --git a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/textlayout/sharedparley.rs b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/textlayout/sharedparley.rs
+index e2957f43..db29b46d 100644
+--- a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/textlayout/sharedparley.rs
++++ b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/textlayout/sharedparley.rs
+@@ -16,7 +16,7 @@ use crate::{
+     },
+     renderer::RendererSealed,
+     textlayout::{TextHorizontalAlignment, TextOverflow, TextVerticalAlignment, TextWrap},
+-    window::WindowAdapter,
++    window::{WindowAdapter, WindowInner},
+ };
+ use alloc::rc::Rc;
+ use alloc::vec::Vec;
+@@ -213,13 +213,23 @@ pub fn draw_text(
+             };
+ 
+             if render {
++                // A selected run fills its background and keeps the glyph colours it was
++                // shaped with, so links and inline code still read as such inside the
++                // highlight. The spans come from the same machinery `TextInput` uses; the
++                // selection itself is handed in by the item (`RenderText::selection`).
++                if let Some((range, background)) = text.selection().filter(|(r, _)| !r.is_empty())
++                {
++                    let spans =
++                        layout.selection_geometry(range, &draw::visible_band(item_renderer));
++                    for span in spans.backgrounds() {
++                        item_renderer.fill_rectangle_with_color(span, background);
++                    }
++                }
+                 layout.draw(
+                     item_renderer,
+                     platform_fill_brush,
+                     platform_stroke_brush,
+                     text_color,
+-                    // `Text` has no selection today; the machinery is shared so wiring one up
+-                    // later is a matter of passing spans here.
+                     None,
+                 );
+             }
+@@ -264,6 +274,128 @@ pub fn link_under_cursor(
+     .flatten()
+ }
+ 
++/// How much text a press selects: the character boundary, the word, or the paragraph.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum TextUnit {
++    Character,
++    Word,
++    Paragraph,
++}
++
++/// The byte range a press at `position` selects, with the paragraphs counted as if they were
++/// joined by newlines. A `Character` unit gives an empty range at the nearest boundary, which is
++/// what a drag needs; the other units give the word or paragraph there.
++///
++/// Positions above the text map to its start and positions below it to its end, so dragging past
++/// either edge keeps the selection growing instead of stopping at the first line.
++#[cfg(feature = "std")]
++pub fn text_range_at(
++    scale_factor: ScaleFactor,
++    text: Pin<&dyn crate::item_rendering::RenderText>,
++    item_rc: &crate::item_tree::ItemRc,
++    size: LogicalSize,
++    position: PhysicalPoint,
++    unit: TextUnit,
++    window: &crate::api::Window,
++    cache: Option<&TextLayoutCache>,
++) -> Option<Range<usize>> {
++    let layout_builder = shaping_builder(text, Some(item_rc), text.wrap(), scale_factor);
++
++    let (horizontal_align, vertical_align) = text.alignment();
++
++    with_text_layout(
++        cache,
++        Some(item_rc),
++        text,
++        &layout_builder,
++        LayoutOptions {
++            horizontal_align,
++            vertical_align,
++            max_height: Some(size.height_length()),
++            max_width: Some(size.width_length()),
++            max_lines: text.line_limit(),
++            text_overflow: text.overflow(),
++        },
++        window,
++        |layout| {
++            let paragraphs = layout.visible_paragraphs();
++            let (first, last) = (paragraphs.first()?, paragraphs.last()?);
++            let y = position.y_length();
++            // Clamp outside the block: a drag continues past the last line of a paragraph and
++            // into the next one, which is a different item.
++            if y < layout.y_offset + first.y {
++                return Some(first.range.start..first.range.start);
++            }
++            if y >= layout.y_offset + last.y + PhysicalLength::new(last.layout.height()) {
++                return Some(last.range.end..last.range.end);
++            }
++            let paragraph = layout.paragraph_by_y(y)?;
++            let local_y = (y - layout.y_offset - paragraph.y).get();
++            let local = match unit {
++                TextUnit::Character => {
++                    let index = parley::editing::Cursor::from_point(
++                        &paragraph.layout,
++                        position.x,
++                        local_y,
++                    )
++                    .index();
++                    index..index
++                }
++                TextUnit::Word => parley::Selection::word_from_point(
++                    &paragraph.layout,
++                    position.x,
++                    local_y,
++                )
++                .text_range(),
++                TextUnit::Paragraph => 0..paragraph.range.len(),
++            };
++            Some(paragraph.range.start + local.start..paragraph.range.start + local.end)
++        },
++    )
++    .flatten()
++}
++
++/// Caret rectangle, in the block's own logical coordinates, at `byte_offset`.
++/// The transcript's selection handles use this to sit on the glyph edge they
++/// adjust; unlike [`text_input_cursor_rect_for_byte_offset`] it addresses a
++/// read-only `StyledText` block rather than a focused text input.
++#[cfg(feature = "std")]
++pub fn styled_text_cursor_rect_for_byte_offset(
++    window: &crate::api::Window,
++    text: Pin<&crate::items::StyledTextItem>,
++    item_rc: &crate::item_tree::ItemRc,
++    byte_offset: usize,
++    affinity: crate::items::TextCursorAffinity,
++) -> Option<LogicalRect> {
++    let window_inner = WindowInner::from_pub(window);
++    let renderer = window_inner.window_adapter();
++    let scale_factor = renderer.renderer().scale_factor()?;
++    let cache = renderer.renderer().text_layout_cache();
++    let (width, height) = (text.width(), text.height());
++    let text: Pin<&dyn crate::item_rendering::RenderText> = text;
++    let layout_builder = shaping_builder(text, Some(item_rc), text.wrap(), scale_factor);
++    let (horizontal_align, vertical_align) = text.alignment();
++    with_text_layout(
++        cache,
++        Some(item_rc),
++        text,
++        &layout_builder,
++        LayoutOptions {
++            horizontal_align,
++            vertical_align,
++            max_height: Some(height),
++            max_width: Some(width),
++            max_lines: text.line_limit(),
++            text_overflow: text.overflow(),
++        },
++        window,
++        |layout| {
++            layout.cursor_rect_for_byte_offset(byte_offset, affinity, PhysicalLength::new(1.0))
++                / scale_factor
++        },
++    )
++}
++
+ fn link_in_layout(layout: &Layout, cursor: PhysicalPoint) -> Option<std::string::String> {
+     layout.paragraph_by_y(cursor.y_length()).and_then(|paragraph| {
+         let paragraph_y: f64 = paragraph.y.cast::<f64>().get();
+diff --git a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/window.rs b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/window.rs
+index f7f5622f..926514ee 100644
+--- a/home/sjxx/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/i-slint-core-1.18.0/window.rs
++++ b/crates/wunder-desktop/frontend/vendor/i-slint-core-1.18/window.rs
 @@ -668,6 +668,9 @@ pub struct WindowInner {
  
      /// Stack of currently active popups
@@ -153,7 +1730,83 @@ index f7f5622..04f210d 100644
              next_popup_id: Cell::new(NonZeroU32::MIN),
              had_popup_on_press: Default::default(),
              close_requested: Default::default(),
-@@ -2208,6 +2212,9 @@ impl WindowInner {
+@@ -850,6 +854,37 @@ impl WindowInner {
+         // handle multiple press release
+         event = self.click_state.check_repeat(event, self.context());
+ 
++        // A left press ends any selection; a press that lands in a selectable text starts a
++        // new one, from that text's own handler (see `crate::text_selection`). A press on a
++        // selection handle keeps the selection so the shell's knob owns the drag.
++        if let MouseEvent::Pressed {
++            position,
++            button: crate::items::PointerEventButton::Left,
++            ..
++        } = &event
++        {
++            let window_adapter = self.window_adapter();
++            crate::text_selection::pressed_at(&window_adapter.window(), *position);
++        }
++
++        // While a selection is being dragged, the pointer belongs to it: the text that began the
++        // drag may have scrolled away or the pointer may be over another block, and neither
++        // should change where the events go. Positions here are the window's, which is what the
++        // selection measures against.
++        if crate::text_selection::dragging() {
++            match event {
++                MouseEvent::Moved { position, .. } => {
++                    crate::text_selection::drag_to(&self.window_adapter(), position);
++                    return Some(MouseDispatchResult { drag_action: None, accepted: true });
++                }
++                MouseEvent::Released { button: crate::items::PointerEventButton::Left, .. } => {
++                    crate::text_selection::release();
++                    return Some(MouseDispatchResult { drag_action: None, accepted: true });
++                }
++                _ => {}
++            }
++        }
++
+         let window_adapter = self.window_adapter();
+         let mut mouse_input_state = self.mouse_input_state.take();
+ 
+@@ -1097,6 +1132,8 @@ impl WindowInner {
+         {
+             window_adapter.set_mouse_cursor(mouse_input_state.cursor.clone());
+         }
++        // Remembers the shape for tests: a screenshot cannot show an OS cursor.
++        crate::cursor::record(&mouse_input_state.cursor);
+ 
+         let is_dragging = mouse_input_state.drag_data.is_some();
+         let drag_action = mouse_input_state.drop_target_action();
+@@ -1293,6 +1330,28 @@ impl WindowInner {
+         internal_key_event.key_event.modifiers =
+             self.context().0.modifiers.get().modifiers_for(&internal_key_event);
+ 
++        // Copy the text selection, or drop it on Escape. A focused text input keeps its own
++        // handling: it returns false here when it has a selection of its own.
++        if internal_key_event.event_type == KeyEventType::KeyPressed {
++            if matches!(internal_key_event.shortcut(), Some(crate::input::StandardShortcut::Copy))
++                && crate::text_selection::copy(self)
++            {
++                return crate::input::KeyEventResult::EventAccepted;
++            }
++            if matches!(
++                internal_key_event.shortcut(),
++                Some(crate::input::StandardShortcut::SelectAll)
++            ) && crate::text_selection::select_all_in_view(self)
++            {
++                return crate::input::KeyEventResult::EventAccepted;
++            }
++            if internal_key_event.key_event.text.chars().eq([char::from(
++                crate::input::key_codes::Key::Escape,
++            )]) {
++                crate::text_selection::clear();
++            }
++        }
++
+         // Emulate macOS menubar behavior: The OS consumes the event before it reaches any
+         // Slint widgets. Therefore we process the menubar shortcuts here first and abort event
+         // propagation if a shortcut matches.
+@@ -2208,6 +2267,9 @@ impl WindowInner {
          position: LogicalPosition,
          parent_item: &ItemRc,
      ) -> bool {
@@ -163,3 +1816,17 @@ index f7f5622..04f210d 100644
          if let Some(x) = self.window_adapter().internal(crate::InternalToken) {
              let position = parent_item.map_to_native_window(
                  parent_item.geometry().origin + position.to_euclid().to_vector(),
+@@ -2321,6 +2383,13 @@ impl WindowInner {
+         self.pinned_fields.text_input_focused.set(value)
+     }
+ 
++    /// Projects the text-input focus flag without touching the IME association.
++    /// Window deactivation keeps the input context alive so the IME server's
++    /// selected input method survives a blur/refocus cycle.
++    pub(crate) fn set_text_input_focused_projection(&self, value: bool) {
++        self.pinned_fields.text_input_focused.set(value)
++    }
++
+     /// Returns true if the window is visible
+     pub fn is_visible(&self) -> bool {
+         self.strong_component_ref.borrow().is_some()

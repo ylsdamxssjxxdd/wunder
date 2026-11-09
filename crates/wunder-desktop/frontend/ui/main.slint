@@ -781,15 +781,15 @@ export component MainWindow inherits Window {
             root.split-drop-row(1, row);
             return;
         }
-        if root.split-count == 2 {
-            root.split-drop-row(DragPreview.pointer-x < split_workspace.absolute-position.x
-                + split_workspace.width * root.split-column-ratio ? 0 : 1, row);
+        if split_workspace.drop-count == 2 {
+            root.split-drop-row(DragPreview.pointer-x < split_workspace.drop-x
+                + split_workspace.drop-width * root.split-column-ratio ? 0 : 1, row);
             return;
         }
-        root.split-drop-row((DragPreview.pointer-y < split_workspace.absolute-position.y
-            + split_workspace.height * root.split-row-ratio ? 0 : 2)
-            + (DragPreview.pointer-x < split_workspace.absolute-position.x
-            + split_workspace.width * root.split-column-ratio ? 0 : 1), row);
+        root.split-drop-row((DragPreview.pointer-y < split_workspace.drop-y
+            + split_workspace.drop-height * root.split-row-ratio ? 0 : 2)
+            + (DragPreview.pointer-x < split_workspace.drop-x
+            + split_workspace.drop-width * root.split-column-ratio ? 0 : 1), row);
     }
     // The working-directory prompt dialog (rename / new dir / new file /
     // delete / cloud-approval confirm), driven by the native controller.
@@ -1090,8 +1090,8 @@ export component MainWindow inherits Window {
     // and a real click needs the layout's own numbers rather than a repeated
     // guess about where the overlay lands. Both surfaces start below the
     // window's title strip, so every y carries the titlebar offset.
-    out property <length> split-button-x: root.width - 27px;
-    out property <length> split-button-y: Theme.titlebar-height + 25px;
+    out property <length> split-close-x: split_workspace.close-x;
+    out property <length> split-close-y: split_workspace.close-y;
     out property <length> settings-button-x: root.sidebar-width / 2;
     out property <length> settings-button-y: Theme.titlebar-height + sidebar_view.height - 20px;
     out property <length> settings-back-x: (root.width - min(1080px, root.width - 72px)) / 2
@@ -1519,7 +1519,8 @@ export component MainWindow inherits Window {
                 }
             }
             split_workspace := ChatSplitWorkspace {
-                horizontal-stretch: 1;
+                horizontal-stretch: root.split-count > 1 ? 1 : 0;
+                max-width: root.split-count > 1 ? root.width : 0px;
                 visible: root.split-count > 1;
                 count <=> root.split-count;
                 column-ratio <=> root.split-column-ratio;
@@ -1558,12 +1559,6 @@ export component MainWindow inherits Window {
         }
     }
 
-    if root.split-count == 1 && root.active-session-id != "" : Action {
-        x: root.width - 42px; y: Theme.titlebar-height + 10px; z: 300;
-        width: 30px; height: 30px;
-        icon: @image-url("../assets/icons/fa-table-columns.svg");
-        clicked => { root.split-layout(2); }
-    }
     if DragPreview.active && DragPreview.pointer-x >= root.sidebar-width + 6px : Rectangle {
         x: clamp(DragPreview.pointer-x + 10px, root.sidebar-width + 8px, root.width - 188px);
         y: clamp(DragPreview.pointer-y - 12px, Theme.titlebar-height + 8px, root.height - 34px);

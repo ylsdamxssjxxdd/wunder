@@ -301,6 +301,10 @@ pub fn install(app: &MainWindow) {
         let Some(app) = weak.upgrade() else { return };
         if count <= 1 {
             app.set_split_count(1);
+            app.set_split_session_0("".into());
+            app.set_split_session_1("".into());
+            app.set_split_session_2("".into());
+            app.set_split_session_3("".into());
             return;
         }
         if app.get_split_count() == 1 {
@@ -322,10 +326,17 @@ pub fn install(app: &MainWindow) {
     let drop_models = split_models.clone();
     app.on_split_drop_row(move |slot, row| {
         let Some(app) = weak.upgrade() else { return };
-        let Some(thread) = app.get_sidebar_rows().row_data(row.max(0) as usize) else {
+        if app.get_split_count() == 1 {
+            app.invoke_split_layout(2);
+        }
+        let model_index = row.max(0) as usize;
+        let Some(thread) = app
+            .get_sidebar_rows()
+            .iter()
+            .find(|item| item.kind == 1 && item.payload == row)
+        else {
             return;
         };
-        let model_index = thread.payload.max(0) as usize;
         let Some(model) = drop_models.get(model_index) else {
             return;
         };
@@ -351,6 +362,7 @@ pub fn install(app: &MainWindow) {
                 app.set_split_rows_3(ModelRc::from(model.clone()));
             }
         }
+        normalize_demo_split(&app);
     });
     let weak = app.as_weak();
     app.on_split_close(move |slot| {
@@ -373,6 +385,7 @@ pub fn install(app: &MainWindow) {
                 app.set_split_rows_3(ModelRc::default());
             }
         }
+        normalize_demo_split(&app);
     });
     let weak = app.as_weak();
     app.on_split_activate(move |slot| {
@@ -425,6 +438,23 @@ pub fn install(app: &MainWindow) {
             app.invoke_timeline_toggle(index);
         }
     });
+}
+
+fn normalize_demo_split(app: &MainWindow) {
+    let open = [
+        app.get_split_session_0(),
+        app.get_split_session_1(),
+        app.get_split_session_2(),
+        app.get_split_session_3(),
+    ]
+    .iter()
+    .filter(|id| !id.is_empty())
+    .count();
+    if open <= 1 {
+        app.invoke_split_layout(1);
+    } else {
+        app.set_split_count(if open == 2 { 2 } else { 4 });
+    }
 }
 
 fn slot(active: &Rc<RefCell<usize>>) -> usize {

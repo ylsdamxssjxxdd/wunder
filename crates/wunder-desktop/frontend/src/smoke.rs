@@ -43,15 +43,43 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         app.get_page() == crate::DesktopPage::Messages,
         "shell did not start on the chat page",
     )?;
-    click(app, app.get_split_button_x(), app.get_split_button_y())?;
+    app.invoke_split_drop_row(1, 1);
     require(
-        app.get_split_count() == 2,
-        "split entry did not open two panes",
+        app.get_split_count() == 2 && app.get_split_session_1() == "t2",
+        "thread drop did not open the correct second pane",
     )?;
     snapshot(app, &directory.join("native-split-two.png"))?;
-    app.invoke_split_layout(4);
-    require(app.get_split_count() == 4, "four-grid layout did not open")?;
+    click(app, app.get_split_close_x(), app.get_split_close_y())?;
+    require(
+        app.get_split_count() == 1,
+        "closing the last other pane did not restore single view",
+    )?;
+    snapshot(app, &directory.join("native-split-single.png"))?;
+    app.invoke_split_drop_row(1, 2);
+    app.invoke_split_drop_row(2, 1);
+    require(
+        app.get_split_count() == 4,
+        "third thread did not open the four-grid layout",
+    )?;
     snapshot(app, &directory.join("native-split-four.png"))?;
+    app.invoke_split_close(2);
+    require(
+        app.get_split_count() == 2,
+        "closing a grid pane did not return to two columns",
+    )?;
+    app.invoke_split_drop_row(2, 1);
+    require(
+        app.get_split_count() == 4,
+        "re-adding a thread did not restore the grid",
+    )?;
+    for _ in 0..64 {
+        app.invoke_split_layout(2);
+        app.invoke_split_layout(4);
+    }
+    require(
+        app.get_split_count() == 4,
+        "repeated split layout switching changed state",
+    )?;
     app.invoke_split_layout(1);
     click(
         app,

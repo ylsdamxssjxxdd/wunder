@@ -191,6 +191,7 @@ pub struct ImeContext {
     pub(crate) ic: ffi::XIC,
     pub(crate) ic_spot: ffi::XPoint,
     pub(crate) style: Style,
+    allowed: bool,
     // Since the data is passed shared between X11 XIM callbacks, but couldn't be directly free
     // from there we keep the pointer to automatically deallocate it.
     _client_data: Box<ImeContextClientData>,
@@ -202,6 +203,7 @@ impl ImeContext {
         im: ffi::XIM,
         style: Style,
         window: ffi::Window,
+        allowed: bool,
         ic_spot: Option<ffi::XPoint>,
         event_sender: ImeEventSender,
     ) -> Result<Self, ImeContextCreationError> {
@@ -235,6 +237,7 @@ impl ImeContext {
             ic,
             ic_spot: ffi::XPoint { x: 0, y: 0 },
             style,
+            allowed: allowed && !matches!(style, Style::None(_)),
             _client_data: unsafe { Box::from_raw(client_data) },
         };
 
@@ -341,7 +344,11 @@ impl ImeContext {
     }
 
     pub fn is_allowed(&self) -> bool {
-        !matches!(self.style, Style::None(_))
+        self.allowed
+    }
+
+    pub fn set_allowed(&mut self, allowed: bool) {
+        self.allowed = allowed && !matches!(self.style, Style::None(_));
     }
 
     // Set the spot for preedit text. Setting spot isn't working with libX11 when preedit callbacks

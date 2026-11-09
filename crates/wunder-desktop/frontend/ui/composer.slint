@@ -1528,10 +1528,18 @@ export component Composer inherits Rectangle {
         root.permission-open = false;
         root.screenshot-open = false;
     }
-    // 对齐云端版 chat-footer (background: transparent; border-top: 0): the band
-    // itself paints nothing, so the white rounded input card is the only
-    // surface — no white rectangular frame around it.
     background: transparent;
+    if !root.mobile : Rectangle {
+        x: 0px;
+        y: 8px + (root.queue-open ? root.queue-height + 6px : 0px)
+            + (root.attachments.length > 0 ? 36px : 0px);
+        width: parent.width;
+        height: max(0px, root.height - self.y - 10px);
+        border-radius: 16px;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: editor.has-focus ? Theme.accent-ink : Theme.border;
+    }
     VerticalLayout {
         // The side inset lives on the input band (main.slint), so the goal
         // banner and the inquiry card share this card's edges.
@@ -1554,10 +1562,8 @@ export component Composer inherits Rectangle {
             }
             Rectangle { horizontal-stretch: 1; }
         }
-        // The editor owns the input card's background, border and focus ring,
-        // so there is one rounded surface and no rectangular frame around it.
-        // Phones put the plus and send squares on this same row; desktop keeps
-        // its separate action row below.
+        // Desktop shares one card surface with the action row below the editor;
+        // phones keep their own editor card and put plus/send on the same row.
         HorizontalLayout {
             vertical-stretch: 1;
             spacing: root.mobile ? 8px : 0px;
@@ -1604,8 +1610,8 @@ export component Composer inherits Rectangle {
                 editor := TextEditBase {
                 x: 0px; y: 0px; width: parent.width; height: parent.height;
                 border-radius: 16px;
-                background: Theme.surface;
-                border-width: 1px;
+                background: root.mobile ? Theme.surface : transparent;
+                border-width: root.mobile ? 1px : 0px;
                 border-color: self.has-focus ? Theme.accent-ink : Theme.border;
                 scroll-view-padding: root.mobile ? 11px : 14px;
                 accessible-role: text-input;

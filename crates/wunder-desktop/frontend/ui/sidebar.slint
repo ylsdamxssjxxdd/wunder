@@ -623,7 +623,7 @@ export component Sidebar inherits Rectangle {
                         split-drop-x: root.absolute-position.x + root.width + 6px;
                         activate => { root.select-row(ri); }
                         move-by(travel) => { root.move-row(ri, travel); }
-                        drop-to-chat => { root.drop-thread-to-chat(ri); }
+                        drop-to-chat => { root.drop-thread-to-chat(row.payload); }
                         ThreadRow {
                             height: parent.height;
                             width: parent.width;

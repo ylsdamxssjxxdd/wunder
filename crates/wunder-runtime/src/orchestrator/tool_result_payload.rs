@@ -530,6 +530,11 @@ fn extract_execute_command_failure_detail(map: &Map<String, Value>) -> Option<St
     Some(details.join("\n"))
 }
 
+/// 失败摘要至少保留的开头行数，以及触发「头 + 焦点窗口」的行数门槛。
+const FAILURE_STREAM_HEAD_LINES: usize = 2;
+const FAILURE_STREAM_FULL_LINES: usize = 6;
+const FAILURE_STREAM_MAX_CHARS: usize = 320;
+
 fn summarize_command_failure_stream(map: &Map<String, Value>, stream: &str) -> Option<String> {
     let output = map
         .get(stream)
@@ -559,14 +564,33 @@ fn summarize_command_failure_stream(map: &Map<String, Value>, stream: &str) -> O
         .unwrap_or(lines.len().saturating_sub(1));
     let start = focus_index.saturating_sub(2);
     let end = (focus_index + 1).min(lines.len().saturating_sub(1));
-    let detail = lines[start..=end]
+    let window = lines[start..=end]
         .iter()
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join(" | ");
-    let detail = if detail.chars().count() > 320 {
-        let head = detail.chars().take(320).collect::<String>();
+    // 只看焦点附近会让人以为前半截丢了：输出较长时补上开头两行，中间行数说清楚。
+    let total = lines.len();
+    let detail = if start > FAILURE_STREAM_HEAD_LINES && total > FAILURE_STREAM_FULL_LINES {
+        let head = lines[..FAILURE_STREAM_HEAD_LINES]
+            .iter()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let omitted = start - FAILURE_STREAM_HEAD_LINES;
+        let mut joined = head;
+        joined.push_str(" | ...(");
+        joined.push_str(&omitted.to_string());
+        joined.push_str(" lines omitted)... | ");
+        joined.push_str(&window);
+        joined
+    } else {
+        window
+    };
+    let detail = if detail.chars().count() > FAILURE_STREAM_MAX_CHARS {
+        let head = detail.chars().take(FAILURE_STREAM_MAX_CHARS).collect::<String>();
         format!("{head}...")
     } else {
         detail
@@ -592,6 +616,8 @@ const OBSERVATION_TABLE_SAMPLE_ROWS: usize = 4;
 // and local context for the model to make an edit decision without replaying
 // the same search, while bounding the second observation envelope.
 const OBSERVATION_SEARCH_HIT_LIMIT: usize = 12;
+/// mode=paths 只回文件清单，条数上限按可直接行动的文件数给足。
+const OBSERVATION_SEARCH_PATH_LIMIT: usize = 40;
 const OBSERVATION_SEARCH_CONTENT_HEAD_CHARS: usize = 360;
 const OBSERVATION_SEARCH_CONTEXT_LINE_LIMIT: usize = 2;
 const OBSERVATION_SEARCH_CONTEXT_LINE_CHARS: usize = 220;
@@ -3044,6 +3070,7 @@ fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
         "fallback_applied",
         "returned_match_count",
         "matched_file_count",
+        "files_only",
         "timeout_hit",
         "match_limit_hit",
         "file_limit_hit",
@@ -3061,6 +3088,23 @@ fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
         }
         if !summary_compacted.is_empty() {
             compacted.insert("summary".to_string(), Value::Object(summary_compacted));
+        }
+    }
+    if let Some(paths) = map.get("paths").and_then(Value::as_array) {
+        let total = paths.len();
+        let kept = paths
+            .iter()
+            .take(OBSERVATION_SEARCH_PATH_LIMIT)
+            .filter_map(|path| path.as_str().map(|text| Value::String(text.to_string())))
+            .collect::<Vec<_>>();
+        if !kept.is_empty() {
+            compacted.insert("paths".to_string(), Value::Array(kept));
+            if total > OBSERVATION_SEARCH_PATH_LIMIT {
+                compacted.insert(
+                    "paths_omitted".to_string(),
+                    json!(total - OBSERVATION_SEARCH_PATH_LIMIT),
+                );
+            }
         }
     }
     if let Some(hits) = map.get("hits").and_then(Value::as_array) {

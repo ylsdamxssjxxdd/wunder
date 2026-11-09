@@ -2851,7 +2851,7 @@ fn start_update_download(desktop: Arc<NativeDesktop>, shared: Arc<Mutex<Shared>>
         offer
     };
     let progress = {
-        let Ok(mut state) = shared.lock() else {
+        let Ok(state) = shared.lock() else {
             return;
         };
         state.update_progress_bytes.clone()
