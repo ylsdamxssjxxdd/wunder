@@ -267,3 +267,59 @@ fn native_hwnd(window: &slint::Window) -> Option<HWND> {
     };
     Some(handle.hwnd.get() as HWND)
 }
+
+/// X11: drop `_NET_WM_STATE_DEMANDS_ATTENTION` from an auxiliary top-level.
+/// Mutter raises that state when a no-activate Utility window is mapped while
+/// another app holds focus, and never clears it because the overlay never takes
+/// focus — the dock/taskbar icon then bounces forever. winit's
+/// `request_user_attention(None)` only touches the WM_HINTS urgency bit, not the
+/// EWMH state, so send the same `_NET_WM_STATE` remove message a WM client uses.
+#[cfg(target_os = "linux")]
+pub fn clear_demands_attention(window: &slint::Window) {
+    use slint::winit_030::WinitWindowAccessor;
+    use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use x11_dl::xlib;
+
+    let xwindow = window
+        .with_winit_window(|native| {
+            let handle = native.window_handle().ok()?;
+            let RawWindowHandle::Xlib(handle) = handle.as_raw() else { return None };
+            Some(handle.window)
+        })
+        .flatten();
+    let Some(xwindow) = xwindow else { return };
+    let Ok(lib) = xlib::Xlib::open() else { return };
+    unsafe {
+        let display = (lib.XOpenDisplay)(std::ptr::null());
+        if display.is_null() {
+            return;
+        }
+        let root = (lib.XRootWindow)(display, (lib.XDefaultScreen)(display));
+        let state = (lib.XInternAtom)(
+            display,
+            b"_NET_WM_STATE\0".as_ptr() as *const std::ffi::c_char,
+            0,
+        );
+        let demands = (lib.XInternAtom)(
+            display,
+            b"_NET_WM_STATE_DEMANDS_ATTENTION\0".as_ptr() as *const std::ffi::c_char,
+            0,
+        );
+        let mut event: xlib::XEvent = std::mem::zeroed();
+        event.client_message.type_ = xlib::ClientMessage;
+        event.client_message.window = xwindow;
+        event.client_message.message_type = state;
+        event.client_message.format = 32;
+        event.client_message.data.set_long(0, 0); // _NET_WM_STATE_REMOVE
+        event.client_message.data.set_long(1, demands as std::ffi::c_long);
+        (lib.XSendEvent)(
+            display,
+            root,
+            0,
+            xlib::SubstructureRedirectMask | xlib::SubstructureNotifyMask,
+            &mut event,
+        );
+        (lib.XFlush)(display);
+        (lib.XCloseDisplay)(display);
+    }
+}

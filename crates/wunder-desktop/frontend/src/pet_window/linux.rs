@@ -215,7 +215,18 @@ impl PetWindow {
         self.comp
             .window()
             .set_position(slint::LogicalPosition::new(x, y));
-        let _ = self.comp.show();
+        // Re-showing an already-mapped overlay makes mutter re-raise the
+        // demands-attention state on every projection, leaving the dock icon
+        // bouncing; map only once and clear the state after the WM sees it.
+        if !self.comp.window().is_visible() {
+            let _ = self.comp.show();
+            let weak = self.comp.as_weak();
+            slint::Timer::single_shot(Duration::from_millis(100), move || {
+                if let Some(comp) = weak.upgrade() {
+                    crate::native_window::clear_demands_attention(comp.window());
+                }
+            });
+        }
     }
 }
 
