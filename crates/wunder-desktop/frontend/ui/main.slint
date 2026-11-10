@@ -480,6 +480,8 @@ export component MainWindow inherits Window {
     in-out property <bool> split-busy-1;
     in-out property <bool> split-busy-2;
     in-out property <bool> split-busy-3;
+    in-out property <[string]> split-model-names: ["", "", "", ""];
+    in-out property <[string]> split-model-keys: ["", "", "", ""];
     callback split-layout(int);
     callback split-close(int);
     callback split-activate(int);
@@ -1572,6 +1574,8 @@ export component MainWindow inherits Window {
                 model-count: root.cloud-chat-active ? root.cloud-thread-models.length : root.model-catalogue-count;
                 model-name: root.selected-model-key != "" ? root.selected-model-key : root.selected-agent-model;
                 model-key: root.selected-model-key;
+                model-names: root.split-model-names;
+                model-keys: root.split-model-keys;
                 attachments: root.pending-attachments;
                 send-key: root.runtime-send-key;
                 layout-changed(count) => { root.split-layout(count); }

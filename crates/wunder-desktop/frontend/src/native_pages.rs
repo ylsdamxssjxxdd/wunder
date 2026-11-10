@@ -603,7 +603,10 @@ fn profile_glyph(username: &str) -> String {
 /// swap. Returns `false` when the model is not a `VecModel` and the caller
 /// must rebuild it.
 fn toggle_name_in_model(selection: &ModelRc<slint::SharedString>, name: &str) -> bool {
-    let Some(names) = selection.as_any().downcast_ref::<VecModel<slint::SharedString>>() else {
+    let Some(names) = selection
+        .as_any()
+        .downcast_ref::<VecModel<slint::SharedString>>()
+    else {
         return false;
     };
     if let Some(position) = names.iter().position(|value| value.as_str() == name) {
@@ -620,7 +623,10 @@ fn toggle_agent_tool_selection(app: &MainWindow, name: &str) {
     if toggle_name_in_model(&selection, name) {
         return;
     }
-    let mut names = selection.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+    let mut names = selection
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
     if let Some(position) = names.iter().position(|value| value == name) {
         names.remove(position);
     } else {
@@ -1417,10 +1423,9 @@ mod tests {
         );
         // A non-VecModel cannot be mutated in place and asks for a rebuild.
         let filtered = slint::ModelRc::new(
-            slint::VecModel::from(vec![SharedString::from("read_file")]).filter(
-                Box::new(|v: &SharedString| v.as_str() != "run_shell")
-                    as Box<dyn Fn(&SharedString) -> bool>,
-            ),
+            slint::VecModel::from(vec![SharedString::from("read_file")])
+                .filter(Box::new(|v: &SharedString| v.as_str() != "run_shell")
+                    as Box<dyn Fn(&SharedString) -> bool>),
         );
         assert!(!toggle_name_in_model(&filtered, "web_search"));
     }

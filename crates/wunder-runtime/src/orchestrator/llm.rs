@@ -696,7 +696,6 @@ impl Orchestrator {
                 round_info.user_round,
                 round_info.model_round,
                 tools,
-                !round_info.is_goal_round,
                 user_message.as_deref(),
                 allow_subagent,
             )

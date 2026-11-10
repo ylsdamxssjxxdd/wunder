@@ -1433,10 +1433,10 @@ export component Composer inherits Rectangle {
         ? 12px + 20px + root.queue-turns.length * 28px
             + (root.queue-overflow > 0 ? 16px : 0px) + (root.queue-items - 1) * 2px + 6px
         : 0px;
-    // Desktop adds 6px of breathing room inside the 36px action band, in
-    // addition to the 6px gap after the editor. Mobile keeps its touch band.
+    // Desktop keeps the action band compact and directly below the editor gap.
+    // Mobile keeps its touch band.
     private property <length> action-row-height: root.mobile ? 40px : 36px;
-    height: (root.mobile ? 70px : 166px)
+    height: (root.mobile ? 70px : 136px)
         + (root.attachments.length > 0 ? 36px : 0px)
         + (root.branch-name != "" ? 22px : 0px) + root.queue-height;
     private property <bool> plus-open: false;
@@ -1533,7 +1533,7 @@ export component Composer inherits Rectangle {
         y: 8px + (root.queue-open ? root.queue-height + 6px : 0px)
             + (root.attachments.length > 0 ? 36px : 0px);
         width: parent.width;
-        height: max(0px, root.height - self.y - 16px);
+        height: max(0px, root.height - self.y - 10px);
         border-radius: 16px;
         background: Theme.surface;
         border-width: 1px;
@@ -1542,7 +1542,7 @@ export component Composer inherits Rectangle {
     VerticalLayout {
         // The side inset lives on the input band (main.slint), so the goal
         // banner and the inquiry card share this card's edges.
-        padding-top: 8px; padding-bottom: 16px; spacing: 6px;
+        padding-top: 8px; padding-bottom: 10px; spacing: 6px;
         if root.queue-open : QueueStrip {
             turns: root.queue-turns;
             overflow: root.queue-overflow;
@@ -1772,7 +1772,7 @@ export component Composer inherits Rectangle {
         HorizontalLayout {
             height: root.mobile ? 0px : root.action-row-height;
             visible: !root.mobile;
-            padding-top: root.mobile ? 0px : 6px;
+            padding-top: 0px;
             padding-left: root.mobile ? 0px : 10px;
             padding-right: root.mobile ? 0px : 10px;
             spacing: 6px;

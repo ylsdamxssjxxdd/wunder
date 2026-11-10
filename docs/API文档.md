@@ -279,7 +279,7 @@ wunder 是一个**多形态的智能体工作台**：桌面版（desktop）是�
   - 网页端 Messenger：`/goal <objective>` 作为一条用户轮次气泡发送并持久化（transcript 行带 `goal_command` 标志），同时创建或替换目标并进入 `active`；`/goal` 查看当前目标状态；`/goal resume` 恢复目标；目标态期间输入不锁定，可随时正常聊天或通过 `/goal <新目标>` 直接替换。
   - 命令行 / TUI：`/goal` 查看当前目标，`/goal <objective>` 创建或替换当前目标并进入 `active`，`/goal --tokens <n> <objective>` 可设置可选 token 预算。
 - 网页端退出目标态统一通过聊天页停止按钮完成，终止会调用会话 cancel 并清除目标。
-- 模型侧暴露单一内置工具 `goal`；支持 `action=get/create/update`，其中 `action=update` 只允许 `status=complete`，模型不能暂停、恢复或清除目标。
+- 模型侧暴露单一内置工具 `goal`；支持 `action=get/edit/pause/resume/complete/blocked`。创建目标只能由用户通过 `/goal`、目标条或 REST 发起，模型没有创建动作；模型尝试 `action=create` 会被 `GOAL_TOOL_CREATE_USER_ONLY` 拒绝。
 - `goal` 工具是运行时系统能力，始终注入模型可用工具列表，不受会话或智能体卡片工具配置影响。
 - 网页端 Messenger 支持 `/goal` 命令；目标态中的智能体会在中栏条目显示“目标”标识，目标态不再锁定发送等线程操作；退出统一通过聊天页停止按钮完成。
 - 目标续跑提示词将 objective 作为数据包裹注入（不改写 frozen system prompt），包含跨轮次保持、证据校验、完成审计与预算汇报要求。

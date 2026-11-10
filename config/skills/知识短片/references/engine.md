@@ -38,7 +38,7 @@ python engine/audio.py  <工程> --bgm 曲子.mp3 -8        # 垫现成配乐（
 
 渲染速度单路约每秒 3–6 帧（1080p，截 PNG），`--jobs 4` 大致快三倍。3 分钟的片子仍然要十几分钟——所以先看拼图，再渲片段，最后才渲全片。
 依赖：Python 的 `playwright`（优先用补充包里的 Chrome，找不到再退回系统 Chrome）、`numpy`、`scipy`、`Pillow`，以及 `ffmpeg`。
-桌面版/安卓补充包已带 scipy 和 6 个拉丁/等宽视频字体；中文用 `opt/fonts/common` 的宋体/雅黑。云端镜像也带 scipy，字体放在 `config/fonts/{video,common}`（挂到 `/usr/share/fonts/wunder`）。开发环境缺拉丁字体时跑 `python engine/get_fonts.py`。
+桌面版/安卓补充包已带 scipy 和 8 个视频字体（思源宋体/黑体 + 6 个拉丁/等宽）；中文优先用视频字体，缺失时退回 `opt/fonts/common` 的宋体/雅黑。云端镜像也带 scipy，字体放在 `config/fonts/{video,common}`（挂到 `/usr/share/fonts/wunder`）。开发环境缺字体时跑 `python engine/get_fonts.py`。
 
 ## film.js 的样子
 

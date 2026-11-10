@@ -212,8 +212,8 @@ FFPROBE_SRC="$(find "$WORK/ffmpeg" -type f -name ffprobe | head -1)"
 install -m 755 "$FFMPEG_SRC" "$WORK/work/usr/local/bin/ffmpeg"
 install -m 755 "$FFPROBE_SRC" "$WORK/work/usr/local/bin/ffprobe"
 
-# 知识短片 skill 的 6 个拉丁/等宽 OFL 字体（中文用共用字体）：优先从部署机 config/fonts/video 复制，
-# 没有就按 packaging/fonts/video-fonts.json 的固定 URL + SHA-256 下载。
+# 知识短片 skill 的 8 个 OFL 字体（思源宋体/黑体 + 6 个拉丁/等宽；中文缺失时退回共用字体）：
+# 优先从部署机 config/fonts/video 复制，没有就按 packaging/fonts/video-fonts.json 的固定 URL + SHA-256 下载。
 echo "==> video fonts"
 [ -f "$VIDEO_FONTS_SCRIPT" ] || { echo "missing video font fetcher: $VIDEO_FONTS_SCRIPT" >&2; exit 2; }
 VIDEO_FONTS_CACHE="$WORK/video-fonts"
@@ -223,7 +223,7 @@ python3 "$VIDEO_FONTS_SCRIPT" "${fetch_args[@]}"
 sudo -n mkdir -p "$WORK/work/usr/share/fonts/wunder/video"
 sudo -n cp -f "$VIDEO_FONTS_CACHE"/*.ttf "$WORK/work/usr/share/fonts/wunder/video/"
 sudo -n cp -f "$VIDEO_FONTS_CACHE"/OFL-*.txt "$WORK/work/usr/share/fonts/wunder/video/" 2>/dev/null || true
-[ "$(find "$WORK/work/usr/share/fonts/wunder/video" -maxdepth 1 -name '*.ttf' | wc -l)" -ge 6 ] \
+[ "$(find "$WORK/work/usr/share/fonts/wunder/video" -maxdepth 1 -name '*.ttf' | wc -l)" -ge 8 ] \
     || { echo "video fonts incomplete under /usr/share/fonts/wunder/video" >&2; exit 2; }
 
 # 公文/文档通用字体：仿宋、楷体、黑体、宋体、方正小标宋、微软雅黑、等线与
@@ -269,7 +269,7 @@ fc-match -f '%{family}\n' '黑体' | grep -qi 'SimHei' || { echo '黑体 mapping
 fc-match -f '%{family}\n' '宋体' | grep -qi 'SimSun' || { echo '宋体 mapping missing'; exit 1; }; \
 fc-match -f '%{family}\n' '方正小标宋简体' | grep -qi 'FZXiaoBiaoSong' || { echo '小标宋 mapping missing'; exit 1; }; \
 fc-match -f '%{family}\n' 'Times New Roman' | grep -qi 'Times New Roman' || { echo 'Times New Roman missing'; exit 1; }; \
-fc-match -f '%{family}\n' ':charset=4e2d' | grep -qi 'WenQuanYi' \
+fc-match -f '%{family}\n' ':charset=4e2d' | grep -Eqi 'WenQuanYi|Microsoft YaHei|Noto (Serif|Sans) SC|SimSun|SimHei|FangSong|KaiTi' \
     || { echo 'no CJK fallback for U+4E2D'; exit 1; }; \
 fc-match -f '%{family}\n' ':charset=1f9d1' | grep -qi 'Noto Color Emoji' \
     || { echo 'no emoji fallback for U+1F9D1'; exit 1; }; \

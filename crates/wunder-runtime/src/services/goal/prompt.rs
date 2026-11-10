@@ -27,13 +27,14 @@ pub fn render_goal_guidance() -> String {
 
 pub fn render_goal_guidance_with_threshold(blocked_after: i64) -> String {
     format!(
-        "goal action=create may infer goal intent from a direct human request in any language. After \
-         session resume or fork, an active goal is disarmed: when a human asks to continue or \
-         resume in any wording or language, use goal action=resume to rearm it. Mark \
-         complete only when the objective is actually achieved. Mark blocked only after the same \
-         blocking condition persists for at least {blocked_after} consecutive goal rounds, and \
-         report that concrete condition in blocked_reason; difficulty, uncertainty, or useful \
-         remaining work is not blocked."
+        "Never start a goal yourself: only the user can start one, through /goal or the goal bar, \
+         and the runtime rejects model attempts to create or replace a goal. After session resume \
+         or fork, an active goal is disarmed: when a human asks to continue or resume in any \
+         wording or language, use goal action=resume to rearm it. Mark complete only when the \
+         objective is actually achieved. Mark blocked only after the same blocking condition \
+         persists for at least {blocked_after} consecutive goal rounds, and report that concrete \
+         condition in blocked_reason; difficulty, uncertainty, or useful remaining work is not \
+         blocked."
     )
 }
 

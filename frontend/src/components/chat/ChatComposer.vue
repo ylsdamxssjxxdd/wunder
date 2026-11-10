@@ -117,7 +117,7 @@
       @withdrawn="handleQueueTurnWithdrawn"
     />
 
-    <!-- 输入框是唯一的「卡片」：白底 + 细边 + 圆角；工具行不再共用这张底。 -->
+    <!-- 输入卡与桌面一致：白底 + 细边 + 圆角，编辑器与底部工具行共用这一张底。 -->
     <div class="input-box input-box--world">
       <textarea
         data-testid="chat-composer-input"
@@ -139,208 +139,208 @@
         </span>
         <span>{{ voiceTranscribingLabel }}</span>
       </div>
-    </div>
 
-    <div class="composer-action-row">
-      <div class="composer-action-group">
-        <!-- 命令 / 预设问题 / 录音 / 审批收进「+」；常驻状态格只列后台任务与子智能体。 -->
-        <div ref="plusMenuAnchorRef" class="composer-anchor">
-          <button
-            class="composer-plus-btn"
-            type="button"
-            data-testid="chat-composer-plus"
-            :class="{ 'is-active': plusPanelVisible }"
-            :title="t('chat.composer.moreActions')"
-            :aria-label="t('chat.composer.moreActions')"
-            :aria-expanded="plusPanelVisible"
-            @click.stop="togglePlusMenu"
-          >
-            <i class="fa-solid fa-plus composer-plus-icon" aria-hidden="true"></i>
-          </button>
+      <div class="composer-action-row">
+        <div class="composer-action-group">
+          <!-- 命令 / 预设问题 / 录音 / 审批收进「+」；常驻状态格只列后台任务与子智能体。 -->
+          <div ref="plusMenuAnchorRef" class="composer-anchor">
+            <button
+              class="composer-plus-btn"
+              type="button"
+              data-testid="chat-composer-plus"
+              :class="{ 'is-active': plusPanelVisible }"
+              :title="t('chat.composer.moreActions')"
+              :aria-label="t('chat.composer.moreActions')"
+              :aria-expanded="plusPanelVisible"
+              @click.stop="togglePlusMenu"
+            >
+              <i class="fa-solid fa-plus composer-plus-icon" aria-hidden="true"></i>
+            </button>
 
-          <div v-if="plusPanelVisible" class="composer-panel composer-panel--plus" @click.stop>
-            <div class="composer-plus-row" @mouseenter="hoverPlusSubmenu('command')">
-              <button
-                class="composer-plus-item"
-                type="button"
-                :class="{ 'is-active': commandMenuOpen }"
-                :aria-expanded="commandMenuOpen"
-                @click.stop="toggleCommandMenu"
-              >
-                <i class="fa-solid fa-terminal composer-plus-item-icon" aria-hidden="true"></i>
-                <span class="composer-plus-item-label">{{ t('chat.composer.commands') }}</span>
-                <i class="fa-solid fa-chevron-right composer-plus-item-caret" aria-hidden="true"></i>
-              </button>
-              <div v-if="commandPanelVisible && !presetMenuVisible" class="composer-plus-flyout" role="listbox">
-                <button
-                  v-for="(item, index) in commandPanelItems"
-                  :key="item.command"
-                  class="command-menu-item"
-                  :class="{ active: !commandMenuOpen && index === commandMenuIndex }"
-                  type="button"
-                  role="option"
-                  :aria-selected="!commandMenuOpen && index === commandMenuIndex"
-                  @mousedown.prevent="applyCommandSuggestion(index)"
-                  @mouseenter="setCommandMenuIndex(index)"
-                >
-                  <span class="command-menu-name">{{ item.command }}</span>
-                  <span class="command-menu-desc">{{ item.description }}</span>
-                </button>
-                <div class="command-menu-hint">{{ t('chat.commandMenu.hint') }}</div>
-              </div>
-            </div>
-
-            <template v-if="presetQuestionItems.length">
-              <div class="composer-plus-row" @mouseenter="hoverPlusSubmenu('preset')">
+            <div v-if="plusPanelVisible" class="composer-panel composer-panel--plus" @click.stop>
+              <div class="composer-plus-row" @mouseenter="hoverPlusSubmenu('command')">
                 <button
                   class="composer-plus-item"
                   type="button"
-                  :class="{ 'is-active': presetMenuVisible }"
-                  :aria-expanded="presetMenuVisible"
-                  @click.stop="togglePresetMenu"
+                  :class="{ 'is-active': commandMenuOpen }"
+                  :aria-expanded="commandMenuOpen"
+                  @click.stop="toggleCommandMenu"
                 >
-                  <i
-                    class="fa-solid fa-wand-magic-sparkles composer-plus-item-icon"
-                    aria-hidden="true"
-                  ></i>
-                  <span class="composer-plus-item-label">{{
-                    t('chat.commandMenu.presetQuestions')
-                  }}</span>
+                  <i class="fa-solid fa-terminal composer-plus-item-icon" aria-hidden="true"></i>
+                  <span class="composer-plus-item-label">{{ t('chat.composer.commands') }}</span>
                   <i class="fa-solid fa-chevron-right composer-plus-item-caret" aria-hidden="true"></i>
                 </button>
-                <ComposerPresetQuestions
-                  v-if="presetMenuVisible"
-                  class="composer-plus-flyout"
-                  :items="presetQuestionItems"
-                  @pick="applyPresetQuestion"
-                />
+                <div v-if="commandPanelVisible && !presetMenuVisible" class="composer-plus-flyout" role="listbox">
+                  <button
+                    v-for="(item, index) in commandPanelItems"
+                    :key="item.command"
+                    class="command-menu-item"
+                    :class="{ active: !commandMenuOpen && index === commandMenuIndex }"
+                    type="button"
+                    role="option"
+                    :aria-selected="!commandMenuOpen && index === commandMenuIndex"
+                    @mousedown.prevent="applyCommandSuggestion(index)"
+                    @mouseenter="setCommandMenuIndex(index)"
+                  >
+                    <span class="command-menu-name">{{ item.command }}</span>
+                    <span class="command-menu-desc">{{ item.description }}</span>
+                  </button>
+                  <div class="command-menu-hint">{{ t('chat.commandMenu.hint') }}</div>
+                </div>
               </div>
-            </template>
 
-            <div
-              v-if="showApprovalModeSelector"
-              class="composer-plus-row"
-              @mouseenter="hoverPlusSubmenu('approval')"
-            >
-              <button
-                class="composer-plus-item"
-                type="button"
-                :class="{ 'is-active': approvalMenuVisible }"
-                :disabled="approvalModeSyncing"
-                :aria-expanded="approvalMenuVisible"
-                @click.stop="toggleApprovalMenu"
+              <template v-if="presetQuestionItems.length">
+                <div class="composer-plus-row" @mouseenter="hoverPlusSubmenu('preset')">
+                  <button
+                    class="composer-plus-item"
+                    type="button"
+                    :class="{ 'is-active': presetMenuVisible }"
+                    :aria-expanded="presetMenuVisible"
+                    @click.stop="togglePresetMenu"
+                  >
+                    <i
+                      class="fa-solid fa-wand-magic-sparkles composer-plus-item-icon"
+                      aria-hidden="true"
+                    ></i>
+                    <span class="composer-plus-item-label">{{
+                      t('chat.commandMenu.presetQuestions')
+                    }}</span>
+                    <i class="fa-solid fa-chevron-right composer-plus-item-caret" aria-hidden="true"></i>
+                  </button>
+                  <ComposerPresetQuestions
+                    v-if="presetMenuVisible"
+                    class="composer-plus-flyout"
+                    :items="presetQuestionItems"
+                    @pick="applyPresetQuestion"
+                  />
+                </div>
+              </template>
+
+              <div
+                v-if="showApprovalModeSelector"
+                class="composer-plus-row"
+                @mouseenter="hoverPlusSubmenu('approval')"
               >
-                <i :class="[approvalTriggerIcon, 'composer-plus-item-icon']" aria-hidden="true"></i>
-                <span class="composer-plus-item-label">{{ approvalModeLabel }}</span>
-                <i class="fa-solid fa-chevron-right composer-plus-item-caret" aria-hidden="true"></i>
-              </button>
-              <!-- 审批模式子面板：与命令/预设同级的右侧呼出，选项列表复用原下拦内容。 -->
-              <div v-if="approvalMenuVisible" class="composer-plus-flyout" role="menu">
-                <div class="composer-panel-title">{{ t('chat.composer.approval') }}</div>
                 <button
-                  v-for="option in approvalOptions"
-                  :key="option.value"
-                  class="composer-panel-item composer-panel-item--radio"
-                  :class="{ 'is-selected': option.value === approvalModeValue }"
+                  class="composer-plus-item"
                   type="button"
-                  role="menuitemradio"
-                  :aria-checked="option.value === approvalModeValue"
-                  @click="selectApprovalMode(option.value)"
+                  :class="{ 'is-active': approvalMenuVisible }"
+                  :disabled="approvalModeSyncing"
+                  :aria-expanded="approvalMenuVisible"
+                  @click.stop="toggleApprovalMenu"
                 >
-                  <span class="composer-panel-radio" aria-hidden="true">
-                    <i v-if="option.value === approvalModeValue" class="fa-solid fa-check"></i>
-                  </span>
-                  <span class="composer-panel-main">
-                    <span class="composer-panel-item-label">{{ option.label }}</span>
-                    <span class="composer-panel-desc">{{ option.description }}</span>
+                  <i :class="[approvalTriggerIcon, 'composer-plus-item-icon']" aria-hidden="true"></i>
+                  <span class="composer-plus-item-label">{{ approvalModeLabel }}</span>
+                  <i class="fa-solid fa-chevron-right composer-plus-item-caret" aria-hidden="true"></i>
+                </button>
+                <!-- 审批模式子面板：与命令/预设同级的右侧呼出，选项列表复用原下拦内容。 -->
+                <div v-if="approvalMenuVisible" class="composer-plus-flyout" role="menu">
+                  <div class="composer-panel-title">{{ t('chat.composer.approval') }}</div>
+                  <button
+                    v-for="option in approvalOptions"
+                    :key="option.value"
+                    class="composer-panel-item composer-panel-item--radio"
+                    :class="{ 'is-selected': option.value === approvalModeValue }"
+                    type="button"
+                    role="menuitemradio"
+                    :aria-checked="option.value === approvalModeValue"
+                    @click="selectApprovalMode(option.value)"
+                  >
+                    <span class="composer-panel-radio" aria-hidden="true">
+                      <i v-if="option.value === approvalModeValue" class="fa-solid fa-check"></i>
+                    </span>
+                    <span class="composer-panel-main">
+                      <span class="composer-panel-item-label">{{ option.label }}</span>
+                      <span class="composer-panel-desc">{{ option.description }}</span>
+                    </span>
+                  </button>
+                  <div class="composer-panel-hint">{{ t('chat.composer.approval.hint') }}</div>
+                </div>
+              </div>
+
+              <div class="composer-plus-row" @mouseenter="hoverPlusSubmenu('none')">
+                <button
+                  v-if="voiceSupported"
+                  class="composer-plus-item"
+                  type="button"
+                  :class="{ 'is-recording': voiceRecording }"
+                  :disabled="composerBusy > 0 || voiceTranscribing"
+                  :title="voiceButtonTitle"
+                  @click.stop="handleToggleVoiceRecord"
+                >
+                  <i
+                    :class="[
+                      voiceRecording
+                        ? 'fa-solid fa-stop'
+                        : voiceTranscribing
+                          ? 'fa-solid fa-waveform-lines'
+                          : 'fa-solid fa-microphone',
+                      'composer-plus-item-icon'
+                    ]"
+                    aria-hidden="true"
+                  ></i>
+                  <span class="composer-plus-item-label">{{ t('messenger.world.voice.title') }}</span>
+                  <span v-if="voiceRecording" class="composer-voice-timer" :title="voiceRecordingLabel">
+                    {{ formatVoiceDurationLabel(props.voiceDurationMs) }}
                   </span>
                 </button>
-                <div class="composer-panel-hint">{{ t('chat.composer.approval.hint') }}</div>
               </div>
             </div>
-
-            <div class="composer-plus-row" @mouseenter="hoverPlusSubmenu('none')">
-              <button
-                v-if="voiceSupported"
-                class="composer-plus-item"
-                type="button"
-                :class="{ 'is-recording': voiceRecording }"
-                :disabled="composerBusy > 0 || voiceTranscribing"
-                :title="voiceButtonTitle"
-                @click.stop="handleToggleVoiceRecord"
-              >
-                <i
-                  :class="[
-                    voiceRecording
-                      ? 'fa-solid fa-stop'
-                      : voiceTranscribing
-                        ? 'fa-solid fa-waveform-lines'
-                        : 'fa-solid fa-microphone',
-                    'composer-plus-item-icon'
-                  ]"
-                  aria-hidden="true"
-                ></i>
-                <span class="composer-plus-item-label">{{ t('messenger.world.voice.title') }}</span>
-                <span v-if="voiceRecording" class="composer-voice-timer" :title="voiceRecordingLabel">
-                  {{ formatVoiceDurationLabel(props.voiceDurationMs) }}
-                </span>
-              </button>
-            </div>
           </div>
+
+          <ComposerStatusBar :session-id="targetSessionId" />
         </div>
 
-        <ComposerStatusBar :session-id="targetSessionId" />
-      </div>
+          <div class="composer-action-group composer-action-group--end">
+            <!-- 右组（对齐桌面 composer.slint:637-663）：模型 + 上下文占用 → 发送/停止。
+                 占用统计不再单独占一个图标位：触发器上的大脑就是占用图标（按占用率填充），
+                 数字与进度在浮层里展开。数据仍取自**唯一**一份投影 sessionContextUsage.ts。 -->
+            <div ref="modelMenuAnchorRef" class="composer-anchor">
+              <button
+                class="composer-model-trigger"
+                type="button"
+                :class="{ 'is-active': modelMenuVisible }"
+                :title="modelTriggerTitle"
+                :aria-label="modelTriggerTitle"
+                :aria-expanded="modelMenuVisible"
+                @click.stop="toggleModelMenu"
+              >
+                <ContextUsageIcon class="composer-model-usage-icon" :ratio="contextUsage.ratio" />
+                <span class="composer-model-name">{{ modelTriggerLabel }}</span>
+                <span v-if="reasoningEffortCompactLabel" class="composer-model-effort">
+                  {{ reasoningEffortCompactLabel }}
+                </span>
+                <span v-if="modelSwitching" class="composer-model-spinner" aria-hidden="true"></span>
+                <i v-else class="fa-solid fa-chevron-down composer-caret" aria-hidden="true"></i>
+              </button>
+              <ModelPickerPopover
+                v-if="modelMenuVisible"
+                :items="modelOptions"
+                :active-model-id="composerModelName"
+                :context-usage="contextUsage"
+                :loading="modelCatalog.loading"
+                :failed="modelCatalog.failed"
+                :busy="modelSwitching"
+                @select="selectModel"
+                @retry="reloadModelCatalog"
+                @close="closeComposerPanels"
+              />
+            </div>
 
-        <div class="composer-action-group composer-action-group--end">
-          <!-- 右组（对齐桌面 composer.slint:637-663）：模型 + 上下文占用 → 发送/停止。
-               占用统计不再单独占一个图标位：触发器上的大脑就是占用图标（按占用率填充），
-               数字与进度在浮层里展开。数据仍取自**唯一**一份投影 sessionContextUsage.ts。 -->
-          <div ref="modelMenuAnchorRef" class="composer-anchor">
             <button
-              class="composer-model-trigger"
+              class="composer-send-btn"
+              data-testid="chat-composer-send"
+              :data-mode="stopButtonActive ? 'stop' : 'send'"
               type="button"
-              :class="{ 'is-active': modelMenuVisible }"
-              :title="modelTriggerTitle"
-              :aria-label="modelTriggerTitle"
-              :aria-expanded="modelMenuVisible"
-              @click.stop="toggleModelMenu"
+              :disabled="!canSendOrStop"
+              :title="sendButtonTitle"
+              :aria-label="sendButtonTitle"
+              @click="handleSendOrStop"
             >
-              <ContextUsageIcon class="composer-model-usage-icon" :ratio="contextUsage.ratio" />
-              <span class="composer-model-name">{{ modelTriggerLabel }}</span>
-              <span v-if="reasoningEffortCompactLabel" class="composer-model-effort">
-                {{ reasoningEffortCompactLabel }}
-              </span>
-              <span v-if="modelSwitching" class="composer-model-spinner" aria-hidden="true"></span>
-              <i v-else class="fa-solid fa-chevron-down composer-caret" aria-hidden="true"></i>
+              <i v-if="stopButtonActive" class="fa-solid fa-stop composer-send-icon" aria-hidden="true"></i>
+              <i v-else class="fa-solid fa-arrow-up composer-send-icon" aria-hidden="true"></i>
             </button>
-            <ModelPickerPopover
-              v-if="modelMenuVisible"
-              :items="modelOptions"
-              :active-model-id="composerModelName"
-              :context-usage="contextUsage"
-              :loading="modelCatalog.loading"
-              :failed="modelCatalog.failed"
-              :busy="modelSwitching"
-              @select="selectModel"
-              @retry="reloadModelCatalog"
-              @close="closeComposerPanels"
-            />
-          </div>
-
-          <button
-            class="composer-send-btn"
-            data-testid="chat-composer-send"
-            :data-mode="stopButtonActive ? 'stop' : 'send'"
-            type="button"
-            :disabled="!canSendOrStop"
-            :title="sendButtonTitle"
-            :aria-label="sendButtonTitle"
-            @click="handleSendOrStop"
-          >
-            <i v-if="stopButtonActive" class="fa-solid fa-stop composer-send-icon" aria-hidden="true"></i>
-            <i v-else class="fa-solid fa-arrow-up composer-send-icon" aria-hidden="true"></i>
-          </button>
+        </div>
       </div>
     </div>
   </div>

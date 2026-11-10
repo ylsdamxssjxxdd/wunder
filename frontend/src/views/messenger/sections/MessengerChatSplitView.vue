@@ -156,15 +156,18 @@ const dropThread = (index: number, event: DragEvent) => {
   dropSlot.value = -1;
   if (!id) return;
   slots.value = assignChatSplitSlot(slots.value, index, id, activeSessionId.value);
-  activeSlot.value = index;
+  activeSlot.value = Math.max(0, slots.value.indexOf(id));
+  if (id !== activeSessionId.value) void props.controller.openSessionById(id);
 };
 const closePane = (index: number) => {
   slots.value = closeChatSplitSlot(slots.value, index);
-  if (!slots.value.length) {
-    emit('update:count', 1);
-    return;
-  }
+  const retained = slots.value.filter(Boolean).length;
+  emit('update:count', retained <= 1 ? 1 : retained === 2 ? 2 : 4);
+  if (!retained) return;
   if (activeSlot.value === index) activeSlot.value = slots.value.findIndex(Boolean);
+  else if (activeSlot.value > index) activeSlot.value -= 1;
+  const id = slots.value[activeSlot.value];
+  if (id && id !== activeSessionId.value) void props.controller.openSessionById(id);
 };
 const activatePane = (sessionId: string) => {
   activeSlot.value = Math.max(0, slots.value.indexOf(sessionId));

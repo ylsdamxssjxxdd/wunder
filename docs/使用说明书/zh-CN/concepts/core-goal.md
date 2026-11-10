@@ -12,7 +12,7 @@ updated_at: 2026-10-16
 
 | 工具 | 作用 |
 | --- | --- |
-| `goal` | 通过 `action=get|create|edit|pause|resume|complete|blocked` 读取、创建、编辑、暂停、恢复、完成或报告受阻 |
+| `goal` | 通过 `action=get|edit|pause|resume|complete|blocked` 读取、编辑、暂停、恢复、完成或报告受阻；创建目标只能由用户发起 |
 
 ## 相位
 

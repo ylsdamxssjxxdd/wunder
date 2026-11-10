@@ -293,7 +293,10 @@ function Assert-SupplementPeArch {
   $suffixes = @('.exe', '.dll', '.pyd', '.node')
   $bad = New-Object System.Collections.Generic.List[string]
   $total = 0
-  foreach ($file in @(Get-ChildItem -LiteralPath $PackageRoot -Recurse -File -ErrorAction SilentlyContinue)) {
+  # -Force matters: without it the scan also skips dot directories such as
+  # numpy/.libs and scipy/.libs, so a foreign-architecture DLL there would pass
+  # the release gate unnoticed.
+  foreach ($file in @(Get-ChildItem -LiteralPath $PackageRoot -Recurse -File -Force -ErrorAction SilentlyContinue)) {
     if ($suffixes -notcontains $file.Extension.ToLowerInvariant()) { continue }
     $machine = Get-PeMachineHeader -Path $file.FullName
     if ($null -eq $machine) { continue }
@@ -1149,6 +1152,11 @@ $psExeRel = [string](Get-PropertyValue -Object $psMeta -Name 'expectedExe' -Defa
 $psBundled = $false
 if (-not $SkipPowerShell) {
   $psArchiveMeta = Get-PropertyValue -Object (Get-PropertyValue -Object $psMeta -Name 'archives') -Name $Arch
+  if ($null -eq $psArchiveMeta) {
+    # The command tool must run the bundled pwsh, so a missing archive for the
+    # selected architecture is a packaging error, not a silent omission.
+    Fail "manifest has no powershell archive for arch $Arch; add it to win7-supplement-manifest.json or pass -SkipPowerShell"
+  }
   if ($null -ne $psArchiveMeta) {
     $psArchive = $PowerShellArchivePath
     if ([string]::IsNullOrWhiteSpace($psArchive)) {
@@ -1326,7 +1334,7 @@ Contents:
   opt/ffmpeg   ffmpeg __FFVER__ (when bundled)
   opt/7zip     7-Zip __SZVER__ console (7z.exe + 7z.dll, when bundled)
   opt/browser  Chrome __BROWSERVER__ win32 at __BROWSEREXE__ (when bundled)
-  opt/fonts/video  知识短片 skill 的 6 个拉丁/等宽 OFL 字体（中文用 opt/fonts/common）
+  opt/fonts/video  知识短片 skill 的 8 个 OFL 字体（思源宋体/黑体 + 6 个拉丁/等宽；中文缺失时退回 opt/fonts/common）
   opt/fonts/common 公文/文档通用字体（仿宋、楷体、黑体、宋体、小标宋、雅黑、等线、Times New Roman）
 
 Use Import supplement in the wunder Desktop settings to install into WUNDER_HOME.

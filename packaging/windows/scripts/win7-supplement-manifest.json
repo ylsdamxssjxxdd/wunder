@@ -157,7 +157,7 @@
     "dest": "opt\\powershell",
     "expectedExe": "pwsh.exe",
     "notes": [
-      "7.1.7 is the last PowerShell 7 build that still runs on Windows 7: 7.2 moved to .NET 6, which requires Windows 8.1+. It is also the last line shipped as a self-contained win-x86 zip.",
+      "7.1.7 is the last PowerShell 7 build that still runs on Windows 7: 7.2 moved to .NET 6, which requires Windows 8.1+. It is also the last line shipped as self-contained win-x86 and win-x64 zips; the supplement pins the archive matching its target architecture.",
       "The zip carries its own .NET 5 runtime, so staging is a plain extract into opt/powershell: no MSI, no administrator rights, no reboot, no registry writes.",
       "Windows 7 still needs the Universal CRT (KB2999226) and the Visual C++ 2015-2019 runtime before the .NET 5 host can load. When it cannot start, the command tool probes the next candidate and falls back to the system Windows PowerShell, so a broken pwsh costs one failed probe instead of a broken shell.",
       "The runtime prefers this host over the system powershell.exe strictly by path: it is the bundled shell, not a PATH accident, because the executable is named pwsh.exe and a powershell.exe lookup can never reach it.",
@@ -168,6 +168,11 @@
         "fileName": "PowerShell-7.1.7-win-x86.zip",
         "url": "https://github.com/PowerShell/PowerShell/releases/download/v7.1.7/PowerShell-7.1.7-win-x86.zip",
         "sha256": "D10F8EE270E94ABD45892DC56765EA5FA6BF84A2D8E5B37EC40B78D195A8F65F"
+      },
+      "x64": {
+        "fileName": "PowerShell-7.1.7-win-x64.zip",
+        "url": "https://github.com/PowerShell/PowerShell/releases/download/v7.1.7/PowerShell-7.1.7-win-x64.zip",
+        "sha256": "09F1E851F8B2DCC660440AAB5E83BB84A082C5CD44A3958B533555580EF80F23"
       }
     }
   },
@@ -197,6 +202,8 @@
     }
   },
   "videoFonts": [
+    "NotoSerifSC-VF.ttf",
+    "NotoSansSC-VF.ttf",
     "CormorantGaramond.ttf",
     "CormorantGaramond-Italic.ttf",
     "Lora.ttf",

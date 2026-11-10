@@ -85,12 +85,20 @@ pub fn run(app: &crate::MainWindow, directory: PathBuf) -> Result<(), Box<dyn st
         move |app| {
             shoot(app, &directory, "markdown.png");
             moved(app, 400.0, 240.0);
-            println!("cursor@400,240={}", i_slint_core::cursor::last_mouse_cursor());
+            println!(
+                "cursor@400,240={}",
+                i_slint_core::cursor::last_mouse_cursor()
+            );
             press(app, 400.0, 240.0);
         }
     });
     after(560, |app| {
-        for (x, y) in [(470.0f32, 262.0f32), (560.0, 280.0), (650.0, 300.0), (760.0, 320.0)] {
+        for (x, y) in [
+            (470.0f32, 262.0f32),
+            (560.0, 280.0),
+            (650.0, 300.0),
+            (760.0, 320.0),
+        ] {
             moved(app, x, y);
         }
         released(app, 760.0, 320.0);
@@ -107,11 +115,17 @@ pub fn run(app: &crate::MainWindow, directory: PathBuf) -> Result<(), Box<dyn st
     after(1100, {
         let directory = directory.clone();
         move |app| {
-            println!("menu open: {}", app.global::<crate::TextMenuState>().get_open());
+            println!(
+                "menu open: {}",
+                app.global::<crate::TextMenuState>().get_open()
+            );
             shoot(app, &directory, "markdown-menu.png");
             // Click the menu's 复制 row: it must hit, run the copy and close.
             click(app, 470.0, 320.0);
-            println!("menu open after click: {}", app.global::<crate::TextMenuState>().get_open());
+            println!(
+                "menu open after click: {}",
+                app.global::<crate::TextMenuState>().get_open()
+            );
             let _ = slint::quit_event_loop();
         }
     });
@@ -156,24 +170,31 @@ fn press(app: &crate::MainWindow, x: f32, y: f32) {
     let _ = app
         .window()
         .dispatch_event_with_result(WindowEvent::PointerMoved { position });
-    let _ = app.window().dispatch_event_with_result(
-        WindowEvent::PointerPressed { position, button: PointerEventButton::Left },
-    );
+    let _ = app
+        .window()
+        .dispatch_event_with_result(WindowEvent::PointerPressed {
+            position,
+            button: PointerEventButton::Left,
+        });
 }
 
 fn moved(app: &crate::MainWindow, x: f32, y: f32) {
     use slint::platform::WindowEvent;
-    let _ = app.window().dispatch_event_with_result(
-        WindowEvent::PointerMoved { position: slint::LogicalPosition::new(x, y) },
-    );
+    let _ = app
+        .window()
+        .dispatch_event_with_result(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(x, y),
+        });
 }
 
 fn released(app: &crate::MainWindow, x: f32, y: f32) {
     use slint::platform::{PointerEventButton, WindowEvent};
-    let _ = app.window().dispatch_event_with_result(WindowEvent::PointerReleased {
-        position: slint::LogicalPosition::new(x, y),
-        button: PointerEventButton::Left,
-    });
+    let _ = app
+        .window()
+        .dispatch_event_with_result(WindowEvent::PointerReleased {
+            position: slint::LogicalPosition::new(x, y),
+            button: PointerEventButton::Left,
+        });
 }
 
 fn right_click(app: &crate::MainWindow, x: f32, y: f32) {
@@ -182,12 +203,18 @@ fn right_click(app: &crate::MainWindow, x: f32, y: f32) {
     let _ = app
         .window()
         .dispatch_event_with_result(WindowEvent::PointerMoved { position });
-    let _ = app.window().dispatch_event_with_result(
-        WindowEvent::PointerPressed { position, button: PointerEventButton::Right },
-    );
-    let _ = app.window().dispatch_event_with_result(
-        WindowEvent::PointerReleased { position, button: PointerEventButton::Right },
-    );
+    let _ = app
+        .window()
+        .dispatch_event_with_result(WindowEvent::PointerPressed {
+            position,
+            button: PointerEventButton::Right,
+        });
+    let _ = app
+        .window()
+        .dispatch_event_with_result(WindowEvent::PointerReleased {
+            position,
+            button: PointerEventButton::Right,
+        });
 }
 
 /// One user row and one answer row, built through the same projection the chat

@@ -156,6 +156,7 @@ def main():
                 "lib/arm64-v8a/liboperit_proot.so",
                 "assets/ubuntu/rootfs.tar.xz",
                 "assets/ubuntu/packs/common.tar.xz",
+                "assets/ubuntu/packs/browser.tar.xz",
             }
             missing = sorted(required - names)
             if missing:

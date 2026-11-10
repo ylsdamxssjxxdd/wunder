@@ -388,8 +388,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "goal",
-        brief_en: "Track the current task goal. get reads it; create needs objective; edit/pause/resume/complete/blocked need goal_id + revision from get.",
-        brief_zh: "跟踪当前任务目标：get 读取，create 需 objective，edit/pause/resume/complete/blocked 需 get 返回的 goal_id + revision。",
+        brief_en: "Track the current task goal. get reads it; edit/pause/resume/complete/blocked need goal_id + revision from get. Goals are started by the user only; never create one.",
+        brief_zh: "跟踪当前任务目标：get 读取，edit/pause/resume/complete/blocked 需 get 返回的 goal_id + revision。目标只能由用户发起，模型不得创建。",
         drop_actions: &[],
         drop_fields: &[],
     },

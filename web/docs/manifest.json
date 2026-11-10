@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-11-10T05:08:49.060704+00:00",
+  "generated_at": "2026-11-10T07:18:41.869615+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is a multi-form agent workbench: Desktop is the local AI workbench, Android is the Desktop's phone form, Cloud (web) is the cloud AI workbench, CLI is the manual local entry point, and the Server is the user and agent management platform. / wunder 是多形态的智能体工作台：桌面版（desktop）是本地 AI 工作台，安卓版（android）是桌面版的手机形态，云端版（web）是云端 AI 工作台，命令行（cli）是手工本地操作入口，服务端（server）是用户与智能体管理平台。",

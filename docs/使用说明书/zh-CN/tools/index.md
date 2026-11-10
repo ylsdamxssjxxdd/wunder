@@ -37,7 +37,7 @@ updated_at: 2026-11-08
 | 自我状态 | `self_status` | 查询智能体自身的运行状态 | 系统与记忆 |
 | 记忆管理 | `memory_manager` | 读写长期记忆 | 系统与记忆 |
 | 定时任务 | `schedule_task` | 创建与管理定时 / 周期任务 | 系统与记忆 |
-| `goal` | `action=get|create|edit|pause|resume|complete|blocked` | 目标态工具，由运行时按会话自动注入，不对桌面端开放选择 | 目标态 |
+| `goal` | `action=get|edit|pause|resume|complete|blocked` | 目标态工具，由运行时按会话自动注入，不对桌面端开放选择；创建目标只能由用户发起 | 目标态 |
 
 `网页搜索` 属代码保留、当前**临时下架**（对模型与用户不可见，见 `default_tool_profile.rs`）。已彻底移除：`ptc`、渠道工具、用户世界工具、`a2a_*` 工具、`final_response`、`a2ui`、LSP 查询类工具。
 
@@ -68,7 +68,7 @@ updated_at: 2026-11-08
 | 桌面 | 桌面控制：[桌面控制](/docs/zh-CN/tools/desktop-control/) |
 | 线程与子智能体 | 子智能体控制：[子智能体控制](/docs/zh-CN/tools/subagent-control/)；会话线程控制：[会话线程控制](/docs/zh-CN/tools/thread-control/) |
 | 系统与记忆 | 自我状态：[自我状态](/docs/zh-CN/tools/self-status/)；记忆管理：[记忆管理](/docs/zh-CN/tools/memory-manager/)；定时任务：[定时任务](/docs/zh-CN/tools/schedule-task/) |
-| 目标态 | `goal`（`action=get|create|edit|pause|resume|complete|blocked`）由运行时按会话自动注入，不对桌面端开放选择 |
+| 目标态 | `goal`（`action=get|edit|pause|resume|complete|blocked`）由运行时按会话自动注入，不对桌面端开放选择；创建目标只能由用户发起 |
 
 ## 结果外壳
 

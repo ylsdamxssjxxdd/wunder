@@ -286,8 +286,7 @@ const REMAP_FLAGS: u32 = windows_sys::Win32::UI::WindowsAndMessaging::SWP_SHOWWI
 #[cfg(windows)]
 fn restore_hidden_window(app: &slint::Weak<MainWindow>, state: &HideState) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        IsWindowVisible, SetWindowPos, ShowWindow, HWND_TOP, SW_MAXIMIZE,
-        SW_SHOW,
+        IsWindowVisible, SetWindowPos, ShowWindow, HWND_TOP, SW_MAXIMIZE, SW_SHOW,
     };
     // The hide went straight to the HWND, so Winit's cached WindowFlags still
     // contain VISIBLE and Slint still believes the window is shown. Both

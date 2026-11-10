@@ -11,7 +11,11 @@ pub fn is_image(source: &str) -> bool {
     let Some(path) = trimmed(source) else {
         return false;
     };
-    let extension = path.rsplit('.').next().unwrap_or_default().to_ascii_lowercase();
+    let extension = path
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp")
 }
 
@@ -20,7 +24,11 @@ pub fn is_document(source: &str) -> bool {
     let Some(path) = trimmed(source) else {
         return false;
     };
-    let extension = path.rsplit('.').next().unwrap_or_default().to_ascii_lowercase();
+    let extension = path
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     matches!(
         extension.as_str(),
         "pdf"

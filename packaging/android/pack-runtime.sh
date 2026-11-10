@@ -5,17 +5,19 @@
 # CI reads the draft with the RELEASE_TOKEN secret because GITHUB_TOKEN cannot
 # see draft releases.
 #
-# The APK embeds a Linux rootfs, an offline tool pack and static proot/busybox
-# libraries. None of these are committed (tens to hundreds of megabytes), so
-# they are staged by builders/stage-android-ubuntu.sh and
-# builders/build-android-ubuntu-pack.sh, then packaged here once and uploaded:
+# The APK embeds a Linux rootfs, offline tool and browser packs, and static
+# proot/busybox libraries. None of these are committed (tens to hundreds of
+# megabytes), so they are staged by builders/stage-android-ubuntu.sh,
+# builders/build-android-ubuntu-pack.sh and
+# builders/build-android-browser-pack.sh, then packaged here once and uploaded:
 #
 #   packaging/android/pack-runtime.sh            # build target/android/runtime/
 #   packaging/android/pack-runtime.sh --publish  # also upload to GitHub
 #
 # Inputs default to the staged app tree; override with WUNDER_ANDROID_APP_MAIN
-# (expects assets/ubuntu/{rootfs.tar.xz,NOTICE.txt}, assets/ubuntu/packs/common.tar.xz
-# and jniLibs/arm64-v8a/{liboperit_proot.so,liboperit_loader.so,libbusybox.so}).
+# (expects assets/ubuntu/{rootfs.tar.xz,NOTICE.txt},
+# assets/ubuntu/packs/{common,browser}.tar.xz and
+# jniLibs/arm64-v8a/{liboperit_proot.so,liboperit_loader.so,libbusybox.so}).
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
@@ -28,6 +30,7 @@ required=(
     "assets/ubuntu/rootfs.tar.xz"
     "assets/ubuntu/NOTICE.txt"
     "assets/ubuntu/packs/common.tar.xz"
+    "assets/ubuntu/packs/browser.tar.xz"
     "jniLibs/arm64-v8a/liboperit_proot.so"
     "jniLibs/arm64-v8a/liboperit_loader.so"
     "jniLibs/arm64-v8a/libbusybox.so"
@@ -35,7 +38,7 @@ required=(
 for entry in "${required[@]}"; do
     [[ -f "$MAIN/$entry" ]] || {
         echo "runtime input missing: $MAIN/$entry" >&2
-        echo "stage it first: builders/stage-android-ubuntu.sh + builders/build-android-ubuntu-pack.sh" >&2
+        echo "stage it first: builders/stage-android-ubuntu.sh + builders/build-android-ubuntu-pack.sh + builders/build-android-browser-pack.sh" >&2
         exit 2
     }
 done
@@ -47,6 +50,7 @@ mkdir -p "$STAGE/assets/ubuntu/packs" "$STAGE/jniLibs/arm64-v8a"
 cp -f "$MAIN/assets/ubuntu/rootfs.tar.xz" "$STAGE/assets/ubuntu/"
 cp -f "$MAIN/assets/ubuntu/NOTICE.txt" "$STAGE/assets/ubuntu/"
 cp -f "$MAIN/assets/ubuntu/packs/common.tar.xz" "$STAGE/assets/ubuntu/packs/"
+cp -f "$MAIN/assets/ubuntu/packs/browser.tar.xz" "$STAGE/assets/ubuntu/packs/"
 cp -f "$MAIN/jniLibs/arm64-v8a/liboperit_proot.so" \
       "$MAIN/jniLibs/arm64-v8a/liboperit_loader.so" \
       "$MAIN/jniLibs/arm64-v8a/libbusybox.so" "$STAGE/jniLibs/arm64-v8a/"

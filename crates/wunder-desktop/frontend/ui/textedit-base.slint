@@ -124,6 +124,8 @@ export component TextEditBase inherits Rectangle {
             vertical-scrollbar-policy: always-off;
 
             text-input := TextInput {
+                width: scroll-view.visible-width;
+                height: max(scroll-view.visible-height, self.preferred-height);
                 enabled: true;
                 single-line: false;
                 wrap: word-wrap;

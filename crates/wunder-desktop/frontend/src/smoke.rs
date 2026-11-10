@@ -43,6 +43,23 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         app.get_page() == crate::DesktopPage::Messages,
         "shell did not start on the chat page",
     )?;
+    let editor_x = app.get_composer_editor_x();
+    let editor_y = app.get_composer_editor_y();
+    let editor_width = app.get_composer_editor_width();
+    let editor_height = app.get_composer_editor_height();
+    require(
+        editor_width > 200.0 && editor_height >= 40.0,
+        "composer editor hit area collapsed",
+    )?;
+    click(
+        app,
+        editor_x + editor_width * 0.85,
+        editor_y + editor_height * 0.5,
+    )?;
+    require(
+        app.get_composer_editor_has_focus(),
+        "clicking the blank right side of the composer did not focus the editor",
+    )?;
     drag(app, 100.0, 156.0, 800.0, 400.0)?;
     require(
         app.get_split_count() == 2 && app.get_split_session_1() == "t2",
@@ -75,6 +92,19 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
     require(
         app.get_split_count() == 4,
         "re-adding a thread did not restore the grid",
+    )?;
+    app.invoke_split_close(1);
+    require(
+        app.get_split_count() == 2
+            && app.get_split_session_0() == "t1"
+            && app.get_split_session_1() == "t2"
+            && app.get_split_session_2().is_empty(),
+        "closing a middle pane did not compact the remaining threads",
+    )?;
+    app.invoke_split_drop_row(2, 2);
+    require(
+        app.get_split_count() == 4 && app.get_split_session_2() == "t3",
+        "dragging after compaction used the wrong pane",
     )?;
     for _ in 0..64 {
         app.invoke_split_layout(2);

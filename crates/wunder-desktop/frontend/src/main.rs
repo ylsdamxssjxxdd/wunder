@@ -74,8 +74,10 @@ static STARTUP_BOOT: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLo
 /// be shutting down while the replacement binary starts, and that handover
 /// must not be mistaken for a duplicate launch.
 fn claim_for_launch() -> std::io::Result<single_instance::Launch> {
-    let relaunch =
-        std::env::var(wunder_desktop::UPDATE_RELAUNCH_ENV).ok().as_deref() == Some("1");
+    let relaunch = std::env::var(wunder_desktop::UPDATE_RELAUNCH_ENV)
+        .ok()
+        .as_deref()
+        == Some("1");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         match single_instance::claim()? {
@@ -220,6 +222,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | "--native-reasoning-smoke"
                 | "--native-model-smoke"
                 | "--native-setup-smoke"
+                | "--native-split-smoke"
         )
     ) {
         let directory = std::path::PathBuf::from(
@@ -238,14 +241,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let models =
             first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-model-smoke"));
         let setup = first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-setup-smoke"));
+        let splitting =
+            first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-split-smoke"));
         if !restoring {
             args.workspace = Some(directory.join("workspace"));
         }
         let runtime = std::sync::Arc::new(wunder_desktop::NativeDesktop::start_with_args(args)?);
+        if splitting {
+            for _ in 0..3 {
+                runtime.create_session(None)?;
+            }
+        }
         // The restore phase deliberately runs a read-only guard: the streaming
         // phase's guard writes probe fixtures, and a check that mutates the
         // store cannot prove what survived the restart.
-        if !restoring && !reasoning && !models && !setup {
+        if !restoring && !reasoning && !models && !setup && !splitting {
             native_smoke::check_runtime(&runtime)?;
         }
         native_runtime::install_ready_without_pets(&app, runtime.clone());
@@ -257,6 +267,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             model_editor_smoke::run(&app, directory, runtime)
         } else if reasoning {
             native_smoke::run_reasoning(&app, directory)
+        } else if splitting {
+            native_smoke::run_split(&app, directory)
         } else if restoring {
             native_restore::run(&app, directory, runtime)
         } else {
@@ -789,10 +801,7 @@ fn install_slint_platform() -> Result<(), Box<dyn std::error::Error>> {
                 let frameless =
                     frameless_first_window.swap(false, std::sync::atomic::Ordering::AcqRel);
                 let attributes = attributes
-                    .with_min_inner_size(winit::dpi::LogicalSize::new(
-                        MIN_WINDOW_W,
-                        MIN_WINDOW_H,
-                    ))
+                    .with_min_inner_size(winit::dpi::LogicalSize::new(MIN_WINDOW_W, MIN_WINDOW_H))
                     .with_title("wunder 桌面版")
                     .with_decorations(!frameless)
                     // A frameless window owns its caption buttons in client

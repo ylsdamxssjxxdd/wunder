@@ -55,15 +55,14 @@
 
 /* ------------------------------------------------------------ action row */
 
-/* 工具行在输入卡**之外**（参考形态）：卡只包输入框，这一行直接落在页面底色上，
-   与卡留 8px 间距；30px 高的按钮行，左组（+ / 工作目录 / 审批）与右组（模型 / 发送）分列两端。 */
+/* 工具行与编辑器共用输入卡（对齐桌面 composer.slint 的动作行）：它是卡内最后一行，
+   不再落在页面底色上；左组（+ / 后台任务 / 子智能体）与右组（模型 / 发送）分列两端。 */
 .composer-action-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
-  margin-top: 8px;
 }
 
 .composer-action-group {
@@ -432,7 +431,6 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 6px;
   color: var(--mz-text-muted, #8a8f99);
   font-size: 12px;
 }

@@ -18,12 +18,18 @@ test('drop assignment replaces a pane and moves an already visible thread', () =
   assert.deepEqual(assignChatSplitSlot([], 1, 'b', 'a'), ['a', 'b']);
   assert.deepEqual(assignChatSplitSlot(['a', 'b'], 1, 'c'), ['a', 'c']);
   assert.deepEqual(assignChatSplitSlot(['a', 'b', 'c', ''], 2, 'b'), ['a', 'c', 'b', '']);
+  assert.deepEqual(assignChatSplitSlot(['a', 'b', 'c', ''], 3, 'b'), ['a', 'b', 'c', '']);
 });
 
-test('closing a pane keeps the grid and the last open pane exits split mode', () => {
-  assert.deepEqual(closeChatSplitSlot(['a', 'b', 'c', ''], 1), ['a', '', 'c', '']);
-  assert.deepEqual(closeChatSplitSlot(['a', ''], 1), ['a', '']);
+test('closing compacts slots and reduces the layout before the next drop', () => {
+  assert.deepEqual(closeChatSplitSlot(['a', 'b', 'c', ''], 1), ['a', 'c']);
+  assert.deepEqual(closeChatSplitSlot(['a', 'b', 'c', 'd'], 2), ['a', 'b', 'd', '']);
+  assert.deepEqual(closeChatSplitSlot(['a', ''], 1), []);
   assert.deepEqual(closeChatSplitSlot(['a', ''], 0), []);
+  assert.deepEqual(
+    assignChatSplitSlot(closeChatSplitSlot(['a', 'b', 'c', ''], 1), 2, 'd'),
+    ['a', 'c', 'd']
+  );
 });
 
 test('ratios are bounded and hit testing covers two-pane and four-grid layouts', () => {

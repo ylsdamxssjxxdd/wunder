@@ -2,6 +2,9 @@
 <html lang="zh"><head><meta charset="utf-8"><title>vk film</title>
 <style>
 /* engine/ 由 render.py 内置的小服务器挂到引擎目录（预览：python render.py <工程> --serve） */
+/* 中文优先用视频字体包里的思源宋体/黑体；缺失时退回系统宋体/雅黑。 */
+@font-face{font-family:"VK Serif";src:url("engine/fonts/NotoSerifSC-VF.ttf");font-weight:200 900}
+@font-face{font-family:"VK Sans"; src:url("engine/fonts/NotoSansSC-VF.ttf"); font-weight:100 900}
 @font-face{font-family:"VK Latin";src:url("engine/fonts/CormorantGaramond.ttf");font-weight:300 700;font-style:normal;font-feature-settings:"lnum" 1}
 @font-face{font-family:"VK Latin";src:url("engine/fonts/CormorantGaramond-Italic.ttf");font-weight:300 700;font-style:italic;font-feature-settings:"lnum" 1}
 @font-face{font-family:"VK Lora"; src:url("engine/fonts/Lora.ttf");font-weight:400 700;font-style:normal}

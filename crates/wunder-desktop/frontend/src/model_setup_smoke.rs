@@ -43,10 +43,10 @@ pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::erro
                         "a fresh catalogue must hold only the seeded virtual model",
                     )?;
                     crate::smoke::snapshot(&app, &directory.join("setup-banner.png"))?;
-                    let x = app.get_model_setup_banner_x()
-                        + app.get_model_setup_banner_width() / 2.0;
-                    let y = app.get_model_setup_banner_y()
-                        + app.get_model_setup_banner_height() / 2.0;
+                    let x =
+                        app.get_model_setup_banner_x() + app.get_model_setup_banner_width() / 2.0;
+                    let y =
+                        app.get_model_setup_banner_y() + app.get_model_setup_banner_height() / 2.0;
                     assert_state(
                         x > 0.0 && y > 0.0,
                         "setup banner geometry is not usable for pointer input",
@@ -55,7 +55,10 @@ pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::erro
                     phase = 1;
                 }
                 1 => {
-                    assert_state(app.get_settings_open(), "banner click did not open settings")?;
+                    assert_state(
+                        app.get_settings_open(),
+                        "banner click did not open settings",
+                    )?;
                     assert_state(
                         app.get_settings_active_panel() == 1,
                         "banner click did not land on the model panel",
@@ -74,7 +77,10 @@ pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::erro
                     phase = 2;
                 }
                 2 => {
-                    let saved = app.get_models().iter().any(|model| model.key == "first-model");
+                    let saved = app
+                        .get_models()
+                        .iter()
+                        .any(|model| model.key == "first-model");
                     if app.get_model_creating() || !saved {
                         return Ok(false);
                     }

@@ -367,7 +367,11 @@ impl Controller {
     }
 
     fn lang(&self) -> usize {
-        if self.zh { 0 } else { 1 }
+        if self.zh {
+            0
+        } else {
+            1
+        }
     }
 
     fn current(&self) -> &Topic {
@@ -747,18 +751,27 @@ mod tests {
             assert_eq!(collapsed.len(), 4, "折叠时应只剩四个分区标题");
             assert!(collapsed.iter().all(|row| row.kind == ROW_BLOCK));
             let counts: i32 = collapsed.iter().map(|row| row.count).sum();
-            assert_eq!(counts as usize, manual.topics.len(), "分区主题数应覆盖整本手册");
+            assert_eq!(
+                counts as usize,
+                manual.topics.len(),
+                "分区主题数应覆盖整本手册"
+            );
 
             let mut expanded = [false; BLOCKS.len()];
             expanded[0] = true;
             let rows = nav_rows(&manual, zh, &expanded);
-            assert!(rows.iter().any(|row| row.kind == ROW_GROUP), "展开后应有二级分组");
             assert!(
-                rows.iter().any(|row| row.kind == ROW_TOPIC && row.topic == 0),
+                rows.iter().any(|row| row.kind == ROW_GROUP),
+                "展开后应有二级分组"
+            );
+            assert!(
+                rows.iter()
+                    .any(|row| row.kind == ROW_TOPIC && row.topic == 0),
                 "展开后应能看到首篇主题"
             );
             assert!(
-                rows.iter().all(|row| row.kind != ROW_TOPIC || row.block == 0),
+                rows.iter()
+                    .all(|row| row.kind != ROW_TOPIC || row.block == 0),
                 "未展开的分区不应投影主题"
             );
         }
@@ -772,7 +785,9 @@ mod tests {
         let mut art = ArtCache::default();
         let rows = project_topic(&manual.topics[0], &mut art);
         assert!(rows.iter().any(|row| row.kind == crate::md::block::HEADING));
-        assert!(rows.iter().any(|row| row.kind == crate::md::block::LIST_ITEM));
+        assert!(rows
+            .iter()
+            .any(|row| row.kind == crate::md::block::LIST_ITEM));
         assert!(
             rows.iter().any(|row| row.plain.contains("本地 AI 工作台")),
             "正文文本应完整进入块的纯文本投影"

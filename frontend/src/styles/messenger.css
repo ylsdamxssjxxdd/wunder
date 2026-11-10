@@ -5459,18 +5459,18 @@
   z-index: 24;
 }
 
-/* B4 §8.1: the card wraps **only** the input now (工具行在它外面），所以是
-   16px 圆角、1px 细边的紧凑输入框，而不是包住整条工具栏的大卡。 */
+/* B4 §8.1: 输入卡与桌面一致——编辑器与底部工具行共用同一张白底细边卡
+   （composer.slint 的 Composer 卡片），不再把工具行放在卡的兄弟节点上。 */
 .messenger-composer-scope.chat-shell .input-box--world {
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
+  gap: 6px;
   border: 1px solid var(--mz-border, #e8e6e3);
   border-radius: 16px;
   background: var(--mz-surface, #ffffff);
   min-height: 0;
   height: auto;
-  padding: 12px 14px;
+  padding: 10px 14px 8px;
   position: relative;
   overflow: visible;
 }
@@ -5506,7 +5506,9 @@
   color: var(--hula-text);
 }
 
-.messenger-composer-scope.chat-shell .input-box:focus-within {
+/* 工具行并入卡片后，只有编辑器获得焦点才点亮整张卡；点「+」/ 模型 / 发送
+   不应让卡持续保持高亮（桌面同样只看 editor.has-focus）。 */
+.messenger-composer-scope.chat-shell .input-box:has(.composer-textarea:focus) {
   border-color: rgba(var(--ui-accent-rgb), 0.56);
   box-shadow:
     0 0 0 4px rgba(var(--ui-accent-rgb), 0.12),

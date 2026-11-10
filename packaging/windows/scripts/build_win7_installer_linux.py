@@ -175,6 +175,44 @@ def format_label(labels, name, version, size):
     return label + labels.get("approxSize", "").replace("{size}", str(int(math.ceil(size / 1048576.0))))
 
 
+def dot_path_entries(supplement_root, component, task):
+    """[Files] entries for dot-prefixed paths.
+
+    Inno Setup's Source wildcard never matches a name starting with a dot, so
+    the per-component entry silently drops numpy/.libs, scipy/.libs and
+    _rels/.rels. numpy and scipy load their OpenBLAS and MSVCP140 from those
+    directories, so an installer built from the wildcard alone produces a
+    Python runtime that cannot import either package. Name every dot directory
+    explicitly and list dot files that live outside one.
+    """
+    base = supplement_root / "opt" / component
+    if not base.is_dir():
+        return []
+    lines = []
+    for dirpath, dirnames, filenames in os.walk(str(base)):
+        rel_dir = Path(dirpath).relative_to(base)
+        rel_text = str(rel_dir).replace("/", "\\")
+        for name in dirnames:
+            if not name.startswith("."):
+                continue
+            relative = (rel_dir / name)
+            lines.append(
+                'Source: "%s\\*"; DestDir: "{app}\\opt\\%s\\%s"; '
+                'Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: %s'
+                % (wine_path(Path(dirpath) / name), component,
+                   str(relative).replace("/", "\\"), task))
+        if any(part.startswith(".") for part in rel_dir.parts):
+            continue
+        for name in filenames:
+            if not name.startswith("."):
+                continue
+            suffix = ("\\" + rel_text) if rel_text and rel_text != "." else ""
+            lines.append(
+                'Source: "%s"; DestDir: "{app}\\opt\\%s%s"; Flags: ignoreversion; Tasks: %s'
+                % (wine_path(Path(dirpath) / name), component, suffix, task))
+    return lines
+
+
 def build_generated_iss(labels, core, supplement_root, version, available, sizes, metadata):
     lines = ["[Tasks]"]
     for name in TASK_NAMES:
@@ -198,6 +236,7 @@ def build_generated_iss(labels, core, supplement_root, version, available, sizes
         lines.append('Source: "%s"; DestDir: "{app}\\opt\\%s"; '
                      'Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: %s'
                      % (wine_path(supplement_root / "opt" / name) + "\\*", name, task_name(name)))
+        lines.extend(dot_path_entries(supplement_root, name, task_name(name)))
     return "\r\n".join(lines) + "\r\n"
 
 

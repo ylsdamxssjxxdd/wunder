@@ -97,10 +97,7 @@ pub enum Inline {
     Strong(Vec<Inline>),
     Emphasis(Vec<Inline>),
     Strike(Vec<Inline>),
-    Link {
-        url: String,
-        children: Vec<Inline>,
-    },
+    Link { url: String, children: Vec<Inline> },
 }
 
 impl Inline {

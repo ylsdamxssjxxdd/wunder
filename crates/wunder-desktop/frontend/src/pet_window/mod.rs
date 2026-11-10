@@ -227,7 +227,7 @@ impl Drop for PetService {
     }
 }
 
-#[cfg(windows)]
-mod win32;
 #[cfg(not(windows))]
 mod linux;
+#[cfg(windows)]
+mod win32;

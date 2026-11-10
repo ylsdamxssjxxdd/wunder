@@ -187,7 +187,10 @@ fn decode(bytes: &[u8]) -> Option<Decoded> {
             return Some(animation);
         }
     }
-    Some(Decoded { frames: vec![decode_still(bytes)?], delays: Vec::new() })
+    Some(Decoded {
+        frames: vec![decode_still(bytes)?],
+        delays: Vec::new(),
+    })
 }
 
 fn decode_still(bytes: &[u8]) -> Option<Pixels> {
@@ -214,8 +217,7 @@ fn bounded_frame(buffer: image::RgbaImage) -> image::RgbaImage {
     if width <= GIF_MAX_WIDTH && height <= GIF_MAX_HEIGHT {
         return buffer;
     }
-    let ratio = (GIF_MAX_WIDTH as f32 / width as f32)
-        .min(GIF_MAX_HEIGHT as f32 / height as f32);
+    let ratio = (GIF_MAX_WIDTH as f32 / width as f32).min(GIF_MAX_HEIGHT as f32 / height as f32);
     let target_width = ((width as f32 * ratio).round() as u32).max(1);
     let target_height = ((height as f32 * ratio).round() as u32).max(1);
     image::DynamicImage::ImageRgba8(buffer)
@@ -257,7 +259,11 @@ fn decode_gif(bytes: &[u8]) -> Option<Decoded> {
         });
         // Browsers treat a missing or sub-frame delay as ~100ms; anything
         // else is bounded so a huge or zero delay cannot stall or spin.
-        delays.push(if delay < 20 { 100 } else { delay.clamp(40, 1000) });
+        delays.push(if delay < 20 {
+            100
+        } else {
+            delay.clamp(40, 1000)
+        });
     }
     (frames.len() > 1).then_some(Decoded { frames, delays })
 }
@@ -393,7 +399,9 @@ fn release(sources: &[String]) {
 /// picture from `image-width`/`image-height` before the texture arrives, and a
 /// zero ratio would render every image at the 16:9 default.
 fn fill(block: &mut MdBlock, image: &DecodedImage) {
-    let Some(first) = image.frames.first() else { return };
+    let Some(first) = image.frames.first() else {
+        return;
+    };
     let size = first.size();
     block.image_width = size.width as f32;
     block.image_height = size.height as f32;
@@ -401,7 +409,11 @@ fn fill(block: &mut MdBlock, image: &DecodedImage) {
     if image.frames.len() > 1 {
         block.image_frames = ModelRc::new(VecModel::from(image.frames.clone()));
         block.frame_delays = ModelRc::new(VecModel::from(
-            image.delays.iter().map(|delay| *delay as i32).collect::<Vec<_>>(),
+            image
+                .delays
+                .iter()
+                .map(|delay| *delay as i32)
+                .collect::<Vec<_>>(),
         ));
     } else {
         block.image_frames = ModelRc::default();

@@ -13,16 +13,17 @@
   python render.py <工程> --serve               起本地预览 http://127.0.0.1:8765/?play（8765 被占用时自动换端口；←/→ 无，改完刷新）
 
 工程目录里只需要 index.html + film.js。引擎（vk.js、vk-kit.js）留在本文件所在目录，
-拉丁与等宽字体优先用补充包的 opt/fonts/video（桌面/安卓）或 /usr/share/fonts/wunder（云端），
-没有时退回 engine/fonts 或跑 get_fonts.py 下载。中文使用补充包 opt/fonts/common 的宋体/雅黑，
-由 fontconfig 提供。都由内置小服务器挂到 /engine/ 下，不用往每个工程里拷字体，
-也没有 file:// 的跨目录字体限制。
+中文优先用补充包 opt/fonts/video 的思源宋体/黑体，缺失时退到 opt/fonts/common 的宋体/雅黑；
+拉丁与等宽字体也在 opt/fonts/video（桌面/安卓）或 /usr/share/fonts/wunder（云端），
+没有时退回 engine/fonts 或跑 get_fonts.py 下载。都由内置小服务器挂到 /engine/ 下，
+不用往每个工程里拷字体，也没有 file:// 的跨目录字体限制。
 """
 import functools, hashlib, http.server, io, json, os, random, subprocess, sys, threading
 from pathlib import Path
 
 ENGINE = Path(__file__).resolve().parent
 REQUIRED_FONTS = [
+    "NotoSerifSC-VF.ttf", "NotoSansSC-VF.ttf",
     "CormorantGaramond.ttf", "CormorantGaramond-Italic.ttf",
     "Lora.ttf", "Lora-Italic.ttf", "JetBrainsMono.ttf", "CourierPrime-Regular.ttf",
 ]

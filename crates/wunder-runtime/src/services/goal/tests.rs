@@ -15,7 +15,9 @@ use super::service::{
     goal_payload, goal_tool_value, goal_tool_value_none, validate_blocked_reason,
     validate_objective, GoalService, GoalUpdatePublisher,
 };
-use super::tools::{goal_tool_specs, is_goal_tool_name, read_wrapup, TOOL_GOAL};
+use super::tools::{
+    goal_tool_specs, is_goal_tool_name, read_wrapup, reject_model_create, TOOL_GOAL,
+};
 use super::types::*;
 use crate::storage::{SessionGoalRecord, SqliteStorage, StorageBackend, StorageLifecycle};
 use serde_json::json;
@@ -223,6 +225,17 @@ fn require_direct_human_rejects_model_turns() {
     require_direct_human(Some(&json!({ "__source": "human" }))).unwrap();
     let error = require_direct_human(None).unwrap_err();
     assert_eq!(error.code, ERR_TOOL_AUTHORITY_REQUIRED);
+}
+
+#[test]
+fn model_goal_tool_rejects_create() {
+    for args in [
+        json!({ "action": "create", "objective": "ship it" }),
+        json!({ "action": " create " }),
+    ] {
+        assert_code(reject_model_create(&args).unwrap_err(), ERR_TOOL_CREATE_USER_ONLY);
+    }
+    reject_model_create(&json!({ "action": "get" })).unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -1250,10 +1263,15 @@ fn goal_tool_spec_is_one_strict_action_union() {
     let branches = spec.input_schema["oneOf"]
         .as_array()
         .expect("goal schema has action branches");
-    assert_eq!(branches.len(), 7);
+    assert_eq!(branches.len(), 6);
+    assert!(
+        branches
+            .iter()
+            .all(|branch| branch["properties"]["action"]["const"] != "create"),
+        "the model-facing goal tool must not expose create"
+    );
     for (action, required) in [
         ("get", json!(["action"])),
-        ("create", json!(["action", "objective"])),
         (
             "edit",
             json!(["action", "goal_id", "revision", "objective"]),

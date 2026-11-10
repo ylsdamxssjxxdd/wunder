@@ -94,7 +94,12 @@ pub fn target_of(title: &str, detail: &str, sections: &[NativeWorkflowSection]) 
 pub fn tool_target(entry: &NativeWorkflowEntry) -> (String, bool) {
     let patch = is_patch_tool(&entry.title);
     if patch {
-        return target_of(&entry.title, "", &entry.sections);
+        // 补丁类工具优先用差异卡片的文件标题；写入文件在结果到达前还没有
+        // 差异卡片，继续走下面的调用预览，避免折叠行的文件芯片中途消失。
+        let (target, _) = target_of(&entry.title, "", &entry.sections);
+        if !target.is_empty() {
+            return (target, true);
+        }
     }
     if matches!(
         entry.title.as_str(),
@@ -132,6 +137,8 @@ pub fn is_patch_tool(tool: &str) -> bool {
         tool,
         "apply_patch"
             | "应用补丁"
+            | "write_file"
+            | "写入文件"
             | "edit_file"
             | "edit_file2"
             | "文本编辑"
@@ -309,6 +316,7 @@ pub fn process_entry(row: &TimelineRow) -> ProcessEntry {
         patch: row.patch.clone(),
         diff_add: diff_add.into(),
         diff_del: diff_del.into(),
+        lines_read: row.read_lines.clone(),
         tokens: row.tokens.clone(),
         duration: row.duration.clone(),
         status_kind: row.status_kind,
@@ -685,11 +693,27 @@ pub fn tool_summary(entry: &NativeWorkflowEntry) -> String {
 /// empty. The folded batch bar has no chip and keeps reading `tool_summary`.
 pub fn tool_row_summary(entry: &NativeWorkflowEntry, target: &str) -> String {
     let summary = tool_summary(entry);
-    let target = target.trim();
-    if !target.is_empty() && !summary.is_empty() && target.starts_with(summary.trim_end()) {
+    if is_same_target(target, &summary) {
         return String::new();
     }
     summary
+}
+
+/// Either side may be the bounded one: the chip clips long paths to 64 chars
+/// while the preview keeps the whole path (or the preview is clipped first).
+/// A prefix of the same path is the same resource and must not print twice.
+fn is_same_target(target: &str, summary: &str) -> bool {
+    let target = target.trim();
+    let summary = summary.trim();
+    if target.is_empty() || summary.is_empty() {
+        return false;
+    }
+    let (long, short) = if target.len() >= summary.len() {
+        (target, summary)
+    } else {
+        (summary, target)
+    };
+    long.starts_with(short)
 }
 
 /// The web timeline keeps invocation usage at the far edge of the row. Native
@@ -747,6 +771,30 @@ mod tests {
     }
 
     #[test]
+    fn write_file_row_keeps_the_call_preview_until_the_patch_section_exists() {
+        let mut entry = NativeWorkflowEntry {
+            id: "fixture-write".into(),
+            title: "write_file".into(),
+            preview: "fixture/sample.txt".into(),
+            detail: String::new(),
+            state: "running".into(),
+            tokens: String::new(),
+            duration: String::new(),
+            read_lines: String::new(),
+            sections: Vec::new(),
+            patch_files: Vec::new(),
+        };
+        assert_eq!(tool_target(&entry), ("fixture/sample.txt".into(), false));
+        assert!(is_patch_tool(&entry.title));
+        entry.sections = vec![NativeWorkflowSection {
+            title: "fixture/sample.txt".into(),
+            kind: "patch".into(),
+            ..Default::default()
+        }];
+        assert_eq!(tool_target(&entry), ("fixture/sample.txt".into(), true));
+    }
+
+    #[test]
     fn command_summary_uses_only_invocation_and_never_result_text() {
         let mut entry = NativeWorkflowEntry {
             id: "fixture-command".into(),
@@ -756,6 +804,7 @@ mod tests {
             state: "running".into(),
             tokens: String::new(),
             duration: String::new(),
+            read_lines: String::new(),
             sections: Vec::new(),
             patch_files: Vec::new(),
         };
@@ -788,6 +837,7 @@ mod tests {
             state: "completed".into(),
             tokens: String::new(),
             duration: String::new(),
+            read_lines: String::new(),
             sections: Vec::new(),
             patch_files: Vec::new(),
         };
@@ -798,9 +848,37 @@ mod tests {
         entry.preview = "a".repeat(200);
         let (target, _) = tool_target(&entry);
         assert_eq!(tool_row_summary(&entry, &target), "");
+        // The chip clips a long path while the preview keeps it whole; the
+        // clipped prefix is still the same resource and must not print again.
+        let long = format!("fixture/{}.rs", "a".repeat(90));
+        entry.title = "文本编辑".into();
+        entry.preview = long.clone();
+        entry.sections = vec![NativeWorkflowSection {
+            title: long.clone(),
+            kind: "patch".into(),
+            ..Default::default()
+        }];
+        let (target, _) = tool_target(&entry);
+        assert_eq!(target.chars().count(), 64);
+        assert!(long.starts_with(target.as_str()));
+        assert_eq!(tool_row_summary(&entry, &target), "");
         // An unrelated summary is kept.
+        entry.title = "read_file".into();
+        entry.sections.clear();
         entry.preview = "fixture query".into();
         assert_eq!(tool_row_summary(&entry, "other.txt"), "fixture query");
+    }
+
+    #[test]
+    fn read_row_carries_the_returned_line_count() {
+        let row = TimelineRow {
+            id: "fixture-read".into(),
+            kind: crate::timeline::KIND_TOOL,
+            read_lines: "142 行".into(),
+            ..Default::default()
+        };
+        assert_eq!(process_entry(&row).lines_read.as_str(), "142 行");
+        assert!(process_entry(&TimelineRow::default()).lines_read.is_empty());
     }
 
     #[test]

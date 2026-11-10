@@ -736,6 +736,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 row.sections = crate::timeline_text::sections(&item.sections);
                 row.tokens = item.tokens.as_str().into();
                 row.duration = item.duration.as_str().into();
+                row.read_lines = item.read_lines.as_str().into();
                 row.status_kind = crate::timeline::status_kind(&item.state);
                 row.patch = if patch {
                     crate::timeline_text::patch_cards(&item.patch_files)
@@ -785,7 +786,7 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             turn.subagents.iter().any(|card| card.is_running()),
         );
         footer.user_round = turn.assistant.user_round.min(i32::MAX as i64) as i32;
-        footer.status_kind = crate::timeline::status_kind(turn.assistant.state.as_str());
+        footer.status_kind = crate::timeline::footer_status_kind(turn.assistant.state.as_str());
         if let Some(body) = answer_at {
             footer.text = rows[body].text.clone();
         }
@@ -923,7 +924,7 @@ pub(crate) fn project_cloud_history(
         footer.summary = answer.id.clone();
         footer.text = answer.text.clone();
         footer.user_round = chat.user_round.min(i32::MAX as i64) as i32;
-        footer.status_kind = crate::timeline::status_kind(chat.status.as_str());
+        footer.status_kind = crate::timeline::footer_status_kind(chat.status.as_str());
         footer.stats = ModelRc::new(VecModel::from(crate::timeline::stat_metrics(
             &crate::turn_stats::with_status(
                 crate::turn_stats::metrics(&chat.assistant.stats.clone().unwrap_or(Value::Null)),
@@ -1104,6 +1105,7 @@ fn blank_row(kind: i32, id: String) -> TimelineRow {
         tool_metrics_visible: false,
         tokens: Default::default(),
         duration: Default::default(),
+        read_lines: Default::default(),
         detail: Default::default(),
         sections: ModelRc::default(),
         process_entries: ModelRc::default(),
@@ -1821,6 +1823,29 @@ mod tests {
         }
         // Body content has no footer metrics.
         assert_eq!(rows[2].stats.row_count(), 0, "no metrics renders no footer");
+    }
+
+    #[test]
+    fn unfinished_turns_keep_their_footer_running_after_reload() {
+        for state in ["正在生成…", "请求中", "正在执行工具…", "等待用户输入"]
+        {
+            let rows = project_history(&[fixture("fixture-running", "partial answer", state)]);
+            let footer = rows
+                .iter()
+                .find(|row| row.kind == crate::timeline::KIND_FOOTER)
+                .expect("footer");
+            assert_eq!(
+                footer.status_kind,
+                crate::timeline::STATUS_RUNNING,
+                "{state}"
+            );
+        }
+        let rows = project_history(&[fixture("fixture-done", "answer", "任务完成")]);
+        let footer = rows
+            .iter()
+            .find(|row| row.kind == crate::timeline::KIND_FOOTER)
+            .expect("footer");
+        assert_eq!(footer.status_kind, crate::timeline::STATUS_DONE);
     }
 
     #[test]

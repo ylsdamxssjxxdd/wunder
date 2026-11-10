@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 pub const TOOL_GOAL: &str = "goal";
 
-const GOAL_DESCRIPTION: &str = "Manage this session's persisted goal. get reads; create starts; edit changes; pause/resume controls; complete closes verified work; blocked reports a persistent blocker. Mutations need goal_id and revision from get, except create. Runtime enforces human-only and goal-round rules.";
+const GOAL_DESCRIPTION: &str = "Manage this session's persisted goal. get reads; edit changes; pause/resume controls; complete closes verified work; blocked reports a persistent blocker. Only the user starts goals; the model must never create one. Mutations need goal_id and revision from get. Runtime enforces human-only and goal-round rules.";
 
 pub fn is_goal_tool_name(name: &str) -> bool {
     name.trim() == TOOL_GOAL
@@ -41,10 +41,6 @@ pub fn goal_tool_specs() -> Vec<ToolSpec> {
     });
     let reference = |name: &str| json!({"$ref": format!("#/$defs/{name}")});
     let get = json!({"action":{"const":"get"}});
-    let create = json!({
-        "action":{"const":"create"}, "objective":reference("objective"),
-        "max_goal_rounds":reference("max_goal_rounds")
-    });
     let mutation = |name: &str| {
         json!({
             "action":{"const":name}, "goal_id":reference("goal_id"), "revision":reference("revision")
@@ -62,7 +58,6 @@ pub fn goal_tool_specs() -> Vec<ToolSpec> {
         input_schema: json!({
             "type":"object", "$defs":defs, "oneOf":[
                 action(get, &["action"]),
-                action(create, &["action", "objective"]),
                 action(edit, &["action", "goal_id", "revision", "objective"]),
                 action(mutation("pause"), &["action", "goal_id", "revision"]),
                 action(mutation("resume"), &["action", "goal_id", "revision"]),
@@ -97,6 +92,24 @@ fn has_round_cap(args: &Value, key: &str) -> bool {
     args.get(key).and_then(Value::as_i64).is_some()
 }
 
+/// Starting a goal is a user decision only; no model-facing entry point may
+/// create or replace one, even if an older schema or client sends `create`.
+pub(super) fn reject_model_create(args: &Value) -> Result<()> {
+    if args
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        == Some("create")
+    {
+        return Err(GoalError {
+            message: "goals can only be started by the user; ask the user to use /goal or the goal bar. The model cannot create or replace a goal.".to_string(),
+            code: ERR_TOOL_CREATE_USER_ONLY,
+        }
+        .into());
+    }
+    Ok(())
+}
+
 fn goal_ref(args: &Value) -> Result<GoalRef> {
     let goal_id = arg_str(args, "goal_id").unwrap_or_default();
     let revision = args.get("revision").and_then(Value::as_i64).unwrap_or(0);
@@ -124,6 +137,7 @@ pub async fn execute_goal_tool(
     if name.trim() != TOOL_GOAL {
         return Err(anyhow::anyhow!("unknown goal tool: {}", name.trim()));
     }
+    reject_model_create(args)?;
     let service = goal_service_from_context(context)?;
     let storage = context.storage.clone();
     let current = service
@@ -143,27 +157,6 @@ pub async fn execute_goal_tool(
                 .as_ref()
                 .map(super::service::goal_tool_value)
                 .unwrap_or_else(super::service::goal_tool_value_none))
-        }
-        "create" => {
-            ensure_action_fields(args, &["action", "objective", "max_goal_rounds"])?;
-            require_direct_human(overrides)?;
-            let objective = arg_str(args, "objective")
-                .ok_or_else(|| GoalError {
-                    message: "objective is required".to_string(),
-                    code: ERR_GOAL_INVALID_OBJECTIVE,
-                })?
-                .to_string();
-            let max_goal_rounds = optional_i64(args, "max_goal_rounds")?;
-            let view = service
-                .create(
-                    storage,
-                    context.user_id,
-                    context.session_id,
-                    &objective,
-                    max_goal_rounds,
-                )
-                .await?;
-            Ok(super::service::goal_tool_value(&view))
         }
         "edit" | "pause" | "resume" | "complete" | "blocked" => {
             let action = args

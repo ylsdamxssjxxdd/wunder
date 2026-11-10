@@ -258,6 +258,9 @@ pub struct NativeWorkflowEntry {
     pub state: String,
     pub tokens: String,
     pub duration: String,
+    /// Pre-formatted line count of a read call ("142 行" / "120/676 行"); empty
+    /// for every tool that does not return file lines.
+    pub read_lines: String,
     pub sections: Vec<NativeWorkflowSection>,
     /// Structured file diffs for the timeline patch card; empty for every tool
     /// that does not change files.

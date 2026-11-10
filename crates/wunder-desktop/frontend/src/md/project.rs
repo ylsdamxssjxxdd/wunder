@@ -78,7 +78,10 @@ impl MarkdownRenderer {
                     kind: block::PARAGRAPH,
                 });
             }
-            Block::Heading { level, inline: nodes } => {
+            Block::Heading {
+                level,
+                inline: nodes,
+            } => {
                 let markup = inline::markup_bold(nodes);
                 let plain = inline::plain(nodes);
                 let mut row = blank(block::HEADING);
@@ -121,9 +124,7 @@ impl MarkdownRenderer {
                 };
                 row.quoted = quoted;
                 rows.push(row);
-                *prev = Some(Meta {
-                    kind: block::IMAGE,
-                });
+                *prev = Some(Meta { kind: block::IMAGE });
             }
             Block::Document(document) => {
                 let mut row = blank(block::DOCUMENT);
@@ -173,12 +174,8 @@ impl MarkdownRenderer {
                     None => 0,
                 };
                 row.depth = depth as i32;
-                row.space_before = space_before(
-                    block::LIST_ITEM,
-                    0,
-                    *prev,
-                    index == 0 && depth == 0,
-                );
+                row.space_before =
+                    space_before(block::LIST_ITEM, 0, *prev, index == 0 && depth == 0);
                 rows.push(row);
                 *prev = Some(Meta {
                     kind: block::LIST_ITEM,
@@ -233,9 +230,7 @@ impl MarkdownRenderer {
         row.cells = cell_model(cells);
         row.quoted = quoted;
         rows.push(row);
-        *prev = Some(Meta {
-            kind: block::TABLE,
-        });
+        *prev = Some(Meta { kind: block::TABLE });
     }
 
     fn prose_row(&mut self, kind: i32, nodes: &[Inline], quoted: bool) -> MdBlock {
@@ -360,9 +355,7 @@ fn column_pixels(weights: &[f32]) -> Vec<f32> {
 
 /// Display width in terminal cells: CJK and emoji take two.
 fn display_width(text: &str) -> usize {
-    text.chars()
-        .map(|ch| if is_wide(ch) { 2 } else { 1 })
-        .sum()
+    text.chars().map(|ch| if is_wide(ch) { 2 } else { 1 }).sum()
 }
 
 fn is_wide(ch: char) -> bool {
@@ -468,9 +461,8 @@ mod tests {
     #[test]
     fn block_kinds_and_spacing_follow_the_document() {
         let mut renderer = MarkdownRenderer::new();
-        let rows = renderer.render(
-            "# 标题\n\n段落。\n\n```rust\nfn main() {}\n```\n\n- 甲\n- 乙\n\n> 引用\n",
-        );
+        let rows = renderer
+            .render("# 标题\n\n段落。\n\n```rust\nfn main() {}\n```\n\n- 甲\n- 乙\n\n> 引用\n");
         assert_eq!(
             kinds(&rows),
             vec![

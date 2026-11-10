@@ -106,6 +106,31 @@ pub fn status_kind(state: &str) -> i32 {
     }
 }
 
+/// Footer status for the turn's fork action. Live turns arrive as localized
+/// phases ("请求中" / "正在生成…"), which the English-only `status_kind` would
+/// settle as done — exposing the fork action under an answer that is still
+/// streaming. Every phrase that is not an explicit terminal state counts as
+/// running; this stays allocation-free because it runs once per stream frame.
+pub fn footer_status_kind(state: &str) -> i32 {
+    let state = state.trim();
+    match state {
+        "failed" | "error" | "rejected" | "执行失败" | "任务失败" => STATUS_FAILED,
+        "cancelled" | "canceled" | "interrupted" | "stopped" | "已停止" | "已取消" | "已中断" => {
+            STATUS_STOPPED
+        }
+        "" | "idle" | "ready" | "none" | "completed" | "complete" | "done" | "ok" | "success"
+        | "final" | "任务完成" | "输出已结束" | "已完成" => STATUS_DONE,
+        _ if state.starts_with("失败") => STATUS_FAILED,
+        _ if state.starts_with("已停止")
+            || state.starts_with("已取消")
+            || state.starts_with("已中断") =>
+        {
+            STATUS_STOPPED
+        }
+        _ => STATUS_RUNNING,
+    }
+}
+
 /// Runtime metrics to row metrics. One conversion keeps the live path and the
 /// history projection producing identical rows.
 pub fn stat_metrics(metrics: &[crate::turn_stats::Metric]) -> Vec<crate::TurnStatMetric> {
@@ -185,6 +210,7 @@ fn blank(kind: i32, id: String) -> TimelineRow {
         tool_metrics_visible: false,
         tokens: Default::default(),
         duration: Default::default(),
+        read_lines: Default::default(),
         detail: slint::SharedString::default(),
         reasoning_blocks: ModelRc::default(),
         sections: ModelRc::default(),
@@ -1277,6 +1303,7 @@ impl Timeline {
                 row.sections = sections;
                 row.tokens = entry.tokens.as_str().into();
                 row.duration = entry.duration.as_str().into();
+                row.read_lines = entry.read_lines.as_str().into();
                 row.status_kind = status;
                 row.patch = cards.clone();
             });
@@ -1326,6 +1353,7 @@ impl Timeline {
             row.sections = sections;
             row.tokens = entry.tokens.as_str().into();
             row.duration = entry.duration.as_str().into();
+            row.read_lines = entry.read_lines.as_str().into();
             row.status_kind = status;
             row.patch = cards;
             row.payload = index as i32;
@@ -2025,8 +2053,8 @@ impl Timeline {
                 entry.kind == KIND_SUBAGENT && entry.status_kind == STATUS_RUNNING
             })
         });
-        let footer_status = status_kind(state);
         let state = crate::turn_stats::resolve_status(state, has_running_subagent);
+        let footer_status = footer_status_kind(state);
         let metric = crate::turn_stats::with_status(
             crate::turn_stats::with_user_round(Vec::new(), round),
             state,
@@ -2074,6 +2102,51 @@ impl Timeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn footer_status_keeps_localized_live_phases_running() {
+        for state in [
+            "请求中",
+            "模型响应中",
+            "正在生成…",
+            "正在思考…",
+            "模型输出中",
+            "正在执行工具…",
+            "使用工具中",
+            "上下文压缩中…",
+            "模型请求正在排队 · 前方 2 个任务",
+            "任务已排队…",
+            "子智能体执行中",
+            "等待用户输入",
+        ] {
+            assert_eq!(footer_status_kind(state), STATUS_RUNNING, "{state}");
+        }
+        for state in ["任务完成", "输出已结束", "completed", "done", "final", ""] {
+            assert_eq!(footer_status_kind(state), STATUS_DONE, "{state}");
+        }
+        assert_eq!(footer_status_kind("执行失败"), STATUS_FAILED);
+        assert_eq!(footer_status_kind("已停止"), STATUS_STOPPED);
+    }
+
+    #[test]
+    fn streaming_turn_footer_never_reads_as_finished() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-live", "Fixture input");
+        let footer = |timeline: &Timeline| {
+            timeline
+                .model
+                .iter()
+                .find(|row| row.kind == KIND_FOOTER)
+                .map(|row| row.status_kind)
+                .expect("footer")
+        };
+        timeline.set_turn_status("请求中", 1);
+        assert_eq!(footer(&timeline), STATUS_RUNNING);
+        timeline.set_turn_status("正在生成…", 1);
+        assert_eq!(footer(&timeline), STATUS_RUNNING);
+        timeline.set_turn_status("任务完成", 1);
+        assert_eq!(footer(&timeline), STATUS_DONE);
+    }
 
     #[test]
     fn answered_inquiry_settles_the_previous_waiting_bubble() {
@@ -3100,6 +3173,7 @@ mod tests {
             state: state.into(),
             tokens: String::new(),
             duration: String::new(),
+            read_lines: String::new(),
             sections: Vec::new(),
             patch_files: Vec::new(),
         };
@@ -3144,6 +3218,7 @@ mod tests {
             state: "completed".into(),
             tokens: String::new(),
             duration: String::new(),
+            read_lines: String::new(),
             sections: Vec::new(),
             patch_files: Vec::new(),
         };

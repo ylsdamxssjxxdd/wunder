@@ -114,7 +114,9 @@ impl Builder {
         // emit the card when the link closes.
         if let Some(document) = self.document.as_mut() {
             match &event {
-                Event::Text(value) | Event::Code(value) | Event::Html(value)
+                Event::Text(value)
+                | Event::Code(value)
+                | Event::Html(value)
                 | Event::InlineHtml(value) => document.alt.push_str(value),
                 Event::SoftBreak | Event::HardBreak => document.alt.push(' '),
                 _ => {}
@@ -484,7 +486,9 @@ mod tests {
             panic!("expected paragraph");
         };
         assert!(inline.iter().any(|node| matches!(node, Inline::Strong(_))));
-        assert!(inline.iter().any(|node| matches!(node, Inline::Link { .. })));
+        assert!(inline
+            .iter()
+            .any(|node| matches!(node, Inline::Link { .. })));
     }
 
     #[test]
@@ -579,4 +583,3 @@ mod tests {
         }
     }
 }
-

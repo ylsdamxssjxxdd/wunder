@@ -175,7 +175,9 @@ function Get-DirectorySupplementInfo([string]$Path) {
     $files[$name] = 0
     $directory = Join-Path $Path "opt\$name"
     if (-not (Test-Path -LiteralPath $directory -PathType Container)) { continue }
-    $items = @(Get-ChildItem -LiteralPath $directory -Recurse -File -ErrorAction SilentlyContinue)
+    # Include dot paths: skip counting numpy/.libs here and the component size
+    # shown by the installer would silently omit its OpenBLAS payload.
+    $items = @(Get-ChildItem -LiteralPath $directory -Recurse -File -Force -ErrorAction SilentlyContinue)
     $files[$name] = $items.Count
     foreach ($item in $items) { $bytes[$name] += $item.Length }
   }
@@ -384,6 +386,47 @@ if (-not $CoreOnly) {
 }
 
 $labels = Get-Content -LiteralPath (Join-Path $installerRoot "component-labels.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+function Get-DotPathEntries {
+  # Inno's Source wildcard does not match dot-prefixed names, so the component
+  # entry skips numpy/.libs, scipy/.libs and _rels/.rels. numpy and scipy load
+  # OpenBLAS and MSVCP140 from those directories, so the installed Python would
+  # fail to import them. Name dot directories explicitly and list dot files
+  # that live outside one.
+  param([string]$ComponentRoot, [string]$Component, [string]$Task)
+  $entries = New-Object System.Collections.Generic.List[string]
+  if (-not (Test-Path -LiteralPath $ComponentRoot -PathType Container)) { return $entries }
+  $dotDirs = New-Object System.Collections.Generic.List[object]
+  $dotFiles = New-Object System.Collections.Generic.List[object]
+  foreach ($item in @(Get-ChildItem -LiteralPath $ComponentRoot -Recurse -Force -ErrorAction SilentlyContinue)) {
+    $rel = $item.FullName.Substring($ComponentRoot.Length).TrimStart('\')
+    $segments = @($rel -split '\\')
+    if (@($segments | Where-Object { $_.StartsWith('.') }).Count -eq 0) { continue }
+    if ($item.PSIsContainer) {
+      $dotDirs.Add(@($item.FullName, $rel))
+      continue
+    }
+    $parentRel = Split-Path -Path $rel -Parent
+    if ([string]::IsNullOrEmpty($parentRel) -or
+        @(($parentRel -split '\\') | Where-Object { $_.StartsWith('.') }).Count -eq 0) {
+      $dotFiles.Add(@($item.FullName, $rel))
+    }
+  }
+  foreach ($pair in $dotDirs) {
+    $source = '{0}\*' -f $pair[0]
+    $dest = '{{app}}\opt\{0}\{1}' -f $Component, $pair[1]
+    $entries.Add(('Source: "{0}"; DestDir: "{1}"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: {2}' -f $source, $dest, $Task))
+  }
+  foreach ($pair in $dotFiles) {
+    $parentRel = Split-Path -Path $pair[1] -Parent
+    $dest = if ([string]::IsNullOrEmpty($parentRel)) {
+      '{{app}}\opt\{0}' -f $Component
+    } else {
+      '{{app}}\opt\{0}\{1}' -f $Component, $parentRel
+    }
+    $entries.Add(('Source: "{0}"; DestDir: "{1}"; Flags: ignoreversion; Tasks: {2}' -f $pair[0], $dest, $Task))
+  }
+  return $entries
+}
 function Format-ComponentLabel([string]$Name, [string]$Version, [int64]$Bytes) {
   $template = [string]$labels.PSObject.Properties[$Name].Value
   if (-not $template) { $template = $Name }
@@ -429,6 +472,9 @@ if (-not $CoreOnly) {
   foreach ($name in $available) {
     $source = Join-Path $supplementRoot "opt\$name\*"
     $lines.Add(('Source: "{0}"; DestDir: "{{app}}\opt\{1}"; Flags: ignoreversion recursesubdirs createallsubdirs; Tasks: {2}' -f $source, $name, (Get-TaskName $name)))
+    foreach ($entry in @(Get-DotPathEntries -ComponentRoot (Join-Path $supplementRoot "opt\$name") -Component $name -Task (Get-TaskName $name))) {
+      $lines.Add($entry)
+    }
   }
 }
 $generatedPath = Join-Path $stageRoot "payload.generated.iss"

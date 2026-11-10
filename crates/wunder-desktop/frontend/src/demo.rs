@@ -407,6 +407,7 @@ pub fn install(app: &MainWindow) {
     let weak = app.as_weak();
     app.on_split_send(move |slot| {
         let Some(app) = weak.upgrade() else { return };
+        app.invoke_split_activate(slot);
         let text = match slot {
             0 => app.get_split_draft_0(),
             1 => app.get_split_draft_1(),
@@ -441,19 +442,70 @@ pub fn install(app: &MainWindow) {
 }
 
 fn normalize_demo_split(app: &MainWindow) {
-    let open = [
-        app.get_split_session_0(),
-        app.get_split_session_1(),
-        app.get_split_session_2(),
-        app.get_split_session_3(),
-    ]
-    .iter()
-    .filter(|id| !id.is_empty())
-    .count();
-    if open <= 1 {
+    let mut panes = Vec::new();
+    for slot in 0..4 {
+        let session = match slot {
+            0 => app.get_split_session_0(),
+            1 => app.get_split_session_1(),
+            2 => app.get_split_session_2(),
+            _ => app.get_split_session_3(),
+        };
+        if session.is_empty() {
+            continue;
+        }
+        let title = match slot {
+            0 => app.get_split_title_0(),
+            1 => app.get_split_title_1(),
+            2 => app.get_split_title_2(),
+            _ => app.get_split_title_3(),
+        };
+        let rows = match slot {
+            0 => app.get_split_rows_0(),
+            1 => app.get_split_rows_1(),
+            2 => app.get_split_rows_2(),
+            _ => app.get_split_rows_3(),
+        };
+        let draft = match slot {
+            0 => app.get_split_draft_0(),
+            1 => app.get_split_draft_1(),
+            2 => app.get_split_draft_2(),
+            _ => app.get_split_draft_3(),
+        };
+        panes.push((session, title, rows, draft));
+    }
+    for target in 0..4 {
+        let (session, title, rows, draft) = panes.get(target).cloned().unwrap_or_default();
+        match target {
+            0 => {
+                app.set_split_session_0(session);
+                app.set_split_title_0(title);
+                app.set_split_rows_0(rows);
+                app.set_split_draft_0(draft);
+            }
+            1 => {
+                app.set_split_session_1(session);
+                app.set_split_title_1(title);
+                app.set_split_rows_1(rows);
+                app.set_split_draft_1(draft);
+            }
+            2 => {
+                app.set_split_session_2(session);
+                app.set_split_title_2(title);
+                app.set_split_rows_2(rows);
+                app.set_split_draft_2(draft);
+            }
+            _ => {
+                app.set_split_session_3(session);
+                app.set_split_title_3(title);
+                app.set_split_rows_3(rows);
+                app.set_split_draft_3(draft);
+            }
+        }
+    }
+    if panes.len() <= 1 {
         app.invoke_split_layout(1);
     } else {
-        app.set_split_count(if open == 2 { 2 } else { 4 });
+        app.set_split_count(if panes.len() == 2 { 2 } else { 4 });
     }
 }
 
@@ -547,6 +599,7 @@ fn fixture_row(kind: i32, index: usize, text: &str) -> TimelineRow {
         tool_metrics_visible: false,
         tokens: Default::default(),
         duration: Default::default(),
+        read_lines: Default::default(),
         detail: Default::default(),
         sections: ModelRc::default(),
         process_entries: ModelRc::default(),

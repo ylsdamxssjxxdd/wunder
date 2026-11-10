@@ -106,12 +106,15 @@ git push gitea main
   `wunder-supplement-win7-ia32-common.zip` 组出 `wunder-desktop-<版本>-win7-x86-setup.exe`。x86_64 宿主原生运行
   该镜像；ARM 宿主由随包的 qemu-x86_64/i386 binfmt 模拟运行同一个 amd64 镜像，两个剖面的 Release 都带这一附件。
 - `android`（x86_64 或 aarch64 worker）：`wunder-android-<版本>-arm64.apk`，内嵌 proot Ubuntu rootfs、离线
-  工具补充包 `common.tar.xz` 与 proot/busybox 运行库。工具链（Android SDK 36、NDK 28.2、Temurin JDK 17、
+  工具补充包 `common.tar.xz`、浏览器补充包 `browser.tar.xz`（Playwright + Chromium，供知识短片等技能开箱即用）
+  与 proot/busybox 运行库。工具链（Android SDK 36、NDK 28.2、Temurin JDK 17、
   Gradle 8.13 与预热缓存）和 APK 资产放在套件 `android/` 目录，由 `<前缀>-android` 卷只读挂载到任务容器的
   `/opt/android`。x86_64 宿主直接用 NDK 原生工具链；aarch64 宿主用套件内置的 `qemu-x86_64-static` 模拟
   x86_64 的 clang/aapt2（Google 只为 x86_64 宿主发布 NDK 与 build-tools），Rust 仍按 aarch64 原生编译。
   Gradle 缓存在首次构建时复制到 `/ci-cache` 后复用，调试签名固定使用 `android/keystore/debug.keystore`，
-  多次构建的 APK 可互相覆盖安装。
+  多次构建的 APK 可互相覆盖安装。套件 `android/assets/packs/` 必须同时准备 `common.tar.xz` 与
+  `browser.tar.xz`；后者由 `builders/build-android-browser-pack.sh` 基于同一份 common 包生成，
+  缺失时构建直接失败而不是产出没有浏览器的 APK。
 
 检出后的步骤一律使用仓库内 `packaging/gitea/ci/` 脚本，只有检出本身用镜像内 `/opt/offline-ci/checkout.py`。
 产物由该次运行的短期令牌上传到 Releases，标签形如 `ci-<提交短哈希>-<运行编号>`。

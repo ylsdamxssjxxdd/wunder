@@ -15,4 +15,3 @@ pub const RULE: i32 = 6;
 /// Workspace file card. Not produced by CommonMark: the parser promotes a link
 /// or image whose target is a workspace document into this kind.
 pub const DOCUMENT: i32 = 7;
-

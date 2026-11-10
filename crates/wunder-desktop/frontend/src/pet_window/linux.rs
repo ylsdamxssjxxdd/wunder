@@ -357,7 +357,10 @@ fn clamp_sprite(comp: &PetOverlay, width: f64, sx: &mut f64, sy: &mut f64) {
         let origin = monitor.position();
         let size = monitor.size();
         let (ox, oy) = (f64::from(origin.x) / scale, f64::from(origin.y) / scale);
-        let (mw, mh) = (f64::from(size.width) / scale, f64::from(size.height) / scale);
+        let (mw, mh) = (
+            f64::from(size.width) / scale,
+            f64::from(size.height) / scale,
+        );
         let max_x = (ox + mw - width - SCREEN_MARGIN).max(ox + SCREEN_MARGIN);
         let max_y = (oy + mh - height - SCREEN_MARGIN).max(oy + SCREEN_MARGIN);
         *sx = (*sx).clamp(ox + SCREEN_MARGIN, max_x).round();

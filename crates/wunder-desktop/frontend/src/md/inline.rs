@@ -243,7 +243,10 @@ mod tests {
             url: "https://example.com/a_(b)?q=1".into(),
             children: vec![Inline::Text("示例 [链接]".into())],
         }];
-        assert_eq!(roundtrip(&nodes), "示例 [链接] (https://example.com/a_(b)?q=1)");
+        assert_eq!(
+            roundtrip(&nodes),
+            "示例 [链接] (https://example.com/a_(b)?q=1)"
+        );
         let source = markup(&nodes);
         let blocks = parse::parse(&source);
         let crate::md::ast::Block::Paragraph(inner) = &blocks[0] else {

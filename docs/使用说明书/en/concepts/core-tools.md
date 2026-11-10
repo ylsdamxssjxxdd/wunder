@@ -58,7 +58,7 @@ Default tool sets, the desktop hidden set, and the desktop extra set all have a 
 | --- | --- |
 | Default built-ins (12) | `定时任务`, `记忆管理`, `执行命令`, `命令会话`, `列出文件`, `文件名匹配`, `搜索内容`, `读取文件`, `网页抓取`, `技能调用`, `写入文件`, `文本编辑` |
 | Default skills | `技能创建器`, `公文写作`, `文稿校对`, `3D网页`, `知识短片` |
-| Desktop hidden (neither selectable nor on by default) | `goal` (`action=get|create|edit|pause|resume|complete|blocked`, injected automatically by the runtime per session), `会话线程控制`, `会话让出` |
+| Desktop hidden (neither selectable nor on by default) | `goal` (`action=get|edit|pause|resume|complete|blocked`, injected automatically by the runtime per session; the model cannot create goals), `会话线程控制`, `会话让出` |
 | Desktop extras, on by default | `读图工具`, `桌面控制`, `子智能体控制` |
 
 `网页搜索` is **temporarily withdrawn, not deleted**: the code is kept and dispatch still recognizes it, but the availability check returns unavailable, so neither the model nor the user can see it. `ptc` has been removed entirely.

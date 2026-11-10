@@ -9,7 +9,7 @@
 - `opt/7zip`：随包附带的 7-Zip 25.01 命令行版（`7z.exe` + `7z.dll`），压缩包归档工具（含 `.7z`/`.rar` 解压）由它提供；可用 `-SkipSevenZip` 跳过
 - `opt/powershell`：随包附带的便携 PowerShell 7.1.7（`pwsh.exe`），是 `执行命令` 工具的默认 shell；可用 `-SkipPowerShell` 跳过，详见「版本选择」
 - `opt/browser`：默认内置 Chrome 109 win32 浏览器，供 `browser_*` 工具开箱使用；可用 `-SkipBrowser` 跳过，详见「内置浏览器」
-- `opt/fonts/video`：知识短片技能用的 6 个拉丁/等宽 OFL 字体（中文用 `opt/fonts/common`）；构建时优先从 `config\fonts\video` 复制，缺失时按 `packaging\fonts\video-fonts.json` 的固定 URL 和 SHA-256 下载。可用 `-VideoFontsDir <目录>` 指定本地字体源
+- `opt/fonts/video`：知识短片技能用的 8 个 OFL 字体（思源宋体/黑体 + 6 个拉丁/等宽；中文缺失时退回 `opt/fonts/common` 的宋体/雅黑）；构建时优先从 `config\fonts\video` 复制，缺失时按 `packaging\fonts\video-fonts.json` 的固定 URL 和 SHA-256 下载。可用 `-VideoFontsDir <目录>` 指定本地字体源
 - `opt/fonts/common`：公文/办公通用字体（仿宋、楷体、黑体、宋体、方正小标宋、微软雅黑、等线、Times New Roman）；构建时优先从 `config\fonts\common` 复制，缺失时按 `packaging\fonts\common-fonts.json` 下载。可用 `-CommonFontsDir <目录>` 指定本地字体源
 
 补充包设计目标：**统一安装到 `WUNDER_HOME/opt`，桌面版与命令行共用一份运行环境**。
@@ -62,6 +62,8 @@ build.bat pack -a win7-x86
 
 Windows 安装包优先使用离线 SDK 的 `Rust-builder/win7/offline/tools/inno-setup/app/ISCC.exe`（Inno Setup 6.7.3，版本与 SHA256 见同目录 `VERSION.txt`）。也可以用 `-Iscc` 或 `WUNDER_ISCC` 指定已有编译器，`-NoDownload` 禁止联网；只有离线编译器缺失且允许下载时才会准备到 `temp_dir/tools/inno-setup`。SDK 根目录可用 `WUNDER_WIN7_BUILDER_ROOT` 或 `WUNDER_BUILDER_ROOT` 覆盖。
 
+Inno Setup 的 `Source: ...\*` 不会展开以点开头的目录和文件，直接按组件通配会把 `numpy/.libs`、`scipy/.libs`、`matplotlib.libs/.load-order` 和 `python-docx` 的 `_rels/.rels` 静默漏装，安装后的 Python 无法导入 numpy/scipy 或用默认模板创建 docx。两个安装器生成脚本（PowerShell 与 Linux/Wine）都会额外为每个点目录/点文件生成显式 `[Files]` 条目，并沿用所属组件的 Task；新增依赖若再带点路径，构建会自动覆盖，不需要手工维护列表。
+
 补充包的版本与下载说明见下文。
 
 ## 版本选择
@@ -87,11 +89,12 @@ Windows 安装包优先使用离线 SDK 的 `Rust-builder/win7/offline/tools/inn
   - 固定使用官方安装器资产（本身是 7z SFX），构建机解包后只携带命令行对 `7z.exe` + `7z.dll` 进包；完整版解码器覆盖 `7z/zip/tar/gzip/xz` 与 Rar，`.rar` 无需再装 unrar（`extra` 包里的 `7za.exe` 不含 Rar）。
   - 入包前对两个文件跑与 ripgrep 相同的 PE 门禁：架构必须匹配目标，且不得静态导入 `bcryptprimitives.dll` / `api-ms-win-core-synch-l1-2-0.dll`（Win8+ 专属，25.01 实测干净）。
   - 构建机需要 7-Zip 来解开这个 SFX（与浏览器 mini_installer 解包同一依赖），CI 镜像自带；无 7-Zip 的主机可用 `-SkipSevenZip` 跳过该组件。
-- PowerShell：`7.1.7 portable (win-x86 zip)`
-  - `7.1.7` 是最后一个能在 Windows 7 上启动的 PowerShell 7：`7.2` 起基于 .NET 6，要求 Windows 8.1+；它也是最后一个提供自包含 win-x86 zip 的版本。
+- PowerShell：`7.1.7 portable (win-x86 / win-x64 zip)`
+  - `7.1.7` 是最后一个能在 Windows 7 上启动的 PowerShell 7：`7.2` 起基于 .NET 6，要求 Windows 8.1+；它也是最后一个提供自包含 win-x86 / win-x64 zip 的版本，清单按目标架构分别 pin 归档。
   - zip 自带 .NET 5 运行时、降级版 API-set shim 与 UCRT，解压即用：不写注册表、不需要管理员权限、不需要重启，这决定它（而不是需要系统级安装的 WMF 5.1）成为补充包的默认选择。
   - 目标机仍需打齐 Universal CRT（`KB2999226`）与 Visual C++ 2015-2019 运行库才能加载 .NET 5 宿主；即便缺失，执行命令工具会在启动探测失败后自动回退系统 Windows PowerShell（Win7 上是 2.0），不会出现整条命令链瘫痪。
-  - 运行时按绝对路径优先选择 `opt/powershell/pwsh.exe`（可执行文件名不是 `powershell.exe`，靠 PATH 永远命中不了它），并把路径发布到 `WUNDER_POWERSHELL_EXE`；版本探测与实际启动使用同一个二进制。
+  - 运行时按绝对路径优先选择 `opt/powershell/pwsh.exe`（可执行文件名不是 `powershell.exe`，靠 PATH 永远命中不了它），并把路径发布到 `WUNDER_POWERSHELL_EXE`；版本探测与实际启动使用同一个二进制。找不到发布变量时也会按 `WUNDER_HOME`、程序目录和其父目录直接探测补充包，避免未跑 bootstrap 的入口退回系统 shell。
+  - 补充包 pwsh 的冷启动探测预算单独放宽到 15 秒（系统候选仍是 3 秒），首次被杀软扫描拖慢时不会让系统 PowerShell 抢先成为默认；若仍启动失败，先以系统 shell 顶替并在稍后自动重试补充包，不再把系统结果永久缓存。
   - 剪裁阶段会移除非 `en-US/zh-Hans/zh-Hant` 的语言资源目录与 `ref/` 引用程序集（约 22 MB），模型侧的工具说明会按 pwsh 7 的差异（无 `Get-WmiObject`、无 `-ComputerName` 参数等）单独下发。
 
 ## 入口命令

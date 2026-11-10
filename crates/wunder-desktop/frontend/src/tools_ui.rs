@@ -21,7 +21,8 @@ fn model<T: Clone + 'static>(items: Vec<T>) -> ModelRc<T> {
     Rc::new(VecModel::from(items)).into()
 }
 fn card(tool: ToolRecord) -> ToolCard {
-    let visual = wunder_desktop::tool_icons::tool_card_visual(&tool.name, &tool.description, &tool.category);
+    let visual =
+        wunder_desktop::tool_icons::tool_card_visual(&tool.name, &tool.description, &tool.category);
     ToolCard {
         name: tool.name.into(),
         description: tool.description.into(),

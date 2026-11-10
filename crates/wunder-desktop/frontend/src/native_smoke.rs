@@ -542,6 +542,12 @@ fn advance(
                     && app.get_split_session_1() == target_id,
                 "thread entry collapsed the first split back to single view",
             )?;
+            let names = app.get_split_model_names();
+            ensure(
+                names.row_data(0).is_some_and(|name| !name.is_empty())
+                    && names.row_data(1).is_some_and(|name| !name.is_empty()),
+                "split pane lost its model selection",
+            )?;
             app.invoke_split_layout(1);
             app.set_draft("native-cancel".into());
         }
@@ -684,6 +690,151 @@ fn advance(
     }
     *step += 1;
     Ok(false)
+}
+
+pub fn run_split(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let result = Rc::new(RefCell::new(None));
+    let output = result.clone();
+    let weak = app.as_weak();
+    let timer = Timer::default();
+    let started = Instant::now();
+    let mut phase = 0;
+    let mut inactive_rows = String::new();
+    timer.start(TimerMode::Repeated, Duration::from_millis(50), move || {
+        let Some(app) = weak.upgrade() else { return };
+        let checked = (|| -> Result<bool, Box<dyn std::error::Error>> {
+            ensure(
+                started.elapsed() < Duration::from_secs(45),
+                "split smoke timed out",
+            )?;
+            if app.get_chat_loading() || app.get_session_loading() || app.get_creating_session() {
+                return Ok(false);
+            }
+            match phase {
+                0 => {
+                    let active = app.get_active_session_id();
+                    ensure(!active.is_empty(), "split smoke has no active thread")?;
+                    let target = app
+                        .get_conversations()
+                        .iter()
+                        .position(|row| row.id != active)
+                        .ok_or("split smoke needs a second thread")?;
+                    let target_id = app
+                        .get_conversations()
+                        .row_data(target)
+                        .map(|row| row.id)
+                        .ok_or("split target disappeared")?;
+                    app.invoke_open_thread_in_split(target as i32);
+                    ensure(
+                        app.get_split_count() == 2
+                            && app.get_split_session_0() == active
+                            && app.get_split_session_1() == target_id,
+                        "first split did not retain both threads",
+                    )?;
+                    phase = 1;
+                }
+                1 => {
+                    if app.get_split_loading_0() || app.get_split_loading_1() {
+                        return Ok(false);
+                    }
+                    let names = app.get_split_model_names();
+                    ensure(
+                        names.row_data(0).is_some_and(|name| !name.is_empty())
+                            && names.row_data(1).is_some_and(|name| !name.is_empty()),
+                        "split pane lost its model selection",
+                    )?;
+                    let first = app.get_split_session_0();
+                    let second = app.get_split_session_1();
+                    let third = app
+                        .get_conversations()
+                        .iter()
+                        .position(|row| row.id != first && row.id != second)
+                        .ok_or("split smoke needs a third thread")?;
+                    app.invoke_split_drop_row(2, third as i32);
+                    ensure(
+                        app.get_split_count() == 4 && !app.get_split_session_2().is_empty(),
+                        "third thread did not open the grid",
+                    )?;
+                    ensure(
+                        app.get_active_session_id() == app.get_split_session_2(),
+                        "drop did not activate the target thread",
+                    )?;
+                    phase = 2;
+                }
+                2 => {
+                    if app.get_split_loading_2() {
+                        return Ok(false);
+                    }
+                    let third = app.get_split_session_2();
+                    app.invoke_split_close(1);
+                    ensure(
+                        app.get_split_count() == 2
+                            && app.get_split_session_1() == third
+                            && app.get_split_session_2().is_empty(),
+                        "closing a middle pane did not compact the native slots",
+                    )?;
+                    phase = 3;
+                }
+                3 => {
+                    inactive_rows = split_text(app.get_split_rows_0());
+                    app.set_split_draft_1("native-long".into());
+                    app.invoke_split_send(1);
+                    phase = 4;
+                }
+                4 => {
+                    if split_text(app.get_split_rows_1()).contains("native-long") {
+                        if app.get_busy() {
+                            app.invoke_split_stop(1);
+                        }
+                        phase = 5;
+                    }
+                }
+                5 => {
+                    if app.get_busy() || app.get_split_busy_1() {
+                        return Ok(false);
+                    }
+                    if !split_text(app.get_split_rows_1()).contains("native-long") {
+                        return Ok(false);
+                    }
+                    ensure(
+                        split_text(app.get_split_rows_0()) == inactive_rows,
+                        "sending in one pane changed the other pane",
+                    )?;
+                    crate::smoke::snapshot(&app, &directory.join("native-split-isolation.png"))?;
+                    return Ok(true);
+                }
+                _ => return Err("unexpected split smoke phase".into()),
+            }
+            Ok(false)
+        })();
+        if matches!(checked, Ok(false)) {
+            return;
+        }
+        let report = match &checked {
+            Ok(_) => "PASS: native split model, compaction and message isolation\n".to_string(),
+            Err(error) => format!("FAIL: split phase {phase}: {error}\n"),
+        };
+        *output.borrow_mut() = Some(
+            std::fs::write(directory.join("smoke.txt"), report)
+                .map_err(|error| error.to_string())
+                .and(checked.map(|_| ()).map_err(|error| error.to_string())),
+        );
+        let _ = slint::quit_event_loop();
+    });
+    app.run()?;
+    timer.stop();
+    result
+        .borrow_mut()
+        .take()
+        .ok_or("split smoke did not run")??;
+    Ok(())
+}
+
+fn split_text(rows: slint::ModelRc<crate::TimelineRow>) -> String {
+    rows.iter()
+        .map(|row| row.text.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The model the built-in agent's form may legitimately carry: the catalogue's

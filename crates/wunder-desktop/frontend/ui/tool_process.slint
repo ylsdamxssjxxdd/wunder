@@ -126,6 +126,16 @@ component ProcessEntryCard inherits Rectangle {
                     font-family: Theme.font-mono; font-weight: 600;
                     vertical-alignment: center;
                 }
+                // A read call states the returned line count where an edit
+                // states its change size, so both file tools answer "how much"
+                // at the same place on the folded row.
+                if root.entry.lines-read != "" : Text {
+                    width: self.preferred-width; height: parent.height;
+                    text: root.entry.lines-read;
+                    color: Theme.muted; font-size: Theme.font-xs;
+                    font-family: Theme.font-mono;
+                    vertical-alignment: center;
+                }
                 Text {
                     horizontal-stretch: 1; min-width: 0px; height: parent.height;
                     text: root.entry.summary;

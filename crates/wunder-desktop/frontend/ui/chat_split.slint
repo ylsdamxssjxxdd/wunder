@@ -133,6 +133,8 @@ export component ChatSplitWorkspace inherits Rectangle {
     in property <int> model-count: 0;
     in property <string> model-name: "";
     in property <string> model-key: "";
+    in property <[string]> model-names: ["", "", "", ""];
+    in property <[string]> model-keys: ["", "", "", ""];
     in property <[ChatAttachment]> attachments: [];
     in property <string> send-key: "enter";
     out property <length> drop-x: grid.absolute-position.x;
@@ -192,7 +194,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 visible: root.session-0 != ""; session-id: root.session-0; title: root.title-0; rows: root.rows-0;
                 draft <=> root.draft-0; active: root.active-session == root.session-0; busy: root.busy-0; loading: root.loading-0;
                 stream-revision: root.stream-revision; models: root.models; model-count: root.model-count;
-                model-name: root.active-session == root.session-0 ? root.model-name : ""; model-key: root.model-key;
+                model-name: root.model-names[0] != "" ? root.model-names[0] : root.model-name; model-key: root.model-keys[0];
                 attachments: root.active-session == root.session-0 ? root.attachments : []; send-key: root.send-key;
                 close => { root.close-pane(0); } activate => { root.activate-pane(0); } send => { root.send-pane(0); } stop => { root.stop-pane(0); }
                 toggle(index) => { root.toggle-row(0, index); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
@@ -203,7 +205,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 visible: root.session-1 != ""; session-id: root.session-1; title: root.title-1; rows: root.rows-1;
                 draft <=> root.draft-1; active: root.active-session == root.session-1; busy: root.busy-1; loading: root.loading-1;
                 stream-revision: root.stream-revision; models: root.models; model-count: root.model-count;
-                model-name: root.active-session == root.session-1 ? root.model-name : ""; model-key: root.model-key;
+                model-name: root.model-names[1] != "" ? root.model-names[1] : root.model-name; model-key: root.model-keys[1];
                 attachments: root.active-session == root.session-1 ? root.attachments : []; send-key: root.send-key;
                 close => { root.close-pane(1); } activate => { root.activate-pane(1); } send => { root.send-pane(1); } stop => { root.stop-pane(1); }
                 toggle(index) => { root.toggle-row(1, index); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
@@ -214,7 +216,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 visible: root.effective-count == 4 && root.session-2 != ""; session-id: root.session-2; title: root.title-2; rows: root.rows-2;
                 draft <=> root.draft-2; active: root.active-session == root.session-2; busy: root.busy-2; loading: root.loading-2;
                 stream-revision: root.stream-revision; models: root.models; model-count: root.model-count;
-                model-name: root.active-session == root.session-2 ? root.model-name : ""; model-key: root.model-key;
+                model-name: root.model-names[2] != "" ? root.model-names[2] : root.model-name; model-key: root.model-keys[2];
                 attachments: root.active-session == root.session-2 ? root.attachments : []; send-key: root.send-key;
                 close => { root.close-pane(2); } activate => { root.activate-pane(2); } send => { root.send-pane(2); } stop => { root.stop-pane(2); }
                 toggle(index) => { root.toggle-row(2, index); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
@@ -225,7 +227,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 visible: root.effective-count == 4 && root.session-3 != ""; session-id: root.session-3; title: root.title-3; rows: root.rows-3;
                 draft <=> root.draft-3; active: root.active-session == root.session-3; busy: root.busy-3; loading: root.loading-3;
                 stream-revision: root.stream-revision; models: root.models; model-count: root.model-count;
-                model-name: root.active-session == root.session-3 ? root.model-name : ""; model-key: root.model-key;
+                model-name: root.model-names[3] != "" ? root.model-names[3] : root.model-name; model-key: root.model-keys[3];
                 attachments: root.active-session == root.session-3 ? root.attachments : []; send-key: root.send-key;
                 close => { root.close-pane(3); } activate => { root.activate-pane(3); } send => { root.send-pane(3); } stop => { root.stop-pane(3); }
                 toggle(index) => { root.toggle-row(3, index); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }

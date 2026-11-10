@@ -65,7 +65,7 @@ wunder 的多个形态各有明确分工：
 
 ## 能力概况
 
-- **多线程与目标态**：单智能体可并行多个任务线程；目标态由单一 `goal` 工具驱动（`action=get|create|edit|pause|resume|complete|blocked`），phase 只有 active / paused / blocked / complete，靠轮次计数推进（默认目标轮上限 256，连续无进展 3 轮自动 block）。没有 token 预算与冷却机制。
+- **多线程与目标态**：单智能体可并行多个任务线程；目标态由单一 `goal` 工具驱动（`action=get|edit|pause|resume|complete|blocked`，创建目标只能由用户发起），phase 只有 active / paused / blocked / complete，靠轮次计数推进（默认目标轮上限 256，连续无进展 3 轮自动 block）。没有 token 预算与冷却机制。
 - **协作**：子智能体（list / history / send / report / spawn / batch_spawn / status / wait / interrupt / close / resume 共 11 种动作）。蜂群编排已移除，不作为能力提供。
 - **工具链**：文件、命令与命令会话、浏览器（单一严格 `browser(action=...)` 工具）、网页抓取、桌面控制与监视、读图、多模态四件套（语音生成 / 声转文 / 图像生成 / 视频生成）、计划 / 问询面板、定时任务、记忆管理。扩展机制三层：**工具 = 执行体，技能 = 可调用知识与脚本（技能名本身可直接被调用），能力（abilities）= 管理员治理面的选择单元**。MCP 双向：既是客户端（`server@tool` 命名、支持打包折叠），也内置服务端端点 `/wunder/mcp`。`网页搜索` 代码保留、当前临时下架；`ptc` 已全链路移除。
 - **知识库三型**：内置词面检索、内置向量检索（分块 + embedding 检索）、外部 RAGFlow 数据集，按库动态注册为可调用能力。

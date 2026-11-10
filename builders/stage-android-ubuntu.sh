@@ -59,11 +59,14 @@ if [ -n "$PACKS" ]; then
     mkdir -p "$DEST_ASSETS/packs"
     cp -f "$PACKS/common.tar.xz" "$DEST_ASSETS/packs/common.tar.xz"
     chmod 644 "$DEST_ASSETS/packs/common.tar.xz"
-    # Optional browser overlay: Playwright + offline Chromium. Without it the
-    # app still installs; browser_* tools simply report the missing runtime.
+    # Browser overlay: Playwright + offline Chromium. Release builds bundle it
+    # so 知识短片 renders out of the box; a dev build without it still installs,
+    # but browser_* tools and browser-backed skills report the missing runtime.
     if [ -f "$PACKS/browser.tar.xz" ]; then
         cp -f "$PACKS/browser.tar.xz" "$DEST_ASSETS/packs/browser.tar.xz"
         chmod 644 "$DEST_ASSETS/packs/browser.tar.xz"
+    else
+        echo "[stage-android-ubuntu] WARN: $PACKS/browser.tar.xz missing; the APK will not include a browser" >&2
     fi
 fi
 
@@ -102,10 +105,11 @@ packs/common.tar.xz
   python-pptx, openpyxl, sqlalchemy and others); each wheel keeps its
   license metadata under /usr/local/lib/python3.12/dist-packages/*.dist-info.
 
-packs/browser.tar.xz (optional)
-  Playwright (Apache-2.0) and its Chromium build. Chromium is distributed
-  under its component licenses; see /opt/browser/chrome-linux/LICENSE inside
-  the installed rootfs.
+packs/browser.tar.xz
+  Playwright (Apache-2.0) and its Chromium build, bundled by release builds
+  so browser-backed skills such as 知识短片 run without downloading anything.
+  Chromium is distributed under its component licenses; see
+  /opt/browser/chrome-linux/LICENSE inside the installed rootfs.
 
 Launcher icon
   openmoji:coconut from OpenMoji (https://openmoji.org), CC BY-SA 4.0,

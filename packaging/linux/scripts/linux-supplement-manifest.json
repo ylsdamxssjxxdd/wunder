@@ -198,6 +198,8 @@
     "arial.ttf"
   ],
   "videoFonts": [
+    "NotoSerifSC-VF.ttf",
+    "NotoSansSC-VF.ttf",
     "CormorantGaramond.ttf",
     "CormorantGaramond-Italic.ttf",
     "Lora.ttf",

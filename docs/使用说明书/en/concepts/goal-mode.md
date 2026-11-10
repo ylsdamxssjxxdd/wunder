@@ -40,7 +40,7 @@ Goal mode hangs a **goal** on a **session** and pairs it with a driver that live
 
 | Phase | Meaning | How it is entered | How it is left |
 | --- | --- | --- | --- |
-| `active` | Able to continue | Create a goal, or resume | `paused` / `blocked` / `complete` |
+| `active` | Able to continue | The user creates a goal, or resumes one | `paused` / `blocked` / `complete` |
 | `paused` | Sitting still; a person can resume at any time | A manual pause, or a continuation round that was interrupted | Resume |
 | `blocked` | Automatic continuation stops | The model self-reports the same blocking condition once at least 3 consecutive continuation rounds have run; or the driver fails to enqueue (`queue-failed`) | Resume (after the blocking condition is resolved) |
 | `complete` | Achieved | The model or a person marks it complete, and only when it is truly done | Reopen with a new goal |
@@ -59,13 +59,13 @@ Whether a goal is armed is an in-process flag and **is not stored in the databas
 
 ## Model-Side Operations
 
-The model side operates on a goal through three built-in tools.
+**Only the user can start a goal**: `/goal <objective>`, the goal bar, or the goal API creates one; the model cannot create or replace a goal. The model side manages an existing goal through one strict-action `goal` tool.
 
 | Tool | Effect |
 | --- | --- |
-| `goal` | Uses `action=get` to read the current goal, including the id and revision required for later operations; uses `create` to create a goal; and uses `edit`, `pause`, `resume`, `complete`, or `blocked` to update one. Creation requires an objective; updates need the goal id and current revision, and reporting blocked is rejected before the minimum round count is reached |
+| `goal` | Uses `action=get` to read the current goal, including the id and revision required for later operations, and uses `edit`, `pause`, `resume`, `complete`, or `blocked` to update one. Updates need the goal id and current revision, and reporting blocked is rejected before the minimum round count is reached |
 
-Authority does not come from anything the model writes: human entry points stamp `__source = "human"` onto the turn and the goal-round driver stamps `__goal_round`. Edit, pause, and resume are allowed only in a person's round; complete and report-blocked are additionally allowed in the goal's **own automatic continuation rounds**.
+Authority does not come from anything the model writes: human entry points stamp `__source = "human"` onto the turn and the goal-round driver stamps `__goal_round`. Edit, pause, and resume are allowed only in a person's round; complete and report-blocked are additionally allowed in the goal's **own automatic continuation rounds**. The runtime rejects any model attempt to create a goal and points the user to `/goal` or the goal bar.
 
 The Desktop **does not expose the `goal` tool for users to pick** (it is a hidden built-in capability); the runtime injects it per session, and the Cloud (web) and the CLI reuse the same injection.
 
@@ -85,6 +85,6 @@ The Desktop **does not expose the `goal` tool for users to pick** (it is a hidde
 - A goal does not stop on a token limit; it looks only at the round budget, the phase, and arming.
 - After a service restart an active goal does not resume on its own; a resume action is needed to arm it again.
 - The model cannot mark a goal blocked at will: the same blocking condition must persist across at least 3 continuation rounds.
-- A goal is managed through one `goal` tool. Its actions are strictly `get`, `create`, `edit`, `pause`, `resume`, `complete`, and `blocked`.
+- Only the user can start a goal. The model-side `goal` tool's actions are strictly `get`, `edit`, `pause`, `resume`, `complete`, and `blocked`; it has no create action.
 - The Admin has no goal panel; use the Cloud, the Desktop, or the CLI.
 - Clearing a goal does not undo work already done: messages, tool results, and file changes already stored are kept.

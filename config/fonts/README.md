@@ -21,7 +21,7 @@ python scripts/fetch_fonts.py --check         # 只校验已有文件
   黑体（`simhei.ttf`）、宋体/新宋体（`simsun.ttc`）、方正小标宋
   （`FZXBSJW.ttf`）、微软雅黑（`msyh.ttc`）、等线（`Deng.ttf`）与
   Times New Roman 四个字重。字体名映射在 `conf.d/99-wunder-common.conf`。
-- `video/`：知识短片技能用的 6 个拉丁/等宽 OFL 字体（中文用 `common/` 的宋体/雅黑）。云端从
+- `video/`：知识短片技能用的 8 个 OFL 字体（思源宋体/黑体 + 6 个拉丁/等宽；中文缺失时退回 `common/` 的宋体/雅黑）。云端从
   `/usr/share/fonts/wunder/video` 读取；补充包构建时用
   `packaging/fonts/fetch_video_fonts.py` 从 `config/fonts/video` 复制（没有时按
   `packaging/fonts/video-fonts.json` 的固定 URL 和 SHA-256 下载），再打进补充包。

@@ -342,9 +342,8 @@ mod daemon {
                         }
                         let invoked = PENDING.lock().ok().and_then(|guard| {
                             let pending = guard.as_ref()?;
-                            (pending.id == id).then(|| {
-                                (pending.session.clone(), pending.weak.clone())
-                            })
+                            (pending.id == id)
+                                .then(|| (pending.session.clone(), pending.weak.clone()))
                         });
                         if let Some((session, weak)) = invoked {
                             PENDING.lock().ok().and_then(|mut guard| {

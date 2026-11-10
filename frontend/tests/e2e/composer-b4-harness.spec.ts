@@ -33,25 +33,22 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   const card = page.locator('.input-box--world').first();
   await expect(card).toBeVisible({ timeout: 20_000 });
 
-  // §8.1 输入卡只包输入框：圆角 16px、1px 边框、白底、12x14 内边距；
-  // 工具行是卡的兄弟节点，直接落在页面底色上（footer 不再铺白底）。
+  // §8.1 输入卡与桌面一致：圆角 16px、1px 边框、白底、10/14/8 内边距；
+  // 底部工具行与编辑器共用这张卡（footer 不再铺白底）。
   const cardStyle = await card.evaluate((el) => {
     const style = getComputedStyle(el);
     return {
       radius: style.borderTopLeftRadius,
       borderWidth: style.borderTopWidth,
       background: style.backgroundColor,
-      padding: `${style.paddingTop} ${style.paddingRight}`,
-      parentHasRow: Array.from(el.parentElement?.children || []).some((child) =>
-        child.classList.contains('composer-action-row'))
+      padding: `${style.paddingTop} ${style.paddingRight} ${style.paddingBottom}`
     };
   });
   expect(cardStyle.radius).toBe('16px');
   expect(cardStyle.borderWidth).toBe('1px');
   expect(cardStyle.background).toBe('rgb(255, 255, 255)');
-  expect(cardStyle.padding).toBe('12px 14px');
-  expect(cardStyle.parentHasRow).toBe(true);
-  expect(await page.locator('.input-box--world .composer-action-row').count()).toBe(0);
+  expect(cardStyle.padding).toBe('10px 14px 8px');
+  expect(await page.locator('.input-box--world > .composer-action-row').count()).toBe(1);
   expect(await page.locator('.messenger-chat-footer').first().evaluate((el) =>
     getComputedStyle(el).backgroundColor)).toBe('rgba(0, 0, 0, 0)');
 

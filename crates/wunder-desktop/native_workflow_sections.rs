@@ -72,8 +72,7 @@ pub(super) fn project(tool: &str, payload: &Value, state: &str, fallback: &str) 
     let mut sections = structured::project(tool, data, args);
     if !sections.is_empty() {
         // Structured groups already preserve the tool's readable result.
-    } else if tool == "apply_patch" || tool.contains("应用补丁") || super::patch::is_edit_tool(tool)
-    {
+    } else if super::patch::is_patch_tool(tool) {
         // The structured patch cards are projected once in the shared module;
         // this view renders the same files as readable sections.
         for file in super::patch::project(tool, payload, args).iter().take(8) {
@@ -354,6 +353,28 @@ mod tests {
         );
         assert_eq!(failed[0].kind, "error");
         assert!(!failed.iter().any(|s| s.meta == "已完成"));
+    }
+    #[test]
+    fn write_file_result_renders_the_same_patch_section() {
+        let data = json!({"tool":"write_file","ok":true,"data":{
+            "ok":true,"action":"write_file","state":"completed",
+            "summary":"Created file sample.txt.","data":{
+                "path":"sample.txt","bytes":12,"existed":false,"previous_bytes":0,
+                "added_lines":2,"deleted_lines":0,"changed_files":1,
+                "files":[{"path":"sample.txt","action":"add","hunks":1,
+                    "added_lines":2,"deleted_lines":0,
+                    "diff_blocks":[{"header":"new file","lines":[
+                        {"kind":"add","new_line":1,"text":"first"},
+                        {"kind":"add","new_line":2,"text":"second"},
+                    ]}]
+                }]
+            }
+        }});
+        let sections = project("写入文件", &data, "completed", "fallback");
+        assert_eq!(sections[0].kind, "patch");
+        assert_eq!(sections[0].title, "sample.txt");
+        assert_eq!(sections[0].meta, "新增  +2 −0");
+        assert_eq!(sections[0].lines[1].text, "first");
     }
     #[test]
     fn command_streams_and_exit_code_remain_separate() {

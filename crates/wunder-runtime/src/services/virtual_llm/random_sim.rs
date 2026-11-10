@@ -111,11 +111,8 @@ const FIXED_ARGS: &[(&str, &str)] = &[
         "generate_video",
         r#"{"prompt":"a plain gray square on a white background","path":".temp/__virtual_sim__.mp4"}"#,
     ),
-    // 目标工具：普通调用给一份可忽略的目标（轮次上限=1，不会持续驱动）。
-    (
-        "goal",
-        r#"{"action":"create","objective":"（模拟）示例目标，可忽略。","max_goal_rounds":1}"#,
-    ),
+    // 目标工具：只读快照。目标只能由用户发起，模拟模型不得创建或替换目标。
+    ("goal", r#"{"action":"get"}"#),
     // 子智能体：普通调用固定为只读 list；真实派生仍走专用入口。
     ("子智能体控制", r#"{"action":"list","limit":5}"#),
     ("subagent_control", r#"{"action":"list","limit":5}"#),
@@ -125,17 +122,6 @@ const MAX_CALLS_PER_ROUND: usize = 2;
 const SAMPLE_WORDS: &[&str] = &[
     "配置", "结构", "说明", "结果", "摘要", "示例", "入口", "依赖", "日志", "错误", "步骤", "参数",
     "目录", "缓存", "接口", "状态",
-];
-/// 人类发起的轮次中，平均每多少轮登记一次长程目标（1/N 概率）。
-const GOAL_ENTRY_ONE_IN: u64 = 3;
-/// 目标轮次上限上限：足够大以便被目标持续驱动，直到人工停止。
-const GOAL_MAX_ROUNDS: i64 = 10_000;
-/// 合成的长程目标描述，贴近真实的可持续推进任务。
-const GOAL_OBJECTIVES: &[&str] = &[
-    "持续跟踪当前仓库的关键变更，并逐轮汇总进展，直到我要求停止。",
-    "以一个较长的调研目标为线索，循环执行只读检查并输出阶段性结论。",
-    "围绕当前主题持续推进，边查证边产出结论，直到我手动中断。",
-    "把它当成一个需要长期推进的任务：每轮都往前推进一步并记录状态。",
 ];
 /// 子智能体控制工具的规范名（在册校验以此为准）。
 const SUBAGENT_TOOL_NAME: &str = "子智能体控制";
@@ -212,35 +198,6 @@ fn fixed_arguments(canonical: &str, raw: &str) -> Option<Value> {
         .iter()
         .find(|(key, _)| canonical == *key || raw == *key)
         .and_then(|(_, args)| serde_json::from_str(args).ok())
-}
-
-/// 请求中提供的 `goal` 工具（若运行时暴露了它）。
-///
-/// `goal` 虽已进入普通随机池（其普通调用走 [`FIXED_ARGS`] 的固定参数），但目标
-/// 编排是运行时级能力，需要携带完整 schema 与可控轮次上限（见 [`goal_create_arguments`]），
-/// 故这里单独取出来供目标入口使用，并沿用模型实际看到的工具名（可能是本地化别名），
-/// 确保 tool_call 能通过在册校验。
-pub(super) fn goal_entry_candidate(tools: Option<&[Value]>) -> Option<(String, Value)> {
-    let items = tools?;
-    items.iter().find_map(|tool| {
-        let name = tool
-            .pointer("/function/name")
-            .or_else(|| tool.get("name"))
-            .and_then(Value::as_str)?;
-        let canonical = crate::tools::resolve_tool_name(name);
-        let is_goal = canonical.trim() == crate::services::goal::TOOL_GOAL
-            || name.trim() == crate::services::goal::TOOL_GOAL;
-        if !is_goal {
-            return None;
-        }
-        let schema = tool
-            .pointer("/function/parameters")
-            .or_else(|| tool.get("input_schema"))
-            .cloned()
-            .filter(Value::is_object)
-            .unwrap_or_else(|| json!({}));
-        Some((name.to_string(), schema))
-    })
 }
 
 /// 名称是否指向子智能体控制工具（规范名或原始名精确匹配，大小写不敏感）。
@@ -409,20 +366,6 @@ pub(super) fn rounds_with_forced_subagent(planned: usize) -> usize {
     planned.max(MIN_ROUNDS_WITH_FORCED_SUBAGENT)
 }
 
-/// 构造 `goal action=create` 的合法参数：必需 objective + 一个把轮次上限顶到天花板的
-/// `max_goal_rounds`，从而实现“被目标持续驱动直到人工停止”。
-fn goal_create_arguments(_schema: &Value, rng: &mut u64) -> Value {
-    // `goal` uses a strict action union, so the create fields live in its create
-    // branch instead of root-level properties. This simulator only reaches this
-    // function after selecting the runtime-owned goal tool; always emit its
-    // valid create payload rather than attempting a lossy generic schema walk.
-    json!({
-        "action": "create",
-        "objective": pick(GOAL_OBJECTIVES, rng),
-        "max_goal_rounds": GOAL_MAX_ROUNDS,
-    })
-}
-
 /// 同一 (session, user_round) 的计划轮次数：1-100 均匀分布，跨模型轮次稳定。
 pub(super) fn plan_rounds(session_seed: &str, user_round: usize) -> usize {
     let seed = mix(session_seed, user_round as u64);
@@ -435,7 +378,6 @@ pub(super) fn build_turn(
     model_round: usize,
     total_rounds: usize,
     tools: &[(String, Value)],
-    goal_entry: Option<&(String, Value)>,
     // 子智能体工具入口，附带“本轮是否强制发出”的开关。用元组承载强制位，这样
     // 只有 `Some(..)` 的调用点需要关心它，`None` 的调用点无需改动。
     subagent_entry: Option<(&(String, Value), bool)>,
@@ -447,7 +389,6 @@ pub(super) fn build_turn(
             model_round,
             total_rounds,
             tools,
-            goal_entry,
             subagent_entry,
             &mut rng,
         )
@@ -461,29 +402,12 @@ fn build_tool_turn(
     model_round: usize,
     total_rounds: usize,
     candidates: &[(String, Value)],
-    goal_entry: Option<&(String, Value)>,
     subagent_entry: Option<(&(String, Value), bool)>,
     rng: &mut u64,
 ) -> VirtualReplayTurn {
     let mut calls = Vec::with_capacity(MAX_CALLS_PER_ROUND);
-    // 确定性抽样的部分轮次会登记一个长程目标，让目标驱动器持续排轮次，直到
-    // 人工停止。目标管理需要直接的人类授权，因此只在人类发起的轮次触发
-    // （驱动器派发的目标轮里 goal_entry 为 None）。
-    let opens_goal =
-        model_round == 1 && goal_entry.is_some() && next_u64(rng) % GOAL_ENTRY_ONE_IN == 0;
     let mut special_calls = 0usize;
-    if opens_goal {
-        if let Some((name, schema)) = goal_entry {
-            let args = goal_create_arguments(schema, rng);
-            calls.push(json!({
-                "id": format!("sim_{round}_{model_round}_goal"),
-                "type": "function",
-                "function": {"name": name, "arguments": args.to_string()},
-            }));
-            special_calls += 1;
-        }
-    }
-    // 子智能体工具：与目标入口同为“首轮、确定性抽样”的特殊动作。这里发出的是
+    // 子智能体工具：首轮、确定性抽样的特殊动作。这里发出的是
     // **真实**的派生/巡检调用（见 subagent_arguments）；递归由调用方通过
     // `allow_subagent` 兜底——子会话不会再被派生子智能体。用户消息含 `subagent`
     // 时强制位为真，本轮必定发出；否则平均每 SUBAGENT_ACTION_ONE_IN 轮抽样一次。
@@ -549,9 +473,7 @@ fn build_tool_turn(
         ),
         total_rounds.saturating_sub(model_round)
     );
-    if opens_goal {
-        reasoning = "这是一项需要持续推进的工作，先登记目标，再逐轮展开。".to_string();
-    } else if opens_subagent {
+    if opens_subagent {
         reasoning = "先委派子智能体处理其中一部分工作，再继续推进。".to_string();
     }
     let content = if next_u64(rng) % 3 != 0 {
@@ -570,9 +492,7 @@ fn build_tool_turn(
     } else {
         String::new()
     };
-    let content = if opens_goal {
-        "我会把它作为一个持续任务来推进，先建立目标。".to_string()
-    } else if opens_subagent {
+    let content = if opens_subagent {
         "先派一个子智能体去处理这部分工作。".to_string()
     } else {
         content
@@ -846,7 +766,7 @@ mod tests {
             json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}),
         )];
         for model_round in 1..30 {
-            let turn = build_turn("session-a", 1, model_round, 40, &candidates, None, None);
+            let turn = build_turn("session-a", 1, model_round, 40, &candidates, None);
             if model_round < 40 {
                 let calls = turn
                     .tool_calls
@@ -871,7 +791,7 @@ mod tests {
     #[test]
     fn no_tools_means_single_final_turn() {
         for model_round in 1..10 {
-            let turn = build_turn("session-a", 1, model_round, 10, &[], None, None);
+            let turn = build_turn("session-a", 1, model_round, 10, &[], None);
             assert!(turn.tool_calls.is_none());
             assert!(!turn.content.trim().is_empty());
         }
@@ -883,7 +803,7 @@ mod tests {
             "列出文件",
             json!({"type":"object","properties":{"path":{"type":"string"}}}),
         )];
-        let turn = build_turn("session-a", 3, 20, 20, &candidates, None, None);
+        let turn = build_turn("session-a", 3, 20, 20, &candidates, None);
         assert!(turn.tool_calls.is_none());
         assert!(turn.content.contains("模型轮次"));
     }
@@ -981,95 +901,9 @@ mod tests {
     }
 
     #[test]
-    fn goal_candidate_matches_goal_tool() {
-        let tools = vec![
-            json!({"type":"function","function":{"name":"读取文件","parameters":json!({"type":"object"})}}),
-            json!({"type":"function","function":{"name":"goal","parameters":json!({"type":"object","oneOf":[{"required":["action","objective"],"properties":{"action":{"const":"create"},"objective":{"type":"string"}}}]})}}),
-        ];
-        let candidate = goal_entry_candidate(Some(&tools)).expect("goal is offered");
-        assert_eq!(candidate.0, "goal");
-        assert!(goal_entry_candidate(None).is_none());
-        // goal 已进入随机池（其普通调用由 FIXED_ARGS 固定），入口仍单独提供完整 schema。
-        assert!(tool_summaries(Some(&tools))
-            .iter()
-            .any(|(name, _)| name == "goal"));
-    }
-
-    #[test]
-    fn goal_entry_is_deterministic_and_only_on_first_model_round() {
-        let candidates = vec![summary(
-            "读取文件",
-            json!({"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}),
-        )];
-        let goal = (
-            "goal".to_string(),
-            json!({"type":"object","oneOf":[{"required":["action","objective"],"properties":{
-                "action":{"const":"create"},
-                "objective":{"type":"string"},
-                "max_goal_rounds":{"type":"integer"}
-            }}]}),
-        );
-        let mut opened = 0;
-        for round in 1..=24 {
-            // Later model rounds never re-open a goal.
-            let later = build_turn("session-a", round, 2, 40, &candidates, Some(&goal), None);
-            let later_calls = later
-                .tool_calls
-                .as_ref()
-                .and_then(Value::as_array)
-                .expect("calls");
-            assert!(later_calls
-                .iter()
-                .all(
-                    |call| call.pointer("/function/name").and_then(Value::as_str) != Some("goal")
-                ));
-            // The first model round may open a goal, and only deterministically.
-            let first = build_turn("session-a", round, 1, 40, &candidates, Some(&goal), None);
-            let again = build_turn("session-a", round, 1, 40, &candidates, Some(&goal), None);
-            assert_eq!(
-                first.tool_calls, again.tool_calls,
-                "goal entry must be reproducible"
-            );
-            let calls = first
-                .tool_calls
-                .as_ref()
-                .and_then(Value::as_array)
-                .expect("calls");
-            assert!(calls.len() <= MAX_CALLS_PER_ROUND);
-            if let Some(call) = calls
-                .iter()
-                .find(|call| call.pointer("/function/name").and_then(Value::as_str) == Some("goal"))
-            {
-                opened += 1;
-                let args: Value = serde_json::from_str(
-                    call.pointer("/function/arguments")
-                        .and_then(Value::as_str)
-                        .expect("args"),
-                )
-                .expect("goal arguments are json");
-                assert_eq!(args.get("action").and_then(Value::as_str), Some("create"));
-                assert!(args.get("objective").and_then(Value::as_str).is_some());
-                assert_eq!(
-                    args.get("max_goal_rounds").and_then(Value::as_i64),
-                    Some(GOAL_MAX_ROUNDS)
-                );
-            }
-        }
-        assert!(opened > 0, "at least one human turn should arm a goal");
-        assert!(
-            opened < 24,
-            "goal entry stays a deterministic subset, not every turn"
-        );
-        // A driver-issued round never sees a goal candidate.
-        let blocked = build_turn("session-a", 1, 1, 40, &candidates, None, None);
-        let blocked_calls = blocked
-            .tool_calls
-            .as_ref()
-            .and_then(Value::as_array)
-            .expect("calls");
-        assert!(blocked_calls
-            .iter()
-            .all(|call| call.pointer("/function/name").and_then(Value::as_str) != Some("goal")));
+    fn goal_normal_call_is_a_read_only_snapshot() {
+        let args = fixed_arguments("goal", "goal").expect("goal fixed args");
+        assert_eq!(args.get("action").and_then(Value::as_str), Some("get"));
     }
 
     #[test]
@@ -1106,7 +940,6 @@ mod tests {
                 2,
                 40,
                 &candidates,
-                None,
                 Some((&subagent, false)),
             );
             let later_calls = later
@@ -1125,7 +958,6 @@ mod tests {
                 1,
                 40,
                 &candidates,
-                None,
                 Some((&subagent, false)),
             );
             let again = build_turn(
@@ -1134,7 +966,6 @@ mod tests {
                 1,
                 40,
                 &candidates,
-                None,
                 Some((&subagent, false)),
             );
             assert_eq!(
@@ -1168,7 +999,7 @@ mod tests {
         );
         assert!(emitted < 40, "subagent entry stays a deterministic subset");
         // 未提供该工具时，永不发出。
-        let absent = build_turn("session-a", 1, 1, 40, &candidates, None, None);
+        let absent = build_turn("session-a", 1, 1, 40, &candidates, None);
         let absent_calls = absent
             .tool_calls
             .as_ref()
@@ -1236,7 +1067,6 @@ mod tests {
                 1,
                 50,
                 &[subagent.clone()],
-                None,
                 Some((&subagent, true)),
             );
             let calls = turn
@@ -1283,7 +1113,7 @@ mod tests {
         let mut dispatched = 0;
         for i in 0..8 {
             let seed = format!("session-forced-{i}");
-            let turn = build_turn(&seed, 1, 1, 50, &candidates, None, Some((&subagent, true)));
+            let turn = build_turn(&seed, 1, 1, 50, &candidates, Some((&subagent, true)));
             let calls = turn
                 .tool_calls
                 .as_ref()
@@ -1307,7 +1137,7 @@ mod tests {
                 dispatched += 1;
             }
             // 强制位只在首轮生效；后续轮次不再发出子智能体调用。
-            let later = build_turn(&seed, 1, 2, 50, &candidates, None, Some((&subagent, true)));
+            let later = build_turn(&seed, 1, 2, 50, &candidates, Some((&subagent, true)));
             let later_calls = later
                 .tool_calls
                 .as_ref()

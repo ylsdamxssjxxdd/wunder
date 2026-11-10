@@ -1378,11 +1378,8 @@ fn clear_drag_state(app: &MainWindow) {
 /// Hover projection: light up the resolved target only when at least one
 /// dragged path would actually change directory, like the web tree does.
 fn drag_hover(app: &MainWindow, index: i32) {
-    let Some(items) = DRAG_MOVE.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .map(|drag| drag.items.clone())
-    }) else {
+    let Some(items) = DRAG_MOVE.with(|slot| slot.borrow().as_ref().map(|drag| drag.items.clone()))
+    else {
         return;
     };
     let Some(dir) = resolve_drop_dir(app, index) else {
@@ -1390,9 +1387,7 @@ fn drag_hover(app: &MainWindow, index: i32) {
         app.set_ws_file_drop_root(false);
         return;
     };
-    let movable = items
-        .iter()
-        .any(|(path, _)| movable_to(path, &dir));
+    let movable = items.iter().any(|(path, _)| movable_to(path, &dir));
     app.set_ws_file_drop_path(if movable && !dir.is_empty() {
         dir.as_str().into()
     } else {

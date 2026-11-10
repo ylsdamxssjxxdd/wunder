@@ -274,7 +274,6 @@ pub async fn load_turn_for_round(
     user_round: Option<i64>,
     model_round: Option<i64>,
     tools: Option<&[Value]>,
-    goal_entry_allowed: bool,
     // 本次人类消息（最新一条用户文本），用于驱动两条测试约定：
     //   * 消息里第一个纯数字 token -> 覆盖本次计划模型轮次数（`5`、`5s`、`5轮` 均可）；
     //   * 消息含 `subagent`（或简拼 `s` / `sub` / `子智能体`，数字后缀 `s`）-> 本次必定
@@ -308,12 +307,9 @@ pub async fn load_turn_for_round(
                 .collect()
         }
     };
-    let goal_entry = goal_entry_allowed
-        .then(|| random_sim::goal_entry_candidate(tools))
-        .flatten();
-    // 子智能体工具：发出真实的派生/巡检调用，让随机轨迹贴近真实工具面。它不受
-    // goal_entry_allowed 限制（与目标入口相互独立）。当当前会话是子会话
-    // （allow_subagent=false）时不提供入口，从而只允许“一层”子智能体。若用户
+    // 子智能体工具：发出真实的派生/巡检调用，让随机轨迹贴近真实工具面。目标只能
+    // 由用户发起，模拟模型不创建目标。当当前会话是子会话（allow_subagent=false）
+    // 时不提供子智能体入口，从而只允许“一层”子智能体。若用户
     // 消息含 `subagent`，强制位为真，本轮必定发出。
     let force_subagent = user_message
         .map(random_sim::wants_subagent)
@@ -343,9 +339,7 @@ pub async fn load_turn_for_round(
         }
         // No replay log is available: the random simulator still produces a
         // full model-round sequence (1-100 planned rounds with harmless
-        // read-only tool calls) without spending any real API quota. Human turns
-        // may additionally arm a long-running goal so the goal driver keeps
-        // producing rounds until the operator stops it.
+        // read-only tool calls) without spending any real API quota.
         // 用户在消息里给出的数字覆盖本次计划轮次，直接决定“本次模型轮数”。
         let planned_rounds =
             round_override.unwrap_or_else(|| random_sim::plan_rounds(&session_seed, round));
@@ -365,7 +359,6 @@ pub async fn load_turn_for_round(
             model_round,
             total_rounds,
             &tool_summaries,
-            goal_entry.as_ref(),
             subagent_arg,
         ))
     })
@@ -789,7 +782,7 @@ mod tests {
 
     #[test]
     fn random_sim_turn_marks_virtual_random_source() {
-        let turn = random_sim::build_turn("session-a", 3, 2, 5, &[], None, None);
+        let turn = random_sim::build_turn("session-a", 3, 2, 5, &[], None);
 
         assert_eq!(turn.source_log_id, RANDOM_REPLAY_LOG_ID);
         assert_eq!(turn.source_round, 3);
@@ -814,7 +807,6 @@ mod tests {
             Some(2),
             Some(3),
             None,
-            true,
             None,
             true,
         )
@@ -848,7 +840,6 @@ mod tests {
             Some(1),
             Some(1),
             None,
-            true,
             None,
             true,
         )
@@ -892,7 +883,6 @@ mod tests {
             Some(1),
             Some(1),
             Some(&tools),
-            true,
             Some("5"),
             true,
         )
@@ -909,7 +899,6 @@ mod tests {
             Some(1),
             Some(5),
             Some(&tools),
-            true,
             Some("5"),
             true,
         )
@@ -924,7 +913,6 @@ mod tests {
             Some(1),
             Some(1),
             Some(&tools),
-            true,
             Some("7 subagent"),
             true,
         )
@@ -950,7 +938,6 @@ mod tests {
             Some(1),
             Some(1),
             Some(&tools),
-            true,
             Some("7 subagent"),
             false,
         )
@@ -991,7 +978,6 @@ mod tests {
                 Some(1),
                 Some(1),
                 Some(&tools),
-                true,
                 Some(message),
                 true,
             )
@@ -1035,7 +1021,6 @@ mod tests {
                 Some(1),
                 Some(2),
                 Some(&tools),
-                true,
                 Some(message),
                 true,
             )
@@ -1069,7 +1054,6 @@ mod tests {
                 Some(1),
                 Some(model_round),
                 Some(&tools),
-                true,
                 Some("4"),
                 true,
             )
@@ -1087,7 +1071,6 @@ mod tests {
             Some(1),
             Some(4),
             Some(&tools),
-            true,
             Some("4"),
             true,
         )

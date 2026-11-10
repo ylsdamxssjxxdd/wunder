@@ -583,16 +583,58 @@ pub fn unused_pwsh() -> Option<PathBuf> {
     pwsh_on_disk()
 }
 
+/// The supplement's own `pwsh.exe`, if present.
+///
+/// The bootstrap publishes `WUNDER_POWERSHELL_EXE`, but entry points that never
+/// run it (server form, direct executable start, older clients) must still
+/// prefer the bundled shell over an OS install. Searching the same supplement
+/// roots here keeps the launcher independent of PATH order, where a bare
+/// `powershell.exe` lookup would always win.
+#[cfg(windows)]
+fn published_bundled_pwsh() -> Option<PathBuf> {
+    let published = env::var_os(POWERSHELL_EXE_ENV).map(PathBuf::from);
+    if let Some(path) = published.filter(|path| path.is_file()) {
+        return Some(path);
+    }
+    let mut roots: Vec<PathBuf> = Vec::new();
+    let mut add = |root: PathBuf| {
+        if root.is_dir() && !roots.iter().any(|known| same_path(known, &root)) {
+            roots.push(root);
+        }
+    };
+    if let Some(home) = env::var_os("WUNDER_HOME").map(PathBuf::from) {
+        add(home);
+    }
+    if let Some(app_dir) = env::var_os("WUNDER_DESKTOP_APP_DIR").map(PathBuf::from) {
+        add(app_dir);
+    }
+    if let Ok(exe) = env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            add(dir.to_path_buf());
+            if let Some(parent) = dir.parent() {
+                add(parent.to_path_buf());
+            }
+        }
+    }
+    add(crate::local_bootstrap::resolve_home_from_env_or_user());
+    find_bundled_pwsh_in(&roots)
+}
+
+/// Search exactly the supplied supplement roots for `opt/powershell/pwsh.exe`.
+#[cfg(windows)]
+fn find_bundled_pwsh_in(roots: &[PathBuf]) -> Option<PathBuf> {
+    crate::local_bootstrap::supplement::find_tool(
+        roots,
+        crate::local_bootstrap::supplement::Tool::PowerShell,
+    )
+}
+
 /// 磁盘上是否存在某个 pwsh.exe（不启动它）。
 ///
 /// 与 `powershell_host()` 分开，避免在探测过程中递归调用自己。
 #[cfg(windows)]
 fn pwsh_on_disk() -> Option<PathBuf> {
-    let published = env::var_os(POWERSHELL_EXE_ENV).map(PathBuf::from);
-    if let Some(path) = published.filter(|path| path.is_file()) {
-        return Some(path);
-    }
-    find_in_path("pwsh.exe")
+    published_bundled_pwsh().or_else(|| find_in_path("pwsh.exe"))
 }
 
 #[cfg(not(windows))]
@@ -644,6 +686,13 @@ pub struct PowerShellHost {
 enum ShellProbe {
     Pending,
     Done(Option<PowerShellHost>),
+    /// 补充包 pwsh 存在但本次没能启动，先用系统 PowerShell 顶替；过一会儿
+    /// 再探补充包，避免一次冷启动超时（杀软扫描）把整个进程永久钉在系统
+    /// shell 上。
+    BundledPending {
+        fallback: PowerShellHost,
+        retry_at: std::time::Instant,
+    },
     /// 探测失败，但磁盘上还有可试的 pwsh：冷启动可能被杀软拖过预算，隔一会儿
     /// 再探一次，别让这台机器永久停在 cmd.exe 上。
     Failed { at: std::time::Instant },
@@ -687,15 +736,33 @@ pub fn powershell_host() -> Option<PowerShellHost> {
     if let ShellProbe::Done(host) = &*guard {
         return host.clone();
     }
-    *guard = match &probed {
-        Some(host) => ShellProbe::Done(Some(host.clone())),
-        // 还有 pwsh 可以再试，就别把结论钉死。
-        None if pwsh_on_disk().is_some() => ShellProbe::Failed {
-            at: std::time::Instant::now(),
-        },
-        None => ShellProbe::Done(None),
-    };
+    let bundled_on_disk = published_bundled_pwsh().is_some();
+    *guard = next_shell_probe(probed.clone(), bundled_on_disk, std::time::Instant::now());
     probed
+}
+
+/// Decide what to cache after one probe round.
+///
+/// A system host is only a stopgap while the supplement binary still exists:
+/// if the bundled pwsh lost a cold-start race it must be retried instead of
+/// becoming the permanent answer.
+#[cfg(windows)]
+fn next_shell_probe(
+    probed: Option<PowerShellHost>,
+    bundled_on_disk: bool,
+    now: std::time::Instant,
+) -> ShellProbe {
+    match probed {
+        Some(host) if host.bundled => ShellProbe::Done(Some(host)),
+        Some(host) if bundled_on_disk => ShellProbe::BundledPending {
+            fallback: host,
+            retry_at: now + PROBE_RETRY_AFTER,
+        },
+        Some(host) => ShellProbe::Done(Some(host)),
+        // 还有 pwsh 可以再试，就别把结论钉死。
+        None if bundled_on_disk => ShellProbe::Failed { at: now },
+        None => ShellProbe::Done(None),
+    }
 }
 
 /// `Some(host)` when the probe has completed (including "no usable host"),
@@ -705,6 +772,13 @@ fn cached_powershell_host() -> Option<Option<PowerShellHost>> {
     let guard = POWERSHELL_HOST.read().ok()?;
     match &*guard {
         ShellProbe::Done(host) => Some(host.clone()),
+        ShellProbe::BundledPending { fallback, retry_at }
+            if std::time::Instant::now() < *retry_at =>
+        {
+            Some(Some(fallback.clone()))
+        }
+        // 到点后重新探测，优先再试补充包。
+        ShellProbe::BundledPending { .. } => None,
         ShellProbe::Failed { at } if at.elapsed() < PROBE_RETRY_AFTER => Some(None),
         // 过期的失败当作「还没探过」，让调用方再试一次。
         ShellProbe::Failed { .. } | ShellProbe::Pending => None,
@@ -729,11 +803,15 @@ pub fn reset_powershell_host() {}
 fn probe_powershell_host() -> Option<PowerShellHost> {
     // Total budget, not per candidate: a Windows image can expose several
     // candidates (override, System32, PATH, pwsh) and a broken .NET stack can
-    // make every one of them hang at startup. Eight seconds bounds the first
-    // command's stall; three seconds per candidate keeps a single black hole
-    // from consuming the whole budget.
-    const TOTAL_BUDGET: std::time::Duration = std::time::Duration::from_secs(8);
+    // make every one of them hang at startup. The bundled pwsh gets a much
+    // larger slice because its first cold start after install can be stuck
+    // behind an antivirus scan for well over three seconds; timing it out at
+    // the same budget as the OS host is exactly how the system shell used to
+    // win on every probe. The OS candidates keep the short budget so a broken
+    // PowerShell install cannot stall the first command for long.
+    const TOTAL_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
     const PER_CANDIDATE: std::time::Duration = std::time::Duration::from_secs(3);
+    const BUNDLED_PER_CANDIDATE: std::time::Duration = std::time::Duration::from_secs(15);
     let deadline = std::time::Instant::now() + TOTAL_BUDGET;
     for candidate in powershell_candidates() {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
@@ -741,7 +819,11 @@ fn probe_powershell_host() -> Option<PowerShellHost> {
             tracing::warn!("powershell host probe budget exhausted before a host answered");
             break;
         }
-        let budget = remaining.min(PER_CANDIDATE);
+        let budget = remaining.min(if candidate.bundled {
+            BUNDLED_PER_CANDIDATE
+        } else {
+            PER_CANDIDATE
+        });
         if let Some(major) = probe_powershell_major(&candidate.exe, budget) {
             return Some(PowerShellHost {
                 exe: candidate.exe,
@@ -767,13 +849,18 @@ struct PowerShellCandidate {
     bundled: bool,
 }
 
-/// Candidate order: explicit override, then the OS install, then whatever PATH
-/// exposes. `pwsh.exe` is only considered when no Windows PowerShell exists at
-/// all — a separately installed PowerShell 7 must not hijack a healthy 5.1
-/// host, because most automation modules only load in Windows PowerShell.
+/// Candidate order: the supplement's portable pwsh, then the OS install, then
+/// whatever PATH exposes. A separately installed `pwsh.exe` on PATH is only
+/// considered when no Windows PowerShell exists at all — it must not hijack a
+/// healthy 5.1 host, because most automation modules only load in Windows
+/// PowerShell. The bundled pwsh is the product's own runtime, so it always
+/// outranks the OS install.
 #[cfg(windows)]
 fn powershell_candidates() -> Vec<PowerShellCandidate> {
-    powershell_candidates_with(env::var_os(POWERSHELL_EXE_ENV).map(PathBuf::from))
+    // Prefer the supplement's own binary even when the bootstrap never
+    // published `WUNDER_POWERSHELL_EXE`; a healthy system PowerShell must not
+    // win by being found first.
+    powershell_candidates_with(published_bundled_pwsh())
 }
 
 #[cfg(windows)]
@@ -1191,6 +1278,52 @@ mod tests {
             }
             None => assert_eq!(powershell_display_name(), "powershell.exe"),
         }
+    }
+
+    /// The OS host may answer while the bundled pwsh is still cold-starting.
+    /// That answer must stay provisional so the next round retries the bundle.
+    #[cfg(windows)]
+    #[test]
+    fn system_fallback_is_provisional_while_the_bundled_pwsh_exists() {
+        let system = PowerShellHost {
+            exe: PathBuf::from(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"),
+            major: 5,
+            bundled: false,
+        };
+        let now = std::time::Instant::now();
+        assert!(matches!(
+            next_shell_probe(Some(system.clone()), true, now),
+            ShellProbe::BundledPending { fallback, .. } if fallback == system
+        ));
+        assert!(matches!(
+            next_shell_probe(Some(system), false, now),
+            ShellProbe::Done(Some(host)) if !host.bundled
+        ));
+
+        let bundled = PowerShellHost {
+            exe: PathBuf::from(r"C:\app\opt\powershell\pwsh.exe"),
+            major: 7,
+            bundled: true,
+        };
+        assert!(matches!(
+            next_shell_probe(Some(bundled), true, now),
+            ShellProbe::Done(Some(host)) if host.bundled
+        ));
+    }
+
+    /// The supplement's `opt/powershell` tree is authoritative even when the
+    /// bootstrap env var was never published for this process.
+    #[cfg(windows)]
+    #[test]
+    fn bundled_pwsh_is_discovered_from_the_supplement_layout() {
+        let temp = tempfile::tempdir().unwrap();
+        let pwsh = temp.path().join("opt/powershell/pwsh.exe");
+        std::fs::create_dir_all(pwsh.parent().unwrap()).unwrap();
+        std::fs::write(&pwsh, b"fixture").unwrap();
+        assert_eq!(
+            find_bundled_pwsh_in(std::slice::from_ref(&temp.path().to_path_buf())),
+            Some(pwsh)
+        );
     }
 
     /// Importing the supplement publishes a new `WUNDER_POWERSHELL_EXE` while

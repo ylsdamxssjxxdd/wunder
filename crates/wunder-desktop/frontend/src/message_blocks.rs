@@ -548,14 +548,14 @@ mod tests {
             md::IMAGE,
             md::LIST_ITEM,
         ] {
-            assert!(kinds.contains(&expected), "missing kind {expected}: {kinds:?}");
+            assert!(
+                kinds.contains(&expected),
+                "missing kind {expected}: {kinds:?}"
+            );
         }
         assert!(blocks.raw == source);
         assert!(
-            blocks
-                .model
-                .iter()
-                .any(|block| block.quoted),
+            blocks.model.iter().any(|block| block.quoted),
             "a quote child is flagged"
         );
     }
@@ -657,6 +657,9 @@ mod tests {
             .find(|block| block.kind == md::DOCUMENT)
             .expect("document card");
         assert_eq!(card.plain, "交付文档");
-        assert!(card.image.to_rgba8().is_some(), "the file icon is filled in");
+        assert!(
+            card.image.to_rgba8().is_some(),
+            "the file icon is filled in"
+        );
     }
 }

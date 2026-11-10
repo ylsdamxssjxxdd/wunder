@@ -22,7 +22,8 @@ esac
 
 for path in "$android_root/sdk" "$android_root/jdk" "$android_root/gradle" \
     "$android_root/skia-binaries" "$android_root/assets/rootfs.tar.xz" \
-    "$android_root/assets/packs/common.tar.xz" "$offline_root/cargo-vendor-slint"; do
+    "$android_root/assets/packs/common.tar.xz" \
+    "$android_root/assets/packs/browser.tar.xz" "$offline_root/cargo-vendor-slint"; do
     [[ -e "$path" ]] || { echo "离线安卓输入缺失: $path（先按 README 准备 kit 的 android/ 目录）" >&2; exit 2; }
 done
 
@@ -78,6 +79,7 @@ mkdir -p "$app_src/assets/ubuntu/packs" "$app_src/jniLibs/arm64-v8a"
 cp -f "$android_root/assets/rootfs.tar.xz" "$app_src/assets/ubuntu/"
 cp -f "$android_root/assets/NOTICE.txt" "$app_src/assets/ubuntu/"
 cp -f "$android_root/assets/packs/common.tar.xz" "$app_src/assets/ubuntu/packs/"
+cp -f "$android_root/assets/packs/browser.tar.xz" "$app_src/assets/ubuntu/packs/"
 cp -f "$android_root/assets/jniLibs/arm64-v8a/"*.so "$app_src/jniLibs/arm64-v8a/"
 
 export ANDROID_HOME="$android_root/sdk"

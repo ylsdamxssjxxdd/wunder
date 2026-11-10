@@ -1199,8 +1199,8 @@ mod tests {
         use std::path::Path;
         use std::time::Duration;
 
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../config/data/companions/global");
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/data/companions/global");
         let Ok(entries) = std::fs::read_dir(&root) else {
             eprintln!("skipped: no companion packages under {}", root.display());
             return;

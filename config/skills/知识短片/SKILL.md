@@ -133,7 +133,7 @@ python engine/render.py <工程目录> --serve            # 浏览器预览
 
 `new_film.py` 建出来的 `film.js` 只是能跑起来的骨架，里面一行画面都没有：没有现成的钩子、没有现成的图表。每一镜都照分镜表现写。
 先填 `SUBS`，再把分镜表里**最难画的那一镜**做出来，截静帧。引擎的用法在 `references/engine.md`。`examples/` 可以翻，看的是别人怎么把一张分镜表变成画面，不是去找能搬的零件。
-字体通常由补充包提供：中文用 `opt/fonts/common` 的宋体/雅黑，拉丁与等宽在 `opt/fonts/video`；云端在 `/usr/share/fonts/wunder`。开发环境缺拉丁字体时跑 `python engine/get_fonts.py`（缺哪个下哪个）。
+字体通常由补充包提供：中文优先用 `opt/fonts/video` 的思源宋体/黑体，缺失时退到 `opt/fonts/common` 的宋体/雅黑；拉丁与等宽也在 `opt/fonts/video`；云端在 `/usr/share/fonts/wunder`。开发环境缺字体时跑 `python engine/get_fonts.py`（缺哪个下哪个）。
 
 过关：拿这张静帧，遮住字幕和小字，问"这是什么、它在干什么"——答得出来；缩到手机横屏大小还分得清；纵向 80%–95% 只有字幕；
 对着 `visualization.md` 第八节的表查过一遍。答不出来就重画，或者回第 2 步换形象。第一版几乎不会过，改两三轮是正常的。

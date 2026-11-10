@@ -12,7 +12,7 @@ A goal is attached to a session; the agent keeps working on it until the goal co
 
 | Tool | Role |
 | --- | --- |
-| `goal` | Uses `action=get|create|edit|pause|resume|complete|blocked` to read, create, edit, pause, resume, complete, or report blocked |
+| `goal` | Uses `action=get|edit|pause|resume|complete|blocked` to read, edit, pause, resume, complete, or report blocked; only the user can create a goal |
 
 ## Phases
 

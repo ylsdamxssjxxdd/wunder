@@ -107,9 +107,18 @@ pub(super) fn project(tool: &str, payload: &Value, args: &Value) -> Vec<NativePa
                     lines: lines.into(),
                 }
             })
+            // 没有差异行且计数为 0 的文件（写回原文、旧内容不可 diff）不生成
+            // 空白卡片，折叠行与详情都不会出现没有内容的“变更片段”。
+            .filter(|card| !card.lines.is_empty() || card.added != "0" || card.deleted != "0")
             .collect();
         if !cards.is_empty() {
             return cards;
+        }
+        // The result already declared its files: a zero-change result must not
+        // fall back to the submitted preview and show a change that never
+        // happened.
+        if !files.is_empty() {
+            return Vec::new();
         }
     }
     // Before the result arrives the submitted call is the only structured
@@ -369,7 +378,11 @@ mod tests {
             }]
         }}});
         for tool in ["写入文件", "write_file"] {
-            let cards = project(tool, &payload, &json!({"path":"sample.txt","content":"new\n"}));
+            let cards = project(
+                tool,
+                &payload,
+                &json!({"path":"sample.txt","content":"new\n"}),
+            );
             assert_eq!(cards.len(), 1, "{tool}");
             assert_eq!(cards[0].path, "sample.txt");
             assert_eq!(cards[0].action, "update");
@@ -380,6 +393,30 @@ mod tests {
             assert_eq!(cards[0].lines[0].kind, "header");
             assert_eq!(cards[0].lines[1].kind, "delete");
             assert_eq!(cards[0].lines[2].kind, "add");
+        }
+    }
+
+    #[test]
+    fn zero_change_files_do_not_create_an_empty_card() {
+        let payload = json!({"result":{"data":{"files":[
+            {"path": "same.txt", "action": "update", "added_lines": 0, "deleted_lines": 0, "diff_blocks": []},
+            {"path": "new.txt", "action": "add", "added_lines": 1, "deleted_lines": 0,
+                "diff_blocks": [{"header": "new file", "lines": [
+                    {"kind": "add", "new_line": 1, "text": "first"},
+                ]}]}
+        ]}}});
+        for tool in ["写入文件", "apply_patch"] {
+            let cards = project(tool, &payload, &Value::Null);
+            assert_eq!(cards.len(), 1, "{tool}");
+            assert_eq!(cards[0].path, "new.txt");
+            let no_change = json!({"result":{"data":{"files":[
+                {"path": "same.txt", "action": "update", "added_lines": 0, "deleted_lines": 0, "diff_blocks": []}
+            ]}}});
+            let args = json!({"patch": "*** same.txt\n@@ -1 +1 @@\n-old\n+new"});
+            assert!(
+                project(tool, &no_change, &args).is_empty(),
+                "{tool}: a settled zero-change result must not fall back to its call preview"
+            );
         }
     }
 

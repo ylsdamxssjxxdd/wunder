@@ -50,7 +50,7 @@ updated_at: 2026-11-09
 
 命令交给当前 shell 执行，工具描述末尾会写明是哪一个，模型据此决定语法：
 
-- **Windows 桌面版**优先用内置的便携版 `pwsh`（PowerShell 7）；探测失败才退到系统 `powershell.exe`（Win7 上是 2.0，Win10/11 是 5.1）；两者都用不了才退到 `cmd.exe`。
+- **Windows 桌面版**优先用内置的便携版 `pwsh`（PowerShell 7）；探测失败才退到系统 `powershell.exe`（Win7 上是 2.0，Win10/11 是 5.1）；两者都用不了才退到 `cmd.exe`。即使没有先经过补充包 bootstrap，运行时也会从共享 home 和程序目录直接发现 `opt/powershell/pwsh.exe`，不会因为系统 shell 先被找到而改用系统版本；首次冷启动较慢时按补充包优先重试。
 - **Linux / macOS 桌面版**固定 bash，并自动加 `set -o pipefail`，管道中间一环失败不会被最后一条命令的成功掩盖。
 - **Android** 用 `/system/bin/sh`（mksh）。
 

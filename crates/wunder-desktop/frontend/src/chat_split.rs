@@ -107,6 +107,20 @@ fn set_draft(app: &MainWindow, slot: usize, value: String) {
     }
 }
 
+fn set_model(app: &MainWindow, slot: usize, name: &str, key: &str) {
+    if slot >= 4 {
+        return;
+    }
+    let mut names = app.get_split_model_names().iter().collect::<Vec<_>>();
+    let mut keys = app.get_split_model_keys().iter().collect::<Vec<_>>();
+    names.resize(4, Default::default());
+    keys.resize(4, Default::default());
+    names[slot] = name.into();
+    keys[slot] = key.into();
+    app.set_split_model_names(ModelRc::new(VecModel::from(names)));
+    app.set_split_model_keys(ModelRc::new(VecModel::from(keys)));
+}
+
 fn cache_drafts(app: &MainWindow) {
     for slot in 0..4 {
         let id = session(app, slot);
@@ -161,6 +175,7 @@ fn clear_pane(app: &MainWindow, slot: usize) {
     set_session(app, slot, "");
     set_title(app, slot, "");
     set_draft(app, slot, String::new());
+    set_model(app, slot, "", "");
     publish_rows(app, slot, Vec::new());
     set_loading(app, slot, false);
     set_busy(app, slot, false);
@@ -182,18 +197,6 @@ fn publish_slot(app: &MainWindow, index: usize) {
             }),
         );
     });
-}
-
-pub(crate) fn sync_active(app: &MainWindow, rows: ModelRc<TimelineRow>) {
-    if app.get_split_count() <= 1 {
-        return;
-    }
-    let active = app.get_active_session_id();
-    for slot in 0..4 {
-        if active == session(app, slot) {
-            publish_model(app, slot, rows.clone());
-        }
-    }
 }
 
 fn activate(app: &MainWindow, slot: usize) {
@@ -241,7 +244,10 @@ fn run_pending(app: &MainWindow, slot: usize) {
             app.invoke_send_message();
         }
         PendingAction::Stop => app.invoke_stop_generation(),
-        PendingAction::Model(key) => app.invoke_select_thread_model(key.into()),
+        PendingAction::Model(key) => {
+            set_model(app, slot, &key, &key);
+            app.invoke_select_thread_model(key.into());
+        }
         PendingAction::Toggle(index) => app.invoke_timeline_toggle(index),
     }
 }
@@ -299,10 +305,27 @@ fn open_slot(app: &MainWindow, desktop: Arc<NativeDesktop>, slot: usize, row: us
     }
     let duplicate = (0..app.get_split_count() as usize)
         .find(|index| *index != slot && session(app, *index) == id);
+    if previous.is_empty() {
+        if let Some(existing) = duplicate {
+            activate(app, existing);
+            return;
+        }
+    }
     SLOTS.with(|slots| slots.borrow_mut()[slot].clear());
     set_session(app, slot, &id);
     restore_draft(app, slot);
     set_title(app, slot, &conversation.title);
+    let selected_key = app.get_selected_model_key().to_string();
+    let fallback_name = if selected_key.is_empty() {
+        app.get_selected_agent_model().to_string()
+    } else {
+        selected_key.clone()
+    };
+    if app.get_active_session_id() == id {
+        set_model(app, slot, &fallback_name, &selected_key);
+    } else {
+        set_model(app, slot, &fallback_name, &fallback_name);
+    }
     publish_rows(app, slot, Vec::new());
     set_loading(app, slot, true);
     set_busy(app, slot, false);
@@ -343,14 +366,22 @@ fn open_slot(app: &MainWindow, desktop: Arc<NativeDesktop>, slot: usize, row: us
     let weak = app.as_weak();
     let wake_weak = weak.clone();
     std::thread::spawn(move || {
-        let result = desktop.load_chat_headers(&id);
+        let result = desktop.load_chat_headers(&id).and_then(|turns| {
+            let session = desktop.get_session_info(&id)?;
+            Ok((turns, session.session_model_name))
+        });
         let _ = weak.upgrade_in_event_loop(move |app| {
-            let current = SLOTS.with(|slots| slots.borrow()[slot].generation == generation);
-            if !current || session(&app, slot) != id {
-                return;
-            }
+            let slot = SLOTS.with(|slots| {
+                slots.borrow().iter().position(|candidate| {
+                    candidate.generation == generation && candidate.session == id
+                })
+            });
+            let Some(slot) = slot else { return };
             match result {
-                Ok(turns) => {
+                Ok((turns, pinned_model)) => {
+                    if let Some(model) = pinned_model {
+                        set_model(&app, slot, &model, &model);
+                    }
                     let watch = desktop.watch_chat_with_initial(&id, Some(turns.clone()));
                     let cancel = watch.cancel_handle();
                     let mut watch = Some(watch);
@@ -381,6 +412,104 @@ fn open_slot(app: &MainWindow, desktop: Arc<NativeDesktop>, slot: usize, row: us
             }
         });
     });
+    activate(app, slot);
+}
+
+fn compact_layout(app: &MainWindow) {
+    let sources = (0..4)
+        .filter(|slot| !session(app, *slot).is_empty())
+        .collect::<Vec<_>>();
+    if sources == (0..sources.len()).collect::<Vec<_>>() {
+        return;
+    }
+    let names = app.get_split_model_names();
+    let keys = app.get_split_model_keys();
+    let panes = sources
+        .iter()
+        .map(|source| {
+            let source = *source;
+            let title = match source {
+                0 => app.get_split_title_0(),
+                1 => app.get_split_title_1(),
+                2 => app.get_split_title_2(),
+                _ => app.get_split_title_3(),
+            };
+            let rows = match source {
+                0 => app.get_split_rows_0(),
+                1 => app.get_split_rows_1(),
+                2 => app.get_split_rows_2(),
+                _ => app.get_split_rows_3(),
+            };
+            let loading = match source {
+                0 => app.get_split_loading_0(),
+                1 => app.get_split_loading_1(),
+                2 => app.get_split_loading_2(),
+                _ => app.get_split_loading_3(),
+            };
+            let busy = match source {
+                0 => app.get_split_busy_0(),
+                1 => app.get_split_busy_1(),
+                2 => app.get_split_busy_2(),
+                _ => app.get_split_busy_3(),
+            };
+            (
+                source,
+                session(app, source),
+                title,
+                draft(app, source),
+                rows,
+                loading,
+                busy,
+                names.row_data(source).unwrap_or_default(),
+                keys.row_data(source).unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    SLOTS.with(|slots| {
+        let mut slots = slots.borrow_mut();
+        let mut previous = std::mem::replace(&mut *slots, (0..4).map(|_| Slot::empty()).collect());
+        for (target, source) in sources.iter().enumerate() {
+            slots[target] = std::mem::replace(&mut previous[*source], Slot::empty());
+        }
+    });
+    PENDING.with(|pending| {
+        let mut pending = pending.borrow_mut();
+        let mut previous = std::mem::take(&mut *pending);
+        for (target, source) in sources.iter().enumerate() {
+            if let Some(entry) = previous.remove(source) {
+                pending.insert(target, entry);
+            }
+        }
+    });
+
+    for target in 0..4 {
+        if let Some((_, id, title, draft, rows, loading, busy, _, _)) = panes.get(target) {
+            set_session(app, target, id);
+            set_title(app, target, title);
+            set_draft(app, target, draft.clone());
+            publish_model(app, target, rows.clone());
+            set_loading(app, target, *loading);
+            set_busy(app, target, *busy);
+        } else {
+            set_session(app, target, "");
+            set_title(app, target, "");
+            set_draft(app, target, String::new());
+            publish_rows(app, target, Vec::new());
+            set_loading(app, target, false);
+            set_busy(app, target, false);
+        }
+    }
+    let mut names = panes.iter().map(|pane| pane.7.clone()).collect::<Vec<_>>();
+    let mut keys = panes.iter().map(|pane| pane.8.clone()).collect::<Vec<_>>();
+    names.resize(4, Default::default());
+    keys.resize(4, Default::default());
+    app.set_split_model_names(ModelRc::new(VecModel::from(names)));
+    app.set_split_model_keys(ModelRc::new(VecModel::from(keys)));
+    let pending = PENDING.with(|pending| pending.borrow().keys().copied().collect::<Vec<_>>());
+    for slot in pending {
+        run_pending(app, slot);
+    }
 }
 
 fn normalize_layout(app: &MainWindow) {
@@ -488,6 +617,7 @@ pub(crate) fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 activate(&app, next);
             }
         }
+        compact_layout(&app);
         normalize_layout(&app);
     });
     let weak = app.as_weak();

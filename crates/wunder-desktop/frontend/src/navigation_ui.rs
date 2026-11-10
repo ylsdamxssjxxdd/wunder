@@ -591,7 +591,9 @@ fn apply_row_diff(model: &VecModel<SidebarRow>, rows: Vec<SidebarRow>) {
     let mut end_new = new_count;
     while end_old > start
         && end_new > start
-        && model.row_data(end_old - 1).is_some_and(|old| old == rows[end_new - 1])
+        && model
+            .row_data(end_old - 1)
+            .is_some_and(|old| old == rows[end_new - 1])
     {
         end_old -= 1;
         end_new -= 1;
@@ -1355,14 +1357,20 @@ mod tests {
         current.truncate(3);
         apply_row_diff(&model, current.clone());
         assert_eq!(model.row_count(), 3);
-        let ids: Vec<String> =
-            (0..model.row_count()).map(|i| model.row_data(i).unwrap().thread_id.into()).collect();
+        let ids: Vec<String> = (0..model.row_count())
+            .map(|i| model.row_data(i).unwrap().thread_id.into())
+            .collect();
         assert_eq!(ids, ["a", "b", "d"]);
         // A full swap (device switch) still converges.
-        let swapped = vec![thread_row("x", "idle"), thread_row("y", "idle"), thread_row("z", "idle")];
+        let swapped = vec![
+            thread_row("x", "idle"),
+            thread_row("y", "idle"),
+            thread_row("z", "idle"),
+        ];
         apply_row_diff(&model, swapped.clone());
-        let ids: Vec<String> =
-            (0..model.row_count()).map(|i| model.row_data(i).unwrap().thread_id.into()).collect();
+        let ids: Vec<String> = (0..model.row_count())
+            .map(|i| model.row_data(i).unwrap().thread_id.into())
+            .collect();
         assert_eq!(ids, ["x", "y", "z"]);
     }
 

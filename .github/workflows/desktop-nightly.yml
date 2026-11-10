@@ -507,13 +507,14 @@ jobs:
             --pattern 'SHA256SUMS' \
             --dir android-runtime --clobber || {
             echo 'android-runtime release is missing its assets;' >&2
-            echo 'rebuild them with packaging/android/pack-runtime.sh --publish' >&2
+            echo 'rebuild rootfs/common/browser packs, then packaging/android/pack-runtime.sh --publish' >&2
             exit 1
           }
           (cd android-runtime && sha256sum -c SHA256SUMS)
           tar -xzf android-runtime/wunder-android-runtime-arm64.tar.gz -C android-runtime
           test -f android-runtime/assets/ubuntu/rootfs.tar.xz
           test -f android-runtime/assets/ubuntu/packs/common.tar.xz
+          test -f android-runtime/assets/ubuntu/packs/browser.tar.xz
           file -b android-runtime/jniLibs/arm64-v8a/liboperit_proot.so | grep -qi aarch64
       - name: Stage runtime inputs and debug keystore
         shell: bash

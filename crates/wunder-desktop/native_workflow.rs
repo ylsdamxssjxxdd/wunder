@@ -98,6 +98,7 @@ impl NativeWorkflowEntry {
             .unwrap_or_default();
         let sections = sections::project(title, data, state, &detail);
         let patch_files = patch::project(title, data, args.unwrap_or(&Value::Null));
+        let read_lines = read_line_label(title, state, data);
         Self {
             id: id.into(),
             title: title.into(),
@@ -106,10 +107,47 @@ impl NativeWorkflowEntry {
             state: state.into(),
             tokens,
             duration,
+            read_lines,
             sections,
             patch_files,
         }
     }
+}
+
+/// The read tool already reports how many lines it returned; the folded row
+/// states the same number beside the file chip. A partial window keeps the
+/// file's total, mirroring the model-facing "read N of M" summary.
+fn read_line_label(tool: &str, state: &str, data: &Value) -> String {
+    if !matches!(tool, "read_file" | "读取文件")
+        || matches!(state, "failed" | "error" | "rejected")
+    {
+        return String::new();
+    }
+    let result = result_data(data);
+    let read = result["read_lines"]
+        .as_u64()
+        .or_else(|| file_line_sum(result, "read_lines"));
+    let total = result["total_lines"]
+        .as_u64()
+        .or_else(|| file_line_sum(result, "total_lines"));
+    match (read, total) {
+        (Some(read), Some(total)) if read > 0 && total > read => format!("{read}/{total} 行"),
+        (Some(read), _) if read > 0 => format!("{read} 行"),
+        _ => String::new(),
+    }
+}
+
+/// Older read results only carry the per-file summaries.
+fn file_line_sum(result: &Value, key: &str) -> Option<u64> {
+    let mut sum = 0u64;
+    let mut found = false;
+    for file in result["files"].as_array()? {
+        if let Some(value) = file[key].as_u64() {
+            sum = sum.saturating_add(value);
+            found = true;
+        }
+    }
+    found.then_some(sum)
 }
 
 /// Display sections are bounded independently. Copy keeps the original text
@@ -562,6 +600,46 @@ mod tests {
             ("2", "0")
         );
         assert_eq!(entry.patch_files[0].lines.len(), 3);
+    }
+
+    #[test]
+    fn read_rows_state_the_returned_line_count() {
+        for (payload, state, expected) in [
+            (
+                json!({"args":{"path":"sample.txt"},"data":{"content":"sample","read_lines":12,"total_lines":12}}),
+                "completed",
+                "12 行",
+            ),
+            (
+                json!({"data":{"content":"sample","read_lines":120,"total_lines":676}}),
+                "completed",
+                "120/676 行",
+            ),
+            (
+                json!({"data":{"content":"sample","files":[
+                    {"read_lines":3,"total_lines":8},{"read_lines":2,"total_lines":4}
+                ]}}),
+                "completed",
+                "5/12 行",
+            ),
+            (
+                json!({"data":{"content":"sample","read_lines":12,"total_lines":12}}),
+                "failed",
+                "",
+            ),
+        ] {
+            let entry =
+                NativeWorkflowEntry::from_payload("fixture-read", "read_file", String::new(), state, &payload);
+            assert_eq!(entry.read_lines, expected, "{payload}");
+        }
+        let other = NativeWorkflowEntry::from_payload(
+            "fixture-write",
+            "write_file",
+            String::new(),
+            "completed",
+            &json!({"data":{"content":"sample","read_lines":12,"total_lines":12}}),
+        );
+        assert!(other.read_lines.is_empty());
     }
 
     #[test]

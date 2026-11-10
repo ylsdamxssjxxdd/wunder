@@ -54,6 +54,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--reasoning-only", action="store_true")
     parser.add_argument("--models-only", action="store_true")
+    parser.add_argument("--split-only", action="store_true")
     # A fresh install has no models at all: the engine seeds only the 虚拟模型
     # and the chat surface must offer the first-run setup banner.
     parser.add_argument("--setup-only", action="store_true")
@@ -83,7 +84,7 @@ def main():
     peak = 0
     try:
         with (output / "process.log").open("wb") as log:
-            mode = "--native-setup-smoke" if args.setup_only else "--native-model-smoke" if args.models_only else "--native-reasoning-smoke" if args.reasoning_only else "--native-smoke"
+            mode = "--native-setup-smoke" if args.setup_only else "--native-model-smoke" if args.models_only else "--native-reasoning-smoke" if args.reasoning_only else "--native-split-smoke" if args.split_only else "--native-smoke"
             process = subprocess.Popen([str(args.ui.resolve()), mode, str(output)],
                                        stdout=log, stderr=subprocess.STDOUT,
                                        env=runtime_env,
@@ -104,7 +105,7 @@ def main():
                     assert not children, f"native runtime spawned a child: {[c.name() for c in children]}"
                     connections = getattr(watched, "net_connections", None) or watched.connections
                     assert not any(c.status == psutil.CONN_LISTEN for c in connections()), "native UI opened a listening socket"
-                except psutil.NoSuchProcess:
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
                 if time.monotonic() > deadline:
                     raise RuntimeError("native smoke timeout")
@@ -112,7 +113,7 @@ def main():
         report = (output / "smoke.txt").read_text(encoding="utf-8") if (output / "smoke.txt").exists() else "missing report"
         if process.returncode != 0 or not report.startswith("PASS"):
             raise RuntimeError(report)
-        if args.reasoning_only or args.models_only or args.setup_only:
+        if args.reasoning_only or args.models_only or args.setup_only or args.split_only:
             print(report.strip())
             return
         metrics = json.loads((output / "stream-metrics.json").read_text())

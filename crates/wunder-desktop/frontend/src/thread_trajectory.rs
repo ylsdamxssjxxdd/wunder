@@ -1325,9 +1325,8 @@ fn apply_axis_overview(model: &mut SnapshotModel, page: &Value) {
     let Some(axis) = page.get("axis") else {
         return;
     };
-    let number = |key: &str, fallback: f64| {
-        axis.get(key).and_then(Value::as_f64).unwrap_or(fallback)
-    };
+    let number =
+        |key: &str, fallback: f64| axis.get(key).and_then(Value::as_f64).unwrap_or(fallback);
     let seq_start = number("seq_start", 0.0);
     let seq_end = number("seq_end", 1.0).max(seq_start + 1.0);
     let time_start = number("time_start_ms", 0.0);
@@ -1354,12 +1353,7 @@ fn apply_axis_overview(model: &mut SnapshotModel, page: &Value) {
             if count == 0 {
                 continue;
             }
-            let lane_count = |key: &str| {
-                tile.get(key)
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0)
-                    .max(0)
-            };
+            let lane_count = |key: &str| tile.get(key).and_then(Value::as_i64).unwrap_or(0).max(0);
             let mut counts = [
                 lane_count("input_count"),
                 lane_count("model_count"),
@@ -1454,9 +1448,8 @@ fn compress_axis_idle(model: &mut SnapshotModel) {
     anchors.sort_by(f64::total_cmp);
     anchors.dedup_by(|left, right| (*left - *right).abs() < 1.0);
 
-    let mut raw: Vec<(f64, f64)> = Vec::with_capacity(
-        model.spans.len() + model.overview_spans.len() + 2,
-    );
+    let mut raw: Vec<(f64, f64)> =
+        Vec::with_capacity(model.spans.len() + model.overview_spans.len() + 2);
     for span in model.overview_spans.iter().chain(model.spans.iter()) {
         if span.start.is_finite() {
             raw.push((span.start, span.end.max(span.start)));
@@ -1484,7 +1477,11 @@ fn compress_axis_idle(model: &mut SnapshotModel) {
     if warp.is_empty() {
         return;
     }
-    for span in model.spans.iter_mut().chain(model.overview_spans.iter_mut()) {
+    for span in model
+        .spans
+        .iter_mut()
+        .chain(model.overview_spans.iter_mut())
+    {
         span.start = warp.map(span.start);
         span.end = warp.map(span.end).max(span.start);
     }
@@ -2300,7 +2297,11 @@ impl Texts {
         if value < 10.0 {
             format!("{value:.1} {}", if self.zh { "秒" } else { "s" })
         } else {
-            format!("{} {}", value.round() as u64, if self.zh { "秒" } else { "s" })
+            format!(
+                "{} {}",
+                value.round() as u64,
+                if self.zh { "秒" } else { "s" }
+            )
         }
     }
     fn seconds(&self, value: Option<f64>) -> String {
@@ -2697,8 +2698,7 @@ fn use_overview(state: &State, model: &SnapshotModel) -> bool {
     // pixels at the far left and leave the track apparently empty.
     !model.overview_spans.is_empty()
         && (!model.axis_turns.is_empty()
-            || (model.has_overview
-                && (model.overview_exact || state.has_more || state.has_newer)))
+            || (model.has_overview && (model.overview_exact || state.has_more || state.has_newer)))
 }
 
 /// A degraded or unit-mismatched axis must not erase the whole track.  When
@@ -2794,8 +2794,7 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, _tex
     let view_width = state.view_width.clamp(0.02, 1.0);
     let timed = state.show_duration;
     let use_overview = use_overview(state, model);
-    let (total_lo, total_hi, domain_fallback) =
-        effective_timeline_domain(state, model, timed);
+    let (total_lo, total_hi, domain_fallback) = effective_timeline_domain(state, model, timed);
     let total = (total_hi - total_lo).max(1.0);
     let window_lo = total_lo + view_start * total;
     let window_total = view_width * total;
@@ -2905,13 +2904,7 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, _tex
     } else {
         axis::AxisMode::Sequence
     };
-    let raw_ticks = axis::axis_ticks(
-        total_lo,
-        window_lo,
-        window_total,
-        AXIS_WIDTH_PX,
-        axis_mode,
-    );
+    let raw_ticks = axis::axis_ticks(total_lo, window_lo, window_total, AXIS_WIDTH_PX, axis_mode);
     // 空闲被压缩后坐标不再是真实时间，刻度仍要显示真实经过时间：把压缩坐标
     // 反解回时间戳再格式化。落在折叠区间里的多个刻度会反解到同一个瞬时点，
     // 因此相邻重复标签只保留一个。
@@ -2941,38 +2934,36 @@ fn project_timeline(app: &MainWindow, state: &State, model: &SnapshotModel, _tex
     }
 
     // 轮次标记抽稀后带 R 编号；100+ 轮不会变成一片竖线。
-    let boundary_candidates: Vec<(i64, f64)> = if !domain_fallback
-        && use_overview
-        && !model.axis_turns.is_empty()
-    {
-        // Real user rounds in the same global domain as the buckets.
-        model
-            .axis_turns
-            .iter()
-            .map(|(round, seq, time)| {
-                let value = if timed { *time } else { *seq };
-                (*round, (value - window_lo) / window_total * AXIS_WIDTH_PX)
-            })
-            .collect()
-    } else {
-        model
-            .boundaries
-            .iter()
-            .map(|(turn, time, record_index)| {
-                let value = if timed {
-                    *time
-                } else {
-                    model
-                        .spans
-                        .iter()
-                        .find(|span| span.record == *record_index)
-                        .and_then(|span| span.sequence_start)
-                        .unwrap_or(*record_index as f64)
-                };
-                (*turn, (value - window_lo) / window_total * AXIS_WIDTH_PX)
-            })
-            .collect()
-    };
+    let boundary_candidates: Vec<(i64, f64)> =
+        if !domain_fallback && use_overview && !model.axis_turns.is_empty() {
+            // Real user rounds in the same global domain as the buckets.
+            model
+                .axis_turns
+                .iter()
+                .map(|(round, seq, time)| {
+                    let value = if timed { *time } else { *seq };
+                    (*round, (value - window_lo) / window_total * AXIS_WIDTH_PX)
+                })
+                .collect()
+        } else {
+            model
+                .boundaries
+                .iter()
+                .map(|(turn, time, record_index)| {
+                    let value = if timed {
+                        *time
+                    } else {
+                        model
+                            .spans
+                            .iter()
+                            .find(|span| span.record == *record_index)
+                            .and_then(|span| span.sequence_start)
+                            .unwrap_or(*record_index as f64)
+                    };
+                    (*turn, (value - window_lo) / window_total * AXIS_WIDTH_PX)
+                })
+                .collect()
+        };
     let boundaries: Vec<TrajBoundary> = axis::thin_turns(&boundary_candidates, AXIS_WIDTH_PX)
         .into_iter()
         .map(|turn| TrajBoundary {
@@ -3232,10 +3223,7 @@ fn project_details(app: &MainWindow, state: &State, model: &SnapshotModel, texts
                 .or(cell.output_detail.as_deref())
                 .unwrap_or_default();
             if !body.is_empty() {
-                sections.push(md_section(
-                    label(zh, "结果", "Result"),
-                    bounded_body(body),
-                ));
+                sections.push(md_section(label(zh, "结果", "Result"), bounded_body(body)));
             }
         }
         TAB_SCHEMA => {

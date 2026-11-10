@@ -977,7 +977,6 @@ fn publish_timeline_with_follow(
         app.set_turn_marks(live.marks_model());
     }
     live.sync_turn_marks();
-    crate::chat_split::sync_active(app, live.model());
     // One monotonic view revision covers live frames and durable history
     // refreshes alike. TimelineView uses it to schedule a bounded follow-tail
     // correction instead of polling content-y forever.

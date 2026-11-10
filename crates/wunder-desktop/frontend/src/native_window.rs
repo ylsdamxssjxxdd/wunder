@@ -276,14 +276,16 @@ fn native_hwnd(window: &slint::Window) -> Option<HWND> {
 /// EWMH state, so send the same `_NET_WM_STATE` remove message a WM client uses.
 #[cfg(target_os = "linux")]
 pub fn clear_demands_attention(window: &slint::Window) {
-    use slint::winit_030::WinitWindowAccessor;
     use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use slint::winit_030::WinitWindowAccessor;
     use x11_dl::xlib;
 
     let xwindow = window
         .with_winit_window(|native| {
             let handle = native.window_handle().ok()?;
-            let RawWindowHandle::Xlib(handle) = handle.as_raw() else { return None };
+            let RawWindowHandle::Xlib(handle) = handle.as_raw() else {
+                return None;
+            };
             Some(handle.window)
         })
         .flatten();
@@ -311,7 +313,10 @@ pub fn clear_demands_attention(window: &slint::Window) {
         event.client_message.message_type = state;
         event.client_message.format = 32;
         event.client_message.data.set_long(0, 0); // _NET_WM_STATE_REMOVE
-        event.client_message.data.set_long(1, demands as std::ffi::c_long);
+        event
+            .client_message
+            .data
+            .set_long(1, demands as std::ffi::c_long);
         (lib.XSendEvent)(
             display,
             root,

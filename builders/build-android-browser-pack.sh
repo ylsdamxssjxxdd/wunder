@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build 安卓版's optional offline browser overlay for the bundled Ubuntu rootfs.
+# Build 安卓版's offline browser overlay for the bundled Ubuntu rootfs.
 #
 # The overlay adds three things to the installed rootfs:
 #   /opt/browser/chrome-linux/chrome        Playwright's arm64 Chromium build
@@ -7,7 +7,8 @@
 #   system libraries Chromium links against
 #
 # It is a plain tar.xz overlay; UbuntuRuntime extracts it into the rootfs and
-# writes a marker. Install it next to common.tar.xz:
+# writes a marker. Release builds bundle it next to common.tar.xz so the
+# 知识短片 skill can render out of the box:
 #
 #   WUNDER_UBUNTU_ROOTFS=/path/rootfs.tar.xz builders/build-android-browser-pack.sh
 #   WUNDER_PACKS_SRC=/tmp/wunder-packs builders/stage-android-ubuntu.sh
@@ -17,7 +18,9 @@
 #   WUNDER_BROWSER_PACK_OUT output archive (default /tmp/wunder-packs/browser.tar.xz)
 #   WUNDER_BROWSER_CHROMIUM_URL  Chromium archive override
 #   WUNDER_BROWSER_PACK_WORK  build directory (default /tmp/wunder-browser-pack-<abi>)
-#   WUNDER_COMMON_PACK    common overlay to stack on (default /tmp/wunder-packs/common-<abi>.tar.xz)
+#   WUNDER_COMMON_PACK    common overlay to stack on (default: staged arm64 pack or
+#                         /tmp/wunder-packs/common-<abi>.tar.xz); required, so the
+#                         overlay is never diffed against the bare rootfs.
 #
 # The overlay is diffed against base + common, matching the device install
 # order, so it never replaces files the common pack already owns.
@@ -29,8 +32,18 @@ BASE_ARCHIVE="${WUNDER_UBUNTU_ROOTFS:-$ROOT/crates/wunder-android/android/app/sr
 WORK="${WUNDER_BROWSER_PACK_WORK:-/tmp/wunder-browser-pack-$ABI}"
 OUT="${WUNDER_BROWSER_PACK_OUT:-/tmp/wunder-packs/browser.tar.xz}"
 REQUIREMENTS="$ROOT/packaging/python/requirements-android-browser.txt"
-COMMON_PACK="${WUNDER_COMMON_PACK:-/tmp/wunder-packs/common-$ABI.tar.xz}"
-[ -f "$COMMON_PACK" ] || COMMON_PACK=""
+COMMON_PACK="${WUNDER_COMMON_PACK:-}"
+if [ -z "$COMMON_PACK" ]; then
+    if [ "$ABI" = "arm64" ] && [ -f "$ROOT/crates/wunder-android/android/app/src/main/assets/ubuntu/packs/common.tar.xz" ]; then
+        COMMON_PACK="$ROOT/crates/wunder-android/android/app/src/main/assets/ubuntu/packs/common.tar.xz"
+    elif [ -f "/tmp/wunder-packs/common-$ABI.tar.xz" ]; then
+        COMMON_PACK="/tmp/wunder-packs/common-$ABI.tar.xz"
+    fi
+fi
+[ -n "$COMMON_PACK" ] && [ -f "$COMMON_PACK" ] || {
+    echo "missing common pack: set WUNDER_COMMON_PACK to the common-<abi> pack" >&2
+    exit 2
+}
 
 # Chromium runtime dependencies. Ubuntu 24.04 renamed several of these with
 # the t64 suffix; keep the names explicit because the arm64 rootfs runs the
@@ -68,6 +81,26 @@ if [ "$ABI" = "arm64" ]; then
 fi
 sudo -n true || { echo "passwordless sudo is required for chroot builds" >&2; exit 2; }
 
+# A killed build can leave /proc, /dev or /sys bind mounts under $WORK.
+# Removing the tree while they are attached would traverse the mount and
+# delete real host device nodes, so refuse to continue until they are gone.
+unmount_work_mounts() {
+    local mount
+    while IFS= read -r mount; do
+        [ -n "$mount" ] || continue
+        sudo -n umount "$mount" 2>/dev/null \
+            || sudo -n umount -l "$mount" 2>/dev/null \
+            || true
+    done < <(grep -F " $WORK/" /proc/self/mountinfo 2>/dev/null \
+        | awk '{print $5}' | sort -r)
+    if grep -qF " $WORK/" /proc/self/mountinfo 2>/dev/null; then
+        echo "refusing to remove $WORK: bind mounts are still attached:" >&2
+        grep -F " $WORK/" /proc/self/mountinfo | awk '{print "  " $5}' >&2
+        return 1
+    fi
+}
+unmount_work_mounts || exit 2
+
 sudo -n rm -rf "$WORK"
 mkdir -p "$WORK/base" "$WORK/work" "$WORK/down" "$WORK/wheels"
 tar -xJf "$BASE_ARCHIVE" -C "$WORK/base" \
@@ -81,14 +114,15 @@ fi
 cp -a "$BASE_TOP/." "$WORK/work/"
 
 # Match the device install order: the browser overlay layers on top of the
-# common tools, so diff against that tree instead of the bare rootfs.
-if [ -n "$COMMON_PACK" ]; then
-    echo "==> stack common pack: $COMMON_PACK"
-    sudo -n tar -xJf "$COMMON_PACK" -C "$WORK/work" --numeric-owner
-    sudo -n chown -R "$(id -u):$(id -g)" "$WORK/work"
-else
-    echo "==> common pack not found; diffing against the bare rootfs" >&2
-fi
+# common tools, so diff against that tree instead of the bare rootfs. A wrong
+# or stale common pack would otherwise duplicate the whole tool overlay.
+echo "==> stack common pack: $COMMON_PACK"
+sudo -n tar -xJf "$COMMON_PACK" -C "$WORK/work" --numeric-owner
+sudo -n chown -R "$(id -u):$(id -g)" "$WORK/work"
+[ -f "$WORK/work/opt/wunder/wheels/requirements-android.txt" ] || {
+    echo "common pack has no Python wheelhouse: $COMMON_PACK" >&2
+    exit 2
+}
 REF="$WORK/ref"
 sudo -n rm -rf "$REF"
 cp -a "$WORK/work" "$REF"
@@ -207,6 +241,9 @@ SKIP_PREFIX = (
     "var/lib/apt/lists/", "var/cache/apt/", "var/log/",
     "var/lib/dpkg/lock", "var/lib/dpkg/triggers/Lock",
     "var/lib/dpkg/updates/", "etc/resolv.conf",
+    # 字体缓存归 common 包所有：浏览器包叠加安装后若带着旧缓存，
+    # 会覆盖 common 里包含视频字体的新缓存。
+    "var/cache/fontconfig/",
 )
 
 def skip(rel):

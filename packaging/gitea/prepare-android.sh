@@ -6,7 +6,7 @@
 #   jdk/           Temurin 17（必须能在 Ubuntu 18.04 / glibc 2.27 上运行）
 #   gradle/        Gradle 8.13
 #   gradle-home/   预热过的 ~/.gradle/caches，构建时复制到可写的 /ci-cache 复用
-#   assets/        rootfs.tar.xz、packs/common.tar.xz、proot/busybox 运行库与 NOTICE
+#   assets/        rootfs.tar.xz、packs/{common,browser}.tar.xz、proot/busybox 运行库与 NOTICE
 #   keystore/      固定调试签名 debug.keystore（保证多次构建的 APK 可覆盖安装）
 #   skia-binaries/ rust-skia 的 aarch64-android 预编译包（离线渲染链必需）
 #
@@ -82,9 +82,14 @@ rsync -a "$GRADLE/" "$OUT/gradle/"
 rsync -a "$GRADLE_HOME/caches" "$OUT/gradle-home/"
 
 app="$ROOT/crates/wunder-android/android/app/src/main"
+for pack in common browser; do
+    [[ -f "$app/assets/ubuntu/packs/$pack.tar.xz" ]] || \
+        fail "缺少 android 资产 assets/ubuntu/packs/$pack.tar.xz（先构建对应补充包）"
+done
 rsync -a "$app/assets/ubuntu/rootfs.tar.xz" "$OUT/assets/"
 rsync -a "$app/assets/ubuntu/NOTICE.txt" "$OUT/assets/"
 rsync -a "$app/assets/ubuntu/packs/common.tar.xz" "$OUT/assets/packs/"
+rsync -a "$app/assets/ubuntu/packs/browser.tar.xz" "$OUT/assets/packs/"
 rsync -a "$app/jniLibs/arm64-v8a/liboperit_proot.so" \
          "$app/jniLibs/arm64-v8a/liboperit_loader.so" \
          "$app/jniLibs/arm64-v8a/libbusybox.so" "$OUT/assets/jniLibs/arm64-v8a/"
@@ -128,7 +133,7 @@ else
 fi
 
 required=(sdk/platforms/android-36 jdk/bin/java gradle/bin/gradle \
-    assets/rootfs.tar.xz assets/packs/common.tar.xz keystore/debug.keystore \
+    assets/rootfs.tar.xz assets/packs/common.tar.xz assets/packs/browser.tar.xz keystore/debug.keystore \
     skia-binaries)
 if [[ "$HOST_ARCH" == aarch64 || "$HOST_ARCH" == arm64 ]]; then
     required+=(bin/rust-linker bin/aapt2 qemu/qemu-x86_64-static x86_64-root/lib64/ld-linux-x86-64.so.2)

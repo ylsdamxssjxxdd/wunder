@@ -50,7 +50,7 @@ A long-lived background command session is managed by the `command_session` tool
 
 Commands run in the active shell, and the tool description names it, so the model can pick the right syntax:
 
-- **Windows desktop** prefers the bundled portable `pwsh` (PowerShell 7). If that probe fails it falls back to the system `powershell.exe` (2.0 on Windows 7, 5.1 on Windows 10/11), and only then to `cmd.exe`.
+- **Windows desktop** prefers the bundled portable `pwsh` (PowerShell 7). If that probe fails it falls back to the system `powershell.exe` (2.0 on Windows 7, 5.1 on Windows 10/11), and only then to `cmd.exe`. Even without the supplement bootstrap, the runtime discovers `opt/powershell/pwsh.exe` from the shared home and program directories, so a system shell found first cannot displace the bundled one; a slow first cold start is retried with the bundled host preferred.
 - **Linux / macOS desktop** always uses bash with `set -o pipefail`, so a failing middle stage of a pipeline is not masked by a successful last command.
 - **Android** uses `/system/bin/sh` (mksh).
 

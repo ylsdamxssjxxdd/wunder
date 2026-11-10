@@ -47,16 +47,18 @@ public final class UbuntuRuntime {
     /// v6 adds the common runtime CLI set (curl/wget/zip/unzip, procps,
     /// psmisc, lsof, bc, bzip2, time, python alias, iproute2) on top of the
     /// v5 fonts; v7 adds scipy and the video-skill fonts; v8 adds the
-    /// document/office fonts; v9 trims video fonts to Latin/mono (Chinese
-    /// comes from the common fonts). Bumping the marker re-extracts the pack
-    /// on devices with an older version.
-    private static final String PACK_VERSION = "9";
-    /// Optional browser overlay: Playwright plus an offline Chromium build.
-    /// Kept separate from the common pack so device installs without browser
-    /// automation do not pay for several hundred megabytes.
+    /// document/office fonts; v9 trims video fonts to Latin/mono; v10 adds
+    /// back the Noto Serif/Sans SC variable fonts for 知识短片. Bumping the
+    /// marker re-extracts the pack on devices with an older version.
+    private static final String PACK_VERSION = "10";
+    /// Browser overlay: Playwright plus an offline Chromium build. Release
+    /// builds bundle it so browser-backed skills run out of the box; dev
+    /// builds may omit it and skip the download/extraction cost.
     private static final String BROWSER_PACK_ASSET = "ubuntu/packs/browser.tar.xz";
     private static final String BROWSER_PACK_MARKER = ".wunder_pack_browser";
-    private static final String BROWSER_PACK_VERSION = "2";
+    /// v3 is the first browser pack bundled with release APKs; older markers
+    /// re-extract it so devices pick up the browser runtime.
+    private static final String BROWSER_PACK_VERSION = "3";
     private static final String WHEELS_DIR = "opt/wunder/wheels";
     /// Command name -> native library packaged in jniLibs. The binaries have to
     /// stay in the package-managed library directory: Android rejects execve on
@@ -112,8 +114,8 @@ public final class UbuntuRuntime {
         return pythonWrapperFile().getAbsolutePath();
     }
 
-    /// True when the optional browser overlay is installed. `WUNDER_BROWSER_BIN`
-    /// is only published in that case.
+    /// True when the browser overlay is installed. `WUNDER_BROWSER_BIN` is
+    /// only published in that case.
     public static boolean browserInstalled() {
         if (app == null || !isInstalled()) {
             return false;
@@ -698,10 +700,11 @@ public final class UbuntuRuntime {
     }
 
     /**
-     * Optional browser overlay: Playwright wheels and the offline Chromium
-     * tree live under `/opt/browser` (and the Playwright driver under
+     * Browser overlay: Playwright wheels and the offline Chromium tree live
+     * under `/opt/browser` (and the Playwright driver under
      * /usr/local/lib/python3.12/dist-packages). It is a plain tar overlay just
-     * like the common pack, so no package manager runs on the device.
+     * like the common pack, so no package manager runs on the device. Release
+     * APKs bundle it for browser-backed skills such as 知识短片.
      */
     private static void installBrowserPack(File files, File rootfs, int basePct, int spanPct)
             throws IOException {
@@ -711,7 +714,7 @@ public final class UbuntuRuntime {
         }
         if (!hasAsset(BROWSER_PACK_ASSET) || !hasAsset(PACK_ASSET)) {
             writeText(new File(rootfs, BROWSER_PACK_MARKER), "absent\n");
-            Log.w(TAG, "browser pack or its common base missing; browser tools stay unavailable");
+            Log.w(TAG, "browser pack or its common base missing; browser tools and browser-backed skills stay unavailable");
             return;
         }
         long expected = assetLength(BROWSER_PACK_ASSET);

@@ -92,7 +92,6 @@ async fn missing_or_disabled_logs_fall_back_to_random_simulation() {
         Some(1),
         Some(1),
         None,
-        true,
         None,
         true,
     )
@@ -120,7 +119,6 @@ async fn missing_or_disabled_logs_fall_back_to_random_simulation() {
         Some(1),
         Some(1),
         None,
-        true,
         None,
         true,
     )
@@ -131,7 +129,7 @@ async fn missing_or_disabled_logs_fall_back_to_random_simulation() {
 
 #[tokio::test]
 async fn stream_emits_reasoning_before_content_and_propagates_cancellation() {
-    let mut turn = random_sim::build_turn("session-a", 1, 1, 1, &[], None, None);
+    let mut turn = random_sim::build_turn("session-a", 1, 1, 1, &[], None);
     turn.content = "A".into();
     turn.reasoning = "B".into();
     let mut deltas = Vec::new();
@@ -164,7 +162,7 @@ async fn stream_emits_reasoning_before_content_and_propagates_cancellation() {
 
 #[tokio::test]
 async fn simulation_preserves_utf8_and_nonstream_generation_still_takes_time() {
-    let mut turn = random_sim::build_turn("session-a", 1, 1, 1, &[], None, None);
+    let mut turn = random_sim::build_turn("session-a", 1, 1, 1, &[], None);
     assert!(!turn.reasoning.trim().is_empty());
     turn.reasoning = "字🙂".repeat(5);
     turn.content = "abcd".repeat(5);

@@ -24,19 +24,21 @@ export const assignChatSplitSlot = (
   const next = slots.length ? [...slots] : createChatSplitSlots(2, activeId);
   while (next.length < Math.max(2, slotIndex + 1)) next.push('');
   const previousIndex = next.indexOf(id);
-  if (previousIndex >= 0 && previousIndex !== slotIndex) {
-    next[previousIndex] = next[slotIndex] || '';
+  if (previousIndex >= 0 && previousIndex !== slotIndex && next[slotIndex]) {
+    next[previousIndex] = next[slotIndex];
+    next[slotIndex] = id;
+  } else if (previousIndex < 0) {
+    next[slotIndex] = id;
   }
-  next[slotIndex] = id;
   return next;
 };
 
 export const closeChatSplitSlot = (slots: readonly string[], slotIndex: number): string[] => {
   if (slotIndex < 0 || slotIndex >= slots.length) return [...slots];
-  const next = [...slots];
-  next[slotIndex] = '';
-  if (next.every((id) => !id)) return [];
-  return next;
+  const retained = slots.filter((id, index) => index !== slotIndex && Boolean(id));
+  if (retained.length <= 1) return [];
+  const count = retained.length === 2 ? 2 : 4;
+  return [...retained, ...Array.from({ length: count - retained.length }, () => '')];
 };
 
 export const clampChatSplitRatio = (value: unknown): number => {
