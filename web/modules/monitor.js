@@ -1417,7 +1417,9 @@ const renderServiceMetrics = (service) => {
     elements.metricServiceTotal.textContent = `${service.total_sessions ?? 0}`;
   }
   if (elements.metricServiceTokenAvg) {
-    const avgTokens = parseMetricNumber(service.avg_context_tokens);
+    const avgTokens = parseMetricNumber(
+      service.avg_consumed_tokens ?? service.avg_context_tokens
+    );
     elements.metricServiceTokenAvg.textContent = formatTokenCount(avgTokens);
   }
   if (elements.metricServicePrefillSpeed) {
@@ -2496,7 +2498,6 @@ const renderMonitorStatusList = (sessions) => {
     header.appendChild(badge);
 
     const metaParts = [];
-    metaParts.push(session?.session_id || "-");
     metaParts.push(session?.user_id || "-");
     const timeText = formatTimestamp(session?.updated_time || session?.start_time);
     if (timeText && timeText !== "-") {

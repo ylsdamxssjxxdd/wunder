@@ -182,6 +182,11 @@ struct SessionRecord {
     cancel_requested: bool,
     cancel_source: Option<String>,
     ended_time: Option<f64>,
+    // 实际运行时长：只累计 running 区间，轮次之间的空闲、排队和等待用户回答不计入。
+    // None 表示旧记录未记录该字段，展示端按“未知”处理而不是用 wall clock 猜测。
+    active_elapsed_s: Option<f64>,
+    active_since: Option<f64>,
+    speed_totals: Option<SpeedTotals>,
     user_rounds: i64,
     model_round_high_water: BTreeMap<i64, i64>,
     last_awarded_user_round: i64,
@@ -205,6 +210,22 @@ struct SessionRecordInit {
     question: String,
     is_admin: bool,
     trace_id: String,
+}
+
+/// 会话内实际发生过的模型调用累计值：服务概览据此计算加权平均速度。
+/// None 表示旧记录没有该字段，需要从保留的事件里回落计算。
+#[derive(Debug, Clone, Copy, Default)]
+struct SpeedTotals {
+    prefill_tokens: i64,
+    prefill_duration_s: f64,
+    decode_tokens: i64,
+    decode_duration_s: f64,
+}
+
+impl SpeedTotals {
+    fn has_measurement(&self) -> bool {
+        self.prefill_duration_s > 0.0 || self.decode_duration_s > 0.0
+    }
 }
 
 /// Compact, display-ready monitor state for one session. Directory views read
@@ -264,6 +285,9 @@ impl SessionRecord {
             cancel_requested: false,
             cancel_source: None,
             ended_time: None,
+            active_elapsed_s: Some(0.0),
+            active_since: Some(now),
+            speed_totals: Some(SpeedTotals::default()),
             user_rounds: 1,
             model_round_high_water: BTreeMap::new(),
             last_awarded_user_round: 0,
@@ -281,9 +305,74 @@ impl SessionRecord {
         }
     }
 
-    fn elapsed_s(&self) -> f64 {
-        let end = self.ended_time.unwrap_or_else(now_ts);
-        (end - self.start_time).max(0.0)
+    /// 进入新状态时结算运行区间。只有 running 计入耗时，其余状态（排队、
+    /// 等待用户回答、取消中、终态）都视为空闲。
+    fn set_status_at(&mut self, status: &str, now: f64) {
+        if status == MonitorState::STATUS_RUNNING {
+            if self.active_since.is_none() {
+                self.active_since = Some(now);
+                self.active_elapsed_s.get_or_insert(0.0);
+            }
+        } else if let Some(since) = self.active_since.take() {
+            let span = (now - since).max(0.0);
+            self.active_elapsed_s = Some(self.active_elapsed_s.unwrap_or(0.0) + span);
+        }
+        self.status = status.to_string();
+    }
+
+    fn elapsed_s_at(&self, at: f64) -> Option<f64> {
+        match (self.active_elapsed_s, self.active_since) {
+            (Some(total), Some(since)) => Some(total + (at - since).max(0.0)),
+            (Some(total), None) => Some(total),
+            (None, Some(since)) => Some((at - since).max(0.0)),
+            (None, None) => None,
+        }
+    }
+
+    fn elapsed_s(&self) -> Option<f64> {
+        self.elapsed_s_at(now_ts())
+    }
+
+    /// 只统计带显式计时的模型调用；没有计时的调用无法区分预填充与生成，
+    /// 不参与速度平均，避免把整次请求耗时摊到解码阶段。
+    fn accumulate_speed_totals(&mut self, data: &Value) {
+        let usage = data.get("usage");
+        let prefill_tokens = parse_i64_value(usage.and_then(|value| value.get("input_tokens")))
+            .or_else(|| parse_i64_value(data.get("input_tokens")))
+            .filter(|value| *value > 0);
+        let decode_tokens = parse_i64_value(data.get("decode_output_tokens"))
+            .or_else(|| parse_i64_value(usage.and_then(|value| value.get("output_tokens"))))
+            .or_else(|| parse_i64_value(data.get("output_tokens")))
+            .filter(|value| *value > 0);
+        let prefill_duration_s =
+            parse_metric_f64(data.get("prefill_duration_s")).filter(|value| *value > 0.0);
+        let decode_duration_s =
+            parse_metric_f64(data.get("decode_duration_s")).filter(|value| *value > 0.0);
+        let totals = self.speed_totals.get_or_insert_with(SpeedTotals::default);
+        if let (Some(tokens), Some(duration)) = (prefill_tokens, prefill_duration_s) {
+            totals.prefill_tokens = totals.prefill_tokens.saturating_add(tokens);
+            totals.prefill_duration_s += duration;
+        }
+        if let (Some(tokens), Some(duration)) = (decode_tokens, decode_duration_s) {
+            totals.decode_tokens = totals.decode_tokens.saturating_add(tokens);
+            totals.decode_duration_s += duration;
+        }
+    }
+
+    fn speed_totals_for_average(&self) -> Option<SpeedTotals> {
+        if let Some(totals) = self.speed_totals {
+            return totals.has_measurement().then_some(totals);
+        }
+        // 旧记录没有累计字段，只能从仍保留的事件回退；新记录以累计值为准，
+        // 避免新轮次刚开始时误用上一轮的事件。
+        let summary = llm_speed_summary_from_monitor_events(&self.events);
+        let totals = SpeedTotals {
+            prefill_tokens: summary.prefill_tokens.unwrap_or(0),
+            prefill_duration_s: summary.prefill_duration_s.unwrap_or(0.0),
+            decode_tokens: summary.decode_tokens.unwrap_or(0),
+            decode_duration_s: summary.decode_duration_s.unwrap_or(0.0),
+        };
+        totals.has_measurement().then_some(totals)
     }
 
     fn to_summary(&self) -> Value {
@@ -304,7 +393,7 @@ impl SessionRecord {
             "summary": trim_text(&localize_summary(&self.summary), Some(2048)),
             "start_time": format_ts(self.start_time),
             "updated_time": format_ts(self.updated_time),
-            "elapsed_s": round2(self.elapsed_s()),
+            "elapsed_s": self.elapsed_s().map(round2),
             "cancel_requested": self.cancel_requested,
             "cancel_source": self.cancel_source,
             "user_rounds": self.user_rounds,
@@ -333,6 +422,16 @@ impl SessionRecord {
             "start_time": self.start_time,
             "updated_time": self.updated_time,
             "ended_time": self.ended_time,
+            "active_elapsed_s": self.active_elapsed_s,
+            "active_since": self.active_since,
+            "speed_prefill_tokens": self.speed_totals.map(|totals| totals.prefill_tokens),
+            "speed_prefill_duration_s": self
+                .speed_totals
+                .map(|totals| totals.prefill_duration_s),
+            "speed_decode_tokens": self.speed_totals.map(|totals| totals.decode_tokens),
+            "speed_decode_duration_s": self
+                .speed_totals
+                .map(|totals| totals.decode_duration_s),
             "cancel_requested": self.cancel_requested,
             "cancel_source": self.cancel_source,
             "user_rounds": self.user_rounds,
@@ -404,6 +503,39 @@ impl SessionRecord {
             .and_then(Value::as_f64)
             .unwrap_or_else(now_ts);
         let ended_time = payload.get("ended_time").and_then(Value::as_f64);
+        let active_elapsed_s = payload
+            .get("active_elapsed_s")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .map(|value| value.max(0.0));
+        let active_since = payload
+            .get("active_since")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite());
+        let speed_prefill_tokens = payload.get("speed_prefill_tokens").and_then(Value::as_i64);
+        let speed_prefill_duration_s = payload
+            .get("speed_prefill_duration_s")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite());
+        let speed_decode_tokens = payload.get("speed_decode_tokens").and_then(Value::as_i64);
+        let speed_decode_duration_s = payload
+            .get("speed_decode_duration_s")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite());
+        let speed_totals = if speed_prefill_tokens.is_some()
+            || speed_prefill_duration_s.is_some()
+            || speed_decode_tokens.is_some()
+            || speed_decode_duration_s.is_some()
+        {
+            Some(SpeedTotals {
+                prefill_tokens: speed_prefill_tokens.unwrap_or(0).max(0),
+                prefill_duration_s: speed_prefill_duration_s.unwrap_or(0.0).max(0.0),
+                decode_tokens: speed_decode_tokens.unwrap_or(0).max(0),
+                decode_duration_s: speed_decode_duration_s.unwrap_or(0.0).max(0.0),
+            })
+        } else {
+            None
+        };
         let cancel_requested = payload
             .get("cancel_requested")
             .and_then(Value::as_bool)
@@ -546,6 +678,9 @@ impl SessionRecord {
             cancel_requested,
             cancel_source,
             ended_time,
+            active_elapsed_s,
+            active_since,
+            speed_totals,
             user_rounds,
             model_round_high_water,
             last_awarded_user_round,
@@ -911,7 +1046,7 @@ impl MonitorState {
                         false,
                     );
                     if let Some(record) = sessions.get_mut(cleaned_session_id.as_str()) {
-                        record.status = Self::STATUS_QUEUED.to_string();
+                        record.set_status_at(Self::STATUS_QUEUED, now);
                         record.stage = "queued".to_string();
                         record.summary = i18n::t("monitor.summary.queued");
                         record.updated_time = now;
@@ -984,7 +1119,13 @@ impl MonitorState {
                         now_ts(),
                     )
                 });
+                let starts_new_round = requested_round > record.user_rounds;
                 record.user_rounds = record.user_rounds.max(persisted_floor).max(requested_round);
+                if starts_new_round {
+                    // 每个用户轮次重新计量速度，避免长生命周期线程的旧调用
+                    // 长期稀释服务概览里的当前模型速度。
+                    record.speed_totals = Some(SpeedTotals::default());
+                }
                 // 线程问题保持首条用户消息：连续轮次沿用线程既有问题，不逐轮覆盖。
                 if record.question.trim().is_empty() {
                     record.question = trim_text(question, Some(2048));
@@ -993,10 +1134,11 @@ impl MonitorState {
                 if !agent_id.trim().is_empty() {
                     record.agent_id = agent_id.trim().to_string();
                 }
-                record.status = Self::STATUS_RUNNING.to_string();
+                let now = now_ts();
+                record.set_status_at(Self::STATUS_RUNNING, now);
                 record.stage = "running".to_string();
                 record.summary = i18n::t("monitor.summary.received");
-                record.updated_time = now_ts();
+                record.updated_time = now;
                 record.ended_time = None;
                 record.cancel_requested = false;
                 record.cancel_source = None;
@@ -1010,10 +1152,10 @@ impl MonitorState {
                         "question": question,
                         "hidden_internal_user": true,
                     }),
-                    now_ts(),
+                    now,
                 );
                 record.dirty = true;
-                let to_persist = self.maybe_persist_record(record, now_ts(), false);
+                let to_persist = self.maybe_persist_record(record, now, false);
                 drop(sessions);
                 if let Some(record) = to_persist {
                     self.save_record(record);
@@ -1058,6 +1200,9 @@ impl MonitorState {
                                 record.context_tokens_peak = total;
                             }
                         }
+                    }
+                    if event_type == "llm_output" {
+                        record.accumulate_speed_totals(data);
                     }
                     if event_type == "progress" {
                         if let Some(stage) = data.get("stage").and_then(Value::as_str) {
@@ -1297,7 +1442,7 @@ impl MonitorState {
                     }
                     let cancel_source = record.cancel_source.clone();
                     record.cancel_requested = true;
-                    record.status = Self::STATUS_CANCELLED.to_string();
+                    record.set_status_at(Self::STATUS_CANCELLED, now);
                     record.stage = "cancelled".to_string();
                     record.summary = i18n::t("monitor.summary.cancelled");
                     record.updated_time = now;
@@ -1349,8 +1494,9 @@ impl MonitorState {
                     } else {
                         Some(normalized_source.to_string())
                     };
-                    record.status = Self::STATUS_CANCELLING.to_string();
-                    record.updated_time = now_ts();
+                    let now = now_ts();
+                    record.set_status_at(Self::STATUS_CANCELLING, now);
+                    record.updated_time = now;
                     let updated_time = record.updated_time;
                     let cancel_source = record.cancel_source.clone();
                     self.append_event(
@@ -1543,8 +1689,9 @@ impl MonitorState {
                         || record.status == Self::STATUS_CANCELLING
                     {
                         record.cancel_requested = true;
-                        record.status = Self::STATUS_CANCELLING.to_string();
-                        record.updated_time = now_ts();
+                        let now = now_ts();
+                        record.set_status_at(Self::STATUS_CANCELLING, now);
+                        record.updated_time = now;
                         let updated_time = record.updated_time;
                         self.append_event(
                             record,
@@ -1689,7 +1836,7 @@ impl MonitorState {
                 ) {
                     return false;
                 }
-                record.status = Self::STATUS_CANCELLED.to_string();
+                record.set_status_at(Self::STATUS_CANCELLED, record.updated_time);
                 record.stage = Self::STATUS_CANCELLED.to_string();
                 record.summary = i18n::t("monitor.summary.restarted");
                 record.cancel_requested = false;
@@ -1736,7 +1883,7 @@ impl MonitorState {
                     return false;
                 }
                 let summary = i18n::t("monitor.summary.restarted");
-                record.status = Self::STATUS_CANCELLED.to_string();
+                record.set_status_at(Self::STATUS_CANCELLED, now);
                 record.stage = Self::STATUS_CANCELLED.to_string();
                 record.summary = summary.clone();
                 record.cancel_requested = false;
@@ -1988,7 +2135,10 @@ impl MonitorState {
         overview.insert("session_id".to_string(), json!(record.session_id.clone()));
         overview.insert("agent_id".to_string(), json!(record.agent_id.clone()));
         overview.insert("status".to_string(), json!(record.status.clone()));
-        overview.insert("elapsed_s".to_string(), json!(round2(record.elapsed_s())));
+        overview.insert(
+            "elapsed_s".to_string(),
+            json!(record.elapsed_s().map(round2)),
+        );
         overview.insert("user_rounds".to_string(), json!(record.user_rounds.max(0)));
         overview.insert("tool_calls".to_string(), json!(record.tool_calls.max(0)));
         overview.insert(
@@ -2278,6 +2428,14 @@ impl MonitorState {
                         continue;
                     }
                     total_sessions += 1;
+                    consumed_tokens_total =
+                        consumed_tokens_total.saturating_add(record.consumed_tokens.max(0));
+                    if let Some(totals) = record.speed_totals_for_average() {
+                        prefill_tokens_total += totals.prefill_tokens.max(0) as f64;
+                        prefill_duration_total += totals.prefill_duration_s;
+                        decode_tokens_total += totals.decode_tokens.max(0) as f64;
+                        decode_duration_total += totals.decode_duration_s;
+                    }
                     if record.status == Self::STATUS_RUNNING
                         || record.status == Self::STATUS_CANCELLING
                     {
@@ -2303,30 +2461,11 @@ impl MonitorState {
                     if !is_terminal {
                         continue;
                     }
-                    let context_peak = derive_effective_context_tokens(&record.events)
-                        .map(|(_, peak)| peak)
-                        .unwrap_or(record.context_tokens_peak.max(record.context_tokens));
-                    consumed_tokens_total += record.consumed_tokens.max(context_peak);
                     let end_ts = record.ended_time.unwrap_or(record.updated_time);
-                    let summary = llm_speed_summary_from_monitor_events(&record.events);
-                    let prefill_tokens = summary.prefill_tokens;
-                    let prefill_duration = summary.prefill_duration_s;
-                    if let (Some(tokens), Some(duration)) = (prefill_tokens, prefill_duration) {
-                        if tokens > 0 && duration > 0.0 {
-                            prefill_tokens_total += tokens as f64;
-                            prefill_duration_total += duration;
-                        }
+                    if let Some(elapsed) = record.elapsed_s_at(end_ts) {
+                        elapsed_total += elapsed;
+                        elapsed_count += 1.0;
                     }
-                    let decode_tokens = summary.decode_tokens;
-                    let decode_duration = summary.decode_duration_s;
-                    if let (Some(tokens), Some(duration)) = (decode_tokens, decode_duration) {
-                        if tokens > 0 && duration > 0.0 {
-                            decode_tokens_total += tokens as f64;
-                            decode_duration_total += duration;
-                        }
-                    }
-                    elapsed_total += (end_ts - record.start_time).max(0.0);
-                    elapsed_count += 1.0;
                 }
                 let history_sessions = finished_sessions + error_sessions + cancelled_sessions;
                 let avg_elapsed = if elapsed_count > 0.0 {
@@ -2345,13 +2484,8 @@ impl MonitorState {
                 } else {
                     None
                 };
-                let avg_context_tokens = if history_sessions > 0 {
-                    Some(round2(
-                        consumed_tokens_total as f64 / history_sessions as f64,
-                    ))
-                } else {
-                    None
-                };
+                let avg_consumed_tokens = (total_sessions > 0)
+                    .then(|| round2(consumed_tokens_total as f64 / total_sessions as f64));
                 json!({
                     "active_sessions": active_sessions,
                     "queued_sessions": queued_sessions,
@@ -2360,7 +2494,7 @@ impl MonitorState {
                     "error_sessions": error_sessions,
                     "cancelled_sessions": cancelled_sessions,
                     "total_sessions": total_sessions,
-                    "avg_context_tokens": avg_context_tokens,
+                    "avg_consumed_tokens": avg_consumed_tokens,
                     "avg_elapsed_s": avg_elapsed,
                     "avg_prefill_speed_tps": avg_prefill_speed,
                     "avg_decode_speed_tps": avg_decode_speed,
@@ -2454,7 +2588,7 @@ impl MonitorState {
             "error_sessions": 0,
             "cancelled_sessions": 0,
             "total_sessions": 0,
-            "avg_context_tokens": Value::Null,
+            "avg_consumed_tokens": Value::Null,
             "avg_elapsed_s": 0.0,
             "avg_prefill_speed_tps": Value::Null,
             "avg_decode_speed_tps": Value::Null,
@@ -2529,7 +2663,7 @@ impl MonitorState {
                     _ => true,
                 };
                 if !live {
-                    record.status = Self::STATUS_ERROR.to_string();
+                    record.set_status_at(Self::STATUS_ERROR, record.updated_time);
                     record.summary = i18n::t("monitor.summary.restarted");
                     record.ended_time = Some(record.updated_time);
                     let summary = record.summary.clone();
@@ -2661,7 +2795,7 @@ impl MonitorState {
                 if !cleaned_agent.is_empty() {
                     record.agent_id = cleaned_agent.to_string();
                 }
-                record.status = Self::STATUS_RUNNING.to_string();
+                record.set_status_at(Self::STATUS_RUNNING, now);
                 record.stage = "running".to_string();
                 record.summary = i18n::t("monitor.summary.received");
                 record.updated_time = now;
@@ -2687,6 +2821,7 @@ impl MonitorState {
                 return (self.maybe_persist_record(record, now, false), user_round);
             }
             record.user_rounds += 1;
+            record.speed_totals = Some(SpeedTotals::default());
             if record.question.trim().is_empty() {
                 record.question = trim_text(question, Some(2048));
             }
@@ -2701,7 +2836,7 @@ impl MonitorState {
             if !cleaned_agent.is_empty() {
                 record.agent_id = cleaned_agent.to_string();
             }
-            record.status = Self::STATUS_RUNNING.to_string();
+            record.set_status_at(Self::STATUS_RUNNING, now);
             record.stage = "received".to_string();
             record.summary = i18n::t("monitor.summary.received");
             record.start_time = now;
@@ -2838,7 +2973,7 @@ impl MonitorState {
                     let Some(record) = sessions.get_mut(session_id) else {
                         return;
                     };
-                    record.status = status.to_string();
+                    record.set_status_at(status, now);
                     record.updated_time = now;
                     record.ended_time = if status == Self::STATUS_WAITING
                         || status == Self::STATUS_RUNNING
@@ -3014,6 +3149,16 @@ impl MonitorState {
             "start_time": record.start_time,
             "updated_time": record.updated_time,
             "ended_time": record.ended_time,
+            "active_elapsed_s": record.active_elapsed_s,
+            "active_since": record.active_since,
+            "speed_prefill_tokens": record.speed_totals.map(|totals| totals.prefill_tokens),
+            "speed_prefill_duration_s": record
+                .speed_totals
+                .map(|totals| totals.prefill_duration_s),
+            "speed_decode_tokens": record.speed_totals.map(|totals| totals.decode_tokens),
+            "speed_decode_duration_s": record
+                .speed_totals
+                .map(|totals| totals.decode_duration_s),
             "cancel_requested": record.cancel_requested,
             "user_rounds": record.user_rounds,
             "rounds": record.user_rounds,
@@ -3065,6 +3210,14 @@ fn parse_i64_value(value: Option<&Value>) -> Option<i64> {
     value
         .and_then(Value::as_i64)
         .or_else(|| value.and_then(Value::as_u64).map(|value| value as i64))
+}
+
+fn parse_metric_f64(value: Option<&Value>) -> Option<f64> {
+    value
+        .and_then(Value::as_f64)
+        .or_else(|| value.and_then(Value::as_i64).map(|value| value as f64))
+        .or_else(|| value.and_then(Value::as_u64).map(|value| value as f64))
+        .filter(|value| value.is_finite() && *value >= 0.0)
 }
 
 fn parse_positive_i64_value(value: Option<&Value>) -> Option<i64> {
@@ -3582,7 +3735,8 @@ mod tests {
         derive_effective_context_tokens, is_workspace_usage_dir_name,
         llm_speed_summary_from_monitor_events, resolve_payload_limit, trim_string_fields,
         update_workspace_usage_state_incremental, MonitorEvent, MonitorState,
-        PendingExperienceAward, WorkspaceUsageScanState, MIN_PAYLOAD_LIMIT,
+        PendingExperienceAward, SessionRecord, SessionRecordInit, WorkspaceUsageScanState,
+        MIN_PAYLOAD_LIMIT,
     };
     use crate::config::ObservabilityConfig;
     use crate::i18n;
@@ -3691,6 +3845,210 @@ mod tests {
         );
         // 已落终态后重复收敛是幂等空操作。
         assert!(!restarted.settle_restarted_session("sample-thread"));
+    }
+
+    /// 耗时只累计 running 区间：轮次之间的空闲、排队和等待回答都不能计入。
+    #[test]
+    fn elapsed_counts_only_running_spans() {
+        let mut record = SessionRecord::new(
+            SessionRecordInit {
+                session_id: "sample-thread".to_string(),
+                user_id: "sample-owner".to_string(),
+                agent_id: "sample-agent".to_string(),
+                question: "sample input".to_string(),
+                is_admin: false,
+                trace_id: "sample-trace".to_string(),
+            },
+            100.0,
+        );
+        assert_eq!(record.elapsed_s_at(130.0), Some(30.0));
+        record.set_status_at(MonitorState::STATUS_FINISHED, 130.0);
+        assert_eq!(
+            record.elapsed_s_at(10_000.0),
+            Some(30.0),
+            "finished thread must not keep growing while idle"
+        );
+        record.set_status_at(MonitorState::STATUS_RUNNING, 10_000.0);
+        assert_eq!(record.elapsed_s_at(10_020.0), Some(50.0));
+        record.set_status_at(MonitorState::STATUS_WAITING, 10_020.0);
+        assert_eq!(
+            record.elapsed_s_at(20_000.0),
+            Some(50.0),
+            "waiting for user input is not execution time"
+        );
+    }
+
+    #[test]
+    fn legacy_monitor_record_without_active_fields_reports_unknown_elapsed() {
+        let root = tempdir().unwrap();
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            root.path().join("sample.db").to_string_lossy().into(),
+        ));
+        storage
+            .upsert_monitor_record(&json!({
+                "session_id": "sample-thread",
+                "user_id": "sample-owner",
+                "agent_id": "sample-agent",
+                "status": "finished",
+                "start_time": 1.0,
+                "updated_time": 5000.0,
+                "ended_time": 5000.0,
+            }))
+            .unwrap();
+        let monitor = MonitorState::new(
+            storage,
+            ObservabilityConfig::default(),
+            root.path().to_string_lossy().into(),
+        );
+        let overview = monitor.get_log_overview("sample-thread").unwrap();
+        assert!(
+            overview["elapsed_s"].is_null(),
+            "legacy wall-clock elapsed must not be presented as execution time"
+        );
+    }
+
+    #[test]
+    fn service_metrics_average_measured_speeds_and_consumed_tokens() {
+        let temp = tempdir().expect("tempdir");
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            temp.path()
+                .join("monitor-service-speed.db")
+                .to_string_lossy()
+                .into(),
+        ));
+        storage.ensure_initialized().expect("initialize storage");
+        let monitor = MonitorState::new(
+            storage,
+            ObservabilityConfig::default(),
+            temp.path().to_string_lossy().to_string(),
+        );
+
+        for (session, input_tokens, output_tokens, prefill_s, decode_s) in
+            [("sess-a", 100, 20, 0.5, 2.0), ("sess-b", 300, 40, 1.5, 4.0)]
+        {
+            monitor.register(session, "user", "agent", "question", true);
+            monitor.record_event(
+                session,
+                "llm_output",
+                &json!({
+                    "usage": {
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "total_tokens": input_tokens + output_tokens,
+                    },
+                    "decode_output_tokens": output_tokens,
+                    "prefill_duration_s": prefill_s,
+                    "decode_duration_s": decode_s,
+                }),
+            );
+            monitor.record_event(
+                session,
+                "model_usage",
+                &json!({
+                    "usage": {
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "total_tokens": input_tokens + output_tokens,
+                    },
+                }),
+            );
+            monitor.mark_finished(session);
+        }
+
+        let metrics = monitor.get_service_metrics(None, None);
+        let prefill_speed = metrics["avg_prefill_speed_tps"]
+            .as_f64()
+            .unwrap_or_default();
+        let decode_speed = metrics["avg_decode_speed_tps"].as_f64().unwrap_or_default();
+        let avg_tokens = metrics["avg_consumed_tokens"].as_f64().unwrap_or_default();
+        assert!((prefill_speed - 200.0).abs() < 0.01, "{prefill_speed}");
+        assert!((decode_speed - 10.0).abs() < 0.01, "{decode_speed}");
+        assert!((avg_tokens - 230.0).abs() < 0.01, "{avg_tokens}");
+    }
+
+    #[test]
+    fn speed_totals_survive_persistence_and_fall_back_to_events() {
+        let mut record = SessionRecord::new(
+            SessionRecordInit {
+                session_id: "sample-thread".to_string(),
+                user_id: "sample-owner".to_string(),
+                agent_id: "sample-agent".to_string(),
+                question: "sample input".to_string(),
+                is_admin: false,
+                trace_id: "sample-trace".to_string(),
+            },
+            100.0,
+        );
+        record.accumulate_speed_totals(&json!({
+            "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+            "decode_output_tokens": 20,
+            "prefill_duration_s": 0.5,
+            "decode_duration_s": 2.0,
+        }));
+        let restored = SessionRecord::from_storage(&record.to_storage()).unwrap();
+        let totals = restored.speed_totals.unwrap();
+        assert_eq!(totals.prefill_tokens, 100);
+        assert!((totals.prefill_duration_s - 0.5).abs() < f64::EPSILON);
+        assert_eq!(totals.decode_tokens, 20);
+        assert!((totals.decode_duration_s - 2.0).abs() < f64::EPSILON);
+
+        let legacy = SessionRecord::from_storage(&json!({
+            "session_id": "legacy-thread",
+            "user_id": "sample-owner",
+            "status": "finished",
+            "start_time": 1.0,
+            "updated_time": 2.0,
+            "events": [
+                {"event_id": 1, "timestamp": 1.0, "type": "llm_request", "data": {"model_round": 1}},
+                {"event_id": 2, "timestamp": 1.1, "type": "llm_output", "data": {
+                    "model_round": 1,
+                    "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+                    "decode_output_tokens": 20,
+                    "prefill_duration_s": 0.5,
+                    "decode_duration_s": 2.0
+                }}
+            ]
+        }))
+        .unwrap();
+        let fallback = legacy.speed_totals_for_average().unwrap();
+        assert_eq!(fallback.prefill_tokens, 100);
+        assert_eq!(fallback.decode_tokens, 20);
+    }
+
+    #[test]
+    fn speed_totals_reset_when_a_new_user_round_starts() {
+        let temp = tempdir().expect("tempdir");
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            temp.path()
+                .join("monitor-speed-reset.db")
+                .to_string_lossy()
+                .into(),
+        ));
+        storage.ensure_initialized().expect("initialize storage");
+        let monitor = MonitorState::new(
+            storage,
+            ObservabilityConfig::default(),
+            temp.path().to_string_lossy().to_string(),
+        );
+        monitor.register("sample-thread", "user", "agent", "first", true);
+        monitor.record_event(
+            "sample-thread",
+            "llm_output",
+            &json!({
+                "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+                "prefill_duration_s": 0.5,
+                "decode_duration_s": 2.0,
+            }),
+        );
+        let first = monitor.get_record("sample-thread").unwrap();
+        assert_eq!(first["speed_prefill_tokens"], json!(100));
+
+        monitor.register_continuation("sample-thread", "user", "agent", "second", true, 2);
+        let second = monitor.get_record("sample-thread").unwrap();
+        assert_eq!(second["speed_prefill_tokens"], json!(0));
+        assert_eq!(second["speed_prefill_duration_s"], json!(0.0));
+        assert_eq!(second["speed_decode_tokens"], json!(0));
+        assert_eq!(second["speed_decode_duration_s"], json!(0.0));
     }
 
     /// 管理端终止兜底：监控行仍在本进程内存中，也要能强制收敛并持久化。

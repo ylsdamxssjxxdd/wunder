@@ -655,6 +655,14 @@ const normalizeLlmConfig = (raw) => {
   };
 };
 
+// 新增模型默认开启视觉，并预填常用输出预算。
+const buildNewLlmConfig = () =>
+  normalizeLlmConfig({
+    support_vision: true,
+    max_output: 32768,
+    thinking_token_budget: 8192,
+  });
+
 // 规范化多模型配置集合。
 const normalizeLlmSet = (raw) => {
   const llm = raw || {};
@@ -1647,7 +1655,7 @@ const applyLlmSet = (raw, options = {}) => {
       name = `${baseName}${index}`;
       index += 1;
     }
-    normalized.models[name] = normalizeLlmConfig({});
+    normalized.models[name] = buildNewLlmConfig();
     normalized.order = [name];
     normalized.defaultName = name;
   }
@@ -1895,7 +1903,7 @@ const handleAddConfig = () => {
     name = `${baseName}${index}`;
     index += 1;
   }
-  state.llm.configs[name] = normalizeLlmConfig({});
+  state.llm.configs[name] = buildNewLlmConfig();
   state.llm.order.push(name);
   if (!state.llm.defaultName) {
     state.llm.defaultName = name;

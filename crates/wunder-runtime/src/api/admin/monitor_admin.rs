@@ -526,9 +526,8 @@ async fn admin_monitor_tool_usage(
         let updated_time = session_info
             .and_then(|value| value.get("updated_time").cloned())
             .unwrap_or(Value::String(last_time_text.clone()));
-        let elapsed_s = session_info
-            .and_then(|value| value.get("elapsed_s").and_then(Value::as_f64))
-            .unwrap_or(0.0);
+        let elapsed_s =
+            session_info.and_then(|value| value.get("elapsed_s").and_then(Value::as_f64));
         let context_tokens = session_info
             .and_then(|value| value.get("context_tokens").and_then(Value::as_i64))
             .unwrap_or(0);
