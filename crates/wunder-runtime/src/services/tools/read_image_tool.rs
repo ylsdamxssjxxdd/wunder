@@ -104,6 +104,7 @@ pub async fn build_followup_user_message(
         .unwrap_or_default();
     let single_attachment = attachments.len() == 1;
     let mut content = vec![json!({ "type": "text", "text": prompt })];
+    let mut hinted_paths = std::collections::HashSet::new();
     for item in attachments {
         let Some(obj) = item.as_object() else {
             continue;
@@ -128,12 +129,36 @@ pub async fn build_followup_user_message(
                     .and_then(Value::as_str)
                     .map(ToString::to_string),
             };
+            // 记住原图路径：持久化会省略图片像素，恢复会话时靠这段文本
+            // 让模型知道该重读哪个文件，而不是只看到一条无图的指令。
+            let path = attachment
+                .public_path
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .or_else(|| {
+                    single_attachment.then(|| result.resolved_path.to_string_lossy().to_string())
+                })
+                .unwrap_or_default();
             if let Some(image_url) = crate::services::chat_media::load_image_attachment_data_url(
                 context.workspace.as_ref(),
                 &attachment,
             )
             .await
             {
+                if !path.is_empty() && hinted_paths.insert(path.clone()) {
+                    content.push(json!({
+                        "type": "text",
+                        "text": crate::i18n::t_with_params(
+                            "tool.read_image.followup_path_hint",
+                            &std::collections::HashMap::from([(
+                                "path".to_string(),
+                                path.clone()
+                            )]),
+                        )
+                    }));
+                }
                 content.push(json!({
                     "type": "image_url",
                     "image_url": { "url": image_url }
@@ -143,6 +168,19 @@ pub async fn build_followup_user_message(
                     .await
                     .map_err(|_| anyhow!(crate::i18n::t("tool.read.not_found")))?;
                 let data_url = format!("data:{content_type};base64,{}", STANDARD.encode(bytes));
+                let path = result.resolved_path.to_string_lossy().to_string();
+                if hinted_paths.insert(path.clone()) {
+                    content.push(json!({
+                        "type": "text",
+                        "text": crate::i18n::t_with_params(
+                            "tool.read_image.followup_path_hint",
+                            &std::collections::HashMap::from([(
+                                "path".to_string(),
+                                path.clone()
+                            )]),
+                        )
+                    }));
+                }
                 content.push(json!({
                     "type": "image_url",
                     "image_url": { "url": data_url }
@@ -310,14 +348,29 @@ mod tests {
             .and_then(Value::as_array)
             .expect("content array");
 
-        assert_eq!(content.len(), 2);
+        assert_eq!(content.len(), 3);
         assert_eq!(content[0].get("type").and_then(Value::as_str), Some("text"));
         let expected_prompt = crate::i18n::t("tool.read_image.followup_prompt");
         assert_eq!(
             content[0].get("text").and_then(Value::as_str),
             Some(expected_prompt.as_str())
         );
+        // Persistence strips image pixels, so the followup carries the source
+        // path in plain text for cross-turn re-reading. The path must stay out
+        // of the image_url object: it is a non-standard field for providers.
+        let resolved_text = resolved_path.to_string_lossy().to_string();
+        assert_eq!(content[1].get("type").and_then(Value::as_str), Some("text"));
         assert!(content[1]
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains(&format!("[image_path:{resolved_text}]")));
+        assert!(content[2]
+            .get("image_url")
+            .and_then(Value::as_object)
+            .and_then(|obj| obj.get("path"))
+            .is_none());
+        assert!(content[2]
             .get("image_url")
             .and_then(Value::as_object)
             .and_then(|obj| obj.get("url"))

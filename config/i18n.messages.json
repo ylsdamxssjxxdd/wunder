@@ -255,6 +255,14 @@
     "en-US": "LLM unavailable: {detail}",
     "zh-CN": "模型不可用: {detail}"
   },
+  "error.llm_retry_summary": {
+    "en-US": "{attempts} attempts over {seconds}s; the provider kept failing.",
+    "zh-CN": "共尝试 {attempts} 次、耗时 {seconds} 秒；模型服务持续失败。"
+  },
+  "context_shrink.summary": {
+    "en-US": "Request context dropped from {before} to {after} tokens (-{delta}); no local compaction was recorded. Rebuilt history omitted inline images, or the provider truncated the prompt / changed usage accounting.",
+    "zh-CN": "请求上下文从 {before} 降到 {after} tokens（-{delta}），本轮未记录本地压缩；常见原因是历史重建时省略了内联图片，或模型服务端截断/用量口径变化。"
+  },
   "virtual_llm.random.reasoning": {
     "zh-CN": "这是模拟思考阶段：检查输入结构，整理回复要点，然后生成正文。此内容仅用于验证流式显示与计时，不代表真实模型推理。",
     "en-US": "This is a simulated reasoning phase: check the input structure, organize response points, then generate the answer. It validates streaming and timing, not actual model reasoning."
@@ -1208,8 +1216,8 @@
     "zh-CN": "请使用升序的包含式行号窗口；长文件先用 mode=outline 或 pattern 定位相关部分，再读取更窄范围。"
   },
   "tool.read.continuation_hint": {
-    "en-US": "This read was cut short for exactly one reason, reported in truncation_reason. If you need the remaining text, request a narrower start_line/end_line window, raise output_budget_bytes, or locate the section with mode=outline or pattern first. A default window that stops at its line limit is not an error; has_more and next_line describe what is left.",
-    "zh-CN": "本次读取因单一原因被截断，原因见 truncation_reason。如需其余内容，请用 start_line/end_line 指定更窄窗口、提高 output_budget_bytes，或先用 mode=outline / pattern 定位后再读。默认行窗口到界属于正常返回，不构成错误；剩余内容见 has_more 与 next_line。"
+    "en-US": "This read was cut short for exactly one reason, reported in truncation_reason. The result's files[].next_outline lists the not-yet-read headings/declarations and suggested_ranges gives ready-to-read narrow windows; if the whole read was folded, api_index gives the function/section entry points. Alternatively use mode=outline, pattern, or a narrower start_line/end_line window. A default window that stops at its line limit is not an error; has_more and next_line describe what is left.",
+    "zh-CN": "本次读取因单一原因被截断，原因见 truncation_reason。结果里的 files[].next_outline 直接列出还没读到的章节/声明，suggested_ranges 给出可直接读取的窄窗口；整份读取被折叠时 api_index 给出函数/章节入口。也可用 mode=outline、pattern 或更窄的 start_line/end_line。默认行窗口到界属于正常返回，不构成错误；剩余内容见 has_more 与 next_line。"
   },
   "tool.read.continuation_hint_repeated": {
     "en-US": "Repeated fixed-step paging on the same file was detected and produced no new evidence. Stop advancing by a constant step. Use mode=outline to see the structure or pattern to locate keywords, then read one narrow window (for example hit_line-20 to hit_line+40). If that adds nothing, report the gap.",
@@ -1226,6 +1234,10 @@
   "tool.read_image.followup_prompt": {
     "en-US": "Please analyze this local visual media and continue the current task.",
     "zh-CN": "请分析这份本地视觉媒体，并继续完成当前任务。"
+  },
+  "tool.read_image.followup_path_hint": {
+    "en-US": "[image_path:{path}] older frames keep only this path; re-read it with the image tool when needed",
+    "zh-CN": "[image_path:{path}] 较早的帧只保留路径；需要重看时用读图工具重新读取"
   },
   "tool.browser.screenshot_followup_prompt": {
     "en-US": "The browser screenshot is attached. Inspect it to verify the page state, then continue the task.",
@@ -2044,8 +2056,8 @@
     "zh-CN": "可选，默认 false：阻塞等待命令结束（或达到 timeout_s）并返回完整输出。仅对长时间运行的命令设为 true，此时立即返回 command_session_id，需用命令会话工具轮询结果。"
   },
   "tool.spec.exec.args.timeout": {
-    "en-US": "Optional. Command timeout in seconds; on timeout the whole command process tree is killed and partial output is returned (default 120; values <= 0 fall back to the default). Long-running work should use run_in_background instead of raising this.",
-    "zh-CN": "可选，命令超时秒数；超时后终止整棵命令进程树并返回已收集的部分输出。默认 120 秒，传 0 或负数同样按默认处理（不提供无上限模式）。长时间任务请用 run_in_background，而不是加大超时。"
+    "en-US": "Optional. Foreground wait budget in seconds (default 120, max 3600; values <= 0 fall back to the default). When it elapses the command is NOT killed: it is moved to a background command session and a command_session_id is returned, so long renders keep writing files; poll with the command_session tool afterwards. Partial output collected so far is included. Prefer run_in_background for known long-running work.",
+    "zh-CN": "可选，前台等待预算秒数（默认 120，最大 3600；传 0 或负数按默认）。到点不会杀命令：自动转入后台命令会话并返回 command_session_id，长渲染可以继续落盘，之后用命令会话工具轮询；已收集的部分输出一并返回。已知的长任务优先用 run_in_background。"
   },
   "tool.spec.exec.args.workdir": {
     "en-US": "Optional. Working directory relative to the current workspace only (no absolute paths).",

@@ -7,7 +7,10 @@ import { buildCanonicalClientMessageSubmittedEvent } from '../../src/realtime/ch
 import {
   applyChatRuntimeEventsWithInvalidation,
   clearRuntimeProjectionInvalidation,
+  flushRuntimeProjectionInvalidation,
   markRuntimeProjectionChanged,
+  markRuntimeProjectionContentChanged,
+  markRuntimeProjectionReasoningChanged,
   runtimeProjectionContentInvalidationState,
   runtimeProjectionInvalidationState
 } from '../../src/realtime/chat/chatRuntimeProjectionInvalidation';
@@ -505,4 +508,22 @@ test('immediate runtime projection invalidation cancels a pending frame before b
 
 test.afterEach(() => {
   clearRuntimeProjectionInvalidation();
+});
+
+
+test('foreground resume flushes every pending projection clock without waiting for timers', (context) => {
+  clearRuntimeProjectionInvalidation();
+  context.after(clearRuntimeProjectionInvalidation);
+  const store = createStore();
+  markRuntimeProjectionChanged(store, { sessionId: 'session-1' });
+  markRuntimeProjectionContentChanged(store, ['message-1']);
+  markRuntimeProjectionReasoningChanged(store, ['message-1']);
+  assert.equal(runtimeProjectionInvalidationState.pending, true);
+  assert.equal(runtimeProjectionContentInvalidationState.pending, true);
+  flushRuntimeProjectionInvalidation();
+  assert.equal(store.runtimeProjectionVersion, 1);
+  assert.equal(store.runtimeProjectionContentVersion, 1);
+  assert.equal(store.runtimeProjectionReasoningVersion, 1);
+  assert.equal(runtimeProjectionInvalidationState.pending, false);
+  assert.equal(runtimeProjectionContentInvalidationState.pending, false);
 });

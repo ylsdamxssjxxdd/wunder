@@ -3280,6 +3280,8 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
                 "matches_truncated",
                 "outline_entries",
                 "outline_truncated",
+                "next_outline",
+                "suggested_ranges",
                 "read_lines",
                 "total_lines",
                 "request_satisfied",
@@ -3369,6 +3371,7 @@ fn fit_read_file_content_to_observation_budget(compacted: &mut Map<String, Value
     else {
         return;
     };
+    let full_content = content.clone();
     let mut overhead = compacted.clone();
     overhead.remove("content");
     let content_budget = OBSERVATION_MAX_CHARS
@@ -3391,6 +3394,33 @@ fn fit_read_file_content_to_observation_budget(compacted: &mut Map<String, Value
     compacted.insert("content".to_string(), Value::String(truncated));
     if !content_head.trim().is_empty() {
         compacted.insert("content_head".to_string(), Value::String(content_head));
+    }
+    // 观察预算把整份读取折叠时，先给一份 API 索引/结构大纲，模型可以按行号
+    // 直接续读，而不是为了找入口再整份额外读一遍。
+    let (entries, total) = crate::services::tools::read_outline::read_outline(&full_content, 16);
+    if !entries.is_empty() {
+        let index = entries
+            .into_iter()
+            .map(|(line, text)| {
+                let mut text = text.trim().to_string();
+                if text.chars().count() > 120 {
+                    text = text.chars().take(120).collect::<String>() + "…";
+                }
+                json!({ "line": line, "text": text })
+            })
+            .collect::<Vec<_>>();
+        compacted.insert("api_index".to_string(), Value::Array(index));
+        compacted.insert("api_index_truncated".to_string(), Value::Bool(total > 16));
+        if let Some(path) = compacted
+            .get("files")
+            .and_then(Value::as_array)
+            .filter(|files| files.len() == 1)
+            .and_then(|files| files.first())
+            .and_then(|file| file.get("path"))
+            .and_then(Value::as_str)
+        {
+            compacted.insert("api_index_file".to_string(), Value::String(path.to_string()));
+        }
     }
     if omitted_chars > 0 {
         compacted.insert("content_omitted_chars".to_string(), json!(omitted_chars));

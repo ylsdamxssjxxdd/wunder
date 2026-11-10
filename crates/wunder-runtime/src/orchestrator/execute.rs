@@ -17,6 +17,32 @@ use crate::services::tools::sessions_yield_tool;
 
 use super::execute_support::*;
 
+/// 单轮模型上下文里最多保留多少张读图原图；更早的帧退化为带路径的占位文本。
+const READ_IMAGE_INLINE_FRAME_LIMIT: usize = 4;
+/// 服务端观测到的输入 token 单轮下降超过该值且本地未压缩时，记录一条轨迹，
+/// 解释模型为什么突然“忘了”此前的上下文。
+const CONTEXT_SHRINK_ALERT_TOKENS: i64 = 1024;
+
+/// 上一轮在“读图后、回答前”中断时，持久化历史里图片已被省略，
+/// 只剩一条「请分析这份图片」的悬空指令。恢复最后一帧原图，
+/// 避免恢复会话后模型对一张不存在的图片作答。
+async fn restore_dangling_followup_image(messages: &mut [Value]) {
+    let Some(last) = messages.last_mut() else {
+        return;
+    };
+    if last.get("role").and_then(Value::as_str) != Some("user") {
+        return;
+    }
+    let Some(path) =
+        crate::services::chat_payload_sanitizer::omitted_inline_image_path(last)
+    else {
+        return;
+    };
+    if let Some(data_url) = crate::services::chat_media::load_image_data_url_for_path(&path).await {
+        crate::services::chat_payload_sanitizer::restore_omitted_inline_image(last, &data_url);
+    }
+}
+
 struct ObservationTokenBudgets {
     per_result: Vec<i64>,
     total_tokens: i64,
@@ -533,6 +559,7 @@ impl Orchestrator {
                 .filter_map(normalize_model_context_message).collect::<Vec<_>>();
             messages.extend(model_context_entries);
             messages = context_manager.normalize_messages(messages);
+            restore_dangling_followup_image(&mut messages).await;
             let user_message = self
                 .build_user_message(&question, prepared.attachments.as_deref())
                 .await;
@@ -683,6 +710,7 @@ impl Orchestrator {
                 self.ensure_not_cancelled(&session_id)?;
                 messages = context_manager.normalize_messages(messages);
                 let context_tokens = persisted_context_tokens.max(0);
+                let context_tokens_before_request = context_tokens;
                 let projected_request_tokens = context_tokens;
                 let mut context_payload = json!({
                     "context_tokens": context_tokens,
@@ -977,6 +1005,32 @@ impl Orchestrator {
                     confirmed_context_occupancy_tokens = Some(tokens);
                     persisted_context_tokens = tokens;
                     self.workspace.save_session_context_tokens_async(&user_id, &session_id, tokens).await;
+                    // 上下文在两次请求之间大幅缩水但本轮没有本地压缩：把这次
+                    // 缩水落成轨迹，避免模型“突然忘了”却无从解释。
+                    if context_tokens_before_request > 0
+                        && tokens.saturating_add(CONTEXT_SHRINK_ALERT_TOKENS)
+                            < context_tokens_before_request
+                        && !compaction_result.model_context_replaced
+                    {
+                        let delta = context_tokens_before_request.saturating_sub(tokens);
+                        let mut shrink_payload = json!({
+                            "stage": "context_shrink",
+                            "summary": i18n::t_with_params(
+                                "context_shrink.summary",
+                                &std::collections::HashMap::from([
+                                    ("before".to_string(), context_tokens_before_request.to_string()),
+                                    ("after".to_string(), tokens.to_string()),
+                                    ("delta".to_string(), delta.to_string()),
+                                ]),
+                            ),
+                            "context_tokens_before": context_tokens_before_request,
+                            "context_tokens_after": tokens,
+                            "delta_tokens": delta,
+                            "context_usage_source": "provider_observed",
+                        });
+                        round_info.insert_into(shrink_payload.as_object_mut().expect("shrink object"));
+                        emitter.emit("context_shrink", shrink_payload).await;
+                    }
                     let mut snapshot = json!({
                         "context_tokens": tokens,
                         "context_occupancy_tokens": tokens,
@@ -1689,6 +1743,13 @@ impl Orchestrator {
                                 round_info,
                             ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                             messages.push(followup_message);
+                            // 读图会逐张内联原图；只保留最近几帧，旧帧退化为带
+                            // 路径的占位文本，避免单轮几十张图把请求推到上限。
+                            crate::services::chat_payload_sanitizer::prune_previous_inline_image_followups_keeping(
+                                &mut messages,
+                                "read_image_followup",
+                                READ_IMAGE_INLINE_FRAME_LIMIT,
+                            );
                         }
                         if let Some(followup_message) = desktop_followup {
                             let mut followup_message = followup_message;

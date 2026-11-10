@@ -40,7 +40,7 @@ mod prompt_surface;
 mod read_file_guard;
 mod read_image_tool;
 mod read_indentation;
-mod read_outline;
+pub(crate) mod read_outline;
 pub(crate) mod registry;
 mod schedule_task_tool;
 mod schema;

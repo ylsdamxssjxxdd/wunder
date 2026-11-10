@@ -308,10 +308,16 @@ fn unavailable_api_exhausts_a_finite_budget_and_releases_the_thread() {
             .await
             .unwrap()
             .unwrap_err();
-            assert_eq!(
-                error.downcast_ref::<OrchestratorError>().unwrap().code(),
-                "LLM_UNAVAILABLE"
-            );
+            let orchestrator_error = error.downcast_ref::<OrchestratorError>().unwrap();
+            assert_eq!(orchestrator_error.code(), "LLM_UNAVAILABLE");
+            // 重试耗尽后的诊断要能解释“为什么慢”：状态码、尝试次数、耗时、模型名。
+            assert!(orchestrator_error.message().contains("HTTP 503"));
+            assert!(orchestrator_error.message().contains(" · "));
+            let detail = orchestrator_error.detail().expect("retry detail");
+            assert_eq!(detail["attempts"], json!(6));
+            assert_eq!(detail["http_status"], json!(503));
+            assert_eq!(detail["model"], json!("fixture-model"));
+            assert!(detail["elapsed_ms"].as_u64().unwrap_or(0) > 0);
             assert_eq!(fixture.requests.lock().len(), 6);
             fixture.assert_settled("failed");
             fixture.healthy.store(true, Ordering::SeqCst);
@@ -326,6 +332,12 @@ fn unavailable_api_exhausts_a_finite_budget_and_releases_the_thread() {
                     .answer,
                 "completed"
             );
+            // 可见的报错气泡不得回灌到下一轮模型上下文。
+            let requests = fixture.requests.lock();
+            let last_request = requests.last().expect("recovered request");
+            let serialized = last_request.to_string();
+            assert!(!serialized.contains("LLM request failed"));
+            assert!(!serialized.contains("HTTP 503"));
         })
     });
 }

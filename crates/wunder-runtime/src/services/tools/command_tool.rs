@@ -33,7 +33,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tokio::io::AsyncReadExt;
 use tokio::process::Child;
 use tokio_util::sync::CancellationToken;
@@ -52,7 +52,12 @@ fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
 const DEFAULT_COMMAND_YIELD_MS: u64 = 750;
 const MAX_COMMAND_YIELD_MS: u64 = 10_000;
 const DEFAULT_COMMAND_TIMEOUT_S: f64 = 120.0;
+const MAX_COMMAND_TIMEOUT_S: f64 = 3600.0;
+/// 前台等待到点后转后台的命令最长保留时间；到点仍未退出才终止，
+/// 避免一条挂死的命令永久占着会话槽位。
+const ESCALATED_COMMAND_MAX_S: f64 = 3600.0;
 const SANDBOX_BLOCKING_WAIT_MARGIN_S: f64 = 15.0;
+const RECENT_OUTPUT_SCAN_LIMIT: usize = 2_000;
 
 fn parse_command_yield_time(args: &Value) -> Duration {
     let value = args
@@ -104,6 +109,88 @@ fn content_is_bare_sleep(content: &str) -> bool {
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
     lines.len() == 1 && is_bare_sleep_command(lines[0])
+}
+
+/// 下游 `head`/`cut`/`grep -q` 提前关管道会让上游收到 SIGPIPE，shell 收尾
+/// 常以 141 退出。这是输出被截断，不是命令本身失败；把它当失败会诱使模型
+/// 反复重跑同一条正确命令。
+fn is_broken_pipe_exit(command: &str, returncode: i32, stderr: &str) -> bool {
+    if returncode == 141 {
+        return true;
+    }
+    if returncode == 0 || !command.contains('|') {
+        return false;
+    }
+    let lowered = stderr.to_ascii_lowercase();
+    lowered.contains("broken pipe") || lowered.contains("epipe")
+}
+
+/// 超时转后台时给模型一份“可能已经落盘”的线索。只扫两层（工程目录的
+/// renders/、review/ 都在这一层），有界条数，避免在大工作区里全量遍历。
+fn recent_output_paths(root: &Path, since: SystemTime, limit: usize) -> Vec<String> {
+    let mut found: Vec<(SystemTime, String)> = Vec::new();
+    let mut queue = vec![(root.to_path_buf(), 0usize)];
+    let mut scanned = 0usize;
+    while let Some((dir, depth)) = queue.pop() {
+        if scanned >= RECENT_OUTPUT_SCAN_LIMIT {
+            break;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if scanned >= RECENT_OUTPUT_SCAN_LIMIT {
+                break;
+            }
+            scanned += 1;
+            let path = entry.path();
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            if metadata.is_dir() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if depth < 2
+                    && !name.starts_with('.')
+                    && name != "node_modules"
+                    && name != "target"
+                {
+                    queue.push((path, depth + 1));
+                }
+                continue;
+            }
+            if !metadata.is_file() {
+                continue;
+            }
+            let Ok(modified) = metadata.modified() else {
+                continue;
+            };
+            if modified < since {
+                continue;
+            }
+            let Ok(relative) = path.strip_prefix(root) else {
+                continue;
+            };
+            found.push((modified, relative.to_string_lossy().to_string()));
+        }
+    }
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.truncate(limit);
+    found.into_iter().map(|(_, path)| path).collect()
+}
+
+/// 超时把前台命令转成后台会话后，模型需要知道怎样接着等、产物在哪。
+fn timeout_escalation_hint(command_session_id: &str, recent: &[String]) -> String {
+    let mut hint = format!(
+        "前台等待已到 timeout_s，命令没有终止，已转入后台继续运行（command_session_id={command_session_id}）。\
+         用命令会话工具轮询到退出后再检查产物；不要重跑同一条命令。"
+    );
+    if !recent.is_empty() {
+        hint.push_str(" 期间已写入/更新的文件：");
+        hint.push_str(&recent.join("、"));
+        hint.push('。');
+    }
+    hint
 }
 
 pub(crate) fn extract_direct_patch_from_command(content: &str) -> Option<String> {
@@ -539,6 +626,7 @@ struct CommandRunResult {
     stderr_capture: CommandOutputCaptureMeta,
     command_session_id: Option<String>,
     running: bool,
+    escalated_on_timeout: bool,
 }
 
 /// 会话级取消令牌的登记守卫。前台阻塞命令在执行期间把令牌挂到 broker 上，
@@ -595,6 +683,13 @@ pub(crate) fn compact_command_result_for_model(item: &Value) -> Value {
     });
     if let Some(warning) = item.get("warning").filter(|value| !value.is_null()) {
         compacted["warning"] = warning.clone();
+    }
+    if item
+        .get("output_truncated_by_pipe")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        compacted["output_truncated_by_pipe"] = json!(true);
     }
     compacted
 }
@@ -657,6 +752,24 @@ async fn drain_output_captures(
         "command output pipes did not reach EOF after tree terminate; reader tasks aborted"
     );
     Ok((CommandOutputCapture::empty(), CommandOutputCapture::empty()))
+}
+
+/// `ExitStatus::code()` 对“被信号杀死”的进程返回 None，工具层会把所有
+/// 信号退出都报成 -1，SIGPIPE（141）因此和未知失败混在一起。按 shell 的
+/// 习惯补成 128+signal，至少能区分“下游截断”和真正的错误。
+fn exit_status_code(status: &std::process::ExitStatus) -> Option<i32> {
+    if let Some(code) = status.code() {
+        return Some(code);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        return status.signal().map(|signal| 128 + signal);
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
 }
 
 pub fn decode_command_output(bytes: &[u8]) -> String {
@@ -912,7 +1025,7 @@ async fn run_spawned_child_streaming(
         }
         stderr.push_str("command cancelled");
     }
-    let exit_code = status.and_then(|value| value.code());
+    let exit_code = status.as_ref().and_then(exit_status_code);
     let returncode = exit_code.unwrap_or(-1);
     if let Some(command_session) = command_session.as_ref() {
         command_session.emit_exit(
@@ -931,6 +1044,7 @@ async fn run_spawned_child_streaming(
         stderr_capture: stderr_capture.meta,
         command_session_id: command_session.map(|item| item.command_session_id().to_string()),
         running: false,
+        escalated_on_timeout: false,
     })
 }
 
@@ -945,6 +1059,7 @@ async fn detach_spawned_child(
     mut stdout_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
     mut stderr_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
     tree: ProcessTree,
+    escalated_on_timeout: bool,
 ) -> Result<CommandRunResult> {
     let session_id = command_session.command_session_id().to_string();
     let cleanup_session_id = session_id.clone();
@@ -985,7 +1100,7 @@ async fn detach_spawned_child(
         // 保证 watcher 一定收尾、broker 槽位一定释放。
         let _ = drain_output_captures(&mut stdout_task, &mut stderr_task, &tree).await;
         tree.disarm();
-        let exit_code = wait_result.and_then(|status| status.code());
+        let exit_code = wait_result.as_ref().and_then(exit_status_code);
         tracker.emit_exit(exit_code, timed_out, error);
         broker.remove_process(&cleanup_session_id);
     });
@@ -998,6 +1113,7 @@ async fn detach_spawned_child(
         stderr_capture: CommandOutputCaptureMeta::empty(),
         command_session_id: Some(session_id),
         running: true,
+        escalated_on_timeout,
     })
 }
 
@@ -1074,7 +1190,7 @@ async fn complete_detachable_child(
         }
         stderr.push_str(error);
     }
-    let exit_code = status.and_then(|value| value.code());
+    let exit_code = status.as_ref().and_then(exit_status_code);
     command_session.emit_exit(exit_code, timed_out, exit_error);
     Ok(CommandRunResult {
         returncode: exit_code.unwrap_or(-1),
@@ -1085,6 +1201,7 @@ async fn complete_detachable_child(
         stderr_capture: stderr_capture.meta,
         command_session_id: Some(command_session.command_session_id().to_string()),
         running: false,
+        escalated_on_timeout: false,
     })
 }
 
@@ -1099,6 +1216,7 @@ async fn run_command_streaming(
     stderr_policy: CommandOutputPolicy,
     command_index: usize,
     yield_time: Option<Duration>,
+    escalate_after: Option<Duration>,
 ) -> Result<CommandRunResult> {
     let command_text = command.to_string();
     let command_env = python_runtime::resolve_desktop_command_env();
@@ -1251,7 +1369,8 @@ async fn run_command_streaming(
         .as_ref()
         .map(|broker| SessionCancelGuard::register(broker, command_session.command_session_id()))
         .unzip();
-    let Some(wait) = yield_time.filter(|wait| *wait > Duration::ZERO) else {
+    let foreground_escalation = yield_time.is_none() && escalate_after.is_some();
+    let Some(wait) = yield_time.or(escalate_after).filter(|wait| *wait > Duration::ZERO) else {
         return run_spawned_child_streaming(
             context,
             child,
@@ -1277,29 +1396,55 @@ async fn run_command_streaming(
         stderr_policy,
         command_session.clone(),
     );
-    let cancelled_during_wait = if let Some(cancel) = session_cancel.as_ref() {
+    // 关键：等待既要能被超时/取消打断，也要在进程自然退出时立刻返回。
+    // 只 sleep(wait) 会让前台转后台路径把每条秒回的命令都拖满 timeout。
+    enum WaitOutcome {
+        Exited(std::io::Result<std::process::ExitStatus>),
+        TimedOut,
+        Cancelled,
+    }
+    let outcome = if let Some(cancel) = session_cancel.as_ref() {
         tokio::select! {
-            _ = tokio::time::sleep(wait) => false,
-            _ = cancel.cancelled() => true,
+            _ = cancel.cancelled() => WaitOutcome::Cancelled,
+            result = child.wait() => WaitOutcome::Exited(result),
+            _ = tokio::time::sleep(wait) => WaitOutcome::TimedOut,
         }
     } else {
-        tokio::time::sleep(wait).await;
-        false
+        tokio::select! {
+            result = child.wait() => WaitOutcome::Exited(result),
+            _ = tokio::time::sleep(wait) => WaitOutcome::TimedOut,
+        }
     };
-    if cancelled_during_wait {
-        tree.terminate();
-        let _ = child.kill().await;
-        let _ = child.wait().await;
-        return complete_detachable_child(
-            None,
-            false,
-            &mut stdout_task,
-            &mut stderr_task,
-            &tree,
-            command_session,
-            Some("command cancelled".to_string()),
-        )
-        .await;
+    match outcome {
+        WaitOutcome::Cancelled => {
+            tree.terminate();
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return complete_detachable_child(
+                None,
+                false,
+                &mut stdout_task,
+                &mut stderr_task,
+                &tree,
+                command_session,
+                Some("command cancelled".to_string()),
+            )
+            .await;
+        }
+        WaitOutcome::Exited(Ok(status)) => {
+            return complete_detachable_child(
+                Some(status),
+                false,
+                &mut stdout_task,
+                &mut stderr_task,
+                &tree,
+                command_session,
+                None,
+            )
+            .await;
+        }
+        WaitOutcome::Exited(Err(err)) => return Err(anyhow!(err)),
+        WaitOutcome::TimedOut => {}
     }
     if let Some(status) = child.try_wait()? {
         return complete_detachable_child(
@@ -1338,14 +1483,22 @@ async fn run_command_streaming(
         )
         .await;
     };
+    // 前台超时转后台：等待预算已经用完，不能再用同一个 timeout 把刚保下来
+    // 的进程杀掉；改给一个较长的硬上限，避免挂死的命令永久占住会话。
+    let detached_timeout = if foreground_escalation {
+        Some(Duration::from_secs_f64(ESCALATED_COMMAND_MAX_S))
+    } else {
+        timeout
+    };
     detach_spawned_child(
         broker,
         child,
-        timeout,
+        detached_timeout,
         command_session,
         stdout_task,
         stderr_task,
         tree,
+        foreground_escalation,
     )
     .await
 }
@@ -1447,6 +1600,32 @@ pub(crate) async fn command_session_control(
     Ok(build_command_session_result(data))
 }
 
+fn command_session_failure_message(data: &Value) -> String {
+    let code = data.get("exit_code").and_then(Value::as_i64);
+    let detail = data
+        .get("error")
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .or_else(|| {
+            data.get("stderr")
+                .and_then(Value::as_str)
+                .filter(|text| !text.trim().is_empty())
+                .and_then(|text| text.lines().rev().find(|line| !line.trim().is_empty()))
+        })
+        .map(str::trim)
+        .unwrap_or_default();
+    let timed_out = data.get("timed_out").and_then(Value::as_bool) == Some(true);
+    match (timed_out, code) {
+        (true, _) => "Command session timed out; partial output is preserved.".to_string(),
+        (false, Some(code)) if !detail.is_empty() => {
+            format!("Command failed with exit code {code}: {detail}")
+        }
+        (false, Some(code)) => format!("Command failed with exit code {code}."),
+        (false, None) if !detail.is_empty() => format!("Command failed: {detail}"),
+        (false, None) => "Command failed; inspect status and incremental output.".to_string(),
+    }
+}
+
 fn build_command_session_result(data: Value) -> Value {
     let running = data.get("status").and_then(Value::as_str) == Some("running");
     if !running
@@ -1461,9 +1640,14 @@ fn build_command_session_result(data: Value) -> Value {
                 .is_some_and(|code| code != 0))
     {
         return build_failed_tool_result(
-            "Command failed; inspect status and incremental output.",
+            command_session_failure_message(&data),
             data,
-            ToolErrorMeta::new("TOOL_COMMAND_SESSION_FAILED", None, false, None),
+            ToolErrorMeta::new(
+                "TOOL_COMMAND_SESSION_FAILED",
+                Some("用同一 command_session_id 可继续读取增量输出；stderr 已包含在数据中。".to_string()),
+                false,
+                None,
+            ),
             false,
         );
     }
@@ -1772,6 +1956,33 @@ fn build_sandbox_command_result(mut data: Value) -> Value {
         );
     }
     let exit_code = data.get("exit_code").and_then(Value::as_i64);
+    let stderr_text = data
+        .get("stderr")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let command_text = data
+        .get("command")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if is_broken_pipe_exit(
+        command_text,
+        exit_code.and_then(|code| i32::try_from(code).ok()).unwrap_or(-1),
+        stderr_text,
+    ) {
+        if let Value::Object(ref mut map) = data {
+            map.insert(
+                "warning".to_string(),
+                json!("管道被下游提前关闭（SIGPIPE/EPIPE），输出已按下游需要截断；这不是命令本身的失败。"),
+            );
+            map.insert("output_truncated_by_pipe".to_string(), json!(true));
+        }
+        return build_model_tool_success(
+            "execute_command",
+            "completed",
+            "Sandbox command output was truncated by a downstream pipe.",
+            data,
+        );
+    }
     if exit_code.unwrap_or(-1) != 0 {
         let detail = data
             .get("error")
@@ -1871,11 +2082,14 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
     // 0/负数不再表示「不限制」：工具调用必须必然返回，无上限只会把整条
     // 智能体线程冻死在一条挂住的命令上。回落到默认超时。
     let timeout_s = if timeout_s > 0.0 {
-        timeout_s
+        timeout_s.min(MAX_COMMAND_TIMEOUT_S)
     } else {
         DEFAULT_COMMAND_TIMEOUT_S
     };
     let timeout = Some(Duration::from_secs_f64(timeout_s));
+    // 前台命令到点后不杀进程：有会话管理时转入后台继续跑，模型随后轮询。
+    let escalate_after = (!run_in_background && context.command_sessions.is_some())
+        .then_some(Duration::from_secs_f64(timeout_s));
     if crate::sandbox::sandbox_enabled(context.config) && !dry_run && !content.is_empty() {
         if let Some(result) = crate::sandbox::launch_command_session(
             context.config,
@@ -2203,6 +2417,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                 ));
             }
         }
+        let command_started = SystemTime::now();
         let run = run_command_streaming(
             context,
             &command,
@@ -2213,6 +2428,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             stderr_policy,
             command_index,
             run_in_background.then(|| parse_command_yield_time(&args)),
+            escalate_after,
         )
         .await?;
         let command_total_bytes = run
@@ -2255,6 +2471,47 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
         if run.running {
             context.workspace.mark_tree_dirty(context.workspace_id);
             let guidance = i18n::t("tool.exec.background_next_step");
+            if run.escalated_on_timeout {
+                let recent = recent_output_paths(&cwd, command_started, 20);
+                let session_id = run.command_session_id.clone().unwrap_or_default();
+                let hint = timeout_escalation_hint(&session_id, &recent);
+                let partial_output = context
+                    .command_sessions
+                    .as_ref()
+                    .and_then(|broker| {
+                        broker.snapshot_for_scope(context.user_id, context.session_id, &session_id)
+                    })
+                    .map(|snapshot| {
+                        json!({
+                            "stdout_tail": snapshot.stdout_tail,
+                            "stderr_tail": snapshot.stderr_tail,
+                        })
+                    })
+                    .unwrap_or(Value::Null);
+                if let Some(last) = results.last_mut().and_then(Value::as_object_mut) {
+                    last.insert("running".to_string(), Value::Bool(true));
+                    last.insert(
+                        "escalated_on_timeout".to_string(),
+                        Value::Bool(true),
+                    );
+                }
+                return Ok(build_model_tool_success(
+                    "execute_command",
+                    "running",
+                    hint.clone(),
+                    json!({
+                        "command_session_id": session_id,
+                        "status": "running",
+                        "reason": "timeout_escalated",
+                        "timeout_s": timeout_s,
+                        "elapsed_s": command_started.elapsed().map(|d| d.as_secs_f64()).unwrap_or(0.0),
+                        "recent_files": recent,
+                        "partial_output": partial_output,
+                        "next_step": hint,
+                        "results": compact_command_results_for_model(&results),
+                    }),
+                ));
+            }
             return Ok(build_model_tool_success(
                 "execute_command",
                 "running",
@@ -2300,6 +2557,21 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                 tool_timeout_meta("TOOL_EXEC_TIMEOUT"),
                 false,
             ));
+        }
+        if is_broken_pipe_exit(&command, run.returncode, &run.stderr) {
+            // 下游 head/cut 提前关闭管道是正常截断，不是命令失败；保留退出码
+            // 与提示，继续执行后续命令。
+            if let Some(last) = results.last_mut().and_then(Value::as_object_mut) {
+                last.insert(
+                    "warning".to_string(),
+                    Value::String(
+                        "管道被下游提前关闭（SIGPIPE/EPIPE），输出已按下游需要截断；这不是命令本身的失败，需要全量输出时去掉 head/cut 等截断。"
+                            .to_string(),
+                    ),
+                );
+                last.insert("output_truncated_by_pipe".to_string(), Value::Bool(true));
+            }
+            continue;
         }
         if run.returncode != 0 {
             context.workspace.mark_tree_dirty(context.workspace_id);

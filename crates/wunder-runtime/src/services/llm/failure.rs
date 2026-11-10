@@ -77,11 +77,22 @@ impl LlmHttpError {
 
 impl std::fmt::Display for LlmHttpError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "LLM request failed: {} {}",
-            self.status, self.detail
-        )
+        // 550/502 之类网关错误常常不给响应体；保留状态码并显式说明，
+        // 避免出现 "LLM request failed: 550 " 这种尾随空格的诊断。
+        let detail = self.detail.trim();
+        if detail.is_empty() {
+            write!(
+                formatter,
+                "LLM request failed: HTTP {} (empty response body)",
+                self.status
+            )
+        } else {
+            write!(
+                formatter,
+                "LLM request failed: HTTP {} {}",
+                self.status, detail
+            )
+        }
     }
 }
 

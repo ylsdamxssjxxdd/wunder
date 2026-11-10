@@ -23,23 +23,25 @@ const SUB = {
 };
 function subs(fr, t, list, style) {
   const st = SUB[style] || SUB.gilt, pal = PAL[style] || PAL.gilt;
-  for (const s of list) {
-    if (t < s.a || t > s.b) continue;
-    const cs = parseMark(s.zh), str = cs.map(c => c.ch).join('');
-    const size = s.big === 2 ? st.huge : s.big ? st.big : st.size, y = s.y || st.y;
-    if (style === 'night') {
-      const k = fade(t, s.a, s.b, .55, .5);
-      fr.chars(str, W / 2, y, { font: st.font, size, track: size * st.track, color: pal.sub, a: k, glow: 6, glowA: .25 }, i => cs[i].tone ? { color: cs[i].tone === 'red' ? pal.rose : pal.gold } : null);
-      if (s.en) fr.text(s.en, W / 2, s.enY || st.enY, { font: 'lora', size: st.enSize, color: pal.en, a: fade(t, s.a + .18, s.b, .55, .45) });
-      continue;
+  fr.mark('字幕', () => {
+    for (const s of list) {
+      if (t < s.a || t > s.b) continue;
+      const cs = parseMark(s.zh), str = cs.map(c => c.ch).join('');
+      const size = s.big === 2 ? st.huge : s.big ? st.big : st.size, y = s.y || st.y;
+      if (style === 'night') {
+        const k = fade(t, s.a, s.b, .55, .5);
+        fr.chars(str, W / 2, y, { font: st.font, size, track: size * st.track, color: pal.sub, a: k, glow: 6, glowA: .25 }, i => cs[i].tone ? { color: cs[i].tone === 'red' ? pal.rose : pal.gold } : null);
+        if (s.en) fr.text(s.en, W / 2, s.enY || st.enY, { font: 'lora', size: st.enSize, color: pal.en, a: fade(t, s.a + .18, s.b, .55, .45) });
+        continue;
+      }
+      const n = cs.length, stg = Math.min(st.stagger, .95 / n), out = 1 - ss(t, s.b - .38, s.b);   // 整句约 0.7–1s 显完，句子越长每字越快
+      const base = s.tone === 'gold' ? pal.gold : pal.ink;
+      fr.chars(str, W / 2, y, { font: st.font, size, track: size * st.track, color: base, shadow: st.shadow, shadowBlur: style === 'flat' ? 10 : 20, shadowY: style === 'flat' ? 3 : 2 }, i => {
+        const k = seg(t, s.a + i * stg, s.a + i * stg + st.rise), tone = cs[i].tone;
+        return { a: smooth(k) * out, blur: style === 'gilt' ? (1 - k) * 9 + (1 - out) * 7 : 0, color: tone === 'red' ? pal.red : tone === 'gold' ? pal.gold : base };
+      });
     }
-    const n = cs.length, stg = Math.min(st.stagger, .95 / n), out = 1 - ss(t, s.b - .38, s.b);   // 整句约 0.7–1s 显完，句子越长每字越快
-    const base = s.tone === 'gold' ? pal.gold : pal.ink;
-    fr.chars(str, W / 2, y, { font: st.font, size, track: size * st.track, color: base, shadow: st.shadow, shadowBlur: style === 'flat' ? 10 : 20, shadowY: style === 'flat' ? 3 : 2 }, i => {
-      const k = seg(t, s.a + i * stg, s.a + i * stg + st.rise), tone = cs[i].tone;
-      return { a: smooth(k) * out, blur: style === 'gilt' ? (1 - k) * 9 + (1 - out) * 7 : 0, color: tone === 'red' ? pal.red : tone === 'gold' ? pal.gold : base };
-    });
-  }
+  });
 }
 
 /* ---------- A：年份里程表 + 地点·人物 + 出处 + 朱印 ----------
@@ -166,6 +168,20 @@ function titleNight(fr, lt, o) {
   fr.text(o.en, W / 2, cy + 290, { font: 'mono', size: 15, track: 5.5, color: pal.label, a: ss(lt, 5.2, 6.2) * a });
 }
 
+/* 按绝对区间排片名卡：不用自己反推 lt 和淡出。
+ * K.card(fr, t, { from: 10.9, to: 16.8, zh, sub, en }) —— lt 自动换算成 t - from，
+ * 到 to 前 fout 秒淡出；kind: 'night'（默认）或 'gilt'。 */
+function card(fr, t, o) {
+  const from = o.from, to = o.to;
+  if (from == null || to == null || t < from || t > to) return 0;
+  const k = Math.min(ss(t, from, from + (o.fin == null ? .12 : o.fin)), 1 - ss(t, to - (o.fout == null ? .7 : o.fout), to)) * (o.a == null ? 1 : o.a);
+  if (k <= .001) return 0;
+  const lt = o.lt == null ? t - from : o.lt;
+  const opts = Object.assign({}, o, { a: k });
+  if (o.kind === 'gilt') titleGilt(fr, lt, opts); else titleNight(fr, lt, opts);
+  return k;
+}
+
 /* ---------- 骰子（小型 3D：正交基 + 弱透视） ---------- */
 const M3 = {
   rot(ax, ay, az) { const cx = Math.cos(ax), sx = Math.sin(ax), cy = Math.cos(ay), sy = Math.sin(ay), cz = Math.cos(az), sz = Math.sin(az); return [[cy * cz, sx * sy * cz - cx * sz, cx * sy * cz + sx * sz], [cy * sz, sx * sy * sz + cx * cz, cx * sy * sz - sx * cz], [-sy, sx * cy, cx * cy]]; },
@@ -290,5 +306,5 @@ function noiseOverlay(fr, k, colors = ['#E84B75', '#64B8F6', '#FFFFFF']) { if (k
 /* 章与章之间"暗一下"：返回 0..1 的亮度系数，乘到底和内容上。times = 每次最暗的时刻 */
 function dips(t, times, half = .55) { let k = 1; for (const c of times) k = Math.min(k, 1 - (1 - smooth(clamp(Math.abs(t - c) / half))) ); return k; }
 
-G.VKit = { gauge, flash, ripple, sepia, noiseOverlay, dips, PAL, SUB, parseMark, subs, track, odometer, hudYear, seal, chapterMark, rays, titleGilt, dustText, titleNight, M3, die, dieFace, meander, numberLine, bellPts };
+G.VKit = { gauge, flash, ripple, sepia, noiseOverlay, dips, PAL, SUB, parseMark, subs, track, odometer, hudYear, seal, chapterMark, rays, titleGilt, dustText, titleNight, card, M3, die, dieFace, meander, numberLine, bellPts };
 })(window);

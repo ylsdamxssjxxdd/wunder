@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {beginThreadView,commitThreadView,threadViewSlots,threadViewPhase,threadViewCursor,applyThreadViewChanges,submitThreadView,failThreadView,clearThreadView,applyThreadViewTail,threadViewAtLatest,threadViewStatus,pauseThreadViewHistory,threadViewHistory,threadViewWindow,removeThreadViewTurnForQueueItem,applyBodyHydration} from '../../src/realtime/chat/threadViewStore';
+import {beginThreadView,commitThreadView,threadViewSlots,threadViewPhase,threadViewCursor,applyThreadViewChanges,submitThreadView,failThreadView,clearThreadView,applyThreadViewTail,threadViewAtLatest,threadViewStatus,pauseThreadViewHistory,threadViewHistory,threadViewWindow,removeThreadViewTurnForQueueItem,applyBodyHydration,flushThreadViewNotifications,threadViewSessionVersion} from '../../src/realtime/chat/threadViewStore';
 const row=(round:number,revision=1)=>({root_turn_id:`fixture-turn-${round}`,user_round:round,revision,status:'completed',user:{item_id:`fixture-user-${round}`,content:'fixture input'},assistant:{item_id:`fixture-answer-${round}`,content:'fixture answer'},workflow_count:0,failed_count:0});
 const page=(chat:any[],seq=1)=>({session_id:'fixture-thread',epoch:1,view_seq:seq,projection_state:'ready',thread_empty:chat.length===0,latest_round:chat.length,chat,trajectory:[],tiles:[],tile_level:0,next_before:1,has_more:false});
 const key='fixture-thread';
@@ -407,3 +407,24 @@ applyThreadViewChanges(key,{view_seq:201,rows:[{...initialStream,revision:201,as
 assert.equal(threadViewSlots(key)![0].assistant.__thread_live,'new answer');
 clearThreadView(key);
 console.log('thread view: overlapping durable suffixes, reordered duplicate tails, gaps and item identity pass');
+
+
+// Split panes subscribe to their own session clock. A tail in one pane must not
+// invalidate or rematerialize the other pane's rows.
+clearThreadView(key);
+const otherKey='fixture-other-thread';
+clearThreadView(otherKey);
+const liveRow={...row(1,1),status:'running'};
+let firstGeneration=beginThreadView(key);
+commitThreadView(key,page([liveRow],1),firstGeneration);
+const otherGeneration=beginThreadView(otherKey,false);
+commitThreadView(otherKey,{...page([row(1)],1),session_id:otherKey},otherGeneration);
+const otherSlot=threadViewSlots(otherKey)![0];
+const otherVersion=threadViewSessionVersion(otherKey);
+const firstVersion=threadViewSessionVersion(key);
+applyThreadViewTail(key,{item_id:'fixture-answer-1',field:'content',offset:14,text:' tail'});
+flushThreadViewNotifications();
+assert.equal(threadViewSessionVersion(key),firstVersion+1);
+assert.equal(threadViewSessionVersion(otherKey),otherVersion);
+assert.equal(threadViewSlots(otherKey)![0],otherSlot);
+console.log('thread view: split tail notifications are session-scoped and preserve row identity pass');

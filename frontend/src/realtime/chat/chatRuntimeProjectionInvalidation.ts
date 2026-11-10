@@ -7,6 +7,7 @@ import type {
 } from './chatRuntimeTypes';
 import { chatDebugLog } from '@/utils/chatDebug';
 import { chatPerf } from '@/utils/chatPerf';
+import { isThreadViewVisible } from './threadViewStore';
 
 type ProjectionVersionStore = {
   activeSessionId?: unknown;
@@ -21,6 +22,7 @@ type ProjectionVersionStore = {
 
 export const runtimeProjectionInvalidationState = {
   cancel: null as null | (() => void),
+  flush: null as null | (() => void),
   pending: false,
   lastBumpedAt: 0,
   sessionIds: new Set<string>()
@@ -28,6 +30,7 @@ export const runtimeProjectionInvalidationState = {
 
 export const runtimeProjectionContentInvalidationState = {
   cancel: null as null | (() => void),
+  flush: null as null | (() => void),
   pending: false,
   lastBumpedAt: 0,
   scheduledAt: 0,
@@ -38,6 +41,7 @@ export const runtimeProjectionContentInvalidationState = {
 
 export const runtimeProjectionReasoningInvalidationState = {
   cancel: null as null | (() => void),
+  flush: null as null | (() => void),
   pending: false,
   lastBumpedAt: 0,
   messageIds: new Set<string>()
@@ -63,6 +67,7 @@ const flushRuntimeProjectionContentVersion = (store: ProjectionVersionStore) => 
   const scheduledAt = runtimeProjectionContentInvalidationState.scheduledAt;
   const now = Date.now();
   runtimeProjectionContentInvalidationState.cancel = null;
+  runtimeProjectionContentInvalidationState.flush = null;
   runtimeProjectionContentInvalidationState.pending = false;
   runtimeProjectionContentInvalidationState.lastBumpedAt = now;
   runtimeProjectionContentInvalidationState.scheduledAt = 0;
@@ -113,6 +118,7 @@ export const markRuntimeProjectionContentChanged = (
   }
   if (runtimeProjectionContentInvalidationState.messageIds.size === 0) return;
   const bump = () => flushRuntimeProjectionContentVersion(store);
+  runtimeProjectionContentInvalidationState.flush = bump;
   if (options.immediate === true) {
     if (runtimeProjectionContentInvalidationState.cancel) {
       runtimeProjectionContentInvalidationState.cancel();
@@ -133,6 +139,7 @@ export const markRuntimeProjectionContentChanged = (
 const flushRuntimeProjectionReasoningVersion = (store: ProjectionVersionStore) => {
   const messageIds = Array.from(runtimeProjectionReasoningInvalidationState.messageIds);
   runtimeProjectionReasoningInvalidationState.cancel = null;
+  runtimeProjectionReasoningInvalidationState.flush = null;
   runtimeProjectionReasoningInvalidationState.pending = false;
   runtimeProjectionReasoningInvalidationState.lastBumpedAt = Date.now();
   runtimeProjectionReasoningInvalidationState.messageIds.clear();
@@ -162,6 +169,7 @@ export const markRuntimeProjectionReasoningChanged = (
   }
   if (runtimeProjectionReasoningInvalidationState.messageIds.size === 0) return;
   const bump = () => flushRuntimeProjectionReasoningVersion(store);
+  runtimeProjectionReasoningInvalidationState.flush = bump;
   if (options.immediate === true) {
     if (runtimeProjectionReasoningInvalidationState.cancel) {
       runtimeProjectionReasoningInvalidationState.cancel();
@@ -188,10 +196,12 @@ export const markRuntimeProjectionChanged = (
     runtimeProjectionInvalidationState.sessionIds.forEach(id => bumpSessionClock(store, id));
     runtimeProjectionInvalidationState.sessionIds.clear();
     runtimeProjectionInvalidationState.cancel = null;
+    runtimeProjectionInvalidationState.flush = null;
     runtimeProjectionInvalidationState.pending = false;
     runtimeProjectionInvalidationState.lastBumpedAt = Date.now();
     store.runtimeProjectionVersion = Number(store.runtimeProjectionVersion || 0) + 1;
   };
+  runtimeProjectionInvalidationState.flush = bump;
   if (options.immediate === true) {
     if (runtimeProjectionInvalidationState.cancel) {
       runtimeProjectionInvalidationState.cancel();
@@ -251,6 +261,19 @@ export const markRuntimeProjectionChanged = (
   runtimeProjectionInvalidationState.cancel = () => globalThis.clearTimeout(timer);
 };
 
+export const flushRuntimeProjectionInvalidation = () => {
+  for (const state of [
+    runtimeProjectionInvalidationState,
+    runtimeProjectionContentInvalidationState,
+    runtimeProjectionReasoningInvalidationState
+  ]) {
+    if (!state.pending) continue;
+    state.cancel?.();
+    const flush = state.flush;
+    flush?.();
+  }
+};
+
 export const clearRuntimeProjectionInvalidation = () => {
   clearBackgroundPublications();
   backgroundChanges = new WeakMap();
@@ -265,13 +288,16 @@ export const clearRuntimeProjectionInvalidation = () => {
     runtimeProjectionReasoningInvalidationState.cancel();
   }
   runtimeProjectionInvalidationState.cancel = null;
+  runtimeProjectionInvalidationState.flush = null;
   runtimeProjectionInvalidationState.pending = false;
   runtimeProjectionContentInvalidationState.cancel = null;
+  runtimeProjectionContentInvalidationState.flush = null;
   runtimeProjectionContentInvalidationState.pending = false;
   runtimeProjectionContentInvalidationState.messageIds.clear();
   runtimeProjectionContentInvalidationState.slowFlushCount = 0;
   runtimeProjectionContentInvalidationState.maxSlowFlushMs = 0;
   runtimeProjectionReasoningInvalidationState.cancel = null;
+  runtimeProjectionReasoningInvalidationState.flush = null;
   runtimeProjectionReasoningInvalidationState.pending = false;
   runtimeProjectionReasoningInvalidationState.messageIds.clear();
 };
@@ -297,7 +323,8 @@ export const applyChatRuntimeEventsWithInvalidation = (
     if (appliedResults.length === 0) return results;
     if (store) {
       const foreground = store.foregroundChatSessionId ?? store.activeSessionId;
-      const background = appliedResults.every(result => result.sessionId !== String(foreground || ''));
+      const background = appliedResults.every(result =>
+        result.sessionId !== String(foreground || '') && !isThreadViewVisible(result.sessionId));
       const urgent = options.immediate === true || events.some(event =>
         /^(session_runtime|session_snapshot|turn_completed|turn_failed|turn_cancelled|assistant_final|approval_|user_message)/.test(event.event_type));
       if (background && !urgent) {

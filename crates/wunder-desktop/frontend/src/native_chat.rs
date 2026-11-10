@@ -4234,6 +4234,23 @@ fn apply_event(
             );
         }
         "queue_start" => active.set_state("正在生成…", Phase::Running),
+        // The provider retry loop is otherwise invisible: a long 5xx streak
+        // would leave the status line on "请求中" for minutes. Surface the
+        // attempt count and the next backoff delay.
+        "llm_stream_retry" => {
+            let attempt = data["attempt"].as_i64().unwrap_or(0);
+            let max_attempts = data["max_attempts"].as_i64().unwrap_or(0);
+            let delay_s = data["delay_s"].as_f64().unwrap_or(0.0).max(0.0);
+            let text = if attempt > 0 && max_attempts > 0 {
+                format!(
+                    "模型服务暂时不可用 · 正在重试 {attempt}/{max_attempts}（{:.0} 秒后）",
+                    delay_s
+                )
+            } else {
+                "模型服务暂时不可用 · 正在重试…".to_string()
+            };
+            active.set_state(text, Phase::Running);
+        }
         "compaction" | "compaction_completed" | "compaction_start" | "compaction_progress" => {
             let summary = data["summary_text"].as_str().unwrap_or("上下文压缩中…");
             let running = matches!(kind, "compaction_start" | "compaction_progress")

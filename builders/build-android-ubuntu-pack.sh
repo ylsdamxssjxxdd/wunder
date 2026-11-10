@@ -360,7 +360,13 @@ PY
 
 echo "==> pack $(wc -l < "$WORK/files.txt") entries"
 mkdir -p "$(dirname "$OUT")"
-XZ_OPT="-T0 -6" tar -C "$WORK/work" --numeric-owner --no-recursion \
+# 9e plus the ABI's branch filter trims the pack by several percent versus the
+# old -6 stream; the extra build time is paid once per pack rebuild.
+case "$ABI" in
+    arm64) XZ_FILTER="--arm64" ;;
+    x86_64) XZ_FILTER="--x86" ;;
+esac
+XZ_OPT="-T0 $XZ_FILTER -9e" tar -C "$WORK/work" --numeric-owner --no-recursion \
     -T "$WORK/files.txt" -J -cf "$OUT"
 chmod 644 "$OUT"
 echo "pack: $OUT"

@@ -1050,6 +1050,7 @@ impl Orchestrator {
         }
         let mut attempt = 0u32;
         let mut last_err: anyhow::Error;
+        let call_started_at = Instant::now();
         loop {
             self.ensure_not_cancelled(session_id)?;
             attempt += 1;
@@ -1246,6 +1247,13 @@ impl Orchestrator {
                     let should_retry = attempt < max_attempts;
                     let retry_delay = resolve_llm_retry_delay(attempt, failure_kind);
                     if emit_events && should_retry {
+                        let http_status = err
+                            .chain()
+                            .find_map(|source| {
+                                source
+                                    .downcast_ref::<crate::llm::LlmHttpError>()
+                                    .map(|failure| failure.status)
+                            });
                         let mut retry_payload = json!({
                             "attempt": attempt,
                             "max_attempts": max_attempts,
@@ -1253,6 +1261,8 @@ impl Orchestrator {
                             "retry_reason": llm_retry_reason(failure_kind),
                             "stream": will_stream,
                             "will_retry": true,
+                            "model": effective_config.model.clone().unwrap_or_default(),
+                            "http_status": http_status,
                             "error": err.to_string(),
                         });
                         if let Value::Object(ref mut map) = retry_payload {
@@ -1271,24 +1281,70 @@ impl Orchestrator {
             }
         }
 
-        let detail = last_err.to_string();
+        let elapsed_ms = call_started_at.elapsed().as_millis() as u64;
+        let last_detail = last_err.to_string();
         let failure_kind = classify_llm_error(&last_err);
         let message_key = if matches!(failure_kind, LlmFailureKind::Unavailable) {
             "error.llm_unavailable"
         } else {
             "error.llm_call_failed"
         };
+        // A provider outage that survived the in-request retry budget is a
+        // different user situation from a single rejected call; say how many
+        // attempts were made so the timeline explains the wait.
+        let retry_summary = if attempt > 1 {
+            Some(i18n::t_with_params(
+                "error.llm_retry_summary",
+                &HashMap::from([
+                    ("attempts".to_string(), attempt.to_string()),
+                    (
+                        "seconds".to_string(),
+                        format!("{:.1}", elapsed_ms as f64 / 1000.0),
+                    ),
+                ]),
+            ))
+        } else {
+            None
+        };
+        let detail = match retry_summary {
+            Some(summary) => format!("{last_detail} · {summary}"),
+            None => last_detail,
+        };
         let message = i18n::t_with_params(
             message_key,
             &HashMap::from([("detail".to_string(), detail)]),
         );
+        let error_detail = json!({
+            "attempts": attempt,
+            "elapsed_ms": elapsed_ms,
+            "http_status": last_err.chain().find_map(|source| {
+                source
+                    .downcast_ref::<crate::llm::LlmHttpError>()
+                    .map(|failure| failure.status)
+            }),
+            "model": effective_config.model.clone().unwrap_or_default(),
+        });
         match failure_kind {
-            LlmFailureKind::ContextWindow => {
-                Err(OrchestratorError::context_window_exceeded(message))
-            }
-            LlmFailureKind::Unavailable => Err(OrchestratorError::llm_unavailable(message)),
-            LlmFailureKind::Permanent => Err(OrchestratorError::llm_request_rejected(message)),
-            LlmFailureKind::Other => Err(OrchestratorError::internal(message)),
+            LlmFailureKind::ContextWindow => Err(OrchestratorError::new(
+                "CONTEXT_WINDOW_EXCEEDED",
+                message,
+                Some(error_detail),
+            )),
+            LlmFailureKind::Unavailable => Err(OrchestratorError::new(
+                "LLM_UNAVAILABLE",
+                message,
+                Some(error_detail),
+            )),
+            LlmFailureKind::Permanent => Err(OrchestratorError::new(
+                "LLM_REQUEST_REJECTED",
+                message,
+                Some(error_detail),
+            )),
+            LlmFailureKind::Other => Err(OrchestratorError::new(
+                "INTERNAL_ERROR",
+                message,
+                Some(error_detail),
+            )),
         }
     }
 }

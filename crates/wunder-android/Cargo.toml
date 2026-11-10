@@ -79,6 +79,10 @@ fontique = { version = "=0.11.1", features = ["system"] }
 # The engine, SQLite and Skia are linked statically; debug symbols alone add
 # ~34 MB to the APK and are useless on a device without a symbol server.
 strip = "symbols"
+# Match 桌面版's release shape: thin LTO plus one codegen unit removes the
+# cross-CGU duplication that otherwise inflates the standalone cdylib.
+lto = "thin"
+codegen-units = 1
 
 [build-dependencies]
 slint-build = "=1.18.0"

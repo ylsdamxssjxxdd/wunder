@@ -63,12 +63,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessengerTurnRow from './MessengerTurnRow.vue';
 import { openThreadViewDetached } from '@/stores/threadViewLoader';
 import { getSessionMessages } from '@/stores/chatRuntimeState';
 import {
+  setThreadViewVisible,
   threadViewCommitted,
   threadViewError,
   threadViewPhase,
@@ -157,6 +158,11 @@ const applyModel = async (payload: Record<string, unknown>) => {
   return props.controller.applyComposerModelSelection(payload);
 };
 
+watch(() => props.sessionId, (id, previous) => {
+  if (previous) setThreadViewVisible(previous, false);
+  if (id) setThreadViewVisible(id, true);
+}, { immediate: true });
+onBeforeUnmount(() => setThreadViewVisible(props.sessionId, false));
 watch(() => props.sessionId, load, { immediate: true });
 watch(
   () => {

@@ -1,6 +1,9 @@
 import { nextTick, onBeforeUnmount, onMounted, watch } from 'vue';
 
 import { chatDebugLog } from '@/utils/chatDebug';
+import { flushBackgroundPublication } from '@/realtime/chat/chatBackgroundPublication';
+import { flushRuntimeProjectionInvalidation } from '@/realtime/chat/chatRuntimeProjectionInvalidation';
+import { flushThreadViewNotifications } from '@/realtime/chat/threadViewStore';
 
 type MessengerRealtimeRecoveryContext = {
   sessionHub: {
@@ -83,6 +86,9 @@ export const installActiveChatRealtimeRecovery = (
 
   const handleForegroundResume = () => {
     if (!isPageVisible()) return;
+    flushBackgroundPublication(ctx.chatStore);
+    flushRuntimeProjectionInvalidation();
+    flushThreadViewNotifications();
     scheduleRecovery('foreground-resume', false);
   };
 

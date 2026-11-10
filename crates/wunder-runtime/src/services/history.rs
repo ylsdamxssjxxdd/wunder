@@ -425,6 +425,11 @@ pub(crate) fn build_message_from_item(item: &Value, include_reasoning: bool) -> 
     if meta_type == "manual_compaction_command" || meta_type == "manual_compaction_marker" {
         return None;
     }
+    // 失败轮次的可见报错气泡只是 UI 回执：下一轮模型请求不应把它当成
+    // assistant 已经说过的话。失败事实由 turn_terminal / 工具历史表达。
+    if meta_type == "turn_error" {
+        return None;
+    }
     // Goal command rows are durable UI transcript entries. Reword them for the
     // model so the raw slash command is not replayed as a literal user task.
     if meta_type == "goal_command" {
@@ -1285,6 +1290,17 @@ mod tests {
             json!(format!("{summary_prefix}\nsummary two"))
         );
         assert_eq!(materialized[2]["content"], json!("future answer"));
+    }
+
+    #[test]
+    fn build_message_from_item_excludes_visible_turn_error_rows() {
+        let item = json!({
+            "role": "assistant",
+            "content": "模型不可用: LLM request failed: HTTP 550 (empty response body)",
+            "meta": { "type": "turn_error" }
+        });
+
+        assert!(build_message_from_item(&item, true).is_none());
     }
 
     #[test]

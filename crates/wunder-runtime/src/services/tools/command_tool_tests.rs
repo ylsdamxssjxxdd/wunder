@@ -543,6 +543,238 @@ async fn timeout_kills_the_whole_tree_and_returns_promptly() {
     );
 }
 
+#[tokio::test]
+#[cfg(feature = "sqlite-storage")]
+async fn foreground_timeout_escalates_to_background_and_keeps_running() {
+    if cfg!(windows) {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+        root.path()
+            .join("state.sqlite3")
+            .to_string_lossy()
+            .into_owned(),
+    ));
+    storage.ensure_initialized().unwrap();
+    let workspace = Arc::new(WorkspaceManager::new(
+        root.path().join("workspace").to_string_lossy().as_ref(),
+        storage.clone(),
+        0,
+        &HashMap::new(),
+    ));
+    let lsp_manager = LspManager::new(workspace.clone());
+    let mut config = Config::default();
+    config.server.mode = "cli".into();
+    config.security.allow_commands = vec!["*".into()];
+    let skills = SkillRegistry::default();
+    let http = reqwest::Client::new();
+    let broker = Arc::new(CommandSessionBroker::new());
+    let context = ToolContext {
+        user_id: "fixture-user",
+        session_id: "fixture-thread",
+        workspace_id: "fixture-user",
+        agent_id: None,
+        user_round: None,
+        model_round: None,
+        is_admin: true,
+        storage,
+        orchestrator: None,
+        monitor: None,
+        workspace: workspace.clone(),
+        lsp_manager,
+        config: &config,
+        skills: &skills,
+        gateway: None,
+        user_world: None,
+        cron_wake_signal: None,
+        user_tool_manager: None,
+        user_tool_bindings: None,
+        user_tool_store: None,
+        request_config_overrides: None,
+        allow_roots: None,
+        read_roots: None,
+        command_sessions: Some(broker.clone()),
+        event_emitter: None,
+        http: &http,
+    };
+    let result = execute_command(
+        &context,
+        &json!({
+            "content": "sleep 2; printf 'finished\\n' > escalated.txt",
+            "timeout_s": 1,
+            "run_in_background": false
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result["ok"], true, "{result}");
+    assert_eq!(result["state"], "running", "{result}");
+    assert_eq!(result["data"]["reason"], "timeout_escalated", "{result}");
+    assert_eq!(result["data"]["timeout_s"], 1.0, "{result}");
+    assert!(result["data"]["command_session_id"].as_str().is_some());
+    // 进程没有被杀，继续在后台跑完并落盘。
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let output = workspace
+        .workspace_root("fixture-user")
+        .join("escalated.txt");
+    while std::time::Instant::now() < deadline {
+        if output.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(std::fs::read_to_string(output).unwrap().trim(), "finished");
+    while !broker
+        .running_tasks("fixture-user", "fixture-thread")
+        .is_empty()
+        && std::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test]
+#[cfg(feature = "sqlite-storage")]
+async fn foreground_quick_command_with_broker_returns_without_waiting_for_timeout() {
+    let root = tempfile::tempdir().unwrap();
+    let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+        root.path()
+            .join("state.sqlite3")
+            .to_string_lossy()
+            .into_owned(),
+    ));
+    storage.ensure_initialized().unwrap();
+    let workspace = Arc::new(WorkspaceManager::new(
+        root.path().join("workspace").to_string_lossy().as_ref(),
+        storage.clone(),
+        0,
+        &HashMap::new(),
+    ));
+    let lsp_manager = LspManager::new(workspace.clone());
+    let mut config = Config::default();
+    config.server.mode = "cli".into();
+    config.security.allow_commands = vec!["*".into()];
+    let skills = SkillRegistry::default();
+    let http = reqwest::Client::new();
+    let broker = Arc::new(CommandSessionBroker::new());
+    let context = ToolContext {
+        user_id: "fixture-user",
+        session_id: "fixture-thread",
+        workspace_id: "fixture-user",
+        agent_id: None,
+        user_round: None,
+        model_round: None,
+        is_admin: true,
+        storage,
+        orchestrator: None,
+        monitor: None,
+        workspace,
+        lsp_manager,
+        config: &config,
+        skills: &skills,
+        gateway: None,
+        user_world: None,
+        cron_wake_signal: None,
+        user_tool_manager: None,
+        user_tool_bindings: None,
+        user_tool_store: None,
+        request_config_overrides: None,
+        allow_roots: None,
+        read_roots: None,
+        command_sessions: Some(broker),
+        event_emitter: None,
+        http: &http,
+    };
+    let started = std::time::Instant::now();
+    let result = execute_command(
+        &context,
+        &json!({"content": "printf 'quick\\n'", "timeout_s": 60, "run_in_background": false}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result["ok"], true, "{result}");
+    assert_eq!(result["state"], "completed", "{result}");
+    assert_eq!(result["data"]["results"][0]["stdout"], json!("quick\n"), "{result}");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "quick command waited for timeout: {:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
+#[cfg(feature = "sqlite-storage")]
+async fn sigpipe_exit_is_reported_as_truncated_output_not_failure() {
+    if cfg!(windows) {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+        root.path()
+            .join("state.sqlite3")
+            .to_string_lossy()
+            .into_owned(),
+    ));
+    storage.ensure_initialized().unwrap();
+    let workspace = Arc::new(WorkspaceManager::new(
+        root.path().join("workspace").to_string_lossy().as_ref(),
+        storage.clone(),
+        0,
+        &HashMap::new(),
+    ));
+    let lsp_manager = LspManager::new(workspace.clone());
+    let mut config = Config::default();
+    config.server.mode = "cli".into();
+    config.security.allow_commands = vec!["*".into()];
+    let skills = SkillRegistry::default();
+    let http = reqwest::Client::new();
+    let context = ToolContext {
+        user_id: "fixture-user",
+        session_id: "fixture-thread",
+        workspace_id: "fixture-user",
+        agent_id: None,
+        user_round: None,
+        model_round: None,
+        is_admin: true,
+        storage,
+        orchestrator: None,
+        monitor: None,
+        workspace,
+        lsp_manager,
+        config: &config,
+        skills: &skills,
+        gateway: None,
+        user_world: None,
+        cron_wake_signal: None,
+        user_tool_manager: None,
+        user_tool_bindings: None,
+        user_tool_store: None,
+        request_config_overrides: None,
+        allow_roots: None,
+        read_roots: None,
+        command_sessions: None,
+        event_emitter: None,
+        http: &http,
+    };
+    let result = execute_command(
+        &context,
+        &json!({"content": "sh -c 'kill -s PIPE $$'", "timeout_s": 30}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result["ok"], true, "{result}");
+    assert_eq!(
+        result["data"]["results"][0]["output_truncated_by_pipe"],
+        json!(true),
+        "{result}"
+    );
+    assert!(result["data"]["results"][0]["warning"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("SIGPIPE"));
+}
+
 #[test]
 fn compact_command_result_for_model_passes_stderr_warning_through() {
     let with_warning = compact_command_result_for_model(&json!({

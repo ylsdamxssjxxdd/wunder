@@ -18,6 +18,8 @@ interface RowExecutionHead { turnId: string; status: string; seq: number }
 interface Entry { key: string; phase: ViewPhase; epoch: number; seq: number; generation: number; rows: Map<string, ChatViewRow>; slots: Map<string, ViewSlot>; rowHeads: Map<string, RowExecutionHead>; order: string[]; next: number | null; more: boolean; bytes: number; error: string; atLatest: boolean; latestRound: number; latestStatus: string; headSeq: number; activeTurnId: string; statusTurnId: string; headAuthoritative: boolean; submissionHead?: { id: string; seq: number } }
 const entries = new Map<string, Entry>();
 export const threadViewClock = shallowRef(0);
+const threadViewSessionClocks = shallowRef<Record<string, number>>({});
+const visibleKeys = new Set<string>();
 const MAX_BYTES = 48 * 1024 * 1024;
 const MAX_ROWS = 100;
 let activeKey = '';
@@ -28,11 +30,50 @@ function entry(key: string): Entry {
   return e;
 }
 let tailTimer:ReturnType<typeof setTimeout>|null=null;
-function notify() { threadViewClock.value++; }
-function notifyTail(){if(tailTimer===null)tailTimer=setTimeout(()=>{tailTimer=null;notify();},16);}
-export function beginThreadView(key: string): number { activeKey = key; const e = entry(key); e.phase = e.rows.size ? 'refreshing' : 'opening'; e.error = ''; e.generation = ++nextGeneration; notify(); return e.generation; }
+const tailKeys = new Set<string>();
+function notify(key = '') {
+  if (key) {
+    threadViewSessionClocks.value = {
+      ...threadViewSessionClocks.value,
+      [key]: Number(threadViewSessionClocks.value[key] || 0) + 1
+    };
+  }
+  if (!key || key === activeKey) threadViewClock.value++;
+}
+function flushTailKeys() {
+  if (tailTimer !== null) clearTimeout(tailTimer);
+  tailTimer = null;
+  const keys = [...tailKeys];
+  tailKeys.clear();
+  keys.forEach(notify);
+}
+function notifyTail(key: string) {
+  tailKeys.add(key);
+  if(tailTimer===null)tailTimer=setTimeout(flushTailKeys,16);
+}
+export function flushThreadViewNotifications() { flushTailKeys(); }
+export function setThreadViewVisible(key: string, visible: boolean) {
+  if (!key) return;
+  if (visible) visibleKeys.add(key);
+  else visibleKeys.delete(key);
+}
+export function isThreadViewVisible(key: string): boolean { return visibleKeys.has(key); }
+function readThreadViewClock(key: string) {
+  void threadViewSessionClocks.value[key];
+  if (key === activeKey) void threadViewClock.value;
+}
+export function threadViewSessionVersion(key: string): number {
+  return Number(threadViewSessionClocks.value[key] || 0);
+}
+function dropSessionClock(key: string) {
+  if (!(key in threadViewSessionClocks.value)) return;
+  const next = { ...threadViewSessionClocks.value };
+  delete next[key];
+  threadViewSessionClocks.value = next;
+}
+export function beginThreadView(key: string, activate = true): number { if (activate) activeKey = key; const e = entry(key); e.phase = e.rows.size ? 'refreshing' : 'opening'; e.error = ''; e.generation = ++nextGeneration; notify(key); return e.generation; }
 export function threadViewGeneration(key: string): number { return entry(key).generation; }
-export function threadViewPhase(key: string): ViewPhase | undefined { void threadViewClock.value; return entries.get(key)?.phase; }
+export function threadViewPhase(key: string): ViewPhase | undefined { readThreadViewClock(key); return entries.get(key)?.phase; }
 export function threadViewCursor(key: string): number { const e=entries.get(key);return e?.epoch===-1 ? -((e.seq??0)+1) : e?.seq??0; }
 export function threadViewHistory(key: string) { const e = entry(key); return { before: e.next, hasMore: e.more }; }
 /**
@@ -48,7 +89,7 @@ export function threadViewWindow(key: string) {
     hasNewer: !e.atLatest,
   };
 }
-export function pauseThreadViewHistory(key: string) { const e = entry(key); e.more = false; notify(); }
+export function pauseThreadViewHistory(key: string) { const e = entry(key); e.more = false; notify(e.key); }
 /** Row status is server vocabulary; message bubbles and audit hooks speak the UI one. */
 export const uiMessageStatus = (status: string) =>
   status === 'completed' ? 'final' : status === 'rejected' ? 'failed' : status;
@@ -208,13 +249,13 @@ export function applyBodyHydration(key: string, id: string, role: BodyRole, expe
     const live = reconcileThreadStream({ content: retained.length > content.length ? retained : content }, message);
     row[role] = { ...message, ...live };
     e.slots.set(id, materialize(row));
-    notify();
+    notify(e.key);
     return;
   }
   row[role] = { ...clearLiveStream(message), content, content_offset: units, tail: '', tail_offset: units,
     hydrated_content: content, hydrated_body: bodyToken(message) };
   e.slots.set(id, materialize(row));
-  notify();
+  notify(e.key);
 }
 /**
  * The durable row keeps a 2 KB head plus a 2 KB tail window, so the middle of a
@@ -344,14 +385,14 @@ function bound(e: Entry, historical = false) {
   if ((evictsOlder || e.next === null) && e.order.length) e.next = e.rows.get(e.order[0])!.user_round;
   e.bytes = e.order.reduce((n,id) => { const r=e.rows.get(id)!; return n+2*(r.user.content.length+r.assistant.content.length+(r.assistant.reasoning?.length??0)+(r.assistant.tail?.length??0))+4096+(r.process_items?.length??0)*32768; }, 0);
   let total = [...entries.values()].reduce((n,v)=>n+v.bytes,0);
-  for (const [key,v] of entries) { if (total <= MAX_BYTES && entries.size <= 32) break; if (key === activeKey) continue; entries.delete(key);total-=v.bytes; }
+  for (const [key,v] of entries) { if (total <= MAX_BYTES && entries.size <= 32) break; if (key === activeKey || visibleKeys.has(key)) continue; entries.delete(key);dropSessionClock(key);total-=v.bytes; }
 }
 function validRows(rows: unknown): rows is ChatViewRow[] {
   return Array.isArray(rows) && rows.length <= 100 && rows.every(r => r && typeof r.root_turn_id === 'string' && r.root_turn_id.length <= 512 &&
     Number.isSafeInteger(r.user_round) && Number.isSafeInteger(r.revision) && typeof r.status === 'string' &&
     ['user','assistant'].every(k => r[k] && typeof r[k].content === 'string' && r[k].content.length <= 8192 && typeof r[k].item_id === 'string'));
 }
-export function threadViewAtLatest(key:string):boolean {void threadViewClock.value;return entries.get(key)?.atLatest ?? true;}
+export function threadViewAtLatest(key:string):boolean {readThreadViewClock(key);return entries.get(key)?.atLatest ?? true;}
 export function threadViewHasNewerPage(key: string, page: ThreadViewPage, generation: number): boolean {
   const e = entries.get(key);
   return Boolean(e && e.generation === generation && ['ready', 'verified_empty'].includes(e.phase) &&
@@ -399,7 +440,7 @@ const optimisticSubmissionOwnsExecutionHead = (e: Entry): boolean => {
 };
 
 export function threadViewActiveTurnId(key:string):string {
-  void threadViewClock.value;
+  readThreadViewClock(key);
   const e=entries.get(key);
   if (!e) return '';
   if (optimisticSubmissionOwnsExecutionHead(e)) {
@@ -407,7 +448,7 @@ export function threadViewActiveTurnId(key:string):string {
   }
   return e.activeTurnId || '';
 }
-export function threadViewOwnsExecution(key:string):boolean {void threadViewClock.value;return entries.get(key)?.headAuthoritative ?? false;}
+export function threadViewOwnsExecution(key:string):boolean {readThreadViewClock(key);return entries.get(key)?.headAuthoritative ?? false;}
 export function threadViewConfirmsCompletion(key:string,turnId:string,status:string):boolean {
   const e=entries.get(key);
   if(!e?.headAuthoritative)return true;
@@ -416,7 +457,7 @@ export function threadViewConfirmsCompletion(key:string,turnId:string,status:str
 }
 /** Admission guards compare execution watermarks, never transcript cursors. */
 export function threadViewHeadVersion(key:string):string {
-  void threadViewClock.value;
+  readThreadViewClock(key);
   const e=entries.get(key);
   return e?.headAuthoritative ? `${e.epoch}:${e.headSeq}` : '';
 }
@@ -430,7 +471,7 @@ export function applyThreadViewHead(key:string, head:any):boolean {
   if(head.view_seq===e.headSeq && (head.runtime_status===e.latestStatus ||
       (turnId===e.statusTurnId && TERMINAL_ROW_STATUSES.includes(e.latestStatus))))return false;
   applyExecutionHead(e,head,[]);
-  notify();return true;
+  notify(e.key);return true;
 }
 
 export function commitThreadView(key: string, page: ThreadViewPage, generation?: number, historical = false, recovery=false, forward=false): boolean {
@@ -447,10 +488,10 @@ export function commitThreadView(key: string, page: ThreadViewPage, generation?:
   if (page.degraded || page.projection_state === 'degraded') {
     e.error = page.diagnostic === 'view_timeout' ? '线程内容正在整理，已保留当前可见记录' : '线程展示暂时降级';
     e.phase = e.rows.size ? 'ready' : 'opening';
-    notify();
+    notify(e.key);
     return true;
   }
-  if (!['ready','source'].includes(page.projection_state)) { e.error = '线程展示暂时不可用，请重试'; e.phase = e.rows.size ? 'ready' : 'error'; notify(); return false; }
+  if (!['ready','source'].includes(page.projection_state)) { e.error = '线程展示暂时不可用，请重试'; e.phase = e.rows.size ? 'ready' : 'error'; notify(e.key); return false; }
   // Candidate validation precedes every mutation; failures retain committed rows.
   if (!historical && !forward && !(recovery && !e.atLatest && e.epoch===page.epoch)) {
     // Commit a complete tail window atomically. Optimistic requests survive refresh.
@@ -467,7 +508,7 @@ export function commitThreadView(key: string, page: ThreadViewPage, generation?:
   if (forward) e.atLatest = !page.has_newer;
   else if(!recovery||e.atLatest){e.next=page.next_before;e.more=page.has_more;}
   e.phase=page.thread_empty === true && !e.rows.size ? 'verified_empty' : 'ready';
-  bound(e,historical);notify();return true;
+  bound(e,historical);notify(e.key);return true;
 }
 function dropViewRow(e: Entry, id: string): void {
   if (!e.rows.delete(id)) return;
@@ -487,11 +528,11 @@ export function applyThreadViewChanges(key: string, payload: { runtime_status?:s
   applyExecutionHead(e, payload, payload.rows);
   if (!e.epoch && payload.epoch !== undefined) e.epoch=payload.epoch;
   reconcileChatQueueRows(key, payload.rows, payload.epoch);
-  e.seq=Math.max(e.seq,payload.view_seq);if(e.rows.size)e.phase='ready';bound(e);notify();return true;
+  e.seq=Math.max(e.seq,payload.view_seq);if(e.rows.size)e.phase='ready';bound(e);notify(e.key);return true;
 }
-export function failThreadView(key: string, generation: number, error: unknown) { const e=entry(key);if(e.generation!==generation)return;e.error=String(error);e.phase=e.rows.size?'ready':'error';notify(); }
-export function threadViewError(key:string):string {void threadViewClock.value;return entries.get(key)?.error ?? '';}
-export function threadViewSlots(key:string):ViewSlot[] | null {void threadViewClock.value;const e=entries.get(key);return e ? e.order.map(id=>e.slots.get(id)!).filter(Boolean) : null;}
+export function failThreadView(key: string, generation: number, error: unknown) { const e=entry(key);if(e.generation!==generation)return;e.error=String(error);e.phase=e.rows.size?'ready':'error';notify(e.key); }
+export function threadViewError(key:string):string {readThreadViewClock(key);return entries.get(key)?.error ?? '';}
+export function threadViewSlots(key:string):ViewSlot[] | null {readThreadViewClock(key);const e=entries.get(key);return e ? e.order.map(id=>e.slots.get(id)!).filter(Boolean) : null;}
 /**
  * True once the display window is the authoritative render source.
  *
@@ -505,14 +546,14 @@ export function threadViewSlots(key:string):ViewSlot[] | null {void threadViewCl
  * that heals a dropped tail never reached the state, and the page went blank.
  */
 export function threadViewCommitted(key:string):boolean {
-  void threadViewClock.value;
+  readThreadViewClock(key);
   const e=entries.get(key);
   return Boolean(e && (e.order.length > 0 || e.phase === 'ready' || e.phase === 'verified_empty'));
 }
 export function submitThreadView(key:string,client:string,content:string) { const e=entry(key);const id=`pending:${client}`;if(e.rows.has(id))return;
   const queued = ['accepted','running','queued','waiting_input','waiting_approval'].includes(threadViewStatus(key) || '');
   if (!queued) e.submissionHead = { id, seq: e.headSeq };
-  merge(e,{root_turn_id:id,user_round:Math.max(e.latestRound,...[...e.rows.values()].map(r=>r.user_round))+1,client_message_id:client,revision:-1,status:queued?'queued':'accepted',user:{item_id:'',content},assistant:{item_id:'',content:''},workflow_count:0,failed_count:0});e.phase='ready';bound(e);notify(); }
+  merge(e,{root_turn_id:id,user_round:Math.max(e.latestRound,...[...e.rows.values()].map(r=>r.user_round))+1,client_message_id:client,revision:-1,status:queued?'queued':'accepted',user:{item_id:'',content},assistant:{item_id:'',content:''},workflow_count:0,failed_count:0});e.phase='ready';bound(e);notify(e.key); }
 /** Bind the optimistic user turn before the first item tail.  The websocket
  * acknowledgement normally arrives ahead of the display projection; without
  * this small identity hand-off a `turn:text-N` tail cannot find the pending
@@ -547,13 +588,13 @@ export function bindThreadViewStreamStarted(key: string, data: { turn_id?: unkno
   e.slots.set(turnId, materialize(bound));
   e.order = e.order.map((id) => id === oldId ? turnId : id);
   if (e.submissionHead?.id === oldId) e.submissionHead = { ...e.submissionHead, id: turnId };
-  notify();
+  notify(e.key);
   return true;
 }
-export function resetThreadViews(){entries.clear();resetThreadBodyHydration();notify();}
-export function clearThreadView(key:string) {entries.delete(key);cancelThreadBodyHydration(key);notify();}
+export function resetThreadViews(){entries.clear();resetThreadBodyHydration();threadViewSessionClocks.value={};tailKeys.clear();notify();}
+export function clearThreadView(key:string) {entries.delete(key);cancelThreadBodyHydration(key);notify(key);dropSessionClock(key);}
 export function threadViewStatus(key:string):string|null {
-  void threadViewClock.value;const e=entries.get(key);if(!e)return null;
+  readThreadViewClock(key);const e=entries.get(key);if(!e)return null;
   // A fresh submission bridges its previously observed head only. Later
   // server heads stay authoritative even if a local pending row remains.
   if (e.headAuthoritative) return optimisticSubmissionOwnsExecutionHead(e) ? 'running' : e.latestStatus;
@@ -565,9 +606,9 @@ export function threadViewStatus(key:string):string|null {
 }
 export function settlePendingThreadView(key:string,client:string,status:string,detail='') {
   const e=entries.get(key);const id=`pending:${client}`;const r=e?.rows.get(id);if(!e||!r)return;
-  r.status=status;r.assistant={...r.assistant,content:detail};e.slots.set(id,materialize(r));notify();
+  r.status=status;r.assistant={...r.assistant,content:detail};e.slots.set(id,materialize(r));notify(e.key);
 }
-export function removePendingThreadView(key:string,client:string) {const e=entries.get(key);if(!e)return;const id=`pending:${client}`;e.rows.delete(id);e.slots.delete(id);e.order=e.order.filter(v=>v!==id);notify();}
+export function removePendingThreadView(key:string,client:string) {const e=entries.get(key);if(!e)return;const id=`pending:${client}`;e.rows.delete(id);e.slots.delete(id);e.order=e.order.filter(v=>v!==id);notify(e.key);}
 /** Remove a locally parked turn after a confirmed queue withdrawal.  A client
  * message id is not itself permission to remove a durable conversation turn:
  * a queue start may win the cancel race and bind that same id to real output.
@@ -602,7 +643,7 @@ export function removeThreadViewTurnForQueueItem(key:string, identities:{clientM
     const row = e.rows.get(id);
     return n + (row ? 2 * (row.user.content.length + row.assistant.content.length + (row.assistant.reasoning?.length ?? 0) + (row.assistant.tail?.length ?? 0)) + 4096 : 0);
   }, 0);
-  notify();
+  notify(e.key);
 }
 function advanceTailActivity(row: ChatViewRow, kind: 'thinking' | 'responding'): void {
   const current = row.process_activity;
@@ -705,7 +746,7 @@ export function applyThreadViewProcessItem(key: string, payload: any): boolean {
   }
   current.slots.set(row.root_turn_id, materialize(row));
   bound(current);
-  notifyTail();
+  notifyTail(current.key);
   return true;
 }
 
@@ -768,7 +809,7 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
       if (row.process_count != null && previousReasoningId !== id) row.process_count += 1;
       row.reasoning_count = Math.max(1, Number(row.reasoning_count || 0));
       e.slots.set(row.root_turn_id, materialize(row));
-      notifyTail();return true;
+      notifyTail(e.key);return true;
     }
     const offset=Number(p.content_offset??p.offset);
     const base=Number(p.base_seq??0);
@@ -794,7 +835,7 @@ export function applyThreadViewTail(key:string,payload:any):boolean {
       ...live,
       tail_offset: expected + deltaUnits,
       body:row.assistant.body?{...row.assistant.body,bytes:row.assistant.body.bytes+encoder.encode(delta).length}:undefined};
-    e.slots.set(row.root_turn_id,materialize(row));notifyTail();return true;
+    e.slots.set(row.root_turn_id,materialize(row));notifyTail(e.key);return true;
   }
   return true;
 }

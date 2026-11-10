@@ -287,7 +287,13 @@ PY
 
 echo "==> pack $(wc -l < "$WORK/files.txt") entries"
 mkdir -p "$(dirname "$OUT")"
-XZ_OPT="-T0 -6" tar -C "$WORK/work" --numeric-owner --no-recursion \
+# The browser pack is the largest APK input; 9e and the ABI branch filter cut
+# roughly a tenth off the old -6 archive without changing extracted content.
+case "$ABI" in
+    arm64) XZ_FILTER="--arm64" ;;
+    x86_64) XZ_FILTER="--x86" ;;
+esac
+XZ_OPT="-T0 $XZ_FILTER -9e" tar -C "$WORK/work" --numeric-owner --no-recursion \
     -T "$WORK/files.txt" -J -cf "$OUT"
 chmod 644 "$OUT"
 echo "pack: $OUT"

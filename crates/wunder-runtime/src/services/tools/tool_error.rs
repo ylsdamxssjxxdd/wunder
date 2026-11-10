@@ -219,7 +219,19 @@ fn compact_command_diagnostic(row: &Value) -> Option<Value> {
 
 pub(crate) fn build_execute_command_failure_message(results: &[Value], timed_out: bool) -> String {
     if timed_out {
-        return "命令执行超时。".to_string();
+        let mut message = String::from("命令执行超时。");
+        if let Some(last) = results.last().and_then(|row| {
+            row.get("stderr")
+                .and_then(Value::as_str)
+                .map(strip_runtime_timeout_note)
+                .and_then(|text| last_meaningful_line(Some(&text)))
+                .or_else(|| last_meaningful_line(row.get("stdout").and_then(Value::as_str)))
+        }) {
+            message.push_str("最后一行输出：");
+            message.push_str(&last);
+            message.push('。');
+        }
+        return message;
     }
     let Some(last) = results.last() else {
         return "命令执行失败。".to_string();
@@ -262,10 +274,30 @@ pub(crate) fn build_execute_command_failure_message(results: &[Value], timed_out
             message.push_str(" 行省略）。");
         }
     }
+    // 模型侧只消费这条摘要，看不到失败 data 里的完整 stderr；把最后一行带出来，
+    // 参数错误、路径不存在这类问题才不用靠盲猜和重试。
+    if let Some(last) = last_meaningful_line(stderr_raw).or_else(|| last_meaningful_line(stdout_raw)) {
+        message.push_str("最后一行输出：");
+        message.push_str(&last);
+        message.push('。');
+    }
     if let Some(note) = broken_pipe_note(stderr_raw, Some(returncode)) {
         message.push_str(note);
     }
     message
+}
+
+fn last_meaningful_line(text: Option<&str>) -> Option<String> {
+    let line = text?
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?;
+    let mut truncated = line.chars().take(240).collect::<String>();
+    if line.chars().count() > 240 {
+        truncated.push('…');
+    }
+    Some(truncated)
 }
 
 /// 失败命令摘要保留的行数：头尾各留几行。
@@ -523,6 +555,22 @@ mod tests {
     }
 
     #[test]
+    fn timeout_message_keeps_last_partial_output_line() {
+        let message = build_execute_command_failure_message(
+            &[json!({
+                "command": "long-task",
+                "returncode": -1,
+                "stdout": "step 1 done\n",
+                "stderr": "warning: slow\ntimeout after 2s"
+            })],
+            true,
+        );
+        assert!(message.contains("命令执行超时"), "{message}");
+        assert!(message.contains("warning: slow"), "{message}");
+        assert!(!message.contains("timeout after 2s"), "{message}");
+    }
+
+    #[test]
     fn broken_pipe_is_called_out_instead_of_looking_like_a_failure() {
         let message = build_execute_command_failure_message(
             &[json!({
@@ -547,7 +595,7 @@ mod tests {
             })],
             false,
         );
-        assert_eq!(message, "命令退出码 2。");
+        assert_eq!(message, "命令退出码 2。最后一行输出：boom。");
     }
 
     #[test]

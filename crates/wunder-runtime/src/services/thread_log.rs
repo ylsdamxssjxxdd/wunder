@@ -295,6 +295,13 @@ pub fn event_item(session_id: &str, event_type: &str, data: &Value) -> Option<Va
                 _ => "running",
             },
         ),
+        // 上下文在两次模型请求之间意外缩水（服务端截断或用量口径变化）。
+        // 落成轨迹里的上下文记录，便于事后解释模型遗忘。
+        "context_shrink" => (
+            "context_guard",
+            format!("context-shrink-{model}"),
+            "completed",
+        ),
         // 成功终止只是生命周期回执（stop_reason=「model_response」之类对时间线
         // 没有信息量，轮次边界已由台账分组表达，对齐 dsh 无终止记录的做法）；
         // 只有失败终止携带错误详情，聊天视图也依赖它渲染失败原因。
@@ -426,6 +433,7 @@ fn derive_context_text(event_type: &str, data: &Value) -> Option<String> {
         }
         "subagent_message" => pick(&["message", "summary", "content"]),
         "compaction" => pick(&["summary", "reason", "status"]),
+        "context_shrink" => pick(&["summary"]),
         _ => None,
     }
 }
@@ -556,6 +564,27 @@ mod tests {
         assert_eq!(item["status"], "completed");
         assert_eq!(item["item_id"], "turn:question-panel-2");
         assert_eq!(item["questions"][0]["options"][0]["label"], "A");
+    }
+
+    #[test]
+    fn context_shrink_event_becomes_a_durable_context_item() {
+        let item = event_item(
+            "thread-a",
+            "context_shrink",
+            &json!({
+                "turn_id": "turn-a",
+                "model_round": 41,
+                "summary": "请求上下文从 226130 降到 190525 tokens（-35605）"
+            }),
+        )
+        .expect("context shrink becomes a durable item");
+        assert_eq!(item["kind"], "context_guard");
+        assert_eq!(item["status"], "completed");
+        assert_eq!(item["item_id"], "turn-a:context-shrink-41");
+        assert_eq!(
+            item["content"],
+            json!("请求上下文从 226130 降到 190525 tokens（-35605）")
+        );
     }
 
     #[test]

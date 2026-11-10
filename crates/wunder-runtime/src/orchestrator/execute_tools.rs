@@ -103,7 +103,7 @@ impl Orchestrator {
                 "assistant",
                 Some(&json!(err.message())),
                 None,
-                None,
+                Some(&json!({ "type": "turn_error" })),
                 None,
                 None,
                 None,

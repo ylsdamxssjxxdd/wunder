@@ -3,6 +3,10 @@
   python audio.py <工程目录>                       # 读 audio/events.json → audio/score.wav → renders/final.mp4
   python audio.py <工程目录> --bgm 曲子.mp3 [-8]   # 用现成配乐垫底（默认 -8 dB），事件音照样叠上去
   python audio.py <工程目录> --wav-only            # 只出 wav，不合成
+  python audio.py <工程目录> --refresh-events      # film.js 改过后先自动重导 events.json，再合成
+
+audio.py 会核对 events.json 里的源码指纹与当前 film.js/layout 等文件：
+不一致就拒绝合成，避免改了台词忘导事件表导致音画错位（--refresh-events 可自动重导）。
 
 事件表由 render.py --events 导出：film.js 里每个 fr.sfx(时刻, 名字, 参数) 就是一条。
 声音的写法学自参考片（C 家族）：
@@ -124,10 +128,44 @@ def write_wav(path, x):
     x = np.clip(x, -1, 1); pcm = (x * 32767).astype("<i2")
     with wave.open(str(path), "wb") as w: w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR); w.writeframes(pcm.tobytes())
 
+def check_events_source(proj, a):
+    """events.json 必须和当前工程源码一致，否则音效会落在旧台词的位置上。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from render import project_hash
+    path = proj / "audio/events.json"
+    spec = json.load(open(path, encoding="utf-8"))
+    current = project_hash(proj)
+    recorded = spec.get("source_hash")
+    if recorded and recorded != current:
+        if "--refresh-events" not in a:
+            sys.exit("音效事件表与当前工程不一致（film.js / layout 等已改动）。\n"
+                     f"  先运行：python engine/render.py \"{proj}\" --events\n"
+                     "  或直接加 --refresh-events 让 audio.py 自动重导。")
+        try:
+            subprocess.run([sys.executable, str(Path(__file__).resolve().with_name("render.py")), str(proj), "--events"], check=True)
+        except subprocess.CalledProcessError as error:
+            sys.exit(f"重导事件表失败（退出码 {error.returncode}）；先单独运行 render.py --events 看报错。")
+        spec = json.load(open(path, encoding="utf-8"))
+        recorded = spec.get("source_hash")
+    if not recorded:
+        print("提示：events.json 没有源码指纹（旧版格式）；建议重跑 render.py --events。", file=sys.stderr)
+    end = float(spec.get("end") or 0)
+    known = {"tick", "soft", "chord", "bloom", "rise", "thud", "tock", "stamp", "shimmer", "hush"}
+    for event in spec.get("events") or []:
+        if not isinstance(event, (list, tuple)) or len(event) < 2:
+            continue
+        when, name = event[0], event[1]
+        if name not in known:
+            sys.exit(f"events.json 里有未知音效 {name!r} @ {when}s；检查 film.js 的 fr.sfx 名字。")
+        if not isinstance(when, (int, float)) or when < 0 or when > end + .001:
+            sys.exit(f"音效 {name} @ {when}s 超出 0–{end}s；检查 film.js 的时刻。")
+    return spec
+
 if __name__ == "__main__":
     a = sys.argv[1:]
     if not a: sys.exit(__doc__)
-    proj = Path(a[0]).resolve(); spec = json.load(open(proj / "audio/events.json", encoding="utf-8"))
+    proj = Path(a[0]).resolve()
+    spec = check_events_source(proj, a)
     bgm = a[a.index("--bgm") + 1] if "--bgm" in a else None
     bgm_db = float(a[a.index("--bgm") + 2]) if bgm and len(a) > a.index("--bgm") + 2 and a[a.index("--bgm") + 2].lstrip("-").replace(".", "").isdigit() else -8
     x = synth(spec, bgm=bool(bgm)); pk = np.abs(x).max() or 1; x = x / pk * 10 ** (-3 / 20)

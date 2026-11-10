@@ -66,7 +66,22 @@ const fontOf = (key, size) => { const f = FONTS[key] || FONTS.serif; return `${f
 
 /* ---------- 一帧 ---------- */
 class Frame {
-  constructor(film) { this.film = film; this.c = film.L; this.x = film.L.getContext('2d'); this.w = W; this.h = H; this.t = 0; }
+  constructor(film) { this.film = film; this.c = film.L; this.x = film.L.getContext('2d'); this.w = W; this.h = H; this.t = 0; this.rec = null; this.markName = ''; }
+
+  /* 包围盒记录：只在 render.py --check-safe / --overlap / --mark 时打开。
+   * 画的时候顺手把可见图元折算回画布坐标，正常渲染没有额外开销。 */
+  _rec(x0, y0, x1, y1, kind) {
+    if (!this.rec || this.x.globalAlpha <= .03) return;
+    const m = this.x.getTransform();
+    let ax = Infinity, ay = Infinity, bx = -Infinity, by = -Infinity;
+    for (const [px, py] of [[x0, y0], [x1, y0], [x0, y1], [x1, y1]]) {
+      const qx = m.a * px + m.c * py + m.e, qy = m.b * px + m.d * py + m.f;
+      ax = Math.min(ax, qx); ay = Math.min(ay, qy); bx = Math.max(bx, qx); by = Math.max(by, qy);
+    }
+    this.rec.push({ name: this.markName || '', kind, box: [Math.round(ax), Math.round(ay), Math.round(bx), Math.round(by)] });
+  }
+  /* 给一组图元起名字：fr.mark('船', () => { ... })；名字会出现在检查报告里 */
+  mark(name, fn) { const prev = this.markName; this.markName = name || ''; try { fn(); } finally { this.markName = prev; } }
 
   /* 在一个变换/透明度/混合/模糊的包裹里画一组东西 */
   g(o, fn) {
@@ -79,7 +94,11 @@ class Frame {
     if (o.s != null) { const s = Array.isArray(o.s) ? o.s : [o.s, o.s]; x.scale(s[0], s[1]); }
     if (o.blur) x.filter = `blur(${o.blur}px)`;
     if (o.clip) { x.beginPath(); x.rect(...o.clip); x.clip(); }
-    fn(); x.restore();
+    const prevMark = this.markName;
+    if (o.mark) this.markName = o.mark;
+    fn();
+    this.markName = prevMark;
+    x.restore();
   }
   /* 先画到一张临时画布，再整体合成：一组东西一起淡入、一起虚、一起缩放时用 */
   layer(o, fn) {
@@ -122,7 +141,7 @@ class Frame {
   _stroke(o) { const x = this.x; x.lineWidth = o.w == null ? 2 : o.w; x.strokeStyle = rgba(o.color || '#fff', o.a == null ? 1 : o.a); x.lineCap = o.cap || 'round'; x.lineJoin = 'round'; x.setLineDash(o.dash || []); if (o.dashOff) x.lineDashOffset = o.dashOff; if (o.glow) { x.shadowColor = rgba(o.glowColor || o.color || '#fff', o.glowA == null ? .9 : o.glowA); x.shadowBlur = o.glow; } x.stroke(); }
   _fill(o) { const x = this.x; x.fillStyle = typeof o.fill === 'string' ? rgba(o.fill, o.fa == null ? (o.a == null ? 1 : o.a) : o.fa) : o.fill; if (o.glow && !o.stroke) { x.shadowColor = rgba(o.glowColor || o.fill, .9); x.shadowBlur = o.glow; } x.fill(); }
   _paint(o) { const x = this.x; if (o.fill) { x.save(); this._fill(o); x.restore(); } if (o.color || o.stroke) { x.save(); this._stroke(Object.assign({}, o, { color: o.color || o.stroke })); x.restore(); } }
-  line(x1, y1, x2, y2, o = {}) { const x = this.x; x.save(); if (o.add) x.globalCompositeOperation = 'lighter'; x.beginPath(); x.moveTo(x1, y1); x.lineTo(x2, y2); this._stroke(o); x.restore(); }
+  line(x1, y1, x2, y2, o = {}) { const x = this.x; x.save(); if (o.add) x.globalCompositeOperation = 'lighter'; x.beginPath(); x.moveTo(x1, y1); x.lineTo(x2, y2); this._stroke(o); x.restore(); if (o.a == null || o.a > .05) { const hw = (o.w == null ? 2 : o.w) / 2; this._rec(Math.min(x1, x2) - hw, Math.min(y1, y2) - hw, Math.max(x1, x2) + hw, Math.max(y1, y2) + hw, 'line'); } }
   /* pts: [[x,y],...]；o.k 只画前 k（0..1）这么长 —— 线条"长出来"就靠它 */
   poly(pts, o = {}) {
     if (pts.length < 2) return; const x = this.x; x.save(); if (o.add) x.globalCompositeOperation = 'lighter';
@@ -133,15 +152,21 @@ class Frame {
       if (i < n - 1) x.lineTo(lerp(pts[i][0], pts[i + 1][0], r), lerp(pts[i][1], pts[i + 1][1], r));
     } else { for (let j = 1; j < n; j++) x.lineTo(pts[j][0], pts[j][1]); if (o.close) x.closePath(); }
     this._paint(o); x.restore();
+    if (o.a == null || o.a > .05) {
+      let ax = Infinity, ay = Infinity, bx = -Infinity, by = -Infinity;
+      for (const p of pts) { ax = Math.min(ax, p[0]); ay = Math.min(ay, p[1]); bx = Math.max(bx, p[0]); by = Math.max(by, p[1]); }
+      const hw = (o.w == null ? 2 : o.w) / 2;
+      this._rec(ax - hw, ay - hw, bx + hw, by + hw, 'poly');
+    }
   }
   /* 沿 poly 走到 k 处的坐标与切向 —— 给线头安一个光点用 */
   along(pts, k) { const f = clamp(k) * (pts.length - 1), i = Math.min(pts.length - 2, Math.floor(f)), r = f - i; return [lerp(pts[i][0], pts[i + 1][0], r), lerp(pts[i][1], pts[i + 1][1], r), Math.atan2(pts[i + 1][1] - pts[i][1], pts[i + 1][0] - pts[i][0])]; }
   /* SVG 路径字符串 */
   path(d, o = {}) { const x = this.x; x.save(); if (o.add) x.globalCompositeOperation = 'lighter'; if (o.at) x.translate(o.at[0], o.at[1]); if (o.rot) x.rotate(o.rot); if (o.s != null) x.scale(o.s, o.s); const p = new Path2D(d); if (o.fill) { x.fillStyle = typeof o.fill === 'string' ? rgba(o.fill, o.a == null ? 1 : o.a) : o.fill; x.fill(p); } if (o.color) { x.lineWidth = o.w == null ? 2 : o.w; x.strokeStyle = rgba(o.color, o.a == null ? 1 : o.a); x.lineJoin = 'round'; x.lineCap = 'round'; if (o.glow) { x.shadowColor = rgba(o.color, .9); x.shadowBlur = o.glow; } x.stroke(p); } x.restore(); }
   circle(cx, cy, r, o = {}) { this.ellipse(cx, cy, r, r, o); }
-  ellipse(cx, cy, rx, ry, o = {}) { if (rx <= 0 || ry <= 0) return; const x = this.x; x.save(); if (o.add) x.globalCompositeOperation = 'lighter'; x.beginPath(); x.ellipse(cx, cy, rx, ry, o.rot || 0, o.a0 == null ? 0 : o.a0, o.a1 == null ? Math.PI * 2 : o.a1); this._paint(o); x.restore(); }
+  ellipse(cx, cy, rx, ry, o = {}) { if (rx <= 0 || ry <= 0) return; const x = this.x; x.save(); if (o.add) x.globalCompositeOperation = 'lighter'; x.beginPath(); x.ellipse(cx, cy, rx, ry, o.rot || 0, o.a0 == null ? 0 : o.a0, o.a1 == null ? Math.PI * 2 : o.a1); this._paint(o); x.restore(); if (o.a == null || o.a > .05) { const r = Math.max(rx, ry) * (o.rot ? 1.42 : 1); this._rec(cx - r, cy - r, cx + r, cy + r, 'ellipse'); } }
   arc(cx, cy, r, a0, a1, o = {}) { this.ellipse(cx, cy, r, r, Object.assign({}, o, { a0, a1 })); }
-  rect(px, py, w, h, o = {}) { const x = this.x; x.save(); if (o.add) x.globalCompositeOperation = 'lighter'; x.beginPath(); if (o.r) x.roundRect(px, py, w, h, o.r); else x.rect(px, py, w, h); this._paint(o); x.restore(); }
+  rect(px, py, w, h, o = {}) { const x = this.x; x.save(); if (o.add) x.globalCompositeOperation = 'lighter'; x.beginPath(); if (o.r) x.roundRect(px, py, w, h, o.r); else x.rect(px, py, w, h); this._paint(o); x.restore(); if (o.a == null || o.a > .05) this._rec(px, py, px + w, py + h, 'rect'); }
   grad(x0, y0, x1, y1, stops) { const g = this.x.createLinearGradient(x0, y0, x1, y1); stops.forEach(([k, c, a]) => g.addColorStop(k, rgba(c, a == null ? 1 : a))); return g; }
   rgrad(cx, cy, r0, r1, stops) { const g = this.x.createRadialGradient(cx, cy, r0, cx, cy, r1); stops.forEach(([k, c, a]) => g.addColorStop(k, rgba(c, a == null ? 1 : a))); return g; }
 
@@ -161,7 +186,9 @@ class Frame {
     x.fillStyle = o.grad ? this.grad(0, py - s * .52, 0, py + s * .52, o.grad) : rgba(o.color || '#fff', 1);
     x.fillText(str, lx, py);
     if (o.stroke) { x.shadowBlur = 0; x.lineWidth = o.strokeW || 1; x.strokeStyle = rgba(o.stroke, 1); x.strokeText(str, lx, py); }
-    x.restore(); return w;
+    x.restore();
+    this._rec(lx, py - s * .58, lx + w, py + s * .5, 'text');
+    return w;
   }
   /* 逐字排布：返回每个字的中心 x 与宽，供逐字显影 / 打字 / 高亮用 */
   layout(str, px, o = {}) {
@@ -175,8 +202,10 @@ class Frame {
   /* 逐字画：per(i, 字) 返回 {a, blur, dy, color, glow, s}；不返回就按 o 画 */
   chars(str, px, py, o, per) {
     const lay = this.layout(str, px, o), x = this.x;
+    let visible = false;
     lay.forEach(c => {
       const p = (per && per(c.i, c)) || {}; const a = (p.a == null ? 1 : p.a) * (o.a == null ? 1 : o.a); if (a <= 0.003) return;
+      visible = true;
       x.save(); this._font(Object.assign({}, o, { track: 0 })); x.textAlign = 'left'; x.globalAlpha *= clamp(a);
       if (p.blur) x.filter = `blur(${p.blur}px)`;
       const col = p.color || o.color || '#fff'; const gl = p.glow == null ? o.glow : p.glow;
@@ -186,6 +215,7 @@ class Frame {
       if (p.s != null && p.s !== 1) { x.translate(c.cx, py); x.scale(p.s, p.s); x.translate(-c.cx, -py); }
       x.fillText(c.ch, c.x, py + (p.dy || 0)); x.restore();
     });
+    if (visible && lay.length) { const s = o.size || 48; this._rec(lay[0].x, py - s * .58, lay[0].x + lay.w, py + s * .5, 'text'); }
     return lay;
   }
 }
@@ -282,8 +312,23 @@ function film(spec) {
   }
   /* 音效事件表：把全片每帧过一遍，只收集、不出图 */
   function events() { SFX.length = 0; collecting = true; const keep = F.L; for (let i = 0; i <= spec.dur * fps; i++) { fr.t = i / fps; fr.frame = i; fr.x = keep.getContext('2d'); fr.look = { bgo: {} }; try { spec.draw(fr, i / fps); } catch (e) { } } collecting = false; const seen = new Set(), uniq = []; SFX.forEach(e => { const k = e[0] + e[1]; if (!seen.has(k)) { seen.add(k); uniq.push(e); } }); uniq.sort((a, b) => a[0] - b[0]); return uniq; }
+  /* 某一帧的元素包围盒（给 --check-safe / --overlap / --mark 用）：
+   * 同名 mark 合并成一个框，未命名的图元各自成条。 */
+  function recordFrame(t) {
+    const keep = fr.rec; fr.rec = []; fr.markName = '';
+    seek(t);
+    const raw = fr.rec; fr.rec = keep;
+    const named = new Map(), out = [];
+    for (const item of raw) {
+      if (!item.name) { out.push(item); continue; }
+      const cur = named.get(item.name);
+      if (!cur) named.set(item.name, { name: item.name, kind: 'mark', box: item.box.slice() });
+      else cur.box = [Math.min(cur.box[0], item.box[0]), Math.min(cur.box[1], item.box[1]), Math.max(cur.box[2], item.box[2]), Math.max(cur.box[3], item.box[3])];
+    }
+    return [...named.values(), ...out];
+  }
 
-  G.seek = seek; G.END = spec.dur; G.FPS = fps; G.events = events; G.META = spec.meta || {};
+  G.seek = seek; G.END = spec.dur; G.FPS = fps; G.events = events; G.recordFrame = recordFrame; G.META = spec.meta || {};
   /* 字体逐个加载、逐个容错：缺一个字体只警告，不阻塞 READY。 */
   const fontLoads = Object.entries(FONTS).map(([key, f]) =>
     document.fonts.load(`${f[0]} 40px ${f[1].split(',')[0]}`, '运A1').then(() => null, () => key));

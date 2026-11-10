@@ -295,12 +295,18 @@ fn resolve_messages_path() -> PathBuf {
 }
 
 fn load_messages_from_json() -> Option<HashMap<String, HashMap<String, String>>> {
+    let embedded = DEFAULT_I18N_MESSAGES_EMBED.trim_start_matches('\u{FEFF}');
+    let embedded_messages = parse_json_messages(embedded);
     let path = resolve_messages_path();
     if path.exists() {
         match std::fs::read_to_string(&path) {
             Ok(content) => {
                 let content = content.trim_start_matches('\u{FEFF}');
-                if let Some(messages) = parse_json_messages(content) {
+                if let Some(mut messages) = parse_json_messages(content) {
+                    // 安装目录里的文案可能落后于程序内置版本；新增 key 先由
+                    // 内置默认兜底，文件里的自定义翻译仍然优先，避免升级后
+                    // 新界面读到原始 key。
+                    merge_missing_messages(&mut messages, embedded_messages);
                     return Some(messages);
                 }
                 eprintln!("i18n messages parse failed: {}", path.display());
@@ -310,8 +316,19 @@ fn load_messages_from_json() -> Option<HashMap<String, HashMap<String, String>>>
             }
         }
     }
-    let embedded = DEFAULT_I18N_MESSAGES_EMBED.trim_start_matches('\u{FEFF}');
-    parse_json_messages(embedded)
+    embedded_messages
+}
+
+fn merge_missing_messages(
+    target: &mut HashMap<String, HashMap<String, String>>,
+    defaults: Option<HashMap<String, HashMap<String, String>>>,
+) {
+    let Some(defaults) = defaults else {
+        return;
+    };
+    for (key, translations) in defaults {
+        target.entry(key).or_insert(translations);
+    }
 }
 
 fn parse_json_messages(text: &str) -> Option<HashMap<String, HashMap<String, String>>> {
@@ -362,5 +379,28 @@ mod tests {
         params.insert("value".to_string(), "7".to_string());
         let formatted = format_template("id-{value:03d}", &params);
         assert_eq!(formatted, "id-007");
+    }
+
+    #[test]
+    fn installed_messages_gain_new_embedded_keys_without_losing_overrides() {
+        let mut installed = HashMap::from([(
+            "custom.key".to_string(),
+            HashMap::from([("zh-CN".to_string(), "安装目录".to_string())]),
+        )]);
+        let embedded = HashMap::from([
+            (
+                "custom.key".to_string(),
+                HashMap::from([("zh-CN".to_string(), "内置".to_string())]),
+            ),
+            (
+                "new.key".to_string(),
+                HashMap::from([("zh-CN".to_string(), "新文案".to_string())]),
+            ),
+        ]);
+
+        merge_missing_messages(&mut installed, Some(embedded));
+
+        assert_eq!(installed["custom.key"]["zh-CN"], "安装目录");
+        assert_eq!(installed["new.key"]["zh-CN"], "新文案");
     }
 }

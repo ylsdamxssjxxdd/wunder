@@ -2,6 +2,7 @@ use super::context::{normalize_model_context_message, MODEL_CONTEXT_INTERNAL_MET
 use super::*;
 
 pub(super) const TOOL_TIMEOUT_ERROR: &str = "tool_timeout";
+const MAX_COMMAND_TIMEOUT_SECS: f64 = 3600.0;
 
 use super::tool_result_payload::{
     estimate_tool_result_chars, extract_exit_code, merge_tool_result_meta,
@@ -1091,7 +1092,11 @@ pub(super) fn resolve_tool_timeout(
             // default), so the outer budget must always exist — a tool
             // call without a watchdog would freeze the whole agent thread
             // on one hung command.
-            let effective = if timeout_s > 0.0 { timeout_s } else { 120.0 };
+            let effective = if timeout_s > 0.0 {
+                timeout_s.min(MAX_COMMAND_TIMEOUT_SECS)
+            } else {
+                120.0
+            };
             return Some(Duration::from_secs_f64(
                 (effective + 30.0).max(MIN_TOOL_TIMEOUT_S),
             ));
@@ -1099,6 +1104,7 @@ pub(super) fn resolve_tool_timeout(
         if timeout_s <= 0.0 {
             timeout_s = DEFAULT_TOOL_TIMEOUT_S;
         }
+        timeout_s = timeout_s.min(MAX_COMMAND_TIMEOUT_SECS);
     } else if canonical_tool_name == "命令会话" {
         // A poll may wait up to 60s server-side before responding.
         let yield_s = crate::tools::command_options::parse_command_session_wait(args).yield_time_ms

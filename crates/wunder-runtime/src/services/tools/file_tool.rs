@@ -1171,6 +1171,82 @@ fn summary_has_more_lines(summary: &Value) -> bool {
     read_lines > 0 && total_lines > read_lines
 }
 
+/// 截断后的续读导航：只列“还没读到的章节/声明”，并给出三个可直接读取的
+/// 窄窗口。读文档的人不必再盲猜下一段从哪行开始，也不必把同一份大纲读两遍。
+fn attach_next_outline(
+    summary: &mut Value,
+    content: &str,
+    file_output_budget_hit: bool,
+    source_truncated_by_size: bool,
+) {
+    let Some(map) = summary.as_object_mut() else {
+        return;
+    };
+    if map.get("mode").and_then(Value::as_str) != Some("slice") {
+        return;
+    }
+    let truncated = file_output_budget_hit
+        || source_truncated_by_size
+        || map
+            .get("used_default_range")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            && map
+                .get("read_lines")
+                .and_then(Value::as_u64)
+                .zip(map.get("total_lines").and_then(Value::as_u64))
+                .is_some_and(|(read, total)| read > 0 && total > read);
+    if !truncated {
+        return;
+    }
+    let read_end = map
+        .get("effective_ranges")
+        .and_then(Value::as_array)
+        .and_then(|ranges| ranges.last())
+        .and_then(Value::as_array)
+        .and_then(|pair| pair.get(1))
+        .and_then(Value::as_u64)
+        .or_else(|| map.get("read_lines").and_then(Value::as_u64))
+        .unwrap_or(0);
+    let total_lines = map
+        .get("total_lines")
+        .and_then(Value::as_u64)
+        .unwrap_or(u64::MAX);
+    let (entries, _) = read_outline::read_outline(content, 400);
+    let next: Vec<(usize, String)> = entries
+        .into_iter()
+        .filter(|(line, _)| *line as u64 > read_end)
+        .take(8)
+        .collect();
+    if next.is_empty() {
+        return;
+    }
+    let outline = next
+        .iter()
+        .map(|(line, text)| {
+            let mut text = text.trim().to_string();
+            if text.chars().count() > 100 {
+                text = text.chars().take(100).collect::<String>() + "…";
+            }
+            json!({ "line": line, "text": text })
+        })
+        .collect::<Vec<_>>();
+    let mut ranges = Vec::new();
+    for (index, (line, _)) in next.iter().take(3).enumerate() {
+        let start = (*line as u64).saturating_sub(2).max(1);
+        let section_end = next
+            .get(index + 1)
+            .map(|(next_line, _)| (*next_line as u64).saturating_sub(1))
+            .unwrap_or(total_lines);
+        let end = section_end.min(start.saturating_add(119)).min(total_lines);
+        if end >= start {
+            ranges.push(json!([start, end]));
+        }
+    }
+    map.insert("next_outline".to_string(), Value::Array(outline));
+    map.insert("suggested_ranges".to_string(), Value::Array(ranges));
+}
+
 fn read_next_line(summaries: &[Value]) -> Option<u64> {
     let summary = summaries.last()?;
     if let Some(end) = summary
@@ -1256,6 +1332,8 @@ fn compact_read_file_summary_for_model(summary: &Value) -> Value {
         "request_satisfied": summary.get("request_satisfied").cloned().unwrap_or(Value::Null),
         "complete": summary.get("complete").cloned().unwrap_or(Value::Null),
         "truncated_by_size": summary.get("truncated_by_size").cloned().unwrap_or(Value::Null),
+        "next_outline": summary.get("next_outline").cloned().unwrap_or(Value::Null),
+        "suggested_ranges": summary.get("suggested_ranges").cloned().unwrap_or(Value::Null),
         "error": summary.get("error").cloned().unwrap_or(Value::Null),
     })
 }
@@ -1845,6 +1923,7 @@ pub(crate) fn read_files_inner(
                 );
             }
         }
+        let omitted_before_render = output_budget_omitted_bytes;
         let rendered_output = match spec.mode {
             ReadFileMode::Slice => {
                 let (effective_ranges, match_count, mut matches_truncated) =
@@ -2067,6 +2146,13 @@ pub(crate) fn read_files_inner(
         if let Some(remaining) = remaining_output_budget.as_mut() {
             *remaining = remaining.saturating_sub(rendered_output.len());
         }
+        let file_output_budget_hit = output_budget_omitted_bytes > omitted_before_render;
+        attach_next_outline(
+            &mut summary,
+            &content,
+            file_output_budget_hit,
+            source_truncated_by_size,
+        );
         outputs.push(rendered_output);
         summaries.push(summary);
     }
@@ -2977,6 +3063,36 @@ mod write_result_tests {
             .expect("blocks")
             .is_empty());
         assert!(data.get("content").is_none());
+    }
+
+    #[test]
+    fn truncated_slice_attaches_next_outline_and_suggested_ranges() {
+        let content = "# 标题\n\n## 第一节\n正文\n\n## 第二节\n正文\n";
+        let mut summary = json!({
+            "mode": "slice",
+            "read_lines": 3,
+            "total_lines": 7,
+            "used_default_range": true,
+            "effective_ranges": [[1, 3]],
+        });
+        attach_next_outline(&mut summary, content, false, false);
+        let outline = summary["next_outline"].as_array().expect("outline");
+        assert_eq!(outline[0]["line"], json!(6));
+        assert_eq!(outline[0]["text"], json!("## 第二节"));
+        let ranges = summary["suggested_ranges"].as_array().expect("ranges");
+        assert_eq!(ranges[0], json!([4, 7]));
+    }
+
+    #[test]
+    fn untruncated_slice_does_not_attach_outline() {
+        let mut summary = json!({
+            "mode": "slice",
+            "read_lines": 11,
+            "total_lines": 11,
+            "effective_ranges": [[1, 11]],
+        });
+        attach_next_outline(&mut summary, "## 第二节\n", false, false);
+        assert!(summary.get("next_outline").is_none());
     }
 
     #[test]

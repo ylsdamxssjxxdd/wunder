@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createChatRuntimeProjection } from '../../src/realtime/chat/chatRuntimeReducer';
 import { applyChatRuntimeEventsWithInvalidation, clearRuntimeProjectionInvalidation } from '../../src/realtime/chat/chatRuntimeProjectionInvalidation';
 import { flushBackgroundPublication } from '../../src/realtime/chat/chatBackgroundPublication';
+import { setThreadViewVisible } from '../../src/realtime/chat/threadViewStore';
 
 test('background content is reduced immediately but UI publication is coalesced and flushed on return', async () => {
   clearRuntimeProjectionInvalidation();
@@ -52,4 +53,24 @@ test('background structural updates do not invalidate the foreground session and
   assert.equal(store.runtimeProjectionVersionBySession['session-2'], 1);
   assert.equal(store.runtimeProjectionVersionBySession['session-1'], foregroundVersion);
   assert.equal(projection.sessions['session-2'].messages.length, 100);
+});
+
+
+test('visible split panes use the foreground publication cadence', async (context) => {
+  clearRuntimeProjectionInvalidation();
+  setThreadViewVisible('session-2', true);
+  context.after(() => {
+    setThreadViewVisible('session-2', false);
+    clearRuntimeProjectionInvalidation();
+  });
+  const store = { activeSessionId: 'session-1', foregroundChatSessionId: 'session-1',
+    runtimeProjectionVersion: 0, runtimeProjectionVersionBySession: {} as Record<string, number>,
+    runtimeProjectionContentVersion: 0, runtimeProjectionContentVersionByMessage: {} as Record<string, number> };
+  const projection = createChatRuntimeProjection();
+  applyChatRuntimeEventsWithInvalidation(store, projection, [{
+    event_type: 'assistant_message_created', session_id: 'session-2', source: 'test', strict: false,
+    user_turn_id: 'turn-split', model_turn_id: 'model-split', message_id: 'message-split', delta: 'x'
+  }]);
+  await new Promise(resolve => setTimeout(resolve, 70));
+  assert.equal(store.runtimeProjectionVersionBySession['session-2'], 1);
 });

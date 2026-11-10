@@ -1242,6 +1242,40 @@ fn test_compact_observation_payload_read_file_uses_unified_budget_for_large_cont
 }
 
 #[test]
+fn observation_truncated_read_includes_api_index() {
+    let content = (0..330)
+        .map(|index| {
+            if index % 30 == 0 {
+                format!("# Section {index}\n")
+            } else {
+                format!("line {index} {}\n", "x".repeat(900))
+            }
+        })
+        .collect::<String>();
+    assert!(content.chars().count() > OBSERVATION_MAX_CHARS);
+    let mut payload = json!({
+        "tool": "读取文件",
+        "ok": true,
+        "data": {
+            "content": content,
+            "files": [{"path": "big.md", "read_lines": 330, "total_lines": 330, "complete": true}]
+        }
+    });
+
+    compact_observation_payload(&mut payload, "读取文件");
+
+    let data = payload.get("data").cloned().unwrap_or(Value::Null);
+    let index = data
+        .get("api_index")
+        .and_then(Value::as_array)
+        .expect("api index");
+    assert!(!index.is_empty());
+    assert_eq!(data.get("api_index_file"), Some(&json!("big.md")));
+    assert!(index[0].get("line").and_then(Value::as_u64).is_some());
+    assert!(index[0].get("text").and_then(Value::as_str).is_some());
+}
+
+#[test]
 fn test_compact_observation_payload_compacts_search_payload() {
     let hits = (0..12)
         .map(|idx| {

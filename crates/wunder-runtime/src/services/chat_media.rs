@@ -34,6 +34,7 @@ const MAX_VIDEO_FRAMES: usize = 120;
 const DEFAULT_GIF_FRAME_STEP: usize = 0;
 const MIN_GIF_FRAME_STEP: usize = 0;
 const MAX_GIF_FRAME_STEP: usize = 120;
+const REINLINE_IMAGE_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const DEFAULT_ASR_BASE_URL: &str = "https://api.openai.com/v1";
 const FFMPEG_BIN_ENV: &str = "WUNDER_FFMPEG_BIN";
 const FFPROBE_BIN_ENV: &str = "WUNDER_FFPROBE_BIN";
@@ -1365,14 +1366,65 @@ pub async fn load_image_attachment_data_url(
     Some(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
 }
 
+/// Re-inline a previously persisted image from its local path. Used when a
+/// resumed turn's history still carries the "analyze this image" instruction
+/// but its pixels were dropped by persistence.
+pub async fn load_image_data_url_for_path(path: &str) -> Option<String> {
+    let path = Path::new(path.trim());
+    let metadata = fs::metadata(path).await.ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    // Re-inlining is a convenience for continuation; never pull a huge file
+    // into the request just because history mentioned it.
+    if metadata.len() > REINLINE_IMAGE_MAX_BYTES {
+        return None;
+    }
+    let bytes = fs::read(path).await.ok()?;
+    let mime = detect_supported_image_content_type(path, &bytes)?;
+    if !is_supported_model_image_mime(&mime) || !validate_image_attachment_bytes(&mime, &bytes) {
+        return None;
+    }
+    Some(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         detect_media_kind_from_path, effective_frame_rate, extract_workspace_id_from_public_path,
-        normalize_filename, normalize_requested_frame_rate, normalize_requested_frame_step,
-        DEFAULT_VIDEO_FRAME_RATE, MAX_GIF_FRAME_STEP, MAX_VIDEO_FRAMES,
+        load_image_data_url_for_path, normalize_filename, normalize_requested_frame_rate,
+        normalize_requested_frame_step, DEFAULT_VIDEO_FRAME_RATE, MAX_GIF_FRAME_STEP,
+        MAX_VIDEO_FRAMES,
     };
     use std::path::Path;
+
+    #[test]
+    fn reinline_image_reads_a_real_png_from_disk() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("frame.png");
+        let image = image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]));
+        image.save(&path).expect("write png");
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let url = runtime
+            .block_on(load_image_data_url_for_path(path.to_str().expect("path")))
+            .expect("data url");
+        assert!(url.starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn reinline_image_rejects_non_images() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("frame.bin");
+        std::fs::write(&path, b"not an image").expect("write file");
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        assert!(
+            runtime
+                .block_on(load_image_data_url_for_path(path.to_str().expect("path")))
+                .is_none()
+        );
+    }
 
     #[test]
     fn normalize_filename_preserves_extension() {

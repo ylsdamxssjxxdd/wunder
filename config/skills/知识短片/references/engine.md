@@ -28,15 +28,34 @@ python engine/render.py <工程> --sheet 16               # 全片均匀 16 帧�
 python engine/render.py <工程> --sheet 3.5 9 21.5       # 指定时刻拼一张
 python engine/render.py <工程> --motion 8.2 10.6        # 这段时间里均匀取 12 帧拼一张 → review/motion_8.2-10.6.jpg（看转场）
 python engine/render.py <工程> --clip 0 30 head         # 只渲 0–30s → renders/head.mp4
+python engine/render.py <工程> --clips 0:12 20:30       # 多段渲染并自动拼 → renders/clips.mp4
+python engine/render.py <工程> --preview 8.2 10.6       # 低码率预览片段 → renders/preview_*.mp4
+python engine/render.py <工程> --strip 8.2 9.2 24       # 连续帧条带 → review/strip_*.jpg（看运动）
+python engine/render.py <工程> --stills 8 --mark 船     # 画元素包围盒 → review/m_*.png（需 fr.mark）
 python engine/render.py <工程> --det                    # 确定性自检
+python engine/render.py <工程> --lint                   # END/FPS/字体/音效/meta/Math.random 检查
+python engine/render.py <工程> --check-safe             # 非字幕元素越过 y=840 的时段
+python engine/render.py <工程> --overlap                # 命名元素包围盒相交（遮挡）的时段
 python engine/render.py <工程>                          # 全片 → renders/raw.mp4（无声）
 python engine/render.py <工程> --jobs 4                 # 全片，分 4 段并行渲再无损拼接
+python engine/render.py <工程> --jobs 4 --resume        # 续渲：跳过源码未变且已完成的段
+python engine/render.py <工程> --concat                 # 手动拼接 renders/_part*.mp4
+python engine/render.py <工程> --web                    # 发布转码 → renders/web.mp4（打印体积/码率）
+python engine/render.py --diff A.mp4 B.mp4              # 两版逐帧差分 → A_diff.jpg + 时刻表
 python engine/render.py <工程> --events                 # 导出音效事件表 → audio/events.json
 python engine/audio.py  <工程>                          # 合成声音 + 合片 → renders/final.mp4
+python engine/audio.py  <工程> --refresh-events         # 先自动重导事件表再合成
 python engine/audio.py  <工程> --bgm 曲子.mp3 -8        # 垫现成配乐（-8 dB），事件音照叠
 ```
 
+`--jobs` 每段完成写 `.done` 标记（内容是工程源码指纹），默认续渲只跳过指纹一致且非空的分段；
+`--fresh` 强制全部重渲。分段渲染中途被杀时，已完成段保留，未完成段重跑即可，不用从头来。
+旧版遗留的分段没有 `.done` 标记，确认完整后可以用 `--concat --force` 强行拼接。
+
 渲染速度单路约每秒 3–6 帧（1080p，截 PNG），`--jobs 4` 大致快三倍。3 分钟的片子仍然要十几分钟——所以先看拼图，再渲片段，最后才渲全片。
+命令工具的前台等待到 `timeout_s` 时不会杀渲染，而是把它转入后台命令会话继续跑并返回 `command_session_id`；
+看到 `reason: timeout_escalated` 就先轮询会话，不要重跑。分段渲染中断后，已完成段带 `.done` 标记，
+重跑 `--jobs 4` 默认续渲，或 `--concat` 直接拼接。
 依赖：Python 的 `playwright`（优先用补充包里的 Chrome，找不到再退回系统 Chrome）、`numpy`、`scipy`、`Pillow`，以及 `ffmpeg`。
 桌面版/安卓补充包已带 scipy 和 8 个视频字体（思源宋体/黑体 + 6 个拉丁/等宽）；中文优先用视频字体，缺失时退回 `opt/fonts/common` 的宋体/雅黑。云端镜像也带 scipy，字体放在 `config/fonts/{video,common}`（挂到 `/usr/share/fonts/wunder`）。开发环境缺字体时跑 `python engine/get_fonts.py`。
 
@@ -115,7 +134,8 @@ function urn(fr, t) {
 
 | | |
 |---|---|
-| `fr.g({ a, at:[x,y], rot, s, add, blur, clip:[x,y,w,h] }, fn)` | 在一组变换 / 透明度 / 加法混合里画 fn |
+| `fr.g({ a, at:[x,y], rot, s, add, blur, clip:[x,y,w,h], mark:'船' }, fn)` | 在一组变换 / 透明度 / 加法混合里画 fn；`mark` 给这组图元命名 |
+| `fr.mark('船', fn)` | 给一组图元命名。`--check-safe`/`--overlap`/`--mark` 用这些名字出报告；不写就只能报 `未命名 ellipse` |
 | `fr.layer({ a, s, at, rot, cx, cy, blur, add }, fn)` | 先画到临时画布再整体合成。一组互相重叠的半透明形状要一起淡入淡出时用它，否则重叠处会透 |
 
 **光**
@@ -217,6 +237,9 @@ function urn(fr, t) {
 - `K.titleGilt(fr, lt, { la, zh, tag, motif(fr, lt, a), a, cy, size, track, rays, tagDy })`：A / B 的金字卡。`lt` 是片名卡的本地时间，0 = 闪白最亮的那一刻。
   `motif` 画片名下面的母题图形；没有母题图形时把 `tagDy` 设成 212 让副题靠上。
 - `K.titleNight(fr, lt, { zh, sub, en, a, cy, lineY, size, track })`：C 的点阵成字。lt 0 = 闪亮那一帧，约 3.3 秒聚拢完，4.6 秒出副题。
+- `K.card(fr, t, { from, to, kind, … })`：区间版片名卡。自动把 `lt` 换算成 `t - from`，并在 `to` 前淡出；
+  `kind` 省略是 `'night'`，传 `'gilt'` 用金字卡。其余参数原样传给对应的 title 函数。排一张 6 秒的卡直接写
+  `K.card(fr, t, { from: 10.9, to: 16.8, zh: '…', sub: '…', en: '…' })`，不用自己反推本地时间和淡出。
 - `K.dustText(fr, str, cx, cy, 文字选项, k, t)`：单独用"点聚成字"，k 0…1。
 
 **全幅效果**（可以叠用）
@@ -245,7 +268,10 @@ function urn(fr, t) {
 
 ## 容易踩的坑
 
-- **字幕区被占。** 纵向 80%–95% 只属于字幕。装置的最低点不要低于 y=840。
+- **字幕区被占。** 纵向 80%–95% 只属于字幕。装置的最低点不要低于 y=840；改完用 `--check-safe` 查一遍，
+  不要只靠截图肉眼扫。检查只记录 text/line/poly/rect/ellipse 的包围盒（glow/spark/path 这类气氛元素不算），
+  装置用 `fr.mark('名字', …)` 包住，报告才会写名字；字幕由 `K.subs` 自动标成「字幕」，不会被误报。
+- **遮挡看不见。** 两个装置叠在一起、量尺压住主体时，用 `--overlap` 查命名元素的包围盒相交；先 `fr.mark` 再查。
 - **相邻两站硬切。** `if (t < 17) a(); else b();` 会切。让两个时间窗重叠半秒，各自乘 `ss` 淡入淡出。
 - **辉光过曝。** 见上。A 的实物（骰子、金币、骨头）本身颜色要压暗一档，否则加上辉光会发白。
 - **大块的实心东西。** 细胞、身体、场景这类有体积的东西，画进 `fr.look.under = ctx => { … }`：它在底之上、内容之下，不参加辉光。`ctx` 是原生的 2D 上下文。写法见 `examples/fold_C/film.js` 的 `heroCell`。

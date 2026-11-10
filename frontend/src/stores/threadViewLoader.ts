@@ -118,7 +118,7 @@ export async function openThreadViewDetached(store: any, key: string) {
   const existing = detachedOpens.get(sessionId);
   if (existing) return existing;
   const request = (async () => {
-    const generation = beginThreadView(sessionId);
+    const generation = beginThreadView(sessionId, false);
     try {
       const response = await getThreadViewBootstrap(sessionId, { kind: 'chat' });
       const data = response.data.data;

@@ -83,6 +83,19 @@ pub fn from_parts(code: &str, message: &str) -> Option<ErrorCard> {
                 "打开 设置 → 模型，添加并启用一套可用的模型配置后重试。",
             )
         }
+        "LLM_UNAVAILABLE"
+            if has(&[
+                "http 5", "500", "502", "503", "504", "550", "bad gateway",
+                "gateway timeout", "internal server error", "服务端",
+            ]) =>
+        {
+            ErrorCard::new(
+                "模型服务暂时不可用",
+                "模型服务端持续返回错误，运行时已自动重试仍未成功，本轮已中断。",
+                message,
+                "稍后重试，或在设置中切换到其他可用模型。",
+            )
+        }
         "LLM_UNAVAILABLE" => ErrorCard::new(
             "模型服务不可用",
             "模型服务没有返回可用结果，本轮已中断。",
@@ -244,6 +257,18 @@ mod tests {
         assert_eq!(card.title, "未配置可用模型");
         assert!(card.hint.contains("设置"));
         assert_eq!(card.detail, "模型不可用: 至少需要一套模型配置");
+    }
+
+    #[test]
+    fn provider_5xx_gets_its_own_recovery_hint() {
+        let card = from_parts(
+            "LLM_UNAVAILABLE",
+            "模型不可用: LLM request failed: HTTP 550 (empty response body) · 共尝试 6 次、耗时 89.5 秒；模型服务持续失败。",
+        )
+        .unwrap();
+        assert_eq!(card.title, "模型服务暂时不可用");
+        assert!(card.detail.contains("550"));
+        assert!(card.hint.contains("稍后重试"));
     }
 
     #[test]

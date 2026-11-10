@@ -2,9 +2,10 @@
 # Stage 安卓版's bundled proot Ubuntu runtime.
 #
 # The rootfs and the static proot/busybox binaries are not committed: they are
-# tens of megabytes and are reused unchanged from a reference Android terminal
-# implementation. Point WUNDER_UBUNTU_SRC at that checkout once, then rebuild
-# the APK.
+# tens of megabytes and are reused from a reference Android terminal
+# implementation (the rootfs is recompressed losslessly to the APK's xz
+# settings). Point WUNDER_UBUNTU_SRC at that checkout once, then rebuild the
+# APK.
 #
 #   WUNDER_UBUNTU_SRC=/path/to/operit-terminal builders/stage-android-ubuntu.sh
 #
@@ -42,6 +43,12 @@ done
 
 mkdir -p "$DEST_ASSETS" "$DEST_LIBS"
 cp -f "$ROOTFS" "$DEST_ASSETS/rootfs.tar.xz"
+# The upstream proot-distro archive ships an xz -6 stream. Recompress it with
+# the same 9e + arm64 settings as the overlays so the APK payload stays
+# consistent and a couple of MB smaller.
+xz -dc "$DEST_ASSETS/rootfs.tar.xz" \
+    | xz -T0 --arm64 -9e -c > "$DEST_ASSETS/rootfs.tar.xz.new"
+mv -f "$DEST_ASSETS/rootfs.tar.xz.new" "$DEST_ASSETS/rootfs.tar.xz"
 cp -f "$LIBS/liboperit_proot.so" "$DEST_LIBS/liboperit_proot.so"
 cp -f "$LIBS/liboperit_loader.so" "$DEST_LIBS/liboperit_loader.so"
 cp -f "$LIBS/libbusybox.so" "$DEST_LIBS/libbusybox.so"

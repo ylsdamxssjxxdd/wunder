@@ -13,6 +13,19 @@ description: >
 
 做这种片子的人是科普作者兼导演。色、字、辉光、片名卡都是皮；片子好不好，看的是观众能不能一眼认出屏上的东西、看见它在变、看完讲得出"因为……所以……"。
 
+## 制作硬约束（开工前先看这 8 条）
+
+细节在 `references/`，但这 8 条每条都能直接毁掉一版成片，先记住：
+
+1. **字幕区只放字幕。** 纵向 80% 以下（y>840）不摆装置；越线用 `--check-safe` 查，别靠肉眼。
+2. **片名卡用区间排。** 片名在 6–24 秒之间出现；用 `K.card(fr, t, { from, to, … })`，不要自己反推 `lt` 和淡出。
+3. **示意要写明。** 比例放大、虚构数值、夸张速度，屏上或台词里必须有一处写"示意"。
+4. **事实带出处。** 年份、人名、数字上屏；最后一屏是片名 + 文献，不放水印和署名。
+5. **声音走一条链。** `--events` → `audio.py`；改完台词必须重导事件表（`audio.py` 会校验，`--refresh-events` 可自动重导）。
+6. **不硬切。** 相邻镜头时间窗重叠半秒，各自乘 `ss` 淡入淡出；一镜只改一处。
+7. **先查再渲。** `--lint` → `--sheet`/`--stills` → `--check-safe`/`--overlap` → `--det` → 渲片段 → 全片。
+8. **长片可续。** 全片用 `--jobs 4`；中断后 `--resume` 或 `--concat`，不要从头重渲；发布用 `--web` 转码。
+
 ## 配图不是讲解
 
 这个 skill 做过一条失败的《折叠》（讲蛋白质和 AlphaFold）：全片的主体是一串星点连成的折线。
@@ -49,7 +62,7 @@ description: >
 - **看的时候当自己是第一次看的观众。** 遮住字幕和小字过三问：这是什么 / 它在干什么 / 我明白了什么。答得含糊就是没做好。
 - **对着 `references/visualization.md` 第八节的表逐条查**：主体够不够大、认不认得出、发不发白、小字压没压在东西上、字幕区干不干净、转场说不说得清。
 - **至少改两轮再给用户看。** 每一轮：把看到的毛病列出来 → 改 → 重截同样的时刻 → 确认改掉了、没改坏别的。还有毛病就接着改，不要带着自己都看得出的毛病交片。
-- **拿参考片当尺子。** 把自己的静帧和示例工程渲出来的 look 图并排放（`python engine/render.py examples/<名称> --sheet 16` 生成 `review/sheet.jpg`），再对照 `references/visualization.md` 第八节的表。差一截，就还没做完。
+- **拿参考片当尺子。** 把自己的静帧和 `references/samples.md` 的合格/不合格样张并排看，再对照 `references/visualization.md` 第八节的表。差一截，就还没做完。
 - **交片时说实话。** 还不满意的地方、没做的东西、没完整看过的部分，直接列出来。
 
 力气不多的时候（时间紧，或者想得不深），照下面做，质量也守得住：
@@ -127,8 +140,16 @@ description: >
 python scripts/new_film.py <工程目录> --world C      # 或 B
 python engine/render.py <工程目录> --sheet 3 8 15 22  # 指定时刻拼一张；--sheet 16 是均匀 16 帧
 python engine/render.py <工程目录> --stills 5.9 18.1  # 原尺寸截几帧
+python engine/render.py <工程目录> --stills 5.9 --mark 船  # 截帧并画元素包围盒（先用 fr.mark('船', …) 命名）
 python engine/render.py <工程目录> --motion 8.2 10.6  # 这段时间里取 12 帧拼一张，看转场
+python engine/render.py <工程目录> --strip 8.2 9.2 24 # 连续帧条带，看运动顺不顺
 python engine/render.py <工程目录> --serve            # 浏览器预览
+```
+
+片名卡用区间版，别手算本地时间：
+
+```js
+K.card(fr, t, { from: 10.9, to: 16.8, zh: '多普勒效应', sub: '为什么救护车一过，声音就变低', en: 'THE DOPPLER EFFECT' });
 ```
 
 `new_film.py` 建出来的 `film.js` 只是能跑起来的骨架，里面一行画面都没有：没有现成的钩子、没有现成的图表。每一镜都照分镜表现写。
@@ -161,14 +182,32 @@ python engine/render.py <工程目录> --clip 0 30 head
 长片按章拆文件（见 `engine.md`）。
 
 ```bash
+python engine/render.py <工程目录> --lint             # END/FPS、字体、音效、meta、Math.random 等静态检查
+python engine/render.py <工程目录> --check-safe       # 非字幕元素越过 y=840 时列出时刻和元素名
+python engine/render.py <工程目录> --overlap          # 命名的元素包围盒相交（遮挡）时列出时刻和元素对
 python engine/render.py <工程目录> --det              # 同一帧渲两次必须一样
 python engine/render.py <工程目录> --jobs 4           # 全片，4 路并行
+python engine/render.py <工程目录> --jobs 4 --resume  # 中断后接着渲（默认跳过源码未变且已完成的段）
+python engine/render.py <工程目录> --concat           # 只有分段、没有 raw.mp4 时手动拼接
+```
+
+命名装置后，检查报告才会写出"船""量尺"这样的名字，否则只能报 `未命名 ellipse`：
+
+```js
+fr.mark('船', () => { /* 画船 */ });
+```
+
+全片渲完看一眼体积和码率；发布版用 `--web` 转码，不要把 100 MB 的 `final.mp4` 直接发出去：
+
+```bash
+python engine/render.py <工程目录> --web              # renders/web.mp4，1080p30 + faststart
 ```
 
 ### 8. 声音
 
 - **C**：`film.js` 里用 `fr.sfx(时刻, 名字)` 登记事件（每一下变化一声、推拉时的上滑音、落定时的低音、提问那一镜不出声），然后
-  `python engine/render.py <工程> --events && python engine/audio.py <工程>`。
+  `python engine/render.py <工程> --events && python engine/audio.py <工程>`。改过台词或镜头时间后，`audio.py` 会拒绝旧事件表；
+  加 `--refresh-events` 让它自动重导，或手动重跑 `--events`。
 - **B**：用户给一首配乐，`python engine/audio.py <工程> --bgm 曲子.mp3 -8`。先量配乐的速度，把每段的开头对到小节线上，
   最大的那次揭晓对到配乐重新进入的那一拍。用户没给配乐就说明白：成片目前只有事件音，等配乐。
 - `audio.py` 需要 scipy；桌面版/安卓补充包和云端镜像已带，开发机缺 scipy 时脚本会明确提示。
@@ -190,7 +229,8 @@ python engine/render.py <工程目录> --jobs 4           # 全片，4 路并行
 | 画面 | 字幕区没有别的东西；任何一刻只有一个主体在动；一镜最多一条小字；颜色含义全片一致 |
 | 节奏 | 没有硬切；主体出完之后停住让人读；每 20–30 秒一段无字幕的纯画面 |
 | 事实 | 屏上每个数字和事实表一致；每个概念有出处；示意的地方写明了 |
-| 技术 | `--det` 通过；1920×1080，30fps；没有水印和署名 |
+| 技术 | `--lint`、`--det` 通过；`--check-safe` 没有非字幕越界；1920×1080，30fps；没有水印和署名 |
+| 交付 | `renders/final.mp4` 之外有 `renders/web.mp4`；体积和码率已核对 |
 
 不合格的时间点列出来，改完只重渲那一段（`--clip`）确认，再渲全片。交片时把没做到的地方直说，包括成片有没有完整看过。
 
@@ -202,6 +242,7 @@ python engine/render.py <工程目录> --jobs 4           # 全片，4 路并行
 | `references/visual-grammar.md` | 定了画法之后的速查：常见句型、版式、常驻元素、颜色、转场、动效手感 |
 | `references/script.md` | 文案：量、骨架、句式、事实、标题 |
 | `references/worlds.md` | 两套外观的规格：色、字、版式、片名卡、声音 |
+| `references/samples.md` | 两张标好的样张：合格（主体认得出、字幕区干净）与不合格（波圈越过 y=840），复刻 look 时的对标基准 |
 | `references/analysis.md` | 四条参考片的结构、节奏、制作痕迹（外观和技术层面） |
 | `references/prompts.md` | 逆向出的提示词：完整 brief、分步提示词、返工话术 |
 | `references/engine.md` | 引擎 API、命令、写法、坑 |
