@@ -2075,6 +2075,10 @@
     "en-US": "Shell environment: cmd.exe (this host has no usable PowerShell). Use cmd syntax (dir, type, copy, del, set, %VAR%, &&); do not use PowerShell cmdlets or $variables. For anything beyond basic file and flow control, call an external program (python, rg, git).",
     "zh-CN": "Shell 环境：cmd.exe（这台机器没有可用的 PowerShell）。请使用 cmd 语法（dir、type、copy、del、set、%VAR%、&&），不要使用 PowerShell 的 cmdlet 或 $变量。超出基本文件与流程控制的需求，请调用外部程序（python、rg、git 等）。"
   },
+  "tool.spec.exec.shell_cmd_with_pwsh": {
+    "en-US": "Shell environment: cmd.exe. This machine also has PowerShell 7 as `pwsh` (bundled with the app). Write the command in cmd syntax; when you need cmdlets or modern PowerShell, call it explicitly as `pwsh -NoProfile -Command \"...\"` instead of assuming the shell is PowerShell.",
+    "zh-CN": "Shell 环境：cmd.exe。这台机器另外装有 PowerShell 7（`pwsh`，随应用内置）。当前命令按 cmd 语法写；需要 cmdlet 或现代 PowerShell 能力时，用 `pwsh -NoProfile -Command \"...\"` 显式调用，不要假设当前 shell 就是 PowerShell（管道、引号、$变量 都由 pwsh 自己解析）。"
+  },
   "tool.spec.browser.description": {
     "en-US": "Automate a browser session. Start the session first to warm up or reuse it, then open/navigate; the common flow is start -> open/navigate -> snapshot/read_page -> click/type/press -> wait/screenshot. Screenshots are saved to the workspace by default.",
     "zh-CN": "浏览器自动化工具。先用 start 预热或复用会话，再 open/navigate；常用流程：start -> open/navigate -> snapshot/read_page -> click/type/press -> wait/screenshot。截图默认保存到工作区。"

@@ -1771,6 +1771,9 @@ export component Composer inherits Rectangle {
         HorizontalLayout {
             height: root.mobile ? 0px : root.action-row-height;
             visible: !root.mobile;
+            padding-top: root.mobile ? 0px : 6px;
+            padding-left: root.mobile ? 0px : 10px;
+            padding-right: root.mobile ? 0px : 10px;
             spacing: 6px;
             Rectangle {
                 width: root.mobile ? 40px : 24px; height: root.action-row-height;

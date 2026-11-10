@@ -55,8 +55,10 @@ export global DragPreview {
 // 的通道：Rust 按帧读真实光标位置与主键状态，位置回灌这里由 Slint 纯绑定
 // 消费，手势收尾则用序列号通知。
 export global PointerChase {
-    // 只在 Windows 打开；其它平台保持纯事件流路径。
+    // Windows 与可用的 Linux/X11 会话共用真实指针追踪。
     in-out property <bool> enabled: false;
+    // Win7 会把合成松开混进事件流；Linux 的真实松开可以直接收尾。
+    in-out property <bool> defer-release: false;
     // 手势进行中：Rust 侧据此决定是否继续追指针。
     in-out property <bool> holding: false;
     in-out property <length> pointer-x: 0px;
@@ -119,7 +121,7 @@ export component DragRow inherits Rectangle {
     // 事件流里的「松开/取消」不一定是用户松手：Win7 在抓取被系统改写时会补
     // 一条合成的松开。主键还按着就说明这次手势没结束，别把它掐断。
     function release-is-real() -> bool {
-        return !PointerChase.enabled || !PointerChase.primary-held();
+        return !PointerChase.enabled || !PointerChase.defer-release || !PointerChase.primary-held();
     }
     // 收尾：松手时按位移落位（不足阈值则当作点击）。吸顶副本与真实行共用
     // 同一个 row-index，所以只能由真正按下那次手势的那一个实例收尾。

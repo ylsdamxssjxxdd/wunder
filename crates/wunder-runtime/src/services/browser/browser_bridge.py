@@ -343,6 +343,7 @@ READABLE_JS = """(opts) => {
   const lines = [];
   const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'CANVAS', 'IFRAME', 'FRAME']);
   const seen = new Set();
+  const radioGroupsSeen = new Set();
   let produced = 0;
   let emitted = 0;
   let visited = 0;
@@ -358,10 +359,15 @@ READABLE_JS = """(opts) => {
     return index;
   }
 
-  function push(text) {
+  function push(text, allowRepeat) {
     const value = (text || '').replace(/\\s+/g, ' ').trim();
-    if (!value || seen.has(value)) return;
-    seen.add(value);
+    // 正文里重复出现的导航/页脚要去重，但表格行必须逐行保留：
+    // 两条记录内容一模一样时，去重会静默吞掉一行数据。
+    if (!value) return;
+    if (allowRepeat !== true) {
+      if (seen.has(value)) return;
+      seen.add(value);
+    }
     const line = (produced ? '\\n' : '') + value;
     if (produced >= stopAfter) { stopped = true; return; }
     const bounded = line.slice(0, stopAfter - produced);
@@ -384,12 +390,26 @@ READABLE_JS = """(opts) => {
     if (bounded.length < line.length) stopped = true;
   }
 
+  // label 的 innerText 会带上控件自身的内容（下拉框把每个 option 的文字都算进去，
+  // 得到 '档位 基础档 标准档'），所以只收文字节点、跳过控件子树。
+  function labelText(node, control) {
+    if (!node) return '';
+    let out = '';
+    for (const child of node.childNodes || []) {
+      if (child === control) continue;
+      if (child.nodeType === Node.TEXT_NODE) { out += child.textContent || ''; continue; }
+      if (child.nodeType !== Node.ELEMENT_NODE) continue;
+      if (child.tagName === 'SELECT' || child.tagName === 'INPUT' || child.tagName === 'TEXTAREA' || child.tagName === 'OPTION') continue;
+      out += labelText(child, control);
+    }
+    return out;
+  }
+
   function fieldLabel(el) {
     const direct = el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('title');
     if (direct && direct.trim()) return direct.trim();
     if (el.labels && el.labels.length) {
-      // label 的 innerText 会把控件周围的空白一起带出来（'名称 ' / ' 同意条款'）。
-      const text = String(el.labels[0].innerText || '').trim();
+      const text = labelText(el.labels[0], el).trim();
       if (text) return text;
     }
     const name = el.getAttribute('name');
@@ -418,15 +438,35 @@ READABLE_JS = """(opts) => {
       // Walking a table cell by cell flattens it into a column of loose values,
       // so "12ms" no longer says which row it belongs to. Emit one line per row
       // with cells joined, which keeps the pairing readable in plain text.
+      const occupied = [];
       let emittedRows = 0;
       for (const tr of el.querySelectorAll('tr')) {
         const cells = [];
+        let column = 0;
+        // 上方 rowspan 还没结束的列要留空位，否则这一行整体左移。
+        const fillSpanning = () => {
+          while (occupied[column] > 0) {
+            cells.push('');
+            occupied[column] -= 1;
+            column += 1;
+          }
+        };
         for (const cell of tr.children) {
           if (cell.tagName !== 'TD' && cell.tagName !== 'TH') continue;
+          fillSpanning();
+          const colspan = Math.max(1, Math.min(64, Number(cell.colSpan) || 1));
+          const rowspan = Math.max(1, Math.min(512, Number(cell.rowSpan) || 1));
           cells.push(String(cell.innerText || cell.textContent || ''));
+          // colspan 合并列同样要补位，否则后面的列也对不上。
+          for (let extra = 1; extra < colspan; extra += 1) cells.push('');
+          if (rowspan > 1) {
+            for (let offset = 0; offset < colspan; offset += 1) occupied[column + offset] = rowspan - 1;
+          }
+          column += colspan;
         }
+        fillSpanning();
         if (cells.some((value) => value.trim())) {
-          push(cells.join(' | '));
+          push(cells.join(' | '), true);
           emittedRows += 1;
         }
       }
@@ -438,19 +478,42 @@ READABLE_JS = """(opts) => {
       // 表单控件的值只存在 value 里，纯文本遍历看不到；补这一行，模型才能确认
       // 自己填进去的内容真的生效了。
       const kind = String(el.getAttribute('type') || (el.tagName === 'SELECT' ? 'select' : 'text')).toLowerCase();
+      const fieldName = el.getAttribute('name') || '';
       const label = fieldLabel(el);
       const named = label ? ' "' + label + '"' : '';
-      if (kind === 'checkbox' || kind === 'radio') {
-        push('- ' + kind + named + ' ' + (el.checked ? '已勾选' : '未勾选'));
+      if (kind === 'radio') {
+        // 单选组每个选项各占一个 input，逐个输出会把「性别」拆成两行，且看不出
+        // 它们互斥；这里按 name 合并成一行并标出当前选中项。
+        if (fieldName && radioGroupsSeen.has(fieldName)) return;
+        const members = fieldName ? Array.prototype.slice.call(document.getElementsByName(fieldName)) : [el];
+        const options = [];
+        for (const member of members) {
+          if (!member || member.nodeType !== Node.ELEMENT_NODE) continue;
+          if (String(member.getAttribute('type') || '').toLowerCase() !== 'radio') continue;
+          const text = labelText(member.labels && member.labels[0], member).trim() || String(member.value || '');
+          if (!text) continue;
+          options.push((member.checked ? '(已选) ' : '') + text);
+        }
+        if (options.length) {
+          const groupName = (el.getAttribute('aria-label') || '').trim() || fieldName;
+          push('- radiogroup' + (groupName ? ' "' + groupName + '"' : '') + ' ' + options.join(' / '));
+        }
+        if (fieldName) radioGroupsSeen.add(fieldName);
+        return;
+      }
+      if (kind === 'checkbox') {
+        push('- checkbox' + named + ' ' + (el.checked ? '已勾选' : '未勾选'));
       } else if (kind === 'submit' || kind === 'button' || kind === 'reset') {
         push('- button' + named + ' "' + String(el.value || '') + '"');
       } else if (kind !== 'hidden' && kind !== 'file') {
         // select 的 value 是 option 的 value 属性（常是 1/2/abc 这类编码），
         // 真正可读的是选中项的文字。
-        const selected = el.tagName === 'SELECT' && el.selectedOptions && el.selectedOptions.length
-          ? String(el.selectedOptions[0].textContent || '')
-          : '';
-        const value = selected.trim() ? selected : String(el.value || '');
+        const chosen = [];
+        for (const option of (el.tagName === 'SELECT' && el.selectedOptions) || []) {
+          const text = String(option.textContent || '').trim();
+          if (text) chosen.push(text);
+        }
+        const value = chosen.length ? chosen.join(' / ') : String(el.value || '');
         const shown = kind === 'password' && value ? '***' : value;
         push('- ' + (el.tagName === 'SELECT' ? 'selectbox' : 'textbox') + named + ' = "' + shown + '"');
       }

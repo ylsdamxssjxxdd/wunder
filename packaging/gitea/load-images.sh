@@ -2,13 +2,27 @@
 set -euo pipefail
 cd -- "$(dirname -- "$0")"
 [[ -f .env ]] || cp .env.example .env
-env_value() { sed -n "s/^$1=//p" .env | tail -n 1; }
+env_value() { sed -n "s/^$1=//p" .env | tail -n 1 | tr -d '\r'; }
 quote_trim() {
-    case "$1" in
-        \"*\") printf '%s' "${1:1:${#1}-2}" ;;
-        \'*\') printf '%s' "${1:1:${#1}-2}" ;;
-        *) printf '%s' "$1" ;;
+    local v="$1"
+    # trim leading/trailing whitespace
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    case "$v" in
+        \"*)
+            v="${v:1}"          # opening quote
+            v="${v%%\"*}"       # up to closing quote; ignore trailing comment
+            ;;
+        \'*)
+            v="${v:1}"
+            v="${v%%\'*}"
+            ;;
+        *)
+            v="${v%%[[:space:]]#*}"  # unquoted inline comment
+            v="${v%"${v##*[![:space:]]}"}"
+            ;;
     esac
+    printf '%s' "$v"
 }
 
 platform="$(env_value CI_PLATFORM)"; platform="${platform:-linux/arm64}"
@@ -74,12 +88,19 @@ if [[ -d binfmt ]]; then
     bash binfmt/register.sh
     installer_image="$(quote_trim "$(env_value INSTALLER_IMAGE)")"
     if [[ -n "$installer_image" ]]; then
+        # 镜像名不能含空白；旧版把 `--entrypoint uname` 直接拼在 docker run 上，
+        # .env 混入多余 token 时 uname 会收到第二个操作数并报 "extra operand"。
+        if [[ "$installer_image" == *[[:space:]]* ]]; then
+            echo "INSTALLER_IMAGE 含空白，按第一段处理：'$installer_image'" >&2
+            echo '请检查 .env 中 INSTALLER_IMAGE 行是否混入了命令或注释。' >&2
+            installer_image="${installer_image%%[[:space:]]*}"
+        fi
         emulated_arch="$(docker run --rm --security-opt seccomp=unconfined \
-            --entrypoint uname "$installer_image" -m 2>/dev/null || true)"
+            --entrypoint /bin/sh "$installer_image" -c 'uname -m' 2>/dev/null || true)"
         [[ "$emulated_arch" == x86_64 ]] || {
             echo "安装包镜像无法在 ARM 上模拟运行（uname 返回 '${emulated_arch:-<空>}'，应为 x86_64）。" >&2
             echo '检查 binfmt 注册与 Docker 是否能执行 amd64 镜像：' >&2
-            echo "  docker run --rm --security-opt seccomp=unconfined --entrypoint uname $installer_image -m" >&2
+            echo "  docker run --rm --security-opt seccomp=unconfined --entrypoint /bin/sh $installer_image -c 'uname -m'" >&2
             exit 2
         }
         echo "Win7 安装包镜像模拟自检通过（uname: $emulated_arch）"

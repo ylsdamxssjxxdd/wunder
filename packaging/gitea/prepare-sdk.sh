@@ -2,13 +2,27 @@
 set -euo pipefail
 cd -- "$(dirname -- "$0")"
 bundle="$(pwd -P)"
-env_value() { sed -n "s/^$1=//p" .env | tail -n 1; }
+env_value() { sed -n "s/^$1=//p" .env | tail -n 1 | tr -d '\r'; }
 quote_trim() {
-    case "$1" in
-        \"*\") printf '%s' "${1:1:${#1}-2}" ;;
-        \'*\') printf '%s' "${1:1:${#1}-2}" ;;
-        *) printf '%s' "$1" ;;
+    local v="$1"
+    # trim leading/trailing whitespace
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    case "$v" in
+        \"*)
+            v="${v:1}"
+            v="${v%%\"*}"
+            ;;
+        \'*)
+            v="${v:1}"
+            v="${v%%\'*}"
+            ;;
+        *)
+            v="${v%%[[:space:]]#*}"
+            v="${v%"${v##*[![:space:]]}"}"
+            ;;
     esac
+    printf '%s' "$v"
 }
 
 sdk="$(quote_trim "${WUNDER_SDK_PATH:-}")"

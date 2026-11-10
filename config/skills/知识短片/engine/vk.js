@@ -38,19 +38,20 @@ const rgba = (c, a = 1) => { if (Array.isArray(c)) return `rgba(${c[0] | 0},${c[
 const mix = (c1, c2, k) => { const a = hex(c1), b = hex(c2); return '#' + [0, 1, 2].map(i => Math.round(lerp(a[i], b[i], k)).toString(16).padStart(2, '0')).join(''); };
 
 /* ---------- 字体键 ---------- */
-/* 字体家族后面都带系统兜底：字体文件缺失时退到系统字体，而不是画不出来。
- * document.fonts.load 只加载第一个家族；缺文件时 vk.js 会警告并继续 READY。 */
+/* 中文用补充包/系统里的宋体、微软雅黑（不再单独打包思源中文）；
+ * 拉丁与等宽字体随视频技能打包，保证标题与代码标注的质感。
+ * 家族后面都带系统兜底：字体文件缺失时退到系统字体，而不是画不出来。 */
 const FONTS = {
-  serif:  ['700', '"VK Serif","Noto Serif SC","Source Han Serif SC","Songti SC",SimSun,serif'],
-  serifm: ['500', '"VK Serif","Noto Serif SC","Source Han Serif SC","Songti SC",SimSun,serif'],
-  serifr: ['400', '"VK Serif","Noto Serif SC","Source Han Serif SC","Songti SC",SimSun,serif'],
-  serifl: ['300', '"VK Serif","Noto Serif SC","Source Han Serif SC","Songti SC",SimSun,serif'],
-  serifx: ['200', '"VK Serif","Noto Serif SC","Source Han Serif SC","Songti SC",SimSun,serif'],
-  serifh: ['900', '"VK Serif","Noto Serif SC","Source Han Serif SC","Songti SC",SimSun,serif'],
-  sans:   ['700', '"VK Sans","Noto Sans SC","Source Han Sans SC","Microsoft YaHei","WenQuanYi Micro Hei",sans-serif'],
-  sansm:  ['500', '"VK Sans","Noto Sans SC","Source Han Sans SC","Microsoft YaHei","WenQuanYi Micro Hei",sans-serif'],
-  sansr:  ['400', '"VK Sans","Noto Sans SC","Source Han Sans SC","Microsoft YaHei","WenQuanYi Micro Hei",sans-serif'],
-  sansh:  ['900', '"VK Sans","Noto Sans SC","Source Han Sans SC","Microsoft YaHei","WenQuanYi Micro Hei",sans-serif'],
+  serif:  ['700', 'SimSun,"Songti SC","Noto Serif SC","Source Han Serif SC",serif'],
+  serifm: ['500', 'SimSun,"Songti SC","Noto Serif SC","Source Han Serif SC",serif'],
+  serifr: ['400', 'SimSun,"Songti SC","Noto Serif SC","Source Han Serif SC",serif'],
+  serifl: ['300', 'SimSun,"Songti SC","Noto Serif SC","Source Han Serif SC",serif'],
+  serifx: ['200', 'SimSun,"Songti SC","Noto Serif SC","Source Han Serif SC",serif'],
+  serifh: ['900', 'SimSun,"Songti SC","Noto Serif SC","Source Han Serif SC",serif'],
+  sans:   ['700', '"Microsoft YaHei","PingFang SC",SimHei,"Noto Sans SC","Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif'],
+  sansm:  ['500', '"Microsoft YaHei","PingFang SC",SimHei,"Noto Sans SC","Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif'],
+  sansr:  ['400', '"Microsoft YaHei","PingFang SC",SimHei,"Noto Sans SC","Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif'],
+  sansh:  ['900', '"Microsoft YaHei","PingFang SC",SimHei,"Noto Sans SC","Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif'],
   latin:  ['400', '"VK Latin","Cormorant Garamond","Times New Roman",serif'],
   latinl: ['300', '"VK Latin","Cormorant Garamond","Times New Roman",serif'],
   latinm: ['600', '"VK Latin","Cormorant Garamond","Times New Roman",serif'],

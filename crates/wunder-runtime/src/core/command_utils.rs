@@ -10,7 +10,7 @@ use std::process::Stdio;
 #[cfg(windows)]
 use std::sync::{Mutex, RwLock};
 #[cfg(windows)]
-use std::{env, path::PathBuf, sync::OnceLock};
+use std::{env, path::PathBuf};
 use tokio::process::Command;
 
 const SHELL_BUILTINS: &[&str] = &[
@@ -565,8 +565,43 @@ pub fn resolve_shell_name(command: &str) -> &'static str {
 
 #[cfg(windows)]
 fn prefer_powershell() -> bool {
-    static PREFER_POWERSHELL: OnceLock<bool> = OnceLock::new();
-    *PREFER_POWERSHELL.get_or_init(|| powershell_host().is_some())
+    // Do NOT cache this boolean. `powershell_host()` already caches the probe,
+    // and a supplement import can publish `pwsh.exe` after boot and call
+    // `reset_powershell_host()`. A separate `OnceLock<bool>` kept the boot-time
+    // answer forever, so an imported PowerShell stayed invisible and every
+    // command kept running through cmd.exe until the app restarted.
+    powershell_host().is_some()
+}
+
+/// A `pwsh.exe` that exists on disk but was not chosen as the shell.
+///
+/// When probing fails (missing VC runtime, policy block, a hung startup) the
+/// command tool falls back to cmd.exe, and the model has no way to learn that a
+/// portable PowerShell is sitting right next to it. Reporting the path is only
+/// for that explanation — it never changes which shell runs.
+#[cfg(windows)]
+pub fn unused_pwsh() -> Option<PathBuf> {
+    if powershell_host().is_some() {
+        return None;
+    }
+    pwsh_on_disk()
+}
+
+/// 磁盘上是否存在某个 pwsh.exe（不启动它）。
+///
+/// 与 `powershell_host()` 分开，避免在探测过程中递归调用自己。
+#[cfg(windows)]
+fn pwsh_on_disk() -> Option<PathBuf> {
+    let published = env::var_os(POWERSHELL_EXE_ENV).map(PathBuf::from);
+    if let Some(path) = published.filter(|path| path.is_file()) {
+        return Some(path);
+    }
+    find_in_path("pwsh.exe")
+}
+
+#[cfg(not(windows))]
+pub fn unused_pwsh() -> Option<std::path::PathBuf> {
+    None
 }
 
 /// Environment variable published by the supplement bootstrap: the absolute
@@ -613,7 +648,14 @@ pub struct PowerShellHost {
 enum ShellProbe {
     Pending,
     Done(Option<PowerShellHost>),
+    /// 探测失败，但磁盘上还有可试的 pwsh：冷启动可能被杀软拖过预算，隔一会儿
+    /// 再探一次，别让这台机器永久停在 cmd.exe 上。
+    Failed { at: std::time::Instant },
 }
+
+/// 一次失败之后多久允许重探。
+#[cfg(windows)]
+const PROBE_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
 
 #[cfg(windows)]
 static POWERSHELL_HOST: RwLock<ShellProbe> = RwLock::new(ShellProbe::Pending);
@@ -645,14 +687,19 @@ pub fn powershell_host() -> Option<PowerShellHost> {
     let Ok(mut guard) = POWERSHELL_HOST.write() else {
         return probed;
     };
-    match &*guard {
-        // Another thread won the race; keep its answer.
-        ShellProbe::Done(host) => host.clone(),
-        ShellProbe::Pending => {
-            *guard = ShellProbe::Done(probed.clone());
-            probed
-        }
+    // Another thread won the race; keep its answer.
+    if let ShellProbe::Done(host) = &*guard {
+        return host.clone();
     }
+    *guard = match &probed {
+        Some(host) => ShellProbe::Done(Some(host.clone())),
+        // 还有 pwsh 可以再试，就别把结论钉死。
+        None if pwsh_on_disk().is_some() => ShellProbe::Failed {
+            at: std::time::Instant::now(),
+        },
+        None => ShellProbe::Done(None),
+    };
+    probed
 }
 
 /// `Some(host)` when the probe has completed (including "no usable host"),
@@ -662,7 +709,9 @@ fn cached_powershell_host() -> Option<Option<PowerShellHost>> {
     let guard = POWERSHELL_HOST.read().ok()?;
     match &*guard {
         ShellProbe::Done(host) => Some(host.clone()),
-        ShellProbe::Pending => None,
+        ShellProbe::Failed { at } if at.elapsed() < PROBE_RETRY_AFTER => Some(None),
+        // 过期的失败当作「还没探过」，让调用方再试一次。
+        ShellProbe::Failed { .. } | ShellProbe::Pending => None,
     }
 }
 
@@ -705,6 +754,14 @@ fn probe_powershell_host() -> Option<PowerShellHost> {
             });
         }
     }
+    // Falling back to cmd.exe is the one outcome users notice ("why is it still
+    // cmd when pwsh is installed"), so leave a line naming the published path:
+    // a bundled pwsh that will not start is a packaging problem, not a missing
+    // feature.
+    tracing::warn!(
+        published_pwsh = ?env::var_os(POWERSHELL_EXE_ENV),
+        "no PowerShell host answered; commands will run through cmd.exe"
+    );
     None
 }
 

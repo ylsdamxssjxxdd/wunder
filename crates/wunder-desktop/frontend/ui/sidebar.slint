@@ -65,6 +65,7 @@ component ThreadRow inherits ContextMenuArea {
     callback archive();
     callback begin-rename();
     callback open-trajectory();
+    callback open-split-view();
     callback begin-selection();
     callback toggle-selection();
     in property <bool> allow-selection: true;
@@ -73,6 +74,7 @@ component ThreadRow inherits ContextMenuArea {
     Menu {
         MenuItem { title: I18n.common_rename; activated => { root.begin-rename(); } }
         MenuItem { title: I18n.sb_thread_trajectory; activated => { root.open-trajectory(); } }
+        MenuItem { title: I18n.sb_thread_split_view; enabled: data.kind == 1; activated => { root.open-split-view(); } }
         MenuItem { title: I18n.sb_thread_archive; enabled: data.archivable; activated => { root.archive(); } }
         MenuSeparator {}
         MenuItem { title: I18n.sb_thread_multi_select; enabled: root.allow-selection; activated => { root.begin-selection(); } }
@@ -402,6 +404,7 @@ export component Sidebar inherits Rectangle {
     callback new-workspace();
     callback move-row(int, int);
     callback drop-thread-to-chat(int);
+    callback open-thread-split(int);
     callback archive-thread(string);
     // Multi-select (web alignment): the tree enters selection mode from a
     // context menu, clicks toggle rows, the bar at the tree's foot
@@ -636,6 +639,7 @@ export component Sidebar inherits Rectangle {
                             // of editing in place.
                             begin-rename => { root.rename-request(row.payload, row.title); }
                             open-trajectory => { root.open-trajectory(row.payload); }
+                            open-split-view => { root.open-thread-split(row.payload); }
                             begin-selection => { root.begin-selection(); }
                             toggle-selection => { root.toggle-selection(row.payload); }
                         }

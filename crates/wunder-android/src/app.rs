@@ -251,9 +251,10 @@ pub fn build_preview() -> MobileWindow {
     let weak = ui.as_weak();
     ui.on_trajectory_filter_changed(move |filter| {
         if let Some(ui) = weak.upgrade() {
-            ui.set_trajectory_items(ModelRc::from(Rc::new(VecModel::from(
-                filtered_trajectory(&preview_trajectory(), filter),
-            ))));
+            ui.set_trajectory_items(ModelRc::from(Rc::new(VecModel::from(filtered_trajectory(
+                &preview_trajectory(),
+                filter,
+            )))));
         }
     });
     let weak = ui.as_weak();
@@ -424,7 +425,8 @@ fn preview_system_prompt() -> &'static str {
 - 代码块标注语言。\n"
 }
 
-fn preview_workspace() -> Vec<WorkspaceFile> {    let rows = [
+fn preview_workspace() -> Vec<WorkspaceFile> {
+    let rows = [
         ("文档", "文档", true, 0, "文件夹"),
         ("图片", "图片", true, 0, "文件夹"),
         ("运行报告.md", "运行报告.md", false, 4, "12.4 KB"),
@@ -475,10 +477,7 @@ fn preview_sessions() -> Vec<MobileSession> {
 /// Mobile filter: 0 all, 1 conversation, 2 tools, 3 system. When a filter
 /// drops the user row that carried the turn label, the first surviving row of
 /// that turn inherits the label so filtered views keep their grouping.
-fn filtered_trajectory(
-    items: &[crate::TrajectoryItem],
-    filter: i32,
-) -> Vec<crate::TrajectoryItem> {
+fn filtered_trajectory(items: &[crate::TrajectoryItem], filter: i32) -> Vec<crate::TrajectoryItem> {
     if filter <= 0 {
         return items.to_vec();
     }
@@ -862,6 +861,20 @@ fn wire_callbacks(
         if let Some(ui) = weak.upgrade() {
             ui.set_drawer_open(false);
         }
+    });
+
+    let sender = commands.clone();
+    let weak = ui.as_weak();
+    ui.on_fork_thread(move |round| {
+        let cloud = weak
+            .upgrade()
+            .map(|ui| ui.get_settings_chat_target() == 1)
+            .unwrap_or(false);
+        let _ = if cloud {
+            sender.send(Command::CloudFork(round))
+        } else {
+            sender.send(Command::Fork(round))
+        };
     });
 
     let sender = commands.clone();
@@ -1726,7 +1739,12 @@ impl RowCache {
                     .saturating_mul(pixels.height as usize)
                     .saturating_mul(4),
             });
-            let held: usize = self.images.values().flatten().map(|image| image.bytes).sum();
+            let held: usize = self
+                .images
+                .values()
+                .flatten()
+                .map(|image| image.bytes)
+                .sum();
             if self.images.len() >= 64
                 || held.saturating_add(image.as_ref().map_or(0, |image| image.bytes))
                     > 96 * 1024 * 1024
@@ -1785,10 +1803,8 @@ impl RowCache {
                         block.image_width = size.width as f32;
                         block.image_height = size.height as f32;
                         if image.frames.len() > 1 {
-                            block.image_frames =
-                                ModelRc::new(VecModel::from(image.frames.clone()));
-                            block.frame_delays =
-                                ModelRc::new(VecModel::from(image.delays.clone()));
+                            block.image_frames = ModelRc::new(VecModel::from(image.frames.clone()));
+                            block.frame_delays = ModelRc::new(VecModel::from(image.delays.clone()));
                         } else {
                             block.image_frames = ModelRc::default();
                             block.frame_delays = ModelRc::default();
@@ -2468,7 +2484,9 @@ fn start_tick(
             ui.set_settings_cloud_username(state.cloud.username.as_str().into());
             ui.set_settings_cloud_balance(state.cloud.balance.min(i32::MAX as i64) as i32);
             ui.set_settings_cloud_daily_grant(state.cloud.daily_grant.min(i32::MAX as i64) as i32);
-            ui.set_settings_cloud_max_concurrent(state.cloud.max_concurrent.min(i32::MAX as u64) as i32);
+            ui.set_settings_cloud_max_concurrent(
+                state.cloud.max_concurrent.min(i32::MAX as u64) as i32
+            );
             ui.set_settings_cloud_active_concurrent(
                 state.cloud.active_concurrent.min(i32::MAX as u64) as i32,
             );
@@ -2692,9 +2710,7 @@ fn start_tick(
             ui.set_goal_objective(goal.objective.as_str().into());
             ui.set_goal_phase(goal.phase.as_str().into());
             ui.set_goal_activation(goal.activation.as_str().into());
-            ui.set_goal_rounds(
-                format!("{}/{}", goal.rounds_started, goal.max_goal_rounds).into(),
-            );
+            ui.set_goal_rounds(format!("{}/{}", goal.rounds_started, goal.max_goal_rounds).into());
             ui.set_goal_elapsed(goal_elapsed(goal.seconds).into());
             last_goal = state.goal_rev;
         }
@@ -2763,9 +2779,10 @@ fn start_tick(
             ui.set_trajectory_loading(state.trajectory_loading);
             ui.set_trajectory_error(state.trajectory_error.as_str().into());
             ui.set_trajectory_filter(state.trajectory_filter);
-            ui.set_trajectory_items(ModelRc::from(Rc::new(VecModel::from(
-                filtered_trajectory(&state.trajectory_items, state.trajectory_filter),
-            ))));
+            ui.set_trajectory_items(ModelRc::from(Rc::new(VecModel::from(filtered_trajectory(
+                &state.trajectory_items,
+                state.trajectory_filter,
+            )))));
             ui.set_trajectory_audit(state.trajectory_audit.clone());
             ui.set_trajectory_segments(ModelRc::from(Rc::new(VecModel::from(
                 state.trajectory_segments.clone(),
@@ -3058,8 +3075,11 @@ fn start_tick(
             ui.set_settings_ubuntu_error(state.ubuntu.error.as_str().into());
             ui.set_settings_ubuntu_enabled(state.ubuntu.enabled);
             // 首装引导：还没有可用运行环境（等待自动安装或安装中）时全屏展示。
-            env_progress =
-                next_env_progress(env_progress, state.ubuntu.state.as_str(), state.ubuntu.progress);
+            env_progress = next_env_progress(
+                env_progress,
+                state.ubuntu.state.as_str(),
+                state.ubuntu.progress,
+            );
             ui.set_env_setup_progress(env_progress);
             if env_setup_should_open(state.ubuntu.state.as_str(), state.env_setup_dismissed) {
                 ui.set_env_setup_open(true);
@@ -3147,7 +3167,10 @@ fn start_tick(
             ui.set_update_source(state.update_source.as_str().into());
             ui.set_update_size(state.update_size_text.as_str().into());
             ui.set_update_error(state.update_error.as_str().into());
-            let percent = update_percent(state.update_progress_bytes.load(Ordering::Relaxed), state.update_size_bytes);
+            let percent = update_percent(
+                state.update_progress_bytes.load(Ordering::Relaxed),
+                state.update_size_bytes,
+            );
             ui.set_update_progress(percent);
             let downloaded = update_progress_text(
                 state.update_progress_bytes.load(Ordering::Relaxed),
@@ -3593,27 +3616,29 @@ pub fn install_preview_data(
         slint::SharedString::from("总结一下当前进度"),
         slint::SharedString::from("检查一下最近的改动"),
     ]))));
-    ui.set_inquiry_questions(ModelRc::from(Rc::new(VecModel::from(vec![InquiryQuestion {
-        index: 0,
-        question: "这次改动先发布到哪个渠道？".into(),
-        multiple: false,
-        no_preference: false,
-        other: "".into(),
-        options: ModelRc::new(VecModel::from(vec![
-            InquiryOption {
-                label: "内测".into(),
-                description: "先给少量设备验证".into(),
-                recommended: true,
-                selected: true,
-            },
-            InquiryOption {
-                label: "正式".into(),
-                description: "直接替换线上包".into(),
-                recommended: false,
-                selected: false,
-            },
-        ])),
-    }]))));
+    ui.set_inquiry_questions(ModelRc::from(Rc::new(VecModel::from(vec![
+        InquiryQuestion {
+            index: 0,
+            question: "这次改动先发布到哪个渠道？".into(),
+            multiple: false,
+            no_preference: false,
+            other: "".into(),
+            options: ModelRc::new(VecModel::from(vec![
+                InquiryOption {
+                    label: "内测".into(),
+                    description: "先给少量设备验证".into(),
+                    recommended: true,
+                    selected: true,
+                },
+                InquiryOption {
+                    label: "正式".into(),
+                    description: "直接替换线上包".into(),
+                    recommended: false,
+                    selected: false,
+                },
+            ])),
+        },
+    ]))));
     ui.set_inquiry_page(0);
     ui.set_inquiry_total(2);
     ui.set_inquiry_ready(false);
@@ -3721,26 +3746,73 @@ pub fn install_preview_data(
     ui.set_model_catalogue_count(2);
 
     // Tool manager and agent fixtures for layout review.
-    let tool = |name: &str, description: &str, category: &str, icon: &str, tone: &str, enabled: bool| crate::MobileTool {
-        name: name.into(),
-        description: description.into(),
-        category: category.into(),
-        enabled,
-        icon: icon.into(),
-        tone: tone.into(),
-    };
+    let tool =
+        |name: &str, description: &str, category: &str, icon: &str, tone: &str, enabled: bool| {
+            crate::MobileTool {
+                name: name.into(),
+                description: description.into(),
+                category: category.into(),
+                enabled,
+                icon: icon.into(),
+                tone: tone.into(),
+            }
+        };
     let builtin = vec![
-        tool("read_file", "读取工作区文件内容", "内置工具", "file-lines", "terminal", true),
-        tool("run_shell", "执行本地命令", "内置工具", "terminal", "terminal", true),
-        tool("web_search", "搜索网页", "内置工具", "magnifying-glass", "search", false),
+        tool(
+            "read_file",
+            "读取工作区文件内容",
+            "内置工具",
+            "file-lines",
+            "terminal",
+            true,
+        ),
+        tool(
+            "run_shell",
+            "执行本地命令",
+            "内置工具",
+            "terminal",
+            "terminal",
+            true,
+        ),
+        tool(
+            "web_search",
+            "搜索网页",
+            "内置工具",
+            "magnifying-glass",
+            "search",
+            false,
+        ),
     ];
-    let mcp_tools = vec![tool("weather_lookup", "查询城市天气", "MCP 工具", "plug", "mcp", false)];
-    let skill_tools = vec![tool("summarize_page", "总结网页正文", "技能", "book", "skill", true)];
-    let knowledge_tools = vec![tool("project_notes", "检索项目笔记", "知识库", "database", "knowledge", false)];
+    let mcp_tools = vec![tool(
+        "weather_lookup",
+        "查询城市天气",
+        "MCP 工具",
+        "plug",
+        "mcp",
+        false,
+    )];
+    let skill_tools = vec![tool(
+        "summarize_page",
+        "总结网页正文",
+        "技能",
+        "book",
+        "skill",
+        true,
+    )];
+    let knowledge_tools = vec![tool(
+        "project_notes",
+        "检索项目笔记",
+        "知识库",
+        "database",
+        "knowledge",
+        false,
+    )];
     ui.set_settings_tools_builtin(ModelRc::from(Rc::new(VecModel::from(builtin.clone()))));
     ui.set_settings_tools_mcp(ModelRc::from(Rc::new(VecModel::from(mcp_tools.clone()))));
     ui.set_settings_tools_skills(ModelRc::from(Rc::new(VecModel::from(skill_tools.clone()))));
-    ui.set_settings_tools_knowledge(ModelRc::from(Rc::new(VecModel::from(knowledge_tools.clone()))));
+    ui.set_settings_tools_knowledge(ModelRc::from(Rc::new(VecModel::from(
+        knowledge_tools.clone(),
+    ))));
     ui.set_settings_tools_servers(ModelRc::from(Rc::new(VecModel::from(vec![
         crate::MobileToolResource {
             name: "weather".into(),
@@ -3790,8 +3862,22 @@ pub fn install_preview_data(
         },
     ]))));
     ui.set_settings_tool_server_tools(ModelRc::from(Rc::new(VecModel::from(vec![
-        tool("weather_current", "查询当前天气", "MCP 工具", "plug", "mcp", false),
-        tool("weather_forecast", "查询未来天气", "MCP 工具", "plug", "mcp", false),
+        tool(
+            "weather_current",
+            "查询当前天气",
+            "MCP 工具",
+            "plug",
+            "mcp",
+            false,
+        ),
+        tool(
+            "weather_forecast",
+            "查询未来天气",
+            "MCP 工具",
+            "plug",
+            "mcp",
+            false,
+        ),
     ]))));
     ui.set_settings_tool_active_server("weather".into());
     ui.set_settings_agent_name("wunder 内置智能体".into());
@@ -3892,10 +3978,26 @@ pub fn install_preview_data(
         slint::SharedString::from("默认工作区"),
     ]))));
     ui.set_settings_channel_catalog(ModelRc::from(Rc::new(VecModel::from(vec![
-        crate::MobileChannelCatalog { channel: "feishu".into(), name: "飞书".into(), description: "飞书自建应用".into() },
-        crate::MobileChannelCatalog { channel: "wechat".into(), name: "企业微信".into(), description: "企业微信应用".into() },
-        crate::MobileChannelCatalog { channel: "wechat_mp".into(), name: "微信公众号".into(), description: "公众号回调".into() },
-        crate::MobileChannelCatalog { channel: "weixin".into(), name: "微信机器人".into(), description: "微信 ClawBot".into() },
+        crate::MobileChannelCatalog {
+            channel: "feishu".into(),
+            name: "飞书".into(),
+            description: "飞书自建应用".into(),
+        },
+        crate::MobileChannelCatalog {
+            channel: "wechat".into(),
+            name: "企业微信".into(),
+            description: "企业微信应用".into(),
+        },
+        crate::MobileChannelCatalog {
+            channel: "wechat_mp".into(),
+            name: "微信公众号".into(),
+            description: "公众号回调".into(),
+        },
+        crate::MobileChannelCatalog {
+            channel: "weixin".into(),
+            name: "微信机器人".into(),
+            description: "微信 ClawBot".into(),
+        },
     ]))));
     ui.set_settings_channel_accounts(ModelRc::from(Rc::new(VecModel::from(vec![
         crate::MobileChannelAccount {
@@ -4237,11 +4339,26 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_activity_plan_current("核对模块清单".into());
             ui.set_activity_plan_position(3);
             let steps = vec![
-                crate::PlanStep { step: "扫描工作区".into(), status: "completed".into() },
-                crate::PlanStep { step: "合并重复模块".into(), status: "completed".into() },
-                crate::PlanStep { step: "核对模块清单".into(), status: "in_progress".into() },
-                crate::PlanStep { step: "补齐接口文档".into(), status: "pending".into() },
-                crate::PlanStep { step: "回归测试".into(), status: "pending".into() },
+                crate::PlanStep {
+                    step: "扫描工作区".into(),
+                    status: "completed".into(),
+                },
+                crate::PlanStep {
+                    step: "合并重复模块".into(),
+                    status: "completed".into(),
+                },
+                crate::PlanStep {
+                    step: "核对模块清单".into(),
+                    status: "in_progress".into(),
+                },
+                crate::PlanStep {
+                    step: "补齐接口文档".into(),
+                    status: "pending".into(),
+                },
+                crate::PlanStep {
+                    step: "回归测试".into(),
+                    status: "pending".into(),
+                },
             ];
             ui.set_activity_plan_steps(ModelRc::from(Rc::new(VecModel::from(steps))));
             ui.set_activity_plan_expanded(page == "goal-plan-expanded");
@@ -4321,8 +4438,7 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_settings_open(true);
             ui.set_settings_tool_file_path("references/guide.md".into());
             ui.set_settings_tool_file_content(
-                "# 写摘要的约定\n\n1. 先提取正文\n2. 再压缩成三段\n3. 保留关键数据\n"
-                    .into(),
+                "# 写摘要的约定\n\n1. 先提取正文\n2. 再压缩成三段\n3. 保留关键数据\n".into(),
             );
             ui.set_settings_tool_file_readonly(false);
             ui.set_settings_tool_file_open(true);
@@ -4467,9 +4583,10 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_trajectory_loading(false);
             ui.set_trajectory_filter(filter);
             ui.set_trajectory_expanded(if page == "trajectory-detail" { 2 } else { -1 });
-            ui.set_trajectory_items(ModelRc::from(Rc::new(VecModel::from(
-                filtered_trajectory(&preview_trajectory(), filter),
-            ))));
+            ui.set_trajectory_items(ModelRc::from(Rc::new(VecModel::from(filtered_trajectory(
+                &preview_trajectory(),
+                filter,
+            )))));
             let (audit, segments, bars) = preview_trajectory_audit();
             ui.set_trajectory_audit(audit);
             ui.set_trajectory_segments(ModelRc::from(Rc::new(VecModel::from(segments))));
@@ -4591,10 +4708,7 @@ mod tests {
         let visible = visible_live_rows(&state);
         assert!(visible.iter().any(|row| {
             row.kind == project::KIND_FOOTER
-                && row
-                    .stats
-                    .iter()
-                    .any(|(key, _)| key == "status-requesting")
+                && row.stats.iter().any(|(key, _)| key == "status-requesting")
         }));
     }
 
@@ -4611,10 +4725,9 @@ mod tests {
     fn an_earlier_round_body_does_not_retire_the_streaming_answer() {
         let mut state = streaming_state("current streaming answer");
         state.generating = false;
-        state.durable_rows.push(RowData::new(
-            project::KIND_BODY,
-            "turn-1-body-final",
-        ));
+        state
+            .durable_rows
+            .push(RowData::new(project::KIND_BODY, "turn-1-body-final"));
         state.durable_rows[2].text = "earlier round".into();
         assert!(!durable_covers_live(&state));
         let visible = visible_live_rows(&state);
@@ -4627,10 +4740,9 @@ mod tests {
     fn a_settled_durable_body_retires_the_live_tail() {
         let mut state = streaming_state("answer");
         state.generating = false;
-        state.durable_rows.push(RowData::new(
-            project::KIND_BODY,
-            "turn-1-body-final",
-        ));
+        state
+            .durable_rows
+            .push(RowData::new(project::KIND_BODY, "turn-1-body-final"));
         state.durable_rows[2].text = "answer".into();
         assert!(durable_covers_live(&state));
         assert!(visible_live_rows(&state).is_empty());
@@ -4676,9 +4788,7 @@ mod tests {
         let mut data = RowData::new(project::KIND_BODY, "row-gif");
         data.blocks_src = "![动图](anim.gif)".into();
         let pixel = |color: [u8; 4]| {
-            slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(
-                &color, 1, 1,
-            ))
+            slint::Image::from_rgba8(slint::SharedPixelBuffer::clone_from_slice(&color, 1, 1))
         };
         cache.images.insert(
             "anim.gif".into(),

@@ -43,10 +43,10 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         app.get_page() == crate::DesktopPage::Messages,
         "shell did not start on the chat page",
     )?;
-    app.invoke_split_drop_row(1, 1);
+    drag(app, 100.0, 156.0, 800.0, 400.0)?;
     require(
         app.get_split_count() == 2 && app.get_split_session_1() == "t2",
-        "thread drop did not open the correct second pane",
+        "thread drag did not open the correct second pane",
     )?;
     snapshot(app, &directory.join("native-split-two.png"))?;
     click(app, app.get_split_close_x(), app.get_split_close_y())?;
@@ -55,7 +55,11 @@ fn check(app: &MainWindow, directory: &std::path::Path) -> Result<(), Box<dyn st
         "closing the last other pane did not restore single view",
     )?;
     snapshot(app, &directory.join("native-split-single.png"))?;
-    app.invoke_split_drop_row(1, 2);
+    app.invoke_open_thread_in_split(2);
+    require(
+        app.get_split_count() == 2 && app.get_split_session_1() == "t3",
+        "thread context action did not open the selected thread",
+    )?;
     app.invoke_split_drop_row(2, 1);
     require(
         app.get_split_count() == 4,
@@ -651,6 +655,38 @@ pub(crate) fn click(app: &MainWindow, x: f32, y: f32) -> Result<(), Box<dyn std:
     app.window()
         .dispatch_event_with_result(WindowEvent::PointerReleased {
             position,
+            button: PointerEventButton::Left,
+        })?;
+    Ok(())
+}
+
+pub(crate) fn drag(
+    app: &MainWindow,
+    from_x: f32,
+    from_y: f32,
+    to_x: f32,
+    to_y: f32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use slint::platform::{PointerEventButton, WindowEvent};
+    let from = slint::LogicalPosition::new(from_x, from_y);
+    app.window()
+        .dispatch_event_with_result(WindowEvent::PointerMoved { position: from })?;
+    app.window()
+        .dispatch_event_with_result(WindowEvent::PointerPressed {
+            position: from,
+            button: PointerEventButton::Left,
+        })?;
+    for step in 1..=8 {
+        let position = slint::LogicalPosition::new(
+            from_x + (to_x - from_x) * step as f32 / 8.0,
+            from_y + (to_y - from_y) * step as f32 / 8.0,
+        );
+        app.window()
+            .dispatch_event_with_result(WindowEvent::PointerMoved { position })?;
+    }
+    app.window()
+        .dispatch_event_with_result(WindowEvent::PointerReleased {
+            position: slint::LogicalPosition::new(to_x, to_y),
             button: PointerEventButton::Left,
         })?;
     Ok(())

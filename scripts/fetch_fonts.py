@@ -6,7 +6,7 @@
 
   python scripts/fetch_fonts.py                 # 通用字体 + 视频字体
   python scripts/fetch_fonts.py --set common    # 只下载公文/办公通用字体
-  python scripts/fetch_fonts.py --set video     # 只下载视频制作字体
+  python scripts/fetch_fonts.py --set video     # 只下载知识短片字体
   python scripts/fetch_fonts.py --check         # 只校验，不联网
   python scripts/fetch_fonts.py --dest DIR      # 换一个字体根目录（默认 config/fonts）
 """
@@ -25,7 +25,7 @@ SETS = {
     },
     "video": {
         "manifest": ROOT / "packaging/fonts/video-fonts.json",
-        "licenses": ROOT / "config/skills/视频制作/engine/fonts",
+        "licenses": ROOT / "config/skills/知识短片/engine/fonts",
     },
 }
 

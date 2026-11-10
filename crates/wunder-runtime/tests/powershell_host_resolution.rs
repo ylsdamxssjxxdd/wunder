@@ -126,4 +126,15 @@ fn runtime_launches_the_probed_powershell_host() {
         stdout.contains(&format!("{major}")),
         "stdout should report major {major}: {stdout:?}"
     );
+
+    // --- The default shell has to follow the same probe. Caching the
+    // --- "prefer PowerShell" decision separately from the host kept the
+    // --- boot-time answer, so a supplement import (which publishes pwsh.exe
+    // --- and resets the probe) left every command running through cmd.exe
+    // --- until the app restarted.
+    assert_eq!(
+        command_utils::platform_default_shell().kind,
+        ShellKind::PowerShell,
+        "a published pwsh.exe must become the default shell without a restart"
+    );
 }

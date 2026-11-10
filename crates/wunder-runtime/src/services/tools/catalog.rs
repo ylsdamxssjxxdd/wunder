@@ -209,8 +209,16 @@ fn exec_shell_note(language: &str) -> Option<String> {
             _ => "tool.spec.exec.shell_powershell",
         },
         // cmd is either an explicit setting or the only shell this host has
-        // (no PowerShell installed / blocked by policy).
-        ShellKind::Cmd => "tool.spec.exec.shell_cmd",
+        // (no PowerShell installed / blocked by policy). When a `pwsh.exe` is
+        // present but the probe rejected it, saying "no PowerShell here" is
+        // simply wrong: the model can still call `pwsh -Command ...` directly.
+        ShellKind::Cmd => {
+            if command_utils::unused_pwsh().is_some() {
+                "tool.spec.exec.shell_cmd_with_pwsh"
+            } else {
+                "tool.spec.exec.shell_cmd"
+            }
+        }
     };
     let note = i18n::t_in_language(key, language);
     let note = note.trim().to_string();

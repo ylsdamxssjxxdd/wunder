@@ -192,15 +192,12 @@
     }
   },
   "fonts": [
-    "NotoSansSC-VF.ttf",
     "msyh.ttc",
     "simsun.ttc",
     "simhei.ttf",
     "arial.ttf"
   ],
   "videoFonts": [
-    "NotoSerifSC-VF.ttf",
-    "NotoSansSC-VF.ttf",
     "CormorantGaramond.ttf",
     "CormorantGaramond-Italic.ttf",
     "Lora.ttf",

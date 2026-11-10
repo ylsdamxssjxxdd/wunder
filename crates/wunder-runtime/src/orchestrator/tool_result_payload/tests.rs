@@ -2178,3 +2178,19 @@ fn search_observation_keeps_files_only_paths() {
         "paths 模式不该再报命中行数: {compacted}"
     );
 }
+
+#[test]
+fn search_observation_hides_the_default_files_only_flag() {
+    let payload = ToolResultPayload::from_value(json!({
+        "hits": [{"path": "src/a.rs", "line": 3, "content": "needle"}],
+        "query": "needle",
+        "files_only": false,
+        "matched_file_count": 1,
+        "returned_match_count": 1
+    }));
+
+    let compacted = payload.to_compact_payload("搜索内容");
+    let data = &compacted["data"];
+    assert!(data.get("files_only").is_none(), "{compacted}");
+    assert_eq!(data["returned_match_count"], json!(1), "{compacted}");
+}

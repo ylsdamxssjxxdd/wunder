@@ -48,7 +48,8 @@ pack="$WUNDER_OFFLINE_ROOT/supplement-prebuilt/win7-ia32/wunder-supplement-win7-
 command -v wine >/dev/null || { echo "任务镜像里没有 wine" >&2; exit 2; }
 [[ -n "${WUNDER_ISCC:-}" ]] || export WUNDER_ISCC='C:\InnoSetup\ISCC.exe'
 
-python3 packaging/windows/scripts/build_win7_installer_linux.py \
+# -u: 解压补充包与 ISCC 压缩都可能持续很久，无缓冲才能让 CI 实时看到阶段日志。
+python3 -u packaging/windows/scripts/build_win7_installer_linux.py \
     --desktop "$desktop" --cli "$cli" --supplement "$pack" \
     --output-dir release-assets --compression "${WUNDER_INNO_COMPRESSION:-lzma2/normal}"
 

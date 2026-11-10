@@ -746,6 +746,7 @@ export component MobileWindow inherits Window {
     callback permission-changed(string);
     callback remove-attachment(int);
     callback copy-text(string);
+    callback fork-thread(int);
     callback toggle-row(int);
     callback draft-changed(string);
     // 问询面板
@@ -1135,6 +1136,7 @@ export component MobileWindow inherits Window {
             stream-revision: root.stream-revision;
             toggle(index) => { root.toggle-row(index); }
             copy-text(text) => { root.copy-text(text); }
+            fork-thread(round) => { root.fork-thread(round); }
             preview-prompt() => {
                 root.prompt-preview = "";
                 root.prompt-preview-error = "";

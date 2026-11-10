@@ -149,6 +149,7 @@ def install_supplement_stage(archive, destination):
     if temporary.exists():
         shutil.rmtree(str(temporary))
     temporary.mkdir(parents=True)
+    print("[wunder-pack] extracting supplement: " + archive.name)
     with zipfile.ZipFile(str(archive)) as stream:
         stream.extractall(str(temporary))
     (temporary / ".wunder-pack.json").write_text(json.dumps({
@@ -158,6 +159,7 @@ def install_supplement_stage(archive, destination):
     if destination.exists():
         shutil.rmtree(str(destination))
     temporary.rename(destination)
+    print("[wunder-pack] supplement stage ready")
 
 
 def component_version(metadata, name):

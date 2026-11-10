@@ -84,6 +84,7 @@ pub struct RowData {
     pub foldable: bool,
     pub open: bool,
     pub payload: i32,
+    pub user_round: i64,
     pub stats: Vec<(String, String)>,
     pub error_title: String,
     pub error_hint: String,
@@ -132,6 +133,7 @@ impl RowData {
         self.foldable.hash(&mut hasher);
         self.open.hash(&mut hasher);
         self.payload.hash(&mut hasher);
+        self.user_round.hash(&mut hasher);
         self.stats.hash(&mut hasher);
         self.error_title.hash(&mut hasher);
         self.error_hint.hash(&mut hasher);
@@ -191,6 +193,7 @@ impl RowData {
         row.foldable = self.foldable;
         row.open = self.open;
         row.payload = self.payload;
+        row.user_round = self.user_round.clamp(0, i32::MAX as i64) as i32;
         row.error_title = self.error_title.as_str().into();
         row.error_hint = self.error_hint.as_str().into();
         row.visible = self.kind != KIND_PROCESS || !self.process_children.is_empty();
@@ -260,7 +263,6 @@ fn blank(kind: i32, id: impl Into<SharedString>) -> TimelineRow {
     TimelineRow {
         kind,
         id: id.into(),
-        // 安卓版没有分叉动作；0 让共享时间线的分叉按钮保持隐藏。
         user_round: 0,
         visible: true,
         text: SharedString::default(),
@@ -307,10 +309,11 @@ pub fn status_kind(state: &str) -> i32 {
     let state = state.trim();
     match state {
         "failed" | "error" | "rejected" | "执行失败" | "任务失败" => STATUS_FAILED,
-        "cancelled" | "canceled" | "interrupted" | "stopped" | "已停止" | "已取消"
-        | "已中断" => STATUS_STOPPED,
-        "" | "idle" | "ready" | "none" | "completed" | "complete" | "done" | "ok"
-        | "success" | "任务完成" | "已完成" => STATUS_DONE,
+        "cancelled" | "canceled" | "interrupted" | "stopped" | "已停止" | "已取消" | "已中断" => {
+            STATUS_STOPPED
+        }
+        "" | "idle" | "ready" | "none" | "completed" | "complete" | "done" | "ok" | "success"
+        | "任务完成" | "已完成" => STATUS_DONE,
         _ if state.starts_with("失败") => STATUS_FAILED,
         _ if state.starts_with("已停止")
             || state.starts_with("已取消")
@@ -635,7 +638,9 @@ pub(crate) fn tool_label(tool: &str) -> String {
         "list_files" | "list_file" => "列出文件",
         "glob" | "glob_files" | "文件名匹配" => "文件名匹配",
         "search_content" | "search_files" => "搜索内容",
-        "web_search" | "web_search_tool" | "web search" | "websearch" | "网页搜索" => "网页搜索",
+        "web_search" | "web_search_tool" | "web search" | "websearch" | "网页搜索" => {
+            "网页搜索"
+        }
         "web_fetch" | "web_fetch_tool" | "web fetch" | "webfetch" | "网页抓取" => "网页抓取",
         "execute_command" | "run_command" | "shell" | "运行命令" => "运行命令",
         "command_session" => "命令会话",
@@ -677,7 +682,9 @@ pub(crate) fn tool_icon_key(tool: &str) -> &'static str {
     if text.contains("subagent") || text.contains("蜂群") || tool.contains("子智能体") {
         return "diagram-project";
     }
-    if text.contains("web_search") || text.contains("search_content") || text.contains("search_files")
+    if text.contains("web_search")
+        || text.contains("search_content")
+        || text.contains("search_files")
         || tool.contains("搜索")
     {
         return "magnifying-glass";
@@ -688,13 +695,21 @@ pub(crate) fn tool_icon_key(tool: &str) -> &'static str {
     if text.contains("glob") || tool.contains("文件名匹配") {
         return "folder-tree";
     }
-    if text.contains("list_file") || text.contains("list_files") || text.contains("read_file")
-        || text.contains("read files") || tool.contains("读取") || tool.contains("列出")
+    if text.contains("list_file")
+        || text.contains("list_files")
+        || text.contains("read_file")
+        || text.contains("read files")
+        || tool.contains("读取")
+        || tool.contains("列出")
     {
         return "file-lines";
     }
-    if text.contains("write_file") || text.contains("edit_file") || text.contains("apply_patch")
-        || text.contains("text_editor") || tool.contains("写入") || tool.contains("编辑")
+    if text.contains("write_file")
+        || text.contains("edit_file")
+        || text.contains("apply_patch")
+        || text.contains("text_editor")
+        || tool.contains("写入")
+        || tool.contains("编辑")
         || tool.contains("补丁")
     {
         return "file-pen";
@@ -820,10 +835,7 @@ fn footer_stats(stats: &NativeMessageStats, round: i64) -> Vec<(String, String)>
         ));
         metrics.push((
             "coins".into(),
-            stats
-                .credits
-                .map(count_text)
-                .unwrap_or_else(|| "--".into()),
+            stats.credits.map(count_text).unwrap_or_else(|| "--".into()),
         ));
     }
     metrics
@@ -838,8 +850,9 @@ pub(crate) fn status_metric(state: &str) -> Option<(&'static str, String)> {
         "failed" | "error" | "rejected" | "执行失败" | "任务失败" => {
             Some(("status-error", "任务失败".into()))
         }
-        "cancelled" | "canceled" | "stopped" | "interrupted" | "已停止" | "已取消"
-        | "已中断" => Some(("status-stopped", "已停止".into())),
+        "cancelled" | "canceled" | "stopped" | "interrupted" | "已停止" | "已取消" | "已中断" => {
+            Some(("status-stopped", "已停止".into()))
+        }
         "waiting_input" | "waiting_user_input" | "waiting_approval" | "等待用户输入"
         | "等待确认" => Some(("status-waiting", "等待确认".into())),
         "queued" | "pending" | "正在排队" | "排队中" => {
@@ -857,12 +870,15 @@ pub(crate) fn status_metric(state: &str) -> Option<(&'static str, String)> {
         "上下文压缩中…" | "上下文压缩中" | "compacting" => {
             Some(("status-compacting", "上下文压缩中".into()))
         }
-        "目标继续执行…" | "目标继续执行" => Some(("status-requesting", "请求中".into())),
+        "目标继续执行…" | "目标继续执行" => {
+            Some(("status-requesting", "请求中".into()))
+        }
         other if other.starts_with("等待") => Some(("status-waiting", "等待确认".into())),
         other if other.starts_with("失败") => Some(("status-error", "任务失败".into())),
-        other if other.starts_with("已停止")
-            || other.starts_with("已取消")
-            || other.starts_with("已中断") =>
+        other
+            if other.starts_with("已停止")
+                || other.starts_with("已取消")
+                || other.starts_with("已中断") =>
         {
             Some(("status-stopped", "已停止".into()))
         }
@@ -883,10 +899,7 @@ pub(crate) fn status_metric(state: &str) -> Option<(&'static str, String)> {
 }
 
 fn footer_row(turn: &NativeChatTurn) -> Option<RowData> {
-    let mut metrics = footer_stats(
-        &turn.assistant.stats,
-        turn.user.user_round,
-    );
+    let mut metrics = footer_stats(&turn.assistant.stats, turn.user.user_round);
     if let Some((key, value)) = status_metric(&turn.assistant.state) {
         metrics.insert(0, (key.into(), value));
     }
@@ -896,6 +909,7 @@ fn footer_row(turn: &NativeChatTurn) -> Option<RowData> {
     let mut row = RowData::new(KIND_FOOTER, format!("{}-footer", turn.root_id));
     row.text = turn.assistant.text.clone();
     row.status_kind = status_kind(&turn.assistant.state);
+    row.user_round = turn.user.user_round;
     row.stats = metrics;
     Some(row)
 }
@@ -994,9 +1008,7 @@ pub fn project_turn(turn: &NativeChatTurn) -> Vec<RowData> {
     let final_text = final_round
         .map(|index| turn.rounds[index].text.clone())
         .filter(|text| !text.trim().is_empty())
-        .or_else(|| {
-            (!turn.assistant.text.trim().is_empty()).then(|| turn.assistant.text.clone())
-        });
+        .or_else(|| (!turn.assistant.text.trim().is_empty()).then(|| turn.assistant.text.clone()));
     if let Some(text) = final_text {
         let mut row = RowData::new(KIND_BODY, format!("{}-body-final", turn.root_id));
         row.text = text.clone();
@@ -1282,6 +1294,7 @@ impl LiveTurn {
             let mut row = RowData::new(KIND_FOOTER, format!("{}-footer", self.root_id));
             row.text = self.answer.clone();
             row.status_kind = self.status;
+            row.user_round = self.user_round;
             row.stats = stats;
             rows.push(row);
         }
@@ -1394,13 +1407,7 @@ mod tests {
         user_two.text = "第二个问题".into();
         let mut answer_two = RowData::new(KIND_BODY, "b3");
         answer_two.text = "第二个回答".into();
-        let rows: Vec<&RowData> = vec![
-            &user_one,
-            &note,
-            &answer_one,
-            &user_two,
-            &answer_two,
-        ];
+        let rows: Vec<&RowData> = vec![&user_one, &note, &answer_one, &user_two, &answer_two];
         let marks = turn_marks(&rows);
         assert_eq!(marks.len(), 2);
         assert_eq!(marks[0].user, "第一个问题");
@@ -1472,7 +1479,10 @@ mod tests {
             bubble_hint("看看 ![图](https://example.com/a.png) 和 [文档](https://example.com) 吧"),
             "看看 和 文档 吧"
         );
-        assert_eq!(bubble_hint("**完成**\n\n- 第一步\n- 第二步"), "完成 第一步 第二步");
+        assert_eq!(
+            bubble_hint("**完成**\n\n- 第一步\n- 第二步"),
+            "完成 第一步 第二步"
+        );
         let long = bubble_hint(&"字".repeat(120));
         assert_eq!(long.chars().count(), 97);
         assert!(long.ends_with('…'));
@@ -1565,6 +1575,7 @@ mod tests {
     fn a_streaming_body_stays_plain_until_the_turn_settles() {
         let mut live = LiveTurn::new("hi".into());
         live.answer = "**流式**".into();
+        live.user_round = 7;
         let rows = live.rows();
         let body = rows
             .iter()
@@ -1576,6 +1587,9 @@ mod tests {
             .find(|row| row.kind == KIND_FOOTER)
             .expect("footer row");
         assert_eq!(footer.stats[0].0, "status-requesting");
+        assert_eq!(footer.user_round, 7);
+        let shared = footer.to_row(&mut MarkdownRenderer::default());
+        assert_eq!(shared.user_round, 7);
         live.status = STATUS_DONE;
         let rows = live.rows();
         let body = rows

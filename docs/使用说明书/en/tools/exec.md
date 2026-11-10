@@ -1,7 +1,7 @@
 ---
 title: Execute Command
 summary: Arguments for `execute_command`, the blocking and background execution modes, polling and writing in a command session, output guards and budgets, and failure diagnosis.
-updated_at: 2026-10-16
+updated_at: 2026-11-09
 ---
 
 # Execute Command
@@ -45,3 +45,15 @@ A long-lived background command session is managed by the `command_session` tool
 - A non-zero exit, a timeout, a working directory that is missing or not a directory, a disallowed command, or exceeding the command budget all fail.
 - On a timeout or a non-zero exit, the collected output is still kept in the result, so you can keep diagnosing.
 - The administrator event details add up to 4 diagnostics, each with the command, its index, the exit code, and a bounded tail of output; the failure message sent to the model is compressed into one error line plus a next-step hint. That summary keeps the first and last 3 lines and reports total and omitted line counts instead of keeping only the tail; exit code 141 or a broken-pipe stderr is called out as a downstream head/cut closing the pipe (SIGPIPE), not a command failure.
+
+## Shell
+
+Commands run in the active shell, and the tool description names it, so the model can pick the right syntax:
+
+- **Windows desktop** prefers the bundled portable `pwsh` (PowerShell 7). If that probe fails it falls back to the system `powershell.exe` (2.0 on Windows 7, 5.1 on Windows 10/11), and only then to `cmd.exe`.
+- **Linux / macOS desktop** always uses bash with `set -o pipefail`, so a failing middle stage of a pipeline is not masked by a successful last command.
+- **Android** uses `/system/bin/sh` (mksh).
+
+The bundled pwsh becomes available as soon as the supplement is imported, with no app restart. Settings can override the choice: `cmd` forces cmd.exe, and any other executable becomes a PowerShell host candidate.
+
+When no usable PowerShell is detected but a `pwsh.exe` is present, the tool description says so explicitly ("this shell is cmd.exe, call `pwsh` when you need PowerShell") instead of letting the model believe the machine has none.

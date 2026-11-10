@@ -1001,7 +1001,7 @@ if ($installBrowser -and (-not $SkipBrowser)) {
 }
 
 # ---------------------------------------------------------------------------
-# 视频制作 skill fonts (opt/fonts/video; not tracked in git)
+# 知识短片 skill fonts (opt/fonts/video; not tracked in git)
 # ---------------------------------------------------------------------------
 $videoFonts = @(Get-PropertyValue -Object $manifest -Name 'videoFonts' -Default @())
 if ($videoFonts.Count -gt 0) {
@@ -1016,7 +1016,7 @@ if ($videoFonts.Count -gt 0) {
   $fontsCache = Join-Path $downDir 'video-fonts'
   $fetchScript = Join-Path $repoRoot 'packaging\fonts\fetch_video_fonts.py'
   if (-not (Test-Path -LiteralPath $fetchScript)) { Fail "video font fetcher missing: $fetchScript" }
-  $fetchArgs = @($fetchScript, '--dest', $fontsCache, '--licenses', (Join-Path $repoRoot 'config\skills\视频制作\engine\fonts'))
+  $fetchArgs = @($fetchScript, '--dest', $fontsCache, '--licenses', (Join-Path $repoRoot 'config\skills\知识短片\engine\fonts'))
   if (-not [string]::IsNullOrWhiteSpace($fontsSource)) { $fetchArgs += @('--source-dir', $fontsSource) }
   Write-Step "staging video fonts: $(if ([string]::IsNullOrWhiteSpace($fontsSource)) { 'pinned Google Fonts URLs' } else { $fontsSource })"
   Invoke-Python -PythonExe $pythonExe -Arguments $fetchArgs
@@ -1326,7 +1326,7 @@ Contents:
   opt/ffmpeg   ffmpeg __FFVER__ (when bundled)
   opt/7zip     7-Zip __SZVER__ console (7z.exe + 7z.dll, when bundled)
   opt/browser  Chrome __BROWSERVER__ win32 at __BROWSEREXE__ (when bundled)
-  opt/fonts/video  视频制作 skill 的 8 个 OFL 字体
+  opt/fonts/video  知识短片 skill 的 6 个拉丁/等宽 OFL 字体（中文用 opt/fonts/common）
   opt/fonts/common 公文/文档通用字体（仿宋、楷体、黑体、宋体、小标宋、雅黑、等线、Times New Roman）
 
 Use Import supplement in the wunder Desktop settings to install into WUNDER_HOME.

@@ -300,7 +300,7 @@ PYEOF
   done <<< "$font_list"
 fi
 
-# 视频制作 skill 的 8 个 OFL 字体：优先用部署机 config/fonts/video 的本地副本，
+# 知识短片 skill 的 6 个拉丁/等宽 OFL 字体（中文用 opt/fonts/common）：优先用部署机 config/fonts/video 的本地副本，
 # 没有就按 packaging/fonts/video-fonts.json 的固定 URL + SHA-256 下载。字体不进 git。
 video_fonts_rel="$(json_field install.videoFontsRoot)"
 [[ -n "$video_fonts_rel" && "$video_fonts_rel" != "null" ]] || video_fonts_rel="opt/fonts/video"
@@ -308,7 +308,7 @@ video_fonts_cache="$build_root/video-fonts"
 video_fonts_source=""
 if [[ -d "$repo_root/config/fonts/video" ]]; then video_fonts_source="$repo_root/config/fonts/video"; fi
 log "staging video fonts: ${video_fonts_source:-pinned Google Fonts URLs}"
-fetch_args=(--dest "$video_fonts_cache" --licenses "$repo_root/config/skills/视频制作/engine/fonts")
+fetch_args=(--dest "$video_fonts_cache" --licenses "$repo_root/config/skills/知识短片/engine/fonts")
 [[ -z "$video_fonts_source" ]] || fetch_args+=(--source-dir "$video_fonts_source")
 python3 "$repo_root/packaging/fonts/fetch_video_fonts.py" "${fetch_args[@]}"
 mkdir -p "$package_root/$video_fonts_rel"
@@ -452,7 +452,7 @@ FFmpeg: $ffmpeg_flavor $ffmpeg_version (opt/ffmpeg/bin/ffmpeg)
 7-Zip: $sevenzip_flavor $sevenzip_version (opt/7zip/bin/7zz, 7z symlink)
 Browser: $browser_version at opt/browser/$browser_executable_rel (when bundled)
 Browsers: Playwright Chromium in opt/python/ms-playwright (when bundled)
-Video fonts: 8 OFL fonts at opt/fonts/video
+Video fonts: 6 Latin/mono OFL fonts at opt/fonts/video (Chinese from opt/fonts/common)
 Document fonts: office fonts at opt/fonts/common (opt/fonts/fonts.conf maps 仿宋_GB2312/楷体_GB2312)
 
 Usage:

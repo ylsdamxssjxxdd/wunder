@@ -17,7 +17,7 @@ pub fn authorized_profile_revision(allowed: &HashSet<String>) -> String {
 }
 
 /// 桌面版/命令行随包附带的默认技能：新建智能体默认勾选，用户可自行取消。
-const DEFAULT_SKILL_NAMES: &[&str] = &["技能创建器", "公文写作", "文稿校对", "3D网页", "视频制作", "图纸设计"];
+const DEFAULT_SKILL_NAMES: &[&str] = &["技能创建器", "公文写作", "文稿校对", "3D网页", "知识短片", "图纸设计"];
 
 /// 桌面端不对智能体开放选择的内置工具：goal 由运行时按会话自动注入，
 /// 其余为会话调度等系统级内部工具。桌面模式的

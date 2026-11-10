@@ -3077,6 +3077,10 @@ fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
         "file_limit_hit",
     ] {
         if let Some(value) = map.get(key).filter(|value| !value.is_null()) {
+            // 逐行命中是默认行为，files_only:false 只是噪声，不写进观察。
+            if key == "files_only" && value.as_bool() == Some(false) {
+                continue;
+            }
             compacted.insert(key.to_string(), value.clone());
         }
     }

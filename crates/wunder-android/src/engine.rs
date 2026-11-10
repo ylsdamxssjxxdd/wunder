@@ -33,6 +33,7 @@ use wunder_desktop::{
 pub enum Command {
     Select(String),
     NewThread,
+    Fork(i32),
     Send(String),
     Stop,
     SelectModel(String),
@@ -337,6 +338,7 @@ pub enum Command {
     },
     RefreshCloudThreads,
     CloudNewThread,
+    CloudFork(i32),
     CloudSelectThread(String),
     CloudSend(String),
     CloudStop,
@@ -1191,9 +1193,8 @@ fn run(
         Some(id) => id.to_string(),
         None => {
             let workspace = shared.lock().unwrap().selected_workspace.clone();
-            let created = desktop.create_session(
-                (!workspace.trim().is_empty()).then_some(workspace.as_str()),
-            )?;
+            let created = desktop
+                .create_session((!workspace.trim().is_empty()).then_some(workspace.as_str()))?;
             refresh_sessions(&desktop, &shared, Some(&created.id));
             created.id
         }
@@ -1233,6 +1234,27 @@ fn run(
                     None,
                 ) {
                     notify(&shared, format!("无法新建会话：{error}"));
+                }
+            }
+            Command::Fork(round) => {
+                let session = shared.lock().unwrap().session_id.clone();
+                match desktop.fork_session(&session, round as i64) {
+                    Ok(created) => {
+                        refresh_sessions(&desktop, &shared, Some(&created.id));
+                        if let Err(error) = select_session(
+                            &desktop,
+                            &shared,
+                            &created.id,
+                            &generation,
+                            &mut watch_cancel,
+                            false,
+                        ) {
+                            notify(&shared, format!("无法打开分叉会话：{error}"));
+                        } else {
+                            notify(&shared, "已创建分叉线程");
+                        }
+                    }
+                    Err(error) => notify(&shared, format!("无法分叉会话：{error}")),
                 }
             }
             Command::NewThreadInWorkspace(id) => {
@@ -1381,12 +1403,9 @@ fn run(
                             })
                             .unwrap_or_default();
                         if current != target {
-                            let next = desktop
-                                .list_sessions(Some(target.as_str()))
-                                .ok()
-                                .and_then(|sessions| {
-                                    sessions.first().map(|session| session.id.clone())
-                                });
+                            let next = desktop.list_sessions(Some(target.as_str())).ok().and_then(
+                                |sessions| sessions.first().map(|session| session.id.clone()),
+                            );
                             let outcome = match next {
                                 Some(session) => select_session(
                                     &desktop,
@@ -1421,8 +1440,7 @@ fn run(
                 color,
                 folder,
             } => {
-                if let Some(id) =
-                    create_workspace(&desktop, &shared, &name, &icon, &color, &folder)
+                if let Some(id) = create_workspace(&desktop, &shared, &name, &icon, &color, &folder)
                 {
                     // A new workspace starts a thread so the drawer (filtered
                     // to the active workspace) is never left with no target
@@ -1446,13 +1464,7 @@ fn run(
                 folder,
             } => update_workspace(&desktop, &shared, &id, &name, &icon, &color, &folder),
             Command::DeleteWorkspace(id) => {
-                delete_workspace(
-                    &desktop,
-                    &shared,
-                    &id,
-                    &generation,
-                    &mut watch_cancel,
-                );
+                delete_workspace(&desktop, &shared, &id, &generation, &mut watch_cancel);
             }
             Command::UploadWorkspace { dir, files } => {
                 upload_workspace(&desktop, &shared, &dir, &files);
@@ -1554,10 +1566,7 @@ fn run(
                         }
                         NativeChatCommand::Stop => stop_generation(&desktop, &shared),
                         compact @ NativeChatCommand::Compact => {
-                            let busy = shared
-                                .lock()
-                                .map(|state| state.generating)
-                                .unwrap_or(false);
+                            let busy = shared.lock().map(|state| state.generating).unwrap_or(false);
                             if busy {
                                 notify(&shared, "请先停止当前任务再压缩上下文");
                             } else {
@@ -1579,20 +1588,42 @@ fn run(
                 // the waiting turn; settle it with the same inquiry identity.
                 let inquiry_turn_id = take_inquiry_answer(&shared, &session, false)
                     .and_then(|(_text, turn_id)| turn_id);
-                start_stream(desktop.clone(), shared.clone(), session, text, inquiry_turn_id);
+                start_stream(
+                    desktop.clone(),
+                    shared.clone(),
+                    session,
+                    text,
+                    inquiry_turn_id,
+                );
             }
             Command::Stop => stop_generation(&desktop, &shared),
             Command::GoalEdit(text) => {
-                run_chat_command(desktop.clone(), shared.clone(), NativeChatCommand::GoalEdit(text));
+                run_chat_command(
+                    desktop.clone(),
+                    shared.clone(),
+                    NativeChatCommand::GoalEdit(text),
+                );
             }
             Command::GoalResume => {
-                run_chat_command(desktop.clone(), shared.clone(), NativeChatCommand::GoalResume);
+                run_chat_command(
+                    desktop.clone(),
+                    shared.clone(),
+                    NativeChatCommand::GoalResume,
+                );
             }
             Command::GoalPause => {
-                run_chat_command(desktop.clone(), shared.clone(), NativeChatCommand::GoalPause);
+                run_chat_command(
+                    desktop.clone(),
+                    shared.clone(),
+                    NativeChatCommand::GoalPause,
+                );
             }
             Command::GoalClear => {
-                run_chat_command(desktop.clone(), shared.clone(), NativeChatCommand::GoalClear);
+                run_chat_command(
+                    desktop.clone(),
+                    shared.clone(),
+                    NativeChatCommand::GoalClear,
+                );
             }
             Command::SelectModel(key) => {
                 let session = shared.lock().unwrap().session_id.clone();
@@ -1641,7 +1672,11 @@ fn run(
             }
             Command::InstallAndroidUpdate => install_update(&shared),
             Command::SetUpdateSource(source) => {
-                let source = if source == "github" { "github" } else { "cloud" };
+                let source = if source == "github" {
+                    "github"
+                } else {
+                    "cloud"
+                };
                 match desktop.get_desktop_settings() {
                     Ok(settings) => match desktop.save_preferences(
                         &settings.theme,
@@ -2152,6 +2187,7 @@ fn run(
             } => crate::cloud::set_sharing(&desktop, &shared, enabled, full_shadow),
             Command::RefreshCloudThreads => crate::cloud::refresh_threads(&desktop, &shared),
             Command::CloudNewThread => crate::cloud::new_thread(&desktop, &shared),
+            Command::CloudFork(round) => crate::cloud::fork(&desktop, &shared, round),
             Command::CloudSelectThread(id) => {
                 crate::cloud::select_thread(&desktop, &shared, &id);
             }
@@ -2866,10 +2902,9 @@ fn start_update_download(desktop: Arc<NativeDesktop>, shared: Arc<Mutex<Shared>>
                     Ok(path) => {
                         state.update_phase = "ready".into();
                         state.update_path = Some(path);
-                        state.update_progress_bytes.store(
-                            state.update_size_bytes,
-                            Ordering::Relaxed,
-                        );
+                        state
+                            .update_progress_bytes
+                            .store(state.update_size_bytes, Ordering::Relaxed);
                         state.update_error.clear();
                     }
                     Err(error) => {
@@ -3115,10 +3150,7 @@ fn reset_context_usage(shared: &Arc<Mutex<Shared>>) {
     }
 }
 
-fn apply_context_usage(
-    shared: &Arc<Mutex<Shared>>,
-    usage: wunder_desktop::NativeContextUsage,
-) {
+fn apply_context_usage(shared: &Arc<Mutex<Shared>>, usage: wunder_desktop::NativeContextUsage) {
     if usage.used.is_none() && usage.capacity.is_none() {
         return;
     }
@@ -3153,11 +3185,7 @@ fn apply_context_usage(
     state.context_rev = state.context_rev.wrapping_add(1);
 }
 
-fn refresh_context_usage(
-    desktop: &NativeDesktop,
-    shared: &Arc<Mutex<Shared>>,
-    session: &str,
-) {
+fn refresh_context_usage(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, session: &str) {
     if session.trim().is_empty() {
         return;
     }
@@ -3727,11 +3755,8 @@ fn mobile_tool(tool: &ToolRecord, enabled: bool) -> MobileTool {
     // Same icon and badge tone as the desktop agent/tools page: the shared
     // resolver keeps per-tool glyphs (terminal, file, search, …) instead of one
     // category glyph for every builtin.
-    let visual = wunder_desktop::tool_icons::tool_card_visual(
-        &tool.name,
-        &tool.description,
-        &tool.category,
-    );
+    let visual =
+        wunder_desktop::tool_icons::tool_card_visual(&tool.name, &tool.description, &tool.category);
     MobileTool {
         name: tool.name.as_str().into(),
         description: tool.description.as_str().into(),
@@ -3917,7 +3942,11 @@ fn apply_tool_files(
     let Ok(mut state) = shared.lock() else {
         return;
     };
-    let entries = files.entries.into_iter().map(mobile_file).collect::<Vec<_>>();
+    let entries = files
+        .entries
+        .into_iter()
+        .map(mobile_file)
+        .collect::<Vec<_>>();
     state.tools.browse_tab = tab;
     state.tools.browse_resource = resource.to_string();
     state.tools.browse_readonly = readonly;
@@ -3956,7 +3985,8 @@ fn load_server_tools(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, name:
         Ok(list) => {
             if let Ok(mut state) = shared.lock() {
                 state.tools.active_server = name.to_string();
-                state.tools.server_tools = list.iter().map(|tool| mobile_tool(tool, false)).collect();
+                state.tools.server_tools =
+                    list.iter().map(|tool| mobile_tool(tool, false)).collect();
                 state.tools_rev = state.tools_rev.wrapping_add(1);
                 state.touch();
             }
@@ -4116,12 +4146,7 @@ fn open_tool_file(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, path: &s
     }
 }
 
-fn save_tool_file(
-    desktop: &NativeDesktop,
-    shared: &Arc<Mutex<Shared>>,
-    path: &str,
-    content: &str,
-) {
+fn save_tool_file(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, path: &str, content: &str) {
     let (tab, resource, readonly, editable) = match shared.lock() {
         Ok(state) => (
             state.tools.browse_tab,
@@ -4240,7 +4265,9 @@ fn upload_tool_files(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, files
     let mut skipped = 0;
     for path in files {
         let source = std::path::Path::new(path);
-        let size = std::fs::metadata(source).map(|meta| meta.len()).unwrap_or(0);
+        let size = std::fs::metadata(source)
+            .map(|meta| meta.len())
+            .unwrap_or(0);
         let Some(name) = source.file_name().and_then(|name| name.to_str()) else {
             skipped += 1;
             continue;
@@ -4303,10 +4330,8 @@ fn export_skill(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, name: &str
         Ok(()) => {
             #[cfg(target_os = "android")]
             {
-                let status = crate::android_host::save_file_to_phone(
-                    &target_text,
-                    &format!("{name}.zip"),
-                );
+                let status =
+                    crate::android_host::save_file_to_phone(&target_text, &format!("{name}.zip"));
                 if let Some(reason) = status.strip_prefix("failed:") {
                     notify(shared, format!("导出失败：{reason}"));
                 } else {
@@ -4385,11 +4410,7 @@ fn open_tool_editor(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, kind: 
                     base_type: "vector".into(),
                     ..MobileKnowledgeDraft::default()
                 });
-            (
-                MobileMcpDraft::default(),
-                kb,
-                index < 0,
-            )
+            (MobileMcpDraft::default(), kb, index < 0)
         }
         _ => return,
     };
@@ -4513,10 +4534,7 @@ fn refresh_agent(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
 
 fn search_agent_tools(shared: &Arc<Mutex<Shared>>, query: &str) {
     let (catalog, tool_names) = match shared.lock() {
-        Ok(state) => (
-            state.agent_catalog.clone(),
-            state.agent.tool_names.clone(),
-        ),
+        Ok(state) => (state.agent_catalog.clone(), state.agent.tool_names.clone()),
         Err(_) => return,
     };
     let groups = agent_groups(&catalog, &tool_names, query);
@@ -4777,18 +4795,18 @@ fn open_cron_editor(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, id: Op
     let (draft, is_new) = match id {
         Some(id) if !id.trim().is_empty() => match desktop.get_cron_job(id) {
             Ok(job) => {
-                let (every_text, interval_unit) = if job.every_s >= 86400 && job.every_s % 86400 == 0
-                {
-                    ((job.every_s / 86400).to_string(), "day")
-                } else if job.every_s >= 3600 && job.every_s % 3600 == 0 {
-                    ((job.every_s / 3600).to_string(), "hour")
-                } else if job.every_s > 0 && job.every_s % 60 == 0 {
-                    ((job.every_s / 60).to_string(), "minute")
-                } else if job.every_s > 0 {
-                    (job.every_s.to_string(), "second")
-                } else {
-                    ("5".to_string(), "minute")
-                };
+                let (every_text, interval_unit) =
+                    if job.every_s >= 86400 && job.every_s % 86400 == 0 {
+                        ((job.every_s / 86400).to_string(), "day")
+                    } else if job.every_s >= 3600 && job.every_s % 3600 == 0 {
+                        ((job.every_s / 3600).to_string(), "hour")
+                    } else if job.every_s > 0 && job.every_s % 60 == 0 {
+                        ((job.every_s / 60).to_string(), "minute")
+                    } else if job.every_s > 0 {
+                        (job.every_s.to_string(), "second")
+                    } else {
+                        ("5".to_string(), "minute")
+                    };
                 (
                     MobileCronDraft {
                         id: job.id.clone().into(),
@@ -5031,7 +5049,8 @@ fn refresh_memory(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, reset_fi
             let mut categories = vec!["全部标签".to_string()];
             if all {
                 for row in &rows {
-                    if !row.category.is_empty() && !categories.iter().any(|item| item == &row.category)
+                    if !row.category.is_empty()
+                        && !categories.iter().any(|item| item == &row.category)
                     {
                         categories.push(row.category.clone());
                     }
@@ -5246,10 +5265,7 @@ fn mobile_workspace(record: &wunder_desktop::NativeWorkspace, active: bool) -> M
 /// Reload the catalogue and keep the current selection when it still exists.
 /// The opened thread's workspace wins over a stale selection the first time
 /// this runs after startup.
-fn refresh_workspaces(
-    desktop: &NativeDesktop,
-    shared: &Arc<Mutex<Shared>>,
-) -> anyhow::Result<()> {
+fn refresh_workspaces(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) -> anyhow::Result<()> {
     let list = desktop.list_workspaces()?;
     // The system DocumentsProvider is read-only and mirrors this catalogue;
     // push it before the UI lock so Binder readers never wait on the engine.
@@ -5324,9 +5340,7 @@ fn managed_workspace_base(desktop: &NativeDesktop) -> anyhow::Result<std::path::
 fn managed_workspace_slug(name: &str, base: &std::path::Path) -> String {
     let mut cleaned = String::with_capacity(name.len());
     for ch in name.chars() {
-        if ch.is_control()
-            || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
-        {
+        if ch.is_control() || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
             cleaned.push('-');
         } else {
             cleaned.push(ch);
@@ -5707,8 +5721,7 @@ fn start_markdown_image(
     }
     let roots = match shared.lock() {
         Ok(mut state) => {
-            if state.images.contains_key(&source) || !state.images_inflight.insert(source.clone())
-            {
+            if state.images.contains_key(&source) || !state.images_inflight.insert(source.clone()) {
                 return;
             }
             drop(state);
@@ -5882,11 +5895,7 @@ fn move_workspace_entry(
     }
 }
 
-fn delete_workspace_entry(
-    desktop: &NativeDesktop,
-    shared: &Arc<Mutex<Shared>>,
-    path: &str,
-) {
+fn delete_workspace_entry(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, path: &str) {
     let root = match active_workspace_root(desktop, shared) {
         Ok(root) => root,
         Err(error) => {
@@ -6004,7 +6013,13 @@ fn upload_workspace(
     };
     let mut existing: std::collections::HashSet<String> = desktop
         .workspace_local_listing(&root, dir, 0)
-        .map(|listing| listing.entries.into_iter().map(|entry| entry.name).collect())
+        .map(|listing| {
+            listing
+                .entries
+                .into_iter()
+                .map(|entry| entry.name)
+                .collect()
+        })
         .unwrap_or_default();
     let mut uploaded = 0usize;
     let mut failed = 0usize;
@@ -6206,23 +6221,24 @@ fn start_screenshot(shared: &Arc<Mutex<Shared>>) {
 
 fn apply_screenshot(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, status: &str) {
     if status == "no_service" {
-        notify(
-            shared,
-            "请先在系统设置中开启 wunder 无障碍服务，再使用截图",
-        );
+        notify(shared, "请先在系统设置中开启 wunder 无障碍服务，再使用截图");
         return;
     }
     let Some(source) = status.strip_prefix("ok|") else {
         notify(
             shared,
-            format!("截图失败：{}", status.strip_prefix("error|").unwrap_or(status)),
+            format!(
+                "截图失败：{}",
+                status.strip_prefix("error|").unwrap_or(status)
+            ),
         );
         return;
     };
     let saved = (|| -> Result<String, String> {
         let root = active_workspace_root(desktop, shared)?;
         let directory = std::path::Path::new(&root).join("screenshots");
-        std::fs::create_dir_all(&directory).map_err(|error| format!("无法创建截图目录：{error}"))?;
+        std::fs::create_dir_all(&directory)
+            .map_err(|error| format!("无法创建截图目录：{error}"))?;
         let now = chrono::Local::now();
         let name = format!(
             "screenshot-{}-{:03}.png",
@@ -6295,8 +6311,8 @@ fn workspace_kind(path: &str, dir: bool) -> i32 {
         "mp4" | "mov" | "mkv" | "webm" | "avi" | "mp3" | "wav" | "m4a" | "flac" | "ogg" => 2,
         "zip" | "rar" | "7z" | "tar" | "gz" | "xz" | "bz2" | "zst" => 3,
         "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "txt" | "md" | "json"
-        | "toml" | "yaml" | "yml" | "csv" | "xml" | "html" | "css" | "js" | "ts" | "rs"
-        | "py" | "java" | "kt" | "c" | "h" | "cpp" | "hpp" | "sh" | "sql" => 4,
+        | "toml" | "yaml" | "yml" | "csv" | "xml" | "html" | "css" | "js" | "ts" | "rs" | "py"
+        | "java" | "kt" | "c" | "h" | "cpp" | "hpp" | "sh" | "sql" => 4,
         _ => 5,
     }
 }
@@ -7427,12 +7443,7 @@ fn update_live_subtitle(state: &mut Shared, live: &LiveTurn) -> bool {
     true
 }
 
-fn publish_live(
-    shared: &Arc<Mutex<Shared>>,
-    session: &str,
-    stream_id: u64,
-    live: &mut LiveTurn,
-) {
+fn publish_live(shared: &Arc<Mutex<Shared>>, session: &str, stream_id: u64, live: &mut LiveTurn) {
     // The identity frame can trail an early status frame. Adopt the durable
     // root of the just-submitted turn as soon as it appears, so the live rows
     // and the durable copy of the same turn share one identity and the tick
@@ -7440,7 +7451,8 @@ fn publish_live(
     if live.root_id == "live" {
         if let Ok(state) = shared.lock() {
             if state.session_id == session {
-                if let Some(root) = project::running_root_for_text(&state.durable_rows, &live.user) {
+                if let Some(root) = project::running_root_for_text(&state.durable_rows, &live.user)
+                {
                     live.root_id = root;
                 }
             }
@@ -7578,7 +7590,9 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
     // The online stream collapses every `*_delta` frame into
     // `thread_item_delta` and keeps the semantic type in `source_event`.
     let kind = if raw == "thread_item_delta" {
-        data.get("source_event").and_then(Value::as_str).unwrap_or(raw)
+        data.get("source_event")
+            .and_then(Value::as_str)
+            .unwrap_or(raw)
     } else {
         raw
     };
@@ -7805,8 +7819,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 .and_then(Value::as_str)
                 .map(str::to_owned)
                 .unwrap_or_default();
-            let entry =
-                NativeWorkflowEntry::from_payload(id, title, detail, state, data);
+            let entry = NativeWorkflowEntry::from_payload(id, title, detail, state, data);
             let label = project::tool_label(&entry.title);
             let icon = project::tool_icon_key(&entry.title).to_string();
             let target = project::tool_target(&entry);
@@ -7853,7 +7866,10 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 .and_then(Value::as_str)
                 .unwrap_or("");
             if !session.is_empty() {
-                let index = data.get("command_index").and_then(Value::as_i64).unwrap_or(0);
+                let index = data
+                    .get("command_index")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
                 let key = format!("{session}#{index}");
                 let id = data
                     .get("tool_call_id")
@@ -7879,10 +7895,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                     live.command_output.insert(key.clone(), output.clone());
                 }
                 let command = data.get("command").and_then(Value::as_str).unwrap_or("");
-                let terminal = matches!(
-                    kind,
-                    "command_session_exit" | "command_session_summary"
-                );
+                let terminal = matches!(kind, "command_session_exit" | "command_session_summary");
                 let exit_code = data.get("exit_code").and_then(Value::as_i64);
                 let failed = exit_code.is_some_and(|code| code != 0)
                     || data["success"] == false
@@ -7951,10 +7964,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 live.phase = "tool".into();
             }
         }
-        "compaction"
-        | "compaction_completed"
-        | "compaction_start"
-        | "compaction_progress" => {
+        "compaction" | "compaction_completed" | "compaction_start" | "compaction_progress" => {
             live.close_reason(STATUS_DONE);
             let summary = data
                 .get("summary_text")
@@ -8007,9 +8017,7 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
                 .and_then(Value::as_str)
                 .unwrap_or("completed");
             let (kind_status, phase) = match status {
-                "cancelled" | "canceled" | "stopped" | "interrupted" => {
-                    (STATUS_STOPPED, "stopped")
-                }
+                "cancelled" | "canceled" | "stopped" | "interrupted" => (STATUS_STOPPED, "stopped"),
                 "failed" | "error" | "rejected" => (STATUS_FAILED, "error"),
                 "waiting_input" | "waiting_user_input" | "waiting_approval" => {
                     (STATUS_RUNNING, "waiting")
@@ -8250,12 +8258,15 @@ mod tests {
     fn stream_delta_reaches_the_live_answer_before_the_final_frame() {
         let mut live = LiveTurn::new("hi".into());
         for delta in ["你", "好"] {
-            apply_event(&mut live, &json!({
-                "event": "thread_item_delta",
-                "data": {"session_id": "s", "data": {
-                    "source_event": "llm_output_delta", "delta": delta
-                }}
-            }));
+            apply_event(
+                &mut live,
+                &json!({
+                    "event": "thread_item_delta",
+                    "data": {"session_id": "s", "data": {
+                        "source_event": "llm_output_delta", "delta": delta
+                    }}
+                }),
+            );
         }
         assert_eq!(live.answer, "你好");
         assert_eq!(live.phase, "outputting");
@@ -8264,15 +8275,18 @@ mod tests {
     #[test]
     fn tool_call_shows_a_preview_before_its_result_frame() {
         let mut live = LiveTurn::new("hi".into());
-        apply_event(&mut live, &json!({
-            "event": "thread_item_delta",
-            "data": {"session_id": "s", "data": {
-                "source_event": "tool_call",
-                "tool": "shell",
-                "tool_call_id": "call-1",
-                "arguments": {"command": "ls -la"}
-            }}
-        }));
+        apply_event(
+            &mut live,
+            &json!({
+                "event": "thread_item_delta",
+                "data": {"session_id": "s", "data": {
+                    "source_event": "tool_call",
+                    "tool": "shell",
+                    "tool_call_id": "call-1",
+                    "arguments": {"command": "ls -la"}
+                }}
+            }),
+        );
         assert_eq!(live.tool_count(), 1);
         let tool = match &live.steps[0] {
             project::LiveStep::Tool(tool) => tool,
@@ -8355,16 +8369,20 @@ mod tests {
     fn question_panel_event_unwraps_two_envelopes_and_queues_the_panel() {
         let shared = Arc::new(Mutex::new(Shared::default()));
         shared.lock().unwrap().session_id = "s".into();
-        apply_inquiry_event(&shared, &json!({
-            "event": "question_panel",
-            "data": {"session_id": "s", "timestamp": "0", "data": {
-                "turn_id": "turn-1",
-                "questions": [{
-                    "question": "选哪个方案？",
-                    "options": [{"label": "A", "recommended": true}]
-                }]
-            }}
-        }), "s");
+        apply_inquiry_event(
+            &shared,
+            &json!({
+                "event": "question_panel",
+                "data": {"session_id": "s", "timestamp": "0", "data": {
+                    "turn_id": "turn-1",
+                    "questions": [{
+                        "question": "选哪个方案？",
+                        "options": [{"label": "A", "recommended": true}]
+                    }]
+                }}
+            }),
+            "s",
+        );
         let state = shared.lock().unwrap();
         let panel = state.inquiry.as_ref().expect("the panel is queued");
         assert_eq!(panel.turn_id, "turn-1");
@@ -8559,7 +8577,10 @@ mod tests {
         let workspace = create_managed_workspace(&desktop, "测试 工作区", "flask", "teal", "")
             .expect("create the managed workspace");
         assert!(std::path::Path::new(&workspace.root_path).is_dir());
-        assert!(workspace.root_path.replace('\\', "/").contains("/workspaces/"));
+        assert!(workspace
+            .root_path
+            .replace('\\', "/")
+            .contains("/workspaces/"));
         assert_eq!(workspace.name, "测试 工作区");
         assert_eq!(workspace.icon, "flask");
 
@@ -8577,10 +8598,16 @@ mod tests {
         .expect("create the picked folder workspace");
         assert!(std::path::Path::new(&external.root_path).is_dir());
         assert!(external.root_path.ends_with("picked-folder"));
-        assert!(!external.root_path.replace('\\', "/").contains("/workspaces/"));
+        assert!(!external
+            .root_path
+            .replace('\\', "/")
+            .contains("/workspaces/"));
 
         select_workspace(&desktop, &shared, &workspace.workspace_id).expect("select");
-        assert_eq!(shared.lock().unwrap().selected_workspace, workspace.workspace_id);
+        assert_eq!(
+            shared.lock().unwrap().selected_workspace,
+            workspace.workspace_id
+        );
         refresh_workspaces(&desktop, &shared).expect("refresh");
         assert!(shared
             .lock()

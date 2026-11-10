@@ -26,13 +26,20 @@ thread_local! {
     static LAST: Cell<Option<(f32, f32)>> = const { Cell::new(None) };
     /// 光标是否已在窗口外：只在从内到外的那一跳上报，避免每帧重复触发。
     static OUTSIDE: Cell<bool> = const { Cell::new(false) };
+    static PRIMARY_HELD: Cell<bool> = const { Cell::new(false) };
 }
 
 /// 装上追踪通道：声明平台能力，并把 Slint 侧的两个回调接到系统调用上。
 pub fn install(app: &MainWindow) {
     let chase = app.global::<PointerChase>();
-    chase.set_enabled(cfg!(windows));
-    chase.on_primary_held(|| crate::os_drag::pointer_button_held());
+    chase.set_defer_release(cfg!(windows));
+    chase.set_enabled(platform_available(app));
+    chase.on_primary_held(|| {
+        #[cfg(windows)]
+        return crate::os_drag::pointer_button_held();
+        #[cfg(not(windows))]
+        PRIMARY_HELD.with(Cell::get)
+    });
 
     let weak = app.as_weak();
     chase.on_begin(move || {
@@ -42,9 +49,14 @@ pub fn install(app: &MainWindow) {
 }
 
 fn start(app: &MainWindow) {
-    if !cfg!(windows) {
+    let chase = app.global::<PointerChase>();
+    if !chase.get_enabled() {
+        chase.set_enabled(platform_available(app));
+    }
+    if !chase.get_enabled() {
         return;
     }
+    PRIMARY_HELD.with(|held| held.set(true));
     OUTSIDE.with(|slot| slot.set(false));
     let weak = app.as_weak();
     CHASE.with(|timer| {
@@ -83,6 +95,7 @@ fn tick(app: &MainWindow) {
     } else if !outside {
         OUTSIDE.with(|slot| slot.set(false));
     }
+    PRIMARY_HELD.with(|current| current.set(held));
     if !held {
         // 事件流没送来那条松开（或被我们判成合成松开而忽略），这里收尾。
         chase.set_finish_serial(chase.get_finish_serial().wrapping_add(1));
@@ -112,9 +125,29 @@ fn cursor_in_window(app: &MainWindow) -> Option<(f32, f32, bool)> {
     imp::cursor_in_window(app)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn cursor_in_window(app: &MainWindow) -> Option<(f32, f32, bool)> {
+    linux::cursor_in_window(app)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn cursor_in_window(_app: &MainWindow) -> Option<(f32, f32, bool)> {
     None
+}
+
+#[cfg(windows)]
+fn platform_available(_app: &MainWindow) -> bool {
+    true
+}
+
+#[cfg(target_os = "linux")]
+fn platform_available(app: &MainWindow) -> bool {
+    linux::cursor_in_window(app).is_some()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn platform_available(_app: &MainWindow) -> bool {
+    false
 }
 
 #[cfg(windows)]
@@ -159,5 +192,82 @@ mod imp {
             return None;
         };
         Some(handle.hwnd.get() as isize)
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::MainWindow;
+    use slint::winit_030::WinitWindowAccessor;
+    use slint::ComponentHandle;
+    use std::cell::RefCell;
+    use x11_dl::xlib;
+
+    struct X11 {
+        lib: xlib::Xlib,
+        display: *mut xlib::Display,
+    }
+
+    impl Drop for X11 {
+        fn drop(&mut self) {
+            unsafe { (self.lib.XCloseDisplay)(self.display) };
+        }
+    }
+
+    thread_local! {
+        static X11_STATE: RefCell<Option<X11>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn cursor_in_window(app: &MainWindow) -> Option<(f32, f32, bool)> {
+        let xwindow = app
+            .window()
+            .with_winit_window(|native| {
+                use slint::winit_030::winit::raw_window_handle::{
+                    HasWindowHandle, RawWindowHandle,
+                };
+                let handle = native.window_handle().ok()?;
+                let RawWindowHandle::Xlib(handle) = handle.as_raw() else {
+                    return None;
+                };
+                Some(handle.window)
+            })
+            .flatten()?;
+        X11_STATE.with(|state| {
+            if state.borrow().is_none() {
+                let lib = xlib::Xlib::open().ok()?;
+                let display = unsafe { (lib.XOpenDisplay)(std::ptr::null()) };
+                if display.is_null() {
+                    return None;
+                }
+                *state.borrow_mut() = Some(X11 { lib, display });
+            }
+            let mut state = state.borrow_mut();
+            let x11 = state.as_mut()?;
+            let (mut root, mut child) = (0 as xlib::Window, 0 as xlib::Window);
+            let (mut root_x, mut root_y, mut x, mut y) = (0, 0, 0, 0);
+            let mut mask = 0u32;
+            let found = unsafe {
+                (x11.lib.XQueryPointer)(
+                    x11.display,
+                    xwindow,
+                    &mut root,
+                    &mut child,
+                    &mut root_x,
+                    &mut root_y,
+                    &mut x,
+                    &mut y,
+                    &mut mask,
+                )
+            };
+            if found == 0 {
+                return None;
+            }
+            let scale = f64::from(app.window().scale_factor()).max(0.001) as f32;
+            Some((
+                x as f32 / scale,
+                y as f32 / scale,
+                mask & xlib::Button1Mask != 0,
+            ))
+        })
     }
 }

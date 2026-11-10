@@ -13,36 +13,39 @@
   python render.py <工程> --serve               起本地预览 http://127.0.0.1:8765/?play（8765 被占用时自动换端口；←/→ 无，改完刷新）
 
 工程目录里只需要 index.html + film.js。引擎（vk.js、vk-kit.js）留在本文件所在目录，
-字体优先用补充包的 opt/fonts/video（桌面/安卓）或 /usr/share/fonts/wunder（云端），
-没有时退回 engine/fonts 或跑 get_fonts.py 下载。都由内置小服务器挂到 /engine/ 下，
-不用往每个工程里拷字体，也没有 file:// 的跨目录字体限制。
+拉丁与等宽字体优先用补充包的 opt/fonts/video（桌面/安卓）或 /usr/share/fonts/wunder（云端），
+没有时退回 engine/fonts 或跑 get_fonts.py 下载。中文使用补充包 opt/fonts/common 的宋体/雅黑，
+由 fontconfig 提供。都由内置小服务器挂到 /engine/ 下，不用往每个工程里拷字体，
+也没有 file:// 的跨目录字体限制。
 """
 import functools, hashlib, http.server, io, json, os, random, subprocess, sys, threading
 from pathlib import Path
 
 ENGINE = Path(__file__).resolve().parent
 REQUIRED_FONTS = [
-    "NotoSerifSC-VF.ttf", "NotoSansSC-VF.ttf",
     "CormorantGaramond.ttf", "CormorantGaramond-Italic.ttf",
     "Lora.ttf", "Lora-Italic.ttf", "JetBrainsMono.ttf", "CourierPrime-Regular.ttf",
 ]
 
 def font_dirs():
-    """字体查找顺序：本地 engine/fonts → 补充包 opt/fonts/video → 系统字体目录。
-    补充包（桌面版/安卓 proot）把 8 个字体放在 opt/fonts/video 或 /usr/share/fonts/wunder/video。"""
+    """字体查找顺序：本地 engine/fonts → 补充包 opt/fonts/video、opt/fonts/common → 系统字体目录。"""
     dirs = [ENGINE / "fonts"]
     home = os.environ.get("WUNDER_HOME", "").strip()
     if home:
         dirs.append(Path(home) / "opt/fonts/video")
+        dirs.append(Path(home) / "opt/fonts/common")
     exe = Path(sys.executable).resolve()
     for parent in exe.parents:
         if parent.name == "opt":
             dirs.append(parent.parent / "opt/fonts/video")
+            dirs.append(parent.parent / "opt/fonts/common")
             break
     if len(ENGINE.parents) > 3:
         dirs.append(ENGINE.parents[3] / "config/fonts/video")
+        dirs.append(ENGINE.parents[3] / "config/fonts/common")
         dirs.append(ENGINE.parents[3] / "config/fonts")
     dirs.append(Path("/usr/share/fonts/wunder/video"))
+    dirs.append(Path("/usr/share/fonts/wunder/common"))
     dirs.append(Path("/usr/share/fonts/wunder"))
     out, seen = [], set()
     for d in dirs:
@@ -66,6 +69,17 @@ def warn_missing_fonts():
     if missing:
         print("提示：缺少视频字体：" + "、".join(missing) +
               "\n  补充包应提供 opt/fonts/video；开发环境可运行 python engine/get_fonts.py", file=sys.stderr)
+
+def apply_fontconfig_env():
+    """让 Chrome 通过 fontconfig 看到补充包 opt/fonts/common 里的宋体/雅黑。"""
+    if os.environ.get("FONTCONFIG_FILE"):
+        return
+    home = os.environ.get("WUNDER_HOME", "").strip()
+    if not home:
+        return
+    conf = Path(home) / "opt/fonts/fonts.conf"
+    if conf.is_file():
+        os.environ["FONTCONFIG_FILE"] = str(conf)
 
 def chrome_executable():
     """优先用补充包里的 Chrome；找不到再退回系统 channel=chrome。"""
@@ -236,6 +250,7 @@ if __name__ == "__main__":
     proj = Path(a[0]).resolve()
     if not (proj / "film.js").exists(): sys.exit(f"{proj} 里没有 film.js")
     (proj / "renders").mkdir(exist_ok=True)
+    apply_fontconfig_env()
     warn_missing_fonts()
     if "--serve" in a:
         try:

@@ -791,6 +791,35 @@ export component MainWindow inherits Window {
             + (DragPreview.pointer-x < split_workspace.drop-x
             + split_workspace.drop-width * root.split-column-ratio ? 0 : 1), row);
     }
+    public function open-thread-in-split(row: int) {
+        if root.split-count > 1 {
+            if root.split-session-0 != "" && root.split-session-0 == root.conversations[row].id {
+                root.split-activate(0); return;
+            }
+            if root.split-session-1 != "" && root.split-session-1 == root.conversations[row].id {
+                root.split-activate(1); return;
+            }
+            if root.split-session-2 != "" && root.split-session-2 == root.conversations[row].id {
+                root.split-activate(2); return;
+            }
+            if root.split-session-3 != "" && root.split-session-3 == root.conversations[row].id {
+                root.split-activate(3); return;
+            }
+        }
+        if root.split-count == 1 || root.split-session-1 == "" {
+            root.split-drop-row(1, row); return;
+        }
+        if root.split-session-2 == "" {
+            root.split-drop-row(2, row); return;
+        }
+        if root.split-session-3 == "" {
+            root.split-drop-row(3, row); return;
+        }
+        if root.active-session-id == root.split-session-1 { root.split-drop-row(1, row); return; }
+        if root.active-session-id == root.split-session-2 { root.split-drop-row(2, row); return; }
+        if root.active-session-id == root.split-session-3 { root.split-drop-row(3, row); return; }
+        root.split-drop-row(0, row);
+    }
     // The working-directory prompt dialog (rename / new dir / new file /
     // delete / cloud-approval confirm), driven by the native controller.
     in-out property <bool> ws-prompt-open: false;
@@ -1188,6 +1217,7 @@ export component MainWindow inherits Window {
                 new-workspace => { root.new-workspace(); }
                 move-row(index, travel) => { root.move-row(index, travel); }
                 drop-thread-to-chat(index) => { root.drop-thread-on-split(index); }
+                open-thread-split(index) => { root.open-thread-in-split(index); }
                 archive-thread(id) => {
                     root.archive-thread(id);
                 }

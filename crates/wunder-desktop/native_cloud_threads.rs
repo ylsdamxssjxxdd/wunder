@@ -28,6 +28,7 @@ pub struct NativeCloudThread {
 pub struct NativeCloudChatRow {
     pub root_turn_id: String,
     pub status: String,
+    pub user_round: i64,
     pub user_text: String,
     pub assistant_text: String,
     pub reasoning: String,
@@ -152,6 +153,7 @@ impl NativeDesktop {
                 NativeCloudChatRow {
                     root_turn_id: chat.root_turn_id.clone(),
                     status: chat.status.clone(),
+                    user_round: chat.user_round,
                     user_text: chat.user.content.clone(),
                     assistant_text,
                     reasoning: chat.assistant.reasoning.clone(),

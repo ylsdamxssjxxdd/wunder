@@ -4,7 +4,7 @@
   python get_fonts.py --check        只检查（含补充包与系统字体目录）
   python get_fonts.py --dest DIR     下载到指定目录（打包时用，如 <repo>/fonts/video）
 全部是 SIL OFL 1.1 授权的开源字体，来自 github.com/google/fonts。
-中文两款各 20MB 左右，所以仓库里不带字体。"""
+中文使用补充包 opt/fonts/common 的宋体/雅黑，不再下载思源中文。"""
 import os, shutil, sys, urllib.request
 from pathlib import Path
 
@@ -12,15 +12,12 @@ ENGINE = Path(__file__).resolve().parent
 DEFAULT_DEST = ENGINE / "fonts"
 BASE = "https://raw.githubusercontent.com/google/fonts/main/ofl/"
 FONTS = {   # 本地文件名: 仓库路径
-    "NotoSerifSC-VF.ttf": "notoserifsc/NotoSerifSC%5Bwght%5D.ttf",             # 宋体（思源宋体），可变字重 200–900
-    "NotoSansSC-VF.ttf": "notosanssc/NotoSansSC%5Bwght%5D.ttf",                # 黑体（思源黑体），可变字重 100–900
     "CormorantGaramond.ttf": "cormorantgaramond/CormorantGaramond%5Bwght%5D.ttf",
     "CormorantGaramond-Italic.ttf": "cormorantgaramond/CormorantGaramond-Italic%5Bwght%5D.ttf",
     "Lora.ttf": "lora/Lora%5Bwght%5D.ttf",
     "Lora-Italic.ttf": "lora/Lora-Italic%5Bwght%5D.ttf",
     "JetBrainsMono.ttf": "jetbrainsmono/JetBrainsMono%5Bwght%5D.ttf",
     "CourierPrime-Regular.ttf": "courierprime/CourierPrime-Regular.ttf",
-    "OFL-NotoSerifSC.txt": "notoserifsc/OFL.txt", "OFL-NotoSansSC.txt": "notosanssc/OFL.txt",
     "OFL-CormorantGaramond.txt": "cormorantgaramond/OFL.txt", "OFL-Lora.txt": "lora/OFL.txt",
     "OFL-JetBrainsMono.txt": "jetbrainsmono/OFL.txt", "OFL-CourierPrime.txt": "courierprime/OFL.txt",
 }
@@ -31,15 +28,19 @@ def font_dirs():
     home = os.environ.get("WUNDER_HOME", "").strip()
     if home:
         dirs.append(Path(home) / "opt/fonts/video")
+        dirs.append(Path(home) / "opt/fonts/common")
     exe = Path(sys.executable).resolve()
     for parent in exe.parents:
         if parent.name == "opt":
             dirs.append(parent.parent / "opt/fonts/video")
+            dirs.append(parent.parent / "opt/fonts/common")
             break
     if len(ENGINE.parents) > 3:
         dirs.append(ENGINE.parents[3] / "config/fonts/video")
+        dirs.append(ENGINE.parents[3] / "config/fonts/common")
         dirs.append(ENGINE.parents[3] / "config/fonts")
     dirs.append(Path("/usr/share/fonts/wunder/video"))
+    dirs.append(Path("/usr/share/fonts/wunder/common"))
     dirs.append(Path("/usr/share/fonts/wunder"))
     out, seen = [], set()
     for d in dirs:

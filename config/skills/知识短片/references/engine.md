@@ -38,7 +38,7 @@ python engine/audio.py  <工程> --bgm 曲子.mp3 -8        # 垫现成配乐（
 
 渲染速度单路约每秒 3–6 帧（1080p，截 PNG），`--jobs 4` 大致快三倍。3 分钟的片子仍然要十几分钟——所以先看拼图，再渲片段，最后才渲全片。
 依赖：Python 的 `playwright`（优先用补充包里的 Chrome，找不到再退回系统 Chrome）、`numpy`、`scipy`、`Pillow`，以及 `ffmpeg`。
-桌面版/安卓补充包已带 scipy 和 8 个视频字体；云端镜像也带 scipy，字体放在 `config/fonts/video`（挂到 `/usr/share/fonts/wunder`）。开发环境缺字体时跑 `python engine/get_fonts.py`。
+桌面版/安卓补充包已带 scipy 和 6 个拉丁/等宽视频字体；中文用 `opt/fonts/common` 的宋体/雅黑。云端镜像也带 scipy，字体放在 `config/fonts/{video,common}`（挂到 `/usr/share/fonts/wunder`）。开发环境缺拉丁字体时跑 `python engine/get_fonts.py`。
 
 ## film.js 的样子
 
@@ -160,8 +160,8 @@ function urn(fr, t) {
 
 | 键 | 是什么 | 用在哪 |
 |---|---|---|
-| `serifh` `serif` `serifm` `serifr` `serifl` `serifx` | 宋体 900 / 700 / 500 / 400 / 300 / 200 | A 的字幕用 `serif`，金字片名用 `serifh`；C 的大字用 `serifl`，字幕用 `serifr` |
-| `sansh` `sans` `sansm` `sansr` | 黑体 900 / 700 / 500 / 400 | B 的字幕和标注 |
+| `serifh` `serif` `serifm` `serifr` `serifl` `serifx` | 宋体 900 / 700 / 500 / 400 / 300 / 200（共用字体） | A 的字幕用 `serif`，金字片名用 `serifh`；C 的大字用 `serifl`，字幕用 `serifr` |
+| `sansh` `sans` `sansm` `sansr` | 微软雅黑/黑体 900 / 700 / 500 / 400（共用字体） | B 的字幕和标注 |
 | `latin` `latinl` `latinm` `latini` `latinim` | Cormorant Garamond 常规 / 细 / 半粗 / 斜体 / 斜体中粗 | 数字、外文题名、公式 |
 | `lora` | Lora 斜体 | C 的英文字幕 |
 | `mono` | JetBrains Mono | 等宽小标、章节编号 |

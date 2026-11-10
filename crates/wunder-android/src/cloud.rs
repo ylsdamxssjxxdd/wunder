@@ -5,7 +5,10 @@
 //! the UI tick converts `RowData` into Slint rows like the local transcript.
 
 use crate::engine::Shared;
-use crate::project::{RowData, KIND_BODY, KIND_ERROR, KIND_PROCESS, KIND_USER, STATUS_DONE, STATUS_FAILED, STATUS_RUNNING, STATUS_STOPPED};
+use crate::project::{
+    RowData, KIND_BODY, KIND_ERROR, KIND_FOOTER, KIND_PROCESS, KIND_USER, STATUS_DONE,
+    STATUS_FAILED, STATUS_RUNNING, STATUS_STOPPED,
+};
 use crate::MobileSession;
 use std::sync::{Arc, Mutex};
 use wunder_desktop::native::{
@@ -253,7 +256,10 @@ pub fn refresh_threads(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
 
 pub fn new_thread(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
     let agents: Vec<NativeCloudAgent> = desktop.cloud_agents().unwrap_or_default();
-    let agent = agents.first().map(|agent| agent.id.clone()).unwrap_or_default();
+    let agent = agents
+        .first()
+        .map(|agent| agent.id.clone())
+        .unwrap_or_default();
     match desktop.cloud_thread_create(&agent, "") {
         Ok(thread) => {
             refresh_threads(desktop, shared);
@@ -332,6 +338,24 @@ pub fn poll(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
             }
         }
         Err(error) => set_active_error(shared, format!("云端会话刷新失败：{error}")),
+    }
+}
+
+pub fn fork(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, user_round: i32) {
+    let id = shared
+        .lock()
+        .map(|state| state.cloud_active.id.clone())
+        .unwrap_or_default();
+    if id.is_empty() || user_round <= 0 {
+        return;
+    }
+    match desktop.cloud_thread_fork(&id, user_round as i64) {
+        Ok(thread) => {
+            refresh_threads(desktop, shared);
+            select_thread(desktop, shared, &thread.id);
+            notify(shared, "已创建分叉线程");
+        }
+        Err(error) => notify(shared, format!("无法分叉云端会话：{error}")),
     }
 }
 
@@ -421,10 +445,7 @@ pub fn refresh_devices(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
         selectable: true,
     });
     if logged_in {
-        let local_device_id = desktop
-            .interlink_status()
-            .device_id
-            .unwrap_or_default();
+        let local_device_id = desktop.interlink_status().device_id.unwrap_or_default();
         match desktop.interlink_devices() {
             Ok(nodes) => {
                 for node in nodes {
@@ -482,10 +503,7 @@ pub fn poll_approvals(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
         let state = shared.lock().ok();
         state
             .map(|state| {
-                state
-                    .approval
-                    .as_ref()
-                    .map(|current| current.id.as_str())
+                state.approval.as_ref().map(|current| current.id.as_str())
                     != next.as_ref().map(|next| next.id.as_str())
             })
             .unwrap_or(false)
@@ -553,6 +571,25 @@ fn rows_from_snapshot(snapshot: &NativeCloudThreadSnapshot) -> Vec<RowData> {
             error.status_kind = STATUS_FAILED;
             rows.push(error);
         }
+        if chat.user_round > 0 {
+            let status = status_kind(&chat.status);
+            let mut footer = RowData::new(KIND_FOOTER, format!("cloud-mobile-footer-{root}"));
+            footer.text = chat.assistant_text.clone();
+            footer.user_round = chat.user_round;
+            footer.status_kind = status;
+            footer.stats = vec![("hashtag".into(), chat.user_round.to_string())];
+            if status != STATUS_DONE {
+                let key = match status {
+                    STATUS_RUNNING => "status-running",
+                    STATUS_FAILED => "status-error",
+                    _ => "status-stopped",
+                };
+                footer
+                    .stats
+                    .insert(0, (key.into(), status_label(&chat.status).into()));
+            }
+            rows.push(footer);
+        }
     }
     rows
 }
@@ -599,5 +636,38 @@ fn notify(shared: &Arc<Mutex<Shared>>, message: impl Into<String>) {
     if let Ok(mut state) = shared.lock() {
         state.notify(message);
         state.touch();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cloud_snapshot_projects_a_forkable_footer_with_the_server_round() {
+        let snapshot = NativeCloudThreadSnapshot {
+            status: "completed".into(),
+            model_key: String::new(),
+            agent_id: String::new(),
+            rows: vec![wunder_desktop::native::NativeCloudChatRow {
+                root_turn_id: "fixture-turn".into(),
+                status: "completed".into(),
+                user_round: 4,
+                user_text: "fixture question".into(),
+                assistant_text: "fixture answer".into(),
+                reasoning: String::new(),
+                workflow_count: 0,
+                process_count: None,
+                failure_message: String::new(),
+            }],
+        };
+        let rows = rows_from_snapshot(&snapshot);
+        let footer = rows
+            .iter()
+            .find(|row| row.kind == KIND_FOOTER)
+            .expect("cloud footer");
+        assert_eq!(footer.user_round, 4);
+        assert_eq!(footer.status_kind, STATUS_DONE);
+        assert_eq!(footer.text, "fixture answer");
     }
 }

@@ -8,7 +8,7 @@
 - `opt/ffmpeg`：给音视频抽帧、抽音轨与转码使用的内置静态 ffmpeg
 - `opt/7zip`：随包附带的 7-Zip 25.01 官方静态命令行版（`bin/7zz`，`bin/7z` 为其符号链接），压缩包归档工具（含 `.7z`/`.rar` 解压）由它提供
 - `opt/browser`：Linux amd64 内置 Google Chrome for Testing 122.0.6261.111；Linux arm64 内置 Playwright Chromium 120.0.6099.28，供 `browser_*` 工具离线使用
-- `opt/fonts/video`：视频制作技能用的 8 个 OFL 字体（构建时从 `config/fonts/video` 复制，缺失时按 `packaging/fonts/video-fonts.json` 的固定 URL 和 SHA-256 下载；字体不随仓库分发）
+- `opt/fonts/video`：知识短片技能用的 6 个拉丁/等宽 OFL 字体（中文用 `opt/fonts/common`）（构建时从 `config/fonts/video` 复制，缺失时按 `packaging/fonts/video-fonts.json` 的固定 URL 和 SHA-256 下载；字体不随仓库分发）
 - `opt/fonts/common`：公文/办公通用字体（仿宋、楷体、黑体、宋体、方正小标宋、微软雅黑、等线、Times New Roman）与 `opt/fonts/fonts.conf` 字体名映射；构建时优先从 `config/fonts/common` 复制，缺失时按 `packaging/fonts/common-fonts.json` 下载
 
 补充包设计目标与 Win7 版一致：**统一安装到 `WUNDER_HOME/opt`，桌面版与命令行共用一份运行环境**。

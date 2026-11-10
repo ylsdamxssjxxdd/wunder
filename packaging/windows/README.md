@@ -9,7 +9,7 @@
 - `opt/7zip`：随包附带的 7-Zip 25.01 命令行版（`7z.exe` + `7z.dll`），压缩包归档工具（含 `.7z`/`.rar` 解压）由它提供；可用 `-SkipSevenZip` 跳过
 - `opt/powershell`：随包附带的便携 PowerShell 7.1.7（`pwsh.exe`），是 `执行命令` 工具的默认 shell；可用 `-SkipPowerShell` 跳过，详见「版本选择」
 - `opt/browser`：默认内置 Chrome 109 win32 浏览器，供 `browser_*` 工具开箱使用；可用 `-SkipBrowser` 跳过，详见「内置浏览器」
-- `opt/fonts/video`：视频制作技能用的 8 个 OFL 字体；构建时优先从 `config\fonts\video` 复制，缺失时按 `packaging\fonts\video-fonts.json` 的固定 URL 和 SHA-256 下载。可用 `-VideoFontsDir <目录>` 指定本地字体源
+- `opt/fonts/video`：知识短片技能用的 6 个拉丁/等宽 OFL 字体（中文用 `opt/fonts/common`）；构建时优先从 `config\fonts\video` 复制，缺失时按 `packaging\fonts\video-fonts.json` 的固定 URL 和 SHA-256 下载。可用 `-VideoFontsDir <目录>` 指定本地字体源
 - `opt/fonts/common`：公文/办公通用字体（仿宋、楷体、黑体、宋体、方正小标宋、微软雅黑、等线、Times New Roman）；构建时优先从 `config\fonts\common` 复制，缺失时按 `packaging\fonts\common-fonts.json` 下载。可用 `-CommonFontsDir <目录>` 指定本地字体源
 
 补充包设计目标：**统一安装到 `WUNDER_HOME/opt`，桌面版与命令行共用一份运行环境**。

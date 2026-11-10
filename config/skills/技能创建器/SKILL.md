@@ -265,7 +265,7 @@ Wunder仅在用户需要这些功能时读取REDLINING.md或OOXML.md。
 scripts/init_skill.py <skill-name> --path <output-directory>
 ```
 
-`<skill-name>` 就是后续运行时使用的唯一标识。英文技能可使用小写字母、数字和单个连字符组成的 hyphen-case（例如`data-cleaner`）；面向中文用户时也可直接使用 Unicode 名称（例如`视频制作`）。不要把目录名、frontmatter `name`、工蜂卡注册名和 `skill_call` 参数改成不同的别名；打包时保持同一个运行标识。
+`<skill-name>` 就是后续运行时使用的唯一标识。英文技能可使用小写字母、数字和单个连字符组成的 hyphen-case（例如`data-cleaner`）；面向中文用户时也可直接使用 Unicode 名称（例如`知识短片`）。不要把目录名、frontmatter `name`、工蜂卡注册名和 `skill_call` 参数改成不同的别名；打包时保持同一个运行标识。
 
 脚本会:
 
