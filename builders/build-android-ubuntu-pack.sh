@@ -16,6 +16,7 @@
 #   WUNDER_PACK_PACKAGES  apt package list (default: base + Android image/recovery/network toolbox)
 #   WUNDER_PY_REQUIREMENTS  pip requirements (default packaging/python/requirements-android.txt)
 #   WUNDER_VIDEO_FONTS_DIR  视频制作字体源目录（默认 config/fonts/video；没有时按固定 URL 下载）
+#   WUNDER_COMMON_FONTS_DIR 公文/文档通用字体源目录（默认 config/fonts/common）
 #   WUNDER_PACK_FFMPEG_URL  static ffmpeg archive override
 #   WUNDER_PACK_WORK      build directory (default /tmp/wunder-pack-<abi>)
 #
@@ -44,6 +45,8 @@ fontconfig fonts-dejavu-core fonts-liberation fonts-noto-color-emoji fonts-wqy-m
 PY_REQUIREMENTS="${WUNDER_PY_REQUIREMENTS:-$ROOT/packaging/python/requirements-android.txt}"
 VIDEO_FONTS_DIR="${WUNDER_VIDEO_FONTS_DIR:-$ROOT/config/fonts/video}"
 VIDEO_FONTS_SCRIPT="$ROOT/packaging/fonts/fetch_video_fonts.py"
+COMMON_FONTS_DIR="${WUNDER_COMMON_FONTS_DIR:-$ROOT/config/fonts/common}"
+COMMON_FONTS_MANIFEST="$ROOT/packaging/fonts/common-fonts.json"
 
 case "$ABI" in
     arm64)
@@ -222,7 +225,24 @@ sudo -n cp -f "$VIDEO_FONTS_CACHE"/*.ttf "$WORK/work/usr/share/fonts/wunder/vide
 sudo -n cp -f "$VIDEO_FONTS_CACHE"/OFL-*.txt "$WORK/work/usr/share/fonts/wunder/video/" 2>/dev/null || true
 [ "$(find "$WORK/work/usr/share/fonts/wunder/video" -maxdepth 1 -name '*.ttf' | wc -l)" -ge 8 ] \
     || { echo "video fonts incomplete under /usr/share/fonts/wunder/video" >&2; exit 2; }
+
+# 公文/文档通用字体：仿宋、楷体、黑体、宋体、方正小标宋、微软雅黑、等线与
+# Times New Roman，连同字体名映射一起装进 rootfs；优先从部署机
+# config/fonts/common 复制，没有就按 packaging/fonts/common-fonts.json 下载。
+echo "==> common document fonts"
+COMMON_FONTS_CACHE="$WORK/common-fonts"
+fetch_args=(--manifest "$COMMON_FONTS_MANIFEST" --dest "$COMMON_FONTS_CACHE")
+[[ -d "$COMMON_FONTS_DIR" ]] && fetch_args+=(--source-dir "$COMMON_FONTS_DIR")
+python3 "$VIDEO_FONTS_SCRIPT" "${fetch_args[@]}"
+sudo -n mkdir -p "$WORK/work/usr/share/fonts/wunder/common" "$WORK/work/etc/fonts/conf.d"
+sudo -n cp -f "$COMMON_FONTS_CACHE"/*.ttf "$WORK/work/usr/share/fonts/wunder/common/"
+sudo -n cp -f "$COMMON_FONTS_CACHE"/*.ttc "$WORK/work/usr/share/fonts/wunder/common/" 2>/dev/null || true
+sudo -n cp -f "$ROOT/packaging/fonts/99-wunder-common.conf" "$WORK/work/etc/fonts/conf.d/99-wunder-common.conf"
+# 补充包内的字体在 chroot 里由 fontconfig 扫描；fc-cache 必须在两份字体都落盘后跑一次。
 run_guest "fc-cache -f >/dev/null"
+COMMON_FONT_EXPECTED="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1], encoding="utf-8"))["files"]))' "$COMMON_FONTS_MANIFEST")"
+[ "$(find "$WORK/work/usr/share/fonts/wunder/common" -maxdepth 1 \( -name '*.ttf' -o -name '*.ttc' \) | wc -l)" -ge "$COMMON_FONT_EXPECTED" ] \
+    || { echo "common fonts incomplete under /usr/share/fonts/wunder/common" >&2; exit 2; }
 
 echo "==> verify tools"
 run_guest "python3 --version; git --version; rg --version | head -1; ffmpeg -version | head -1; 7z i | head -2"
@@ -243,6 +263,12 @@ fc-list | grep -qi 'Noto Color Emoji' || { echo 'Noto Color Emoji missing'; exit
 fc-list | grep -qi 'Noto Serif SC' || { echo 'Noto Serif SC missing'; exit 1; }; \
 fc-list | grep -qi 'Cormorant Garamond' || { echo 'Cormorant Garamond missing'; exit 1; }; \
 fc-list | grep -qi 'JetBrains Mono' || { echo 'JetBrains Mono missing'; exit 1; }; \
+fc-match -f '%{family}\n' '仿宋_GB2312' | grep -qi 'FangSong' || { echo '仿宋_GB2312 mapping missing'; exit 1; }; \
+fc-match -f '%{family}\n' '楷体_GB2312' | grep -qi 'KaiTi' || { echo '楷体_GB2312 mapping missing'; exit 1; }; \
+fc-match -f '%{family}\n' '黑体' | grep -qi 'SimHei' || { echo '黑体 mapping missing'; exit 1; }; \
+fc-match -f '%{family}\n' '宋体' | grep -qi 'SimSun' || { echo '宋体 mapping missing'; exit 1; }; \
+fc-match -f '%{family}\n' '方正小标宋简体' | grep -qi 'FZXiaoBiaoSong' || { echo '小标宋 mapping missing'; exit 1; }; \
+fc-match -f '%{family}\n' 'Times New Roman' | grep -qi 'Times New Roman' || { echo 'Times New Roman missing'; exit 1; }; \
 fc-match -f '%{family}\n' ':charset=4e2d' | grep -qi 'WenQuanYi' \
     || { echo 'no CJK fallback for U+4E2D'; exit 1; }; \
 fc-match -f '%{family}\n' ':charset=1f9d1' | grep -qi 'Noto Color Emoji' \

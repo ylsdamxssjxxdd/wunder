@@ -11,7 +11,10 @@
     "ffmpegRoot": "opt\\ffmpeg",
     "powershellRoot": "opt\\powershell",
     "sevenZipRoot": "opt\\7zip",
-    "videoFontsRoot": "opt\\fonts\\video"
+    "videoFontsRoot": "opt\\fonts\\video",
+    "commonFontsRoot": "opt\\fonts\\common",
+    "fontconfigFile": "opt\\fonts\\fonts.conf",
+    "fontconfigAliases": "opt\\fonts\\conf.d\\99-wunder-common.conf"
   },
   "browser": {
     "enabled": true,
@@ -202,6 +205,19 @@
     "Lora-Italic.ttf",
     "JetBrainsMono.ttf",
     "CourierPrime-Regular.ttf"
+  ],
+  "commonFonts": [
+    "simfang.ttf",
+    "simkai.ttf",
+    "simhei.ttf",
+    "simsun.ttc",
+    "FZXBSJW.ttf",
+    "msyh.ttc",
+    "Deng.ttf",
+    "times.ttf",
+    "timesbd.ttf",
+    "timesi.ttf",
+    "timesbi.ttf"
   ],
   "ffmpeg": {
     "version": "4.4.1",

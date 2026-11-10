@@ -19,7 +19,7 @@ grep -q ' /proc/sys/fs/binfmt_misc ' /proc/mounts || \
 
 register_one() {
     local name="$1" magic="$2" mask="$3"
-    local interp="$PWD/qemu-$name-static"
+    local interp="$PWD/$name-static"
     [[ -x "$interp" ]] || die "缺少解释器: $interp"
     if [[ -e "/proc/sys/fs/binfmt_misc/$name" ]]; then
         local current

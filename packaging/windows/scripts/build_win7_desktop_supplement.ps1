@@ -90,6 +90,8 @@ param(
 
   [string]$VideoFontsDir = '',
 
+  [string]$CommonFontsDir = '',
+
   [switch]$SkipPrune,
   [switch]$SkipGitPrune,
 
@@ -829,6 +831,9 @@ $ffmpegRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -N
 $powershellRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'powershellRoot' -Default 'opt\powershell'))
 $sevenZipRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'sevenZipRoot' -Default 'opt\7zip'))
 $videoFontsRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'videoFontsRoot' -Default 'opt\fonts\video'))
+$commonFontsRoot = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'commonFontsRoot' -Default 'opt\fonts\common'))
+$fontconfigFile = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'fontconfigFile' -Default 'opt\fonts\fonts.conf'))
+$fontconfigAliases = Join-Path $packRoot ([string](Get-PropertyValue -Object $layout -Name 'fontconfigAliases' -Default 'opt\fonts\conf.d\99-wunder-common.conf'))
 
 Write-Step "repo root : $repoRoot"
 Write-Step "build root: $buildRootEffective"
@@ -1023,6 +1028,40 @@ if ($videoFonts.Count -gt 0) {
     Fail "video fonts incomplete: $($stagedFonts.Count)/$($videoFonts.Count) in $videoFontsRoot"
   }
   Write-Step "bundled video fonts: $($stagedFonts.Count) ttf at opt/fonts/video"
+}
+
+# ---------------------------------------------------------------------------
+# 公文/文档通用字体 (opt/fonts/common; not tracked in git)
+# ---------------------------------------------------------------------------
+$commonFonts = @(Get-PropertyValue -Object $manifest -Name 'commonFonts' -Default @())
+if ($commonFonts.Count -gt 0) {
+  $commonSource = $CommonFontsDir
+  if (-not [string]::IsNullOrWhiteSpace($commonSource) -and -not (Test-Path -LiteralPath $commonSource -PathType Container)) {
+    Fail "common fonts dir not found: $commonSource"
+  }
+  if ([string]::IsNullOrWhiteSpace($commonSource)) {
+    $candidate = Join-Path $repoRoot 'config\fonts\common'
+    if (Test-Path -LiteralPath $candidate -PathType Container) { $commonSource = $candidate }
+  }
+  $commonCache = Join-Path $downDir 'common-fonts'
+  $fetchScript = Join-Path $repoRoot 'packaging\fonts\fetch_video_fonts.py'
+  if (-not (Test-Path -LiteralPath $fetchScript)) { Fail "common font fetcher missing: $fetchScript" }
+  $fetchArgs = @($fetchScript, '--manifest', (Join-Path $repoRoot 'packaging\fonts\common-fonts.json'),
+    '--dest', $commonCache)
+  if (-not [string]::IsNullOrWhiteSpace($commonSource)) { $fetchArgs += @('--source-dir', $commonSource) }
+  Write-Step "staging common fonts: $(if ([string]::IsNullOrWhiteSpace($commonSource)) { 'pinned upstream font URLs' } else { $commonSource })"
+  Invoke-Python -PythonExe $pythonExe -Arguments $fetchArgs
+  Ensure-Directory $commonFontsRoot
+  Ensure-Directory (Split-Path -Parent $fontconfigAliases)
+  Copy-Item -Path (Join-Path $commonCache '*.ttf') -Destination $commonFontsRoot -Force
+  Copy-Item -Path (Join-Path $commonCache '*.ttc') -Destination $commonFontsRoot -Force -ErrorAction SilentlyContinue
+  Copy-Item -Path (Join-Path $repoRoot 'packaging\fonts\wunder-fonts.conf') -Destination $fontconfigFile -Force
+  Copy-Item -Path (Join-Path $repoRoot 'packaging\fonts\99-wunder-common.conf') -Destination $fontconfigAliases -Force
+  $stagedCommon = @(Get-ChildItem -LiteralPath $commonFontsRoot | Where-Object { $_.Extension -in '.ttf', '.ttc' })
+  if ($stagedCommon.Count -lt $commonFonts.Count) {
+    Fail "common fonts incomplete: $($stagedCommon.Count)/$($commonFonts.Count) in $commonFontsRoot"
+  }
+  Write-Step "bundled common fonts: $($stagedCommon.Count) files at opt/fonts/common"
 }
 
 # ---------------------------------------------------------------------------
@@ -1288,12 +1327,13 @@ Contents:
   opt/7zip     7-Zip __SZVER__ console (7z.exe + 7z.dll, when bundled)
   opt/browser  Chrome __BROWSERVER__ win32 at __BROWSEREXE__ (when bundled)
   opt/fonts/video  视频制作 skill 的 8 个 OFL 字体
+  opt/fonts/common 公文/文档通用字体（仿宋、楷体、黑体、宋体、小标宋、雅黑、等线、Times New Roman）
 
 Use Import supplement in the wunder Desktop settings to install into WUNDER_HOME.
 For manual installation, close processes using this runtime and unpack into
 WUNDER_HOME (default: .wunder in your user home). wunder Desktop and wunder CLI share
-opt/python, opt/git, opt/rg, opt/ffmpeg, opt/powershell, opt/7zip and
-opt/fonts/video, and prepend their bins to PATH.
+opt/python, opt/git, opt/rg, opt/ffmpeg, opt/powershell, opt/7zip,
+opt/fonts/video and opt/fonts/common, and prepend their bins to PATH.
 
 Shell: when opt/powershell/pwsh.exe starts, the command tool runs it as the
 default shell and falls back to the system Windows PowerShell only if the
@@ -1345,6 +1385,8 @@ $metaObj = [ordered]@{
   }
   failedPackages = [string[]]$failedPackages
   missingImports = [string[]]$missingImports
+  videoFonts = [string[]]$videoFonts
+  commonFonts = [string[]]$commonFonts
 }
 Write-Utf8NoBom -Path (Join-Path $packRoot 'wunder-win7-supplement.json') -Content (ConvertTo-Json -InputObject $metaObj -Depth 6)
 

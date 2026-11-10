@@ -153,7 +153,18 @@ fn resolve_desktop_shell() -> command_utils::ShellLaunch {
     }
 }
 
+fn apply_fontconfig_env(cmd: &mut TokioCommand) {
+    let Some(home) = std::env::var_os("WUNDER_HOME") else {
+        return;
+    };
+    let conf = PathBuf::from(home).join("opt/fonts/fonts.conf");
+    if conf.is_file() {
+        cmd.env("FONTCONFIG_FILE", conf);
+    }
+}
+
 pub fn apply_python_env(cmd: &mut TokioCommand, runtime: &PythonRuntime) {
+    apply_fontconfig_env(cmd);
     cmd.env(PYTHON_BIN_ENV, runtime.bin.to_string_lossy().to_string());
     let runtime_path_entries = python_runtime_path_entries(runtime);
     for entry in runtime_path_entries.iter().rev() {
@@ -197,6 +208,7 @@ pub fn apply_python_env(cmd: &mut TokioCommand, runtime: &PythonRuntime) {
 }
 
 pub fn apply_system_python_env_if_configured(cmd: &mut TokioCommand) {
+    apply_fontconfig_env(cmd);
     if !desktop_python_runtime_mode_is_system() {
         return;
     }

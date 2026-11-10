@@ -71,6 +71,7 @@ emit(
     browser=data.get("browser", {}),
     fonts=data.get("fonts", []),
     videoFonts=data.get("videoFonts", []),
+    commonFonts=data.get("commonFonts", []),
     install=data["install"],
 )
 PYEOF
@@ -317,6 +318,28 @@ if compgen -G "$video_fonts_cache/OFL-*.txt" >/dev/null; then
 fi
 log "bundled video fonts: $(find "$package_root/$video_fonts_rel" -maxdepth 1 -name '*.ttf' | wc -l) ttf at $video_fonts_rel"
 
+# 公文/文档技能的通用字体组件：仿宋、楷体、黑体、宋体、方正小标宋、
+# 微软雅黑、等线与 Times New Roman，外加字体名映射。优先用部署机
+# config/fonts/common 的本地副本，没有就按固定 URL 下载。
+common_fonts_rel="$(json_field install.commonFontsRoot)"
+[[ -n "$common_fonts_rel" && "$common_fonts_rel" != "null" ]] || common_fonts_rel="opt/fonts/common"
+common_fonts_cache="$build_root/common-fonts"
+common_fonts_source=""
+if [[ -d "$repo_root/config/fonts/common" ]]; then common_fonts_source="$repo_root/config/fonts/common"; fi
+log "staging common fonts: ${common_fonts_source:-pinned upstream font URLs}"
+fetch_args=(--manifest "$repo_root/packaging/fonts/common-fonts.json" --dest "$common_fonts_cache")
+[[ -z "$common_fonts_source" ]] || fetch_args+=(--source-dir "$common_fonts_source")
+python3 "$repo_root/packaging/fonts/fetch_video_fonts.py" "${fetch_args[@]}"
+mkdir -p "$package_root/$common_fonts_rel" "$package_root/opt/fonts/conf.d"
+cp -f "$common_fonts_cache"/*.ttf "$package_root/$common_fonts_rel"/
+cp -f "$common_fonts_cache"/*.ttc "$package_root/$common_fonts_rel"/ 2>/dev/null || true
+cp -f "$repo_root/packaging/fonts/wunder-fonts.conf" "$package_root/opt/fonts/fonts.conf"
+cp -f "$repo_root/packaging/fonts/99-wunder-common.conf" "$package_root/opt/fonts/conf.d/99-wunder-common.conf"
+common_font_expected="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1], encoding="utf-8"))["files"]))' "$repo_root/packaging/fonts/common-fonts.json")"
+common_font_count="$(find "$package_root/$common_fonts_rel" -maxdepth 1 \( -name '*.ttf' -o -name '*.ttc' \) | wc -l)"
+[[ "$common_font_count" -ge "$common_font_expected" ]] || fail "common fonts incomplete: $common_font_count/$common_font_expected at $common_fonts_rel"
+log "bundled common fonts: $common_font_count files at $common_fonts_rel"
+
 log "building Git $git_version from source"
 obtain_file "$git_tarball_url" "$downloads_dir/$git_tarball_file" "$git_tarball_sha256"
 git_src="$stage_dir/git-$git_version"
@@ -429,13 +452,15 @@ FFmpeg: $ffmpeg_flavor $ffmpeg_version (opt/ffmpeg/bin/ffmpeg)
 7-Zip: $sevenzip_flavor $sevenzip_version (opt/7zip/bin/7zz, 7z symlink)
 Browser: $browser_version at opt/browser/$browser_executable_rel (when bundled)
 Browsers: Playwright Chromium in opt/python/ms-playwright (when bundled)
+Video fonts: 8 OFL fonts at opt/fonts/video
+Document fonts: office fonts at opt/fonts/common (opt/fonts/fonts.conf maps 仿宋_GB2312/楷体_GB2312)
 
 Usage:
 1. Use Import supplement in the wunder Desktop settings, or close processes using this runtime.
 2. For manual installation, extract into WUNDER_HOME (default: ~/.wunder),
    including when wunder Desktop is distributed as an AppImage.
 3. Ensure the target now contains opt/python, opt/git, opt/rg, opt/ffmpeg,
-   opt/7zip, opt/fonts/video (and opt/browser on amd64).
+   opt/7zip, opt/fonts/video, opt/fonts/common (and opt/browser on amd64).
 4. Start wunder Desktop or wunder CLI; both prepend the shared opt/python,
    opt/git, opt/rg, opt/ffmpeg and opt/7zip to PATH automatically.
 EOF
@@ -505,6 +530,12 @@ output = {
     "videoFonts": {
         "root": manifest["install"].get("videoFontsRoot", "opt/fonts/video"),
         "packages": manifest.get("videoFonts", []),
+    },
+    "commonFonts": {
+        "root": manifest["install"].get("commonFontsRoot", "opt/fonts/common"),
+        "fontconfig": manifest["install"].get("fontconfigFile", "opt/fonts/fonts.conf"),
+        "aliases": manifest["install"].get("fontconfigAliases", "opt/fonts/conf.d/99-wunder-common.conf"),
+        "packages": manifest.get("commonFonts", []),
     },
     "install": manifest["install"],
 }

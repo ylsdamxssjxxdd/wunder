@@ -20,7 +20,7 @@ $stageRoot = Join-Path $repoRoot "temp_dir\installer\win7-x86"
 # of wunder.iss indexes its ComponentTasks/ComponentLabels arrays in exactly
 # this order, so a component added here must also bump ComponentCount and the
 # array bounds there.
-$ComponentOrder = @("python", "git", "rg", "ffmpeg", "7zip", "powershell", "browser")
+$ComponentOrder = @("python", "git", "rg", "ffmpeg", "7zip", "powershell", "browser", "fonts")
 # Inno parses task names as expressions, so a name may not start with a digit.
 $ComponentTaskNames = @{ "7zip" = "sevenzip" }
 

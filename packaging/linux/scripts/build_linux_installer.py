@@ -26,7 +26,7 @@ import tarfile
 import time
 from pathlib import Path
 
-KNOWN_COMPONENTS = ("python", "git", "rg", "ffmpeg", "7zip", "browser")
+KNOWN_COMPONENTS = ("python", "git", "rg", "ffmpeg", "7zip", "browser", "fonts")
 ELF_MACHINES = {"x64": 0x3E, "arm64": 0xB7}
 # The supplement keeps its published amd64/arm64 file names.
 SUPPLEMENT_ARCH = {"x64": "amd64", "arm64": "arm64"}
@@ -40,6 +40,7 @@ LABELS = {
     "ffmpeg": "FFmpeg {version}",
     "7zip": "7-Zip {version}",
     "browser": "内置浏览器 Chrome {version}",
+    "fonts": "字体（视频与公文）",
 }
 CHUNK = 4 * 1024 * 1024
 
@@ -226,6 +227,7 @@ def safe_link_name(raw):
 def normalize_supplement(source, destination):
     components = dict((key, {"bytes": 0, "files": 0, "version": ""}) for key in KNOWN_COMPONENTS)
     metadata = {}
+    unknown = set()
     temporary = destination.with_name(destination.name + ".tmp")
     if temporary.exists():
         temporary.unlink()
@@ -256,7 +258,10 @@ def normalize_supplement(source, destination):
                             metadata = {}
                     continue
                 parts = name.split("/")
-                if len(parts) < 2 or parts[0] != "opt" or parts[1] not in components:
+                if len(parts) < 2 or parts[0] != "opt":
+                    continue
+                if parts[1] not in components:
+                    unknown.add(parts[1])
                     continue
                 component = parts[1]
                 if member.isdir():
@@ -313,6 +318,12 @@ def normalize_supplement(source, destination):
             close_compressed_tar(target_tar, target_gzip, target_raw)
     finally:
         source_tar.close()
+
+    if unknown:
+        if temporary.exists():
+            temporary.unlink()
+        fail("supplement contains components the installer does not declare (they would be skipped silently): "
+             + ", ".join(sorted(unknown)))
 
     present = [key for key in KNOWN_COMPONENTS if components[key]["files"] > 0]
     if not present:

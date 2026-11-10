@@ -1,0 +1,93 @@
+{
+  "description": "公文/办公常用字体。字体本体不进 git；构建补充包或部署云端时下载到 config/fonts/common 或补充包 opt/fonts/common。",
+  "files": [
+    {
+      "name": "simfang.ttf",
+      "urls": [
+        "https://cdn.jsdelivr.net/gh/zyh1102/fonts@0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/simfang.ttf",
+        "https://raw.githubusercontent.com/zyh1102/fonts/0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/simfang.ttf"
+      ],
+      "sha256": "3e2d44b01c9a248a61bedae4f15c8aae501328b1f7adfe6e111a5da5aa5c5104"
+    },
+    {
+      "name": "simkai.ttf",
+      "urls": [
+        "https://cdn.jsdelivr.net/gh/zyh1102/fonts@0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/simkai.ttf",
+        "https://raw.githubusercontent.com/zyh1102/fonts/0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/simkai.ttf"
+      ],
+      "sha256": "9dd76f7ab430edd091db24c3f18e71410325c1414141aad5fe67947873ffba06"
+    },
+    {
+      "name": "simhei.ttf",
+      "urls": [
+        "https://cdn.jsdelivr.net/gh/zyh1102/fonts@0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/simhei.ttf",
+        "https://raw.githubusercontent.com/zyh1102/fonts/0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/simhei.ttf"
+      ],
+      "sha256": "aa4560dd8fe5645745fed3ffa301c3ca4d6c03cbd738145b613303961ba733b8"
+    },
+    {
+      "name": "simsun.ttc",
+      "urls": [
+        "https://cdn.jsdelivr.net/gh/zyh1102/fonts@0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/simsun.ttc",
+        "https://raw.githubusercontent.com/zyh1102/fonts/0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/simsun.ttc"
+      ],
+      "sha256": "2e3cc9dbd787c827f73496f01633bba430e15c5db4d4f6ed9938386ea01f0171"
+    },
+    {
+      "name": "FZXBSJW.ttf",
+      "urls": [
+        "https://cdn.jsdelivr.net/gh/zyh1102/fonts@0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/FZXBSJW.TTF",
+        "https://raw.githubusercontent.com/zyh1102/fonts/0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/FZXBSJW.TTF"
+      ],
+      "sha256": "4069ebd257f325dbd8e069ae367b46a626122936999e2db574a93d49ab1d7a31"
+    },
+    {
+      "name": "msyh.ttc",
+      "urls": [
+        "https://cdn.jsdelivr.net/gh/zyh1102/fonts@0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/msyh.ttc",
+        "https://raw.githubusercontent.com/zyh1102/fonts/0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/msyh.ttc"
+      ],
+      "sha256": "e4b3b9d058750fb80899c24f68e35beda606ca92694eff0e9f7f91eec7a846aa"
+    },
+    {
+      "name": "Deng.ttf",
+      "urls": [
+        "https://cdn.jsdelivr.net/gh/zyh1102/fonts@0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/Deng.ttf",
+        "https://raw.githubusercontent.com/zyh1102/fonts/0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/Deng.ttf"
+      ],
+      "sha256": "765be9ce80a602fca63934de9d12847743e0de6401c9306ae4416e2eabdaff06"
+    },
+    {
+      "name": "times.ttf",
+      "urls": [
+        "https://cdn.jsdelivr.net/gh/zyh1102/fonts@0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/times.ttf",
+        "https://raw.githubusercontent.com/zyh1102/fonts/0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/times.ttf"
+      ],
+      "sha256": "2cff2a03d8034801979dd6d16f09b9a825c3d710fcf068f2ebfbf0e1425c87cf"
+    },
+    {
+      "name": "timesbd.ttf",
+      "urls": [
+        "https://cdn.jsdelivr.net/gh/zyh1102/fonts@0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/timesbd.ttf",
+        "https://raw.githubusercontent.com/zyh1102/fonts/0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/timesbd.ttf"
+      ],
+      "sha256": "621b4a765fef5d255d19530f4bf936104c6519f2e232a0eef1923474e5b9cf22"
+    },
+    {
+      "name": "timesi.ttf",
+      "urls": [
+        "https://cdn.jsdelivr.net/gh/zyh1102/fonts@0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/timesi.ttf",
+        "https://raw.githubusercontent.com/zyh1102/fonts/0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/timesi.ttf"
+      ],
+      "sha256": "3a1c2bc8528bfa432e0414d4ec69bf5813563c474e16a9ad0f57ca262f8d24a2"
+    },
+    {
+      "name": "timesbi.ttf",
+      "urls": [
+        "https://cdn.jsdelivr.net/gh/zyh1102/fonts@0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/timesbi.ttf",
+        "https://raw.githubusercontent.com/zyh1102/fonts/0ebcbf8f32327db36fd1aeed7d5fff444fc2177e/timesbi.ttf"
+      ],
+      "sha256": "2852329a38acf9252504669d9c23d5e88366cf77e8209d508f5e7198639648ea"
+    }
+  ]
+}

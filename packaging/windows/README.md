@@ -10,12 +10,13 @@
 - `opt/powershell`：随包附带的便携 PowerShell 7.1.7（`pwsh.exe`），是 `执行命令` 工具的默认 shell；可用 `-SkipPowerShell` 跳过，详见「版本选择」
 - `opt/browser`：默认内置 Chrome 109 win32 浏览器，供 `browser_*` 工具开箱使用；可用 `-SkipBrowser` 跳过，详见「内置浏览器」
 - `opt/fonts/video`：视频制作技能用的 8 个 OFL 字体；构建时优先从 `config\fonts\video` 复制，缺失时按 `packaging\fonts\video-fonts.json` 的固定 URL 和 SHA-256 下载。可用 `-VideoFontsDir <目录>` 指定本地字体源
+- `opt/fonts/common`：公文/办公通用字体（仿宋、楷体、黑体、宋体、方正小标宋、微软雅黑、等线、Times New Roman）；构建时优先从 `config\fonts\common` 复制，缺失时按 `packaging\fonts\common-fonts.json` 下载。可用 `-CommonFontsDir <目录>` 指定本地字体源
 
 补充包设计目标：**统一安装到 `WUNDER_HOME/opt`，桌面版与命令行共用一份运行环境**。
 
 当前约定：
 
-- `build.bat pack -a win7-x86` 生成单文件 `wunder-desktop-<版本>-win7-x86-setup.exe`；安装向导把程序本体也作为可勾选项：wunder 桌面版与 wunder 命令行默认勾选，不勾则不安装对应的 `wunder-desktop.exe`/`wunder-cli.exe`，因此可以只装补充组件。补充组件（Python/Git/ripgrep/ffmpeg/7-Zip/PowerShell 7/内置浏览器）默认全部勾选，一次安装即得完整运行环境；不需要的项可逐条取消。勾选桌面版即自动创建开始菜单与桌面快捷方式（不再单列“桌面快捷方式”任务）。页面提供“全选”一键恢复全部勾选，任一项取消会自动回退全选状态。
+- `build.bat pack -a win7-x86` 生成单文件 `wunder-desktop-<版本>-win7-x86-setup.exe`；安装向导把程序本体也作为可勾选项：wunder 桌面版与 wunder 命令行默认勾选，不勾则不安装对应的 `wunder-desktop.exe`/`wunder-cli.exe`，因此可以只装补充组件。补充组件（Python/Git/ripgrep/ffmpeg/7-Zip/PowerShell 7/内置浏览器/字体）默认全部勾选，一次安装即得完整运行环境；不需要的项可逐条取消。勾选桌面版即自动创建开始菜单与桌面快捷方式（不再单列“桌面快捷方式”任务）。页面提供“全选”一键恢复全部勾选，任一项取消会自动回退全选状态。
 - 安装向导允许改安装目录，默认 `%USERPROFILE%\.wunder`。安装根会写入 `.wunder-home`，桌面版和命令行启动时以该根作为 `WUNDER_HOME`；显式设置的非空 `WUNDER_HOME` 优先。
 - 安装目录同时保存配置、会话、工作区、日志和 `opt/` 补充组件；迁移时复制整个安装根。
 - 选中已存在的组件时，安装器先清空对应 `opt/<component>`，再写入新版本；`config`、`data`、`workspace`、`logs` 等用户数据不会删除。
@@ -45,7 +46,7 @@ wunder-desktop-<版本>-win7-x86-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NOREST
 ```
 
 - `/SILENT` 只显示进度，`/VERYSILENT` 完全无界面；两者都会跳过全部向导页。
-- 组件用 `/TASKS=` 指定，任务名与向导勾选项一致（`desktop`、`cli`、`python`、`git`、`rg`、`ffmpeg`、`sevenzip`、`powershell`、`browser`），例如 `/TASKS="desktop,cli,powershell,sevenzip"`；不传时按向导默认勾选（桌面版、命令行与全部补充组件）。`7zip` 的目录名不能直接当任务名——Inno 把任务名按表达式解析，数字开头会报 `Invalid token '7'`，所以任务名固定为 `sevenzip`，安装目录仍是 `opt/7zip`。
+- 组件用 `/TASKS=` 指定，任务名与向导勾选项一致（`desktop`、`cli`、`python`、`git`、`rg`、`ffmpeg`、`sevenzip`、`powershell`、`browser`、`fonts`），例如 `/TASKS="desktop,cli,powershell,sevenzip"`；不传时按向导默认勾选（桌面版、命令行与全部补充组件）。`7zip` 的目录名不能直接当任务名——Inno 把任务名按表达式解析，数字开头会报 `Invalid token '7'`，所以任务名固定为 `sevenzip`，安装目录仍是 `opt/7zip`。
 - 检测到已安装组件时的确认弹窗在静默模式下自动跳过（直接按“清空组件目录后继续”执行）；只有组件目录被占用这类致命错误会中止安装（非零退出码），`/SUPPRESSMSGBOXES` 连错误弹窗也不再显示。
 - 卸载器同样支持静默：`unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`。
 

@@ -9,11 +9,12 @@
 - `opt/7zip`：随包附带的 7-Zip 25.01 官方静态命令行版（`bin/7zz`，`bin/7z` 为其符号链接），压缩包归档工具（含 `.7z`/`.rar` 解压）由它提供
 - `opt/browser`：Linux amd64 内置 Google Chrome for Testing 122.0.6261.111；Linux arm64 内置 Playwright Chromium 120.0.6099.28，供 `browser_*` 工具离线使用
 - `opt/fonts/video`：视频制作技能用的 8 个 OFL 字体（构建时从 `config/fonts/video` 复制，缺失时按 `packaging/fonts/video-fonts.json` 的固定 URL 和 SHA-256 下载；字体不随仓库分发）
+- `opt/fonts/common`：公文/办公通用字体（仿宋、楷体、黑体、宋体、方正小标宋、微软雅黑、等线、Times New Roman）与 `opt/fonts/fonts.conf` 字体名映射；构建时优先从 `config/fonts/common` 复制，缺失时按 `packaging/fonts/common-fonts.json` 下载
 
 补充包设计目标与 Win7 版一致：**统一安装到 `WUNDER_HOME/opt`，桌面版与命令行共用一份运行环境**。
 
 - 推荐在桌面版设置中选择“导入补充包”，默认写入 `~/.wunder/opt/`，导入后桌面版新启动的工具立即生效。
-- 手动安装时，关闭使用该补充包的进程，将压缩包解压到 `${WUNDER_HOME:-$HOME/.wunder}`，使其下直接出现 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/7zip`、`opt/fonts/video`，再启动桌面版或命令行。
+- 手动安装时，关闭使用该补充包的进程，将压缩包解压到 `${WUNDER_HOME:-$HOME/.wunder}`，使其下直接出现 `opt/python`、`opt/git`、`opt/rg`、`opt/ffmpeg`、`opt/7zip`、`opt/fonts/video`、`opt/fonts/common`，再启动桌面版或命令行。
 - `.run` 安装包与 `.portable` 便携包共用这个可写用户目录；新导入始终写入共享 home，不自动搬迁旧文件。
 
 ## 安装器打包
@@ -31,7 +32,7 @@ Windows 上也可以执行 `build.bat pack -a linux-x64`；组包器是 Python 3
 
 运行 `.run` 后：
 
-- 运行 `.run` 后直接装完，全程没有任何提问：桌面版、命令行与全部补充组件（Python、Git、ripgrep、FFmpeg、7-Zip、内置浏览器）一次装好，并创建应用菜单项与桌面启动图标。有没有终端、有没有 stdin 都一样，`curl … | sh` 之类的方式也能跑通。
+- 运行 `.run` 后直接装完，全程没有任何提问：桌面版、命令行与全部补充组件（Python、Git、ripgrep、FFmpeg、7-Zip、内置浏览器、字体）一次装好，并创建应用菜单项与桌面启动图标。有没有终端、有没有 stdin 都一样，`curl … | sh` 之类的方式也能跑通。
 - 默认安装到 `~/.wunder`；改目录用 `--home=PATH`（或预先设置非空的 `WUNDER_HOME`）。检测到已有安装时原地升级：只替换程序文件与组件目录，配置、会话、工作区保留，不再二次确认。
 - 默认显示进度条：解压安装包（0–55%）、清理旧文件、命令行、桌面版、命令与桌面入口、补充组件（到 100%），按已落盘字节推进，最后一行 `100% 安装完成` 后接固定摘要。进度只写 stderr，`> install.log` 之类的重定向不会污染摘要；终端里原地刷新，非终端按 10% 一档换行输出。
 - 只有在需要更小体积时才用 `--components=python,git` 只装列出的组件；`--no-desktop-entry`、`--no-desktop-icon` 可分别跳过菜单项与桌面图标；`--no-progress`（或设置 `NO_COLOR`）关闭进度条。`-y`/`--yes`/`--all` 仍然接受但已无作用（安装本来就无交互、默认全选）。

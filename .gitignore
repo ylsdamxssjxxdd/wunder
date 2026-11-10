@@ -35,6 +35,7 @@ config/fonts/*.otc
 config/fonts/*.woff
 config/fonts/*.woff2
 config/fonts/video/
+config/fonts/common/
 .pytest_cache
 **/__pycache__/
 *.pyc

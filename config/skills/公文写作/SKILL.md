@@ -58,6 +58,10 @@ description: 这是一个用于生成标准公文格式文档的技能。适用�
 - 一级标题：黑体三号；二级标题：楷体_GB2312三号；三级/四级标题：仿宋_GB2312三号；标题首行缩进与正文一致。
 - 数字：默认 Times New Roman。
 
+字体由补充包 `opt/fonts/common`（或云端 `config/fonts/common`）提供；转换器只把字体名写进 DOCX，
+查看端仍需安装对应字体。Linux/安卓由 `fonts.conf` 把 `仿宋_GB2312`、`楷体_GB2312` 映射到自带的
+FangSong、KaiTi。字体文件不进 git，首次部署运行 `python scripts/fetch_fonts.py --set common`。
+
 ## 版头要素（可选，置于标题之前）
 使用“键：值”单行写法，转换器会识别并排版：
 - `份号：000001`

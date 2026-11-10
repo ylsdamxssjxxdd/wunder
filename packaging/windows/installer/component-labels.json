@@ -8,5 +8,6 @@
   "ffmpeg": "FFmpeg {version}",
   "7zip": "7-Zip {version}",
   "browser": "内置浏览器 Chrome {version}",
+  "fonts": "字体（视频与公文）",
   "approxSize": "（约 {size} MB）"
 }

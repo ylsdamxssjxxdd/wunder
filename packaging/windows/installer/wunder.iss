@@ -124,16 +124,16 @@ Type: filesandordirs; Name: "{app}\opt\remotion"
 // Keep the component list in sync with build_win7_installer.ps1 and
 // build_win7_installer_linux.py: the task names below must cover every
 // supplement component those scripts can emit (currently python, git, rg,
-// ffmpeg, 7zip, powershell, browser). Inno parses these names as expressions,
+// ffmpeg, 7zip, powershell, browser, fonts). Inno parses these names as expressions,
 // so a component whose directory starts with a digit gets a letter-prefixed
 // task name (7zip -> sevenzip); ComponentDirAt maps it back to the opt dir.
 const
-  ComponentCount = 7;
+  ComponentCount = 8;
   CComponentsShown = {#ComponentsShown};
 
 var
-  ComponentTasks: array[0..6] of String;
-  ComponentLabels: array[0..6] of String;
+  ComponentTasks: array[0..7] of String;
+  ComponentLabels: array[0..7] of String;
   SelectAllCheckBox: TNewCheckBox;
   UpdatingSelectAll: Boolean;
 
@@ -146,6 +146,7 @@ begin
   ComponentTasks[4] := 'sevenzip';
   ComponentTasks[5] := 'powershell';
   ComponentTasks[6] := 'browser';
+  ComponentTasks[7] := 'fonts';
   ComponentLabels[0] := 'Python';
   ComponentLabels[1] := 'Git';
   ComponentLabels[2] := 'ripgrep';
@@ -153,6 +154,7 @@ begin
   ComponentLabels[4] := '7-Zip';
   ComponentLabels[5] := 'PowerShell';
   ComponentLabels[6] := '内置浏览器';
+  ComponentLabels[7] := '字体';
   Result := True;
 end;
 

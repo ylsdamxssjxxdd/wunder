@@ -208,6 +208,19 @@
     "JetBrainsMono.ttf",
     "CourierPrime-Regular.ttf"
   ],
+  "commonFonts": [
+    "simfang.ttf",
+    "simkai.ttf",
+    "simhei.ttf",
+    "simsun.ttc",
+    "FZXBSJW.ttf",
+    "msyh.ttc",
+    "Deng.ttf",
+    "times.ttf",
+    "timesbd.ttf",
+    "timesi.ttf",
+    "timesbi.ttf"
+  ],
   "install": {
     "extractInto": "desktop install root (Win7-style install dir) or the directory holding the portable launcher",
     "pythonRoot": "opt/python",
@@ -216,6 +229,9 @@
     "ffmpegRoot": "opt/ffmpeg",
     "sevenZipRoot": "opt/7zip",
     "browserRoot": "opt/browser",
-    "videoFontsRoot": "opt/fonts/video"
+    "videoFontsRoot": "opt/fonts/video",
+    "commonFontsRoot": "opt/fonts/common",
+    "fontconfigFile": "opt/fonts/fonts.conf",
+    "fontconfigAliases": "opt/fonts/conf.d/99-wunder-common.conf"
   }
 }

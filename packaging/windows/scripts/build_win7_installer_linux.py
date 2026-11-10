@@ -21,7 +21,7 @@ import zipfile
 from pathlib import Path
 
 
-COMPONENT_ORDER = ("python", "git", "rg", "ffmpeg", "7zip", "powershell", "browser")
+COMPONENT_ORDER = ("python", "git", "rg", "ffmpeg", "7zip", "powershell", "browser", "fonts")
 TASK_NAMES = ("desktop", "cli")
 # Inno parses task names as expressions, so a name may not start with a digit.
 COMPONENT_TASK_NAMES = {"7zip": "sevenzip"}

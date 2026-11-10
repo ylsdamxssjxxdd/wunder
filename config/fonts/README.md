@@ -3,11 +3,31 @@
 舰体的 Docker 镜像已安装 `fonts-noto-cjk` 等字体包。Compose 还会把本目录的
 `.otf`、`.ttf`、`.ttc` 文件只读挂载到 `wunder-server`、`wunder-sandbox` 和
 `extra-mcp` 的 `/usr/share/fonts/wunder`，并为 OnlyOffice 挂载自定义字体目录。
+`config/fonts.conf` 把 `/usr/share/fonts/wunder/conf.d` 一并包含进来，字体名映射
+（如 `仿宋_GB2312` → `FangSong`）因此在云端容器内生效。
 
-视频制作技能用的 8 个 OFL 字体放在本目录的 `video/` 下（整个目录不进 git）。
-云端挂载后技能从 `/usr/share/fonts/wunder/video` 读取；补充包构建时用
-`packaging/fonts/fetch_video_fonts.py` 从 `config/fonts/video` 复制（没有时按
-`packaging/fonts/video-fonts.json` 的固定 URL 和 SHA-256 下载），再打进补充包。
+字体本体不进 git。部署云端或本地开发时运行：
+
+```bash
+python scripts/fetch_fonts.py                 # 通用字体 + 视频字体
+python scripts/fetch_fonts.py --set common    # 只下载公文/办公通用字体
+python scripts/fetch_fonts.py --check         # 只校验已有文件
+```
+
+脚本按 `packaging/fonts/*.json` 里固定的 URL 与 SHA-256 下载，已存在且校验通过的
+文件会直接复用。
+
+- `common/`：公文/办公常用字体。仿宋（`simfang.ttf`）、楷体（`simkai.ttf`）、
+  黑体（`simhei.ttf`）、宋体/新宋体（`simsun.ttc`）、方正小标宋
+  （`FZXBSJW.ttf`）、微软雅黑（`msyh.ttc`）、等线（`Deng.ttf`）与
+  Times New Roman 四个字重。字体名映射在 `conf.d/99-wunder-common.conf`。
+- `video/`：视频制作技能用的 8 个 OFL 字体。云端从
+  `/usr/share/fonts/wunder/video` 读取；补充包构建时用
+  `packaging/fonts/fetch_video_fonts.py` 从 `config/fonts/video` 复制（没有时按
+  `packaging/fonts/video-fonts.json` 的固定 URL 和 SHA-256 下载），再打进补充包。
+
+`common/` 里是从 Windows/方正字体文件直接取用的测试字体，发布或对外分发前应换成
+已获授权的副本；补充包构建时如果 `config/fonts/common` 不存在，也会按同一清单下载。
 
 Matplotlib 的中文默认字体由 `config/matplotlibrc` 配置，舰体与沙盒通过
 `MATPLOTLIBRC` 加载。普通绘图沿用默认字体即可，无需为每幅图重新探测字体或指定路径。
