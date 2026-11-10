@@ -214,6 +214,8 @@ rm -rf "$python_extract"
 
 python_bin="$python_root/bin/python3"
 [[ -f "$python_bin" ]] || fail "python3 missing from staged runtime: $python_bin"
+# 技能文档统一用 python；Ubuntu 24.04 默认没有该命令，补一个包内别名。
+ln -sfn python3 "$python_root/bin/python"
 
 if ! "$python_bin" -m pip --version >/dev/null 2>&1; then
   log "bootstrapping pip into embedded Python"
