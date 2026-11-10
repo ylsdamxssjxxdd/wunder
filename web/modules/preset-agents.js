@@ -6,7 +6,7 @@ import { appendLog } from "./log.js?v=20261011-01";
 import { notify } from "./notify.js";
 import { t } from "./i18n.js?v=20261017-01";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
-import { ensureLlmConfigLoaded } from "./llm.js?v=20260923-04";
+import { ensureLlmConfigLoaded } from "./llm.js?v=20261110-01";
 import { listGlobalCompanions } from "./companions.js?v=20260506-01";
 import { ensureOrgUnitsLoaded } from "./org-units.js?v=20260518-01";
 import { isRemovedSwarmTool } from "../shared/deprecated-tools.js";

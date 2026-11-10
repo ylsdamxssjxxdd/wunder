@@ -53,10 +53,11 @@ python engine/audio.py  <工程> --bgm 曲子.mp3 -8        # 垫现成配乐（
 旧版遗留的分段没有 `.done` 标记，确认完整后可以用 `--concat --force` 强行拼接。
 
 渲染速度单路约每秒 3–6 帧（1080p，截 PNG），`--jobs 4` 大致快三倍。3 分钟的片子仍然要十几分钟——所以先看拼图，再渲片段，最后才渲全片。
+ARM 服务器上单路截帧受单核性能限制，长片优先用 `--jobs`（按核数和内存调，每路约 0.5–1 GB）；若明显慢于预期，先确认容器是原生 aarch64、Chrome 可执行文件不是 x86-64（qemu 模拟会慢一个数量级）。
 命令工具的前台等待到 `timeout_s` 时不会杀渲染，而是把它转入后台命令会话继续跑并返回 `command_session_id`；
 看到 `reason: timeout_escalated` 就先轮询会话，不要重跑。分段渲染中断后，已完成段带 `.done` 标记，
 重跑 `--jobs 4` 默认续渲，或 `--concat` 直接拼接。
-依赖：Python 的 `playwright`（优先用补充包里的 Chrome，找不到再退回系统 Chrome）、`numpy`、`scipy`、`Pillow`，以及 `ffmpeg`。
+依赖：Python 的 `playwright`（优先用补充包里的 Chrome，其次用 Playwright 自带 Chromium，最后退回系统 Chrome）、`numpy`、`scipy`、`Pillow`，以及 `ffmpeg`（补充包不带 `ffprobe`；读视频信息会自动退回 `ffmpeg -i` 解析，脚本不要再新增 ffprobe 硬依赖）。
 桌面版/安卓补充包已带 scipy 和 8 个视频字体（思源宋体/黑体 + 6 个拉丁/等宽）；中文优先用视频字体，缺失时退回 `opt/fonts/common` 的宋体/雅黑。云端镜像也带 scipy，字体放在 `config/fonts/{video,common}`（挂到 `/usr/share/fonts/wunder`）。开发环境缺字体时跑 `python engine/get_fonts.py`。
 
 ## film.js 的样子

@@ -47,6 +47,12 @@ export const clampChatSplitRatio = (value: unknown): number => {
   return Math.min(0.75, Math.max(0.25, ratio));
 };
 
+export const resolveChatSplitPreviewCount = (
+  count: ChatSplitCount,
+  slots: readonly string[],
+  dragging: boolean
+): ChatSplitCount => (count === 2 && dragging && slots.filter(Boolean).length >= 2 ? 4 : count);
+
 export const splitSlotAtPoint = (
   count: ChatSplitCount,
   xRatio: number,

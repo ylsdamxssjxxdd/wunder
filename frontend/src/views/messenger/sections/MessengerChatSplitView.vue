@@ -1,27 +1,13 @@
 <template>
   <section class="messenger-split-workspace" data-testid="messenger-split-workspace">
-    <div class="messenger-split-toolbar">
-      <span class="messenger-split-toolbar-hint">{{ t('messenger.split.hint') }}</span>
-      <div class="messenger-split-layout-actions" :aria-label="t('messenger.split.layout')">
-        <button type="button" :title="t('messenger.split.single')" @click="setCount(1)">
-          <i class="fa-regular fa-square" aria-hidden="true"></i>
-        </button>
-        <button type="button" :class="{ 'is-active': count === 2 }" :title="t('messenger.split.two')" @click="setCount(2)">
-          <i class="fa-solid fa-table-columns" aria-hidden="true"></i>
-        </button>
-        <button type="button" :class="{ 'is-active': count === 4 }" :title="t('messenger.split.four')" @click="setCount(4)">
-          <i class="fa-solid fa-table-cells-large" aria-hidden="true"></i>
-        </button>
-      </div>
-    </div>
-
     <div
       ref="gridEl"
       class="messenger-split-grid"
-      :class="`is-${count}`"
+      :class="`is-${effectiveCount}`"
       :style="gridStyle"
+      @dragover="handleGridDragOver"
     >
-      <template v-for="(sessionId, index) in slots" :key="index">
+      <template v-for="(sessionId, index) in visibleSlots" :key="index">
         <div
           v-if="sessionId"
           class="messenger-split-cell"
@@ -84,7 +70,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import MessengerChatSplitPane from './MessengerChatSplitPane.vue';
 import {
   CHAT_THREAD_DRAG_TYPE,
@@ -92,6 +78,7 @@ import {
   clampChatSplitRatio,
   closeChatSplitSlot,
   createChatSplitSlots,
+  resolveChatSplitPreviewCount,
   type ChatSplitCount
 } from '../chatSplitLayout';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
@@ -133,30 +120,44 @@ const persistRatio = (axis: 'column' | 'row') => {
 };
 const count = computed(() => props.count);
 const activeSessionId = computed(() => props.activeSessionId);
+const draggingThread = ref(false);
+// 双栏已满时拖入线程，临时展开四格供放入新分区（与桌面版一致）。
+const effectiveCount = computed<ChatSplitCount>(() =>
+  resolveChatSplitPreviewCount(count.value, slots.value, draggingThread.value)
+);
+const visibleSlotCount = computed(() => (effectiveCount.value === 4 ? 4 : slots.value.length));
+const visibleSlots = computed(() => {
+  if (visibleSlotCount.value <= slots.value.length) return slots.value;
+  return [...slots.value, ...Array.from({ length: visibleSlotCount.value - slots.value.length }, () => '')];
+});
 const gridStyle = computed(() => ({
   '--split-column': `${columnRatio.value * 100}%`,
   '--split-row': `${rowRatio.value * 100}%`
 }));
 
-const setCount = (next: ChatSplitCount) => {
-  if (next === 1) {
-    emit('update:count', 1);
-    return;
-  }
-  const retained = slots.value.filter(Boolean);
-  slots.value = createChatSplitSlots(next, retained[0] || activeSessionId.value);
-  retained.slice(1, next).forEach((id, index) => { slots.value[index + 1] = id; });
-  activeSlot.value = Math.min(activeSlot.value, next - 1);
-  emit('update:count', next);
+const hasThreadDrag = (event: DragEvent): boolean =>
+  Array.from(event.dataTransfer?.types || []).includes(CHAT_THREAD_DRAG_TYPE);
+const handleGridDragOver = (event: DragEvent) => {
+  if (!hasThreadDrag(event)) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  draggingThread.value = true;
+};
+const endThreadDrag = () => {
+  draggingThread.value = false;
 };
 const dropThread = (index: number, event: DragEvent) => {
   const id = String(
     event.dataTransfer?.getData(CHAT_THREAD_DRAG_TYPE) || event.dataTransfer?.getData('text/plain') || ''
   ).trim();
+  draggingThread.value = false;
   dropSlot.value = -1;
   if (!id) return;
   slots.value = assignChatSplitSlot(slots.value, index, id, activeSessionId.value);
   activeSlot.value = Math.max(0, slots.value.indexOf(id));
+  const filled = slots.value.filter(Boolean).length;
+  const nextCount: ChatSplitCount = filled > 2 ? 4 : 2;
+  if (nextCount !== count.value) emit('update:count', nextCount);
   if (id !== activeSessionId.value) void props.controller.openSessionById(id);
 };
 const closePane = (index: number) => {
@@ -225,7 +226,12 @@ const nudge = (axis: 'column' | 'row', delta: number) => {
   persistRatio(axis);
 };
 
+onMounted(() => {
+  window.addEventListener('dragend', endThreadDrag, true);
+});
+
 onBeforeUnmount(() => {
+  window.removeEventListener('dragend', endThreadDrag, true);
   window.removeEventListener('pointermove', onResizeMove);
   window.removeEventListener('pointerup', stopResize);
   window.removeEventListener('pointercancel', stopResize);

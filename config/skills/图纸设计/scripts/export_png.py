@@ -20,6 +20,7 @@ FALLBACK_SETTLE_MS = 4_000
 BROWSER_LAYOUTS = (
     ("chrome-win", "chrome.exe"),
     ("chrome-linux64", "chrome"),
+    ("chrome-linux-arm64", "chrome"),
     ("chrome-linux", "chrome"),
 )
 

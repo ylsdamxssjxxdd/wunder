@@ -2321,8 +2321,10 @@ def main():
             browser_candidates.extend(
                 (
                     root / "browser" / "chrome-linux64" / "chrome",
+                    root / "browser" / "chrome-linux-arm64" / "chrome",
                     root / "browser" / "chrome-linux" / "chrome",
                     root / "opt" / "browser" / "chrome-linux64" / "chrome",
+                    root / "opt" / "browser" / "chrome-linux-arm64" / "chrome",
                     root / "opt" / "browser" / "chrome-linux" / "chrome",
                 )
             )

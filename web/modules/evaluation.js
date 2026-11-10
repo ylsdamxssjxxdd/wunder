@@ -2,7 +2,7 @@
 import { elements } from "./elements.js?v=20261016-01";
 import { getWunderBase } from "./api.js";
 import { escapeHtml, formatDuration } from "./utils.js";
-import { ensureLlmConfigLoaded } from "./llm.js?v=20260923-04";
+import { ensureLlmConfigLoaded } from "./llm.js?v=20261110-01";
 import { state } from "./state.js";
 import { getCurrentLanguage } from "./i18n.js?v=20261016-01";
 

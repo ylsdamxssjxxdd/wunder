@@ -118,7 +118,7 @@
     />
 
     <!-- 输入卡与桌面一致：白底 + 细边 + 圆角，编辑器与底部工具行共用这一张底。 -->
-    <div class="input-box input-box--world">
+    <div class="input-box input-box--world" @mousedown="handleComposerSurfacePointerDown">
       <textarea
         data-testid="chat-composer-input"
         v-model="inputText"
@@ -1178,6 +1178,21 @@ const focusComposerInputAtEnd = () => {
     }
     caretPosition.value = cursor;
   });
+};
+
+// 卡片内除控件外的空白（含底部工具行空位）都算命中输入区，和桌面一致。
+const isComposerControlTarget = (target: EventTarget | null): boolean => {
+  const element = target instanceof Element ? target : null;
+  return Boolean(element?.closest(
+    'button, a, input, textarea, select, label, [role="button"], [role="menuitem"], [role="option"], '
+    + '[contenteditable="true"], .composer-panel, .command-menu'
+  ));
+};
+const handleComposerSurfacePointerDown = (event: MouseEvent) => {
+  if (event.button !== 0 || isComposerControlTarget(event.target)) return;
+  // 阻止本次按下的默认失焦，否则浏览器会在事件结束后把焦点交还给 body。
+  event.preventDefault();
+  focusComposerInputAtEnd();
 };
 
 const activeQueueSessionId = computed(() => targetSessionId.value);

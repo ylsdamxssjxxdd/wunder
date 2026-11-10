@@ -339,6 +339,60 @@ test('edit entries keep the +/- stats when only the result carries the numbers',
   assert.deepEqual(patchInput.diffStats, { added: 2, deleted: 1 });
 });
 
+test('read entries state the returned line count beside the target chip', () => {
+  // 整文件读取：只显示实际行数；摘要与徽章重复，已经让位。
+  const full = buildTimelineToolEntry(baseRun({
+    toolName: '读取文件',
+    toolDisplayName: '读取文件',
+    toolRuntimeName: '读取文件',
+    callItem: callItem({ args: { path: 'src/a.rs' } }),
+    resultItem: callItem({ data: { content: '>>> src/a.rs\nline', read_lines: 142, total_lines: 142 } })
+  }), t);
+  assert.deepEqual(full.readLines, { read: 142, total: 142 });
+  assert.equal(full.summary, '');
+
+  // 窗口读取：带上文件总行数，读者知道只读了一部分。
+  const windowed = buildTimelineToolEntry(baseRun({
+    toolName: 'read_file',
+    toolDisplayName: '读取文件',
+    toolRuntimeName: 'read_file',
+    callItem: callItem({ args: { path: 'src/b.rs' } }),
+    resultItem: callItem({ data: { content: '>>> src/b.rs\nline', read_lines: 120, total_lines: 676 } })
+  }), t);
+  assert.deepEqual(windowed.readLines, { read: 120, total: 676 });
+
+  // 旧记录只保留逐文件摘要时按文件汇总。
+  const legacy = buildTimelineToolEntry(baseRun({
+    toolName: 'read_file',
+    toolDisplayName: '读取文件',
+    toolRuntimeName: 'read_file',
+    callItem: callItem({ args: { path: 'src/c.rs' } }),
+    resultItem: callItem({
+      data: {
+        content: 'line',
+        files: [{ read_lines: 3, total_lines: 8 }, { read_lines: 2, total_lines: 4 }]
+      }
+    })
+  }), t);
+  assert.deepEqual(legacy.readLines, { read: 5, total: 12 });
+
+  // 失败/取消的读取没有返回行数；其他工具不显示该指标。
+  const failed = buildTimelineToolEntry(baseRun({
+    toolName: '读取文件',
+    toolDisplayName: '读取文件',
+    toolRuntimeName: '读取文件',
+    callItem: callItem({ args: { path: 'src/a.rs' } }),
+    resultItem: callItem({ error: 'file not found' }, { status: 'failed' })
+  }), t);
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.readLines, null);
+  const command = buildTimelineToolEntry(baseRun({
+    callItem: callItem({ args: { content: 'cat src/a.rs' } }),
+    resultItem: callItem({ data: { read_lines: 12, total_lines: 12 } })
+  }), t);
+  assert.equal(command.readLines, null);
+});
+
 test('failed edit entries drop the inline +/- stats', () => {
   // 失败的编辑没有改出这组行数，条目行不再显示统计。
   const failed = buildTimelineToolEntry(baseRun({

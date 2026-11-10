@@ -91,6 +91,24 @@ async fn run_server(runtime_threads: runtime_tuning::ServerRuntimeThreads) -> an
         "server.bootstrap.hydrate_mcp_tool_specs",
         hydrate_enabled_mcp_tool_specs(state.clone()),
     );
+    // A previous instance leaves monitor rows and open admissions behind. Settle
+    // them once at boot so the admin panel cannot show dead threads as active,
+    // then repeat after the session-lock TTL so admissions still shielded by a
+    // dead process's unexpired lock are caught as well.
+    let settle_state = state.clone();
+    long_task::spawn("server.bootstrap.settle_restarted_activity", async move {
+        match wunder_server::startup::settle_restarted_activity(settle_state.clone()).await {
+            Ok(0) => {}
+            Ok(settled) => info!(settled, "settled restarted activity"),
+            Err(error) => warn!(%error, "settle restarted activity failed"),
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(150)).await;
+        match wunder_server::startup::settle_restarted_activity(settle_state).await {
+            Ok(0) => {}
+            Ok(settled) => info!(settled, "settled restarted activity after lock ttl"),
+            Err(error) => warn!(%error, "settle restarted activity retry failed"),
+        }
+    });
 
     // 统一在线状态：网页会话节点的租约回收（docs §5.1）。
     state

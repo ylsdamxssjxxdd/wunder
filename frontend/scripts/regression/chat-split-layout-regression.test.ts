@@ -5,6 +5,7 @@ import {
   clampChatSplitRatio,
   closeChatSplitSlot,
   createChatSplitSlots,
+  resolveChatSplitPreviewCount,
   splitSlotAtPoint
 } from '../../src/views/messenger/chatSplitLayout';
 
@@ -40,4 +41,11 @@ test('ratios are bounded and hit testing covers two-pane and four-grid layouts',
   assert.equal(splitSlotAtPoint(2, 0.8, 0.1), 1);
   assert.equal(splitSlotAtPoint(4, 0.8, 0.8), 3);
   assert.equal(splitSlotAtPoint(4, 0.2, 0.8), 2);
+});
+
+test('dragging a thread over a full two-pane split previews empty fourth-slot targets', () => {
+  assert.equal(resolveChatSplitPreviewCount(2, ['a', 'b'], true), 4);
+  assert.equal(resolveChatSplitPreviewCount(2, ['a', ''], true), 2);
+  assert.equal(resolveChatSplitPreviewCount(2, ['a', 'b'], false), 2);
+  assert.equal(resolveChatSplitPreviewCount(4, ['a', 'b', '', ''], true), 4);
 });

@@ -7,11 +7,7 @@ import { notify } from "./notify.js";
 import { t, getCurrentLanguage } from "./i18n.js?v=20261016-01";
 import { normalizeSimulationSpeed, renderSimulationConfig, showSimulationConfig, readSimulationConfig, readSimulationOptions } from "./llm-simulation.js?v=20260923-04";
 
-let contextProbeTimer = null;
-let lastProbeKey = "";
-let lastAutoContext = null;
 let probeInFlight = false;
-let pendingProbe = false;
 let ttsVoiceProbeTimer = null;
 let ttsVoiceProbeInFlight = false;
 let pendingTtsVoiceProbe = false;
@@ -721,16 +717,6 @@ const normalizeLlmSet = (raw) => {
 };
 
 const getDisplayName = (name) => state.llm.nameEdits?.[name] || name;
-
-const resetProbeState = () => {
-  lastProbeKey = "";
-  lastAutoContext = null;
-  pendingProbe = false;
-  if (contextProbeTimer) {
-    clearTimeout(contextProbeTimer);
-    contextProbeTimer = null;
-  }
-};
 
 const clearLlmForm = () => {
   renderSimulationConfig("fast");
@@ -1447,7 +1433,6 @@ const selectLlmConfig = (name) => {
   }
   syncActiveConfigToState();
   state.llm.activeName = name;
-  resetProbeState();
   applyLlmConfigToForm(name, state.llm.configs[name]);
   renderLlmList();
   updateDetailHeader();
@@ -1503,22 +1488,9 @@ const buildTtsVoiceProbePayload = () => {
   };
 };
 
-// 判断是否需要覆盖当前 max_context 输入。
-const shouldApplyContextValue = (probeKey, value) => {
-  const currentValue = elements.llmMaxContext.value.trim();
-  if (!currentValue) {
-    return true;
-  }
-  if (probeKey !== lastProbeKey) {
-    return true;
-  }
-  return lastAutoContext !== null && String(currentValue) === String(lastAutoContext);
-};
-
-// 请求模型最大上下文长度。
-const requestContextWindow = async (force = false) => {
+// 手动请求模型最大上下文长度，仅在用户点击探测按钮时触发。
+const requestContextWindow = async () => {
   if (probeInFlight) {
-    pendingProbe = true;
     return;
   }
   const payload = buildContextProbePayload();
@@ -1526,9 +1498,6 @@ const requestContextWindow = async (force = false) => {
     return;
   }
   const probeKey = `${payload.provider}|${payload.base_url}|${payload.model}|${payload.api_key ? 1 : 0}`;
-  if (!force && probeKey === lastProbeKey && lastAutoContext !== null) {
-    return;
-  }
   probeInFlight = true;
   try {
     const wunderBase = getWunderBase();
@@ -1554,42 +1523,21 @@ const requestContextWindow = async (force = false) => {
       return;
     }
     if (Number.isFinite(result.max_context) && result.max_context > 0) {
-      if (shouldApplyContextValue(probeKey, result.max_context)) {
-        elements.llmMaxContext.value = String(result.max_context);
-        lastAutoContext = result.max_context;
-        lastProbeKey = probeKey;
-        appendLog(t("llm.contextProbe.auto", { value: result.max_context }));
-        if (force) {
-          notify(t("llm.contextProbe.auto", { value: result.max_context }), "info");
-        }
-      }
+      elements.llmMaxContext.value = String(result.max_context);
+      appendLog(t("llm.contextProbe.auto", { value: result.max_context }));
+      notify(t("llm.contextProbe.auto", { value: result.max_context }), "info");
       return;
     }
-    lastProbeKey = probeKey;
     if (result.message) {
       appendLog(t("llm.contextProbe.result", { message: result.message }));
+      notify(t("llm.contextProbe.result", { message: result.message }), "warn");
     }
   } catch (error) {
     appendLog(t("llm.contextProbe.failed", { message: error.message }));
+    notify(t("llm.contextProbe.failed", { message: error.message }), "error");
   } finally {
     probeInFlight = false;
-    if (pendingProbe) {
-      pendingProbe = false;
-      setTimeout(() => {
-        requestContextWindow(true);
-      }, 0);
-    }
   }
-};
-
-// 延迟触发探测，避免频繁请求。
-const scheduleContextProbe = () => {
-  if (contextProbeTimer) {
-    clearTimeout(contextProbeTimer);
-  }
-  contextProbeTimer = setTimeout(() => {
-    requestContextWindow(false);
-  }, 600);
 };
 
 const requestTtsVoices = async (force = false) => {
@@ -1703,7 +1651,6 @@ const applyLlmSet = (raw, options = {}) => {
     normalized.order = [name];
     normalized.defaultName = name;
   }
-  resetProbeState();
   state.llm.configs = normalized.models;
   state.llm.order = normalized.order;
   state.llm.defaultName = normalized.defaultName;
@@ -1954,7 +1901,6 @@ const handleAddConfig = () => {
     state.llm.defaultName = name;
   }
   state.llm.activeName = name;
-  resetProbeState();
   renderLlmList();
   applyLlmConfigToForm(name, state.llm.configs[name]);
   updateDetailHeader();
@@ -2021,7 +1967,6 @@ const handleDeleteConfig = () => {
     );
   }
   state.llm.activeName = state.llm.defaultName || state.llm.order[0] || "";
-  resetProbeState();
   renderLlmList();
   if (state.llm.activeName && state.llm.configs[state.llm.activeName]) {
     applyLlmConfigToForm(state.llm.activeName, state.llm.configs[state.llm.activeName]);
@@ -2190,7 +2135,7 @@ export const initLlmPanel = () => {
       notify(t("llm.error.probeMissing"), "warn");
       return;
     }
-    requestContextWindow(true);
+    requestContextWindow();
   });
   elements.llmVirtualReplaySelect?.addEventListener("change", handleVirtualReplaySelection);
   elements.llmVirtualReplayRefreshBtn?.addEventListener("click", async () => {
@@ -2223,13 +2168,9 @@ export const initLlmPanel = () => {
     }
   });
 
-  const handleProbeInput = () => {
-    scheduleContextProbe();
-    scheduleTtsVoiceProbe();
-  };
-  elements.llmBaseUrl.addEventListener("input", handleProbeInput);
-  elements.llmModel.addEventListener("input", handleProbeInput);
-  elements.llmApiKey.addEventListener("input", handleProbeInput);
+  elements.llmBaseUrl.addEventListener("input", scheduleTtsVoiceProbe);
+  elements.llmModel.addEventListener("input", scheduleTtsVoiceProbe);
+  elements.llmApiKey.addEventListener("input", scheduleTtsVoiceProbe);
   elements.llmProvider.addEventListener("change", () => {
     const nextProvider = normalizeProviderId(elements.llmProvider.value);
     const previousProvider = lastProviderSelection;
@@ -2238,10 +2179,8 @@ export const initLlmPanel = () => {
     applyProviderDefaults(nextProvider, { previousProvider: lastProviderSelection });
     lastProviderSelection = nextProvider;
     updateVirtualReplayVisibility();
-    handleProbeInput();
+    scheduleTtsVoiceProbe();
   });
-  elements.llmBaseUrl.addEventListener("blur", () => requestContextWindow(true));
-  elements.llmModel.addEventListener("blur", () => requestContextWindow(true));
   elements.llmBaseUrl.addEventListener("blur", () => requestTtsVoices(true));
   elements.llmModel.addEventListener("blur", () => requestTtsVoices(true));
   elements.llmApiKey.addEventListener("blur", () => requestTtsVoices(true));

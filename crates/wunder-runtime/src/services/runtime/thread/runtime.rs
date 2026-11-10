@@ -1335,7 +1335,7 @@ impl ThreadRuntime {
     /// Whether a durable session lock already names this session. Read off the
     /// worker threads: a SQLite read here would stall one of the few runtime
     /// workers on every submit and every queue tick.
-    async fn holds_session_lock(&self, user_id: &str, session_id: &str) -> bool {
+    pub(crate) async fn holds_session_lock(&self, user_id: &str, session_id: &str) -> bool {
         let store = self.user_store.clone();
         let user_id = user_id.to_string();
         let session_id = session_id.to_string();

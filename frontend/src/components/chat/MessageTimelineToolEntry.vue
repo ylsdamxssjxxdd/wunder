@@ -40,6 +40,8 @@
         <span v-if="entry.diffStats.added > 0" class="tl-entry-diff-add">+{{ entry.diffStats.added }}</span>
         <span v-if="entry.diffStats.deleted > 0" class="tl-entry-diff-del">−{{ entry.diffStats.deleted }}</span>
       </span>
+      <!-- 读取量：与编辑行的 +/- 同一位置，窗口读取带上文件总行数。 -->
+      <span v-if="entry.readLines" class="tl-entry-read-lines">{{ readLinesLabel }}</span>
       <span
         v-if="entry.summary"
         class="tl-entry-summary"
@@ -138,6 +140,13 @@ const displayStatus = computed(() => {
     (command.exitCode !== null && command.exitCode !== 0) ? 'failed' : 'completed';
 });
 const displayExitCode = computed(() => commandSession.value?.exitCode ?? props.entry.exitCode);
+const readLinesLabel = computed(() => {
+  const lines = props.entry.readLines;
+  if (!lines) return '';
+  return lines.total !== null && lines.total > lines.read
+    ? t('chat.timeline.entryReadLinesPartial', { read: lines.read, total: lines.total })
+    : t('chat.timeline.entryReadLines', { lines: lines.read });
+});
 
 const interactive = computed(() => Boolean(props.entry.expandable || commandSession.value));
 const fallbackStatus = computed(() => t({
@@ -353,6 +362,17 @@ button.tl-entry-head:focus-visible {
 
 .tl-entry-diff-del {
   color: #dc2626;
+}
+
+/* 读取条目的返回行数：与 +/- 同位置，弱化为灰色等宽，不抢状态色。 */
+.tl-entry-read-lines {
+  flex: 0 0 auto;
+  color: var(--mz-text-muted, #8a8f99);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  white-space: nowrap;
 }
 
 /* 展开内容左内边距保持 24px（沟槽 20px + 24px = 44px），不被分组沟槽挤压。 */

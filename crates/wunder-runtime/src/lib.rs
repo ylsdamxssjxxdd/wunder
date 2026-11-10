@@ -30,7 +30,7 @@ pub use core::{
     token_utils,
 };
 pub use lsp::LspManager;
-pub use ops::{benchmark, monitor, performance, throughput};
+pub use ops::{benchmark, monitor, performance, startup, throughput};
 pub use orchestrator::constants as orchestrator_constants;
 pub use services::runtime::thread::{ThreadCancelSettlement, ThreadSubmitOutcome};
 pub use services::skill_archive;

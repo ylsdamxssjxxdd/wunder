@@ -5507,12 +5507,10 @@
 }
 
 /* 工具行并入卡片后，只有编辑器获得焦点才点亮整张卡；点「+」/ 模型 / 发送
-   不应让卡持续保持高亮（桌面同样只看 editor.has-focus）。 */
+   不应让卡持续保持高亮（桌面同样只看 editor.has-focus）。聚焦只做安静的
+   描边加深，不加彩色光圈。 */
 .messenger-composer-scope.chat-shell .input-box:has(.composer-textarea:focus) {
-  border-color: rgba(var(--ui-accent-rgb), 0.56);
-  box-shadow:
-    0 0 0 4px rgba(var(--ui-accent-rgb), 0.12),
-    0 12px 24px rgba(15, 23, 42, 0.08);
+  border-color: var(--mz-border-strong, #d8d5d0);
 }
 
 .messenger-composer-scope.chat-shell textarea::placeholder {

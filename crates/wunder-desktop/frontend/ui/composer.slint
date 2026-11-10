@@ -1538,6 +1538,11 @@ export component Composer inherits Rectangle {
         background: Theme.surface;
         border-width: 1px;
         border-color: editor.has-focus ? Theme.accent-ink : Theme.border;
+        // 卡片空白处（含底部动作行空位）也把焦点交给编辑器；按钮与编辑器
+        // 自身在更上层，仍先拿到点击。
+        TouchArea {
+            clicked => { root.focus-editor(); }
+        }
     }
     VerticalLayout {
         // The side inset lives on the input band (main.slint), so the goal

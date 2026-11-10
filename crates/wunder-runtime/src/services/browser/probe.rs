@@ -93,6 +93,7 @@ fn supplement_browser_candidates(root: &Path) -> Vec<PathBuf> {
         root.join("opt/browser/chrome-win64/chrome.exe"),
         root.join("opt/browser/chrome-linux/chrome"),
         root.join("opt/browser/chrome-linux64/chrome"),
+        root.join("opt/browser/chrome-linux-arm64/chrome"),
         root.join("opt/browser/chrome-linux/chrome"),
         root.join("opt/browser/chrome.exe"),
     ]
@@ -113,6 +114,8 @@ fn playwright_chromium_executables(browsers_path: Option<&str>) -> Vec<PathBuf> 
                 executables.push(dir.join("chrome-win/chrome.exe"));
                 executables.push(dir.join("chrome-win64/chrome.exe"));
                 executables.push(dir.join("chrome-linux/chrome"));
+                executables.push(dir.join("chrome-linux64/chrome"));
+                executables.push(dir.join("chrome-linux-arm64/chrome"));
             }
         }
     }
@@ -286,6 +289,22 @@ mod tests {
     }
 
     #[test]
+    fn chrome_linux_arm64_layout_is_recognized() {
+        let bundled = PathBuf::from("supplement/opt/browser/chrome-linux-arm64/chrome");
+        let exists = |path: &Path| path == bundled.as_path();
+        let selected =
+            select_fallback_executable(&[], &[PathBuf::from("supplement")], &[], &exists);
+        assert_eq!(selected, Some(bundled));
+
+        let root = tempfile::tempdir().unwrap();
+        touch(&root.path().join("chromium-1248/chrome-linux-arm64/chrome"));
+        let cached = playwright_chromium_executables(Some(root.path().to_str().unwrap()));
+        assert!(cached
+            .iter()
+            .any(|path| path.ends_with("chromium-1248/chrome-linux-arm64/chrome")));
+    }
+
+    #[test]
     fn system_browser_is_the_last_resort() {
         let edge = PathBuf::from("C:/Edge/msedge.exe");
         let exists = |path: &Path| path == edge.as_path();
@@ -331,6 +350,13 @@ mod tests {
         let selected =
             select_fallback_executable(&[], &[PathBuf::from("supplement")], &[], &exists);
         assert_eq!(selected, Some(bundled));
+
+        let root = tempfile::tempdir().unwrap();
+        touch(&root.path().join("chromium-1248/chrome-linux64/chrome"));
+        let cached = playwright_chromium_executables(Some(root.path().to_str().unwrap()));
+        assert!(cached
+            .iter()
+            .any(|path| path.ends_with("chromium-1248/chrome-linux64/chrome")));
     }
 
     #[test]

@@ -15,7 +15,7 @@ audio.py 会核对 events.json 里的源码指纹与当前 film.js/layout 等文
 事件名：tick / soft / chord / bloom / rise / thud / tock / stamp / shimmer / hush（参数 dur，秒）
 META（film.js 的 meta）：{ root: 半音偏移, noise: [[起,止,强度0..1],...], silence: [[起,止],...], drone: 0..1 }
 """
-import json, subprocess, sys
+import json, os, subprocess, sys
 from pathlib import Path
 import numpy as np
 try:
@@ -27,6 +27,9 @@ SR = 48000
 D3 = 146.83
 PENTA = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21]           # 大调五声，嗒声从这里取音高
 CHORD = [0, 7, 12, 14, 19, 24, 26]                   # 根音、五度、八度、九度…… 叠成"开阔"的和弦
+
+def ffmpeg_bin():
+    return os.environ.get("WUNDER_FFMPEG_BIN", "").strip() or "ffmpeg"
 
 def hz(semi, base=D3): return base * 2 ** (semi / 12)
 def env_exp(n, tau, attack=0.004):
@@ -128,12 +131,31 @@ def write_wav(path, x):
     x = np.clip(x, -1, 1); pcm = (x * 32767).astype("<i2")
     with wave.open(str(path), "wb") as w: w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR); w.writeframes(pcm.tobytes())
 
+def reimport_events(proj):
+    try:
+        subprocess.run([sys.executable, str(Path(__file__).resolve().with_name("render.py")), str(proj), "--events"], check=True)
+    except subprocess.CalledProcessError as error:
+        sys.exit(f"重导事件表失败（退出码 {error.returncode}）；先单独运行 render.py --events 看报错。")
+
+def load_events(proj):
+    path = proj / "audio/events.json"
+    try:
+        return json.load(open(path, encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        sys.exit(f"{path} 不是有效 JSON（{error}）；重跑 render.py --events 覆盖它。")
+
 def check_events_source(proj, a):
     """events.json 必须和当前工程源码一致，否则音效会落在旧台词的位置上。"""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from render import project_hash
     path = proj / "audio/events.json"
-    spec = json.load(open(path, encoding="utf-8"))
+    if not path.is_file():
+        if "--refresh-events" not in a:
+            sys.exit("还没有音效事件表 audio/events.json。\n"
+                     f"  先运行：python engine/render.py \"{proj}\" --events\n"
+                     "  或加 --refresh-events 让 audio.py 自动重导。")
+        reimport_events(proj)
+    spec = load_events(proj)
     current = project_hash(proj)
     recorded = spec.get("source_hash")
     if recorded and recorded != current:
@@ -141,11 +163,8 @@ def check_events_source(proj, a):
             sys.exit("音效事件表与当前工程不一致（film.js / layout 等已改动）。\n"
                      f"  先运行：python engine/render.py \"{proj}\" --events\n"
                      "  或直接加 --refresh-events 让 audio.py 自动重导。")
-        try:
-            subprocess.run([sys.executable, str(Path(__file__).resolve().with_name("render.py")), str(proj), "--events"], check=True)
-        except subprocess.CalledProcessError as error:
-            sys.exit(f"重导事件表失败（退出码 {error.returncode}）；先单独运行 render.py --events 看报错。")
-        spec = json.load(open(path, encoding="utf-8"))
+        reimport_events(proj)
+        spec = load_events(proj)
         recorded = spec.get("source_hash")
     if not recorded:
         print("提示：events.json 没有源码指纹（旧版格式）；建议重跑 render.py --events。", file=sys.stderr)
@@ -168,14 +187,28 @@ if __name__ == "__main__":
     spec = check_events_source(proj, a)
     bgm = a[a.index("--bgm") + 1] if "--bgm" in a else None
     bgm_db = float(a[a.index("--bgm") + 2]) if bgm and len(a) > a.index("--bgm") + 2 and a[a.index("--bgm") + 2].lstrip("-").replace(".", "").isdigit() else -8
+    wav_only = "--wav-only" in a
+    if bgm and not Path(bgm).is_file():
+        sys.exit(f"找不到配乐文件：{bgm}")
+    raw, out, end = proj / "renders/raw.mp4", proj / "renders/final.mp4", spec["end"]
+    if not wav_only and (not raw.is_file() or raw.stat().st_size == 0):
+        sys.exit("还没有 renders/raw.mp4（无声全片），无法合成声音。\n"
+                 f"  先渲全片：python engine/render.py \"{proj}\"\n"
+                 f"  长片用：  python engine/render.py \"{proj}\" --jobs 4")
     x = synth(spec, bgm=bool(bgm)); pk = np.abs(x).max() or 1; x = x / pk * 10 ** (-3 / 20)
     wav = proj / "audio/score.wav"; write_wav(wav, x); print("score:", wav, f"{len(x) / SR:.1f}s", len(spec["events"]), "events")
-    if "--wav-only" in a: sys.exit()
-    raw, out, end = proj / "renders/raw.mp4", proj / "renders/final.mp4", spec["end"]
+    if wav_only: sys.exit()
     if bgm:   # 现成配乐：垫底 + 事件音；整体到 -14 LUFS
         fc = f"[2:a]atrim=0:{end},volume={bgm_db}dB,afade=t=in:d=0.4,afade=t=out:st={end - 1.5}:d=1.5[b];[1:a][b]amix=inputs=2:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[a]"
-        cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(raw), "-i", str(wav), "-stream_loop", "-1", "-i", bgm, "-filter_complex", fc]
+        cmd = [ffmpeg_bin(), "-v", "error", "-y", "-nostdin", "-i", str(raw), "-i", str(wav), "-stream_loop", "-1", "-i", bgm, "-filter_complex", fc]
     else:     # 合成配乐本来就安静、动态大：只到 -18 LUFS，别压扁
-        cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(raw), "-i", str(wav), "-filter_complex", "[1:a]loudnorm=I=-18:TP=-1.5:LRA=14[a]"]
-    subprocess.run(cmd + ["-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-shortest", str(out)], check=True)
+        cmd = [ffmpeg_bin(), "-v", "error", "-y", "-nostdin", "-i", str(raw), "-i", str(wav), "-filter_complex", "[1:a]loudnorm=I=-18:TP=-1.5:LRA=14[a]"]
+    try:
+        r = subprocess.run(cmd + ["-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-shortest", str(out)],
+                           capture_output=True, encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        sys.exit(f"找不到 ffmpeg（{ffmpeg_bin()}）：请确认补充包已安装，或把 ffmpeg 放进 PATH")
+    if r.returncode != 0:
+        detail = (r.stderr or "").strip() or "ffmpeg 没有输出错误信息"
+        sys.exit(f"合成失败（退出码 {r.returncode}）：\n{detail}")
     print("done", out)

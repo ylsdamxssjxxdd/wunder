@@ -1706,6 +1706,53 @@ impl MonitorState {
         )
     }
 
+    /// 无执行器残留诊断行的强制收敛入口。与 `settle_restarted_session`
+    /// 不同，内存里已有该会话时也把状态落为 cancelled；仅供进程启动清扫和
+    /// 管理端终止兜底使用，调用方须先确认没有存活会话锁或执行器。
+    pub fn force_settle_session(&self, session_id: &str) -> bool {
+        let cleaned = session_id.trim().to_string();
+        if cleaned.is_empty() {
+            return false;
+        }
+        self.run_guarded(
+            "monitor.force_settle_session",
+            || false,
+            || {
+                let now = now_ts();
+                let mut sessions = self.sessions.lock();
+                if !sessions.contains_key(&cleaned) {
+                    let Some(record) = self.hydrate_session_record_for_register(&cleaned) else {
+                        return false;
+                    };
+                    sessions.insert(cleaned.clone(), record);
+                }
+                let Some(record) = sessions.get_mut(&cleaned) else {
+                    return false;
+                };
+                if matches!(
+                    record.status.as_str(),
+                    Self::STATUS_FINISHED | Self::STATUS_ERROR | Self::STATUS_CANCELLED
+                ) {
+                    return false;
+                }
+                let summary = i18n::t("monitor.summary.restarted");
+                record.status = Self::STATUS_CANCELLED.to_string();
+                record.stage = Self::STATUS_CANCELLED.to_string();
+                record.summary = summary.clone();
+                record.cancel_requested = false;
+                record.cancel_source = None;
+                record.updated_time = now;
+                record.ended_time = Some(now);
+                self.append_event(record, "cancelled", &json!({ "summary": summary }), now);
+                record.dirty = true;
+                if let Some(payload) = self.maybe_persist_record(record, now, true) {
+                    self.save_record(payload);
+                }
+                true
+            },
+        )
+    }
+
     pub fn sum_consumed_tokens_by_user(&self, user_id: &str) -> i64 {
         let cleaned = user_id.trim().to_string();
         if cleaned.is_empty() {
@@ -2441,23 +2488,61 @@ impl MonitorState {
                 .load_recent_monitor_records(MONITOR_HISTORY_LOAD_LIMIT)
                 .unwrap_or_default()
         };
+        let now = now_ts();
+        // A running/cancelling row is only abandoned when no live session lock
+        // holds it. Replicas share PostgreSQL, so another instance's sessions
+        // must keep their status; a failed lock read also stays conservative.
+        let mut live_locks: HashMap<String, Option<HashSet<String>>> = HashMap::new();
+        for payload in &records {
+            let Some(record) = SessionRecord::from_storage(payload) else {
+                continue;
+            };
+            if !matches!(
+                record.status.as_str(),
+                Self::STATUS_RUNNING | Self::STATUS_CANCELLING
+            ) || live_locks.contains_key(&record.user_id)
+            {
+                continue;
+            }
+            let locks = self
+                .storage
+                .list_session_locks_by_user(&record.user_id)
+                .ok()
+                .map(|locks| {
+                    locks
+                        .into_iter()
+                        .filter(|lock| lock.expires_at > now)
+                        .map(|lock| lock.session_id.trim().to_string())
+                        .collect::<HashSet<_>>()
+                });
+            live_locks.insert(record.user_id.clone(), locks);
+        }
         let mut rebuilt = HashMap::new();
+        let mut persist = Vec::new();
         for payload in records {
             let Some(mut record) = SessionRecord::from_storage(&payload) else {
                 continue;
             };
             if record.status == Self::STATUS_RUNNING || record.status == Self::STATUS_CANCELLING {
-                record.status = Self::STATUS_ERROR.to_string();
-                record.summary = i18n::t("monitor.summary.restarted");
-                record.ended_time = Some(record.updated_time);
-                let summary = record.summary.clone();
-                let updated_time = record.updated_time;
-                self.append_event(
-                    &mut record,
-                    "restart",
-                    &json!({ "summary": summary }),
-                    updated_time,
-                );
+                let live = match live_locks.get(&record.user_id) {
+                    Some(Some(locks)) => locks.contains(record.session_id.trim()),
+                    _ => true,
+                };
+                if !live {
+                    record.status = Self::STATUS_ERROR.to_string();
+                    record.summary = i18n::t("monitor.summary.restarted");
+                    record.ended_time = Some(record.updated_time);
+                    let summary = record.summary.clone();
+                    let updated_time = record.updated_time;
+                    self.append_event(
+                        &mut record,
+                        "restart",
+                        &json!({ "summary": summary }),
+                        updated_time,
+                    );
+                    record.dirty = true;
+                    persist.push(self.build_persisted_record_payload(&record));
+                }
             }
             if record.status == Self::STATUS_FINISHED {
                 record.stage = "final".to_string();
@@ -2487,6 +2572,10 @@ impl MonitorState {
                 }
             }
             sessions.insert(session_id, record);
+        }
+        drop(sessions);
+        for payload in persist {
+            self.save_record(payload);
         }
     }
 
@@ -3602,6 +3691,53 @@ mod tests {
         );
         // 已落终态后重复收敛是幂等空操作。
         assert!(!restarted.settle_restarted_session("sample-thread"));
+    }
+
+    /// 管理端终止兜底：监控行仍在本进程内存中，也要能强制收敛并持久化。
+    #[test]
+    fn force_settle_closes_in_memory_running_record_and_persists() {
+        let root = tempdir().unwrap();
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            root.path().join("sample.db").to_string_lossy().into(),
+        ));
+        let monitor = MonitorState::new(
+            storage.clone(),
+            ObservabilityConfig::default(),
+            root.path().to_string_lossy().into(),
+        );
+        monitor.register(
+            "sample-thread",
+            "sample-owner",
+            "sample-agent",
+            "sample input",
+            false,
+        );
+        assert_eq!(
+            monitor.get_record("sample-thread").unwrap()["status"],
+            "running"
+        );
+        assert!(monitor.force_settle_session("sample-thread"));
+        assert_eq!(
+            monitor.get_record("sample-thread").unwrap()["status"],
+            "cancelled"
+        );
+        assert!(!monitor.force_settle_session("sample-thread"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let persisted = storage
+                .get_monitor_record("sample-thread")
+                .ok()
+                .flatten()
+                .and_then(|record| record.get("status").cloned());
+            if persisted.as_ref().and_then(|value| value.as_str()) == Some("cancelled") {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "force settle must persist the cancelled status"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
     }
 
     #[test]

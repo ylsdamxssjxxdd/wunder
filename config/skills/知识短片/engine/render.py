@@ -46,6 +46,25 @@ SAFE_Y = 840
 KNOWN_SFX = {"tick", "soft", "chord", "bloom", "rise", "thud", "tock", "stamp", "shimmer", "hush"}
 SUB_RE = re.compile(r"字幕|sub(?:title)?|caption", re.I)
 
+def ffmpeg_bin():
+    return os.environ.get("WUNDER_FFMPEG_BIN", "").strip() or "ffmpeg"
+
+def ffprobe_bin():
+    # 补充包只带 ffmpeg、不带 ffprobe；有就用，没有就退回 ffmpeg -i 解析。
+    return os.environ.get("WUNDER_FFPROBE_BIN", "").strip() or "ffprobe"
+
+def ffmpeg_run(args, what):
+    """跑 ffmpeg 并按 UTF-8 解 stderr：Windows 中文控制台默认 GBK，直接 text=True 会炸。"""
+    try:
+        r = subprocess.run([ffmpeg_bin()] + args, capture_output=True,
+                           encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        sys.exit(f"找不到 ffmpeg（{ffmpeg_bin()}）：请确认补充包已安装，或把 ffmpeg 放进 PATH")
+    if r.returncode != 0:
+        detail = (r.stderr or "").strip() or "ffmpeg 没有输出错误信息"
+        sys.exit(f"{what}失败（退出码 {r.returncode}）：\n{detail}")
+    return r
+
 def font_dirs():
     """字体查找顺序：本地 engine/fonts → 补充包 opt/fonts/video、opt/fonts/common → 系统字体目录。"""
     dirs = [ENGINE / "fonts"]
@@ -100,8 +119,36 @@ def apply_fontconfig_env():
     if conf.is_file():
         os.environ["FONTCONFIG_FILE"] = str(conf)
 
+def playwright_chromium():
+    """Playwright 自带的 Chromium（云端镜像/补充包），兼容 chrome-linux64 新布局。"""
+    exe_dir = Path(sys.executable).resolve().parent
+    bases = [exe_dir / "ms-playwright", exe_dir.parent / "ms-playwright",
+             exe_dir.parent.parent / "ms-playwright",
+             Path(sys.prefix) / "ms-playwright", Path(sys.prefix).parent / "ms-playwright",
+             Path("/opt/ms-playwright")]
+    env = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
+    if env and env != "0":
+        bases.insert(0, Path(env))
+    home = os.environ.get("HOME", "").strip()
+    if home:
+        bases.append(Path(home) / ".cache/ms-playwright")
+    patterns = ("chrome-linux64/chrome", "chrome-linux-arm64/chrome", "chrome-linux/chrome",
+                "chrome-win64/chrome.exe", "chrome-win/chrome.exe",
+                "chrome-mac*/Chromium.app/Contents/MacOS/Chromium")
+    for base in bases:
+        if not base.is_dir():
+            continue
+        for pattern in patterns:
+            found = [p for p in base.glob(f"chromium-*/{pattern}") if p.is_file()]
+            if found:
+                def revision(path):
+                    m = re.search(r"chromium-(\d+)", str(path))
+                    return int(m.group(1)) if m else 0
+                return max(found, key=revision)
+    return None
+
 def chrome_executable():
-    """优先用补充包里的 Chrome；找不到再退回系统 channel=chrome。"""
+    """优先用补充包里的 Chrome；其次用 Playwright 自带 Chromium。"""
     env = os.environ.get("WUNDER_CHROME_PATH", "").strip()
     if env and Path(env).is_file():
         return Path(env)
@@ -115,8 +162,10 @@ def chrome_executable():
             roots.append(parent.parent)
             break
     rels = [
-        "opt/browser/chrome-linux64/chrome", "opt/browser/chrome-linux/chrome",
-        "opt/browser/chrome-win/chrome.exe", "opt/browser/chrome.exe",
+        "opt/browser/chrome-linux64/chrome", "opt/browser/chrome-linux-arm64/chrome",
+        "opt/browser/chrome-linux/chrome",
+        "opt/browser/chrome-win64/chrome.exe", "opt/browser/chrome-win/chrome.exe",
+        "opt/browser/chrome.exe",
         "opt/browser/chrome-mac/Chromium.app/Contents/MacOS/Chromium",
     ]
     for root in roots:
@@ -125,17 +174,12 @@ def chrome_executable():
             if p.is_file():
                 return p
     # 安卓 proot 的浏览器包固定在 rootfs 的 /opt/browser。
-    for abs_path in (Path("/opt/browser/chrome-linux/chrome"), Path("/opt/browser/chrome")):
+    for abs_path in (Path("/opt/browser/chrome-linux64/chrome"),
+                     Path("/opt/browser/chrome-linux-arm64/chrome"),
+                     Path("/opt/browser/chrome-linux/chrome"), Path("/opt/browser/chrome")):
         if abs_path.is_file():
             return abs_path
-    for base in (Path(sys.prefix) / "ms-playwright", Path(sys.prefix).parent / "ms-playwright"):
-        if base.is_dir():
-            for pattern in ("chromium-*/chrome-linux/chrome", "chromium-*/chrome-win/chrome.exe",
-                            "chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium"):
-                for p in sorted(base.glob(pattern)):
-                    if p.is_file():
-                        return p
-    return None
+    return playwright_chromium()
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     proj = None
@@ -170,10 +214,16 @@ def open_page(p, url):
         try:
             b = p.chromium.launch(executable_path=str(exe), args=args)
         except Exception as e:
-            print(f"[chrome] 补充包浏览器启动失败（{exe}）：{e}", file=sys.stderr)
-            b = p.chromium.launch(channel="chrome", args=args)
+            print(f"[chrome] 内置浏览器启动失败（{exe}）：{e}", file=sys.stderr)
+            b = None
     else:
-        b = p.chromium.launch(channel="chrome", args=args)
+        b = None
+    if b is None:
+        try:
+            b = p.chromium.launch(args=args)
+        except Exception as e:
+            print(f"[chrome] Playwright 自带 Chromium 启动失败：{e}", file=sys.stderr)
+            b = p.chromium.launch(channel="chrome", args=args)
     pg = b.new_page(viewport={"width": 1920, "height": 1080}, device_scale_factor=1)
     pg.on("console", lambda m: m.type in ("error", "warning") and print("[page]", m.text))
     pg.on("pageerror", lambda e: print("[pageerror]", e))
@@ -246,9 +296,9 @@ def probe_video(path):
     info = {"size": path.stat().st_size if path.exists() else 0}
     try:
         r = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration,bit_rate",
+            [ffprobe_bin(), "-v", "error", "-show_entries", "format=duration,bit_rate",
              "-show_entries", "stream=width,height,r_frame_rate", "-of", "json", str(path)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, encoding="utf-8", errors="replace", timeout=30,
         )
         if r.returncode == 0 and r.stdout.strip():
             data = json.loads(r.stdout)
@@ -266,8 +316,9 @@ def probe_video(path):
     if "duration" not in info:
         # 补充包只带 ffmpeg、不带 ffprobe 时，从 ffmpeg -i 的 stderr 里取时长/分辨率。
         try:
-            r = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(path)],
-                               capture_output=True, text=True, timeout=30)
+            r = subprocess.run([ffmpeg_bin(), "-hide_banner", "-i", str(path)],
+                               capture_output=True, encoding="utf-8", errors="replace",
+                               stdin=subprocess.DEVNULL, timeout=30)
             text = r.stderr or ""
             m = re.search(r"Duration:\s*(\d+):(\d+):([\d.]+)", text)
             if m:
@@ -280,6 +331,9 @@ def probe_video(path):
                 info["fps"] = float(m.group(1))
         except Exception:
             pass
+    if "duration" not in info and info["size"] > 0:
+        print(f"提示：读不到 {path.name} 的时长（ffprobe 与 ffmpeg -i 都未成功）；"
+              f"不影响出片，排查可运行：ffmpeg -i \"{path}\"", file=sys.stderr)
     return info
 
 def print_video(path):
@@ -388,9 +442,13 @@ def frames(proj, out, a=0.0, b=None, crf=14.0, preset="medium", preview=False, l
         if total <= 0:
             sys.exit(f"渲染区间为空：{a:g}–{bb:g}s；终点必须大于起点")
         errf = tempfile.TemporaryFile()
-        ff = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "image2pipe", "-framerate", str(fps), "-i", "-"]
-                              + encode_args(crf, preset, preview) + [str(out)],
-                              stdin=subprocess.PIPE, stderr=errf)
+        try:
+            ff = subprocess.Popen([ffmpeg_bin(), "-v", "error", "-y", "-f", "image2pipe",
+                                   "-framerate", str(fps), "-i", "-"]
+                                  + encode_args(crf, preset, preview) + [str(out)],
+                                  stdin=subprocess.PIPE, stderr=errf)
+        except FileNotFoundError:
+            sys.exit(f"找不到 ffmpeg（{ffmpeg_bin()}）：请确认补充包已安装，或把 ffmpeg 放进 PATH")
         prog = Progress(total, label or out.stem)
         try:
             for k, i in enumerate(range(n0, n1), 1):
@@ -418,8 +476,8 @@ def concat_parts(proj, parts, out, keep=False):
         sys.exit("没有可拼接的分段")
     lst = proj / "renders/_parts.txt"
     lst.write_text("".join(f"file '{p.as_posix()}'\n" for p in parts), encoding="utf-8")
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
-                    "-c", "copy", "-movflags", "+faststart", str(out)], check=True)
+    ffmpeg_run(["-v", "error", "-y", "-nostdin", "-f", "concat", "-safe", "0", "-i", str(lst),
+                "-c", "copy", "-movflags", "+faststart", str(out)], "拼接分段")
     if not keep:
         for p in parts:
             p.unlink(missing_ok=True)
@@ -449,8 +507,9 @@ def frames_parallel(proj, out, jobs, crf=14.0, preset="medium", keep=False, fres
         cmd = [sys.executable, str(Path(__file__).resolve()), str(proj), "--clip",
                repr(cuts[i] / fps), repr(cuts[i + 1] / fps), part.stem,
                "--crf", f"{crf:g}", "--preset", preset]
+        env = dict(os.environ, PYTHONIOENCODING="utf-8")
         with open(log, "w", encoding="utf-8") as lf:
-            rc = subprocess.call(cmd, stdout=lf, stderr=subprocess.STDOUT)
+            rc = subprocess.call(cmd, stdout=lf, stderr=subprocess.STDOUT, env=env)
         if rc != 0 or not part.exists() or part.stat().st_size == 0:
             failures.append((i, rc, log))
             print(f"  第 {i} 段失败（退出码 {rc}），日志：{log}")
@@ -518,7 +577,7 @@ def web(proj, name=None, crf=None, kb=None):
         sys.exit("没有 renders/final.mp4 或 renders/raw.mp4；先渲全片再 --web")
     out = proj / f"renders/{name or 'web'}"
     if out.suffix.lower() != ".mp4": out = out.with_suffix(".mp4")
-    args = ["ffmpeg", "-v", "error", "-y", "-i", str(src), "-map", "0:v:0", "-map", "0:a?",
+    args = ["-v", "error", "-y", "-nostdin", "-i", str(src), "-map", "0:v:0", "-map", "0:a?",
             "-c:v", "libx264", "-preset", "slow", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
     if kb:
         args += ["-b:v", f"{int(kb)}k", "-maxrate", f"{int(kb * 1.2)}k", "-bufsize", f"{int(kb * 2)}k"]
@@ -526,7 +585,7 @@ def web(proj, name=None, crf=None, kb=None):
         args += ["-crf", f"{crf if crf is not None else 23:g}", "-maxrate", "8M", "-bufsize", "16M"]
     args += ["-c:a", "copy", str(out)]
     print("web:", src.name, "→", out.name, "（音频直接复制）" if src.name == "final.mp4" else "（源无音频）")
-    subprocess.run(args, check=True)
+    ffmpeg_run(args, "发布转码")
     print_video(out)
 
 # ---------- 音效事件 ----------
@@ -692,8 +751,12 @@ def check_overlap(proj, interval=1.0, min_ratio=0.02):
 
 # ---------- 版本差分 ----------
 def extract_frame(video, t):
-    r = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t:.3f}", "-i", str(video), "-frames:v", "1",
-                        "-f", "image2pipe", "-vcodec", "png", "-"], capture_output=True)
+    try:
+        r = subprocess.run([ffmpeg_bin(), "-v", "error", "-nostdin", "-ss", f"{t:.3f}",
+                            "-i", str(video), "-frames:v", "1",
+                            "-f", "image2pipe", "-vcodec", "png", "-"], capture_output=True)
+    except FileNotFoundError:
+        sys.exit(f"找不到 ffmpeg（{ffmpeg_bin()}）：请确认补充包已安装，或把 ffmpeg 放进 PATH")
     if r.returncode != 0 or not r.stdout:
         sys.exit(f"抽帧失败 {video} @ {t:.2f}s：{r.stderr.decode('utf-8', 'replace').strip()}")
     return r.stdout
@@ -704,7 +767,9 @@ def diff_videos(a, b, samples=8, out=None):
     if not a.exists(): sys.exit(f"找不到 {a}")
     if not b.exists(): sys.exit(f"找不到 {b}")
     da = probe_video(a).get("duration"); db = probe_video(b).get("duration")
-    if not da or not db: sys.exit("需要 ffprobe 读取时长；请确认补充包里有 ffprobe")
+    if not da or not db:
+        sys.exit("读不到视频时长：ffprobe 不存在时会退回 ffmpeg -i 解析，两者都没成功。\n"
+                 "  请确认 PATH 里有可用的 ffmpeg（补充包只带 ffmpeg，不带 ffprobe）。")
     if abs(da - db) > .15:
         print(f"注意：时长不一致 A={da:.2f}s B={db:.2f}s，按较短者比较")
     dur = min(da, db); samples = max(2, min(int(samples), 24))

@@ -35,6 +35,12 @@ export type TimelineToolMetrics = {
   durationMs: number | null;
 };
 
+/** 读取条目实际返回的行数；窗口读取时带上文件总行数。 */
+export type TimelineReadLines = {
+  read: number;
+  total: number | null;
+};
+
 export type TimelineTargetChip = {
   key: string;
   label: string;
@@ -58,6 +64,8 @@ export type TimelineToolEntry = {
   summaryMono: boolean;
   /** 编辑/补丁类工具的 +/- 行数统计（其他工具为 null）。 */
   diffStats: TimelineDiffStats | null;
+  /** 读取文件返回的行数（其他工具为 null）。 */
+  readLines: TimelineReadLines | null;
   /** 目标标签（文件名 / 路径），点击在左栏工作目录区定位。 */
   targets: TimelineTargetChip[];
   /** 失败时的错误摘要（可展开查看）。 */
@@ -546,6 +554,59 @@ const buildTargets = (run: RawToolRun): TimelineTargetChip[] => {
     });
 };
 
+const READ_TOOL_TOKENS = ['read_file', '\u8bfb\u53d6\u6587\u4ef6', 'read files'] as const;
+
+const isTimelineReadToolRun = (run: RawToolRun): boolean =>
+  [run.toolName, run.toolRuntimeName, run.toolDisplayName, run.toolFunctionName].some((name) => {
+    const normalized = String(name || '').trim().toLowerCase();
+    return Boolean(normalized) && READ_TOOL_TOKENS.some((token) => normalized === token || normalized.includes(token));
+  });
+
+const nonNegativeInt = (value: unknown): number | null => {
+  const parsed = toOptionalInt(value);
+  return parsed !== null && parsed >= 0 ? parsed : null;
+};
+
+/**
+ * 读取文件的折叠行指示实际返回行数：结果侧 `read_lines` / `total_lines` 是
+ * 权威口径（窗口读取时 已读 < 总数），旧记录只保留 `files[]` 时按文件汇总。
+ * 与编辑行的 +/- 同一位置展示，读者不必展开就知道读了多少。
+ */
+const resolveRunReadLines = (run: RawToolRun): TimelineReadLines | null => {
+  if (!isTimelineReadToolRun(run)) return null;
+  for (const item of [run.resultItem, run.outputItem]) {
+    if (!item) continue;
+    const data = extractToolResultDataObject(parseToolWorkflowResultObject(item.detail));
+    if (!data) continue;
+    let read = nonNegativeInt(data.read_lines);
+    let total = nonNegativeInt(data.total_lines);
+    if (read === null) {
+      const files = Array.isArray(data.files) ? (data.files as unknown[]) : [];
+      let fileRead = 0;
+      let fileTotal = 0;
+      let found = false;
+      for (const value of files) {
+        const file = asObject(value);
+        if (!file) continue;
+        const readValue = nonNegativeInt(file.read_lines);
+        const totalValue = nonNegativeInt(file.total_lines);
+        if (readValue === null && totalValue === null) continue;
+        fileRead += readValue ?? 0;
+        fileTotal += totalValue ?? 0;
+        found = true;
+      }
+      if (found) {
+        read = fileRead;
+        total = fileTotal;
+      }
+    }
+    if (read !== null && read > 0) {
+      return { read, total: total !== null && total > 0 ? total : null };
+    }
+  }
+  return null;
+};
+
 /**
  * 摘要与目标徽章的去重：文本编辑、读图等路径型工具的摘要就是文件名，
  * 徽章已渲染同一份路径，摘要再显示一遍就成了行内重复。
@@ -594,6 +655,7 @@ const resolveCompactionEntry = (
     summary: truncateSingleLine([instanceLabel, display.summaryTitle || display.resultSummary].filter(Boolean).join(' · ')),
     summaryMono: false,
     diffStats: null,
+    readLines: null,
     targets: [],
     errorText: status === 'failed' ? display.summaryNote || display.resultSummary : '',
     detailText: display.resultBody || display.copyBody || '',
@@ -653,6 +715,8 @@ export const buildTimelineToolEntry = (
     summaryMono: isExecuteCommandToolName(run.toolName),
     // +/- 统计只描述实际生效的改动：失败/取消的调用没有改出这个结果，不显示。
     diffStats: status === 'failed' || status === 'cancelled' ? null : buildTimelineDiffStats(run),
+    // 读取行数同理只在成功返回后展示。
+    readLines: status === 'failed' || status === 'cancelled' ? null : resolveRunReadLines(run),
     targets,
     errorText,
     detailText,

@@ -81,16 +81,6 @@
         >
           <i class="fa-solid fa-angles-up" aria-hidden="true"></i>
         </button>
-        <button
-          v-if="splitCount === 1 && hasActiveThread && !localThreadActive"
-          class="messenger-split-enter"
-          type="button"
-          :title="t('messenger.split.two')"
-          :aria-label="t('messenger.split.two')"
-          @click="splitCount = 2"
-        >
-          <i class="fa-solid fa-table-columns" aria-hidden="true"></i>
-        </button>
         <MessengerChatSplitView
           v-if="splitCount !== 1"
           v-model:count="splitCount"

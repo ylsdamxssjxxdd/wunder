@@ -838,27 +838,69 @@ async fn admin_monitor_cancel(
     State(state): State<Arc<AppState>>,
     AxumPath(session_id): AxumPath<String>,
 ) -> Result<Json<Value>, Response> {
+    let session_id = session_id.trim().to_string();
     let record = state.monitor.get_record(&session_id);
     let user_id = record
         .as_ref()
         .and_then(|record| record.get("user_id"))
         .and_then(Value::as_str);
-    let ok = if let Some(user_id) = user_id {
-        state
+    let mut cancelled = false;
+    if let Some(user_id) = user_id {
+        match state
             .kernel
             .thread_runtime
             .cancel_session_activity(user_id, &session_id, "admin_cancel")
             .await
-            .map(|result| {
-                result.monitor_cancelled
+        {
+            Ok(result) => {
+                cancelled = result.monitor_cancelled
                     || result.queued_tasks_cancelled > 0
-                    || result.running_tasks_marked_cancelled > 0
-            })
-            .unwrap_or(false)
-    } else {
-        false
-    };
-    if !ok {
+                    || result.running_tasks_marked_cancelled > 0;
+            }
+            Err(error) => {
+                warn!(session = %session_id, %error, "admin monitor cancel failed");
+            }
+        }
+    }
+    let still_active = state
+        .monitor
+        .get_record(&session_id)
+        .and_then(|record| {
+            record
+                .get("status")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .is_some_and(|status| {
+            matches!(
+                status.as_str(),
+                "running" | "cancelling" | "queued" | "waiting"
+            )
+        });
+    if still_active || !cancelled {
+        // 监控行可能比执行器活得更久（上一进程崩溃、结算丢失）。没有存活
+        // 会话锁时当场结算残留受理并关闭诊断行；持锁的执行器自行收敛终态。
+        let lock_held = match user_id {
+            Some(user_id) => {
+                state
+                    .kernel
+                    .thread_runtime
+                    .holds_session_lock(user_id, &session_id)
+                    .await
+            }
+            None => false,
+        };
+        if !lock_held {
+            let turns = state
+                .kernel
+                .thread_runtime
+                .settle_thread_orphans(&session_id)
+                .await
+                .unwrap_or(0);
+            cancelled = state.monitor.force_settle_session(&session_id) || turns > 0 || cancelled;
+        }
+    }
+    if !cancelled {
         return Ok(Json(json!({
             "ok": false,
             "message": i18n::t("error.session_not_found_or_finished")
