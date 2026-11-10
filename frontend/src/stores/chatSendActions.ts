@@ -1,4 +1,4 @@
-import { threadViewSlots, threadViewCursor, threadViewOwnsExecution, settlePendingThreadView, removeThreadViewTurnByClientMessageId } from '@/realtime/chat/threadViewStore';
+import { threadViewSlots, threadViewCursor, threadViewOwnsExecution, settlePendingThreadView, removeThreadViewTurnForQueueItem } from '@/realtime/chat/threadViewStore';
 import { applyChatThreadEffects, applyThreadViewEffects, syncChatThreadShell } from './chatThreadEffects';
 import { defineStore } from 'pinia';
 
@@ -1332,11 +1332,22 @@ export const chatSendActions = {
     /**
      * 撤下一条还没开跑的排队轮次：连同它的本地乐观消息一起剪掉。
      * 引擎侧这条从未落进会话历史，留着就是一条永远不会更新的残影。
+     * 入参可以是排队条目 id，也可以是整条排队条目：持久 turn id 能唯一钉住
+     * 被撤下的提交，避免展示头把它投影成运行态后剪不掉。
      */
-    dropParkedQueueTurn(clientMessageId: unknown) {
+    dropParkedQueueTurn(item: unknown) {
       const sessionId = String(this.activeSessionId || '').trim();
-      const cleanedClientMessageId = String(clientMessageId || '').trim();
-      if (!sessionId || !cleanedClientMessageId) return;
+      const source = item && typeof item === 'object'
+        ? item as Record<string, unknown>
+        : {};
+      const cleanedClientMessageId = String(
+        source.clientMessageId ?? source.client_message_id ??
+        (typeof item === 'string' ? item : '')
+      ).trim();
+      const cleanedRootTurnId = String(
+        source.rootTurnId ?? source.root_turn_id ?? source.turnId ?? source.turn_id ?? ''
+      ).trim();
+      if (!sessionId || (!cleanedClientMessageId && !cleanedRootTurnId)) return;
       const staleIds = new Set(selectParkedTurnMessageIds(this.messages, cleanedClientMessageId));
       for (let index = this.messages.length - 1; index >= 0; index -= 1) {
         const message = this.messages[index] as Record<string, unknown> | null;
@@ -1351,9 +1362,12 @@ export const chatSendActions = {
       if (threadState) {
         const removedTurnIds = new Set<string>();
         for (const [turnId, turn] of threadState.turns) {
-          const locallyPending = turnId === `pending:${cleanedClientMessageId}`;
-          const durablyParked = turn.clientMessageId === cleanedClientMessageId && turn.status === 'queued';
-          if (!locallyPending && !durablyParked) continue;
+          const locallyPending = Boolean(cleanedClientMessageId) && turnId === `pending:${cleanedClientMessageId}`;
+          const matchesQueueTurn =
+            (Boolean(cleanedClientMessageId) && turn.clientMessageId === cleanedClientMessageId) ||
+            (Boolean(cleanedRootTurnId) &&
+              (turn.turnId === cleanedRootTurnId || turn.rootTurnId === cleanedRootTurnId));
+          if (!locallyPending && !matchesQueueTurn) continue;
           removedTurnIds.add(turnId);
           threadState.turns.delete(turnId);
         }
@@ -1363,10 +1377,13 @@ export const chatSendActions = {
           threadState.tails.delete(itemId);
         }
       }
-      // The thread-view helper applies the same pending/queued constraint.
-      // It cannot remove a running or completed turn merely because it shares
-      // the original client message id.
-      removeThreadViewTurnByClientMessageId(sessionId,cleanedClientMessageId);
+      // The thread-view helper keeps the client-id-only path constrained to
+      // parked rows; a confirmed queue row's durable root id may remove the
+      // row immediately even if the display head projected it as running.
+      removeThreadViewTurnForQueueItem(sessionId, {
+        clientMessageId: cleanedClientMessageId,
+        rootTurnId: cleanedRootTurnId
+      });
       cacheSessionMessages(sessionId, this.messages);
       markRuntimeProjectionChanged(this, {
         sessionId,

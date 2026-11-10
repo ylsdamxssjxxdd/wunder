@@ -1811,21 +1811,10 @@ fn project_browser_observation(data: &Value) -> Option<Value> {
             projected.insert(key.to_string(), value.clone());
         }
     }
-    if let Some(refs) = map.get("refs").and_then(Value::as_array) {
-        let omitted = refs.len().saturating_sub(OBSERVATION_BROWSER_REFS_LIMIT);
-        let mut compacted = refs
-            .iter()
-            .take(OBSERVATION_BROWSER_REFS_LIMIT)
-            .map(compact_browser_ref)
-            .collect::<Vec<_>>();
-        if omitted > 0 {
-            compacted.push(build_omitted_items_marker(omitted));
-            projected.insert("truncated".to_string(), Value::Bool(true));
-            projected.insert("omitted_refs".to_string(), json!(omitted));
-            projected.insert("continuation_required".to_string(), Value::Bool(true));
-        }
-        projected.insert("refs".to_string(), Value::Array(compacted));
-    }
+    // The snapshot text already carries each ref next to its role/name. The
+    // separate refs array repeated the same elements with selectors and frame
+    // paths, which doubled observation tokens without adding a next step. Keep
+    // it only in the event/audit payload.
     if let Some(artifact) = project_artifact(data) {
         projected.insert("artifact".to_string(), artifact);
     }
@@ -1841,6 +1830,7 @@ fn project_browser_interaction(data: &Value) -> Option<Value> {
             "kind",
             "target_ref",
             "ref",
+            "ref_recovered",
             "page_generation",
             "generation",
         ],
@@ -1892,6 +1882,8 @@ fn project_browser_batch(data: &Value) -> Option<Value> {
                     "kind",
                     "target_id",
                     "url",
+                    "ref",
+                    "ref_recovered",
                     "truncated",
                     "has_more",
                     "next_cursor",
@@ -1924,31 +1916,6 @@ fn project_browser_batch(data: &Value) -> Option<Value> {
         }
     }
     Some(Value::Object(projected))
-}
-
-fn compact_browser_ref(value: &Value) -> Value {
-    let Some(source) = value.as_object() else {
-        return value.clone();
-    };
-    let mut item = Map::new();
-    for key in ["ref", "role", "tag"] {
-        if let Some(text) = source.get(key).and_then(Value::as_str) {
-            let (text, _) = truncate_text_head(text, 256);
-            item.insert(key.to_string(), Value::String(text));
-        }
-    }
-    for key in ["name", "selector"] {
-        if let Some(text) = source.get(key).and_then(Value::as_str) {
-            let (text, _) = truncate_text_head(text, 512);
-            item.insert(key.to_string(), Value::String(text));
-        }
-    }
-    for key in ["frame_path", "page_generation"] {
-        if let Some(value) = source.get(key).filter(|value| !value.is_null()) {
-            item.insert(key.to_string(), value.clone());
-        }
-    }
-    Value::Object(item)
 }
 
 fn compact_browser_value(value: &Value, max_chars: usize) -> Value {

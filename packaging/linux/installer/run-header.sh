@@ -1,6 +1,7 @@
 #!/bin/sh
-# Wunder self-extracting installer header. The gzip-compressed tar payload
-# starts on the line after the marker below; builders append it verbatim.
+# Wunder self-extracting installer header. The uncompressed tar payload starts
+# on the line after the marker below; builders append it verbatim. The
+# supplement inside that payload is compressed as supplement.tar.xz.
 set -eu
 
 SELF="$0"
@@ -146,7 +147,7 @@ if [ "$WUNDER_PROGRESS" -eq 1 ]; then
   watch_extract &
   WATCH_PID=$!
 fi
-if ! tail -n +"$PAYLOAD_LINE" "$SELF" | tar -xzf - -C "$TMP_DIR"; then
+if ! tail -n +"$PAYLOAD_LINE" "$SELF" | tar -xf - -C "$TMP_DIR"; then
   [ -n "${WATCH_PID:-}" ] && kill "$WATCH_PID" 2>/dev/null || true
   finish_progress
   echo "安装包解压失败，文件可能不完整。" >&2

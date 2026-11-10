@@ -106,7 +106,7 @@ test('an accepted idle-thread submission stays mounted across admission and exec
 });
 
 
-test('capacity waiting survives reconnect and hands off without a stale queue row', async ({page})=>{
+test('capacity waiting keeps the sent turn on the timeline and marks the bubble queued', async ({page})=>{
   const service=new ChatMockService();
   await service.install(page);
   try {
@@ -116,20 +116,66 @@ test('capacity waiting survives reconnect and hands off without a stale queue ro
     await page.locator('button[type="submit"]').click();
     await page.waitForURL('**/app/**');
     await page.goto(`/app/chat?session_id=${MOCK_SESSION}`);
+    const messages=page.getByTestId('messenger-message-list');
     service.queueNext=true;
     service.duplicateNext=true;
     await page.getByTestId('chat-composer-input').fill('Fixture capacity input');
     await page.getByTestId('chat-composer-send').click();
-    await expect(page.getByTestId('chat-queue-strip')).toContainText('Fixture capacity input');
-    await expect(page.getByTestId('messenger-message-list')).not.toContainText('Fixture capacity input');
+    // Waiting for a global execution slot is not the composer input queue: the
+    // message is already sent and owns a timeline row with a queued bubble.
+    const capacityTurn=page.locator('.messenger-turn[data-root-turn-id="fixture-turn-1"]');
+    await expect(messages).toContainText('Fixture capacity input');
+    await expect(capacityTurn.locator('.messenger-message.mine')).toHaveCount(1);
+    await expect(capacityTurn.locator('.messenger-message[data-message-status="queued"]')).toHaveCount(1);
+    await expect(capacityTurn.locator('.messenger-message-stats')).toContainText('Queued');
+    await expect(page.getByTestId('chat-queue-strip')).toHaveCount(0);
     await page.reload();
-    await expect(page.getByTestId('chat-queue-strip')).toContainText('Fixture capacity input');
+    await expect(messages).toContainText('Fixture capacity input');
+    await expect(capacityTurn.locator('.messenger-message.mine')).toHaveCount(1);
+    await expect(capacityTurn.locator('.messenger-message[data-message-status="queued"]')).toHaveCount(1);
+    await expect(capacityTurn.locator('.messenger-message-stats')).toContainText('Queued');
+    await expect(page.getByTestId('chat-queue-strip')).toHaveCount(0);
     const connections=service.connections;
     service.disconnect();
     service.release();
     await expect.poll(()=>service.connections).toBeGreaterThan(connections);
-    await expect(page.getByTestId('messenger-message-list')).toContainText('Completed reply 1.');
+    await expect(messages).toContainText('Completed reply 1.');
     await expect(page.getByTestId('chat-queue-strip')).toHaveCount(0);
     await expect(page.locator('.messenger-turn[data-root-turn-id="fixture-turn-1"]')).toHaveCount(1);
+  } finally {await service.dispose();}
+});
+
+test('editing a parked input returns it to the composer without a timeline bubble', async ({page})=>{
+  const service=new ChatMockService();
+  await service.install(page);
+  try {
+    await page.goto('/login');
+    await page.locator('input[autocomplete="username"]').fill('fixture-user');
+    await page.locator('input[autocomplete="current-password"]').fill('fixture-password');
+    await page.locator('button[type="submit"]').click();
+    await page.waitForURL('**/app/**');
+    await page.goto(`/app/chat?session_id=${MOCK_SESSION}`);
+    const input=page.getByTestId('chat-composer-input');
+    const messages=page.getByTestId('messenger-message-list');
+    const queue=page.getByTestId('chat-queue-strip');
+    service.holdNext=true;
+    await input.fill('First fixture input');
+    await page.getByTestId('chat-composer-send').click();
+    await expect(messages).toContainText('Partial reply 1.');
+    await input.fill('Queued fixture input');
+    await page.getByTestId('chat-composer-send').click();
+    await expect(queue).toContainText('Queued fixture input');
+    await page.getByTestId('chat-queue-edit').click();
+    await expect(input).toHaveValue('Queued fixture input');
+    await expect(queue).toHaveCount(0);
+    await expect(messages).not.toContainText('Queued fixture input');
+    await expect(page.locator('.messenger-turn[data-root-turn-id="fixture-turn-2"]')).toHaveCount(0);
+    // The withdraw publishes a durable cancelled row; wait past the debounced
+    // refresh so a re-materialized ghost would be caught here.
+    await page.waitForTimeout(700);
+    await expect(messages).not.toContainText('Queued fixture input');
+    await expect(page.locator('.messenger-turn[data-root-turn-id="fixture-turn-2"]')).toHaveCount(0);
+    service.release();
+    await expect(messages).toContainText('Completed reply 1.');
   } finally {await service.dispose();}
 });

@@ -466,8 +466,7 @@ pub fn fork_thread_title<'a>(
     source_title: &str,
     existing_titles: impl IntoIterator<Item = &'a str>,
 ) -> String {
-    let source = source_title.trim();
-    let source = source.split(" · 分叉").next().unwrap_or(source).trim();
+    let source = fork_base_title(source_title);
     let source = if source.is_empty() {
         "新会话"
     } else {
@@ -476,14 +475,31 @@ pub fn fork_thread_title<'a>(
     let existing = existing_titles
         .into_iter()
         .collect::<std::collections::HashSet<_>>();
-    let first = format!("{source} · 分叉");
+    let first = format!("分叉 · {source}");
     if !existing.contains(first.as_str()) {
         return first;
     }
     (2..=existing.len() + 1)
-        .map(|index| format!("{source} · 分叉 {index}"))
+        .map(|index| format!("分叉 {index} · {source}"))
         .find(|candidate| !existing.contains(candidate.as_str()))
-        .unwrap_or_else(|| format!("{source} · 分叉 {}", existing.len() + 2))
+        .unwrap_or_else(|| format!("分叉 {} · {source}", existing.len() + 2))
+}
+
+// 分叉标题把「分叉」放在最前（分叉 · 原名 / 分叉 N · 原名），一眼可辨；
+// 二次分叉先剥掉已有前缀，旧后缀格式（原名 · 分叉 [N]）也一并剥离，避免叠加。
+fn fork_base_title(title: &str) -> &str {
+    let title = title.trim();
+    let title = title.split(" · 分叉").next().unwrap_or(title).trim();
+    let Some(rest) = title.strip_prefix("分叉") else {
+        return title;
+    };
+    let rest = rest
+        .trim_start_matches(|c: char| c.is_whitespace() || c.is_ascii_digit())
+        .trim_start();
+    match rest.strip_prefix('·') {
+        Some(rest) => rest.trim(),
+        None => title,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -543,20 +559,25 @@ mod tests {
     }
 
     #[test]
-    fn fork_titles_are_numbered_without_stacking_suffixes() {
-        assert_eq!(fork_thread_title("需求讨论", []), "需求讨论 · 分叉");
+    fn fork_titles_are_prefixed_and_numbered_without_stacking() {
+        assert_eq!(fork_thread_title("需求讨论", []), "分叉 · 需求讨论");
         assert_eq!(
-            fork_thread_title("需求讨论", ["需求讨论", "需求讨论 · 分叉"]),
-            "需求讨论 · 分叉 2"
+            fork_thread_title("需求讨论", ["需求讨论", "分叉 · 需求讨论"]),
+            "分叉 2 · 需求讨论"
         );
         assert_eq!(
             fork_thread_title(
-                "需求讨论 · 分叉 2",
-                ["需求讨论 · 分叉", "需求讨论 · 分叉 3"]
+                "分叉 2 · 需求讨论",
+                ["分叉 · 需求讨论", "分叉 3 · 需求讨论"]
             ),
-            "需求讨论 · 分叉 2"
+            "分叉 2 · 需求讨论"
         );
-        assert_eq!(fork_thread_title("  ", []), "新会话 · 分叉");
+        assert_eq!(
+            fork_thread_title("需求讨论 · 分叉 3", ["分叉 · 需求讨论"]),
+            "分叉 2 · 需求讨论"
+        );
+        assert_eq!(fork_thread_title("分叉测试", []), "分叉 · 分叉测试");
+        assert_eq!(fork_thread_title("  ", []), "分叉 · 新会话");
     }
 
     #[test]

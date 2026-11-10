@@ -1375,6 +1375,13 @@ pub async fn build_phone_followup_user_message(result: &Value) -> Result<Option<
     phone_control::build_followup_user_message(result).await
 }
 
+pub async fn build_browser_followup_user_message(
+    context: &ToolContext<'_>,
+    result: &Value,
+) -> Result<Option<Value>> {
+    browser_tool::build_followup_user_message(context, result).await
+}
+
 pub fn is_read_image_tool_name(name: &str) -> bool {
     read_image_tool::is_read_image_tool_name(name)
 }

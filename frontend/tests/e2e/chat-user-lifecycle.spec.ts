@@ -145,23 +145,27 @@ test('user operations drive the production chat through mocked HTTP and WebSocke
     service.duplicateNext = true;
     await send('Queue the next fixture request.');
     await expect.poll(() => service.turns.at(-1)?.status).toBe('queued');
-    // The queue list can lag this durable view update. A queued, empty turn is
-    // owned by the composer queue and must never flash as an assistant bubble.
+    // Waiting for a global execution slot is a sent turn: it keeps its timeline
+    // row and its empty assistant bubble carries the queued status. The input
+    // queue strip only owns turns parked behind a running turn of this thread.
     const queuedTurn = page.locator('.messenger-turn[data-root-turn-id="fixture-turn-10"]');
-    await expect(queuedTurn).toHaveCount(0);
+    await expect(queuedTurn).toHaveCount(1);
+    await expect(queuedTurn.locator('.messenger-message.mine')).toContainText('Queue the next fixture request.');
+    await expect(queuedTurn.locator('.messenger-message[data-message-status="queued"]')).toHaveCount(1);
+    await expect(page.getByTestId('chat-queue-strip')).toHaveCount(0);
     service.updateQueueAhead(1);
-    await expect(queuedTurn).toHaveCount(0);
+    await expect(queuedTurn).toHaveCount(1);
     const watchesBeforeReload = service.requests.filter(request => request.transport === 'ws' && request.type === 'watch').length;
     await page.reload();
-    await expect(page.getByTestId('chat-queue-strip')).toContainText('Queue the next fixture request.');
+    await expect(queuedTurn).toHaveCount(1);
+    await expect(page.getByTestId('chat-queue-strip')).toHaveCount(0);
     await expect.poll(() => service.requests.filter(request => request.transport === 'ws' && request.type === 'watch').length)
       .toBeGreaterThan(watchesBeforeReload);
-    await expect(queuedTurn).toHaveCount(0);
     // Reload installs a fresh page-local notice recorder. Compare the queued
     // completion with this recorder rather than the previous page's count.
     noticesBeforeRound = await noticeCount();
     service.updateQueueAhead(0);
-    await expect(queuedTurn).toHaveCount(0);
+    await expect(queuedTurn).toHaveCount(1);
     coverage.queue = true;
     service.release();
     await completed(10);

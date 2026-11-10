@@ -412,15 +412,49 @@ class BrowserBridgeTests(unittest.TestCase):
         self.assertIn("Shadow action", snapshot)
         self.assertTrue(self.act({"kind": "click", "ref": self.observed_ref()})["success"])
 
-    def test_dom_change_invalidates_observed_ref_with_reobserve_hint(self):
+    def test_dom_update_keeps_observed_ref_usable(self):
         old_ref = self.observed_ref()
         before = self.session.page_generations[self.target]
         self.page.evaluate("document.querySelector('#status').textContent = 'Changed'")
-        with self.assertRaisesRegex(ValueError, r"Call browser\(action=observe_refs\)"):
-            self.act({"kind": "click", "ref": old_ref})
-        self.assertGreater(self.session.page_generations[self.target], before)
-        fresh = self.observed_ref()
-        self.assertNotEqual(old_ref, fresh)
+        result = self.act({"kind": "click", "ref": old_ref})
+        self.assertTrue(result["success"])
+        # A normal DOM mutation is not a new document; the ref must not be
+        # reported or treated as recovered.
+        self.assertNotIn("ref_recovered", result["data"])
+        self.assertEqual(self.session.page_generations[self.target], before)
+
+    def test_reload_recovers_ref_by_selector_and_stale_ref_hints_reobserve(self):
+        url = "https://example.test/refresh"
+        self.page.route(url, lambda route: route.fulfill(
+            content_type="text/html",
+            body="<button id='send'>Continue</button>",
+        ))
+        try:
+            self.page.goto(url)
+            self.session.snapshot(self.target, max_chars=1000)
+            old_ref = list(self.session.refs[self.target])[0]
+            self.page.reload()
+            recovered = self.act({"kind": "click", "ref": old_ref})
+            self.assertTrue(recovered["success"])
+            self.assertTrue(recovered["data"].get("ref_recovered"))
+            # Replacing the document without the selector must fail fast with
+            # the re-observe hint instead of waiting out Playwright's timeout.
+            self.page.set_content("<p>different page</p>")
+            with self.assertRaisesRegex(ValueError, r"observe_refs"):
+                self.act({"kind": "click", "ref": old_ref, "timeout_ms": 100})
+        finally:
+            self.page.unroute(url)
+
+    def test_snapshot_dedupes_repeated_controls_and_skips_unnamed_links(self):
+        self.page.set_content(
+            "<nav>" + "<a href='/sample'>Home</a>" * 20 + "</nav>"
+            "<a href='/empty'></a><button></button><input id='q'>"
+        )
+        data = self.session.snapshot(self.target, max_chars=4000)["data"]
+        self.assertEqual(data["snapshot"].count('link "Home"'), 1)
+        self.assertNotIn('link "link"', data["snapshot"])
+        self.assertGreaterEqual(data["stats"]["duplicates"], 19)
+        self.assertIn('textbox "textbox"', data["snapshot"])
 
 
 if __name__ == "__main__":

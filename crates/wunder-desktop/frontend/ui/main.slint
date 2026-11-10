@@ -601,6 +601,7 @@ export component MainWindow inherits Window {
     // 当前线程的子智能体，包含已结束的线程以便回看详情。
     in-out property <[SubagentItem]> subagent-items: [];
     in-out property <int> subagent-count: 0;
+    in-out property <int> subagent-running-count: 0;
     in-out property <string> selected-agent-name;
     in-out property <string> selected-agent-description;
     in-out property <string> selected-agent-model;
@@ -1518,6 +1519,7 @@ export component MainWindow inherits Window {
                             terminate-task(id) => { root.terminate-task(id); }
                             subagent-items: root.subagent-items;
                             subagent-count: root.subagent-count;
+                            subagent-running-count: root.subagent-running-count;
                             open-subagent(id) => { root.dock-open-subagent(id); }
                             stop-subagent(id) => { root.dock-stop-subagent(id); }
                             permission-mode <=> root.permission-mode;

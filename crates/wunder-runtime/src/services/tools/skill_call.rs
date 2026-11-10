@@ -987,25 +987,31 @@ mod tests {
             entrypoint: None,
         };
 
-        let result = load_skill(&spec, SkillCallArgs {
-            name: Some("demo".to_string()),
-            skill_name: None,
-            action: None,
-            path: None,
-            section: None,
-            start_line: None,
-            line_limit: None,
-            bytes_limit: None,
-            cursor: None,
-            manifest_cursor: None,
-            full: false,
-        })
+        let result = load_skill(
+            &spec,
+            SkillCallArgs {
+                name: Some("demo".to_string()),
+                skill_name: None,
+                action: None,
+                path: None,
+                section: None,
+                start_line: None,
+                line_limit: None,
+                bytes_limit: None,
+                cursor: None,
+                manifest_cursor: None,
+                full: false,
+            },
+        )
         .expect("load skill");
 
         assert_eq!(result["action"], "skill_load");
         assert_eq!(result["data"]["path"], "SKILL.md");
         assert_eq!(result["data"]["version"], "1.2.0");
-        assert_eq!(result["data"]["resource_index"], json!(["SKILL.md", "scripts/"]));
+        assert_eq!(
+            result["data"]["resource_index"],
+            json!(["SKILL.md", "scripts/"])
+        );
         let content = result["data"]["content"].as_str().expect("content");
         assert!(content.contains("# Demo"));
         assert!(content.contains("./scripts/run.py"));

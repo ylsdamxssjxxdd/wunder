@@ -525,6 +525,46 @@ mod tests {
     }
 
     #[test]
+    fn write_file_result_carries_change_size_through_the_event_envelope() {
+        let payload = json!({
+            "tool": "write_file", "ok": true,
+            "data": {
+                "ok": true, "action": "write_file", "state": "completed",
+                "summary": "Created file sample.txt.",
+                "data": {
+                    "path": "sample.txt", "bytes": 12, "dry_run": false,
+                    "existed": false, "previous_bytes": 0, "lsp": null,
+                    "added_lines": 2, "deleted_lines": 0, "changed_files": 1,
+                    "files": [{"action": "add", "path": "sample.txt", "hunks": 1,
+                        "added_lines": 2, "deleted_lines": 0,
+                        "diff_blocks": [{"header": "new file", "lines": [
+                            {"kind": "add", "new_line": 1, "text": "first"},
+                            {"kind": "add", "new_line": 2, "text": "second"},
+                        ]}]
+                    }]
+                }
+            }
+        });
+        let entry = NativeWorkflowEntry::from_payload(
+            "fixture-write",
+            "write_file",
+            String::new(),
+            "completed",
+            &payload,
+        );
+        assert_eq!(entry.patch_files.len(), 1);
+        assert_eq!(entry.patch_files[0].action, "add");
+        assert_eq!(
+            (
+                entry.patch_files[0].added.as_str(),
+                entry.patch_files[0].deleted.as_str()
+            ),
+            ("2", "0")
+        );
+        assert_eq!(entry.patch_files[0].lines.len(), 3);
+    }
+
+    #[test]
     fn collapsed_metrics_prefer_request_context_then_usage_and_meta_duration() {
         for (payload, expected) in [
             (

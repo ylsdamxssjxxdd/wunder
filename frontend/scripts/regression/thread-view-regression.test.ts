@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {beginThreadView,commitThreadView,threadViewSlots,threadViewPhase,threadViewCursor,applyThreadViewChanges,submitThreadView,failThreadView,clearThreadView,applyThreadViewTail,threadViewAtLatest,threadViewStatus,pauseThreadViewHistory,threadViewHistory,threadViewWindow,removeThreadViewTurnByClientMessageId,applyBodyHydration} from '../../src/realtime/chat/threadViewStore';
+import {beginThreadView,commitThreadView,threadViewSlots,threadViewPhase,threadViewCursor,applyThreadViewChanges,submitThreadView,failThreadView,clearThreadView,applyThreadViewTail,threadViewAtLatest,threadViewStatus,pauseThreadViewHistory,threadViewHistory,threadViewWindow,removeThreadViewTurnForQueueItem,applyBodyHydration} from '../../src/realtime/chat/threadViewStore';
 const row=(round:number,revision=1)=>({root_turn_id:`fixture-turn-${round}`,user_round:round,revision,status:'completed',user:{item_id:`fixture-user-${round}`,content:'fixture input'},assistant:{item_id:`fixture-answer-${round}`,content:'fixture answer'},workflow_count:0,failed_count:0});
 const page=(chat:any[],seq=1)=>({session_id:'fixture-thread',epoch:1,view_seq:seq,projection_state:'ready',thread_empty:chat.length===0,latest_round:chat.length,chat,trajectory:[],tiles:[],tile_level:0,next_before:1,has_more:false});
 const key='fixture-thread';
@@ -121,12 +121,22 @@ console.log('thread view: active reasoning identity follows the newest model ite
 
 clearThreadView(key);generation=beginThreadView(key);
 commitThreadView(key,page([{...row(1,1),status:'queued',client_message_id:'fixture-queued'}]),generation);
-removeThreadViewTurnByClientMessageId(key,'fixture-queued');
+removeThreadViewTurnForQueueItem(key,{clientMessageId:'fixture-queued'});
 assert.equal(threadViewSlots(key)!.length,0);
 commitThreadView(key,page([{...row(1,2),status:'running',client_message_id:'fixture-started'}],2),generation);
-removeThreadViewTurnByClientMessageId(key,'fixture-started');
+removeThreadViewTurnForQueueItem(key,{clientMessageId:'fixture-started'});
 assert.equal(threadViewSlots(key)!.length,1);
-console.log('thread view: only queued durable rows are removable by client message id pass');
+// A confirmed queue withdrawal carries the durable root turn, so a row the
+// display head projected as running is still removed immediately.
+commitThreadView(key,page([{...row(1,3),status:'running',client_message_id:'fixture-withdrawn'}],3),generation);
+removeThreadViewTurnForQueueItem(key,{clientMessageId:'fixture-withdrawn',rootTurnId:'fixture-turn-1'});
+assert.equal(threadViewSlots(key)!.length,0);
+// A queue-only cancellation frame clears the parked row it settled instead of
+// leaving the stale queued bubble behind.
+commitThreadView(key,page([{...row(1,4),status:'queued',client_message_id:'fixture-cancelled'}],4),generation);
+applyThreadViewChanges(key,{view_seq:5,rows:[{...row(1,4),status:'cancelled',client_message_id:'fixture-cancelled',stop_reason:'user_withdrew_queued_turn'}]});
+assert.equal(threadViewSlots(key)!.length,0);
+console.log('thread view: only parked or withdrawn queue rows are removable pass');
 
 clearThreadView(key);generation=beginThreadView(key);
 commitThreadView(key,page([{...row(1,1),status:'running',process_activity:{kind:'thinking'},assistant:{item_id:'fixture-answer-1',content:'',reasoning:'fixture thought',reasoning_offset:15}}]),generation);

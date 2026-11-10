@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-11-10T03:24:09.530434+00:00",
+  "generated_at": "2026-11-10T05:08:49.060704+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is a multi-form agent workbench: Desktop is the local AI workbench, Android is the Desktop's phone form, Cloud (web) is the cloud AI workbench, CLI is the manual local entry point, and the Server is the user and agent management platform. / wunder 是多形态的智能体工作台：桌面版（desktop）是本地 AI 工作台，安卓版（android）是桌面版的手机形态，云端版（web）是云端 AI 工作台，命令行（cli）是手工本地操作入口，服务端（server）是用户与智能体管理平台。",
@@ -202,7 +202,7 @@
                   {
                     "slug": "zh-CN/tools/browser",
                     "title": "浏览器工具",
-                    "summary": "单一 `browser` action 工具的启用条件、严格动作 schema、批处理、结果附件与限额。",
+                    "summary": "单一 `browser` action 工具的启用条件、严格动作 schema、批处理、跨刷新 ref 恢复、降噪后的观察输出、截图回传与限额。",
                     "url": "/docs/zh-CN/tools/browser/"
                   }
                 ]
@@ -230,7 +230,7 @@
                   {
                     "slug": "zh-CN/tools/desktop-control",
                     "title": "桌面控制",
-                    "summary": "桌面控制的启用条件、坐标与 17 个动作（含 wait 观察）、截图追加给模型的方式、失败判定与回滚边界。",
+                    "summary": "桌面控制的启用条件、坐标与 17 个动作（含 wait 观察）、type_text 的焦点与换行语义、截图追加给模型的方式、失败判定与回滚边界。",
                     "url": "/docs/zh-CN/tools/desktop-control/"
                   }
                 ]
@@ -774,7 +774,7 @@
                   {
                     "slug": "en/tools/browser",
                     "title": "Browser Tool",
-                    "summary": "Enablement, strict actions, batching, result attachments, and limits for the single `browser` tool.",
+                    "summary": "Enablement, strict actions, batching, ref recovery across refreshes, denoised observations, screenshot delivery, and limits for the single `browser` tool.",
                     "url": "/docs/en/tools/browser/"
                   }
                 ]
@@ -785,7 +785,7 @@
                   {
                     "slug": "en/tools/desktop-control",
                     "title": "Desktop Control",
-                    "summary": "Enablement conditions for Desktop Control, coordinates and the 17 actions (including the wait observation), how screenshots are appended to the model, failure diagnosis, and rollback boundaries.",
+                    "summary": "Enablement conditions for Desktop Control, coordinates and the 17 actions (including the wait observation), type_text focus/newline semantics, how screenshots are appended to the model, failure diagnosis, and rollback boundaries.",
                     "url": "/docs/en/tools/desktop-control/"
                   }
                 ]
@@ -2559,7 +2559,7 @@
       "language": "zh-CN",
       "title": "执行命令",
       "summary": "`execute_command` 的参数、阻塞与后台两种执行模式、命令会话的轮询与写入、输出守卫与预算，以及失败后的诊断。",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-11-09",
       "read_when": [],
       "source_docs": [],
       "tab": "工具",
@@ -2598,6 +2598,11 @@
           "id": "section-6",
           "level": 2,
           "text": "错误与处理"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Shell"
         }
       ],
       "prev_slug": "zh-CN/tools/workspace-files",
@@ -2701,8 +2706,8 @@
       "slug": "zh-CN/tools/browser",
       "language": "zh-CN",
       "title": "浏览器工具",
-      "summary": "单一 `browser` action 工具的启用条件、严格动作 schema、批处理、结果附件与限额。",
-      "updated_at": "2026-10-20",
+      "summary": "单一 `browser` action 工具的启用条件、严格动作 schema、批处理、跨刷新 ref 恢复、降噪后的观察输出、截图回传与限额。",
+      "updated_at": "2026-11-10",
       "read_when": [],
       "source_docs": [],
       "tab": "工具",
@@ -2869,8 +2874,8 @@
       "slug": "zh-CN/tools/desktop-control",
       "language": "zh-CN",
       "title": "桌面控制",
-      "summary": "桌面控制的启用条件、坐标与 17 个动作（含 wait 观察）、截图追加给模型的方式、失败判定与回滚边界。",
-      "updated_at": "2026-10-18",
+      "summary": "桌面控制的启用条件、坐标与 17 个动作（含 wait 观察）、type_text 的焦点与换行语义、截图追加给模型的方式、失败判定与回滚边界。",
+      "updated_at": "2026-11-10",
       "read_when": [],
       "source_docs": [],
       "tab": "工具",
@@ -7092,7 +7097,7 @@
       "language": "en",
       "title": "Execute Command",
       "summary": "Arguments for `execute_command`, the blocking and background execution modes, polling and writing in a command session, output guards and budgets, and failure diagnosis.",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-11-09",
       "read_when": [],
       "source_docs": [],
       "tab": "Tools",
@@ -7131,6 +7136,11 @@
           "id": "section-6",
           "level": 2,
           "text": "Errors"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Shell"
         }
       ],
       "prev_slug": "en/tools/workspace-files",
@@ -7229,8 +7239,8 @@
       "slug": "en/tools/browser",
       "language": "en",
       "title": "Browser Tool",
-      "summary": "Enablement, strict actions, batching, result attachments, and limits for the single `browser` tool.",
-      "updated_at": "2026-10-20",
+      "summary": "Enablement, strict actions, batching, ref recovery across refreshes, denoised observations, screenshot delivery, and limits for the single `browser` tool.",
+      "updated_at": "2026-11-10",
       "read_when": [],
       "source_docs": [],
       "tab": "Tools",
@@ -7275,8 +7285,8 @@
       "slug": "en/tools/desktop-control",
       "language": "en",
       "title": "Desktop Control",
-      "summary": "Enablement conditions for Desktop Control, coordinates and the 17 actions (including the wait observation), how screenshots are appended to the model, failure diagnosis, and rollback boundaries.",
-      "updated_at": "2026-10-18",
+      "summary": "Enablement conditions for Desktop Control, coordinates and the 17 actions (including the wait observation), type_text focus/newline semantics, how screenshots are appended to the model, failure diagnosis, and rollback boundaries.",
+      "updated_at": "2026-11-10",
       "read_when": [],
       "source_docs": [],
       "tab": "Tools",

@@ -135,7 +135,8 @@ const computeChatThreadTurnSlots = (
     );
     // A withdrawn queue root may reappear in a replayed durable frame. It has
     // no execution/output of its own and must not become a ghost chat row.
-    if (!hasVisibleExecution && !hasAssistantOutput && effectiveStatus === 'cancelled') {
+    const withdrawn = group.some(member => member.stopReason === 'user_withdrew_queued_turn');
+    if (withdrawn || (!hasVisibleExecution && !hasAssistantOutput && effectiveStatus === 'cancelled')) {
       activeTurnIds.add(turn.turnId);
       continue;
     }

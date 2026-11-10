@@ -413,7 +413,8 @@ mod tests {
                 }
             ]
         }))
-        .expect("questions").questions;
+        .expect("questions")
+        .questions;
         assert_eq!(questions.len(), 2);
         assert_eq!(questions[0].options.len(), 2);
         assert!(questions[0].options[1].recommended);
@@ -429,7 +430,8 @@ mod tests {
             "routes": [{ "label": "继续（推荐）" }],
             "allow_multiple": false
         }))
-        .expect("legacy questions").questions;
+        .expect("legacy questions")
+        .questions;
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].question, "旧版单题");
         // 标题里写「推荐」也要被识别成推荐项。
@@ -444,7 +446,8 @@ mod tests {
                 { "question": "有选项的一题", "options": ["甲"] }
             ]
         }))
-        .expect("kept questions").questions;
+        .expect("kept questions")
+        .questions;
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].question, "有选项的一题");
 
@@ -458,7 +461,8 @@ mod tests {
         let questions = normalize_question_panel_questions(&json!({
             "questions": [{ "question": "选哪个方向", "options": "甲|乙" }]
         }))
-        .expect("questions").questions;
+        .expect("questions")
+        .questions;
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].options.len(), 2);
         assert_eq!(questions[0].options[1].label, "乙");
@@ -475,8 +479,16 @@ mod tests {
         .expect("one usable question");
         assert_eq!(parsed.questions.len(), 1);
         assert_eq!(parsed.dropped.len(), 1);
-        assert!(parsed.dropped[0].contains("第 2 题缺少 options"), "{:?}", parsed.dropped);
-        assert!(parsed.dropped[0].contains("没有选项的一题"), "{:?}", parsed.dropped);
+        assert!(
+            parsed.dropped[0].contains("第 2 题缺少 options"),
+            "{:?}",
+            parsed.dropped
+        );
+        assert!(
+            parsed.dropped[0].contains("没有选项的一题"),
+            "{:?}",
+            parsed.dropped
+        );
     }
 
     #[test]

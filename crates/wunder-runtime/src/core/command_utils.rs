@@ -550,17 +550,13 @@ pub fn build_shell_command(command: &str, cwd: &Path) -> Command {
     build_shell_command_with_shell(command, cwd, &platform_default_shell())
 }
 
-pub fn resolve_shell_name(command: &str) -> &'static str {
-    let _ = command;
-    match platform_default_shell().kind {
-        ShellKind::Cmd => "cmd.exe",
-        // The concrete basename (`pwsh.exe` for the bundled portable build) is
-        // allocated per process, so this static accessor cannot report it.
-        // Callers that need the real name use `shell_display_name`.
-        ShellKind::PowerShell => "powershell.exe",
-        ShellKind::Bash => "bash",
-        ShellKind::Sh => "sh",
-    }
+/// Shell name recorded for a launched command.
+///
+/// Kept as a thin alias of [`shell_display_name`] on purpose: the old version
+/// returned a fixed `"powershell.exe"` for every PowerShell host, so a bundled
+/// PowerShell 7 was reported under the wrong name in command-session metadata.
+pub fn resolve_shell_name(shell: &ShellLaunch) -> String {
+    shell_display_name(shell)
 }
 
 #[cfg(windows)]

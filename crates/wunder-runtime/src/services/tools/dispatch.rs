@@ -112,9 +112,7 @@ pub async fn execute_builtin_tool(
         desktop_control::TOOL_DESKTOP_CONTROL => {
             desktop_control::tool_desktop_control(context, args).await
         }
-        phone_control::TOOL_PHONE_CONTROL => {
-            phone_control::tool_phone_control(context, args).await
-        }
+        phone_control::TOOL_PHONE_CONTROL => phone_control::tool_phone_control(context, args).await,
         // Android-only device surfaces. They resolve here so a persisted call
         // from an older Android session still fails with a readable "disabled"
         // error on hosts without a device executor, never with "unknown tool".

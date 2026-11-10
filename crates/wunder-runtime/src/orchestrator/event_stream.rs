@@ -264,7 +264,8 @@ impl EventEmitter {
             if let Some(item) =
                 crate::services::thread_log::event_item(&self.session_id, event_type, &data)
             {
-                let mut body = crate::storage::thread_history::item_preview(&json!({"payload":data}));
+                let mut body =
+                    crate::storage::thread_history::item_preview(&json!({"payload":data}));
                 // The live process row renders directly from this event, so it
                 // keeps the small raw call/result objects the stored card-grade
                 // preview deliberately drops. Bounded per field; oversized

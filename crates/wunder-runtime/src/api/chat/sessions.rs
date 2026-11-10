@@ -2133,11 +2133,11 @@ mod tests {
         let fork = build_forked_session_record(
             &source,
             "target".into(),
-            "fixture title · 分叉".into(),
+            "分叉 · fixture title".into(),
             10.0,
         );
         assert_eq!(fork.user_id, source.user_id);
-        assert_eq!(fork.title, "fixture title · 分叉");
+        assert_eq!(fork.title, "分叉 · fixture title");
         assert_eq!(fork.agent_id, source.agent_id);
         assert_eq!(fork.workspace_id, source.workspace_id);
         assert_eq!(fork.tool_overrides, source.tool_overrides);

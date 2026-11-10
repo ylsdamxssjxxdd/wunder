@@ -1386,6 +1386,7 @@ export component Composer inherits Rectangle {
     callback terminate-task(string);
     in property <[SubagentItem]> subagent-items: [];
     in property <int> subagent-count: 0;
+    in property <int> subagent-running-count: 0;
     callback open-subagent(string);
     callback stop-subagent(string);
     // §8.4 permission mode: a plain preference string, reported by the runtime
@@ -1435,7 +1436,7 @@ export component Composer inherits Rectangle {
     // Desktop adds 6px of breathing room inside the 36px action band, in
     // addition to the 6px gap after the editor. Mobile keeps its touch band.
     private property <length> action-row-height: root.mobile ? 40px : 36px;
-    height: (root.mobile ? 70px : 160px)
+    height: (root.mobile ? 70px : 166px)
         + (root.attachments.length > 0 ? 36px : 0px)
         + (root.branch-name != "" ? 22px : 0px) + root.queue-height;
     private property <bool> plus-open: false;
@@ -1532,7 +1533,7 @@ export component Composer inherits Rectangle {
         y: 8px + (root.queue-open ? root.queue-height + 6px : 0px)
             + (root.attachments.length > 0 ? 36px : 0px);
         width: parent.width;
-        height: max(0px, root.height - self.y - 10px);
+        height: max(0px, root.height - self.y - 16px);
         border-radius: 16px;
         background: Theme.surface;
         border-width: 1px;
@@ -1541,7 +1542,7 @@ export component Composer inherits Rectangle {
     VerticalLayout {
         // The side inset lives on the input band (main.slint), so the goal
         // banner and the inquiry card share this card's edges.
-        padding-top: 8px; padding-bottom: 10px; spacing: 6px;
+        padding-top: 8px; padding-bottom: 16px; spacing: 6px;
         if root.queue-open : QueueStrip {
             turns: root.queue-turns;
             overflow: root.queue-overflow;
@@ -2076,6 +2077,7 @@ export component Composer inherits Rectangle {
                     terminate-task(id) => { root.terminate-task(id); }
                     subagent-items: root.subagent-items;
                     subagent-count: root.subagent-count;
+                    subagent-running-count: root.subagent-running-count;
                     subagent-hidden: max(root.subagent-count - root.subagent-items.length, 0);
                     subagent-hint: root.subagent-count > 0
                         ? I18n.hud_subagents_hint(root.subagent-count) : I18n.hud_subagents_empty;

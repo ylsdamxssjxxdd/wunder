@@ -1344,8 +1344,7 @@ mod tests {
 
     #[test]
     fn test_parse_tool_call_prefixed_name_without_close() {
-        let content =
-            r#"<tool_call>execute_command{"content":"print('ok')","filename":"demo.py","workdir":"."}</think>"#;
+        let content = r#"<tool_call>execute_command{"content":"print('ok')","filename":"demo.py","workdir":"."}</think>"#;
         let calls = parse_tool_calls_from_text(content);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "execute_command");

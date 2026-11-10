@@ -14,11 +14,15 @@ use crate::services::browser::browser_tools_enabled as browser_tools_enabled_imp
 use crate::services::browser::provider::{active_provider, browser_registry};
 use anyhow::{anyhow, Result};
 use base64::Engine;
+use image::ImageEncoder;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
 const BROWSER_SCREENSHOT_DIR: &str = "browser/screenshots";
+const MAX_MODEL_SCREENSHOT_BYTES: usize = 8 * 1024 * 1024;
+const MODEL_SCREENSHOT_MAX_WIDTH: u32 = 1280;
+const MODEL_SCREENSHOT_MAX_HEIGHT: u32 = 2000;
 
 /// Whether browser tools are enabled for the given config.
 pub fn browser_tools_enabled(config: &Config) -> bool {
@@ -109,6 +113,141 @@ pub async fn tool_browser(
     }
     persist_image_blocks(context, args, &mut value)?;
     Ok(value)
+}
+
+/// A browser screenshot is saved as a workspace attachment, which the model
+/// cannot see by itself. Add one bounded image block as a user message so the
+/// next model round actually views the page instead of guessing from metadata.
+pub async fn build_followup_user_message(
+    context: &ToolContext<'_>,
+    result_data: &Value,
+) -> Result<Option<Value>> {
+    let Some(blocks) = result_data
+        .get("content")
+        .or_else(|| result_data.get("content_blocks"))
+        .and_then(Value::as_array)
+    else {
+        return Ok(None);
+    };
+    let mut images = Vec::new();
+    for block in blocks {
+        if block.get("type").and_then(Value::as_str) != Some("image") {
+            continue;
+        }
+        let Some(attachment) = block.get("attachment") else {
+            continue;
+        };
+        let Some(relative) = attachment
+            .get("workspace_relative_path")
+            .or_else(|| attachment.get("path"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let Ok(path) = context
+            .workspace
+            .resolve_path(context.workspace_id, relative)
+        else {
+            continue;
+        };
+        let Ok(bytes) = tokio::fs::read(&path).await else {
+            continue;
+        };
+        let mime = attachment
+            .get("mime_type")
+            .and_then(Value::as_str)
+            .unwrap_or("image/png")
+            .to_string();
+        let data_url = crate::core::blocking::run_cpu("browser_screenshot_view", move || {
+            model_ready_screenshot_data_url(bytes, &mime)
+        })
+        .await?;
+        images.push(json!({
+            "type": "image_url",
+            "image_url": { "url": data_url }
+        }));
+        if images.len() >= 2 {
+            break;
+        }
+    }
+    if images.is_empty() {
+        return Ok(None);
+    }
+    let mut content = vec![json!({
+        "type": "text",
+        "text": crate::i18n::t("tool.browser.screenshot_followup_prompt")
+    })];
+    content.extend(images);
+    Ok(Some(json!({ "role": "user", "content": content })))
+}
+
+fn model_ready_screenshot_data_url(bytes: Vec<u8>, mime: &str) -> Result<String> {
+    let mime = mime.trim().to_ascii_lowercase();
+    let decoded = image::load_from_memory(&bytes).ok();
+    let needs_scale = decoded.as_ref().is_some_and(|image| {
+        image.width() > MODEL_SCREENSHOT_MAX_WIDTH || image.height() > MODEL_SCREENSHOT_MAX_HEIGHT
+    });
+    if !needs_scale && bytes.len() <= MAX_MODEL_SCREENSHOT_BYTES {
+        return Ok(format!(
+            "data:{};base64,{}",
+            if mime.starts_with("image/") {
+                mime
+            } else {
+                "image/png".to_string()
+            },
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        ));
+    }
+    let Some(image) = decoded else {
+        if bytes.len() <= MAX_MODEL_SCREENSHOT_BYTES {
+            return Ok(format!(
+                "data:image/png;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(bytes)
+            ));
+        }
+        return Err(anyhow!("Browser screenshot is too large for model viewing"));
+    };
+    let scale = (MODEL_SCREENSHOT_MAX_WIDTH as f64 / image.width() as f64)
+        .min(MODEL_SCREENSHOT_MAX_HEIGHT as f64 / image.height() as f64)
+        .min(1.0);
+    let width = ((image.width() as f64 * scale).round() as u32).max(1);
+    let height = ((image.height() as f64 * scale).round() as u32).max(1);
+    let resized = image.resize(width, height, image::imageops::FilterType::Triangle);
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(
+            resized.to_rgba8().as_raw(),
+            resized.width(),
+            resized.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(|err| anyhow!("Encode browser screenshot failed: {err}"))?;
+    if png.len() <= MAX_MODEL_SCREENSHOT_BYTES {
+        return Ok(format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(png)
+        ));
+    }
+    let rgb = resized.to_rgb8();
+    let mut jpeg = Vec::new();
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 82);
+    encoder
+        .write_image(
+            rgb.as_raw(),
+            rgb.width(),
+            rgb.height(),
+            image::ExtendedColorType::Rgb8,
+        )
+        .map_err(|err| anyhow!("Encode browser screenshot failed: {err}"))?;
+    if jpeg.len() > MAX_MODEL_SCREENSHOT_BYTES {
+        return Err(anyhow!("Browser screenshot is too large for model viewing"));
+    }
+    Ok(format!(
+        "data:image/jpeg;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(jpeg)
+    ))
 }
 
 fn ensure_browser_available(config: &Config) -> Result<()> {
@@ -270,8 +409,8 @@ mod tests {
     }
 
     #[cfg(feature = "sqlite-storage")]
-    #[test]
-    fn screenshot_content_is_persisted_as_a_resolvable_attachment() {
+    #[tokio::test]
+    async fn screenshot_content_is_persisted_as_a_resolvable_attachment() {
         use crate::services::tools::ToolContext;
         use crate::storage::{SqliteStorage, StorageBackend};
         use std::{collections::HashMap, sync::Arc};
@@ -337,5 +476,20 @@ mod tests {
             .resolve_path(context.workspace_id, "browser/screenshots/sample.png")
             .unwrap();
         assert_eq!(std::fs::read(path).unwrap(), b"sample");
+
+        let data = json!({
+            "action": "screenshot",
+            "content": result["content"].clone(),
+        });
+        let followup = super::build_followup_user_message(&context, &data)
+            .await
+            .expect("build browser followup")
+            .expect("followup message");
+        let content = followup["content"].as_array().expect("content array");
+        assert_eq!(content[0]["type"], "text");
+        assert!(content[1]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
     }
 }

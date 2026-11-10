@@ -8,8 +8,6 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use image::ImageEncoder;
 use serde_json::{json, Value};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::Hasher;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tokio::fs;
@@ -125,6 +123,9 @@ pub fn desktop_control_tool_spec(language: &str) -> ToolSpec {
     scroll.insert("scroll_steps".to_string(), reference("scroll_steps"));
     let mut press = base();
     press.insert("key".to_string(), reference("key"));
+    // bbox stays available but optional: omitting it types into whatever
+    // control already has focus, without a synthetic click that can move the
+    // caret, select existing text or dismiss a menu.
     let mut typing = base();
     typing.insert("text".to_string(), reference("text"));
     let mut wait = base();
@@ -143,7 +144,7 @@ pub fn desktop_control_tool_spec(language: &str) -> ToolSpec {
             input_branch(json!({"enum": pointer_actions}), base(), &["action", "bbox"]),
             input_branch(json!({"enum": ["scroll_down", "scroll_up"]}), scroll, &["action", "bbox"]),
             input_branch(json!({"const": "press_key"}), press, &["action", "key"]),
-            input_branch(json!({"const": "type_text"}), typing, &["action", "bbox", "text"]),
+            input_branch(json!({"const": "type_text"}), typing, &["action", "text"]),
             input_branch(json!({"const": "wait"}), wait, &["action"]),
             input_branch(json!({"const": "move_mouse"}), move_mouse, &["action", "bbox"]),
             input_branch(json!({"const": "drag_drop"}), drag, &["action", "bbox", "to_bbox"])
@@ -567,8 +568,21 @@ pub async fn tool_desktop_control(context: &ToolContext<'_>, args: &Value) -> Re
                     "tool.desktop_control.text_required"
                 )));
             }
-            mouse_click(MouseButton::Left, cx, cy)?;
-            send_unicode_text(&text)?;
+            // Only an explicit bbox clicks to focus. Most callers have just
+            // clicked the field in a previous action; clicking it again moves
+            // the caret to the bbox centre and can select or replace the text
+            // that is already there.
+            if payload.bbox.is_some() {
+                mouse_click(MouseButton::Left, cx, cy)?;
+                sleep(Duration::from_millis(30)).await;
+            }
+            // A long unicode typing run opens the X display or builds input
+            // arrays for every character; keep it off the async workers.
+            let text_to_send = text.clone();
+            blocking::run_cpu("desktop_type_text", move || {
+                send_unicode_text(&text_to_send)
+            })
+            .await?;
         }
         DesktopAction::Wait => {}
         DesktopAction::MoveMouse => {
@@ -813,7 +827,7 @@ fn parse_desktop_control_args(args: &Value) -> Result<DesktopControlArgs> {
                 "tool.desktop_control.to_bbox_required"
             )));
         }
-        DesktopAction::Wait | DesktopAction::PressKey => {}
+        DesktopAction::Wait | DesktopAction::PressKey | DesktopAction::TypeText => {}
         _ if bbox.is_none() => {
             return Err(anyhow!(crate::i18n::t("tool.desktop_control.bbox_required")));
         }
@@ -1902,12 +1916,250 @@ fn send_key_sequence(keys: &str) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TextSegment {
+    Char(char),
+    Enter,
+    Tab,
+}
+
+/// Text fields receive newlines and tabs as key presses, not as Unicode
+/// characters. Sending U+000A through a keysym lookup used to fail on X11 and
+/// silently drop line breaks on Windows; splitting them out also collapses
+/// CRLF into one Enter so pasted multi-line text does not double-submit.
+fn text_input_segments(text: &str) -> Vec<TextSegment> {
+    let mut segments = Vec::with_capacity(text.chars().count());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                segments.push(TextSegment::Enter);
+            }
+            '\n' => segments.push(TextSegment::Enter),
+            '\t' => segments.push(TextSegment::Tab),
+            _ => segments.push(TextSegment::Char(ch)),
+        }
+    }
+    segments
+}
+
+#[cfg(windows)]
 fn send_unicode_text(text: &str) -> Result<()> {
-    for ch in text.chars() {
-        send_unicode_char(ch)?;
-        std::thread::sleep(std::time::Duration::from_millis(2));
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
+        VK_RETURN, VK_TAB,
+    };
+    let keyboard_input = |vk: u16, scan: u16, flags: u32| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: scan,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let mut inputs = Vec::new();
+    for segment in text_input_segments(text) {
+        match segment {
+            TextSegment::Enter | TextSegment::Tab => {
+                let vk = match segment {
+                    TextSegment::Enter => VK_RETURN,
+                    TextSegment::Tab => VK_TAB,
+                    TextSegment::Char(_) => unreachable!(),
+                };
+                inputs.push(keyboard_input(vk, 0, 0));
+                inputs.push(keyboard_input(vk, 0, KEYEVENTF_KEYUP));
+            }
+            TextSegment::Char(ch) => {
+                // SendInput accepts UTF-16 code units. A scalar above U+FFFF
+                // therefore needs two press/release pairs; casting directly to
+                // u16 would lose the upper surrogate.
+                let mut units = [0u16; 2];
+                for unit in ch.encode_utf16(&mut units).iter().copied() {
+                    inputs.push(keyboard_input(0, unit, KEYEVENTF_UNICODE));
+                    inputs.push(keyboard_input(0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
+                }
+            }
+        }
+    }
+    for chunk in inputs.chunks(128) {
+        let sent = unsafe {
+            SendInput(
+                chunk.len() as u32,
+                chunk.as_ptr(),
+                std::mem::size_of::<INPUT>() as i32,
+            )
+        };
+        if sent != chunk.len() as u32 {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_control.capture_failed"
+            )));
+        }
     }
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+unsafe fn x11_keysym_keycode(
+    xlib: &x11_dl::xlib::Xlib,
+    display: *mut x11_dl::xlib::Display,
+    name: &str,
+) -> Result<u32> {
+    let name = std::ffi::CString::new(name)
+        .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_control.key_required")))?;
+    let keysym = (xlib.XStringToKeysym)(name.as_ptr());
+    let keycode = (xlib.XKeysymToKeycode)(display, keysym);
+    if keysym == 0 || keycode == 0 {
+        return Err(anyhow!(crate::i18n::t(
+            "tool.desktop_control.capture_failed"
+        )));
+    }
+    Ok(u32::from(keycode))
+}
+
+#[cfg(target_os = "linux")]
+unsafe fn x11_fake_keycode(
+    xtest: &x11_dl::xtest::Xf86vmode,
+    display: *mut x11_dl::xlib::Display,
+    keycode: u32,
+    pressed: bool,
+) -> Result<()> {
+    if (xtest.XTestFakeKeyEvent)(display, keycode, i32::from(pressed), 0) == 0 {
+        return Err(anyhow!(crate::i18n::t(
+            "tool.desktop_control.capture_failed"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+unsafe fn x11_fake_key(
+    xlib: &x11_dl::xlib::Xlib,
+    xtest: &x11_dl::xtest::Xf86vmode,
+    display: *mut x11_dl::xlib::Display,
+    name: &str,
+    pressed: bool,
+) -> Result<()> {
+    let keycode = x11_keysym_keycode(xlib, display, name)?;
+    x11_fake_keycode(xtest, display, keycode, pressed)
+}
+
+/// XStringToKeysym is a direct mapping only for characters represented by the
+/// active XKB layout. Returns the keycode and keysym when the layout has a
+/// printable key for `ch`; layout mappings that need AltGr or a non-default
+/// group are deliberately left to the Unicode fallback.
+#[cfg(target_os = "linux")]
+unsafe fn x11_char_mapping(
+    xlib: &x11_dl::xlib::Xlib,
+    display: *mut x11_dl::xlib::Display,
+    ch: char,
+) -> Option<(u32, std::ffi::c_ulong)> {
+    if !ch.is_ascii() {
+        return None;
+    }
+    let name = std::ffi::CString::new(ch.to_string()).ok()?;
+    let keysym = (xlib.XStringToKeysym)(name.as_ptr());
+    if keysym == 0 {
+        return None;
+    }
+    let keycode = (xlib.XKeysymToKeycode)(display, keysym);
+    if keycode == 0 {
+        return None;
+    }
+    Some((u32::from(keycode), keysym))
+}
+
+#[cfg(target_os = "linux")]
+unsafe fn x11_send_unicode_codepoint(
+    xlib: &x11_dl::xlib::Xlib,
+    xtest: &x11_dl::xtest::Xf86vmode,
+    display: *mut x11_dl::xlib::Display,
+    ch: char,
+) -> Result<()> {
+    // GTK, Qt and common X11 input methods accept Ctrl+Shift+U followed by a
+    // hexadecimal Unicode codepoint and Enter. XTest can synthesize that
+    // sequence without a clipboard or an input-method dependency.
+    x11_fake_key(xlib, xtest, display, "Control_L", true)?;
+    x11_fake_key(xlib, xtest, display, "Shift_L", true)?;
+    x11_fake_key(xlib, xtest, display, "u", true)?;
+    x11_fake_key(xlib, xtest, display, "u", false)?;
+    x11_fake_key(xlib, xtest, display, "Shift_L", false)?;
+    x11_fake_key(xlib, xtest, display, "Control_L", false)?;
+    for digit in unicode_input_codepoint(ch).chars() {
+        let name = digit.to_string();
+        x11_fake_key(xlib, xtest, display, &name, true)?;
+        x11_fake_key(xlib, xtest, display, &name, false)?;
+    }
+    x11_fake_key(xlib, xtest, display, "Return", true)?;
+    x11_fake_key(xlib, xtest, display, "Return", false)?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn send_unicode_text(text: &str) -> Result<()> {
+    let segments = text_input_segments(text);
+    with_xtest(|xlib, xtest, display, _| unsafe {
+        let mut pending = 0usize;
+        for segment in segments {
+            match segment {
+                TextSegment::Enter => {
+                    x11_fake_key(xlib, xtest, display, "Return", true)?;
+                    x11_fake_key(xlib, xtest, display, "Return", false)?;
+                }
+                TextSegment::Tab => {
+                    x11_fake_key(xlib, xtest, display, "Tab", true)?;
+                    x11_fake_key(xlib, xtest, display, "Tab", false)?;
+                }
+                TextSegment::Char(ch) => match x11_char_mapping(xlib, display, ch) {
+                    Some((keycode, keysym)) => {
+                        // The unshifted and shifted level tell us whether a
+                        // plain keycode would type the wrong character (e.g.
+                        // uppercase letters and punctuation needed Shift).
+                        let unshifted = (xlib.XkbKeycodeToKeysym)(display, keycode as u8, 0, 0);
+                        let shifted = (xlib.XkbKeycodeToKeysym)(display, keycode as u8, 0, 1);
+                        let needs_shift = shifted == keysym && unshifted != keysym;
+                        let shift = if needs_shift {
+                            Some(x11_keysym_keycode(xlib, display, "Shift_L")?)
+                        } else {
+                            None
+                        };
+                        if let Some(shift_code) = shift {
+                            x11_fake_keycode(xtest, display, shift_code, true)?;
+                        }
+                        x11_fake_keycode(xtest, display, keycode, true)?;
+                        x11_fake_keycode(xtest, display, keycode, false)?;
+                        if let Some(shift_code) = shift {
+                            x11_fake_keycode(xtest, display, shift_code, false)?;
+                        }
+                    }
+                    None => {
+                        x11_send_unicode_codepoint(xlib, xtest, display, ch)?;
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                },
+            }
+            pending += 1;
+            if pending >= 32 {
+                (xlib.XFlush)(display);
+                pending = 0;
+            }
+        }
+        (xlib.XFlush)(display);
+        Ok(())
+    })
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn send_unicode_text(_text: &str) -> Result<()> {
+    Err(anyhow!(crate::i18n::t(
+        "tool.desktop_control.unsupported_platform"
+    )))
 }
 
 fn build_vk_for_key(key: &str) -> Option<VkCode> {
@@ -1977,135 +2229,6 @@ fn key_down(key: VkCode) -> Result<()> {
 
 fn key_up(key: VkCode) -> Result<()> {
     send_key_event(key, true)
-}
-
-fn send_unicode_char(ch: char) -> Result<()> {
-    #[cfg(windows)]
-    {
-        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-            SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
-        };
-        // SendInput accepts UTF-16 code units. A scalar above U+FFFF therefore
-        // needs two press/release pairs; casting directly to u16 used to lose
-        // the upper surrogate and broke emoji and supplementary CJK text.
-        let mut units = [0u16; 2];
-        let units = ch.encode_utf16(&mut units);
-        let mut inputs = Vec::with_capacity(units.len() * 2);
-        for unit in units.iter().copied() {
-            for flags in [KEYEVENTF_UNICODE, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP] {
-                inputs.push(INPUT {
-                    r#type: INPUT_KEYBOARD,
-                    Anonymous: windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
-                        ki: KEYBDINPUT {
-                            wVk: 0,
-                            wScan: unit,
-                            dwFlags: flags,
-                            time: 0,
-                            dwExtraInfo: 0,
-                        },
-                    },
-                });
-            }
-        }
-        let sent = unsafe {
-            SendInput(
-                inputs.len() as u32,
-                inputs.as_mut_ptr(),
-                std::mem::size_of::<INPUT>() as i32,
-            )
-        };
-        if sent != inputs.len() as u32 {
-            return Err(anyhow!(crate::i18n::t(
-                "tool.desktop_control.capture_failed"
-            )));
-        }
-        Ok(())
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // XStringToKeysym is a direct mapping only for characters represented
-        // by the active XKB layout. It must not receive a UTF-8 Chinese or
-        // emoji string and then pretend the result is a usable key symbol.
-        if !ch.is_ascii() {
-            return send_linux_unicode_input(ch);
-        }
-        let name = std::ffi::CString::new(ch.to_string()).map_err(|_| anyhow!("无效字符"))?;
-        with_xtest(|xlib, xtest, display, _| unsafe {
-            let keysym = (xlib.XStringToKeysym)(name.as_ptr());
-            if keysym == 0 {
-                return Err(anyhow!("当前 X11 键盘布局不支持该字符"));
-            }
-            let keycode = (xlib.XKeysymToKeycode)(display, keysym);
-            if keycode == 0
-                || (xtest.XTestFakeKeyEvent)(display, keycode as u32, 1, 0) == 0
-                || (xtest.XTestFakeKeyEvent)(display, keycode as u32, 0, 0) == 0
-            {
-                return Err(anyhow!(crate::i18n::t(
-                    "tool.desktop_control.capture_failed"
-                )));
-            }
-            (xlib.XFlush)(display);
-            Ok(())
-        })
-    }
-    #[cfg(not(any(windows, target_os = "linux")))]
-    {
-        let _ = ch;
-        Err(anyhow!(crate::i18n::t(
-            "tool.desktop_control.unsupported_platform"
-        )))
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn send_linux_unicode_input(ch: char) -> Result<()> {
-    // GTK, Qt and common X11 input methods accept Ctrl+Shift+U followed by a
-    // hexadecimal Unicode codepoint and Enter. XTest can synthesize that
-    // sequence without a clipboard or an input-method dependency.
-    let codepoint = unicode_input_codepoint(ch);
-    with_xtest(|xlib, xtest, display, _| unsafe {
-        let send_named = |name: &str, pressed: bool| -> Result<()> {
-            let name = std::ffi::CString::new(name)
-                .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_control.key_required")))?;
-            let keysym = (xlib.XStringToKeysym)(name.as_ptr());
-            let keycode = (xlib.XKeysymToKeycode)(display, keysym);
-            if keysym == 0
-                || keycode == 0
-                || (xtest.XTestFakeKeyEvent)(display, keycode as u32, i32::from(pressed), 0) == 0
-            {
-                return Err(anyhow!(crate::i18n::t(
-                    "tool.desktop_control.capture_failed"
-                )));
-            }
-            Ok(())
-        };
-
-        send_named("Control_L", true)?;
-        send_named("Shift_L", true)?;
-        send_named("u", true)?;
-        send_named("u", false)?;
-        send_named("Shift_L", false)?;
-        send_named("Control_L", false)?;
-        for digit in codepoint.chars() {
-            let name = std::ffi::CString::new(digit.to_string())
-                .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_control.key_required")))?;
-            let keysym = (xlib.XStringToKeysym)(name.as_ptr());
-            let keycode = (xlib.XKeysymToKeycode)(display, keysym);
-            if keysym == 0
-                || keycode == 0
-                || (xtest.XTestFakeKeyEvent)(display, keycode as u32, 1, 0) == 0
-                || (xtest.XTestFakeKeyEvent)(display, keycode as u32, 0, 0) == 0
-            {
-                return Err(anyhow!(crate::i18n::t(
-                    "tool.desktop_control.capture_failed"
-                )));
-            }
-        }
-        send_named("Return", true)?;
-        send_named("Return", false)?;
-        (xlib.XFlush)(display);
-        Ok(())
-    })
 }
 
 #[cfg(target_os = "linux")]
@@ -2809,11 +2932,20 @@ mod tests {
             .expect("wait without bbox");
         assert!(wait.bbox.is_none());
         assert_eq!(wait.delay_ms, 200);
-        assert!(parse_desktop_control_args(&json!({"action": "press_key", "key": "enter"})).is_ok());
-        assert!(parse_desktop_control_args(&json!({"action": "left_click"})).is_err());
-        assert!(parse_desktop_control_args(&json!({"action": "type_text", "text": "hi"})).is_err());
         assert!(
-            parse_desktop_control_args(&json!({"action": "scroll_down", "scroll_steps": 3})).is_err()
+            parse_desktop_control_args(&json!({"action": "press_key", "key": "enter"})).is_ok()
+        );
+        assert!(parse_desktop_control_args(&json!({"action": "left_click"})).is_err());
+        // type_text targets the current focus when no bbox is given, so it no
+        // longer forces a synthetic click on the text field.
+        assert!(parse_desktop_control_args(&json!({"action": "type_text", "text": "hi"})).is_ok());
+        assert!(parse_desktop_control_args(
+            &json!({"action": "type_text", "bbox": [10, 20, 30, 40], "text": "hi"})
+        )
+        .is_ok());
+        assert!(
+            parse_desktop_control_args(&json!({"action": "scroll_down", "scroll_steps": 3}))
+                .is_err()
         );
     }
 
@@ -2840,6 +2972,39 @@ mod tests {
             type_text["properties"]["text"]["$ref"],
             json!("#/$defs/text")
         );
+        assert_eq!(
+            type_text["required"],
+            json!(["action", "text"]),
+            "bbox must stay optional for type_text"
+        );
         assert_eq!(spec.input_schema["$defs"]["bbox"]["type"], json!("array"));
+    }
+
+    #[test]
+    fn text_input_segments_preserve_multiline_text() {
+        assert_eq!(
+            text_input_segments("a\r\nb\nc\td"),
+            vec![
+                TextSegment::Char('a'),
+                TextSegment::Enter,
+                TextSegment::Char('b'),
+                TextSegment::Enter,
+                TextSegment::Char('c'),
+                TextSegment::Tab,
+                TextSegment::Char('d'),
+            ]
+        );
+        assert_eq!(
+            text_input_segments("第一行\n第二行"),
+            vec![
+                TextSegment::Char('第'),
+                TextSegment::Char('一'),
+                TextSegment::Char('行'),
+                TextSegment::Enter,
+                TextSegment::Char('第'),
+                TextSegment::Char('二'),
+                TextSegment::Char('行'),
+            ]
+        );
     }
 }

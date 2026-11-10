@@ -7,9 +7,11 @@ import {
   filterConsumedQueueItems,
   hasOnlyQueueMarkers,
   isChatQueueRuntimeEvent,
+  isInputQueueTurn,
   isParkedQueueTurn,
   projectQueueItems,
   queueItemIdentities,
+  resolveAssistantQueueWaitReason,
   resolveEmbeddedChatQueueRuntimeEvent,
   resolveConsumedQueueEventIdentities,
   resolveQueueWaitReason,
@@ -21,7 +23,27 @@ test('队列等待原因区分输入等待与容量等待', () => {
   assert.equal(resolveQueueWaitReason({ reason: 'input' }), 'input');
   assert.equal(resolveQueueWaitReason({ queued_input: { reason: 'scheduler' } }), 'scheduler');
   assert.equal(resolveQueueWaitReason({ data: { queue_wait: { reason: 'capacity' } } }), 'capacity');
+  assert.equal(resolveQueueWaitReason({ wait_reason: 'input' }), 'input');
   assert.equal(resolveQueueWaitReason({ queued: true }), '');
+});
+
+test('排队条只收输入队列条目，容量等待属于已发送轮次', () => {
+  assert.ok(isInputQueueTurn({ wait_reason: 'input' }));
+  assert.ok(isInputQueueTurn({ waitReason: 'input' }));
+  assert.ok(isInputQueueTurn({}), '旧引擎缺省原因时保留排队条归属');
+  assert.equal(isInputQueueTurn({ wait_reason: 'capacity' }), false);
+  assert.equal(isInputQueueTurn({ wait_reason: 'scheduler' }), false);
+  assert.equal(isInputQueueTurn({ waitReason: 'capacity' }), false);
+  assert.equal(projectQueueItems([{ queue_id: 'task-a', wait_reason: 'capacity' }])[0].waitReason, 'capacity');
+});
+
+test('助手排队标记里的等待原因可驱动让位判定', () => {
+  assert.equal(resolveAssistantQueueWaitReason({ queued_input: { reason: 'input' } }), 'input');
+  assert.equal(resolveAssistantQueueWaitReason({ queue_wait_reason: 'capacity' }), 'capacity');
+  assert.equal(resolveAssistantQueueWaitReason({
+    workflowItems: [{ id: 'queue:status', eventType: 'queue_enter', detail: JSON.stringify({ queued_input: { reason: 'input' } }) }]
+  }), 'input');
+  assert.equal(resolveAssistantQueueWaitReason({ workflowItems: [{ id: 'queue:status', eventType: 'queue_enter', detail: '{bad json' }] }), '');
 });
 
 const parked = (queueId: string, content: string, createdAt: number): QueuedTurn =>
@@ -162,6 +184,24 @@ test('挂起中的轮次由排队条承载，时间线不放这一行', () => {
   assert.ok(isParkedQueueTurn(items, { role: 'user', message_id: 'cm-1' }, hydrated));
 });
 
+test('等待全局并发槽位的轮次属于时间线，不进输入区排队条', () => {
+  const capacityAssistant = {
+    ...queuedAssistant,
+    status: 'queued',
+    queued_input: { queue_id: 'task-a', reason: 'capacity', priority: 0 }
+  };
+  assert.equal(isParkedQueueTurn([], queuedUser, capacityAssistant), false, '没有排队条也要保留已发送轮次');
+  assert.equal(isParkedQueueTurn([parkedItem()], queuedUser, capacityAssistant), false, '容量等待不再由排队条承载');
+  const scheduled = { ...capacityAssistant, queued_input: { queue_id: 'task-a', reason: 'scheduler', priority: 0 } };
+  assert.equal(isParkedQueueTurn([parkedItem()], queuedUser, scheduled), false);
+  const inputAssistant = {
+    ...queuedAssistant,
+    status: 'streaming',
+    queued_input: { queue_id: 'task-a', reason: 'input', priority: 0 }
+  };
+  assert.ok(isParkedQueueTurn([], queuedUser, inputAssistant), '输入等待即使列表未同步也由排队条承载');
+});
+
 test('开跑、已产出或不再明确排队的轮次照常渲染', () => {
   const items = [parkedItem()];
   assert.ok(isParkedQueueTurn([], queuedUser, queuedAssistant), '队列列表尚未同步时仍由排队条承载');
@@ -211,6 +251,11 @@ test('撤下一条没开跑的轮次会挑出本地占位的两条消息', () =>
   assert.deepEqual(selectParkedTurnMessageIds(messages, 'missing'), []);
   assert.deepEqual(selectParkedTurnMessageIds(messages, ''), []);
   assert.deepEqual(selectParkedTurnMessageIds(undefined, 'cm-1'), []);
+  // 容量等待是已发送轮次，撤下动作不得把它的时间线消息剪掉。
+  assert.deepEqual(selectParkedTurnMessageIds([
+    queuedUser,
+    { ...queuedAssistant, status: 'queued', queued_input: { queue_id: 'task-a', reason: 'capacity', priority: 0 } }
+  ], 'cm-1'), []);
 });
 
 const readSource = (relative: string): string =>
@@ -234,15 +279,22 @@ test('排队让位与剪枝真的接在渲染与撤下路径上', () => {
   const composer = readSource('components/chat/ChatComposer.vue');
   assert.ok(
     /@withdrawn="handleQueueTurnWithdrawn"/.test(composer) &&
-      /chatStore\.dropParkedQueueTurn\(clientMessageId\)/.test(composer),
+      /chatStore\.dropParkedQueueTurn\(item\)/.test(composer),
     '输入区没有剪掉撤下的轮次'
   );
   const sendActions = readSource('stores/chatSendActions.ts');
   assert.ok(
-    /dropParkedQueueTurn\(clientMessageId: unknown\)/.test(sendActions) &&
+    /dropParkedQueueTurn\(item: unknown\)/.test(sendActions) &&
       /selectParkedTurnMessageIds\(this\.messages/.test(sendActions) &&
-      /removeThreadViewTurnByClientMessageId\(sessionId,cleanedClientMessageId\)/.test(sendActions),
+      /removeThreadViewTurnForQueueItem\(sessionId, \{/.test(sendActions) &&
+      /rootTurnId: cleanedRootTurnId/.test(sendActions),
     'store 上的剪枝动作缺失'
+  );
+  const queueLive = readSource('stores/chatQueueLiveState.ts');
+  assert.ok(
+    /\.filter\(isInputQueueTurn\)/.test(queueLive) &&
+      /waitReason!=='input'/.test(queueLive),
+    '排队条没有按等待原因隔离容量等待'
   );
   const queueState = readSource('stores/chatQueueState.ts');
   assert.ok(/resolveEmbeddedChatQueueRuntimeEvent/.test(queueState) && /consumedQueueIds/.test(readSource('stores/chatQueueLiveState.ts')), '队列终态没有消费并屏蔽旧快照');

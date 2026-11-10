@@ -327,7 +327,12 @@ fn open_slot(app: &MainWindow, desktop: Arc<NativeDesktop>, slot: usize, row: us
             }
         }
     }
-    normalize_layout(app);
+    let open = (0..4)
+        .filter(|slot| !session(app, *slot).is_empty())
+        .count();
+    if open > 0 {
+        app.set_split_count(if open > 2 { 4 } else { 2 });
+    }
     let (sender, receiver) = std::sync::mpsc::sync_channel(8);
     SLOTS.with(|slots| {
         let mut slots = slots.borrow_mut();

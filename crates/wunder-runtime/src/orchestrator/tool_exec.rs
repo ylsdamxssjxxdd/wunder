@@ -1101,8 +1101,8 @@ pub(super) fn resolve_tool_timeout(
         }
     } else if canonical_tool_name == "命令会话" {
         // A poll may wait up to 60s server-side before responding.
-        let yield_s = crate::tools::command_options::parse_command_session_wait(args)
-            .yield_time_ms as f64
+        let yield_s = crate::tools::command_options::parse_command_session_wait(args).yield_time_ms
+            as f64
             / 1000.0;
         timeout_s = timeout_s.max(yield_s.min(60.0) + 30.0);
     } else if tool_name.contains('@') {
@@ -1808,7 +1808,11 @@ mod tests {
             Some(Duration::from_secs(90))
         );
         assert_eq!(
-            resolve_tool_timeout(&config, "command_session", &json!({"action": "write_stdin"})),
+            resolve_tool_timeout(
+                &config,
+                "command_session",
+                &json!({"action": "write_stdin"})
+            ),
             Some(Duration::from_millis(30_500))
         );
         assert_eq!(

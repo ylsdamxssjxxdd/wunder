@@ -55,7 +55,7 @@ fn sort_queue_tasks_by_dispatch_order(tasks: &mut [AgentTaskRecord]) {
     });
 }
 
-fn queue_task_view(task: &AgentTaskRecord, position: usize) -> Value {
+fn queue_task_view(task: &AgentTaskRecord, position: usize, wait_reason: &str) -> Value {
     let payload = &task.request_payload;
     let content = payload
         .get("question")
@@ -66,6 +66,12 @@ fn queue_task_view(task: &AgentTaskRecord, position: usize) -> Value {
         "queue_id": task.task_id,
         "session_id": task.session_id,
         "status": task.status,
+        // Live wait reason for the whole session: `input` means this turn is
+        // parked behind the thread's running execution, while `capacity` /
+        // `scheduler` means it is only waiting for a global execution slot.
+        // Clients keep only `input` rows in the composer strip; a submitted
+        // turn that waits for capacity stays a visible chat turn.
+        "wait_reason": wait_reason,
         "content": content,
         "position": position,
         "queue_ahead": payload.get("queue_ahead").cloned().unwrap_or(json!(position)),
@@ -117,6 +123,9 @@ impl ThreadRuntime {
         if user_id.is_empty() || session_id.is_empty() {
             return Err(anyhow!(i18n::t("error.session_not_found")));
         }
+        // The reason is session-wide: either this thread is still executing
+        // (input queue) or every parked turn only waits for a global slot.
+        let wait_reason = self.queue_wait_reason(&session_id).await.to_string();
         let store = self.user_store.clone();
         let tasks = blocking::run_db("queue.user_list", move || {
             load_parked_queue_tasks(&store, &user_id, &session_id)
@@ -125,7 +134,7 @@ impl ThreadRuntime {
         let items = tasks
             .iter()
             .enumerate()
-            .map(|(index, task)| queue_task_view(task, index))
+            .map(|(index, task)| queue_task_view(task, index, &wait_reason))
             .collect::<Vec<_>>();
         Ok(json!({ "items": items, "total": items.len() }))
     }
@@ -503,6 +512,32 @@ mod tests {
         assert_eq!(items[0]["content"], json!("first"));
         assert_eq!(items[0]["position"], json!(0));
         assert_eq!(items[1]["position"], json!(1));
+        // No execution owns the thread yet: these rows only wait for a slot.
+        assert_eq!(items[0]["wait_reason"], json!("scheduler"));
+    }
+
+    #[tokio::test]
+    async fn user_queue_distinguishes_input_wait_from_global_slot_wait() {
+        let (_root, state) = build_state("queue-wait-reason").await;
+        let runtime = &state.kernel.thread_runtime;
+        park_task(
+            &state,
+            "task-a",
+            "user-a",
+            "session-a",
+            "first",
+            100.0,
+            json!({}),
+        );
+        let lease = runtime
+            .try_acquire_start_lease("session-a", "fixture-execution")
+            .await
+            .unwrap();
+        let items = list_items(&state, "user-a", "session-a").await;
+        assert_eq!(items[0]["wait_reason"], json!("input"));
+        drop(lease);
+        let items = list_items(&state, "user-a", "session-a").await;
+        assert_eq!(items[0]["wait_reason"], json!("scheduler"));
     }
 
     #[tokio::test]

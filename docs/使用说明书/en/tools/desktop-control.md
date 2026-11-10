@@ -1,7 +1,7 @@
 ---
 title: Desktop Control
-summary: Enablement conditions for Desktop Control, coordinates and the 17 actions (including the wait observation), how screenshots are appended to the model, failure diagnosis, and rollback boundaries.
-updated_at: 2026-10-18
+summary: Enablement conditions for Desktop Control, coordinates and the 17 actions (including the wait observation), type_text focus/newline semantics, how screenshots are appended to the model, failure diagnosis, and rollback boundaries.
+updated_at: 2026-11-10
 ---
 
 `桌面控制` exists for targets whose only entry point is a graphical interface: if commands, files, or browser tools can solve it, do not go through desktop control, because it is slower, more error-prone, and it directly drives the user's real screen. It both **drives** and **observes**: it injects mouse/keyboard actions and then screenshots; to just see the desktop's current state, or to confirm whether the previous action took effect, use the `wait` action — it waits and then screenshots without injecting any input.
@@ -22,11 +22,12 @@ Across the forms: the Desktop (desktop mode) lists this tool in its extra-enable
 
 ## Arguments
 
-One call needs both a **position** and an **action**:
+One call needs an **action**; pointer actions also need a **position**:
 
 - Position uses normalized coordinates: either an `[x1,y1,x2,y2]` tuple or a two-value center point. Coordinates are based on a default `1000×1000` normalized grid; at run time the center is taken and mapped linearly onto real screen pixels.
 - There are 17 actions: `left_click`, `left_double_click`, `right_click`, `middle_click`; `left_hold` / `right_hold` / `middle_hold` and their matching `left_release` / `right_release` / `middle_release`; `scroll_down` / `scroll_up`; `press_key`, `type_text`, `wait`, `move_mouse`, `drag_drop`.
 - Related arguments: a key uses `key`, typed text uses `text`, a wait uses `delay_ms`, drag duration uses `duration_ms` (about 400 ms when omitted), scroll steps use `scroll_steps`, and a drag destination uses `to_bbox`.
+- `type_text` may omit `bbox`: it then types into the control that already has focus and does not click again, which fits the usual "click the field, then type" flow. With `bbox`, the pointer is placed there first. Newlines become Enter and tabs become Tab; CRLF counts as one Enter.
 - Every action accepts only its own fields; extra or cross-action fields are rejected. Coordinates are bounded to `0..10000`, and text and key lengths are bounded too.
 
 ## Waiting and observing
@@ -44,7 +45,7 @@ The `wait` action reads desktop windows and screen state. Give a wait duration (
 
 - Desktop control not compiled in: the call fails outright and says the capability is not enabled.
 - Not in desktop mode, or the switch is off: it returns "desktop control is disabled".
-- Missing arguments: position and action are both required and it reports whichever is missing; a malformed position reports an illegal coordinate.
+- Missing arguments: action is required; pointer actions must include a position, while `type_text` may omit it. A malformed position reports an illegal coordinate.
 - Screenshot failure: capture times out after 5000 ms by default (100 ms minimum), and failure reports an error upward.
 
 ## Boundaries

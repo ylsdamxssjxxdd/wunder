@@ -524,6 +524,25 @@ fn advance(
             app.invoke_new_thread();
         }
         5 => {
+            let active = app.get_active_session_id();
+            let target = app
+                .get_conversations()
+                .iter()
+                .position(|row| row.id != active)
+                .ok_or("split entry needs the previous conversation")?;
+            let target_id = app
+                .get_conversations()
+                .row_data(target)
+                .map(|row| row.id)
+                .ok_or("split target disappeared")?;
+            app.invoke_open_thread_in_split(target as i32);
+            ensure(
+                app.get_split_count() == 2
+                    && app.get_split_session_0() == active
+                    && app.get_split_session_1() == target_id,
+                "thread entry collapsed the first split back to single view",
+            )?;
+            app.invoke_split_layout(1);
             app.set_draft("native-cancel".into());
         }
         6 => {

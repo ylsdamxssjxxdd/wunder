@@ -136,12 +136,15 @@ export component SubagentPanel inherits Rectangle {
 export component SubagentDock inherits Rectangle {
     in property <[SubagentItem]> items: [];
     in property <int> count: 0;
+    // 仍在执行的数量：只有它大于 0 时图标才点亮；已结束的子智能体只保留计数。
+    in property <int> running-count: 0;
     in property <int> hidden: 0;
     in property <string> hint: "";
     out property <bool> hovering: cell.has-hover || panel.hovered;
     callback open(string);
     callback stop(string);
 
+    private property <bool> active: root.running-count > 0;
     private property <bool> lingering: false;
     private property <bool> panel-open: root.count > 0 && (root.hovering || root.lingering);
 
@@ -156,13 +159,13 @@ export component SubagentDock inherits Rectangle {
     Image {
         x: 5px; y: 5px; width: 16px; height: 16px;
         source: @image-url("../assets/icons/robot.svg");
-        colorize: root.count > 0 ? Theme.accent-ink : Theme.muted;
+        colorize: root.active ? Theme.accent-ink : Theme.muted;
         image-fit: contain;
     }
     Text {
         x: 23px; y: 0px; width: parent.width - 23px; height: 26px;
         text: root.count > 9 ? "9+" : "\{root.count}";
-        color: root.count > 0 ? Theme.accent-ink : Theme.muted;
+        color: root.active ? Theme.accent-ink : Theme.muted;
         font-size: Theme.font-xs;
         font-weight: 600;
         vertical-alignment: center;

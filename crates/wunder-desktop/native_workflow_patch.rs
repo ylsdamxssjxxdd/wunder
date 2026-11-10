@@ -356,6 +356,34 @@ mod tests {
     }
 
     #[test]
+    fn write_file_result_projects_the_same_diff_card() {
+        let payload = json!({"result":{"ok":true,"action":"write_file","state":"completed","summary":"Updated file sample.txt.","data":{
+            "path": "sample.txt", "bytes": 12, "dry_run": false, "existed": true, "previous_bytes": 8, "lsp": null,
+            "added_lines": 1, "deleted_lines": 1, "changed_files": 1,
+            "files": [{"action": "update", "path": "sample.txt", "hunks": 1,
+                "added_lines": 1, "deleted_lines": 1,
+                "diff_blocks": [{"header": "@@ -2,1 +2,1 @@", "lines": [
+                    {"kind": "delete", "old_line": 2, "text": "old"},
+                    {"kind": "add", "new_line": 2, "text": "new"},
+                ]}]
+            }]
+        }}});
+        for tool in ["写入文件", "write_file"] {
+            let cards = project(tool, &payload, &json!({"path":"sample.txt","content":"new\n"}));
+            assert_eq!(cards.len(), 1, "{tool}");
+            assert_eq!(cards[0].path, "sample.txt");
+            assert_eq!(cards[0].action, "update");
+            assert_eq!(
+                (cards[0].added.as_str(), cards[0].deleted.as_str()),
+                ("1", "1")
+            );
+            assert_eq!(cards[0].lines[0].kind, "header");
+            assert_eq!(cards[0].lines[1].kind, "delete");
+            assert_eq!(cards[0].lines[2].kind, "add");
+        }
+    }
+
+    #[test]
     fn unrelated_tools_never_produce_a_card() {
         assert!(project(
             "read_file",

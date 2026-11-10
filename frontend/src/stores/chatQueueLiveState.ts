@@ -1,5 +1,5 @@
 import { reactive } from 'vue';
-import { filterConsumedQueueItems, resolveConsumedQueueEventIdentities, projectQueueItems, type QueuedTurn } from './chatQueueProjection';
+import { filterConsumedQueueItems, isInputQueueTurn, resolveConsumedQueueEventIdentities, projectQueueItems, queueItemIdentities, type QueuedTurn } from './chatQueueProjection';
 
 type QueueState = {
   sessionId: string;
@@ -51,7 +51,12 @@ const cleanText = (value: unknown): string => String(value ?? '').trim();
 
 export const applyItems = (sessionId: string, items: QueuedTurn[]) => {
   const consumed = consumedQueueIds.get(sessionId);
-  queue(sessionId).items = filterConsumedQueueItems(items, consumed || new Set<string>());
+  // The strip is the input queue only. Capacity/scheduler waits are ordinary
+  // submitted turns and stay on the timeline.
+  queue(sessionId).items = filterConsumedQueueItems(
+    items,
+    consumed || new Set<string>()
+  ).filter(isInputQueueTurn);
 };
 export const chatQueueRevision = (sessionId: string) => queue(sessionId).revision || 0;
 export const chatQueueForSession = (sessionId: string) => queue(sessionId);
@@ -112,12 +117,29 @@ export function reconcileChatQueueRows(sessionId: string, rows: Array<{
     while(revisions.size>128)revisions.delete(revisions.keys().next().value!);
     if (['queued','pending'].includes(row.status)) {
       if(!row.queued_input?.queue_id)continue;
+      const waitReason=cleanText(row.queued_input.reason).toLowerCase();
+      if(waitReason && waitReason!=='input') {
+        // An explicitly capacity/scheduler-parked turn is already a submitted
+        // chat turn. Drop any stale strip row instead of re-owning it.
+        const identities=new Set([
+          `queue:${row.queued_input.queue_id}`,
+          `root:${row.root_turn_id}`,
+          ...(row.client_message_id?[`client:${row.client_message_id}`]:[])
+        ]);
+        const current=queue(sessionId);
+        const kept=current.items.filter(item=>!queueItemIdentities(item).some(identity=>identities.has(identity)));
+        if(kept.length!==current.items.length) {
+          current.revision=chatQueueRevision(sessionId)+1;
+          applyItems(sessionId,kept);
+        }
+        continue;
+      }
       const target=queue(sessionId);
       const incoming=projectQueueItems([{
         queue_id:row.queued_input.queue_id, root_turn_id:row.root_turn_id,
         client_message_id:row.client_message_id, content:row.user?.content || '',
         attachments:row.user?.attachments || [], priority:row.queued_input.priority,
-        status:'pending'
+        reason:waitReason || 'input', status:'pending'
       }])[0];
       if(!incoming)continue;
       const at=target.items.findIndex(item=>item.queueId===incoming.queueId);

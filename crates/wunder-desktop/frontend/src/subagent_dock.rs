@@ -31,6 +31,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     let model = Rc::new(VecModel::<SubagentItem>::default());
     app.set_subagent_items(ModelRc::from(model.clone()));
     app.set_subagent_count(0);
+    app.set_subagent_running_count(0);
     let bridge = Rc::new(RefCell::new(Bridge {
         app: app.as_weak(),
         desktop,
@@ -135,6 +136,13 @@ fn publish(bridge: &mut Bridge, mut rows: Vec<SubagentItem>) {
     let count = rows.len() as i32;
     if app.get_subagent_count() != count {
         app.set_subagent_count(count);
+    }
+    let running = rows
+        .iter()
+        .filter(|row| row.status_kind == crate::timeline::STATUS_RUNNING)
+        .count() as i32;
+    if app.get_subagent_running_count() != running {
+        app.set_subagent_running_count(running);
     }
     rows.truncate(MAX_ROWS);
     let reshaped = rows.len() != bridge.rows.len()

@@ -454,6 +454,7 @@ export component HostHud inherits Rectangle {
     in property <string> task-hint: "";
     in property <[SubagentItem]> subagent-items: [];
     in property <int> subagent-count: 0;
+    in property <int> subagent-running-count: 0;
     in property <int> subagent-hidden: 0;
     in property <string> subagent-hint: "";
     callback toggle-task(string);
@@ -517,6 +518,7 @@ export component HostHud inherits Rectangle {
             subagent-cell := SubagentDock {
                 items: root.subagent-items;
                 count: root.subagent-count;
+                running-count: root.subagent-running-count;
                 hidden: root.subagent-hidden;
                 hint: root.subagent-hint;
                 open(id) => { root.open-subagent(id); }

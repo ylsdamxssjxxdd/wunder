@@ -86,9 +86,10 @@ pub use command_tool::decode_command_output;
 pub use prompt_surface::prompt_tool_spec;
 pub use catalog::{
     android_notifications_tools_enabled, android_screen_tools_enabled, browser_tools_available,
-    build_desktop_followup_user_message, build_mcp_tool_alias_entries,
-    build_mcp_tool_alias_entries_for_names, build_phone_followup_user_message,
-    build_read_image_followup_user_message, build_runtime_tool_display_map, builtin_aliases,
+    build_browser_followup_user_message, build_desktop_followup_user_message,
+    build_mcp_tool_alias_entries, build_mcp_tool_alias_entries_for_names,
+    build_phone_followup_user_message, build_read_image_followup_user_message,
+    build_runtime_tool_display_map, builtin_aliases,
     builtin_tool_specs, collect_available_tool_names, collect_enabled_tool_names_for_catalog,
     collect_prompt_tool_specs, collect_prompt_tool_specs_with_language,
     current_tool_schema_reference, desktop_tools_available, expand_browser_group_selection,

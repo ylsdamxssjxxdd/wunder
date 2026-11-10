@@ -117,8 +117,8 @@ impl ExcludeFilter {
         let mut has_path = false;
         for pattern in patterns {
             let normalized = pattern.replace('\\', "/");
-            let glob = Glob::new(&normalized)
-                .map_err(|err| format!("无效的 exclude 模式：{err}"))?;
+            let glob =
+                Glob::new(&normalized).map_err(|err| format!("无效的 exclude 模式：{err}"))?;
             if normalized.contains('/') {
                 path_builder.add(glob);
                 has_path = true;
@@ -150,9 +150,7 @@ impl ExcludeFilter {
 
     /// 目录也参与排除（整棵子树剪掉）；文件按同一规则过滤。
     pub(crate) fn is_match(&self, rel_path: &str, name: &str) -> bool {
-        self.name_set
-            .as_ref()
-            .is_some_and(|set| set.is_match(name))
+        self.name_set.as_ref().is_some_and(|set| set.is_match(name))
             || self
                 .path_set
                 .as_ref()
@@ -185,7 +183,9 @@ mod tests {
             vec!["a", "b"]
         );
         assert!(parse_exclude_patterns(&json!({ "exclude": [1] })).is_err());
-        assert!(parse_exclude_patterns(&json!({})).expect("missing").is_empty());
+        assert!(parse_exclude_patterns(&json!({}))
+            .expect("missing")
+            .is_empty());
     }
 
     #[test]

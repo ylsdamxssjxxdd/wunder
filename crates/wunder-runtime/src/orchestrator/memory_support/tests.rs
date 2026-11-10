@@ -1106,12 +1106,8 @@ fn test_collect_retained_tail_interaction_messages_for_compaction_trims_large_bl
         json!({ "role": "assistant", "content": "round-2 assistant" }),
     ];
 
-    let retained = collect_retained_tail_interaction_messages_for_compaction(
-        &messages,
-        None,
-        3,
-        256,
-    );
+    let retained =
+        collect_retained_tail_interaction_messages_for_compaction(&messages, None, 3, 256);
     assert_eq!(retained.len(), 3);
     assert!(estimate_message_tokens(&retained[0]) <= 256);
     assert_ne!(retained[0]["content"], json!(large_assistant));

@@ -357,8 +357,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "桌面控制",
-        brief_en: "Drive the local desktop. Each action takes bbox=[x1,y1,x2,y2]; type_text/press_key/scroll/wait accept their own extra field. Verify the returned screenshot before retrying the same action.",
-        brief_zh: "控制本地桌面：每个动作传 bbox=[x1,y1,x2,y2]；type_text/press_key/scroll/wait 另带对应参数；重试同一动作前先核对返回的截图。",
+        brief_en: "Drive the local desktop. Pointer actions take bbox=[x1,y1,x2,y2]; type_text omits bbox to type into the focused control (newlines/tabs become Enter/Tab), press_key/scroll/wait take only their own field. Verify the returned screenshot before retrying the same action.",
+        brief_zh: "控制本地桌面：指针动作传 bbox=[x1,y1,x2,y2]；type_text 可省略 bbox 直接输入当前焦点（换行/Tab 按 Enter/Tab 发送），press_key/scroll/wait 只带各自参数；重试同一动作前先核对返回的截图。",
         drop_actions: &[
             "middle_click",
             "left_hold",

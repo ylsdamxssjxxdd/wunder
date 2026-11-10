@@ -1609,6 +1609,21 @@ impl Orchestrator {
                         } else {
                             None
                         };
+                        let browser_followup = if result.ok && is_browser_tool_name(&name) {
+                            match build_browser_followup_user_message(&tool_context, &result.data)
+                                .await
+                            {
+                                Ok(payload) => payload,
+                                Err(err) => {
+                                    warn!(
+                                        "failed to prepare browser followup for session {session_id}: {err}"
+                                    );
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        };
                         // Autonomous terminal updates hand the turn a closing
                         // instruction (deepseek deferContext equivalent).
                         let goal_wrapup = if result.ok && goal::is_goal_tool_name(&name) {
@@ -1713,6 +1728,26 @@ impl Orchestrator {
                             crate::services::chat_payload_sanitizer::prune_previous_inline_image_followups(
                                 &mut messages,
                                 "phone_followup",
+                            );
+                        }
+                        if let Some(followup_message) = browser_followup {
+                            let mut followup_message = followup_message;
+                            self.mark_internal_model_context_message(
+                                &mut followup_message,
+                                "browser_followup",
+                                round_info,
+                            );
+                            self.try_append_internal_model_context_chat(
+                                &user_id,
+                                &session_id,
+                                &followup_message,
+                                "browser_followup",
+                                round_info,
+                            ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
+                            messages.push(followup_message);
+                            crate::services::chat_payload_sanitizer::prune_previous_inline_image_followups(
+                                &mut messages,
+                                "browser_followup",
                             );
                         }
                         if let Some(wrapup_text) = goal_wrapup {

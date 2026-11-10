@@ -92,10 +92,17 @@ function materialize(row: ChatViewRow): ViewSlot {
 }
 const isQueueOnlyCancelledRow = (row: ChatViewRow): boolean =>
   row.status === 'cancelled' &&
-  !String(row.assistant?.item_id || '').trim() &&
-  !String(row.assistant?.content || '').trim() &&
-  !String(row.assistant?.reasoning || '').trim() &&
-  Number(row.workflow_count || 0) === 0;
+  (
+    // A withdrawn park never ran: the composer edit already returned its text
+    // to the input, so this row must never resurface as a chat bubble.
+    String(row.stop_reason || '') === 'user_withdrew_queued_turn' ||
+    (
+      !String(row.assistant?.item_id || '').trim() &&
+      !String(row.assistant?.content || '').trim() &&
+      !String(row.assistant?.reasoning || '').trim() &&
+      Number(row.workflow_count || 0) === 0
+    )
+  );
 function utf16Units(text: string): number {
   return [...text].reduce((total, char) => total + char.length, 0);
 }
@@ -462,9 +469,18 @@ export function commitThreadView(key: string, page: ThreadViewPage, generation?:
   e.phase=page.thread_empty === true && !e.rows.size ? 'verified_empty' : 'ready';
   bound(e,historical);notify();return true;
 }
+function dropViewRow(e: Entry, id: string): void {
+  if (!e.rows.delete(id)) return;
+  e.slots.delete(id);
+  e.order = e.order.filter(value => value !== id);
+  e.rowHeads.delete(id);
+}
 export function applyThreadViewChanges(key: string, payload: { runtime_status?:string;status_turn_id?:string;active_turn_id?:string;epoch?:number; view_seq: number; reset_required?: boolean; rows: ChatViewRow[] }): boolean {
   const e=entry(key);if(!payload || payload.reset_required || !Number.isSafeInteger(payload.view_seq) || !validRows(payload.rows) || (payload.epoch!==undefined && e.epoch && e.epoch!==payload.epoch)) return false;
-  for(const row of payload.rows.filter(row => !isQueueOnlyCancelledRow(row))) {
+  for(const row of payload.rows) {
+    // A queue-only cancel must also clear the row it was parked as: filtering
+    // the frame out would leave the previous queued bubble on screen forever.
+    if(isQueueOnlyCancelledRow(row)) { dropViewRow(e,row.root_turn_id); continue; }
     e.latestRound=Math.max(e.latestRound,row.user_round);
     if(e.atLatest||e.rows.has(row.root_turn_id)||e.rows.has(`pending:${row.client_message_id}`))merge(e,row);
   }
@@ -554,17 +570,27 @@ export function settlePendingThreadView(key:string,client:string,status:string,d
 export function removePendingThreadView(key:string,client:string) {const e=entries.get(key);if(!e)return;const id=`pending:${client}`;e.rows.delete(id);e.slots.delete(id);e.order=e.order.filter(v=>v!==id);notify();}
 /** Remove a locally parked turn after a confirmed queue withdrawal.  A client
  * message id is not itself permission to remove a durable conversation turn:
- * a queue start may win the cancel race and bind that same id to real output. */
-export function removeThreadViewTurnByClientMessageId(key:string,client:string) {
+ * a queue start may win the cancel race and bind that same id to real output.
+ * A confirmed queue row also carries the durable root turn id, which uniquely
+ * identifies the withdrawn submission and lets the row disappear immediately
+ * even when the display head projected it as running. */
+export function removeThreadViewTurnForQueueItem(key:string, identities:{clientMessageId?:string;rootTurnId?:string}) {
   const e = entries.get(key);
-  const cleaned = String(client || '').trim();
-  if (!e || !cleaned) return;
+  const client = String(identities?.clientMessageId || '').trim();
+  const root = String(identities?.rootTurnId || '').trim();
+  if (!e || (!client && !root)) return;
   const removed = new Set<string>();
   for (const [id, row] of e.rows) {
-    const locallyPending = id === `pending:${cleaned}`;
-    const durablyParked = String(row.client_message_id || '').trim() === cleaned &&
+    const locallyPending = Boolean(client) && id === `pending:${client}`;
+    const matchesRoot = Boolean(root) &&
+      (String(row.root_turn_id || '').trim() === root ||
+        String(row.execution_turn_id || '').trim() === root);
+    // Client-only removal stays constrained to parked rows: without a durable
+    // identity the same local id may already belong to real output.
+    const durablyParked = Boolean(client) && !root &&
+      String(row.client_message_id || '').trim() === client &&
       row.status === 'queued';
-    if (locallyPending || durablyParked) {
+    if (locallyPending || matchesRoot || durablyParked) {
       removed.add(id);
       e.rows.delete(id);
       e.slots.delete(id);

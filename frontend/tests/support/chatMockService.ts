@@ -512,6 +512,9 @@ export class ChatMockService {
       else if (path === '/chat/sessions') data = request.method() === 'POST' ? session : { items: [session], total: 1 };
       else if (path.endsWith('/queue')) data = { items: this.queue.map((turn, position) => ({
         queue_id: turn.turn_id, root_turn_id: turn.turn_id, client_message_id: turn.client_message_id,
+        // Same split as the engine: a running thread parks inputs behind it
+        // (`input`); otherwise the turn only waits for a global slot.
+        wait_reason: this.active ? 'input' : 'capacity',
         content: turn.content, position, status: 'pending', priority: 0
       })) };
       else if (path.includes('/queue/') && path.endsWith('/prioritize')) {
@@ -520,6 +523,18 @@ export class ChatMockService {
         if (index >= 0) this.queue.unshift(this.queue.splice(index, 1)[0]);
         this.cancel();
         data = { ok: true };
+      }
+      else if (path.includes('/queue/') && path.endsWith('/cancel')) {
+        const id = decodeURIComponent(path.split('/queue/')[1].split('/')[0]);
+        const index = this.queue.findIndex(turn => turn.turn_id === id);
+        const turn = index >= 0 ? this.queue.splice(index, 1)[0] : null;
+        if (turn) {
+          // Mirrors `cancel_queued_task`: the durable turn is closed as a
+          // withdrawal and the display projection must omit it.
+          turn.stop_reason = 'user_withdrew_queued_turn';
+          this.state(turn, 'cancelled');
+        }
+        data = { ok: true, cancelled: Boolean(turn), content: turn?.content ?? '' };
       }
       else if(path.endsWith('/view/bootstrap')||path.endsWith('/view/chat')||path.endsWith('/view/trajectory')) {
         const query = new URL(request.url()).searchParams;

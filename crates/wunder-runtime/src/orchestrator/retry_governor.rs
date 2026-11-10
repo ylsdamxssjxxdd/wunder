@@ -98,10 +98,7 @@ fn success_progress_fingerprint(
     result: &ToolResultPayload,
 ) -> Option<(String, String)> {
     let canonical = resolve_tool_name(tool_name);
-    if !matches!(
-        canonical.as_str(),
-        "执行命令" | "execute_command"
-    ) {
+    if !matches!(canonical.as_str(), "执行命令" | "execute_command") {
         return None;
     }
     let mut fingerprint_fragments = Vec::new();
@@ -430,7 +427,9 @@ mod tests {
             })),
         };
         for _ in 0..(MAX_SAME_NON_RETRYABLE_FAILURES - 1) {
-            assert!(governor.record_failure("execute_command", &payload).is_none());
+            assert!(governor
+                .record_failure("execute_command", &payload)
+                .is_none());
         }
         let stop = governor
             .record_failure("execute_command", &payload)

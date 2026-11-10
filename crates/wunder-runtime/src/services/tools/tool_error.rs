@@ -99,10 +99,7 @@ fn strip_runtime_timeout_note(raw: &str) -> String {
                 .strip_prefix(PREFIX)
                 .and_then(|rest| rest.strip_suffix('s'))
                 .is_some_and(|seconds| {
-                    !seconds.is_empty()
-                        && seconds
-                            .chars()
-                            .all(|c| c.is_ascii_digit() || c == '.')
+                    !seconds.is_empty() && seconds.chars().all(|c| c.is_ascii_digit() || c == '.')
                 });
         if !is_note {
             kept.push(line);
@@ -235,7 +232,9 @@ pub(crate) fn build_execute_command_failure_message(results: &[Value], timed_out
     message.push('。');
     let stderr_raw = last.get("stderr").and_then(Value::as_str);
     let stdout_raw = last.get("stdout").and_then(Value::as_str);
-    let stderr_blank = stderr_raw.map(|text| text.trim().is_empty()).unwrap_or(true);
+    let stderr_blank = stderr_raw
+        .map(|text| text.trim().is_empty())
+        .unwrap_or(true);
     if stderr_blank {
         if let Some(stdout) = compact_command_output(stdout_raw) {
             if stdout.total_lines > 0 {
@@ -516,7 +515,11 @@ mod tests {
         assert_eq!(compacted.omitted_lines, 4);
         assert!(compacted.text.starts_with("line 1"), "{}", compacted.text);
         assert!(compacted.text.ends_with("line 10"), "{}", compacted.text);
-        assert!(compacted.text.contains("4 lines omitted"), "{}", compacted.text);
+        assert!(
+            compacted.text.contains("4 lines omitted"),
+            "{}",
+            compacted.text
+        );
     }
 
     #[test]

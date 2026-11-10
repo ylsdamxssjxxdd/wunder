@@ -84,7 +84,7 @@ mod disabled {
                 branch(json!({"enum":["left_click","left_double_click","right_click","middle_click","left_hold","right_hold","middle_hold","left_release","right_release","middle_release"]}), base(), &["action","bbox"]),
                 branch(json!({"enum":["scroll_down","scroll_up"]}), scroll, &["action","bbox"]),
                 branch(json!({"const":"press_key"}), press, &["action","bbox","key"]),
-                branch(json!({"const":"type_text"}), typing, &["action","bbox","text"]),
+                branch(json!({"const":"type_text"}), typing, &["action","text"]),
                 branch(json!({"const":"wait"}), wait, &["action","bbox"]),
                 branch(json!({"const":"move_mouse"}), move_mouse, &["action","bbox"]),
                 branch(json!({"const":"drag_drop"}), drag, &["action","bbox","to_bbox"])

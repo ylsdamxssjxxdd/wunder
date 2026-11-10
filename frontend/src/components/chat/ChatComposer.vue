@@ -109,7 +109,8 @@
       </div>
     </div>
 
-    <!-- 排队条：当前轮还在跑时发出的消息先停在引擎队列里，可插话 / 编辑 / 删除 / 拖动排序。 -->
+    <!-- 排队条只承载输入队列：当前轮还在跑时发出的消息先停在这里，可插话 / 编辑 / 删除 / 拖动排序。
+         等待全局并发槽位的轮次已经算「发出」，留在聊天时间线里显示排队中。 -->
     <ComposerQueueStrip
       :session-id="activeQueueSessionId"
       @edit="handleQueueTurnEdit"
@@ -1182,9 +1183,14 @@ const focusComposerInputAtEnd = () => {
 const activeQueueSessionId = computed(() => targetSessionId.value);
 
 // 撤下一条还没开跑的轮次：引擎侧它从未进过会话历史，本地占位必须一起消失。
-const handleQueueTurnWithdrawn = (item: { clientMessageId?: string }) => {
-  const clientMessageId = String(item?.clientMessageId || '').trim();
-  if (clientMessageId) chatStore.dropParkedQueueTurn(clientMessageId);
+const handleQueueTurnWithdrawn = (item: {
+  clientMessageId?: string;
+  rootTurnId?: string;
+  userTurnId?: string;
+  queueId?: string;
+}) => {
+  if (!item) return;
+  chatStore.dropParkedQueueTurn(item);
 };
 
 // 排队条目被「编辑」撤下后放回输入框：文本追加，附件按已转换的媒体条目还原。
@@ -2356,7 +2362,8 @@ const applyPresetQuestion = (question: string) => {
 };
 
 const handleSend = async () => {
-  // 会话在跑时不再静默吞掉发送：引擎会把这一轮挂进队列，输入区上方出现排队条。
+  // 会话在跑时不再静默吞掉发送：引擎会把这一轮挂进输入队列，输入区上方出现排队条；
+  // 若只是等待全局并发槽位，则按普通已发送轮次留在时间线里显示排队中。
   if (voiceRecording.value) return;
   closeComposerPanels();
   if (commandSuggestionsVisible.value && applyCommandSuggestion()) {

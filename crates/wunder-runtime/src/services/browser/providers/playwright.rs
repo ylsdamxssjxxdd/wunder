@@ -119,7 +119,7 @@ pub fn playwright_tool_specs() -> Vec<ToolSpec> {
     vec![ToolSpec {
         name: TOOL_BROWSER.to_string(),
         title: None,
-        description: "Browser automation. Pick one action. observe_refs supplies element refs for click/type/select/hover/drag; element actions take ref or selector. navigate needs url, type needs text, press needs key, screenshot writes a workspace-relative path.".to_string(),
+        description: "Browser automation. Pick one action. observe_refs supplies element refs for click/type/select/hover/drag; refs survive same-page re-renders and reloads when the element still matches, and element actions also take a selector. navigate needs url, type needs text, press needs key. screenshot saves a PNG (optional workspace-relative path) and the image is attached for you to view. Observations default to 12000 chars; pass max_chars for more.".to_string(),
         input_schema: json!({
             "type":"object",
             "$defs": defs,

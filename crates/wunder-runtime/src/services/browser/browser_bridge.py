@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import hmac
 import ipaddress
 import json
@@ -84,6 +85,8 @@ SNAPSHOT_JS = """(opts) => {
   const refs = [];
   let localCounter = 0;
   const seenTexts = new Set();
+  const seenInteractive = new Set();
+  let duplicates = 0;
   let used = 0;
   let visited = 0;
   let truncated = false;
@@ -270,16 +273,29 @@ SNAPSHOT_JS = """(opts) => {
       const name = needsName ? nameOf(node) : '';
       if (interactive) {
         if (opts.interactive) {
-          localCounter += 1;
-          const ref = opts.ref_prefix + 'e' + (opts.ref_start + localCounter);
-          if (!push(lineFor(opts.fmt, role, name, ref, stateOf(node, role)))) return;
-          refs.push({
-            ref: ref,
-            role: role,
-            name: name,
-            selector: selector,
-            tag: tag,
-          });
+          const state = stateOf(node, role);
+          const named = !!String(name || '').trim();
+          const meaningful =
+            named || ['textbox', 'combobox', 'checkbox', 'radio', 'switch', 'tab', 'menuitem'].includes(role);
+          // Repeated nav/footer links produce dozens of identical lines.
+          // Keep the first ref for each role+name+state and count the rest;
+          // unnamed links and icon buttons add no actionable information.
+          const key = role + '\\u0000' + name + '\\u0000' + state;
+          if (!meaningful || seenInteractive.has(key)) {
+            duplicates += 1;
+          } else {
+            seenInteractive.add(key);
+            localCounter += 1;
+            const ref = opts.ref_prefix + 'e' + (opts.ref_start + localCounter);
+            if (!push(lineFor(opts.fmt, role, name, ref, state))) return;
+            refs.push({
+              ref: ref,
+              role: role,
+              name: name,
+              selector: selector,
+              tag: tag,
+            });
+          }
         }
       } else if (/^H[1-6]$/.test(node.tagName)) {
         if (name && !seenTexts.has(name)) {
@@ -302,7 +318,7 @@ SNAPSHOT_JS = """(opts) => {
   }
 
   if (document.body) walkRoot(document.body, document.body, '', 0);
-  return { lines: lines, refs: refs, count: localCounter, truncated: truncated };
+  return { lines: lines, refs: refs, count: localCounter, truncated: truncated, duplicates: duplicates };
 }"""
 
 # Selector of the element handed in as an argument, used to address the frame
@@ -957,6 +973,7 @@ class BridgeSession:
         self.pages_by_key = {}
         self.refs = {}
         self.page_generations = {}
+        self.page_identities = {}
         self.page_states = {}
         # Cursor signatures bind a window to this one bridge process.  They are
         # deliberately not persisted: a restarted browser cannot promise the
@@ -1128,6 +1145,7 @@ class BridgeSession:
         self.pages_by_key[id(page)] = target_id
         self.refs[target_id] = {}
         self.page_generations[target_id] = 0
+        self.page_identities[target_id] = None
         if self.active_target_id is None:
             self.active_target_id = target_id
         return target_id, page
@@ -1163,6 +1181,7 @@ class BridgeSession:
                 self.pages.pop(target_id, None)
                 self.refs.pop(target_id, None)
                 self.page_generations.pop(target_id, None)
+                self.page_identities.pop(target_id, None)
                 self.page_states.pop(target_id, None)
         if self.active_target_id not in self.pages:
             self.active_target_id = next(iter(self.pages), None)
@@ -1338,6 +1357,7 @@ class BridgeSession:
         self.pages_by_key.pop(id(page), None)
         self.refs.pop(target_id, None)
         self.page_generations.pop(target_id, None)
+        self.page_identities.pop(target_id, None)
         self.page_states.pop(target_id, None)
         if not self.pages:
             new_target_id, _ = self._new_page()
@@ -1361,9 +1381,10 @@ class BridgeSession:
         if not allowed:
             return {"success": False, "error": "Navigation blocked: %s" % reason}
         page, target_id = self._resolve_page(target_id)
-        # Invalidate before the request: even a failed navigation can replace
-        # the document with an error page.
-        self._invalidate_refs(target_id)
+        # Clear refs before the request: even a failed navigation can replace
+        # the document with an error page, and selectors from the old page must
+        # not silently match a different element on the new one.
+        self._clear_refs(target_id)
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=self._timeout_ms(timeout_ms))
         except Exception as exc:
@@ -1397,7 +1418,7 @@ class BridgeSession:
             pass
         return {"success": False, "error": "Navigation ended at a blocked address: %s" % reason}
 
-    def snapshot(self, target_id=None, fmt="role", interactive=True, compact=True, max_chars=40000,
+    def snapshot(self, target_id=None, fmt="role", interactive=True, compact=True, max_chars=12000,
                  ready_timeout_ms=None):
         max_chars = char_budget(max_chars)
         page, target_id = self._resolve_page(target_id)
@@ -1407,34 +1428,54 @@ class BridgeSession:
         if ready_timeout_ms == 0:
             grace_ms = 0
         deadline = time.monotonic() + grace_ms / 1000
-        # Failed standalone observations must not leave a previous page's refs
-        # available for a later action.
-        self.refs[target_id] = {}
         # A new observation owns a distinct ref namespace even when the page
         # did not change. An old e1 must never silently point at a new element.
-        self._invalidate_refs(target_id)
+        self._clear_refs(target_id)
+        last = None
         while True:
             url = safe_page_url(page)
             try:
-                generation = self._refresh_page_generation(page, target_id)
-                lines, refs, truncated = self._collect(page, fmt, interactive, compact, max_chars)
+                generation, identity = self._refresh_page_state(page, target_id)
+                lines, refs, truncated, duplicates = self._collect(
+                    page, fmt, interactive, compact, max_chars
+                )
                 title = safe_page_title(page)
                 tabs = self._tabs_state()
-                if url != safe_page_url(page) or generation != self._refresh_page_generation(page, target_id):
+                _, current_identity = self._refresh_page_state(page, target_id)
+                # DOM mutations (clocks, feeds, ads) are normal. Only a real
+                # document/frame identity change makes the collected refs
+                # ambiguous enough to retry.
+                if (
+                    identity is None
+                    or current_identity is None
+                    or identity != current_identity
+                    or url != safe_page_url(page)
+                ):
                     raise RuntimeError("Page changed while taking snapshot")
             except Exception as exc:
                 transient = any(message in str(exc) for message in (
                     "Execution context was destroyed", "Cannot find context",
                     "Frame was detached", "Page changed while taking snapshot",
                 ))
-                if not transient or time.monotonic() >= deadline:
+                if not transient:
+                    raise
+                if last is not None and time.monotonic() >= deadline:
+                    # A page that keeps reloading must not make observation
+                    # impossible. The last complete scan is still a usable
+                    # selector snapshot; ref actions recover by selector.
+                    break
+                if time.monotonic() >= deadline:
                     raise
             else:
+                last = (lines, refs, truncated, duplicates, title, url, generation)
                 if lines or truncated or time.monotonic() >= deadline:
                     break
             remaining_ms = (deadline - time.monotonic()) * 1000
             if remaining_ms > 0:
                 page.wait_for_timeout(min(50, remaining_ms))
+        if last is None:
+            raise RuntimeError("Page changed while taking snapshot")
+        lines, refs, truncated, duplicates, title, url, generation = last
         refs_map = {item["ref"]: item for item in refs}
         self.refs[target_id] = refs_map
         text = "\n".join(lines).strip()
@@ -1455,6 +1496,7 @@ class BridgeSession:
                     "lines": len(lines),
                     "chars": len(text),
                     "refs": len(refs_map),
+                    "duplicates": duplicates,
                     "frames": len(self._reachable_frames(page)),
                 },
                 "truncated": truncated,
@@ -1469,6 +1511,7 @@ class BridgeSession:
         ref_start = 0
         used = 0
         truncated = False
+        duplicates = 0
         main = page.main_frame
         target_id = self.pages_by_key[id(page)]
         generation = self.page_generations[target_id]
@@ -1508,15 +1551,19 @@ class BridgeSession:
             for item in payload.get("refs") or []:
                 entry = dict(item)
                 entry["frame_path"] = list(frame_path)
+                # Reopening an iframe after a self-refresh can change its host
+                # path; the URL is the more durable fallback for ref recovery.
+                entry["frame_url"] = frame.url or "about:blank"
                 entry["page_generation"] = generation
                 refs.append(entry)
             lines.extend(payload.get("lines") or [])
             used += len("\n".join(payload.get("lines") or [])) + overhead
             ref_start += int(payload.get("count") or 0)
+            duplicates += int(payload.get("duplicates") or 0)
             if payload.get("truncated"):
                 truncated = True
                 break
-        return lines, refs, truncated
+        return lines, refs, truncated, duplicates
 
     def _reachable_frames(self, page):
         try:
@@ -1524,12 +1571,24 @@ class BridgeSession:
         except Exception:
             return []
 
-    def _invalidate_refs(self, target_id):
-        self.refs[target_id] = {}
+    def _bump_page_generation(self, target_id):
         self.page_generations[target_id] = self.page_generations.get(target_id, 0) + 1
         return self.page_generations[target_id]
 
-    def _refresh_page_generation(self, page, target_id):
+    def _invalidate_refs(self, target_id):
+        """A new document generation starts, but old refs stay available.
+
+        Self-refreshing pages, SPAs and live feeds replace DOM nodes without
+        navigating. Their refs can be re-resolved by selector, so keeping them
+        is what makes the next click survive a refresh.
+        """
+        return self._bump_page_generation(target_id)
+
+    def _clear_refs(self, target_id):
+        self.refs[target_id] = {}
+        return self._bump_page_generation(target_id)
+
+    def _read_page_state(self, page):
         states = []
         for frame in self._reachable_frames(page):
             try:
@@ -1539,12 +1598,54 @@ class BridgeSession:
                 # identity and would invalidate every ref action.
                 states.append((frame.url, tuple(state)))
             except Exception:
-                states.append((id(frame), ("unreadable", frame.url)))
-        signature = tuple(states)
-        if self.page_states.get(target_id) != signature:
-            self.page_states[target_id] = signature
-            self._invalidate_refs(target_id)
-        return self.page_generations.get(target_id, 0)
+                # Keep a stable marker instead of failing the whole read: one
+                # cross-origin or navigating frame must not make observation
+                # and ref recovery impossible.
+                states.append((frame.url, ("unreadable", frame.url)))
+        return tuple(states)
+
+    @staticmethod
+    def _identity_of(states):
+        if states is None:
+            return None
+        # [token, revision, href]: the document token changes on navigation,
+        # while revision changes on every DOM mutation and must not invalidate
+        # refs by itself.
+        return tuple((url, values[0] if values else None) for url, values in states)
+
+    def _refresh_page_state(self, page, target_id):
+        signature = self._read_page_state(page)
+        if signature is None:
+            # A navigation/refresh is in flight; keep the previous generation
+            # instead of failing the caller on a transient execution-context
+            # loss.
+            return self.page_generations.get(target_id, 0), None
+        identity = self._identity_of(signature)
+        previous = self.page_identities.get(target_id)
+        if previous is not None and previous != identity:
+            previous_urls = tuple(url for url, _ in previous)
+            current_urls = tuple(url for url, _ in identity)
+            if previous_urls != current_urls:
+                # A different URL is a real navigation; selectors from the old
+                # page must not silently match a new page.
+                self._clear_refs(target_id)
+            else:
+                # Same URL, new document token: a reload/self-refresh. Keep
+                # refs so the next action can re-resolve them by selector.
+                self._invalidate_refs(target_id)
+        self.page_identities[target_id] = identity
+        self.page_states[target_id] = signature
+        return self.page_generations.get(target_id, 0), identity
+
+    def _refresh_page_generation(self, page, target_id):
+        generation, _ = self._refresh_page_state(page, target_id)
+        return generation
+
+    def _page_revision_digest(self, target_id):
+        signature = self.page_states.get(target_id)
+        if signature is None:
+            return ""
+        return hashlib.sha256(repr(signature).encode("utf-8")).hexdigest()[:16]
 
     def _frame_path(self, frame):
         """frame_locator hops from the main page down to `frame`."""
@@ -1585,7 +1686,7 @@ class BridgeSession:
         if kind == "wait":
             return self._wait(page, target_id, request)
         if kind == "back":
-            self._invalidate_refs(target_id)
+            self._clear_refs(target_id)
             page.go_back(wait_until="domcontentloaded", timeout=self._timeout_ms(request.get("timeout_ms")))
             return self._action_result(page, target_id, kind)
         if kind == "evaluate":
@@ -1616,14 +1717,14 @@ class BridgeSession:
             return self._action_result(page, target_id, kind, extra={"key": key})
         locator_request = ({"ref": request.get("from_ref"), "selector": request.get("from_selector")}
                            if kind == "drag" else request)
-        locator = self._resolve_locator(page, target_id, locator_request)
+        locator, locator_meta = self._resolve_locator(page, target_id, locator_request)
         timeout_ms = self._timeout_ms(request.get("timeout_ms"), request.get("timeout_secs"))
         if kind == "click":
             if bool(request.get("double_click", False)):
                 locator.dblclick(timeout=timeout_ms)
             else:
                 locator.click(timeout=timeout_ms)
-            return self._action_result(page, target_id, kind)
+            return self._action_result(page, target_id, kind, extra=locator_meta)
         if kind in ("type", "fill"):
             text = request.get("text")
             if text is None:
@@ -1634,16 +1735,18 @@ class BridgeSession:
                     locator.press("Enter", timeout=timeout_ms)
             except Exception as exc:
                 return {"success": False, "error": "Browser input failed (%s)" % type(exc).__name__}
-            return self._action_result(page, target_id, kind)
+            return self._action_result(page, target_id, kind, extra=locator_meta)
         if kind == "press":
             key = request.get("key")
             if not key:
                 return {"success": False, "error": "Browser press missing 'key'"}
             locator.press(str(key), timeout=timeout_ms)
-            return self._action_result(page, target_id, kind, extra={"key": key})
+            extra = dict(locator_meta)
+            extra["key"] = key
+            return self._action_result(page, target_id, kind, extra=extra)
         if kind == "hover":
             locator.hover(timeout=timeout_ms)
-            return self._action_result(page, target_id, kind)
+            return self._action_result(page, target_id, kind, extra=locator_meta)
         if kind == "select":
             value = request.get("value")
             if value is None:
@@ -1651,9 +1754,9 @@ class BridgeSession:
             if value is None:
                 return {"success": False, "error": "Browser select missing 'value' or 'text'"}
             locator.select_option(value=value, timeout=timeout_ms)
-            return self._action_result(page, target_id, kind)
+            return self._action_result(page, target_id, kind, extra=locator_meta)
         if kind == "drag":
-            target_locator = self._resolve_locator(
+            target_locator, target_meta = self._resolve_locator(
                 page,
                 target_id,
                 {
@@ -1663,7 +1766,9 @@ class BridgeSession:
                 },
             )
             locator.drag_to(target_locator, timeout=timeout_ms)
-            return self._action_result(page, target_id, kind)
+            extra = dict(locator_meta)
+            extra.update(target_meta)
+            return self._action_result(page, target_id, kind, extra=extra)
         return {"success": False, "error": "Unsupported browser act kind: %s" % kind}
 
     def batch(self, request, target_id=None):
@@ -1698,6 +1803,10 @@ class BridgeSession:
                 )
             try:
                 result = self.act(step_request, target_id)
+            except ValueError as exc:
+                # Our own validation/ref errors carry actionable recovery text
+                # and never include user inputs.
+                result = {"success": False, "error": str(exc)}
             except Exception as exc:
                 # Playwright errors can contain locator.fill arguments. Report
                 # the failed operation and type without echoing user inputs.
@@ -1711,7 +1820,7 @@ class BridgeSession:
                 key: data[key]
                 for key in (
                     "kind", "target_id", "url", "content", "truncated",
-                    "has_more", "next_cursor",
+                    "has_more", "next_cursor", "ref", "ref_recovered",
                 )
                 if key in data
             }
@@ -1740,13 +1849,18 @@ class BridgeSession:
     def read_page(self, target_id=None, max_chars=40000, cursor=None):
         page, target_id = self._resolve_page(target_id)
         generation = self._refresh_page_generation(page, target_id)
+        revision = self._page_revision_digest(target_id)
         offset = 0
         if cursor:
             try:
                 state = self._decode_page_cursor(cursor)
             except (TypeError, ValueError, json.JSONDecodeError):
                 return {"success": False, "error": "Invalid browser page cursor; call browser(action=observe_text) again."}
-            if state.get("target_id") != target_id or int(state.get("page_generation", -1)) != generation:
+            if (
+                state.get("target_id") != target_id
+                or int(state.get("page_generation", -1)) != generation
+                or state.get("revision") != revision
+            ):
                 return {
                     "success": False,
                     "error": "Stale browser page cursor; call browser(action=observe_text) again.",
@@ -1759,7 +1873,9 @@ class BridgeSession:
         )
         next_cursor = None
         if has_more:
-            next_cursor = self._encode_page_cursor(target_id, generation, offset + js_code_unit_count(content))
+            next_cursor = self._encode_page_cursor(
+                target_id, generation, revision, offset + js_code_unit_count(content)
+            )
         return {
             "success": True,
             "data": {
@@ -1826,9 +1942,10 @@ class BridgeSession:
             has_more = False
         return "".join(chunks), has_more, scan_truncated
 
-    def _encode_page_cursor(self, target_id, generation, offset):
+    def _encode_page_cursor(self, target_id, generation, revision, offset):
         payload = json.dumps(
-            {"v": 1, "target_id": target_id, "page_generation": generation, "offset": offset},
+            {"v": 1, "target_id": target_id, "page_generation": generation,
+             "revision": revision, "offset": offset},
             separators=(",", ":"), sort_keys=True,
         ).encode("utf-8")
         signature = hmac.digest(self._page_cursor_secret, payload, "sha256")[:16]
@@ -1846,8 +1963,10 @@ class BridgeSession:
             raise ValueError("invalid cursor")
         state = json.loads(payload.decode("utf-8"))
         offset = state.get("offset")
+        revision = state.get("revision")
         if (state.get("v") != 1 or not isinstance(state.get("target_id"), str)
                 or not isinstance(state.get("page_generation"), int)
+                or not isinstance(revision, str) or len(revision) > 128
                 or isinstance(offset, bool) or not isinstance(offset, int)
                 or offset < 0 or offset > 4_000_000):
             raise ValueError("invalid cursor")
@@ -1931,22 +2050,49 @@ class BridgeSession:
     def _resolve_locator(self, page, target_id, request):
         ref_id = request.get("ref")
         if ref_id:
+            ref_id = str(ref_id)
+            # Refresh before reading the map: a real navigation clears it, and
+            # the old ref must then fail instead of being re-resolved on a
+            # different page.
             generation = self._refresh_page_generation(page, target_id)
-            ref = self.refs.get(target_id, {}).get(str(ref_id))
-            if ref is None or ref.get("page_generation") != generation:
+            ref = self.refs.get(target_id, {}).get(ref_id)
+            if ref is None:
                 raise ValueError(
-                    "Stale or unknown browser ref: %s (page_generation=%s). Call browser(action=observe_refs) and use its new refs." % (ref_id, generation)
+                    "Unknown browser ref: %s. The page was observed again or the tab changed; call browser(action=observe_refs) and use its new refs." % ref_id
                 )
             selector = ref.get("selector")
             if not selector:
                 raise ValueError("Browser ref %s has no selector mapping" % ref_id)
-            return self._locator_for(page, ref.get("frame_path") or [], selector)
+            recovered = ref.get("page_generation") != generation
+            locator = self._locator_for_ref(page, ref, recovered)
+            if recovered:
+                # A same-URL reload or self-refresh keeps the element's selector
+                # but replaces the document. Give the refreshed page a short
+                # window to render it again; only then call the ref dead.
+                deadline = time.monotonic() + 0.8
+                while True:
+                    try:
+                        count = locator.count()
+                    except Exception:
+                        count = 0
+                    if count > 0:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise ValueError(
+                            "Browser ref %s is stale after the page refreshed; the element is still missing. Call browser(action=observe_refs) and use its new refs." % ref_id
+                        )
+                    page.wait_for_timeout(100)
+                    locator = self._locator_for_ref(page, ref, True)
+            meta = {"ref": ref_id}
+            if recovered:
+                meta["ref_recovered"] = True
+            return locator, meta
         selector = request.get("selector")
         if selector:
-            return page.locator(str(selector)).first
+            return page.locator(str(selector)).first, {}
         text = request.get("text")
         if text and str(request.get("kind", "")).lower() in ("click", "hover"):
-            return page.get_by_text(str(text), exact=False).first
+            return page.get_by_text(str(text), exact=False).first, {}
         raise ValueError("Browser action requires 'ref' or 'selector'")
 
     @staticmethod
@@ -1955,6 +2101,19 @@ class BridgeSession:
         for hop in frame_path:
             root = root.frame_locator(str(hop))
         return root.locator(str(selector)).first
+
+    @classmethod
+    def _locator_for_ref(cls, page, ref, recovered):
+        selector = str(ref.get("selector"))
+        if recovered and ref.get("frame_url"):
+            # A refreshed iframe may keep its URL but change the host path.
+            frame = next(
+                (item for item in page.frames if (item.url or "about:blank") == ref.get("frame_url")),
+                None,
+            )
+            if frame is not None:
+                return frame.locator(selector).first
+        return cls._locator_for(page, ref.get("frame_path") or [], selector)
 
     def _wait(self, page, target_id, request):
         timeout_ms = self._timeout_ms(request.get("timeout_ms"), request.get("timeout_secs"))
@@ -2106,7 +2265,10 @@ def extract_readable(target, max_chars=40000, offset=0, collect=True):
 
 
 def char_budget(value):
-    return min(max(int(value if value is not None else 40000), 1), 40000)
+    # Observation is the noisiest browser output. 12k characters fits a real
+    # page's actionable controls without turning every observe into a context
+    # dump; callers can still ask for up to 40k.
+    return min(max(int(value if value is not None else 12000), 1), 40000)
 
 
 def main():

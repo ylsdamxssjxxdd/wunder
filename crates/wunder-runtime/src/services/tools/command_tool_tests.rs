@@ -6,7 +6,10 @@ fn decode_command_output_recovers_gbk_chinese() {
     let (encoded, _, _) = encoding_rs::GBK.encode("中文输出正常");
     assert_eq!(decode_command_output(&encoded), "中文输出正常");
     // Valid UTF-8 must stay untouched.
-    assert_eq!(decode_command_output("中文输出正常".as_bytes()), "中文输出正常");
+    assert_eq!(
+        decode_command_output("中文输出正常".as_bytes()),
+        "中文输出正常"
+    );
 }
 
 #[cfg(feature = "sqlite-storage")]
@@ -209,11 +212,9 @@ async fn foreground_command_can_be_terminated_from_the_task_panel() {
     let stderr = result["data"]["stderr"].as_str().unwrap_or("");
     assert!(stderr.contains("command cancelled"), "{result}");
     // 会话已收尾，面板不再列出这条任务。
-    assert!(
-        broker
-            .running_tasks("fixture-user", "fixture-thread")
-            .is_empty()
-    );
+    assert!(broker
+        .running_tasks("fixture-user", "fixture-thread")
+        .is_empty());
 }
 
 #[test]
@@ -455,7 +456,9 @@ async fn pipe_holding_grandchild_cannot_stall_the_command_result() {
         .unwrap();
     let elapsed = started.elapsed();
     assert_eq!(result["ok"], true, "{result}");
-    let stdout = result["data"]["results"][0]["stdout"].as_str().unwrap_or("");
+    let stdout = result["data"]["results"][0]["stdout"]
+        .as_str()
+        .unwrap_or("");
     assert!(stdout.contains("ready"), "{result}");
     assert!(
         elapsed < Duration::from_secs(30),

@@ -174,7 +174,9 @@ fn glob_files_inner(
     {
         let exclude = exclude.clone();
         let root = root.clone();
-        builder.filter_entry(move |entry| entry_allowed(entry, &root, exclude.as_deref(), include_ignored));
+        builder.filter_entry(move |entry| {
+            entry_allowed(entry, &root, exclude.as_deref(), include_ignored)
+        });
     }
     let mut hits: Vec<GlobHit> = Vec::new();
     for entry in builder.build().filter_map(|item| item.ok()) {

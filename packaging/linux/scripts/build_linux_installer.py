@@ -6,21 +6,22 @@ supplement tar.gz. The desktop archive is a plain tar.gz of the AppDir, so the
 installer expands it at install time: no FUSE, no libfuse2 and no AppImage
 runtime are needed on the target machine.
 The supplement is normalized to opt/<component>/... while preserving modes and
-relative symlinks; its original ./opt/... layout is accepted too. The result is
-one executable .run file: a POSIX shell header followed by a gzip-compressed
-payload tar.
+relative symlinks; its original ./opt/... layout is accepted too. It is stored
+as supplement.tar.xz inside the payload. The result is one executable .run
+file: a POSIX shell header followed by an uncompressed payload tar.
 
 This script stays compatible with Python 3.6 (Ubuntu 18.04 build hosts).
 """
 
 import argparse
-import gzip
 import hashlib
 import io
 import json
+import lzma
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tarfile
 import time
@@ -45,31 +46,71 @@ LABELS = {
 CHUNK = 4 * 1024 * 1024
 
 
-def open_compressed_tar(path):
-    # tarfile.open(..., "w|gz", compresslevel=...) needs Python 3.9, but the
-    # offline packer may run on Python 3.6/3.8 (Ubuntu 18.04, embedded Win).
+def open_plain_tar(path):
     raw = path.open("wb")
     try:
-        gz = gzip.GzipFile(fileobj=raw, mode="wb", compresslevel=1, mtime=0)
-        try:
-            tar = tarfile.open(fileobj=gz, mode="w|", format=tarfile.GNU_FORMAT)
-        except Exception:
-            gz.close()
-            raise
+        tar = tarfile.open(fileobj=raw, mode="w|", format=tarfile.GNU_FORMAT)
     except Exception:
         raw.close()
         raise
-    return tar, gz, raw
+    return tar, raw
 
 
-def close_compressed_tar(tar, gz, raw):
+def close_plain_tar(tar, raw):
+    try:
+        tar.close()
+    finally:
+        raw.close()
+
+
+def open_xz_tar(path):
+    # Prefer the system xz so the large supplement compresses on all cores.
+    # Windows pack hosts may not ship xz, so fall back to Python's lzma.
+    raw = path.open("wb")
+    try:
+        if shutil.which("xz"):
+            process = subprocess.Popen(
+                ["xz", "-6", "-T0", "-c"],
+                stdin=subprocess.PIPE,
+                stdout=raw,
+            )
+            try:
+                tar = tarfile.open(fileobj=process.stdin, mode="w|", format=tarfile.GNU_FORMAT)
+            except Exception:
+                process.stdin.close()
+                process.wait()
+                raise
+            return tar, process, raw, None
+        compressor = lzma.LZMAFile(raw, "wb", preset=6)
+        try:
+            tar = tarfile.open(fileobj=compressor, mode="w|", format=tarfile.GNU_FORMAT)
+        except Exception:
+            compressor.close()
+            raise
+        return tar, None, raw, compressor
+    except Exception:
+        raw.close()
+        raise
+
+
+def close_xz_tar(tar, process, raw, compressor):
+    status = 0
     try:
         tar.close()
     finally:
         try:
-            gz.close()
+            if compressor is not None:
+                compressor.close()
+            elif process is not None:
+                process.stdin.close()
         finally:
-            raw.close()
+            try:
+                if process is not None:
+                    status = process.wait()
+            finally:
+                raw.close()
+    if status != 0:
+        fail("xz compression failed with exit code %d" % status)
 
 
 def fail(message):
@@ -238,7 +279,7 @@ def normalize_supplement(source, destination):
         fail("cannot read supplement archive %s: %s" % (source, error))
 
     try:
-        target_tar, target_gzip, target_raw = open_compressed_tar(temporary)
+        target_tar, target_process, target_raw, target_compressor = open_xz_tar(temporary)
         try:
             for member in source_tar:
                 raw_name = member.name.replace("\\", "/")
@@ -315,7 +356,7 @@ def normalize_supplement(source, destination):
                 elif member.issym() or member.islnk():
                     target_tar.addfile(copied)
         finally:
-            close_compressed_tar(target_tar, target_gzip, target_raw)
+            close_xz_tar(target_tar, target_process, target_raw, target_compressor)
     finally:
         source_tar.close()
 
@@ -386,8 +427,8 @@ def build_payload(
     installer_dir,
     image,
 ):
-    payload = stage / "payload.tar.gz"
-    temporary = stage / "payload.tar.gz.tmp"
+    payload = stage / "payload.tar"
+    temporary = stage / "payload.tar.tmp"
     if temporary.exists():
         temporary.unlink()
 
@@ -423,7 +464,7 @@ def build_payload(
         for key, info in components.items()
     )
 
-    target_tar, target_gzip, target_raw = open_compressed_tar(temporary)
+    target_tar, target_raw = open_plain_tar(temporary)
     try:
         directory = tarfile.TarInfo("payload")
         directory.type = tarfile.DIRTYPE
@@ -453,9 +494,9 @@ def build_payload(
         if not core_only:
             if supplement is None:
                 fail("internal error: supplement path is missing")
-            add_file(target_tar, "payload/supplement.tar.gz", supplement, 0o644)
+            add_file(target_tar, "payload/supplement.tar.xz", supplement, 0o644)
     finally:
-        close_compressed_tar(target_tar, target_gzip, target_raw)
+        close_plain_tar(target_tar, target_raw)
 
     os.replace(str(temporary), str(payload))
     return payload
@@ -549,7 +590,7 @@ def main():
 
     if not args.core_only:
         source_hash = sha256_file(supplement)
-        normalized_supplement = stage / "supplement.tar.gz"
+        normalized_supplement = stage / "supplement.tar.xz"
         cache_path = stage / "supplement.meta.json"
         cached = None
         if cache_path.is_file() and normalized_supplement.is_file():

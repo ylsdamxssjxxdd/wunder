@@ -7,6 +7,13 @@ export type QueuedTurn = {
   waitAhead: number | null;
   priority: number;
   status: string;
+  /**
+   * Why the engine parked this turn. `input` is the composer's own input
+   * queue (the thread is still running). `capacity` / `scheduler` waits are
+   * ordinary submitted turns waiting for a global execution slot; they stay
+   * on the timeline and never own a composer row.
+   */
+  waitReason: string;
   clientMessageId: string;
   rootTurnId?: string;
   userTurnId?: string;
@@ -101,6 +108,7 @@ export const normalizeQueuedTurn = (value: unknown): QueuedTurn | null => {
     waitAhead: readNumber(source.wait_ahead, source.waitAhead),
     priority: readNumber(source.priority) ?? 0,
     status: cleanText(source.status) || 'pending',
+    waitReason: resolveQueueWaitReason(source),
     clientMessageId: cleanText(source.client_message_id ?? source.clientMessageId),
     rootTurnId: cleanText(source.root_turn_id ?? source.rootTurnId),
     userTurnId: cleanText(source.user_turn_id ?? source.userTurnId),
@@ -146,11 +154,10 @@ const queueEventData = (payload: unknown): Record<string, unknown> => {
 };
 
 /**
- * Queue waiting has two different meanings. `input`/`scheduler` means the
- * current session is still running and this message is only parked behind
- * it; `capacity` means the request is waiting for a global execution slot.
- * Keep this interpretation in one place so transport and durable projections
- * cannot drift apart.
+ * Queue waiting has two different meanings. `input` means this turn is parked
+ * behind the thread's own running execution; `capacity`/`scheduler` means it
+ * is only waiting for a global execution slot. Keep this interpretation in one
+ * place so transport and durable projections cannot drift apart.
  */
 export const resolveQueueWaitReason = (payload: unknown): string => {
   const data = queueEventData(payload);
@@ -163,6 +170,20 @@ export const resolveQueueWaitReason = (payload: unknown): string => {
     nested.reason ?? nested.wait_reason ??
     data.reason ?? data.wait_reason ?? data.queue_reason ?? data.queue_wait_reason
   ).toLowerCase();
+};
+
+/**
+ * The composer strip is the input queue, not every parked submission. Only a
+ * turn behind this thread's own running execution belongs to it; a capacity or
+ * scheduler wait is a sent turn that stays on the timeline. Reason-less rows
+ * keep the legacy strip ownership so an older engine still drives the strip.
+ */
+export const isInputQueueTurn = (item: unknown): boolean => {
+  const source = (item || {}) as Record<string, unknown>;
+  const reason = cleanText(
+    source.waitReason ?? source.wait_reason ?? source.reason
+  ).toLowerCase();
+  return !reason || reason === 'input';
 };
 
 /** Resolve the queue row consumed by a start/terminal event, including legacy identity fallbacks. */
@@ -260,6 +281,47 @@ const hasExplicitQueuedStatus = (message: unknown): boolean => {
   return statuses.some((value) => cleanText(value).toLowerCase() === 'queued');
 };
 
+const readWorkflowDetail = (value: unknown): Record<string, any> | null => {
+  if (!value) return null;
+  if (typeof value === 'object' && !Array.isArray(value)) return value as Record<string, any>;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, any>
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Wait reason carried by the assistant bubble's queue marker, whether it comes
+ * from the live runtime projection or a hydrated durable marker.
+ */
+export const resolveAssistantQueueWaitReason = (message: unknown): string => {
+  const source = message as Record<string, any> | null | undefined;
+  if (!source) return '';
+  const direct = resolveQueueWaitReason({
+    reason: source.queue_wait_reason ?? source.queueWaitReason,
+    queued_input: source.queued_input ?? source.queuedInput
+  });
+  if (direct) return direct;
+  const items = Array.isArray(source.workflowItems) ? source.workflowItems : [];
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index] as Record<string, any> | null | undefined;
+    if (!isQueueMarkerItem(item)) continue;
+    const reason = resolveQueueWaitReason(readWorkflowDetail(item?.detail));
+    if (reason) return reason;
+  }
+  return '';
+};
+
+const ownsComposerQueue = (message: unknown): boolean => {
+  const reason = resolveAssistantQueueWaitReason(message);
+  return !reason || reason === 'input';
+};
+
 /** 历史补水后的排队标记条目 id 形如 `queue:<queue_id>`，用它也能对上排队条。 */
 const markerQueueIdsOf = (message: unknown): Set<string> => {
   const source = message as Record<string, any> | null | undefined;
@@ -274,9 +336,10 @@ const markerQueueIdsOf = (message: unknown): Set<string> => {
 };
 
 /**
- * 排队条替时间线承载这一轮：条目确实还挂在引擎队列里，且这一轮一行输出都没有。
- * 两个条件都要——只看队列会漏掉「已开跑但条目还没刷掉」，只看状态会在排队接口
- * 查询失败时把消息两头都藏掉。
+ * 排队条替时间线承载这一轮：这一轮是挂在输入队列里的空轮次，一行输出都没有。
+ * 等待原因必须落在 input（线程自身仍在执行）；capacity/scheduler 只是等待全局
+ * 执行槽，消息已经发出，时间线要保留它的用户气泡与「排队中」状态。原因缺失的
+ * 旧投影再退回排队条成员判定，避免旧引擎下把消息两头都藏掉。
  */
 export const isParkedQueueTurn = (
   items: QueuedTurn[],
@@ -284,9 +347,10 @@ export const isParkedQueueTurn = (
   assistantMessage: unknown
 ): boolean => {
   if (!hasOnlyQueueMarkers(assistantMessage)) return false;
-  // The queue strip is the owner of an explicitly queued, still-empty turn.
-  // Do not wait for the asynchronous queue list to catch up: during that gap
-  // the thread-view row would otherwise flash as a duplicate empty bubble.
+  const reason = resolveAssistantQueueWaitReason(assistantMessage);
+  if (reason) return reason === 'input';
+  // Legacy reason-less projections keep the strip's historical ownership once
+  // the turn is explicitly queued; otherwise only a live strip row may claim it.
   if (hasExplicitQueuedStatus(assistantMessage)) return true;
   const user = userMessage as Record<string, any> | null | undefined;
   const clientMessageId = cleanText(user?.client_message_id ?? readMessageId(user));
@@ -326,10 +390,12 @@ export const selectParkedTurnMessageIds = (
   );
   // Empty assistant placeholders occur briefly when a dispatched turn has no
   // output yet.  They are not proof that the turn is still cancellable.  Only
-  // a durable queued status or an actual queue lifecycle marker permits local
-  // removal.
+  // an input-queue turn with a durable queued status or an actual queue
+  // lifecycle marker permits local removal; capacity/scheduler waits are sent
+  // turns and must never be pruned by a queue action.
   if (!assistants.length || !assistants.every((assistant) =>
     hasOnlyQueueMarkers(assistant) &&
+    ownsComposerQueue(assistant) &&
     (hasExplicitQueuedStatus(assistant) || markerQueueIdsOf(assistant).size > 0)
   )) {
     return [];

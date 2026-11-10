@@ -83,7 +83,11 @@ def check_desktop_archive(archive, architecture):
 
 
 def check_self_extractor(path, architecture):
-    """Both Linux delivery forms are a shell header plus an appended gzip payload."""
+    """Both Linux delivery forms are a shell header plus an appended payload.
+
+    The .run carries an uncompressed tar (its supplement is already xz);
+    the .portable still carries a gzip stream.
+    """
     marker = RUN_MARKER if path.name.endswith(".run") else PORTABLE_MARKER
     with path.open("rb") as stream:
         head = stream.read(65536)
@@ -95,7 +99,11 @@ def check_self_extractor(path, architecture):
     offset = boundary + len(marker)
     with path.open("rb") as stream:
         stream.seek(offset)
-        if stream.read(3) != GZIP_MAGIC:
+        if path.name.endswith(".run"):
+            header = stream.read(512)
+            if len(header) < 512 or header[257:262] != b"ustar":
+                raise RuntimeError("payload of " + path.name + " is not an uncompressed tar")
+        elif stream.read(3) != GZIP_MAGIC:
             raise RuntimeError("payload of " + path.name + " is not a gzip member")
     if ("-" + architecture) not in path.name:
         raise RuntimeError("artifact name does not carry the " + architecture + " label: " + path.name)

@@ -630,7 +630,10 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
 fn parse_files_only(args: &Value) -> bool {
     if let Some(mode) = args.get("mode").and_then(Value::as_str) {
         let normalized = mode.trim().to_ascii_lowercase();
-        if matches!(normalized.as_str(), "paths" | "files" | "files_only" | "list") {
+        if matches!(
+            normalized.as_str(),
+            "paths" | "files" | "files_only" | "list"
+        ) {
             return true;
         }
     }

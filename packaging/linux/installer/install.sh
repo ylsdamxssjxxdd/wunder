@@ -420,7 +420,8 @@ if [ "$count" -gt 0 ]; then
       "$PAYLOAD_DIR/../.supplement-done" "$HOME_DIR/opt" &
     SUPPLEMENT_WATCH_PID=$!
   fi
-  if ! tar -xzf "$PAYLOAD_DIR/supplement.tar.gz" -C "$HOME_DIR" --no-same-owner $members; then
+  command -v xz >/dev/null 2>&1 || die "安装包使用 xz 压缩补充组件，请先安装 xz-utils。"
+  if ! tar -xJf "$PAYLOAD_DIR/supplement.tar.xz" -C "$HOME_DIR" --no-same-owner $members; then
     [ -n "${SUPPLEMENT_WATCH_PID:-}" ] && kill "$SUPPLEMENT_WATCH_PID" 2>/dev/null || true
     progress_done
     echo "补充组件解压失败。请检查磁盘空间后重新运行安装包；再次安装会先清理本次留下的目录。" >&2

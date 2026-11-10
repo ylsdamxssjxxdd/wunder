@@ -309,7 +309,11 @@ fn resolve_related_memory_record_id(
 }
 
 fn build_memory_manager_detail(action: &str, data: &Value) -> String {
-    let count = data.get("count").and_then(Value::as_u64).unwrap_or(0).to_string();
+    let count = data
+        .get("count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .to_string();
     let deleted = data
         .get("deleted")
         .and_then(Value::as_i64)
@@ -634,11 +638,7 @@ pub(crate) async fn execute_memory_manager_tool(
             );
             let detail_title = derived_title
                 .clone()
-                .or_else(|| {
-                    existing_fragment
-                        .as_ref()
-                        .map(|item| item.title_l0.clone())
-                })
+                .or_else(|| existing_fragment.as_ref().map(|item| item.title_l0.clone()))
                 .unwrap_or_else(|| memory_id.clone());
             let updated_record = fragment_store
                 .save_fragment(

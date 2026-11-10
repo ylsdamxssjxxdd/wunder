@@ -1483,14 +1483,20 @@ fn browser_list_and_observation_projection_marks_omitted_items() {
         .collect::<Vec<_>>();
     let result = ToolResultPayload::from_value(json!({
         "ok": true,
-        "data": {"action": "observe_refs", "refs": refs}
+        "data": {"action": "observe_refs", "snapshot": "- button \"Next\" [ref=e1]", "refs": refs}
     }));
     let observation = result.to_compact_payload("browser");
+    // The snapshot line already names the ref; the old refs array repeated
+    // every element and doubled the observation payload.
+    assert!(observation["data"].get("refs").is_none());
+    assert_eq!(observation["data"]["text"], "- button \"Next\" [ref=e1]");
     assert_eq!(
-        observation["data"]["refs"].as_array().unwrap().len(),
-        OBSERVATION_BROWSER_REFS_LIMIT + 1
+        result.to_event_payload("browser")["data"]["refs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        OBSERVATION_BROWSER_REFS_LIMIT + 2
     );
-    assert_eq!(observation["data"]["omitted_refs"], 2);
 }
 
 #[test]

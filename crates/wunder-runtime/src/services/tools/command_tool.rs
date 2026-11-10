@@ -1111,9 +1111,8 @@ async fn run_command_streaming(
     // runtime (安卓版's Ubuntu). Direct-spawning `uname` or `git` would silently
     // bypass that runtime and answer from Android/toybox instead.
     let force_shell = std::env::var_os(command_utils::SHELL_SCRIPT_ENV).is_some();
-    let shell_command = || {
-        command_utils::build_shell_command_with_shell(command, cwd, &command_env.shell)
-    };
+    let shell_command =
+        || command_utils::build_shell_command_with_shell(command, cwd, &command_env.shell);
     let (mut cmd, used_direct) = if force_shell {
         (shell_command(), false)
     } else if let Some(cmd) = command_utils::build_direct_command_with_overrides(
@@ -1163,7 +1162,7 @@ async fn run_command_streaming(
             } else {
                 CommandSessionLaunchMode::Shell
             },
-            (!used_direct).then(|| command_utils::resolve_shell_name(command).to_string()),
+            (!used_direct).then(|| command_utils::resolve_shell_name(&command_env.shell)),
         ),
         Err(err) if used_direct && command_utils::is_not_found_error(&err) => {
             let mut cmd =

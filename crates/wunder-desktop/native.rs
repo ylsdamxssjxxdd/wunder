@@ -2154,9 +2154,9 @@ mod thread_switch_tests {
         let source_id = generated[0].session_id.clone();
         let fork = desktop.fork_session(&source_id, 2).expect("fork session");
         assert_ne!(fork.id, source_id);
-        assert!(fork.title.ends_with(" · 分叉"));
+        assert!(fork.title.starts_with("分叉 · "));
         let second = desktop.fork_session(&source_id, 2).expect("second fork");
-        assert!(second.title.ends_with(" · 分叉 2"));
+        assert!(second.title.starts_with("分叉 2 · "));
         assert_ne!(fork.title, second.title);
         let source = desktop.open_chat_snapshot(&source_id).expect("source view");
         let target = desktop.open_chat_snapshot(&fork.id).expect("fork view");
