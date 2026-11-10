@@ -1296,25 +1296,14 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
         }
 
         if output.returncode != 0 {
-            return ToolResult {
-                ok: false,
-                data: with_error_meta(
-                    build_execute_command_failure_data(
-                        &results,
-                        guarded_total_commands,
-                        guarded_truncated_commands > 0,
-                        guarded_omitted_bytes,
-                        false,
-                    ),
-                    ToolErrorMeta::new(
-                        "TOOL_EXEC_NON_ZERO_EXIT",
-                        Some("命令返回非 0，请先根据 stderr 修正后再重试。".to_string()),
-                        false,
-                        None,
-                    ),
-                ),
-                error: build_execute_command_failure_message(&results, false),
-            };
+            // 非零退出码是命令语义（grep 无匹配、pkill 无进程等），不是工具
+            // 执行失败；保留完整输出与退出码，由模型判断是否需要修正。
+            if let Some(last) = results.last_mut().and_then(Value::as_object_mut) {
+                last.insert(
+                    "exit_note".to_string(),
+                    json!(i18n::t("tool.exec.non_zero_exit_note")),
+                );
+            }
         }
     }
 
@@ -1645,25 +1634,14 @@ async fn execute_command_streaming(
         }
 
         if output.returncode != 0 {
-            return ToolResult {
-                ok: false,
-                data: with_error_meta(
-                    build_execute_command_failure_data(
-                        &results,
-                        guarded_total_commands,
-                        guarded_truncated_commands > 0,
-                        guarded_omitted_bytes,
-                        false,
-                    ),
-                    ToolErrorMeta::new(
-                        "TOOL_EXEC_NON_ZERO_EXIT",
-                        Some("命令返回非 0，请先根据 stderr 修正后再重试。".to_string()),
-                        false,
-                        None,
-                    ),
-                ),
-                error: build_execute_command_failure_message(&results, false),
-            };
+            // 非零退出码是命令语义（grep 无匹配、pkill 无进程等），不是工具
+            // 执行失败；保留完整输出与退出码，由模型判断是否需要修正。
+            if let Some(last) = results.last_mut().and_then(Value::as_object_mut) {
+                last.insert(
+                    "exit_note".to_string(),
+                    json!(i18n::t("tool.exec.non_zero_exit_note")),
+                );
+            }
         }
     }
 

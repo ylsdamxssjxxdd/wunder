@@ -1348,8 +1348,18 @@ pub async fn load_image_attachment_data_url(
     if public_path.is_empty() {
         return None;
     }
-    let workspace_id = extract_workspace_id_from_public_path(public_path)?;
-    let resolved = workspace.resolve_path(&workspace_id, public_path).ok()?;
+    let resolved = match extract_workspace_id_from_public_path(public_path) {
+        Some(workspace_id) => workspace.resolve_path(&workspace_id, public_path).ok()?,
+        None => {
+            // 本地形态（桌面/CLI）的 display_path 就是绝对文件路径，直接读；
+            // 否则裁切/抽帧的派生附件会回退成原图，模型看到的不是同一帧。
+            let path = Path::new(public_path);
+            if !path.is_absolute() {
+                return None;
+            }
+            path.to_path_buf()
+        }
+    };
     let bytes = fs::read(resolved).await.ok()?;
     let mime = attachment
         .content_type
@@ -1388,6 +1398,307 @@ pub async fn load_image_data_url_for_path(path: &str) -> Option<String> {
     Some(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
 }
 
+const IMAGE_VIEW_MAX_DIMENSION: u32 = 4096;
+const IMAGE_VIEW_MAX_ENCODED_BYTES: usize = 8 * 1024 * 1024;
+const IMAGE_VIEW_MAX_SCALE: f64 = 16.0;
+const IMAGE_VIEW_EDGE_SAMPLE_WIDTH: u32 = 480;
+const IMAGE_VIEW_EDGE_THRESHOLD: u8 = 6;
+const IMAGE_VIEW_BACKGROUND_TOLERANCE: u8 = 24;
+const IMAGE_VIEW_CORNER_PATCH: u32 = 8;
+
+/// 读图工具的裁切区域，单位是源图像素。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageCrop {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl ImageCrop {
+    pub fn parse(raw: &str) -> Result<Self> {
+        let invalid = || anyhow!(crate::i18n::t("tool.read_image.invalid_crop"));
+        let parts: Vec<&str> = raw.split(',').map(str::trim).collect();
+        if parts.len() != 4 {
+            return Err(invalid());
+        }
+        let mut values = [0_u32; 4];
+        for (slot, part) in values.iter_mut().zip(parts) {
+            *slot = part.parse::<u32>().map_err(|_| invalid())?;
+        }
+        let crop = Self {
+            x: values[0],
+            y: values[1],
+            width: values[2],
+            height: values[3],
+        };
+        if crop.width == 0 || crop.height == 0 {
+            return Err(invalid());
+        }
+        Ok(crop)
+    }
+}
+
+/// 区域数值检查：替代「裁切→存图→肉眼看」的纯数值证据，随结果文本持久留存。
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct ImageViewStats {
+    pub width: u32,
+    pub height: u32,
+    pub mean_luma: f64,
+    pub background_rgb: [u8; 3],
+    pub non_background_ratio: f64,
+    pub edge_ratio: f64,
+}
+
+pub struct ImageView {
+    pub attachment: Option<AttachmentPayload>,
+    pub stats: Option<ImageViewStats>,
+    pub source_width: u32,
+    pub source_height: u32,
+    pub view_width: u32,
+    pub view_height: u32,
+}
+
+struct RenderedImageView {
+    encoded: Option<(Vec<u8>, &'static str, &'static str)>,
+    stats: Option<ImageViewStats>,
+    source_width: u32,
+    source_height: u32,
+    view_width: u32,
+    view_height: u32,
+    view_changed: bool,
+}
+
+/// 读图工具的裁切/缩放/统计：派生图落盘为工作区附件，统计在缩放前的裁切
+/// 区域上计算（缩放不改变亮度与占比语义）。stats_only 不解码输出像素。
+pub async fn derive_image_view(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    source_path: &Path,
+    crop: Option<ImageCrop>,
+    scale: Option<f64>,
+    want_stats: bool,
+    stats_only: bool,
+) -> Result<ImageView> {
+    if let Some(scale) = scale {
+        if !scale.is_finite() || scale <= 0.0 || scale > IMAGE_VIEW_MAX_SCALE {
+            return Err(anyhow!(crate::i18n::t("tool.read_image.invalid_scale")));
+        }
+    }
+    let bytes = fs::read(source_path).await?;
+    let filename = source_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "image".to_string());
+    let source_mime = detect_supported_image_content_type(source_path, &bytes);
+    let rendered =
+        blocking::run_cpu("read_image_view", move || {
+            render_image_view(&bytes, crop, scale, want_stats, stats_only)
+        })
+        .await?;
+    let attachment = if stats_only {
+        None
+    } else if rendered.view_changed {
+        let (encoded, mime, extension) = rendered
+            .encoded
+            .ok_or_else(|| anyhow!("image view encoding missing"))?;
+        let derived_root = persist_derived_root(workspace, workspace_id, &filename).await?;
+        let output_path = derived_root.join(format!("view.{extension}"));
+        fs::write(&output_path, &encoded).await?;
+        let stem = Path::new(&filename)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("image");
+        Some(AttachmentPayload {
+            name: Some(format!("{stem}_view.{extension}")),
+            content: None,
+            content_type: Some(mime.to_string()),
+            public_path: Some(workspace.display_path(workspace_id, &output_path)),
+        })
+    } else {
+        let mime = source_mime
+            .ok_or_else(|| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
+        Some(AttachmentPayload {
+            name: Some(filename),
+            content: None,
+            content_type: Some(mime),
+            public_path: Some(workspace.display_path(workspace_id, source_path)),
+        })
+    };
+    Ok(ImageView {
+        attachment,
+        stats: rendered.stats,
+        source_width: rendered.source_width,
+        source_height: rendered.source_height,
+        view_width: rendered.view_width,
+        view_height: rendered.view_height,
+    })
+}
+
+fn render_image_view(
+    bytes: &[u8],
+    crop: Option<ImageCrop>,
+    scale: Option<f64>,
+    want_stats: bool,
+    stats_only: bool,
+) -> Result<RenderedImageView> {
+    let image = image::load_from_memory(bytes)
+        .map_err(|_| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
+    let (source_width, source_height) = (image.width(), image.height());
+    let cropped = match crop {
+        Some(crop) => {
+            if crop.x.saturating_add(crop.width) > source_width
+                || crop.y.saturating_add(crop.height) > source_height
+            {
+                return Err(anyhow!(crate::i18n::t_with_params(
+                    "tool.read_image.crop_out_of_bounds",
+                    &std::collections::HashMap::from([
+                        ("width".to_string(), source_width.to_string()),
+                        ("height".to_string(), source_height.to_string()),
+                    ]),
+                )));
+            }
+            image.crop_imm(crop.x, crop.y, crop.width, crop.height)
+        }
+        None => image,
+    };
+    let stats = want_stats.then(|| compute_image_view_stats(&cropped));
+    let effective_scale = scale.unwrap_or(1.0);
+    let scaled = if (effective_scale - 1.0).abs() > f64::EPSILON {
+        let width = (f64::from(cropped.width()) * effective_scale).round().max(1.0) as u32;
+        let height = (f64::from(cropped.height()) * effective_scale).round().max(1.0) as u32;
+        if width > IMAGE_VIEW_MAX_DIMENSION || height > IMAGE_VIEW_MAX_DIMENSION {
+            let max_scale = (f64::from(IMAGE_VIEW_MAX_DIMENSION) / f64::from(cropped.width()))
+                .min(f64::from(IMAGE_VIEW_MAX_DIMENSION) / f64::from(cropped.height()));
+            return Err(anyhow!(crate::i18n::t_with_params(
+                "tool.read_image.scale_too_large",
+                &std::collections::HashMap::from([(
+                    "max_scale".to_string(),
+                    format!("{max_scale:.2}"),
+                )]),
+            )));
+        }
+        cropped.resize_exact(width, height, image::imageops::FilterType::Lanczos3)
+    } else {
+        cropped
+    };
+    let view_changed = crop.is_some() || (effective_scale - 1.0).abs() > f64::EPSILON;
+    let encoded = if stats_only || !view_changed {
+        None
+    } else {
+        Some(encode_image_view(&scaled)?)
+    };
+    Ok(RenderedImageView {
+        encoded,
+        stats,
+        source_width,
+        source_height,
+        view_width: scaled.width(),
+        view_height: scaled.height(),
+        view_changed,
+    })
+}
+
+fn encode_image_view(image: &DynamicImage) -> Result<(Vec<u8>, &'static str, &'static str)> {
+    let mut png = Vec::new();
+    image
+        .write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
+        .map_err(|err| anyhow!("encode image view failed: {err}"))?;
+    if png.len() <= IMAGE_VIEW_MAX_ENCODED_BYTES {
+        return Ok((png, "image/png", "png"));
+    }
+    let rgb = DynamicImage::ImageRgb8(image.to_rgb8());
+    let mut jpeg = Vec::new();
+    rgb.write_to(&mut Cursor::new(&mut jpeg), ImageFormat::Jpeg)
+        .map_err(|err| anyhow!("encode image view failed: {err}"))?;
+    if jpeg.len() > IMAGE_VIEW_MAX_ENCODED_BYTES {
+        return Err(anyhow!(crate::i18n::t("tool.read_image.view_too_large")));
+    }
+    Ok((jpeg, "image/jpeg", "jpg"))
+}
+
+fn compute_image_view_stats(image: &DynamicImage) -> ImageViewStats {
+    let rgb = image.to_rgb8();
+    let (width, height) = rgb.dimensions();
+    let pixels = rgb.as_raw();
+    let count = u64::from(width) * u64::from(height);
+    let mut luma_sum = 0_u64;
+    for px in pixels.chunks_exact(3) {
+        luma_sum += (u64::from(px[0]) * 77 + u64::from(px[1]) * 150 + u64::from(px[2]) * 29) >> 8;
+    }
+    let mean_luma = luma_sum as f64 / count.max(1) as f64;
+
+    // 背景估计：四角色块的逐通道中位数，单角有内容时不至于被带偏。
+    let patch = IMAGE_VIEW_CORNER_PATCH.min(width).min(height).max(1);
+    let mut background = [0_u8; 3];
+    for (channel, slot) in background.iter_mut().enumerate() {
+        let mut samples: Vec<u8> = Vec::with_capacity((patch * patch * 4) as usize);
+        for (x0, y0) in [
+            (0, 0),
+            (width - patch, 0),
+            (0, height - patch),
+            (width - patch, height - patch),
+        ] {
+            for y in y0..y0 + patch {
+                for x in x0..x0 + patch {
+                    samples.push(pixels[((y * width + x) * 3) as usize + channel]);
+                }
+            }
+        }
+        samples.sort_unstable();
+        *slot = samples[samples.len() / 2];
+    };
+    let mut non_background = 0_u64;
+    for px in pixels.chunks_exact(3) {
+        let diff = px[0]
+            .abs_diff(background[0])
+            .max(px[1].abs_diff(background[1]))
+            .max(px[2].abs_diff(background[2]));
+        if diff > IMAGE_VIEW_BACKGROUND_TOLERANCE {
+            non_background += 1;
+        }
+    }
+
+    // 边缘占比在降采样亮度图上算，颗粒噪声被平均掉，与技能的安全区像素
+    // 检查同口径；渐变背景靠它而不是颜色差判断。
+    let luma = image.to_luma8();
+    let sample_width = width.min(IMAGE_VIEW_EDGE_SAMPLE_WIDTH).max(1);
+    let sample_height = ((u64::from(height) * u64::from(sample_width)) / u64::from(width).max(1))
+        .max(1) as u32;
+    let small = image::imageops::resize(&luma, sample_width, sample_height, image::imageops::FilterType::Triangle);
+    let raw = small.as_raw();
+    let mut edge_hits = 0_u64;
+    let mut edge_total = 0_u64;
+    for y in 0..sample_height {
+        for x in 0..sample_width {
+            let index = (y * sample_width + x) as usize;
+            if x + 1 < sample_width {
+                edge_total += 1;
+                if raw[index].abs_diff(raw[index + 1]) > IMAGE_VIEW_EDGE_THRESHOLD {
+                    edge_hits += 1;
+                }
+            }
+            if y + 1 < sample_height {
+                edge_total += 1;
+                if raw[index].abs_diff(raw[index + sample_width as usize]) > IMAGE_VIEW_EDGE_THRESHOLD {
+                    edge_hits += 1;
+                }
+            }
+        }
+    }
+    let round = |value: f64, places: f64| (value * places).round() / places;
+    ImageViewStats {
+        width,
+        height,
+        mean_luma: round(mean_luma, 10.0),
+        background_rgb: background,
+        non_background_ratio: round(non_background as f64 / count.max(1) as f64, 10_000.0),
+        edge_ratio: round(edge_hits as f64 / edge_total.max(1) as f64, 10_000.0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1424,6 +1735,128 @@ mod tests {
                 .block_on(load_image_data_url_for_path(path.to_str().expect("path")))
                 .is_none()
         );
+    }
+
+    fn png_bytes(image: &image::DynamicImage) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        image
+            .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .expect("encode png");
+        bytes
+    }
+
+    /// 100x80 黑底，(50,50) 处一块 10x10 白色矩形。
+    fn fixture_image() -> image::DynamicImage {
+        let mut image = image::RgbImage::from_pixel(100, 80, image::Rgb([0, 0, 0]));
+        for y in 50..60 {
+            for x in 50..60 {
+                image.put_pixel(x, y, image::Rgb([255, 255, 255]));
+            }
+        }
+        image::DynamicImage::ImageRgb8(image)
+    }
+
+    #[test]
+    fn image_crop_parse_validates_shape() {
+        let crop = super::ImageCrop::parse("10, 20,30,40").expect("parse crop");
+        assert_eq!((crop.x, crop.y, crop.width, crop.height), (10, 20, 30, 40));
+        for bad in ["1,2,3", "1,2,0,4", "a,b,c,d", "-1,2,3,4", "1,2,3,4,5"] {
+            assert!(super::ImageCrop::parse(bad).is_err(), "accepted {bad}");
+        }
+    }
+
+    #[test]
+    fn attachment_data_url_reads_local_absolute_paths() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("view.png");
+        let image = image::RgbaImage::from_pixel(2, 2, image::Rgba([0, 255, 0, 255]));
+        image.save(&path).expect("write png");
+        let attachment = crate::schemas::AttachmentPayload {
+            name: Some("view.png".to_string()),
+            content: None,
+            content_type: Some("image/png".to_string()),
+            public_path: Some(path.to_string_lossy().to_string()),
+        };
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let workspace = crate::workspace::WorkspaceManager::new(
+            dir.path().to_string_lossy().as_ref(),
+            std::sync::Arc::new(crate::storage::SqliteStorage::new(
+                dir.path().join("state.db").to_string_lossy().to_string(),
+            )),
+            0,
+            &std::collections::HashMap::new(),
+        );
+        let url = runtime
+            .block_on(super::load_image_attachment_data_url(&workspace, &attachment))
+            .expect("data url from absolute path");
+        assert!(url.starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn render_image_view_crops_and_computes_region_stats() {
+        let bytes = png_bytes(&fixture_image());
+        let crop = super::ImageCrop { x: 40, y: 40, width: 20, height: 20 };
+        let view = super::render_image_view(&bytes, Some(crop), None, true, false)
+            .expect("render view");
+        assert_eq!((view.source_width, view.source_height), (100, 80));
+        assert_eq!((view.view_width, view.view_height), (20, 20));
+        let stats = view.stats.expect("stats");
+        assert_eq!((stats.width, stats.height), (20, 20));
+        assert_eq!(stats.background_rgb, [0, 0, 0]);
+        // 白色矩形 100/400 像素：占比 25%，平均亮度 255*0.25。
+        assert!((stats.non_background_ratio - 0.25).abs() < 0.001);
+        assert!((stats.mean_luma - 63.8).abs() < 0.2);
+        assert!(stats.edge_ratio > 0.0);
+        let (encoded, mime, extension) = view.encoded.expect("encoded view");
+        assert_eq!(mime, "image/png");
+        assert_eq!(extension, "png");
+        let decoded = image::load_from_memory(&encoded).expect("decode view");
+        assert_eq!((decoded.width(), decoded.height()), (20, 20));
+    }
+
+    #[test]
+    fn render_image_view_stats_only_skips_encoding() {
+        let bytes = png_bytes(&fixture_image());
+        let view = super::render_image_view(&bytes, None, None, true, true).expect("render view");
+        assert!(view.encoded.is_none());
+        assert!(view.stats.is_some());
+        assert!(!view.view_changed);
+    }
+
+    #[test]
+    fn render_image_view_plain_read_reuses_original() {
+        let bytes = png_bytes(&fixture_image());
+        let view = super::render_image_view(&bytes, None, None, false, false).expect("render view");
+        assert!(view.encoded.is_none());
+        assert!(!view.view_changed);
+        assert!(view.stats.is_none());
+    }
+
+    #[test]
+    fn render_image_view_scale_zooms_after_crop() {
+        let bytes = png_bytes(&fixture_image());
+        let crop = super::ImageCrop { x: 50, y: 50, width: 10, height: 10 };
+        let view = super::render_image_view(&bytes, Some(crop), Some(2.0), false, false)
+            .expect("render view");
+        assert_eq!((view.view_width, view.view_height), (20, 20));
+        assert!(view.view_changed);
+        assert!(view.encoded.is_some());
+    }
+
+    #[test]
+    fn render_image_view_rejects_out_of_bounds_crop() {
+        let bytes = png_bytes(&fixture_image());
+        let crop = super::ImageCrop { x: 90, y: 70, width: 20, height: 20 };
+        assert!(super::render_image_view(&bytes, Some(crop), None, false, false).is_err());
+    }
+
+    #[test]
+    fn render_image_view_rejects_oversized_scale() {
+        let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            400, 300, image::Rgb([0, 0, 0]),
+        ));
+        let bytes = png_bytes(&image);
+        assert!(super::render_image_view(&bytes, None, Some(16.0), false, false).is_err());
     }
 
     #[test]

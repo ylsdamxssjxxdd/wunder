@@ -229,12 +229,13 @@ fn model_sandbox_poll_contains_each_output_once() {
     assert_eq!(result["stdout"], "new\n");
     assert_eq!(result["stderr"], "warning\n");
     assert!(result.get("deltas").is_none());
-    assert_eq!(
-        build_command_session_result(json!({
-            "status": "exited", "exit_code": 2, "stderr": "failed"
-        }))["ok"],
-        false
-    );
+    // 非零退出是命令语义：会话正常完成，退出码与提示随数据返回。
+    let exited = build_command_session_result(json!({
+        "status": "exited", "exit_code": 2, "stderr": "failed"
+    }));
+    assert_eq!(exited["ok"], true);
+    assert_eq!(exited["data"]["exit_code"], 2);
+    assert!(exited["data"]["exit_note"].as_str().is_some());
 }
 
 /// Exercise real sandbox pipes + HTTP + runtime observer + model exit wait.

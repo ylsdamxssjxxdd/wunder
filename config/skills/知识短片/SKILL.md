@@ -24,7 +24,7 @@ description: >
 5. **声音走一条链。** `--events` → `audio.py`；改完台词必须重导事件表（`audio.py` 会校验，`--refresh-events` 可自动重导）。
 6. **不硬切。** 相邻镜头时间窗重叠半秒，各自乘 `ss` 淡入淡出；一镜只改一处。
 7. **先查再渲。** `--lint` → `--sheet`/`--stills` → `--check-safe`/`--overlap` → `--det` → 渲片段 → 全片。
-8. **长片可续。** 全片用 `--jobs 4`；中断后 `--resume` 或 `--concat`，不要从头重渲；发布用 `--web` 转码。
+8. **长片可续。** 全片用 `--jobs 4`；中断后重跑同样的 `--jobs 4`（默认续渲）或 `--concat`，不要从头重渲；发布用 `--web` 转码。
 
 ## 配图不是讲解
 
@@ -62,6 +62,8 @@ description: >
 - **看的时候当自己是第一次看的观众。** 遮住字幕和小字过三问：这是什么 / 它在干什么 / 我明白了什么。答得含糊就是没做好。
 - **对着 `references/visualization.md` 第八节的表逐条查**：主体够不够大、认不认得出、发不发白、小字压没压在东西上、字幕区干不干净、转场说不说得清。
 - **至少改两轮再给用户看。** 每一轮：把看到的毛病列出来 → 改 → 重截同样的时刻 → 确认改掉了、没改坏别的。还有毛病就接着改，不要带着自己都看得出的毛病交片。
+- **先算成本再决定改哪里。** 全片重渲很贵，但按镜头分段后改一镜只重渲一镜（`--only 镜号`，默认保留分段）；
+  先做 30 秒、先改最刺眼的那几处，不要因为“全片要跑很久”就放过明显的问题。
 - **拿参考片当尺子。** 把自己的静帧和 `references/samples.md` 的合格/不合格样张并排看，再对照 `references/visualization.md` 第八节的表。差一截，就还没做完。
 - **交片时说实话。** 还不满意的地方、没做的东西、没完整看过的部分，直接列出来。
 
@@ -152,9 +154,13 @@ python engine/render.py <工程目录> --serve            # 浏览器预览
 K.card(fr, t, { from: 10.9, to: 16.8, zh: '多普勒效应', sub: '为什么救护车一过，声音就变低', en: 'THE DOPPLER EFFECT' });
 ```
 
+片名卡的副标题 / 英文出现时刻会按卡片长度自动压缩；需要精确控制时加 `subAt` / `enAt`（相对卡片起点，秒）。
 `new_film.py` 建出来的 `film.js` 只是能跑起来的骨架，里面一行画面都没有：没有现成的钩子、没有现成的图表。每一镜都照分镜表现写。
-先填 `SUBS`，再把分镜表里**最难画的那一镜**做出来，截静帧。引擎的用法在 `references/engine.md`。`examples/` 可以翻，看的是别人怎么把一张分镜表变成画面，不是去找能搬的零件。
+先把 `SHOTS` 和 `SUBS` 填成和分镜表同一份时间（`K.cue(SHOTS)` 可以把字幕写成相对镜头的 `{shot, at, dur}`），再把分镜表里**最难画的那一镜**做出来，截静帧。
+引擎的用法在 `references/engine.md`。`examples/` 可以翻，看的是别人怎么把一张分镜表变成画面，不是去找能搬的零件。
 字体通常由补充包提供：中文优先用 `opt/fonts/video` 的思源宋体/黑体，缺失时退到 `opt/fonts/common` 的宋体/雅黑；拉丁与等宽也在 `opt/fonts/video`；云端在 `/usr/share/fonts/wunder`。开发环境缺字体时跑 `python engine/get_fonts.py`（缺哪个下哪个）。
+
+**看图不要靠猜。** 截出的帧用读图工具（read_image）直接看：`path` 指向 `review/s_0005.00.png`、`review/sheet.jpg`、`review/motion_*.jpg` 即可，不需要起服务、不需要浏览器。局部放大用 `crop="x,y,w,h"` + `scale`（如 `scale=2`）一步到位，不要再 PIL 裁切存图绕圈；小字糊就放大那块区域，而不是重截。字幕区干不干净、某区域亮不亮这类数值判断用 `stats`（随图返回平均亮度、非背景/边缘像素占比）或 `stats_only`（只要数值不回图，适合逐帧巡检），别靠肉眼数包围盒。历史里的旧图只留路径，按路径重读就能回看同一帧；看一眼就落一条文字结论的习惯仍然值得保持。成片抽帧检查直接把 `path` 指向 `renders/final.mp4` 并给 `frame_rate`（长片用 0.1–0.3）。`--serve` + 浏览器只在需要交互预览动态效果时用。
 
 过关：拿这张静帧，遮住字幕和小字，问"这是什么、它在干什么"——答得出来；缩到手机横屏大小还分得清；纵向 80%–95% 只有字幕；
 对着 `visualization.md` 第八节的表查过一遍。答不出来就重画，或者回第 2 步换形象。第一版几乎不会过，改两三轮是正常的。
@@ -173,7 +179,8 @@ python engine/render.py <工程目录> --clip 0 30 head
 渲之前先用 `--motion` 把每个转场前后各抽一张拼图看：镜头怎么进、东西怎么变、有没有哪一帧说不清在干什么。有就改，改完再渲。
 
 过关：字幕出现后 0.3 秒内屏上有动作；"哦——"之前有铺垫、之后停得住；场景之间是长出来的或者推拉过去的，不是硬切。
-这是给用户看画面的时机。
+这是给用户看画面的时机。**这一关是硬门槛：`head.mp4` 不过就不铺全片**——全片一次是 6–23 分钟，改一版 30 秒只要几十秒；
+先便宜地改到满意，再花贵的钱。
 
 ### 7. 铺全片
 
@@ -182,19 +189,25 @@ python engine/render.py <工程目录> --clip 0 30 head
 长片按章拆文件（见 `engine.md`）。
 
 ```bash
-python engine/render.py <工程目录> --lint             # END/FPS、字体、音效、meta、Math.random 等静态检查
-python engine/render.py <工程目录> --check-safe       # 非字幕元素越过 y=840 时列出时刻和元素名
-python engine/render.py <工程目录> --overlap          # 命名的元素包围盒相交（遮挡）时列出时刻和元素对
+python engine/render.py <工程目录> --lint             # END/FPS、字体、音效、meta、分镜表、Math.random 等检查
+python engine/render.py <工程目录> --storyboard       # 分镜表时间列 vs film.js 的 SHOTS，逐镜核对
+python engine/render.py <工程目录> --check-safe       # 包围盒 + 像素：非字幕内容越过 y=840（背景差分；flat 跳过像素）
+python engine/render.py <工程目录> --check-band       # 只做像素检查（手写 ctx / 柔边渐变也能查到）
+python engine/render.py <工程目录> --overlap          # 命名元素实际相交面积；有意相交用 allow 放行
 python engine/render.py <工程目录> --det              # 同一帧渲两次必须一样
-python engine/render.py <工程目录> --jobs 4           # 全片，4 路并行
-python engine/render.py <工程目录> --jobs 4 --resume  # 中断后接着渲（默认跳过源码未变且已完成的段）
-python engine/render.py <工程目录> --concat           # 只有分段、没有 raw.mp4 时手动拼接
+python engine/render.py <工程目录> --jobs 4           # 按镜头切段，最多 4 路真并行，再无损拼接
+python engine/render.py <工程目录> --only 3           # 只重渲第 3 镜，其余分段保留并自动重拼
+python engine/render.py <工程目录> --concat           # 手动拼接全部分段
+python engine/render.py <工程目录> --sheet 16 --from renders/final.mp4  # 从成片抽帧拼图
 ```
 
-命名装置后，检查报告才会写出"船""量尺"这样的名字，否则只能报 `未命名 ellipse`：
+分段默认保留，改一镜只重渲一镜；确认不再迭代时加 `--clean-parts` 删掉分段。
+第一次全片用 `--jobs 4` 铺完；之后改哪一镜就 `--only 镜号/名字/时间区间`，不要整片重渲。
+命名装置后，检查报告才会写出"船""量尺"这样的名字，否则只能报 `未命名 ellipse`；有意让两个装置相交时，用 allow 放行：
 
 ```js
 fr.mark('船', () => { /* 画船 */ });
+fr.mark('声波圈', () => { /* 画圈 */ }, { allow: '你' });   // --overlap 跳过“声波圈 × 你”
 ```
 
 全片渲完看一眼体积和码率；发布版用 `--web` 转码，不要把 100 MB 的 `final.mp4` 直接发出去：
@@ -205,16 +218,16 @@ python engine/render.py <工程目录> --web              # renders/web.mp4，10
 
 ### 8. 声音
 
-- **C**：`film.js` 里用 `fr.sfx(时刻, 名字)` 登记事件（每一下变化一声、推拉时的上滑音、落定时的低音、提问那一镜不出声），然后
-  `python engine/render.py <工程> --events && python engine/audio.py <工程>`。改过台词或镜头时间后，`audio.py` 会拒绝旧事件表；
-  加 `--refresh-events` 让它自动重导，或手动重跑 `--events`。
+- **C**：`film.js` 里用 `VK.film({ sfx: [[时刻, 名字], …] })` 声明事件（每一下变化一声、推拉时的上滑音、落定时的低音、提问那一镜不出声），
+  也可以在 `draw` 里 `fr.sfx(...)`；然后 `python engine/render.py <工程> --events && python engine/audio.py <工程>`。
+  改过台词或镜头时间后，`audio.py` 会拒绝旧事件表；加 `--refresh-events` 让它自动重导，或手动重跑 `--events`。
 - **B**：用户给一首配乐，`python engine/audio.py <工程> --bgm 曲子.mp3 -8`。先量配乐的速度，把每段的开头对到小节线上，
   最大的那次揭晓对到配乐重新进入的那一拍。用户没给配乐就说明白：成片目前只有事件音，等配乐。
 - `audio.py` 需要 scipy；桌面版/安卓补充包和云端镜像已带，开发机缺 scipy 时脚本会明确提示。
 
 ### 9. 终检
 
-整片渲出来以后做三遍：
+整片渲出来以后做三遍（用 read_image 对 `renders/final.mp4` 按 `frame_rate` 抽帧通看，转场处再用 `--motion`/`--strip` 加密抽查）：
 
 1. **静音、遮住字幕看一遍。** 每一段在讲什么，看得出来吗？
 2. **只读字幕一遍。** 通顺吗？有没有哪句里的名词，屏上找不到？

@@ -248,12 +248,12 @@ async fn common_developer_tools_complete_a_real_workspace_workflow() {
         json!({ "content": failing_command }),
     )
     .await;
-    assert_eq!(failed_command["ok"], false);
-    assert_eq!(
-        failed_command["error_meta"]["code"],
-        "TOOL_EXEC_NON_ZERO_EXIT"
-    );
-    assert_eq!(failed_command["data"]["returncode"], 7);
+    // 非零退出码是命令语义而非工具失败：结果正常返回，退出码与提示随数据携带。
+    assert_eq!(failed_command["ok"], true);
+    assert_eq!(failed_command["data"]["results"][0]["returncode"], 7);
+    assert!(failed_command["data"]["results"][0]["exit_note"]
+        .as_str()
+        .is_some_and(|note| !note.is_empty()));
 }
 
 #[tokio::test]
@@ -472,6 +472,94 @@ async fn read_image_generates_the_followup_image_block_for_the_model() {
     assert!(image_block["image_url"]["url"]
         .as_str()
         .is_some_and(|url| url.starts_with("data:image/png;base64,")));
+}
+
+#[tokio::test]
+async fn read_image_crop_scale_stats_deliver_pixels_and_persistent_numbers() {
+    let fixture = ToolFixture::new();
+    // 100x80 黑底，(50,50) 处 10x10 白色矩形；裁 (40,40,20,20) 后白占 25%。
+    let mut image = image::RgbImage::from_pixel(100, 80, image::Rgb([0, 0, 0]));
+    for y in 50..60 {
+        for x in 50..60 {
+            image.put_pixel(x, y, image::Rgb([255, 255, 255]));
+        }
+    }
+    image
+        .save(fixture.workspace_path("frame.png"))
+        .expect("write png fixture");
+
+    let result = invoke(
+        &fixture,
+        "read_image",
+        json!({ "path": "frame.png", "crop": "40,40,20,20", "scale": 2, "stats": true }),
+    )
+    .await;
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["data"]["view"]["source_width"], 100);
+    assert_eq!(result["data"]["view"]["width"], 40);
+    assert_eq!(result["data"]["view"]["height"], 40);
+    let stats = &result["data"]["stats"];
+    assert!((stats["non_background_ratio"].as_f64().unwrap() - 0.25).abs() < 0.001);
+    assert!((stats["mean_luma"].as_f64().unwrap() - 63.8).abs() < 0.2);
+
+    let context = fixture.context();
+    let followup = build_read_image_followup_user_message(&context, &result["data"])
+        .await
+        .expect("build image followup")
+        .expect("followup message");
+    let content = followup["content"].as_array().expect("content array");
+    let texts: Vec<&str> = content
+        .iter()
+        .filter(|block| block["type"] == "text")
+        .filter_map(|block| block["text"].as_str())
+        .collect();
+    assert!(texts.iter().any(|text| text.contains("[image_stats]")));
+    assert!(texts.iter().any(|text| text.contains("[image_path:")));
+    let image_block = content
+        .iter()
+        .find(|block| block["type"] == "image_url")
+        .expect("image_url block");
+    assert!(image_block["image_url"]["url"]
+        .as_str()
+        .is_some_and(|url| url.starts_with("data:image/")));
+
+    // 派生图真实落盘，且就是放大后的裁切区域。
+    let attachment = &result["data"]["result"]["attachments"][0];
+    let public_path = attachment["public_path"].as_str().expect("public path");
+    let derived = fixture
+        .workspace
+        .resolve_path(USER_ID, public_path)
+        .expect("resolve derived view");
+    let decoded = image::open(&derived).expect("open derived view");
+    assert_eq!((decoded.width(), decoded.height()), (40, 40));
+
+    // 越界 crop 明确报错并带上真实尺寸，不静默 clamp。
+    let context = fixture.context();
+    let out_of_bounds = execute_tool(
+        &context,
+        "read_image",
+        &json!({ "path": "frame.png", "crop": "90,70,20,20" }),
+    )
+    .await;
+    assert!(out_of_bounds.is_err());
+
+    // stats_only：只有数值，没有附件，也不产生悬空看图指令。
+    let numeric = invoke(
+        &fixture,
+        "read_image",
+        json!({ "path": "frame.png", "crop": "40,40,20,20", "stats_only": true }),
+    )
+    .await;
+    assert_eq!(numeric["ok"], true);
+    assert!(numeric["data"]["stats"].is_object());
+    assert!(numeric["data"]["result"]["attachments"]
+        .as_array()
+        .expect("attachments array")
+        .is_empty());
+    let followup = build_read_image_followup_user_message(&context, &numeric["data"])
+        .await
+        .expect("build numeric followup");
+    assert!(followup.is_none());
 }
 
 #[tokio::test]

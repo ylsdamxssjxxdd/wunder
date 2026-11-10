@@ -27,7 +27,7 @@
 python engine/render.py <工程> --sheet 16                 # 全片 16 帧，先看整体
 python engine/render.py <工程> --stills 12.5 --mark 船    # 原尺寸 + 包围盒
 python engine/render.py <工程> --check-safe               # 安全区越界表（时刻 + 元素名）
-python engine/render.py <工程> --overlap                  # 命名元素包围盒相交（遮挡）表
+python engine/render.py <工程> --overlap                  # 命名元素实际相交面积（allow 可放行）
 python engine/render.py --diff A.mp4 B.mp4                # 两版逐帧差分
 ```
 

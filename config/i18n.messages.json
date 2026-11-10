@@ -1251,6 +1251,34 @@
     "en-US": "The specified file is not supported visual media.",
     "zh-CN": "指定文件不是受支持的视觉媒体格式。"
   },
+  "tool.read_image.invalid_crop": {
+    "en-US": "crop must be four comma-separated non-negative integers \"x,y,w,h\" with w and h greater than 0.",
+    "zh-CN": "crop 需为四个逗号分隔的非负整数 \"x,y,w,h\"，且 w、h 大于 0。"
+  },
+  "tool.read_image.crop_out_of_bounds": {
+    "en-US": "crop exceeds the image bounds (image is {width}x{height} pixels).",
+    "zh-CN": "crop 超出图片范围（图片为 {width}x{height} 像素）。"
+  },
+  "tool.read_image.invalid_scale": {
+    "en-US": "scale must be a number in (0, 16].",
+    "zh-CN": "scale 需为 (0, 16] 内的数值。"
+  },
+  "tool.read_image.scale_too_large": {
+    "en-US": "scale too large: output sides are capped at 4096px (max usable scale for this crop is {max_scale}).",
+    "zh-CN": "scale 过大：输出边长上限 4096px（当前裁切区域最大可用 scale={max_scale}）。"
+  },
+  "tool.read_image.view_image_only": {
+    "en-US": "crop/scale/stats are only supported for still images; extract video or GIF frames first (frame_rate or ffmpeg).",
+    "zh-CN": "crop/scale/stats 仅支持静态图片；视频或 GIF 请先抽帧（frame_rate 或 ffmpeg）。"
+  },
+  "tool.read_image.view_too_large": {
+    "en-US": "The derived image is still too large after re-encoding; use a smaller crop or scale.",
+    "zh-CN": "派生图重编码后仍过大，请减小 crop 区域或 scale。"
+  },
+  "tool.read_image.followup_stats": {
+    "en-US": "[image_stats] region {width}x{height}: mean luma {mean_luma}/255, estimated background RGB({background}), non-background pixels {non_background}%, edge pixels {edge}%. These numbers persist as text; cite them directly instead of re-viewing the frame.",
+    "zh-CN": "[image_stats] 区域 {width}x{height}：平均亮度 {mean_luma}/255，估计背景 RGB({background})，非背景像素占比 {non_background}%，边缘像素占比 {edge}%。数值以文本留存，可直接引用，不必为核对数字重看该帧。"
+  },
   "tool.web_fetch.invalid_url": {
     "en-US": "Invalid URL.",
     "zh-CN": "无效的 URL。"
@@ -2032,12 +2060,20 @@
     "zh-CN": "当前运行环境不支持命令会话。"
   },
   "tool.exec.background_next_step": {
-    "en-US": "Output is streamed to the UI automatically. When the result is needed, call command_session with this command_session_id; poll defaults to wait_for=exit and yield_time_ms=60000. Do not poll for each output line or narrate each poll. Confirm exit before reporting completion; never sleep to wait.",
-    "zh-CN": "输出由运行时自动推送到界面。需要结果时用命令会话工具传入该 command_session_id；poll 默认 wait_for=exit、yield_time_ms=60000。不要逐行轮询或逐次播报轮询过程；确认退出后再报告完成，不要用 sleep 空等。"
+    "en-US": "Output is streamed to the UI automatically. To wait for the result, call command_session with {\"command_session_id\":\"<id above>\",\"action\":\"poll\",\"wait_for\":\"exit\"} — it blocks until exit or the 60s window; if still running, call the same wait again. Do not poll for each output line or narrate each poll. Confirm exit before reporting completion; never sleep to wait.",
+    "zh-CN": "输出由运行时自动推送到界面。等待结果请直接调用命令会话工具：command_session {\"command_session_id\":\"<上面的 id>\",\"action\":\"poll\",\"wait_for\":\"exit\"}——会阻塞到退出或 60 秒窗口结束；仍在运行就再调用一次同一等待。不要逐行轮询或逐次播报轮询过程；确认退出后再报告完成，不要用 sleep 空等。"
+  },
+  "tool.command_session.keep_waiting": {
+    "en-US": "The command is still running. Call poll again with the same command_session_id (defaults wait_for=exit, yield_time_ms=60000) until it exits; never idle with sleep.",
+    "zh-CN": "命令仍在运行。继续用同一 command_session_id 调用 poll（默认 wait_for=exit、yield_time_ms=60000）直到退出；不要用 sleep 空等。"
   },
   "tool.exec.sleep_not_allowed": {
     "en-US": "Do not idle with a bare sleep command: execute_command blocks by default and returns the result; to wait for a background command, poll it with the command_session tool instead.",
     "zh-CN": "不要用 sleep 空等：执行命令默认阻塞等待即可拿到结果；等待后台命令请用命令会话工具轮询。"
+  },
+  "tool.exec.non_zero_exit_note": {
+    "en-US": "The command exited with a non-zero code. Exit codes are command semantics, not tool failures (grep no-match=1, pkill no-process=1, diff differences=1). Judge from stdout/stderr whether a fix is needed; do not retry blindly or mask with || true.",
+    "zh-CN": "命令以非 0 退出码结束。退出码是命令语义而非工具失败（grep 无匹配=1、pkill 无进程=1、diff 有差异=1）；请结合 stdout/stderr 判断是否需要修正，不要盲目重试或加 || true 掩盖。"
   },
   "tool.exec.timeout": {
     "en-US": "Command timed out and was terminated; the collected partial output is included.",
@@ -2064,8 +2100,8 @@
     "zh-CN": "可选，工作目录仅支持工作区内相对路径（不允许绝对路径）。"
   },
   "tool.spec.exec.description": {
-    "en-US": "Run CLI commands in the workspace. Small stdout/stderr is returned directly; large output is reduced to byte summaries and preserved as a tool-result handle when available, which can be paged or searched with read_file instead of rerunning the command. Each call runs in a fresh shell; pass workdir instead of using cd. Blocks by default until the command exits or timeout_s (default 120s) is reached; set run_in_background=true only for long-running commands, which returns a command_session_id to poll with the command_session tool. Provide `description` (5-10 words) before `content` in the arguments. Never use a bare sleep command to idle-wait. workdir accepts only a workspace-relative subdirectory.",
-    "zh-CN": "在工作区内执行 CLI 命令。较小的 stdout/stderr 直接返回；大输出只返回字节摘要，并在可用时保存为 tool-result 句柄，可用 read_file 分页或检索，无需重跑命令。每次调用都在全新 shell 中执行；用 workdir 指定目录而非 cd。默认阻塞等待命令结束或达到 timeout_s（默认 120 秒）；仅对长时间运行的命令设置 run_in_background=true，此时返回 command_session_id，用命令会话工具轮询。请先提供 description（命令做什么，5–10 个词），再提供 content。不要用单独的 sleep 命令空等。workdir 仅接受工作区内的相对子目录。"
+    "en-US": "Run CLI commands in the workspace. Small stdout/stderr is returned directly; large output is reduced to byte summaries and preserved as a tool-result handle when available, which can be paged or searched with read_file instead of rerunning the command. Each call runs in a fresh shell; pass workdir instead of using cd. Blocks by default until the command exits or timeout_s (default 120s) is reached; set run_in_background=true only for long-running commands, which returns a command_session_id to poll with the command_session tool. A non-zero exit code is returned as normal result data (exit codes are command semantics, e.g. grep no-match=1), not a tool failure. Provide `description` (5-10 words) before `content` in the arguments. Never use a bare sleep command to idle-wait. workdir accepts only a workspace-relative subdirectory.",
+    "zh-CN": "在工作区内执行 CLI 命令。较小的 stdout/stderr 直接返回；大输出只返回字节摘要，并在可用时保存为 tool-result 句柄，可用 read_file 分页或检索，无需重跑命令。每次调用都在全新 shell 中执行；用 workdir 指定目录而非 cd。默认阻塞等待命令结束或达到 timeout_s（默认 120 秒）；仅对长时间运行的命令设置 run_in_background=true，此时返回 command_session_id，用命令会话工具轮询。非 0 退出码作为正常结果数据返回（退出码是命令语义，如 grep 无匹配=1），不算工具失败。请先提供 description（命令做什么，5–10 个词），再提供 content。不要用单独的 sleep 命令空等。workdir 仅接受工作区内的相对子目录。"
   },
   "tool.spec.exec.shell_bash": {
     "en-US": "Shell environment: POSIX bash. Write POSIX commands: pipes, &&, ;, grep, sed, awk, find, ssh, ls, cat, head, tail, tar, curl, etc. On Windows use /c/... or forward-slash C:/... paths (avoid backslashes) and invoke cmd as `cmd //c ...`. Output is UTF-8. Do not use cmd or PowerShell syntax (e.g. dir, type, copy, del, set, %VAR%).",
@@ -2744,8 +2780,24 @@
     "zh-CN": "本地视觉媒体路径，可使用工作区相对路径或允许的绝对路径。"
   },
   "tool.spec.read_image.description": {
-    "en-US": "Read a local image, GIF, or video file into the current model context. This is not a web image-search tool.",
-    "zh-CN": "读取本地图片、GIF 或视频并送入当前模型上下文。不是联网看图工具。"
+    "en-US": "Read a local image, GIF, or video into the current model context; not a web image-search tool. Images support crop=x,y,w,h and scale to inspect details, stats for region numbers (mean luma, non-background/edge pixel ratios), stats_only for numbers without pixels. Videos use frame_rate to extract frames. Older frames in history keep only their path — re-read the path to view them again.",
+    "zh-CN": "读取本地图片、GIF 或视频并送入当前模型上下文，不是联网看图工具。图片支持 crop=x,y,w,h 裁切与 scale 缩放看细节；stats 附带区域平均亮度、非背景/边缘像素占比等数值，stats_only 只返回数值不回图。视频用 frame_rate 抽帧。历史中的旧帧只保留路径，需要时按路径重读即可回看。"
+  },
+  "tool.spec.read_image.args.crop": {
+    "en-US": "Optional still-image crop in source pixels: \"x,y,w,h\". Applied before scale; stats are computed on this region.",
+    "zh-CN": "可选，静态图片裁切区域，源图像素坐标 \"x,y,w,h\"。先于 scale 生效；stats 在该区域上计算。"
+  },
+  "tool.spec.read_image.args.scale": {
+    "en-US": "Optional viewing zoom applied after crop, e.g. 2 doubles, 0.5 halves. Max 16; output sides are capped at 4096px.",
+    "zh-CN": "可选，裁切后的显示缩放倍率，如 2 放大一倍、0.5 缩小一半。最大 16，输出边长上限 4096px。"
+  },
+  "tool.spec.read_image.args.stats": {
+    "en-US": "Optional, default false: also return region numbers (size, mean luma 0-255, estimated corner background RGB, non-background pixel ratio, edge pixel ratio). Numbers persist as text even after the image is dropped from context.",
+    "zh-CN": "可选，默认 false：附带区域数值（尺寸、平均亮度 0-255、四角估计背景 RGB、非背景像素占比、边缘像素占比）。图片被上下文省略后数值仍以文本留存，可直接引用。"
+  },
+  "tool.spec.read_image.args.stats_only": {
+    "en-US": "Optional, default false: return only the region numbers without inlining an image. Use for numeric sweeps over many frames (e.g. safe-area checks) without spending vision tokens.",
+    "zh-CN": "可选，默认 false：只返回区域数值，不内联图片。适合对大量帧做纯数值检查（如安全区巡检），不消耗视觉额度。"
   },
   "tool.spec.read_image.args.frame_rate": {
     "en-US": "Optional frame extraction rate for video files (FPS).",

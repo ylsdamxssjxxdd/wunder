@@ -118,6 +118,7 @@ function rays(fr, cx, cy, lt, a, n = 56, color = '#E7C477') {
 }
 function titleGilt(fr, lt, o) {
   const pal = PAL.gilt, a = o.a == null ? 1 : o.a, cy = o.cy || 465, cs = Array.from(o.zh), size = o.size || 196, track = o.track == null ? 22 : o.track;
+  const hold = o.hold == null ? 6.5 : Math.max(1.2, o.hold), tagAt = o.tagAt == null ? Math.min(1.15, Math.max(.6, hold * .2)) : o.tagAt;
   rays(fr, W / 2, cy + 30, lt, ss(lt, .1, 1.2) * a * (o.rays == null ? .5 : o.rays));
   { const r0 = rng(31), sk = ss(lt, 0, 1) * a * (o.specks == null ? 1 : o.specks); for (let i = 0; i < 110; i++) { const px = r0() * W, py = r0() * H, s0 = r0(); fr.glow(px, py, 2.5 + s0 * 4, '#F1D9A0', (.25 + .6 * s0) * (.6 + .4 * Math.sin(lt * (1 + s0 * 2) + i)) * sk); } }   // 金屑星点
   fr.glow(W / 2, cy, 620, '#6B4A1C', .22 * ss(lt, 0, .8) * a);
@@ -128,7 +129,7 @@ function titleGilt(fr, lt, o) {
   const r = rng(77);
   for (let i = 0; i < 70; i++) { const b = .1 + r() * .9, k = seg(lt, b, b + .9); if (k <= 0 || k >= 1) { r(); r(); r(); continue; } const px = W / 2 - 520 + r() * 1040 + k * 40, py = cy - 110 + r() * 220 - k * 30, s = 1 + r() * 2.2; fr.glow(px, py, s * 4, '#F4D48A', Math.sin(k * Math.PI) * .8 * a); }
   if (o.motif) o.motif(fr, lt, a);
-  fr.text(o.tag, W / 2, cy + (o.tagDy || 307), { font: 'serifm', size: 34, track: 18, color: '#D4D2CC', a: ss(lt, 1.15, 1.8) * a });
+  fr.text(o.tag, W / 2, cy + (o.tagDy || 307), { font: 'serifm', size: 34, track: 18, color: '#D4D2CC', a: ss(lt, tagAt, tagAt + .65) * a });
 }
 
 /* ---------- C：点阵聚成字 ----------
@@ -159,13 +160,20 @@ function dustText(fr, str, cx, cy, o, k, t) {
 }
 function titleNight(fr, lt, o) {
   const pal = PAL.night, a = o.a == null ? 1 : o.a, cy = o.cy || 438, ly = o.lineY || 577;
+  /* 卡片可见时长（到淡出前）决定副标题和英文何时出现：6 秒卡不会等到第 4.6 秒才出副题。
+   * o.subAt / o.enAt 可覆盖（相对卡片起点，秒）。 */
+  const hold = o.hold == null ? 6.5 : Math.max(1.2, o.hold);
+  const zhEnd = Math.min(3.3, Math.max(1.6, hold * .55));
+  const subAt = o.subAt == null ? Math.min(4.6, Math.max(1.2, hold * .45)) : o.subAt;
+  const enAt = o.enAt == null ? subAt + Math.min(.7, Math.max(.25, hold * .08)) : o.enAt;
+  const subIn = Math.min(1.0, Math.max(.4, hold * .15)), enIn = Math.min(1.0, Math.max(.35, hold * .12));
   /* 一条贯穿画面的细线，两个光点沿线向右跑（信号） */
   const la = ss(lt, 0, .6) * a; fr.line(W / 2 - 960 * ss(lt, .05, 1.2), ly, W / 2 + 960 * ss(lt, .05, 1.2), ly, { w: 1.1, color: '#7FA8C8', a: .3 * la, cap: 'butt' });
   for (let i = 0; i <= 16; i++) { const tx = 120 + i * 105; fr.line(tx, ly + 3, tx, ly + 8, { w: 1, color: '#7FA8C8', a: .22 * la * ss(lt, .3 + i * .03, 1 + i * .03), cap: 'butt' }); }
   for (let j = 0; j < 2; j++) { const sp = 685, span = 2074, px = ((W / 2 + j * 1037 + Math.max(0, lt) * sp) % span) - 77; fr.comet(px, ly, 240, 13, '#CFE6FF', (j === 0 ? 1 : ss(lt, .55, .9)) * a); }   // 两个光点相隔半个画面，约 3s 绕一圈
-  dustText(fr, o.zh, W / 2, cy, { font: 'serifl', size: o.size || 178, track: o.track == null ? 58 : o.track, color: pal.ink, glow: 14, glowColor: '#BFD9F2', glowA: .35, a }, seg(lt, .5, 3.3), lt);
-  fr.text(o.sub, W / 2 + 9, cy + 235, { font: 'serifm', size: 40, track: 20, color: pal.goldLo, a: ss(lt, 4.6, 5.6) * a, glow: 10, glowA: .3 });
-  fr.text(o.en, W / 2, cy + 290, { font: 'mono', size: 15, track: 5.5, color: pal.label, a: ss(lt, 5.2, 6.2) * a });
+  dustText(fr, o.zh, W / 2, cy, { font: 'serifl', size: o.size || 178, track: o.track == null ? 58 : o.track, color: pal.ink, glow: 14, glowColor: '#BFD9F2', glowA: .35, a }, seg(lt, .5, zhEnd), lt);
+  fr.text(o.sub, W / 2 + 9, cy + 235, { font: 'serifm', size: 40, track: 20, color: pal.goldLo, a: ss(lt, subAt, subAt + subIn) * a, glow: 10, glowA: .3 });
+  fr.text(o.en, W / 2, cy + 290, { font: 'mono', size: 15, track: 5.5, color: pal.label, a: ss(lt, enAt, enAt + enIn) * a });
 }
 
 /* 按绝对区间排片名卡：不用自己反推 lt 和淡出。
@@ -174,12 +182,47 @@ function titleNight(fr, lt, o) {
 function card(fr, t, o) {
   const from = o.from, to = o.to;
   if (from == null || to == null || t < from || t > to) return 0;
-  const k = Math.min(ss(t, from, from + (o.fin == null ? .12 : o.fin)), 1 - ss(t, to - (o.fout == null ? .7 : o.fout), to)) * (o.a == null ? 1 : o.a);
+  const fout = o.fout == null ? .7 : o.fout;
+  const k = Math.min(ss(t, from, from + (o.fin == null ? .12 : o.fin)), 1 - ss(t, to - fout, to)) * (o.a == null ? 1 : o.a);
   if (k <= .001) return 0;
   const lt = o.lt == null ? t - from : o.lt;
-  const opts = Object.assign({}, o, { a: k });
+  const opts = Object.assign({ hold: Math.max(.4, to - from - fout) }, o, { a: k });
   if (o.kind === 'gilt') titleGilt(fr, lt, opts); else titleNight(fr, lt, opts);
   return k;
+}
+
+/* ---------- 单源时间轴：镜头表 → 字幕 / 章节标的绝对时间 ----------
+ * const SHOTS = [{ no: 1, name: '开场', from: .6, to: 4.9 }, …];
+ * const C = K.cue(SHOTS);
+ * const SUBS = C.subs([{ shot: 1, at: 0, dur: 4.3, zh: '……' }]);
+ * const MARKS = C.marks([{ shot: 2, at: .8, no: '01', zh: '……', en: '……' }]);
+ * 改镜头起点只动 SHOTS 一处，字幕和章节标跟着走。 */
+function cue(shots) {
+  const list = (shots || []).filter(s => s && isFinite(s.from) && isFinite(s.to) && s.to > s.from);
+  const by = new Map();
+  list.forEach((s, i) => { by.set(String(s.no == null ? i + 1 : s.no), s); if (s.name) by.set(String(s.name), s); });
+  const shot = ref => {
+    if (typeof ref === 'number') return list[ref - 1] || null;
+    const hit = by.get(String(ref)); if (hit) return hit;
+    const n = parseInt(ref, 10); return isFinite(n) ? list[n - 1] || null : null;
+  };
+  const at = (ref, off = 0) => { const s = shot(ref); if (!s) throw new Error('K.cue: 未知镜号 ' + ref); return s.from + off; };
+  return {
+    shots: list, at, shot,
+    subs(rows) {
+      return (rows || []).map(r => {
+        const s = shot(r.shot); if (!s) throw new Error('K.cue: 未知镜号 ' + r.shot);
+        const a = s.from + (r.at || 0), b = r.b != null ? r.b : r.dur != null ? Math.min(s.to, a + r.dur) : s.to;
+        const out = Object.assign({}, r, { a, b }); delete out.shot; delete out.at; delete out.dur; return out;
+      });
+    },
+    marks(rows) {
+      return (rows || []).map(r => {
+        const s = shot(r.shot); if (!s) throw new Error('K.cue: 未知镜号 ' + r.shot);
+        const out = Object.assign({}, r, { t: s.from + (r.at || 0) }); delete out.shot; delete out.at; return out;
+      });
+    },
+  };
 }
 
 /* ---------- 骰子（小型 3D：正交基 + 弱透视） ---------- */
@@ -306,5 +349,5 @@ function noiseOverlay(fr, k, colors = ['#E84B75', '#64B8F6', '#FFFFFF']) { if (k
 /* 章与章之间"暗一下"：返回 0..1 的亮度系数，乘到底和内容上。times = 每次最暗的时刻 */
 function dips(t, times, half = .55) { let k = 1; for (const c of times) k = Math.min(k, 1 - (1 - smooth(clamp(Math.abs(t - c) / half))) ); return k; }
 
-G.VKit = { gauge, flash, ripple, sepia, noiseOverlay, dips, PAL, SUB, parseMark, subs, track, odometer, hudYear, seal, chapterMark, rays, titleGilt, dustText, titleNight, card, M3, die, dieFace, meander, numberLine, bellPts };
+G.VKit = { gauge, flash, ripple, sepia, noiseOverlay, dips, PAL, SUB, parseMark, subs, track, cue, odometer, hudYear, seal, chapterMark, rays, titleGilt, dustText, titleNight, card, M3, die, dieFace, meander, numberLine, bellPts };
 })(window);

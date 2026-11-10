@@ -1,6 +1,11 @@
 /* vk.js — 引擎核心：一张 1920×1080 的 Canvas，每一帧都是 t 的纯函数。
  *
- *   VK.film({ dur, theme, draw(fr, t) })   →  window.seek(t) / window.END / window.SFX
+ *   VK.film({ dur, theme, shots, subs, sfx, draw(fr, t) })
+ *     → window.seek(t) / END / FPS / SHOTS / SUBS / events() / recordFrame(t)
+ *
+ *   shots: 可选的镜头表 [{ no, name, from, to }]，render.py 按它切段、--storyboard 用它核对；
+ *   subs:  可选的 SUB 列表，暴露给 --storyboard 核对分镜表；
+ *   sfx:   可选的音效声明 [[t, 名字, 参数], …]，比在 draw() 里 fr.sfx(...) 更直观。
  *
  * 画面分两层：底（bg：渐变、星点/尘埃、暗角）和光（L：一切内容）。
  * 出帧时 L 叠到底上，再把 L 模糊两遍用加法叠回去 —— 所有亮的东西自带辉光。
@@ -66,7 +71,7 @@ const fontOf = (key, size) => { const f = FONTS[key] || FONTS.serif; return `${f
 
 /* ---------- 一帧 ---------- */
 class Frame {
-  constructor(film) { this.film = film; this.c = film.L; this.x = film.L.getContext('2d'); this.w = W; this.h = H; this.t = 0; this.rec = null; this.markName = ''; }
+  constructor(film) { this.film = film; this.c = film.L; this.x = film.L.getContext('2d'); this.w = W; this.h = H; this.t = 0; this.rec = null; this.markName = ''; this.markAllow = null; }
 
   /* 包围盒记录：只在 render.py --check-safe / --overlap / --mark 时打开。
    * 画的时候顺手把可见图元折算回画布坐标，正常渲染没有额外开销。 */
@@ -78,10 +83,16 @@ class Frame {
       const qx = m.a * px + m.c * py + m.e, qy = m.b * px + m.d * py + m.f;
       ax = Math.min(ax, qx); ay = Math.min(ay, qy); bx = Math.max(bx, qx); by = Math.max(by, qy);
     }
-    this.rec.push({ name: this.markName || '', kind, box: [Math.round(ax), Math.round(ay), Math.round(bx), Math.round(by)] });
+    this.rec.push({ name: this.markName || '', kind, box: [Math.round(ax), Math.round(ay), Math.round(bx), Math.round(by)], allow: this.markAllow });
   }
-  /* 给一组图元起名字：fr.mark('船', () => { ... })；名字会出现在检查报告里 */
-  mark(name, fn) { const prev = this.markName; this.markName = name || ''; try { fn(); } finally { this.markName = prev; } }
+  /* 给一组图元起名字：fr.mark('船', () => { ... })；名字会出现在检查报告里。
+   * 第三个参数可写 { allow: '你' }，--overlap 会跳过这两个名字之间的相交。 */
+  mark(name, fn, o) {
+    if (typeof fn !== 'function' && typeof o === 'function') { const t = fn; fn = o; o = t || {}; }
+    const prev = this.markName, prevAllow = this.markAllow;
+    this.markName = name || ''; this.markAllow = (o && o.allow) || null;
+    try { fn(); } finally { this.markName = prev; this.markAllow = prevAllow; }
+  }
 
   /* 在一个变换/透明度/混合/模糊的包裹里画一组东西 */
   g(o, fn) {
@@ -94,10 +105,10 @@ class Frame {
     if (o.s != null) { const s = Array.isArray(o.s) ? o.s : [o.s, o.s]; x.scale(s[0], s[1]); }
     if (o.blur) x.filter = `blur(${o.blur}px)`;
     if (o.clip) { x.beginPath(); x.rect(...o.clip); x.clip(); }
-    const prevMark = this.markName;
-    if (o.mark) this.markName = o.mark;
+    const prevMark = this.markName, prevAllow = this.markAllow;
+    if (o.mark) { this.markName = o.mark; this.markAllow = o.allow || null; }
     fn();
-    this.markName = prevMark;
+    this.markName = prevMark; this.markAllow = prevAllow;
     x.restore();
   }
   /* 先画到一张临时画布，再整体合成：一组东西一起淡入、一起虚、一起缩放时用 */
@@ -285,7 +296,7 @@ function film(spec) {
   const grains = []; { const r = rng(20261006); for (let k = 0; k < 6; k++) { const c = document.createElement('canvas'); c.width = 480; c.height = 270; const gx = c.getContext('2d'), im = gx.createImageData(480, 270); for (let i = 0; i < im.data.length; i += 4) { const v = 128 + (r() - .5) * 2 * 110; im.data[i] = im.data[i + 1] = im.data[i + 2] = v; im.data[i + 3] = 255; } gx.putImageData(im, 0, 0); grains.push(c); } }
   const fr = new Frame(F); F.fr = fr;
   const fps = spec.fps || 30;
-  const SFX = [];           // 音效登记：scene 里 fr.sfx(时刻, 名字, 参数) —— 只在导出事件表时收集
+  const SFX = [];           // 音效登记：可在 VK.film({ sfx: [[t, 名字, 参数], …] }) 里声明，也可在 scene 里 fr.sfx(...)
   let collecting = false;
   fr.sfx = (t, name, p) => { if (collecting) SFX.push([+t.toFixed(3), name, p || {}]); };
   fr.theme = spec.theme || 'night';
@@ -311,24 +322,50 @@ function film(spec) {
     if (look.grain > 0) { out.globalCompositeOperation = 'overlay'; out.globalAlpha = look.grain; out.imageSmoothingEnabled = true; out.drawImage(grains[fr.frame % grains.length], 0, 0, W, H); out.globalCompositeOperation = 'source-over'; out.globalAlpha = 1; }
   }
   /* 音效事件表：把全片每帧过一遍，只收集、不出图 */
-  function events() { SFX.length = 0; collecting = true; const keep = F.L; for (let i = 0; i <= spec.dur * fps; i++) { fr.t = i / fps; fr.frame = i; fr.x = keep.getContext('2d'); fr.look = { bgo: {} }; try { spec.draw(fr, i / fps); } catch (e) { } } collecting = false; const seen = new Set(), uniq = []; SFX.forEach(e => { const k = e[0] + e[1]; if (!seen.has(k)) { seen.add(k); uniq.push(e); } }); uniq.sort((a, b) => a[0] - b[0]); return uniq; }
+  function events() {
+    SFX.length = 0;
+    for (const e of Array.isArray(spec.sfx) ? spec.sfx : []) {
+      if (Array.isArray(e) && e.length >= 2 && isFinite(+e[0])) SFX.push([+e[0], e[1], e[2] || {}]);
+    }
+    collecting = true; const keep = F.L;
+    for (let i = 0; i <= spec.dur * fps; i++) { fr.t = i / fps; fr.frame = i; fr.x = keep.getContext('2d'); fr.look = { bgo: {} }; try { spec.draw(fr, i / fps); } catch (e) { } }
+    collecting = false; const seen = new Set(), uniq = []; SFX.forEach(e => { const k = e[0] + e[1]; if (!seen.has(k)) { seen.add(k); uniq.push(e); } }); uniq.sort((a, b) => a[0] - b[0]); return uniq;
+  }
   /* 某一帧的元素包围盒（给 --check-safe / --overlap / --mark 用）：
-   * 同名 mark 合并成一个框，未命名的图元各自成条。 */
+   * 同名 mark 合并成一个框（parts 保留逐图元的框），未命名的图元各自成条。 */
   function recordFrame(t) {
-    const keep = fr.rec; fr.rec = []; fr.markName = '';
+    const keep = fr.rec; fr.rec = []; fr.markName = ''; fr.markAllow = null;
     seek(t);
     const raw = fr.rec; fr.rec = keep;
     const named = new Map(), out = [];
     for (const item of raw) {
       if (!item.name) { out.push(item); continue; }
       const cur = named.get(item.name);
-      if (!cur) named.set(item.name, { name: item.name, kind: 'mark', box: item.box.slice() });
-      else cur.box = [Math.min(cur.box[0], item.box[0]), Math.min(cur.box[1], item.box[1]), Math.max(cur.box[2], item.box[2]), Math.max(cur.box[3], item.box[3])];
+      if (!cur) named.set(item.name, { name: item.name, kind: 'mark', box: item.box.slice(), parts: [item.box.slice()], allow: item.allow || null });
+      else {
+        cur.parts.push(item.box.slice());
+        cur.box = [Math.min(cur.box[0], item.box[0]), Math.min(cur.box[1], item.box[1]), Math.max(cur.box[2], item.box[2]), Math.max(cur.box[3], item.box[3])];
+        if (item.allow) cur.allow = item.allow;
+      }
     }
     return [...named.values(), ...out];
   }
 
-  G.seek = seek; G.END = spec.dur; G.FPS = fps; G.events = events; G.recordFrame = recordFrame; G.META = spec.meta || {};
+  /* 只重绘底 + look.under + post（不画 L），供 render.py 的像素检查做背景差分：
+   * 字幕带里与背景帧不同的像素才是真正的内容，整幅背景画到哪都不算越界。 */
+  function background(t) {
+    seek(t);
+    const look = fr.look;
+    out.setTransform(1, 0, 0, 1, 0, 0); out.globalCompositeOperation = 'source-over'; out.globalAlpha = 1; out.filter = 'none';
+    (BG[look.bg] || BG.night)(out, t, look.bgo);
+    if (look.under) look.under(out, t);
+    if (look.post) look.post(out, t);
+    if (look.grain > 0) { out.globalCompositeOperation = 'overlay'; out.globalAlpha = look.grain; out.imageSmoothingEnabled = true; out.drawImage(grains[fr.frame % grains.length], 0, 0, W, H); out.globalCompositeOperation = 'source-over'; out.globalAlpha = 1; }
+  }
+
+  G.seek = seek; G.END = spec.dur; G.FPS = fps; G.events = events; G.recordFrame = recordFrame;
+  G.META = spec.meta || {}; G.SHOTS = spec.shots || null; G.SUBS = spec.subs || null;
+  G.__vkBackground = background; G.__vkTheme = spec.theme || 'night';
   /* 字体逐个加载、逐个容错：缺一个字体只警告，不阻塞 READY。 */
   const fontLoads = Object.entries(FONTS).map(([key, f]) =>
     document.fonts.load(`${f[0]} 40px ${f[1].split(',')[0]}`, '运A1').then(() => null, () => key));

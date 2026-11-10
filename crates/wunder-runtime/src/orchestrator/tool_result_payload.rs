@@ -2191,10 +2191,12 @@ fn project_command_session_success(data: &Value) -> Option<Value> {
             "status",
             "seq",
             "exit_code",
+            "exit_note",
             "timed_out",
             "dropped",
             "output_truncated",
             "next_seq",
+            "next_step",
         ],
     );
     for key in ["stdout", "stderr", "pty", "error"] {
@@ -2312,7 +2314,7 @@ fn project_web_fetch_success(data: &Value) -> Option<Value> {
 
 fn project_read_image_success(data: &Value) -> Option<Value> {
     let map = model_tool_result_data_map(data)?;
-    let mut projected = pick_non_empty_fields(map, &["path", "media_kind", "size_bytes"]);
+    let mut projected = pick_non_empty_fields(map, &["path", "media_kind", "size_bytes", "view", "stats"]);
     let result = map.get("result").and_then(Value::as_object);
     if let Some(result) = result {
         for key in [
@@ -2587,7 +2589,7 @@ fn project_command_row(row: &Map<String, Value>) -> Value {
     );
     let stdout_omitted = project_command_stream(row, &mut projected, "stdout");
     let stderr_omitted = project_command_stream(row, &mut projected, "stderr");
-    for key in ["truncated", "status"] {
+    for key in ["truncated", "status", "exit_note"] {
         if let Some(value) = row
             .get(key)
             .filter(|value| !value.is_null() && !is_empty_string(value))

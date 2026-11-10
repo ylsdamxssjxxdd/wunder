@@ -24,8 +24,12 @@ SKELETON = """/* ★ 片名 · {name}
 const {{ W, H, clamp, lerp, seg, smooth, ss, E, fade, hash, rng, rgba, mix }} = VK;
 const K = VKit, P = K.PAL.{pal};
 
+const SHOTS = [                                            // 镜头表：和 storyboard.md 的“# 时间”逐行对应；--jobs 按它切段，--storyboard 用它核对
+  // {{ no: 1, name: '开场', from: 0.6, to: 4.9 }},
+];
 const T = {{ end: 30 }};                                   // 关键时刻集中写在这里，挪动时只改一处
 const SUBS = [                                             // 一句字幕一行，和分镜表对着写；{{词}} 金色，{{!词}} 红色
+  // 也可以写成相对镜头：const C = K.cue(SHOTS); C.subs([{{ shot: 1, at: 0, dur: 4.3, zh: '……' }}])
   // {{ a: 0.8, b: 4.2, zh: '……'{en} }},
 ];
 
@@ -37,6 +41,10 @@ function scene1(fr, t) {{
 
 VK.film({{
   dur: T.end, theme: '{theme}', meta: {{ title: '' }},
+  shots: SHOTS, subs: SUBS,
+  sfx: [                                                   // 可选：音效写在这里，比在 draw() 里 fr.sfx(...) 更直观
+    // [3.2, 'tock', {{ pitch: 2 }}],
+  ],
   draw(fr, t) {{
     scene1(fr, t);
     K.subs(fr, t, SUBS, '{subs}');                         // 字幕永远最后画，压在一切之上

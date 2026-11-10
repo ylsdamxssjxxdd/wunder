@@ -27,33 +27,43 @@ python engine/render.py <工程> --stills 2.5 8.5 21      # 截几帧 → review
 python engine/render.py <工程> --sheet 16               # 全片均匀 16 帧拼一张 → review/sheet.jpg
 python engine/render.py <工程> --sheet 3.5 9 21.5       # 指定时刻拼一张
 python engine/render.py <工程> --motion 8.2 10.6        # 这段时间里均匀取 12 帧拼一张 → review/motion_8.2-10.6.jpg（看转场）
-python engine/render.py <工程> --clip 0 30 head         # 只渲 0–30s → renders/head.mp4
+python engine/render.py <工程> --clip 0 30 head         # 只渲 0–30s → renders/head.mp4（成功写 .done）
 python engine/render.py <工程> --clips 0:12 20:30       # 多段渲染并自动拼 → renders/clips.mp4
 python engine/render.py <工程> --preview 8.2 10.6       # 低码率预览片段 → renders/preview_*.mp4
 python engine/render.py <工程> --strip 8.2 9.2 24       # 连续帧条带 → review/strip_*.jpg（看运动）
 python engine/render.py <工程> --stills 8 --mark 船     # 画元素包围盒 → review/m_*.png（需 fr.mark）
 python engine/render.py <工程> --det                    # 确定性自检
-python engine/render.py <工程> --lint                   # END/FPS/字体/音效/meta/Math.random 检查
-python engine/render.py <工程> --check-safe             # 非字幕元素越过 y=840 的时段
-python engine/render.py <工程> --overlap                # 命名元素包围盒相交（遮挡）的时段
+python engine/render.py <工程> --lint                   # END/FPS/字体/音效/meta/分镜表/Math.random 检查
+python engine/render.py <工程> --storyboard             # 分镜表时间列 vs film.js 的 SHOTS 逐镜核对
+python engine/render.py <工程> --check-safe             # 包围盒 + 像素：非字幕内容越过 y=840 的时段
+python engine/render.py <工程> --check-band             # 只做像素检查（手写 ctx / 柔边渐变也查）
+python engine/render.py <工程> --overlap                # 命名元素实际相交面积（可用 allow 放行）
 python engine/render.py <工程>                          # 全片 → renders/raw.mp4（无声）
-python engine/render.py <工程> --jobs 4                 # 全片，分 4 段并行渲再无损拼接
-python engine/render.py <工程> --jobs 4 --resume        # 续渲：跳过源码未变且已完成的段
-python engine/render.py <工程> --concat                 # 手动拼接 renders/_part*.mp4
+python engine/render.py <工程> --jobs 4                 # 按镜头切段，最多 4 路并行渲再无损拼接
+python engine/render.py <工程> --only 3                 # 只重渲第 3 镜，再拼全部已完成分段
+python engine/render.py <工程> --parts 0:12 12:30       # 没有 SHOTS 时手动指定分段边界
+python engine/render.py <工程> --concat                 # 拼接 renders/_part*.mp4（默认保留分段）
+python engine/render.py <工程> --clean-parts            # 拼接成功后删分段（默认保留）
 python engine/render.py <工程> --web                    # 发布转码 → renders/web.mp4（打印体积/码率）
 python engine/render.py --diff A.mp4 B.mp4              # 两版逐帧差分 → A_diff.jpg + 时刻表
+python engine/render.py <工程> --sheet 16 --from renders/final.mp4  # 从成片抽帧拼图（编码后检查）
 python engine/render.py <工程> --events                 # 导出音效事件表 → audio/events.json
 python engine/audio.py  <工程>                          # 合成声音 + 合片 → renders/final.mp4
 python engine/audio.py  <工程> --refresh-events         # 先自动重导事件表再合成
 python engine/audio.py  <工程> --bgm 曲子.mp3 -8        # 垫现成配乐（-8 dB），事件音照叠
 ```
 
-`--jobs` 每段完成写 `.done` 标记（内容是工程源码指纹），默认续渲只跳过指纹一致且非空的分段；
-`--fresh` 强制全部重渲。分段渲染中途被杀时，已完成段保留，未完成段重跑即可，不用从头来。
-旧版遗留的分段没有 `.done` 标记，确认完整后可以用 `--concat --force` 强行拼接。
+`--jobs` 每段由子进程自己写 `.done` 标记（工程源码指纹 + 分段区间），父进程被杀时已渲完的段仍然有效；
+默认续渲只跳过指纹一致且非空的分段，`--fresh` 强制全部重渲。分段默认保留，方便改一镜只重渲一镜；
+`--clean-parts` 才删。旧版遗留的分段没有 `.done` 标记，确认完整后可以用 `--concat --force` 强行拼接。
+`--only 3` / `--only 开场` / `--only 26.4:29.1` 只重渲选中段，其余分段保留并自动重拼；第一次用 `--only` 前先跑一次 `--jobs` 把全部分段铺出来。
+`--check-safe` 的像素检查会隐藏字幕，把整帧和「底 + look.under + 后期」的纯背景帧相减：背景（包括 B 的整幅插画）两边都有，不算越界；
+手写 ctx 画的内容只出现在整帧里，会被查出来。flat（B）整幅场景都在前景层，默认跳过像素检查，装置请用 `fr.mark` 命名。
+阈值可用 `--band-diff`（像素差，默认 10）和 `--band-ratio`（面积占比，默认 0.2%）调；默认每 0.5 秒采样一次。
 
-渲染速度单路约每秒 3–6 帧（1080p，截 PNG），`--jobs 4` 大致快三倍。3 分钟的片子仍然要十几分钟——所以先看拼图，再渲片段，最后才渲全片。
-ARM 服务器上单路截帧受单核性能限制，长片优先用 `--jobs`（按核数和内存调，每路约 0.5–1 GB）；若明显慢于预期，先确认容器是原生 aarch64、Chrome 可执行文件不是 x86-64（qemu 模拟会慢一个数量级）。
+渲染速度单路约每秒 3–6 帧（1080p，截 PNG），`--jobs 4` 四路真并行（按 CPU 核数和内存调，每路约 0.5–1 GB）。3 分钟的片子仍然要十几分钟——所以先看拼图，再渲片段，最后才渲全片。
+**看图不要靠猜。** 环境里 `file://` 不可用：先 `--serve`，再用浏览器打开 `http://127.0.0.1:8765/review/s_0005.00.png`（`sheet.jpg`、`m_*.png`、`band_*.png` 同理）。
+ARM 服务器上单路截帧受单核性能限制，长片优先用 `--jobs`；若明显慢于预期，先确认容器是原生 aarch64、Chrome 可执行文件不是 x86-64（qemu 模拟会慢一个数量级）。
 命令工具的前台等待到 `timeout_s` 时不会杀渲染，而是把它转入后台命令会话继续跑并返回 `command_session_id`；
 看到 `reason: timeout_escalated` 就先轮询会话，不要重跑。分段渲染中断后，已完成段带 `.done` 标记，
 重跑 `--jobs 4` 默认续渲，或 `--concat` 直接拼接。
@@ -68,8 +78,15 @@ ARM 服务器上单路截帧受单核性能限制，长片优先用 `--jobs`（�
 const { W, H, lerp, seg, ss, E, fade, rng } = VK;
 const K = VKit, P = K.PAL.night;
 
-const SUBS  = [ { a: 4.0, b: 8.5, zh: '你一定{猜到}了下一个字。', en: 'You already know the next character.' }, … ];
-const MARKS = [ { t: .4, no: '00', zh: '序', en: 'PROLOGUE' }, { t: 38.6, no: '01', zh: '猜', en: 'THE GUESS' } ];
+const SHOTS = [
+  { no: 1, name: '开场', from: 0, to: 14 },              // 镜头表：和 storyboard.md 的“# 时间”逐行对应
+  { no: 2, name: '猜',   from: 38.6, to: 52 },
+];
+const C = K.cue(SHOTS);                                  // 镜头级单源：字幕/章节标写相对时间
+const SUBS  = C.subs([
+  { shot: 1, at: 4.0, dur: 4.5, zh: '你一定{猜到}了下一个字。', en: 'You already know the next character.' },
+]);
+const MARKS = C.marks([{ shot: 1, at: .4, no: '00', zh: '序', en: 'PROLOGUE' }]);
 
 /* 一站一个函数。自己管自己的进场和退场（乘一个透明度），不要靠 draw 里的 if 硬切 */
 function hook(fr, t) { const a = 1 - ss(t, 13.5, 14.0); … }
@@ -77,6 +94,8 @@ function ch1(fr, t)  { const a = ss(t, 38.6, 39.5); … }
 
 VK.film({
   dur: 300, theme: 'night', meta: { title: '……' },
+  shots: SHOTS, subs: SUBS,                              // 暴露给 --jobs 切段与 --storyboard 核对
+  sfx: [[14.02, 'chord', { gain: .8 }], [24.03, 'thud']], // 音效也可以声明在这里
   draw(fr, t) {
     fr.look.bgo = { stars: K.dips(t, [14.05, 38.25]) };   // 底的参数每帧可以改
     K.chapterMark(fr, t, MARKS);                          // 常驻元素
@@ -91,6 +110,11 @@ VK.film({
 
 能跑的例子在 `examples/`：`fold_C`（自己的题目，夜曲，33 秒：从血管推进细胞再推到一串珠子，全片一台摄影机；分镜表在同目录 `storyboard.md`）、`pigeon_B`（自己的题目，寓言，33 秒：六个镜头六种景别，计时器按真实时间走）、`stim_B`（寓言，12 秒）、`info_C`（夜曲，47 秒）。
 `examples/kit_gallery` 把所有件各演一遍。
+
+**镜头表是切段和分镜核对的单源。** `SHOTS` 的 `from/to` 就是 storyboard.md 每行的时间列；
+`--jobs` 把它当分段边界，`--storyboard` 用它查“分镜里有、film.js 里没有”的镜头。分镜之间允许留空档——渲染时会把空档补成独立段，拼完仍是 END 的长度。
+改一镜只重渲那一镜：`python engine/render.py <工程> --only 3`（也接受镜名或时间区间），其余分段保留并自动重拼。
+新工程请把 `shots`、`subs`、`sfx` 传进 `VK.film`；旧工程没有 `SHOTS` 也能渲，只是 `--storyboard` 只能查时间列本身。
 
 **长片按章拆文件。** 一条 3 分钟的片子大约 600–1000 行。超过 400 行就拆：在 `index.html` 里 `film.js` 之前加
 `<script src="ch1.js"></script>`，每个文件往 `window.CH` 上挂自己的函数（`(window.CH = window.CH || {}).urn = function (fr, t) { … }`），
@@ -136,7 +160,7 @@ function urn(fr, t) {
 | | |
 |---|---|
 | `fr.g({ a, at:[x,y], rot, s, add, blur, clip:[x,y,w,h], mark:'船' }, fn)` | 在一组变换 / 透明度 / 加法混合里画 fn；`mark` 给这组图元命名 |
-| `fr.mark('船', fn)` | 给一组图元命名。`--check-safe`/`--overlap`/`--mark` 用这些名字出报告；不写就只能报 `未命名 ellipse` |
+| `fr.mark('船', fn, { allow: '波圈' })` | 给一组图元命名。`--check-safe`/`--overlap`/`--mark` 用这些名字出报告；不写就只能报 `未命名 ellipse`。`allow` 让 `--overlap` 跳过这组与指定名字的相交（可写数组，`'all'` 表示全部放行） |
 | `fr.layer({ a, s, at, rot, cx, cy, blur, add }, fn)` | 先画到临时画布再整体合成。一组互相重叠的半透明形状要一起淡入淡出时用它，否则重叠处会透 |
 
 **光**
@@ -188,7 +212,8 @@ function urn(fr, t) {
 | `mono` | JetBrains Mono | 等宽小标、章节编号 |
 | `type` | Courier Prime | 打字机文稿 |
 
-**声音事件** `fr.sfx(时刻, 名字, 参数)`。在哪一帧调都行，同一个（时刻，名字）只记一次；`render.py --events` 会把全片过一遍收集起来。
+**声音事件** 推荐写在 `VK.film({ sfx: [[时刻, 名字, 参数], …] })` 里，和画面代码分开；
+也可以在 `draw` 里调 `fr.sfx(时刻, 名字, 参数)`。同一个（时刻，名字）只记一次；`render.py --events` 会把全片过一遍收集起来。
 名字：`tick`（一声嗒，`pitch` 选音高）`soft` `chord`（`root` 半音偏移）`bloom`（和弦 + 一口气）`rise`（上滑音，`dur`）
 `thud` `tock` `stamp` `shimmer` `hush`（之后彻底静音 `dur` 秒）。都有 `gain`。
 

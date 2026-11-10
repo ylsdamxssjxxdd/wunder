@@ -218,10 +218,10 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "读图工具",
-        brief_en: "Read an image file by path and return it as a vision message.",
-        brief_zh: "按 path 读取图片并作为视觉消息返回。",
+        brief_en: "Read a local image/GIF/video into vision by path. Images: crop=x,y,w,h and scale zoom into details; stats adds region luma/non-background numbers, stats_only returns numbers without an image. Videos: frame_rate extracts frames. Old frames keep only their path — re-read it anytime.",
+        brief_zh: "按 path 把本地图片/GIF/视频送入视觉。图片可 crop=x,y,w,h 裁切、scale 缩放看细节；stats 附带区域亮度与非背景像素占比数值，stats_only 只要数值不回图。视频用 frame_rate 抽帧。历史旧帧只留路径，随时按路径重读。",
         drop_actions: &[],
-        drop_fields: &["frame_rate", "frame_step"],
+        drop_fields: &[],
     },
     SurfaceRule {
         tool: "语音生成",

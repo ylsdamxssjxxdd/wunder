@@ -129,7 +129,11 @@ pub async fn build_followup_user_message(
     else {
         return Ok(None);
     };
-    let mut images = Vec::new();
+    let mut image_count = 0_usize;
+    let mut content = vec![json!({
+        "type": "text",
+        "text": crate::i18n::t("tool.browser.screenshot_followup_prompt")
+    })];
     for block in blocks {
         if block.get("type").and_then(Value::as_str) != Some("image") {
             continue;
@@ -164,22 +168,28 @@ pub async fn build_followup_user_message(
             model_ready_screenshot_data_url(bytes, &mime)
         })
         .await?;
-        images.push(json!({
+        // 截图像素会被持久化省略；纯文本路径留在上下文里，模型之后可用
+        // 读图工具按路径回看同一帧，而不是重截一次。
+        let display = context.workspace.display_path(context.workspace_id, &path);
+        content.push(json!({
+            "type": "text",
+            "text": crate::i18n::t_with_params(
+                "tool.read_image.followup_path_hint",
+                &std::collections::HashMap::from([("path".to_string(), display)]),
+            )
+        }));
+        content.push(json!({
             "type": "image_url",
             "image_url": { "url": data_url }
         }));
-        if images.len() >= 2 {
+        image_count += 1;
+        if image_count >= 2 {
             break;
         }
     }
-    if images.is_empty() {
+    if image_count == 0 {
         return Ok(None);
     }
-    let mut content = vec![json!({
-        "type": "text",
-        "text": crate::i18n::t("tool.browser.screenshot_followup_prompt")
-    })];
-    content.extend(images);
     Ok(Some(json!({ "role": "user", "content": content })))
 }
 
@@ -487,7 +497,15 @@ mod tests {
             .expect("followup message");
         let content = followup["content"].as_array().expect("content array");
         assert_eq!(content[0]["type"], "text");
-        assert!(content[1]["image_url"]["url"]
+        assert!(content[1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("[image_path:"));
+        assert!(content[1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("browser/screenshots/sample.png"));
+        assert!(content[2]["image_url"]["url"]
             .as_str()
             .unwrap()
             .starts_with("data:image/png;base64,"));

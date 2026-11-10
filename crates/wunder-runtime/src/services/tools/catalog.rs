@@ -695,6 +695,19 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             description: t("tool.spec.read_image.description"),
             input_schema: super::schema::object(vec![
                 super::schema::string("path").desc(t("tool.spec.read_image.args.path")),
+                super::schema::string("crop")
+                    .desc(t("tool.spec.read_image.args.crop"))
+                    .optional(),
+                super::schema::number("scale")
+                    .desc(t("tool.spec.read_image.args.scale"))
+                    .max(16)
+                    .optional(),
+                super::schema::boolean("stats")
+                    .desc(t("tool.spec.read_image.args.stats"))
+                    .optional(),
+                super::schema::boolean("stats_only")
+                    .desc(t("tool.spec.read_image.args.stats_only"))
+                    .optional(),
                 super::schema::number("frame_rate")
                     .desc(t("tool.spec.read_image.args.frame_rate"))
                     .optional(),

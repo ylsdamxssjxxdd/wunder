@@ -684,6 +684,9 @@ pub(crate) fn compact_command_result_for_model(item: &Value) -> Value {
     if let Some(warning) = item.get("warning").filter(|value| !value.is_null()) {
         compacted["warning"] = warning.clone();
     }
+    if let Some(exit_note) = item.get("exit_note").filter(|value| !value.is_null()) {
+        compacted["exit_note"] = exit_note.clone();
+    }
     if item
         .get("output_truncated_by_pipe")
         .and_then(Value::as_bool)
@@ -1626,18 +1629,14 @@ fn command_session_failure_message(data: &Value) -> String {
     }
 }
 
-fn build_command_session_result(data: Value) -> Value {
+fn build_command_session_result(mut data: Value) -> Value {
     let running = data.get("status").and_then(Value::as_str) == Some("running");
     if !running
         && (data.get("timed_out").and_then(Value::as_bool) == Some(true)
             || data
                 .get("error")
                 .and_then(Value::as_str)
-                .is_some_and(|error| !error.is_empty())
-            || data
-                .get("exit_code")
-                .and_then(Value::as_i64)
-                .is_some_and(|code| code != 0))
+                .is_some_and(|error| !error.is_empty()))
     {
         return build_failed_tool_result(
             command_session_failure_message(&data),
@@ -1650,6 +1649,18 @@ fn build_command_session_result(data: Value) -> Value {
             ),
             false,
         );
+    }
+    // 非零退出码随数据返回：命令确实执行完了，退出语义由模型结合输出判断。
+    if !running
+        && data
+            .get("exit_code")
+            .and_then(Value::as_i64)
+            .is_some_and(|code| code != 0)
+    {
+        data["exit_note"] = json!(i18n::t("tool.exec.non_zero_exit_note"));
+    }
+    if running {
+        data["next_step"] = json!(i18n::t("tool.command_session.keep_waiting"));
     }
     build_model_tool_success(
         "command_session",
@@ -1931,7 +1942,8 @@ fn collect_sandbox_output(
 }
 
 /// Build the model-facing result for a finished sandbox command, mirroring the
-/// local blocking semantics: timeout and non-zero exit are failures.
+/// local blocking semantics: timeout is a failure; a non-zero exit code is
+/// command semantics carried in the data, not a tool failure.
 fn build_sandbox_command_result(mut data: Value) -> Value {
     if let Value::Object(ref mut map) = data {
         map.remove("deltas");
@@ -1983,30 +1995,16 @@ fn build_sandbox_command_result(mut data: Value) -> Value {
             data,
         );
     }
-    if exit_code.unwrap_or(-1) != 0 {
-        let detail = data
-            .get("error")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| {
-                data.get("stderr")
-                    .and_then(Value::as_str)
-                    .filter(|value| !value.trim().is_empty())
-            })
-            .map(str::trim)
-            .map(ToString::to_string)
-            .unwrap_or_else(|| format!("command exited with code {}", exit_code.unwrap_or(-1)));
-        return build_failed_tool_result(
-            detail,
-            data,
-            ToolErrorMeta::new(
-                "TOOL_EXEC_NON_ZERO_EXIT",
-                Some("命令返回非 0，请先根据 stderr 修正后再重试。".to_string()),
-                false,
-                None,
-            ),
-            false,
-        );
+    if let Some(code) = exit_code {
+        if code != 0 {
+            // 非零退出码是命令语义，不是工具失败；保留输出由模型判断。
+            if let Value::Object(ref mut map) = data {
+                map.insert(
+                    "exit_note".to_string(),
+                    json!(i18n::t("tool.exec.non_zero_exit_note")),
+                );
+            }
+        }
     }
     build_model_tool_success(
         "execute_command",
@@ -2574,24 +2572,14 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             continue;
         }
         if run.returncode != 0 {
-            context.workspace.mark_tree_dirty(context.workspace_id);
-            return Ok(build_failed_tool_result(
-                build_execute_command_failure_message(&results, false),
-                build_execute_command_failure_data(
-                    &results,
-                    guarded_total_commands,
-                    guarded_truncated_commands > 0,
-                    guarded_omitted_bytes,
-                    false,
-                ),
-                ToolErrorMeta::new(
-                    "TOOL_EXEC_NON_ZERO_EXIT",
-                    Some("命令返回非 0，请先根据 stderr 修正后再重试。".to_string()),
-                    false,
-                    None,
-                ),
-                false,
-            ));
+            // 退出码是命令语义的一部分（grep 无匹配、pkill 无进程、diff 有差异），
+            // 不是工具执行失败；保留完整输出与退出码，由模型判断是否需要修正。
+            if let Some(last) = results.last_mut().and_then(Value::as_object_mut) {
+                last.insert(
+                    "exit_note".to_string(),
+                    Value::String(i18n::t("tool.exec.non_zero_exit_note")),
+                );
+            }
         }
     }
     context.workspace.mark_tree_dirty(context.workspace_id);

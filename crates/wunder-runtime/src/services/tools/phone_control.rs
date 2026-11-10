@@ -700,6 +700,16 @@ pub async fn build_followup_user_message(result_data: &Value) -> Result<Option<V
         .unwrap_or_else(|| crate::i18n::t("tool.phone_control.followup_prompt"));
     let mut content = vec![json!({ "type": "text", "text": prompt })];
     content.push(json!({
+        "type": "text",
+        "text": crate::i18n::t_with_params(
+            "tool.read_image.followup_path_hint",
+            &std::collections::HashMap::from([(
+                "path".to_string(),
+                path.to_string_lossy().to_string(),
+            )]),
+        )
+    }));
+    content.push(json!({
         "type": "image_url",
         "image_url": { "url": current_data_url }
     }));
@@ -852,7 +862,11 @@ mod tests {
             .unwrap()
             .expect("followup");
         let content = followup["content"].as_array().unwrap();
-        assert!(content[1]["image_url"]["url"]
+        assert!(content[1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("[image_path:"));
+        assert!(content[2]["image_url"]["url"]
             .as_str()
             .unwrap()
             .starts_with("data:image/png;base64,"));
