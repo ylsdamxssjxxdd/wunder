@@ -139,7 +139,7 @@ fn roots(
     include_input: bool,
 ) -> Result<Vec<Value>> {
     let order = if after.is_some() { "ASC" } else { "DESC" };
-    tx.query(&format!("SELECT head.turn_id,root.root_turn_id,root.user_round,head.status,
+    let mut turns = tx.query(&format!("SELECT head.turn_id,root.root_turn_id,root.user_round,head.status,
             root.client_message_id,root.created_at_ms,head.updated_at_ms,
             CASE WHEN NOT $5::boolean OR root.input_json IS NULL THEN NULL ELSE jsonb_build_object(
               'content',left(body.content,512),'_content_bytes',octet_length(body.content),
