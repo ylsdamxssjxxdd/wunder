@@ -118,8 +118,7 @@ impl NativeWorkflowEntry {
 /// states the same number beside the file chip. A partial window keeps the
 /// file's total, mirroring the model-facing "read N of M" summary.
 fn read_line_label(tool: &str, state: &str, data: &Value) -> String {
-    if !matches!(tool, "read_file" | "读取文件")
-        || matches!(state, "failed" | "error" | "rejected")
+    if !matches!(tool, "read_file" | "读取文件") || matches!(state, "failed" | "error" | "rejected")
     {
         return String::new();
     }
@@ -628,8 +627,13 @@ mod tests {
                 "",
             ),
         ] {
-            let entry =
-                NativeWorkflowEntry::from_payload("fixture-read", "read_file", String::new(), state, &payload);
+            let entry = NativeWorkflowEntry::from_payload(
+                "fixture-read",
+                "read_file",
+                String::new(),
+                state,
+                &payload,
+            );
             assert_eq!(entry.read_lines, expected, "{payload}");
         }
         let other = NativeWorkflowEntry::from_payload(

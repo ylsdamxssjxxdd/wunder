@@ -12,21 +12,22 @@ pub mod request_limits;
 pub mod sandbox;
 mod services;
 pub use services::archive_extract;
-pub use services::tools::command_sessions::{CommandTaskDetail, CommandTaskView};
 pub use services::companions;
 pub use services::memory_fragments;
 pub use services::thread_log::export_stream as export_thread_log_stream;
 pub use services::thread_log::hydrate_active_text as hydrate_thread_item_text;
 pub use services::tool_result_display;
+pub use services::tools::command_sessions::{CommandTaskDetail, CommandTaskView};
 pub mod storage;
 
 pub use api::{build_desktop_router, build_router};
 pub use channels::ChannelHub;
 pub use core::{
     approval, approval_registry, auth, blocking, bounded_queue, command_utils, config,
-    config_store, dpi, drawio_config, exec_policy, http_client, i18n, local_assets, local_bootstrap,
-    logging, long_task, onlyoffice_config, path_utils, process_file_lock, repo_assets, runtime_metrics,
-    runtime_tuning, rustls_provider, schemas, shutdown, state, token_utils,
+    config_store, dpi, drawio_config, exec_policy, http_client, i18n, local_assets,
+    local_bootstrap, logging, long_task, onlyoffice_config, path_utils, process_file_lock,
+    repo_assets, runtime_metrics, runtime_tuning, rustls_provider, schemas, shutdown, state,
+    token_utils,
 };
 pub use lsp::LspManager;
 pub use ops::{benchmark, monitor, performance, throughput};
@@ -50,10 +51,10 @@ pub use services::work_state_reset::{
 pub use services::worker_card_settings;
 pub use services::{
     admin_skills, agent_management, attachment, browser, cloud, cron, cron_schedule,
-    default_agent_protocol,
-    default_tool_profile, desktop_lan, doc2md, drawio, goal, history, interlink, knowledge, llm,
-    mcp, memory, multimodal_models, onlyoffice, org_units, presence, prompting, ragflow_knowledge,
-    runtime, skills, tools, user_access, user_leveling, user_prompt_templates, user_store,
-    user_tools, user_world, vector_knowledge, virtual_llm, workspace,
+    default_agent_protocol, default_tool_profile, desktop_lan, doc2md, drawio, goal, history,
+    interlink, knowledge, llm, mcp, memory, multimodal_models, onlyoffice, org_units, presence,
+    prompting, ragflow_knowledge, runtime, skills, tools, user_access, user_leveling,
+    user_prompt_templates, user_store, user_tools, user_world, vector_knowledge, virtual_llm,
+    workspace,
 };
 pub use wunder_core as stable_core;

@@ -13,13 +13,13 @@
 use super::service::{error_message, CloudService};
 use super::{CloudSessionExpired, CloudTransportError};
 use anyhow::{anyhow, bail, Result};
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering as CmpOrdering;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::time::Duration;
-use futures::StreamExt;
 use tokio::io::AsyncWriteExt;
 
 /// Server routes, mirrored by `api::updates`. Kept here so the client and the
@@ -157,7 +157,9 @@ pub fn compare_release_versions(left: &str, right: &str) -> CmpOrdering {
 pub fn normalize_version(version: &str) -> String {
     let trimmed = version.trim();
     match trimmed.strip_prefix(['v', 'V']) {
-        Some(rest) if !rest.is_empty() && rest.chars().next().is_some_and(|ch| ch.is_ascii_digit()) => {
+        Some(rest)
+            if !rest.is_empty() && rest.chars().next().is_some_and(|ch| ch.is_ascii_digit()) =>
+        {
             rest.to_string()
         }
         _ => trimmed.to_string(),
@@ -226,7 +228,10 @@ impl CloudService {
             // Single-flight silent refresh, then exactly one retry — the same
             // contract as `authed_send`, kept explicit because this request
             // runs without a total timeout.
-            let stale = self.session().map(|session| session.token).unwrap_or_default();
+            let stale = self
+                .session()
+                .map(|session| session.token)
+                .unwrap_or_default();
             self.recover_auth(&stale).await?;
             response = self.send_update_download(file).await?;
         }
@@ -411,9 +416,12 @@ pub fn select_github_asset(
         Some(asset) => asset,
         None => return Ok(None),
     };
-    asset.url = release
-        .asset_url(&asset.file)
-        .ok_or_else(|| anyhow!("release is missing the manifest-listed package {}", asset.file))?;
+    asset.url = release.asset_url(&asset.file).ok_or_else(|| {
+        anyhow!(
+            "release is missing the manifest-listed package {}",
+            asset.file
+        )
+    })?;
     if asset.version.is_empty() {
         asset.version = normalize_version(&release.tag_name);
     }
@@ -463,12 +471,13 @@ pub fn select_github_android_release(
             };
             let replace = match &best {
                 None => true,
-                Some(current) => match compare_release_versions(&candidate.version, &current.version)
-                {
-                    CmpOrdering::Greater => true,
-                    CmpOrdering::Equal => candidate.published_at_ms > current.published_at_ms,
-                    CmpOrdering::Less => false,
-                },
+                Some(current) => {
+                    match compare_release_versions(&candidate.version, &current.version) {
+                        CmpOrdering::Greater => true,
+                        CmpOrdering::Equal => candidate.published_at_ms > current.published_at_ms,
+                        CmpOrdering::Less => false,
+                    }
+                }
             };
             if replace {
                 best = Some(candidate);
@@ -685,11 +694,26 @@ mod tests {
 
     #[test]
     fn dotted_versions_compare_numerically() {
-        assert_eq!(compare_release_versions("0.2.10", "0.2.9"), CmpOrdering::Greater);
-        assert_eq!(compare_release_versions("0.10.0", "0.9.9"), CmpOrdering::Greater);
-        assert_eq!(compare_release_versions("0.2.6", "0.2.6"), CmpOrdering::Equal);
-        assert_eq!(compare_release_versions("0.2.6-rc1", "0.2.6"), CmpOrdering::Less);
-        assert_eq!(compare_release_versions("0.2.6", "0.2.6-rc1"), CmpOrdering::Greater);
+        assert_eq!(
+            compare_release_versions("0.2.10", "0.2.9"),
+            CmpOrdering::Greater
+        );
+        assert_eq!(
+            compare_release_versions("0.10.0", "0.9.9"),
+            CmpOrdering::Greater
+        );
+        assert_eq!(
+            compare_release_versions("0.2.6", "0.2.6"),
+            CmpOrdering::Equal
+        );
+        assert_eq!(
+            compare_release_versions("0.2.6-rc1", "0.2.6"),
+            CmpOrdering::Less
+        );
+        assert_eq!(
+            compare_release_versions("0.2.6", "0.2.6-rc1"),
+            CmpOrdering::Greater
+        );
         assert!(is_newer_version("0.3.0", "0.2.6"));
         assert!(!is_newer_version("0.2.6", "0.2.6"));
         assert!(!is_newer_version("0.2.5", "0.2.6"));
@@ -701,7 +725,10 @@ mod tests {
     fn github_tags_with_v_prefix_compare_like_manifest_versions() {
         assert!(is_newer_version("v0.2.7", "0.2.6"));
         assert!(!is_newer_version("0.2.6", "v0.2.7"));
-        assert_eq!(compare_release_versions("v0.2.7", "0.2.7"), CmpOrdering::Equal);
+        assert_eq!(
+            compare_release_versions("v0.2.7", "0.2.7"),
+            CmpOrdering::Equal
+        );
         assert_eq!(normalize_version("  v0.2.7 "), "0.2.7");
         assert_eq!(normalize_version("version0.2.7"), "version0.2.7");
     }
@@ -731,8 +758,10 @@ mod tests {
             .expect("asset for desktop/windows/x86");
         assert_eq!(asset.url, "https://example.invalid/m/pkg.exe");
         assert_eq!(asset.sha256, "abc");
-        assert!(asset.version == "0.2.7" || asset.version.is_empty(),
-            "manifest version wins when present");
+        assert!(
+            asset.version == "0.2.7" || asset.version.is_empty(),
+            "manifest version wins when present"
+        );
         // A package listed in the manifest but missing from the release is a
         // publishing error, not an empty result.
         let broken = select_github_asset(
@@ -744,9 +773,11 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{broken:#}").contains("missing.exe"));
-        assert!(select_github_asset(manifest_text, &release, "cli", "windows", "x86")
-            .unwrap()
-            .is_none());
+        assert!(
+            select_github_asset(manifest_text, &release, "cli", "windows", "x86")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

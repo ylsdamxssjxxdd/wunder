@@ -399,6 +399,10 @@ import AgentToolOptionLabel from '@/components/agent/AgentToolOptionLabel.vue';
 import CompanionLazyList from '@/components/companions/CompanionLazyList.vue';
 import CompanionSprite from '@/components/companions/CompanionSprite.vue';
 import AbilityTooltipCard from '@/components/common/AbilityTooltipCard.vue';
+import {
+  hasConfiguredModelField,
+  normalizeConfiguredModelName
+} from '@/components/chat/composerModelCatalogModel';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useCompanionStore, type CompanionPackageRecord } from '@/stores/companions';
@@ -1233,8 +1237,14 @@ watch(avatarDialogIcon, (value) => {
 const confirmDiscardChanges = async (): Promise<boolean> => !deleting.value;
 
 const resolveConfiguredModelName = (agent: Record<string, unknown>): string => {
-  const configured = String(agent.configured_model_name || '').trim();
+  const configured = normalizeConfiguredModelName(agent.configured_model_name);
   if (configured) return configured;
+  // `configured_model_name: null` means the agent follows the system default, so
+  // the effective `model_name` must not be turned back into an explicit choice
+  // (that would pin the current default into the agent on the next save).
+  if (hasConfiguredModelField(agent)) {
+    return '';
+  }
   const fallback = String(agent.model_name || '').trim();
   const defaultName = String(defaultModelName.value || '').trim();
   if (fallback && fallback !== defaultName) {

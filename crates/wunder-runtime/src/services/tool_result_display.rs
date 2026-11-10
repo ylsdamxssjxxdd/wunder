@@ -80,7 +80,10 @@ fn memory_operation_line(action: &str, args: &Value, data: &Value) -> String {
     match action {
         "add" => format!("保存记忆{}", subject(title)),
         "update" => format!("更新记忆{}", subject(title)),
-        "get" => format!("读取记忆{}", subject(if title.is_empty() { memory_id } else { title })),
+        "get" => format!(
+            "读取记忆{}",
+            subject(if title.is_empty() { memory_id } else { title })
+        ),
         "remove" => format!("删除记忆{}", subject(memory_id)),
         "clear" => "清空记忆".to_string(),
         "list" => {
@@ -434,7 +437,8 @@ mod tests {
         assert!(!output.contains("SKILL.md"));
     }
     #[test]
-    fn pending_and_failed_writes_never_claim_applied_content() {        let payload = json!({"ok":false,"error":"write denied","args":{"content":"not written"}});
+    fn pending_and_failed_writes_never_claim_applied_content() {
+        let payload = json!({"ok":false,"error":"write denied","args":{"content":"not written"}});
         let output = tool_result_display("write_file", &payload, false);
         assert!(output.contains("write denied"));
         assert!(!output.contains("not written"));

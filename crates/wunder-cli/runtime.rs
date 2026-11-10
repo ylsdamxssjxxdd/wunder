@@ -90,9 +90,8 @@ impl CliRuntime {
                 .context("release embedded local assets failed")?;
         // Untouched system assets now follow this binary; user-edited copies are
         // preserved and the new bytes are written under temp/asset-conflicts/.
-        let config_merge =
-            wunder_server::local_bootstrap::merge_missing_config_keys(&wunder_home)
-                .context("merge default config keys failed")?;
+        let config_merge = wunder_server::local_bootstrap::merge_missing_config_keys(&wunder_home)
+            .context("merge default config keys failed")?;
         if config_merge.changed || release_report.conflict_count() > 0 {
             eprintln!(
                 "local assets: updated={} conflicts={} config_keys_added={}",

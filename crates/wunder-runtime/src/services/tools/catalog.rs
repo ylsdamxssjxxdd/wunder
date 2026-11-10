@@ -1148,7 +1148,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         specs.push(android_screen::android_screen_tool_spec(language));
     }
     if android_notifications::android_notifications_tools_enabled() {
-        specs.push(android_notifications::android_notifications_tool_spec(language));
+        specs.push(android_notifications::android_notifications_tool_spec(
+            language,
+        ));
     }
     specs.extend(goal::goal_tool_specs());
     // Browser tools come from the active provider's native surface (dsh parity).
@@ -1423,8 +1425,7 @@ fn runtime_builtin_tool_allowed(config: &Config, canonical: &str) -> bool {
     {
         return false;
     }
-    if phone_control::is_phone_control_tool_name(canonical)
-        && !phone_control::phone_tools_enabled()
+    if phone_control::is_phone_control_tool_name(canonical) && !phone_control::phone_tools_enabled()
     {
         return false;
     }
@@ -1537,8 +1538,10 @@ mod model_capability_tests {
     fn phone_control_requires_an_installed_device_host() {
         let config = crate::config::Config::default();
         assert!(!super::runtime_builtin_tool_allowed(&config, "手机控制"));
-        assert!(!crate::services::default_tool_profile::default_tool_candidates()
-            .contains(&"手机控制".to_string()));
+        assert!(
+            !crate::services::default_tool_profile::default_tool_candidates()
+                .contains(&"手机控制".to_string())
+        );
     }
 
     #[test]
@@ -1595,7 +1598,9 @@ pub fn resolve_tool_name(name: &str) -> String {
             "手机控制器" | "手机监视器" | "phone_controller" | "phone_monitor" => {
                 Some(phone_control::TOOL_PHONE_CONTROL.to_string())
             }
-            "安卓截屏" | "屏幕采集" => Some(android_screen::TOOL_ANDROID_SCREEN.to_string()),
+            "安卓截屏" | "屏幕采集" => {
+                Some(android_screen::TOOL_ANDROID_SCREEN.to_string())
+            }
             "安卓通知栏" | "通知监听" => {
                 Some(android_notifications::TOOL_ANDROID_NOTIFICATIONS.to_string())
             }
@@ -3307,7 +3312,9 @@ mod tests {
             let description = spec.input_schema["properties"]["limit"]["description"]
                 .as_str()
                 .expect("limit description");
-            assert!(description.contains("start_line/offset") || description.contains("start_line"));
+            assert!(
+                description.contains("start_line/offset") || description.contains("start_line")
+            );
             let list_spec = builtin_tool_specs_with_language(language)
                 .into_iter()
                 .find(|spec| spec.name == resolve_tool_name("list_files"))
@@ -3611,7 +3618,10 @@ mod tests {
             "related_memory_id",
             "memory_time",
         ] {
-            assert!(memory_properties.contains_key(field), "{field} must be exposed");
+            assert!(
+                memory_properties.contains_key(field),
+                "{field} must be exposed"
+            );
         }
         assert!(!memory_properties.contains_key("summary"));
         assert!(!memory_properties.contains_key("entities"));

@@ -259,16 +259,11 @@ async fn tools_catalog_hides_unavailable_tools_and_resolves_enabled_aliases() {
         .config_store
         .update(|config| {
             config.server.mode = "api".to_string();
-            config.tools.builtin.enabled = [
-                "网页搜索",
-                "web_search",
-                "网页抓取",
-                "read_file",
-                "goal",
-            ]
-            .into_iter()
-            .map(str::to_string)
-            .collect();
+            config.tools.builtin.enabled =
+                ["网页搜索", "web_search", "网页抓取", "read_file", "goal"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect();
             config.tools.web.search.enabled = true;
             config.tools.web.fetch.enabled = false;
             config.tools.browser.enabled = false;

@@ -1150,9 +1150,15 @@ mod tests {
         assert!(admissions
             .refresh_pending_input_attachments("fixture-thread", &turn, persisted)
             .unwrap());
-        let body = admissions.pending("fixture-thread", &turn).unwrap().unwrap();
+        let body = admissions
+            .pending("fixture-thread", &turn)
+            .unwrap()
+            .unwrap();
         let attachments = &body["attachments"];
-        assert_eq!(attachments[0]["public_path"], "/workspaces/fixture/chat_attachments/fixture.png");
+        assert_eq!(
+            attachments[0]["public_path"],
+            "/workspaces/fixture/chat_attachments/fixture.png"
+        );
         assert!(
             attachments[0]["content"].is_null(),
             "the raw inline payload must not survive the refresh"
@@ -1163,11 +1169,7 @@ mod tests {
             .update("fixture-thread", &turn, "completed", true)
             .unwrap();
         assert!(!admissions
-            .refresh_pending_input_attachments(
-                "fixture-thread",
-                &turn,
-                serde_json::json!([])
-            )
+            .refresh_pending_input_attachments("fixture-thread", &turn, serde_json::json!([]))
             .unwrap());
 
         // 未知轮次是幂等空操作。

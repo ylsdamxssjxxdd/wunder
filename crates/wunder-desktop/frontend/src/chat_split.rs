@@ -1,29 +1,59 @@
 use crate::{MainWindow, TimelineRow};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
-use wunder_desktop::native::{NativeChatTurn, NativeThreadUpdate, NativeThreadWatchCancel};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+};
+use std::time::{Duration, Instant};
+use wunder_desktop::native::{
+    NativeChatTurn, NativeThreadUpdate, NativeThreadWatch, NativeThreadWatchCancel,
+};
 use wunder_desktop::NativeDesktop;
+
+const UPDATE_QUEUE: usize = 8;
+const UPDATE_BUDGET: usize = 8;
+const RETRY_DELAY: Duration = Duration::from_millis(250);
+
+struct LiveProjection {
+    model: ModelRc<TimelineRow>,
+    root: String,
+    answer: String,
+    active: bool,
+}
 
 struct Slot {
     session: String,
     turns: Vec<NativeChatTurn>,
+    timeline: crate::timeline::Timeline,
+    live: Option<LiveProjection>,
     cancel: Option<NativeThreadWatchCancel>,
-    receiver: std::sync::mpsc::Receiver<NativeThreadUpdate>,
+    sender: std::sync::mpsc::SyncSender<(u64, NativeThreadUpdate)>,
+    receiver: std::sync::mpsc::Receiver<(u64, NativeThreadUpdate)>,
     generation: u64,
+    overflow_generation: Arc<AtomicU64>,
+    wake_pending: Arc<AtomicBool>,
+    watch_retry_at: Option<Instant>,
+    ready: bool,
 }
 
 impl Slot {
     fn empty() -> Self {
-        let (_sender, receiver) = std::sync::mpsc::sync_channel(8);
+        let (sender, receiver) = std::sync::mpsc::sync_channel(UPDATE_QUEUE);
         Self {
             session: String::new(),
             turns: Vec::new(),
+            timeline: crate::timeline::Timeline::new(),
+            live: None,
             cancel: None,
+            sender,
             receiver,
             generation: 0,
+            overflow_generation: Arc::new(AtomicU64::new(u64::MAX)),
+            wake_pending: Arc::new(AtomicBool::new(false)),
+            watch_retry_at: None,
+            ready: false,
         }
     }
 
@@ -32,9 +62,17 @@ impl Slot {
             cancel.cancel();
         }
         self.generation = self.generation.wrapping_add(1);
+        self.overflow_generation.store(u64::MAX, Ordering::Release);
+        self.wake_pending.store(false, Ordering::Release);
         self.session.clear();
         self.turns.clear();
-        self.receiver = std::sync::mpsc::sync_channel(8).1;
+        self.timeline = crate::timeline::Timeline::new();
+        self.live = None;
+        let (sender, receiver) = std::sync::mpsc::sync_channel(UPDATE_QUEUE);
+        self.sender = sender;
+        self.receiver = receiver;
+        self.watch_retry_at = None;
+        self.ready = false;
     }
 }
 
@@ -55,6 +93,29 @@ thread_local! {
     static SLOTS: RefCell<Vec<Slot>> = RefCell::new((0..4).map(|_| Slot::empty()).collect());
     static PENDING: RefCell<HashMap<usize, PendingEntry>> = RefCell::new(HashMap::new());
     static DRAFTS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    static UPDATE_SCHEDULED: Cell<bool> = const { Cell::new(false) };
+}
+
+fn wake_ui(weak: &slint::Weak<MainWindow>, pending: &AtomicBool) {
+    if pending.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let _ = weak.upgrade_in_event_loop(|app| {
+        app.invoke_split_thread_update_ready();
+    });
+}
+
+fn schedule_drain(app: &MainWindow) {
+    if UPDATE_SCHEDULED.with(|scheduled| scheduled.replace(true)) {
+        return;
+    }
+    let weak = app.as_weak();
+    slint::Timer::single_shot(Duration::ZERO, move || {
+        UPDATE_SCHEDULED.with(|scheduled| scheduled.set(false));
+        if let Some(app) = weak.upgrade() {
+            app.invoke_split_thread_update_ready();
+        }
+    });
 }
 
 fn session(app: &MainWindow, slot: usize) -> String {
@@ -181,22 +242,171 @@ fn clear_pane(app: &MainWindow, slot: usize) {
     set_busy(app, slot, false);
 }
 
+fn slot_busy(slot: &Slot) -> bool {
+    slot.turns.iter().any(|turn| {
+        matches!(
+            turn.assistant.state.as_str(),
+            "running" | "queued" | "accepted" | "waiting_input" | "waiting_approval"
+        )
+    })
+}
+
+fn refresh_slot(slot: &mut Slot) -> bool {
+    let rows = crate::native_chat::project_history(&slot.turns);
+    slot.timeline.publish_history(rows);
+    slot_busy(slot)
+}
+
+fn current_model(app: &MainWindow, slot: usize) -> ModelRc<TimelineRow> {
+    match slot {
+        0 => app.get_split_rows_0(),
+        1 => app.get_split_rows_1(),
+        2 => app.get_split_rows_2(),
+        _ => app.get_split_rows_3(),
+    }
+}
+
+fn durable_caught_up(slot: &Slot, live: &LiveProjection) -> bool {
+    !live.root.is_empty()
+        && slot
+            .turns
+            .iter()
+            .find(|turn| turn.root_id == live.root)
+            .is_some_and(|turn| {
+                let status = if turn.assistant.stats_status.is_empty() {
+                    turn.assistant.state.as_str()
+                } else {
+                    turn.assistant.stats_status.as_str()
+                };
+                let phase = crate::runtime_phase::Phase::of(status);
+                (phase.terminal() || phase == crate::runtime_phase::Phase::Inquiry)
+                    && turn.assistant.text == live.answer
+            })
+}
+
 fn publish_slot(app: &MainWindow, index: usize) {
     SLOTS.with(|slots| {
-        let slots = slots.borrow();
-        let Some(slot) = slots.get(index) else { return };
-        publish_rows(app, index, crate::native_chat::project_history(&slot.turns));
-        set_busy(
-            app,
-            index,
-            slot.turns.iter().any(|turn| {
-                matches!(
-                    turn.assistant.state.as_str(),
-                    "running" | "queued" | "accepted" | "waiting_input" | "waiting_approval"
-                )
-            }),
-        );
+        let mut slots = slots.borrow_mut();
+        let Some(slot) = slots.get_mut(index) else {
+            return;
+        };
+        let durable_busy = if slot.live.as_ref().is_some_and(|live| live.active) {
+            slot_busy(slot)
+        } else {
+            refresh_slot(slot)
+        };
+        let caught_up = slot
+            .live
+            .as_ref()
+            .is_some_and(|live| !live.active && durable_caught_up(slot, live));
+        if caught_up {
+            slot.live = None;
+        }
+        let (model, busy) = match slot.live.as_ref() {
+            Some(live) => (live.model.clone(), durable_busy || live.active),
+            None => (slot.timeline.model(), durable_busy),
+        };
+        if current_model(app, index) != model {
+            publish_model(app, index, model);
+        }
+        set_busy(app, index, busy);
     });
+    app.set_stream_updates(app.get_stream_updates().wrapping_add(1));
+}
+
+pub(crate) fn sync_live(app: &MainWindow, session: &str, model: ModelRc<TimelineRow>) {
+    if app.get_split_count() <= 1 || app.get_active_session_id() != session {
+        return;
+    }
+    let mut published = false;
+    SLOTS.with(|slots| {
+        let mut slots = slots.borrow_mut();
+        let Some((index, slot)) = slots
+            .iter_mut()
+            .enumerate()
+            .find(|(_, slot)| slot.session == session)
+        else {
+            return;
+        };
+        let root = slot
+            .live
+            .as_ref()
+            .map(|live| live.root.clone())
+            .filter(|root| !root.is_empty())
+            .unwrap_or_else(|| {
+                (0..model.row_count())
+                    .rev()
+                    .filter_map(|index| model.row_data(index))
+                    .find(|row| {
+                        row.kind == crate::timeline::KIND_PROCESS && !row.process_root.is_empty()
+                    })
+                    .map(|row| row.process_root.to_string())
+                    .unwrap_or_default()
+            });
+        slot.live = Some(LiveProjection {
+            model: model.clone(),
+            root,
+            answer: String::new(),
+            active: true,
+        });
+        if current_model(app, index) != model {
+            publish_model(app, index, model);
+        }
+        set_busy(app, index, true);
+        published = true;
+    });
+    if published {
+        app.set_stream_updates(app.get_stream_updates().wrapping_add(1));
+    }
+}
+
+fn freeze_live(live: &mut LiveProjection) {
+    live.model = ModelRc::new(VecModel::from(live.model.iter().collect::<Vec<_>>()));
+}
+
+pub(crate) fn finish_live(app: &MainWindow, session: &str) {
+    SLOTS.with(|slots| {
+        for (index, slot) in slots.borrow_mut().iter_mut().enumerate() {
+            if slot.session == session {
+                if let Some(live) = slot.live.as_mut() {
+                    freeze_live(live);
+                    live.answer = (0..live.model.row_count())
+                        .rev()
+                        .filter_map(|index| live.model.row_data(index))
+                        .find(|row| row.kind == crate::timeline::KIND_BODY)
+                        .map(|row| row.text.to_string())
+                        .unwrap_or_default();
+                    live.active = false;
+                    if current_model(app, index) != live.model {
+                        publish_model(app, index, live.model.clone());
+                    }
+                }
+            }
+        }
+    });
+}
+
+pub(crate) fn release_live(app: &MainWindow, session_id: &str) {
+    let released = SLOTS.with(|slots| {
+        let mut released = false;
+        for slot in slots.borrow_mut().iter_mut() {
+            if slot.session == session_id {
+                if let Some(live) = slot.live.as_mut() {
+                    freeze_live(live);
+                    live.active = false;
+                    released = true;
+                }
+            }
+        }
+        released
+    });
+    if released {
+        for index in 0..4 {
+            if session(app, index) == session_id {
+                publish_slot(app, index);
+            }
+        }
+    }
 }
 
 fn activate(app: &MainWindow, slot: usize) {
@@ -269,6 +479,49 @@ fn schedule(app: &MainWindow, slot: usize, action: PendingAction) {
     });
     activate(app, slot);
     run_pending(app, slot);
+}
+
+fn attach_watch(app: &MainWindow, slot: usize, mut watch: NativeThreadWatch) {
+    let (generation, cancel, sender, overflow, wake_pending, session) = SLOTS.with(|slots| {
+        let mut slots = slots.borrow_mut();
+        let slot = &mut slots[slot];
+        if let Some(cancel) = slot.cancel.take() {
+            cancel.cancel();
+        }
+        slot.generation = slot.generation.wrapping_add(1);
+        slot.watch_retry_at = None;
+        slot.overflow_generation.store(u64::MAX, Ordering::Release);
+        (
+            slot.generation,
+            watch.cancel_handle(),
+            slot.sender.clone(),
+            slot.overflow_generation.clone(),
+            slot.wake_pending.clone(),
+            slot.session.clone(),
+        )
+    });
+    SLOTS.with(|slots| slots.borrow_mut()[slot].cancel = Some(cancel.clone()));
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        while !cancel.is_cancelled() {
+            let Some(update) = watch.blocking_recv() else {
+                break;
+            };
+            match sender.try_send((generation, update)) {
+                Ok(()) => {}
+                Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                    overflow.store(generation, Ordering::Release);
+                    wake_ui(&weak, &wake_pending);
+                    break;
+                }
+                Err(std::sync::mpsc::TrySendError::Disconnected(_)) => break,
+            }
+            wake_ui(&weak, &wake_pending);
+        }
+        if !cancel.is_cancelled() && !session.is_empty() {
+            wake_ui(&weak, &wake_pending);
+        }
+    });
 }
 
 fn open_slot(app: &MainWindow, desktop: Arc<NativeDesktop>, slot: usize, row: usize) {
@@ -356,15 +609,9 @@ fn open_slot(app: &MainWindow, desktop: Arc<NativeDesktop>, slot: usize, row: us
     if open > 0 {
         app.set_split_count(if open > 2 { 4 } else { 2 });
     }
-    let (sender, receiver) = std::sync::mpsc::sync_channel(8);
-    SLOTS.with(|slots| {
-        let mut slots = slots.borrow_mut();
-        slots[slot].session = id.clone();
-        slots[slot].receiver = receiver;
-    });
+    SLOTS.with(|slots| slots.borrow_mut()[slot].session = id.clone());
     let generation = SLOTS.with(|slots| slots.borrow()[slot].generation);
     let weak = app.as_weak();
-    let wake_weak = weak.clone();
     std::thread::spawn(move || {
         let result = desktop.load_chat_headers(&id).and_then(|turns| {
             let session = desktop.get_session_info(&id)?;
@@ -383,27 +630,14 @@ fn open_slot(app: &MainWindow, desktop: Arc<NativeDesktop>, slot: usize, row: us
                         set_model(&app, slot, &model, &model);
                     }
                     let watch = desktop.watch_chat_with_initial(&id, Some(turns.clone()));
-                    let cancel = watch.cancel_handle();
-                    let mut watch = Some(watch);
                     SLOTS.with(|slots| {
                         let mut slots = slots.borrow_mut();
                         slots[slot].turns = turns;
-                        slots[slot].cancel = Some(cancel.clone());
+                        slots[slot].ready = true;
                     });
                     publish_slot(&app, slot);
                     set_loading(&app, slot, false);
-                    let thread = std::thread::spawn(move || {
-                        let mut watch = watch.take().expect("watch");
-                        while let Some(update) = watch.blocking_recv() {
-                            if sender.send(update).is_err() {
-                                break;
-                            }
-                            let _ = wake_weak.upgrade_in_event_loop(|app| {
-                                app.invoke_split_thread_update_ready()
-                            });
-                        }
-                    });
-                    drop(thread);
+                    attach_watch(&app, slot, watch);
                 }
                 Err(error) => {
                     set_loading(&app, slot, false);
@@ -525,23 +759,43 @@ fn normalize_layout(app: &MainWindow) {
 
 pub(crate) fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     let weak = app.as_weak();
+    let update_desktop = desktop.clone();
     app.on_split_thread_update_ready(move || {
-        let Some(app) = weak.upgrade() else { return };
+        let Some(app) = weak.upgrade() else {
+            return;
+        };
+        let started = Instant::now();
         for index in 0..4 {
             let mut changed = false;
+            let mut reconnect = false;
+            let mut retry_later = false;
+            let mut drain_again = false;
+            let mut queue_exhausted = false;
             SLOTS.with(|slots| {
                 let mut slots = slots.borrow_mut();
                 let slot = &mut slots[index];
-                for _ in 0..8 {
-                    let Ok(update) = slot.receiver.try_recv() else {
-                        break;
-                    };
-                    match update {
-                        NativeThreadUpdate::Reset(turns) => {
-                            slot.turns = turns;
-                            changed = true;
+                slot.wake_pending.store(false, Ordering::Release);
+                let overflowed =
+                    slot.overflow_generation.swap(u64::MAX, Ordering::AcqRel) == slot.generation;
+                if overflowed {
+                    if let Some(cancel) = slot.cancel.take() {
+                        cancel.cancel();
+                    }
+                    let (sender, receiver) = std::sync::mpsc::sync_channel(UPDATE_QUEUE);
+                    slot.sender = sender;
+                    slot.receiver = receiver;
+                    slot.watch_retry_at = Some(Instant::now());
+                }
+                for _ in 0..UPDATE_BUDGET {
+                    match slot.receiver.try_recv() {
+                        Ok((generation, _)) if generation != slot.generation => continue,
+                        Ok((_, NativeThreadUpdate::Reset(turns))) => {
+                            if slot.turns != turns {
+                                slot.turns = turns;
+                                changed = true;
+                            }
                         }
-                        NativeThreadUpdate::Turns(turns) => {
+                        Ok((_, NativeThreadUpdate::Turns(turns))) => {
                             for turn in turns {
                                 if let Some(old) = slot
                                     .turns
@@ -557,14 +811,64 @@ pub(crate) fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                                     changed = true;
                                 }
                             }
-                            slot.turns.sort_by_key(|turn| turn.user.user_round);
+                            if changed {
+                                slot.turns.sort_by_key(|turn| turn.user.user_round);
+                            }
                         }
-                        _ => {}
+                        Ok((_, NativeThreadUpdate::Failed(error))) => {
+                            app.set_status(error.into());
+                            if let Some(cancel) = slot.cancel.take() {
+                                cancel.cancel();
+                            }
+                            slot.watch_retry_at = Some(Instant::now() + RETRY_DELAY);
+                        }
+                        Ok(_) => {}
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            queue_exhausted = true;
+                            break;
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                            queue_exhausted = true;
+                            if let Some(cancel) = slot.cancel.take() {
+                                cancel.cancel();
+                            }
+                            slot.watch_retry_at = Some(Instant::now() + RETRY_DELAY);
+                            break;
+                        }
+                    }
+                    if started.elapsed() > Duration::from_millis(5) {
+                        break;
+                    }
+                }
+                drain_again = !queue_exhausted;
+                if slot.ready && slot.cancel.is_none() && !slot.session.is_empty() {
+                    if slot
+                        .watch_retry_at
+                        .is_none_or(|retry| retry <= Instant::now())
+                    {
+                        reconnect = true;
+                    } else {
+                        retry_later = true;
                     }
                 }
             });
             if changed {
                 publish_slot(&app, index);
+            }
+            if reconnect {
+                let session = SLOTS.with(|slots| slots.borrow()[index].session.clone());
+                let watch = update_desktop.watch_chat_with_initial(&session, None);
+                attach_watch(&app, index, watch);
+            } else if retry_later {
+                let weak = app.as_weak();
+                slint::Timer::single_shot(RETRY_DELAY, move || {
+                    if let Some(app) = weak.upgrade() {
+                        app.invoke_split_thread_update_ready();
+                    }
+                });
+            }
+            if drain_again {
+                schedule_drain(&app);
             }
         }
     });
@@ -673,4 +977,127 @@ pub(crate) fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             );
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wunder_desktop::NativeMessage;
+
+    fn turn(root: &str, text: &str) -> NativeChatTurn {
+        let message = |mine: bool, text: &str| NativeMessage {
+            turn_id: root.into(),
+            text: text.into(),
+            mine,
+            created_at: 0.0,
+            state: "completed".into(),
+            stats_status: "任务完成".into(),
+            user_round: 0,
+            stats: Default::default(),
+            attachments: Vec::new(),
+        };
+        NativeChatTurn {
+            root_id: root.into(),
+            user: message(true, "Fixture input"),
+            assistant: message(false, text),
+            rounds: Vec::new(),
+            subagents: Vec::new(),
+            process_steps: 0,
+            plan: None,
+            question_panel: None,
+            failure: None,
+        }
+    }
+
+    #[test]
+    fn durable_updates_patch_one_stable_slot_model() {
+        let mut slot = Slot::empty();
+        slot.turns = vec![
+            turn("fixture-a", "Earlier answer"),
+            turn("fixture-b", "Tail"),
+        ];
+        assert!(!refresh_slot(&mut slot));
+        let model = slot.timeline.model();
+        let frozen = model
+            .iter()
+            .find(|row| row.id == "answer-fixture-a")
+            .map(|row| row.blocks)
+            .expect("frozen answer blocks");
+
+        slot.turns[1].assistant.text.push_str(" continued");
+        refresh_slot(&mut slot);
+        let next = slot.timeline.model();
+        assert_eq!(next, model, "a durable frame must not replace the model");
+        assert_eq!(
+            next.iter()
+                .find(|row| row.id == "answer-fixture-a")
+                .map(|row| row.blocks),
+            Some(frozen),
+            "an unrelated turn must keep its projected blocks"
+        );
+        assert_eq!(
+            next.iter()
+                .find(|row| row.id == "answer-fixture-b")
+                .map(|row| row.text.to_string()),
+            Some("Tail continued".into())
+        );
+    }
+
+    #[test]
+    fn live_handoff_waits_for_its_own_durable_terminal() {
+        let mut slot = Slot::empty();
+        slot.turns = vec![turn("fixture-root", "Partial")];
+        slot.turns[0].assistant.state = "running".into();
+        slot.turns[0].assistant.stats_status = "正在生成…".into();
+        let mut live = LiveProjection {
+            model: ModelRc::default(),
+            root: "fixture-root".into(),
+            answer: "Partial".into(),
+            active: false,
+        };
+        assert!(!durable_caught_up(&slot, &live));
+        live.root = "fixture-other".into();
+        assert!(!durable_caught_up(&slot, &live));
+        live.root = "fixture-root".into();
+        slot.turns[0].assistant.state = "running".into();
+        slot.turns[0].assistant.stats_status = "正在生成…".into();
+        assert!(!durable_caught_up(&slot, &live));
+        slot.turns[0].assistant.state = "waiting_input".into();
+        slot.turns[0].assistant.stats_status = "等待用户输入".into();
+        assert!(durable_caught_up(&slot, &live));
+        slot.turns[0].assistant.state = "completed".into();
+        slot.turns[0].assistant.stats_status = "任务完成".into();
+        live.answer = "Not yet durable".into();
+        assert!(!durable_caught_up(&slot, &live));
+        live.answer = "Partial".into();
+        assert!(durable_caught_up(&slot, &live));
+    }
+
+    #[test]
+    fn terminal_snapshot_does_not_follow_later_source_mutations() {
+        let source = ModelRc::new(VecModel::from(crate::native_chat::project_history(&[
+            turn("fixture-root", "Visible partial"),
+        ])));
+        let mut live = LiveProjection {
+            model: source.clone(),
+            root: "fixture-root".into(),
+            answer: String::new(),
+            active: true,
+        };
+        freeze_live(&mut live);
+        let index = source
+            .iter()
+            .position(|row| row.id == "answer-fixture-root")
+            .expect("source answer");
+        let mut changed = source.row_data(index).expect("source row");
+        changed.text = "Overwritten".into();
+        source.set_row_data(index, changed);
+        assert_eq!(
+            live.model
+                .iter()
+                .find(|row| row.id == "answer-fixture-root")
+                .map(|row| row.text.to_string()),
+            Some("Visible partial".into())
+        );
+    }
 }

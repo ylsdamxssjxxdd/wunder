@@ -1672,34 +1672,38 @@ impl MonitorState {
         if cleaned.is_empty() {
             return false;
         }
-        self.run_guarded("monitor.settle_restarted_session", || false, || {
-            if self.sessions.lock().contains_key(&cleaned) {
-                // 本进程内有同一会话的活动记录时不覆盖。
-                return false;
-            }
-            let Some(mut record) = self.hydrate_session_record_for_register(&cleaned) else {
-                return false;
-            };
-            if !matches!(
-                record.status.as_str(),
-                Self::STATUS_RUNNING | Self::STATUS_CANCELLING | Self::STATUS_QUEUED
-            ) {
-                return false;
-            }
-            record.status = Self::STATUS_CANCELLED.to_string();
-            record.stage = Self::STATUS_CANCELLED.to_string();
-            record.summary = i18n::t("monitor.summary.restarted");
-            record.cancel_requested = false;
-            record.cancel_source = None;
-            record.ended_time = Some(record.updated_time);
-            record.dirty = false;
-            let payload = self.build_persisted_record_payload(&record);
-            if let Err(error) = self.storage.upsert_monitor_record(&payload) {
-                warn!("monitor restart settle failed for session {cleaned}: {error}");
-                return false;
-            }
-            true
-        })
+        self.run_guarded(
+            "monitor.settle_restarted_session",
+            || false,
+            || {
+                if self.sessions.lock().contains_key(&cleaned) {
+                    // 本进程内有同一会话的活动记录时不覆盖。
+                    return false;
+                }
+                let Some(mut record) = self.hydrate_session_record_for_register(&cleaned) else {
+                    return false;
+                };
+                if !matches!(
+                    record.status.as_str(),
+                    Self::STATUS_RUNNING | Self::STATUS_CANCELLING | Self::STATUS_QUEUED
+                ) {
+                    return false;
+                }
+                record.status = Self::STATUS_CANCELLED.to_string();
+                record.stage = Self::STATUS_CANCELLED.to_string();
+                record.summary = i18n::t("monitor.summary.restarted");
+                record.cancel_requested = false;
+                record.cancel_source = None;
+                record.ended_time = Some(record.updated_time);
+                record.dirty = false;
+                let payload = self.build_persisted_record_payload(&record);
+                if let Err(error) = self.storage.upsert_monitor_record(&payload) {
+                    warn!("monitor restart settle failed for session {cleaned}: {error}");
+                    return false;
+                }
+                true
+            },
+        )
     }
 
     pub fn sum_consumed_tokens_by_user(&self, user_id: &str) -> i64 {
@@ -3581,18 +3585,12 @@ mod tests {
             root.path().to_string_lossy().into(),
         );
         assert_eq!(
-            restarted
-                .get_session_stats("sample-thread")
-                .unwrap()
-                .status,
+            restarted.get_session_stats("sample-thread").unwrap().status,
             "running"
         );
         assert!(restarted.settle_restarted_session("sample-thread"));
         assert_eq!(
-            restarted
-                .get_session_stats("sample-thread")
-                .unwrap()
-                .status,
+            restarted.get_session_stats("sample-thread").unwrap().status,
             "cancelled"
         );
         assert_eq!(

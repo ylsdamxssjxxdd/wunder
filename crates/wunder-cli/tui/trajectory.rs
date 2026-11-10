@@ -283,7 +283,10 @@ impl TrajectoryView {
             } else {
                 (self.axis.seq_start as f64, self.axis.seq_end as f64)
             };
-            return (start, end.max(start + if self.duration { 0.001 } else { 1.0 }));
+            return (
+                start,
+                end.max(start + if self.duration { 0.001 } else { 1.0 }),
+            );
         }
         let mut start = f64::INFINITY;
         let mut end = f64::NEG_INFINITY;

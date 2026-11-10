@@ -818,7 +818,9 @@ mod tests {
         let thinned = thin_turns(&turns, 960.0);
         assert!(!thinned.is_empty());
         assert!(thinned.len() <= 20);
-        assert!(thinned.windows(2).all(|pair| pair[1].x - pair[0].x >= MIN_TURN_GAP_PX));
+        assert!(thinned
+            .windows(2)
+            .all(|pair| pair[1].x - pair[0].x >= MIN_TURN_GAP_PX));
         assert_eq!(thinned[0].label, "R10");
     }
 

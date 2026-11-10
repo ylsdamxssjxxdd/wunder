@@ -120,6 +120,10 @@ name = "cron_tool"
 required-features = ["sqlite-storage"]
 
 [[test]]
+name = "default_model_switch"
+required-features = ["sqlite-storage"]
+
+[[test]]
 name = "gateway_regression"
 required-features = ["sqlite-storage"]
 

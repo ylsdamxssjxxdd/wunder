@@ -233,7 +233,10 @@ fn model_goal_tool_rejects_create() {
         json!({ "action": "create", "objective": "ship it" }),
         json!({ "action": " create " }),
     ] {
-        assert_code(reject_model_create(&args).unwrap_err(), ERR_TOOL_CREATE_USER_ONLY);
+        assert_code(
+            reject_model_create(&args).unwrap_err(),
+            ERR_TOOL_CREATE_USER_ONLY,
+        );
     }
     reject_model_create(&json!({ "action": "get" })).unwrap();
 }

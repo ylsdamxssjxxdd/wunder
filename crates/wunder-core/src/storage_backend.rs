@@ -1040,14 +1040,8 @@ pub trait ChatSessionStore {
     /// numbers made the profile load scale with accumulated history; backends
     /// that can aggregate in SQL should override this.
     fn chat_thread_activity(&self, user_id: &str, since: f64) -> Result<ChatThreadActivity> {
-        let (records, total) = self.list_chat_sessions_by_status(
-            user_id,
-            None,
-            None,
-            Some("active"),
-            0,
-            0,
-        )?;
+        let (records, total) =
+            self.list_chat_sessions_by_status(user_id, None, None, Some("active"), 0, 0)?;
         Ok(ChatThreadActivity::from_records(&records, total, since))
     }
     fn update_chat_session_title(

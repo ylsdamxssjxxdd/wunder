@@ -5,7 +5,9 @@ import { readComposerDraftState, writeComposerDraftState, clearComposerDraftStat
 import {
   COMPOSER_MODEL_MAX_ITEMS,
   buildComposerModelSnapshot,
-  normalizeComposerModelItems
+  hasConfiguredModelField,
+  normalizeComposerModelItems,
+  normalizeConfiguredModelName
 } from '../../src/components/chat/composerModelCatalogModel';
 import {
   WORKSPACE_REFERENCE_MAX_ITEMS,
@@ -41,6 +43,31 @@ test('model items are de-duplicated by id and bounded', () => {
   const many = Array.from({ length: COMPOSER_MODEL_MAX_ITEMS + 25 }, (_, index) => `m-${index}`);
   assert.equal(normalizeComposerModelItems(many, '').length, COMPOSER_MODEL_MAX_ITEMS);
   assert.equal(normalizeComposerModelItems(['a', 'a', 'A'], '').length, 1);
+});
+
+test('a null configured_model_name means "follow system default"', () => {
+  const payload = {
+    configured_model_name: null,
+    model_name: 'old-system-default'
+  };
+  assert.equal(hasConfiguredModelField(payload), true);
+  assert.equal(normalizeConfiguredModelName(payload.configured_model_name), '');
+
+  assert.equal(hasConfiguredModelField({ model_name: 'legacy-default' }), false);
+  assert.equal(
+    hasConfiguredModelField({ configuredModelName: null }),
+    true,
+    'camelCase payloads count as delivered as well'
+  );
+});
+
+test('configured model aliases normalize to a concrete key or the default', () => {
+  assert.equal(normalizeConfiguredModelName('model-a'), 'model-a');
+  assert.equal(normalizeConfiguredModelName(' default '), '');
+  assert.equal(normalizeConfiguredModelName('__default__'), '');
+  assert.equal(normalizeConfiguredModelName('SYSTEM'), '');
+  assert.equal(normalizeConfiguredModelName(null), '');
+  assert.equal(normalizeConfiguredModelName({ id: 'nested' }), '');
 });
 
 test('missing contract fields degrade without inventing values', () => {

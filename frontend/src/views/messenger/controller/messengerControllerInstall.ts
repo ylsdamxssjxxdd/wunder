@@ -11,6 +11,7 @@ import { updateProfile } from '@/api/auth';
 import { listChannelBindings } from '@/api/channels';
 import { fetchRealtimeSystemPrompt, fetchSessionSystemPrompt, getSession as getChatSessionApi, synthesizeChatTts, updateSessionModel } from '@/api/chat';
 import { composerModelCatalog } from '@/components/chat/composerModelCatalog';
+import { hasConfiguredModelField, normalizeConfiguredModelName } from '@/components/chat/composerModelCatalogModel';
 import { fetchCronJobs } from '@/api/cron';
 import { fetchUserSkillContent, uploadUserSkillZip } from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent } from '@/api/workspace';
@@ -2970,16 +2971,26 @@ function installMessengerControllerAgentIdentityState(ctx: MessengerControllerCo
 
   ctx.resolveExplicitAgentModelName = (profileValue: unknown): string => {
       const profile = ctx.asObjectRecord(profileValue);
+      const hasConfiguredField = hasConfiguredModelField(profile);
       const configuredRaw = profile.configured_model_name ?? profile.configuredModelName;
-      const configuredResolved = ctx.resolveModelNameFromRecord(configuredRaw);
-      const configured = configuredResolved || String(configuredRaw || '').trim();
-      if (!ctx.isDefaultModelSelectorValue(configured)) {
+      const configured = normalizeConfiguredModelName(
+          ctx.resolveModelNameFromRecord(configuredRaw) || configuredRaw
+      );
+      if (configured) {
           return configured;
+      }
+      // The server advertises `configured_model_name` explicitly; null means the
+      // agent follows the system default. `model_name` is only the effective
+      // model at response time, so treating a stale one as an explicit choice
+      // pins the label to the previous default after the admin switches it.
+      if (hasConfiguredField) {
+          return '';
       }
       const fallback = ctx.resolveModelNameFromRecord(profile);
       if (ctx.isDefaultModelSelectorValue(fallback))
           return '';
-      // API fallback may contain effective default model_name when agent has no explicit model.
+      // Legacy payloads without the field may still carry the effective default
+      // in `model_name`; keep the old heuristic only for those.
       if (ctx.desktopLocalMode.value && ctx.isSameModelName(fallback, ctx.desktopDefaultModelDisplayName.value)) {
           return '';
       }
@@ -11222,7 +11233,11 @@ function installMessengerControllerLifecycleReactiveEffects(ctx: MessengerContro
           ctx.disposeMessageTtsPlayback();
           return;
       }
-      const forceRefresh = Boolean(previous?.[4] && !showingSettings);
+      // A new thread (or another agent) must read the current system default
+      // instead of a cached one, otherwise the composer keeps showing the
+      // default model that was current when the page first loaded.
+      const forceRefresh = Boolean(previous?.[4] && !showingSettings) ||
+          Boolean(previous && (previous[2] !== _agentId || previous[3] !== _sessionId));
       if (desktop) {
           void ctx.readDesktopDefaultModelMeta(forceRefresh);
           return;

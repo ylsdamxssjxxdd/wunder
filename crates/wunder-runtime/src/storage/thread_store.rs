@@ -1271,10 +1271,9 @@ impl LocalThreadStore {
                         "status":if result.failed{"failed"}else{"completed"},
                         "meta":result.meta,
                     });
-                    if let Some(reference) = crate::tools::runtime_tool_schema_reference(
-                        profile.function_name,
-                    )
-                    .or_else(|| crate::tools::runtime_tool_schema_reference(profile.name))
+                    if let Some(reference) =
+                        crate::tools::runtime_tool_schema_reference(profile.function_name)
+                            .or_else(|| crate::tools::runtime_tool_schema_reference(profile.name))
                     {
                         payload["schema_ref"] = serde_json::to_value(reference)?;
                     }
@@ -1287,7 +1286,11 @@ impl LocalThreadStore {
                     }
                     let observation = serde_json::json!({"role":"tool","tool_call_id":call_id,"content":serde_json::to_string(&observation_payload)?});
                     // 工具按计划时长依序执行，时间戳随之推进。
-                    tool_cursor += (round.tool_duration_s.get(tool_index).copied().unwrap_or(0.0)
+                    tool_cursor += (round
+                        .tool_duration_s
+                        .get(tool_index)
+                        .copied()
+                        .unwrap_or(0.0)
                         * 1000.0) as i64;
                     let tool_at = tool_cursor;
                     self.push_stress_record(

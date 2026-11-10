@@ -13,8 +13,7 @@ use crate::orchestrator_constants::{
     COMPACTION_HISTORY_RATIO, COMPACTION_META_TYPE, COMPACTION_MIN_OBSERVATION_TOKENS,
     COMPACTION_REPLACEMENT_HISTORY_META_KEY, COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS,
     DEFAULT_LLM_TIMEOUT_S, DEFAULT_TOOL_PARALLELISM, DEFAULT_TOOL_TIMEOUT_S, MIN_TOOL_TIMEOUT_S,
-    OBSERVATION_PREFIX,
-    SESSION_LOCK_BUSY_BACKOFF_AFTER, SESSION_LOCK_BUSY_BACKOFF_FACTOR,
+    OBSERVATION_PREFIX, SESSION_LOCK_BUSY_BACKOFF_AFTER, SESSION_LOCK_BUSY_BACKOFF_FACTOR,
     SESSION_LOCK_BUSY_MAX_INTERVAL_S, SESSION_LOCK_BUSY_MAX_SPREAD_S, SESSION_LOCK_BUSY_RETRY_S,
     SESSION_LOCK_BUSY_WARN_S, SESSION_LOCK_HEARTBEAT_S, SESSION_LOCK_POLL_INTERVAL_S,
     SESSION_LOCK_TTL_S, STREAM_EVENT_QUEUE_SIZE, TOOL_RESULT_TRUNCATION_MARKER,
@@ -74,13 +73,13 @@ mod context;
 mod empty_output_guard;
 #[cfg(all(test, feature = "sqlite-storage"))]
 mod empty_output_tests;
-#[cfg(all(test, feature = "sqlite-storage"))]
-mod failure_recovery_tests;
 mod error;
 mod event_stream;
 mod execute;
 mod execute_support;
 mod execute_tools;
+#[cfg(all(test, feature = "sqlite-storage"))]
+mod failure_recovery_tests;
 mod hooks;
 mod limiter;
 mod llm;

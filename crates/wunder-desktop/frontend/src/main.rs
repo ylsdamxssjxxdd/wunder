@@ -337,6 +337,16 @@ fn install_composer_popover_dismissal(app: &MainWindow) {
         );
         let scale = f64::from(window.scale_factor()).max(0.001);
         match event {
+            winit::event::WindowEvent::Focused(true)
+            | winit::event::WindowEvent::Occluded(false) => {
+                let weak = weak.clone();
+                slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                    if let Some(app) = weak.upgrade() {
+                        native_chat::resume_rendering(&app);
+                    }
+                });
+                return EventResult::Propagate;
+            }
             winit::event::WindowEvent::CursorMoved { position, .. } => {
                 pointer_for_filter.set(Some((position.x, position.y)));
                 return EventResult::Propagate;

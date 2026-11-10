@@ -590,7 +590,10 @@ fn summarize_command_failure_stream(map: &Map<String, Value>, stream: &str) -> O
         window
     };
     let detail = if detail.chars().count() > FAILURE_STREAM_MAX_CHARS {
-        let head = detail.chars().take(FAILURE_STREAM_MAX_CHARS).collect::<String>();
+        let head = detail
+            .chars()
+            .take(FAILURE_STREAM_MAX_CHARS)
+            .collect::<String>();
         format!("{head}...")
     } else {
         detail
@@ -2100,7 +2103,14 @@ fn project_android_notifications(data: &Value) -> Option<Value> {
             .map(|item| {
                 Value::Object(pick_non_empty_fields(
                     item,
-                    &["package", "title", "text", "post_time", "key", "can_dismiss"],
+                    &[
+                        "package",
+                        "title",
+                        "text",
+                        "post_time",
+                        "key",
+                        "can_dismiss",
+                    ],
                 ))
             })
             .collect::<Vec<_>>();
@@ -2664,8 +2674,7 @@ fn project_list_files_success(data: &Value) -> Option<Value> {
     };
     let mut projected = Map::new();
     if let Some(items) = map.get("items").filter(|value| !value.is_null()) {
-        if let Some(items) = items.as_array().filter(|items| items.len() > inline_limit)
-        {
+        if let Some(items) = items.as_array().filter(|items| items.len() > inline_limit) {
             // A generic head/tail sampler drops the middle of a 289-entry
             // listing, which is exactly where the top-level directories live.
             // Keep directories first so one call is enough for an architecture
@@ -2693,8 +2702,7 @@ fn project_list_files_success(data: &Value) -> Option<Value> {
             } else {
                 "directories_first; pass top_level_only=true to get only direct children in one call"
             };
-            projected
-                .insert("hint".to_string(), Value::String(hint.to_string()));
+            projected.insert("hint".to_string(), Value::String(hint.to_string()));
         } else {
             projected.insert("items".to_string(), items.clone());
         }
@@ -3243,7 +3251,10 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
     // model never has to reconcile `output_budget_hit: true` with
     // `truncated_by_size: false` in the same payload.
     if !map.contains_key("truncation_reason") {
-        if let Some(value) = map.get("output_budget_hit").filter(|value| !value.is_null()) {
+        if let Some(value) = map
+            .get("output_budget_hit")
+            .filter(|value| !value.is_null())
+        {
             compacted.insert("output_budget_hit".to_string(), value.clone());
         }
     }
@@ -3280,11 +3291,7 @@ fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value>
             }
             // A `false` next to `truncation_reason: output_budget` reads like a
             // contradiction. Only the affirmative case carries information.
-            if file_obj
-                .get("truncated_by_size")
-                .and_then(Value::as_bool)
-                == Some(true)
-            {
+            if file_obj.get("truncated_by_size").and_then(Value::as_bool) == Some(true) {
                 item.insert("truncated_by_size".to_string(), Value::Bool(true));
             }
             if !item.is_empty() {

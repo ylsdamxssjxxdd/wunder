@@ -48,6 +48,28 @@ const asRecord = (value: unknown): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {};
 
+const DEFAULT_MODEL_SELECTOR_VALUES = new Set(['', 'default', '__default__', 'system']);
+
+/**
+ * `configured_model_name` is the agent's own model override; the server sends
+ * it as `null` when the agent follows the system default. Its presence (even
+ * with a null value) makes the effective `model_name` purely informational —
+ * treating that effective value as an override pins stale defaults in the UI.
+ */
+export const hasConfiguredModelField = (profileValue: unknown): boolean => {
+  const profile = asRecord(profileValue);
+  return (
+    Object.prototype.hasOwnProperty.call(profile, 'configured_model_name') ||
+    Object.prototype.hasOwnProperty.call(profile, 'configuredModelName')
+  );
+};
+
+export const normalizeConfiguredModelName = (value: unknown): string => {
+  const text =
+    typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
+  return DEFAULT_MODEL_SELECTOR_VALUES.has(text.toLowerCase()) ? '' : text;
+};
+
 const normalizeContext = (value: unknown): number | null => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;

@@ -3683,11 +3683,7 @@ async fn handle_doctor(
     let tls_roots = wunder_server::http_client::tls_roots_label();
     println!(
         "- {}: {tls_roots}",
-        if is_zh {
-            "TLS 根证书"
-        } else {
-            "tls_roots"
-        }
+        if is_zh { "TLS 根证书" } else { "tls_roots" }
     );
     if wunder_server::http_client::is_termux() {
         println!("- Termux: detected");
@@ -3707,11 +3703,7 @@ async fn handle_doctor(
         };
         println!(
             "- {}: {result}",
-            if is_zh {
-                "HTTPS 探测"
-            } else {
-                "tls_probe"
-            }
+            if is_zh { "HTTPS 探测" } else { "tls_probe" }
         );
     }
 

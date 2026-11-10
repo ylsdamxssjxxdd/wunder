@@ -175,9 +175,8 @@ impl DesktopRuntime {
                 .context("release embedded local assets failed")?;
         // Untouched system assets follow this binary; user edits stay untouched
         // and the new bytes land in temp/asset-conflicts/ for comparison.
-        let config_merge =
-            wunder_server::local_bootstrap::merge_missing_config_keys(&state_root)
-                .context("merge default config keys failed")?;
+        let config_merge = wunder_server::local_bootstrap::merge_missing_config_keys(&state_root)
+            .context("merge default config keys failed")?;
         if config_merge.changed || release_report.conflict_count() > 0 {
             eprintln!(
                 "local assets: updated={} conflicts={} config_keys_added={}",
@@ -369,19 +368,16 @@ impl DesktopRuntime {
         );
 
         step_start = Instant::now();
-        let mut init_options = AppStateInitOptions::desktop_default()
-            .with_start_thread_runtime(false);
+        let mut init_options =
+            AppStateInitOptions::desktop_default().with_start_thread_runtime(false);
         if args.background_runtime {
             // The Android :background tick owns the due-job drain; a second
             // scheduler loop in that process would race it for the same lease.
             init_options = init_options.with_start_cron(false);
         }
-        let mut state = AppState::new_with_options(
-            config_store.clone(),
-            config.clone(),
-            init_options,
-        )
-        .context("initialize desktop state failed")?;
+        let mut state =
+            AppState::new_with_options(config_store.clone(), config.clone(), init_options)
+                .context("initialize desktop state failed")?;
         // Recover stale SQLite tasks before the native queue dispatcher starts.
         state.runtime_capabilities.thread_runtime_active =
             args.native_runtime && !args.background_runtime;
@@ -1133,10 +1129,7 @@ pub(crate) fn refresh_runtime_tool_env(settings: &DesktopSettings, app_dir: &Pat
             .map(|name| name.eq_ignore_ascii_case("cmd.exe"))
             .unwrap_or(false);
         if !is_cmd {
-            set_env_path_if_exists(
-                wunder_server::command_utils::POWERSHELL_EXE_ENV,
-                &shell_bin,
-            );
+            set_env_path_if_exists(wunder_server::command_utils::POWERSHELL_EXE_ENV, &shell_bin);
             wunder_server::command_utils::reset_powershell_host();
         }
     }
@@ -1158,10 +1151,7 @@ pub(crate) fn refresh_runtime_tool_env(settings: &DesktopSettings, app_dir: &Pat
                 .unwrap_or(false);
             if ubuntu_wrapper {
                 if let Some(script) = configured.as_ref() {
-                    set_env_path_if_exists(
-                        wunder_server::command_utils::SHELL_SCRIPT_ENV,
-                        script,
-                    );
+                    set_env_path_if_exists(wunder_server::command_utils::SHELL_SCRIPT_ENV, script);
                 }
                 set_env_path_if_exists(
                     wunder_server::command_utils::SHELL_BIN_ENV,

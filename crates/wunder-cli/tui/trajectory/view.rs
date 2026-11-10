@@ -1,6 +1,5 @@
 use super::*;
 use crate::tool_display::tool_result_ledger_summary;
-use wunder_server::stable_core::trajectory_axis as axis;
 use crate::tui::theme;
 use ratatui::layout::{Constraint, Direction as LayoutDirection, Layout};
 use ratatui::style::Style;
@@ -8,6 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use wunder_server::stable_core::trajectory_axis as axis;
 
 fn tr(zh: bool, chinese: &'static str, english: &'static str) -> &'static str {
     if zh {
@@ -707,7 +707,10 @@ fn draw_timeline(frame: &mut Frame, area: Rect, v: &mut TrajectoryView, zh: bool
                 if start < range.0 || start > range.1 {
                     continue;
                 }
-                result.push((row.user_round, coordinate(start, range, width) as f64 * 12.0));
+                result.push((
+                    row.user_round,
+                    coordinate(start, range, width) as f64 * 12.0,
+                ));
             }
             result
         };

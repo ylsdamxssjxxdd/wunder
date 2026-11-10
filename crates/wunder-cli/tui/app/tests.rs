@@ -350,7 +350,10 @@ fn authoritative_thinking_frames_never_append_the_same_block_twice() {
     // A short summary frame must not rewind a longer live stream.
     assert_eq!(reconcile_authoritative_text(full, streamed), Keep);
     // Neither contains the other: the complete frame wins, still no append.
-    assert_eq!(reconcile_authoritative_text("draft fragment", full), Replace);
+    assert_eq!(
+        reconcile_authoritative_text("draft fragment", full),
+        Replace
+    );
     assert_eq!(reconcile_authoritative_text("", full), Replace);
     assert_eq!(reconcile_authoritative_text(full, "   "), Keep);
 }

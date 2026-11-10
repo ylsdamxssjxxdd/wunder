@@ -39,7 +39,10 @@ fn start_isolated() -> Result<NativeDesktop, Box<dyn std::error::Error>> {
                            "base_url": "http://127.0.0.1:9/v1", "timeout_s": 5,
                            "support_vision": false, "api_key": "contract-secret"}}}
     });
-    std::fs::write(config.join("wunder.yaml"), serde_json::to_vec(&engine_config)?)?;
+    std::fs::write(
+        config.join("wunder.yaml"),
+        serde_json::to_vec(&engine_config)?,
+    )?;
     let settings = serde_json::json!({
         "workspace_root": "", "desktop_token": "", "updated_at": 0,
         "lan_mesh": {"enabled": false}
@@ -59,15 +62,21 @@ fn preferences_validate_and_persist() {
     let _serial = serial();
     let runtime = start_isolated().expect("isolated runtime");
     assert!(
-        runtime.save_preferences("dark", "enter", 14, "cloud").is_err(),
+        runtime
+            .save_preferences("dark", "enter", 14, "cloud")
+            .is_err(),
         "unknown theme"
     );
     assert!(
-        runtime.save_preferences("light", "space", 14, "cloud").is_err(),
+        runtime
+            .save_preferences("light", "space", 14, "cloud")
+            .is_err(),
         "unknown send key"
     );
     assert!(
-        runtime.save_preferences("light", "enter", 9, "cloud").is_err(),
+        runtime
+            .save_preferences("light", "enter", 9, "cloud")
+            .is_err(),
         "font size out of range"
     );
     let settings = runtime
@@ -96,7 +105,10 @@ fn preferences_validate_and_persist() {
         .save_preferences("honey", "enter", 14, "  ")
         .expect("blank source save");
     assert_eq!(
-        runtime.get_desktop_settings().expect("reload").update_source,
+        runtime
+            .get_desktop_settings()
+            .expect("reload")
+            .update_source,
         "cloud"
     );
 }

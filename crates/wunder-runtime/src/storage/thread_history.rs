@@ -356,7 +356,11 @@ impl ThreadHistoryStore {
     /// of a branched segment recover per-root summaries as of `through`
     /// (exclusive); heads alone cannot answer that, and writing one checkpoint
     /// per item on the hot path would duplicate the head for every entry.
-    pub(crate) fn ensure_chat_checkpoints(&self, rollout_id: &str, through_ordinal: u64) -> Result<()> {
+    pub(crate) fn ensure_chat_checkpoints(
+        &self,
+        rollout_id: &str,
+        through_ordinal: u64,
+    ) -> Result<()> {
         validate_id("rollout_id", rollout_id)?;
         let through = sqlite_i64(through_ordinal)?;
         super::thread_chat_summary::ensure_checkpoints(&mut *self.connect()?, rollout_id, through)
@@ -632,7 +636,10 @@ impl ThreadHistoryStore {
             items.pop();
         }
         let mut more = window_extra || budget_limited;
-        let root = self.db_path.parent().expect("history database has a parent");
+        let root = self
+            .db_path
+            .parent()
+            .expect("history database has a parent");
         let segments: &[HistorySegment] = match &self.scope {
             Some((current, segments)) if current == rollout_id => segments.as_slice(),
             _ => &[],
@@ -646,9 +653,10 @@ impl ThreadHistoryStore {
                 .last()
                 .map(|item| i64::try_from(item.rollout_ordinal).unwrap_or(i64::MAX))
                 .or_else(|| {
-                    request.before.as_ref().map(|cursor| {
-                        i64::try_from(cursor.rollout_ordinal).unwrap_or(i64::MAX)
-                    })
+                    request
+                        .before
+                        .as_ref()
+                        .map(|cursor| i64::try_from(cursor.rollout_ordinal).unwrap_or(i64::MAX))
                 });
             let accept = |item: &ThreadHistoryItem| {
                 turn_id.map_or(true, |turn| item.turn_id.as_deref() == Some(turn))
@@ -724,7 +732,10 @@ impl ThreadHistoryStore {
         }
         // Outside the active window: locate the owning turn and re-read the
         // canonical rollout so the read stays bounded.
-        let root = self.db_path.parent().expect("history database has a parent");
+        let root = self
+            .db_path
+            .parent()
+            .expect("history database has a parent");
         let segments: &[HistorySegment] = match &self.scope {
             Some((current, segments)) if current == rollout_id => segments.as_slice(),
             _ => &[],
@@ -1100,7 +1111,9 @@ fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str)
         |row| row.get(0),
     )?;
     if exists == 0 {
-        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition};"))?;
+        conn.execute_batch(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {definition};"
+        ))?;
     }
     Ok(())
 }
@@ -1501,7 +1514,10 @@ fn envelope_to_history_item(
         .and_then(Value::as_str)
         .unwrap_or("unknown")
         .to_string();
-    let turn_id = body.get("turn_id").and_then(Value::as_str).map(str::to_string);
+    let turn_id = body
+        .get("turn_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let root_turn_id = body
         .get("root_turn_id")
         .and_then(Value::as_str)
@@ -1843,7 +1859,13 @@ fn project_completed_item(
             "INSERT OR IGNORE INTO thread_item_anchors
                  (rollout_id,rollout_ordinal,item_id,record_byte_offset,record_byte_length)
              VALUES (?1,?2,?3,?4,?5)",
-            params![rollout_id, ordinal, item_id, sqlite_i64(byte_offset)?, sqlite_i64(byte_length)?],
+            params![
+                rollout_id,
+                ordinal,
+                item_id,
+                sqlite_i64(byte_offset)?,
+                sqlite_i64(byte_length)?
+            ],
         )?;
     }
 
@@ -2140,8 +2162,8 @@ fn preview_body(body: &Value) -> Value {
         }
     }
     // Card-grade text previews; full content and reasoning stay in the log.
-    let content = wunder_core::thread_view::message_content_text(&body["content"])
-        .unwrap_or_default();
+    let content =
+        wunder_core::thread_view::message_content_text(&body["content"]).unwrap_or_default();
     if !content.is_empty() {
         out.insert("content".into(), json!(preview(&content, 256)));
         out.insert("_content_bytes".into(), Value::from(content.len()));
@@ -2216,7 +2238,10 @@ fn preview_body(body: &Value) -> Value {
             .get("workspace_changed")
             .is_some_and(|value| value == &Value::Bool(true) || value.is_number())
         {
-            kept.insert("workspace_changed".into(), meta["workspace_changed"].clone());
+            kept.insert(
+                "workspace_changed".into(),
+                meta["workspace_changed"].clone(),
+            );
         }
         if !kept.is_empty() {
             out.insert("meta".into(), Value::Object(kept));
@@ -2321,9 +2346,7 @@ fn preview_body(body: &Value) -> Value {
         if let Some(metrics) = runtime.get("metrics").and_then(Value::as_object) {
             let bounded: serde_json::Map<_, _> = metrics
                 .iter()
-                .filter(|(_, value)| {
-                    value.is_number() || value.is_boolean() || value.is_string()
-                })
+                .filter(|(_, value)| value.is_number() || value.is_boolean() || value.is_string())
                 .take(16)
                 .map(|(key, value)| (preview(key, 64), value.clone()))
                 .collect();
@@ -3121,4 +3144,3 @@ mod tests {
         assert_eq!(old.item_json["id"], "item-100");
     }
 }
-

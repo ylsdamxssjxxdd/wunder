@@ -55,10 +55,7 @@ pub fn find_tool(roots: &[PathBuf], tool: Tool) -> Option<PathBuf> {
             "opt/powershell/bin/pwsh.exe",
             "opt/powershell/bin/powershell.exe",
         ],
-        Tool::PowerShell => &[
-            "opt/powershell/pwsh",
-            "opt/powershell/bin/pwsh",
-        ],
+        Tool::PowerShell => &["opt/powershell/pwsh", "opt/powershell/bin/pwsh"],
     };
     roots.iter().find_map(|root| {
         candidates

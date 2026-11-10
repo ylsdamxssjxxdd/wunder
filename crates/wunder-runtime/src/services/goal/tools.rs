@@ -95,12 +95,7 @@ fn has_round_cap(args: &Value, key: &str) -> bool {
 /// Starting a goal is a user decision only; no model-facing entry point may
 /// create or replace one, even if an older schema or client sends `create`.
 pub(super) fn reject_model_create(args: &Value) -> Result<()> {
-    if args
-        .get("action")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        == Some("create")
-    {
+    if args.get("action").and_then(Value::as_str).map(str::trim) == Some("create") {
         return Err(GoalError {
             message: "goals can only be started by the user; ask the user to use /goal or the goal bar. The model cannot create or replace a goal.".to_string(),
             code: ERR_TOOL_CREATE_USER_ONLY,

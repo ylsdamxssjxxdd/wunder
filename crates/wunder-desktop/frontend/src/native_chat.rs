@@ -615,6 +615,7 @@ pub(crate) fn prepare_external_timeline(app: &MainWindow) {
         state.history_loading_older = false;
         state.timeline.borrow_mut().clear();
         let local_id = app.get_active_session_id().to_string();
+        crate::chat_split::release_live(app, &local_id);
         if !local_id.is_empty() {
             if state.drafts.len() >= 100 {
                 state.drafts.clear();
@@ -981,6 +982,7 @@ fn publish_timeline_with_follow(
     // refreshes alike. TimelineView uses it to schedule a bounded follow-tail
     // correction instead of polling content-y forever.
     if follow_output {
+        crate::chat_split::sync_live(app, app.get_active_session_id().as_str(), live.model());
         app.set_stream_updates(app.get_stream_updates().wrapping_add(1));
     }
     crate::activity_ui::notify_timeline_rows(live.row_count());
@@ -1731,6 +1733,9 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         let id = row.id.to_string();
         let desktop = state.borrow().desktop.clone();
         let previous_session = app.get_active_session_id().to_string();
+        if previous_session != id {
+            crate::chat_split::release_live(&app, &previous_session);
+        }
         clear_initial_history();
         // Thread lease I/O is deliberately deferred to the worker below. On a
         // mechanical disk, acquiring the new lease and releasing the previous
@@ -2603,6 +2608,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                                     && live.remove_live_turn(&client_message_id)
                                 {
                                     publish_timeline_passive(&app, &live);
+                                    crate::chat_split::release_live(&app, &session);
                                     app.set_busy(previous_busy);
                                     app.set_activity_running(previous_activity_running);
                                 }
@@ -3358,6 +3364,7 @@ fn bind_stop(app: &MainWindow, state: Rc<RefCell<State>>) {
                 let mut timeline = current.timeline.borrow_mut();
                 timeline.remove_live_turn(&pending.client_message_id);
                 publish_timeline_passive(&app, &timeline);
+                crate::chat_split::release_live(&app, &session);
                 stopped_submission = true;
             }
             if let Some(active) = current.active.as_mut() {
@@ -3582,6 +3589,33 @@ fn bind_goal(app: &MainWindow, state: Rc<RefCell<State>>) {
     });
 }
 
+pub(crate) fn resume_rendering(app: &MainWindow) {
+    if !app.get_cloud_chat_active() {
+        app.invoke_native_thread_update_ready();
+        app.invoke_split_thread_update_ready();
+        CHAT_STATE.with(|slot| {
+            let Some(state) = slot.borrow().upgrade() else {
+                return;
+            };
+            let has_work = {
+                let state = state.borrow();
+                state.active.is_some() || !state.parked.is_empty()
+            };
+            if has_work {
+                pump_stream(app, &state);
+                let restart = {
+                    let state = state.borrow();
+                    !state.timer.running() && (state.active.is_some() || !state.parked.is_empty())
+                };
+                if restart {
+                    start_timer(app, state.clone());
+                }
+            }
+        });
+    }
+    app.window().request_redraw();
+}
+
 fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
     // The timer belongs to State: a weak callback avoids retaining the runtime
@@ -3594,314 +3628,314 @@ fn start_timer(app: &MainWindow, state: Rc<RefCell<State>>) {
             let (Some(app), Some(state)) = (weak.upgrade(), callback_state.upgrade()) else {
                 return;
             };
-            let mut state = state.borrow_mut();
-            // Cloned before the active borrow so the reducer can hold the
-            // timeline while the stream is polled.
-            let timeline = state.timeline.clone();
-            let desktop = state.desktop.clone();
-            let last_plan_sig = state.plan_sig.clone();
-            // ---- parked submissions ----
-            // A parked turn stays silent until the engine starts its own root
-            // turn, so the first parked stream that speaks is the turn that just
-            // began: it takes the live slot, and whatever it had already
-            // emitted replays through the normal pump below.
-            let active_session = app.get_active_session_id().to_string();
-            let mut promote: Option<ParkedTurn> = None;
-            let mut parked_moved = false;
-            let mut index = 0usize;
-            while index < state.parked.len() {
-                let signal = match state.parked.get_mut(index) {
-                    Some(entry) => drain_entry(entry, &active_session),
-                    None => break,
-                };
-                match signal {
-                    EntrySignal::Quiet => index += 1,
-                    EntrySignal::Announced => {
-                        queue::schedule_due(&mut state.queue_due, Duration::from_millis(250));
-                        index += 1;
-                    }
-                    EntrySignal::Ready => {
-                        if state.active.is_some() {
-                            // The slot is still held: the event stays buffered
-                            // in the entry and attaches when the turn settles.
-                            break;
-                        }
-                        promote = state.parked.remove(index);
-                        parked_moved = true;
-                        break;
-                    }
-                    EntrySignal::Settled | EntrySignal::Failed(_) => {
-                        if let EntrySignal::Failed(message) = signal {
-                            app.set_status(message.into());
-                        }
-                        state.parked.remove(index);
-                        parked_moved = true;
-                        queue::schedule_due(&mut state.queue_due, Duration::from_millis(0));
-                        break;
-                    }
-                }
+            pump_stream(&app, &state);
+        });
+}
+
+fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
+    let mut state = state.borrow_mut();
+    // Cloned before the active borrow so the reducer can hold the
+    // timeline while the stream is polled.
+    let timeline = state.timeline.clone();
+    let desktop = state.desktop.clone();
+    let last_plan_sig = state.plan_sig.clone();
+    // ---- parked submissions ----
+    // A parked turn stays silent until the engine starts its own root
+    // turn, so the first parked stream that speaks is the turn that just
+    // began: it takes the live slot, and whatever it had already
+    // emitted replays through the normal pump below.
+    let active_session = app.get_active_session_id().to_string();
+    let mut promote: Option<ParkedTurn> = None;
+    let mut parked_moved = false;
+    let mut index = 0usize;
+    while index < state.parked.len() {
+        let signal = match state.parked.get_mut(index) {
+            Some(entry) => drain_entry(entry, &active_session),
+            None => break,
+        };
+        match signal {
+            EntrySignal::Quiet => index += 1,
+            EntrySignal::Announced => {
+                queue::schedule_due(&mut state.queue_due, Duration::from_millis(250));
+                index += 1;
             }
-            let mut pending: VecDeque<NativeChatEvent> = VecDeque::new();
-            if let Some(entry) = promote {
-                let session = entry.session.clone();
-                let content = entry.content.clone();
-                pending = entry.prelude.into();
-                {
-                    let mut live = timeline.borrow_mut();
-                    if entry.settles_inquiry {
-                        live.settle_answered_inquiry();
-                    }
-                    let row = live.begin_turn(&entry.client_message_id, &content);
-                    echo_image_attachments(&app, &desktop, &mut live, row, &content, &entry.images);
-                    live.set_turn_status("请求中", 0);
-                    publish_timeline(&app, &live);
+            EntrySignal::Ready => {
+                if state.active.is_some() {
+                    // The slot is still held: the event stays buffered
+                    // in the entry and attaches when the turn settles.
+                    break;
                 }
-                let mut output = TurnOutput::new(session.clone(), timeline.clone());
-                if let Some((explanation, steps)) = state.plans.get(&session) {
-                    output.plan_explanation = explanation.clone();
-                    output.plan_steps = steps.clone();
+                promote = state.parked.remove(index);
+                parked_moved = true;
+                break;
+            }
+            EntrySignal::Settled | EntrySignal::Failed(_) => {
+                if let EntrySignal::Failed(message) = signal {
+                    app.set_status(message.into());
                 }
-                state.active = Some(Active {
-                    stream: entry.stream,
-                    output,
-                    client_message_id: entry.client_message_id,
-                });
-                app.set_busy(true);
-                app.set_stopping(false);
-                app.set_follow_output(true);
-                app.set_activity_running(true);
-                set_session_status(&app, &session, "正在生成…", Phase::Running);
+                state.parked.remove(index);
+                parked_moved = true;
                 queue::schedule_due(&mut state.queue_due, Duration::from_millis(0));
+                break;
             }
-            if parked_moved || queue::due_arrived(&mut state.queue_due) {
-                // Promotion is the point at which the request owns the live
-                // slot. Hide its queue card immediately; the next refresh will
-                // still use the engine snapshot for every other row.
-                let promoted_client_id = state
-                    .active
-                    .as_ref()
-                    .map(|active| active.client_message_id.clone());
-                if let Some(client_message_id) = promoted_client_id {
-                    queue::without_client_id(&mut state.queue_cache, client_message_id.as_str());
-                    queue::publish_rows(&app, &state.queue_cache);
-                }
-                let queue_generation = state.queue_generation.clone();
-                request_queue_refresh(
-                    &app,
-                    desktop.clone(),
-                    active_session.clone(),
-                    queue_generation,
-                );
+        }
+    }
+    let mut pending: VecDeque<NativeChatEvent> = VecDeque::new();
+    if let Some(entry) = promote {
+        let session = entry.session.clone();
+        let content = entry.content.clone();
+        pending = entry.prelude.into();
+        {
+            let mut live = timeline.borrow_mut();
+            if entry.settles_inquiry {
+                live.settle_answered_inquiry();
             }
-            // The turn is taken out of the state for the tick so the flush can
-            // also touch the plan cache and signature without fighting the
-            // active borrow; it goes back (or drops on completion) below.
-            let mut live_turn = state.active.take();
-            let Some(active) = live_turn.as_mut() else {
-                // A parked subscriber of another thread can never be pumped
-                // from here, and its bounded channel would only back-pressure
-                // the engine, so it goes with the thread that was left behind.
-                state.parked.retain(|entry| entry.session == active_session);
-                if state.parked.is_empty() {
-                    // Nothing left to pump: release the running state and stop
-                    // the timer until the next submission.
-                    if app.get_busy() {
-                        app.set_busy(false);
-                        app.set_activity_running(false);
-                    }
-                    state.timer.stop();
+            let row = live.begin_turn(&entry.client_message_id, &content);
+            echo_image_attachments(&app, &desktop, &mut live, row, &content, &entry.images);
+            live.set_turn_status("请求中", 0);
+            publish_timeline(&app, &live);
+        }
+        let mut output = TurnOutput::new(session.clone(), timeline.clone());
+        if let Some((explanation, steps)) = state.plans.get(&session) {
+            output.plan_explanation = explanation.clone();
+            output.plan_steps = steps.clone();
+        }
+        state.active = Some(Active {
+            stream: entry.stream,
+            output,
+            client_message_id: entry.client_message_id,
+        });
+        app.set_busy(true);
+        app.set_stopping(false);
+        app.set_follow_output(true);
+        app.set_activity_running(true);
+        set_session_status(&app, &session, "正在生成…", Phase::Running);
+        queue::schedule_due(&mut state.queue_due, Duration::from_millis(0));
+    }
+    if parked_moved || queue::due_arrived(&mut state.queue_due) {
+        // Promotion is the point at which the request owns the live
+        // slot. Hide its queue card immediately; the next refresh will
+        // still use the engine snapshot for every other row.
+        let promoted_client_id = state
+            .active
+            .as_ref()
+            .map(|active| active.client_message_id.clone());
+        if let Some(client_message_id) = promoted_client_id {
+            queue::without_client_id(&mut state.queue_cache, client_message_id.as_str());
+            queue::publish_rows(&app, &state.queue_cache);
+        }
+        let queue_generation = state.queue_generation.clone();
+        request_queue_refresh(
+            &app,
+            desktop.clone(),
+            active_session.clone(),
+            queue_generation,
+        );
+    }
+    // The turn is taken out of the state for the tick so the flush can
+    // also touch the plan cache and signature without fighting the
+    // active borrow; it goes back (or drops on completion) below.
+    let mut live_turn = state.active.take();
+    let Some(active) = live_turn.as_mut() else {
+        // A parked subscriber of another thread can never be pumped
+        // from here, and its bounded channel would only back-pressure
+        // the engine, so it goes with the thread that was left behind.
+        state.parked.retain(|entry| entry.session == active_session);
+        if state.parked.is_empty() {
+            // Nothing left to pump: release the running state and stop
+            // the timer until the next submission.
+            if app.get_busy() {
+                app.set_busy(false);
+                app.set_activity_running(false);
+            }
+            state.timer.stop();
+        }
+        return;
+    };
+    let _ = &desktop;
+    let started = Instant::now();
+    let mut done = false;
+    let mut dirty = false;
+    let mut new_plan_sig: Option<String> = None;
+    app.set_stream_max_backlog(
+        app.get_stream_max_backlog()
+            .max(active.stream.pending_events() as i32),
+    );
+    for _ in 0..128 {
+        // A promoted parked turn may already hold events; they replay
+        // first so the handover never loses a token.
+        let event = match pending.pop_front() {
+            Some(event) => event,
+            None => match active.stream.try_recv() {
+                Ok(Some(event)) => event,
+                Ok(None) => break,
+                Err(error) => {
+                    app.set_status(error.into());
+                    active.set_state("执行失败", Phase::Error);
+                    active.settlement_failed = true;
+                    done = true;
+                    break;
                 }
-                return;
-            };
-            let _ = &desktop;
-            let started = Instant::now();
-            let mut done = false;
-            let mut dirty = false;
-            let mut new_plan_sig: Option<String> = None;
-            app.set_stream_max_backlog(
-                app.get_stream_max_backlog()
-                    .max(active.stream.pending_events() as i32),
-            );
-            for _ in 0..128 {
-                // A promoted parked turn may already hold events; they replay
-                // first so the handover never loses a token.
-                let event = match pending.pop_front() {
-                    Some(event) => event,
-                    None => match active.stream.try_recv() {
-                        Ok(Some(event)) => event,
-                        Ok(None) => break,
-                        Err(error) => {
-                            app.set_status(error.into());
-                            active.set_state("执行失败", Phase::Error);
-                            active.settlement_failed = true;
-                            done = true;
-                            break;
-                        }
-                    },
-                };
-                match event {
-                    NativeChatEvent::Event(event) => {
-                        update_active_stats(active, &event);
-                        apply_context_usage(
-                            &app,
-                            wunder_desktop::NativeContextUsage::from_value(&event),
+            },
+        };
+        match event {
+            NativeChatEvent::Event(event) => {
+                update_active_stats(active, &event);
+                apply_context_usage(&app, wunder_desktop::NativeContextUsage::from_value(&event));
+                // Cloud queue visibility (§4.4.4): `cloud_queue`
+                // incremental events carry the waiting position for the
+                // turn; any other streamed event means the turn is
+                // progressing again, so the banner hides.
+                if event["event"].as_str() == Some("cloud_queue") {
+                    let data = &event["data"];
+                    let position = data["position"].as_i64().unwrap_or(0);
+                    let queue_session = data["session_id"].as_str().unwrap_or("");
+                    if queue_session.is_empty() || queue_session == active.session {
+                        app.set_cloud_queue_position(position.clamp(0, i32::MAX as i64) as i32);
+                        active.set_state(
+                            format!("模型请求正在排队 · 前方 {position} 个任务"),
+                            Phase::Pending,
                         );
-                        // Cloud queue visibility (§4.4.4): `cloud_queue`
-                        // incremental events carry the waiting position for the
-                        // turn; any other streamed event means the turn is
-                        // progressing again, so the banner hides.
-                        if event["event"].as_str() == Some("cloud_queue") {
-                            let data = &event["data"];
-                            let position = data["position"].as_i64().unwrap_or(0);
-                            let queue_session = data["session_id"].as_str().unwrap_or("");
-                            if queue_session.is_empty() || queue_session == active.session {
-                                app.set_cloud_queue_position(
-                                    position.clamp(0, i32::MAX as i64) as i32
-                                );
-                                active.set_state(
-                                    format!("模型请求正在排队 · 前方 {position} 个任务"),
-                                    Phase::Pending,
-                                );
-                            }
-                        } else if app.get_cloud_queue_position() >= 0 {
-                            app.set_cloud_queue_position(-1);
+                    }
+                } else if app.get_cloud_queue_position() >= 0 {
+                    app.set_cloud_queue_position(-1);
+                }
+                // The 问询面板 tool publishes its questions once and the
+                // turn ends right after, so the card is driven straight
+                // from this event rather than from the per-frame flush.
+                // The stream wraps every payload as
+                // `{session_id, timestamp, data}`, so the questions sit
+                // one level deeper than the raw emit.
+                if event["event"].as_str() == Some("question_panel") {
+                    if let Some(panel) = inquiry_from_payload(event_data(&event)) {
+                        let session = active.session.clone();
+                        // One live panel per thread, and threads are
+                        // bounded by the conversation list; drop the
+                        // oldest extras rather than grow without limit.
+                        if state.inquiries.len() > 64 {
+                            state.inquiries.clear();
                         }
-                        // The 问询面板 tool publishes its questions once and the
-                        // turn ends right after, so the card is driven straight
-                        // from this event rather than from the per-frame flush.
-                        // The stream wraps every payload as
-                        // `{session_id, timestamp, data}`, so the questions sit
-                        // one level deeper than the raw emit.
-                        if event["event"].as_str() == Some("question_panel") {
-                            if let Some(panel) = inquiry_from_payload(event_data(&event)) {
-                                let session = active.session.clone();
-                                // One live panel per thread, and threads are
-                                // bounded by the conversation list; drop the
-                                // oldest extras rather than grow without limit.
-                                if state.inquiries.len() > 64 {
-                                    state.inquiries.clear();
-                                }
-                                let mut panel = panel;
-                                panel.inquiry_turn_id = event_data(&event)
-                                    .get("turn_id")
-                                    .and_then(Value::as_str)
-                                    .or_else(|| event.get("turn_id").and_then(Value::as_str))
-                                    .unwrap_or_default()
-                                    .to_string();
-                                let key = panel.consumption_key(&session);
-                                if !inquiry_was_consumed(&state, &key) {
-                                    state.inquiries.insert(session.clone(), panel);
-                                }
-                                app.set_title_inquiry_count(state.inquiries.len() as i32);
-                                if app.get_active_session_id() == session.as_str() {
-                                    publish_inquiry(&app, &session, &state);
-                                }
-                            }
-                        } else if event["event"].as_str() == Some("question_panel_clear") {
-                            let session = active.session.clone();
-                            state.inquiries.remove(&session);
-                            if app.get_active_session_id() == session.as_str() {
-                                publish_inquiry(&app, &session, &state);
-                            }
+                        let mut panel = panel;
+                        panel.inquiry_turn_id = event_data(&event)
+                            .get("turn_id")
+                            .and_then(Value::as_str)
+                            .or_else(|| event.get("turn_id").and_then(Value::as_str))
+                            .unwrap_or_default()
+                            .to_string();
+                        let key = panel.consumption_key(&session);
+                        if !inquiry_was_consumed(&state, &key) {
+                            state.inquiries.insert(session.clone(), panel);
                         }
-                        match apply_event(active, &mut timeline.borrow_mut(), &event) {
-                            Ok(changed) => dirty |= changed,
-                            Err(error) => {
-                                app.set_status(error.into());
-                                active.set_state("执行失败", Phase::Error);
-                                active.settlement_failed = true;
-                                done = true;
-                            }
+                        app.set_title_inquiry_count(state.inquiries.len() as i32);
+                        if app.get_active_session_id() == session.as_str() {
+                            publish_inquiry(&app, &session, &state);
                         }
                     }
-                    NativeChatEvent::Queued => {
-                        active.set_state("任务已排队…", Phase::Pending);
-                        dirty = true;
-                        // Another device (or a goal round) held the thread, so
-                        // this turn went into the queue after all: show it.
-                        queue::schedule_due(&mut state.queue_due, Duration::from_millis(0));
+                } else if event["event"].as_str() == Some("question_panel_clear") {
+                    let session = active.session.clone();
+                    state.inquiries.remove(&session);
+                    if app.get_active_session_id() == session.as_str() {
+                        publish_inquiry(&app, &session, &state);
                     }
-                    NativeChatEvent::Failed(error) => {
-                        app.set_status(error.clone().into());
-                        // The stream failed outside the structured event path,
-                        // so the sentence is the only diagnosis there is.
-                        timeline
-                            .borrow_mut()
-                            .upsert_error(&crate::error_card::generic(&error));
+                }
+                match apply_event(active, &mut timeline.borrow_mut(), &event) {
+                    Ok(changed) => dirty |= changed,
+                    Err(error) => {
+                        app.set_status(error.into());
                         active.set_state("执行失败", Phase::Error);
                         active.settlement_failed = true;
                         done = true;
-                        app.set_cloud_queue_position(-1);
-                    }
-                    NativeChatEvent::Finished => {
-                        done = true;
-                        app.set_cloud_queue_position(-1);
                     }
                 }
-                if done || started.elapsed() > Duration::from_millis(5) {
-                    break;
-                }
             }
-            if dirty || done {
-                // One frame flush: the active tail block and the measured
-                // cells, never the whole history.
-                let mut live = timeline.borrow_mut();
-                live.flush();
-                live.set_turn_status(active.state(), active.user_round);
-                publish_timeline(&app, &live);
-                app.set_stream_bytes(live.body_len().min(i32::MAX as usize) as i32);
-                drop(live);
-                set_session_status(&app, &active.session, active.state(), active.phase);
-                // Status dock: capsule state plus plan progress and file
-                // stats; the session plan cache only moves when the plan did.
-                let sig = publish_activity(&app, active, &last_plan_sig);
-                if sig != last_plan_sig {
-                    state.plans.insert(
-                        active.session.clone(),
-                        (active.plan_explanation.clone(), active.plan_steps.clone()),
-                    );
-                }
-                new_plan_sig = Some(sig);
+            NativeChatEvent::Queued => {
+                active.set_state("任务已排队…", Phase::Pending);
+                dirty = true;
+                // Another device (or a goal round) held the thread, so
+                // this turn went into the queue after all: show it.
+                queue::schedule_due(&mut state.queue_due, Duration::from_millis(0));
             }
-            if done {
-                if active.state() == "正在生成…" {
-                    active.set_state("输出已结束", Phase::Done);
-                }
-                let settle = active.settle();
-                // Markdown is intentionally parsed once, after the terminal
-                // event; the frozen block keeps its parsed form from here on.
-                let mut live = timeline.borrow_mut();
-                live.finish(settle);
-                live.set_turn_status(active.state(), active.user_round);
-                live.flush();
-                publish_timeline(&app, &live);
-                drop(live);
-                set_session_status(&app, &active.session, active.state(), active.phase);
-                app.set_stopping(false);
-                // Idle stops the capsule spinner; the plan attributes stay and
-                // reappear with the next turn's flush.
-                if state.parked.is_empty() {
-                    app.set_busy(false);
-                    app.set_activity_running(false);
-                    state.timer.stop();
-                }
-                // With parked submissions still waiting the pump keeps running:
-                // the engine starts the successor as soon as this lease drops,
-                // and the next tick hands it the live slot.
-                crate::workspace_files::execution_finished(&app, desktop.clone());
+            NativeChatEvent::Failed(error) => {
+                app.set_status(error.clone().into());
+                // The stream failed outside the structured event path,
+                // so the sentence is the only diagnosis there is.
+                timeline
+                    .borrow_mut()
+                    .upsert_error(&crate::error_card::generic(&error));
+                active.set_state("执行失败", Phase::Error);
+                active.settlement_failed = true;
+                done = true;
+                app.set_cloud_queue_position(-1);
             }
-            if done {
-                live_turn = None;
+            NativeChatEvent::Finished => {
+                done = true;
+                app.set_cloud_queue_position(-1);
             }
-            state.active = live_turn;
-            if let Some(sig) = new_plan_sig {
-                state.plan_sig = sig;
-            }
-            app.set_stream_max_ui_ms(
-                app.get_stream_max_ui_ms()
-                    .max(started.elapsed().as_secs_f32() * 1000.0),
+        }
+        if done || started.elapsed() > Duration::from_millis(5) {
+            break;
+        }
+    }
+    if dirty || done {
+        // One frame flush: the active tail block and the measured
+        // cells, never the whole history.
+        let mut live = timeline.borrow_mut();
+        live.flush();
+        live.set_turn_status(active.state(), active.user_round);
+        publish_timeline(&app, &live);
+        app.set_stream_bytes(live.body_len().min(i32::MAX as usize) as i32);
+        drop(live);
+        set_session_status(&app, &active.session, active.state(), active.phase);
+        // Status dock: capsule state plus plan progress and file
+        // stats; the session plan cache only moves when the plan did.
+        let sig = publish_activity(&app, active, &last_plan_sig);
+        if sig != last_plan_sig {
+            state.plans.insert(
+                active.session.clone(),
+                (active.plan_explanation.clone(), active.plan_steps.clone()),
             );
-        });
+        }
+        new_plan_sig = Some(sig);
+    }
+    if done {
+        if active.state() == "正在生成…" {
+            active.set_state("输出已结束", Phase::Done);
+        }
+        let settle = active.settle();
+        // Markdown is intentionally parsed once, after the terminal
+        // event; the frozen block keeps its parsed form from here on.
+        let mut live = timeline.borrow_mut();
+        live.finish(settle);
+        live.set_turn_status(active.state(), active.user_round);
+        live.flush();
+        publish_timeline(&app, &live);
+        drop(live);
+        crate::chat_split::finish_live(&app, &active.session);
+        set_session_status(&app, &active.session, active.state(), active.phase);
+        app.set_stopping(false);
+        // Idle stops the capsule spinner; the plan attributes stay and
+        // reappear with the next turn's flush.
+        if state.parked.is_empty() {
+            app.set_busy(false);
+            app.set_activity_running(false);
+            state.timer.stop();
+        }
+        // With parked submissions still waiting the pump keeps running:
+        // the engine starts the successor as soon as this lease drops,
+        // and the next tick hands it the live slot.
+        crate::workspace_files::execution_finished(&app, desktop.clone());
+    }
+    if done {
+        live_turn = None;
+    }
+    state.active = live_turn;
+    if let Some(sig) = new_plan_sig {
+        state.plan_sig = sig;
+    }
+    app.set_stream_max_ui_ms(
+        app.get_stream_max_ui_ms()
+            .max(started.elapsed().as_secs_f32() * 1000.0),
+    );
 }
 
 /// Reduce one runtime event into the live turn. `output` carries the turn's

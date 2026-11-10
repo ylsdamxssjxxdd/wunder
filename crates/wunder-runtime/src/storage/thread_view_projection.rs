@@ -530,20 +530,22 @@ pub(crate) fn trajectory(
         )
         .then(|| crate::services::thread_log::diagnostics::project(item, status))
         .flatten(),
-        args_preview: is_tool_kind(kind).then(|| {
-            item.get("args_preview")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-                .or_else(|| tool_args_preview(item))
-        })
-        .flatten(),
-        result_preview: is_tool_kind(kind).then(|| {
-            item.get("result_preview")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-                .or_else(|| tool_result_preview(item))
-        })
-        .flatten(),
+        args_preview: is_tool_kind(kind)
+            .then(|| {
+                item.get("args_preview")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .or_else(|| tool_args_preview(item))
+            })
+            .flatten(),
+        result_preview: is_tool_kind(kind)
+            .then(|| {
+                item.get("result_preview")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .or_else(|| tool_result_preview(item))
+            })
+            .flatten(),
     }
 }
 

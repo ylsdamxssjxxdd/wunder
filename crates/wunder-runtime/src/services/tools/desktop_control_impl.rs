@@ -829,7 +829,9 @@ fn parse_desktop_control_args(args: &Value) -> Result<DesktopControlArgs> {
         }
         DesktopAction::Wait | DesktopAction::PressKey | DesktopAction::TypeText => {}
         _ if bbox.is_none() => {
-            return Err(anyhow!(crate::i18n::t("tool.desktop_control.bbox_required")));
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_control.bbox_required"
+            )));
         }
         _ => {}
     }
@@ -1055,8 +1057,7 @@ async fn capture_stable_screenshot(
     // share one wall-clock budget instead of multiplying capture_timeout_ms
     // by the probe count on a slow desktop.
     let capture_timeout_ms = config.capture_timeout_ms.max(100);
-    let mut previous =
-        capture_screenshot(capture_timeout_ms, expected_screen, norm).await?;
+    let mut previous = capture_screenshot(capture_timeout_ms, expected_screen, norm).await?;
     let mut tracker = FrameStabilityTracker::default();
     tracker.observe(&previous.signature, started.elapsed().as_millis() as u64);
     let mut stable = false;

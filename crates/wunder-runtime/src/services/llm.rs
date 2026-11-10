@@ -4870,7 +4870,10 @@ mod tests {
         assert_eq!(reasoning_token_count("abcd"), 1);
         assert_eq!(reasoning_token_count(""), 0);
         assert_eq!(truncate_reasoning_to_tokens("思考中", 2), "思考");
-        assert_eq!(trim_reasoning_to_budget("思考中".to_string(), Some(2)), "思考");
+        assert_eq!(
+            trim_reasoning_to_budget("思考中".to_string(), Some(2)),
+            "思考"
+        );
         assert_eq!(
             trim_reasoning_to_budget("思考中".to_string(), None),
             "思考中"

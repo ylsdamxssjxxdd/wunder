@@ -416,12 +416,16 @@ fn local_workspace_move_keeps_files_and_directories_inside_the_root(
 
     // A directory moves into another folder, then back to the root.
     runtime.workspace_local_move(&root, "notes", "archive")?;
-    assert!(std::path::Path::new(&root).join("archive/notes/sub").is_dir());
+    assert!(std::path::Path::new(&root)
+        .join("archive/notes/sub")
+        .is_dir());
     runtime.workspace_local_move(&root, "archive/notes", "")?;
     assert!(std::path::Path::new(&root).join("notes/sub").is_dir());
 
     // Self, own subtree and outer traversal targets are refused.
-    assert!(runtime.workspace_local_move(&root, "notes", "notes").is_err());
+    assert!(runtime
+        .workspace_local_move(&root, "notes", "notes")
+        .is_err());
     assert!(runtime
         .workspace_local_move(&root, "notes", "notes/sub")
         .is_err());

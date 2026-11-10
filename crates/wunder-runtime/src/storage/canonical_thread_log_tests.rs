@@ -1263,11 +1263,9 @@ async fn trimmed_active_window_replays_earliest_chat_and_process_from_rollout() 
         .unwrap();
     assert_eq!(window_rows, ACTIVE_WINDOW_ITEMS);
     let anchors: i64 = history
-        .query_row(
-            "SELECT COUNT(*) FROM thread_item_anchors",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT COUNT(*) FROM thread_item_anchors", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert!(anchors > 0, "sparse anchors must cover the trimmed prefix");
 
@@ -1489,11 +1487,9 @@ async fn forked_thread_replays_inherited_rounds_beyond_the_active_window() {
         .unwrap();
     assert_eq!(window_rows, ACTIVE_WINDOW_ITEMS);
     let floor: i64 = history
-        .query_row(
-            "SELECT MIN(rollout_ordinal) FROM thread_items",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT MIN(rollout_ordinal) FROM thread_items", [], |row| {
+            row.get(0)
+        })
         .unwrap();
 
     let parent = ThreadId::new(THREAD).unwrap();
@@ -1565,7 +1561,11 @@ async fn forked_thread_replays_inherited_rounds_beyond_the_active_window() {
         }
     }
     assert_eq!(rounds.len(), (fork_round + 1) as usize);
-    assert_eq!(rounds.iter().next(), Some(&1), "inherited prefix is missing");
+    assert_eq!(
+        rounds.iter().next(),
+        Some(&1),
+        "inherited prefix is missing"
+    );
 
     // The oldest inherited turn must still replay below the parent's window
     // floor, and its process page must contain the input plus the last answer.
@@ -1596,7 +1596,11 @@ async fn forked_thread_replays_inherited_rounds_beyond_the_active_window() {
             !items.is_empty(),
             "inherited process page below the window must not be empty"
         );
-        process.extend(items.iter().map(|item| item["item_id"].as_str().unwrap().to_owned()));
+        process.extend(
+            items
+                .iter()
+                .map(|item| item["item_id"].as_str().unwrap().to_owned()),
+        );
         pages += 1;
         if !page["has_older"].as_bool().unwrap() {
             break;
@@ -1650,9 +1654,11 @@ async fn compressed_rollout_replays_turns_beyond_the_active_window() {
         .unwrap();
     let state = Connection::open(root.path().join("state_1.sqlite")).unwrap();
     let relative: String = state
-        .query_row("SELECT rollout_path FROM canonical_rollouts LIMIT 1", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT rollout_path FROM canonical_rollouts LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
     drop(state);
     let rollout = root.path().join(relative);
@@ -1684,7 +1690,9 @@ async fn compressed_rollout_replays_turns_beyond_the_active_window() {
     let mut guards = 0;
     let mut replayed = 0;
     loop {
-        let page = db.thread_view_page(USER, THREAD, "chat", before, 12).unwrap();
+        let page = db
+            .thread_view_page(USER, THREAD, "chat", before, 12)
+            .unwrap();
         for row in &page.chat {
             assert!(
                 !row.user.content.is_empty(),

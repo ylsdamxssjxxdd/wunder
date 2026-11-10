@@ -971,7 +971,10 @@ mod tests {
         let plan = plan_timeline(7, now_s, &spec).expect("plan");
         assert_eq!(plan.costs.len(), 5);
         assert!(plan.costs.iter().all(|cost| cost.gap_before_s > 0.0));
-        assert!(plan.costs.iter().all(|cost| cost.total_s > cost.gap_before_s));
+        assert!(plan
+            .costs
+            .iter()
+            .all(|cost| cost.total_s > cost.gap_before_s));
         // 起点 = now - 总时长：线程恰好结束在 now 附近。
         let total_s: f64 = plan.costs.iter().map(|cost| cost.total_s).sum();
         assert!((plan.start_time + total_s - now_s).abs() < 1.0);

@@ -4,8 +4,8 @@
 //! resolves back to decodable bytes. A break anywhere in that chain is what
 //! leaves the bubble pasting the path instead of the thumbnail.
 
-use std::sync::{Mutex, OnceLock};
 use serde_json::Value;
+use std::sync::{Mutex, OnceLock};
 use wunder_desktop::{args::DesktopArgs, NativeChatAttachment, NativeChatInput, NativeDesktop};
 
 /// One runtime per home at a time: the second initializer in the same home
@@ -36,7 +36,10 @@ fn start_isolated() -> Result<(NativeDesktop, std::path::PathBuf), Box<dyn std::
                            "base_url": "http://127.0.0.1:9/v1", "timeout_s": 5,
                            "support_vision": false, "api_key": "contract-secret"}}}
     });
-    std::fs::write(config.join("wunder.yaml"), serde_json::to_vec(&engine_config)?)?;
+    std::fs::write(
+        config.join("wunder.yaml"),
+        serde_json::to_vec(&engine_config)?,
+    )?;
     let settings = serde_json::json!({
         "workspace_root": "", "desktop_token": "", "updated_at": 0,
         "lan_mesh": {"enabled": false}
@@ -118,10 +121,7 @@ fn image_attachment_round_trip_reaches_a_resolvable_public_path() {
         .find(|turn| turn.user.text.contains("请看这张图"))
         .expect("user turn present");
     eprintln!("home: {}", home.display());
-    eprintln!(
-        "user attachments: {:?}",
-        turn.user.attachments
-    );
+    eprintln!("user attachments: {:?}", turn.user.attachments);
     assert!(
         !turn.user.attachments.is_empty(),
         "the durable user turn must project its attachments"
@@ -151,7 +151,8 @@ fn image_attachment_round_trip_reaches_a_resolvable_public_path() {
         .workspace_image_bytes("", &public_path)
         .expect("image source resolves through the private workspace remap");
     assert_eq!(
-        bytes, png_bytes(),
+        bytes,
+        png_bytes(),
         "the resolved bytes are the persisted png"
     );
 }

@@ -23,9 +23,7 @@ use tokio_util::io::ReaderStream;
 
 use crate::api::cloud::{authenticate_cloud, require_cloud_enabled};
 use crate::api::errors::error_response_with_detail;
-use crate::services::cloud::update::{
-    update_file_name_is_safe, ReleaseManifest, UpdateAsset,
-};
+use crate::services::cloud::update::{update_file_name_is_safe, ReleaseManifest, UpdateAsset};
 use crate::state::AppState;
 
 const CODE_UPDATE_UNAVAILABLE: &str = "UPDATE_UNAVAILABLE";

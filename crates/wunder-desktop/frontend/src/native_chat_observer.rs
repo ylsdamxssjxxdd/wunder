@@ -18,6 +18,7 @@ pub(super) struct Observation {
     /// the OS suspends it.  Record only its generation, then rebuild one
     /// compact snapshot rather than retain an unbounded change backlog.
     overflow_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    wake_pending: std::sync::Arc<AtomicBool>,
     turns: Vec<NativeChatTurn>,
     /// Durable rows of the history, rebuilt only when a turn actually changes.
     rows: Vec<TimelineRow>,
@@ -41,6 +42,7 @@ impl Default for Observation {
             watch_cancel: None,
             forward_generation: 0,
             overflow_generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+            wake_pending: std::sync::Arc::new(AtomicBool::new(false)),
             turns: Vec::new(),
             rows: Vec::new(),
             list_refreshed: None,
@@ -51,6 +53,15 @@ impl Default for Observation {
     }
 }
 
+fn wake_observer(weak: &slint::Weak<MainWindow>, pending: &AtomicBool) {
+    if pending.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let _ = weak.upgrade_in_event_loop(|app| {
+        app.invoke_native_thread_update_ready();
+    });
+}
+
 impl Observation {
     pub(super) fn detach(&mut self) {
         if let Some(cancel) = self.watch_cancel.take() {
@@ -59,6 +70,7 @@ impl Observation {
         self.forward_generation = self.forward_generation.wrapping_add(1);
         self.overflow_generation
             .store(u64::MAX, std::sync::atomic::Ordering::Release);
+        self.wake_pending.store(false, Ordering::Release);
         while self.updates.try_recv().is_ok() {}
         self.ready = false;
         self.session.clear();
@@ -78,6 +90,7 @@ impl Observation {
         self.watch_cancel = Some(cancel.clone());
         let sender = self.update_sender.clone();
         let overflow_generation = self.overflow_generation.clone();
+        let wake_pending = self.wake_pending.clone();
         let weak = app.as_weak();
         std::thread::spawn(move || {
             let mut watch = watch;
@@ -92,9 +105,7 @@ impl Observation {
                     Ok(()) => {}
                     Err(std::sync::mpsc::TrySendError::Full(_)) => {
                         overflow_generation.store(generation, std::sync::atomic::Ordering::Release);
-                        let _ = weak.upgrade_in_event_loop(move |app| {
-                            app.invoke_native_thread_update_ready();
-                        });
+                        wake_observer(&weak, &wake_pending);
                         break;
                     }
                     Err(std::sync::mpsc::TrySendError::Disconnected(_)) => break,
@@ -102,9 +113,7 @@ impl Observation {
                 if cancel.is_cancelled() {
                     break;
                 }
-                let _ = weak.upgrade_in_event_loop(move |app| {
-                    app.invoke_native_thread_update_ready();
-                });
+                wake_observer(&weak, &wake_pending);
             }
         });
         self.session = session.to_string();
@@ -276,6 +285,10 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
             return;
         };
         let mut current = state.borrow_mut();
+        current
+            .observation
+            .wake_pending
+            .store(false, Ordering::Release);
         if app.get_cloud_chat_active() {
             current.observation.detach();
             return;
@@ -395,9 +408,11 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
         let mut dirty = false;
         let mut reset = false;
         let mut queue_changed = false;
+        let mut queue_exhausted = false;
         let started = Instant::now();
         for _ in 0..8 {
             let Ok((generation, update)) = observation.updates.try_recv() else {
+                queue_exhausted = true;
                 break;
             };
             if generation != observation.forward_generation {
@@ -491,6 +506,7 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                 break;
             }
         }
+        let drain_again = !queue_exhausted;
         // While the foreground reducer owns a temporary tail, durable
         // rows are accumulated but never installed into the shared model:
         // their real root id differs from the client request id and would
@@ -553,6 +569,14 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
         }
         let queue_due = queue_active && queue::due_arrived(&mut current.queue_due);
         drop(current);
+        if drain_again {
+            let weak = app.as_weak();
+            slint::Timer::single_shot(Duration::ZERO, move || {
+                if let Some(app) = weak.upgrade() {
+                    app.invoke_native_thread_update_ready();
+                }
+            });
+        }
         if refresh {
             refresh_chat(&app, state.clone(), true);
         }

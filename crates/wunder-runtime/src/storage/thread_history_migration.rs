@@ -594,7 +594,10 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(anchors, 5_000 / super::super::thread_history::ANCHOR_INTERVAL + 1);
+        assert_eq!(
+            anchors,
+            5_000 / super::super::thread_history::ANCHOR_INTERVAL + 1
+        );
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
@@ -611,4 +614,3 @@ mod tests {
         assert!(after < before, "migration must reclaim the linear rows");
     }
 }
-

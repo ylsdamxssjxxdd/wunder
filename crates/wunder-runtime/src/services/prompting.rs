@@ -1388,7 +1388,10 @@ mod tests {
             .into_iter()
             .map(|spec| spec.name)
             .collect();
-        assert!(allowed.len() >= 20, "catalog must expose the built-in tools");
+        assert!(
+            allowed.len() >= 20,
+            "catalog must expose the built-in tools"
+        );
         for (locale, function_call) in [("en", true), ("zh", false)] {
             let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../config/prompts")

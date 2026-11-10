@@ -53,11 +53,7 @@ const DROP_KEYS: &[&str] = &[
 fn is_schema_map_keyword(key: &str) -> bool {
     matches!(
         key,
-        "properties"
-            | "$defs"
-            | "definitions"
-            | "patternProperties"
-            | "dependentSchemas"
+        "properties" | "$defs" | "definitions" | "patternProperties" | "dependentSchemas"
     )
 }
 
@@ -122,12 +118,7 @@ fn minify_schema_map(value: &Value, keep_descriptions: bool) -> Value {
     match value {
         Value::Object(map) => Value::Object(
             map.iter()
-                .map(|(key, child)| {
-                    (
-                        key.clone(),
-                        minify_schema_node(child, keep_descriptions),
-                    )
-                })
+                .map(|(key, child)| (key.clone(), minify_schema_node(child, keep_descriptions)))
                 .collect(),
         ),
         other => minify_schema_node(other, keep_descriptions),
@@ -480,15 +471,15 @@ fn prune_actions(schema: &mut Value, drop: &[&str]) {
             if let Some(value) = action.get("const").and_then(Value::as_str) {
                 return !drop.contains(&value);
             }
-            action.get("enum").and_then(Value::as_array).map_or(
-                true,
-                |values| {
+            action
+                .get("enum")
+                .and_then(Value::as_array)
+                .map_or(true, |values| {
                     values
                         .iter()
                         .filter_map(Value::as_str)
                         .any(|item| !drop.contains(&item))
-                },
-            )
+                })
         });
         for branch in branches.iter_mut() {
             if let Some(values) = branch
@@ -499,8 +490,7 @@ fn prune_actions(schema: &mut Value, drop: &[&str]) {
                 .and_then(|action| action.get_mut("enum"))
                 .and_then(Value::as_array_mut)
             {
-                values
-                    .retain(|value| !value.as_str().is_some_and(|item| drop.contains(&item)));
+                values.retain(|value| !value.as_str().is_some_and(|item| drop.contains(&item)));
             }
         }
     }
@@ -688,8 +678,16 @@ mod tests {
     #[test]
     fn briefs_stay_within_a_bounded_length() {
         for rule in SURFACE_RULES {
-            assert!(!rule.brief_en.is_empty(), "{} lacks an English brief", rule.tool);
-            assert!(!rule.brief_zh.is_empty(), "{} lacks a Chinese brief", rule.tool);
+            assert!(
+                !rule.brief_en.is_empty(),
+                "{} lacks an English brief",
+                rule.tool
+            );
+            assert!(
+                !rule.brief_zh.is_empty(),
+                "{} lacks a Chinese brief",
+                rule.tool
+            );
             assert!(
                 rule.brief_en.chars().count() <= 420,
                 "{} English brief grew to {} chars",

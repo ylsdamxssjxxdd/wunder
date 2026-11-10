@@ -70,27 +70,19 @@ mod web_fetch_tool;
 mod web_fetch_tool_impl;
 mod web_search_tool;
 
-pub use android_notifications::{
-    install_android_notifications_host, AndroidNotificationsHost,
-};
+pub use android_notifications::{install_android_notifications_host, AndroidNotificationsHost};
 pub use android_screen::{install_android_screen_host, AndroidScreenHost};
 pub use browser_tool::{
     browser_tool_names, browser_tool_summary_spec, BROWSER_GROUP_NAME, BROWSER_GROUP_NAME_ALIAS,
 };
 pub(crate) use catalog::current_executable_tool_input_schema;
-/// Decode raw command output (UTF-8, then Windows GBK / UTF-16 fallbacks).
-/// Exposed so non-tool callers that render command streams use the same
-/// byte-level decoder instead of a lossy conversion.
-pub use command_tool::decode_command_output;
-/// Produce the reduced tool specification the model actually receives.
-pub use prompt_surface::prompt_tool_spec;
 pub use catalog::{
     android_notifications_tools_enabled, android_screen_tools_enabled, browser_tools_available,
     build_browser_followup_user_message, build_desktop_followup_user_message,
     build_mcp_tool_alias_entries, build_mcp_tool_alias_entries_for_names,
     build_phone_followup_user_message, build_read_image_followup_user_message,
-    build_runtime_tool_display_map, builtin_aliases,
-    builtin_tool_specs, collect_available_tool_names, collect_enabled_tool_names_for_catalog,
+    build_runtime_tool_display_map, builtin_aliases, builtin_tool_specs,
+    collect_available_tool_names, collect_enabled_tool_names_for_catalog,
     collect_prompt_tool_specs, collect_prompt_tool_specs_with_language,
     current_tool_schema_reference, desktop_tools_available, expand_browser_group_selection,
     filter_tool_names_by_model_capability, is_android_notifications_tool_name,
@@ -100,7 +92,10 @@ pub use catalog::{
     resolve_runtime_tool_display_name, resolve_tool_name, runtime_tool_schema,
     runtime_tool_schema_reference, with_browser_group_members,
 };
-pub use phone_control::{install_phone_control_host, PhoneControlHost};
+/// Decode raw command output (UTF-8, then Windows GBK / UTF-16 fallbacks).
+/// Exposed so non-tool callers that render command streams use the same
+/// byte-level decoder instead of a lossy conversion.
+pub use command_tool::decode_command_output;
 pub use context::{
     build_tool_roots, DetachedToolContext, ToolContext, ToolEventEmitter, ToolRoots,
 };
@@ -118,6 +113,9 @@ pub(crate) use mcp_pack::{
     spec_for_server as mcp_pack_spec_for_server,
 };
 pub(crate) use memory_manager_tool::execute_memory_manager_tool;
+pub use phone_control::{install_phone_control_host, PhoneControlHost};
+/// Produce the reduced tool specification the model actually receives.
+pub use prompt_surface::prompt_tool_spec;
 pub(crate) use session_announce_support::{
     append_child_announce, build_parent_follow_up_announce, insert_run_metadata_field,
     should_auto_wake_parent_after_child_run, should_auto_wake_parent_follow_up,

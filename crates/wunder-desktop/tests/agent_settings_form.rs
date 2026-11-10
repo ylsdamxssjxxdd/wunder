@@ -43,7 +43,10 @@ fn start_isolated() -> Result<NativeDesktop, Box<dyn std::error::Error>> {
                            "base_url": "http://127.0.0.1:9/v1", "timeout_s": 5,
                            "support_vision": false}}}
     });
-    std::fs::write(config.join("wunder.yaml"), serde_json::to_vec(&engine_config)?)?;
+    std::fs::write(
+        config.join("wunder.yaml"),
+        serde_json::to_vec(&engine_config)?,
+    )?;
     let settings = serde_json::json!({
         "workspace_root": "", "desktop_token": "", "updated_at": 0,
         "lan_mesh": {"enabled": false}

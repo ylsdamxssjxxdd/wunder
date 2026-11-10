@@ -24,13 +24,13 @@ pub use native::{
     NativePatchLine, NativePlanStep, NativePlanView, NativeProcessItem, NativeProcessPage,
     NativeProfile, NativeQueueTurn, NativeSession, NativeStream, NativeSubagentCard,
     NativeThreadUpdate, NativeThreadWatch, NativeThreadWatchCancel, NativeWorkflowEntry,
-    NativeWorkflowLine, NativeWorkflowSection, NativeWorkspace, RuntimeToolStatus, ToolRecord, WorkspaceDeleteSummary, WorkspaceEdit,
-    WorkspacePathReport, CURRENT_VERSION, DEFAULT_AGENT_ID, TARGET_CLI, TARGET_DESKTOP,
-    TARGET_SUPPLEMENT, UPDATE_GITHUB_REPO, UPDATE_RELAUNCH_ENV, UpdateStateView,
-    WORKSPACE_COLORS, WORKSPACE_ICONS,
+    NativeWorkflowLine, NativeWorkflowSection, NativeWorkspace, RuntimeToolStatus, ToolRecord,
+    UpdateStateView, WorkspaceDeleteSummary, WorkspaceEdit, WorkspacePathReport, CURRENT_VERSION,
+    DEFAULT_AGENT_ID, TARGET_CLI, TARGET_DESKTOP, TARGET_SUPPLEMENT, UPDATE_GITHUB_REPO,
+    UPDATE_RELAUNCH_ENV, WORKSPACE_COLORS, WORKSPACE_ICONS,
 };
-pub use wunder_server::cloud::update::{is_newer_version, AndroidRelease};
 pub use runtime::DesktopRuntime;
+pub use wunder_server::cloud::update::{is_newer_version, AndroidRelease};
 
 /// Adopt a portable installation root as WUNDER_HOME before any path is
 /// resolved. Call this at the very start of a local-form process; an explicit

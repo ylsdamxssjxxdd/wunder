@@ -24,7 +24,9 @@ use tokio::io::AsyncWriteExt;
 
 use crate::api::errors::error_response_with_detail;
 use crate::api::updates::releases_dir;
-use crate::services::cloud::update::{normalize_version, update_file_name_is_safe, ReleaseManifest};
+use crate::services::cloud::update::{
+    normalize_version, update_file_name_is_safe, ReleaseManifest,
+};
 use crate::state::AppState;
 
 /// Uploads stream straight to disk; the cap only bounds one package, and the
@@ -162,9 +164,9 @@ async fn require_releases_dir(state: &AppState) -> Result<PathBuf, Response> {
     let Some(dir) = releases_dir(state).await else {
         return Err(unavailable("storage.data_root is not configured"));
     };
-    tokio::fs::create_dir_all(&dir).await.map_err(|error| {
-        unavailable(format!("release directory is unavailable: {error}"))
-    })?;
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|error| unavailable(format!("release directory is unavailable: {error}")))?;
     Ok(dir)
 }
 
@@ -199,9 +201,7 @@ async fn upload_package(State(state): State<Arc<AppState>>, mut multipart: Multi
                 match field.chunk().await {
                     Ok(Some(_)) => continue,
                     Ok(None) => break,
-                    Err(error) => {
-                        return invalid_file(format!("multipart upload failed: {error}"))
-                    }
+                    Err(error) => return invalid_file(format!("multipart upload failed: {error}")),
                 }
             }
             continue;
@@ -227,8 +227,7 @@ async fn upload_package(State(state): State<Arc<AppState>>, mut multipart: Multi
                     hasher.update(&chunk);
                     written += chunk.len() as u64;
                     if let Err(error) = file.write_all(&chunk).await {
-                        failure =
-                            Some(unavailable(format!("release file write failed: {error}")));
+                        failure = Some(unavailable(format!("release file write failed: {error}")));
                         break;
                     }
                 }
@@ -458,15 +457,19 @@ mod tests {
 
     #[tokio::test]
     async fn publish_verifies_bytes_and_fills_integrity_fields() {
-        let dir =
-            std::env::temp_dir().join(format!("wunder-admin-upd-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("wunder-admin-upd-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("desktop-0.3.0-win7-x86.exe"), b"package-bytes").unwrap();
         let mut manifest = ReleaseManifest {
             releases: vec![entry(
                 "0.3.0",
-                vec![asset("desktop", "windows", "x86", "desktop-0.3.0-win7-x86.exe")],
+                vec![asset(
+                    "desktop",
+                    "windows",
+                    "x86",
+                    "desktop-0.3.0-win7-x86.exe",
+                )],
             )],
         };
         verify_manifest_packages(&dir, &mut manifest).await.unwrap();
@@ -484,8 +487,8 @@ mod tests {
 
     #[tokio::test]
     async fn publish_rejects_missing_files_and_bad_tokens() {
-        let dir = std::env::temp_dir()
-            .join(format!("wunder-admin-upd-miss-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("wunder-admin-upd-miss-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut missing = ReleaseManifest {
@@ -531,7 +534,10 @@ mod tests {
             upload_rejection("../evil", &referenced),
             Some("invalid package file name")
         );
-        assert_eq!(upload_rejection("desktop-0.3.0-win7-x86.exe", &referenced), None);
+        assert_eq!(
+            upload_rejection("desktop-0.3.0-win7-x86.exe", &referenced),
+            None
+        );
     }
 
     #[test]

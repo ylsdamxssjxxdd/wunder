@@ -723,9 +723,7 @@ pub fn release_assets_with_id(
         let current_hash = fs::read(&target)
             .map(|bytes| sha256_hex(&bytes))
             .unwrap_or_default();
-        if record.deleted_by_user
-            || (!record.user_modified && current_hash == record.sha256)
-        {
+        if record.deleted_by_user || (!record.user_modified && current_hash == record.sha256) {
             // Untouched system copy (or an already deleted tombstone).
             if record.deleted_by_user {
                 manifest.assets.remove(&relative);
@@ -1120,7 +1118,10 @@ mod tests {
         assert!(report.changed);
         let mut inserted = report.inserted_keys.clone();
         inserted.sort();
-        assert_eq!(inserted, vec!["server.host".to_string(), "storage".to_string()]);
+        assert_eq!(
+            inserted,
+            vec!["server.host".to_string(), "storage".to_string()]
+        );
         assert!(report.backup.is_some());
         assert!(report.backup.as_ref().unwrap().is_file());
 

@@ -483,18 +483,16 @@ impl PostgresAdmissionStore {
             return Ok(false);
         };
         fields.insert("attachments".into(), attachments);
-        let updated = tx
-            .execute(
-                "UPDATE service_thread_admissions SET input_json=$3,updated_at_ms=$4
+        let updated = tx.execute(
+            "UPDATE service_thread_admissions SET input_json=$3,updated_at_ms=$4
                  WHERE thread_id=$1 AND turn_id=$2 AND input_json IS NOT NULL",
-                &[
-                    &thread,
-                    &turn,
-                    &serde_json::to_string(&body)?,
-                    &chrono::Utc::now().timestamp_millis(),
-                ],
-            )?
-            > 0;
+            &[
+                &thread,
+                &turn,
+                &serde_json::to_string(&body)?,
+                &chrono::Utc::now().timestamp_millis(),
+            ],
+        )? > 0;
         tx.commit()?;
         Ok(updated)
     }

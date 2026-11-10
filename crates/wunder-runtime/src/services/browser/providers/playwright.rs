@@ -233,9 +233,23 @@ fn validate_browser_action(args: &Value) -> Result<String> {
 }
 
 const BROWSER_ACTIONS: &[&str] = &[
-    "navigate", "back", "tabs_list", "tabs_new", "tabs_select", "tabs_close",
-    "observe_refs", "observe_text", "screenshot", "click", "type", "hover",
-    "select", "drag", "press", "wait", "batch",
+    "navigate",
+    "back",
+    "tabs_list",
+    "tabs_new",
+    "tabs_select",
+    "tabs_close",
+    "observe_refs",
+    "observe_text",
+    "screenshot",
+    "click",
+    "type",
+    "hover",
+    "select",
+    "drag",
+    "press",
+    "wait",
+    "batch",
 ];
 
 fn browser_action_allowed_fields(action: &str) -> Option<&'static [&'static str]> {
@@ -253,12 +267,24 @@ fn browser_action_allowed_fields(action: &str) -> Option<&'static [&'static str]
         "hover" => &["action", "target_id", "ref", "selector"],
         "select" => &["action", "target_id", "ref", "selector", "value"],
         "drag" => &[
-            "action", "target_id", "from_ref", "from_selector", "to_ref", "to_selector",
+            "action",
+            "target_id",
+            "from_ref",
+            "from_selector",
+            "to_ref",
+            "to_selector",
         ],
         "press" => &["action", "target_id", "key"],
         "wait" => &[
-            "action", "target_id", "wait_ms", "load_state", "text", "selector",
-            "state", "url", "timeout_ms",
+            "action",
+            "target_id",
+            "wait_ms",
+            "load_state",
+            "text",
+            "selector",
+            "state",
+            "url",
+            "timeout_ms",
         ],
         "batch" => &["action", "target_id", "steps"],
         _ => return None,
@@ -899,7 +925,7 @@ fn normalize_image_mime(format: &str) -> String {
 mod tests {
     use super::{
         browser_action_allowed_fields, copy_snapshot_args, normalize_image_mime, truncate_chars,
-        validate_batch_steps, validate_browser_action, BROWSER_ACTIONS, PlaywrightProvider,
+        validate_batch_steps, validate_browser_action, PlaywrightProvider, BROWSER_ACTIONS,
         TOOL_BROWSER, TOOL_NAMES,
     };
     use crate::services::browser::provider::BrowserProvider;
@@ -1131,7 +1157,10 @@ mod tests {
                 browser_action_allowed_fields(action)
                     .is_some_and(|fields| fields.contains(&field.as_str()))
             });
-            assert!(accepted, "model-visible field '{field}' is dead in every action");
+            assert!(
+                accepted,
+                "model-visible field '{field}' is dead in every action"
+            );
         }
     }
 }

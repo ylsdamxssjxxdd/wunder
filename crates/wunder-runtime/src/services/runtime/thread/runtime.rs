@@ -443,7 +443,9 @@ impl ThreadRuntime {
                 // point of view: it owns a fresh turn before any execution
                 // may start, and can never be attached to the active turn.
                 if force_runtime_queue
-                    || self.should_queue(&user_id, Some(session_id), inquiry_answer).await
+                    || self
+                        .should_queue(&user_id, Some(session_id), inquiry_answer)
+                        .await
                     || self.count_all_pending_tasks().await > 0
                     || self.orchestrator.scheduling.suspended_count() > 0
                 {

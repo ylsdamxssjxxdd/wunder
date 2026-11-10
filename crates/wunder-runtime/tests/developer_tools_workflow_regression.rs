@@ -481,8 +481,7 @@ async fn read_file_limit_and_list_files_top_level_work_in_one_call() {
     std::fs::create_dir_all(root.join("alpha/nested")).expect("create nested dir");
     std::fs::create_dir_all(root.join("beta")).expect("create second dir");
     for index in 0..40 {
-        std::fs::write(root.join(format!("file-{index:02}.txt")), "x")
-            .expect("write survey file");
+        std::fs::write(root.join(format!("file-{index:02}.txt")), "x").expect("write survey file");
     }
     std::fs::write(root.join("alpha/inside.txt"), "x").expect("write nested file");
     let lines = (1..=80)

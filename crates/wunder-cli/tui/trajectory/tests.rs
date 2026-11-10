@@ -91,11 +91,13 @@ fn full_domain_axis_stays_fixed_across_ledger_pages() {
         time_end_ms: 1_800_072_000_000.0,
         total_events: 12_000,
         bucket_width: 24,
-        turns: vec![wunder_server::stable_core::thread_view::TrajectoryAxisTurn {
-            round: 120,
-            seq: 11_900,
-            time_ms: 1_800_071_000_000.0,
-        }],
+        turns: vec![
+            wunder_server::stable_core::thread_view::TrajectoryAxisTurn {
+                round: 120,
+                seq: 11_900,
+                time_ms: 1_800_071_000_000.0,
+            },
+        ],
         complete: true,
     };
     let mut v = TrajectoryView::new("fixture-thread".into());

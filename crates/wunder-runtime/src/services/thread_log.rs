@@ -53,7 +53,13 @@ pub fn export_response(
     include_internal: bool,
     system_prompt: Option<String>,
 ) -> axum::response::Response {
-    let rx = export_stream(storage, user_id, session_id, include_internal, system_prompt);
+    let rx = export_stream(
+        storage,
+        user_id,
+        session_id,
+        include_internal,
+        system_prompt,
+    );
     let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
     let mut response = axum::response::Response::new(axum::body::Body::from_stream(stream));
     response.headers_mut().insert(
@@ -95,34 +101,70 @@ pub fn export_stream(
         let result: anyhow::Result<()> = async {
             let header = export_header(&session_id, system_prompt.as_deref());
             tx.send(Ok(format!("{header}\n"))).await?;
-            let mut before=None;
+            let mut before = None;
             loop {
-                let db=storage.clone();let owner=user_id.clone();let thread=session_id.clone();
-                let turns=crate::core::blocking::run_db("thread_log.export.turns",move ||
-                    db.list_thread_turns(&owner,&thread,before,50)).await?;
-                if turns.is_empty(){break;}
-                before=turns.last().and_then(|v|v["user_turn_index"].as_i64());
+                let db = storage.clone();
+                let owner = user_id.clone();
+                let thread = session_id.clone();
+                let turns = crate::core::blocking::run_db("thread_log.export.turns", move || {
+                    db.list_thread_turns(&owner, &thread, before, 50)
+                })
+                .await?;
+                if turns.is_empty() {
+                    break;
+                }
+                before = turns.last().and_then(|v| v["user_turn_index"].as_i64());
                 for turn in turns {
-                    let turn_id=turn["turn_id"].as_str().unwrap_or_default().to_string();
-                    tx.send(Ok(format!("{}\n",json!({"record_type":"turn","turn":turn})))).await?;
-                    let mut after=-1;
+                    let turn_id = turn["turn_id"].as_str().unwrap_or_default().to_string();
+                    tx.send(Ok(format!(
+                        "{}\n",
+                        json!({"record_type":"turn","turn":turn})
+                    )))
+                    .await?;
+                    let mut after = -1;
                     loop {
-                        let db=storage.clone();let owner=user_id.clone();let thread=session_id.clone();let id=turn_id.clone();
-                        let page=crate::core::blocking::run_db("thread_log.export.items",move ||
-                            db.get_thread_turn(&owner,&thread,&id,after,50,include_internal)).await?
-                            .ok_or_else(||anyhow::anyhow!("turn deleted during export"))?;
+                        let db = storage.clone();
+                        let owner = user_id.clone();
+                        let thread = session_id.clone();
+                        let id = turn_id.clone();
+                        let page =
+                            crate::core::blocking::run_db("thread_log.export.items", move || {
+                                db.get_thread_turn(
+                                    &owner,
+                                    &thread,
+                                    &id,
+                                    after,
+                                    50,
+                                    include_internal,
+                                )
+                            })
+                            .await?
+                            .ok_or_else(|| anyhow::anyhow!("turn deleted during export"))?;
                         for item in page["items"].as_array().into_iter().flatten() {
-                            tx.send(Ok(format!("{}\n",json!({"record_type":"item","item":item})))).await?;
+                            tx.send(Ok(format!(
+                                "{}\n",
+                                json!({"record_type":"item","item":item})
+                            )))
+                            .await?;
                         }
-                        if page["has_more"]!=true {break;}
-                        after=page["next_after"].as_i64().ok_or_else(||anyhow::anyhow!("missing item cursor"))?;
+                        if page["has_more"] != true {
+                            break;
+                        }
+                        after = page["next_after"]
+                            .as_i64()
+                            .ok_or_else(|| anyhow::anyhow!("missing item cursor"))?;
                     }
                 }
             }
             // Consumers can distinguish a complete export from an interrupted download.
-            tx.send(Ok(format!("{}\n",json!({"record_type":"export_complete"})))).await?;
+            tx.send(Ok(format!(
+                "{}\n",
+                json!({"record_type":"export_complete"})
+            )))
+            .await?;
             Ok(())
-        }.await;
+        }
+        .await;
         if let Err(err) = result {
             let _ = tx.send(Err(std::io::Error::other(err.to_string()))).await;
         }

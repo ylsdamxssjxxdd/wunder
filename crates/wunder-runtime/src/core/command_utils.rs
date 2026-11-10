@@ -695,7 +695,9 @@ enum ShellProbe {
     },
     /// 探测失败，但磁盘上还有可试的 pwsh：冷启动可能被杀软拖过预算，隔一会儿
     /// 再探一次，别让这台机器永久停在 cmd.exe 上。
-    Failed { at: std::time::Instant },
+    Failed {
+        at: std::time::Instant,
+    },
 }
 
 /// 一次失败之后多久允许重探。
@@ -895,14 +897,9 @@ fn push_powershell_candidate(
     if !path.is_file() {
         return;
     }
-    let duplicate = candidates
-        .iter()
-        .any(|known| same_path(&known.exe, &path));
+    let duplicate = candidates.iter().any(|known| same_path(&known.exe, &path));
     if !duplicate {
-        candidates.push(PowerShellCandidate {
-            exe: path,
-            bundled,
-        });
+        candidates.push(PowerShellCandidate { exe: path, bundled });
     }
 }
 
@@ -966,10 +963,7 @@ fn probe_powershell_major(exe: &Path, timeout: std::time::Duration) -> Option<u3
     if !status.success() {
         return None;
     }
-    String::from_utf8_lossy(&stdout)
-        .trim()
-        .parse::<u32>()
-        .ok()
+    String::from_utf8_lossy(&stdout).trim().parse::<u32>().ok()
 }
 
 /// Detected Windows PowerShell major version: 2 on a stock Windows 7, 5 on
@@ -1153,8 +1147,8 @@ mod tests {
             parts,
             vec!["python", r"C:\Program Files\tool.py", "-c", "a b"]
         );
-        let parts = split_windows_command_words(r#"python -c \"quoted\""#)
-            .expect("tokenise command");
+        let parts =
+            split_windows_command_words(r#"python -c \"quoted\""#).expect("tokenise command");
         assert_eq!(parts, vec!["python", "-c", "\"quoted\""]);
         assert!(split_windows_command_words(r#"python "unterminated"#).is_none());
     }
@@ -1566,7 +1560,10 @@ mod tests {
     fn powershell_prelude_stays_on_2_0_syntax() {
         let script = powershell_script("Get-Location");
         assert!(!script.contains("::new("), "{script}");
-        assert!(script.contains("New-Object System.Text.UTF8Encoding"), "{script}");
+        assert!(
+            script.contains("New-Object System.Text.UTF8Encoding"),
+            "{script}"
+        );
         // The command keeps its own line so a prelude failure cannot swallow it.
         assert!(script.ends_with("\nGet-Location"), "{script}");
     }
@@ -1609,7 +1606,10 @@ mod tests {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(output.status.success(), "stderr={stderr}");
         assert!(stdout.contains("wunder-ok"), "stdout={stdout:?}");
-        assert!(stderr.trim().is_empty(), "prelude leaked to stderr: {stderr}");
+        assert!(
+            stderr.trim().is_empty(),
+            "prelude leaked to stderr: {stderr}"
+        );
     }
 
     /// `/D` keeps `cmd /C` deterministic: it skips AutoRun hooks that would

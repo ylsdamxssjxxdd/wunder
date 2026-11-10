@@ -264,8 +264,6 @@ struct Thinking {
 struct ToolItem {
     id: String,
     index: usize,
-    /// The `apply_patch`-family result renders as a diff card.
-    patch: bool,
     /// Batch that owns this invocation. Result frames may arrive after a later
     /// batch has started, so the current `group` is not a safe lookup key.
     group: i32,
@@ -1263,7 +1261,7 @@ impl Timeline {
     pub fn upsert_tool(&mut self, entry: &NativeWorkflowEntry) {
         let label = crate::timeline_text::tool_label(&entry.title);
         let pending = status_kind(&entry.state) == STATUS_RUNNING;
-        let (target, patch) = crate::timeline_text::tool_target(entry);
+        let (target, _) = crate::timeline_text::tool_target(entry);
         if let Some(tool) = self.tools.iter().find(|tool| tool.id == entry.id) {
             let index = tool.index;
             // A tool entry settles once. Trailing frames of a command that was
@@ -1277,18 +1275,16 @@ impl Timeline {
             {
                 return;
             }
-            let patch = tool.patch;
             let group = tool.group;
             let summary = crate::timeline_text::tool_summary(entry);
             let row_summary = crate::timeline_text::tool_row_summary(entry, &target);
             let metrics = crate::timeline_text::tool_metrics(entry);
             let metrics_visible = !metrics.is_empty();
             let copy = crate::timeline_text::copy_text(&entry.sections, entry.detail.as_str());
-            let cards = if patch {
-                crate::timeline_text::patch_cards(&entry.patch_files)
-            } else {
-                ModelRc::default()
-            };
+            // The call frame of a write has no diff yet; the result frame
+            // brings the cards. Read them from the current entry, never from a
+            // flag cached when the call was first shown.
+            let cards = crate::timeline_text::patch_cards(&entry.patch_files);
             let status = status_kind(&entry.state);
             let icon = wunder_desktop::tool_icons::workflow_icon(&entry.title).to_string();
             let sections = crate::timeline_text::sections(&entry.sections);
@@ -1334,11 +1330,7 @@ impl Timeline {
         let metrics = crate::timeline_text::tool_metrics(entry);
         let metrics_visible = !metrics.is_empty();
         let copy = crate::timeline_text::copy_text(&entry.sections, entry.detail.as_str());
-        let cards = if patch {
-            crate::timeline_text::patch_cards(&entry.patch_files)
-        } else {
-            ModelRc::default()
-        };
+        let cards = crate::timeline_text::patch_cards(&entry.patch_files);
         let status = status_kind(&entry.state);
         let group = self.group;
         let sections = crate::timeline_text::sections(&entry.sections);
@@ -1365,7 +1357,6 @@ impl Timeline {
         self.tools.push(ToolItem {
             id: entry.id.clone(),
             index,
-            patch,
             group,
         });
         // A result-only replay has no pending call frame to take the fast
@@ -3159,6 +3150,47 @@ mod tests {
             .find(|row| row.detail == "Later thought")
             .unwrap();
         assert!(reason.process_open);
+    }
+
+    #[test]
+    fn write_result_upgrades_its_call_row_with_the_change_size() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-write-turn", "Fixture input");
+        // The call frame carries no diff yet; only the result knows the change.
+        timeline.upsert_tool(&NativeWorkflowEntry::from_payload(
+            "fixture-write",
+            "写入文件",
+            String::new(),
+            "running",
+            &serde_json::json!({"args":{"path":"fixture/new.md","content":"a\nb\n"}}),
+        ));
+        timeline.upsert_tool(&NativeWorkflowEntry::from_payload(
+            "fixture-write",
+            "写入文件",
+            String::new(),
+            "completed",
+            &serde_json::json!({
+                "tool":"写入文件","ok":true,
+                "args":{"path":"fixture/new.md","content":"a\nb\n"},
+                "data":{"path":"fixture/new.md","added_lines":2,"deleted_lines":0,
+                    "changed_files":1,"files":[{"path":"fixture/new.md","action":"add",
+                        "added_lines":2,"deleted_lines":0,
+                        "diff_blocks":[{"header":"new file","lines":[
+                            {"kind":"add","new_line":1,"text":"a"},
+                            {"kind":"add","new_line":2,"text":"b"}
+                        ]}]
+                    }]
+                }
+            }),
+        ));
+        let bar = timeline.model.row_data(timeline.process_bar).unwrap();
+        let child = (0..bar.process_entries.row_count())
+            .filter_map(|index| bar.process_entries.row_data(index))
+            .find(|entry| entry.id == "tool-fixture-write")
+            .expect("write child");
+        assert_eq!(child.patch.row_count(), 1);
+        assert_eq!(child.diff_add.as_str(), "2");
+        assert!(child.diff_del.is_empty());
     }
 
     #[test]

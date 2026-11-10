@@ -311,11 +311,9 @@ fn large_command_output_is_a_summary_with_saved_result_recovery() {
     assert!(head.starts_with("out-early-"), "head: {head}");
     assert!(head.lines().count() <= 3, "head lines: {head}");
     assert!(tail.ends_with("-cccccccccccccccc"), "tail: {tail}");
-    assert!(
-        observation["data"]["stderr_summary"]["head"]
-            .as_str()
-            .is_some_and(|text| text.starts_with("warn-early-"))
-    );
+    assert!(observation["data"]["stderr_summary"]["head"]
+        .as_str()
+        .is_some_and(|text| text.starts_with("warn-early-")));
     assert!(observation["data"].get("stdout").is_none());
     assert!(observation["data"].get("stderr").is_none());
     assert_eq!(observation["result_handle"], handle);
@@ -2178,7 +2176,11 @@ fn search_observation_keeps_files_only_paths() {
     let compacted = payload.to_compact_payload("搜索内容");
     let data = &compacted["data"];
     assert_eq!(data["files_only"], json!(true), "{compacted}");
-    assert_eq!(data["paths"], json!(["src/a.rs", "src/b.rs"]), "{compacted}");
+    assert_eq!(
+        data["paths"],
+        json!(["src/a.rs", "src/b.rs"]),
+        "{compacted}"
+    );
     assert!(
         data.get("returned_match_count").is_none(),
         "paths 模式不该再报命中行数: {compacted}"

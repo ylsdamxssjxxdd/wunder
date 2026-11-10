@@ -20,8 +20,8 @@
 use std::path::{Path, PathBuf};
 
 use wunder_server::command_utils::{
-    self, ShellKind, ShellLaunch, build_shell_command_with_shell, powershell_display_name,
-    powershell_major_version,
+    self, build_shell_command_with_shell, powershell_display_name, powershell_major_version,
+    ShellKind, ShellLaunch,
 };
 
 fn candidate() -> Option<PathBuf> {

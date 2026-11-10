@@ -88,8 +88,8 @@ impl BrowserProvider for WebViewProvider {
             if tool.trim() != TOOL_BROWSER {
                 return Err(anyhow!("Unknown browser tool '{tool}'"));
             }
-            let host = webview_host()
-                .ok_or_else(|| anyhow!("Android WebView host is not installed"))?;
+            let host =
+                webview_host().ok_or_else(|| anyhow!("Android WebView host is not installed"))?;
             let action = args
                 .get("action")
                 .and_then(Value::as_str)

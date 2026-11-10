@@ -700,6 +700,8 @@ pub fn run_split(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std
     let started = Instant::now();
     let mut phase = 0;
     let mut inactive_rows = String::new();
+    let mut watched_rows = None;
+    let mut resumed = false;
     timer.start(TimerMode::Repeated, Duration::from_millis(50), move || {
         let Some(app) = weak.upgrade() else { return };
         let checked = (|| -> Result<bool, Box<dyn std::error::Error>> {
@@ -782,20 +784,35 @@ pub fn run_split(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std
                     phase = 4;
                 }
                 4 => {
-                    if split_text(app.get_split_rows_1()).contains("native-long") {
+                    let rows = split_text(app.get_split_rows_1());
+                    if rows.contains("native-long") && rows.contains("增量测试内容") {
+                        ensure(resumed, "split body arrived before its live process")?;
+                        ensure(
+                            watched_rows.as_ref() == Some(&app.get_split_rows_1()),
+                            "live output replaced the split timeline model",
+                        )?;
                         if app.get_busy() {
                             app.invoke_split_stop(1);
                         }
                         phase = 5;
+                    } else if !resumed && rows.contains("测试思考增量") {
+                        crate::native_chat::resume_rendering(&app);
+                        watched_rows = Some(app.get_split_rows_1());
+                        resumed = true;
                     }
                 }
                 5 => {
                     if app.get_busy() || app.get_split_busy_1() {
                         return Ok(false);
                     }
-                    if !split_text(app.get_split_rows_1()).contains("native-long") {
+                    let rows = split_text(app.get_split_rows_1());
+                    if !rows.contains("native-long") {
                         return Ok(false);
                     }
+                    ensure(
+                        rows.contains("测试思考增量") && rows.contains("增量测试内容"),
+                        "terminal handoff lost the live process or partial answer",
+                    )?;
                     ensure(
                         split_text(app.get_split_rows_0()) == inactive_rows,
                         "sending in one pane changed the other pane",
@@ -832,7 +849,8 @@ pub fn run_split(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std
 
 fn split_text(rows: slint::ModelRc<crate::TimelineRow>) -> String {
     rows.iter()
-        .map(|row| row.text.to_string())
+        .flat_map(|row| [row.text, row.summary, row.detail])
+        .map(|text| text.to_string())
         .collect::<Vec<_>>()
         .join("\n")
 }

@@ -19,10 +19,7 @@ pub(crate) const VISIBLE: &str = "visible=1";
 fn first_user_question_text(raw: &str) -> Option<String> {
     let item: Value = serde_json::from_str(raw).ok()?;
     let wrapped = item.get("item_id").is_some() && item.get("payload").is_some();
-    let body = item
-        .get("payload")
-        .filter(|_| wrapped)
-        .unwrap_or(&item);
+    let body = item.get("payload").filter(|_| wrapped).unwrap_or(&item);
     let text = wunder_core::thread_view::message_content_text(&body["content"])?;
     let text = text.trim();
     if text.is_empty() {
@@ -128,11 +125,7 @@ impl<'a> CanonicalThreadLog<'a> {
     fn connection(&self, session: Option<&str>) -> Result<HistorySnapshot> {
         self.connection_for(session, None)
     }
-    fn connection_for(
-        &self,
-        session: Option<&str>,
-        user: Option<&str>,
-    ) -> Result<HistorySnapshot> {
+    fn connection_for(&self, session: Option<&str>, user: Option<&str>) -> Result<HistorySnapshot> {
         let root = self.threads.root();
         let conn = Connection::open_with_flags(
             root.join("thread_history_1.sqlite"),
@@ -516,15 +509,11 @@ impl<'a> CanonicalThreadLog<'a> {
                 let raw = if summary {
                     preview
                 } else {
-                    Self::hydrate(
-                        &mut bodies,
-                        &reference,
-                        ordinal,
-                        &id,
-                        preview,
-                    )?
+                    Self::hydrate(&mut bodies, &reference, ordinal, &id, preview)?
                 };
-                output.items.push(Self::item(raw, ordinal, session, internal)?);
+                output
+                    .items
+                    .push(Self::item(raw, ordinal, session, internal)?);
             }
         }
         if output.items.len() > limit {
@@ -686,7 +675,9 @@ impl<'a> CanonicalThreadLog<'a> {
         for (ordinal, preview) in rows.into_iter().take(1024) {
             let preview: Value = serde_json::from_str(&preview)?;
             let wrapped = preview["payload"].get("item_id").is_some()
-                && preview["payload"].get("payload").is_some_and(Value::is_object);
+                && preview["payload"]
+                    .get("payload")
+                    .is_some_and(Value::is_object);
             let payload = if wrapped {
                 &preview["payload"]["payload"]
             } else {
@@ -1157,7 +1148,10 @@ impl<'a> CanonicalThreadLog<'a> {
             )?;
             for item in scanned.items {
                 let ordinal = i64::try_from(item.rollout_ordinal)?;
-                activity = Some((serde_json::to_string(&item_preview(&item.item_json))?, ordinal));
+                activity = Some((
+                    serde_json::to_string(&item_preview(&item.item_json))?,
+                    ordinal,
+                ));
                 break;
             }
         }
@@ -1222,8 +1216,7 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
             page.has_newer = page.next_after.is_some_and(|n| n < latest);
         } else {
             let limit = limit.clamp(1, TRAJECTORY_PAGE_MAX);
-            let items =
-                Self::item_page(&conn, s, root, b, a, limit as i64, false, false, true)?;
+            let items = Self::item_page(&conn, s, root, b, a, limit as i64, false, false, true)?;
             // `item_page` scans newest-first (DESC) without a forward cursor and
             // oldest-first (ASC) with one.  Its `limit + 1` sentinel therefore
             // means "older rows remain" in the first case but "newer rows
@@ -1831,10 +1824,7 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
             );
             let mut statement = conn.prepare(&sql)?;
             let rows = statement.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, Option<String>>(1)?,
-                ))
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
             })?;
             for row in rows {
                 let (session, preview) = row?;
@@ -1927,10 +1917,7 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
                     denied.insert(row?);
                 }
             }
-            let readable: Vec<&String> = chunk
-                .iter()
-                .filter(|id| !denied.contains(*id))
-                .collect();
+            let readable: Vec<&String> = chunk.iter().filter(|id| !denied.contains(*id)).collect();
             if readable.is_empty() {
                 continue;
             }
@@ -2010,7 +1997,11 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
                 if let Some(tail) = output.get_mut(&session) {
                     let running = super::thread_view_projection::is_running(&status) != 0;
                     tail.runtime_head = Some(ThreadExecutionHead {
-                        active_turn_id: if running { turn_id.clone() } else { String::new() },
+                        active_turn_id: if running {
+                            turn_id.clone()
+                        } else {
+                            String::new()
+                        },
                         status_turn_id: turn_id,
                         runtime_status: status,
                         epoch: 1,
@@ -2110,20 +2101,16 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
                 let raw = Self::hydrate(&mut bodies, &reference, ordinal, id, preview)?;
                 Some((raw, ordinal))
             }
-            None => find_item_via_anchor(
-                &snapshot,
-                &snapshot.root,
-                &snapshot.segments,
-                &rollout,
-                id,
-            )?
-            .map(|found| -> Result<(String, i64)> {
-                Ok((
-                    serde_json::to_string(&found.item_json)?,
-                    i64::try_from(found.rollout_ordinal)?,
-                ))
-            })
-            .transpose()?,
+            None => {
+                find_item_via_anchor(&snapshot, &snapshot.root, &snapshot.segments, &rollout, id)?
+                    .map(|found| -> Result<(String, i64)> {
+                        Ok((
+                            serde_json::to_string(&found.item_json)?,
+                            i64::try_from(found.rollout_ordinal)?,
+                        ))
+                    })
+                    .transpose()?
+            }
         };
         let mut result = match located {
             Some((raw, ordinal)) => {
