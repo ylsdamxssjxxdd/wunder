@@ -1033,6 +1033,55 @@ impl<'a> CanonicalThreadLog<'a> {
                 row.assistant = message;
             }
         }
+        // A running turn (or a tool-only turn that never produced an answer)
+        // owns no summary assistant item, but its newest assistant round
+        // already carries the turn stopwatch. Publish only the bounded stats
+        // so the process bar can show the elapsed time during the run; the
+        // intermediate prose must never become the reply body.
+        if summary.assistant_item_id.is_none() {
+            let mut latest_assistant = conn
+                .query_row(
+                    "SELECT preview_json,rollout_ordinal FROM thread_items
+                     WHERE rollout_id=?1 AND COALESCE(root_turn_id,turn_id)=?2 AND visible=1
+                       AND item_type='assistant_message'
+                     ORDER BY rollout_ordinal DESC LIMIT 1",
+                    params![rollout, root],
+                    |record| Ok((record.get::<_, String>(0)?, record.get::<_, i64>(1)?)),
+                )
+                .optional()?;
+            if latest_assistant.is_none() {
+                let (low, high) = Self::turn_ordinal_range(conn, &rollout, root)?;
+                let scanned = scan_lineage(
+                    &snapshot.root,
+                    snapshot,
+                    &snapshot.segments,
+                    &rollout,
+                    ScanDirection::Older,
+                    Some(high.saturating_add(1)),
+                    Some(low),
+                    None,
+                    1,
+                    start_hint,
+                    &|item: &ThreadHistoryItem| {
+                        item.root_turn_id.as_deref().or(item.turn_id.as_deref()) == Some(root)
+                            && item_is_visible(&item.item_json)
+                            && item.item_type == "assistant_message"
+                    },
+                )?;
+                for item in scanned.items {
+                    let ordinal = i64::try_from(item.rollout_ordinal)?;
+                    latest_assistant = Some((
+                        serde_json::to_string(&item_preview(&item.item_json))?,
+                        ordinal,
+                    ));
+                    break;
+                }
+            }
+            if let Some((raw, ordinal)) = latest_assistant {
+                let item = Self::item(raw, ordinal, session, false)?;
+                row.assistant.stats = p::finite_stats(&item["payload"]);
+            }
+        }
         // Older/live writers may not be able to revise the already-completed
         // assistant item with meta.panel. Recover the bounded panel directly
         // from the latest visible question-panel tool result so the composer

@@ -127,6 +127,7 @@ fn turn(row: tokio_postgres::Row) -> Result<Value> {
         "control":control.as_deref().map(serde_json::from_str::<Value>).transpose()?.unwrap_or_default(),
         "summary":row.get::<_,Option<String>>("summary_json").as_deref().map(serde_json::from_str::<Value>).transpose()?.unwrap_or_default(),
         "process_item_id":row.get::<_,Option<String>>("process_item_id"),
+        "latest_assistant_item_id":row.get::<_,Option<String>>("latest_assistant_item_id"),
     }))
 }
 
@@ -149,7 +150,8 @@ fn roots(
                 'mime_type',left(COALESCE(part->>'mime_type',part->>'content_type'),128))),'[]'::jsonb)
                 FROM (SELECT part FROM jsonb_array_elements(CASE WHEN jsonb_typeof(input.doc->'attachments')='array'
                   THEN input.doc->'attachments' ELSE '[]'::jsonb END) part LIMIT 8) cards))::text END AS input_json,
-            head.control_json,chat.summary_json,process.item_id AS process_item_id
+            head.control_json,chat.summary_json,process.item_id AS process_item_id,
+            latest_assistant.item_id AS latest_assistant_item_id
         FROM (SELECT * FROM service_thread_admissions
             WHERE thread_id=$1 AND turn_id=root_turn_id
               AND ($2::bigint IS NULL OR user_round<$2) AND ($3::bigint IS NULL OR user_round>$3)
@@ -168,6 +170,13 @@ fn roots(
         LEFT JOIN LATERAL (SELECT item_id FROM service_thread_items_v2
             WHERE thread_id=$1 AND root_turn_id=root.root_turn_id AND visible
             ORDER BY ordinal DESC LIMIT 1) process ON TRUE
+        -- A running turn has no final-answer item yet, but its latest assistant
+        -- item already carries the turn stopwatch. Expose its identity so the
+        -- chat row can publish that duration while the work is still running.
+        LEFT JOIN LATERAL (SELECT item_id FROM service_thread_items_v2
+            WHERE thread_id=$1 AND root_turn_id=root.root_turn_id AND visible
+              AND preview_json::jsonb->>'kind'='assistant_message'
+            ORDER BY ordinal DESC LIMIT 1) latest_assistant ON TRUE
         ORDER BY root.user_round {order}"), &[&session,&before,&after,&((limit+1) as i64),&include_input])?
         .into_iter().map(turn).collect::<Result<Vec<_>>>()?;
     turns.retain(|turn| !p::is_withdrawn_queue_turn(turn));
@@ -243,6 +252,16 @@ fn chat(turn: &Value, items: &HashMap<String, Value>, seq: i64) -> Result<ChatVi
         .and_then(|id| items.get(id))
     {
         row.assistant = message(item, seq);
+    } else if let Some(item) = turn["latest_assistant_item_id"]
+        .as_str()
+        .and_then(|id| items.get(id))
+    {
+        // While a turn runs (or a tool-only turn settles without a final
+        // answer) the chat row has no reply body, but the process bar still
+        // shows the stopwatch from the newest assistant round. Publish only
+        // the bounded stats: the intermediate prose must never become the
+        // answer body.
+        row.assistant.stats = p::finite_stats(&item["payload"]);
     }
     if let Some(item) = summary
         .question_panel_item_id
@@ -317,6 +336,31 @@ mod inquiry_tests {
         assert_eq!(row.reasoning_item_id, "fixture-turn:text-2");
         assert_eq!(row.assistant.reasoning, "Fixture next thought");
         assert_eq!(row.process_count, Some(2));
+    }
+
+    #[test]
+    fn running_turn_publishes_stopwatch_without_leaking_intermediate_prose() {
+        let summary = ChatSummary {
+            process_count: 2,
+            ..Default::default()
+        };
+        let turn = json!({"turn_id":"fixture-turn","root_turn_id":"fixture-turn",
+            "user_round":1,"status":"running","summary":summary,
+            "latest_assistant_item_id":"fixture-turn:text-7"});
+        let items = HashMap::from([(
+            "fixture-turn:text-7".into(),
+            json!({"item_id":"fixture-turn:text-7","payload":{
+                "content":"intermediate prose",
+                "message_stats":{"interaction_duration_s":65.4}}}),
+        )]);
+        let row = chat(&turn, &items, 3).unwrap();
+        // The intermediate round is work-process content, never the answer body.
+        assert_eq!(row.assistant.item_id, "");
+        assert_eq!(row.assistant.content, "");
+        assert_eq!(
+            row.assistant.stats.as_ref().unwrap()["interaction_duration_s"],
+            json!(65.4)
+        );
     }
 
     #[test]
@@ -512,6 +556,7 @@ impl PostgresThreadLog<'_> {
                     .into_iter()
                     .filter_map(|field| t["summary"][field].as_str().map(str::to_owned))
                     .chain(t["process_item_id"].as_str().map(str::to_owned))
+                    .chain(t["latest_assistant_item_id"].as_str().map(str::to_owned))
                 })
                 .collect::<BTreeSet<_>>()
                 .into_iter()

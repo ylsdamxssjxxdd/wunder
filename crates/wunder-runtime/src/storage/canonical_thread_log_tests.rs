@@ -49,6 +49,45 @@ fn process_reasoning_identity_uses_its_own_body_when_answer_is_from_an_older_rou
     assert_eq!(row.process_count, Some(2));
 }
 
+#[test]
+fn running_turn_process_bar_keeps_stopwatch_from_latest_assistant_round() {
+    let root = tempfile::tempdir().unwrap();
+    let db = SqliteStorage::new(
+        root.path()
+            .join("state_1.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    db.ensure_initialized().unwrap();
+    let admitted = db
+        .accept_thread_turn(USER, THREAD, &json!({"content":"Fixture input"}))
+        .unwrap();
+    let turn = admitted["turn_id"].as_str().unwrap();
+    super::test_support::freeze_thread(root.path(), USER, THREAD);
+    super::test_support::begin_turn(root.path(), USER, THREAD, turn);
+    db.append_thread_item(
+        USER,
+        &json!({
+            "session_id":THREAD,"turn_id":turn,
+            "item_id":format!("{turn}:text-1"),"kind":"assistant_message","model_round":1,
+            "content":"Fixture intermediate note",
+            "tool_calls":[{"id":"fixture-call"}],
+            "message_stats":{"interaction_duration_s":65.4},
+            "status":"completed"
+        }),
+    )
+    .unwrap();
+    let page = db.thread_view_page(USER, THREAD, "chat", None, 12).unwrap();
+    let row = &page.chat[0];
+    // The intermediate round is work-process content, never the reply body.
+    assert_eq!(row.assistant.item_id, "");
+    assert_eq!(row.assistant.content, "");
+    assert_eq!(
+        row.assistant.stats.as_ref().unwrap()["interaction_duration_s"],
+        json!(65.4)
+    );
+}
+
 fn read_body(db: &dyn StorageBackend, body_id: &str) -> String {
     let mut cursor = 0;
     let mut content = String::new();

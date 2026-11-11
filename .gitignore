@@ -129,3 +129,4 @@ build_win7b.log
 metadata_win7.err
 metadata_win7.json
 videos/
+.venv*/
