@@ -17,31 +17,9 @@ use crate::services::tools::sessions_yield_tool;
 
 use super::execute_support::*;
 
-/// 单轮模型上下文里最多保留多少张读图原图；更早的帧退化为带路径的占位文本。
-const READ_IMAGE_INLINE_FRAME_LIMIT: usize = 4;
 /// 服务端观测到的输入 token 单轮下降超过该值且本地未压缩时，记录一条轨迹，
 /// 解释模型为什么突然“忘了”此前的上下文。
 const CONTEXT_SHRINK_ALERT_TOKENS: i64 = 1024;
-
-/// 上一轮在“读图后、回答前”中断时，持久化历史里图片已被省略，
-/// 只剩一条「请分析这份图片」的悬空指令。恢复最后一帧原图，
-/// 避免恢复会话后模型对一张不存在的图片作答。
-async fn restore_dangling_followup_image(messages: &mut [Value]) {
-    let Some(last) = messages.last_mut() else {
-        return;
-    };
-    if last.get("role").and_then(Value::as_str) != Some("user") {
-        return;
-    }
-    let Some(path) =
-        crate::services::chat_payload_sanitizer::omitted_inline_image_path(last)
-    else {
-        return;
-    };
-    if let Some(data_url) = crate::services::chat_media::load_image_data_url_for_path(&path).await {
-        crate::services::chat_payload_sanitizer::restore_omitted_inline_image(last, &data_url);
-    }
-}
 
 struct ObservationTokenBudgets {
     per_result: Vec<i64>,
@@ -559,7 +537,7 @@ impl Orchestrator {
                 .filter_map(normalize_model_context_message).collect::<Vec<_>>();
             messages.extend(model_context_entries);
             messages = context_manager.normalize_messages(messages);
-            restore_dangling_followup_image(&mut messages).await;
+            crate::services::chat_media::restore_omitted_inline_images(&mut messages).await;
             let user_message = self
                 .build_user_message(&question, prepared.attachments.as_deref())
                 .await;
@@ -1743,13 +1721,6 @@ impl Orchestrator {
                                 round_info,
                             ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                             messages.push(followup_message);
-                            // 读图会逐张内联原图；只保留最近几帧，旧帧退化为带
-                            // 路径的占位文本，避免单轮几十张图把请求推到上限。
-                            crate::services::chat_payload_sanitizer::prune_previous_inline_image_followups_keeping(
-                                &mut messages,
-                                "read_image_followup",
-                                READ_IMAGE_INLINE_FRAME_LIMIT,
-                            );
                         }
                         if let Some(followup_message) = desktop_followup {
                             let mut followup_message = followup_message;
@@ -1766,10 +1737,6 @@ impl Orchestrator {
                                 round_info,
                             ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                             messages.push(followup_message);
-                            crate::services::chat_payload_sanitizer::prune_previous_inline_image_followups(
-                                &mut messages,
-                                "desktop_followup",
-                            );
                         }
                         if let Some(followup_message) = phone_followup {
                             let mut followup_message = followup_message;
@@ -1786,10 +1753,6 @@ impl Orchestrator {
                                 round_info,
                             ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                             messages.push(followup_message);
-                            crate::services::chat_payload_sanitizer::prune_previous_inline_image_followups(
-                                &mut messages,
-                                "phone_followup",
-                            );
                         }
                         if let Some(followup_message) = browser_followup {
                             let mut followup_message = followup_message;
@@ -1806,10 +1769,6 @@ impl Orchestrator {
                                 round_info,
                             ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                             messages.push(followup_message);
-                            crate::services::chat_payload_sanitizer::prune_previous_inline_image_followups(
-                                &mut messages,
-                                "browser_followup",
-                            );
                         }
                         if let Some(wrapup_text) = goal_wrapup {
                             let mut followup_message =

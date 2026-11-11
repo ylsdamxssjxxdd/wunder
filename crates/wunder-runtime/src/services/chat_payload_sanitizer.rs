@@ -89,132 +89,18 @@ pub fn parse_sanitized_persisted_chat_payload(text: &str) -> (Option<Value>, Opt
     (value, repaired_text)
 }
 
-pub fn prune_previous_inline_image_followups(messages: &mut Vec<Value>, source: &str) {
-    prune_previous_inline_image_followups_keeping(messages, source, 1);
+/// 文本是否为「图片已省略」占位（持久化省略图像像素后的标记）。
+pub fn is_omitted_image_placeholder_text(text: &str) -> bool {
+    text.trim() == INLINE_IMAGE_OMITTED_TEXT
 }
 
-/// Keep only the newest `keep` followup images from `source`; older images are
-/// replaced by path-bearing placeholders so the model can re-read them on
-/// demand instead of paying their tokens on every round. Counting is per image
-/// part, not per message, so one multi-frame video followup cannot bypass the
-/// budget.
-pub fn prune_previous_inline_image_followups_keeping(
-    messages: &mut Vec<Value>,
-    source: &str,
-    keep: usize,
-) {
-    let keep = keep.max(1);
-    let mut image_parts: Vec<(usize, usize)> = Vec::new();
-    for (message_index, message) in messages.iter().enumerate() {
-        if !is_internal_followup_message(message, source) {
-            continue;
-        }
-        let Some(parts) = message.get("content").and_then(Value::as_array) else {
-            continue;
-        };
-        for (part_index, part) in parts.iter().enumerate() {
-            if part.get("image_url").is_some() && value_contains_inline_image(part) {
-                image_parts.push((message_index, part_index));
-            }
-        }
-    }
-    if image_parts.len() <= keep {
-        return;
-    }
-    let prune_until = image_parts.len() - keep;
-    for (message_index, part_index) in image_parts.into_iter().take(prune_until) {
-        let Some(part) = messages
-            .get_mut(message_index)
-            .and_then(|message| message.get_mut("content"))
-            .and_then(Value::as_array_mut)
-            .and_then(|parts| parts.get_mut(part_index))
-        else {
-            continue;
-        };
-        sanitize_inline_images_in_value(part);
-    }
-}
-
-/// 提取一条消息里被省略图片的原始路径（用于跨轮恢复最后一帧）。
-/// 只在该消息确实含有“图片已省略”占位时生效，避免把仍在上下文中的
-/// 图片重复内联。
-pub fn omitted_inline_image_path(value: &Value) -> Option<String> {
-    if !contains_omitted_image_placeholder(value) {
-        return None;
-    }
-    find_image_path_marker(value)
-}
-
-fn contains_omitted_image_placeholder(value: &Value) -> bool {
-    match value {
-        Value::String(text) => text.contains(INLINE_IMAGE_OMITTED_TEXT),
-        Value::Array(items) => items.iter().any(contains_omitted_image_placeholder),
-        Value::Object(map) => map.values().any(contains_omitted_image_placeholder),
-        _ => false,
-    }
-}
-
-fn find_image_path_marker(value: &Value) -> Option<String> {
-    match value {
-        Value::String(text) => {
-            let start = text.find(IMAGE_PATH_MARKER_PREFIX)? + IMAGE_PATH_MARKER_PREFIX.len();
-            let end = text[start..].find(']')? + start;
-            let path = text[start..end].trim();
-            (!path.is_empty()).then(|| path.to_string())
-        }
-        Value::Array(items) => items.iter().rev().find_map(find_image_path_marker),
-        Value::Object(map) => map
-            .get("content")
-            .and_then(find_image_path_marker)
-            .or_else(|| map.values().filter_map(find_image_path_marker).last()),
-        _ => None,
-    }
-}
-
-/// 把被省略图片的占位文本换回真实图片（pixels 来自磁盘上的原路径），
-/// 保留同一位置，避免跨轮历史出现「要求分析图片却没有图」的悬空指令。
-/// 优先恢复消息里最后一张被省略的图（最近一帧），只恢复一张。
-pub fn restore_omitted_inline_image(message: &mut Value, data_url: &str) {
-    let Some(parts) = message
-        .get_mut("content")
-        .and_then(Value::as_array_mut)
-    else {
-        return;
-    };
-    for part in parts.iter_mut().rev() {
-        let is_placeholder = part
-            .get("text")
-            .and_then(Value::as_str)
-            .map(|text| text.trim() == INLINE_IMAGE_OMITTED_TEXT)
-            .unwrap_or(false);
-        if !is_placeholder {
-            continue;
-        }
-        *part = serde_json::json!({
-            "type": "image_url",
-            "image_url": { "url": data_url }
-        });
-        return;
-    }
-}
-
-pub fn value_contains_inline_image(value: &Value) -> bool {
-    match value {
-        Value::String(text) => is_inline_image_data_url(text),
-        Value::Array(items) => items.iter().any(value_contains_inline_image),
-        Value::Object(map) => map.values().any(value_contains_inline_image),
-        _ => false,
-    }
-}
-
-fn is_internal_followup_message(message: &Value, source: &str) -> bool {
-    message
-        .get("meta")
-        .and_then(Value::as_object)
-        .and_then(|meta| meta.get("source"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        == Some(source)
+/// 从一段文本里解析 `[image_path:...]` 提示中的原始路径。占位与路径提示
+/// 都是纯文本 part，恢复时按出现顺序把每个占位配给它前面最近的路径提示。
+pub fn image_path_marker_in_text(text: &str) -> Option<String> {
+    let start = text.find(IMAGE_PATH_MARKER_PREFIX)? + IMAGE_PATH_MARKER_PREFIX.len();
+    let end = text[start..].find(']')? + start;
+    let path = text[start..end].trim();
+    (!path.is_empty()).then(|| path.to_string())
 }
 
 fn sanitize_inline_images_in_value(value: &mut Value) -> bool {
@@ -423,88 +309,34 @@ mod tests {
     }
 
     #[test]
-    fn prune_previous_inline_image_followups_keeps_latest_frame_only() {
-        let mut messages = vec![
-            json!({
-                "role": "user",
-                "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,OLD"}}],
-                "meta": {"source": "desktop_followup"}
-            }),
-            json!({
-                "role": "user",
-                "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,NEW"}}],
-                "meta": {"source": "desktop_followup"}
-            }),
-        ];
-
-        prune_previous_inline_image_followups(&mut messages, "desktop_followup");
-
-        assert!(!messages[0].to_string().contains("data:image/png;base64"));
-        assert!(messages[1]
-            .to_string()
-            .contains("data:image/png;base64,NEW"));
-    }
-
-    #[test]
-    fn prune_keeping_multiple_frames_preserves_paths() {
-        let frame = |data: &str, path: &str| {
-            json!({
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "prompt"},
-                    {"type": "text", "text": format!("[image_path:{path}]")},
-                    {"type": "image_url", "image_url": {"url": data}}
-                ],
-                "meta": {"source": "read_image_followup"}
-            })
-        };
-        let mut messages = vec![
-            frame("data:image/png;base64,ONE", "/tmp/1.png"),
-            frame("data:image/png;base64,TWO", "/tmp/2.png"),
-            frame("data:image/png;base64,THREE", "/tmp/3.png"),
-        ];
-
-        prune_previous_inline_image_followups_keeping(&mut messages, "read_image_followup", 2);
-
-        assert!(!messages[0].to_string().contains("data:image/png;base64,ONE"));
-        assert!(messages[0].to_string().contains("[image_path:/tmp/1.png]"));
+    fn image_path_marker_parses_hint_with_trailing_prose() {
         assert_eq!(
-            omitted_inline_image_path(&messages[0]).as_deref(),
-            Some("/tmp/1.png")
+            image_path_marker_in_text("[image_path:/tmp/a.png] older frames keep only this path")
+                .as_deref(),
+            Some("/tmp/a.png")
         );
-        assert!(messages[1]
-            .to_string()
-            .contains("data:image/png;base64,TWO"));
-        assert!(messages[2]
-            .to_string()
-            .contains("data:image/png;base64,THREE"));
+        assert_eq!(
+            image_path_marker_in_text("[image_path:review/s_0005.00.png]").as_deref(),
+            Some("review/s_0005.00.png")
+        );
+        assert!(image_path_marker_in_text("plain text").is_none());
+        assert!(image_path_marker_in_text("[image_path:]").is_none());
     }
 
     #[test]
-    fn prune_counts_image_parts_inside_one_multi_frame_followup() {
-        let mut messages = vec![json!({
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "prompt"},
-                {"type": "text", "text": "[image_path:/tmp/a.png]"},
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,A"}},
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,B"}},
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,C"}}
-            ],
-            "meta": {"source": "read_image_followup"}
-        })];
-
-        prune_previous_inline_image_followups_keeping(&mut messages, "read_image_followup", 2);
-
-        let serialized = messages[0].to_string();
-        assert!(!serialized.contains("base64,A"));
-        assert!(serialized.contains("[image_path:/tmp/a.png]"));
-        assert!(serialized.contains("base64,B"));
-        assert!(serialized.contains("base64,C"));
+    fn omitted_placeholder_text_is_detected_exactly() {
+        assert!(is_omitted_image_placeholder_text(INLINE_IMAGE_OMITTED_TEXT));
+        assert!(is_omitted_image_placeholder_text(&format!(
+            "  {INLINE_IMAGE_OMITTED_TEXT}  "
+        )));
+        assert!(!is_omitted_image_placeholder_text(
+            "[image_path:/tmp/a.png]"
+        ));
+        assert!(!is_omitted_image_placeholder_text("inline image omitted"));
     }
 
     #[test]
-    fn omitted_image_placeholder_keeps_path_and_can_be_restored() {
+    fn sanitized_followup_keeps_path_hint_for_restore() {
         let mut message = json!({
             "role": "user",
             "content": [
@@ -516,29 +348,15 @@ mod tests {
 
         sanitize_inline_images_in_value(&mut message);
 
-        assert!(message
-            .to_string()
-            .contains("[inline image omitted from persisted context]"));
+        let parts = message["content"].as_array().expect("content array");
+        assert!(is_omitted_image_placeholder_text(
+            parts[2]["text"].as_str().unwrap()
+        ));
         assert_eq!(
-            omitted_inline_image_path(&message).as_deref(),
+            image_path_marker_in_text(parts[1]["text"].as_str().unwrap()).as_deref(),
             Some("/tmp/a.png")
         );
-        restore_omitted_inline_image(&mut message, "data:image/png;base64,BBBB");
-        let restored = message.to_string();
-        assert!(restored.contains("data:image/png;base64,BBBB"));
-        assert!(!restored.contains("inline image omitted"));
-    }
-
-    #[test]
-    fn omitted_image_path_requires_an_actual_placeholder() {
-        let message = json!({
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "[image_path:/tmp/a.png]"},
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
-            ]
-        });
-        assert!(omitted_inline_image_path(&message).is_none());
+        assert!(!message.to_string().contains("data:image/png;base64"));
     }
 
     #[test]

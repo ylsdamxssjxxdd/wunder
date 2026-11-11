@@ -150,10 +150,7 @@ fn recent_output_paths(root: &Path, since: SystemTime, limit: usize) -> Vec<Stri
             if metadata.is_dir() {
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
-                if depth < 2
-                    && !name.starts_with('.')
-                    && name != "node_modules"
-                    && name != "target"
+                if depth < 2 && !name.starts_with('.') && name != "node_modules" && name != "target"
                 {
                     queue.push((path, depth + 1));
                 }
@@ -1373,7 +1370,10 @@ async fn run_command_streaming(
         .map(|broker| SessionCancelGuard::register(broker, command_session.command_session_id()))
         .unzip();
     let foreground_escalation = yield_time.is_none() && escalate_after.is_some();
-    let Some(wait) = yield_time.or(escalate_after).filter(|wait| *wait > Duration::ZERO) else {
+    let Some(wait) = yield_time
+        .or(escalate_after)
+        .filter(|wait| *wait > Duration::ZERO)
+    else {
         return run_spawned_child_streaming(
             context,
             child,
@@ -1636,26 +1636,33 @@ fn build_command_session_result(mut data: Value) -> Value {
             || data
                 .get("error")
                 .and_then(Value::as_str)
-                .is_some_and(|error| !error.is_empty()))
+                .is_some_and(|error| !error.is_empty())
+            || data
+                .get("exit_code")
+                .and_then(Value::as_i64)
+                .is_some_and(|code| code < 0))
     {
         return build_failed_tool_result(
             command_session_failure_message(&data),
             data,
             ToolErrorMeta::new(
                 "TOOL_COMMAND_SESSION_FAILED",
-                Some("用同一 command_session_id 可继续读取增量输出；stderr 已包含在数据中。".to_string()),
+                Some(
+                    "用同一 command_session_id 可继续读取增量输出；stderr 已包含在数据中。"
+                        .to_string(),
+                ),
                 false,
                 None,
             ),
             false,
         );
     }
-    // 非零退出码随数据返回：命令确实执行完了，退出语义由模型结合输出判断。
+    // 正的非零退出码随数据返回：命令确实执行完了，退出语义由模型结合输出判断。
     if !running
         && data
             .get("exit_code")
             .and_then(Value::as_i64)
-            .is_some_and(|code| code != 0)
+            .is_some_and(|code| code > 0)
     {
         data["exit_note"] = json!(i18n::t("tool.exec.non_zero_exit_note"));
     }
@@ -1978,7 +1985,9 @@ fn build_sandbox_command_result(mut data: Value) -> Value {
         .unwrap_or_default();
     if is_broken_pipe_exit(
         command_text,
-        exit_code.and_then(|code| i32::try_from(code).ok()).unwrap_or(-1),
+        exit_code
+            .and_then(|code| i32::try_from(code).ok())
+            .unwrap_or(-1),
         stderr_text,
     ) {
         if let Value::Object(ref mut map) = data {
@@ -1995,15 +2004,42 @@ fn build_sandbox_command_result(mut data: Value) -> Value {
             data,
         );
     }
-    if let Some(code) = exit_code {
-        if code != 0 {
-            // 非零退出码是命令语义，不是工具失败；保留输出由模型判断。
+    match exit_code {
+        Some(0) => {}
+        Some(code) if code > 0 => {
+            // 正的非零退出码是命令语义，不是工具失败；保留输出由模型判断。
             if let Value::Object(ref mut map) = data {
                 map.insert(
                     "exit_note".to_string(),
                     json!(i18n::t("tool.exec.non_zero_exit_note")),
                 );
             }
+        }
+        _ => {
+            // 负退出码（被信号终止/取消）或缺失退出码：命令没有正常执行完。
+            let detail = data
+                .get("error")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| {
+                    data.get("stderr")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.trim().is_empty())
+                })
+                .map(str::trim)
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "command was terminated before exiting".to_string());
+            return build_failed_tool_result(
+                detail,
+                data,
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_TERMINATED",
+                    Some("命令被信号终止或取消，没有正常执行完。".to_string()),
+                    false,
+                    None,
+                ),
+                false,
+            );
         }
     }
     build_model_tool_success(
@@ -2488,10 +2524,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                     .unwrap_or(Value::Null);
                 if let Some(last) = results.last_mut().and_then(Value::as_object_mut) {
                     last.insert("running".to_string(), Value::Bool(true));
-                    last.insert(
-                        "escalated_on_timeout".to_string(),
-                        Value::Bool(true),
-                    );
+                    last.insert("escalated_on_timeout".to_string(), Value::Bool(true));
                 }
                 return Ok(build_model_tool_success(
                     "execute_command",
@@ -2571,8 +2604,29 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             }
             continue;
         }
-        if run.returncode != 0 {
-            // 退出码是命令语义的一部分（grep 无匹配、pkill 无进程、diff 有差异），
+        if run.returncode < 0 {
+            // 负退出码表示被信号终止或用户取消：命令没有正常执行完，是真正的失败。
+            context.workspace.mark_tree_dirty(context.workspace_id);
+            return Ok(build_failed_tool_result(
+                build_execute_command_failure_message(&results, false),
+                build_execute_command_failure_data(
+                    &results,
+                    guarded_total_commands,
+                    guarded_truncated_commands > 0,
+                    guarded_omitted_bytes,
+                    false,
+                ),
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_TERMINATED",
+                    Some("命令被信号终止或取消，没有正常执行完。".to_string()),
+                    false,
+                    None,
+                ),
+                false,
+            ));
+        }
+        if run.returncode > 0 {
+            // 正的非零退出码是命令语义（grep 无匹配、pkill 无进程、diff 有差异），
             // 不是工具执行失败；保留完整输出与退出码，由模型判断是否需要修正。
             if let Some(last) = results.last_mut().and_then(Value::as_object_mut) {
                 last.insert(

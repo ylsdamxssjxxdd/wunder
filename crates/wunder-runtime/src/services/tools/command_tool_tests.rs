@@ -696,7 +696,11 @@ async fn foreground_quick_command_with_broker_returns_without_waiting_for_timeou
     .unwrap();
     assert_eq!(result["ok"], true, "{result}");
     assert_eq!(result["state"], "completed", "{result}");
-    assert_eq!(result["data"]["results"][0]["stdout"], json!("quick\n"), "{result}");
+    assert_eq!(
+        result["data"]["results"][0]["stdout"],
+        json!("quick\n"),
+        "{result}"
+    );
     assert!(
         started.elapsed() < Duration::from_secs(5),
         "quick command waited for timeout: {:?}",

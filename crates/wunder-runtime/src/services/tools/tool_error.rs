@@ -276,7 +276,9 @@ pub(crate) fn build_execute_command_failure_message(results: &[Value], timed_out
     }
     // 模型侧只消费这条摘要，看不到失败 data 里的完整 stderr；把最后一行带出来，
     // 参数错误、路径不存在这类问题才不用靠盲猜和重试。
-    if let Some(last) = last_meaningful_line(stderr_raw).or_else(|| last_meaningful_line(stdout_raw)) {
+    if let Some(last) =
+        last_meaningful_line(stderr_raw).or_else(|| last_meaningful_line(stdout_raw))
+    {
         message.push_str("最后一行输出：");
         message.push_str(&last);
         message.push('。');

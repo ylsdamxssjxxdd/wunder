@@ -1236,8 +1236,8 @@
     "zh-CN": "请分析这份本地视觉媒体，并继续完成当前任务。"
   },
   "tool.read_image.followup_path_hint": {
-    "en-US": "[image_path:{path}] older frames keep only this path; re-read it with the image tool when needed",
-    "zh-CN": "[image_path:{path}] 较早的帧只保留路径；需要重看时用读图工具重新读取"
+    "en-US": "[image_path:{path}] source path for this image; re-read it with the image tool if you need the original again (e.g. after compaction).",
+    "zh-CN": "[image_path:{path}] 这张图的原始路径；确实需要再看原图时（如压缩清退后）用读图工具按此路径重读。"
   },
   "tool.browser.screenshot_followup_prompt": {
     "en-US": "The browser screenshot is attached. Inspect it to verify the page state, then continue the task.",
@@ -2780,8 +2780,8 @@
     "zh-CN": "本地视觉媒体路径，可使用工作区相对路径或允许的绝对路径。"
   },
   "tool.spec.read_image.description": {
-    "en-US": "Read a local image, GIF, or video into the current model context; not a web image-search tool. Images support crop=x,y,w,h and scale to inspect details, stats for region numbers (mean luma, non-background/edge pixel ratios), stats_only for numbers without pixels. Videos use frame_rate to extract frames. Older frames in history keep only their path — re-read the path to view them again.",
-    "zh-CN": "读取本地图片、GIF 或视频并送入当前模型上下文，不是联网看图工具。图片支持 crop=x,y,w,h 裁切与 scale 缩放看细节；stats 附带区域平均亮度、非背景/边缘像素占比等数值，stats_only 只返回数值不回图。视频用 frame_rate 抽帧。历史中的旧帧只保留路径，需要时按路径重读即可回看。"
+    "en-US": "Read a local image, GIF, or video into the current model context; not a web image-search tool. The default view is auto-fitted for the model (long side <=2048px, ~2500 patches); use crop=x,y,w,h plus scale to inspect original-resolution details. stats returns region numbers (mean luma, non-background/edge pixel ratios); stats_only returns numbers without pixels. Videos use frame_rate to extract frames. Images stay in context across rounds; re-read the path only when you need the pixels again (e.g. after compaction).",
+    "zh-CN": "读取本地图片、GIF 或视频并送入当前模型上下文，不是联网看图工具。默认视图会自动压到适合模型的尺寸（长边 ≤2048px、约 2500 个 32px patch）；要看清原尺寸小字细节，用 crop=x,y,w,h 指定区域再配合 scale 放大。stats 附带区域平均亮度、非背景/边缘像素占比等数值，stats_only 只返回数值不回图。视频用 frame_rate 抽帧。图像随上下文保留，不必每轮重读；确实需要再看像素时（如压缩清退后）再按路径重读。"
   },
   "tool.spec.read_image.args.crop": {
     "en-US": "Optional still-image crop in source pixels: \"x,y,w,h\". Applied before scale; stats are computed on this region.",

@@ -2314,7 +2314,8 @@ fn project_web_fetch_success(data: &Value) -> Option<Value> {
 
 fn project_read_image_success(data: &Value) -> Option<Value> {
     let map = model_tool_result_data_map(data)?;
-    let mut projected = pick_non_empty_fields(map, &["path", "media_kind", "size_bytes", "view", "stats"]);
+    let mut projected =
+        pick_non_empty_fields(map, &["path", "media_kind", "size_bytes", "view", "stats"]);
     let result = map.get("result").and_then(Value::as_object);
     if let Some(result) = result {
         for key in [
@@ -3421,7 +3422,10 @@ fn fit_read_file_content_to_observation_budget(compacted: &mut Map<String, Value
             .and_then(|file| file.get("path"))
             .and_then(Value::as_str)
         {
-            compacted.insert("api_index_file".to_string(), Value::String(path.to_string()));
+            compacted.insert(
+                "api_index_file".to_string(),
+                Value::String(path.to_string()),
+            );
         }
     }
     if omitted_chars > 0 {

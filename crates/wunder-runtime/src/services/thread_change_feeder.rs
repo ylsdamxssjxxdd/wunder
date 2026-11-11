@@ -467,9 +467,10 @@ mod tests {
         };
         assert_eq!(data["payload"]["item_id"], "barrier-item");
         // A single commit can project more than one row, so drain until the feed
-        // goes quiet; the window below has to measure an idle feeder.
+        // goes quiet; the window below has to measure an idle feeder. Loaded
+        // runners can deliver those rows late, so keep a generous quiet window.
         let drained = std::time::Instant::now();
-        while tokio::time::timeout(std::time::Duration::from_millis(150), receiver.recv())
+        while tokio::time::timeout(std::time::Duration::from_millis(600), receiver.recv())
             .await
             .is_ok()
         {

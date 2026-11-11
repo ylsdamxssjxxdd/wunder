@@ -218,8 +218,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "读图工具",
-        brief_en: "Read a local image/GIF/video into vision by path. Images: crop=x,y,w,h and scale zoom into details; stats adds region luma/non-background numbers, stats_only returns numbers without an image. Videos: frame_rate extracts frames. Old frames keep only their path — re-read it anytime.",
-        brief_zh: "按 path 把本地图片/GIF/视频送入视觉。图片可 crop=x,y,w,h 裁切、scale 缩放看细节；stats 附带区域亮度与非背景像素占比数值，stats_only 只要数值不回图。视频用 frame_rate 抽帧。历史旧帧只留路径，随时按路径重读。",
+        brief_en: "Read a local image/GIF/video into vision by path. The default view is auto-fitted (long side <=2048px); crop=x,y,w,h + scale inspect original-resolution details. stats adds region luma/non-background numbers; stats_only returns numbers without an image. Videos: frame_rate extracts frames. Images stay in context across rounds; re-read the path only when you need the pixels again.",
+        brief_zh: "按 path 把本地图片/GIF/视频送入视觉。默认视图自动压到长边 ≤2048px；要看清原尺寸细节用 crop=x,y,w,h 指定区域并配合 scale。stats 附带区域亮度与非背景像素占比数值，stats_only 只要数值不回图。视频用 frame_rate 抽帧。图像随上下文保留，不必每轮重读；确实需要再看像素时再按路径重读。",
         drop_actions: &[],
         drop_fields: &[],
     },

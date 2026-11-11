@@ -728,7 +728,11 @@ async fn read_screenshot_data_url(path: &Path) -> Result<String> {
             "tool.phone_control.capture_too_large"
         )));
     }
-    Ok(format!("data:image/png;base64,{}", STANDARD.encode(bytes)))
+    let (bytes, mime) = crate::core::blocking::run_cpu("phone_screenshot_view", move || {
+        crate::services::chat_media::encode_model_ready_image_bytes(&bytes, "image/png")
+    })
+    .await?;
+    Ok(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
 }
 
 #[cfg(test)]

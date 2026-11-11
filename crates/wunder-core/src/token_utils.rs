@@ -5,7 +5,10 @@ use std::sync::OnceLock;
 
 const APPROX_BYTES_PER_TOKEN: f64 = 4.0;
 const MESSAGE_TOKEN_OVERHEAD: i64 = 4;
-const IMAGE_TOKEN_ESTIMATE: i64 = 256;
+// 图像常驻上下文（不做轮内裁剪），其成本必须被 compaction 如实计入，否则
+// 几十张图会在估算远低于实际时撑爆窗口。对齐 codex 高细节口径：一张缩放后
+// 的图按约 1844 token 固定计（codex RESIZED_IMAGE_BYTES_ESTIMATE=7373 / 4）。
+const IMAGE_TOKEN_ESTIMATE: i64 = 1844;
 
 pub fn approx_token_count(text: &str) -> i64 {
     if text.is_empty() {

@@ -106,7 +106,9 @@ async fn workflow_metrics_preserve_parallel_success_failure_and_cancellation() {
                     .is_some()
             ))
             .collect::<Vec<_>>(),
-        vec![(true, true), (false, true)]
+        // 正的非零退出码（exit 3）是命令语义，结果仍为成功；真正的失败由
+        // 下面的取消用例覆盖。
+        vec![(true, true), (true, true)]
     );
     let work = orchestrator.execute_tool_calls_parallel(
         vec![

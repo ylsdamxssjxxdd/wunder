@@ -1,7 +1,7 @@
 use super::{build_model_tool_success, ToolContext};
 use crate::schemas::AttachmentPayload;
 use crate::services::chat_media::{
-    detect_media_kind_from_path, derive_image_view, process_visual_media_path, ImageCrop,
+    derive_image_view, detect_media_kind_from_path, process_visual_media_path, ImageCrop,
     ImageViewStats,
 };
 use anyhow::{anyhow, Result};
@@ -82,7 +82,8 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         .filter(|value| !value.is_empty())
         .map(ImageCrop::parse)
         .transpose()?;
-    let has_view_ops = crop.is_some() || payload.scale.is_some() || payload.stats || payload.stats_only;
+    let has_view_ops =
+        crop.is_some() || payload.scale.is_some() || payload.stats || payload.stats_only;
     if has_view_ops {
         if media_kind != "image" {
             return Err(anyhow!(crate::i18n::t("tool.read_image.view_image_only")));
@@ -127,7 +128,12 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         } else {
             format!("Prepared visual media {} for model inspection.", raw_path)
         };
-        return Ok(build_model_tool_success("read_image", "completed", message, data));
+        return Ok(build_model_tool_success(
+            "read_image",
+            "completed",
+            message,
+            data,
+        ));
     }
     let result = process_visual_media_path(
         context.workspace.as_ref(),
@@ -276,10 +282,13 @@ pub async fn build_followup_user_message(
     if has_image {
         if let Some(stats) = result_data.get("stats").filter(|value| value.is_object()) {
             if let Ok(stats) = serde_json::from_value::<ImageViewStats>(stats.clone()) {
-                content.insert(1, json!({
-                    "type": "text",
-                    "text": format_image_stats_text(&stats),
-                }));
+                content.insert(
+                    1,
+                    json!({
+                        "type": "text",
+                        "text": format_image_stats_text(&stats),
+                    }),
+                );
             }
         }
     }
@@ -307,7 +316,10 @@ pub(crate) fn format_image_stats_text(stats: &ImageViewStats) -> String {
                 "non_background".to_string(),
                 format!("{:.2}", stats.non_background_ratio * 100.0),
             ),
-            ("edge".to_string(), format!("{:.2}", stats.edge_ratio * 100.0)),
+            (
+                "edge".to_string(),
+                format!("{:.2}", stats.edge_ratio * 100.0),
+            ),
         ]),
     )
 }

@@ -232,6 +232,50 @@ async fn process_audio_source(
     })
 }
 
+/// 默认读图路径（无 crop/scale/stats）也按 codex 高细节口径压缩：超过上限
+/// 时落一份派生图作为入模附件，原图仍在工作区供 crop/scale 取细节；未超限
+/// 返回 None 沿用原图，不做任何重编码。
+async fn cap_still_image_for_model(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    filename: &str,
+    mime: &str,
+    bytes: &[u8],
+) -> Result<Option<AttachmentPayload>> {
+    let Some((source_width, source_height)) = image_dimensions(bytes) else {
+        return Ok(None);
+    };
+    let Some((width, height)) = model_view_size(source_width, source_height) else {
+        return Ok(None);
+    };
+    let bytes = bytes.to_vec();
+    let prefer_jpeg = mime.eq_ignore_ascii_case("image/jpeg");
+    let encoded = blocking::run_cpu(
+        "cap_model_view",
+        move || -> Result<(Vec<u8>, &'static str, &'static str)> {
+            let image = image::load_from_memory(&bytes)
+                .map_err(|_| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
+            let resized = image.resize_exact(width, height, image::imageops::FilterType::Lanczos3);
+            encode_image_view_with_preference(&resized, prefer_jpeg)
+        },
+    )
+    .await?;
+    let (encoded, out_mime, extension) = encoded;
+    let derived_root = persist_derived_root(workspace, workspace_id, filename).await?;
+    let output_path = derived_root.join(format!("view.{extension}"));
+    fs::write(&output_path, &encoded).await?;
+    let stem = Path::new(filename)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("image");
+    Ok(Some(AttachmentPayload {
+        name: Some(format!("{stem}_view.{extension}")),
+        content: None,
+        content_type: Some(out_mime.to_string()),
+        public_path: Some(workspace.display_path(workspace_id, &output_path)),
+    }))
+}
+
 async fn process_image_source(
     workspace: &WorkspaceManager,
     workspace_id: &str,
@@ -283,10 +327,30 @@ async fn process_image_source(
         .await;
     }
     let public_path = workspace.display_path(workspace_id, source_path);
+    let attachment = match cap_still_image_for_model(
+        workspace,
+        workspace_id,
+        filename.as_str(),
+        &mime_type,
+        bytes.as_slice(),
+    )
+    .await?
+    {
+        Some(attachment) => attachment,
+        None => AttachmentPayload {
+            name: Some(filename),
+            content: None,
+            content_type: Some(mime_type),
+            public_path: Some(public_path.clone()),
+        },
+    };
     Ok(ChatMediaProcessResult {
         kind: "image".to_string(),
-        name: filename.clone(),
-        source_public_path: public_path.clone(),
+        name: attachment
+            .name
+            .clone()
+            .unwrap_or_else(|| "image".to_string()),
+        source_public_path: public_path,
         transcript: None,
         duration_ms: None,
         requested_frame_rate: None,
@@ -296,12 +360,7 @@ async fn process_image_source(
         total_frame_count: None,
         frame_count: 1,
         has_audio: false,
-        attachments: vec![AttachmentPayload {
-            name: Some(filename),
-            content: None,
-            content_type: Some(mime_type),
-            public_path: Some(public_path),
-        }],
+        attachments: vec![attachment],
         warnings: Vec::new(),
     })
 }
@@ -1395,7 +1454,50 @@ pub async fn load_image_data_url_for_path(path: &str) -> Option<String> {
     if !is_supported_model_image_mime(&mime) || !validate_image_attachment_bytes(&mime, &bytes) {
         return None;
     }
+    // 恢复历史时按入模上限重新压缩：磁盘原图可能远大于首轮看到的视图，
+    // 直接内联会让跨轮常驻成本超出单图估价。
+    let (bytes, mime) = blocking::run_cpu("reinstate_image_view", move || {
+        encode_model_ready_image_bytes(&bytes, &mime)
+    })
+    .await
+    .ok()?;
     Some(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
+}
+
+/// 加载持久化历史时，把被省略的图像按路径提示从磁盘重新内联。像素写库时
+/// 被省略以控制体积，但磁盘原图与 `[image_path:]` 提示仍在；对齐 codex 在构建
+/// prompt 时解析图像引用的做法，让图像跨轮常驻，模型不必反复重读同一帧。
+/// 占位与路径提示都是纯文本 part，按出现顺序把每个占位配给它前面最近的路径。
+/// 图像的清退只发生在 compaction（含图消息被压成文本摘要），不在普通轮次里
+/// 逐图裁剪。文件已不存在时占位保留，不阻断历史加载。
+pub async fn restore_omitted_inline_images(messages: &mut [Value]) {
+    use crate::services::chat_payload_sanitizer::{
+        image_path_marker_in_text, is_omitted_image_placeholder_text,
+    };
+    for message in messages.iter_mut() {
+        let Some(parts) = message.get_mut("content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        let mut last_path: Option<String> = None;
+        for part in parts.iter_mut() {
+            let Some(text) = part.get("text").and_then(Value::as_str).map(str::to_string) else {
+                continue;
+            };
+            if let Some(path) = image_path_marker_in_text(&text) {
+                last_path = Some(path);
+            }
+            if is_omitted_image_placeholder_text(&text) {
+                if let Some(path) = last_path.as_ref() {
+                    if let Some(data_url) = load_image_data_url_for_path(path).await {
+                        *part = serde_json::json!({
+                            "type": "image_url",
+                            "image_url": { "url": data_url }
+                        });
+                    }
+                }
+            }
+        }
+    }
 }
 
 const IMAGE_VIEW_MAX_DIMENSION: u32 = 4096;
@@ -1405,6 +1507,57 @@ const IMAGE_VIEW_EDGE_SAMPLE_WIDTH: u32 = 480;
 const IMAGE_VIEW_EDGE_THRESHOLD: u8 = 6;
 const IMAGE_VIEW_BACKGROUND_TOLERANCE: u8 = 24;
 const IMAGE_VIEW_CORNER_PATCH: u32 = 8;
+/// codex 高细节口径：默认入模视图压到最长边 ≤2048 且 ≤2500 个 32px patch，
+/// 让常驻图像的单图成本可预测（约 1844 token）。显式 crop/scale 是细节请求，
+/// 只按 4096 长边兜底，不做 patch 上限。
+const MODEL_VIEW_MAX_DIMENSION: u32 = 2048;
+const MODEL_VIEW_MAX_PATCHES: u32 = 2500;
+const MODEL_VIEW_PATCH_SIZE: u32 = 32;
+
+/// codex 高细节上限内则返回 None（沿用原图），超限返回缩放后的目标尺寸。
+fn model_view_size(width: u32, height: u32) -> Option<(u32, u32)> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let long = width.max(height);
+    let area = f64::from(width) * f64::from(height);
+    let max_area = f64::from(MODEL_VIEW_MAX_PATCHES)
+        * f64::from(MODEL_VIEW_PATCH_SIZE)
+        * f64::from(MODEL_VIEW_PATCH_SIZE);
+    let mut scale = 1.0_f64;
+    if long > MODEL_VIEW_MAX_DIMENSION {
+        scale = f64::from(MODEL_VIEW_MAX_DIMENSION) / f64::from(long);
+    }
+    if area * scale * scale > max_area {
+        scale = (max_area / area).sqrt();
+    }
+    if scale >= 1.0 {
+        return None;
+    }
+    let scaled_width = ((f64::from(width) * scale).floor() as u32).max(1);
+    let scaled_height = ((f64::from(height) * scale).floor() as u32).max(1);
+    (scaled_width < width || scaled_height < height).then_some((scaled_width, scaled_height))
+}
+
+fn max_dimension_size(width: u32, height: u32, max: u32) -> Option<(u32, u32)> {
+    let long = width.max(height);
+    if long == 0 || long <= max {
+        return None;
+    }
+    let scale = f64::from(max) / f64::from(long);
+    Some((
+        ((f64::from(width) * scale).floor() as u32).max(1),
+        ((f64::from(height) * scale).floor() as u32).max(1),
+    ))
+}
+
+fn image_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()
+}
 
 /// 读图工具的裁切区域，单位是源图像素。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1493,11 +1646,10 @@ pub async fn derive_image_view(
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "image".to_string());
     let source_mime = detect_supported_image_content_type(source_path, &bytes);
-    let rendered =
-        blocking::run_cpu("read_image_view", move || {
-            render_image_view(&bytes, crop, scale, want_stats, stats_only)
-        })
-        .await?;
+    let rendered = blocking::run_cpu("read_image_view", move || {
+        render_image_view(&bytes, crop, scale, want_stats, stats_only)
+    })
+    .await?;
     let attachment = if stats_only {
         None
     } else if rendered.view_changed {
@@ -1518,8 +1670,8 @@ pub async fn derive_image_view(
             public_path: Some(workspace.display_path(workspace_id, &output_path)),
         })
     } else {
-        let mime = source_mime
-            .ok_or_else(|| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
+        let mime =
+            source_mime.ok_or_else(|| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
         Some(AttachmentPayload {
             name: Some(filename),
             content: None,
@@ -1565,10 +1717,17 @@ fn render_image_view(
         None => image,
     };
     let stats = want_stats.then(|| compute_image_view_stats(&cropped));
+    let prefer_jpeg = matches!(image::guess_format(bytes), Ok(ImageFormat::Jpeg));
     let effective_scale = scale.unwrap_or(1.0);
+    let explicit_detail = crop.is_some() || (effective_scale - 1.0).abs() > f64::EPSILON;
+    let mut resized = false;
     let scaled = if (effective_scale - 1.0).abs() > f64::EPSILON {
-        let width = (f64::from(cropped.width()) * effective_scale).round().max(1.0) as u32;
-        let height = (f64::from(cropped.height()) * effective_scale).round().max(1.0) as u32;
+        let width = (f64::from(cropped.width()) * effective_scale)
+            .round()
+            .max(1.0) as u32;
+        let height = (f64::from(cropped.height()) * effective_scale)
+            .round()
+            .max(1.0) as u32;
         if width > IMAGE_VIEW_MAX_DIMENSION || height > IMAGE_VIEW_MAX_DIMENSION {
             let max_scale = (f64::from(IMAGE_VIEW_MAX_DIMENSION) / f64::from(cropped.width()))
                 .min(f64::from(IMAGE_VIEW_MAX_DIMENSION) / f64::from(cropped.height()));
@@ -1580,15 +1739,32 @@ fn render_image_view(
                 )]),
             )));
         }
+        resized = true;
         cropped.resize_exact(width, height, image::imageops::FilterType::Lanczos3)
+    } else if crop.is_some() {
+        // 裁切是细节请求：只兜底超长边，不套 patch 上限。
+        match max_dimension_size(cropped.width(), cropped.height(), IMAGE_VIEW_MAX_DIMENSION) {
+            Some((width, height)) => {
+                resized = true;
+                cropped.resize_exact(width, height, image::imageops::FilterType::Lanczos3)
+            }
+            None => cropped,
+        }
     } else {
-        cropped
+        // 默认视图（如仅 stats）：按 codex 高细节上限压缩，控制常驻成本。
+        match model_view_size(cropped.width(), cropped.height()) {
+            Some((width, height)) => {
+                resized = true;
+                cropped.resize_exact(width, height, image::imageops::FilterType::Lanczos3)
+            }
+            None => cropped,
+        }
     };
-    let view_changed = crop.is_some() || (effective_scale - 1.0).abs() > f64::EPSILON;
+    let view_changed = explicit_detail || resized;
     let encoded = if stats_only || !view_changed {
         None
     } else {
-        Some(encode_image_view(&scaled)?)
+        Some(encode_image_view_with_preference(&scaled, prefer_jpeg)?)
     };
     Ok(RenderedImageView {
         encoded,
@@ -1599,6 +1775,57 @@ fn render_image_view(
         view_height: scaled.height(),
         view_changed,
     })
+}
+
+/// 工具 followup 截图入模前的统一上限：超过 codex 高细节口径（2048 长边 /
+/// 2500 个 32px patch）才缩放重编码，未超限原样返回，避免无谓的解码重编码。
+pub fn encode_model_ready_image_bytes(bytes: &[u8], mime_hint: &str) -> Result<(Vec<u8>, String)> {
+    let normalized = mime_hint.trim().to_ascii_lowercase();
+    let mime = if normalized.starts_with("image/") {
+        normalized
+    } else {
+        "image/png".to_string()
+    };
+    let Some((width, height)) = image_dimensions(bytes) else {
+        return Ok((bytes.to_vec(), mime));
+    };
+    let Some((target_width, target_height)) = model_view_size(width, height) else {
+        return Ok((bytes.to_vec(), mime));
+    };
+    let image = image::load_from_memory(bytes)
+        .map_err(|_| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
+    let resized = image.resize_exact(
+        target_width,
+        target_height,
+        image::imageops::FilterType::Lanczos3,
+    );
+    let prefer_jpeg = mime == "image/jpeg";
+    let (encoded, out_mime, _) = encode_image_view_with_preference(&resized, prefer_jpeg)?;
+    Ok((encoded, out_mime.to_string()))
+}
+
+/// 照片类输入保留 JPEG（体积远小于同尺寸 PNG），其余走 PNG/JPEG 兜底。
+fn encode_image_view_with_preference(
+    image: &DynamicImage,
+    prefer_jpeg: bool,
+) -> Result<(Vec<u8>, &'static str, &'static str)> {
+    if prefer_jpeg {
+        use image::ImageEncoder;
+        let rgb = image.to_rgb8();
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 85)
+            .write_image(
+                rgb.as_raw(),
+                rgb.width(),
+                rgb.height(),
+                image::ExtendedColorType::Rgb8,
+            )
+            .map_err(|err| anyhow!("encode image view failed: {err}"))?;
+        if jpeg.len() <= IMAGE_VIEW_MAX_ENCODED_BYTES {
+            return Ok((jpeg, "image/jpeg", "jpg"));
+        }
+    }
+    encode_image_view(image)
 }
 
 fn encode_image_view(image: &DynamicImage) -> Result<(Vec<u8>, &'static str, &'static str)> {
@@ -1649,7 +1876,7 @@ fn compute_image_view_stats(image: &DynamicImage) -> ImageViewStats {
         }
         samples.sort_unstable();
         *slot = samples[samples.len() / 2];
-    };
+    }
     let mut non_background = 0_u64;
     for px in pixels.chunks_exact(3) {
         let diff = px[0]
@@ -1665,9 +1892,14 @@ fn compute_image_view_stats(image: &DynamicImage) -> ImageViewStats {
     // 检查同口径；渐变背景靠它而不是颜色差判断。
     let luma = image.to_luma8();
     let sample_width = width.min(IMAGE_VIEW_EDGE_SAMPLE_WIDTH).max(1);
-    let sample_height = ((u64::from(height) * u64::from(sample_width)) / u64::from(width).max(1))
-        .max(1) as u32;
-    let small = image::imageops::resize(&luma, sample_width, sample_height, image::imageops::FilterType::Triangle);
+    let sample_height =
+        ((u64::from(height) * u64::from(sample_width)) / u64::from(width).max(1)).max(1) as u32;
+    let small = image::imageops::resize(
+        &luma,
+        sample_width,
+        sample_height,
+        image::imageops::FilterType::Triangle,
+    );
     let raw = small.as_raw();
     let mut edge_hits = 0_u64;
     let mut edge_total = 0_u64;
@@ -1682,7 +1914,9 @@ fn compute_image_view_stats(image: &DynamicImage) -> ImageViewStats {
             }
             if y + 1 < sample_height {
                 edge_total += 1;
-                if raw[index].abs_diff(raw[index + sample_width as usize]) > IMAGE_VIEW_EDGE_THRESHOLD {
+                if raw[index].abs_diff(raw[index + sample_width as usize])
+                    > IMAGE_VIEW_EDGE_THRESHOLD
+                {
                     edge_hits += 1;
                 }
             }
@@ -1730,17 +1964,18 @@ mod tests {
         std::fs::write(&path, b"not an image").expect("write file");
 
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
-        assert!(
-            runtime
-                .block_on(load_image_data_url_for_path(path.to_str().expect("path")))
-                .is_none()
-        );
+        assert!(runtime
+            .block_on(load_image_data_url_for_path(path.to_str().expect("path")))
+            .is_none());
     }
 
     fn png_bytes(image: &image::DynamicImage) -> Vec<u8> {
         let mut bytes = Vec::new();
         image
-            .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
             .expect("encode png");
         bytes
     }
@@ -1787,7 +2022,10 @@ mod tests {
             &std::collections::HashMap::new(),
         );
         let url = runtime
-            .block_on(super::load_image_attachment_data_url(&workspace, &attachment))
+            .block_on(super::load_image_attachment_data_url(
+                &workspace,
+                &attachment,
+            ))
             .expect("data url from absolute path");
         assert!(url.starts_with("data:image/png;base64,"));
     }
@@ -1795,9 +2033,14 @@ mod tests {
     #[test]
     fn render_image_view_crops_and_computes_region_stats() {
         let bytes = png_bytes(&fixture_image());
-        let crop = super::ImageCrop { x: 40, y: 40, width: 20, height: 20 };
-        let view = super::render_image_view(&bytes, Some(crop), None, true, false)
-            .expect("render view");
+        let crop = super::ImageCrop {
+            x: 40,
+            y: 40,
+            width: 20,
+            height: 20,
+        };
+        let view =
+            super::render_image_view(&bytes, Some(crop), None, true, false).expect("render view");
         assert_eq!((view.source_width, view.source_height), (100, 80));
         assert_eq!((view.view_width, view.view_height), (20, 20));
         let stats = view.stats.expect("stats");
@@ -1835,7 +2078,12 @@ mod tests {
     #[test]
     fn render_image_view_scale_zooms_after_crop() {
         let bytes = png_bytes(&fixture_image());
-        let crop = super::ImageCrop { x: 50, y: 50, width: 10, height: 10 };
+        let crop = super::ImageCrop {
+            x: 50,
+            y: 50,
+            width: 10,
+            height: 10,
+        };
         let view = super::render_image_view(&bytes, Some(crop), Some(2.0), false, false)
             .expect("render view");
         assert_eq!((view.view_width, view.view_height), (20, 20));
@@ -1846,17 +2094,167 @@ mod tests {
     #[test]
     fn render_image_view_rejects_out_of_bounds_crop() {
         let bytes = png_bytes(&fixture_image());
-        let crop = super::ImageCrop { x: 90, y: 70, width: 20, height: 20 };
+        let crop = super::ImageCrop {
+            x: 90,
+            y: 70,
+            width: 20,
+            height: 20,
+        };
         assert!(super::render_image_view(&bytes, Some(crop), None, false, false).is_err());
     }
 
     #[test]
     fn render_image_view_rejects_oversized_scale() {
         let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
-            400, 300, image::Rgb([0, 0, 0]),
+            400,
+            300,
+            image::Rgb([0, 0, 0]),
         ));
         let bytes = png_bytes(&image);
         assert!(super::render_image_view(&bytes, None, Some(16.0), false, false).is_err());
+    }
+
+    #[test]
+    fn model_view_size_matches_codex_high_detail_limits() {
+        // 1080p 与常见的 1290x1210 拼图不压缩。
+        assert!(super::model_view_size(1920, 1080).is_none());
+        assert!(super::model_view_size(1290, 1210).is_none());
+        // 4K 按最长边 2048 压。
+        assert_eq!(super::model_view_size(3840, 2160), Some((2048, 1152)));
+        // 方形大图按 2500 个 32px patch 的面积上限压。
+        let (width, height) = super::model_view_size(3000, 3000).expect("resize");
+        assert!(width.div_ceil(32) * height.div_ceil(32) <= 2500);
+    }
+
+    #[test]
+    fn model_ready_image_bytes_cap_oversized_screenshots_only() {
+        let large = png_bytes(&image::DynamicImage::ImageRgb8(
+            image::RgbImage::from_pixel(2600, 1300, image::Rgb([30, 30, 30])),
+        ));
+        let (capped, mime) =
+            super::encode_model_ready_image_bytes(&large, "image/png").expect("cap screenshot");
+        assert_eq!(mime, "image/png");
+        let decoded = image::load_from_memory(&capped).expect("decode capped");
+        assert!(decoded.width() <= 2048 && decoded.height() <= 2048);
+        assert!(decoded.width().div_ceil(32) * decoded.height().div_ceil(32) <= 2500);
+
+        let small = png_bytes(&fixture_image());
+        let (unchanged, mime) =
+            super::encode_model_ready_image_bytes(&small, "image/png").expect("keep small");
+        assert_eq!(mime, "image/png");
+        assert_eq!(unchanged, small);
+    }
+
+    #[test]
+    fn render_image_view_default_stats_view_is_capped_but_stats_keep_original_region() {
+        let image = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            2600,
+            2600,
+            image::Rgb([10, 10, 10]),
+        ));
+        let bytes = png_bytes(&image);
+        let view = super::render_image_view(&bytes, None, None, true, false).expect("render");
+        assert!(view.view_width <= 2048 && view.view_height <= 2048);
+        assert!(view.view_changed);
+        let stats = view.stats.expect("stats");
+        // 统计在缩放前的原始区域上计算，坐标语义不随入模压缩改变。
+        assert_eq!((stats.width, stats.height), (2600, 2600));
+    }
+
+    #[tokio::test]
+    async fn cap_still_image_for_model_resizes_large_and_skips_small() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let workspace = crate::workspace::WorkspaceManager::new(
+            dir.path().to_string_lossy().as_ref(),
+            std::sync::Arc::new(crate::storage::SqliteStorage::new(
+                dir.path().join("state.db").to_string_lossy().to_string(),
+            )),
+            0,
+            &std::collections::HashMap::new(),
+        );
+        let large = png_bytes(&image::DynamicImage::ImageRgb8(
+            image::RgbImage::from_pixel(2600, 2600, image::Rgb([0, 0, 0])),
+        ));
+        let attachment =
+            super::cap_still_image_for_model(&workspace, "user", "big.png", "image/png", &large)
+                .await
+                .expect("cap large")
+                .expect("large image is capped");
+        let path = workspace
+            .resolve_path("user", attachment.public_path.as_deref().unwrap())
+            .expect("resolve derived");
+        let decoded = image::open(&path).expect("open derived");
+        assert!(decoded.width() <= 2048 && decoded.height() <= 2048);
+
+        let small = png_bytes(&fixture_image());
+        assert!(super::cap_still_image_for_model(
+            &workspace,
+            "user",
+            "small.png",
+            "image/png",
+            &small
+        )
+        .await
+        .expect("cap small")
+        .is_none());
+    }
+
+    #[tokio::test]
+    async fn restore_omitted_images_reinlines_from_path_hints() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let frame_a = dir.path().join("a.png");
+        let frame_b = dir.path().join("b.png");
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]))
+            .save(&frame_a)
+            .expect("write a");
+        image::RgbImage::from_pixel(2600, 1300, image::Rgb([0, 0, 255]))
+            .save(&frame_b)
+            .expect("write b");
+        let placeholder = "[inline image omitted from persisted context]";
+        let mut messages = vec![
+            serde_json::json!({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "prompt"},
+                    {"type": "text", "text": format!("[image_path:{}]", frame_a.display())},
+                    {"type": "text", "text": placeholder},
+                    {"type": "text", "text": format!("[image_path:{}]", frame_b.display())},
+                    {"type": "text", "text": placeholder}
+                ]
+            }),
+            // 文件已删除：占位保留，不阻断加载。
+            serde_json::json!({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": format!("[image_path:{}]", dir.path().join("gone.png").display())},
+                    {"type": "text", "text": placeholder}
+                ]
+            }),
+        ];
+
+        super::restore_omitted_inline_images(&mut messages).await;
+
+        let parts = messages[0]["content"].as_array().expect("parts");
+        assert_eq!(parts[2]["type"], "image_url");
+        assert!(parts[2]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+        assert_eq!(parts[4]["type"], "image_url");
+        // 两张图各自配对自己的路径，恢复出的字节不同。
+        assert_ne!(parts[2]["image_url"]["url"], parts[4]["image_url"]["url"]);
+        // 大图恢复时按入模上限压缩，跨轮常驻成本与首轮一致。
+        use base64::Engine as _;
+        let url = parts[4]["image_url"]["url"].as_str().expect("url");
+        let encoded = url.split_once(',').expect("data url payload").1;
+        let restored_bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("decode restored");
+        let restored = image::load_from_memory(&restored_bytes).expect("restored image");
+        assert!(restored.width() <= 2048 && restored.height() <= 2048);
+        assert!(restored.width().div_ceil(32) * restored.height().div_ceil(32) <= 2500);
+        let missing = messages[1]["content"].as_array().expect("parts");
+        assert_eq!(missing[1]["text"], placeholder);
     }
 
     #[test]

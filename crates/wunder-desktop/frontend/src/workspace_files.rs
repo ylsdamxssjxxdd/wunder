@@ -26,6 +26,9 @@ const MAX_REQUESTS: u32 = 4;
 const MAX_CACHED_DIRS: usize = 64;
 const MAX_DIRECTORY_ENTRIES: usize = 2000;
 const MAX_CACHED_ENTRIES: usize = 8000;
+/// Trailing refresh after an execution ends, so late artifact writes land in
+/// the same settled view the user is looking at.
+const COMPLETION_SETTLE_MS: u64 = 1500;
 
 /// Context-menu action codes shared with the .slint side (aligned with the
 /// web left-rail menu: open/preview, download, rename, delete, reference,
@@ -191,9 +194,19 @@ pub(crate) fn set_target(app: &MainWindow, api: Arc<NativeDesktop>, target: Targ
 
 /// Coalesced refresh after an execution writes files; no per-token scans.
 pub(crate) fn execution_finished(app: &MainWindow, api: Arc<NativeDesktop>) {
-    if !is_cloud_target() {
-        settle(app, api);
-    }
+    settle(app, api.clone());
+    // Final artifacts can land just after the terminal frame. One trailing
+    // settle per completed execution guarantees the panel ends on the
+    // committed directory state, for local and cloud workspaces alike.
+    let weak = app.as_weak();
+    slint::Timer::single_shot(
+        std::time::Duration::from_millis(COMPLETION_SETTLE_MS),
+        move || {
+            if let Some(app) = weak.upgrade() {
+                settle(&app, api);
+            }
+        },
+    );
 }
 
 /// Push the target's chrome: the local flag swaps cloud-only actions out, the
