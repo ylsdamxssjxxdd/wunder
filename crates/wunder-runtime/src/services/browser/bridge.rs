@@ -1595,6 +1595,12 @@ pub(crate) fn apply_bridge_environment(
         }
     }
     command.env("PYTHONIOENCODING", "utf-8");
+    // The bridge script sets this before importing Playwright, but the reduced
+    // environment is the only thing the driver node inherits on Windows; keep
+    // the gate here so a changed launch path cannot drop it.
+    if cfg!(windows) {
+        command.env("NODE_SKIP_PLATFORM_CHECK", "1");
+    }
     if let Some(path) = browsers_path {
         command.env("PLAYWRIGHT_BROWSERS_PATH", path);
     } else if let Ok(value) = std::env::var("PLAYWRIGHT_BROWSERS_PATH") {

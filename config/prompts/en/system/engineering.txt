@@ -53,3 +53,9 @@ Keep commands inside the working directory and allowed paths.
 - Command execution runs inside a bundled Ubuntu 24.04 (proot) on the phone and shares the same file paths as the working directory; apt, python, node, git and other Linux tools are available without a root password.
 - Shared storage is still constrained by Android permissions: verify access before reading /sdcard or /storage/emulated. Files under the app-private directory are not affected.
 [[/RUNTIME_UBUNTU]]
+
+[[HAS_BROWSER_TOOL]]
+[Built-in browser]
+- The workspace ships a browser; never install one. Use `browser` for login, forms, clicks, pagination, JS pages or screenshots.
+- Flow: navigate -> observe_refs -> click/type/press -> observe_text/screenshot; re-observe after changes. web_fetch is only for static pages.
+[[/HAS_BROWSER_TOOL]]

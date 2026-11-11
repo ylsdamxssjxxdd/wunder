@@ -988,6 +988,18 @@ fn publish_timeline_with_follow(
     crate::activity_ui::notify_timeline_rows(live.row_count());
 }
 
+/// Whether this window's foreground owns the live tail of `session`. A parked
+/// send and an in-flight lease acquisition count too: both may already show a
+/// provisional bubble keyed by the client request id.
+fn foreground_live(state: &State, session: &str) -> bool {
+    state.active.is_some()
+        || !state.parked.is_empty()
+        || state
+            .submitting
+            .as_ref()
+            .is_some_and(|pending| pending.session == session)
+}
+
 /// Reset the status-dock attributes for a thread without a live plan. The
 /// slint-viewer demo values (and any previous thread's state) must never leak
 /// into the view of an idle session.
@@ -2007,7 +2019,8 @@ fn bind_history_paging(app: &MainWindow, state: Rc<RefCell<State>>) {
                         current.history_has_more = has_more && next_before.is_some();
                         if current.observation.prepend(turns) {
                             let timeline = current.timeline.clone();
-                            current.observation.publish(&app, &timeline);
+                            let live = foreground_live(&current, &session);
+                            current.observation.publish(&app, &timeline, live);
                         }
                     }
                     Err(error) => {
@@ -3035,7 +3048,12 @@ fn withdraw_queue_turn(
                     let mut st = state.borrow_mut();
                     if st.observation.remove_turn(&root_turn_id) {
                         let timeline = st.timeline.clone();
-                        st.observation.publish(&app, &timeline);
+                        let live = foreground_live(&st, &session);
+                        // A running turn keys its bubble by the client request
+                        // id; republishing the durable history now would append
+                        // the same question as a second bubble. The observer
+                        // republishes once the foreground settles.
+                        st.observation.publish(&app, &timeline, live);
                     }
                 }
                 if content.is_some() && !client_id.is_empty() {

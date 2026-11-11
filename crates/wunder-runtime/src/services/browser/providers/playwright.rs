@@ -119,7 +119,7 @@ pub fn playwright_tool_specs() -> Vec<ToolSpec> {
     vec![ToolSpec {
         name: TOOL_BROWSER.to_string(),
         title: None,
-        description: "Browser automation. Pick one action. observe_refs supplies element refs for click/type/select/hover/drag; refs survive same-page re-renders and reloads when the element still matches, and element actions also take a selector. navigate needs url, type needs text, press needs key. screenshot saves a PNG (optional workspace-relative path) and the image is attached for you to view. Observations default to 12000 chars; pass max_chars for more.".to_string(),
+        description: "Built-in browser automation, already bundled with the workspace — no install or download. Use it for real web pages: login, forms, clicks, pagination, JS-rendered content or screenshots. Pick one action; the common flow is navigate -> observe_refs -> click/type/press -> observe_text or screenshot. observe_refs supplies element refs for element actions; refs survive same-page re-renders and reloads when the element still matches, and element actions also take a selector. navigate/tabs_new need url, type needs text, press needs key. tabs_* manage tabs and target_id selects one. screenshot saves a PNG (optional workspace-relative path) and the image is attached for you to view. Observations default to 12000 chars; pass max_chars for more.".to_string(),
         input_schema: json!({
             "type":"object",
             "$defs": defs,

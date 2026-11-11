@@ -105,6 +105,14 @@ pub fn path_entries(roots: &[PathBuf]) -> Vec<PathBuf> {
 /// launch with a reduced environment.
 pub fn configure_runtime_env(roots: &[PathBuf]) {
     prepend_tool_paths(roots);
+    // Playwright launches its bundled driver through Node. The Win7 supplement
+    // replaces the x64 driver runtime with a 32-bit Node 16 that is outside
+    // Node's supported OS matrix, so every child that imports Playwright (the
+    // browser bridge and skill scripts alike) needs this gate in its
+    // environment or Node refuses to start.
+    if cfg!(windows) {
+        std::env::set_var("NODE_SKIP_PLATFORM_CHECK", "1");
+    }
     let first_file = |candidates: &[&str]| -> Option<PathBuf> {
         roots.iter().find_map(|root| {
             candidates

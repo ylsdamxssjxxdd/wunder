@@ -53,3 +53,9 @@
 - 命令执行运行在手机内置的 Ubuntu 24.04（proot）中，与工作目录共享同一套文件路径；apt、python、node、git 等 Linux 工具可直接使用，安装软件包不需要 root 密码。
 - 共享存储仍受 Android 权限约束，访问 /sdcard 或 /storage/emulated 前先确认权限；应用私有目录内的文件不受此限制。
 [[/RUNTIME_UBUNTU]]
+
+[[HAS_BROWSER_TOOL]]
+[内置浏览器]
+- 工作台自带浏览器，无需安装。登录、表单、点击、翻页、JS 渲染页面或截图直接用 `browser`。
+- 流程：navigate → observe_refs → click/type/press → observe_text/screenshot，页面变化后重新 observe_refs；静态正文才用「网页抓取」。
+[[/HAS_BROWSER_TOOL]]

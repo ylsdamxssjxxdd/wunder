@@ -1269,6 +1269,11 @@ pub fn builtin_aliases() -> HashMap<String, String> {
         web_fetch_tool::TOOL_WEB_FETCH_ALIAS.to_string(),
         web_fetch_tool::TOOL_WEB_FETCH.to_string(),
     );
+    // 内置浏览器只有一个可调用工具；模型在文本协议下常按中文或产品名试探，
+    // 别名让这些调用直接落到 `browser`，而不是报未知工具再重试。
+    // 「浏览器」本身是用户侧的聚合条目名，保持原样交给整组展开逻辑。
+    map.insert("内置浏览器".to_string(), "browser".to_string());
+    map.insert("playwright".to_string(), "browser".to_string());
     map.insert(
         desktop_control::TOOL_DESKTOP_CONTROL_ALIAS.to_string(),
         desktop_control::TOOL_DESKTOP_CONTROL.to_string(),
@@ -3533,6 +3538,8 @@ mod tests {
         // 「浏览器」是用户侧的聚合条目名，可选、可授权。
         assert!(available.contains("浏览器"));
         assert_eq!(resolve_tool_name("browser"), "browser");
+        assert_eq!(resolve_tool_name("内置浏览器"), "browser");
+        assert_eq!(resolve_tool_name("playwright"), "browser");
     }
 
     #[test]

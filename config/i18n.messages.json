@@ -2152,12 +2152,12 @@
     "zh-CN": "Shell 环境：cmd.exe。这台机器另外装有 PowerShell 7（`pwsh`，随应用内置）。当前命令按 cmd 语法写；需要 cmdlet 或现代 PowerShell 能力时，用 `pwsh -NoProfile -Command \"...\"` 显式调用，不要假设当前 shell 就是 PowerShell（管道、引号、$变量 都由 pwsh 自己解析）。"
   },
   "tool.spec.browser.description": {
-    "en-US": "Automate a browser session. The common flow is navigate -> observe_refs -> click/type/press -> wait; refs survive same-page re-renders and reloads when the element still matches. Screenshots are saved to the workspace and the image is attached for the model to view.",
-    "zh-CN": "浏览器自动化工具。常用流程：navigate -> observe_refs -> click/type/press -> wait；同页重渲染或刷新后元素仍存在时 ref 会自动恢复。截图保存到工作区，并把图像追加给模型查看。"
+    "en-US": "Built-in browser automation (bundled, no installation). Common flow: navigate -> observe_refs -> click/type/press -> observe_text or screenshot; refs survive same-page re-renders and reloads when the element still matches. Screenshots are saved to the workspace and the image is attached for the model to view.",
+    "zh-CN": "内置浏览器自动化工具（随应用提供，无需安装）。常用流程：navigate -> observe_refs -> click/type/press -> observe_text 或 screenshot；同页重渲染或刷新后元素仍存在时 ref 会自动恢复。截图保存到工作区，并把图像追加给模型查看。"
   },
   "tool.spec.browser_group.description": {
-    "en-US": "Browser automation as one user-facing capability. The model calls one browser tool with a strict action schema for navigation, observation, interaction, waiting, and screenshots.",
-    "zh-CN": "浏览器自动化能力：模型调用一个具有严格 action schema 的 browser 工具，支持导航、观察、交互、等待与截图，受会话、允许域名与超时限制。"
+    "en-US": "Built-in browser automation as one user-facing capability. The model calls one browser tool with a strict action schema for navigation, observation, interaction, waiting, and screenshots.",
+    "zh-CN": "内置浏览器自动化能力：模型调用一个具有严格 action schema 的 browser 工具，支持导航、观察、交互、等待与截图，受会话、允许域名与超时限制。"
   },
   "tool.spec.browser.args.action": {
     "en-US": "Action: status/profiles/start/stop/tabs/open/focus/close/navigate/snapshot/act/click/type/press/hover/wait/screenshot/read_page.",

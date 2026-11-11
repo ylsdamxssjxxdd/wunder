@@ -386,8 +386,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "browser",
-        brief_en: "Browser automation. observe_refs before element actions. navigate/tabs_new take url; click/type/press take ref or selector; wait_ms only applies to wait. target_id selects a tab; text cursors require an unchanged page.",
-        brief_zh: "浏览器自动化：元素操作前先 observe_refs；navigate/tabs_new 用 url，click/type/press 用 ref 或 selector，wait_ms 仅用于 wait；target_id 指定标签页；文本 cursor 要求页面未变化。",
+        brief_en: "Built-in browser, no install needed. Use it for login, forms, clicks, pagination, JS pages or screenshots. Flow: navigate -> observe_refs -> click/type/press -> observe_text/screenshot; re-observe after changes. tabs_* manage tabs, target_id selects one; wait_ms only applies to wait.",
+        brief_zh: "工作台内置浏览器，无需安装。登录、表单、点击、翻页、JS 页面或截图直接用：navigate → observe_refs → click/type/press → observe_text/screenshot，变化后重新 observe_refs；tabs_* 管理标签页，target_id 指定标签页，wait_ms 仅用于 wait。",
         drop_actions: &["hover", "select", "drag"],
         drop_fields: &[
             "from_ref",
@@ -648,10 +648,8 @@ mod tests {
             .is_some_and(Value::is_object));
         assert!(projected.input_schema["$defs"].get("orphan").is_none());
         assert!(projected.title.is_none());
-        assert!(projected.description.starts_with("Browser automation."));
-        assert!(projected
-            .description
-            .contains("text cursors require an unchanged page"));
+        assert!(projected.description.starts_with("Built-in browser"));
+        assert!(projected.description.contains("re-observe after changes"));
         assert_ne!(projected.description, spec.description);
     }
 

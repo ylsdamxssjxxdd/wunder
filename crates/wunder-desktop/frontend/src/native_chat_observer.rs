@@ -194,17 +194,38 @@ impl Observation {
 
     /// Publish the durable history into the shared model without touching the
     /// live turn that is already appended to it.
+    ///
+    /// A foreground turn keys its bubble by the client request id while the
+    /// durable snapshot keys the same turn by its root id, so publishing a
+    /// snapshot mid-run appends the running user question a second time. The
+    /// snapshot is deferred until the foreground settles; the regular observer
+    /// tick republishes it then.
     pub(super) fn publish(
-        &self,
+        &mut self,
         app: &MainWindow,
         timeline: &Rc<RefCell<crate::timeline::Timeline>>,
+        foreground_live: bool,
     ) {
+        if !self.history_publish_gate(foreground_live) {
+            return;
+        }
         let root = crate::native_chat::markdown_root(app);
         let mut live = timeline.borrow_mut();
         live.set_markdown_root(root);
         live.publish_history(self.rows.clone());
         live.hydrate_markdown_images();
         crate::native_chat::publish_timeline_passive(app, &live);
+    }
+
+    /// The durable snapshot and the live turn must never be installed while a
+    /// local foreground owns the tail. Remember a deferred snapshot so the
+    /// observer tick after the turn settles still republishes it.
+    fn history_publish_gate(&mut self, foreground_live: bool) -> bool {
+        if foreground_live {
+            self.history_dirty = true;
+            return false;
+        }
+        true
     }
 }
 
@@ -367,7 +388,7 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                     current.history_before = *history_before;
                     current.history_has_more = *history_has_more && history_before.is_some();
                     current.history_loading_older = false;
-                    current.observation.publish(&app, &timeline);
+                    current.observation.publish(&app, &timeline, false);
                     app.set_session_loading(false);
                 }
                 // The thread's last published plan and a pending 问询面板
@@ -517,7 +538,7 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
             // The durable rows are rebuilt only when a turn changed, and
             // only for the turns the observer actually holds.
             observation.rows = project_history(&observation.turns);
-            observation.publish(&app, &timeline);
+            observation.publish(&app, &timeline, local_busy);
             reconciled_history = true;
             let durable_busy = observation.turns.iter().any(|turn| {
                 matches!(
@@ -1178,6 +1199,21 @@ fn blank_row(kind: i32, id: String) -> TimelineRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A running turn's bubble is keyed by the client request id while the
+    /// durable snapshot keys it by root id. Republishing the snapshot mid-run
+    /// (for example after withdrawing a queued sibling) appended the running
+    /// question a second time, and only reopening the thread repaired it.
+    #[test]
+    fn foreground_owned_tail_defers_the_durable_snapshot() {
+        let mut observation = Observation::default();
+        assert!(!observation.history_publish_gate(true));
+        assert!(
+            observation.history_dirty,
+            "the deferred snapshot must still be published once the turn settles"
+        );
+        assert!(observation.history_publish_gate(false));
+    }
 
     #[test]
     fn cloud_reasoning_updates_the_same_paged_child_before_completion() {

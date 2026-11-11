@@ -566,6 +566,14 @@ fn build_system_prompt_skeleton(
         cfg!(target_os = "android") && !ubuntu_shell,
     );
     engineering_flags.insert("RUNTIME_UBUNTU".to_string(), ubuntu_shell);
+    // The browser is a built-in tool, not something the model should install
+    // or hunt for; say so only when this thread may actually call it.
+    engineering_flags.insert(
+        "HAS_BROWSER_TOOL".to_string(),
+        allowed_tool_names
+            .iter()
+            .any(|name| resolve_tool_name(name) == "browser"),
+    );
 
     let engineering_template = read_prompt_template_from_scope(
         config,
@@ -1345,6 +1353,30 @@ mod tests {
     fn resolve_requested_prompt_locale_prefers_supported_override() {
         assert_eq!(resolve_requested_prompt_locale(Some("en-US")), Some("en"));
         assert_eq!(resolve_requested_prompt_locale(Some("zh-Hans")), Some("zh"));
+    }
+
+    #[test]
+    fn browser_guidance_follows_tool_availability() {
+        let prompt_root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/prompts");
+        for (locale, marker) in [("zh", "[内置浏览器]"), ("en", "[Built-in browser]")] {
+            let template =
+                std::fs::read_to_string(prompt_root.join(locale).join("system/engineering.txt"))
+                    .expect("engineering template");
+            let enabled = apply_prompt_flags(
+                &template,
+                &HashMap::from([("HAS_BROWSER_TOOL".to_string(), true)]),
+            );
+            assert!(enabled.contains(marker), "{locale} browser guidance");
+            let disabled = apply_prompt_flags(
+                &template,
+                &HashMap::from([("HAS_BROWSER_TOOL".to_string(), false)]),
+            );
+            assert!(
+                !disabled.contains(marker),
+                "{locale} must not advertise a missing tool"
+            );
+        }
     }
 
     #[test]
