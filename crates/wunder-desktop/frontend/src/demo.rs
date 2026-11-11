@@ -595,8 +595,6 @@ fn fixture_row(kind: i32, index: usize, text: &str) -> TimelineRow {
         tool_name: Default::default(),
         tool_icon: Default::default(),
         target: Default::default(),
-        tool_metrics: Default::default(),
-        tool_metrics_visible: false,
         tokens: Default::default(),
         duration: Default::default(),
         read_lines: Default::default(),

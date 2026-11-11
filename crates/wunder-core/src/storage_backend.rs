@@ -254,6 +254,14 @@ pub trait ThreadLogStore {
         &self,
         session_ids: &[String],
     ) -> Result<HashMap<String, String>>;
+    /// Privileged administration projection: latest assistant response timing
+    /// aggregates for each requested thread. Used to backfill speed metrics
+    /// that older diagnostic monitor records never persisted. Callers must
+    /// authorize administration before invoking.
+    fn thread_latest_speed_totals(
+        &self,
+        session_ids: &[String],
+    ) -> Result<HashMap<String, ThreadSpeedTotals>>;
     /// Return the durable user-turn tail and ThreadLog change cursor for each
     /// requested session in one batch. The result is bounded by the supplied
     /// session ids and is used by the session catalog so detached threads

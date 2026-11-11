@@ -68,7 +68,7 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from '@/i18n';
 import { ElMessage } from 'element-plus';
 import {
-  chatQueueState,
+  chatQueueForSession,
   interjectChatQueueTurn,
   refreshChatQueue,
   resetChatQueue,
@@ -84,7 +84,11 @@ const emit = defineEmits<{
 }>();
 const { t } = useI18n();
 
-const items = computed(() => chatQueueState.sessionId === props.sessionId ? chatQueueState.items : []);
+// 每个输入区只读自己会话的排队投影：分屏时多个排队条并存，不能抢同一份全局选择。
+const items = computed(() => {
+  const sessionId = String(props.sessionId || '').trim();
+  return sessionId ? chatQueueForSession(sessionId).items : [];
+});
 const busy = ref(false);
 const draggingId = ref('');
 const dropIndex = ref(-1);
@@ -129,7 +133,7 @@ const handleDrop = async (event: DragEvent) => {
   handleDragEnd();
   const sessionId = String(props.sessionId || '').trim();
   if (!sessionId || !sourceId || targetIndex < 0) return;
-  const ordered = chatQueueState.items.map((item) => item.queueId);
+  const ordered = items.value.map((item) => item.queueId);
   const from = ordered.indexOf(sourceId);
   if (from < 0 || from === targetIndex) return;
   ordered.splice(from, 1);

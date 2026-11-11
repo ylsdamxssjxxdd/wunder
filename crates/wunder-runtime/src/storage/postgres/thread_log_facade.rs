@@ -607,6 +607,47 @@ impl<'a> PostgresThreadLog<'a> {
         Ok(output)
     }
 
+    pub(crate) fn thread_latest_speed_totals(
+        &self,
+        session_ids: &[String],
+    ) -> Result<HashMap<String, wunder_core::storage_records::ThreadSpeedTotals>> {
+        let mut sessions = session_ids
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .take(5000)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        sessions.sort_unstable();
+        sessions.dedup();
+        if sessions.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut conn = self.storage.conn()?;
+        let rows = conn.query(
+            "SELECT s.thread_id,i.preview_json
+             FROM unnest($1::text[]) AS s(thread_id)
+             JOIN LATERAL (
+                SELECT preview_json FROM service_thread_items_v2 i
+                WHERE i.thread_id=s.thread_id AND i.visible
+                  AND i.preview_json::jsonb->>'kind'='assistant_message'
+                ORDER BY i.ordinal DESC LIMIT 1
+             ) i ON true",
+            &[&sessions],
+        )?;
+        let mut output = HashMap::new();
+        for row in rows {
+            let session: String = row.get(0);
+            let preview: String = row.get(1);
+            if let Some(totals) =
+                crate::storage::thread_speed::speed_totals_from_assistant_preview(&preview)
+            {
+                output.insert(session, totals);
+            }
+        }
+        Ok(output)
+    }
+
     pub(crate) fn list_thread_changes(
         &self,
         user: &str,

@@ -80,7 +80,6 @@ pub struct RowData {
     pub tool_name: String,
     pub tool_icon: String,
     pub target: String,
-    pub tool_metrics: String,
     pub detail: String,
     pub reasoning_src: String,
     pub status_kind: i32,
@@ -130,7 +129,6 @@ impl RowData {
         self.tool_name.hash(&mut hasher);
         self.tool_icon.hash(&mut hasher);
         self.target.hash(&mut hasher);
-        self.tool_metrics.hash(&mut hasher);
         self.detail.hash(&mut hasher);
         self.reasoning_src.hash(&mut hasher);
         self.status_kind.hash(&mut hasher);
@@ -191,8 +189,6 @@ impl RowData {
         row.tool_name = self.tool_name.as_str().into();
         row.tool_icon = self.tool_icon.as_str().into();
         row.target = self.target.as_str().into();
-        row.tool_metrics = self.tool_metrics.as_str().into();
-        row.tool_metrics_visible = !self.tool_metrics.is_empty();
         row.detail = self.detail.as_str().into();
         row.status_kind = self.status_kind;
         row.foldable = self.foldable;
@@ -278,8 +274,6 @@ fn blank(kind: i32, id: impl Into<SharedString>) -> TimelineRow {
         tool_name: SharedString::default(),
         tool_icon: SharedString::default(),
         target: SharedString::default(),
-        tool_metrics: SharedString::default(),
-        tool_metrics_visible: false,
         tokens: SharedString::default(),
         duration: SharedString::default(),
         read_lines: SharedString::default(),
@@ -1383,7 +1377,7 @@ mod tests {
             preview: "src/main.rs".into(),
             detail: "fn main() {}".into(),
             state: "completed".into(),
-            tokens: "1.2k token".into(),
+            tokens: "1.2k".into(),
             duration: "0.3s".into(),
             read_lines: String::new(),
             sections: vec![NativeWorkflowSection {

@@ -13,6 +13,7 @@
           <i v-else class="fa-solid fa-check"></i>
         </span>
       </span>
+      <i class="fa-solid fa-brain tl-thinking-icon" aria-hidden="true"></i>
       <span class="tl-thinking-label">
         {{ entry.streaming ? t('chat.timeline.thinkingRunning') : t('chat.timeline.thinkingDone') }}
       </span>
@@ -154,10 +155,19 @@ const { t } = useI18n();
   color: var(--mz-text-muted, #8a8f99);
 }
 
+.tl-thinking-icon {
+  flex: 0 0 auto;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 13px;
+  line-height: 18px;
+}
+
 .tl-thinking-label {
   flex: 0 0 auto;
   color: var(--mz-text-muted, #8a8f99);
   font-size: 13px;
+  /* 与工具条目同口径：标签和右侧摘要共用 18px 行高，混排时落在同一水平线。 */
+  line-height: 18px;
 }
 
 .tl-thinking-summary {
@@ -165,7 +175,7 @@ const { t } = useI18n();
   min-width: 0;
   color: var(--mz-timeline-entry-soft, #9ba0a8);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 18px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -77,6 +77,8 @@ import {
   threadViewStatus
 } from '@/realtime/chat/threadViewStore';
 import { buildTranscriptTurnRows } from '../controller/legacyTurnRowAdapter';
+import { chatQueueForSession } from '@/stores/chatQueueState';
+import { isParkedQueueTurn } from '@/stores/chatQueueProjection';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
 
 const props = defineProps<{
@@ -118,13 +120,17 @@ const busy = computed(() => {
 const rows = computed(() => {
   const slots = threadViewSlots(props.sessionId);
   if (threadViewCommitted(props.sessionId) && slots) {
-    return slots.map((slot, index) => ({
-      key: slot.key,
-      rootTurnId: slot.rootTurnId,
-      kind: 'turn' as const,
-      user: { key: String(slot.user.id || `${slot.key}:user`), sourceIndex: index * 2, message: slot.user },
-      assistant: { key: String(slot.assistant.id || `${slot.key}:assistant`), sourceIndex: index * 2 + 1, message: slot.assistant }
-    }));
+    // 与主时间线同一口径：停在输入区排队条里的轮次不进入聊天记录。
+    const queuedItems = chatQueueForSession(props.sessionId).items;
+    return slots
+      .filter((slot) => !isParkedQueueTurn(queuedItems, slot.user, slot.assistant))
+      .map((slot, index) => ({
+        key: slot.key,
+        rootTurnId: slot.rootTurnId,
+        kind: 'turn' as const,
+        user: { key: String(slot.user.id || `${slot.key}:user`), sourceIndex: index * 2, message: slot.user },
+        assistant: { key: String(slot.assistant.id || `${slot.key}:assistant`), sourceIndex: index * 2 + 1, message: slot.assistant }
+      }));
   }
   return buildTranscriptTurnRows(getSessionMessages(props.sessionId));
 });

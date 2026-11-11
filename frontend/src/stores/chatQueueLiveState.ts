@@ -12,32 +12,25 @@ type QueueState = {
 };
 
 const queues = new Map<string, QueueState>();
-const selection = reactive({ sessionId: '' });
+const MAX_QUEUE_SESSIONS = 32;
+// LRU: a read pins that session while eviction removes the oldest untouched
+// entry, so several visible composers cannot evict each other's queue.
 function queue(sessionId: string): QueueState {
   let value=queues.get(sessionId);
-  if (!value) {
-    value=reactive({sessionId,items:[],loading:false,error:'',revision:0,rowRevisions:new Map<string,number>()});
+  if(value) {
+    queues.delete(sessionId);
     queues.set(sessionId,value);
-    while(queues.size>32) {
-      const id=[...queues.keys()].find(id=>id!==selection.sessionId && id!==sessionId);
-      if(id===undefined)break;
-      queues.delete(id);
-    }
+    return value;
+  }
+  value=reactive({sessionId,items:[],loading:false,error:'',revision:0,rowRevisions:new Map<string,number>()});
+  queues.set(sessionId,value);
+  while(queues.size>MAX_QUEUE_SESSIONS) {
+    const id=queues.keys().next().value;
+    if(id===undefined)break;
+    queues.delete(id);
   }
   return value;
 }
-// Compatibility facade for the selected composer; background events always
-// address their own bounded session entry, never change selection.
-const state: QueueState = {
-  get sessionId(){return selection.sessionId;},
-  set sessionId(id){selection.sessionId=id;},
-  get items(){return queue(selection.sessionId).items;},
-  set items(items){queue(selection.sessionId).items=items;},
-  get loading(){return queue(selection.sessionId).loading;},
-  set loading(loading){queue(selection.sessionId).loading=loading;},
-  get error(){return queue(selection.sessionId).error;},
-  set error(error){queue(selection.sessionId).error=error;}
-};
 
 // A queue-start frame is the authoritative hand-off from the composer queue
 // to the live thread.  The queue endpoint is eventually consistent, so keep a
@@ -60,6 +53,8 @@ export const applyItems = (sessionId: string, items: QueuedTurn[]) => {
 };
 export const chatQueueRevision = (sessionId: string) => queue(sessionId).revision || 0;
 export const chatQueueForSession = (sessionId: string) => queue(sessionId);
+/** Read path for background refresh: never create a queue entry just to check. */
+export const hasChatQueue = (sessionId: string) => queues.has(sessionId);
 
 export const rememberQueueIdentities = (sessionId: string, identities: Iterable<string>) => {
   if (!sessionId) return;
@@ -94,8 +89,6 @@ export const consumeQueueItem = (sessionId: string, payload: unknown, eventType:
     if (remaining.length !== target.items.length) target.items = remaining;
   }
 };
-
-export const chatQueueState = state;
 
 /** Committed display rows also carry the queue hand-off on display-only streams. */
 export function reconcileChatQueueRows(sessionId: string, rows: Array<{

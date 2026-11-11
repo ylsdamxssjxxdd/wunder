@@ -55,6 +55,37 @@ SAFE_Y = 840
 KNOWN_SFX = {"tick", "soft", "chord", "bloom", "rise", "thud", "tock", "stamp", "shimmer", "hush"}
 SUB_RE = re.compile(r"字幕|sub(?:title)?|caption", re.I)
 
+_RENDER_LOCK_HANDLE = None
+
+def ensure_render_lock(proj):
+    """同一工程同时只允许一个进程写 renders/。锁随进程退出由系统释放；
+    并行渲染的子进程通过环境变量识别父进程已持锁，不再重复加锁。"""
+    global _RENDER_LOCK_HANDLE
+    if _RENDER_LOCK_HANDLE is not None or os.environ.get("WUNDER_RENDER_LOCK") == "held":
+        return
+    lock_path = Path(proj) / "renders/.render.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(lock_path, "a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        sys.exit("另一个渲染进程正在写这个工程（renders/.render.lock 被占用）。"
+                 "等它结束，或确认没有渲染进程后再试；不要和它同时写同一段。")
+    _RENDER_LOCK_HANDLE = handle
+    os.environ["WUNDER_RENDER_LOCK"] = "held"
+
+def temp_output(out):
+    """先写隐藏临时文件再原子改名：产物路径上永远不会出现半个 mp4。"""
+    out = Path(out)
+    return out.with_name(f".{out.name}.tmp-{os.getpid()}")
+
 def ffmpeg_bin():
     return os.environ.get("WUNDER_FFMPEG_BIN", "").strip() or "ffmpeg"
 
@@ -257,11 +288,16 @@ def with_page(proj, fn):
 
 # ---------- 命令行 ----------
 def flag_args(a, name):
-    """取 --flag 后面直到下一个 --flag 的值。"""
-    if name not in a: return []
-    i = a.index(name) + 1; out = []
-    while i < len(a) and not a[i].startswith("--"):
-        out.append(a[i]); i += 1
+    """取 --flag 后面直到下一个 --flag 的值；同时接受 --flag=value 写法。"""
+    out = []
+    for i, token in enumerate(a):
+        if token.startswith(name + "="):
+            return [token.split("=", 1)[1]]
+        if token == name:
+            i += 1
+            while i < len(a) and not a[i].startswith("--"):
+                out.append(a[i]); i += 1
+            break
     return out
 
 def flag_value(a, name, default=None):
@@ -582,6 +618,9 @@ def strip(proj, t0, t1, n=12):
 
 # ---------- 渲染 ----------
 def frames(proj, out, a=0.0, b=None, crf=14.0, preset="medium", preview=False, label=None):
+    ensure_render_lock(proj)
+    out = Path(out)
+    tmp = temp_output(out)
     def go(pg):
         end, fps = pg.evaluate("END"), pg.evaluate("FPS")
         bb = end if b is None else min(b, end)
@@ -593,7 +632,7 @@ def frames(proj, out, a=0.0, b=None, crf=14.0, preset="medium", preview=False, l
         try:
             ff = subprocess.Popen([ffmpeg_bin(), "-v", "error", "-y", "-f", "image2pipe",
                                    "-framerate", str(fps), "-i", "-"]
-                                  + encode_args(crf, preset, preview) + [str(out)],
+                                  + encode_args(crf, preset, preview) + [str(tmp)],
                                   stdin=subprocess.PIPE, stderr=errf)
         except FileNotFoundError:
             sys.exit(f"找不到 ffmpeg（{ffmpeg_bin()}）：请确认补充包已安装，或把 ffmpeg 放进 PATH")
@@ -604,6 +643,8 @@ def frames(proj, out, a=0.0, b=None, crf=14.0, preset="medium", preview=False, l
                     ff.stdin.write(shot(pg, i / fps))
                 except (BrokenPipeError, OSError):
                     errf.seek(0)
+                    ff.kill()
+                    tmp.unlink(missing_ok=True)
                     sys.exit("ffmpeg 提前退出：" + (errf.read().decode("utf-8", "replace").strip() or "未知错误"))
                 prog.step(k)
         finally:
@@ -612,8 +653,10 @@ def frames(proj, out, a=0.0, b=None, crf=14.0, preset="medium", preview=False, l
         rc = ff.wait(); prog.close()
         if rc != 0:
             errf.seek(0)
+            tmp.unlink(missing_ok=True)
             sys.exit(f"ffmpeg 失败（退出码 {rc}）：\n" + errf.read().decode("utf-8", "replace").strip())
         errf.close()
+        os.replace(tmp, out)
         # 完成标记由子进程自己写：父进程被杀时，已经渲完的段仍然算数。
         # 标记里带区间，镜头表改了以后同名分段会被判脏，不会拿旧内容去拼。
         if not preview:
@@ -624,13 +667,21 @@ def frames(proj, out, a=0.0, b=None, crf=14.0, preset="medium", preview=False, l
     with_page(proj, go)
 
 def concat_parts(proj, parts, out, keep=True):
+    ensure_render_lock(proj)
     parts = [p for p in parts if p.exists() and p.stat().st_size > 0]
     if not parts:
         sys.exit("没有可拼接的分段")
+    out = Path(out)
+    tmp = temp_output(out)
     lst = proj / "renders/_parts.txt"
     lst.write_text("".join(f"file '{p.as_posix()}'\n" for p in parts), encoding="utf-8")
-    ffmpeg_run(["-v", "error", "-y", "-nostdin", "-f", "concat", "-safe", "0", "-i", str(lst),
-                "-c", "copy", "-movflags", "+faststart", str(out)], "拼接分段")
+    try:
+        ffmpeg_run(["-v", "error", "-y", "-nostdin", "-f", "concat", "-safe", "0", "-i", str(lst),
+                    "-c", "copy", "-movflags", "+faststart", str(tmp)], "拼接分段")
+    except SystemExit:
+        tmp.unlink(missing_ok=True)
+        raise
+    os.replace(tmp, out)
     if not keep:
         for p in parts:
             p.unlink(missing_ok=True)
@@ -646,6 +697,7 @@ def frames_parallel(proj, out, jobs, crf=14.0, preset="medium", keep=True, fresh
     """把全片按镜头（或 --parts / 等分）切成段，最多 jobs 个进程同时渲，再无损拼接。
     每段由子进程自己写 .done 标记（内容是工程源码指纹），父进程被杀时已渲完的段仍然有效。
     --only 只重渲指定镜号/名字/时间，再用全部已完成分段重新拼接；分段默认保留，--clean-parts 才删。"""
+    ensure_render_lock(proj)
     meta = project_meta(proj)
     end, fps = meta["end"], meta["fps"]
     jobs = max(1, int(jobs))
@@ -700,7 +752,10 @@ def frames_parallel(proj, out, jobs, crf=14.0, preset="medium", keep=True, fresh
 
     failures = []
     if pending:
-        print(f"  渲染 {len(pending)} 段（最多 {min(jobs, len(pending))} 路并行；每路约 0.5–1 GB 内存）")
+        skipped = len(entries) - len(pending)
+        print(f"  渲染 {len(pending)}/{len(entries)} 段（最多 {min(jobs, len(pending))} 路并行；"
+              f"每路约 0.5–1 GB 内存）"
+              + (f"；{skipped} 段已完成或源码未变，直接复用" if skipped else ""))
         with ThreadPoolExecutor(max_workers=min(jobs, len(pending))) as pool:
             futures = {pool.submit(render_one, entry): entry for entry in pending}
             for future in as_completed(futures):
@@ -793,6 +848,7 @@ def preview_clip(proj, a, b, name=None):
     frames(proj, out, a, b, preview=True, label=f"preview {a:g}-{b:g}")
 
 def web(proj, name=None, crf=None, kb=None):
+    ensure_render_lock(proj)
     final, raw = proj / "renders/final.mp4", proj / "renders/raw.mp4"
     src = final if final.exists() else raw
     if final.exists() and raw.exists() and raw.stat().st_mtime > final.stat().st_mtime + 1:
@@ -808,9 +864,15 @@ def web(proj, name=None, crf=None, kb=None):
         args += ["-b:v", f"{int(kb)}k", "-maxrate", f"{int(kb * 1.2)}k", "-bufsize", f"{int(kb * 2)}k"]
     else:
         args += ["-crf", f"{crf if crf is not None else 23:g}", "-maxrate", "8M", "-bufsize", "16M"]
-    args += ["-c:a", "copy", str(out)]
+    tmp = temp_output(out)
+    args += ["-c:a", "copy", str(tmp)]
     print("web:", src.name, "→", out.name, "（音频直接复制）" if src.name == "final.mp4" else "（源无音频）")
-    ffmpeg_run(args, "发布转码")
+    try:
+        ffmpeg_run(args, "发布转码")
+    except SystemExit:
+        tmp.unlink(missing_ok=True)
+        raise
+    os.replace(tmp, out)
     print_video(out)
 
 # ---------- 音效事件 ----------
@@ -1310,7 +1372,7 @@ if __name__ == "__main__":
             if not tokens: sys.exit("--only 后面写镜号、名字或时间区间，例如 --only 3 或 --only 开场")
             only = tokens
         segments = parse_clip_specs(flag_args(a, "--parts")) if "--parts" in a else None
-        jobs = as_int(flag_value(a, "--jobs"), "--jobs", 1 if only else 4)
+        jobs = as_int(flag_value(a, "--jobs"), "--jobs", min(4, max(1, os.cpu_count() or 4)))
         frames_parallel(proj, proj / "renders/raw.mp4", jobs, crf, preset, keep, fresh, only, segments)
     else:
         frames(proj, proj / "renders/raw.mp4", crf=crf, preset=preset)

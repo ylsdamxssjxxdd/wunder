@@ -1,6 +1,6 @@
 // 运行监控：记录会话状态、事件与系统资源指标，支持持久化恢复与取消控制。
 use crate::config::ObservabilityConfig;
-use crate::core::llm_speed::{build_llm_speed_summary, LlmSpeedEvent};
+use crate::core::llm_speed::{build_llm_speed_summary, LlmSpeedEvent, LlmSpeedSummary};
 use crate::i18n;
 use crate::ops::sysinfo_compat::{
     collect_host_metrics, new_disks, new_system, MonitorDisks, MonitorSystem,
@@ -375,13 +375,43 @@ impl SessionRecord {
         totals.has_measurement().then_some(totals)
     }
 
+    /// 展示用速度：持久化累计值优先。历史记录不再保存事件明细，若只从
+    /// 事件回退，线程列表与详情里的预填充/生成速度会永久缺失。
+    fn speed_summary_for_display(&self) -> LlmSpeedSummary {
+        let mut summary = llm_speed_summary_from_monitor_events(&self.events);
+        let Some(totals) = self.speed_totals.filter(|totals| totals.has_measurement()) else {
+            return summary;
+        };
+        summary.prefill_tokens = (totals.prefill_tokens > 0).then_some(totals.prefill_tokens);
+        summary.prefill_duration_s =
+            (totals.prefill_duration_s > 0.0).then_some(totals.prefill_duration_s);
+        summary.prefill_speed_tps = match (totals.prefill_tokens, totals.prefill_duration_s) {
+            (tokens, duration) if tokens > 0 && duration > 0.0 => Some(tokens as f64 / duration),
+            _ => None,
+        };
+        summary.prefill_speed_lower_bound = false;
+        summary.decode_tokens = (totals.decode_tokens > 0).then_some(totals.decode_tokens);
+        summary.decode_duration_s =
+            (totals.decode_duration_s > 0.0).then_some(totals.decode_duration_s);
+        summary.decode_speed_tps = match (totals.decode_tokens, totals.decode_duration_s) {
+            (tokens, duration) if tokens > 0 && duration > 0.0 => Some(tokens as f64 / duration),
+            _ => None,
+        };
+        if summary.ttft_ms.is_none() {
+            summary.ttft_ms = summary
+                .prefill_duration_s
+                .map(|duration| (duration * 1000.0).round() as u64);
+        }
+        summary
+    }
+
     fn to_summary(&self) -> Value {
         let (context_tokens, context_tokens_peak) = derive_effective_context_tokens(&self.events)
             .unwrap_or((
                 self.context_tokens,
                 self.context_tokens_peak.max(self.context_tokens),
             ));
-        json!({
+        let mut summary = json!({
             "session_id": self.session_id,
             "user_id": self.user_id,
             "agent_id": self.agent_id,
@@ -405,7 +435,11 @@ impl SessionRecord {
             "tool_calls": self.tool_calls,
             "model_request_count": self.model_request_count,
             "quota_used": self.model_request_count,
-        })
+        });
+        if let Value::Object(ref mut map) = summary {
+            self.speed_summary_for_display().insert_into_map(map);
+        }
+        summary
     }
 
     fn to_storage(&self) -> Value {
@@ -1755,14 +1789,7 @@ impl MonitorState {
             sessions
                 .values()
                 .filter(|record| !active_only || Self::is_active_status(&record.status))
-                .map(|record| {
-                    let mut summary = record.to_summary();
-                    let speed = llm_speed_summary_from_monitor_events(&record.events);
-                    if let Value::Object(ref mut map) = summary {
-                        speed.insert_into_map(map);
-                    }
-                    summary
-                })
+                .map(|record| record.to_summary())
                 .collect()
         })
     }
@@ -2008,11 +2035,7 @@ impl MonitorState {
             .map(|event| event.to_dict())
             .collect::<Vec<_>>();
         let events_has_more = offset.saturating_add(events.len()) < event_total;
-        let mut session = record.to_summary();
-        let speed = llm_speed_summary_from_monitor_events(&record.events);
-        if let Value::Object(ref mut map) = session {
-            speed.insert_into_map(map);
-        }
+        let session = record.to_summary();
         json!({
             "session": session,
             "events": events,
@@ -2130,7 +2153,7 @@ impl MonitorState {
         // Keep the user-facing projection deliberately small.  The monitor summary
         // also contains trace/user/admin fields that are useful to operators but must
         // never be copied into a regular user's session response.
-        let speed = llm_speed_summary_from_monitor_events(&record.events);
+        let speed = record.speed_summary_for_display();
         let mut overview = serde_json::Map::new();
         overview.insert("session_id".to_string(), json!(record.session_id.clone()));
         overview.insert("agent_id".to_string(), json!(record.agent_id.clone()));
@@ -2689,6 +2712,37 @@ impl MonitorState {
                 record.stage = "cancelling".to_string();
             }
             rebuilt.insert(record.session_id.clone(), record);
+        }
+        // 早期诊断持久化不保存速度累计值。终态线程从 ThreadLog 的最新回复
+        // 回填一次，避免历史线程列表长期缺少预填充/生成速度。
+        let missing_speed_ids = rebuilt
+            .values()
+            .filter(|record| {
+                matches!(
+                    record.status.as_str(),
+                    Self::STATUS_FINISHED | Self::STATUS_ERROR | Self::STATUS_CANCELLED
+                ) && !record
+                    .speed_totals
+                    .is_some_and(|totals| totals.has_measurement())
+            })
+            .map(|record| record.session_id.clone())
+            .collect::<Vec<_>>();
+        if !missing_speed_ids.is_empty() {
+            match self.storage.thread_latest_speed_totals(&missing_speed_ids) {
+                Ok(speeds) => {
+                    for (session_id, totals) in speeds {
+                        if let Some(record) = rebuilt.get_mut(&session_id) {
+                            record.speed_totals = Some(SpeedTotals {
+                                prefill_tokens: totals.prefill_tokens,
+                                prefill_duration_s: totals.prefill_duration_s,
+                                decode_tokens: totals.decode_tokens,
+                                decode_duration_s: totals.decode_duration_s,
+                            });
+                        }
+                    }
+                }
+                Err(error) => warn!(%error, "monitor speed backfill failed"),
+            }
         }
         if rebuilt.is_empty() {
             return;
@@ -3992,6 +4046,13 @@ mod tests {
         assert_eq!(totals.decode_tokens, 20);
         assert!((totals.decode_duration_s - 2.0).abs() < f64::EPSILON);
 
+        // 历史记录不再持久化事件，摘要仍应使用累计值给出速度。
+        assert!(restored.events.is_empty());
+        let summary = restored.to_summary();
+        assert_eq!(summary["prefill_speed_tps"], json!(200.0));
+        assert_eq!(summary["decode_speed_tps"], json!(10.0));
+        assert_eq!(summary["ttft_ms"], json!(500));
+
         let legacy = SessionRecord::from_storage(&json!({
             "session_id": "legacy-thread",
             "user_id": "sample-owner",
@@ -4013,6 +4074,69 @@ mod tests {
         let fallback = legacy.speed_totals_for_average().unwrap();
         assert_eq!(fallback.prefill_tokens, 100);
         assert_eq!(fallback.decode_tokens, 20);
+    }
+
+    /// 旧的诊断记录没有速度累计值，历史加载时应从 ThreadLog 最新回复补齐，
+    /// 否则线程状态窗口里的历史线程永远没有预填充/生成速度。
+    #[test]
+    fn history_load_backfills_terminal_speed_from_thread_log() {
+        let root = tempdir().expect("tempdir");
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            root.path()
+                .join("monitor-speed-backfill.db")
+                .to_string_lossy()
+                .into(),
+        ));
+        storage.ensure_initialized().expect("initialize storage");
+        let admitted = storage
+            .accept_thread_turn(
+                "sample-owner",
+                "sample-thread",
+                &json!({"content":"sample input"}),
+            )
+            .expect("admit turn");
+        let turn = admitted["turn_id"].as_str().expect("turn id");
+        crate::storage::test_support::freeze_thread(root.path(), "sample-owner", "sample-thread");
+        crate::storage::test_support::begin_turn(
+            root.path(),
+            "sample-owner",
+            "sample-thread",
+            turn,
+        );
+        storage
+            .append_thread_item(
+                "sample-owner",
+                &json!({"session_id":"sample-thread","turn_id":turn,
+                    "item_id":"assistant-speed","kind":"assistant_message","model_round":1,
+                    "content":"sample answer","status":"completed",
+                    "prefill_duration_s":0.5,"decode_duration_s":2.0,
+                    "decode_output_tokens":20,"usage":{"input_tokens":100,"output_tokens":20}}),
+            )
+            .expect("append assistant item");
+        storage
+            .upsert_monitor_record(&json!({
+                "session_id":"sample-thread",
+                "user_id":"sample-owner",
+                "status":"finished",
+                "start_time":1.0,
+                "updated_time":2.0
+            }))
+            .expect("persist monitor record");
+
+        let monitor = Arc::new(MonitorState::new(
+            storage,
+            ObservabilityConfig::default(),
+            root.path().to_string_lossy().to_string(),
+        ));
+        assert!(monitor.warm_history(false));
+        let session = monitor
+            .list_sessions(false)
+            .into_iter()
+            .find(|session| session["session_id"] == json!("sample-thread"))
+            .expect("terminal session");
+        assert_eq!(session["prefill_speed_tps"], json!(200.0));
+        assert_eq!(session["decode_speed_tps"], json!(10.0));
+        assert_eq!(session["ttft_ms"], json!(500));
     }
 
     #[test]

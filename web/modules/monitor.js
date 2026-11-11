@@ -70,6 +70,7 @@ const getStatusLegend = () => [
 ];
 const STATUS_CHART_EMPTY_NAME = "__empty__";
 let latestStatusChartData = null;
+let monitorStatusSessions = [];
 // 线程状态图例与后端状态字段映射，便于点击后过滤记录
 const getStatusLabelToKey = () => ({
   [t("monitor.status.active")]: "active",
@@ -302,6 +303,7 @@ const ensureMonitorState = () => {
     state.monitor.pagination = {
       pageSize: DEFAULT_MONITOR_SESSION_PAGE_SIZE,
       activePage: 1,
+      statusPage: 1,
     };
   }
   if (
@@ -315,6 +317,12 @@ const ensureMonitorState = () => {
     state.monitor.pagination.activePage < 1
   ) {
     state.monitor.pagination.activePage = 1;
+  }
+  if (
+    !Number.isFinite(state.monitor.pagination.statusPage) ||
+    state.monitor.pagination.statusPage < 1
+  ) {
+    state.monitor.pagination.statusPage = 1;
   }
 };
 
@@ -2297,16 +2305,30 @@ const resolveMonitorPaginationElement = (key, id) => {
   return node;
 };
 
+const MONITOR_PAGINATION_KEYS = {
+  active: {
+    container: ["monitorActivePagination", "monitorActivePagination"],
+    info: ["monitorActivePageInfo", "monitorActivePageInfo"],
+    prev: ["monitorActivePrevBtn", "monitorActivePrevBtn"],
+    next: ["monitorActiveNextBtn", "monitorActiveNextBtn"],
+  },
+  status: {
+    container: ["monitorStatusPagination", "monitorStatusPagination"],
+    info: ["monitorStatusPageInfo", "monitorStatusPageInfo"],
+    prev: ["monitorStatusPrevBtn", "monitorStatusPrevBtn"],
+    next: ["monitorStatusNextBtn", "monitorStatusNextBtn"],
+  },
+};
+
 const getMonitorPaginationElements = (type) => {
-  if (type !== "active") return null;
+  const keys = MONITOR_PAGINATION_KEYS[type];
+  if (!keys) return null;
+  const resolve = ([elementKey, id]) => resolveMonitorPaginationElement(elementKey, id);
   return {
-    container: resolveMonitorPaginationElement(
-      "monitorActivePagination",
-      "monitorActivePagination"
-    ),
-    info: resolveMonitorPaginationElement("monitorActivePageInfo", "monitorActivePageInfo"),
-    prev: resolveMonitorPaginationElement("monitorActivePrevBtn", "monitorActivePrevBtn"),
-    next: resolveMonitorPaginationElement("monitorActiveNextBtn", "monitorActiveNextBtn"),
+    container: resolve(keys.container),
+    info: resolve(keys.info),
+    prev: resolve(keys.prev),
+    next: resolve(keys.next),
   };
 };
 
@@ -2427,6 +2449,13 @@ const updateMonitorPage = (pageKey, delta) => {
   renderMonitorSessions(state.monitor.sessions);
 };
 
+const updateMonitorStatusPage = (delta) => {
+  ensureMonitorState();
+  const current = Number(state.monitor.pagination?.statusPage) || 1;
+  state.monitor.pagination.statusPage = Math.max(1, current + delta);
+  renderMonitorStatusList();
+};
+
 // 缁戝畾鍒嗛〉鎸夐挳浜嬩欢锛岄伩鍏嶉噸澶嶆煡鎵?DOM
 const bindMonitorPagination = () => {
   if (elements.monitorActivePrevBtn) {
@@ -2437,6 +2466,16 @@ const bindMonitorPagination = () => {
   if (elements.monitorActiveNextBtn) {
     elements.monitorActiveNextBtn.addEventListener("click", () => {
       updateMonitorPage("activePage", 1);
+    });
+  }
+  if (elements.monitorStatusPrevBtn) {
+    elements.monitorStatusPrevBtn.addEventListener("click", () => {
+      updateMonitorStatusPage(-1);
+    });
+  }
+  if (elements.monitorStatusNextBtn) {
+    elements.monitorStatusNextBtn.addEventListener("click", () => {
+      updateMonitorStatusPage(1);
     });
   }
 };
@@ -2474,16 +2513,21 @@ const matchSessionByStatusKey = (session, key) => {
   return statusMatches(session?.status, key);
 };
 
-const renderMonitorStatusList = (sessions) => {
+const renderMonitorStatusList = (sessions = monitorStatusSessions) => {
   if (!elements.monitorStatusList) {
     return;
   }
+  monitorStatusSessions = sortSessionsByUpdate(Array.isArray(sessions) ? sessions : []);
+  const pageData = resolveMonitorPageSlice(monitorStatusSessions, "statusPage", {
+    sorted: true,
+  });
+  renderMonitorPagination("status", pageData);
   elements.monitorStatusList.textContent = "";
-  if (!Array.isArray(sessions) || sessions.length === 0) {
+  if (pageData.total === 0) {
     elements.monitorStatusList.textContent = t("common.noRecords");
     return;
   }
-  sortSessionsByUpdate(sessions).forEach((session) => {
+  pageData.sessions.forEach((session) => {
     const item = document.createElement("button");
     item.type = "button";
     item.className = "list-item monitor-status-item";
@@ -2745,6 +2789,8 @@ const openMonitorStatusModal = (statusKey, label = "") => {
       total: matchedSessions.length,
     });
   }
+  ensureMonitorState();
+  state.monitor.pagination.statusPage = 1;
   renderMonitorStatusList(matchedSessions);
   elements.monitorStatusModal.classList.add("active");
 };

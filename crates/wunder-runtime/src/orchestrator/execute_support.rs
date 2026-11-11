@@ -156,7 +156,9 @@ const WORKSPACE_PATH_HINT_KEYS: [&str; 26] = [
 const WORKSPACE_EVENT_NESTED_OBJECT_KEYS: [&str; 5] =
     ["data", "meta", "result", "output", "payload"];
 const CANCELLED_GENERATION_CONTEXT_MARKER: &str =
-    "Previous run cancelled by user before an assistant response was produced.";
+    "Previous run cancelled by user before an assistant response was produced. \
+     Resume from the last recorded tool result or file state; do not restart work that already completed. \
+     If that run produced no conclusion, say so explicitly before continuing.";
 
 pub(super) fn build_planned_tool_calls(
     calls: Vec<ToolCall>,

@@ -34,10 +34,10 @@ export component ChatAlignmentDemo inherits Window {
                 process-paged: root.paged, process-older: root.older, process-newer: root.newer, process-error: root.failed,
                 process-entries: [
                     {kind: 3, id: "fixture-read", payload: 2, open: root.read-open,
-                        tool-name: "Read file", tool-icon: "file-lines", target: "sample.txt", summary: "Read sample file", tokens: "1.8k token", duration: "19ms",
+                        tool-name: "Read file", tool-icon: "file-lines", target: "sample.txt", summary: "Read sample file", tokens: "1.8k", duration: "19ms",
                         detail: "sample content", sections: [{title: "sample.txt", kind: "text", lines: [{text: "sample content", kind: "context"}]}]},
                     {kind: 3, id: "fixture-command", payload: 3, status-kind: root.running ? 1 : 0, open: root.command-open,
-                        tool-name: "Run command", tool-icon: "terminal", summary: "check sample.txt", tokens: "2.4k token", duration: "1.2s",
+                        tool-name: "Run command", tool-icon: "terminal", summary: "check sample.txt", tokens: "2.4k", duration: "1.2s",
                         detail: "2 checks passed", sections: [{title: "$ check sample.txt", meta: "exit 0", kind: "command", lines: [{text: "2 checks passed", kind: "context"}]}]},
                     {kind: 3, id: "fixture-error", payload: 4, open: root.error-open, status-kind: 2,
                         tool-name: "Read file", tool-icon: "file-lines", target: "missing.txt", summary: "Check sample file", duration: "12ms",

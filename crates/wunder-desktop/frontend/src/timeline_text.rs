@@ -716,17 +716,6 @@ fn is_same_target(target: &str, summary: &str) -> bool {
     long.starts_with(short)
 }
 
-/// The web timeline keeps invocation usage at the far edge of the row. Native
-/// projection already receives the bounded, formatted values from the shared
-/// desktop workflow adapter, so this helper only joins the populated parts.
-pub fn tool_metrics(entry: &NativeWorkflowEntry) -> String {
-    [entry.tokens.as_str(), entry.duration.as_str()]
-        .into_iter()
-        .filter(|value| !value.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5124,6 +5124,23 @@
   z-index: 210;
 }
 
+#monitorStatusModal .modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+
+#monitorStatusModal .modal-body .monitor-status-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+#monitorStatusModal .monitor-pagination {
+  flex: 0 0 auto;
+}
+
 #monitorDetailModal {
   z-index: 215;
 }

@@ -185,7 +185,7 @@ assert.equal(threadViewSlots(key)![0].assistant.process_activity.kind,'tool');
 console.log('thread view: late model tails cannot replace a newer tool phase pass');
 
 // Display-only delivery must consume the composer queue and reject stale HTTP rows.
-import { chatQueueState, applyItems } from '../../src/stores/chatQueueLiveState';
+import { chatQueueForSession, applyItems } from '../../src/stores/chatQueueLiveState';
 import { projectQueueItems, isParkedQueueTurn } from '../../src/stores/chatQueueProjection';
 clearThreadView(key); generation = beginThreadView(key);
 commitThreadView(key, { ...page([ { ...row(1, 1), status: 'running' } ]), runtime_status: 'running' }, generation);
@@ -194,10 +194,10 @@ assert.equal(threadViewStatus(key), 'running');
 const pendingQueue = threadViewSlots(key)!.at(-1)!;
 assert.equal(isParkedQueueTurn([], pendingQueue.user, pendingQueue.assistant), true);
 const parked = projectQueueItems([{queue_id:'fixture-queue', root_turn_id:'fixture-turn-2', client_message_id:'fixture-queued-client'}]);
-chatQueueState.sessionId = key; applyItems(key, parked);
+applyItems(key, parked);
 applyThreadViewChanges(key, { view_seq: 12, runtime_status: 'running', rows: [{ ...row(2, 12), client_message_id:'fixture-queued-client', status: 'running' }] });
-assert.equal(chatQueueState.items.length, 0);
-applyItems(key, parked); assert.equal(chatQueueState.items.length, 0);
+assert.equal(chatQueueForSession(key).items.length, 0);
+applyItems(key, parked); assert.equal(chatQueueForSession(key).items.length, 0);
 // An idle submission remains mounted while the server accepts it before execution.
 clearThreadView(key); generation = beginThreadView(key); commitThreadView(key, page([]), generation);
 submitThreadView(key, 'fixture-admission', 'input');
@@ -235,15 +235,13 @@ applyThreadViewChanges(background,{epoch:1,view_seq:1,runtime_status:'running',r
   ...row(1),root_turn_id:'fixture-background-turn',client_message_id:'fixture-background-client',status:'queued',
   queued_input:{queue_id:'fixture-background-queue',reason:'input',priority:0}
 }]});
-assert.equal(chatQueueState.sessionId,key);
-chatQueueState.sessionId=background;
-assert.equal(chatQueueState.items[0].queueId,'fixture-background-queue');
+assert.equal(chatQueueForSession(background).items[0].queueId,'fixture-background-queue');
 applyThreadViewChanges(background,{epoch:1,view_seq:2,runtime_status:'running',rows:[{
   ...row(1,2),root_turn_id:'fixture-background-turn',client_message_id:'fixture-background-client',status:'running'
 }]});
-assert.equal(chatQueueState.items.length,0);
+assert.equal(chatQueueForSession(background).items.length,0);
 applyItems(background,projectQueueItems([{queue_id:'fixture-background-queue',client_message_id:'fixture-background-client'}]));
-assert.equal(chatQueueState.items.length,0);
+assert.equal(chatQueueForSession(background).items.length,0);
 console.log('thread view: independent monotonic head, old pages, background queue isolation and stale snapshots pass');
 
 // Accepted input must not flash into the transcript before its queue decision.

@@ -161,6 +161,7 @@ export const state = {
     pagination: {
       pageSize: 100,
       activePage: 1,
+      statusPage: 1,
     },
     timeFilter: {
       enabled: false,

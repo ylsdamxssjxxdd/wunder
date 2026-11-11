@@ -292,7 +292,8 @@ fn build_missing_tool_observation(tool_name: &str) -> String {
         "tool": tool_name,
         "ok": false,
         "error": "missing tool result",
-        "data": {},
+        "data": { "result_recorded": false },
+        "hint": "The tool result was not recorded in this thread's history. Verify side effects (files, processes, remote state) before retrying; do not rerun a command blindly.",
     });
     serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
 }

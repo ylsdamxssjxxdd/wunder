@@ -270,9 +270,17 @@ test('排队让位与剪枝真的接在渲染与撤下路径上', () => {
     slots.includes('.filter((slot) => !isParkedQueueTurn(queuedItems, slot.user, slot.assistant))'),
     '时间线没有按排队条让位'
   );
-  assert.ok(slots.includes('chatQueueState.items'), '让位判定没有读排队条状态');
+  assert.ok(slots.includes('chatQueueForSession(activeSessionId).items'), '让位判定没有读当前会话的排队投影');
+
+  const split = readSource('views/messenger/sections/MessengerChatSplitPane.vue');
+  assert.ok(
+    split.includes('.filter((slot) => !isParkedQueueTurn(queuedItems, slot.user, slot.assistant))'),
+    '分屏时间线没有按排队条让位'
+  );
+  assert.ok(split.includes('chatQueueForSession(props.sessionId).items'), '分屏没有读自己会话的排队投影');
 
   const strip = readSource('components/chat/ComposerQueueStrip.vue');
+  assert.ok(strip.includes('chatQueueForSession(sessionId).items'), '排队条没有读自己会话的排队投影');
   assert.ok(/emit\('withdrawn', result\.item\)/.test(strip), '撤下后没有广播 withdrawn');
   assert.ok(/handleWithdraw\(item, false\)/.test(strip), '删除路径没有走同一条撤下逻辑');
 

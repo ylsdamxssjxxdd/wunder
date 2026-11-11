@@ -2420,8 +2420,9 @@ const handleSend = async () => {
   clearAttachments();
   flushPersistDraftState();
   focusComposerInputAtEnd();
-  // 排队补水：这一轮若被挂进队列，排队条要立刻跟上（防抖内合并多次发送）。
-  scheduleChatQueueRefresh(activeQueueSessionId.value);
+  // 排队补水：这一轮若被挂进队列，排队条要立刻跟上；队列还没落库时
+  // queue_enter 事件会再触发一次刷新，不会漏掉。
+  scheduleChatQueueRefresh(activeQueueSessionId.value, 0);
 };
 
 const handleSendOrStop = async () => {

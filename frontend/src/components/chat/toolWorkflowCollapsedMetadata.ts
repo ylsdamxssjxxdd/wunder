@@ -183,7 +183,7 @@ const resolveItemMetadata = (item: WorkflowItem | null): { records: UnknownRecor
   return { records, rawValues: collectRawMetadata(records) };
 };
 
-export const formatTokenLabel = (tokens: number | null): string => tokens === null ? '' : `${formatCompactCount(tokens)} token`;
+export const formatTokenLabel = (tokens: number | null): string => tokens === null ? '' : formatCompactCount(tokens);
 
 export const formatDurationLabel = (durationMs: number | null): string => {
   if (durationMs === null) return '';

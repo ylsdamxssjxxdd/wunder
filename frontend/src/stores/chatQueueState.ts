@@ -1,5 +1,5 @@
-import { chatQueueState as state, applyItems, rememberQueueIdentities, consumeQueueItem, chatQueueRevision, chatQueueForSession } from './chatQueueLiveState';
-export { chatQueueState } from './chatQueueLiveState';
+import { applyItems, hasChatQueue, rememberQueueIdentities, consumeQueueItem, chatQueueRevision, chatQueueForSession } from './chatQueueLiveState';
+export { chatQueueForSession } from './chatQueueLiveState';
 import {
   cancelQueuedTurn,
   getSessionQueue,
@@ -19,8 +19,9 @@ export type { QueuedTurn };
 export { isChatQueueRuntimeEvent };
 
 const QUEUE_REFRESH_DEBOUNCE_MS = 220;
-let latestRequestId = 0;
-let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+const MAX_TRACKED_QUEUE_SESSIONS = 64;
+const latestRequestIds = new Map<string, number>();
+const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const cleanText = (value: unknown): string => String(value ?? '').trim();
 
 const readResponseData = (response: unknown): Record<string, unknown> => {
@@ -42,31 +43,36 @@ export async function refreshChatQueue(
     resetChatQueue();
     return;
   }
-  const requestId = ++latestRequestId;
+  // Queue state is per session: several composers (main thread plus split
+  // panes) refresh at the same time, and one of them must not discard the
+  // responses of the others.
+  const requestId = (latestRequestIds.get(targetId) || 0) + 1;
+  latestRequestIds.delete(targetId);
+  latestRequestIds.set(targetId, requestId);
+  while (latestRequestIds.size > MAX_TRACKED_QUEUE_SESSIONS) {
+    const oldest = latestRequestIds.keys().next().value;
+    if (oldest === undefined) break;
+    latestRequestIds.delete(oldest);
+  }
   const revision = chatQueueRevision(targetId);
   const target = chatQueueForSession(targetId);
-  if (state.sessionId !== targetId) {
-    if (refreshTimer) clearTimeout(refreshTimer);
-    refreshTimer = null;
-  }
-  state.sessionId = targetId;
   if (!options.silent) target.loading = true;
   try {
     const response = await getSessionQueue(targetId);
-    if (requestId !== latestRequestId || state.sessionId !== targetId) return;
+    if (latestRequestIds.get(targetId) !== requestId) return;
     if (revision !== chatQueueRevision(targetId)) {
       scheduleChatQueueRefresh(targetId);
       return;
     }
     applyItems(targetId, projectQueueItems(readResponseData(response).items));
-    state.error = '';
+    target.error = '';
   } catch (error) {
-    if (requestId !== latestRequestId) return;
+    if (latestRequestIds.get(targetId) !== requestId) return;
     if (!options.silent) {
-      state.error = (error as { message?: string })?.message || '';
+      target.error = (error as { message?: string })?.message || '';
     }
   } finally {
-    target.loading = false;
+    if (latestRequestIds.get(targetId) === requestId) target.loading = false;
   }
 }
 
@@ -76,12 +82,13 @@ export function scheduleChatQueueRefresh(
 ) {
   const targetId = cleanText(sessionId);
   if (!targetId) return;
-  if (refreshTimer) clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(() => {
-    refreshTimer = null;
-    if (state.sessionId && state.sessionId !== targetId) return;
+  const pending = refreshTimers.get(targetId);
+  if (pending) clearTimeout(pending);
+  const timer = setTimeout(() => {
+    refreshTimers.delete(targetId);
     void refreshChatQueue(targetId, { silent: true });
   }, delayMs);
+  refreshTimers.set(targetId, timer);
 }
 
 export function noteChatQueueRuntimeEvent(sessionId: unknown, eventType: unknown, payload?: unknown): void {
@@ -103,19 +110,13 @@ export function noteChatQueueRuntimeEvent(sessionId: unknown, eventType: unknown
       embedded?.eventType ?? cleanText(eventType).toLowerCase()
     );
   }
-  if (state.sessionId === targetId) scheduleChatQueueRefresh(sessionId);
+  if (targetId && hasChatQueue(targetId)) scheduleChatQueueRefresh(targetId);
 }
 
 export function resetChatQueue(): void {
-  latestRequestId += 1;
-  if (refreshTimer) {
-    clearTimeout(refreshTimer);
-    refreshTimer = null;
-  }
-  state.sessionId = '';
-  state.items = [];
-  state.loading = false;
-  state.error = '';
+  for (const timer of refreshTimers.values()) clearTimeout(timer);
+  refreshTimers.clear();
+  latestRequestIds.clear();
 }
 
 /** Drop the local queue projection when a session-wide stop settles it. */
@@ -162,7 +163,7 @@ export async function interjectChatQueueTurn(
   if (!targetId || !cleanedQueueId) return rejected();
   try {
     await prioritizeQueuedTurn(targetId, cleanedQueueId);
-    if (state.sessionId === targetId) await refreshChatQueue(targetId, { silent: true });
+    if (hasChatQueue(targetId)) await refreshChatQueue(targetId, { silent: true });
     return { ok: true, message: '', item: null };
   } catch (error) {
     scheduleChatQueueRefresh(targetId, 0);
@@ -223,7 +224,7 @@ export async function reorderChatQueueTurns(
   if (!targetId || orderedIds.length < 2) return rejected();
   const nextItems = applyLocalQueueReorder(chatQueueForSession(targetId).items, orderedIds);
   if (!nextItems) {
-    if (state.sessionId === targetId) await refreshChatQueue(targetId, { silent: true });
+    if (hasChatQueue(targetId)) await refreshChatQueue(targetId, { silent: true });
     return rejected();
   }
   applyItems(targetId, nextItems);

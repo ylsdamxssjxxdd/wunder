@@ -543,6 +543,31 @@ async fn handle_ws(
                                 // queue-scoped feeder reaches a terminal event.
                                 let queued_busy = presence.nodes().begin_busy(&web_node_id);
                                 let queued_user = user.user_id.clone();
+                                // The client stops its long-lived watch when it
+                                // submits, so a queued turn's command sessions
+                                // have no live subscription unless this request
+                                // owns one. Run turns start the same watcher in
+                                // `stream_request`; queued turns execute in the
+                                // dispatch loop instead and used to only receive
+                                // timeline changes.
+                                let command_cancel = cancel.clone();
+                                let command_state = state.clone();
+                                let command_user = user.user_id.clone();
+                                let command_session = session_id.clone();
+                                let command_tx = ws_tx.clone();
+                                let command_request_id = request_id.clone();
+                                let watcher_cancel = command_cancel.clone();
+                                long_task::spawn(
+                                    "api.chat_ws.queued_command_stream",
+                                    crate::api::ws_helpers::watch_command_sessions(
+                                        command_state.control.command_sessions.clone(),
+                                        command_user,
+                                        command_session,
+                                        Some(command_request_id),
+                                        command_tx,
+                                        watcher_cancel,
+                                    ),
+                                );
                                 long_task::spawn("api.chat_ws.queued_auto_resume", async move {
                                     let _queued_busy = queued_busy;
                                     if let Some(seq) = display_cursor {
@@ -569,6 +594,10 @@ async fn handle_ws(
                                         )
                                         .await;
                                     }
+                                    // The queue-scoped feeder owns the turn's
+                                    // lifetime; stop forwarding command events
+                                    // when it reaches a terminal event.
+                                    command_cancel.cancel();
                                     // cleanup: only remove if our task_id still owns
                                     // the entry (avoids clobbering a newer task).
                                     let _ = cleanup_ws_task(

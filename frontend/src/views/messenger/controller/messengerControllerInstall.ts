@@ -25,7 +25,7 @@ import { threadViewClock, threadViewOwnsExecution, threadViewHeadVersion, thread
 import { threadViewPhase, threadViewSlots } from '@/realtime/chat/threadViewStore';
 import { readThreadBody } from '@/realtime/chat/threadBodyReader';
 import { buildChatThreadMaterializedSlots } from '@/realtime/chat/chatThreadRuntime';
-import { chatQueueState } from '@/stores/chatQueueState';
+import { chatQueueForSession } from '@/stores/chatQueueState';
 import { isParkedQueueTurn } from '@/stores/chatQueueProjection';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
@@ -1927,7 +1927,8 @@ function installMessengerControllerRenderableMessages(ctx: MessengerControllerCo
       return buildChatThreadMaterializedSlots(ctx.chatStore.activeSessionId);
   });
   ctx.agentTurnSlots = computed(() => {
-      const queuedItems = chatQueueState.sessionId === ctx.chatStore.activeSessionId ? chatQueueState.items : [];
+      const activeSessionId = String(ctx.chatStore.activeSessionId || '').trim();
+      const queuedItems = activeSessionId ? chatQueueForSession(activeSessionId).items : [];
       return (ctx.agentThreadSlotSource.value ?? [])
           .filter((slot) => !isParkedQueueTurn(queuedItems, slot.user, slot.assistant))
           .map(slot => ({

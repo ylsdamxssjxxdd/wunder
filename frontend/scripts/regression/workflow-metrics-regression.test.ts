@@ -39,9 +39,9 @@ test('parallel tools keep request context and runtime latency despite conflictin
   assert.deepEqual(rows().map(row => ({...resolveCollapsedWorkflowEntryMetadata(row),
     status: row.resultItem?.status})).map(({contextTokensLabel, durationLabel, status}) =>
       ({contextTokensLabel, durationLabel, status})), [
-    {contextTokensLabel:'120 token',durationLabel:'1.3s',status:'completed'},
-    {contextTokensLabel:'120 token',durationLabel:'0ms',status:'failed'},
-    {contextTokensLabel:'240 token',durationLabel:'',status:undefined}
+    {contextTokensLabel:'120',durationLabel:'1.3s',status:'completed'},
+    {contextTokensLabel:'120',durationLabel:'0ms',status:'failed'},
+    {contextTokensLabel:'240',durationLabel:'',status:undefined}
   ]);
 });
 
@@ -68,7 +68,7 @@ test('zero context survives a partial snapshot and unknown request context never
   emit('tool_call', {tool:'read_file',tool_call_id:'call_1'});
   emit('tool_call', {tool:'read_file',tool_call_id:'call_2',request_context_tokens:null});
   assert.deepEqual(rows().map(row => resolveCollapsedWorkflowEntryMetadata(row).contextTokensLabel),
-    ['0 token', '']);
+    ['0', '']);
   assert.equal(rows()[0].callItem?.['context_max_tokens'], 800);
 });
 

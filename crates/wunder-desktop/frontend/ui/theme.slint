@@ -227,11 +227,6 @@ export struct TimelineRow {
     tool-name: string,
     tool-icon: string,
     target: string,
-    // Compact per-tool footer, e.g. "2.4k token 1.2s". Kept as one bounded
-    // string so the hot path only patches the active row and never rebuilds a
-    // second metrics model for every streamed result frame.
-    tool-metrics: string,
-    tool-metrics-visible: bool,
     tokens: string,
     duration: string,
     // Returned line count of a read call, shown beside its file chip.

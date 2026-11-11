@@ -48,10 +48,11 @@
         :class="{ 'is-mono': entry.summaryMono }"
         :title="entry.summary"
       >{{ entry.summary }}</span>
-      <!-- 与桌面端折叠行一致：右侧是该次请求的上下文占用与工具耗时。 -->
+      <!-- 与桌面端折叠行一致：右侧是该次请求的上下文占用与工具耗时。
+           两列定宽且左对齐，跨条目的数值从同一位置起排。 -->
       <span v-if="tokenMetric || durationMetric" class="tl-entry-metrics">
-        <span v-if="tokenMetric">{{ tokenMetric }}</span>
-        <span v-if="durationMetric">{{ durationMetric }}</span>
+        <span>{{ tokenMetric }}</span>
+        <span>{{ durationMetric }}</span>
       </span>
     </component>
 
@@ -323,12 +324,14 @@ button.tl-entry-head:focus-visible {
   font-size: 11.5px;
 }
 
-/* 右侧运行指标：与桌面端 ProcessEntryCard 的 tokens/duration 同口径。 */
+/* 右侧运行指标：与桌面端 ProcessEntryCard 的 tokens/duration 同口径。
+   固定两列（6ch/5ch + 8px），空值也占位，token 列跨条目左对齐。 */
 .tl-entry-metrics {
   flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+  display: inline-grid;
+  grid-template-columns: 6ch 5ch;
+  column-gap: 8px;
+  justify-items: start;
   margin-left: auto;
   color: var(--mz-text-muted, #8a8f99);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;

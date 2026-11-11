@@ -152,7 +152,7 @@ test('idle snapshot overrides stale workflow flags and historical tools keep met
   const rows = buildWorkflowToolRuns(message.workflowItems || []);
   assert.equal(rows.length, 1);
   const labels = resolveCollapsedWorkflowEntryMetadata(rows[0]);
-  assert.equal(labels.contextTokensLabel, '120 token');
+  assert.equal(labels.contextTokensLabel, '120');
   assert.equal(labels.durationLabel, '1.3s');
 });
 

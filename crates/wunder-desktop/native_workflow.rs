@@ -76,7 +76,7 @@ impl NativeWorkflowEntry {
         .map(|c| if c.is_whitespace() { ' ' } else { c })
         .collect();
         let tokens = request_context_tokens(data)
-            .map(|n| format!("{} token", compact(n)))
+            .map(compact)
             .unwrap_or_default();
         let duration = number(data, &["duration_ms"], 0)
             .or_else(|| {
@@ -494,15 +494,15 @@ mod tests {
         for (payload, expected) in [
             (
                 json!({"request_usage":{"total":2400},"request_context_tokens":1800,"data":{"consumed_tokens":99999}}),
-                "1.8k token",
+                "1.8k",
             ),
             (
                 json!({"request_usage":{"total_tokens":"3200","total":1}}),
-                "3.2k token",
+                "3.2k",
             ),
             (
                 json!({"request_usage":{"total_tokens":null,"total":1250}}),
-                "1.2k token",
+                "1.2k",
             ),
             (json!({"request_usage":{"total":0}}), ""),
             (
@@ -514,7 +514,7 @@ mod tests {
                 json!({"request_context_tokens":null,"data":{"consumed_tokens":123}}),
                 "",
             ),
-            (json!({"request_context_tokens":1800}), "1.8k token"),
+            (json!({"request_context_tokens":1800}), "1.8k"),
             (
                 json!({"args":{"consumed_tokens":123},"data":{"usage":{"total":456}}}),
                 "",
@@ -549,7 +549,7 @@ mod tests {
                 row.tokens.as_str(),
                 row.duration.as_str()
             ),
-            ("example.txt", "2.4k token", "1.3s")
+            ("example.txt", "2.4k", "1.3s")
         );
         let empty = NativeWorkflowEntry::from_payload(
             "tool-2",
@@ -651,11 +651,11 @@ mod tests {
         for (payload, expected) in [
             (
                 json!({"request_context_tokens":1800,"request_usage":{"total":2400},"meta":{"duration_ms":19}}),
-                ("1.8k token", "19ms"),
+                ("1.8k", "19ms"),
             ),
             (
                 json!({"request_usage":{"input_tokens":1100,"output_tokens":120},"meta":{"duration_ms":1999}}),
-                ("1.2k token", "2.0s"),
+                ("1.2k", "2.0s"),
             ),
             (
                 json!({"result":{"usage":{"total":9999}},"meta":{"duration_ms":20000}}),

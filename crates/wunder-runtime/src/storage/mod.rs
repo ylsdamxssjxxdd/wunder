@@ -45,6 +45,7 @@ mod thread_history_migration;
 #[cfg(test)]
 mod thread_lifecycle_tests;
 pub(crate) mod thread_mutation;
+pub(crate) mod thread_speed;
 pub mod thread_store;
 pub(crate) mod thread_view_projection;
 #[cfg(test)]

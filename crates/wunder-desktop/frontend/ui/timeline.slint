@@ -552,11 +552,13 @@ component FoldEntry inherits Rectangle {
                 }
                 Image {
                     y: 6.5px; width: 13px; height: 13px;
-                    source: ToolIcons.image(root.data.tool-icon);
+                    // A thinking entry has no tool key; it takes the shared
+                    // brain glyph so every folded row opens with one icon.
+                    source: root.data.kind == EntryKind.reason
+                        ? @image-url("../assets/icons/brain.svg")
+                        : ToolIcons.image(root.data.tool-icon);
                     colorize: Theme.muted; image-fit: contain;
-                    // A thinking entry has no tool glyph: the web row reads as
-                    // status, label, outcome.
-                    visible: root.data.tool-icon != "";
+                    visible: root.data.kind == EntryKind.reason || root.data.tool-icon != "";
                 }
                 Text {
                     width: self.preferred-width; height: parent.height;
@@ -579,11 +581,19 @@ component FoldEntry inherits Rectangle {
                         overflow: elide; vertical-alignment: center;
                     }
                 }
-                if root.data.kind == EntryKind.tool && root.data.tool-metrics != "" : Text {
-                    width: self.preferred-width; height: parent.height;
-                    text: root.data.tool-metrics;
+                if root.data.kind == EntryKind.tool && (root.data.tokens != "" || root.data.duration != "") : Text {
+                    width: 44px * Theme.font-scale; height: parent.height;
+                    text: root.data.tokens;
                     color: Theme.muted; font-size: Theme.font-xs;
-                    vertical-alignment: center;
+                    font-family: Theme.font-mono;
+                    horizontal-alignment: left; vertical-alignment: center;
+                }
+                if root.data.kind == EntryKind.tool && (root.data.tokens != "" || root.data.duration != "") : Text {
+                    width: 40px * Theme.font-scale; height: parent.height;
+                    text: root.data.duration;
+                    color: Theme.muted; font-size: Theme.font-xs;
+                    font-family: Theme.font-mono;
+                    horizontal-alignment: left; vertical-alignment: center;
                 }
             }
         }

@@ -1214,6 +1214,43 @@ async fn thread_first_user_questions_returns_the_first_visible_user_message() {
     assert!(backend.thread_first_user_questions(&[]).unwrap().is_empty());
 }
 
+#[test]
+fn thread_latest_speed_totals_reads_the_latest_assistant_reply() {
+    let root = tempfile::tempdir().unwrap();
+    let db = SqliteStorage::new(
+        root.path()
+            .join("state_1.sqlite")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    db.ensure_initialized().unwrap();
+    let admitted = db
+        .accept_thread_turn(USER, THREAD, &json!({"content":"Fixture input"}))
+        .unwrap();
+    let turn = admitted["turn_id"].as_str().unwrap();
+    super::test_support::freeze_thread(root.path(), USER, THREAD);
+    super::test_support::begin_turn(root.path(), USER, THREAD, turn);
+    db.append_thread_item(
+        USER,
+        &json!({"session_id":THREAD,"turn_id":turn,"item_id":"assistant-speed",
+            "kind":"assistant_message","model_round":1,"content":"Fixture answer",
+            "status":"completed","prefill_duration_s":0.5,"decode_duration_s":2.0,
+            "decode_output_tokens":20,"usage":{"input_tokens":100,"output_tokens":20}}),
+    )
+    .unwrap();
+
+    let summaries = db
+        .thread_latest_speed_totals(&[THREAD.to_string(), "missing-thread".to_string()])
+        .unwrap();
+    let totals = summaries.get(THREAD).expect("thread speed totals");
+    assert_eq!(totals.prefill_tokens, 100);
+    assert!((totals.prefill_duration_s - 0.5).abs() < f64::EPSILON);
+    assert_eq!(totals.decode_tokens, 20);
+    assert!((totals.decode_duration_s - 2.0).abs() < f64::EPSILON);
+    assert!(!summaries.contains_key("missing-thread"));
+    assert!(db.thread_latest_speed_totals(&[]).unwrap().is_empty());
+}
+
 /// A thread longer than the bounded active window must still open its oldest
 /// chat cards and process timeline. The projection keeps only the newest
 /// `ACTIVE_WINDOW_ITEMS` rows; every read below that floor has to revalidate

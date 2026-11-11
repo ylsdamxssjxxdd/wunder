@@ -373,6 +373,16 @@ impl ThreadLogStore for SqliteStorage {
         )
         .thread_first_user_questions(session_ids)
     }
+    fn thread_latest_speed_totals(
+        &self,
+        session_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, crate::storage::ThreadSpeedTotals>> {
+        crate::storage::canonical_thread_log::CanonicalThreadLog::new(
+            self.canonical_threads()?.as_ref(),
+            self,
+        )
+        .thread_latest_speed_totals(session_ids)
+    }
     fn thread_turn_tails(
         &self,
         user_id: &str,

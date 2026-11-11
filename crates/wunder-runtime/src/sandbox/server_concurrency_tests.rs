@@ -200,6 +200,149 @@ async fn background_command_session_can_be_polled_only_in_its_scope() {
     assert_eq!(foreign.get("ok").and_then(Value::as_bool), Some(false));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn background_pipe_holder_does_not_block_session_finish() {
+    let dir = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, build_router()).await.unwrap() });
+    let client = reqwest::Client::new();
+    let launch = client
+        .post(format!(
+            "http://{address}/sandboxes/command-sessions/launch"
+        ))
+        .json(&json!({
+            "user_id": "user_bg", "session_id": "thread_bg",
+            "workspace_root": dir.path(), "container_root": dir.path(), "allow_commands": ["*"],
+            "args": {
+                "content": "(sleep 30 & echo $! > bg.pid); echo started",
+                "yield_time_ms": 50
+            }
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(launch.get("ok").and_then(Value::as_bool), Some(true));
+    let id = launch
+        .pointer("/data/command_session_id")
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_string();
+    // 后台孙子进程持有管道写端：收尾必须在 EOF 宽限后放弃读端并落 exited，
+    // 不能把一条秒回的命令挂成 TOOL_TIMEOUT。
+    let poll = timeout(
+        Duration::from_secs(8),
+        client
+            .post(format!("http://{address}/sandboxes/command-sessions/poll"))
+            .json(&json!({
+                "user_id": "user_bg", "session_id": "thread_bg",
+                "command_session_id": id, "yield_time_ms": 5000,
+                "wait_for_exit": true, "include_snapshot": true
+            }))
+            .send(),
+    )
+    .await
+    .expect("session must finish despite the pipe holder")
+    .unwrap()
+    .json::<Value>()
+    .await
+    .unwrap();
+    assert_eq!(
+        poll.pointer("/data/status").and_then(Value::as_str),
+        Some("exited")
+    );
+    assert!(poll
+        .pointer("/data/stdout")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.contains("started")));
+    server.abort();
+    if let Ok(pid) = tokio::fs::read_to_string(dir.path().join("bg.pid")).await {
+        let _ = Command::new("kill")
+            .args(["-9", pid.trim()])
+            .stderr(Stdio::null())
+            .status()
+            .await;
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn session_timeout_terminates_grandchildren() {
+    let dir = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, build_router()).await.unwrap() });
+    let client = reqwest::Client::new();
+    let launch = client
+        .post(format!(
+            "http://{address}/sandboxes/command-sessions/launch"
+        ))
+        .json(&json!({
+            "user_id": "user_tree", "session_id": "thread_tree",
+            "workspace_root": dir.path(), "container_root": dir.path(), "allow_commands": ["*"],
+            "args": {
+                "content": "sleep 30 & echo $! > gc.pid; wait",
+                "timeout_s": 1, "run_in_background": true, "yield_time_ms": 50
+            }
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(launch.get("ok").and_then(Value::as_bool), Some(true));
+    let id = launch
+        .pointer("/data/command_session_id")
+        .and_then(Value::as_str)
+        .unwrap()
+        .to_string();
+    let poll = timeout(
+        Duration::from_secs(8),
+        client
+            .post(format!("http://{address}/sandboxes/command-sessions/poll"))
+            .json(&json!({
+                "user_id": "user_tree", "session_id": "thread_tree",
+                "command_session_id": id, "yield_time_ms": 5000,
+                "wait_for_exit": true
+            }))
+            .send(),
+    )
+    .await
+    .expect("session must finish after timeout")
+    .unwrap()
+    .json::<Value>()
+    .await
+    .unwrap();
+    assert_eq!(
+        poll.pointer("/data/status").and_then(Value::as_str),
+        Some("exited")
+    );
+    assert_eq!(
+        poll.pointer("/data/timed_out").and_then(Value::as_bool),
+        Some(true)
+    );
+    let pid = tokio::fs::read_to_string(dir.path().join("gc.pid"))
+        .await
+        .expect("grandchild pid file");
+    let alive = Command::new("kill")
+        .args(["-0", pid.trim()])
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .unwrap()
+        .success();
+    server.abort();
+    assert!(
+        !alive,
+        "grandchild must be terminated together with the session"
+    );
+}
+
 #[tokio::test]
 async fn background_command_session_can_be_cancelled() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

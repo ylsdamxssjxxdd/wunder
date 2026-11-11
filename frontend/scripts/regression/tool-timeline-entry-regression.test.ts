@@ -15,6 +15,7 @@ import type { RawToolRun, WorkflowItem } from '../../src/components/chat/toolWor
 import { buildWorkflowToolRuns } from '../../src/components/chat/toolWorkflowRunModel';
 import { buildTimelineStructuredView } from '../../src/components/chat/toolTimelineStructured';
 import { extractToolResultDataObject } from '../../src/components/chat/toolWorkflowResultPayload';
+import { formatDurationLabel, formatTokenLabel } from '../../src/components/chat/toolWorkflowCollapsedMetadata';
 
 const t = (key: string, params?: Record<string, unknown>): string =>
   params && params.line !== undefined ? `${key}:${params.line}` : key;
@@ -603,4 +604,11 @@ test('collapsed tool entry exposes context occupancy and duration metrics', () =
     })
   }), t);
   assert.deepEqual(durable.metrics, { tokens: 1800, durationMs: 1250 });
+});
+
+test('metric labels stay numeric: no token unit on the folded row', () => {
+  assert.equal(formatTokenLabel(1800), '1.8k');
+  assert.equal(formatTokenLabel(14200), '14.2k');
+  assert.equal(formatTokenLabel(null), '');
+  assert.equal(formatDurationLabel(1250), '1.3s');
 });

@@ -27,6 +27,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::command_utils;
+use crate::core::process_tree::{ProcessTree, PIPE_EOF_GRACE};
 use crate::core::python_runtime;
 use crate::core::tool_args::recover_tool_args_value as recover_tool_args_value_lossy;
 use crate::i18n;
@@ -50,6 +51,9 @@ mod file_runtime;
 use file_runtime::execute_builtin_file_tool;
 
 const DEFAULT_COMMAND_TIMEOUT_S: f64 = 120.0;
+/// 前台阻塞命令到点后由调用方转后台继续跑；会话自身的硬上限必须比工具
+/// 等待窗口长，否则 shell 会被直接杀掉，转后台就失去意义。
+const ESCALATED_COMMAND_MAX_S: f64 = 3600.0;
 const RULES_CACHE_CAPACITY: usize = 512;
 const RULES_CACHE_TTL: Duration = Duration::from_secs(600);
 const STREAM_READ_CHUNK_SIZE: usize = 4096;
@@ -811,6 +815,12 @@ async fn launch_command_session_inner(request: SandboxToolRequest) -> Value {
         parse_timeout_secs(args.get("timeout_s")).unwrap_or(DEFAULT_COMMAND_TIMEOUT_S),
         &command_budget,
     );
+    let run_in_background = matches!(args.get("run_in_background"), Some(Value::Bool(true)));
+    let session_timeout_s = if run_in_background {
+        timeout_s
+    } else {
+        timeout_s.max(ESCALATED_COMMAND_MAX_S)
+    };
     let command_env = python_runtime::resolve_desktop_command_env();
     let overrides = command_utils::CommandProgramOverrides {
         pip_bin: command_env.command_overrides.pip_bin.clone(),
@@ -845,6 +855,8 @@ async fn launch_command_session_inner(request: SandboxToolRequest) -> Value {
             return json!({"ok": false, "error": error.to_string()});
         }
     };
+    // 必须在命令派生孙进程之前挂载：Unix 记录进程组，Windows 挂 Job。
+    let tree = ProcessTree::attach(&child);
     let id = format!("sandcmd_{}", Uuid::new_v4().simple());
     let session = Arc::new(SandboxCommandSession {
         user_id: request.user_id,
@@ -872,7 +884,7 @@ async fn launch_command_session_inner(request: SandboxToolRequest) -> Value {
         .and_then(Value::as_u64)
         .unwrap_or(750)
         .clamp(50, 10_000);
-    spawn_sandbox_command_session(child, Arc::clone(&session), timeout_s);
+    spawn_sandbox_command_session(child, tree, Arc::clone(&session), session_timeout_s);
     let initial = timeout(Duration::from_millis(yield_time_ms), async {
         loop {
             let notified = session.changed.notified();
@@ -1876,6 +1888,7 @@ async fn run_command_output(
     cmd.kill_on_drop(true);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(CommandError::from_spawn)?;
+    let tree = ProcessTree::attach(&child);
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let stdout_task = stdout.map(|stream| {
@@ -1898,16 +1911,25 @@ async fn run_command_output(
     let mut timed_out = false;
     let status = if timeout_s > 0.0 {
         match timeout(Duration::from_secs_f64(timeout_s), child.wait()).await {
-            Ok(result) => Some(result.map_err(CommandError::from_wait)?),
+            Ok(result) => {
+                let status = result.map_err(CommandError::from_wait)?;
+                tree.disarm();
+                Some(status)
+            }
             Err(_) => {
                 timed_out = true;
+                // 只杀直接子进程会留下持有管道的孙进程；整树终止后读任务才能
+                // 在宽限内读到 EOF，工具调用也才不会带着“未知副作用”返回。
+                tree.terminate();
                 let _ = child.kill().await;
                 let _ = child.wait().await;
                 None
             }
         }
     } else {
-        Some(child.wait().await.map_err(CommandError::from_wait)?)
+        let status = child.wait().await.map_err(CommandError::from_wait)?;
+        tree.disarm();
+        Some(status)
     };
     let stdout_capture = join_capture_task(stdout_task, stdout_policy).await?;
     let stderr_capture = join_capture_task(stderr_task, stderr_policy).await?;
@@ -1925,8 +1947,42 @@ async fn run_command_output(
     })
 }
 
+/// 命令会话的输出读任务必须**有界**收尾。后台命令（`nohup … &`）会让孙进程
+/// 继承管道写端：直接 `await` 读任务会永远等不到 EOF，会话永远停在 running，
+/// 调用方只能按超时处理——这就是“秒回的命令报 TOOL_TIMEOUT”的根因。
+/// 自然退出时给一个 EOF 宽限后放弃读端（保留故意脱管的守护进程）；超时/取消
+/// 时先整树终止，再给同一宽限。
+async fn drain_session_readers(
+    stdout_task: Option<tokio::task::JoinHandle<()>>,
+    stderr_task: Option<tokio::task::JoinHandle<()>>,
+) {
+    let stdout_abort = stdout_task.as_ref().map(|handle| handle.abort_handle());
+    let stderr_abort = stderr_task.as_ref().map(|handle| handle.abort_handle());
+    let drain = async {
+        if let Some(handle) = stdout_task {
+            let _ = handle.await;
+        }
+        if let Some(handle) = stderr_task {
+            let _ = handle.await;
+        }
+    };
+    tokio::pin!(drain);
+    if timeout(PIPE_EOF_GRACE, drain.as_mut()).await.is_err() {
+        // abort 句柄必须在把 JoinHandle 交出去之前取好；future 被丢弃只会
+        // detach 读任务，管道读端与任务会一起泄漏。
+        if let Some(handle) = stdout_abort {
+            handle.abort();
+        }
+        if let Some(handle) = stderr_abort {
+            handle.abort();
+        }
+        warn!("sandbox command session pipes did not reach EOF; reader tasks aborted");
+    }
+}
+
 fn spawn_sandbox_command_session(
     mut child: tokio::process::Child,
+    tree: ProcessTree,
     session: Arc<SandboxCommandSession>,
     timeout_s: f64,
 ) {
@@ -1948,6 +2004,7 @@ fn spawn_sandbox_command_session(
         let (status, timed_out, error) = if timeout_s > 0.0 {
             tokio::select! {
                 _ = session.cancel.cancelled() => {
+                    tree.terminate();
                     let _ = child.kill().await;
                     let _ = child.wait().await;
                     (None, false, Some("command cancelled".to_string()))
@@ -1956,6 +2013,7 @@ fn spawn_sandbox_command_session(
                     Ok(Ok(status)) => (Some(status), false, None),
                     Ok(Err(error)) => (None, false, Some(error.to_string())),
                     Err(_) => {
+                        tree.terminate();
                         let _ = child.kill().await;
                         let _ = child.wait().await;
                         (None, true, None)
@@ -1965,6 +2023,7 @@ fn spawn_sandbox_command_session(
         } else {
             tokio::select! {
                 _ = session.cancel.cancelled() => {
+                    tree.terminate();
                     let _ = child.kill().await;
                     let _ = child.wait().await;
                     (None, false, Some("command cancelled".to_string()))
@@ -1975,12 +2034,12 @@ fn spawn_sandbox_command_session(
                 }
             }
         };
-        if let Some(handle) = stdout_task {
-            let _ = handle.await;
+        if !timed_out && error.is_none() && status.is_some() {
+            // shell 正常退出：不要连带杀掉命令有意脱管的守护进程，
+            // 只需放弃仍被它持有的管道读端。
+            tree.disarm();
         }
-        if let Some(handle) = stderr_task {
-            let _ = handle.await;
-        }
+        drain_session_readers(stdout_task, stderr_task).await;
         session.finish(status.and_then(|item| item.code()), timed_out, error);
         command_sessions().release_active();
     });

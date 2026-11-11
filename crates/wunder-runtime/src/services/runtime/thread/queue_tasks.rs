@@ -125,7 +125,10 @@ impl ThreadRuntime {
         }
         // The reason is session-wide: either this thread is still executing
         // (input queue) or every parked turn only waits for a global slot.
-        let wait_reason = self.queue_wait_reason(&session_id).await.to_string();
+        let wait_reason = self
+            .queue_wait_reason(&user_id, &session_id)
+            .await
+            .to_string();
         let store = self.user_store.clone();
         let tasks = blocking::run_db("queue.user_list", move || {
             load_parked_queue_tasks(&store, &user_id, &session_id)
@@ -538,6 +541,29 @@ mod tests {
         drop(lease);
         let items = list_items(&state, "user-a", "session-a").await;
         assert_eq!(items[0]["wait_reason"], json!("scheduler"));
+    }
+
+    #[tokio::test]
+    async fn detached_execution_lock_keeps_input_queue_ownership() {
+        let (_root, state) = build_state("queue-wait-reason-detached").await;
+        park_task(
+            &state,
+            "task-a",
+            "user-a",
+            "session-a",
+            "next question",
+            100.0,
+            json!({}),
+        );
+        // A detached execution releases its in-process lease but keeps the
+        // durable session lock while it keeps running. New input is still
+        // behind that execution and must stay in the composer input queue.
+        state
+            .storage
+            .try_acquire_session_lock("session-a", "user-a", "agent-a", 120.0, 8)
+            .expect("acquire fixture session lock");
+        let items = list_items(&state, "user-a", "session-a").await;
+        assert_eq!(items[0]["wait_reason"], json!("input"));
     }
 
     #[tokio::test]

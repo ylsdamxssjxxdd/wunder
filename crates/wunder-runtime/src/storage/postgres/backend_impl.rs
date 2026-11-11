@@ -329,6 +329,13 @@ impl ThreadLogStore for PostgresStorage {
         super::thread_log_facade::PostgresThreadLog::new(self)?
             .thread_first_user_questions(session_ids)
     }
+    fn thread_latest_speed_totals(
+        &self,
+        session_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, crate::storage::ThreadSpeedTotals>> {
+        super::thread_log_facade::PostgresThreadLog::new(self)?
+            .thread_latest_speed_totals(session_ids)
+    }
     fn thread_turn_tails(
         &self,
         user_id: &str,

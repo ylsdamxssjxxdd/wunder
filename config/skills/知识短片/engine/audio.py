@@ -18,6 +18,8 @@ META（film.js 的 meta）：{ root: 半音偏移, noise: [[起,止,强度0..1],
 import json, os, subprocess, sys
 from pathlib import Path
 import numpy as np
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from render import ensure_render_lock, temp_output  # 与渲染共用工程锁和原子改名
 try:
     from scipy.signal import fftconvolve, lfilter, butter
 except ModuleNotFoundError:
@@ -190,6 +192,7 @@ if __name__ == "__main__":
     wav_only = "--wav-only" in a
     if bgm and not Path(bgm).is_file():
         sys.exit(f"找不到配乐文件：{bgm}")
+    ensure_render_lock(proj)
     raw, out, end = proj / "renders/raw.mp4", proj / "renders/final.mp4", spec["end"]
     if not wav_only and (not raw.is_file() or raw.stat().st_size == 0):
         sys.exit("还没有 renders/raw.mp4（无声全片），无法合成声音。\n"
@@ -203,12 +206,15 @@ if __name__ == "__main__":
         cmd = [ffmpeg_bin(), "-v", "error", "-y", "-nostdin", "-i", str(raw), "-i", str(wav), "-stream_loop", "-1", "-i", bgm, "-filter_complex", fc]
     else:     # 合成配乐本来就安静、动态大：只到 -18 LUFS，别压扁
         cmd = [ffmpeg_bin(), "-v", "error", "-y", "-nostdin", "-i", str(raw), "-i", str(wav), "-filter_complex", "[1:a]loudnorm=I=-18:TP=-1.5:LRA=14[a]"]
+    tmp = temp_output(out)
     try:
-        r = subprocess.run(cmd + ["-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-shortest", str(out)],
+        r = subprocess.run(cmd + ["-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-shortest", str(tmp)],
                            capture_output=True, encoding="utf-8", errors="replace")
     except FileNotFoundError:
         sys.exit(f"找不到 ffmpeg（{ffmpeg_bin()}）：请确认补充包已安装，或把 ffmpeg 放进 PATH")
     if r.returncode != 0:
+        tmp.unlink(missing_ok=True)
         detail = (r.stderr or "").strip() or "ffmpeg 没有输出错误信息"
         sys.exit(f"合成失败（退出码 {r.returncode}）：\n{detail}")
+    os.replace(tmp, out)
     print("done", out)

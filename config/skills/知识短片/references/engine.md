@@ -57,6 +57,7 @@ python engine/audio.py  <工程> --bgm 曲子.mp3 -8        # 垫现成配乐（
 默认续渲只跳过指纹一致且非空的分段，`--fresh` 强制全部重渲。分段默认保留，方便改一镜只重渲一镜；
 `--clean-parts` 才删。旧版遗留的分段没有 `.done` 标记，确认完整后可以用 `--concat --force` 强行拼接。
 `--only 3` / `--only 开场` / `--only 26.4:29.1` 只重渲选中段，其余分段保留并自动重拼；第一次用 `--only` 前先跑一次 `--jobs` 把全部分段铺出来。
+`--jobs` 接受 `--jobs 4` 和 `--jobs=4`，不写时按 CPU 核数（最多 4）决定并发；日志里的「渲染 1/N 段」表示其余分段命中 `.done` 被复用，不是并行失效。
 `--check-safe` 的像素检查会隐藏字幕，把整帧和「底 + look.under + 后期」的纯背景帧相减：背景（包括 B 的整幅插画）两边都有，不算越界；
 手写 ctx 画的内容只出现在整帧里，会被查出来。flat（B）整幅场景都在前景层，默认跳过像素检查，装置请用 `fr.mark` 命名。
 阈值可用 `--band-diff`（像素差，默认 10）和 `--band-ratio`（面积占比，默认 0.2%）调；默认每 0.5 秒采样一次。
@@ -65,8 +66,11 @@ python engine/audio.py  <工程> --bgm 曲子.mp3 -8        # 垫现成配乐（
 **看图不要靠猜。** 环境里 `file://` 不可用：先 `--serve`，再用浏览器打开 `http://127.0.0.1:8765/review/s_0005.00.png`（`sheet.jpg`、`m_*.png`、`band_*.png` 同理）。
 ARM 服务器上单路截帧受单核性能限制，长片优先用 `--jobs`；若明显慢于预期，先确认容器是原生 aarch64、Chrome 可执行文件不是 x86-64（qemu 模拟会慢一个数量级）。
 命令工具的前台等待到 `timeout_s` 时不会杀渲染，而是把它转入后台命令会话继续跑并返回 `command_session_id`；
-看到 `reason: timeout_escalated` 就先轮询会话，不要重跑。分段渲染中断后，已完成段带 `.done` 标记，
+看到 `reason: timeout_escalated` 就先轮询会话（带回 `after_seq` 只取新输出），不要重跑。分段渲染中断后，已完成段带 `.done` 标记，
 重跑 `--jobs 4` 默认续渲，或 `--concat` 直接拼接。
+同一工程用 `renders/.render.lock` 做单实例互斥，并行渲染只由父进程派生子进程；产物先写 `.*.tmp-<pid>` 再 `os.replace`，
+所以 `renders/raw.mp4`、`_part*.mp4`、`final.mp4`、`web.mp4` 只要存在就是完整文件。渲染中探测 mp4 会报
+`moov atom not found`，这是文件尚未收尾，不是损坏；判断完成只认同名 `.done`。
 依赖：Python 的 `playwright`（优先用补充包里的 Chrome，其次用 Playwright 自带 Chromium，最后退回系统 Chrome）、`numpy`、`scipy`、`Pillow`，以及 `ffmpeg`（补充包不带 `ffprobe`；读视频信息会自动退回 `ffmpeg -i` 解析，脚本不要再新增 ffprobe 硬依赖）。
 桌面版/安卓补充包已带 scipy 和 8 个视频字体（思源宋体/黑体 + 6 个拉丁/等宽）；中文优先用视频字体，缺失时退回 `opt/fonts/common` 的宋体/雅黑。云端镜像也带 scipy，字体放在 `config/fonts/{video,common}`（挂到 `/usr/share/fonts/wunder`）。开发环境缺字体时跑 `python engine/get_fonts.py`。
 

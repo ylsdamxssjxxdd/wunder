@@ -748,8 +748,6 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                 row.tool_name = label.as_str().into();
                 row.tool_icon = wunder_desktop::tool_icons::workflow_icon(&item.title).into();
                 row.target = target.as_str().into();
-                row.tool_metrics = crate::timeline_text::tool_metrics(item).into();
-                row.tool_metrics_visible = !row.tool_metrics.is_empty();
                 row.summary = crate::timeline_text::tool_row_summary(item, &target)
                     .as_str()
                     .into();
@@ -1146,8 +1144,6 @@ fn blank_row(kind: i32, id: String) -> TimelineRow {
         tool_name: Default::default(),
         tool_icon: Default::default(),
         target: Default::default(),
-        tool_metrics: Default::default(),
-        tool_metrics_visible: false,
         tokens: Default::default(),
         duration: Default::default(),
         read_lines: Default::default(),

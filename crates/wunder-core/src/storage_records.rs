@@ -351,6 +351,18 @@ pub struct ThreadTurnTail {
     pub change_seq: i64,
 }
 
+/// Aggregate token/time measurements of a thread's latest assistant reply.
+/// Diagnostic monitor persistence only started storing speed totals after
+/// older history was written; administration reads this from canonical thread
+/// history to backfill missing display metrics without rewriting logs.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ThreadSpeedTotals {
+    pub prefill_tokens: i64,
+    pub prefill_duration_s: f64,
+    pub decode_tokens: i64,
+    pub decode_duration_s: f64,
+}
+
 /// Durable state of one session goal, mirroring the deepseek goal domain:
 /// full snapshot per mutation, CAS on `revision`, phase lifecycle
 /// `active|paused|blocked|complete`. Activation is process-local and never

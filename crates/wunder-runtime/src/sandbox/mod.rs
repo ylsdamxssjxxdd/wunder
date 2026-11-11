@@ -162,6 +162,56 @@ fn strip_root_prefix<'a>(value: &'a str, root: &str) -> Option<&'a str> {
     None
 }
 
+/// `/workspace` 是公共根 `/workspaces` 的单数别名，只有作为**路径 token 的
+/// 起点**（行首、空白、引号、`=`、`(` 等之后）且后面是完整路径边界时才替换。
+/// 否则 `/workspaces/<user>/workspace/tmp` 里嵌套的 `workspace` 目录会被改成
+/// `workspaces`，模型给的合法路径被悄悄换成不存在的目录。
+fn replace_root_alias_in_text(text: &str, alias: &str, root: &str) -> String {
+    if alias.is_empty() || alias == root || !text.contains(alias) {
+        return text.to_string();
+    }
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(index) = rest.find(alias) {
+        let (before, after) = rest.split_at(index);
+        output.push_str(before);
+        let token_start = before.chars().next_back().is_none_or(|ch| {
+            matches!(
+                ch,
+                ' ' | '\n'
+                    | '\r'
+                    | '\t'
+                    | '"'
+                    | '\''
+                    | '='
+                    | '('
+                    | '['
+                    | '{'
+                    | ';'
+                    | ','
+                    | '|'
+                    | '&'
+                    | '`'
+            )
+        });
+        let remainder = &after[alias.len()..];
+        let segment_end = remainder.chars().next().is_none_or(|ch| {
+            matches!(
+                ch,
+                '/' | '\\' | '"' | '\'' | ' ' | '\n' | '\r' | '\t' | ')' | ']' | '}' | ';' | ','
+            )
+        });
+        if token_start && segment_end {
+            output.push_str(root);
+        } else {
+            output.push_str(alias);
+        }
+        rest = remainder;
+    }
+    output.push_str(rest);
+    output
+}
+
 fn replace_root_in_text(text: &str, from_root: &str, to_root: &str) -> String {
     if from_root.is_empty() || from_root == to_root || !text.contains(from_root) {
         return text.to_string();
@@ -422,7 +472,7 @@ pub async fn execute_tool(
             if let Some(Value::String(content)) = map.get("content").cloned() {
                 // 先把命令串里的单数 `/workspace` 别名对齐到规范根 `/workspaces`，
                 // 使 `cd /workspace/<user>/... && ...` 与文件工具落到同一挂载点。
-                let aligned = replace_root_in_text(&content, "/workspace", "/workspaces");
+                let aligned = replace_root_alias_in_text(&content, "/workspace", "/workspaces");
                 let rewritten =
                     rewrite_public_to_container(&aligned, &public_root, &container_user_root);
                 if rewritten != content {
@@ -976,6 +1026,43 @@ mod tests {
             map_public_path_to_container("/workspaces/sjxx2/a.png", public_root, mounted_root),
             None,
             "相邻用户名不能被当作本用户前缀"
+        );
+    }
+
+    #[test]
+    fn test_workspace_alias_rewrite_only_matches_path_token_start() {
+        assert_eq!(
+            replace_root_alias_in_text(
+                "cd /workspace/sjxx/workspace/temp && ls",
+                "/workspace",
+                "/workspaces"
+            ),
+            "cd /workspaces/sjxx/workspace/temp && ls",
+            "只有开头的单数别名被对齐，嵌套的 workspace 目录保持不变"
+        );
+        assert_eq!(
+            replace_root_alias_in_text(
+                "cp /workspaces/sjxx/workspace/a.png /workspace/sjxx/workspace/b.png",
+                "/workspace",
+                "/workspaces"
+            ),
+            "cp /workspaces/sjxx/workspace/a.png /workspaces/sjxx/workspace/b.png"
+        );
+        assert_eq!(
+            replace_root_alias_in_text(
+                "python x.py --dir=/workspace/sjxx/workspace/out",
+                "/workspace",
+                "/workspaces"
+            ),
+            "python x.py --dir=/workspaces/sjxx/workspace/out"
+        );
+        assert_eq!(
+            replace_root_alias_in_text(
+                "/workspace/sjxx/a /workspaces/sjxx/a",
+                "/workspace",
+                "/workspaces"
+            ),
+            "/workspaces/sjxx/a /workspaces/sjxx/a"
         );
     }
 

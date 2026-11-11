@@ -21,6 +21,175 @@ use super::execute_support::*;
 /// 解释模型为什么突然“忘了”此前的上下文。
 const CONTEXT_SHRINK_ALERT_TOKENS: i64 = 1024;
 
+/// 已持久化的 assistant `tool_calls` 必须在同一轮内全部落盘对应的结果。
+/// 模型协议要求调用与结果成对出现：取消、批量执行失败、预算/终止截断都可能
+/// 留下“有调用无结果”的历史，下一轮只能补 `missing tool result` 占位，模型
+/// 会误判命令副作用并重跑。这里记录尚未落盘的调用，收尾时补写明确结论。
+struct UnsettledToolCalls {
+    orchestrator: Orchestrator,
+    user_id: String,
+    session_id: String,
+    round_info: RoundInfo,
+    native_tool_api: bool,
+    pending: parking_lot::Mutex<Vec<(String, String)>>,
+    armed: bool,
+}
+
+impl UnsettledToolCalls {
+    fn from_persisted(
+        orchestrator: Orchestrator,
+        user_id: String,
+        session_id: String,
+        round_info: RoundInfo,
+        native_tool_api: bool,
+        persisted_tool_calls: Option<&Value>,
+    ) -> Self {
+        let mut pending = Vec::new();
+        for item in persisted_tool_calls
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(id) = item
+                .get("id")
+                .or_else(|| item.get("tool_call_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            let Some(name) = item
+                .get("function")
+                .and_then(Value::as_object)
+                .and_then(|function| function.get("name"))
+                .and_then(Value::as_str)
+                .or_else(|| item.get("name").and_then(Value::as_str))
+            else {
+                continue;
+            };
+            pending.push((id.to_string(), name.to_string()));
+        }
+        Self {
+            orchestrator,
+            user_id,
+            session_id,
+            round_info,
+            native_tool_api,
+            pending: parking_lot::Mutex::new(pending),
+            armed: true,
+        }
+    }
+
+    fn complete(&mut self, id: Option<&str>) {
+        let Some(id) = id.map(str::trim).filter(|value| !value.is_empty()) else {
+            return;
+        };
+        self.pending
+            .lock()
+            .retain(|(pending_id, _)| pending_id != id);
+    }
+
+    /// 为剩余调用补写失败结论，返回可直接推入消息上下文的模型消息。
+    async fn settle(&mut self, reason: &str) -> Vec<Value> {
+        self.armed = false;
+        let pending = std::mem::take(&mut *self.pending.lock());
+        let mut messages = Vec::with_capacity(pending.len());
+        for (id, name) in pending {
+            let observation = json!({
+                "tool": name,
+                "ok": false,
+                "error": reason,
+                "data": {},
+            })
+            .to_string();
+            if let Err(error) = self
+                .orchestrator
+                .try_append_chat(
+                    &self.user_id,
+                    &self.session_id,
+                    "tool",
+                    Some(&json!(observation)),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(id.as_str()),
+                    None,
+                    self.round_info,
+                )
+                .await
+            {
+                warn!(
+                    session_id = %self.session_id,
+                    tool_call_id = %id,
+                    "failed to persist settled tool result: {error}"
+                );
+            }
+            messages.push(if self.native_tool_api {
+                json!({
+                    "role": "tool",
+                    "tool_call_id": id,
+                    "content": observation,
+                })
+            } else {
+                json!({
+                    "role": "user",
+                    "content": format!("{OBSERVATION_PREFIX}{observation}"),
+                })
+            });
+        }
+        messages
+    }
+}
+
+impl Drop for UnsettledToolCalls {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let pending = std::mem::take(&mut *self.pending.lock());
+        if pending.is_empty() {
+            return;
+        }
+        let Some(handle) = tokio::runtime::Handle::try_current().ok() else {
+            return;
+        };
+        let orchestrator = self.orchestrator.clone();
+        let user_id = self.user_id.clone();
+        let session_id = self.session_id.clone();
+        let round_info = self.round_info;
+        // 收尾路径可能因 `?` 提前返回；最后一道保险把剩余调用落盘，避免
+        // 历史里留下永远无法配对的 tool_call。
+        handle.spawn(async move {
+            for (id, name) in pending {
+                let observation = json!({
+                    "tool": name,
+                    "ok": false,
+                    "error": "tool execution ended before a result was recorded",
+                    "data": {},
+                })
+                .to_string();
+                let _ = orchestrator
+                    .try_append_chat(
+                        &user_id,
+                        &session_id,
+                        "tool",
+                        Some(&json!(observation)),
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(id.as_str()),
+                        None,
+                        round_info,
+                    )
+                    .await;
+            }
+        });
+    }
+}
+
 struct ObservationTokenBudgets {
     per_result: Vec<i64>,
     total_tokens: i64,
@@ -1371,7 +1540,21 @@ impl Orchestrator {
                     }
                 }
 
-                self.ensure_not_cancelled(&session_id)?;
+                let mut unsettled_tool_calls = UnsettledToolCalls::from_persisted(
+                    self.clone(),
+                    user_id.clone(),
+                    session_id.clone(),
+                    round_info,
+                    uses_native_tool_api(tool_call_mode, &llm_config),
+                    assistant_history.persisted_tool_calls.as_ref(),
+                );
+
+                if let Err(error) = self.ensure_not_cancelled(&session_id) {
+                    unsettled_tool_calls
+                        .settle("tool execution was cancelled before it started; nothing was executed")
+                        .await;
+                    return Err(error);
+                }
 
                 for planned in &exec_calls {
                     let args = &planned.call.arguments;
@@ -1506,7 +1689,18 @@ impl Orchestrator {
                         ))
                             .await;
                         tool_event_forwarder.flush().await;
-                        outcomes?
+                        match outcomes {
+                            Ok(outcomes) => outcomes,
+                            Err(error) => {
+                                unsettled_tool_calls
+                                    .settle(
+                                        "tool execution was interrupted before results were recorded; \
+                                         verify side effects before retrying",
+                                    )
+                                    .await;
+                                return Err(error);
+                            }
+                        }
                     };
                     outcomes.extend(cached_recall_outcomes);
                     let observation_budgets = resolve_observation_token_budgets(
@@ -1727,7 +1921,7 @@ impl Orchestrator {
                             })
                         };
                         messages.push(observation_model_message.clone());
-                        self.try_append_chat(
+                        if let Err(error) = self.try_append_chat(
                             &user_id,
                             &session_id,
                             "tool",
@@ -1739,7 +1933,15 @@ impl Orchestrator {
                             history_tool_call_id.as_deref(),
                             None,
                             round_info,
-                        ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
+                        ).await {
+                            unsettled_tool_calls
+                                .settle(
+                                    "the tool result could not be persisted; verify side effects before retrying",
+                                )
+                                .await;
+                            return Err(OrchestratorError::internal(error.to_string()));
+                        }
+                        unsettled_tool_calls.complete(event_tool_call_id.as_deref());
                         if let Some(followup_message) = read_image_followup {
                             let mut followup_message = followup_message;
                             self.mark_internal_model_context_message(
@@ -2222,7 +2424,15 @@ impl Orchestrator {
                             }
                         }
 
-                        self.ensure_not_cancelled(&session_id)?;
+                        if let Err(error) = self.ensure_not_cancelled(&session_id) {
+                            unsettled_tool_calls
+                                .settle(
+                                    "tool execution was cancelled before all results were recorded; \
+                                     verify side effects before retrying",
+                                )
+                                .await;
+                            return Err(error);
+                        }
                         if !answer.is_empty() {
                             break;
                         }
@@ -2232,6 +2442,13 @@ impl Orchestrator {
                         }
                     }
                 }
+
+                // 预算/终止截断的调用不会进入结果循环；补齐结果后再让模型
+                // 继续，避免下一轮请求出现 tool_call 无配对的占位。
+                let settled_messages = unsettled_tool_calls
+                    .settle("tool call was skipped without execution; no side effects were applied")
+                    .await;
+                messages.extend(settled_messages);
 
                 if let Some(model_notice) = failure_reroute_notice.take() {
                     if !should_finish && answer.is_empty() {

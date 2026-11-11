@@ -67,9 +67,14 @@ component ProcessEntryCard inherits Rectangle {
                         x: 3.5px; y: 7px; status: root.entry.status-kind;
                     }
                 }
-                if root.entry.tool-icon != "" : Image {
+                // kind 2 is a reasoning entry (EntryKind.reason lives in
+                // timeline.slint, which imports this file): it carries no tool
+                // key, so the shared brain glyph stands in for the tool icon.
+                if root.entry.kind == 2 || root.entry.tool-icon != "" : Image {
                     y: 6.5px; width: 13px; height: 13px;
-                    source: ToolIcons.image(root.entry.tool-icon);
+                    source: root.entry.kind == 2
+                        ? @image-url("../assets/icons/brain.svg")
+                        : ToolIcons.image(root.entry.tool-icon);
                     colorize: Theme.muted;
                 }
                 Text {
@@ -142,17 +147,20 @@ component ProcessEntryCard inherits Rectangle {
                     color: Theme.timeline-entry-soft; font-size: Theme.font-sm;
                     overflow: elide; vertical-alignment: center;
                 }
-                if root.entry.tokens != "" : Text {
-                    width: self.preferred-width; height: parent.height;
+                // Right-side metrics share fixed columns so every row starts
+                // its token count and duration at the same x; an empty side
+                // still keeps its column instead of shifting the other one.
+                if root.entry.tokens != "" || root.entry.duration != "" : Text {
+                    width: 44px * Theme.font-scale; height: parent.height;
                     text: root.entry.tokens; color: Theme.muted;
                     font-size: Theme.font-xs; font-family: Theme.font-mono;
-                    vertical-alignment: center;
+                    horizontal-alignment: left; vertical-alignment: center;
                 }
-                if root.entry.duration != "" : Text {
-                    width: self.preferred-width; height: parent.height;
+                if root.entry.tokens != "" || root.entry.duration != "" : Text {
+                    width: 40px * Theme.font-scale; height: parent.height;
                     text: root.entry.duration; color: Theme.muted;
                     font-size: Theme.font-xs; font-family: Theme.font-mono;
-                    vertical-alignment: center;
+                    horizontal-alignment: left; vertical-alignment: center;
                 }
             }
 

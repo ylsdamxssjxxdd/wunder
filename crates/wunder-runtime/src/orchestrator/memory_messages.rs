@@ -57,7 +57,7 @@ impl Orchestrator {
         let attachment_default_name = i18n::t("attachment.default_name");
         let attachment_invalid_image_notice = i18n::t("attachment.invalid_image_notice");
         let mut attachment_parts: Vec<String> = Vec::new();
-        let mut image_parts: Vec<Value> = Vec::new();
+        let mut multimodal_parts: Vec<Value> = Vec::new();
         for attachment in attachments {
             let content = attachment.content.as_deref().unwrap_or("");
             let trimmed = content.trim();
@@ -84,7 +84,20 @@ impl Orchestrator {
                     )
                     .await
                 {
-                    image_parts.push(json!({
+                    // 持久化时像素会被替换成占位文本；先写入路径提示，读回
+                    // 历史时才能按路径重新内联，而不是只剩一句“图片已省略”。
+                    if let Some(public_path) = attachment
+                        .public_path
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        multimodal_parts.push(json!({
+                            "type": "text",
+                            "text": format!("[image_path:{public_path}]")
+                        }));
+                    }
+                    multimodal_parts.push(json!({
                         "type": "image_url",
                         "image_url": { "url": image_url }
                     }));
@@ -112,14 +125,14 @@ impl Orchestrator {
             }
             text_content.push_str(question);
         }
-        if !image_parts.is_empty() {
+        if !multimodal_parts.is_empty() {
             let text_payload = if text_content.trim().is_empty() {
                 i18n::t("attachment.image_prompt")
             } else {
                 text_content
             };
             let mut parts = vec![json!({ "type": "text", "text": text_payload })];
-            parts.extend(image_parts);
+            parts.extend(multimodal_parts);
             return json!({ "role": "user", "content": parts });
         }
         json!({ "role": "user", "content": text_content })

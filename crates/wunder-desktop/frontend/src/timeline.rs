@@ -206,8 +206,6 @@ fn blank(kind: i32, id: String) -> TimelineRow {
         tool_name: slint::SharedString::default(),
         tool_icon: slint::SharedString::default(),
         target: slint::SharedString::default(),
-        tool_metrics: slint::SharedString::default(),
-        tool_metrics_visible: false,
         tokens: Default::default(),
         duration: Default::default(),
         read_lines: Default::default(),
@@ -1278,8 +1276,6 @@ impl Timeline {
             let group = tool.group;
             let summary = crate::timeline_text::tool_summary(entry);
             let row_summary = crate::timeline_text::tool_row_summary(entry, &target);
-            let metrics = crate::timeline_text::tool_metrics(entry);
-            let metrics_visible = !metrics.is_empty();
             let copy = crate::timeline_text::copy_text(&entry.sections, entry.detail.as_str());
             // The call frame of a write has no diff yet; the result frame
             // brings the cards. Read them from the current entry, never from a
@@ -1293,8 +1289,6 @@ impl Timeline {
                 row.tool_icon = icon.as_str().into();
                 row.target = target.as_str().into();
                 row.summary = row_summary.as_str().into();
-                row.tool_metrics = metrics.as_str().into();
-                row.tool_metrics_visible = metrics_visible;
                 row.detail = copy.clone();
                 row.sections = sections;
                 row.tokens = entry.tokens.as_str().into();
@@ -1327,8 +1321,6 @@ impl Timeline {
         let icon = wunder_desktop::tool_icons::workflow_icon(&entry.title).to_string();
         let summary = crate::timeline_text::tool_summary(entry);
         let row_summary = crate::timeline_text::tool_row_summary(entry, &target);
-        let metrics = crate::timeline_text::tool_metrics(entry);
-        let metrics_visible = !metrics.is_empty();
         let copy = crate::timeline_text::copy_text(&entry.sections, entry.detail.as_str());
         let cards = crate::timeline_text::patch_cards(&entry.patch_files);
         let status = status_kind(&entry.state);
@@ -1339,8 +1331,6 @@ impl Timeline {
             row.tool_icon = icon.as_str().into();
             row.target = target.as_str().into();
             row.summary = row_summary.as_str().into();
-            row.tool_metrics = metrics.as_str().into();
-            row.tool_metrics_visible = metrics_visible;
             row.detail = copy;
             row.sections = sections;
             row.tokens = entry.tokens.as_str().into();

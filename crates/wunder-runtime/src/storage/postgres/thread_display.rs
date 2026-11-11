@@ -62,6 +62,8 @@ pub(super) fn initialize(conn: &mut PgTx<'_>) -> Result<()> {
     );
     CREATE INDEX IF NOT EXISTS service_thread_v2_items_root ON service_thread_items_v2(thread_id,root_turn_id,ordinal);
     CREATE INDEX IF NOT EXISTS service_thread_v2_items_visible ON service_thread_items_v2(thread_id,ordinal) WHERE visible;
+    CREATE INDEX IF NOT EXISTS service_thread_v2_items_assistant ON service_thread_items_v2(thread_id,ordinal DESC)
+      WHERE visible AND (preview_json::jsonb->>'kind'='assistant_message');
     CREATE TABLE IF NOT EXISTS service_thread_chat_heads_v2 (
         thread_id TEXT NOT NULL REFERENCES service_threads(thread_id) ON DELETE CASCADE,
         root_turn_id TEXT NOT NULL, summary_json TEXT NOT NULL,

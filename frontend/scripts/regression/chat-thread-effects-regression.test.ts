@@ -126,8 +126,8 @@ test('row-shaped atomic snapshot restores compact input and complete tool invoca
     assert.deepEqual(JSON.parse(String(runs[0].callItem?.toolCallRawDetail)), { tool: 'example_tool', arguments: { text: 'sample input' } });
     const metadata = resolveCollapsedWorkflowEntryMetadata(runs[0]);
     assert.equal(metadata.durationLabel, '125ms');
-    assert.equal(metadata.contextTokensLabel, '42 token');
-    assert.equal(metadata.consumedTokensLabel, '57 token');
+    assert.equal(metadata.contextTokensLabel, '42');
+    assert.equal(metadata.consumedTokensLabel, '57');
   } finally { cleanup(); }
 });
 

@@ -1835,6 +1835,49 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
         }
         Ok(output)
     }
+    fn thread_latest_speed_totals(
+        &self,
+        session_ids: &[String],
+    ) -> Result<HashMap<String, wunder_core::storage_records::ThreadSpeedTotals>> {
+        let mut sessions = session_ids
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .take(5000)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        sessions.sort_unstable();
+        sessions.dedup();
+        if sessions.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let conn = self.connection(None)?;
+        let mut output = HashMap::new();
+        for chunk in sessions.chunks(200) {
+            let values = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                "SELECT d.thread_id,(
+                    SELECT i.preview_json FROM thread_items i
+                    WHERE i.rollout_id=d.rollout_id AND i.item_type='assistant_message' AND i.visible=1
+                    ORDER BY i.rollout_ordinal DESC LIMIT 1)
+                 FROM state.canonical_threads d WHERE d.thread_id IN ({values})"
+            );
+            let mut statement = conn.prepare(&sql)?;
+            let rows = statement.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })?;
+            for row in rows {
+                let (session, preview) = row?;
+                if let Some(totals) = preview
+                    .as_deref()
+                    .and_then(super::thread_speed::speed_totals_from_assistant_preview)
+                {
+                    output.insert(session, totals);
+                }
+            }
+        }
+        Ok(output)
+    }
     /// Turn tails for a whole page of threads in a bounded number of reads.
     ///
     /// The per-thread version opened a queue connection for every ownership

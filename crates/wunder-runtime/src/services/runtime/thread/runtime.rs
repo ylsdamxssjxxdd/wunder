@@ -1085,7 +1085,10 @@ impl ThreadRuntime {
             finished_at: None,
             last_error: None,
         };
-        let wait_reason = self.queue_wait_reason(&record.session_id).await.to_string();
+        let wait_reason = self
+            .queue_wait_reason(&record.user_id, &record.session_id)
+            .await
+            .to_string();
         record.request_payload["__queue_wait"] = json!({
             "queue_id":record.task_id,"reason":wait_reason,"priority":0
         });
@@ -1148,7 +1151,11 @@ impl ThreadRuntime {
             "wait_ahead": queue_stats.wait_ahead,
             "queue_change_seq": queue_change_seq,
         });
-        if !self.session_has_active_runtime_slot(&record.session_id) {
+        // A parked question behind this thread's own execution is the input
+        // queue, not a queued thread. Only a real slot wait owns the monitor's
+        // queued state; otherwise the composer strip would show the question
+        // while the sidebar reports the running thread as queued.
+        if wait_reason != "input" {
             self.monitor.mark_queued(&record.session_id, None);
             self.monitor
                 .record_event(&record.session_id, "queue_enter", &queue_monitor_payload);
@@ -1183,8 +1190,8 @@ impl ThreadRuntime {
         .unwrap_or(0)
     }
 
-    async fn queue_wait_reason(&self, session: &str) -> &'static str {
-        if self.session_has_active_runtime_slot(session) {
+    async fn queue_wait_reason(&self, user_id: &str, session: &str) -> &'static str {
+        if self.session_has_live_execution(user_id, session).await {
             "input"
         } else if self.active_runtime_session_count()
             >= self
@@ -1201,6 +1208,14 @@ impl ThreadRuntime {
         }
     }
 
+    /// Whether this session is still executing its own turn. The in-process
+    /// lease disappears when the transport stream detaches, while the detached
+    /// execution keeps its durable session lock. New input still waits behind
+    /// that execution, so the live lock is the authority, not the lease.
+    async fn session_has_live_execution(&self, user_id: &str, session: &str) -> bool {
+        self.session_has_active_runtime_slot(session) || self.holds_session_lock(user_id, session).await
+    }
+
     async fn publish_queue_wait(&self, task: &AgentTaskRecord) -> Result<()> {
         let Some(turn) = task
             .request_payload
@@ -1209,7 +1224,7 @@ impl ThreadRuntime {
         else {
             return Ok(());
         };
-        let reason = self.queue_wait_reason(&task.session_id).await;
+        let reason = self.queue_wait_reason(&task.user_id, &task.session_id).await;
         self.orchestrator.committer.update_turn(&task.user_id, &task.session_id, turn,
             "queued", "", &json!({"queued_input": {
                 "queue_id": task.task_id, "reason": reason,
@@ -1326,7 +1341,7 @@ impl ThreadRuntime {
                 "queue_total": stats.queue_total,
                 "active_ahead": stats.active_ahead,
             "wait_ahead": stats.wait_ahead,
-            "reason": self.queue_wait_reason(&task.session_id).await,
+            "reason": self.queue_wait_reason(&task.user_id, &task.session_id).await,
             }),
         )
         .await;
@@ -2430,6 +2445,87 @@ fn ensure_session_record_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A detached execution (for example after the browser closes the send
+    /// stream) drops its in-process lease but keeps the session lock. The next
+    /// question is still behind that execution: it owns the composer input
+    /// queue, and the monitor must keep reporting the thread as running.
+    #[tokio::test]
+    async fn detached_execution_keeps_parked_input_in_the_composer_queue() {
+        use crate::state::{AppState, AppStateInitOptions};
+        use crate::storage::StorageBackend;
+        let root = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.storage.backend = "sqlite".into();
+        config.storage.data_root = root.path().join("data").to_string_lossy().into_owned();
+        config.workspace.root = root.path().join("workspace").to_string_lossy().into_owned();
+        let store = ConfigStore::new(root.path().join("config.yaml"));
+        store
+            .update(|current| *current = config.clone())
+            .await
+            .unwrap();
+        let state = AppState::new_with_options(
+            store,
+            config,
+            AppStateInitOptions::cli_default().with_start_thread_runtime(false),
+        )
+        .unwrap();
+        let user = state
+            .user_store
+            .create_user(
+                "fixture-user",
+                None,
+                "fixture-password",
+                None,
+                None,
+                vec!["user".into()],
+                "active",
+                false,
+            )
+            .unwrap();
+        let session = "fixture-thread";
+        state
+            .monitor
+            .register(session, &user.user_id, "", "running question", false);
+        let _lock = state
+            .storage
+            .try_acquire_session_lock(session, &user.user_id, "agent-a", 120.0, 8)
+            .expect("acquire detached execution lock");
+        let request = WunderRequest {
+            user_id: user.user_id.clone(),
+            question: "next question".into(),
+            client_message_id: None,
+            tool_names: Vec::new(),
+            skip_tool_calls: false,
+            stream: true,
+            session_id: Some(session.into()),
+            agent_id: None,
+            workspace_container_id: None,
+            workspace_id: None,
+            model_name: None,
+            language: None,
+            config_overrides: None,
+            agent_prompt: None,
+            preview_skill: false,
+            attachments: None,
+            allow_queue: true,
+            is_admin: false,
+            enforce_runtime_queue: false,
+            approval_tx: None,
+        };
+        let outcome = state
+            .kernel
+            .thread_runtime
+            .submit_user_request(request)
+            .await
+            .unwrap();
+        let ThreadSubmitOutcome::Queued(info) = outcome else {
+            panic!("a locked session must park the next question");
+        };
+        assert_eq!(info.wait_reason, "input");
+        let record = state.monitor.get_record(session).expect("monitor record");
+        assert_eq!(record["status"], json!("running"));
+    }
 
     /// Regression for desktop goal stalling: the goal is created while a
     /// human turn owns the session fence (the model calls the `goal` tool

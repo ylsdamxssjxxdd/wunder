@@ -656,6 +656,18 @@ impl Drop for SessionCancelGuard {
     }
 }
 
+/// 取消 watcher 只在前台等待期间需要；等待结束（完成或转后台）就 abort，
+/// 否则每个命令都会留下一个永远挂在 `cancelled()` 上的长任务。
+struct CancelWatcherGuard(Option<tokio::task::JoinHandle<()>>);
+
+impl Drop for CancelWatcherGuard {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.abort();
+        }
+    }
+}
+
 pub(crate) fn compact_command_result_for_model(item: &Value) -> Value {
     let output_meta = item.get("output_meta").and_then(Value::as_object);
     let mut compacted = json!({
@@ -1713,9 +1725,10 @@ async fn observe_sandbox_command(
     tracker: CommandSessionTracker,
     broker: Arc<super::command_sessions::CommandSessionBroker>,
     cancel: tokio_util::sync::CancellationToken,
+    start_seq: u64,
 ) {
     let id = tracker.command_session_id().to_string();
-    let mut after_seq = 0;
+    let mut after_seq = start_seq;
     let mut failures = 0;
     loop {
         let result = tokio::select! {
@@ -1795,12 +1808,15 @@ fn emit_sandbox_output(tracker: &CommandSessionTracker, data: &Value, after_seq:
 
 /// Block until a sandbox background command exits, using the session
 /// poll-with-wait loop (Notify-driven on the sandbox side) instead of sleeps.
+///
+/// 到点仍未退出时**不杀进程**：返回 `running` 数据与已消费的输出序号，由
+/// 调用方转入后台会话继续轮询。渲染这类长命令的超时不应等于失败重跑。
 async fn await_sandbox_command_exit(
     context: &ToolContext<'_>,
     command_session_id: &str,
     timeout_s: f64,
     tracker: Option<&CommandSessionTracker>,
-) -> Option<Value> {
+) -> Option<(Value, u64)> {
     let deadline = (timeout_s > 0.0).then(|| {
         std::time::Instant::now()
             + Duration::from_secs_f64(timeout_s + SANDBOX_BLOCKING_WAIT_MARGIN_S)
@@ -1848,42 +1864,6 @@ async fn await_sandbox_command_exit(
         if running && !deadline_exceeded {
             continue;
         }
-        if running {
-            let _ = crate::sandbox::cancel_command_session(
-                context.config,
-                context.user_id,
-                context.session_id,
-                command_session_id,
-            )
-            .await;
-            if let Some(final_data) = crate::sandbox::control_command_session(
-                context.config,
-                context.user_id,
-                context.session_id,
-                command_session_id,
-                "",
-                crate::sandbox::CommandSessionPollOptions {
-                    after_seq,
-                    yield_time_ms: 1000,
-                    wait_for_exit: true,
-                    ..Default::default()
-                },
-                false,
-            )
-            .await
-            .filter(|value| value.get("ok").and_then(Value::as_bool) == Some(true))
-            .and_then(|value| value.get("data").cloned())
-            {
-                collect_sandbox_output(&final_data, after_seq, tracker, &mut stdout, &mut stderr);
-                dropped |= final_data
-                    .get("dropped")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                data = final_data;
-            }
-            data["status"] = json!("exited");
-            data["timed_out"] = json!(true);
-        }
         let stdout = stdout.finish();
         let stderr = stderr.finish();
         if let Value::Object(ref mut map) = data {
@@ -1901,6 +1881,16 @@ async fn await_sandbox_command_exit(
                 json!(dropped || stdout.meta.truncated || stderr.meta.truncated),
             );
             map.insert("dropped".into(), json!(dropped));
+            if running {
+                map.insert("status".into(), json!("running"));
+                map.insert("reason".into(), json!("timeout_escalated"));
+                map.insert("timeout_s".into(), json!(timeout_s));
+                map.insert("poll_after_seq".into(), json!(after_seq));
+            }
+        }
+        if running {
+            // 会话仍在后台运行：不要发退出事件，后续 observer 接着推送增量。
+            return Some((data, after_seq));
         }
         if let Some(tracker) = tracker {
             tracker.emit_exit(
@@ -1915,7 +1905,7 @@ async fn await_sandbox_command_exit(
                     .map(str::to_string),
             );
         }
-        return Some(data);
+        return Some((data, after_seq));
     }
 }
 
@@ -2160,6 +2150,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                     .get("status")
                     .and_then(Value::as_str)
                     .is_some_and(|status| status.eq_ignore_ascii_case("exited"));
+                let mut escalated_after_seq: Option<u64> = None;
                 if completed {
                     if let Some(tracker) = tracker.as_ref() {
                         if let Some(stderr) = data.get("stderr").and_then(Value::as_str) {
@@ -2196,6 +2187,30 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                             false,
                         ));
                     };
+                    // 阻塞等待期间也要能被「终止」：把会话级取消令牌挂到
+                    // broker，用户停止/线程取消时由 watcher 取消远端会话，
+                    // 不能等到工具超时才发现命令还在跑。
+                    let (_sandbox_cancel_guard, sandbox_cancel) = context
+                        .command_sessions
+                        .as_ref()
+                        .map(|broker| SessionCancelGuard::register(broker, command_session_id))
+                        .unzip();
+                    let _cancel_watcher = CancelWatcherGuard(sandbox_cancel.map(|cancel| {
+                        let cancel_config = context.config.clone();
+                        let cancel_user = context.user_id.to_string();
+                        let cancel_session = context.session_id.to_string();
+                        let cancel_id = command_session_id.to_string();
+                        long_task::spawn("tools.sandbox_command_cancel", async move {
+                            cancel.cancelled().await;
+                            let _ = crate::sandbox::cancel_command_session(
+                                &cancel_config,
+                                &cancel_user,
+                                &cancel_session,
+                                &cancel_id,
+                            )
+                            .await;
+                        })
+                    }));
                     match await_sandbox_command_exit(
                         context,
                         command_session_id,
@@ -2204,9 +2219,14 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                     )
                     .await
                     {
-                        Some(final_data) => {
+                        Some((final_data, resume_after_seq)) => {
+                            let still_running =
+                                final_data.get("status").and_then(Value::as_str) == Some("running");
                             data = final_data;
-                            completed = true;
+                            completed = !still_running;
+                            if still_running {
+                                escalated_after_seq = Some(resume_after_seq);
+                            }
                         }
                         None => {
                             return Ok(build_failed_tool_result(
@@ -2263,17 +2283,39 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                             tracker,
                             Arc::clone(broker),
                             handle.cancellation_token(),
+                            escalated_after_seq.unwrap_or(0),
                         ),
                     );
                 }
-                let guidance = i18n::t("tool.exec.background_next_step");
+                let (summary, guidance) = if let Some(seq) = escalated_after_seq {
+                    let guidance = format!(
+                        "前台等待已到 timeout_s，命令没有终止，已转入后台命令会话继续运行（command_session_id={}）。\
+                         用命令会话工具轮询到退出后再检查产物；轮询时传 after_seq={seq} 只取新输出。不要重跑同一条命令。",
+                        data.get("command_session_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                    );
+                    (
+                        "Command exceeded the foreground timeout and is still running in the background."
+                            .to_string(),
+                        guidance,
+                    )
+                } else {
+                    (
+                        format!(
+                            "Sandbox command started in the background. {}",
+                            i18n::t("tool.exec.background_next_step")
+                        ),
+                        i18n::t("tool.exec.background_next_step"),
+                    )
+                };
                 if let Value::Object(ref mut map) = data {
-                    map.insert("next_step".to_string(), Value::String(guidance.clone()));
+                    map.insert("next_step".to_string(), Value::String(guidance));
                 }
                 return Ok(build_model_tool_success(
                     "execute_command",
                     "running",
-                    format!("Sandbox command started in the background. {guidance}"),
+                    summary,
                     data,
                 ));
             }
