@@ -142,8 +142,8 @@ pub use update::{
     TARGET_DESKTOP, TARGET_SUPPLEMENT, UPDATE_GITHUB_REPO,
 };
 pub use workspace::{
-    NativeWorkspace, WorkspaceDeleteSummary, WorkspaceEdit, WorkspacePathReport, WORKSPACE_COLORS,
-    WORKSPACE_ICONS,
+    random_workspace_visual, NativeWorkspace, WorkspaceDeleteSummary, WorkspaceEdit,
+    WorkspacePathReport, WORKSPACE_COLORS, WORKSPACE_ICONS,
 };
 
 #[derive(Debug, Clone)]

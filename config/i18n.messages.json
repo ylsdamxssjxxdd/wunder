@@ -1291,6 +1291,10 @@
     "en-US": "crop/scale/stats are only supported for still images; extract video or GIF frames first (frame_rate or ffmpeg).",
     "zh-CN": "crop/scale/stats 仅支持静态图片；视频或 GIF 请先抽帧（frame_rate 或 ffmpeg）。"
   },
+  "tool.read_image.compare_exclusive": {
+    "en-US": "compare_with returns a side-by-side image and cannot be combined with crop/scale/stats; call them separately.",
+    "zh-CN": "compare_with 返回并排对比图，不能与 crop/scale/stats 同时使用，请分别调用。"
+  },
   "tool.read_image.view_too_large": {
     "en-US": "The derived image is still too large after re-encoding; use a smaller crop or scale.",
     "zh-CN": "派生图重编码后仍过大，请减小 crop 区域或 scale。"
@@ -2036,32 +2040,24 @@
     "zh-CN": "在一个文本文件里只做一次精确替换。适合 read_file 后的小范围明确替换：只提供 path、old_text、new_text。工具会容忍误带 read_file 行号、换行符差异，并把唯一的已完成替换视为成功。old_text 匹配多处时，请扩大 old_text 上下文，或明确设置 expected_count。多步骤修改、条件替换、正则替换、标记间替换或任何难以写成一次精确替换的情况，请改用 execute_command 写一个小 Python 脚本。"
   },
   "tool.spec.command_session.description": {
-    "en-US": "Wait for a background command or write its stdin. The runtime continuously streams output to the UI without model polling. Poll defaults to wait_for=exit and yield_time_ms=60000, returning once on exit or at the wait deadline. Use wait_for=output only when intermediate output is needed. Output is incremental; pass the last returned seq as after_seq, or omit it to automatically resume. Confirm exit before reporting completion; never sleep to wait.",
-    "zh-CN": "等待后台命令或写入其 stdin。运行时持续向界面推送输出，无需模型频繁轮询。poll 默认 wait_for=exit、yield_time_ms=60000，等到退出或等待窗口结束再返回；需要中间输出时才用 wait_for=output。仅返回新增输出；after_seq 传上次返回的 seq，省略则自动续读。报告完成前必须确认退出，不要用 sleep 空等。"
-  },
-  "tool.spec.command_session.args.action": {
-    "en-US": "Action: poll reads status and output; write_stdin sends input and then reads status and output.",
-    "zh-CN": "操作：poll 读取状态和输出；write_stdin 写入输入后再读取状态和输出。"
+    "en-US": "Read a background command session or feed its stdin. Empty input returns only new output and comes back fast (default yield_time_ms=250). Non-empty input is written to stdin first; that call then waits for the command to exit within the same window. Use wait_for=exit to block on a plain read. A session that already exited still returns its final output, so confirm completion from status and exit_code instead of re-running the command.",
+    "zh-CN": "读取后台命令会话或喂 stdin。input 为空只返回新增输出并很快返回（默认 yield_time_ms=250）；input 非空时先写入 stdin，本次调用随后在同一个窗口内等命令退出。纯轮询需要阻塞到退出时传 wait_for=exit。会话已退出时仍返回最后的输出，因此请用 status 与 exit_code 判断完成，不要重跑命令。"
   },
   "tool.spec.command_session.args.id": {
     "en-US": "Background command session ID returned by execute_command.",
     "zh-CN": "execute_command 返回的后台命令会话 ID。"
   },
   "tool.spec.command_session.args.input": {
-    "en-US": "Text to send to stdin; use only with write_stdin.",
-    "zh-CN": "写入 stdin 的文本，仅用于 write_stdin。"
-  },
-  "tool.spec.command_session.args.after_seq": {
-    "en-US": "Last consumed seq; return only newer output. Omit to resume automatically from this command session's previous tool read.",
-    "zh-CN": "已消费的 seq，仅返回其后的新增输出；省略时从该命令会话上次工具读取位置自动续读。"
+    "en-US": "Text to write to stdin. Leave it out (or empty) to only read new output. After a non-empty write the call waits for the command to exit (bounded by yield_time_ms); pass wait_for=output to return as soon as output appears. A session started without an interactive stdin rejects writes and tells you how to proceed.",
+    "zh-CN": "要写入 stdin 的文本；省略或传空字符串表示只读取新增输出。写入非空内容后，本次调用会等命令退出（受 yield_time_ms 限制）；想一有输出就返回则传 wait_for=output。以非交互方式启动的会话会拒绝写入并给出替代做法。"
   },
   "tool.spec.command_session.args.wait_for": {
-    "en-US": "Wait target: exit (default for poll) keeps waiting through output until exit or the deadline; output returns on new output (default for write_stdin). Neither mode affects the live UI stream.",
-    "zh-CN": "等待目标：exit（poll 默认）在有输出时继续等待，直到退出或窗口结束；output 在有新增输出时返回（write_stdin 默认）。两种模式均不影响界面实时输出。"
+    "en-US": "output (default) returns as soon as there is new output; exit keeps waiting through output until the command exits or the wait window ends.",
+    "zh-CN": "output（默认）一有新输出就返回；exit 会忽略中间输出一直等到退出或等待窗口结束。"
   },
   "tool.spec.command_session.args.yield_time_ms": {
-    "en-US": "Wait window in milliseconds, maximum 60000. Defaults to 60000 for wait_for=exit, 500 for wait_for=output or write_stdin. Use 0 to read immediately.",
-    "zh-CN": "等待窗口，单位毫秒，最大 60000。wait_for=exit 默认 60000；wait_for=output 或 write_stdin 默认 500。传 0 立即读取。"
+    "en-US": "Wait window in milliseconds, at most 60000. Defaults to 250, or 60000 when wait_for=exit. Use 0 to read immediately.",
+    "zh-CN": "等待窗口，单位毫秒，最大 60000。默认 250；wait_for=exit 时默认 60000。传 0 立即读取。"
   },
   "tool.command_session.summary": {
     "en-US": "Command status and incremental output.",
@@ -2080,12 +2076,12 @@
     "zh-CN": "当前运行环境不支持命令会话。"
   },
   "tool.exec.background_next_step": {
-    "en-US": "Output is streamed to the UI automatically. To wait for the result, call command_session with {\"command_session_id\":\"<id above>\",\"action\":\"poll\",\"wait_for\":\"exit\"} — it blocks until exit or the 60s window; if still running, call the same wait again. Do not poll for each output line or narrate each poll. Confirm exit before reporting completion; never sleep to wait.",
-    "zh-CN": "输出由运行时自动推送到界面。等待结果请直接调用命令会话工具：command_session {\"command_session_id\":\"<上面的 id>\",\"action\":\"poll\",\"wait_for\":\"exit\"}——会阻塞到退出或 60 秒窗口结束；仍在运行就再调用一次同一等待。不要逐行轮询或逐次播报轮询过程；确认退出后再报告完成，不要用 sleep 空等。"
+    "en-US": "Output is streamed to the UI automatically. To read the result, call the command session tool with {\"command_session_id\":\"<id above>\"} for new output, or add \"wait_for\":\"exit\" to block until the command exits. Do not poll per output line or narrate each poll. Confirm exit before reporting completion; never sleep to wait.",
+    "zh-CN": "输出由运行时自动推送到界面。读取结果请用命令会话工具传 {\"command_session_id\":\"<上面的 id>\"} 取新增输出；要阻塞到退出则加 \"wait_for\":\"exit\"。不要逐行轮询或逐次播报轮询过程；确认退出后再报告完成，不要用 sleep 空等。"
   },
   "tool.command_session.keep_waiting": {
-    "en-US": "The command is still running. Call poll again with the same command_session_id (defaults wait_for=exit, yield_time_ms=60000) until it exits; never idle with sleep.",
-    "zh-CN": "命令仍在运行。继续用同一 command_session_id 调用 poll（默认 wait_for=exit、yield_time_ms=60000）直到退出；不要用 sleep 空等。"
+    "en-US": "The command is still running. Call this tool again with the same command_session_id to read new output, or pass wait_for=exit to block until it exits; never idle with sleep.",
+    "zh-CN": "命令仍在运行。继续用同一 command_session_id 调用本工具读取新增输出，或传 wait_for=exit 阻塞到退出；不要用 sleep 空等。"
   },
   "tool.exec.sleep_not_allowed": {
     "en-US": "Do not idle with a bare sleep command: execute_command blocks by default and returns the result; to wait for a background command, poll it with the command_session tool instead.",
@@ -2808,8 +2804,8 @@
     "zh-CN": "可选，静态图片裁切区域，源图像素坐标 \"x,y,w,h\"。先于 scale 生效；stats 在该区域上计算。"
   },
   "tool.spec.read_image.args.scale": {
-    "en-US": "Optional viewing zoom applied after crop, e.g. 2 doubles, 0.5 halves. Max 16; output sides are capped at 4096px.",
-    "zh-CN": "可选，裁切后的显示缩放倍率，如 2 放大一倍、0.5 缩小一半。最大 16，输出边长上限 4096px。"
+    "en-US": "Optional viewing zoom applied after crop, e.g. 2 doubles, 0.5 halves. Max 16; output sides are capped at 6000px and 10000 32px patches.",
+    "zh-CN": "可选，裁切后的显示缩放倍率，如 2 放大一倍、0.5 缩小一半。最大 16，输出边长上限 6000px。"
   },
   "tool.spec.read_image.args.stats": {
     "en-US": "Optional, default false: also return region numbers (size, mean luma 0-255, estimated corner background RGB, non-background pixel ratio, edge pixel ratio). Numbers persist as text even after the image is dropped from context.",
@@ -2818,6 +2814,10 @@
   "tool.spec.read_image.args.stats_only": {
     "en-US": "Optional, default false: return only the region numbers without inlining an image. Use for numeric sweeps over many frames (e.g. safe-area checks) without spending vision tokens.",
     "zh-CN": "可选，默认 false：只返回区域数值，不内联图片。适合对大量帧做纯数值检查（如安全区巡检），不消耗视觉额度。"
+  },
+  "tool.spec.read_image.args.compare_with": {
+    "en-US": "Optional path of a second still image. Returns one side-by-side image (left = path, right = compare_with) at full model detail, for before/after or A/B comparison. Cannot be combined with crop/scale/stats.",
+    "zh-CN": "可选，第二张静态图片的路径。返回一张并排对比图（左=path，右=compare_with），两半仍保持入模细节级别，适合前后对比或 A/B 对照。不能与 crop/scale/stats 同时使用。"
   },
   "tool.spec.read_image.args.frame_rate": {
     "en-US": "Optional frame extraction rate for video files (FPS).",
@@ -3582,5 +3582,21 @@
   "tool.spec.search.args.files_only": {
     "zh-CN": "可选，等价 mode=paths 的布尔写法。",
     "en-US": "Optional boolean alias of mode=paths."
+  },
+  "tool.command_session.stdin_closed": {
+    "en-US": "This command session has no writable stdin, so the input was not delivered.",
+    "zh-CN": "该命令会话没有可写的 stdin，输入没有送进去。"
+  },
+  "tool.command_session.stdin_closed_hint": {
+    "en-US": "The command was started without an interactive stdin. Deliver input with the command itself (pipe it in: printf '...' | cmd, yes | cmd) and rerun; or keep reading this session's output without writing.",
+    "zh-CN": "这条命令是以非交互方式启动的，没有可写 stdin。请把输入写进命令本身（管道：printf '...' | 命令、yes | 命令）后重新执行，或继续只读这条会话的输出。"
+  },
+  "tool.command_session.stdin_after_exit": {
+    "en-US": "The command had already exited, so the input was not delivered; the output below is its final result.",
+    "zh-CN": "命令已退出，输入没有送进去；下面的输出是它的最终结果。"
+  },
+  "tool.command_session.interrupted": {
+    "en-US": "Interrupt requested: the command is being terminated.",
+    "zh-CN": "已请求中断：命令正在被终止。"
   }
 }

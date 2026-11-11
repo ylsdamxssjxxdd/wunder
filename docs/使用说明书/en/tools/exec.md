@@ -1,7 +1,7 @@
 ---
 title: Execute Command
 summary: Arguments for `execute_command`, the blocking and background execution modes, polling and writing in a command session, output guards and budgets, and failure diagnosis.
-updated_at: 2026-11-09
+updated_at: 2026-11-12
 ---
 
 # Execute Command
@@ -30,9 +30,15 @@ Only a bounded preview of the output is kept. Cancelling the current thread term
 
 A long-lived background command session is managed by the `command_session` tool, which supports switching between foreground and background: a foreground call reads the current status and output directly, while switching to background leaves the command running.
 
-- With no input given, a call is purely a poll that reads back the session's status and the output collected so far.
-- To feed content into the session, write it with `write_stdin`.
-- With `yield_time_ms` (up to 60000), one call can keep waiting until the command exits.
+One call has exactly two intents, decided by `input`:
+
+- **Empty `input`** (or omitted): read back status plus new output only, returning within 250 ms by default — the cheap "take a look" call.
+- **Non-empty `input`**: write it to the session's stdin first; that call then waits for the command to exit within the same wait window (the `printf ... | cmd` semantics). Pass `wait_for=output` to return as soon as output appears. Sessions started without an interactive stdin reject the write, say it was not delivered, and suggest piping the input through the command itself (`printf '...' | cmd`).
+- **Ctrl-C `input`**: treated as an interrupt, i.e. terminate the command; works even when the session has no stdin.
+
+`wait_for` defaults to `output` (return as soon as there is new output). Pass `wait_for=exit` to ignore intermediate output and block until the command exits or the wait window ends; the window is `yield_time_ms` (up to 60000, and 60000 is the default in that mode).
+
+An already-exited session is not an error: its final output and exit code are still returned. Decide completion from `status` and `exit_code` instead of re-running the command.
 
 ## Automatic behavior
 

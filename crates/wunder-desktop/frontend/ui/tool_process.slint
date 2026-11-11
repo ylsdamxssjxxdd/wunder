@@ -105,7 +105,9 @@ component ProcessEntryCard inherits Rectangle {
                     }
                     target-text := Text {
                         x: 7px; width: parent.width - 14px; height: parent.height;
-                        text: root.entry.target; color: Theme.muted; font-size: Theme.font-sm;
+                        // Only the file name: the directory lives in the tooltip.
+                        text: root.entry.target-label != "" ? root.entry.target-label : root.entry.target;
+                        color: Theme.muted; font-size: Theme.font-sm;
                         overflow: elide; vertical-alignment: center;
                     }
                     target-hit := TouchArea {

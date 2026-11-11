@@ -232,7 +232,7 @@ pub fn refresh_threads(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
                     } else {
                         thread.title.into()
                     },
-                    preview: "云端".into(),
+                    workspace: "云端工作区".into(),
                     time: String::new().into(),
                     status: thread.status.into(),
                     active: false,

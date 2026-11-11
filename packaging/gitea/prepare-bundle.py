@@ -258,10 +258,12 @@ def main():
             run("docker", "pull", "--platform", platform, name)
     task_images = [profile["builder_tag"]]
     if not args.skip_build:
-        run("docker", "build", "--platform", platform,
+        # buildx 默认 provenance 会把镜像导成带 attestation 的多平台索引，老 daemon 的
+        # save/load/inspect 都会出问题，两个任务镜像都关掉。
+        run("docker", "build", "--provenance=false", "--platform", platform,
             "-f", str(source / profile["builder_dockerfile"]), "-t", profile["builder_tag"], str(source))
         if profile["installer_dockerfile"]:
-            run("docker", "build", "--platform", platform,
+            run("docker", "build", "--provenance=false", "--platform", platform,
                 "-f", str(source / profile["installer_dockerfile"]), "-t", profile["installer_tag"], str(source))
     for name in task_images:
         if not has_image(name):

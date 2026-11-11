@@ -108,6 +108,16 @@ pub const WORKSPACE_COLORS: &[&str] = &[
     "light-green",
 ];
 
+/// Icon + color for a workspace created without an explicit choice. Creating a
+/// workspace stays a two-field decision (folder + name): the visual pair is
+/// drawn at random from the very tables the edit dialog still offers.
+pub fn random_workspace_visual() -> (String, String) {
+    let seed = *uuid::Uuid::new_v4().as_bytes();
+    let icon = WORKSPACE_ICONS[usize::from(seed[0]) % WORKSPACE_ICONS.len()];
+    let color = WORKSPACE_COLORS[usize::from(seed[1]) % WORKSPACE_COLORS.len()];
+    (icon.to_string(), color.to_string())
+}
+
 #[derive(Clone, Debug)]
 pub struct NativeWorkspace {
     pub workspace_id: String,
@@ -388,6 +398,9 @@ impl NativeDesktop {
         let now = now_ts();
         let record = if creating {
             let root = self.resolve_new_root(&edit.root_path, "")?;
+            // An empty choice means "assign one": create never asks the user to
+            // pick a glyph or a swatch, editing still can.
+            let (auto_icon, auto_color) = random_workspace_visual();
             if storage
                 .find_workspace_by_root(self.user_id(), &root.to_string_lossy())?
                 .is_some()
@@ -399,8 +412,16 @@ impl NativeDesktop {
                 user_id: self.user_id().to_string(),
                 name: name.to_string(),
                 root_path: root.to_string_lossy().into_owned(),
-                icon: normalize_choice(&edit.icon, "folder", WORKSPACE_ICONS),
-                color: normalize_choice(&edit.color, "blue", WORKSPACE_COLORS),
+                icon: if edit.icon.trim().is_empty() {
+                    auto_icon
+                } else {
+                    normalize_choice(&edit.icon, "folder", WORKSPACE_ICONS)
+                },
+                color: if edit.color.trim().is_empty() {
+                    auto_color
+                } else {
+                    normalize_choice(&edit.color, "blue", WORKSPACE_COLORS)
+                },
                 sort_index: storage.next_workspace_sort_index(self.user_id())?,
                 created_at: now,
                 updated_at: now,
@@ -1467,6 +1488,15 @@ mod tests {
             &root,
             &outside.path().canonicalize().unwrap()
         ));
+    }
+
+    #[test]
+    fn random_visual_stays_inside_the_offered_tables() {
+        for _ in 0..64 {
+            let (icon, color) = random_workspace_visual();
+            assert!(WORKSPACE_ICONS.contains(&icon.as_str()));
+            assert!(WORKSPACE_COLORS.contains(&color.as_str()));
+        }
     }
 
     #[test]

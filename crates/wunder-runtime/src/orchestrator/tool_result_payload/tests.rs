@@ -430,12 +430,15 @@ fn compact_projection_command_session_is_incremental_and_bounded() {
         "ok": true,
         "data": {"action":"command_session", "state":"running", "data": {
             "command_session_id":"cmd-1", "status":"running", "seq":4,
-            "stdout":"x".repeat(5000), "cwd":"audit-only", "command":"audit-only"
+            "stdout":"x".repeat(5000), "cwd":"audit-only", "command":"audit-only",
+            "stdin_note":"still running"
         }}
     }));
     let data = result.to_compact_payload("command_session")["data"].clone();
     assert_eq!(data["command_session_id"], "cmd-1");
-    assert!(data["stdout"].as_str().unwrap().chars().count() <= 1800);
+    assert_eq!(data["stdin_note"], "still running");
+    // 5000 字符在单次轮询预算内应当完整保留。
+    assert_eq!(data["stdout"].as_str().unwrap().chars().count(), 5000);
     assert!(data.get("cwd").is_none());
 }
 

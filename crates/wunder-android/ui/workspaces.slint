@@ -268,7 +268,8 @@ export component WorkspacesPage inherits Rectangle {
         }
         root.editor-error = "";
         if root.editor-new {
-            root.create(root.editor-name, root.editor-icon, root.editor-color, root.editor-folder);
+            // 新建只填名称和文件夹；图标和颜色由引擎随机赋予，编辑时可再改。
+            root.create(root.editor-name, "", "", root.editor-folder);
         } else {
             root.update(root.editor-id, root.editor-name, root.editor-icon, root.editor-color,
                 root.editor-folder);
@@ -544,7 +545,9 @@ export component WorkspacesPage inherits Rectangle {
             x: 8px;
             y: parent.height - self.height - 8px - root.inset-bottom;
             width: parent.width - 16px;
-            height: min(parent.height - 16px - root.inset-bottom, 470px);
+            // 新建只填名称和文件夹，弹层按内容收短；编辑带着图标和颜色选择器，用满高度。
+            height: min(parent.height - 16px - root.inset-bottom,
+                root.editor-new ? 330px : 470px);
             border-radius: Theme.radius-lg;
             background: Theme.surface;
             drop-shadow-color: #00000033;
@@ -665,39 +668,44 @@ export component WorkspacesPage inherits Rectangle {
                             wrap: word-wrap;
                         }
 
-                        Text {
-                            height: 18px;
-                            text: "图标";
-                            color: Theme.muted;
-                            font-size: Theme.font-xs;
-                            vertical-alignment: center;
-                        }
-                        GridLayout {
-                            spacing: 6px;
-                            for key[index] in WorkspaceVisual.icon-keys() : WorkspaceIconCell {
-                                row: index >= 8 ? 1 : 0;
-                                col: index >= 8 ? index - 8 : index;
-                                icon-key: key;
-                                selected: root.editor-icon == key;
-                                picked => { root.editor-icon = key; }
+                        // 新建工作区的图标和颜色由引擎随机分配，选择器只在编辑时出现。
+                        if !root.editor-new : VerticalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            Text {
+                                height: 18px;
+                                text: "图标";
+                                color: Theme.muted;
+                                font-size: Theme.font-xs;
+                                vertical-alignment: center;
                             }
-                        }
+                            GridLayout {
+                                spacing: 6px;
+                                for key[index] in WorkspaceVisual.icon-keys() : WorkspaceIconCell {
+                                    row: index >= 8 ? 1 : 0;
+                                    col: index >= 8 ? index - 8 : index;
+                                    icon-key: key;
+                                    selected: root.editor-icon == key;
+                                    picked => { root.editor-icon = key; }
+                                }
+                            }
 
-                        Text {
-                            height: 18px;
-                            text: "颜色";
-                            color: Theme.muted;
-                            font-size: Theme.font-xs;
-                            vertical-alignment: center;
-                        }
-                        GridLayout {
-                            spacing: 10px;
-                            for key[index] in WorkspaceVisual.color-keys() : WorkspaceColorDot {
-                                row: index >= 8 ? 1 : 0;
-                                col: index >= 8 ? index - 8 : index;
-                                color-key: key;
-                                selected: root.editor-color == key;
-                                picked => { root.editor-color = key; }
+                            Text {
+                                height: 18px;
+                                text: "颜色";
+                                color: Theme.muted;
+                                font-size: Theme.font-xs;
+                                vertical-alignment: center;
+                            }
+                            GridLayout {
+                                spacing: 10px;
+                                for key[index] in WorkspaceVisual.color-keys() : WorkspaceColorDot {
+                                    row: index >= 8 ? 1 : 0;
+                                    col: index >= 8 ? index - 8 : index;
+                                    color-key: key;
+                                    selected: root.editor-color == key;
+                                    picked => { root.editor-color = key; }
+                                }
                             }
                         }
                     }

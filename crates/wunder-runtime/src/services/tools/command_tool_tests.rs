@@ -217,6 +217,108 @@ async fn foreground_command_can_be_terminated_from_the_task_panel() {
         .is_empty());
 }
 
+/// 后台会话的 stdin 是真管道：喂进去的内容命令能收到；会话退出后再喂，
+/// 不能变成硬错误把最终输出一起丢掉。
+#[tokio::test]
+#[cfg(feature = "sqlite-storage")]
+async fn background_session_takes_stdin_and_still_returns_final_output_after_exit() {
+    let root = tempfile::tempdir().unwrap();
+    let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+        root.path()
+            .join("state.sqlite3")
+            .to_string_lossy()
+            .into_owned(),
+    ));
+    storage.ensure_initialized().unwrap();
+    let workspace = Arc::new(WorkspaceManager::new(
+        root.path().join("workspace").to_string_lossy().as_ref(),
+        storage.clone(),
+        0,
+        &HashMap::new(),
+    ));
+    let lsp_manager = LspManager::new(workspace.clone());
+    let mut config = Config::default();
+    config.server.mode = "cli".into();
+    config.security.allow_commands = vec!["*".into()];
+    let skills = SkillRegistry::default();
+    let http = reqwest::Client::new();
+    let broker = Arc::new(CommandSessionBroker::new());
+    let context = ToolContext {
+        user_id: "fixture-user",
+        session_id: "fixture-thread",
+        workspace_id: "fixture-user",
+        agent_id: None,
+        user_round: None,
+        model_round: None,
+        is_admin: true,
+        storage,
+        orchestrator: None,
+        monitor: None,
+        workspace: workspace.clone(),
+        lsp_manager,
+        config: &config,
+        skills: &skills,
+        gateway: None,
+        user_world: None,
+        cron_wake_signal: None,
+        user_tool_manager: None,
+        user_tool_bindings: None,
+        user_tool_store: None,
+        request_config_overrides: None,
+        allow_roots: None,
+        read_roots: None,
+        command_sessions: Some(broker.clone()),
+        event_emitter: None,
+        http: &http,
+    };
+    let command = if cfg!(windows) {
+        "powershell -NoProfile -Command \"$line = [Console]::In.ReadLine(); Write-Output ('GOT:' + $line)\""
+    } else {
+        "read -r line; printf 'GOT:%s\\n' \"$line\""
+    };
+    let started = execute_command(
+        &context,
+        &json!({"content": command, "timeout_s": 30, "run_in_background": true, "yield_time_ms": 100}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(started["ok"], true, "{started}");
+    let id = started["data"]["command_session_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("command session id missing: {started}"))
+        .to_string();
+    // 喂一行 stdin：命令读完后退出，这次调用要直接拿到它的输出。
+    let answered = command_session_control(
+        &context,
+        &json!({"command_session_id": id, "input": "hello\n", "yield_time_ms": 5000}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answered["ok"], true, "{answered}");
+    assert_eq!(answered["data"]["status"], "exited", "{answered}");
+    assert!(
+        answered["data"]["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("GOT:hello"),
+        "{answered}"
+    );
+    // 已经退出再喂：不算失败，照样返回最终输出，并说明输入没有送进去。
+    let after_exit = command_session_control(
+        &context,
+        &json!({"command_session_id": id, "input": "again\n", "yield_time_ms": 0}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(after_exit["ok"], true, "{after_exit}");
+    assert_eq!(after_exit["data"]["status"], "exited", "{after_exit}");
+    assert!(
+        after_exit["data"]["stdin_note"].as_str().is_some(),
+        "{after_exit}"
+    );
+    assert_eq!(after_exit["data"]["exit_code"], 0, "{after_exit}");
+}
+
 #[test]
 fn model_sandbox_poll_contains_each_output_once() {
     let result = compact_sandbox_poll_result(json!({
@@ -351,6 +453,7 @@ async fn sandbox_background_output_streams_independently_and_polls_incrementally
         tracker,
         broker.clone(),
         handle.cancellation_token(),
+        0,
     ));
     let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
         .await
@@ -358,13 +461,21 @@ async fn sandbox_background_output_streams_independently_and_polls_incrementally
         .unwrap();
     assert_eq!(first.event_type, "command_session_delta");
     assert!(first.data["delta"].as_str().unwrap().contains("first"));
-    let result = command_session_control(&context, &json!({"command_session_id": id}))
+    // 默认是「读一眼」：先确认能拿到增量，再显式阻塞到退出收齐剩余输出。
+    let quick = command_session_control(&context, &json!({"command_session_id": id}))
         .await
         .unwrap();
+    assert_eq!(quick["ok"], true, "{quick}");
+    let result = command_session_control(
+        &context,
+        &json!({"command_session_id": id, "wait_for": "exit", "yield_time_ms": 10000}),
+    )
+    .await
+    .unwrap();
     assert_eq!(result["ok"], true, "{result}");
     assert_eq!(result["data"]["status"], "exited");
     let stdout = result["data"]["stdout"].as_str().unwrap();
-    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["first", "second"]);
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["second"]);
     let next = command_session_control(
         &context,
         &json!({"command_session_id": id, "yield_time_ms": 0}),
@@ -373,7 +484,7 @@ async fn sandbox_background_output_streams_independently_and_polls_incrementally
     .unwrap();
     assert_eq!(next["data"]["stdout"], "");
     assert!(broker.snapshot(&id).unwrap().stdout_tail.contains("first"));
-    let foreground = await_sandbox_command_exit(&context, &id, 10.0, None)
+    let (foreground, _after_seq) = await_sandbox_command_exit(&context, &id, 10.0, None)
         .await
         .unwrap();
     assert_eq!(

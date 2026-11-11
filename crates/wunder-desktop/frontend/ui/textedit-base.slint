@@ -18,6 +18,9 @@ export component TextEditBase inherits Rectangle {
     out property <bool> has-focus: text-input.has-focus;
     out property <length> visible-width <=> scroll-view.visible-width;
     out property <length> visible-height <=> scroll-view.visible-height;
+    // Height the wrapped text actually needs, independent of the visible box.
+    // Hosts that grow with the content read this; the scroll view still caps it.
+    out property <length> text-preferred-height: text-input.preferred-height;
     in-out property <string> text <=> text-input.text;
     // Caret geometry, in UTF-8 bytes. The composer needs "is the caret glued to
     // one end of the draft" to decide whether ArrowUp/ArrowDown may recall a

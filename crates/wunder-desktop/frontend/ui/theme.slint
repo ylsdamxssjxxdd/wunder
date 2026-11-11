@@ -201,7 +201,15 @@ export global TimelineSpin {
 // avoids recursive models and lets a live tool update only its own child row.
 export struct ProcessEntry {
     kind: int, id: string, text: string, blocks: [MdBlock],
-    summary: string, tool-name: string, tool-icon: string, target: string,
+    summary: string, tool-name: string, tool-icon: string,
+    // The call target the chip acts on (full path, or a query for non-file
+    // tools). Kept whole so opening the resource and the tooltip stay exact.
+    target: string,
+    // What the chip actually prints: the file name of `target`. A full path
+    // reads as noise on the folded row and pushes the summary off a narrow
+    // shell, so the row shows the name only and leaves the directory to the
+    // tooltip.
+    target-label: string,
     detail: string, sections: [WorkflowSection], patch: [PatchCard],
     // Collapsed-row change size of an edit-style call, pre-formatted as plain
     // counts ("12" / "3"). Empty means that side has no change, so a tool row

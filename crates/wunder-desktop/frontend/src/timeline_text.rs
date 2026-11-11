@@ -132,6 +132,27 @@ fn short(value: &str, limit: usize) -> String {
     value.trim().chars().take(limit).collect()
 }
 
+/// The last segment of a path-like value; the whole value when it carries no
+/// separator. Used both for the chip label and for spotting a summary that
+/// names the same file in another form.
+fn file_name(value: &str) -> &str {
+    let trimmed = value.trim().trim_end_matches(['/', '\\']);
+    trimmed
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(trimmed)
+        .trim()
+}
+
+/// The folded row prints only the file name of the call target. A full path
+/// reads as noise beside the tool name and pushes the summary off a narrow
+/// shell, so the chip keeps the directory out of sight while `target` keeps the
+/// whole path for opening the resource and for the tooltip. A target without a
+/// separator (a query, a URL) is left as it is.
+pub fn target_label(target: &str) -> String {
+    file_name(target).chars().take(64).collect()
+}
+
 pub fn is_patch_tool(tool: &str) -> bool {
     matches!(
         tool,
@@ -307,6 +328,7 @@ pub fn process_entry(row: &TimelineRow) -> ProcessEntry {
         },
         tool_icon: row.tool_icon.clone(),
         target: row.target.clone(),
+        target_label: target_label(&row.target).into(),
         detail: if body {
             row.text.clone()
         } else {
@@ -702,6 +724,8 @@ pub fn tool_row_summary(entry: &NativeWorkflowEntry, target: &str) -> String {
 /// Either side may be the bounded one: the chip clips long paths to 64 chars
 /// while the preview keeps the whole path (or the preview is clipped first).
 /// A prefix of the same path is the same resource and must not print twice.
+/// The chip itself prints only the file name, so a summary that resolves to the
+/// same file name in a differently folded form is the same resource as well.
 fn is_same_target(target: &str, summary: &str) -> bool {
     let target = target.trim();
     let summary = summary.trim();
@@ -713,7 +737,11 @@ fn is_same_target(target: &str, summary: &str) -> bool {
     } else {
         (summary, target)
     };
-    long.starts_with(short)
+    if long.starts_with(short) {
+        return true;
+    }
+    let (long_name, short_name) = (file_name(long), file_name(short));
+    !long_name.is_empty() && long_name == short_name
 }
 
 #[cfg(test)]
@@ -757,6 +785,29 @@ mod tests {
         };
         let entry = process_entry(&failed);
         assert!(entry.diff_add.is_empty() && entry.diff_del.is_empty());
+    }
+
+    #[test]
+    fn folded_row_chip_prints_only_the_file_name() {
+        assert_eq!(target_label("/home/fixture/project/src/main.rs"), "main.rs");
+        assert_eq!(target_label("fixture\\project\\main.rs"), "main.rs");
+        assert_eq!(target_label("main.rs"), "main.rs");
+        // A directory target (a list call) keeps its last segment.
+        assert_eq!(target_label("fixture/project/"), "project");
+        assert_eq!(target_label("   "), "");
+        // A target without a separator is not a path and stays as it is.
+        assert_eq!(target_label("fixture query"), "fixture query");
+        let row = TimelineRow {
+            id: "fixture-read".into(),
+            kind: crate::timeline::KIND_TOOL,
+            target: "/home/fixture/project/src/main.rs".into(),
+            ..Default::default()
+        };
+        let entry = process_entry(&row);
+        // The chip prints the name; opening the chip and the tooltip keep the
+        // whole path.
+        assert_eq!(entry.target_label.as_str(), "main.rs");
+        assert_eq!(entry.target.as_str(), "/home/fixture/project/src/main.rs");
     }
 
     #[test]
@@ -856,6 +907,28 @@ mod tests {
         entry.sections.clear();
         entry.preview = "fixture query".into();
         assert_eq!(tool_row_summary(&entry, "other.txt"), "fixture query");
+    }
+
+    #[test]
+    fn row_summary_treats_a_folded_path_as_the_same_file() {
+        // The chip prints only the file name, so a summary that folds the same
+        // path another way must not print the file name a second time.
+        let mut entry = NativeWorkflowEntry {
+            id: "fixture-edit".into(),
+            title: "文本编辑".into(),
+            preview: ".../src/lib.rs".into(),
+            detail: String::new(),
+            state: "completed".into(),
+            tokens: String::new(),
+            duration: String::new(),
+            read_lines: String::new(),
+            sections: Vec::new(),
+            patch_files: Vec::new(),
+        };
+        assert_eq!(tool_row_summary(&entry, "crates/engine/src/lib.rs"), "");
+        // A different file keeps its summary.
+        entry.preview = "src/other.rs".into();
+        assert_eq!(tool_row_summary(&entry, "src/lib.rs"), "src/other.rs");
     }
 
     #[test]

@@ -294,10 +294,7 @@ fn question_panel_options_error(checked: &[&Value], args: &Value) -> anyhow::Err
                 "没有可渲染的问题项，实际顶层字段有 {}",
                 obj.keys().cloned().collect::<Vec<_>>().join("、")
             ),
-            None => format!(
-                "没有可渲染的问题项，参数实际是 {}",
-                value_kind(args)
-            ),
+            None => format!("没有可渲染的问题项，参数实际是 {}", value_kind(args)),
         });
     }
     question_panel_shape_error_with(details)
@@ -637,7 +634,10 @@ mod tests {
         }))
         .expect("kept questions");
         assert_eq!(parsed.questions.len(), MAX_QUESTION_PANEL_QUESTIONS);
-        assert_eq!(parsed.questions[0].options.len(), MAX_QUESTION_PANEL_OPTIONS);
+        assert_eq!(
+            parsed.questions[0].options.len(),
+            MAX_QUESTION_PANEL_OPTIONS
+        );
         assert!(
             parsed
                 .dropped

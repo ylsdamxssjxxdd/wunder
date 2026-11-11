@@ -7,6 +7,12 @@ const MAX_OUTPUT_BUDGET_BYTES: usize = 4 * 1024 * 1024;
 const MIN_COMMAND_LIMIT: usize = 1;
 const MAX_COMMAND_LIMIT: usize = 200;
 pub(crate) const MAX_COMMAND_SESSION_POLL_MS: u64 = 60_000;
+/// 命令会话默认的等待窗口：取一眼新输出就返回，不阻塞线程。
+///
+/// 设计对齐 codex 的 unified exec：后台会话的默认动作是「读一下」，
+/// 需要阻塞到退出时才由调用方显式声明 `wait_for=exit`。这样模型连续
+/// 轮询时每一步都是毫秒级返回，不会因为默认 60s 空等把一轮对话拖死。
+pub(crate) const DEFAULT_COMMAND_SESSION_POLL_MS: u64 = 250;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CommandSessionWaitOptions {
@@ -14,24 +20,46 @@ pub(crate) struct CommandSessionWaitOptions {
     pub(crate) yield_time_ms: u64,
 }
 
+/// 命令会话一次调用要做什么：空输入是轮询，非空是写 stdin。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandSessionInput<'a> {
+    /// 只读取新增输出。
+    Poll,
+    /// Ctrl-C：任何会话（包括没有 stdin 的）都可以中断。
+    Interrupt,
+    /// 写入 stdin 后再读取输出。
+    Text(&'a str),
+}
+
+impl CommandSessionInput<'_> {
+    pub(crate) fn writes_stdin(self) -> bool {
+        matches!(self, Self::Text(_))
+    }
+}
+
+/// 模型的输入是一次「写 stdin」而不是独立的 action：空 input 就是轮询。
+pub(crate) fn parse_command_session_input(args: &Value) -> CommandSessionInput<'_> {
+    match args.get("input").and_then(Value::as_str).unwrap_or("") {
+        "" => CommandSessionInput::Poll,
+        // Ctrl-C / ETX：非 tty 会话也支持，语义是终止这条命令。
+        "\x03" => CommandSessionInput::Interrupt,
+        text => CommandSessionInput::Text(text),
+    }
+}
+
 /// Share the same wait policy with the orchestrator's outer tool deadline.
 pub(crate) fn parse_command_session_wait(args: &Value) -> CommandSessionWaitOptions {
-    let write_stdin = args
-        .get("action")
-        .and_then(Value::as_str)
-        .is_some_and(|action| action.eq_ignore_ascii_case("write_stdin"));
     let wait_for_exit = args
         .get("wait_for")
         .and_then(Value::as_str)
-        .map(|value| value != "output")
-        .unwrap_or(!write_stdin);
+        .is_some_and(|value| value.eq_ignore_ascii_case("exit"));
     let yield_time_ms = args
         .get("yield_time_ms")
         .and_then(Value::as_u64)
         .unwrap_or(if wait_for_exit {
             MAX_COMMAND_SESSION_POLL_MS
         } else {
-            500
+            DEFAULT_COMMAND_SESSION_POLL_MS
         })
         .min(MAX_COMMAND_SESSION_POLL_MS);
     CommandSessionWaitOptions {
@@ -164,26 +192,32 @@ mod tests {
     }
 
     #[test]
-    fn command_session_wait_defaults_match_exit_and_interactive_actions() {
+    fn command_session_wait_defaults_to_a_quick_read() {
+        // 默认只取新输出，不再默认阻塞到退出。
         assert_eq!(
             parse_command_session_wait(&json!({})),
             CommandSessionWaitOptions {
-                wait_for_exit: true,
-                yield_time_ms: 60_000
+                wait_for_exit: false,
+                yield_time_ms: DEFAULT_COMMAND_SESSION_POLL_MS
             }
         );
+        // 显式要阻塞时才给长窗口，且未知取值一律按「读一下」处理。
         for args in [
-            json!({"action": "write_stdin"}),
-            json!({"wait_for": "output"}),
+            json!({"wait_for": "exit"}),
+            json!({"wait_for": "EXIT", "yield_time_ms": 90_000}),
         ] {
             assert_eq!(
                 parse_command_session_wait(&args),
                 CommandSessionWaitOptions {
-                    wait_for_exit: false,
-                    yield_time_ms: 500
+                    wait_for_exit: true,
+                    yield_time_ms: 60_000
                 }
             );
         }
+        assert_eq!(
+            parse_command_session_wait(&json!({"wait_for": "nonsense"})).wait_for_exit,
+            false
+        );
         assert_eq!(
             parse_command_session_wait(&json!({"yield_time_ms": 0})).yield_time_ms,
             0
@@ -192,5 +226,27 @@ mod tests {
             parse_command_session_wait(&json!({"yield_time_ms": 90_000})).yield_time_ms,
             60_000
         );
+    }
+
+    #[test]
+    fn command_session_input_separates_poll_write_and_interrupt() {
+        assert_eq!(
+            parse_command_session_input(&json!({})),
+            CommandSessionInput::Poll
+        );
+        assert_eq!(
+            parse_command_session_input(&json!({"input": ""})),
+            CommandSessionInput::Poll
+        );
+        assert_eq!(
+            parse_command_session_input(&json!({"input": "y\n"})),
+            CommandSessionInput::Text("y\n")
+        );
+        assert_eq!(
+            parse_command_session_input(&json!({"input": "\x03"})),
+            CommandSessionInput::Interrupt
+        );
+        assert!(parse_command_session_input(&json!({"input": "ls\n"})).writes_stdin());
+        assert!(!parse_command_session_input(&json!({})).writes_stdin());
     }
 }

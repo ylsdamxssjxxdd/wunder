@@ -3894,7 +3894,7 @@ component ArchivePage inherits Rectangle {
                                 }
                             }
                             Text {
-                                text: session.preview;
+                                text: "工作区 · " + (session.workspace == "" ? "未知" : session.workspace);
                                 color: Theme.muted;
                                 font-size: Theme.font-xs;
                                 overflow: elide;

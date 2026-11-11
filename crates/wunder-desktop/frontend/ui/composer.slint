@@ -1435,7 +1435,19 @@ export component Composer inherits Rectangle {
     // Desktop keeps the action band compact and directly below the editor gap.
     // Mobile keeps its touch band.
     private property <length> action-row-height: root.mobile ? 40px : 36px;
-    height: (root.mobile ? 70px : 136px)
+    // ---- 输入区随草稿行数增高 ----
+    // 基准高度按两行文本给定；每多一行按内容实际需要增高，到上限后由编辑器
+    // 内部滚动（TextEditBase 的 ScrollView 负责跟随光标）。inset 是编辑器
+    // 自身上下内边距（scroll-view-padding × 2）。
+    private property <length> editor-min-height: root.mobile ? 44px : 70px;
+    private property <length> editor-inset: (root.mobile ? 11px : 14px) * 2;
+    private property <length> editor-max-height: root.mobile ? 132px : 200px;
+    private property <length> editor-box-height: min(
+        root.editor-max-height,
+        max(root.editor-min-height, editor.text-preferred-height + root.editor-inset)
+    );
+    private property <length> editor-growth: root.editor-box-height - root.editor-min-height;
+    height: (root.mobile ? 70px : 136px) + root.editor-growth
         + (root.attachments.length > 0 ? 36px : 0px)
         + (root.branch-name != "" ? 22px : 0px) + root.queue-height;
     private property <bool> plus-open: false;

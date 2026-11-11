@@ -3702,7 +3702,7 @@ fn session_cards(
                 session.title.clone()
             }
             .into(),
-            preview: session.workspace_name.as_str().into(),
+            workspace: session.workspace_name.as_str().into(),
             time: project::session_time(session.updated_at).into(),
             status: session.runtime_status.as_str().into(),
             active: active == Some(session.id.as_str()),

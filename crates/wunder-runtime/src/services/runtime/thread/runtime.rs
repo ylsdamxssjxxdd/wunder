@@ -1213,7 +1213,8 @@ impl ThreadRuntime {
     /// execution keeps its durable session lock. New input still waits behind
     /// that execution, so the live lock is the authority, not the lease.
     async fn session_has_live_execution(&self, user_id: &str, session: &str) -> bool {
-        self.session_has_active_runtime_slot(session) || self.holds_session_lock(user_id, session).await
+        self.session_has_active_runtime_slot(session)
+            || self.holds_session_lock(user_id, session).await
     }
 
     async fn publish_queue_wait(&self, task: &AgentTaskRecord) -> Result<()> {
@@ -1224,7 +1225,9 @@ impl ThreadRuntime {
         else {
             return Ok(());
         };
-        let reason = self.queue_wait_reason(&task.user_id, &task.session_id).await;
+        let reason = self
+            .queue_wait_reason(&task.user_id, &task.session_id)
+            .await;
         self.orchestrator.committer.update_turn(&task.user_id, &task.session_id, turn,
             "queued", "", &json!({"queued_input": {
                 "queue_id": task.task_id, "reason": reason,

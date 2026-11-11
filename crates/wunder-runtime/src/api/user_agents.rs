@@ -1067,14 +1067,11 @@ pub async fn load_agent_runtime_records(
         } else {
             session_token_usage
         };
-        let session_billed_tokens = record_consumed_tokens
-            .max(event_billed_tokens)
-            .max(0);
+        let session_billed_tokens = record_consumed_tokens.max(event_billed_tokens).max(0);
         let session_quota_consumed = record_quota.max(event_quota_consumed).max(0);
         let session_tool_calls = record_tool_calls.max(event_tool_calls).max(0);
         summary_billed_tokens = summary_billed_tokens.saturating_add(session_billed_tokens);
-        summary_quota_consumed =
-            summary_quota_consumed.saturating_add(session_quota_consumed);
+        summary_quota_consumed = summary_quota_consumed.saturating_add(session_quota_consumed);
         summary_tool_calls = summary_tool_calls.saturating_add(session_tool_calls);
 
         let mut has_token_source = false;
@@ -1102,8 +1099,7 @@ pub async fn load_agent_runtime_records(
                 .as_deref()
                 .and_then(|day_key| daily.get_mut(day_key))
             {
-                entry.billed_tokens =
-                    entry.billed_tokens.saturating_add(session_billed_tokens);
+                entry.billed_tokens = entry.billed_tokens.saturating_add(session_billed_tokens);
             }
         }
         if quota_by_day.is_empty() {
@@ -1111,8 +1107,7 @@ pub async fn load_agent_runtime_records(
                 .as_deref()
                 .and_then(|day_key| daily.get_mut(day_key))
             {
-                entry.quota_consumed =
-                    entry.quota_consumed.saturating_add(session_quota_consumed);
+                entry.quota_consumed = entry.quota_consumed.saturating_add(session_quota_consumed);
             }
         } else {
             for (day_key, consumed) in &quota_by_day {

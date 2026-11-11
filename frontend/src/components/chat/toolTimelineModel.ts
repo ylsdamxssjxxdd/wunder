@@ -206,14 +206,6 @@ const basenameOfPath = (value: string): string => {
   return segments.length > 0 ? segments[segments.length - 1] : '';
 };
 
-const compactPathLabel = (value: string): string => {
-  const normalized = normalizePathLike(value);
-  if (!normalized) return '';
-  const segments = normalized.split('/').filter(Boolean);
-  if (segments.length <= 2) return normalized;
-  return `…/${segments.slice(-2).join('/')}`;
-};
-
 /**
  * 从工具调用/结果的原始 detail 里取路径与关键文本。
  * 只扫描有界前缀，避免整段大 JSON 解析进入流式热路径。
@@ -555,7 +547,9 @@ const buildTargets = (run: RawToolRun): TimelineTargetChip[] => {
   return Array.from(paths)
     .slice(0, TARGET_LIMIT)
     .map((path) => {
-      const label = compactPathLabel(path) || basenameOfPath(path);
+      // 徽章只显示文件名：目录写在折叠行的工具名旁边是噪声，完整路径留在
+      // `path` 里供点击打开与 title 提示。
+      const label = basenameOfPath(path) || path;
       return {
         key: path,
         path,
@@ -619,20 +613,23 @@ const resolveRunReadLines = (run: RawToolRun): TimelineReadLines | null => {
 
 /**
  * 摘要与目标徽章的去重：文本编辑、读图等路径型工具的摘要就是文件名，
- * 徽章已渲染同一份路径，摘要再显示一遍就成了行内重复。
- * 覆盖完整路径、折叠标签与 basename 三种形态的比对；compactPath（摘要）
- * 用 `.../`、compactPathLabel（徽章）用 `…/`，先剥掉折叠前缀再比对，
- * 避免深层路径因省略号写法不同而漏判。
+ * 徽章已渲染同一份文件，摘要再显示一遍就成了行内重复。
+ * 覆盖完整路径与 basename 两种形态的比对；compactPath（摘要）用 `.../`
+ * 折叠前缀，先剥掉前缀再比对，避免深层路径因省略号写法不同而漏判。
  */
 const summaryDuplicatesTarget = (summary: string, targets: TimelineTargetChip[]): boolean => {
   const normalized = summary.trim().replace(/^(?:\u2026|\.{3})\//, '');
   if (!normalized) return false;
+  // 摘要里可能只剩折叠路径（`.../src/lib.rs`），先按文件名归一化再比对。
+  const summaryBase = !/\s/.test(normalized) ? basenameOfPath(normalized) : '';
   return targets.some((target) => {
     const path = normalizePathLike(target.path);
+    const base = basenameOfPath(path);
     const label = (target.label || '').replace(/^(?:\u2026|\.{3})\//, '');
     return normalized === path ||
       normalized === label ||
-      normalized === basenameOfPath(path);
+      normalized === base ||
+      (Boolean(summaryBase) && summaryBase === base);
   });
 };
 

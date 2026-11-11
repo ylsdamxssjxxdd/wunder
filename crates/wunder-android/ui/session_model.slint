@@ -5,7 +5,8 @@
 export struct MobileSession {
     id: string,
     title: string,
-    preview: string,
+    /// Owning workspace name, projected for the archived-thread list.
+    workspace: string,
     time: string,
     status: string,
     active: bool,

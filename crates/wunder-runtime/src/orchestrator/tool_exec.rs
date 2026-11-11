@@ -1809,17 +1809,15 @@ mod tests {
     #[test]
     fn tool_deadlines_always_exist_for_blocking_commands_and_sessions() {
         let config = Config::default();
+        // 默认只读一眼（250ms），外层看门狗仍然必须存在。
         assert_eq!(
             resolve_tool_timeout(&config, "command_session", &json!({})),
-            Some(Duration::from_secs(90))
+            Some(Duration::from_millis(30_250))
         );
+        // 只有显式声明阻塞到退出时才放大到 60s 窗口。
         assert_eq!(
-            resolve_tool_timeout(
-                &config,
-                "command_session",
-                &json!({"action": "write_stdin"})
-            ),
-            Some(Duration::from_millis(30_500))
+            resolve_tool_timeout(&config, "command_session", &json!({"wait_for": "exit"})),
+            Some(Duration::from_secs(90))
         );
         assert_eq!(
             resolve_tool_timeout(&config, "执行命令", &json!({})),

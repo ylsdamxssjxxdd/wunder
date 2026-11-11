@@ -489,11 +489,7 @@ mod tests {
         // 历史会一直带着这些图，预算必须在字节维度封顶，而不是等 token 兜底。
         let mut messages: Vec<Value> = (0..100)
             .map(|index| {
-                let url = format!(
-                    "data:image/jpeg;base64,{}{}",
-                    "A".repeat(200 * 1024),
-                    index
-                );
+                let url = format!("data:image/jpeg;base64,{}{}", "A".repeat(200 * 1024), index);
                 serde_json::json!({ "role": "user", "content": [ image(&url) ] })
             })
             .collect();

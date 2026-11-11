@@ -4,7 +4,7 @@ import { TextFieldActivation } from "text_field.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { LineEdit, ComboBox, ScrollView, ListView } from "std-widgets.slint";
 export struct MemoryCard { id: string, title: string, content: string, category: string, source: string, time: string }
-export struct ArchiveCard { id: string, title: string, time: string }
+export struct ArchiveCard { id: string, title: string, time: string, workspace: string }
 export struct RuntimePoint { date: string, value: float, label: string }
 export struct HeatCard { name: string, count: string, intensity: float }
 export component ExpertData inherits Rectangle {

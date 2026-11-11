@@ -95,14 +95,25 @@ if [[ -d binfmt ]]; then
             echo '请检查 .env 中 INSTALLER_IMAGE 行是否混入了命令或注释。' >&2
             installer_image="${installer_image%%[[:space:]]*}"
         fi
+        # 真实报错必须留在现场：吞掉 stderr 时只剩「uname 返回 <空>」，
+        # binfmt/seccomp/解释器三类故障没法区分。
+        emu_err="$(mktemp)"
         emulated_arch="$(docker run --rm --security-opt seccomp=unconfined \
-            --entrypoint /bin/sh "$installer_image" -c 'uname -m' 2>/dev/null || true)"
-        [[ "$emulated_arch" == x86_64 ]] || {
+            --entrypoint /bin/sh "$installer_image" -c 'uname -m' 2>"$emu_err" || true)"
+        if [[ "$emulated_arch" != x86_64 ]]; then
             echo "安装包镜像无法在 ARM 上模拟运行（uname 返回 '${emulated_arch:-<空>}'，应为 x86_64）。" >&2
-            echo '检查 binfmt 注册与 Docker 是否能执行 amd64 镜像：' >&2
+            if [[ -s "$emu_err" ]]; then
+                echo 'Docker 报错：' >&2
+                cat "$emu_err" >&2
+            fi
+            echo '当前 binfmt 注册（flags 必须含 F）：' >&2
+            cat /proc/sys/fs/binfmt_misc/qemu-x86_64 >&2 2>/dev/null || true
+            echo '手动复现：' >&2
             echo "  docker run --rm --security-opt seccomp=unconfined --entrypoint /bin/sh $installer_image -c 'uname -m'" >&2
+            rm -f "$emu_err"
             exit 2
-        }
+        fi
+        rm -f "$emu_err"
         echo "Win7 安装包镜像模拟自检通过（uname: $emulated_arch）"
     fi
 fi

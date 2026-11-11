@@ -2512,6 +2512,8 @@ export default {
   'messenger.status.idle': 'Ready',
   'messenger.status.context': 'Context',
   'messenger.status.contextTitle': 'Context usage of the active thread',
+  'messenger.archived.workspaceMissing': 'Unknown workspace',
+  'messenger.archived.workspaceLabel': 'Workspace',
   'messenger.archived.searchPlaceholder': 'Search archived thread title or content',
   'messenger.archived.searchEmpty': 'No matching archived thread',
 

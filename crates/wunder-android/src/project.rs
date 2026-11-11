@@ -230,6 +230,9 @@ impl RowData {
                         tool_name: child.tool_name.as_str().into(),
                         tool_icon: child.tool_icon.as_str().into(),
                         target: child.target.as_str().into(),
+                        // The chip prints the file name only; `target` keeps the
+                        // full path for opening the resource and the tooltip.
+                        target_label: target_label(&child.target).into(),
                         detail: child.detail.as_str().into(),
                         sections: workflow_sections(&child.sections),
                         patch: patch_cards(&child.patch),
@@ -746,11 +749,55 @@ pub(crate) fn tool_target(entry: &NativeWorkflowEntry) -> String {
     String::new()
 }
 
+/// The last segment of a path-like value; the whole value when it carries no
+/// separator. Used both for the chip label and for spotting a summary that
+/// names the same file in another form.
+fn file_name(value: &str) -> &str {
+    let trimmed = value.trim().trim_end_matches(['/', '\\']);
+    trimmed
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(trimmed)
+        .trim()
+}
+
+/// The folded row prints only the file name of the call target. A full path
+/// reads as noise beside the tool name on a phone-width row, so the chip keeps
+/// the directory out of sight while `target` keeps the whole path for opening
+/// the resource and for the tooltip. A target without a separator (a query, a
+/// URL) is left as it is.
+pub(crate) fn target_label(target: &str) -> String {
+    file_name(target).chars().take(64).collect()
+}
+
+/// The chip already names the file; a summary that resolves to the same file
+/// (the same path, a clipped prefix of it, or only its name) must not print the
+/// path a second time on the same row.
+fn row_summary(summary: &str, target: &str) -> String {
+    let (summary_text, target_text) = (summary.trim(), target.trim());
+    if summary_text.is_empty() || target_text.is_empty() {
+        return summary.to_string();
+    }
+    let (long, short) = if target_text.len() >= summary_text.len() {
+        (target_text, summary_text)
+    } else {
+        (summary_text, target_text)
+    };
+    if long.starts_with(short) {
+        return String::new();
+    }
+    let (long_name, short_name) = (file_name(long), file_name(short));
+    if !long_name.is_empty() && long_name == short_name {
+        return String::new();
+    }
+    summary.to_string()
+}
+
 fn tool_child(turn_id: &str, entry: &NativeWorkflowEntry) -> ProcessChildData {
     ProcessChildData {
         id: format!("{turn_id}-tool-{}", entry.id),
         kind: KIND_TOOL,
-        summary: entry.preview.clone(),
+        summary: row_summary(&entry.preview, &tool_target(entry)),
         tool_name: tool_label(&entry.title),
         tool_icon: tool_icon_key(&entry.title).into(),
         target: tool_target(entry),
@@ -1243,11 +1290,14 @@ impl LiveTurn {
                     tool_name: tool.title.clone(),
                     tool_icon: tool.tool_icon.clone(),
                     target: tool.target.clone(),
-                    summary: if tool.summary.is_empty() {
-                        preview_text(&tool.detail, 160)
-                    } else {
-                        tool.summary.clone()
-                    },
+                    summary: row_summary(
+                        &if tool.summary.is_empty() {
+                            preview_text(&tool.detail, 160)
+                        } else {
+                            tool.summary.clone()
+                        },
+                        &tool.target,
+                    ),
                     detail: tool.detail.clone(),
                     sections: tool.sections.clone(),
                     patch: tool.patch.clone(),
@@ -1434,8 +1484,34 @@ mod tests {
         assert_eq!(child.tool_name, "读取文件");
         assert_eq!(child.tool_icon, "file-lines");
         assert_eq!(child.target, "src/main.rs");
+        // The chip already prints the file name; the row must not repeat it.
+        assert_eq!(child.summary, "");
         assert_eq!(workflow_sections(&child.sections).row_count(), 1);
         assert_eq!(patch_cards(&child.patch).row_count(), 1);
+    }
+
+    #[test]
+    fn chip_summary_stays_when_it_names_another_resource() {
+        // The chip prints only the file name, so a differently folded form of
+        // the same file still counts as the same resource.
+        assert_eq!(row_summary(".../src/lib.rs", "crates/engine/src/lib.rs"), "");
+        assert_eq!(row_summary("/home/assets/lib.rs", "lib.rs"), "");
+        // A query is not the file the chip names and stays readable.
+        assert_eq!(row_summary("fixture query", "src/main.rs"), "fixture query");
+        assert_eq!(row_summary("src/other.rs", "src/main.rs"), "src/other.rs");
+        // No chip means the summary is the only place naming the call.
+        assert_eq!(row_summary("src/main.rs", ""), "src/main.rs");
+    }
+
+    #[test]
+    fn folded_row_chip_prints_only_the_file_name() {
+        assert_eq!(target_label("/home/fixture/project/src/main.rs"), "main.rs");
+        assert_eq!(target_label("fixture\\project\\main.rs"), "main.rs");
+        assert_eq!(target_label("main.rs"), "main.rs");
+        assert_eq!(target_label("fixture/project/"), "project");
+        assert_eq!(target_label("  "), "");
+        // A target without a separator is not a path and stays as it is.
+        assert_eq!(target_label("fixture query"), "fixture query");
     }
 
     #[test]

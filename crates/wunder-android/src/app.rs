@@ -77,7 +77,7 @@ pub fn build_preview() -> MobileWindow {
     let archived = Rc::new(VecModel::<MobileSession>::from(vec![MobileSession {
         id: "preview-archived-1".into(),
         title: "旧的运行时实验".into(),
-        preview: "心舰".into(),
+        workspace: "心舰".into(),
         time: "10-28 18:40".into(),
         status: "idle".into(),
         active: false,
@@ -324,6 +324,20 @@ pub fn build_preview() -> MobileWindow {
     let weak = ui.as_weak();
     ui.on_create_workspace(move |name, icon, color, folder| {
         if let Some(ui) = weak.upgrade() {
+            // The editor sends an empty visual pair for new workspaces; the real
+            // backend draws one, so the preview mirrors that instead of showing
+            // the gray fallback.
+            let (auto_icon, auto_color) = wunder_desktop::random_workspace_visual();
+            let icon = if icon.is_empty() {
+                auto_icon.into()
+            } else {
+                icon
+            };
+            let color = if color.is_empty() {
+                auto_color.into()
+            } else {
+                color
+            };
             let id: slint::SharedString =
                 format!("preview-ws-{}", workspaces_for_create.row_count() + 1).into();
             let active_id = id.clone();
@@ -450,7 +464,7 @@ fn preview_sessions() -> Vec<MobileSession> {
         MobileSession {
             id: "preview-1".into(),
             title: "移动端聊天区对齐".into(),
-            preview: "心舰".into(),
+            workspace: "心舰".into(),
             time: "11-06 14:20".into(),
             status: "running".into(),
             active: true,
@@ -458,7 +472,7 @@ fn preview_sessions() -> Vec<MobileSession> {
         MobileSession {
             id: "preview-2".into(),
             title: "检查无障碍控制链路".into(),
-            preview: "心舰".into(),
+            workspace: "心舰".into(),
             time: "11-05 09:12".into(),
             status: "idle".into(),
             active: false,
@@ -466,7 +480,7 @@ fn preview_sessions() -> Vec<MobileSession> {
         MobileSession {
             id: "preview-3".into(),
             title: "整理运行时补充包".into(),
-            preview: "心舰".into(),
+            workspace: "心舰".into(),
             time: "11-04 21:08".into(),
             status: "idle".into(),
             active: false,
@@ -3557,7 +3571,7 @@ pub fn install_preview_data(
         MobileSession {
             id: "preview-1".into(),
             title: "移动端聊天区对齐".into(),
-            preview: "心舰".into(),
+            workspace: "心舰".into(),
             time: "11-06 14:20".into(),
             status: "running".into(),
             active: true,
@@ -3565,7 +3579,7 @@ pub fn install_preview_data(
         MobileSession {
             id: "preview-2".into(),
             title: "检查无障碍控制链路".into(),
-            preview: "心舰".into(),
+            workspace: "心舰".into(),
             time: "11-05 09:12".into(),
             status: "idle".into(),
             active: false,

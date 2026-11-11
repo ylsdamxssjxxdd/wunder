@@ -446,27 +446,19 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             title: None,
             description: t("tool.spec.command_session.description"),
             input_schema: super::schema::object(vec![
-                super::schema::string("action")
-                    .desc(t("tool.spec.command_session.args.action"))
-                    .enums(vec!["poll", "write_stdin"])
-                    .optional(),
                 super::schema::string("command_session_id")
                     .desc(t("tool.spec.command_session.args.id")),
                 super::schema::string("input")
                     .desc(t("tool.spec.command_session.args.input"))
                     .optional(),
-                super::schema::integer("after_seq")
-                    .desc(t("tool.spec.command_session.args.after_seq"))
-                    .min(0)
-                    .optional(),
-                super::schema::string("wait_for")
-                    .desc(t("tool.spec.command_session.args.wait_for"))
-                    .enums(vec!["exit", "output"])
-                    .optional(),
                 super::schema::integer("yield_time_ms")
                     .desc(t("tool.spec.command_session.args.yield_time_ms"))
                     .min(0)
                     .max(60000)
+                    .optional(),
+                super::schema::string("wait_for")
+                    .desc(t("tool.spec.command_session.args.wait_for"))
+                    .enums(vec!["output", "exit"])
                     .optional(),
             ]),
         },
@@ -707,6 +699,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .optional(),
                 super::schema::boolean("stats_only")
                     .desc(t("tool.spec.read_image.args.stats_only"))
+                    .optional(),
+                super::schema::string("compare_with")
+                    .desc(t("tool.spec.read_image.args.compare_with"))
                     .optional(),
                 super::schema::number("frame_rate")
                     .desc(t("tool.spec.read_image.args.frame_rate"))
@@ -2841,16 +2836,21 @@ mod tests {
             .iter()
             .find(|spec| spec.name == "命令会话")
             .expect("Chinese command session spec");
+        // 默认是「读一眼」，阻塞到退出要显式声明。
         assert!(zh_session.description.contains("wait_for=exit"));
+        assert!(zh_session.description.contains("input 为空"));
         assert_eq!(
             zh_session.input_schema["properties"]["wait_for"]["enum"],
-            serde_json::json!(["exit", "output"])
+            serde_json::json!(["output", "exit"])
         );
         assert!(
-            zh_session.input_schema["properties"]["action"]["description"]
+            zh_session.input_schema["properties"]["input"]["description"]
                 .as_str()
-                .is_some_and(|value| value.contains("操作"))
+                .is_some_and(|value| value.contains("stdin"))
         );
+        // action/after_seq 已并入默认语义，不再对模型暴露。
+        assert!(zh_session.input_schema["properties"]["action"].is_null());
+        assert!(zh_session.input_schema["properties"]["after_seq"].is_null());
         assert!(zh
             .iter()
             .all(|spec| spec.name != "LSP查询" && spec.name != "节点调用"));
@@ -2861,9 +2861,9 @@ mod tests {
             .expect("English command session spec");
         assert!(en_session.description.contains("wait_for=exit"));
         assert!(
-            en_session.input_schema["properties"]["action"]["description"]
+            en_session.input_schema["properties"]["input"]["description"]
                 .as_str()
-                .is_some_and(|value| value.starts_with("Action:"))
+                .is_some_and(|value| value.contains("stdin"))
         );
         assert_eq!(resolve_tool_name("lsp"), "lsp");
         assert_eq!(resolve_tool_name("node_invoke"), "node_invoke");

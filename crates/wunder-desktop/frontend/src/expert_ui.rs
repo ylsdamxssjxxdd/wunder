@@ -289,6 +289,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                                     id: r.id.into(),
                                     title: r.title.into(),
                                     time: timestamp(r.updated_at).into(),
+                                    workspace: r.workspace_name.into(),
                                 })
                                 .collect(),
                         ));

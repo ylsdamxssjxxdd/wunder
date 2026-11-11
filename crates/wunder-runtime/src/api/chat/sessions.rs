@@ -463,9 +463,20 @@ async fn list_sessions(
         .thread_turn_tails(&resolved.user.user_id, &session_ids)
         .unwrap_or_default();
     let usage_by_session = state.monitor.session_usage_summaries(&session_ids);
+    // Workspace display names for this page: one bounded read per request so
+    // clients can label every thread with the workspace that owns it without a
+    // per-row round trip.
+    let workspace_names = state
+        .storage
+        .list_workspaces(&resolved.user.user_id)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|record| (record.workspace_id.clone(), record))
+        .collect::<HashMap<String, crate::storage::WorkspaceRecord>>();
     for record in &sessions {
         let mut payload = session_payload(record);
         if let Value::Object(map) = &mut payload {
+            insert_session_workspace_fields(map, record.workspace_id.as_deref(), &workspace_names);
             map.insert(
                 "reasoning_effort".to_string(),
                 json!(state
@@ -1949,12 +1960,34 @@ fn session_payload(record: &crate::storage::ChatSessionRecord) -> Value {
         "updated_at": format_ts(record.updated_at),
         "last_message_at": format_ts(record.last_message_at),
         "agent_id": record.agent_id,
+        // Owning workspace; the list projection adds its display name.
+        "workspace_id": record.workspace_id,
         "tool_overrides": record.tool_overrides,
         "parent_session_id": record.parent_session_id,
         "parent_message_id": record.parent_message_id,
         "spawn_label": record.spawn_label,
         "spawned_by": record.spawned_by,
     })
+}
+
+/// Label one session payload with the workspace that owns it. A thread whose
+/// workspace record is gone (deleted workspace) or that never carried one
+/// (cloud-created thread) stays unlabeled, so each client falls back to its own
+/// default label instead of showing a dangling id.
+fn insert_session_workspace_fields(
+    map: &mut serde_json::Map<String, Value>,
+    workspace_id: Option<&str>,
+    workspaces: &HashMap<String, crate::storage::WorkspaceRecord>,
+) {
+    let workspace = workspace_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .and_then(|id| workspaces.get(id));
+    let Some(workspace) = workspace else {
+        return;
+    };
+    map.insert("workspace_name".to_string(), json!(workspace.name));
+    map.insert("workspace_color".to_string(), json!(workspace.color));
 }
 
 fn insert_session_goal_payload(
@@ -2091,16 +2124,49 @@ mod tests {
     use super::{
         apply_session_running_state, build_forked_session_record,
         build_projected_queue_assistant_message, build_projected_queue_user_message,
-        has_active_queue_task, is_session_stream_active_or_queued, item_page_cursor_after_merge,
-        merge_persisted_transcript_metrics, merge_visible_transcript_page, normalize_before_seq,
-        project_queued_session_messages, raw_item_page_from_loaded_history,
-        summarize_transcript_messages, RunningTurnHint,
+        has_active_queue_task, insert_session_workspace_fields, is_session_stream_active_or_queued,
+        item_page_cursor_after_merge, merge_persisted_transcript_metrics,
+        merge_visible_transcript_page, normalize_before_seq, project_queued_session_messages,
+        raw_item_page_from_loaded_history, summarize_transcript_messages, RunningTurnHint,
     };
     use crate::storage::{AgentTaskRecord, SqliteStorage, StorageBackend};
     use crate::user_store::UserStore;
     use serde_json::json;
     use serde_json::Value;
     use std::sync::Arc;
+
+    #[test]
+    fn session_list_payload_labels_owning_workspace() {
+        use crate::storage::WorkspaceRecord;
+        use std::collections::HashMap;
+
+        let workspace = WorkspaceRecord {
+            workspace_id: "ws_projects".into(),
+            user_id: "user".into(),
+            name: "项目".into(),
+            root_path: "/tmp/projects".into(),
+            icon: "folder".into(),
+            color: "#4f8ef7".into(),
+            sort_index: 0,
+            created_at: 1.0,
+            updated_at: 1.0,
+        };
+        let workspaces = HashMap::from([(workspace.workspace_id.clone(), workspace)]);
+
+        let mut payload = serde_json::Map::new();
+        payload.insert("id".into(), json!("sess_1"));
+        insert_session_workspace_fields(&mut payload, Some("ws_projects"), &workspaces);
+        assert_eq!(payload.get("workspace_name"), Some(&json!("项目")));
+        assert_eq!(payload.get("workspace_color"), Some(&json!("#4f8ef7")));
+
+        // A deleted workspace and a cloud thread without one stay unlabeled so
+        // every client falls back to its own default instead of a dangling id.
+        let mut unlabeled = serde_json::Map::new();
+        insert_session_workspace_fields(&mut unlabeled, Some("ws_gone"), &workspaces);
+        insert_session_workspace_fields(&mut unlabeled, None, &workspaces);
+        insert_session_workspace_fields(&mut unlabeled, Some("  "), &workspaces);
+        assert!(unlabeled.get("workspace_name").is_none());
+    }
 
     fn build_user_store() -> UserStore {
         let db_path = std::env::temp_dir().join(format!(

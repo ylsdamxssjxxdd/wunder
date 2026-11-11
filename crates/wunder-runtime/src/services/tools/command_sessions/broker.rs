@@ -273,6 +273,20 @@ pub(crate) struct CommandProcessHandle {
     cancel: CancellationToken,
 }
 
+/// 一次 stdin 写入的结果。
+///
+/// 这两种「没写进去」都不是运行时故障，调用方要能区分并继续读最终输出：
+/// 命令跑完以后再写输入是正常时序，不能因此丢掉它已经产出的输出。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandStdinWrite {
+    /// 输入已经交给进程。
+    Written,
+    /// 会话没有可写的 stdin（进程不是以可交互方式启动，或 stdin 已关闭）。
+    StdinClosed,
+    /// 会话已经结束，本次输入没有生效。
+    SessionExited,
+}
+
 impl CommandProcessHandle {
     pub(crate) fn new(stdin: Option<ChildStdin>) -> Self {
         Self {
@@ -285,15 +299,26 @@ impl CommandProcessHandle {
         self.cancel.clone()
     }
 
-    pub(crate) async fn write_stdin(&self, input: &[u8]) -> Result<(), String> {
+    pub(crate) fn stdin_writable(&self) -> bool {
+        self.stdin
+            .try_lock()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false)
+    }
+
+    pub(crate) async fn write_stdin(&self, input: &[u8]) -> Result<CommandStdinWrite, String> {
         let mut guard = self.stdin.lock().await;
         let Some(stdin) = guard.as_mut() else {
-            return Err("command stdin is unavailable".to_string());
+            return Ok(CommandStdinWrite::StdinClosed);
         };
-        stdin
-            .write_all(input)
-            .await
-            .map_err(|error| format!("failed to write command stdin: {error}"))
+        if let Err(error) = stdin.write_all(input).await {
+            return Err(format!("failed to write command stdin: {error}"));
+        }
+        // 很多交互式程序读完一行才动起来，不 flush 会让模型以为输入没生效。
+        if let Err(error) = stdin.flush().await {
+            return Err(format!("failed to flush command stdin: {error}"));
+        }
+        Ok(CommandStdinWrite::Written)
     }
 
     pub(crate) fn cancel(&self) {
@@ -576,18 +601,22 @@ impl CommandSessionBroker {
         session_id: &str,
         command_session_id: &str,
         input: &[u8],
-    ) -> Result<(), String> {
+    ) -> Result<CommandStdinWrite, String> {
         let snapshot = self
             .snapshot_for_scope(user_id, session_id, command_session_id)
             .ok_or_else(|| "unknown command session".to_string())?;
+        // 已经结束的会话不是错误：调用方还要读最后一次输出。
         if snapshot.status != CommandSessionStatus::Running {
-            return Err("command session has exited".to_string());
+            return Ok(CommandStdinWrite::SessionExited);
         }
-        let process = self
+        let Some(process) = self
             .processes
             .get(command_session_id)
             .map(|entry| Arc::clone(entry.value()))
-            .ok_or_else(|| "command process is no longer active".to_string())?;
+        else {
+            // 退出瞬间快照可能还没落到 exited，进程句柄已释放同样按已退出处理。
+            return Ok(CommandStdinWrite::SessionExited);
+        };
         process.write_stdin(input).await
     }
 
@@ -1279,5 +1308,47 @@ mod tests {
                 .count()
         });
         assert_eq!(accepted, MAX_ACTIVE_COMMAND_PROCESSES);
+    }
+
+    #[tokio::test]
+    async fn stdin_write_reports_closed_and_exited_without_failing() {
+        let broker = CommandSessionBroker::new();
+        broker.start_session(build_start_spec());
+        // 非交互会话（没有 stdin 句柄）：写入要能识别为「没有可写 stdin」。
+        assert!(broker.register_process("cmd_test", Arc::new(CommandProcessHandle::new(None))));
+        assert_eq!(
+            broker
+                .write_stdin("user_a", "sess_1", "cmd_test", b"yes\n")
+                .await
+                .unwrap(),
+            CommandStdinWrite::StdinClosed
+        );
+        // 会话结束后再写：不是错误，调用方仍可读最终输出。
+        broker.finish_session("cmd_test", Some(0), false, None);
+        assert_eq!(
+            broker
+                .write_stdin("user_a", "sess_1", "cmd_test", b"yes\n")
+                .await
+                .unwrap(),
+            CommandStdinWrite::SessionExited
+        );
+        let final_data = broker
+            .poll(
+                "user_a",
+                "sess_1",
+                "cmd_test",
+                None,
+                std::time::Duration::ZERO,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(final_data["status"], "exited");
+        assert_eq!(final_data["exit_code"], 0);
+        // 跨作用域仍然拒绝。
+        assert!(broker
+            .write_stdin("user_b", "sess_1", "cmd_test", b"x")
+            .await
+            .is_err());
     }
 }

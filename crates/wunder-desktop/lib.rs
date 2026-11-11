@@ -14,20 +14,21 @@ pub use native_command_tasks::{NativeCommandTask, NativeCommandTaskDetail};
 pub use native_host_hud::{HostHud, HostHudSampler};
 
 pub use native::{
-    validate_cloud_password, AgentRecord, AgentSettingsEdit, ChannelAccountCard,
-    ChannelAccountListing, ChannelBindingCard, ChannelCatalogItem, ChannelLogEntry,
-    CloudStatusView, CompanionOverlayState, CompanionPlacement, CronRecord, CronRunRecord,
-    DesktopSettings, LanPeerRecord, LanSettings, ModelEdit, ModelProbeOutcome, ModelRecord,
-    NativeChannelAccountEdit, NativeChannelBindingEdit, NativeChatAttachment, NativeChatEvent,
-    NativeChatInput, NativeChatRound, NativeChatTurn, NativeContextUsage, NativeCronJobEdit,
-    NativeDesktop, NativeMessage, NativeMessageAttachment, NativeNavigationOrder, NativePatchFile,
-    NativePatchLine, NativePlanStep, NativePlanView, NativeProcessItem, NativeProcessPage,
-    NativeProfile, NativeQueueTurn, NativeSession, NativeStream, NativeSubagentCard,
-    NativeThreadUpdate, NativeThreadWatch, NativeThreadWatchCancel, NativeWorkflowEntry,
-    NativeWorkflowLine, NativeWorkflowSection, NativeWorkspace, RuntimeToolStatus, ToolRecord,
-    UpdateStateView, WorkspaceDeleteSummary, WorkspaceEdit, WorkspacePathReport, CURRENT_VERSION,
-    DEFAULT_AGENT_ID, TARGET_CLI, TARGET_DESKTOP, TARGET_SUPPLEMENT, UPDATE_GITHUB_REPO,
-    UPDATE_RELAUNCH_ENV, WORKSPACE_COLORS, WORKSPACE_ICONS,
+    random_workspace_visual, validate_cloud_password, AgentRecord, AgentSettingsEdit,
+    ChannelAccountCard, ChannelAccountListing, ChannelBindingCard, ChannelCatalogItem,
+    ChannelLogEntry, CloudStatusView, CompanionOverlayState, CompanionPlacement, CronRecord,
+    CronRunRecord, DesktopSettings, LanPeerRecord, LanSettings, ModelEdit, ModelProbeOutcome,
+    ModelRecord, NativeChannelAccountEdit, NativeChannelBindingEdit, NativeChatAttachment,
+    NativeChatEvent, NativeChatInput, NativeChatRound, NativeChatTurn, NativeContextUsage,
+    NativeCronJobEdit, NativeDesktop, NativeMessage, NativeMessageAttachment,
+    NativeNavigationOrder, NativePatchFile, NativePatchLine, NativePlanStep, NativePlanView,
+    NativeProcessItem, NativeProcessPage, NativeProfile, NativeQueueTurn, NativeSession,
+    NativeStream, NativeSubagentCard, NativeThreadUpdate, NativeThreadWatch,
+    NativeThreadWatchCancel, NativeWorkflowEntry, NativeWorkflowLine, NativeWorkflowSection,
+    NativeWorkspace, RuntimeToolStatus, ToolRecord, UpdateStateView, WorkspaceDeleteSummary,
+    WorkspaceEdit, WorkspacePathReport, CURRENT_VERSION, DEFAULT_AGENT_ID, TARGET_CLI,
+    TARGET_DESKTOP, TARGET_SUPPLEMENT, UPDATE_GITHUB_REPO, UPDATE_RELAUNCH_ENV, WORKSPACE_COLORS,
+    WORKSPACE_ICONS,
 };
 pub use runtime::DesktopRuntime;
 pub use wunder_server::cloud::update::{is_newer_version, AndroidRelease};

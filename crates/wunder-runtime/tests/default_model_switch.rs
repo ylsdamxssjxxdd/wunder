@@ -294,15 +294,16 @@ async fn set_agent_model(context: &TestContext, model: &str) {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{payload}");
-    assert_eq!(payload["data"]["agent"]["configured_model_name"], json!(model));
+    assert_eq!(
+        payload["data"]["agent"]["configured_model_name"],
+        json!(model)
+    );
 }
 
 /// 管理端把 `from` 改名成 `to`：整体写回 llm 配置，旧键从配置里消失。
 async fn rename_admin_model(context: &TestContext, from: &str, to: &str) {
     let mut llm = admin_llm(context).await;
-    let models = llm["llm"]["models"]
-        .as_object_mut()
-        .expect("models object");
+    let models = llm["llm"]["models"].as_object_mut().expect("models object");
     let entry = models.remove(from).expect("old model entry");
     models.insert(to.to_string(), entry);
     let (status, payload) = send_json(

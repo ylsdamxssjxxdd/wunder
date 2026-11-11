@@ -244,8 +244,16 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         }
         let edit_mode = state.get_edit_mode();
         let workspace_id = state.get_workspace_id().to_string();
-        let icon = choice(WORKSPACE_ICONS, state.get_icon_index(), "folder");
-        let color = choice(WORKSPACE_COLORS, state.get_color_index(), "blue");
+        // Create asks for folder + name only; the engine draws a random icon and
+        // color from the same tables, and the edit dialog can still change them.
+        let (icon, color) = if edit_mode {
+            (
+                choice(WORKSPACE_ICONS, state.get_icon_index(), "folder"),
+                choice(WORKSPACE_COLORS, state.get_color_index(), "blue"),
+            )
+        } else {
+            (String::new(), String::new())
+        };
         state.set_busy(true);
         let weak = weak.clone();
         let api = api.clone();

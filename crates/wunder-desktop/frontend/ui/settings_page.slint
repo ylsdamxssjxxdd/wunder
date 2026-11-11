@@ -2070,7 +2070,7 @@ export component SettingsPage inherits Rectangle {
                                     height: 54px;
                                     Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: Theme.border; }
                                     Text { x: 0px; y: 8px; width: max(0px, parent.width - 228px); height: 20px; text: archive.title; color: Theme.text; font-size: Theme.font-md; font-weight: 600; vertical-alignment: center; overflow: elide; }
-                                    Text { x: 0px; y: 29px; width: max(0px, parent.width - 228px); height: 17px; text: archive.time; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                    Text { x: 0px; y: 29px; width: max(0px, parent.width - 228px); height: 17px; text: I18n.stc_archives_workspace + " · " + (archive.workspace == "" ? I18n.stc_archives_workspace_missing : archive.workspace) + " · " + archive.time; color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                     Action { x: parent.width - 220px; y: 13px; width: 66px; label: I18n.stc_archives_open; show-label: true; enabled: !root.expert-saving; clicked => { root.open-expert-archive(archive.id); } }
                                     Action { x: parent.width - 146px; y: 13px; width: 66px; label: I18n.stc_archives_restore; show-label: true; enabled: !root.expert-saving; clicked => { root.restore-expert-archive(archive.id); } }
                                     Action { x: parent.width - 72px; y: 13px; width: 66px; label: I18n.common_delete; show-label: true; danger: true; enabled: !root.expert-saving; clicked => { root.delete-expert-archive(archive.id); } }

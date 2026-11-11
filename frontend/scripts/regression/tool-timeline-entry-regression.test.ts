@@ -243,14 +243,15 @@ test('path tools do not render the same file name twice beside the target chip',
   assert.equal(readImage.targets[0]?.path, 'temp/鸭子.png');
   assert.equal(readImage.summary, '');
 
-  // 深层路径：摘要折叠前缀 `.../` 与徽章 `…/` 写法不同，仍需判定为重复。
+  // 深层路径：徽章只印文件名，摘要的折叠写法 `.../src/lib.rs` 仍判定为重复。
   const deep = buildTimelineToolEntry(baseRun({
     toolName: 'write_file',
     toolDisplayName: '写入文件',
     toolRuntimeName: 'write_file',
     callItem: callItem({ args: { path: 'crates/engine/src/lib.rs', content: '# hi\n' } })
   }), t);
-  assert.equal(deep.targets[0]?.label, '…/src/lib.rs');
+  assert.equal(deep.targets[0]?.label, 'lib.rs');
+  assert.equal(deep.targets[0]?.path, 'crates/engine/src/lib.rs');
   assert.equal(deep.summary, '');
 
   // 摘要与徽章内容不同（命令/query）时保持原样。

@@ -267,6 +267,28 @@ fn workspace_crud_binds_threads_and_persists_order() -> Result<(), Box<dyn std::
 }
 
 #[test]
+fn new_workspaces_draw_an_icon_and_color_instead_of_asking(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let runtime = start_isolated()?;
+    let host = tempfile::tempdir()?;
+    // Creating a workspace only asks for folder + name; empty choices must be
+    // filled from the same tables the edit dialog still offers.
+    let mut seen = std::collections::HashSet::new();
+    for index in 0..12 {
+        let root = make_folder(host.path(), &format!("auto{}", index));
+        let workspace = runtime.create_workspace(&format!("自动{}", index), &root, "", "")?;
+        assert!(wunder_desktop::WORKSPACE_ICONS.contains(&workspace.icon.as_str()));
+        assert!(wunder_desktop::WORKSPACE_COLORS.contains(&workspace.color.as_str()));
+        seen.insert((workspace.icon, workspace.color));
+    }
+    assert!(
+        seen.len() > 1,
+        "auto assignment must vary between workspaces"
+    );
+    Ok(())
+}
+
+#[test]
 fn workspace_path_validation_reports_occupancy_and_nesting(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = start_isolated()?;

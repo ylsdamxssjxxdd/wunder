@@ -1,8 +1,8 @@
 use super::{build_model_tool_success, ToolContext};
 use crate::schemas::AttachmentPayload;
 use crate::services::chat_media::{
-    derive_image_view, detect_media_kind_from_path, process_visual_media_path, ImageCrop,
-    ImageViewStats, MediaViewDims,
+    derive_image_pair_view, derive_image_view, detect_media_kind_from_path,
+    process_visual_media_path, ImageCrop, ImageViewStats, MediaViewDims,
 };
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
@@ -11,6 +11,102 @@ use std::path::{Path, PathBuf};
 use tokio::io::AsyncReadExt;
 
 const MAX_READ_VISUAL_MEDIA_BYTES: u64 = 128 * 1024 * 1024;
+
+/// 已读图片指纹：同一路径重复读取时据此提示“内容未变”。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ImageFingerprint {
+    sha256_8: String,
+    mtime_ms: i64,
+    size: u64,
+}
+
+#[derive(Default)]
+struct ReadImageRegistry {
+    entries: std::collections::HashMap<(String, String), ImageFingerprint>,
+    order: std::collections::VecDeque<(String, String)>,
+}
+
+const READ_IMAGE_REGISTRY_CAPACITY: usize = 256;
+/// 超出这个体积的图像不做全文件摘要，避免为一次读图扫几十 MB。
+const MAX_FINGERPRINT_BYTES: u64 = 64 * 1024 * 1024;
+
+static READ_IMAGE_REGISTRY: std::sync::OnceLock<std::sync::Mutex<ReadImageRegistry>> =
+    std::sync::OnceLock::new();
+
+fn read_image_registry() -> &'static std::sync::Mutex<ReadImageRegistry> {
+    READ_IMAGE_REGISTRY.get_or_init(|| std::sync::Mutex::new(ReadImageRegistry::default()))
+}
+
+fn file_fingerprint(path: &Path, size: u64) -> Option<ImageFingerprint> {
+    if size > MAX_FINGERPRINT_BYTES {
+        return None;
+    }
+    use sha2::Digest;
+    let mtime_ms = std::fs::metadata(path)
+        .ok()
+        .and_then(|meta| meta.modified().ok())
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|elapsed| elapsed.as_millis() as i64)?;
+    let file = std::fs::File::open(path).ok()?;
+    let mut reader = std::io::BufReader::with_capacity(64 * 1024, file);
+    let mut hasher = sha2::Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = std::io::Read::read(&mut reader, &mut buffer).ok()?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let digest = hasher.finalize();
+    Some(ImageFingerprint {
+        sha256_8: hex::encode(&digest[..4]),
+        mtime_ms,
+        size,
+    })
+}
+
+/// 记录本次读取并返回“与上次同内容”。按会话隔离，避免串到别的会话。
+fn track_fingerprint(session_id: &str, path: &str, fingerprint: &Option<ImageFingerprint>) -> bool {
+    let Some(fingerprint) = fingerprint else {
+        return false;
+    };
+    let key = (session_id.to_string(), path.to_string());
+    let mut registry = read_image_registry()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let unchanged = registry
+        .entries
+        .get(&key)
+        .map(|previous| previous.sha256_8 == fingerprint.sha256_8)
+        .unwrap_or(false);
+    registry.order.retain(|existing| existing != &key);
+    registry.order.push_back(key.clone());
+    registry.entries.insert(key, fingerprint.clone());
+    while registry.order.len() > READ_IMAGE_REGISTRY_CAPACITY {
+        if let Some(evicted) = registry.order.pop_front() {
+            registry.entries.remove(&evicted);
+        }
+    }
+    unchanged
+}
+
+fn format_mtime(mtime_ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(mtime_ms)
+        .map(|time| time.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_else(|| mtime_ms.to_string())
+}
+
+fn unchanged_content_notice(unchanged: bool, fingerprint: &Option<ImageFingerprint>) -> String {
+    match (unchanged, fingerprint) {
+        (true, Some(fingerprint)) => format!(
+            " Content is identical to the previous read of this path (sha256 {}, mtime {}); the image did not change.",
+            fingerprint.sha256_8,
+            format_mtime(fingerprint.mtime_ms)
+        ),
+        _ => String::new(),
+    }
+}
 
 /// 对齐 codex `image_resize_notice`：入模视图被缩小后明确告知模型，避免它
 /// 以为自己看的是原始像素，需要精确细节时用 crop / scale 取局部。
@@ -43,6 +139,8 @@ struct ReadImageArgs {
     stats: bool,
     #[serde(default)]
     stats_only: bool,
+    #[serde(default)]
+    compare_with: Option<String>,
 }
 
 pub fn is_read_image_tool_name(name: &str) -> bool {
@@ -94,6 +192,87 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         .transpose()?;
     let has_view_ops =
         crop.is_some() || payload.scale.is_some() || payload.stats || payload.stats_only;
+
+    // 图片指纹：给模型一个“这份内容是否变过”的客观依据（sha256 前 8 位 + mtime）。
+    let fingerprint = if media_kind == "image" {
+        file_fingerprint(&resolved, metadata.len())
+    } else {
+        None
+    };
+    let unchanged = track_fingerprint(
+        context.session_id,
+        &resolved.to_string_lossy(),
+        &fingerprint,
+    );
+
+    let compare_with = payload
+        .compare_with
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(compare_raw) = compare_with {
+        if media_kind != "image" {
+            return Err(anyhow!(crate::i18n::t("tool.read_image.view_image_only")));
+        }
+        if has_view_ops {
+            return Err(anyhow!(crate::i18n::t("tool.read_image.compare_exclusive")));
+        }
+        let compare_resolved = super::resolve_tool_path(
+            context.workspace.as_ref(),
+            context.workspace_id,
+            compare_raw,
+            &extra_roots,
+        )?;
+        let compare_metadata = tokio::fs::metadata(&compare_resolved)
+            .await
+            .map_err(|_| anyhow!(crate::i18n::t("tool.read.not_found")))?;
+        if !compare_metadata.is_file() {
+            return Err(anyhow!(crate::i18n::t("tool.read_image.not_file")));
+        }
+        let pair = derive_image_pair_view(
+            context.workspace.as_ref(),
+            context.workspace_id,
+            &resolved,
+            &compare_resolved,
+        )
+        .await?;
+        let attachments = vec![serde_json::to_value(&pair.attachment).unwrap_or(Value::Null)];
+        let mut data = json!({
+            "path": raw_path,
+            "resolved_path": resolved.to_string_lossy().to_string(),
+            "media_kind": media_kind,
+            "size_bytes": metadata.len(),
+            "mode": "side_by_side",
+            "compare": {
+                "left_path": raw_path,
+                "right_path": compare_raw,
+                "left": pair.left,
+                "right": pair.right,
+            },
+            "result": {
+                "kind": "image",
+                "frame_count": attachments.len(),
+                "attachments": attachments,
+            },
+        });
+        if let Some(fingerprint) = fingerprint.as_ref() {
+            data["mtime_ms"] = json!(fingerprint.mtime_ms);
+            data["sha256_8"] = json!(fingerprint.sha256_8);
+            data["unchanged_since_last_read"] = json!(unchanged);
+        }
+        return Ok(build_model_tool_success(
+            "read_image",
+            "completed",
+            format!(
+                "Prepared a side-by-side comparison for model inspection: left is {}, right is {}.{}",
+                raw_path,
+                compare_raw,
+                unchanged_content_notice(unchanged, &fingerprint)
+            ),
+            data,
+        ));
+    }
+
     if has_view_ops {
         if media_kind != "image" {
             return Err(anyhow!(crate::i18n::t("tool.read_image.view_image_only")));
@@ -133,18 +312,24 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         if let Some(stats) = view.stats.as_ref() {
             data["stats"] = serde_json::to_value(stats).unwrap_or(Value::Null);
         }
+        if let Some(fingerprint) = fingerprint.as_ref() {
+            data["mtime_ms"] = json!(fingerprint.mtime_ms);
+            data["sha256_8"] = json!(fingerprint.sha256_8);
+            data["unchanged_since_last_read"] = json!(unchanged);
+        }
         let message = if payload.stats_only {
             format!("Computed region statistics for {}.", raw_path)
         } else {
             format!(
-                "Prepared visual media {} for model inspection.{}",
+                "Prepared visual media {} for model inspection.{}{}",
                 raw_path,
                 image_resize_notice(&MediaViewDims {
                     source_width: view.source_width,
                     source_height: view.source_height,
                     width: view.view_width,
                     height: view.view_height,
-                })
+                }),
+                unchanged_content_notice(unchanged, &fingerprint)
             )
         };
         return Ok(build_model_tool_success(
@@ -169,20 +354,27 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         .as_ref()
         .map(image_resize_notice)
         .unwrap_or_default();
+    let unchanged_notice = unchanged_content_notice(unchanged, &fingerprint);
+    let mut data = json!({
+        "path": raw_path,
+        "resolved_path": resolved.to_string_lossy().to_string(),
+        "media_kind": media_kind,
+        "size_bytes": metadata.len(),
+        "result": result,
+    });
+    if let Some(fingerprint) = fingerprint.as_ref() {
+        data["mtime_ms"] = json!(fingerprint.mtime_ms);
+        data["sha256_8"] = json!(fingerprint.sha256_8);
+        data["unchanged_since_last_read"] = json!(unchanged);
+    }
     Ok(build_model_tool_success(
         "read_image",
         "completed",
         format!(
-            "Prepared visual media {} for model inspection.{}",
-            raw_path, resize_notice
+            "Prepared visual media {} for model inspection.{}{}",
+            raw_path, resize_notice, unchanged_notice
         ),
-        json!({
-            "path": raw_path,
-            "resolved_path": resolved.to_string_lossy().to_string(),
-            "media_kind": media_kind,
-            "size_bytes": metadata.len(),
-            "result": result,
-        }),
+        data,
     ))
 }
 
@@ -397,6 +589,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fingerprint_detects_unchanged_content_per_session() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.png");
+        std::fs::write(&path, b"first-content").expect("write");
+        let size = std::fs::metadata(&path).expect("meta").len();
+        let first = file_fingerprint(&path, size).expect("fingerprint");
+        assert_eq!(first.sha256_8.len(), 8);
+        assert_eq!(first.size, size);
+
+        // 首次读取不算“与上次相同”。
+        assert!(!track_fingerprint("session-a", "k", &Some(first.clone())));
+        // 同会话再读同一内容：命中。
+        assert!(track_fingerprint("session-a", "k", &Some(first.clone())));
+        // 别的会话不共享“上次”。
+        assert!(!track_fingerprint("session-b", "k", &Some(first.clone())));
+
+        std::fs::write(&path, b"second-content-changed").expect("write");
+        let changed = file_fingerprint(&path, std::fs::metadata(&path).expect("meta").len())
+            .expect("fingerprint");
+        assert_ne!(first.sha256_8, changed.sha256_8);
+        assert!(!track_fingerprint("session-a", "k", &Some(changed)));
+        // 没有指纹（过大或不可读）时永不报告“未变”。
+        assert!(!track_fingerprint("session-a", "k", &None));
+    }
+
+    #[test]
+    fn unchanged_notice_reports_hash_and_mtime() {
+        let fingerprint = Some(ImageFingerprint {
+            sha256_8: "1a2b3c4d".to_string(),
+            mtime_ms: 1_700_000_000_000,
+            size: 2048,
+        });
+        let notice = unchanged_content_notice(true, &fingerprint);
+        assert!(notice.contains("1a2b3c4d"), "{}", notice);
+        assert!(notice.contains("did not change"));
+        assert_eq!(unchanged_content_notice(false, &fingerprint), "");
+        assert_eq!(unchanged_content_notice(true, &None), "");
+    }
+
+    #[test]
     fn image_resize_notice_only_when_view_is_smaller() {
         // 1080p 在 codex 高细节上限内，不缩：无提示。
         let unchanged = MediaViewDims {
@@ -546,6 +778,121 @@ mod tests {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .starts_with("data:image/png;base64,"));
+    }
+
+    fn write_png(path: &std::path::Path, color: [u8; 4], width: u32, height: u32) {
+        let image = ImageBuffer::<Rgba<u8>, _>::from_pixel(width, height, Rgba(color));
+        let mut bytes = Vec::new();
+        DynamicImage::ImageRgba8(image)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("encode png");
+        std::fs::write(path, &bytes).expect("write png");
+    }
+
+    #[tokio::test]
+    async fn read_image_reports_unchanged_content_and_side_by_side() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("read-image-e2e.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace = Arc::new(WorkspaceManager::new(
+            dir.path().to_string_lossy().as_ref(),
+            storage.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        let lsp_manager = LspManager::new(workspace.clone());
+        let config = Config::default();
+        let skills = SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let context = ToolContext {
+            user_id: "user",
+            session_id: "read-image-e2e",
+            workspace_id: "user",
+            agent_id: None,
+            user_round: None,
+            model_round: None,
+            is_admin: false,
+            storage,
+            orchestrator: None,
+            monitor: None,
+            workspace,
+            lsp_manager,
+            config: &config,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+        let user_root = context
+            .workspace
+            .resolve_path("user", "")
+            .expect("user root");
+        std::fs::create_dir_all(&user_root).expect("mkdir user root");
+        write_png(&user_root.join("left.png"), [200, 30, 30, 255], 40, 30);
+        write_png(&user_root.join("right.png"), [30, 30, 200, 255], 30, 40);
+
+        let first = tool_read_image(&context, &json!({ "path": "left.png" }))
+            .await
+            .expect("first read");
+        assert_eq!(first["data"]["sha256_8"].as_str().map(str::len), Some(8));
+        assert_eq!(first["data"]["unchanged_since_last_read"], json!(false));
+        assert!(!first["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("identical"));
+
+        let second = tool_read_image(&context, &json!({ "path": "left.png" }))
+            .await
+            .expect("second read");
+        assert_eq!(second["data"]["unchanged_since_last_read"], json!(true));
+        assert!(second["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("identical to the previous read"));
+
+        let paired = tool_read_image(
+            &context,
+            &json!({
+                "path": "left.png",
+                "compare_with": "right.png",
+            }),
+        )
+        .await
+        .expect("compare read");
+        assert_eq!(paired["data"]["mode"], json!("side_by_side"));
+        let attachments = paired["data"]["result"]["attachments"]
+            .as_array()
+            .expect("attachments");
+        assert_eq!(attachments.len(), 1);
+        assert!(paired["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("side-by-side comparison"));
+
+        // compare_with 与 crop/scale 互斥。
+        assert!(tool_read_image(
+            &context,
+            &json!({
+                "path": "left.png",
+                "compare_with": "right.png",
+                "crop": "0,0,10,10",
+            }),
+        )
+        .await
+        .is_err());
     }
 
     #[test]

@@ -22,13 +22,16 @@ register_one() {
     local interp="$PWD/$name-static"
     [[ -x "$interp" ]] || die "缺少解释器: $interp"
     if [[ -e "/proc/sys/fs/binfmt_misc/$name" ]]; then
-        local current
+        local current flags
         current="$(sed -n 's/^interpreter //p' "/proc/sys/fs/binfmt_misc/$name" | head -n 1)"
-        if grep -q '^enabled' "/proc/sys/fs/binfmt_misc/$name" && [[ -x "$current" ]]; then
-            echo "[binfmt] $name 已由 $current 提供，复用"
+        flags="$(sed -n 's/^flags: //p' "/proc/sys/fs/binfmt_misc/$name" | head -n 1)"
+        # 没有 F 标志的注册（发行版 qemu-user-static 常见）在容器里按路径找不到解释器，
+        # exec 阶段才报 exec format error，必须换成本目录带 F 的注册。
+        if grep -q '^enabled' "/proc/sys/fs/binfmt_misc/$name" && [[ -x "$current" && "$flags" == *F* ]]; then
+            echo "[binfmt] $name 已由 $current 提供（带 F 标志），复用"
             return
         fi
-        # 指向的解释器已不存在：先禁用再按当前目录重建。
+        echo "[binfmt] $name 现有注册不可用（解释器缺失或无 F 标志），按当前目录重建"
         echo -1 > "/proc/sys/fs/binfmt_misc/$name" 2>/dev/null || true
     fi
     printf ':%s:M::%s:%s:%s:OPF\n' "$name" "$magic" "$mask" "$interp" \

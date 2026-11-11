@@ -2478,6 +2478,8 @@ export default {
   'messenger.status.idle': '就绪',
   'messenger.status.context': '上下文',
   'messenger.status.contextTitle': '当前线程的上下文用量',
+  'messenger.archived.workspaceMissing': '未知工作区',
+  'messenger.archived.workspaceLabel': '所属工作区',
   'messenger.archived.searchPlaceholder': '搜索归档线程标题或内容',
   'messenger.archived.searchEmpty': '没有匹配的归档线程',
 

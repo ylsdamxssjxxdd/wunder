@@ -46,6 +46,12 @@
       >
         <div class="messenger-archived-thread-title-row">
           <div class="messenger-archived-thread-title">{{ item.title }}</div>
+          <span
+            class="messenger-archived-thread-workspace"
+            :title="`${t('messenger.archived.workspaceLabel')} · ${item.workspace}`"
+          >
+            {{ item.workspace }}
+          </span>
           <span class="messenger-archived-thread-time">{{ formatTime(item.lastAt) }}</span>
         </div>
         <div class="messenger-archived-thread-preview">
@@ -115,6 +121,8 @@ type ArchivedSessionItem = {
   id: string;
   title: string;
   preview: string;
+  /** Owning workspace label; cloud threads fall back to the cloud workspace. */
+  workspace: string;
   lastAt: unknown;
 };
 
@@ -150,7 +158,7 @@ const filteredSessions = computed(() => {
   const needle = keyword.value.trim().toLowerCase();
   if (!needle) return archivedSessions.value;
   return archivedSessions.value.filter((item) =>
-    `${item.title} ${item.preview}`.toLowerCase().includes(needle)
+    `${item.title} ${item.preview} ${item.workspace}`.toLowerCase().includes(needle)
   );
 });
 const pageCount = computed(() =>
@@ -242,6 +250,16 @@ const resolveSessionPreview = (session: Record<string, unknown>): string =>
     .replace(/\s+/g, ' ')
     .slice(0, 120);
 
+const resolveSessionWorkspace = (session: Record<string, unknown>): string => {
+  const name = String(session?.workspace_name || '').trim();
+  if (name) return name;
+  // A thread that names a workspace the catalogue no longer has is not the same
+  // as a cloud thread that never carried one. Keep them distinguishable.
+  return String(session?.workspace_id || '').trim()
+    ? t('messenger.archived.workspaceMissing')
+    : t('messenger.workspace.defaultName');
+};
+
 const loadArchivedSessions = async () => {
   loading.value = true;
   try {
@@ -254,6 +272,7 @@ const loadArchivedSessions = async () => {
         id: String(session?.id || '').trim(),
         title: String(session?.title || t('chat.newSession')).trim() || t('chat.newSession'),
         preview: resolveSessionPreview(session),
+        workspace: resolveSessionWorkspace(session),
         lastAt: session?.updated_at || session?.last_message_at || session?.created_at
       }))
       .filter((item) => item.id)
@@ -397,6 +416,20 @@ onMounted(() => {
   font-size: 13px;
   font-weight: 600;
   color: #2f2f2f;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.messenger-archived-thread-workspace {
+  flex-shrink: 0;
+  max-width: 40%;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: #f1f3f5;
+  color: #5d6673;
+  font-size: 11px;
+  line-height: 17px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

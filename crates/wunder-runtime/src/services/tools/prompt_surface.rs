@@ -183,10 +183,10 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "命令会话",
-        brief_en: "Poll or write to a background command session: action=poll|write_stdin with command_session_id, input and wait_for=exit|output (default exit, yield_time_ms=60000). Confirm exit before reporting completion; never sleep to wait.",
-        brief_zh: "轮询或写入后台命令会话：action=poll|write_stdin，传 command_session_id、input 与 wait_for=exit|output（默认 exit、yield_time_ms=60000）；确认退出后再报告完成，不要用 sleep 等待。",
+        brief_en: "Read a background command session or feed its stdin. Empty input just returns new output (default yield_time_ms=250); non-empty input writes stdin and then waits for the command to exit within the same window. Pass wait_for=exit to block on a plain read. A finished session still returns its final output.",
+        brief_zh: "读取后台命令会话或喂 stdin：input 为空只取新输出（默认 yield_time_ms=250），非空先写 stdin，随后在同一个窗口内等命令退出；纯轮询要阻塞到退出才传 wait_for=exit。会话已退出时仍会返回最后的输出。",
         drop_actions: &[],
-        drop_fields: &["after_seq"],
+        drop_fields: &[],
     },
     SurfaceRule {
         tool: "列出文件",

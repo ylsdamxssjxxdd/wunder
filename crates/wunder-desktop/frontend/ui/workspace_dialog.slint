@@ -167,7 +167,8 @@ export component WorkspaceDialog inherits Rectangle {
         TouchArea { scroll-event(event) => { return accept; } }
         Rectangle {
             width: min(480px, parent.width - 48px);
-            height: 500px;
+            // Create is shorter: it carries no icon/color pickers.
+            height: WorkspaceDialogState.edit-mode ? 500px : 398px;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             border-radius: Theme.radius-xl;
@@ -286,17 +287,19 @@ export component WorkspaceDialog inherits Rectangle {
                     text <=> WorkspaceDialogState.name-draft;
                     enabled: !WorkspaceDialogState.busy;
                 }
-                Text {
-                    height: 16px;
-                    text: I18n.ws_icon_label;
-                    color: Theme.muted; font-size: Theme.font-xs;
-                    vertical-alignment: center;
-                }
-                // One line of compact icon cells; the loop keeps the picker
-                // in sync with `WorkspaceVisual.icon-keys()` without hand
-                // written rows.
-                VerticalLayout {
-                    spacing: 6px;
+                // New workspaces get a random icon and color from the engine, so
+                // the pickers only exist when editing an existing workspace.
+                if WorkspaceDialogState.edit-mode : VerticalLayout {
+                    spacing: 10px;
+                    Text {
+                        height: 16px;
+                        text: I18n.ws_icon_label;
+                        color: Theme.muted; font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                    }
+                    // One line of compact icon cells; the loop keeps the picker
+                    // in sync with `WorkspaceVisual.icon-keys()` without hand
+                    // written rows.
                     HorizontalLayout {
                         spacing: 3px;
                         for key[idx] in WorkspaceVisual.icon-keys() : IconCell {
@@ -304,18 +307,18 @@ export component WorkspaceDialog inherits Rectangle {
                             icon-key: key;
                         }
                     }
-                }
-                Text {
-                    height: 16px;
-                    text: I18n.ws_color_label;
-                    color: Theme.muted; font-size: Theme.font-xs;
-                    vertical-alignment: center;
-                }
-                HorizontalLayout {
-                    spacing: 6px;
-                    for dot[index] in WorkspaceVisual.color-keys() : ColorDot {
-                        index: index;
-                        color-key: dot;
+                    Text {
+                        height: 16px;
+                        text: I18n.ws_color_label;
+                        color: Theme.muted; font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        for dot[index] in WorkspaceVisual.color-keys() : ColorDot {
+                            index: index;
+                            color-key: dot;
+                        }
                     }
                 }
                 HorizontalLayout {

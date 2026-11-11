@@ -2197,6 +2197,7 @@ fn project_command_session_success(data: &Value) -> Option<Value> {
             "output_truncated",
             "next_seq",
             "next_step",
+            "stdin_note",
         ],
     );
     for key in ["stdout", "stderr", "pty", "error"] {
@@ -2207,8 +2208,10 @@ fn project_command_session_success(data: &Value) -> Option<Value> {
             let value = if let Some(text) = value.as_str() {
                 // Polls should carry only the delta. A defensive cap prevents
                 // a provider that ignores after_seq from replaying history.
+                // 单次轮询给到约 7.5k 字符：编译失败、测试报告这类多行输出
+                // 通常一次就能读完，不必让模型为看后半段再轮询一次。
                 let compacted =
-                    truncate_tool_result_string(text, 1150, 560, TOOL_RESULT_TRUNCATION_MARKER);
+                    truncate_tool_result_string(text, 5_000, 2_500, TOOL_RESULT_TRUNCATION_MARKER);
                 if compacted.chars().count() < text.chars().count() {
                     projected.insert("output_truncated".to_string(), Value::Bool(true));
                 }

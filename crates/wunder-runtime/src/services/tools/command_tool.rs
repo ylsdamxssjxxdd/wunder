@@ -1,7 +1,8 @@
 use super::{
     apply_patch_tool, build_model_tool_success, build_model_tool_success_with_hint,
     command_options::{
-        apply_time_budget_secs, parse_command_budget, parse_command_session_wait, parse_dry_run,
+        apply_time_budget_secs, parse_command_budget, parse_command_session_input,
+        parse_command_session_wait, parse_dry_run, CommandSessionInput,
         MAX_COMMAND_SESSION_POLL_MS,
     },
     command_output_guard::{
@@ -10,7 +11,8 @@ use super::{
         DEFAULT_CAPTURE_TOTAL_BYTES, STDERR_CAPTURE_POLICY, STDOUT_CAPTURE_POLICY,
     },
     command_sessions::{
-        CommandProcessHandle, CommandSessionLaunchMode, CommandSessionStream, CommandSessionTracker,
+        CommandProcessHandle, CommandSessionLaunchMode, CommandSessionStream,
+        CommandSessionTracker, CommandStdinWrite,
     },
     execute_in_sandbox, recover_tool_args_value, resolve_tool_name,
     tool_error::{
@@ -180,7 +182,7 @@ fn recent_output_paths(root: &Path, since: SystemTime, limit: usize) -> Vec<Stri
 fn timeout_escalation_hint(command_session_id: &str, recent: &[String]) -> String {
     let mut hint = format!(
         "前台等待已到 timeout_s，命令没有终止，已转入后台继续运行（command_session_id={command_session_id}）。\
-         用命令会话工具轮询到退出后再检查产物；不要重跑同一条命令。"
+         用命令会话工具读新增输出，需要阻塞到退出就传 wait_for=exit；退出后再检查产物，不要重跑同一条命令。"
     );
     if !recent.is_empty() {
         hint.push_str(" 期间已写入/更新的文件：");
@@ -1072,10 +1074,12 @@ async fn detach_spawned_child(
     mut stderr_task: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
     tree: ProcessTree,
     escalated_on_timeout: bool,
+    child_stdin: Option<tokio::process::ChildStdin>,
 ) -> Result<CommandRunResult> {
     let session_id = command_session.command_session_id().to_string();
     let cleanup_session_id = session_id.clone();
-    let process = Arc::new(CommandProcessHandle::new(child.stdin.take()));
+    // 写端来自调用方提前 take 出来的那一份；tokio 的 wait 不会关掉它。
+    let process = Arc::new(CommandProcessHandle::new(child_stdin));
     if !broker.register_process(&session_id, Arc::clone(&process)) {
         tree.terminate();
         let _ = child.kill().await;
@@ -1347,6 +1351,12 @@ async fn run_command_streaming(
             return Err(anyhow!(err));
         }
     };
+    // 关键：stdin 写端必须自己拿着，不能让 tokio 的 `Child::wait` 代管。
+    // tokio 在开始 wait 时会主动关掉未被取走的 stdin（避免子进程等待输入
+    // 永不退出），于是「先等 100ms 再转后台」的命令一进入等待就再也收不到
+    // write_stdin 的输入——命令读到 EOF 直接结束，模型还以为它挂了。
+    // 提前 take 出来，等待期间写端仍由我们持有，转后台时原样交给会话句柄。
+    let child_stdin = child.stdin.take();
     // 树守卫挂得越早，覆盖孙进程越完整（Job 成员随创建继承）。
     let tree = ProcessTree::attach(&child);
     let command_session = CommandSessionTracker::start(
@@ -1514,10 +1524,18 @@ async fn run_command_streaming(
         stderr_task,
         tree,
         foreground_escalation,
+        child_stdin,
     )
     .await
 }
 
+/// 后台命令会话的唯一入口：空 input 读新输出，非空 input 写 stdin 后再读，
+/// Ctrl-C 中断。设计对齐 codex 的 unified exec：
+///
+/// - 一次调用只有「读一眼」和「写一次」两种意图，不再额外要求 action；
+/// - 读一眼默认 250ms 就返回，需要阻塞到退出时才传 `wait_for=exit`；
+/// - 会话已退出不是错误，仍然返回最后一次输出，避免模型拿不到结果；
+/// - 没有可写 stdin 时给出可执行的替代做法，而不是让模型反复重试。
 pub(crate) async fn command_session_control(
     context: &ToolContext<'_>,
     args: &Value,
@@ -1536,12 +1554,14 @@ pub(crate) async fn command_session_control(
             false,
         ));
     }
-    let action = args.get("action").and_then(Value::as_str).unwrap_or("poll");
-    let input = args.get("input").and_then(Value::as_str).unwrap_or("");
-    let write_stdin = action.eq_ignore_ascii_case("write_stdin");
+    let input = parse_command_session_input(args);
     let wait = parse_command_session_wait(args);
-    let wait_for_exit = wait.wait_for_exit;
     let yield_time_ms = wait.yield_time_ms;
+    // 喂完输入通常就是在等结果（`echo y | 命令` 的语义），所以没有显式声明
+    // wait_for 时按「等退出」处理；纯轮询仍然是读一眼就走。窗口不放大，
+    // 交互式程序照样能在几百毫秒内把控制权交回来。
+    let wait_for_exit =
+        wait.wait_for_exit || (input.writes_stdin() && args.get("wait_for").is_none());
     let after_seq = args.get("after_seq").and_then(Value::as_u64);
     let broker = context.command_sessions.as_ref();
     let managed = broker.is_some_and(|broker| {
@@ -1549,31 +1569,65 @@ pub(crate) async fn command_session_control(
             .snapshot_for_scope(context.user_id, context.session_id, session_id)
             .is_some()
     });
-    if session_id.starts_with("sandcmd_") && (write_stdin || !managed) {
+    let sandbox_backed = session_id.starts_with("sandcmd_");
+    // 非 tty 会话没有可写 stdin，中断必须落到终止上；沙盒会话的输入要回到
+    // 沙盒侧，本地没有它的子进程句柄。
+    let mut stdin_note: Option<String> = None;
+    if matches!(input, CommandSessionInput::Interrupt) {
+        if let Some(broker) = broker {
+            broker.terminate_task(context.user_id, context.session_id, session_id);
+        }
+        stdin_note = Some(i18n::t("tool.command_session.interrupted"));
+    }
+    if sandbox_backed && (input.writes_stdin() || !managed) {
         let Some(result) = crate::sandbox::control_command_session(
             context.config,
             context.user_id,
             context.session_id,
             session_id,
-            input,
+            match input {
+                CommandSessionInput::Text(text) => text,
+                _ => "",
+            },
             crate::sandbox::CommandSessionPollOptions {
                 after_seq: if managed { 0 } else { after_seq.unwrap_or(0) },
                 yield_time_ms: if managed { 0 } else { yield_time_ms },
                 wait_for_exit,
                 include_snapshot: false,
             },
-            write_stdin,
+            input.writes_stdin(),
         )
         .await
         else {
             return Ok(build_failed_tool_result(
                 &i18n::t("tool.command_session.sandbox_unavailable"),
-                json!({"command_session_id": session_id}),
+                json!({ "command_session_id": session_id }),
                 ToolErrorMeta::new("TOOL_COMMAND_SESSION_UNAVAILABLE", None, true, Some(200)),
                 false,
             ));
         };
         if !result.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+            let error = result
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if error.contains("stdin is unavailable") {
+                return Ok(build_failed_tool_result(
+                    &i18n::t("tool.command_session.stdin_closed"),
+                    json!({
+                        "command_session_id": session_id,
+                        "stdin_note": i18n::t("tool.command_session.stdin_closed_hint"),
+                    }),
+                    ToolErrorMeta::new(
+                        "TOOL_COMMAND_STDIN_CLOSED",
+                        Some(i18n::t("tool.command_session.stdin_closed_hint")),
+                        false,
+                        None,
+                    ),
+                    false,
+                ));
+            }
             return Ok(result);
         }
         if !managed {
@@ -1590,16 +1644,50 @@ pub(crate) async fn command_session_control(
             false,
         ));
     };
-    if write_stdin && !session_id.starts_with("sandcmd_") {
-        broker
-            .write_stdin(
-                context.user_id,
-                context.session_id,
-                session_id,
-                input.as_bytes(),
-            )
-            .await
-            .map_err(|error| anyhow!(error))?;
+    if let CommandSessionInput::Text(text) = input {
+        if !sandbox_backed {
+            match broker
+                .write_stdin(
+                    context.user_id,
+                    context.session_id,
+                    session_id,
+                    text.as_bytes(),
+                )
+                .await
+                .map_err(|error| anyhow!(error))?
+            {
+                CommandStdinWrite::Written => {}
+                CommandStdinWrite::StdinClosed => {
+                    // 输入没进去，但会话还在跑：把当前状态一并带回去，模型
+                    // 不必再花一次调用去确认它是否还活着。
+                    let data = broker
+                        .poll(
+                            context.user_id,
+                            context.session_id,
+                            session_id,
+                            after_seq,
+                            Duration::ZERO,
+                            false,
+                        )
+                        .await
+                        .map_err(|error| anyhow!(error))?;
+                    return Ok(build_failed_tool_result(
+                        &i18n::t("tool.command_session.stdin_closed"),
+                        with_stdin_note(data, i18n::t("tool.command_session.stdin_closed_hint")),
+                        ToolErrorMeta::new(
+                            "TOOL_COMMAND_STDIN_CLOSED",
+                            Some(i18n::t("tool.command_session.stdin_closed_hint")),
+                            false,
+                            None,
+                        ),
+                        false,
+                    ));
+                }
+                CommandStdinWrite::SessionExited => {
+                    stdin_note = Some(i18n::t("tool.command_session.stdin_after_exit"));
+                }
+            }
+        }
     }
     let data = broker
         .poll(
@@ -1612,7 +1700,19 @@ pub(crate) async fn command_session_control(
         )
         .await
         .map_err(|error| anyhow!(error))?;
+    let data = match stdin_note {
+        Some(note) => with_stdin_note(data, note),
+        None => data,
+    };
     Ok(build_command_session_result(data))
+}
+
+/// 输入侧的情况单独占一个字段：`next_step` 已被轮询提示占用。
+fn with_stdin_note(mut data: Value, note: String) -> Value {
+    if let Value::Object(ref mut map) = data {
+        map.insert("stdin_note".to_string(), Value::String(note));
+    }
+    data
 }
 
 fn command_session_failure_message(data: &Value) -> String {

@@ -1913,6 +1913,125 @@ pub async fn derive_image_view(
     })
 }
 
+/// 并排对比视图：左 = 主图，右 = 对照图。两半各自等比缩进 1000x1000 的画框，
+/// 画布最宽 2008、最高 1000，天然落在 codex 高细节上限（2048 / 2500 patch）内，
+/// 所以模型拿到的仍是原始细节级别的对比，而不是两张缩略图。
+pub struct ImagePairView {
+    pub attachment: AttachmentPayload,
+    pub left: MediaViewDims,
+    pub right: MediaViewDims,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// 并排对比的画框：半幅 1000px，中间 8px 白色分隔。
+const IMAGE_PAIR_PANE: u32 = 1000;
+const IMAGE_PAIR_GAP: u32 = 8;
+
+pub async fn derive_image_pair_view(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    left_path: &Path,
+    right_path: &Path,
+) -> Result<ImagePairView> {
+    let left_bytes = fs::read(left_path).await?;
+    let right_bytes = fs::read(right_path).await?;
+    let rendered = blocking::run_cpu("read_image_pair_view", move || {
+        render_image_pair(&left_bytes, &right_bytes)
+    })
+    .await?;
+    let left_stem = image_file_stem(left_path);
+    let right_stem = image_file_stem(right_path);
+    let filename = format!("{}__vs__{}", left_stem, right_stem);
+    let derived_root = persist_derived_root(workspace, workspace_id, &filename).await?;
+    let output_path = derived_root.join("pair.jpg");
+    fs::write(&output_path, &rendered.bytes).await?;
+    Ok(ImagePairView {
+        attachment: AttachmentPayload {
+            name: Some(format!("{}_pair.jpg", filename)),
+            content: None,
+            content_type: Some("image/jpeg".to_string()),
+            public_path: Some(workspace.display_path(workspace_id, &output_path)),
+        },
+        left: rendered.left,
+        right: rendered.right,
+        width: rendered.width,
+        height: rendered.height,
+    })
+}
+
+fn image_file_stem(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|value| value.to_str())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "image".to_string())
+}
+
+struct RenderedImagePair {
+    bytes: Vec<u8>,
+    left: MediaViewDims,
+    right: MediaViewDims,
+    width: u32,
+    height: u32,
+}
+
+fn fit_into_pane(image: &DynamicImage, pane: u32) -> DynamicImage {
+    let (width, height) = (image.width().max(1), image.height().max(1));
+    if width <= pane && height <= pane {
+        return image.clone();
+    }
+    let scale = (f64::from(pane) / f64::from(width.max(height))).min(1.0);
+    let target_width = ((f64::from(width) * scale).round() as u32).max(1);
+    let target_height = ((f64::from(height) * scale).round() as u32).max(1);
+    image.resize_exact(
+        target_width,
+        target_height,
+        image::imageops::FilterType::Lanczos3,
+    )
+}
+
+fn render_image_pair(left_bytes: &[u8], right_bytes: &[u8]) -> Result<RenderedImagePair> {
+    let left_image = image::load_from_memory(left_bytes)
+        .map_err(|_| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
+    let right_image = image::load_from_memory(right_bytes)
+        .map_err(|_| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
+    let left_source = (left_image.width(), left_image.height());
+    let right_source = (right_image.width(), right_image.height());
+    let left_fit = fit_into_pane(&left_image, IMAGE_PAIR_PANE).to_rgb8();
+    let right_fit = fit_into_pane(&right_image, IMAGE_PAIR_PANE).to_rgb8();
+    let height = left_fit.height().max(right_fit.height()).max(1);
+    let width = left_fit.width() + IMAGE_PAIR_GAP + right_fit.width();
+    let mut canvas = image::RgbImage::from_pixel(width, height, image::Rgb([255, 255, 255]));
+    image::imageops::overlay(&mut canvas, &left_fit, 0, 0);
+    image::imageops::overlay(
+        &mut canvas,
+        &right_fit,
+        i64::from(left_fit.width() + IMAGE_PAIR_GAP),
+        0,
+    );
+    let canvas = DynamicImage::ImageRgb8(canvas);
+    let (bytes, _, _) =
+        encode_image_view_with_preference(&canvas, true, IMAGE_VIEW_MAX_ENCODED_BYTES)?;
+    Ok(RenderedImagePair {
+        bytes,
+        left: MediaViewDims {
+            source_width: left_source.0,
+            source_height: left_source.1,
+            width: left_fit.width(),
+            height: left_fit.height(),
+        },
+        right: MediaViewDims {
+            source_width: right_source.0,
+            source_height: right_source.1,
+            width: right_fit.width(),
+            height: right_fit.height(),
+        },
+        width,
+        height,
+    })
+}
+
 fn render_image_view(
     bytes: &[u8],
     crop: Option<ImageCrop>,
@@ -2082,10 +2201,7 @@ fn encode_image_view_with_preference(
     Err(anyhow!(crate::i18n::t("tool.read_image.view_too_large")))
 }
 
-fn encode_jpeg_within_budget(
-    image: &DynamicImage,
-    max_bytes: usize,
-) -> Result<Option<Vec<u8>>> {
+fn encode_jpeg_within_budget(image: &DynamicImage, max_bytes: usize) -> Result<Option<Vec<u8>>> {
     use image::ImageEncoder;
     let rgb = image.to_rgb8();
     // 起始质量对齐 codex（JPEG q85）；超字节保护才逐档降，最后才缩图。
@@ -2206,9 +2322,8 @@ mod tests {
     use super::{
         detect_media_kind_from_path, effective_frame_rate, extract_workspace_id_from_public_path,
         load_image_data_url_for_path, normalize_filename, normalize_requested_frame_rate,
-        normalize_requested_frame_step, DEFAULT_VIDEO_FRAME_RATE, IMAGE_VIEW_CACHE_BYTES,
-        IMAGE_VIEW_CACHE_VERSION, ImageViewCache, ImageViewKey, MAX_GIF_FRAME_STEP,
-        MAX_VIDEO_FRAMES,
+        normalize_requested_frame_step, ImageViewCache, ImageViewKey, DEFAULT_VIDEO_FRAME_RATE,
+        IMAGE_VIEW_CACHE_BYTES, IMAGE_VIEW_CACHE_VERSION, MAX_GIF_FRAME_STEP, MAX_VIDEO_FRAMES,
     };
     use std::path::Path;
     use std::sync::Arc;
@@ -2461,7 +2576,10 @@ mod tests {
             }
         }
         let png = png_bytes(&image::DynamicImage::ImageRgb8(rgba));
-        assert!(png.len() > 512 * 1024, "fixture should be a real screenshot");
+        assert!(
+            png.len() > 512 * 1024,
+            "fixture should be a real screenshot"
+        );
         let (encoded, mime) =
             super::encode_model_ready_image_bytes(&png, "image/png").expect("encode view");
         assert_eq!(mime, "image/jpeg");
@@ -2479,6 +2597,36 @@ mod tests {
         let decoded = image::load_from_memory(&encoded).expect("decode");
         // 分辨率对齐 codex：1080p 不缩放，清晰度与源图一致。
         assert_eq!((decoded.width(), decoded.height()), (1920, 1080));
+    }
+
+    #[test]
+    fn image_pair_view_keeps_both_sides_within_model_limits() {
+        let left = png_bytes(&image::DynamicImage::ImageRgb8(
+            image::RgbImage::from_pixel(1920, 1080, image::Rgb([200, 10, 10])),
+        ));
+        let right = png_bytes(&image::DynamicImage::ImageRgb8(
+            image::RgbImage::from_pixel(1080, 1920, image::Rgb([10, 10, 200])),
+        ));
+        let pair = super::render_image_pair(&left, &right).expect("pair");
+        // 左 1000x563、右 563x1000，加 8px 分隔。
+        assert_eq!(pair.width, 1000 + super::IMAGE_PAIR_GAP + 563);
+        assert_eq!(pair.height, 1000);
+        // 画布天然落在 codex 高细节上限内，两半都是原始细节级别。
+        assert!(pair.width <= super::MODEL_VIEW_MAX_DIMENSION);
+        assert!(super::model_view_size(pair.width, pair.height).is_none());
+        assert_eq!(
+            (pair.left.source_width, pair.left.source_height),
+            (1920, 1080)
+        );
+        assert_eq!(
+            (pair.right.source_width, pair.right.source_height),
+            (1080, 1920)
+        );
+        let decoded = image::load_from_memory(&pair.bytes).expect("decode pair");
+        assert_eq!(
+            (decoded.width(), decoded.height()),
+            (pair.width, pair.height)
+        );
     }
 
     #[test]
