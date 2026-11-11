@@ -43,6 +43,18 @@ for entry in "${required[@]}"; do
     }
 done
 
+# BusyBox 1.36 on the device cannot decode xz BCJ filters; such archives only
+# fail after installation ("tar: corrupted data" + "tar: short read").
+for archive in assets/ubuntu/rootfs.tar.xz \
+               assets/ubuntu/packs/common.tar.xz \
+               assets/ubuntu/packs/browser.tar.xz; do
+    if xz --robot --list -vv "$MAIN/$archive" | awk -F '\t' '$1 == "block" { print $NF }' \
+        | grep -qE -- '--(arm64|armthumb|arm|x86|powerpc|ia64|sparc)( |$)'; then
+        echo "BCJ filter in $MAIN/$archive: the bundled busybox cannot decode it" >&2
+        exit 2
+    fi
+done
+
 mkdir -p "$OUT_DIR"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT

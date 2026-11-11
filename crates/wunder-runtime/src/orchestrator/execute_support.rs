@@ -509,6 +509,38 @@ pub(super) fn uses_native_tool_api(
     }
 }
 
+/// 从 assistant 已落盘的 tool_calls 项里取 id。数字 id 与历史规整、
+/// 工具调用解析保持同一口径，统一转成字符串。
+pub(super) fn persisted_tool_call_id(item: &Value) -> Option<String> {
+    for key in ["id", "tool_call_id", "toolCallId", "call_id", "callId"] {
+        let Some(value) = item.get(key) else {
+            continue;
+        };
+        let text = match value {
+            Value::String(text) => text.trim().to_string(),
+            Value::Number(num) => num.to_string(),
+            _ => continue,
+        };
+        if !text.is_empty() {
+            return Some(text);
+        }
+    }
+    None
+}
+
+/// 结果消息只有在 assistant 本轮真正落盘了同一 id 时，才能使用
+/// `role=tool + tool_call_id`；否则历史规整无法配对，会先补 missing result。
+pub(super) fn history_tool_call_id(
+    event_id: Option<&str>,
+    persisted_ids: &std::collections::HashSet<String>,
+) -> Option<String> {
+    event_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .filter(|id| persisted_ids.contains(*id))
+        .map(str::to_string)
+}
+
 pub(super) fn resolve_tool_parallelism(total: usize) -> usize {
     let desired = DEFAULT_TOOL_PARALLELISM.max(1);
     total.max(1).min(desired)

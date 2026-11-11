@@ -82,9 +82,12 @@ def ensure_render_lock(proj):
     os.environ["WUNDER_RENDER_LOCK"] = "held"
 
 def temp_output(out):
-    """先写隐藏临时文件再原子改名：产物路径上永远不会出现半个 mp4。"""
+    """先写隐藏临时文件再原子改名：产物路径上永远不会出现半个 mp4。
+    扩展名必须留在最后（ffmpeg 靠后缀推断封装格式），不能写成 name.tmp-pid。"""
     out = Path(out)
-    return out.with_name(f".{out.name}.tmp-{os.getpid()}")
+    suffix = "".join(out.suffixes)
+    stem = out.name[: -len(suffix)] if suffix else out.name
+    return out.with_name(f".{stem}.tmp-{os.getpid()}{suffix}")
 
 def ffmpeg_bin():
     return os.environ.get("WUNDER_FFMPEG_BIN", "").strip() or "ffmpeg"
@@ -482,6 +485,14 @@ def shot_ranges(shots, end):
         if b - a <= .001: continue
         items.append({"from": a, "to": b, "name": shot.get("name") or f"镜{i + 1}",
                       "no": shot.get("no", i + 1)})
+    # 镜头时间窗允许重叠（相邻镜交叉淡入淡出），但渲染分段必须互不重叠，
+    # 否则拼接会重复时间。按下一镜起点切分：每镜保留自己的主区间，
+    # 不再把整段重叠镜头合并成一个“抬头 + 白光 + …”的超长段。
+    items.sort(key=lambda item: item["from"])
+    for index, item in enumerate(items):
+        if index + 1 < len(items):
+            item["to"] = min(item["to"], items[index + 1]["from"])
+    items = [item for item in items if item["to"] - item["from"] > .001]
     return fill_gaps(items, end)
 
 def equal_ranges(end, fps, jobs):
@@ -509,7 +520,10 @@ def select_entries(entries, tokens):
             a, b = parse_clip_specs([token])[0]
             hit = [e for e in entries if e["from"] < b and e["to"] > a]
         else:
-            hit = [e for e in entries if token == e.get("name") or token in (e.get("name") or "")]
+            # 先精确匹配名字，避免 "白光" 同时命中 "白光 + 反射" 等多段。
+            hit = [e for e in entries if token == e.get("name")]
+            if not hit:
+                hit = [e for e in entries if token in (e.get("name") or "")]
         if not hit:
             labels = "、".join(f'{e["index"] + 1}{"/" + str(e.get("no")) if e.get("no") is not None else ""}·{e["name"]}' for e in entries)
             sys.exit(f"--only 没有匹配 {token!r}；可用：{labels}")

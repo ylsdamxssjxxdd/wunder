@@ -32,6 +32,19 @@ BASE_ARCHIVE="${WUNDER_UBUNTU_ROOTFS:-$ROOT/crates/wunder-android/android/app/sr
 WORK="${WUNDER_BROWSER_PACK_WORK:-/tmp/wunder-browser-pack-$ABI}"
 OUT="${WUNDER_BROWSER_PACK_OUT:-/tmp/wunder-packs/browser.tar.xz}"
 REQUIREMENTS="$ROOT/packaging/python/requirements-android-browser.txt"
+
+# The device unpacks the pack with the bundled busybox 1.36, whose xz decoder
+# has no BCJ support: a --arm64/--x86 stream passes xz -t on the host but fails
+# on-device with "tar: corrupted data" + "tar: short read".
+require_plain_xz() {
+    local archive="$1"
+    if xz --robot --list -vv "$archive" \
+        | awk -F '\t' '$1 == "block" { print $NF }' \
+        | grep -qE -- '--(arm64|armthumb|arm|x86|powerpc|ia64|sparc)( |$)'; then
+        echo "BCJ filter in $archive: the bundled busybox cannot decode it" >&2
+        exit 2
+    fi
+}
 COMMON_PACK="${WUNDER_COMMON_PACK:-}"
 if [ -z "$COMMON_PACK" ]; then
     if [ "$ABI" = "arm64" ] && [ -f "$ROOT/crates/wunder-android/android/app/src/main/assets/ubuntu/packs/common.tar.xz" ]; then
@@ -287,14 +300,12 @@ PY
 
 echo "==> pack $(wc -l < "$WORK/files.txt") entries"
 mkdir -p "$(dirname "$OUT")"
-# The browser pack is the largest APK input; 9e and the ABI branch filter cut
-# roughly a tenth off the old -6 archive without changing extracted content.
-case "$ABI" in
-    arm64) XZ_FILTER="--arm64" ;;
-    x86_64) XZ_FILTER="--x86" ;;
-esac
-XZ_OPT="-T0 $XZ_FILTER -9e" tar -C "$WORK/work" --numeric-owner --no-recursion \
+# The browser pack is the largest APK input; 9e cuts roughly a tenth off the
+# old -6 archive without changing extracted content. No BCJ filter here: see
+# require_plain_xz above.
+XZ_OPT="-T0 -9e" tar -C "$WORK/work" --numeric-owner --no-recursion \
     -T "$WORK/files.txt" -J -cf "$OUT"
 chmod 644 "$OUT"
+require_plain_xz "$OUT"
 echo "pack: $OUT"
 ls -lh "$OUT"

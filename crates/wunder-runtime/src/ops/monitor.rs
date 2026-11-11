@@ -201,6 +201,17 @@ struct SessionRecord {
     dirty: bool,
     last_persisted: f64,
     round_floor_verified: bool,
+    /// The admin monitor polls the full session list every few seconds. Building
+    /// each summary re-scans up to 500 retained events for context/speed
+    /// derivations; finished records never change, so reuse the last projection
+    /// until a summary-relevant field or the event tail changes.
+    summary_cache: Option<SummaryCacheEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct SummaryCacheEntry {
+    fingerprint: u64,
+    value: Value,
 }
 
 struct SessionRecordInit {
@@ -302,6 +313,7 @@ impl SessionRecord {
             dirty: true,
             last_persisted: 0.0,
             round_floor_verified: true,
+            summary_cache: None,
         }
     }
 
@@ -440,6 +452,65 @@ impl SessionRecord {
             self.speed_summary_for_display().insert_into_map(map);
         }
         summary
+    }
+
+    /// Fingerprint of every field the display projection reads. `updated_time`
+    /// covers in-place record updates and `events.len()` covers the retained
+    /// tail; the remaining values make the key self-contained so a projection
+    /// can never outlive the data it was built from.
+    fn summary_fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.updated_time.to_bits().hash(&mut hasher);
+        self.events.len().hash(&mut hasher);
+        self.question.hash(&mut hasher);
+        self.status.hash(&mut hasher);
+        self.stage.hash(&mut hasher);
+        self.summary.hash(&mut hasher);
+        self.start_time.to_bits().hash(&mut hasher);
+        self.cancel_requested.hash(&mut hasher);
+        self.cancel_source.hash(&mut hasher);
+        self.ended_time.map(f64::to_bits).hash(&mut hasher);
+        self.active_elapsed_s.map(f64::to_bits).hash(&mut hasher);
+        self.active_since.map(f64::to_bits).hash(&mut hasher);
+        self.speed_totals
+            .map(|totals| {
+                (
+                    totals.prefill_tokens,
+                    totals.prefill_duration_s.to_bits(),
+                    totals.decode_tokens,
+                    totals.decode_duration_s.to_bits(),
+                )
+            })
+            .hash(&mut hasher);
+        self.user_rounds.hash(&mut hasher);
+        self.model_request_count.hash(&mut hasher);
+        self.context_tokens.hash(&mut hasher);
+        self.context_tokens_peak.hash(&mut hasher);
+        self.consumed_tokens.hash(&mut hasher);
+        self.tool_calls.hash(&mut hasher);
+        // `elapsed_s` is derived from the wall clock while a session is inside a
+        // running interval. Bucket by second so a live session keeps ticking
+        // even when no events arrive; idle/finished records pay nothing.
+        if self.active_since.is_some() {
+            now_ts().floor().to_bits().hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    fn to_summary_cached(&mut self) -> Value {
+        let fingerprint = self.summary_fingerprint();
+        if let Some(cache) = self.summary_cache.as_ref() {
+            if cache.fingerprint == fingerprint {
+                return cache.value.clone();
+            }
+        }
+        let value = self.to_summary();
+        self.summary_cache = Some(SummaryCacheEntry {
+            fingerprint,
+            value: value.clone(),
+        });
+        value
     }
 
     fn to_storage(&self) -> Value {
@@ -729,6 +800,7 @@ impl SessionRecord {
             dirty: false,
             last_persisted: updated_time,
             round_floor_verified: false,
+            summary_cache: None,
         })
     }
 }
@@ -1785,11 +1857,11 @@ impl MonitorState {
 
     pub fn list_sessions(&self, active_only: bool) -> Vec<Value> {
         self.run_guarded("monitor.list_sessions", Vec::new, || {
-            let sessions = self.sessions.lock();
+            let mut sessions = self.sessions.lock();
             sessions
-                .values()
+                .values_mut()
                 .filter(|record| !active_only || Self::is_active_status(&record.status))
-                .map(|record| record.to_summary())
+                .map(SessionRecord::to_summary_cached)
                 .collect()
         })
     }
@@ -3958,6 +4030,55 @@ mod tests {
         assert!(
             overview["elapsed_s"].is_null(),
             "legacy wall-clock elapsed must not be presented as execution time"
+        );
+    }
+
+    #[test]
+    fn session_summary_cache_reuses_projection_and_invalidates_on_events() {
+        let mut record = SessionRecord::from_storage(&json!({
+            "session_id": "cache-thread",
+            "user_id": "sample-owner",
+            "status": "finished",
+            "start_time": 1.0,
+            "updated_time": 2.0
+        }))
+        .expect("record");
+        let first = record.to_summary_cached();
+        assert!(record.summary_cache.is_some());
+        let cached_fingerprint = record
+            .summary_cache
+            .as_ref()
+            .expect("cache entry")
+            .fingerprint;
+        let second = record.to_summary_cached();
+        assert_eq!(first, second);
+        assert_eq!(
+            cached_fingerprint,
+            record
+                .summary_cache
+                .as_ref()
+                .expect("cache entry")
+                .fingerprint
+        );
+
+        // The retained event tail feeds the derived context/speed values; an
+        // append must invalidate the cached projection even when no scalar
+        // field changes.
+        record.events.push_back(MonitorEvent {
+            event_id: 1,
+            timestamp: 3.0,
+            event_type: "context_usage".to_string(),
+            data: json!({ "context_tokens": 4321 }),
+        });
+        let third = record.to_summary_cached();
+        assert_eq!(third["context_tokens"], json!(4321));
+        assert_ne!(
+            cached_fingerprint,
+            record
+                .summary_cache
+                .as_ref()
+                .expect("cache entry")
+                .fingerprint
         );
     }
 

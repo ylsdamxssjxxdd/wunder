@@ -516,6 +516,17 @@ jobs:
           test -f android-runtime/assets/ubuntu/packs/common.tar.xz
           test -f android-runtime/assets/ubuntu/packs/browser.tar.xz
           file -b android-runtime/jniLibs/arm64-v8a/liboperit_proot.so | grep -qi aarch64
+          # The on-device busybox xz decoder has no BCJ support; such archives
+          # only fail after installation ("tar: corrupted data" / "short read").
+          for archive in android-runtime/assets/ubuntu/rootfs.tar.xz \
+                         android-runtime/assets/ubuntu/packs/common.tar.xz \
+                         android-runtime/assets/ubuntu/packs/browser.tar.xz; do
+            if xz --robot --list -vv "$archive" | awk -F '\t' '$1 == "block" { print $NF }' \
+                | grep -qE -- '--(arm64|armthumb|arm|x86|powerpc|ia64|sparc)( |$)'; then
+              echo "BCJ filter in $archive: the bundled busybox cannot decode it" >&2
+              exit 1
+            fi
+          done
       - name: Stage runtime inputs and debug keystore
         shell: bash
         run: |

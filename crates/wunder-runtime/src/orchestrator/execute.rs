@@ -30,7 +30,6 @@ struct UnsettledToolCalls {
     user_id: String,
     session_id: String,
     round_info: RoundInfo,
-    native_tool_api: bool,
     pending: parking_lot::Mutex<Vec<(String, String)>>,
     armed: bool,
 }
@@ -41,7 +40,6 @@ impl UnsettledToolCalls {
         user_id: String,
         session_id: String,
         round_info: RoundInfo,
-        native_tool_api: bool,
         persisted_tool_calls: Option<&Value>,
     ) -> Self {
         let mut pending = Vec::new();
@@ -50,13 +48,7 @@ impl UnsettledToolCalls {
             .into_iter()
             .flatten()
         {
-            let Some(id) = item
-                .get("id")
-                .or_else(|| item.get("tool_call_id"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            else {
+            let Some(id) = persisted_tool_call_id(item) else {
                 continue;
             };
             let Some(name) = item
@@ -75,7 +67,6 @@ impl UnsettledToolCalls {
             user_id,
             session_id,
             round_info,
-            native_tool_api,
             pending: parking_lot::Mutex::new(pending),
             armed: true,
         }
@@ -126,18 +117,13 @@ impl UnsettledToolCalls {
                     "failed to persist settled tool result: {error}"
                 );
             }
-            messages.push(if self.native_tool_api {
-                json!({
-                    "role": "tool",
-                    "tool_call_id": id,
-                    "content": observation,
-                })
-            } else {
-                json!({
-                    "role": "user",
-                    "content": format!("{OBSERVATION_PREFIX}{observation}"),
-                })
-            });
+            // 进入 pending 的调用都带 id（来自 assistant 已落盘的 tool_calls），
+            // 结果必须使用同样的 role=tool + tool_call_id 才能配对。
+            messages.push(json!({
+                "role": "tool",
+                "tool_call_id": id,
+                "content": observation,
+            }));
         }
         messages
     }
@@ -1540,12 +1526,23 @@ impl Orchestrator {
                     }
                 }
 
+                // 结果消息是否携带 tool_call_id，必须以本轮 assistant 实际
+                // 落盘的 tool_calls 为准，而不是按协议模式猜。文本协议也可能
+                // 收到带 id 的 native payload；按模式丢 id 会让历史配对失败，
+                // 下一轮先补一条 missing tool result 再出现真实结果。
+                let persisted_tool_call_ids = assistant_history
+                    .persisted_tool_calls
+                    .as_ref()
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(persisted_tool_call_id)
+                    .collect::<HashSet<_>>();
                 let mut unsettled_tool_calls = UnsettledToolCalls::from_persisted(
                     self.clone(),
                     user_id.clone(),
                     session_id.clone(),
                     round_info,
-                    uses_native_tool_api(tool_call_mode, &llm_config),
                     assistant_history.persisted_tool_calls.as_ref(),
                 );
 
@@ -1896,12 +1893,11 @@ impl Orchestrator {
                             .map(str::trim)
                             .filter(|value| !value.is_empty())
                             .map(ToString::to_string);
-                        let history_tool_call_id = if uses_native_tool_api(tool_call_mode, &llm_config) {
-                            event_tool_call_id.clone()
-                        } else {
-                            None
-                        };
-                        let observation_model_message = if uses_native_tool_api(tool_call_mode, &llm_config) {
+                        let history_tool_call_id = history_tool_call_id(
+                            event_tool_call_id.as_deref(),
+                            &persisted_tool_call_ids,
+                        );
+                        let observation_model_message =
                             if let Some(tool_call_id) = history_tool_call_id.as_ref() {
                                 json!({
                                     "role": "tool",
@@ -1913,13 +1909,7 @@ impl Orchestrator {
                                     "role": "user",
                                     "content": format!("{OBSERVATION_PREFIX}{observation}"),
                                 })
-                            }
-                        } else {
-                            json!({
-                                "role": "user",
-                                "content": format!("{OBSERVATION_PREFIX}{observation}"),
-                            })
-                        };
+                            };
                         messages.push(observation_model_message.clone());
                         if let Err(error) = self.try_append_chat(
                             &user_id,

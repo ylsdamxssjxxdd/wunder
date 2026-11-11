@@ -257,7 +257,9 @@ public final class UbuntuRuntime {
 
             File archive = new File(files, "ubuntu-rootfs.tar.xz");
             long expected = staged ? stagedArchive.length() : assetLength(ROOTFS_ASSET);
-            if (!archive.isFile() || (expected > 0 && archive.length() != expected)) {
+            // A compressed asset exposes no length; always re-copy in that case
+            // instead of trusting a leftover archive from a failed install.
+            if (!archive.isFile() || expected <= 0 || archive.length() != expected) {
                 setStage("复制 Ubuntu 根文件系统…", 4);
                 if (staged) {
                     copyFileWithProgress(stagedArchive, archive, expected);

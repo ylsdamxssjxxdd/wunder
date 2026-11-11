@@ -26,6 +26,20 @@ DEST_ASSETS="$APP/assets/ubuntu"
 DEST_LIBS="$APP/jniLibs/arm64-v8a"
 SRC="${WUNDER_UBUNTU_SRC:-}"
 
+# The device unpacks these archives with the bundled busybox 1.36, whose xz
+# decoder has no BCJ support. An archive compressed with xz --arm64/--x86
+# passes xz -t on the host but fails on-device with
+# "tar: corrupted data" + "tar: short read" after the APK is installed.
+require_plain_xz() {
+    local archive="$1"
+    if xz --robot --list -vv "$archive" \
+        | awk -F '\t' '$1 == "block" { print $NF }' \
+        | grep -qE -- '--(arm64|armthumb|arm|x86|powerpc|ia64|sparc)( |$)'; then
+        echo "BCJ filter in $archive: the bundled busybox cannot decode it" >&2
+        exit 2
+    fi
+}
+
 if [ -z "$SRC" ]; then
     echo "WUNDER_UBUNTU_SRC is not set; point it at the reference terminal checkout." >&2
     exit 2
@@ -43,12 +57,13 @@ done
 
 mkdir -p "$DEST_ASSETS" "$DEST_LIBS"
 cp -f "$ROOTFS" "$DEST_ASSETS/rootfs.tar.xz"
-# The upstream proot-distro archive ships an xz -6 stream. Recompress it with
-# the same 9e + arm64 settings as the overlays so the APK payload stays
-# consistent and a couple of MB smaller.
+# The upstream proot-distro archive ships an xz -6 stream. Recompress it at 9e
+# to match the overlays. The filter must stay plain LZMA2: BCJ (--arm64) is
+# rejected by the device-side busybox (see require_plain_xz above).
 xz -dc "$DEST_ASSETS/rootfs.tar.xz" \
-    | xz -T0 --arm64 -9e -c > "$DEST_ASSETS/rootfs.tar.xz.new"
+    | xz -T0 -9e -c > "$DEST_ASSETS/rootfs.tar.xz.new"
 mv -f "$DEST_ASSETS/rootfs.tar.xz.new" "$DEST_ASSETS/rootfs.tar.xz"
+require_plain_xz "$DEST_ASSETS/rootfs.tar.xz"
 cp -f "$LIBS/liboperit_proot.so" "$DEST_LIBS/liboperit_proot.so"
 cp -f "$LIBS/liboperit_loader.so" "$DEST_LIBS/liboperit_loader.so"
 cp -f "$LIBS/libbusybox.so" "$DEST_LIBS/libbusybox.so"
@@ -66,12 +81,14 @@ if [ -n "$PACKS" ]; then
     mkdir -p "$DEST_ASSETS/packs"
     cp -f "$PACKS/common.tar.xz" "$DEST_ASSETS/packs/common.tar.xz"
     chmod 644 "$DEST_ASSETS/packs/common.tar.xz"
+    require_plain_xz "$DEST_ASSETS/packs/common.tar.xz"
     # Browser overlay: Playwright + offline Chromium. Release builds bundle it
     # so 知识短片 renders out of the box; a dev build without it still installs,
     # but browser_* tools and browser-backed skills report the missing runtime.
     if [ -f "$PACKS/browser.tar.xz" ]; then
         cp -f "$PACKS/browser.tar.xz" "$DEST_ASSETS/packs/browser.tar.xz"
         chmod 644 "$DEST_ASSETS/packs/browser.tar.xz"
+        require_plain_xz "$DEST_ASSETS/packs/browser.tar.xz"
     else
         echo "[stage-android-ubuntu] WARN: $PACKS/browser.tar.xz missing; the APK will not include a browser" >&2
     fi

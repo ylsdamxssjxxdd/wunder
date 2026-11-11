@@ -25,6 +25,38 @@ use tracing::{info, warn};
 const ADMIN_MONITOR_TIMING_INFO_MS: u128 = 200;
 const ADMIN_MONITOR_TIMING_WARN_MS: u128 = 1000;
 const ADMIN_MONITOR_DETAIL_EVENT_PAGE_MAX_LIMIT: i64 = 100;
+/// The admin page polls the full thread list every few seconds. Thread titles
+/// can change but do so rarely, and a thread's first user question never
+/// changes, so both are cached instead of re-reading them from storage on
+/// every poll. Questions absent from storage are cached for the same window:
+/// the fallback exists for legacy/system threads, not newly created ones.
+const THREAD_TITLE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+const THREAD_QUESTION_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
+const THREAD_META_CACHE_MAX_ENTRIES: usize = 20_000;
+
+type CachedThreadField = (Option<String>, Instant);
+
+#[derive(Default)]
+struct CachedThreadMeta {
+    title: Option<CachedThreadField>,
+    question: Option<CachedThreadField>,
+}
+
+fn thread_meta_cache() -> &'static std::sync::Mutex<HashMap<String, CachedThreadMeta>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, CachedThreadMeta>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+fn lock_thread_meta_cache() -> std::sync::MutexGuard<'static, HashMap<String, CachedThreadMeta>> {
+    thread_meta_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn cached_field_is_fresh(field: Option<&CachedThreadField>, ttl: std::time::Duration) -> bool {
+    field.is_some_and(|(_, fetched_at)| fetched_at.elapsed() < ttl)
+}
 
 #[cfg(test)]
 #[path = "session_catalog_tests.rs"]
@@ -102,10 +134,12 @@ async fn admin_monitor(
     let system_ms = stage_started_at.elapsed().as_millis();
     stage_started_at = Instant::now();
     let mut sessions = state.monitor.list_sessions(active_only);
+    let sessions_ms = stage_started_at.elapsed().as_millis();
     // 线程管理页展示「线程名称」：线程名称即用户在云端版中的会话标题，监控摘要
     // 本身只带首条问题，这里按所属用户和线程身份批量读取标题回填 thread_name。
+    stage_started_at = Instant::now();
     attach_thread_names(&state, &mut sessions).await?;
-    let sessions_ms = stage_started_at.elapsed().as_millis();
+    let thread_meta_ms = stage_started_at.elapsed().as_millis();
 
     stage_started_at = Instant::now();
     let mut since_time = None;
@@ -186,6 +220,7 @@ async fn admin_monitor(
         query_window_ms,
         system_ms,
         sessions_ms,
+        thread_meta_ms,
         service_ms,
         tool_stats_ms,
         sandbox_ms,
@@ -206,38 +241,87 @@ async fn attach_thread_names(
     if sessions.is_empty() {
         return Ok(());
     }
-    let owners = sessions
-        .iter()
-        .filter_map(|session| {
-            let user = session.get("user_id")?.as_str()?.trim();
-            let thread = session.get("session_id")?.as_str()?.trim();
-            (!user.is_empty() && !thread.is_empty()).then(|| (user.to_string(), thread.to_string()))
-        })
-        .collect::<Vec<_>>();
-    let missing_questions = sessions
-        .iter()
-        .filter(|session| {
-            session
+    let mut title_owners = Vec::new();
+    let mut question_ids = Vec::new();
+    {
+        let cache = lock_thread_meta_cache();
+        for session in sessions.iter() {
+            let Some(user) = session
+                .get("user_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|user| !user.is_empty())
+            else {
+                continue;
+            };
+            let Some(thread) = session
+                .get("session_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|thread| !thread.is_empty())
+            else {
+                continue;
+            };
+            let cached = cache.get(thread);
+            if !cached_field_is_fresh(
+                cached.and_then(|meta| meta.title.as_ref()),
+                THREAD_TITLE_CACHE_TTL,
+            ) {
+                title_owners.push((user.to_string(), thread.to_string()));
+            }
+            let has_question = session
                 .get("question")
                 .and_then(Value::as_str)
                 .map(str::trim)
-                .filter(|question| !question.is_empty())
-                .is_none()
-        })
-        .filter_map(|session| session.get("session_id")?.as_str().map(str::to_string))
-        .collect::<Vec<_>>();
-    let storage = state.storage.clone();
-    let (titles, questions) =
-        crate::core::blocking::run_db("api.admin.monitor.thread_titles", move || {
-            let titles = storage.list_chat_session_titles(&owners)?;
-            // 问题回填是展示增强：历史库不可读时保持空问题，不让整页失败。
-            let questions = storage
-                .thread_first_user_questions(&missing_questions)
-                .unwrap_or_default();
-            Ok::<_, anyhow::Error>((titles, questions))
-        })
-        .await
-        .map_err(|error| error_response(StatusCode::SERVICE_UNAVAILABLE, error.to_string()))?;
+                .is_some_and(|question| !question.is_empty());
+            if !has_question
+                && !cached_field_is_fresh(
+                    cached.and_then(|meta| meta.question.as_ref()),
+                    THREAD_QUESTION_CACHE_TTL,
+                )
+            {
+                question_ids.push(thread.to_string());
+            }
+        }
+    }
+    let (titles, questions, title_owners, question_ids) =
+        if title_owners.is_empty() && question_ids.is_empty() {
+            (HashMap::new(), HashMap::new(), title_owners, question_ids)
+        } else {
+            let storage = state.storage.clone();
+            crate::core::blocking::run_db("api.admin.monitor.thread_titles", move || {
+                let titles = storage.list_chat_session_titles(&title_owners)?;
+                // 问题回填是展示增强：历史库不可读时保持空问题，不让整页失败。
+                let questions = storage
+                    .thread_first_user_questions(&question_ids)
+                    .unwrap_or_default();
+                Ok::<_, anyhow::Error>((titles, questions, title_owners, question_ids))
+            })
+            .await
+            .map_err(|error| error_response(StatusCode::SERVICE_UNAVAILABLE, error.to_string()))?
+        };
+    {
+        let mut cache = lock_thread_meta_cache();
+        let fetched_at = Instant::now();
+        for (_, thread) in &title_owners {
+            cache.entry(thread.clone()).or_default().title =
+                Some((titles.get(thread).cloned(), fetched_at));
+        }
+        for thread in &question_ids {
+            cache.entry(thread.clone()).or_default().question =
+                Some((questions.get(thread).cloned(), fetched_at));
+        }
+        if cache.len() > THREAD_META_CACHE_MAX_ENTRIES {
+            cache.retain(|_, meta| {
+                cached_field_is_fresh(meta.title.as_ref(), THREAD_TITLE_CACHE_TTL)
+                    || cached_field_is_fresh(meta.question.as_ref(), THREAD_QUESTION_CACHE_TTL)
+            });
+            if cache.len() > THREAD_META_CACHE_MAX_ENTRIES {
+                cache.clear();
+            }
+        }
+    }
+    let cache = lock_thread_meta_cache();
     for session in sessions.iter_mut() {
         let Some(map) = session.as_object_mut() else {
             continue;
@@ -247,6 +331,7 @@ async fn attach_thread_names(
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
+        let cached = cache.get(&session_id);
         let current_question = map
             .get("question")
             .and_then(Value::as_str)
@@ -254,19 +339,21 @@ async fn attach_thread_names(
             .filter(|question| !question.is_empty())
             .map(str::to_string);
         let question = current_question.or_else(|| {
-            questions
-                .get(&session_id)
+            cached
+                .and_then(|meta| meta.question.as_ref())
+                .and_then(|(value, _)| value.clone())
                 .map(|question| question.trim().to_string())
                 .filter(|question| !question.is_empty())
         });
         if let Some(question) = question.as_deref() {
             map.insert("question".to_string(), json!(question));
         }
-        if let Some(title) = titles
-            .get(&session_id)
-            .map(|title| title.trim())
-            .filter(|title| !title.is_empty())
-        {
+        let title = cached
+            .and_then(|meta| meta.title.as_ref())
+            .and_then(|(value, _)| value.clone())
+            .map(|title| title.trim().to_string())
+            .filter(|title| !title.is_empty());
+        if let Some(title) = title {
             map.insert("thread_name".to_string(), json!(title));
         } else if let Some(question) = question {
             map.insert("thread_name".to_string(), json!(question));
@@ -294,6 +381,7 @@ fn log_admin_monitor_timing(
     query_window_ms: u128,
     system_ms: u128,
     sessions_ms: u128,
+    thread_meta_ms: u128,
     service_ms: u128,
     tool_stats_ms: u128,
     sandbox_ms: u128,
@@ -305,6 +393,7 @@ fn log_admin_monitor_timing(
         query_window_ms,
         system_ms,
         sessions_ms,
+        thread_meta_ms,
         service_ms,
         tool_stats_ms,
         sandbox_ms,
@@ -331,6 +420,7 @@ fn log_admin_monitor_timing(
             query_window_ms,
             system_ms,
             sessions_ms,
+            thread_meta_ms,
             service_ms,
             tool_stats_ms,
             sandbox_ms,
@@ -352,6 +442,7 @@ fn log_admin_monitor_timing(
             query_window_ms,
             system_ms,
             sessions_ms,
+            thread_meta_ms,
             service_ms,
             tool_stats_ms,
             sandbox_ms,

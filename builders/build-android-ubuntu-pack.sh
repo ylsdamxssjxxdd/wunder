@@ -28,6 +28,19 @@ ABI="${WUNDER_PACK_ABI:-arm64}"
 BASE_ARCHIVE="${WUNDER_UBUNTU_ROOTFS:-$ROOT/crates/wunder-android/android/app/src/main/assets/ubuntu/rootfs.tar.xz}"
 WORK="${WUNDER_PACK_WORK:-/tmp/wunder-pack-$ABI}"
 OUT="${WUNDER_PACK_OUT:-/tmp/wunder-packs/common-$ABI.tar.xz}"
+
+# The device unpacks the pack with the bundled busybox 1.36, whose xz decoder
+# has no BCJ support: a --arm64/--x86 stream passes xz -t on the host but fails
+# on-device with "tar: corrupted data" + "tar: short read".
+require_plain_xz() {
+    local archive="$1"
+    if xz --robot --list -vv "$archive" \
+        | awk -F '\t' '$1 == "block" { print $NF }' \
+        | grep -qE -- '--(arm64|armthumb|arm|x86|powerpc|ia64|sparc)( |$)'; then
+        echo "BCJ filter in $archive: the bundled busybox cannot decode it" >&2
+        exit 2
+    fi
+}
 # Fonts keep the terminal, Python imaging and headless Chromium from rendering
 # tofu: DejaVu is the default Latin/mono family, Liberation substitutes the
 # Microsoft metric-compatible faces, WenQuanYi Micro Hei covers CJK at ~5 MB
@@ -360,14 +373,12 @@ PY
 
 echo "==> pack $(wc -l < "$WORK/files.txt") entries"
 mkdir -p "$(dirname "$OUT")"
-# 9e plus the ABI's branch filter trims the pack by several percent versus the
-# old -6 stream; the extra build time is paid once per pack rebuild.
-case "$ABI" in
-    arm64) XZ_FILTER="--arm64" ;;
-    x86_64) XZ_FILTER="--x86" ;;
-esac
-XZ_OPT="-T0 $XZ_FILTER -9e" tar -C "$WORK/work" --numeric-owner --no-recursion \
+# 9e trims the pack by several percent versus the old -6 stream; the extra
+# build time is paid once per pack rebuild. No BCJ filter here: see
+# require_plain_xz above.
+XZ_OPT="-T0 -9e" tar -C "$WORK/work" --numeric-owner --no-recursion \
     -T "$WORK/files.txt" -J -cf "$OUT"
 chmod 644 "$OUT"
+require_plain_xz "$OUT"
 echo "pack: $OUT"
 ls -lh "$OUT"

@@ -1190,3 +1190,34 @@ async fn frozen_tool_call_mode_does_not_replace_corrupt_canonical_prompt() {
         .load_session_frozen_tool_call_mode("fixture-user", "fixture-thread")
         .is_none());
 }
+
+#[test]
+fn tool_result_uses_only_ids_persisted_on_the_assistant_message() {
+    let persisted = std::collections::HashSet::from(["call_persisted".to_string()]);
+    assert_eq!(
+        history_tool_call_id(Some("call_persisted"), &persisted).as_deref(),
+        Some("call_persisted"),
+        "id 已随 assistant tool_calls 落盘时必须继续携带，才能与结果配对"
+    );
+    assert_eq!(
+        history_tool_call_id(Some("call_generated"), &persisted),
+        None,
+        "仅为执行补生成的 id 不能写进结果，否则历史会出现无配对的 tool 消息"
+    );
+    assert_eq!(history_tool_call_id(None, &persisted), None);
+    assert_eq!(history_tool_call_id(Some("  "), &persisted), None);
+}
+
+#[test]
+fn persisted_tool_call_id_accepts_string_and_numeric_ids() {
+    assert_eq!(
+        persisted_tool_call_id(&json!({"id": "call_a"})).as_deref(),
+        Some("call_a")
+    );
+    assert_eq!(
+        persisted_tool_call_id(&json!({"toolCallId": 42})).as_deref(),
+        Some("42")
+    );
+    assert_eq!(persisted_tool_call_id(&json!({"id": "  "})), None);
+    assert_eq!(persisted_tool_call_id(&json!({"name": "x"})), None);
+}
