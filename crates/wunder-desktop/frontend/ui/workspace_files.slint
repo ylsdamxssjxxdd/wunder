@@ -618,6 +618,12 @@ export component WorkspacePromptDialog inherits ModalDialog {
     callback accepted(string);
     callback canceled();
 
+    // Opening the dialog must not cost a click: the draft takes the caret and
+    // the old name is selected, so typing replaces it. The selection waits one
+    // frame because the text binding is still re-evaluated during the creation
+    // frame and would drop a same-frame select-all.
+    private property <bool> select-armed: false;
+
     card-width: 360px;
     card-height: 200px;
     dismissable: !root.busy;
@@ -632,11 +638,30 @@ export component WorkspacePromptDialog inherits ModalDialog {
             text: root.prompt-body; color: Theme.muted; font-size: Theme.font-sm;
             wrap: word-wrap;
         }
-        if root.input-visible : InlineInput {
+        if root.input-visible : Rectangle {
             height: 32px;
-            enabled: !root.busy;
-            text <=> root.prompt-value;
-            accepted => { if !root.busy { root.accepted(root.prompt-value); } }
+            prompt-input := InlineInput {
+                width: parent.width; height: parent.height;
+                enabled: !root.busy;
+                text <=> root.prompt-value;
+                // 打开即聚焦，光标落在名字末尾；随后一帧内全选，直接输入就是覆盖。
+                init => {
+                    if !root.busy {
+                        self.focus-editor();
+                        root.select-armed = true;
+                    }
+                }
+                accepted => { if !root.busy { root.accepted(root.prompt-value); } }
+            }
+            // 创建帧内文本绑定还会重算，同帧 select-all 会被覆盖，所以延一帧。
+            Timer {
+                interval: 40ms;
+                running: root.select-armed;
+                triggered => {
+                    root.select-armed = false;
+                    prompt-input.select-all-text();
+                }
+            }
         }
         Rectangle { vertical-stretch: 1; }
         HorizontalLayout {

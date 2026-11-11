@@ -468,10 +468,6 @@ export component MainWindow inherits Window {
     in-out property <string> split-title-1;
     in-out property <string> split-title-2;
     in-out property <string> split-title-3;
-    // The open thread's own name. Every split pane carries its title; the single
-    // view reads this one so the transcript is named too. Rust projects it from
-    // the conversation list whenever the list or the selection changes.
-    in-out property <string> active-thread-title: "";
     in-out property <[TimelineRow]> split-rows-0: [];
     in-out property <[TimelineRow]> split-rows-1: [];
     in-out property <[TimelineRow]> split-rows-2: [];
@@ -788,20 +784,30 @@ export component MainWindow inherits Window {
     function apply-sidebar-width(start-width: length, start-x: length, current-x: length) {
         root.sidebar-width = clamp(start-width + (current-x - start-x), 170px, 420px);
     }
+    // 拖到分屏区时的目标格。落点只按指针相对分屏框的象限算，不看当前预览
+    // 出的是 2 格还是 4 格：预览会在指针进入分屏区时自己切换，若还拿它当
+    // 判据，两视图时先按 2 格取左右、松手却落在下排，第三个线程就永远进不来。
+    // 两视图只有左右两列，指针压在下半区就是开下排（2/3），上半区是换掉
+    // 已有的 0/1。
+    function split-drop-slot() -> int {
+        let right = DragPreview.pointer-x >= split_workspace.drop-x
+            + split_workspace.drop-width * root.split-column-ratio;
+        let bottom = DragPreview.pointer-y >= split_workspace.drop-y
+            + split_workspace.drop-height * root.split-row-ratio;
+        if root.split-count < 4 {
+            if bottom && DragPreview.pointer-x >= split_workspace.drop-x {
+                return right ? 3 : 2;
+            }
+            return right ? 1 : 0;
+        }
+        return (bottom ? 2 : 0) + (right ? 1 : 0);
+    }
     function drop-thread-on-split(row: int) {
         if root.split-count == 1 {
             root.split-drop-row(1, row);
             return;
         }
-        if split_workspace.drop-count == 2 {
-            root.split-drop-row(DragPreview.pointer-x < split_workspace.drop-x
-                + split_workspace.drop-width * root.split-column-ratio ? 0 : 1, row);
-            return;
-        }
-        root.split-drop-row((DragPreview.pointer-y < split_workspace.drop-y
-            + split_workspace.drop-height * root.split-row-ratio ? 0 : 2)
-            + (DragPreview.pointer-x < split_workspace.drop-x
-            + split_workspace.drop-width * root.split-column-ratio ? 0 : 1), row);
+        root.split-drop-row(root.split-drop-slot(), row);
     }
     public function open-thread-in-split(row: int) {
         if root.split-count > 1 {
@@ -1098,19 +1104,6 @@ export component MainWindow inherits Window {
     // list (root path, branch), since the native layer always seeds one.
     out property <bool> has-active-workspace: root.selected-workspace >= 0
         && root.selected-workspace < root.workspaces.length;
-    // What the single view's header names: a local thread from the conversation
-    // projection, a cloud thread from the rows its picker already carries.
-    out property <string> single-thread-title: root.cloud-chat-active
-        ? (root.cloud-thread-index >= 0 && root.cloud-thread-index < root.cloud-thread-rows.length
-            ? root.cloud-thread-rows[root.cloud-thread-index].title : "")
-        : root.active-thread-title;
-    // A thread that has not earned a title yet still gets the header, so the
-    // strip does not appear and vanish on the first send.
-    out property <bool> single-thread-head-visible: root.cloud-chat-active
-        ? (root.cloud-thread-index >= 0 && root.cloud-thread-index < root.cloud-thread-rows.length)
-        : root.active-session-id != "";
-    out property <string> single-thread-head-title: root.single-thread-title != ""
-        ? root.single-thread-title : I18n.chat_new_thread;
     // One timeline fold toggle: the Rust projection patches only the rows the
     // fold owns (itself, its tool batch, or its whole earlier turn).
     callback timeline-toggle(int);
@@ -1394,39 +1387,17 @@ export component MainWindow inherits Window {
             Rectangle {
                 horizontal-stretch: root.split-count == 1 ? 1 : 0;
                 max-width: root.split-count == 1 ? root.width : 0px;
+                // 分屏时这列要真正收成 0：`max-width` 拦不住内容的最小宽度，
+                // 不显式放开 `min-width` 的话，隐藏的单视图列会按最宽的表单
+                // 撑出一条空白，左侧窗格就被顶到侧栏右边一段距离之外。
+                min-width: 0px;
                 visible: root.split-count == 1;
                 background: Theme.chat;
                 VerticalLayout {
                     spacing: 0px;
-                    // Single view header. A split pane names its thread, so a
-                    // one-thread screen that showed no title read as an
-                    // anonymous stream. Same height, dot and type scale as
-                    // SplitPane's head, so the two layouts stay one system.
-                    if root.single-thread-head-visible : Rectangle {
-                        height: 34px;
-                        background: Theme.surface;
-                        HorizontalLayout {
-                            padding-left: 12px; padding-right: 12px; spacing: 8px;
-                            Rectangle {
-                                width: 7px; height: 7px; y: (parent.height - 7px) / 2;
-                                border-radius: 4px;
-                                background: root.busy ? Theme.accent-ink : Theme.border-strong;
-                            }
-                            Text {
-                                horizontal-stretch: 1; min-width: 0px; height: parent.height;
-                                text: root.single-thread-head-title; color: Theme.text;
-                                font-size: Theme.font-md; font-weight: 650;
-                                vertical-alignment: center; overflow: elide;
-                            }
-                        }
-                        Rectangle {
-                            y: parent.height - 1px; width: parent.width; height: 1px;
-                            background: Theme.border;
-                        }
-                    }
-                    // The transcript owns the remaining column height. Context
-                    // that used to sit in a top bar (workspace, thread) now
-                    // lives in the sidebar and this one header line.
+                    // The transcript owns the full column height: the web form
+                    // dropped the top bar, so the workspace/thread identity it
+                    // carried lives only in the sidebar now.
                     // The transcript holder is a small wrapper so the timeline
                     // stays reachable from outside: a `public function` cannot
                     // name an element that an `if` may remove, so the two views
@@ -1597,6 +1568,9 @@ export component MainWindow inherits Window {
             split_workspace := ChatSplitWorkspace {
                 horizontal-stretch: root.split-count > 1 ? 1 : 0;
                 max-width: root.split-count > 1 ? root.width : 0px;
+                // 与单视图列同理：单视图时它也必须真的收成 0，否则窗格内容
+                // 的最小宽度会在右侧留下一条没有归属的空白。
+                min-width: 0px;
                 visible: root.split-count > 1;
                 count <=> root.split-count;
                 column-ratio <=> root.split-column-ratio;

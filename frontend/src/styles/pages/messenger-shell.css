@@ -1656,12 +1656,6 @@ button.messenger-sidebar-workspace-row {
   right: 34px;
 }
 
-/* 单视图标题行占住顶部 32px，浮层入口随之下移，避免压在标题上。 */
-.messenger-main.has-chat-head .messenger-sidebar-open,
-.messenger-main.has-chat-head .messenger-scroll-top-btn {
-  top: 44px;
-}
-
 .messenger-sidebar-open:hover,
 .messenger-main .messenger-scroll-top-btn:hover {
   color: var(--mz-primary, var(--ui-accent-ink));
@@ -2086,44 +2080,6 @@ button.messenger-sidebar-workspace-row {
 .messenger-split-pane.is-active .messenger-split-pane-title {
   color: var(--mz-text);
   font-weight: 600;
-}
-
-/* 单视图标题行：与分屏窗格头同高、同字号，只剩一个视图时也点名当前线程。 */
-.messenger-chat-head {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--mz-border);
-  background: var(--mz-surface);
-}
-
-.messenger-chat-head-state {
-  flex-shrink: 0;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ui-accent);
-  opacity: 0.6;
-}
-
-.messenger-chat-head-state.is-running {
-  background: var(--mz-primary);
-  opacity: 1;
-  animation: messenger-split-pulse 1.2s ease-in-out infinite alternate;
-}
-
-.messenger-chat-head-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--mz-text);
-  font-size: var(--mz-font-sm);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .messenger-split-pane-messages {

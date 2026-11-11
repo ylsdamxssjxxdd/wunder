@@ -822,9 +822,16 @@ fn strict_parse_json_value(raw: &str) -> Option<Value> {
 
 fn parse_json_value_lossy(raw: &str) -> Option<Value> {
     let repaired = repair_json_string_syntax(raw);
-    (repaired != raw)
-        .then(|| serde_json::from_str::<Value>(&repaired).ok())
-        .flatten()
+    if repaired == raw {
+        return None;
+    }
+    let value = serde_json::from_str::<Value>(&repaired).ok()?;
+    // 修复不能把非空参数削成空对象：那等于静默丢掉全部字段，工具只会收到一个
+    // 「什么都没传」的空参数，报错也就指不出真正坏在哪里。保留原文更可诊断。
+    if value.as_object().is_some_and(|map| map.is_empty()) && !raw.trim().is_empty() {
+        return None;
+    }
+    Some(value)
 }
 
 fn strip_empty_object_prefix(raw: &str) -> Option<&str> {
@@ -973,8 +980,33 @@ mod tests {
     }
 
     #[test]
-    fn normalize_tool_arguments_json_with_meta_repairs_empty_object_prefix() {
-        let (normalized, repair) = normalize_tool_arguments_json_with_meta(
+    fn normalize_tool_arguments_json_never_collapses_payload_into_empty_object() {
+        // 语法坏掉的参数若被「修」成 {}，工具就只会看到一个空参数，
+        // 既丢了全部字段，也让报错指不出真正坏在哪里。
+        for broken in [
+            "{\"questions\": [question\": \"甲?\"]}",
+            "{\"questions\": [{\"question\": \"甲\"",
+            "not json at all",
+        ] {
+            let (normalized, repair) = normalize_tool_arguments_json_with_meta(broken);
+            let value: Value = serde_json::from_str(&normalized).expect("normalized json");
+            assert!(
+                !value.as_object().is_some_and(|map| map.is_empty()),
+                "{broken} -> {normalized}"
+            );
+            if !broken.trim().is_empty() && value.get("raw").is_none() {
+                // 能修复就修复，但修复结果必须留下原始内容里的东西。
+                assert!(
+                    value.as_object().is_some_and(|map| !map.is_empty()),
+                    "{broken} -> {normalized}"
+                );
+            }
+            let _ = repair;
+        }
+    }
+
+    #[test]
+    fn normalize_tool_arguments_json_with_meta_repairs_empty_object_prefix() {        let (normalized, repair) = normalize_tool_arguments_json_with_meta(
             "{}{\"filename\":\"sample.py\",\"content\":\"print(1)\"}",
         );
         assert_eq!(

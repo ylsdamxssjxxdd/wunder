@@ -414,7 +414,6 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                                 );
                             }
                             app.set_active_session_id("".into());
-                            crate::native_chat::sync_thread_title(&app);
                         }
                         // Refresh the catalogue counts last: focus already
                         // applied its direct projection, so this read can land

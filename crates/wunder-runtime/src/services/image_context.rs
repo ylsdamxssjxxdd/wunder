@@ -18,12 +18,12 @@ use std::io::{self, Write};
 use crate::config::LlmModelConfig;
 use crate::services::chat_payload_sanitizer::image_path_marker_in_text;
 
-pub const DEFAULT_MAX_CONTEXT_IMAGES: usize = 24;
+pub const DEFAULT_MAX_CONTEXT_IMAGES: usize = 16;
 /// Total inline image data-URL bytes kept in one request. Base64 inflates raw
 /// image bytes by ~1/3, so this leaves room for text and tool schemas under a
 /// 32 MiB provider body ceiling.
-pub const DEFAULT_MAX_CONTEXT_IMAGE_BYTES: usize = 24 * 1024 * 1024;
-pub const DEFAULT_MAX_VERSIONS_PER_PATH: usize = 2;
+pub const DEFAULT_MAX_CONTEXT_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+pub const DEFAULT_MAX_VERSIONS_PER_PATH: usize = 1;
 pub const DEFAULT_MAX_REQUEST_BYTES: usize = 32 * 1024 * 1024;
 
 /// The newest images are always kept even when an old history is over budget;
@@ -481,6 +481,39 @@ mod tests {
             max_versions_per_path: max_versions,
             max_request_bytes: 8 * 1024 * 1024,
         }
+    }
+
+    #[test]
+    fn hundred_hd_screenshots_stay_within_default_budget() {
+        // 100 张降规格后的 1080p 入模视图（1024×576 JPEG，base64 约 200KB）。
+        // 历史会一直带着这些图，预算必须在字节维度封顶，而不是等 token 兜底。
+        let mut messages: Vec<Value> = (0..100)
+            .map(|index| {
+                let url = format!(
+                    "data:image/jpeg;base64,{}{}",
+                    "A".repeat(200 * 1024),
+                    index
+                );
+                serde_json::json!({ "role": "user", "content": [ image(&url) ] })
+            })
+            .collect();
+        let defaults = ImageContextPolicy {
+            max_images: DEFAULT_MAX_CONTEXT_IMAGES,
+            max_total_bytes: DEFAULT_MAX_CONTEXT_IMAGE_BYTES,
+            max_versions_per_path: DEFAULT_MAX_VERSIONS_PER_PATH,
+            max_request_bytes: DEFAULT_MAX_REQUEST_BYTES,
+        };
+        let report = enforce_image_budget(&mut messages, &defaults);
+        let (count, bytes) = inline_image_stats(&messages);
+        assert!(
+            count <= DEFAULT_MAX_CONTEXT_IMAGES,
+            "inline images {count} 超出默认上限"
+        );
+        assert!(
+            bytes <= DEFAULT_MAX_CONTEXT_IMAGE_BYTES,
+            "inline bytes {bytes} 超出默认预算"
+        );
+        assert!(report.budget_images_removed > 0, "超预算时必须裁掉旧图");
     }
 
     fn image(url: &str) -> Value {

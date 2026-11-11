@@ -516,6 +516,16 @@ export component InlineInput inherits Rectangle {
     callback edited();
     // Enter commits the field, matching FormField's accepted -> committed path.
     callback accepted();
+    // Slint has no cross-component focus property, so hosts that open a dialog
+    // hand the caret to the editor explicitly (see WorkspacePromptDialog).
+    public function focus-editor() {
+        if root.enabled && !root.read-only { editor.focus(); }
+    }
+    // Selecting the old value is what makes a rename dialog usable: typing
+    // replaces the name instead of appending to it.
+    public function select-all-text() {
+        editor.select-all();
+    }
     min-height: 30px;
     border-radius: Theme.radius-sm; border-width: 1px;
     border-color: root.read-only || !root.enabled ? Theme.input-readonly-border : editor.has-focus ? Theme.accent-ink : Theme.input-border;
@@ -595,7 +605,22 @@ export component ModalDialog inherits Rectangle {
         y: (root.height - self.height) / 2;
         border-radius: Theme.radius-xl; background: Theme.surface; border-width: 1px; border-color: Theme.border;
         TouchArea { }
-        VerticalLayout { padding: Theme.space-5; spacing: Theme.space-3; @children }
+        // Esc 与点遮罩同义：只在可关闭时生效（busy 的对话框必须等操作结束）。
+        // 它必须包住卡片内容，焦点元素未处理的按键才会冒泡到这里。
+        FocusScope {
+            width: 100%; height: 100%;
+            // 卡片自己带输入框时，输入框的 init 会随后接管焦点；没有输入框的
+            // 确认框/信息框则落在这里，Esc 才有接收者。
+            init => { self.focus(); }
+            key-pressed(event) => {
+                if event.text == Key.Escape && root.dismissable {
+                    root.dismissed();
+                    return accept;
+                }
+                return reject;
+            }
+            VerticalLayout { padding: Theme.space-5; spacing: Theme.space-3; @children }
+        }
     }
 }
 

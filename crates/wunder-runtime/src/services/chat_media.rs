@@ -50,6 +50,22 @@ pub struct ChatMediaUpload {
     pub bytes: Vec<u8>,
 }
 
+/// 入模视图与源图的尺寸关系，对齐 codex 的 `image_resize_notice`：让模型知道
+/// 自己看到的是缩略版，需要精确像素时用 crop/scale 取局部。
+#[derive(Debug, Clone, Copy, Serialize, serde::Deserialize)]
+pub struct MediaViewDims {
+    pub source_width: u32,
+    pub source_height: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl MediaViewDims {
+    pub fn downscaled(&self) -> bool {
+        self.width < self.source_width || self.height < self.source_height
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatMediaProcessResult {
     pub kind: String,
@@ -73,6 +89,8 @@ pub struct ChatMediaProcessResult {
     pub frame_count: usize,
     #[serde(default)]
     pub has_audio: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<MediaViewDims>,
     #[serde(default)]
     pub attachments: Vec<AttachmentPayload>,
     #[serde(default)]
@@ -225,6 +243,7 @@ async fn process_audio_source(
         total_frame_count: None,
         frame_count: 0,
         has_audio: true,
+        view: None,
         attachments: vec![AttachmentPayload {
             name: Some(filename.to_string()),
             content: Some(content),
@@ -242,7 +261,7 @@ async fn cap_still_image_for_model(
     workspace: &WorkspaceManager,
     workspace_id: &str,
     filename: &str,
-    mime: &str,
+    _mime: &str,
     bytes: &[u8],
 ) -> Result<Option<AttachmentPayload>> {
     let Some((source_width, source_height)) = image_dimensions(bytes) else {
@@ -252,14 +271,15 @@ async fn cap_still_image_for_model(
         return Ok(None);
     };
     let bytes = bytes.to_vec();
-    let prefer_jpeg = mime.eq_ignore_ascii_case("image/jpeg");
+    // 入模视图不再跟随源格式：截屏多是 PNG，原样内联比 JPEG 大 5–10 倍。
+    let prefer_jpeg = true;
     let encoded = blocking::run_cpu(
         "cap_model_view",
         move || -> Result<(Vec<u8>, &'static str, &'static str)> {
             let image = image::load_from_memory(&bytes)
                 .map_err(|_| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
             let resized = image.resize_exact(width, height, image::imageops::FilterType::Lanczos3);
-            encode_image_view_with_preference(&resized, prefer_jpeg)
+            encode_image_view_with_preference(&resized, prefer_jpeg, IMAGE_VIEW_MAX_ENCODED_BYTES)
         },
     )
     .await?;
@@ -308,6 +328,7 @@ async fn process_image_source(
             total_frame_count: None,
             frame_count: 1,
             has_audio: false,
+            view: None,
             attachments: vec![preview],
             warnings: Vec::new(),
         });
@@ -330,6 +351,17 @@ async fn process_image_source(
         .await;
     }
     let public_path = workspace.display_path(workspace_id, source_path);
+    // 入模视图尺寸：给模型一条“这是缩略版”的提示（对齐 codex image_resize_notice）。
+    let view = image_dimensions(&bytes).map(|(source_width, source_height)| {
+        let (width, height) =
+            model_view_size(source_width, source_height).unwrap_or((source_width, source_height));
+        MediaViewDims {
+            source_width,
+            source_height,
+            width,
+            height,
+        }
+    });
     let attachment = match cap_still_image_for_model(
         workspace,
         workspace_id,
@@ -363,6 +395,7 @@ async fn process_image_source(
         total_frame_count: None,
         frame_count: 1,
         has_audio: false,
+        view,
         attachments: vec![attachment],
         warnings: Vec::new(),
     })
@@ -469,6 +502,7 @@ async fn process_gif_source(
             total_frame_count: Some(total_frame_count),
             frame_count: 1,
             has_audio: false,
+            view: None,
             attachments: vec![preview],
             warnings: Vec::new(),
         });
@@ -506,6 +540,7 @@ async fn process_gif_source(
         total_frame_count: Some(total_frame_count),
         frame_count: attachments.len(),
         has_audio: false,
+        view: None,
         attachments,
         warnings: Vec::new(),
     })
@@ -654,6 +689,7 @@ async fn process_video_source(
         total_frame_count: probe.total_frames,
         frame_count,
         has_audio,
+        view: None,
         attachments,
         warnings,
     })
@@ -1440,7 +1476,11 @@ pub async fn load_image_attachment_data_url(
 /// request. Non-PNG formats (GIF animation, WebP/TIFF/BMP) keep their original
 /// bytes so frame semantics are not silently changed.
 pub(crate) async fn encode_model_ready_data_url(bytes: Vec<u8>, mime: String) -> String {
-    if !matches!(mime.as_str(), "image/png" | "image/jpeg") {
+    // 动图（GIF）与视频等非静态格式原样内联，避免重编码丢帧。
+    if !matches!(
+        mime.as_str(),
+        "image/png" | "image/jpeg" | "image/webp" | "image/bmp" | "image/tiff"
+    ) {
         return format!("data:{mime};base64,{}", STANDARD.encode(bytes));
     }
     let original = bytes.clone();
@@ -1462,7 +1502,7 @@ pub(crate) async fn encode_model_ready_data_url(bytes: Vec<u8>, mime: String) ->
 /// 只复制一次字符串，不再重新解码。
 const IMAGE_VIEW_CACHE_BYTES: usize = 48 * 1024 * 1024;
 /// 入模编码策略变化时递增，避免继续命中旧视图。
-const IMAGE_VIEW_CACHE_VERSION: u32 = 1;
+const IMAGE_VIEW_CACHE_VERSION: u32 = 2;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct ImageViewKey {
@@ -1664,55 +1704,75 @@ pub async fn restore_omitted_inline_images(
     report
 }
 
-const IMAGE_VIEW_MAX_DIMENSION: u32 = 4096;
-const IMAGE_VIEW_MAX_ENCODED_BYTES: usize = 8 * 1024 * 1024;
+/// 显式 crop/scale 的细节视图上限，对齐 codex `ORIGINAL_DETAIL`（6000 长边 /
+/// 10000 个 32px patch）：细节请求不套默认视图的重采样，只做兜底。
+const IMAGE_VIEW_MAX_DIMENSION: u32 = 6000;
+const IMAGE_VIEW_MAX_PATCHES: u32 = 10_000;
+/// 单张入模视图的字节保护（codex 无此限制，因为它走附件上传而非内联）。
+const IMAGE_VIEW_MAX_ENCODED_BYTES: usize = 1024 * 1024;
+/// 显式 crop/scale 的细节视图允许更大，避免把用户主动要看的细节压糊。
+const IMAGE_VIEW_DETAIL_MAX_ENCODED_BYTES: usize = 4 * 1024 * 1024;
 const IMAGE_VIEW_MAX_SCALE: f64 = 16.0;
 const IMAGE_VIEW_EDGE_SAMPLE_WIDTH: u32 = 480;
 const IMAGE_VIEW_EDGE_THRESHOLD: u8 = 6;
 const IMAGE_VIEW_BACKGROUND_TOLERANCE: u8 = 24;
 const IMAGE_VIEW_CORNER_PATCH: u32 = 8;
-/// codex 高细节口径：默认入模视图压到最长边 ≤2048 且 ≤2500 个 32px patch，
-/// 让常驻图像的单图成本可预测（约 1844 token）。显式 crop/scale 是细节请求，
-/// 只按 4096 长边兜底，不做 patch 上限。
+/// codex 高细节口径（`PromptImageMode::HIGH_DETAIL`）：最长边 ≤2048 且
+/// ≤2500 个 32px patch。1080p 截图（60×34=2040 patch）与常见照片都落在上限
+/// 内，不重采样；4K 及更大的图才缩放，单图约 2.3–2.5k patch。
 const MODEL_VIEW_MAX_DIMENSION: u32 = 2048;
 const MODEL_VIEW_MAX_PATCHES: u32 = 2500;
 const MODEL_VIEW_PATCH_SIZE: u32 = 32;
 
-/// codex 高细节上限内则返回 None（沿用原图），超限返回缩放后的目标尺寸。
-fn model_view_size(width: u32, height: u32) -> Option<(u32, u32)> {
-    if width == 0 || height == 0 {
+/// codex `prompt_image_dimensions_fit`：边长与 patch 数都要在上限内。
+fn view_fits_limits(width: u32, height: u32, max_dimension: u32, max_patches: u32) -> bool {
+    let patches_wide = width.div_ceil(MODEL_VIEW_PATCH_SIZE);
+    let patches_high = height.div_ceil(MODEL_VIEW_PATCH_SIZE);
+    width <= max_dimension
+        && height <= max_dimension
+        && u64::from(patches_wide) * u64::from(patches_high) <= u64::from(max_patches)
+}
+
+/// 与 codex `prompt_image_output_dimensions_for_limits` 同算法：先按最长边
+/// 缩到上限，再按 patch 预算按面积缩，并按 patch 网格向下取整对齐。上限内
+/// 返回 None（沿用原图，不做任何重采样）。
+fn view_size_with_limits(
+    width: u32,
+    height: u32,
+    max_dimension: u32,
+    max_patches: u32,
+) -> Option<(u32, u32)> {
+    let width = width.max(1);
+    let height = height.max(1);
+    if view_fits_limits(width, height, max_dimension, max_patches) {
         return None;
     }
-    let long = width.max(height);
-    let area = f64::from(width) * f64::from(height);
-    let max_area = f64::from(MODEL_VIEW_MAX_PATCHES)
-        * f64::from(MODEL_VIEW_PATCH_SIZE)
-        * f64::from(MODEL_VIEW_PATCH_SIZE);
-    let mut scale = 1.0_f64;
-    if long > MODEL_VIEW_MAX_DIMENSION {
-        scale = f64::from(MODEL_VIEW_MAX_DIMENSION) / f64::from(long);
+    let dimension_scale = (f64::from(max_dimension) / f64::from(width.max(height))).min(1.0);
+    let width = ((f64::from(width) * dimension_scale).round() as u32).max(1);
+    let height = ((f64::from(height) * dimension_scale).round() as u32).max(1);
+    if view_fits_limits(width, height, max_dimension, max_patches) {
+        return Some((width, height));
     }
-    if area * scale * scale > max_area {
-        scale = (max_area / area).sqrt();
-    }
-    if scale >= 1.0 {
-        return None;
-    }
-    let scaled_width = ((f64::from(width) * scale).floor() as u32).max(1);
-    let scaled_height = ((f64::from(height) * scale).floor() as u32).max(1);
+    let patch_size = f64::from(MODEL_VIEW_PATCH_SIZE);
+    let width_f64 = f64::from(width);
+    let height_f64 = f64::from(height);
+    let mut scale =
+        (patch_size * patch_size * f64::from(max_patches) / width_f64 / height_f64).sqrt();
+    let patches_wide = width_f64 * scale / patch_size;
+    let patches_high = height_f64 * scale / patch_size;
+    scale *= (patches_wide.floor() / patches_wide).min(patches_high.floor() / patches_high);
+    let scaled_width = ((width_f64 * scale).floor() as u32).max(1);
+    let scaled_height = ((height_f64 * scale).floor() as u32).max(1);
     (scaled_width < width || scaled_height < height).then_some((scaled_width, scaled_height))
 }
 
-fn max_dimension_size(width: u32, height: u32, max: u32) -> Option<(u32, u32)> {
-    let long = width.max(height);
-    if long == 0 || long <= max {
-        return None;
-    }
-    let scale = f64::from(max) / f64::from(long);
-    Some((
-        ((f64::from(width) * scale).floor() as u32).max(1),
-        ((f64::from(height) * scale).floor() as u32).max(1),
-    ))
+fn model_view_size(width: u32, height: u32) -> Option<(u32, u32)> {
+    view_size_with_limits(
+        width,
+        height,
+        MODEL_VIEW_MAX_DIMENSION,
+        MODEL_VIEW_MAX_PATCHES,
+    )
 }
 
 fn image_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
@@ -1906,8 +1966,13 @@ fn render_image_view(
         resized = true;
         cropped.resize_exact(width, height, image::imageops::FilterType::Lanczos3)
     } else if crop.is_some() {
-        // 裁切是细节请求：只兜底超长边，不套 patch 上限。
-        match max_dimension_size(cropped.width(), cropped.height(), IMAGE_VIEW_MAX_DIMENSION) {
+        // 裁切是细节请求：对齐 codex `ORIGINAL_DETAIL`（6000 长边 / 10000 patch）。
+        match view_size_with_limits(
+            cropped.width(),
+            cropped.height(),
+            IMAGE_VIEW_MAX_DIMENSION,
+            IMAGE_VIEW_MAX_PATCHES,
+        ) {
             Some((width, height)) => {
                 resized = true;
                 cropped.resize_exact(width, height, image::imageops::FilterType::Lanczos3)
@@ -1928,7 +1993,11 @@ fn render_image_view(
     let encoded = if stats_only || !view_changed {
         None
     } else {
-        Some(encode_image_view_with_preference(&scaled, prefer_jpeg)?)
+        Some(encode_image_view_with_preference(
+            &scaled,
+            prefer_jpeg,
+            IMAGE_VIEW_DETAIL_MAX_ENCODED_BYTES,
+        )?)
     };
     Ok(RenderedImageView {
         encoded,
@@ -1941,8 +2010,13 @@ fn render_image_view(
     })
 }
 
-/// 工具 followup 截图入模前的统一上限：超过 codex 高细节口径（2048 长边 /
-/// 2500 个 32px patch）才缩放重编码，未超限原样返回，避免无谓的解码重编码。
+/// 入模视图的统一漏斗：先按 codex 高细节口径（2048 长边 / 2500 patch）决定
+/// 是否需要重采样，再不透明画面统一编码成 JPEG（质量 85，对齐 codex）。
+///
+/// 与 codex 的唯一有意差异：codex 在上限内直接复用源文件字节（PNG 截图原样
+/// 1–2 MB），并把图上传成附件引用；我们只能内联 base64，因此即使不缩放也重
+/// 编码一次——分辨率不变，请求体小 5–10 倍。GIF/WebP/BMP/TIFF 保留原字节，
+/// 避免动画与多帧语义被静默改变。
 pub fn encode_model_ready_image_bytes(bytes: &[u8], mime_hint: &str) -> Result<(Vec<u8>, String)> {
     let normalized = mime_hint.trim().to_ascii_lowercase();
     let mime = if normalized.starts_with("image/") {
@@ -1950,21 +2024,29 @@ pub fn encode_model_ready_image_bytes(bytes: &[u8], mime_hint: &str) -> Result<(
     } else {
         "image/png".to_string()
     };
-    let Some((width, height)) = image_dimensions(bytes) else {
+    // 只有动图保留原字节（重编码会丢帧）；其余静态格式统一走尺寸与编码漏斗。
+    if !matches!(
+        mime.as_str(),
+        "image/png" | "image/jpeg" | "image/webp" | "image/bmp" | "image/tiff"
+    ) {
         return Ok((bytes.to_vec(), mime));
-    };
-    let Some((target_width, target_height)) = model_view_size(width, height) else {
+    }
+    let Some((width, height)) = image_dimensions(bytes) else {
         return Ok((bytes.to_vec(), mime));
     };
     let image = image::load_from_memory(bytes)
         .map_err(|_| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
-    let resized = image.resize_exact(
-        target_width,
-        target_height,
-        image::imageops::FilterType::Lanczos3,
-    );
-    let prefer_jpeg = mime == "image/jpeg";
-    let (encoded, out_mime, _) = encode_image_view_with_preference(&resized, prefer_jpeg)?;
+    let view = match model_view_size(width, height) {
+        Some((target_width, target_height)) => image.resize_exact(
+            target_width,
+            target_height,
+            image::imageops::FilterType::Lanczos3,
+        ),
+        None => image,
+    };
+    let prefer_jpeg = true;
+    let (encoded, out_mime, _) =
+        encode_image_view_with_preference(&view, prefer_jpeg, IMAGE_VIEW_MAX_ENCODED_BYTES)?;
     Ok((encoded, out_mime.to_string()))
 }
 
@@ -1972,12 +2054,44 @@ pub fn encode_model_ready_image_bytes(bytes: &[u8], mime_hint: &str) -> Result<(
 fn encode_image_view_with_preference(
     image: &DynamicImage,
     prefer_jpeg: bool,
+    max_bytes: usize,
 ) -> Result<(Vec<u8>, &'static str, &'static str)> {
-    if prefer_jpeg {
-        use image::ImageEncoder;
-        let rgb = image.to_rgb8();
+    // 截屏与 UI 截图基本是不透明画面，JPEG 比 PNG 小一个数量级；带透明通道
+    // 的图仍先试 PNG，避免透明区被压成黑块。
+    if prefer_jpeg && !image.color().has_alpha() {
+        if let Some(jpeg) = encode_jpeg_within_budget(image, max_bytes)? {
+            return Ok((jpeg, "image/jpeg", "jpg"));
+        }
+    }
+    if let Some(png) = encode_png_within_budget(image, max_bytes)? {
+        return Ok((png, "image/png", "png"));
+    }
+    if let Some(jpeg) = encode_jpeg_within_budget(image, max_bytes)? {
+        return Ok((jpeg, "image/jpeg", "jpg"));
+    }
+    // 质量压到底仍超预算：等比缩小再试，最终还超才报错。
+    let mut current = image.clone();
+    for _ in 0..3 {
+        let width = (current.width() * 3 / 4).max(1);
+        let height = (current.height() * 3 / 4).max(1);
+        current = current.resize_exact(width, height, image::imageops::FilterType::Lanczos3);
+        if let Some(jpeg) = encode_jpeg_within_budget(&current, max_bytes)? {
+            return Ok((jpeg, "image/jpeg", "jpg"));
+        }
+    }
+    Err(anyhow!(crate::i18n::t("tool.read_image.view_too_large")))
+}
+
+fn encode_jpeg_within_budget(
+    image: &DynamicImage,
+    max_bytes: usize,
+) -> Result<Option<Vec<u8>>> {
+    use image::ImageEncoder;
+    let rgb = image.to_rgb8();
+    // 起始质量对齐 codex（JPEG q85）；超字节保护才逐档降，最后才缩图。
+    for quality in [85_u8, 78, 68] {
         let mut jpeg = Vec::new();
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 85)
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, quality)
             .write_image(
                 rgb.as_raw(),
                 rgb.width(),
@@ -1985,29 +2099,19 @@ fn encode_image_view_with_preference(
                 image::ExtendedColorType::Rgb8,
             )
             .map_err(|err| anyhow!("encode image view failed: {err}"))?;
-        if jpeg.len() <= IMAGE_VIEW_MAX_ENCODED_BYTES {
-            return Ok((jpeg, "image/jpeg", "jpg"));
+        if jpeg.len() <= max_bytes {
+            return Ok(Some(jpeg));
         }
     }
-    encode_image_view(image)
+    Ok(None)
 }
 
-fn encode_image_view(image: &DynamicImage) -> Result<(Vec<u8>, &'static str, &'static str)> {
+fn encode_png_within_budget(image: &DynamicImage, max_bytes: usize) -> Result<Option<Vec<u8>>> {
     let mut png = Vec::new();
     image
         .write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
         .map_err(|err| anyhow!("encode image view failed: {err}"))?;
-    if png.len() <= IMAGE_VIEW_MAX_ENCODED_BYTES {
-        return Ok((png, "image/png", "png"));
-    }
-    let rgb = DynamicImage::ImageRgb8(image.to_rgb8());
-    let mut jpeg = Vec::new();
-    rgb.write_to(&mut Cursor::new(&mut jpeg), ImageFormat::Jpeg)
-        .map_err(|err| anyhow!("encode image view failed: {err}"))?;
-    if jpeg.len() > IMAGE_VIEW_MAX_ENCODED_BYTES {
-        return Err(anyhow!(crate::i18n::t("tool.read_image.view_too_large")));
-    }
-    Ok((jpeg, "image/jpeg", "jpg"))
+    Ok((png.len() <= max_bytes).then_some(png))
 }
 
 fn compute_image_view_stats(image: &DynamicImage) -> ImageViewStats {
@@ -2304,33 +2408,77 @@ mod tests {
 
     #[test]
     fn model_view_size_matches_codex_high_detail_limits() {
-        // 1080p 与常见的 1290x1210 拼图不压缩。
+        // 1080p 截屏（60×34=2040 patch）落在 codex 高细节上限内，原样入模。
         assert!(super::model_view_size(1920, 1080).is_none());
-        assert!(super::model_view_size(1290, 1210).is_none());
-        // 4K 按最长边 2048 压。
+        // 4K 按最长边缩到 2048，patch 数同时落回 2500 以内。
         assert_eq!(super::model_view_size(3840, 2160), Some((2048, 1152)));
-        // 方形大图按 2500 个 32px patch 的面积上限压。
+        // 小于上限的图不放大。
+        assert!(super::model_view_size(800, 600).is_none());
+        // 方形大图按 2500 个 32px patch 的面积上限压，并对齐 patch 网格。
+        assert_eq!(super::model_view_size(3000, 3000), Some((1600, 1600)));
         let (width, height) = super::model_view_size(3000, 3000).expect("resize");
         assert!(width.div_ceil(32) * height.div_ceil(32) <= 2500);
     }
 
     #[test]
-    fn model_ready_image_bytes_cap_oversized_screenshots_only() {
+    fn model_ready_image_bytes_caps_large_screenshots_to_jpeg_budget() {
         let large = png_bytes(&image::DynamicImage::ImageRgb8(
             image::RgbImage::from_pixel(2600, 1300, image::Rgb([30, 30, 30])),
         ));
         let (capped, mime) =
             super::encode_model_ready_image_bytes(&large, "image/png").expect("cap screenshot");
-        assert_eq!(mime, "image/png");
+        // 截屏 PNG 原样内联是请求体膨胀的根源：入模统一转 JPEG 并压到预算内。
+        assert_eq!(mime, "image/jpeg");
+        assert!(capped.len() <= super::IMAGE_VIEW_MAX_ENCODED_BYTES);
         let decoded = image::load_from_memory(&capped).expect("decode capped");
         assert!(decoded.width() <= 2048 && decoded.height() <= 2048);
-        assert!(decoded.width().div_ceil(32) * decoded.height().div_ceil(32) <= 2500);
 
+        // 小图同样重编码为 JPEG：分辨率不变，但请求体比源 PNG 小一个量级。
         let small = png_bytes(&fixture_image());
-        let (unchanged, mime) =
-            super::encode_model_ready_image_bytes(&small, "image/png").expect("keep small");
-        assert_eq!(mime, "image/png");
-        assert_eq!(unchanged, small);
+        let (reencoded, mime) =
+            super::encode_model_ready_image_bytes(&small, "image/png").expect("reencode small");
+        assert_eq!(mime, "image/jpeg");
+        let decoded = image::load_from_memory(&reencoded).expect("decode small");
+        assert_eq!(
+            (decoded.width(), decoded.height()),
+            (fixture_image().width(), fixture_image().height())
+        );
+    }
+
+    #[test]
+    fn default_view_keeps_1080p_resolution_and_only_reencodes() {
+        // 模拟 1080p 截屏：白底 + 文字纹理。纯色块会被 PNG 压得极好，
+        // 无法代表真实截屏，所以用确定性伪随机纹理 + 深色块混合。
+        let mut rgba = image::RgbImage::from_pixel(1920, 1080, image::Rgb([250, 250, 250]));
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        for y in 0..1080 {
+            for x in 0..1920 {
+                if y % 18 < 11 && x % 7 != 0 {
+                    seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    let v = 20 + (seed >> 33) as u8 % 96;
+                    rgba.put_pixel(x, y, image::Rgb([v, v, v]));
+                }
+            }
+        }
+        let png = png_bytes(&image::DynamicImage::ImageRgb8(rgba));
+        assert!(png.len() > 512 * 1024, "fixture should be a real screenshot");
+        let (encoded, mime) =
+            super::encode_model_ready_image_bytes(&png, "image/png").expect("encode view");
+        assert_eq!(mime, "image/jpeg");
+        assert!(
+            encoded.len() <= super::IMAGE_VIEW_MAX_ENCODED_BYTES,
+            "1080p 入模视图应落在 1MB 预算内，实际 {} KB",
+            encoded.len() / 1024
+        );
+        assert!(
+            encoded.len() < png.len(),
+            "JPEG 重编码应小于源 PNG（{} vs {}）",
+            encoded.len(),
+            png.len()
+        );
+        let decoded = image::load_from_memory(&encoded).expect("decode");
+        // 分辨率对齐 codex：1080p 不缩放，清晰度与源图一致。
+        assert_eq!((decoded.width(), decoded.height()), (1920, 1080));
     }
 
     #[test]

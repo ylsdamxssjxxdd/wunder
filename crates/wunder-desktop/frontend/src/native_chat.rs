@@ -628,7 +628,6 @@ pub(crate) fn prepare_external_timeline(app: &MainWindow) {
             desktop.defer_close_session(&released_id, Duration::from_secs(2));
             state.drafts.insert(local_id, app.get_draft().to_string());
             app.set_active_session_id("".into());
-            sync_thread_title(app);
         }
         app.set_draft("".into());
         app.set_session_loading(false);
@@ -724,7 +723,6 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     // once and lets the turn flush (or the selection reset) drive it after.
     reset_activity(app);
     app.set_conversations(ModelRc::default());
-    sync_thread_title(app);
     app.set_agents(ModelRc::default());
     app.set_tools(ModelRc::default());
     app.set_models(ModelRc::default());
@@ -1587,7 +1585,6 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                     if !app.get_conversations().iter().eq(rows.iter().cloned()) {
                         app.set_conversations(ModelRc::new(VecModel::from(rows)));
                     }
-                    sync_thread_title(&app);
                     // The list is on screen; the shell may now let the user
                     // pick a thread. Set before the automatic first open below
                     // so that open is not mistaken for an early click. The
@@ -1734,24 +1731,6 @@ fn local_status_overrides(state: &State) -> Vec<(String, String)> {
     statuses
 }
 
-/// Project the open thread's name into the single view's header.
-///
-/// The conversation list is the only place a title lives, so the header is
-/// recomputed whenever that list or the selection changes; each split pane
-/// keeps its own copy of the same name.
-pub(crate) fn sync_thread_title(app: &MainWindow) {
-    let id = app.get_active_session_id();
-    let title = app
-        .get_conversations()
-        .iter()
-        .find(|row| row.id == id)
-        .map(|row| row.title)
-        .unwrap_or_default();
-    if app.get_active_thread_title() != title {
-        app.set_active_thread_title(title);
-    }
-}
-
 fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
     let weak = app.as_weak();
     app.on_select_conversation(move |index| {
@@ -1846,7 +1825,6 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         app.set_stopping(false);
         reset_context_usage(&app);
         app.set_active_session_id(id.clone().into());
-        sync_thread_title(&app);
         app.set_session_loading(true);
         state.borrow_mut().session_loading_since = Some(std::time::Instant::now());
         app.set_status("正在打开线程，读取历史记录…".into());
@@ -1962,7 +1940,6 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                         // an acquisition failure. The next selection starts
                         // from a clean, empty timeline.
                         app.set_active_session_id("".into());
-                        sync_thread_title(&app);
                         app.set_queue_turns(ModelRc::default());
                         app.set_queue_overflow(0);
                         // A lock or busy verdict during startup is transient:

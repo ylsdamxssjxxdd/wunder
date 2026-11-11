@@ -2,7 +2,7 @@ use super::{build_model_tool_success, ToolContext};
 use crate::schemas::AttachmentPayload;
 use crate::services::chat_media::{
     derive_image_view, detect_media_kind_from_path, process_visual_media_path, ImageCrop,
-    ImageViewStats,
+    ImageViewStats, MediaViewDims,
 };
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
@@ -11,6 +11,18 @@ use std::path::{Path, PathBuf};
 use tokio::io::AsyncReadExt;
 
 const MAX_READ_VISUAL_MEDIA_BYTES: u64 = 128 * 1024 * 1024;
+
+/// 对齐 codex `image_resize_notice`：入模视图被缩小后明确告知模型，避免它
+/// 以为自己看的是原始像素，需要精确细节时用 crop / scale 取局部。
+fn image_resize_notice(view: &MediaViewDims) -> String {
+    if !view.downscaled() {
+        return String::new();
+    }
+    format!(
+        " Image was downscaled from {}x{} to {}x{} pixels for model input; use crop or scale to inspect fine detail.",
+        view.source_width, view.source_height, view.width, view.height
+    )
+}
 
 pub const TOOL_READ_IMAGE: &str = "\u{8bfb}\u{56fe}\u{5de5}\u{5177}";
 pub const TOOL_READ_IMAGE_ALIAS: &str = "read_image";
@@ -124,7 +136,16 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         let message = if payload.stats_only {
             format!("Computed region statistics for {}.", raw_path)
         } else {
-            format!("Prepared visual media {} for model inspection.", raw_path)
+            format!(
+                "Prepared visual media {} for model inspection.{}",
+                raw_path,
+                image_resize_notice(&MediaViewDims {
+                    source_width: view.source_width,
+                    source_height: view.source_height,
+                    width: view.view_width,
+                    height: view.view_height,
+                })
+            )
         };
         return Ok(build_model_tool_success(
             "read_image",
@@ -143,10 +164,18 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
         payload.frame_step,
     )
     .await?;
+    let resize_notice = result
+        .view
+        .as_ref()
+        .map(image_resize_notice)
+        .unwrap_or_default();
     Ok(build_model_tool_success(
         "read_image",
         "completed",
-        format!("Prepared visual media {} for model inspection.", raw_path),
+        format!(
+            "Prepared visual media {} for model inspection.{}",
+            raw_path, resize_notice
+        ),
         json!({
             "path": raw_path,
             "resolved_path": resolved.to_string_lossy().to_string(),
@@ -366,6 +395,29 @@ fn parse_result_payload(data: &Value) -> Option<ReadImageResultPayload> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_resize_notice_only_when_view_is_smaller() {
+        // 1080p 在 codex 高细节上限内，不缩：无提示。
+        let unchanged = MediaViewDims {
+            source_width: 1920,
+            source_height: 1080,
+            width: 1920,
+            height: 1080,
+        };
+        assert_eq!(image_resize_notice(&unchanged), "");
+
+        // 4K 被压到 2048x1152：明确告知模型这是缩略版。
+        let downscaled = MediaViewDims {
+            source_width: 3840,
+            source_height: 2160,
+            width: 2048,
+            height: 1152,
+        };
+        let notice = image_resize_notice(&downscaled);
+        assert!(notice.contains("3840x2160 to 2048x1152"), "{notice}");
+        assert!(notice.contains("crop or scale"), "{notice}");
+    }
     use crate::config::Config;
     use crate::lsp::LspManager;
     use crate::skills::SkillRegistry;

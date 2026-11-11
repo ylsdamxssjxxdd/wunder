@@ -102,6 +102,11 @@ struct QuestionPanelQuestion {
 
 /// 面板一次最多分页展示的问题数，与工具 schema 的 maxItems 对齐。
 const MAX_QUESTION_PANEL_QUESTIONS: usize = 4;
+/// 单题最多展示的选项数，与工具 schema 的 options.maxItems 对齐。
+const MAX_QUESTION_PANEL_OPTIONS: usize = 4;
+/// 顶层写成单题（question/options 平铺）时的兼容字段。
+const QUESTION_PANEL_FLAT_QUESTION_KEYS: &[&str] = &["question", "prompt", "title", "header"];
+const QUESTION_PANEL_FLAT_OPTION_KEYS: &[&str] = &["options", "routes", "choices"];
 
 pub(crate) async fn execute_question_panel_tool(
     context: &ToolContext<'_>,
@@ -122,11 +127,12 @@ pub(crate) async fn execute_question_panel_tool(
             }),
         );
     }
-    // 被丢掉的题不能静默消失：提示里说清是第几题、缺了什么，模型下一轮才能补上。
+    // 被丢掉或截断的题不能静默消失：提示里说清是哪一题、缺了什么或多在哪，
+    // 模型下一轮才能补上。
     let hint = if parsed.dropped.is_empty() {
         None
     } else {
-        let mut hint = String::from("Dropped questions without usable options: ");
+        let mut hint = String::from("Question panel: these items were not shown: ");
         hint.push_str(&parsed.dropped.join("; "));
         Some(hint)
     };
@@ -162,22 +168,69 @@ struct QuestionPanelParse {
 
 fn normalize_question_panel_questions(args: &Value) -> Result<QuestionPanelParse> {
     let Some(obj) = args.as_object() else {
-        return Err(question_panel_options_error(&[], args));
+        return Err(question_panel_shape_error(format!(
+            "没有收到参数对象，实际是 {}",
+            value_kind(args)
+        )));
     };
-    let raw_items = match obj.get("questions").and_then(Value::as_array) {
-        Some(items) => items.clone(),
+    let raw_items: Vec<Value> = match obj.get("questions") {
+        // questions 存在但不是数组时不要退化成单题：那会把错误指向合成出来的
+        // 字段，让调用方以为自己的 options 写错了。
+        Some(value) if !value.is_array() => {
+            return Err(question_panel_shape_error(format!(
+                "questions 必须是数组，实际是 {}",
+                value_kind(value)
+            )));
+        }
+        Some(value) => value.as_array().cloned().unwrap_or_default(),
         None => {
+            let has_flat = QUESTION_PANEL_FLAT_QUESTION_KEYS
+                .iter()
+                .chain(QUESTION_PANEL_FLAT_OPTION_KEYS.iter())
+                .any(|key| obj.contains_key(*key));
+            if !has_flat {
+                let keys = obj.keys().cloned().collect::<Vec<_>>().join("、");
+                let detail = if keys.is_empty() {
+                    "缺少 questions 数组，实际参数是空对象".to_string()
+                } else {
+                    format!("缺少 questions 数组，实际顶层字段有 {keys}")
+                };
+                return Err(question_panel_shape_error(detail));
+            }
             // 单题扁平写法：历史线程与仍在用旧契约的调用方要能继续渲染。
             vec![json!({
-                "question": first_panel_value(obj, &["question", "prompt", "title", "header"]),
-                "options": first_panel_value(obj, &["options", "routes", "choices"]),
+                "question": first_panel_value(obj, QUESTION_PANEL_FLAT_QUESTION_KEYS),
+                "options": first_panel_value(obj, QUESTION_PANEL_FLAT_OPTION_KEYS),
                 "multiple": first_panel_value(obj, &["multiple", "allow_multiple", "multi"]),
             })]
         }
     };
+    if raw_items.is_empty() {
+        return Err(question_panel_shape_error(
+            "questions 是空数组，至少要给出 1 题".to_string(),
+        ));
+    }
+    let checked = raw_items
+        .iter()
+        .take(MAX_QUESTION_PANEL_QUESTIONS)
+        .collect::<Vec<_>>();
+    // 没展示出来的内容一律点名：被丢掉的题或选项不能静默消失。
+    let mut dropped = question_panel_problems(&checked);
+    if raw_items.len() > MAX_QUESTION_PANEL_QUESTIONS {
+        let from = MAX_QUESTION_PANEL_QUESTIONS + 1;
+        let to = raw_items.len();
+        let position = if from == to {
+            format!("第 {from} 题")
+        } else {
+            format!("第 {}–{} 题", from, to)
+        };
+        dropped.push(format!(
+            "{position}超出单次上限 {} 题，未展示",
+            MAX_QUESTION_PANEL_QUESTIONS
+        ));
+    }
     let mut questions = Vec::new();
-    let raw_items_for_error = raw_items.clone();
-    for item in raw_items.into_iter().take(MAX_QUESTION_PANEL_QUESTIONS) {
+    for (index, item) in checked.iter().enumerate() {
         let Value::Object(record) = item else {
             continue;
         };
@@ -194,14 +247,23 @@ fn normalize_question_panel_questions(args: &Value) -> Result<QuestionPanelParse
         } else {
             question
         };
-        let options = normalize_question_panel_options(
-            record
-                .get("options")
-                .or_else(|| record.get("routes"))
-                .or_else(|| record.get("choices")),
-        );
+        let raw_options = record
+            .get("options")
+            .or_else(|| record.get("routes"))
+            .or_else(|| record.get("choices"));
+        let option_total = raw_options.map(option_item_count).unwrap_or(0);
+        let options = normalize_question_panel_options(raw_options);
         if options.is_empty() {
             continue;
+        }
+        if option_total > MAX_QUESTION_PANEL_OPTIONS {
+            dropped.push(format!(
+                "第 {} 题有 {} 个选项，超过上限 {} 个，仅展示前 {} 个",
+                index + 1,
+                option_total,
+                MAX_QUESTION_PANEL_OPTIONS,
+                MAX_QUESTION_PANEL_OPTIONS
+            ));
         }
         let multiple = record
             .get("multiple")
@@ -215,11 +277,6 @@ fn normalize_question_panel_questions(args: &Value) -> Result<QuestionPanelParse
             multiple,
         });
     }
-    let checked = raw_items_for_error
-        .iter()
-        .take(MAX_QUESTION_PANEL_QUESTIONS)
-        .collect::<Vec<_>>();
-    let dropped = question_panel_problems(&checked);
     if questions.is_empty() {
         return Err(question_panel_options_error(&checked, args));
     }
@@ -231,18 +288,47 @@ fn normalize_question_panel_questions(args: &Value) -> Result<QuestionPanelParse
 fn question_panel_options_error(checked: &[&Value], args: &Value) -> anyhow::Error {
     let mut details = question_panel_problems(checked);
     if details.is_empty() {
-        let keys = args
-            .as_object()
-            .map(|obj| obj.keys().cloned().collect::<Vec<_>>().join("、"))
-            .unwrap_or_default();
-        let mut line = String::from("没有可渲染的问题项，实际字段有 ");
-        line.push_str(&keys);
-        details.push(line);
+        details.push(match args.as_object() {
+            Some(obj) if obj.is_empty() => "没有可渲染的问题项，实际参数是空对象".to_string(),
+            Some(obj) => format!(
+                "没有可渲染的问题项，实际顶层字段有 {}",
+                obj.keys().cloned().collect::<Vec<_>>().join("、")
+            ),
+            None => format!(
+                "没有可渲染的问题项，参数实际是 {}",
+                value_kind(args)
+            ),
+        });
     }
-    let mut message = i18n::t("tool.question_panel.options_required");
+    question_panel_shape_error_with(details)
+}
+
+fn question_panel_shape_error(detail: String) -> anyhow::Error {
+    // 结构性问题（没收到 questions）不该套「每个问题至少要给出一个选项」，
+    // 那句话会把人往错误的方向带。
+    anyhow!(
+        "问询面板参数不可用：{}。正确形状：{}。",
+        detail,
+        QUESTION_PANEL_SHAPE_HINT
+    )
+}
+
+const QUESTION_PANEL_SHAPE_HINT: &str = "questions 数组，每项含 question 与 options（options 至少 1 项，可写字符串数组，也可写用 | 或 ，分隔的一整串）";
+
+fn question_panel_shape_error_with(details: Vec<String>) -> anyhow::Error {
+    // 文案自带句号，先剥掉再补，避免出现「选项。。」这种双句号。
+    let mut message = i18n::t("tool.question_panel.options_required")
+        .trim()
+        .trim_end_matches(|c| c == '。' || c == '.')
+        .to_string();
     message.push('。');
-    message.push_str(&details.join("；"));
-    message.push_str("。正确形状：questions 数组，每项含 question 与 options（options 至少 1 项，可写字符串数组，也可写用 | 分隔的一整串）。");
+    if !details.is_empty() {
+        message.push_str(&details.join("；"));
+        message.push('。');
+    }
+    message.push_str("正确形状：");
+    message.push_str(QUESTION_PANEL_SHAPE_HINT);
+    message.push('。');
     anyhow!(message)
 }
 
@@ -384,6 +470,8 @@ fn normalize_question_panel_options(value: Option<&Value>) -> Vec<QuestionPanelO
             recommended,
         });
     }
+    // 超出上限的选项不进入面板：调用方已在 dropped 里被明确告知。
+    normalized.truncate(MAX_QUESTION_PANEL_OPTIONS);
     normalized
 }
 
@@ -453,7 +541,7 @@ mod tests {
 
         let err = normalize_question_panel_questions(&json!({ "questions": [] }))
             .expect_err("no usable question");
-        assert!(err.to_string().contains("选项"));
+        assert!(err.to_string().contains("questions"), "{}", err);
     }
 
     #[test]
@@ -498,5 +586,73 @@ mod tests {
         let text = err.to_string();
         assert!(text.contains("第 1 题缺少 options"), "{}", text);
         assert!(text.contains("正确形状"), "{}", text);
+    }
+
+    #[test]
+    fn question_panel_error_never_doubles_the_sentence_period() {
+        let err = normalize_question_panel_questions(&json!({ "questions": [] }))
+            .expect_err("empty questions");
+        let text = err.to_string();
+        assert!(!text.contains("。。"), "{}", text);
+        assert!(!text.contains(".."), "{}", text);
+    }
+
+    #[test]
+    fn question_panel_error_points_at_the_missing_questions_array() {
+        // 参数整体没解析出来时，报错必须指向真正的问题，而不是编造一题缺 options。
+        let err = normalize_question_panel_questions(&json!({})).expect_err("empty args");
+        let text = err.to_string();
+        assert!(text.contains("缺少 questions 数组"), "{}", text);
+        assert!(text.contains("空对象"), "{}", text);
+        assert!(!text.contains("第 1 题"), "{}", text);
+
+        let err = normalize_question_panel_questions(&json!({ "raw": "{oops" }))
+            .expect_err("unparsed payload");
+        let text = err.to_string();
+        assert!(text.contains("缺少 questions 数组"), "{}", text);
+        assert!(text.contains("raw"), "{}", text);
+
+        let err = normalize_question_panel_questions(&json!("甲|乙")).expect_err("not an object");
+        assert!(err.to_string().contains("字符串"), "{}", err);
+    }
+
+    #[test]
+    fn question_panel_rejects_non_array_questions() {
+        let err = normalize_question_panel_questions(&json!({ "questions": "要问什么？" }))
+            .expect_err("questions is a string");
+        let text = err.to_string();
+        assert!(text.contains("必须是数组"), "{}", text);
+    }
+
+    #[test]
+    fn question_panel_reports_overflow_instead_of_dropping_silently() {
+        let parsed = normalize_question_panel_questions(&json!({
+            "questions": [
+                { "question": "一", "options": ["甲", "乙", "丙", "丁", "戊"] },
+                { "question": "二", "options": ["甲"] },
+                { "question": "三", "options": ["甲"] },
+                { "question": "四", "options": ["甲"] },
+                { "question": "五", "options": ["甲"] }
+            ]
+        }))
+        .expect("kept questions");
+        assert_eq!(parsed.questions.len(), MAX_QUESTION_PANEL_QUESTIONS);
+        assert_eq!(parsed.questions[0].options.len(), MAX_QUESTION_PANEL_OPTIONS);
+        assert!(
+            parsed
+                .dropped
+                .iter()
+                .any(|line| line.contains("第 5 题") && line.contains("超出单次上限")),
+            "{:?}",
+            parsed.dropped
+        );
+        assert!(
+            parsed
+                .dropped
+                .iter()
+                .any(|line| line.contains("第 1 题") && line.contains("5 个选项")),
+            "{:?}",
+            parsed.dropped
+        );
     }
 }

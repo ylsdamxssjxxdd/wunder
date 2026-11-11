@@ -17,9 +17,6 @@ pub fn install(app: &MainWindow) {
     app.set_profile_ready(true);
     app.set_threads_ready(true);
     app.set_active_session_id("t1".into());
-    // Preview fixtures have no conversation list to project from, so the
-    // single view's header takes the name straight from the fixture.
-    app.set_active_thread_title("检查示例文件".into());
     app.set_status("本地演示".into());
     app.set_selected_workspace(0);
     app.set_workspaces(ModelRc::new(VecModel::from(vec![
@@ -209,13 +206,6 @@ pub fn install(app: &MainWindow) {
         *select_active.borrow_mut() = target;
         app.set_timeline(ModelRc::from(select_models[target].clone()));
         app.set_draft(select_drafts.borrow()[target].as_str().into());
-        let title = app
-            .get_sidebar_rows()
-            .iter()
-            .find(|row| row.kind == 1 && row.payload == index)
-            .map(|row| row.title)
-            .unwrap_or_default();
-        app.set_active_thread_title(title);
         scroll_to_end(&app);
     });
 
