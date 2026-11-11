@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 
 import {
   buildAssistantMessageStatsEntries,
+  resolveAssistantTurnDurationLabel,
   sumConversationConsumedTokens
 } from '../../src/utils/messageStats';
 import {
@@ -1386,4 +1387,16 @@ test('final missing decode timing clears an earlier model speed', async () => {
   const { mergeMessageStats } = await import('../../src/stores/chatStats');
   const stats = mergeMessageStats({ visible_decode_speed_tps: 70, contextTokens: 100 }, { visible_decode_speed_tps: null });
   assert.equal(findEntryValue(buildAssistantMessageStatsEntries({ role: 'assistant', stats }, createTranslator()), 'Speed'), '-');
+});
+
+test('process duration label reuses the turn stopwatch value', () => {
+  assert.equal(
+    resolveAssistantTurnDurationLabel({
+      role: 'assistant',
+      stats: { interaction_duration_s: 65.4 }
+    }),
+    '1m 5.4s'
+  );
+  assert.equal(resolveAssistantTurnDurationLabel({ role: 'assistant', stats: {} }), '');
+  assert.equal(resolveAssistantTurnDurationLabel({ role: 'user', stats: { interaction_duration_s: 65.4 } }), '');
 });

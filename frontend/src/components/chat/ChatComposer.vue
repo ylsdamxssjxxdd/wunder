@@ -378,6 +378,7 @@ import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { clearWorkspaceDragPaths, hasWorkspaceDragPaths, readWorkspaceDragPaths } from '@/components/chat/workspaceDrag';
 
 import { useSessionContextUsage } from '@/views/messenger/sessionContextUsage';
+import { readChatLiveContextUsage } from '@/realtime/chat/chatLiveContextUsage';
 // B2 hand-off: the sidebar file area queues workspace references here.
 import {
   pendingWorkspaceChatReferences,
@@ -702,13 +703,17 @@ const reasoningEffortCompactLabel = computed(() => {
   return typeof splitIndex === 'number' ? label.slice(0, splitIndex).trim() || label : label;
 });
 // 占用统计只有 `sessionContextUsage.ts` 一份实现：模型触发器上的大脑、百分比和
-// 浮层里的明细都读同一个投影，同一屏不会漂出两个百分比。
+// 浮层里的明细都读同一个投影，同一屏不会漂出两个百分比。usage 帧不进入消息
+// 投影，因此这里优先采用 WS 上最新观测到的实时快照，避免整轮停留在旧值或 0。
+const liveContextUsage = computed(() => readChatLiveContextUsage(targetSessionId.value));
 const contextUsage = useSessionContextUsage({
   scope: () => `${targetSessionId.value}:${composerModelName.value}`,
   messages: () => (Array.isArray(props.contextMessages) ? props.contextMessages : []),
   session: () => resolveCurrentSession(),
   loading: () => Boolean(props.loading),
-  modelName: () => composerModelName.value
+  modelName: () => composerModelName.value,
+  observedUsedTokens: () => liveContextUsage.value?.used ?? null,
+  observedTotalTokens: () => liveContextUsage.value?.total ?? null
 });
 const contextUsageTitle = computed(() => {
   const counts = String(contextUsage.value.counts || '').trim();

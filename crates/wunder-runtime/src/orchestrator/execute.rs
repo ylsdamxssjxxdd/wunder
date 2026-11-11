@@ -524,6 +524,8 @@ impl Orchestrator {
                 .map_err(|error| OrchestratorError::internal(error.to_string()))?;
 
             let context_manager = ContextManager;
+            let image_policy =
+                crate::services::image_context::ImageContextPolicy::from_config(&llm_config);
             let mut messages = vec![json!({ "role": "system", "content": system_prompt })];
             // Ensure the previous turn's async history writes are visible before deriving
             // this turn's model input. Otherwise fast follow-up user messages can miss the
@@ -537,7 +539,16 @@ impl Orchestrator {
                 .filter_map(normalize_model_context_message).collect::<Vec<_>>();
             messages.extend(model_context_entries);
             messages = context_manager.normalize_messages(messages);
-            crate::services::chat_media::restore_omitted_inline_images(&mut messages).await;
+            let restore_report = crate::services::chat_media::restore_omitted_inline_images(
+                &mut messages,
+                &image_policy,
+            )
+            .await;
+            if restore_report.placeholders > 0 {
+                emitter
+                    .emit("context_image_restore", restore_report.to_payload())
+                    .await;
+            }
             let user_message = self
                 .build_user_message(&question, prepared.attachments.as_deref())
                 .await;
@@ -756,6 +767,29 @@ impl Orchestrator {
                 let mut overflow_recovery_attempts = 0_u32;
                 self.apply_agent_messages(agent_inbox.as_ref().expect("active inbox"),
                     &user_id, &session_id, &mut messages, &emitter, round_info, false).await?;
+                // Visual iterations can append a new image every round. Keep the
+                // newest ones and replace stale/superseded images with path hints
+                // before hashing the prompt and paying the provider request size.
+                let image_report = match crate::services::image_context::enforce_request_limits(
+                    &mut messages,
+                    tools_payload,
+                    &image_policy,
+                ) {
+                    Ok(report) => report,
+                    Err(too_large) => {
+                        return Err(OrchestratorError::llm_request_too_large(
+                            too_large.message(),
+                            too_large.detail(),
+                        ));
+                    }
+                };
+                if image_report.changed() {
+                    let mut payload = image_report.to_payload();
+                    if let Value::Object(ref mut map) = payload {
+                        round_info.insert_into(map);
+                    }
+                    emitter.emit("context_image_budget", payload).await;
+                }
                 let current_prefix_hashes: Vec<String> = messages
                     .iter()
                     .map(super::context::stable_json_message_hash)

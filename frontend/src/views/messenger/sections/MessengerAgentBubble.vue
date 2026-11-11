@@ -101,10 +101,12 @@
       />
 
       <div
-        v-if="isUser && hasMessageContent(item.message.content)"
+        v-if="isUser && (hasMessageContent(item.message.content) || userTimeLabel)"
         class="messenger-message-extra"
       >
+        <span v-if="userTimeLabel" class="messenger-message-time">{{ userTimeLabel }}</span>
         <button
+          v-if="hasMessageContent(item.message.content)"
           class="messenger-message-footer-copy"
           type="button"
           :title="t('chat.message.copy')"
@@ -124,6 +126,7 @@ import type { MessengerControllerContext } from '../controller/messengerControll
 import MessageMarkdownBody from '@/components/chat/MessageMarkdownBody.vue';
 import MessageTimelineAssistant from './MessageTimelineAssistant.vue';
 import { uiMessageStatus } from '@/realtime/chat/threadViewStore';
+import { formatClockHourMinute } from '@/utils/formatDateTime';
 
 /**
  * 聊天区消息行（§7 时间线形态）。
@@ -142,6 +145,15 @@ const props = defineProps<{
 }>();
 
 const isUser = computed(() => String(props.item.message?.role || '') === 'user');
+const userTimeLabel = computed(() =>
+  isUser.value
+    ? formatClockHourMinute(
+        props.item.message?.created_at ??
+          props.item.message?.createdAt ??
+          props.item.message?.timestamp
+      )
+    : ''
+);
 
 const translate = props.controller.t;
 const t = (key: string, params?: Record<string, unknown>): string =>

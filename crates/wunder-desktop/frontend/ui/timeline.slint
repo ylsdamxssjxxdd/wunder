@@ -827,6 +827,13 @@ component ProcessBar inherits Rectangle {
                 overflow: elide; vertical-alignment: center;
                 visible: root.data.summary != "";
             }
+            // 本轮总耗时只显示数值，标签由“工作过程”标题本身承担。
+            if root.data.duration != "" : Text {
+                width: self.preferred-width; height: parent.height;
+                text: root.data.duration; color: Theme.muted;
+                font-size: Theme.font-xs; font-family: Theme.font-mono;
+                vertical-alignment: center;
+            }
         }
     }
     process-body := ToolProcess {

@@ -35,6 +35,7 @@ import {
 } from './chatRuntimeRenderAdapter';
 import { chatPerf } from '@/utils/chatPerf';
 import { threadViewSlots, threadViewCommitted, submitThreadView, clearThreadView, applyThreadViewChanges, applyThreadViewTail, applyThreadViewProcessItem, bindThreadViewStreamStarted,threadViewStatus } from './threadViewStore';
+import { applyChatLiveContextUsageEvent } from './chatLiveContextUsage';
 import { threadViewStoreMessages } from '@/stores/chatGreeting';
 
 interface ChatThreadRuntimeEntry {
@@ -474,6 +475,11 @@ export const applyChatThreadServerEvent = (
   // This is an out-of-band filesystem notification, not timeline data. Let
   // every transport deliver its side effect even after a view has committed.
   if (eventType === 'workspace_update') return false;
+  // Observed occupancy is a session-level snapshot, not timeline content. The
+  // durable reducer consumes these frames only while a display window is not
+  // committed, so capture every usage frame here as well; otherwise the
+  // composer can freeze at the value read when the thread was opened.
+  applyChatLiveContextUsageEvent(key, eventType, payload);
   // Queue controls are handled before the durable pipeline classifies them as
   // control frames. This makes queue_start immediately consume the composer
   // item instead of waiting for an eventually consistent queue refresh.

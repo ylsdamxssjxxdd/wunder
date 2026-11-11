@@ -172,6 +172,10 @@ impl OrchestratorError {
         Self::new("LLM_REQUEST_REJECTED", message, None)
     }
 
+    pub(super) fn llm_request_too_large(message: String, detail: Value) -> Self {
+        Self::new("LLM_REQUEST_TOO_LARGE", message, Some(detail))
+    }
+
     pub(super) fn context_window_exceeded(message: String) -> Self {
         Self::new("CONTEXT_WINDOW_EXCEEDED", message, None)
     }
@@ -242,6 +246,14 @@ fn default_meta_for_code(code: &str) -> OrchestratorErrorMeta {
             false,
             None,
             ErrorSourceStage::Llm,
+            RecoveryAction::FixRequest,
+        ),
+        "LLM_REQUEST_TOO_LARGE" => OrchestratorErrorMeta::new(
+            ErrorCategory::Input,
+            ErrorSeverity::Error,
+            false,
+            None,
+            ErrorSourceStage::Request,
             RecoveryAction::FixRequest,
         ),
         "INVALID_REQUEST" => OrchestratorErrorMeta::new(

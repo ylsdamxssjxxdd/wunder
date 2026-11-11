@@ -1976,6 +1976,17 @@
   margin-top: 4px;
 }
 
+.messenger-message-time {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 24px;
+  color: var(--mz-text-muted, #8a8f99);
+  font-size: 11px;
+  line-height: 24px;
+  white-space: nowrap;
+}
+
 .messenger-message-extra .messenger-message-stats {
   flex: 1;
   margin-top: 0;

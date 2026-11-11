@@ -14,9 +14,10 @@ pub const DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF: &str = "制作一个骑自行�
 pub const DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE: &str = "用公文写作技能写一篇广州旅游攻略";
 pub const DEFAULT_AGENT_PRESET_QUESTION_DEEPER_ISSUE: &str =
     "在我跟你反复讨论的问题当中，有没有一个更深层次的问题我一直绕着走，但是没有问出来。";
-pub const DEFAULT_AGENT_PRESET_QUESTION_FULL_EFFORT: &str =
-    "拿出你的全部本事，用上你能用的一切，帮我……";
+pub const DEFAULT_AGENT_PRESET_QUESTION_BLUE_SKY_SHORT_FILM: &str =
+    "做一个短片，解释为什么天空是蓝色的";
 const LEGACY_AGENT_PRESET_QUESTION_DRAW_HEART: &str = "绘制一个爱心到本地";
+const LEGACY_AGENT_PRESET_QUESTION_FULL_EFFORT: &str = "拿出你的全部本事，用上你能用的一切，帮我……";
 /// Questions shipped before the current default set; a stored list holding nothing
 /// else counts as untouched and is upgraded in place.
 const INHERITED_AGENT_PRESET_QUESTIONS: &[&str] = &[
@@ -29,7 +30,7 @@ pub fn default_agent_preset_questions() -> Vec<String> {
         DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF,
         DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE,
         DEFAULT_AGENT_PRESET_QUESTION_DEEPER_ISSUE,
-        DEFAULT_AGENT_PRESET_QUESTION_FULL_EFFORT,
+        DEFAULT_AGENT_PRESET_QUESTION_BLUE_SKY_SHORT_FILM,
     ]
     .iter()
     .map(|question| (*question).to_string())
@@ -40,6 +41,8 @@ pub fn normalize_default_agent_preset_questions(questions: &mut Vec<String>) {
     for question in questions.iter_mut() {
         if question == LEGACY_AGENT_PRESET_QUESTION_DRAW_HEART {
             *question = DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF.to_string();
+        } else if question == LEGACY_AGENT_PRESET_QUESTION_FULL_EFFORT {
+            *question = DEFAULT_AGENT_PRESET_QUESTION_BLUE_SKY_SHORT_FILM.to_string();
         }
     }
     let inherited_only = questions
@@ -199,6 +202,17 @@ mod tests {
             normalize_default_agent_preset_questions(&mut stored);
             assert_eq!(stored, expected);
         }
+    }
+
+    #[test]
+    fn legacy_full_effort_preset_is_replaced_with_short_film_prompt() {
+        let mut stored = vec![
+            "自定义问题".to_string(),
+            "拿出你的全部本事，用上你能用的一切，帮我……".to_string(),
+        ];
+        normalize_default_agent_preset_questions(&mut stored);
+        assert_eq!(stored[0], "自定义问题");
+        assert_eq!(stored[1], "做一个短片，解释为什么天空是蓝色的");
     }
 
     #[test]

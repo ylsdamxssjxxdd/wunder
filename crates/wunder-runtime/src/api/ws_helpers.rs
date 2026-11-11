@@ -390,6 +390,14 @@ pub(crate) async fn resume_thread_view(
         .orchestrator
         .change_hub
         .subscribe_goal_updates(&session_id);
+    // Context occupancy is an in-process snapshot published on every observed
+    // model request. The display window has no row revision for it, so the
+    // watch must forward it directly or the browser stays on the value read at
+    // open until the next catalog refresh.
+    let mut context_usage = state
+        .kernel
+        .orchestrator
+        .subscribe_context_usage(&session_id);
     let mut last_goal = None;
     let mut last_runtime = None;
     let mut last_row_controls = None;
@@ -537,6 +545,28 @@ pub(crate) async fn resume_thread_view(
                 _ = tx.tx.closed() => return,
                 changed = wake.changed() => { if changed.is_err() { return; } break; },
                 changed = goal_wake.changed() => { if changed.is_err() { return; } break; },
+                changed = context_usage.changed() => {
+                    if changed.is_err() { return; }
+                    let snapshot = context_usage.borrow_and_update().clone();
+                    // The channel starts as Null; it is a wake, never a snapshot.
+                    if !snapshot.is_null()
+                        && send_ws_display_event(
+                            &tx,
+                            request_id,
+                            StreamEvent {
+                                event: "context_usage".into(),
+                                data: snapshot,
+                                id: None,
+                                timestamp: Some(Utc::now()),
+                            },
+                            cancel.as_ref(),
+                        )
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                },
                 incoming = async { match live.as_mut() {
                     Some(receiver) => receiver.recv().await,
                     None => std::future::pending().await,
@@ -1553,6 +1583,82 @@ mod tests {
             .change_hub
             .publish_goal_update(session, Value::Null);
         assert!(next_goal(&mut rx).await.is_null());
+        cancel.cancel();
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn display_watch_forwards_live_context_usage_snapshots() {
+        let (state, _dir) = build_test_state("context-usage-display-fixture").await;
+        let user = "fixture-user";
+        let session = "fixture-thread";
+        state
+            .storage
+            .upsert_chat_session(&crate::storage::ChatSessionRecord {
+                session_id: session.into(),
+                user_id: user.into(),
+                title: "fixture".into(),
+                status: "active".into(),
+                created_at: 1.,
+                updated_at: 1.,
+                last_message_at: 1.,
+                agent_id: None,
+                workspace_id: None,
+                tool_overrides: vec![],
+                parent_session_id: None,
+                parent_message_id: None,
+                spawn_label: None,
+                spawned_by: None,
+            })
+            .unwrap();
+        let page = state
+            .storage
+            .thread_view_page(user, session, "chat", None, 12)
+            .unwrap();
+        let (tx, mut rx) = mpsc::channel(64);
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn(resume_thread_view(
+            state.clone(),
+            session.into(),
+            user.into(),
+            page.view_seq,
+            true,
+            None,
+            WsSender::new(tx),
+            Some(cancel.clone()),
+        ));
+        // The initial goal/view frame proves the watch installed its context
+        // subscription before the snapshot is published.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let Some(Message::Text(_)) = rx.recv().await else {
+                panic!("watch closed");
+            };
+        })
+        .await
+        .expect("initial display frame");
+        state.kernel.orchestrator.change_hub.publish_context_usage(
+            session,
+            json!({
+                "context_occupancy_tokens": 3210,
+                "max_context": 128000,
+                "context_usage_source": "provider_input"
+            }),
+        );
+        let usage = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let Some(Message::Text(raw)) = rx.recv().await else {
+                    panic!("watch closed");
+                };
+                let value: Value = serde_json::from_str(&raw).unwrap();
+                if value["payload"]["event"] == "context_usage" {
+                    break value["payload"]["data"].clone();
+                }
+            }
+        })
+        .await
+        .expect("context usage snapshot delivered");
+        assert_eq!(usage["context_occupancy_tokens"], json!(3210));
+        assert_eq!(usage["max_context"], json!(128000));
         cancel.cancel();
         task.await.unwrap();
     }

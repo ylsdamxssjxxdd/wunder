@@ -73,6 +73,8 @@ pub struct RowData {
     pub id: String,
     pub text: String,
     pub time: String,
+    /// 本轮总耗时（工作过程条右端，仅数值）。
+    pub duration: String,
     pub blocks_src: String,
     pub summary: String,
     pub tool_name: String,
@@ -122,6 +124,7 @@ impl RowData {
         self.kind.hash(&mut hasher);
         self.text.hash(&mut hasher);
         self.time.hash(&mut hasher);
+        self.duration.hash(&mut hasher);
         self.blocks_src.hash(&mut hasher);
         self.summary.hash(&mut hasher);
         self.tool_name.hash(&mut hasher);
@@ -183,6 +186,7 @@ impl RowData {
         let mut row = blank(self.kind, self.id.as_str());
         row.text = self.text.as_str().into();
         row.time = self.time.as_str().into();
+        row.duration = self.duration.as_str().into();
         row.summary = self.summary.as_str().into();
         row.tool_name = self.tool_name.as_str().into();
         row.tool_icon = self.tool_icon.as_str().into();
@@ -930,6 +934,11 @@ fn duration_text(seconds: f64) -> String {
     }
 }
 
+/// 工作过程条右端的总耗时：与 footer 的 stopwatch 同源，只给数值。
+fn turn_duration_label(stats: &NativeMessageStats) -> String {
+    stats.duration_s.map(duration_text).unwrap_or_default()
+}
+
 fn count_text(value: f64) -> String {
     let value = value.trunc();
     if value < 1000.0 {
@@ -1003,6 +1012,7 @@ pub fn project_turn(turn: &NativeChatTurn) -> Vec<RowData> {
         bar.status_kind = status_kind(&turn.assistant.state);
         bar.foldable = true;
         bar.open = bar.status_kind == STATUS_RUNNING;
+        bar.duration = turn_duration_label(&turn.assistant.stats);
         bar.process_children = children;
         rows.push(bar);
     }
@@ -1266,6 +1276,7 @@ impl LiveTurn {
             // The live turn is unfolded from its first step; a tap writes the
             // state back into `live_rows`, and the next publish keeps it.
             bar.open = true;
+            bar.duration = turn_duration_label(&self.stats);
             bar.process_children = children;
             rows.push(bar);
         }
@@ -1528,6 +1539,37 @@ mod tests {
         assert_eq!(status_kind("执行失败"), STATUS_FAILED);
         assert_eq!(status_metric("正在生成…").unwrap().0, "status-outputting");
         assert_eq!(status_metric("正在排队").unwrap().0, "status-queued");
+    }
+
+    #[test]
+    fn process_bar_carries_the_turn_duration_to_slint() {
+        let stats = NativeMessageStats::from_payload(&serde_json::json!({
+            "interaction_duration_s": 65.4
+        }));
+        assert_eq!(turn_duration_label(&stats), "1m 5.4s");
+        let mut live = LiveTurn::new("hi".into());
+        live.stats = stats;
+        live.push_tool(LiveTool {
+            id: "call-1".into(),
+            title: "读取文件".into(),
+            tool_icon: "file-lines".into(),
+            summary: "src/main.rs".into(),
+            state: "completed".into(),
+            detail: String::new(),
+            target: String::new(),
+            sections: Vec::new(),
+            patch: Vec::new(),
+            tokens: String::new(),
+            duration: String::new(),
+        });
+        let rows = live.rows();
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .expect("process bar");
+        assert_eq!(bar.duration, "1m 5.4s");
+        let shared = bar.to_row(&mut MarkdownRenderer::default());
+        assert_eq!(shared.duration, "1m 5.4s");
     }
 
     #[test]

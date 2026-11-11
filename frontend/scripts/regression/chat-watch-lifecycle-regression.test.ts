@@ -462,6 +462,19 @@ test('canonical projection-only side effects preserve command session output sto
   assert.equal(entry.stdoutBytes, 5);
 });
 
+test('send stream forwards live command session frames before the durable reducer consumes them', () => {
+  const sendSource = readFileSync(resolve(process.cwd(), 'src/stores/chatSendActions.ts'), 'utf8');
+  const interceptIndex = sendSource.indexOf("effectiveEventType.startsWith('command_session_')");
+  const reducerIndex = sendSource.indexOf('applyChatThreadServerEvent(this, sessionId, effectiveEventType, payload');
+  assert.ok(interceptIndex >= 0);
+  assert.ok(reducerIndex >= 0);
+  // 视图提交后 reducer 会吞掉所有帧；命令会话必须先走实时副作用，
+  // 否则普通命令在发送期间永远不会出现在后台任务面板里。
+  assert.ok(interceptIndex < reducerIndex);
+  const branch = sendSource.slice(interceptIndex, reducerIndex);
+  assert.ok(branch.includes('applyCanonicalStreamSideEffects(this, sessionId, effectiveEventType, payload)'));
+});
+
 test('command session store keeps bounded head and tail output preview', () => {
   setActivePinia(createPinia());
   const commandSessions = useCommandSessionStore();

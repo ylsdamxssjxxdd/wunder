@@ -645,6 +645,35 @@ impl Orchestrator {
         });
         let chat_messages =
             sanitize_chat_messages_for_request(&self.build_chat_messages(&request_messages));
+        // The image budget in the executor keeps the request well below the
+        // provider ceiling; this is the final byte-level gate for every caller
+        // (including compaction) and gives a readable failure instead of an
+        // oversized upload that a gateway drops without an HTTP status.
+        let (inline_image_count, inline_image_bytes) =
+            crate::services::image_context::inline_image_stats(messages);
+        let request_bytes =
+            crate::services::image_context::serialized_bytes(&chat_messages.messages)
+                .saturating_add(
+                    tools
+                        .map(|items| crate::services::image_context::serialized_bytes(items))
+                        .unwrap_or(0),
+                )
+                .saturating_add(crate::services::image_context::REQUEST_BODY_OVERHEAD_BYTES);
+        let request_bytes_limit =
+            crate::services::image_context::ImageContextPolicy::from_config(&effective_config)
+                .max_request_bytes;
+        if request_bytes > request_bytes_limit {
+            let too_large = crate::services::image_context::RequestTooLarge {
+                request_bytes,
+                limit_bytes: request_bytes_limit,
+                image_count: inline_image_count,
+                image_bytes: inline_image_bytes,
+            };
+            return Err(OrchestratorError::llm_request_too_large(
+                too_large.message(),
+                too_large.detail(),
+            ));
+        }
         // This is the final local gate before a provider request. It deliberately
         // measures the sanitized messages and the exact native tool definitions
         // that will be serialized below, including image placeholders and tool
@@ -746,6 +775,9 @@ impl Orchestrator {
                 "request_admission_limit_tokens": request_admission.limit_tokens,
                 "request_output_reserve_tokens": request_admission.output_reserve_tokens,
                 "request_safety_reserve_tokens": request_admission.safety_reserve_tokens,
+                "request_estimated_bytes": request_bytes,
+                "inline_image_count": inline_image_count,
+                "inline_image_bytes": inline_image_bytes,
             });
             if let Value::Object(ref mut map) = request_payload {
                 if let Some(repair) = chat_messages.repair.clone() {
@@ -1246,14 +1278,26 @@ impl Orchestrator {
                     let max_attempts = resolve_llm_max_attempts(failure_kind);
                     let should_retry = attempt < max_attempts;
                     let retry_delay = resolve_llm_retry_delay(attempt, failure_kind);
+                    let http_status = err.chain().find_map(|source| {
+                        source
+                            .downcast_ref::<crate::llm::LlmHttpError>()
+                            .map(|failure| failure.status)
+                    });
+                    // A transport failure without an HTTP status is usually a
+                    // gateway dropping the upload; log the request size so this
+                    // is distinguishable from a provider outage in the field.
+                    tracing::warn!(
+                        session_id = %session_id,
+                        attempt = attempt,
+                        max_attempts = max_attempts,
+                        delay_s = retry_delay.as_secs_f64(),
+                        retry_reason = llm_retry_reason(failure_kind),
+                        http_status = ?http_status,
+                        request_bytes = request_bytes,
+                        error = %err,
+                        "llm request failed"
+                    );
                     if emit_events && should_retry {
-                        let http_status = err
-                            .chain()
-                            .find_map(|source| {
-                                source
-                                    .downcast_ref::<crate::llm::LlmHttpError>()
-                                    .map(|failure| failure.status)
-                            });
                         let mut retry_payload = json!({
                             "attempt": attempt,
                             "max_attempts": max_attempts,
@@ -1263,6 +1307,7 @@ impl Orchestrator {
                             "will_retry": true,
                             "model": effective_config.model.clone().unwrap_or_default(),
                             "http_status": http_status,
+                            "request_bytes": request_bytes,
                             "error": err.to_string(),
                         });
                         if let Value::Object(ref mut map) = retry_payload {
@@ -1322,6 +1367,7 @@ impl Orchestrator {
                     .downcast_ref::<crate::llm::LlmHttpError>()
                     .map(|failure| failure.status)
             }),
+            "request_bytes": request_bytes,
             "model": effective_config.model.clone().unwrap_or_default(),
         });
         match failure_kind {

@@ -809,6 +809,15 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             &turn.assistant,
             turn.subagents.iter().any(|card| card.is_running()),
         );
+        // The process bar owns the one-line summary of the turn; its right edge
+        // carries the same stopwatch value as the footer, without a label.
+        let process_duration = footer
+            .stats
+            .iter()
+            .find(|metric| metric.key == "stopwatch")
+            .map(|metric| metric.value.clone())
+            .filter(|value| value != "-" && value != "--")
+            .unwrap_or_default();
         footer.user_round = turn.assistant.user_round.min(i32::MAX as i64) as i32;
         footer.status_kind = crate::timeline::footer_status_kind(turn.assistant.state.as_str());
         if let Some(body) = answer_at {
@@ -824,6 +833,9 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
             &turn.assistant.state,
             answer_at.unwrap_or(usize::MAX),
         );
+        if !process_duration.is_empty() {
+            rows[process_bar_at].duration = process_duration.into();
+        }
         if turn.process_steps > 0 {
             rows[process_bar_at].text =
                 crate::timeline_text::process_label(turn.process_steps.min(i32::MAX as i64) as i32)
@@ -850,6 +862,7 @@ pub(crate) fn project_cloud_history(
             format!("cloud-user-{}", chat.root_turn_id),
         );
         user.text = chat.user.content.as_str().into();
+        user.time = crate::timeline_text::clock_hhmm(chat.created_time).into();
         user.blocks = previous
             .iter()
             .find(|row| row.id == user.id && row.text == user.text)
@@ -872,6 +885,14 @@ pub(crate) fn project_cloud_history(
         process.summary = cloud_status_label(chat.status.as_str()).into();
         process.visible = process_steps > 0 || !chat.assistant.reasoning.is_empty();
         process.status_kind = crate::timeline::status_kind(chat.status.as_str());
+        process.duration =
+            crate::turn_stats::metrics(&chat.assistant.stats.clone().unwrap_or(Value::Null))
+                .into_iter()
+                .find(|metric| metric.key == "duration")
+                .map(|metric| metric.value)
+                .filter(|value| value != "-" && value != "--")
+                .unwrap_or_default()
+                .into();
         let process_id = process.process_idx;
         let running_thought = process.status_kind == crate::timeline::STATUS_RUNNING
             && chat.process_activity.kind == "thinking";
@@ -1451,6 +1472,40 @@ mod tests {
             .map(|row| row.stats.row_count())
             .expect("a footer row");
         assert_eq!(count, 0, "no metrics renders no row");
+    }
+
+    #[test]
+    fn process_bar_mirrors_the_turn_duration() {
+        let mut turn = fixture("fixture-duration", "Fixture answer", "completed");
+        turn.assistant.stats =
+            wunder_desktop::native::NativeMessageStats::from_payload(&serde_json::json!({
+                "interaction_duration_s": 65.4
+            }));
+        let rows = project_history(&[turn]);
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == crate::timeline::KIND_PROCESS)
+            .expect("a process bar");
+        assert_eq!(bar.duration, "1m 5.4s");
+    }
+
+    #[test]
+    fn cloud_process_bar_carries_user_time_and_turn_duration() {
+        let mut chat = ChatViewRow {
+            root_turn_id: "fixture-cloud".into(),
+            workflow_count: 2,
+            status: "completed".into(),
+            created_time: 1_700_000_000.0,
+            ..Default::default()
+        };
+        chat.user.content = "Fixture input".into();
+        chat.assistant.stats = Some(serde_json::json!({"interaction_duration_s": 65.4}));
+        let rows = project_cloud_history(&[chat], ModelRc::default());
+        assert_eq!(
+            rows[0].time,
+            crate::timeline_text::clock_hhmm(1_700_000_000.0)
+        );
+        assert_eq!(rows[1].duration, "1m 5.4s");
     }
 
     #[test]

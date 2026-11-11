@@ -48,6 +48,11 @@
         :class="{ 'is-mono': entry.summaryMono }"
         :title="entry.summary"
       >{{ entry.summary }}</span>
+      <!-- 与桌面端折叠行一致：右侧是该次请求的上下文占用与工具耗时。 -->
+      <span v-if="tokenMetric || durationMetric" class="tl-entry-metrics">
+        <span v-if="tokenMetric">{{ tokenMetric }}</span>
+        <span v-if="durationMetric">{{ durationMetric }}</span>
+      </span>
     </component>
 
     <div v-if="interactive && open" class="tl-entry-body">
@@ -109,6 +114,7 @@ import { parseToolWorkflowResultObject } from './toolWorkflowResultPayload';
 import { buildToolResultPreview } from './toolWorkflowPreview';
 import { useCommandSessionStore } from '@/stores/commandSessions';
 import { commandSessionOutputPreview, resolveTimelineCommandSessionRef } from './toolTimelineCommandSession';
+import { formatDurationLabel, formatTokenLabel } from './toolWorkflowCollapsedMetadata';
 
 const props = withDefaults(defineProps<{
   entry: TimelineToolEntry;
@@ -140,6 +146,8 @@ const displayStatus = computed(() => {
     (command.exitCode !== null && command.exitCode !== 0) ? 'failed' : 'completed';
 });
 const displayExitCode = computed(() => commandSession.value?.exitCode ?? props.entry.exitCode);
+const tokenMetric = computed(() => formatTokenLabel(props.entry.metrics.tokens));
+const durationMetric = computed(() => formatDurationLabel(props.entry.metrics.durationMs));
 const readLinesLabel = computed(() => {
   const lines = props.entry.readLines;
   if (!lines) return '';
@@ -289,6 +297,8 @@ button.tl-entry-head:focus-visible {
   gap: 8px;
   color: var(--mz-text-muted, #8a8f99);
   font-size: 13px;
+  /* 与右侧摘要、chip、行数徽标共用 18px 行高，混排时文字落在同一水平线。 */
+  line-height: 18px;
 }
 
 .tl-entry-tool i {
@@ -301,7 +311,7 @@ button.tl-entry-head:focus-visible {
   min-width: 0;
   color: var(--mz-timeline-entry-soft, #9ba0a8);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 18px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -311,6 +321,20 @@ button.tl-entry-head:focus-visible {
 .tl-entry-summary.is-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11.5px;
+}
+
+/* 右侧运行指标：与桌面端 ProcessEntryCard 的 tokens/duration 同口径。 */
+.tl-entry-metrics {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--mz-text-muted, #8a8f99);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
 }
 
 .tl-entry-chips {

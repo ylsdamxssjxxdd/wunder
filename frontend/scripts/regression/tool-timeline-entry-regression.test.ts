@@ -581,3 +581,26 @@ test('memory entries name the concrete operation in summary and detail', () => {
   assert.equal(legacyEntry.summary, '保存记忆');
   assert.equal(legacyEntry.detailText, '旧数据没有 detail 字段。');
 });
+
+test('collapsed tool entry exposes context occupancy and duration metrics', () => {
+  // 实时投影把运行指标提炼到字段上；线程视图的持久条目则保留在 detail 原文里。
+  const live = buildTimelineToolEntry(baseRun({
+    toolName: 'read_file',
+    callItem: callItem(
+      { args: { path: 'src/main.rs' } },
+      { runtimeMetrics: true, request_context_tokens: 1800, duration_ms: 1250 }
+    )
+  }), t);
+  assert.deepEqual(live.metrics, { tokens: 1800, durationMs: 1250 });
+
+  const durable = buildTimelineToolEntry(baseRun({
+    toolName: 'read_file',
+    callItem: callItem({ args: { path: 'src/main.rs' } }),
+    resultItem: callItem({
+      data: { content: 'Fixture output' },
+      meta: { duration_ms: 1250 },
+      request_context_tokens: 1800
+    })
+  }), t);
+  assert.deepEqual(durable.metrics, { tokens: 1800, durationMs: 1250 });
+});

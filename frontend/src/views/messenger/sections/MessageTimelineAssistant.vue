@@ -17,6 +17,7 @@
       :reasoning-item-id="String(message.reasoning_item_id || '')"
       :reasoning-streaming="Boolean(message.reasoningStreaming)"
       :final-item-id="String(message.item_id || message.assistant_item_id || '')"
+      :duration-label="processDurationLabel"
       @open-change="processOpen = $event"
     />
     <!-- 有工具的轮次：流式文本进过程区实时行，不外显为正文；过程区收起时外显保证输出可见；
@@ -253,6 +254,7 @@ import type { ChatRuntimeTimelineBlock } from '@/realtime/chat/chatRuntimeTypes'
 import type { WorkflowItem } from '@/components/chat/toolWorkflowRunModel';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
 import { buildAssistantDisplayContent } from '@/utils/assistantFailureNotice';
+import { resolveAssistantTurnDurationLabel } from '@/utils/messageStats';
 
 /**
  * 助手轮次的时间线条目区（方案 §7.3 / §7.4，形态对齐桌面端
@@ -281,6 +283,7 @@ const translate = controller.t;
 const t = (key: string, params?: Record<string, unknown>): string => String(translate(key, params) ?? key);
 const chatStore = controller.chatStore;
 const message = computed<Record<string, any>>(() => props.item.message);
+const processDurationLabel = computed(() => resolveAssistantTurnDurationLabel(message.value));
 
 const activeSessionId = computed(() => String(props.sessionId || chatStore.activeSessionId || '').trim());
 const conversationKey = computed(() => String(controller.sessionHub?.activeConversationKey || ''));

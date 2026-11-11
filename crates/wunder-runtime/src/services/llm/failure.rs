@@ -98,6 +98,30 @@ impl std::fmt::Display for LlmHttpError {
 
 impl std::error::Error for LlmHttpError {}
 
+/// Flattens a reqwest transport failure into one diagnostic sentence.
+///
+/// `reqwest::Error`'s own Display often stops at "error sending request for
+/// url", while the actionable cause (connection reset, TLS, body decode) lives
+/// in its source chain. The orchestrator only renders the top-level anyhow
+/// message, so the chain must be folded in here.
+pub(crate) fn summarize_llm_transport_error(error: &reqwest::Error) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(source) = current {
+        let text = source.to_string();
+        let text = text.trim();
+        if !text.is_empty() && !parts.iter().any(|part| part == text) {
+            parts.push(text.to_string());
+        }
+        current = source.source();
+    }
+    if parts.is_empty() {
+        "unknown transport error".to_string()
+    } else {
+        parts.join(": ")
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct LlmPayloadError {
     pub(crate) kind: Option<ProviderFailureKind>,

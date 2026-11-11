@@ -20,7 +20,9 @@ mod admission;
 pub(crate) mod benchmark;
 mod context_probe;
 mod failure;
-pub(crate) use failure::{LlmHttpError, LlmPayloadError, ProviderFailureKind};
+pub(crate) use failure::{
+    summarize_llm_transport_error, LlmHttpError, LlmPayloadError, ProviderFailureKind,
+};
 #[cfg(test)]
 mod failure_tests;
 pub(crate) mod output;
@@ -1025,7 +1027,12 @@ impl LlmClient {
                 .json(payload)
                 .send()
                 .await
-                .context("LLM request failed");
+                .map_err(|err| {
+                    anyhow!(
+                        "LLM request failed: {}",
+                        summarize_llm_transport_error(&err)
+                    )
+                });
         }
         self.send_cloud_request(payload).await
     }

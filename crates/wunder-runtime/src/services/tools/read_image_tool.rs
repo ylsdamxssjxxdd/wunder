@@ -5,8 +5,6 @@ use crate::services::chat_media::{
     ImageViewStats,
 };
 use anyhow::{anyhow, Result};
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -238,7 +236,11 @@ pub async fn build_followup_user_message(
                 let bytes = tokio::fs::read(&result.resolved_path)
                     .await
                     .map_err(|_| anyhow!(crate::i18n::t("tool.read.not_found")))?;
-                let data_url = format!("data:{content_type};base64,{}", STANDARD.encode(bytes));
+                let data_url = crate::services::chat_media::encode_model_ready_data_url(
+                    bytes,
+                    content_type.clone(),
+                )
+                .await;
                 let path = result.resolved_path.to_string_lossy().to_string();
                 if hinted_paths.insert(path.clone()) {
                     content.push(json!({

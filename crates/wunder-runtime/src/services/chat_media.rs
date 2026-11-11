@@ -5,6 +5,7 @@ use crate::schemas::AttachmentPayload;
 use crate::services::chat_attachments::{
     is_supported_model_image_mime, parse_image_data_url, validate_image_attachment_bytes,
 };
+use crate::services::image_context::{ImageContextPolicy, ImageRestoreReport};
 use crate::services::multimodal_models::{self, AudioTranscriptionRequest};
 use crate::storage::USER_PRIVATE_CONTAINER_ID;
 use crate::workspace::WorkspaceManager;
@@ -18,6 +19,7 @@ use reqwest::multipart::{Form, Part};
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -1398,10 +1400,7 @@ pub async fn load_image_attachment_data_url(
     if let Some((mime_type, bytes)) =
         parse_image_data_url(raw_content, attachment.content_type.as_deref())
     {
-        return Some(format!(
-            "data:{mime_type};base64,{}",
-            STANDARD.encode(bytes)
-        ));
+        return Some(encode_model_ready_data_url(bytes, mime_type).await);
     }
     let public_path = attachment.public_path.as_deref()?.trim();
     if public_path.is_empty() {
@@ -1425,14 +1424,35 @@ pub async fn load_image_attachment_data_url(
         .as_deref()
         .map(str::trim)
         .filter(|value| value.starts_with("image/"))
-        .unwrap_or("image/jpeg");
-    if !is_supported_model_image_mime(mime) {
+        .unwrap_or("image/jpeg")
+        .to_string();
+    if !is_supported_model_image_mime(&mime) {
         return None;
     }
-    if !validate_image_attachment_bytes(mime, &bytes) {
+    if !validate_image_attachment_bytes(&mime, &bytes) {
         return None;
     }
-    Some(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
+    Some(encode_model_ready_data_url(bytes, mime).await)
+}
+
+/// Re-encode PNG/JPEG inputs to the model-view size before they enter the
+/// request. Non-PNG formats (GIF animation, WebP/TIFF/BMP) keep their original
+/// bytes so frame semantics are not silently changed.
+pub(crate) async fn encode_model_ready_data_url(bytes: Vec<u8>, mime: String) -> String {
+    if !matches!(mime.as_str(), "image/png" | "image/jpeg") {
+        return format!("data:{mime};base64,{}", STANDARD.encode(bytes));
+    }
+    let original = bytes.clone();
+    let mime_hint = mime.clone();
+    let encoded = blocking::run_cpu("model_image_view", move || {
+        encode_model_ready_image_bytes(&bytes, &mime_hint)
+    })
+    .await;
+    let (bytes, mime) = match encoded {
+        Ok(encoded) => encoded,
+        Err(_) => (original, mime),
+    };
+    format!("data:{mime};base64,{}", STANDARD.encode(bytes))
 }
 
 /// Re-inline a previously persisted image from its local path. Used when a
@@ -1466,38 +1486,88 @@ pub async fn load_image_data_url_for_path(path: &str) -> Option<String> {
 
 /// 加载持久化历史时，把被省略的图像按路径提示从磁盘重新内联。像素写库时
 /// 被省略以控制体积，但磁盘原图与 `[image_path:]` 提示仍在；对齐 codex 在构建
-/// prompt 时解析图像引用的做法，让图像跨轮常驻，模型不必反复重读同一帧。
+/// prompt 时解析图像引用的做法，让最近的图像跨轮常驻，模型不必反复重读同一帧。
 /// 占位与路径提示都是纯文本 part，按出现顺序把每个占位配给它前面最近的路径。
-/// 图像的清退只发生在 compaction（含图消息被压成文本摘要），不在普通轮次里
-/// 逐图裁剪。文件已不存在时占位保留，不阻断历史加载。
-pub async fn restore_omitted_inline_images(messages: &mut [Value]) {
+///
+/// 只按“最新优先”恢复预算内的图片：同一路径最多保留最近若干个版本，整体
+/// 不超过策略的图片数与字节数；更早的占位保留路径提示，需要时由模型重读。
+/// 这样既保留视觉上下文，又不会把几十帧原图再次塞满请求。
+pub async fn restore_omitted_inline_images(
+    messages: &mut [Value],
+    policy: &ImageContextPolicy,
+) -> ImageRestoreReport {
     use crate::services::chat_payload_sanitizer::{
         image_path_marker_in_text, is_omitted_image_placeholder_text,
     };
-    for message in messages.iter_mut() {
-        let Some(parts) = message.get_mut("content").and_then(Value::as_array_mut) else {
+
+    let mut candidates: Vec<(usize, usize, String)> = Vec::new();
+    let mut report = ImageRestoreReport::default();
+    for (message_index, message) in messages.iter().enumerate() {
+        let Some(parts) = message.get("content").and_then(Value::as_array) else {
             continue;
         };
         let mut last_path: Option<String> = None;
-        for part in parts.iter_mut() {
-            let Some(text) = part.get("text").and_then(Value::as_str).map(str::to_string) else {
+        for (part_index, part) in parts.iter().enumerate() {
+            let Some(text) = part.get("text").and_then(Value::as_str) else {
                 continue;
             };
-            if let Some(path) = image_path_marker_in_text(&text) {
+            if let Some(path) = image_path_marker_in_text(text) {
                 last_path = Some(path);
             }
-            if is_omitted_image_placeholder_text(&text) {
-                if let Some(path) = last_path.as_ref() {
-                    if let Some(data_url) = load_image_data_url_for_path(path).await {
-                        *part = serde_json::json!({
-                            "type": "image_url",
-                            "image_url": { "url": data_url }
-                        });
+            if is_omitted_image_placeholder_text(text) {
+                report.placeholders = report.placeholders.saturating_add(1);
+                match last_path.as_ref() {
+                    Some(path) => candidates.push((message_index, part_index, path.clone())),
+                    None => {
+                        report.skipped_missing = report.skipped_missing.saturating_add(1);
                     }
                 }
             }
         }
     }
+
+    // Newest first: the latest frame of each path wins, older versions stay as
+    // path-bearing placeholders and can be re-read on demand.
+    let mut per_path: HashMap<String, usize> = HashMap::new();
+    let keep_versions = policy.max_versions_per_path.max(1);
+    for (message_index, part_index, path) in candidates.into_iter().rev() {
+        let seen = per_path.entry(path.clone()).or_insert(0);
+        if *seen >= keep_versions {
+            report.skipped_by_path_limit = report.skipped_by_path_limit.saturating_add(1);
+            continue;
+        }
+        if report.restored >= policy.max_images {
+            report.skipped_by_budget = report.skipped_by_budget.saturating_add(1);
+            continue;
+        }
+        let Some(data_url) = load_image_data_url_for_path(&path).await else {
+            report.skipped_missing = report.skipped_missing.saturating_add(1);
+            continue;
+        };
+        let data_url_len = data_url.len();
+        if report.restored_bytes.saturating_add(data_url_len) > policy.max_total_bytes {
+            report.skipped_by_budget = report.skipped_by_budget.saturating_add(1);
+            continue;
+        }
+        let replaced = messages
+            .get_mut(message_index)
+            .and_then(|message| message.get_mut("content"))
+            .and_then(Value::as_array_mut)
+            .and_then(|parts| parts.get_mut(part_index))
+            .map(|part| {
+                *part = serde_json::json!({
+                    "type": "image_url",
+                    "image_url": { "url": data_url }
+                });
+            })
+            .is_some();
+        if replaced {
+            *seen += 1;
+            report.restored = report.restored.saturating_add(1);
+            report.restored_bytes = report.restored_bytes.saturating_add(data_url_len);
+        }
+    }
+    report
 }
 
 const IMAGE_VIEW_MAX_DIMENSION: u32 = 4096;
@@ -2232,7 +2302,13 @@ mod tests {
             }),
         ];
 
-        super::restore_omitted_inline_images(&mut messages).await;
+        let policy = crate::services::image_context::ImageContextPolicy {
+            max_images: 24,
+            max_total_bytes: 24 * 1024 * 1024,
+            max_versions_per_path: 2,
+            max_request_bytes: 32 * 1024 * 1024,
+        };
+        super::restore_omitted_inline_images(&mut messages, &policy).await;
 
         let parts = messages[0]["content"].as_array().expect("parts");
         assert_eq!(parts[2]["type"], "image_url");
@@ -2255,6 +2331,91 @@ mod tests {
         assert!(restored.width().div_ceil(32) * restored.height().div_ceil(32) <= 2500);
         let missing = messages[1]["content"].as_array().expect("parts");
         assert_eq!(missing[1]["text"], placeholder);
+    }
+
+    #[tokio::test]
+    async fn restore_omitted_images_keeps_newest_version_per_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let frame = dir.path().join("frame.png");
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([0, 255, 0, 255]))
+            .save(&frame)
+            .expect("write frame");
+        let placeholder = "[inline image omitted from persisted context]";
+        let hint = format!("[image_path:{}]", frame.display());
+        let mut messages = vec![
+            serde_json::json!({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": hint.clone()},
+                    {"type": "text", "text": placeholder},
+                ]
+            }),
+            serde_json::json!({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": hint.clone()},
+                    {"type": "text", "text": placeholder},
+                ]
+            }),
+        ];
+        let policy = crate::services::image_context::ImageContextPolicy {
+            max_images: 24,
+            max_total_bytes: 24 * 1024 * 1024,
+            max_versions_per_path: 1,
+            max_request_bytes: 32 * 1024 * 1024,
+        };
+
+        let report = super::restore_omitted_inline_images(&mut messages, &policy).await;
+
+        assert_eq!(report.placeholders, 2);
+        assert_eq!(report.restored, 1);
+        assert_eq!(report.skipped_by_path_limit, 1);
+        assert_eq!(messages[0]["content"][1]["type"], "text");
+        assert_eq!(messages[1]["content"][1]["type"], "image_url");
+    }
+
+    #[tokio::test]
+    async fn restore_omitted_images_respects_budget() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let first = dir.path().join("first.png");
+        let second = dir.path().join("second.png");
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]))
+            .save(&first)
+            .expect("write first");
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([0, 0, 255, 255]))
+            .save(&second)
+            .expect("write second");
+        let placeholder = "[inline image omitted from persisted context]";
+        let mut messages = vec![
+            serde_json::json!({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": format!("[image_path:{}]", first.display())},
+                    {"type": "text", "text": placeholder},
+                ]
+            }),
+            serde_json::json!({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": format!("[image_path:{}]", second.display())},
+                    {"type": "text", "text": placeholder},
+                ]
+            }),
+        ];
+        let policy = crate::services::image_context::ImageContextPolicy {
+            max_images: 1,
+            max_total_bytes: 24 * 1024 * 1024,
+            max_versions_per_path: 2,
+            max_request_bytes: 32 * 1024 * 1024,
+        };
+
+        let report = super::restore_omitted_inline_images(&mut messages, &policy).await;
+
+        assert_eq!(report.restored, 1);
+        assert_eq!(report.skipped_by_budget, 1);
+        // Newest first: the second message wins the only slot.
+        assert_eq!(messages[0]["content"][1]["type"], "text");
+        assert_eq!(messages[1]["content"][1]["type"], "image_url");
     }
 
     #[test]

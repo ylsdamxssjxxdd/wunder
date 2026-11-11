@@ -653,7 +653,13 @@ export const chatSendActions = {
           const approvalPayload = payload?.data ?? payload;
           const normalizedEventType = resolveNormalizedStreamEventType(eventType, payload);
           const effectiveEventType = normalizedEventType || eventType;
-          if (effectiveEventType === 'workspace_update') {
+          // 命令会话是实时控制面，不是时间线内容。发送流的 reducer 在视图已
+          // 提交后会把所有帧当作已消费，若这里不先截获，面板只能等到发送结束
+          // 后靠快照补水，期间结束的普通命令就永远不显示。与 watch 流保持一致。
+          if (
+            effectiveEventType === 'workspace_update' ||
+            effectiveEventType.startsWith('command_session_')
+          ) {
             applyCanonicalStreamSideEffects(this, sessionId, effectiveEventType, payload);
             return;
           }

@@ -21,6 +21,7 @@
     <span class="timeline-process-title">{{ t('chat.timeline.workProcess') }}</span>
     <span class="timeline-process-count">{{ t('chat.timeline.workProcessSteps', { count: fold.steps }) }}</span>
     <span v-if="fold.activity" class="timeline-process-latest">{{ fold.activity }}</span>
+    <span v-if="processDurationLabel" class="timeline-process-duration">{{ processDurationLabel }}</span>
   </button>
 
   <template v-for="block in visibleBlocks" :key="block.id">
@@ -125,6 +126,7 @@ import type { WorkflowItem } from './toolWorkflowRunModel';
 import type { ChatRuntimeTimelineBlock } from '@/realtime/chat/chatRuntimeTypes';
 import { t } from '@/i18n';
 import { reasoningPreview } from './timelineActivity';
+import { resolveAssistantTurnDurationLabel } from '@/utils/messageStats';
 
 /**
  * 云端版时间线的块渲染单元（§7.3 / §7.4，形态对齐桌面端
@@ -231,6 +233,7 @@ type TimelineFold = {
 
 // ------------------------------------------------------- 工具/思考条目
 
+const processDurationLabel = computed(() => resolveAssistantTurnDurationLabel(props.message));
 const toolEntryModel = computed(() => buildTimelineToolEntries(props.workflowItems, t));
 const allToolEntries = computed(() => toolEntryModel.value.entries);
 const omittedRuns = computed(() => toolEntryModel.value.omittedRuns);
@@ -639,6 +642,14 @@ watch(
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.timeline-process-duration {
+  flex: 0 0 auto;
+  color: var(--mz-text-muted, #8a8f99);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 /* ------------------------------------------------------- 工具分组折叠条 */

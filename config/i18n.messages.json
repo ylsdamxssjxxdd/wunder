@@ -259,6 +259,26 @@
     "en-US": "{attempts} attempts over {seconds}s; the provider kept failing.",
     "zh-CN": "共尝试 {attempts} 次、耗时 {seconds} 秒；模型服务持续失败。"
   },
+  "error.llm_request_too_large": {
+    "en-US": "The model request is {request_mb} MiB, over the {limit_mb} MiB request limit. Older inline images were already dropped; reduce this turn's images, re-read only the frames you need, or start a new thread.",
+    "zh-CN": "模型请求约 {request_mb} MiB，超过 {limit_mb} MiB 的请求上限。更早的内联图片已尽量精简，请减少本轮图片、只重新读取需要的画面，或新开线程继续。"
+  },
+  "image.context.omitted_duplicate": {
+    "en-US": "[identical inline image omitted; the newest copy is above]",
+    "zh-CN": "[相同的内联图片已省略，上方保留了最新一份]"
+  },
+  "image.context.omitted_superseded": {
+    "en-US": "[older inline image of this path omitted; the newest version is above]",
+    "zh-CN": "[该路径的旧版内联图片已省略，上方保留了最新版本]"
+  },
+  "image.context.omitted_budget": {
+    "en-US": "[older inline image omitted from context to stay within the request budget]",
+    "zh-CN": "[较早的内联图片已从上下文中省略，以控制在请求预算内]"
+  },
+  "image.context.path_suffix": {
+    "en-US": " path: {path}",
+    "zh-CN": "，路径：{path}"
+  },
   "context_shrink.summary": {
     "en-US": "Request context dropped from {before} to {after} tokens (-{delta}); no local compaction was recorded. Rebuilt history omitted inline images, or the provider truncated the prompt / changed usage accounting.",
     "zh-CN": "请求上下文从 {before} 降到 {after} tokens（-{delta}），本轮未记录本地压缩；常见原因是历史重建时省略了内联图片，或模型服务端截断/用量口径变化。"

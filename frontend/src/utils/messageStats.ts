@@ -339,6 +339,18 @@ const resolveDurationSeconds = (stats: Record<string, any>): number | null => {
   return (prefill ?? 0) + (decode ?? 0);
 };
 
+/** 过程条右侧的总耗时：只取本轮 interaction duration，无值时返回空串。 */
+export const resolveAssistantTurnDurationLabel = (
+  message: Record<string, any> | null | undefined
+): string => {
+  if (!message || message.role !== 'assistant' || message.isGreeting) return '';
+  const stats = message.stats && typeof message.stats === 'object' ? message.stats : null;
+  if (!stats) return '';
+  const seconds = resolveDurationSeconds(stats);
+  if (seconds === null || !Number.isFinite(seconds) || seconds <= 0) return '';
+  return formatDuration(seconds);
+};
+
 const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
   // A bubble represents one user round.  When several model requests happen
   // in that round (for example tool/reasoning continuations), the durable

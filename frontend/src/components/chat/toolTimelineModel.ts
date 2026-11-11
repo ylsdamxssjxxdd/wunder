@@ -466,12 +466,22 @@ const positiveFinite = (value: unknown): number | null => {
 };
 
 /**
- * 从条目 detail（原始事件体的 JSON 串）读取指标：
- * - 上下文占用 = request_context_tokens，缺省回退 request_usage；
- * - 耗时 = meta.duration_ms（finalize_tool_result 写入）。
- * 先做子串短路再解析，避免为无指标的大 detail 付出整段 JSON 解析成本。
+ * 从条目读取指标：
+ * - 运行时投影已把 request_context_tokens / duration_ms 提炼到字段上，直接读取；
+ * - 线程视图等持久条目只有 detail 原文，才回退解析 JSON。
+ * 上下文占用 = request_context_tokens，缺省回退 request_usage；
+ * 耗时 = meta.duration_ms（finalize_tool_result 写入）。
  */
-const readItemMetrics = (detail: unknown): TimelineToolMetrics | null => {
+const readItemMetrics = (item: WorkflowItem | null): TimelineToolMetrics | null => {
+  if (!item) return null;
+  const typedTokens =
+    positiveFinite(item.request_context_tokens) ??
+    positiveFinite(item.context_occupancy_tokens);
+  const typedDuration = positiveFinite(item.duration_ms);
+  if (typedTokens !== null || typedDuration !== null) {
+    return { tokens: typedTokens, durationMs: typedDuration };
+  }
+  const detail = item.detail;
   if (typeof detail !== 'string') return null;
   if (
     !detail.includes('request_usage') &&
@@ -499,7 +509,7 @@ const resolveRunMetrics = (run: RawToolRun): TimelineToolMetrics => {
   const merged: TimelineToolMetrics = { tokens: null, durationMs: null };
   // 结果侧优先（终态耗时），调用侧兜底（运行中即可显示上下文占用）。
   for (const item of [run.resultItem, run.outputItem, run.callItem]) {
-    const metrics = readItemMetrics(item?.detail);
+    const metrics = readItemMetrics(item);
     if (!metrics) continue;
     merged.durationMs = merged.durationMs ?? metrics.durationMs;
     merged.tokens = merged.tokens ?? metrics.tokens;

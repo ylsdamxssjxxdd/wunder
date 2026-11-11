@@ -20,6 +20,7 @@
       <span class="timeline-process-title">{{ t('chat.timeline.workProcess') }}</span>
       <span class="timeline-process-count">{{ t('chat.timeline.workProcessSteps', { count }) }}</span>
       <span class="timeline-process-latest">{{ currentActivity }}</span>
+      <span v-if="durationLabel" class="timeline-process-duration">{{ durationLabel }}</span>
     </button>
 
     <div v-if="open" ref="processBodyRef" class="timeline-process-body" @scroll.passive="handleProcessScroll" @wheel.passive="handleProcessWheel" @pointerdown="pageAnchor = null" @keydown="pageAnchor = null">
@@ -123,6 +124,8 @@ const props = defineProps<{
    * contain several assistant prints; only this item belongs in the answer
    * block, all earlier prints stay in the work process. */
   finalItemId?: string;
+  /** 本轮总耗时；空串表示没有可用统计，不渲染。 */
+  durationLabel?: string;
 }>();
 
 // 展开状态上报：父组件据此决定流式尾部是否外显（过程区收起时正文已让位，
@@ -962,6 +965,14 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.timeline-process-duration {
+  flex: 0 0 auto;
+  color: var(--mz-text-muted, #8a8f99);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 /* 过程体限高滚动：一次工作过程固定在同一区域内展开，长轮次不撑开整条消息。 */

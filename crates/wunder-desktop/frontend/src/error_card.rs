@@ -168,6 +168,12 @@ pub fn from_parts(code: &str, message: &str) -> Option<ErrorCard> {
             message,
             "压缩上下文或缩短本轮输入后重试。",
         ),
+        "LLM_REQUEST_TOO_LARGE" => ErrorCard::new(
+            "请求体积超出上限",
+            "本轮请求包含的历史图片过多，超过了模型接口可接收的体积，请求没有发出。",
+            message,
+            "运行时已自动保留最近图片；继续时只需重读必要的画面，或新开线程再试。",
+        ),
         "USER_QUOTA_EXCEEDED" | "USER_QUOTA_INSUFFICIENT" => ErrorCard::new(
             "额度不足",
             "当前账户额度不足，本轮没有执行。",
@@ -288,6 +294,17 @@ mod tests {
         assert_eq!(context.title, "上下文超出模型上限");
         let busy = from_parts("USER_BUSY", "线程正在忙").unwrap();
         assert_eq!(busy.title, "线程正在处理其他任务");
+    }
+
+    #[test]
+    fn oversized_image_request_gets_its_own_recovery_hint() {
+        let card = from_parts(
+            "LLM_REQUEST_TOO_LARGE",
+            "模型请求约 33.2 MiB，超过 32.0 MiB 的请求上限。",
+        )
+        .unwrap();
+        assert_eq!(card.title, "请求体积超出上限");
+        assert!(card.hint.contains("重读"));
     }
 
     #[test]

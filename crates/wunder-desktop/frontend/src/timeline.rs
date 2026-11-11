@@ -1941,6 +1941,24 @@ impl Timeline {
 
     /// Update the independent footer without invalidating body/process layout.
     pub fn set_turn_stats(&self, stats: Vec<crate::TurnStatMetric>) {
+        // 过程条右侧只显示总耗时数值；与 footer 的 stopwatch 使用同一口径，
+        // 避免出现两个互相矛盾的本轮时长。
+        let duration = stats
+            .iter()
+            .find(|metric| metric.key == "stopwatch")
+            .map(|metric| metric.value.clone())
+            .filter(|value| value != "-" && value != "--")
+            .unwrap_or_default();
+        if self.process != NO_PROCESS && !duration.is_empty() {
+            let bar = self.process_bar;
+            if self
+                .model
+                .row_data(bar)
+                .is_some_and(|row| row.duration.as_str() != duration.as_str())
+            {
+                self.patch(bar, |row| row.duration = duration.as_str().into());
+            }
+        }
         let Some(index) = self.ensure_footer() else {
             return;
         };
@@ -2402,6 +2420,20 @@ mod tests {
                 .key,
             "status-outputting"
         );
+    }
+
+    #[test]
+    fn process_bar_shows_the_footer_duration_without_a_label() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-duration", "Fixture input");
+        timeline.set_turn_stats(stat_metrics(&crate::turn_stats::metrics(
+            &serde_json::json!({"interaction_duration_s": 12.4}),
+        )));
+        let bar = timeline
+            .model
+            .row_data(timeline.process_bar)
+            .expect("a process bar");
+        assert_eq!(bar.duration, "12.4s");
     }
 
     #[test]

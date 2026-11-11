@@ -31,3 +31,12 @@ export function formatDateTime(value: unknown): string {
   const pad = (part: number) => String(part).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
+
+/** 本地时区的 `HH:mm`（消息气泡角标）；没有可用时间时返回空串。 */
+export function formatClockHourMinute(value: unknown): string {
+  const ms = toEpochMs(value);
+  if (!ms) return '';
+  const date = new Date(ms);
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}

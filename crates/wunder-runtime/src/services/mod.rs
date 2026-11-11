@@ -12,6 +12,7 @@ pub mod chat_attachments;
 pub mod chat_history_item;
 pub mod chat_media;
 pub mod chat_payload_sanitizer;
+pub mod image_context;
 pub mod chat_runtime_projection;
 pub mod chat_transcript;
 pub mod cloud;

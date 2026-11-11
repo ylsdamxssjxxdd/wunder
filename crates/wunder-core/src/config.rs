@@ -771,6 +771,11 @@ pub struct LlmModelConfig {
     pub max_context: Option<u32>,
     #[serde(default)]
     pub max_output: Option<u32>,
+    /// Provider request-body ceiling in bytes. Inline images are the usual
+    /// reason a request crosses it; the runtime evicts older images first and
+    /// fails fast with a readable error if the body still cannot fit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_request_bytes: Option<usize>,
     #[serde(default)]
     pub thinking_token_budget: Option<u32>,
     #[serde(default)]

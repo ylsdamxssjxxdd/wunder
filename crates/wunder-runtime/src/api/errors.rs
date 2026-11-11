@@ -69,7 +69,7 @@ pub(crate) fn status_for_error_code(code: &str) -> StatusCode {
         "CANCELLED" => StatusCode::CONFLICT,
         "CONTENT_TYPE_NOT_SUPPORTED" => StatusCode::UNSUPPORTED_MEDIA_TYPE,
         "HANDSHAKE_TIMEOUT" | "REQUEST_TIMEOUT" => StatusCode::REQUEST_TIMEOUT,
-        "CONTEXT_WINDOW_EXCEEDED" => StatusCode::PAYLOAD_TOO_LARGE,
+        "CONTEXT_WINDOW_EXCEEDED" | "LLM_REQUEST_TOO_LARGE" => StatusCode::PAYLOAD_TOO_LARGE,
         "PAYLOAD_TOO_LARGE" => StatusCode::PAYLOAD_TOO_LARGE,
         "RATE_LIMITED" | "USER_BUSY" | "USER_QUOTA_EXCEEDED" | "USER_QUOTA_INSUFFICIENT" => {
             StatusCode::TOO_MANY_REQUESTS
@@ -113,6 +113,9 @@ pub(crate) fn hint_for_error_code(code: &str) -> Option<&'static str> {
         }
         "CONTEXT_WINDOW_EXCEEDED" => {
             Some("Reduce context size or let the session compact history before retrying.")
+        }
+        "LLM_REQUEST_TOO_LARGE" => {
+            Some("Reduce inline images or compact conversation history before retrying.")
         }
         "UNSUPPORTED_METHOD" | "METHOD_NOT_FOUND" | "UNSUPPORTED_TYPE" => {
             Some("Verify method/type against the protocol documentation.")
