@@ -972,7 +972,8 @@ export global I18n {
     out property <string> stc_channels: zh ? "渠道设置" : "Channels";
     out property <string> stc_channels_note: zh ? "渠道账号、绑定与日志" : "Channel accounts, bindings and logs";
     out property <string> stc_runs: zh ? "运行记录" : "Activity";
-    out property <string> stc_runs_note: zh ? "累计运行、令牌与工具调用" : "Total runtime, tokens and tool calls";
+    out property <string> stc_runs_note: zh ? "近 14 天运行、令牌与额度" : "Runtime, tokens and quota (14d)";
+    out property <string> stc_runs_empty: zh ? "暂无运行记录" : "No runtime records";
     out property <string> stc_archives: zh ? "归档线程" : "Archived threads";
     out property <string> stc_archives_note: zh ? "已归档线程，可查看或彻底删除" : "Archived threads: review or delete";
     out property <string> stc_help: zh ? "帮助" : "Help";
@@ -1022,9 +1023,9 @@ export global I18n {
     out property <string> stc_agent_questions_note: zh ? "最多 12 条，随配置保存；回车或点「+」加入。" : "At most 12 entries, saved with the configuration; press Enter or “+” to add.";
     out property <string> stc_agent_question_add: zh ? "添加预设问题" : "Add preset question";
     out property <string> stc_agent_question_placeholder: zh ? "输入一条预设问题…" : "Type a preset question…";
-    out property <string> stc_runs_duration: zh ? "累计运行" : "Total runtime";
-    out property <string> stc_runs_tokens: zh ? "累计令牌" : "Total tokens";
-    out property <string> stc_runs_calls: zh ? "工具调用" : "Tool calls";
+    out property <string> stc_runs_duration: zh ? "近 14 天运行" : "Runtime (14d)";
+    out property <string> stc_runs_tokens: zh ? "近 14 天令牌" : "Tokens (14d)";
+    out property <string> stc_runs_calls: zh ? "近 14 天额度" : "Quota (14d)";
     out property <string> pet_behavior: zh ? "伙伴行为" : "Companion behavior";
     out property <string> pet_behavior_note: zh ? "开关即时保存，动画随线程运行状态联动。" : "Changes save instantly; animation follows thread state.";
     out property <string> pet_show: zh ? "动画形象" : "Companion avatar";

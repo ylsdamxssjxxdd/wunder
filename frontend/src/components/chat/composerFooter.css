@@ -58,6 +58,7 @@
 /* 工具行与编辑器共用输入卡（对齐桌面 composer.slint 的动作行）：它是卡内最后一行，
    不再落在页面底色上；左组（+ / 后台任务 / 子智能体）与右组（模型 / 发送）分列两端。 */
 .composer-action-row {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;

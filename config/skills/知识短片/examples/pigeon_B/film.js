@@ -105,16 +105,24 @@ function s6(fr, t) {                                        // 计时器在前�
   const px = Math.min(a.x + 330, 1400); spin(fr, px, 640, 250, a.trail); pigeon(fr, px, 760, 1.6, a);
   timer(fr, 560, 430, 270, t);
 }
-const SHOTS = [[0, T.s2, s1], [T.s2, T.s3, s2], [T.s3, T.s4, s3], [T.s4, T.s5, s4], [T.s5, T.s6, s5], [T.s6, T.end, s6]];
+const SHOTS = [
+  { no: 1, name: '全景', from: 0, to: T.s2, fn: s1 },
+  { no: 2, name: '特写', from: T.s2, to: T.s3, fn: s2 },
+  { no: 3, name: '中景', from: T.s3, to: T.s4, fn: s3 },
+  { no: 4, name: '近景', from: T.s4, to: T.s5, fn: s4 },
+  { no: 5, name: '慢推', from: T.s5, to: T.s6, fn: s5 },
+  { no: 6, name: '前后景', from: T.s6, to: T.end, fn: s6 },
+];
 
 VK.film({
   dur: T.end, theme: 'flat', meta: { title: '鸽子的迷信', root: 0 },
+  shots: SHOTS, subs: SUBS,
   draw(fr, t) {
     fr.look.bgo = { color: '#17121E' };
-    const sh = SHOTS.find(s => t >= s[0] && t < s[1]) || SHOTS[SHOTS.length - 1];
-    const cut = Math.min(ss(t, sh[0], sh[0] + (sh[0] ? .22 : .5)), 1 - ss(t, sh[1] - (sh[1] >= T.end ? .6 : .22), sh[1]));     // 镜头之间暗一下
+    const sh = SHOTS.find(s => t >= s.from && t < s.to) || SHOTS[SHOTS.length - 1];
+    const cut = Math.min(ss(t, sh.from, sh.from + (sh.from ? .22 : .5)), 1 - ss(t, sh.to - (sh.to >= T.end ? .6 : .22), sh.to));     // 镜头之间暗一下
     fr.g({ a: cut }, () => {
-      sh[2](fr, t);
+      sh.fn(fr, t);
       const x = fr.x, g = x.createRadialGradient(W / 2, 520, H * .55, W / 2, 520, W * .72); g.addColorStop(0, 'rgba(20,10,10,0)'); g.addColorStop(1, 'rgba(20,10,10,.5)'); fr.rect(0, 0, W, H, { fill: g });
       const b = x.createLinearGradient(0, 820, 0, H); b.addColorStop(0, 'rgba(18,12,20,0)'); b.addColorStop(.5, 'rgba(18,12,20,.75)'); b.addColorStop(1, 'rgba(18,12,20,.9)'); fr.rect(0, 820, W, 260, { fill: b });
     });

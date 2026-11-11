@@ -967,7 +967,7 @@ pub struct Shared {
     pub usage_rev: u64,
     pub usage_duration: String,
     pub usage_tokens: String,
-    pub usage_calls: String,
+    pub usage_quota: String,
     pub target: i32,
     pub target_rev: u64,
     pub cloud_rev: u64,
@@ -5094,7 +5094,7 @@ fn refresh_memory(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>, reset_fi
 }
 
 /// Local runtime usage for the account page, mirroring 桌面版's three tiles
-/// (runtime / consumed tokens / tool calls). Reads the same engine summary the
+/// (runtime / consumed tokens / quota used). Reads the same engine summary the
 /// desktop expert page uses; independent of cloud sign-in.
 fn refresh_usage(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
     let Ok(value) = desktop.expert_runtime(DEFAULT_AGENT_ID, None) else {
@@ -5104,11 +5104,11 @@ fn refresh_usage(desktop: &NativeDesktop, shared: &Arc<Mutex<Shared>>) {
     let seconds = summary["runtime_seconds"].as_f64().unwrap_or(0.0) as u64;
     let duration = format!("{}h {}m", seconds / 3600, seconds % 3600 / 60);
     let tokens = compact_usage(summary["consumed_tokens"].as_f64().unwrap_or(0.0));
-    let calls = compact_usage(summary["tool_calls"].as_f64().unwrap_or(0.0));
+    let quota = compact_usage(summary["quota_consumed"].as_f64().unwrap_or(0.0));
     if let Ok(mut state) = shared.lock() {
         state.usage_duration = duration;
         state.usage_tokens = tokens;
-        state.usage_calls = calls;
+        state.usage_quota = quota;
         state.usage_rev = state.usage_rev.wrapping_add(1);
         state.touch();
     }

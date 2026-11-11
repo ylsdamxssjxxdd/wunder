@@ -303,7 +303,9 @@ onBeforeUnmount(() => {
   color: var(--mz-text-muted, #8a8f99);
   font-size: 12px;
 }
-.composer-status-dock { position: relative; }
+/* 状态格本身不建立定位上下文：浮层贴住动作行左缘展开，
+   与加号菜单同一条左边线，也不会探到侧栏底下。 */
+.composer-status-dock { position: static; }
 .composer-status-trigger {
   display: inline-flex;
   align-items: center;
@@ -337,10 +339,11 @@ onBeforeUnmount(() => {
 .composer-status-panel {
   position: absolute;
   z-index: 40;
-  left: -92px;
+  /* 定位上下文是 `.composer-action-row`：左缘与加号菜单对齐，宽度不超出动作行。 */
+  left: 0;
   bottom: calc(100% + 6px);
   box-sizing: border-box;
-  width: 380px;
+  width: min(380px, 100%);
   max-width: calc(100vw - 32px);
   padding: 8px;
   border: 1px solid var(--mz-border, #e5e7eb);

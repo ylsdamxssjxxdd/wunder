@@ -10,7 +10,7 @@
     }"
     :style="sidebarWidthStyle"
   >
-    <div class="messenger-shell">
+    <div class="messenger-shell" :inert="showChatSettingsView">
       <MessengerSidebar
         v-show="!isEmbeddedChatRoute && !sidebarCollapsed"
         :controller="controller"

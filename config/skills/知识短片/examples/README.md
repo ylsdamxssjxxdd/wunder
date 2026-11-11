@@ -27,9 +27,10 @@
 | `pigeon_B/` | B 寓言 | 不是复刻，自己的题目 | 见上 |
 
 需要看图时，对任意示例跑 `python ../engine/render.py <示例目录> --sheet 16`，会在该示例的 `review/sheet.jpg` 生成拼图。拼图不入库。
+示例只带代码和分镜；参考项目里的 `look_*.jpg`、`*.gif` 体积大，不随仓库分发，需要时用 `--sheet` 现场生成。
 
 ```bash
-python ../engine/render.py stim_B --serve         # 预览
+python ../engine/render.py stim_B --serve         # 预览；?t=8 冻结在 8 秒
 python ../engine/render.py info_C --sheet 16       # 拼图
 python ../engine/render.py info_C && python ../engine/render.py info_C --events && python ../engine/audio.py info_C
 ```

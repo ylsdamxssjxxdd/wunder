@@ -2751,12 +2751,20 @@ function installMessengerControllerAgentIdentityState(ctx: MessengerControllerCo
 
   ctx.activeAgentIdForApi = computed(() => ctx.activeAgentId.value === DEFAULT_AGENT_KEY ? '' : ctx.activeAgentId.value);
 
-  ctx.activeAgentPresetQuestions = computed(() => {
-      if (ctx.activeAgentId.value === DEFAULT_AGENT_KEY) {
+  // 分屏窗格按各自会话的 agent 读取预设问题，不跟随前台 agent。
+  ctx.resolveAgentPresetQuestions = (agentId: unknown): string[] => {
+      const normalized = ctx.normalizeAgentId(agentId);
+      if (normalized === DEFAULT_AGENT_KEY) {
           return normalizeAgentPresetQuestions(ctx.defaultAgentProfile.value?.preset_questions);
       }
-      return normalizeAgentPresetQuestions((ctx.activeAgent.value as Record<string, unknown> | null)?.preset_questions);
-  });
+      return normalizeAgentPresetQuestions(
+          (ctx.agentMap.value.get(normalized) as Record<string, unknown> | undefined)?.preset_questions
+      );
+  };
+
+  ctx.activeAgentPresetQuestions = computed(() =>
+      ctx.resolveAgentPresetQuestions(ctx.activeAgentId.value)
+  );
 
   ctx.activeAgentName = computed(() => String((ctx.activeAgent.value as Record<string, unknown> | null)?.name || ctx.t('messenger.defaultAgent')));
 

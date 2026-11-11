@@ -1,6 +1,5 @@
 <template>
         <div
-          v-if="sessionHub.activeSection === 'messages'"
           class="messenger-message-panel"
         >
           <div v-if="bootLoading" class="messenger-chat-empty">{{ t('common.loading') }}</div>

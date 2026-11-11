@@ -117,6 +117,10 @@ description: >
 格式和自查在 `references/visualization.md` 第六节，例子在第七节。一句字幕一行：画法（六种之一，或"不画"）、屏上是什么、它在干什么、屏上的小字、观众明白了什么、声音。
 字幕的量和句式按 `references/script.md`。**没有分镜表不建工程。**
 
+时间列可以写 `1 · 0.6–4.9`、`0.6–4.9` 或 `第 1 镜 · 0.6–4.9s`。无字幕镜头在字幕列写 `—`（或 `无字幕`/`纯画面`）；
+片名卡单独一行、画法写 `片名卡`，不要求和 `SUBS`/`SHOTS` 对齐。只写一个时刻的片名卡（`| 片名 · 6.5 |`）会被按到下一镜补全，
+`--lint` 只提示建议写成区间。**不要往 `SUBS` 里塞空字幕来骗过检查。**
+
 过关：
 - 遮住字幕一列，只读"屏上是什么，在干什么"，看得出在讲什么；
 - 每一句里的名词，屏上找得到；
@@ -147,7 +151,7 @@ python engine/render.py <工程目录> --stills 5.9 18.1  # 原尺寸截几帧
 python engine/render.py <工程目录> --stills 5.9 --mark 船  # 截帧并画元素包围盒（先用 fr.mark('船', …) 命名）
 python engine/render.py <工程目录> --motion 8.2 10.6  # 这段时间里取 12 帧拼一张，看转场
 python engine/render.py <工程目录> --strip 8.2 9.2 24 # 连续帧条带，看运动顺不顺
-python engine/render.py <工程目录> --serve            # 浏览器预览
+python engine/render.py <工程目录> --serve            # 浏览器预览；?play 播放，?t=41 冻结在 41 秒
 ```
 
 片名卡用区间版，别手算本地时间：
@@ -162,7 +166,7 @@ K.card(fr, t, { from: 10.9, to: 16.8, zh: '多普勒效应', sub: '为什么救�
 引擎的用法在 `references/engine.md`。`examples/` 可以翻，看的是别人怎么把一张分镜表变成画面，不是去找能搬的零件。
 字体通常由补充包提供：中文优先用 `opt/fonts/video` 的思源宋体/黑体，缺失时退到 `opt/fonts/common` 的宋体/雅黑；拉丁与等宽也在 `opt/fonts/video`；云端在 `/usr/share/fonts/wunder`。开发环境缺字体时跑 `python engine/get_fonts.py`（缺哪个下哪个）。
 
-**看图不要靠猜。** 截出的帧用读图工具（read_image）直接看：`path` 指向 `review/s_0005.00.png`、`review/sheet.jpg`、`review/motion_*.jpg` 即可，不需要起服务、不需要浏览器。局部放大用 `crop="x,y,w,h"` + `scale`（如 `scale=2`）一步到位，不要再 PIL 裁切存图绕圈；全图默认会压到长边 ≤2048px，4K 上的极小字要看就得 crop 出那块原图区域，而不是重截。字幕区干不干净、某区域亮不亮这类数值判断用 `stats`（随图返回平均亮度、非背景/边缘像素占比）或 `stats_only`（只要数值不回图，适合逐帧巡检），别靠肉眼数包围盒。历史里的图像会随上下文保留，不必每轮重读；确实需要再看像素时（如压缩清退后）按路径重读即可回看同一帧。看一眼就落一条文字结论的习惯仍然值得保持。成片抽帧检查直接把 `path` 指向 `renders/final.mp4` 并给 `frame_rate`（长片用 0.1–0.3）。`--serve` + 浏览器只在需要交互预览动态效果时用。
+**看图不要靠猜。** 截出的帧用读图工具（read_image）直接看：`path` 指向 `review/s_0005.00.png`、`review/sheet.jpg`、`review/motion_*.jpg` 即可，不需要起服务、不需要浏览器。局部放大用 `crop="x,y,w,h"` + `scale`（如 `scale=2`）一步到位，不要再 PIL 裁切存图绕圈；全图默认会压到长边 ≤2048px，4K 上的极小字要看就得 crop 出那块原图区域，而不是重截。字幕区干不干净、某区域亮不亮这类数值判断用 `stats`（随图返回平均亮度、非背景/边缘像素占比）或 `stats_only`（只要数值不回图，适合逐帧巡检），别靠肉眼数包围盒。历史里的图像会随上下文保留，不必每轮重读；确实需要再看像素时（如压缩清退后）按路径重读即可回看同一帧。看一眼就落一条文字结论的习惯仍然值得保持。成片抽帧检查直接把 `path` 指向 `renders/final.mp4` 并给 `frame_rate`（长片用 0.1–0.3）。`--serve` + 浏览器只在需要交互预览动态效果时用：`?t=41` 冻结在 41 秒；页面加载慢或 JS 报错会在画面上显示提示/堆栈，不再只剩黑屏。
 
 过关：拿这张静帧，遮住字幕和小字，问"这是什么、它在干什么"——答得出来；缩到手机横屏大小还分得清；纵向 80%–95% 只有字幕；
 对着 `visualization.md` 第八节的表查过一遍。答不出来就重画，或者回第 2 步换形象。第一版几乎不会过，改两三轮是正常的。
@@ -193,10 +197,11 @@ python engine/render.py <工程目录> --clip 0 30 head
 ```bash
 python engine/render.py <工程目录> --lint             # END/FPS、字体、音效、meta、分镜表、Math.random 等检查
 python engine/render.py <工程目录> --storyboard       # 分镜表时间列 vs film.js 的 SHOTS，逐镜核对
-python engine/render.py <工程目录> --check-safe       # 包围盒 + 像素：非字幕内容越过 y=840（背景差分；flat 跳过像素）
-python engine/render.py <工程目录> --check-band       # 只做像素检查（手写 ctx / 柔边渐变也能查到）
+python engine/render.py <工程目录> --check-safe       # 包围盒 + 像素：非字幕内容越过 y=840（忽略 bloom/辉光；flat 只查命名装置）
+python engine/render.py <工程目录> --check-band       # 只做像素检查（手写 ctx 也查；辉光不算越界）
+python engine/render.py <工程目录> --check-band --band-strict  # 连辉光一起查（更严，贴地光晕容易误报）
 python engine/render.py <工程目录> --overlap          # 命名元素实际相交面积；有意相交用 allow 放行
-python engine/render.py <工程目录> --det              # 同一帧渲两次必须一样
+python engine/render.py <工程目录> --det [样本数]     # 同一帧渲两次必须一样；失败报差异区域、元素名、可疑全局写入
 python engine/render.py <工程目录> --jobs 4           # 按镜头切段，最多 4 路真并行，再无损拼接
 python engine/render.py <工程目录> --only 3           # 只重渲第 3 镜，其余分段保留并自动重拼
 python engine/render.py <工程目录> --concat           # 手动拼接全部分段
@@ -263,4 +268,4 @@ python engine/render.py <工程目录> --web              # renders/web.mp4，10
 | `references/engine.md` | 引擎 API、命令、写法、坑 |
 | `engine/` | `vk.js` `vk-kit.js` `render.py` `audio.py` `get_fonts.py` |
 | `scripts/new_film.py` | 建工程：`index.html` + 一份没有画面的 `film.js` 骨架 |
-| `examples/` | 看别人怎么做过一次，不是零件库。`fold_C`（夜曲，《折叠》开头 33 秒）和 `pigeon_B`（寓言，《鸽子的迷信》开头 33 秒）：自己题目的样片，各带分镜表；两段对照参考片做的复刻；一张货架图。需要看图对照时，对任意示例跑 `python engine/render.py examples/<名称> --sheet 16` 生成 `review/sheet.jpg`，不要把示例里的装置搬进自己的片子 |
+| `examples/` | 看别人怎么做过一次，不是零件库。`fold_C`（夜曲，33 秒，血管→细胞→珠串）和 `pigeon_B`（寓言，33 秒，六个镜头六种景别）是两段自己题目的样片，各带分镜表；`stim_B`（寓言，12.5 秒）、`info_C`（夜曲，47 秒）是对照参考片的复刻；`kit_gallery` 把 VKKit 的件各演一遍。示例只带代码和分镜，不带成片 GIF/大图；需要看图时跑 `python engine/render.py examples/<名称> --sheet 16` 生成 `review/sheet.jpg`，不要把示例里的装置搬进自己的片子 |

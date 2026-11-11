@@ -851,13 +851,17 @@ pub async fn load_agent_runtime_records(
             error_response(StatusCode::BAD_REQUEST, i18n::t("error.content_required"))
         })?;
 
-    let records =
-        state
-            .monitor
-            .load_records_by_user(&user_id, None, None, MAX_RUNTIME_RECORD_LIMIT);
+    // Monitor persistence keeps aggregate facts only (events are stripped), so
+    // daily totals must come from the record-level counters. The window filter
+    // also keeps the query bounded instead of loading the whole history.
+    let records = state.monitor.load_records_by_user(
+        &user_id,
+        None,
+        Some(range_start_ts),
+        MAX_RUNTIME_RECORD_LIMIT,
+    );
     let mut daily = build_runtime_day_map(range_start, range_end);
     let mut heatmap_by_tool: HashMap<String, RuntimeHeatmapToolStats> = HashMap::new();
-    let mut summary_runtime_seconds = 0.0_f64;
     let mut summary_billed_tokens = 0_i64;
     let mut summary_quota_consumed = 0_i64;
     let mut summary_tool_calls = 0_i64;
@@ -891,14 +895,33 @@ pub async fn load_agent_runtime_records(
             range_start_ts,
             range_end_ts,
         );
-        summary_runtime_seconds += (session_end - session_start).max(0.0);
+
+        let activity_day = runtime_day_key(session_end);
+        let record_consumed_tokens = parse_i64_value(record.get("consumed_tokens"))
+            .unwrap_or(0)
+            .max(0);
+        let record_tool_calls = parse_i64_value(record.get("tool_calls"))
+            .unwrap_or(0)
+            .max(0);
+        let record_quota = parse_i64_value(record.get("model_request_count"))
+            .or_else(|| parse_i64_value(record.get("quota_used")))
+            .unwrap_or(0)
+            .max(0);
 
         let mut round_usage_by_day: HashMap<String, i64> = HashMap::new();
         let mut token_usage_by_day: HashMap<String, i64> = HashMap::new();
+        let mut model_usage_by_day: HashMap<String, i64> = HashMap::new();
+        let mut quota_by_day: HashMap<String, i64> = HashMap::new();
+        let mut tool_calls_by_day: HashMap<String, i64> = HashMap::new();
         let mut has_round_usage = false;
         let mut has_round_usage_total = false;
         let mut session_round_usage = 0_i64;
         let mut session_token_usage = 0_i64;
+        let mut has_model_usage = false;
+        let mut has_model_usage_total = false;
+        let mut session_model_usage = 0_i64;
+        let mut event_quota_consumed = 0_i64;
+        let mut event_tool_calls = 0_i64;
 
         if let Some(events) = record.get("events").and_then(Value::as_array) {
             for event in events {
@@ -918,7 +941,28 @@ pub async fn load_agent_runtime_records(
                 let in_range = daily.contains_key(&day_key);
 
                 match event_type {
+                    "model_usage" => {
+                        let total_tokens = parse_usage_total_tokens(data);
+                        if total_tokens <= 0 {
+                            continue;
+                        }
+                        has_model_usage_total = true;
+                        session_model_usage =
+                            session_model_usage.saturating_add(total_tokens.max(0));
+                        if !in_range {
+                            continue;
+                        }
+                        has_model_usage = true;
+                        let entry = model_usage_by_day.entry(day_key).or_default();
+                        *entry = entry.saturating_add(total_tokens);
+                    }
                     "round_usage" => {
+                        // Turns already accounted per-response only carry a
+                        // cumulative snapshot; counting them again would double
+                        // bill the legacy fallback path.
+                        if data.get("usage_accounted").and_then(Value::as_bool) == Some(true) {
+                            continue;
+                        }
                         let total_tokens = parse_usage_total_tokens(data);
                         if total_tokens <= 0 {
                             continue;
@@ -955,20 +999,18 @@ pub async fn load_agent_runtime_records(
                         if consumed <= 0 {
                             continue;
                         }
-                        summary_quota_consumed = summary_quota_consumed.saturating_add(consumed);
+                        event_quota_consumed = event_quota_consumed.saturating_add(consumed);
                         if !in_range {
                             continue;
                         }
-                        if let Some(entry) = daily.get_mut(&day_key) {
-                            entry.quota_consumed = entry.quota_consumed.saturating_add(consumed);
-                        }
+                        let entry = quota_by_day.entry(day_key).or_default();
+                        *entry = entry.saturating_add(consumed);
                     }
                     "tool_call" => {
-                        summary_tool_calls = summary_tool_calls.saturating_add(1);
+                        event_tool_calls = event_tool_calls.saturating_add(1);
                         if in_range {
-                            if let Some(entry) = daily.get_mut(&day_key) {
-                                entry.tool_calls = entry.tool_calls.saturating_add(1);
-                            }
+                            let entry = tool_calls_by_day.entry(day_key).or_default();
+                            *entry = entry.saturating_add(1);
                         }
                         if event_ts < selected_start_ts || event_ts >= selected_end_ts {
                             continue;
@@ -1009,24 +1051,90 @@ pub async fn load_agent_runtime_records(
             }
         }
 
-        let usage_source = if has_round_usage {
-            &round_usage_by_day
-        } else {
-            &token_usage_by_day
-        };
-        let session_billed_tokens = if has_round_usage_total {
+        // Prefer per-event attribution when the payload still carries events;
+        // otherwise fall back to the persisted per-session counters.
+        let event_billed_tokens = if has_model_usage_total {
+            session_model_usage.saturating_add(session_round_usage)
+        } else if has_round_usage_total {
             session_round_usage
         } else {
             session_token_usage
         };
-        summary_billed_tokens = summary_billed_tokens.saturating_add(session_billed_tokens.max(0));
-        for (day_key, total_tokens) in usage_source {
-            if let Some(entry) = daily.get_mut(day_key) {
-                entry.billed_tokens = entry.billed_tokens.saturating_add((*total_tokens).max(0));
+        let session_billed_tokens = record_consumed_tokens
+            .max(event_billed_tokens)
+            .max(0);
+        let session_quota_consumed = record_quota.max(event_quota_consumed).max(0);
+        let session_tool_calls = record_tool_calls.max(event_tool_calls).max(0);
+        summary_billed_tokens = summary_billed_tokens.saturating_add(session_billed_tokens);
+        summary_quota_consumed =
+            summary_quota_consumed.saturating_add(session_quota_consumed);
+        summary_tool_calls = summary_tool_calls.saturating_add(session_tool_calls);
+
+        let mut has_token_source = false;
+        if has_model_usage || has_round_usage {
+            has_token_source = true;
+            for source in [&model_usage_by_day, &round_usage_by_day] {
+                for (day_key, total_tokens) in source {
+                    if let Some(entry) = daily.get_mut(day_key) {
+                        entry.billed_tokens =
+                            entry.billed_tokens.saturating_add((*total_tokens).max(0));
+                    }
+                }
+            }
+        } else if !token_usage_by_day.is_empty() {
+            has_token_source = true;
+            for (day_key, total_tokens) in &token_usage_by_day {
+                if let Some(entry) = daily.get_mut(day_key) {
+                    entry.billed_tokens =
+                        entry.billed_tokens.saturating_add((*total_tokens).max(0));
+                }
+            }
+        }
+        if !has_token_source {
+            if let Some(entry) = activity_day
+                .as_deref()
+                .and_then(|day_key| daily.get_mut(day_key))
+            {
+                entry.billed_tokens =
+                    entry.billed_tokens.saturating_add(session_billed_tokens);
+            }
+        }
+        if quota_by_day.is_empty() {
+            if let Some(entry) = activity_day
+                .as_deref()
+                .and_then(|day_key| daily.get_mut(day_key))
+            {
+                entry.quota_consumed =
+                    entry.quota_consumed.saturating_add(session_quota_consumed);
+            }
+        } else {
+            for (day_key, consumed) in &quota_by_day {
+                if let Some(entry) = daily.get_mut(day_key) {
+                    entry.quota_consumed = entry.quota_consumed.saturating_add((*consumed).max(0));
+                }
+            }
+        }
+        if tool_calls_by_day.is_empty() {
+            if let Some(entry) = activity_day
+                .as_deref()
+                .and_then(|day_key| daily.get_mut(day_key))
+            {
+                entry.tool_calls = entry.tool_calls.saturating_add(session_tool_calls);
+            }
+        } else {
+            for (day_key, calls) in &tool_calls_by_day {
+                if let Some(entry) = daily.get_mut(day_key) {
+                    entry.tool_calls = entry.tool_calls.saturating_add((*calls).max(0));
+                }
             }
         }
     }
 
+    // Summary mirrors the selected window so the cards and the chart agree.
+    let summary_runtime_seconds = daily
+        .values()
+        .map(|stats| stats.runtime_seconds.max(0.0))
+        .sum::<f64>();
     let daily_items = daily
         .iter()
         .map(|(date, stats)| {

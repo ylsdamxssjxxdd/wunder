@@ -71,7 +71,7 @@ const fontOf = (key, size) => { const f = FONTS[key] || FONTS.serif; return `${f
 
 /* ---------- 一帧 ---------- */
 class Frame {
-  constructor(film) { this.film = film; this.c = film.L; this.x = film.L.getContext('2d'); this.w = W; this.h = H; this.t = 0; this.rec = null; this.markName = ''; this.markAllow = null; }
+  constructor(film) { this.film = film; this.c = film.L; this.x = film.L.getContext('2d'); this.w = W; this.h = H; this.t = 0; this.rec = null; this.markName = ''; this.markAllow = null; this.solid = false; this.clips = []; }
 
   /* 包围盒记录：只在 render.py --check-safe / --overlap / --mark 时打开。
    * 画的时候顺手把可见图元折算回画布坐标，正常渲染没有额外开销。 */
@@ -83,6 +83,10 @@ class Frame {
       const qx = m.a * px + m.c * py + m.e, qy = m.b * px + m.d * py + m.f;
       ax = Math.min(ax, qx); ay = Math.min(ay, qy); bx = Math.max(bx, qx); by = Math.max(by, qy);
     }
+    for (const c of this.clips) {
+      ax = Math.max(ax, c[0]); ay = Math.max(ay, c[1]); bx = Math.min(bx, c[2]); by = Math.min(by, c[3]);
+    }
+    if (bx <= ax || by <= ay) return;
     this.rec.push({ name: this.markName || '', kind, box: [Math.round(ax), Math.round(ay), Math.round(bx), Math.round(by)], allow: this.markAllow });
   }
   /* 给一组图元起名字：fr.mark('船', () => { ... })；名字会出现在检查报告里。
@@ -103,12 +107,23 @@ class Frame {
     if (o.at) x.translate(o.at[0], o.at[1]);
     if (o.rot) x.rotate(o.rot);
     if (o.s != null) { const s = Array.isArray(o.s) ? o.s : [o.s, o.s]; x.scale(s[0], s[1]); }
-    if (o.blur) x.filter = `blur(${o.blur}px)`;
-    if (o.clip) { x.beginPath(); x.rect(...o.clip); x.clip(); }
+    if (o.blur && !this.solid) x.filter = `blur(${o.blur}px)`;
+    const prevClips = this.clips;
+    if (o.clip) {
+      const m = x.getTransform();
+      let cx0 = Infinity, cy0 = Infinity, cx1 = -Infinity, cy1 = -Infinity;
+      for (const [px, py] of [[o.clip[0], o.clip[1]], [o.clip[0] + o.clip[2], o.clip[1]],
+        [o.clip[0], o.clip[1] + o.clip[3]], [o.clip[0] + o.clip[2], o.clip[1] + o.clip[3]]]) {
+        const qx = m.a * px + m.c * py + m.e, qy = m.b * px + m.d * py + m.f;
+        cx0 = Math.min(cx0, qx); cy0 = Math.min(cy0, qy); cx1 = Math.max(cx1, qx); cy1 = Math.max(cy1, qy);
+      }
+      this.clips = prevClips.concat([[cx0, cy0, cx1, cy1]]);
+      x.beginPath(); x.rect(...o.clip); x.clip();
+    }
     const prevMark = this.markName, prevAllow = this.markAllow;
     if (o.mark) { this.markName = o.mark; this.markAllow = o.allow || null; }
     fn();
-    this.markName = prevMark; this.markAllow = prevAllow;
+    this.markName = prevMark; this.markAllow = prevAllow; this.clips = prevClips;
     x.restore();
   }
   /* 先画到一张临时画布，再整体合成：一组东西一起淡入、一起虚、一起缩放时用 */
@@ -119,7 +134,7 @@ class Frame {
     const x = this.x; x.save();
     x.globalAlpha *= clamp(o.a == null ? 1 : o.a);
     if (o.add) x.globalCompositeOperation = 'lighter';
-    if (o.blur) x.filter = `blur(${o.blur}px)`;
+    if (o.blur && !this.solid) x.filter = `blur(${o.blur}px)`;
     if (o.s != null || o.at || o.rot) {
       const cx = o.cx == null ? W / 2 : o.cx, cy = o.cy == null ? H / 2 : o.cy;
       x.translate(cx + (o.at ? o.at[0] : 0), cy + (o.at ? o.at[1] : 0));
@@ -132,25 +147,26 @@ class Frame {
 
   /* --- 光 --- */
   glow(px, py, r, color = '#fff', a = 1) {
-    if (a <= 0 || r <= 0) return; const x = this.x; x.save(); x.globalCompositeOperation = 'lighter';
+    if (this.solid || a <= 0 || r <= 0) return; const x = this.x; x.save(); x.globalCompositeOperation = 'lighter';
     const gr = x.createRadialGradient(px, py, 0, px, py, r);
     gr.addColorStop(0, rgba(color, a)); gr.addColorStop(.25, rgba(color, a * .55)); gr.addColorStop(.6, rgba(color, a * .12)); gr.addColorStop(1, rgba(color, 0));
     x.fillStyle = gr; x.fillRect(px - r, py - r, r * 2, r * 2); x.restore();
   }
   /* 光点 = 小白核 + 大色晕（两层叠加，参考片就是这么画的） */
-  spark(px, py, r, color = '#F8D893', a = 1) { this.glow(px, py, r * 4.2, color, a * .34); this.glow(px, py, r * 1.6, color, a * .8); this.glow(px, py, r * .8, '#ffffff', a); }
+  spark(px, py, r, color = '#F8D893', a = 1) { if (this.solid) return; this.glow(px, py, r * 4.2, color, a * .34); this.glow(px, py, r * 1.6, color, a * .8); this.glow(px, py, r * .8, '#ffffff', a); }
   /* 带彗尾的光点：沿 ang 方向运动，尾巴拖在身后 */
   comet(px, py, len, r, color = '#DCEBFF', a = 1, ang = 0) {
+    if (this.solid) return;
     const x = this.x; x.save(); x.globalCompositeOperation = 'lighter'; x.translate(px, py); x.rotate(ang);
     const gr = x.createLinearGradient(-len, 0, 0, 0); gr.addColorStop(0, rgba(color, 0)); gr.addColorStop(.7, rgba(color, a * .35)); gr.addColorStop(1, rgba('#ffffff', a));
     x.strokeStyle = gr; x.lineWidth = r * .62; x.lineCap = 'round'; x.beginPath(); x.moveTo(-len, 0); x.lineTo(0, 0); x.stroke(); x.restore();
     this.spark(px, py, r, color, a);
   }
-  flash(a, color = '#F2E2B8') { if (a <= 0) return; const x = this.x; x.save(); x.globalCompositeOperation = 'lighter'; x.fillStyle = rgba(color, a); x.fillRect(0, 0, W, H); x.restore(); }
+  flash(a, color = '#F2E2B8') { if (this.solid || a <= 0) return; const x = this.x; x.save(); x.globalCompositeOperation = 'lighter'; x.fillStyle = rgba(color, a); x.fillRect(0, 0, W, H); x.restore(); }
 
   /* --- 线与形 --- */
-  _stroke(o) { const x = this.x; x.lineWidth = o.w == null ? 2 : o.w; x.strokeStyle = rgba(o.color || '#fff', o.a == null ? 1 : o.a); x.lineCap = o.cap || 'round'; x.lineJoin = 'round'; x.setLineDash(o.dash || []); if (o.dashOff) x.lineDashOffset = o.dashOff; if (o.glow) { x.shadowColor = rgba(o.glowColor || o.color || '#fff', o.glowA == null ? .9 : o.glowA); x.shadowBlur = o.glow; } x.stroke(); }
-  _fill(o) { const x = this.x; x.fillStyle = typeof o.fill === 'string' ? rgba(o.fill, o.fa == null ? (o.a == null ? 1 : o.a) : o.fa) : o.fill; if (o.glow && !o.stroke) { x.shadowColor = rgba(o.glowColor || o.fill, .9); x.shadowBlur = o.glow; } x.fill(); }
+  _stroke(o) { const x = this.x; x.lineWidth = o.w == null ? 2 : o.w; x.strokeStyle = rgba(o.color || '#fff', o.a == null ? 1 : o.a); x.lineCap = o.cap || 'round'; x.lineJoin = 'round'; x.setLineDash(o.dash || []); if (o.dashOff) x.lineDashOffset = o.dashOff; if (o.glow && !this.solid) { x.shadowColor = rgba(o.glowColor || o.color || '#fff', o.glowA == null ? .9 : o.glowA); x.shadowBlur = o.glow; } x.stroke(); }
+  _fill(o) { const x = this.x; x.fillStyle = typeof o.fill === 'string' ? rgba(o.fill, o.fa == null ? (o.a == null ? 1 : o.a) : o.fa) : o.fill; if (o.glow && !o.stroke && !this.solid) { x.shadowColor = rgba(o.glowColor || o.fill, .9); x.shadowBlur = o.glow; } x.fill(); }
   _paint(o) { const x = this.x; if (o.fill) { x.save(); this._fill(o); x.restore(); } if (o.color || o.stroke) { x.save(); this._stroke(Object.assign({}, o, { color: o.color || o.stroke })); x.restore(); } }
   line(x1, y1, x2, y2, o = {}) { const x = this.x; x.save(); if (o.add) x.globalCompositeOperation = 'lighter'; x.beginPath(); x.moveTo(x1, y1); x.lineTo(x2, y2); this._stroke(o); x.restore(); if (o.a == null || o.a > .05) { const hw = (o.w == null ? 2 : o.w) / 2; this._rec(Math.min(x1, x2) - hw, Math.min(y1, y2) - hw, Math.max(x1, x2) + hw, Math.max(y1, y2) + hw, 'line'); } }
   /* pts: [[x,y],...]；o.k 只画前 k（0..1）这么长 —— 线条"长出来"就靠它 */
@@ -173,7 +189,7 @@ class Frame {
   /* 沿 poly 走到 k 处的坐标与切向 —— 给线头安一个光点用 */
   along(pts, k) { const f = clamp(k) * (pts.length - 1), i = Math.min(pts.length - 2, Math.floor(f)), r = f - i; return [lerp(pts[i][0], pts[i + 1][0], r), lerp(pts[i][1], pts[i + 1][1], r), Math.atan2(pts[i + 1][1] - pts[i][1], pts[i + 1][0] - pts[i][0])]; }
   /* SVG 路径字符串 */
-  path(d, o = {}) { const x = this.x; x.save(); if (o.add) x.globalCompositeOperation = 'lighter'; if (o.at) x.translate(o.at[0], o.at[1]); if (o.rot) x.rotate(o.rot); if (o.s != null) x.scale(o.s, o.s); const p = new Path2D(d); if (o.fill) { x.fillStyle = typeof o.fill === 'string' ? rgba(o.fill, o.a == null ? 1 : o.a) : o.fill; x.fill(p); } if (o.color) { x.lineWidth = o.w == null ? 2 : o.w; x.strokeStyle = rgba(o.color, o.a == null ? 1 : o.a); x.lineJoin = 'round'; x.lineCap = 'round'; if (o.glow) { x.shadowColor = rgba(o.color, .9); x.shadowBlur = o.glow; } x.stroke(p); } x.restore(); }
+  path(d, o = {}) { const x = this.x; x.save(); if (o.add) x.globalCompositeOperation = 'lighter'; if (o.at) x.translate(o.at[0], o.at[1]); if (o.rot) x.rotate(o.rot); if (o.s != null) x.scale(o.s, o.s); const p = new Path2D(d); if (o.fill) { x.fillStyle = typeof o.fill === 'string' ? rgba(o.fill, o.a == null ? 1 : o.a) : o.fill; x.fill(p); } if (o.color) { x.lineWidth = o.w == null ? 2 : o.w; x.strokeStyle = rgba(o.color, o.a == null ? 1 : o.a); x.lineJoin = 'round'; x.lineCap = 'round'; if (o.glow && !this.solid) { x.shadowColor = rgba(o.color, .9); x.shadowBlur = o.glow; } x.stroke(p); } x.restore(); }
   circle(cx, cy, r, o = {}) { this.ellipse(cx, cy, r, r, o); }
   ellipse(cx, cy, rx, ry, o = {}) { if (rx <= 0 || ry <= 0) return; const x = this.x; x.save(); if (o.add) x.globalCompositeOperation = 'lighter'; x.beginPath(); x.ellipse(cx, cy, rx, ry, o.rot || 0, o.a0 == null ? 0 : o.a0, o.a1 == null ? Math.PI * 2 : o.a1); this._paint(o); x.restore(); if (o.a == null || o.a > .05) { const r = Math.max(rx, ry) * (o.rot ? 1.42 : 1); this._rec(cx - r, cy - r, cx + r, cy + r, 'ellipse'); } }
   arc(cx, cy, r, a0, a1, o = {}) { this.ellipse(cx, cy, r, r, Object.assign({}, o, { a0, a1 })); }
@@ -190,9 +206,9 @@ class Frame {
     const w = x.measureText(str).width - (o.track || 0), al = o.align || 'c';
     const lx = al === 'c' ? px - w / 2 : al === 'r' ? px - w : px;
     x.textAlign = 'left'; x.globalAlpha *= clamp(a); if (o.add) x.globalCompositeOperation = 'lighter';
-    if (o.blur) x.filter = `blur(${o.blur}px)`;
-    if (o.glow) { x.shadowColor = rgba(o.glowColor || o.color || '#fff', o.glowA == null ? .85 : o.glowA); x.shadowBlur = o.glow; }
-    if (o.shadow) { x.shadowColor = rgba('#000', o.shadow); x.shadowBlur = o.shadowBlur || 14; x.shadowOffsetY = o.shadowY || 2; }
+    if (o.blur && !this.solid) x.filter = `blur(${o.blur}px)`;
+    if (o.glow && !this.solid) { x.shadowColor = rgba(o.glowColor || o.color || '#fff', o.glowA == null ? .85 : o.glowA); x.shadowBlur = o.glow; }
+    if (o.shadow && !this.solid) { x.shadowColor = rgba('#000', o.shadow); x.shadowBlur = o.shadowBlur || 14; x.shadowOffsetY = o.shadowY || 2; }
     const s = o.size || 48;
     x.fillStyle = o.grad ? this.grad(0, py - s * .52, 0, py + s * .52, o.grad) : rgba(o.color || '#fff', 1);
     x.fillText(str, lx, py);
@@ -218,10 +234,10 @@ class Frame {
       const p = (per && per(c.i, c)) || {}; const a = (p.a == null ? 1 : p.a) * (o.a == null ? 1 : o.a); if (a <= 0.003) return;
       visible = true;
       x.save(); this._font(Object.assign({}, o, { track: 0 })); x.textAlign = 'left'; x.globalAlpha *= clamp(a);
-      if (p.blur) x.filter = `blur(${p.blur}px)`;
-      const col = p.color || o.color || '#fff'; const gl = p.glow == null ? o.glow : p.glow;
+      if (p.blur && !this.solid) x.filter = `blur(${p.blur}px)`;
+      const col = p.color || o.color || '#fff'; const gl = this.solid ? 0 : (p.glow == null ? o.glow : p.glow);
       if (gl) { x.shadowColor = rgba(p.glowColor || col, o.glowA == null ? .85 : o.glowA); x.shadowBlur = gl; }
-      else if (o.shadow) { x.shadowColor = rgba('#000', o.shadow); x.shadowBlur = o.shadowBlur || 14; x.shadowOffsetY = o.shadowY || 2; }
+      else if (o.shadow && !this.solid) { x.shadowColor = rgba('#000', o.shadow); x.shadowBlur = o.shadowBlur || 14; x.shadowOffsetY = o.shadowY || 2; }
       const s = o.size || 48; x.fillStyle = (o.grad && !p.color) ? this.grad(0, py - s * .52, 0, py + s * .52, o.grad) : rgba(col, 1);
       if (p.s != null && p.s !== 1) { x.translate(c.cx, py); x.scale(p.s, p.s); x.translate(-c.cx, -py); }
       x.fillText(c.ch, c.x, py + (p.dy || 0)); x.restore();
@@ -301,25 +317,49 @@ function film(spec) {
   fr.sfx = (t, name, p) => { if (collecting) SFX.push([+t.toFixed(3), name, p || {}]); };
   fr.theme = spec.theme || 'night';
 
-  function seek(t) {
+  function seekInner(t, opts) {
     t = Math.max(0, Math.min(spec.dur, t)); fr.t = t; fr.frame = Math.round(t * fps);
+    fr.solid = !!(opts && opts.solid);                   // 实心内容帧：跳过辉光/柔边，只留几何主体（像素检查用）
+    fr.clips = [];
     const L = F.L, lx = L.getContext('2d'); lx.setTransform(1, 0, 0, 1, 0, 0); lx.clearRect(0, 0, W, H); fr.x = lx;
     const look = { bg: fr.theme, bgo: {}, bloom: spec.bloom == null ? ({ gilt: .34, flat: .12 }[fr.theme] || 1) : spec.bloom, grain: spec.grain == null ? .05 : spec.grain, post: null };   // 辉光：夜空全开，鎏金三成（实物不能发白），插画基本不要
     fr.look = look;
     spec.draw(fr, t);                                   // 场景可以改 fr.look（换底、调辉光）
+    const bloom = (opts && opts.bloom === false) ? 0 : look.bloom;
     out.setTransform(1, 0, 0, 1, 0, 0); out.globalCompositeOperation = 'source-over'; out.globalAlpha = 1; out.filter = 'none';
     (BG[look.bg] || BG.night)(out, t, look.bgo);
     if (look.under) look.under(out, t);                 // 需要画在内容之下、底之上的东西（整幅插画背景）
     out.drawImage(L, 0, 0);
-    if (look.bloom > 0) {                               // 辉光：缩小→模糊→加法叠回，两档半径
+    if (bloom > 0) {                                    // 辉光：缩小→模糊→加法叠回，两档半径
       sx.setTransform(1, 0, 0, 1, 0, 0); sx.clearRect(0, 0, W / 4, H / 4); sx.filter = 'blur(3px)'; sx.drawImage(L, 0, 0, W / 4, H / 4); sx.filter = 'none';
-      out.globalCompositeOperation = 'lighter'; out.globalAlpha = .42 * look.bloom; out.drawImage(small, 0, 0, W, H);
+      out.globalCompositeOperation = 'lighter'; out.globalAlpha = .42 * bloom; out.drawImage(small, 0, 0, W, H);
       sx.clearRect(0, 0, W / 4, H / 4); sx.filter = 'blur(11px)'; sx.drawImage(L, 0, 0, W / 4, H / 4); sx.filter = 'none';
-      out.globalAlpha = .34 * look.bloom; out.drawImage(small, 0, 0, W, H);
+      out.globalAlpha = .34 * bloom; out.drawImage(small, 0, 0, W, H);
       out.globalCompositeOperation = 'source-over'; out.globalAlpha = 1;
     }
     if (look.post) look.post(out, t);                   // 全幅后期：闪白、染色、色差
     if (look.grain > 0) { out.globalCompositeOperation = 'overlay'; out.globalAlpha = look.grain; out.imageSmoothingEnabled = true; out.drawImage(grains[fr.frame % grains.length], 0, 0, W, H); out.globalCompositeOperation = 'source-over'; out.globalAlpha = 1; }
+    fr.solid = false;
+    G.__vkLastT = t; G.__vkFrameNo = (G.__vkFrameNo || 0) + 1;
+    if (G.__vkState) { G.__vkState.t = t; G.__vkState.frame = G.__vkFrameNo; G.__vkState.error = null; }
+  }
+  function showError(error) {
+    const stack = String((error && error.stack) || error || '未知错误');
+    G.__vkError = stack;
+    if (G.__vkState) G.__vkState.error = stack;
+    document.title = 'vk ERROR';
+    if (typeof G.__vkShowError === 'function') { G.__vkShowError('画面代码出错', stack); return; }
+    try {
+      out.setTransform(1, 0, 0, 1, 0, 0); out.globalCompositeOperation = 'source-over'; out.globalAlpha = 1;
+      out.fillStyle = '#240B0B'; out.fillRect(0, 0, W, H);
+      out.fillStyle = '#FFD9D9'; out.font = '24px monospace'; out.textBaseline = 'top';
+      out.fillText('画面代码出错', 60, 60);
+      stack.split('\n').slice(0, 12).forEach((line, i) => out.fillText(line.slice(0, 150), 60, 110 + i * 34));
+    } catch (_) { /* 出帧上下文也坏了时只能靠页面错误层 */ }
+  }
+  function seek(t, opts) {
+    try { seekInner(t, opts); }
+    catch (error) { showError(error); }
   }
   /* 音效事件表：把全片每帧过一遍，只收集、不出图 */
   function events() {
@@ -328,8 +368,13 @@ function film(spec) {
       if (Array.isArray(e) && e.length >= 2 && isFinite(+e[0])) SFX.push([+e[0], e[1], e[2] || {}]);
     }
     collecting = true; const keep = F.L;
-    for (let i = 0; i <= spec.dur * fps; i++) { fr.t = i / fps; fr.frame = i; fr.x = keep.getContext('2d'); fr.look = { bgo: {} }; try { spec.draw(fr, i / fps); } catch (e) { } }
-    collecting = false; const seen = new Set(), uniq = []; SFX.forEach(e => { const k = e[0] + e[1]; if (!seen.has(k)) { seen.add(k); uniq.push(e); } }); uniq.sort((a, b) => a[0] - b[0]); return uniq;
+    try {
+      for (let i = 0; i <= spec.dur * fps; i++) {
+        fr.t = i / fps; fr.frame = i; fr.x = keep.getContext('2d'); fr.look = { bgo: {} };
+        spec.draw(fr, i / fps);
+      }
+    } finally { collecting = false; }
+    const seen = new Set(), uniq = []; SFX.forEach(e => { const k = e[0] + e[1]; if (!seen.has(k)) { seen.add(k); uniq.push(e); } }); uniq.sort((a, b) => a[0] - b[0]); return uniq;
   }
   /* 某一帧的元素包围盒（给 --check-safe / --overlap / --mark 用）：
    * 同名 mark 合并成一个框（parts 保留逐图元的框），未命名的图元各自成条。 */
@@ -365,19 +410,44 @@ function film(spec) {
 
   G.seek = seek; G.END = spec.dur; G.FPS = fps; G.events = events; G.recordFrame = recordFrame;
   G.META = spec.meta || {}; G.SHOTS = spec.shots || null; G.SUBS = spec.subs || null;
+  G.__vkState = { ready: false, t: 0, frame: 0, error: null, mode: 'still' };
   G.__vkBackground = background; G.__vkTheme = spec.theme || 'night';
+  /* 像素检查用：出帧时跳过 bloom、fr.glow/spark/comet/flash 和柔边，只留实心几何与文字。
+   * 这样辉光漫进字幕带不会被当成装置越界；手写 ctx 没有这个开关，仍然会被差分查到。 */
+  G.__vkSolid = t => seek(t, { solid: true, bloom: false });
+  /* 预览/自动化用：seek 后等两帧合成完成再返回，避免截图拿到上一帧。 */
+  G.__vkSeek = t => {
+    seek(t);
+    return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(
+      () => resolve({ t: G.__vkLastT, frame: G.__vkFrameNo, error: G.__vkError || null }))));
+  };
   /* 字体逐个加载、逐个容错：缺一个字体只警告，不阻塞 READY。 */
   const fontLoads = Object.entries(FONTS).map(([key, f]) =>
     document.fonts.load(`${f[0]} 40px ${f[1].split(',')[0]}`, '运A1').then(() => null, () => key));
+  const params = new URLSearchParams(location.search);
+  const tParam = params.get('t');
+  const play = params.has('play') && (tParam == null || tParam === '');
+  G.__vkState.mode = play ? 'play' : (tParam == null ? 'still' : 't');
   document.fonts.ready.then(() => Promise.all(fontLoads)).then(failed => {
     const bad = [...new Set(failed.filter(Boolean))];
     if (bad.length) console.warn('[vk] fonts not loaded:', bad.join(', '));
     G.VK_MISSING_FONTS = bad;
-    G.READY = true;
-    seek(+(new URLSearchParams(location.search).get('t') || 0));
+    G.READY = true; G.__vkState.ready = true;
+    const start = tParam == null || tParam === '' ? 0 : Number(tParam);
+    seek(Number.isFinite(start) ? start : 0);
   });
-  /* 预览：?play 实时播，←/→ 步进 */
-  if (new URLSearchParams(location.search).has('play')) { let t0 = performance.now(); const loop = () => { seek(((performance.now() - t0) / 1000) % spec.dur); requestAnimationFrame(loop); }; document.fonts.ready.then(() => requestAnimationFrame(loop)); }
+  /* 预览：?play 实时播；?t=41 冻结在 41 秒；←/→ 步进一帧。 */
+  if (play) {
+    let t0 = performance.now();
+    const loop = () => { seek(((performance.now() - t0) / 1000) % spec.dur); requestAnimationFrame(loop); };
+    document.fonts.ready.then(() => requestAnimationFrame(loop));
+  } else {
+    addEventListener('keydown', event => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      seek((G.__vkLastT || 0) + (event.key === 'ArrowRight' ? 1 : -1) / fps);
+      event.preventDefault();
+    });
+  }
   return F;
 }
 

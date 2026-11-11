@@ -44,8 +44,10 @@
   --mz-timeline-entry-soft: #9ba0a8;
 
   /* 阅读列宽度：正文列与输入区共用，窄视口自动退化为一屏宽；
-     宽屏封顶 1440px，宽屏下尽量撑满聊天区，仍给两侧留一点呼吸。 */
-  --mz-chat-column-width: 1440px;
+     宽屏封顶 1280px，列外再留随视口增长的呼吸边距。 */
+  --mz-chat-column-width: 1280px;
+  /* 聊天区左右呼吸边距：随视口增长，正文与输入区共用同一条列边界。 */
+  --mz-chat-gutter: clamp(16px, 3vw, 56px);
   /* 刻度条独占通道宽度：输入区按它右移，两列才能对齐到同一中线。 */
   --mz-turn-ruler-width: 18px;
 
@@ -1619,7 +1621,7 @@ button.messenger-sidebar-workspace-row {
 .messenger-chat-footer {
   position: relative;
   flex-shrink: 0;
-  padding: 8px 16px 12px;
+  padding: 8px var(--mz-chat-gutter) 12px;
   border-top: 0;
   background: transparent;
 }
@@ -1881,8 +1883,8 @@ button.messenger-sidebar-workspace-row {
 /* §7 时间线让出一个干净视口：左右 24px 的缩进由每一行自己承担
    （桌面端 `timeline-padding` 同款），外层不再叠加 16px 内边距。 */
 .messenger-view .messenger-chat-body.is-messages {
-  padding-left: 0;
-  padding-right: 0;
+  padding-left: var(--mz-chat-gutter);
+  padding-right: var(--mz-chat-gutter);
 }
 
 /* §7.2 用户气泡：最宽 min(70%, 内容 + 24px)、圆角 12px、底 `timeline-bubble`、
@@ -1917,7 +1919,7 @@ button.messenger-sidebar-workspace-row {
 /* `.is-threaded` 与 `.messenger-chat-body.is-messages` 同源（有活动线程时
    刻度条通道才存在），无线程时输入区回到整幅居中。 */
 .messenger-view .messenger-chat-footer.is-threaded {
-  padding-right: calc(16px + var(--mz-turn-ruler-width));
+  padding-right: calc(var(--mz-chat-gutter) + var(--mz-turn-ruler-width));
 }
 
 
@@ -2017,10 +2019,6 @@ button.messenger-sidebar-workspace-row {
   background: var(--mz-bg);
 }
 
-.messenger-split-pane.is-active .messenger-split-pane-head {
-  box-shadow: inset 0 2px 0 var(--mz-primary);
-}
-
 .messenger-split-pane-head {
   display: flex;
   flex-shrink: 0;
@@ -2029,7 +2027,20 @@ button.messenger-sidebar-workspace-row {
   height: 32px;
   padding: 0 5px 0 12px;
   border-bottom: 1px solid var(--mz-border);
-  background: var(--mz-sidebar);
+  background: var(--mz-surface);
+  transition: background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+/* 活动窗格：白底上叠一层极浅的强调色渐变 + 顶部 2px 强调线；标题回到正文色，
+   未激活标题降为静音色，靠色阶差而不是灰底表达焦点。 */
+.messenger-split-pane.is-active .messenger-split-pane-head {
+  background: linear-gradient(
+    180deg,
+    rgba(var(--ui-accent-rgb), 0.09),
+    rgba(var(--ui-accent-rgb), 0.02)
+  );
+  border-bottom-color: rgba(var(--ui-accent-rgb), 0.28);
+  box-shadow: inset 0 2px 0 var(--ui-accent);
 }
 
 .messenger-split-pane-state {
@@ -2045,6 +2056,11 @@ button.messenger-sidebar-workspace-row {
   animation: messenger-split-pulse 1.2s ease-in-out infinite alternate;
 }
 
+.messenger-split-pane.is-active .messenger-split-pane-state:not(.is-running) {
+  background: var(--ui-accent);
+  opacity: 0.6;
+}
+
 @keyframes messenger-split-pulse {
   to { opacity: 0.35; }
 }
@@ -2053,11 +2069,17 @@ button.messenger-sidebar-workspace-row {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  color: var(--mz-text-secondary);
+  color: var(--mz-text-muted);
   font-size: var(--mz-font-sm);
-  font-weight: 600;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color 0.18s ease;
+}
+
+.messenger-split-pane.is-active .messenger-split-pane-title {
+  color: var(--mz-text);
+  font-weight: 600;
 }
 
 .messenger-split-pane-messages {
@@ -2102,6 +2124,15 @@ button.messenger-sidebar-workspace-row {
 
 .messenger-split-pane-composer .composer-model-name {
   max-width: 100px;
+}
+
+/* 分屏窗格比整页窄：级联子菜单改从所属行向上展开并左对齐，
+   避免右侧窗格把 268px 的子菜单顶出视口。 */
+.messenger-split-pane .composer-panel--plus .composer-plus-flyout {
+  right: auto;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: min(268px, calc(100vw - 48px));
 }
 
 .messenger-split-resizer {

@@ -4891,8 +4891,13 @@
  },
  {
   "key": "stc_runs_note",
-  "zh": "累计运行、令牌与工具调用",
-  "en": "Total runtime, tokens and tool calls"
+  "zh": "近 14 天运行、令牌与额度",
+  "en": "Runtime, tokens and quota (14d)"
+ },
+ {
+  "key": "stc_runs_empty",
+  "zh": "暂无运行记录",
+  "en": "No runtime records"
  },
  {
   "key": "stc_archives",
@@ -5141,18 +5146,18 @@
  },
  {
   "key": "stc_runs_duration",
-  "zh": "累计运行",
-  "en": "Total runtime"
+  "zh": "近 14 天运行",
+  "en": "Runtime (14d)"
  },
  {
   "key": "stc_runs_tokens",
-  "zh": "累计令牌",
-  "en": "Total tokens"
+  "zh": "近 14 天令牌",
+  "en": "Tokens (14d)"
  },
  {
   "key": "stc_runs_calls",
-  "zh": "工具调用",
-  "en": "Tool calls"
+  "zh": "近 14 天额度",
+  "en": "Quota (14d)"
  },
  {
   "key": "pet_behavior",

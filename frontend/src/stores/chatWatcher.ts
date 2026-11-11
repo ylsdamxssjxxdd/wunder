@@ -1,4 +1,4 @@
-import { threadViewCursor, commitThreadView, threadViewGeneration, threadViewStatus, threadViewSlots, resetThreadViews, failThreadView } from '@/realtime/chat/threadViewStore';
+import { threadViewCursor, commitThreadView, threadViewGeneration, threadViewStatus, threadViewSlots, resetThreadViews, failThreadView, isThreadViewVisible } from '@/realtime/chat/threadViewStore';
 import { resetThreadViewLoads } from './threadViewLoader';
 import { getThreadViewBootstrap } from '@/api/chat';
 // AI生成
@@ -34,16 +34,60 @@ import { buildDetail, handleApprovalEvent, resolveNormalizedStreamEventType, ses
 import { noteChatQueueRuntimeEvent } from './chatQueueState';
 const connectionFailures=new Map<string,number>();
 
-export const startSessionWatcher = (store, sessionId) => {
-  clearSessionWatcher();
+export interface SessionWatchOptions {
+  /** Split-pane follow stream: never replaces the foreground watcher and only
+   *  lives while its thread view is visible. */
+  follow?: boolean;
+}
+
+// Follow streams are keyed by session so a pane remount can never leave a
+// duplicate feeder attached to the same thread.
+const followWatchers = new Map<string, AbortController>();
+
+export const stopFollowSessionWatcher = (sessionId: string): void => {
+  const key = resolveSessionKey(sessionId);
+  const controller = key ? followWatchers.get(key) : undefined;
+  if (!key || !controller) return;
+  followWatchers.delete(key);
+  controller.abort();
+};
+
+export const stopAllFollowSessionWatchers = (): void => {
+  const controllers = [...followWatchers.values()];
+  followWatchers.clear();
+  controllers.forEach((controller) => controller.abort());
+};
+
+const followWatchAllowed = (key: string): boolean =>
+  isThreadViewVisible(key) && chatWatcherSharedState.sessionWatchSessionId !== key;
+
+export const startSessionWatcher = (store, sessionId, options: SessionWatchOptions = {}) => {
+  const follow = options.follow === true;
   const key = resolveSessionKey(sessionId);
   if (!key) return;
+  if (follow) {
+    if (chatWatcherSharedState.sessionWatchSessionId === key) {
+      // Still the true foreground: its watcher already owns this session.
+      if (String(store.activeSessionId || '') === key) return;
+      // Stale foreground registration from a session switch in flight. Retire
+      // it now so the incoming foreground watcher cannot abort the follow
+      // stream we are about to install.
+      chatWatcherSharedState.sessionWatchSessionId = '';
+      abortWatchStream(key);
+    }
+    stopFollowSessionWatcher(key);
+  } else {
+    // A pane that just became foreground hands its follow stream over to the
+    // full watcher; cancel it locally instead of waiting for the server swap.
+    stopFollowSessionWatcher(key);
+    clearSessionWatcher();
+  }
   const desktopMode = false;
   if (!hasKnownSessionInStore(store, key)) {
     failThreadView(key,threadViewGeneration(key),'线程元信息尚未加载，请重试');
     return;
   }
-  chatWatcherSharedState.sessionWatchSessionId = key;
+  if (!follow) chatWatcherSharedState.sessionWatchSessionId = key;
   const runtime = ensureRuntime(key);
   if (!runtime) return;
   // Change-stream v2 state lives per session; the watch cursor resumes from
@@ -55,6 +99,7 @@ export const startSessionWatcher = (store, sessionId) => {
   runtime.watchActiveRoundCount = 0;
   refreshRuntimeStreamLifecycle(runtime);
   const controller = runtime.watchController;
+  if (follow) followWatchers.set(key, controller);
   runtime.watchLastEventAt = Date.now();
   runtime.watchReconcileAt = 0;
   const requestId = buildWsRequestId();
@@ -71,7 +116,8 @@ export const startSessionWatcher = (store, sessionId) => {
     threadResumeTimer = setTimeout(() => {
       threadResumeTimer = null;
       if (controller.signal.aborted || runtime.watchController !== controller) return;
-      startSessionWatcher(store, key);
+      if (follow && !followWatchAllowed(key)) return;
+      startSessionWatcher(store, key, options);
     }, 0);
   };
 
@@ -105,7 +151,7 @@ export const startSessionWatcher = (store, sessionId) => {
             !runtime.sendController && !runtime.resumeController) {
           if (chatPerf.enabled()) chatPerf.count('chat_watch_liveness_reconnect', 1, { sessionId: key });
           controller.abort();
-          startSessionWatcher(store, key);
+          startSessionWatcher(store, key, options);
           return;
         }
         tick();
@@ -220,7 +266,10 @@ export const startSessionWatcher = (store, sessionId) => {
         refreshRuntimeStreamLifecycle(current);
         if (chatWatcherSharedState.sessionWatchSessionId === key) chatWatcherSharedState.sessionWatchSessionId = '';
       }
-      if (isCurrentWatcher && !controller.signal.aborted && store.activeSessionId === key && !desktopMode) {
+      if (isCurrentWatcher && follow && followWatchers.get(key) === controller) followWatchers.delete(key);
+      const shouldReconnect = isCurrentWatcher && !controller.signal.aborted && !desktopMode &&
+        (follow ? followWatchAllowed(key) : store.activeSessionId === key);
+      if (shouldReconnect) {
         const attempts=connectionFailures.get(key)??0;
         connectionFailures.set(key,Math.min(attempts+1,5));
         while(connectionFailures.size>32)connectionFailures.delete(connectionFailures.keys().next().value!);
@@ -228,8 +277,9 @@ export const startSessionWatcher = (store, sessionId) => {
           const latest = getRuntime(key);
           // Another path may have installed a watcher during the debounce
           // window.  Never replace that live instance with this stale retry.
-          if (latest?.watchController || store.activeSessionId !== key) return;
-          startSessionWatcher(store, key);
+          if (latest?.watchController) return;
+          if (follow ? (!followWatchAllowed(key) || followWatchers.has(key)) : store.activeSessionId !== key) return;
+          startSessionWatcher(store, key, options);
         }, Math.min(30000,1000*2**attempts)+Math.random()*500);
       }
     });
@@ -449,6 +499,7 @@ export const resetChatRuntimeState = () => {
   });
   useCommandSessionStore().reset();
   clearSessionWatcher();
+  stopAllFollowSessionWatchers();
   sessionRuntime.clear();
   sessionMessages.clear();
   sessionProtectedRealtimeMessages.clear();

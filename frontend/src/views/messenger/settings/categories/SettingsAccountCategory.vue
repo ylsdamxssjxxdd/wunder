@@ -28,8 +28,8 @@
 
     <section class="messenger-settings-card">
       <div class="messenger-settings-group-head">
-        <div class="messenger-settings-title">{{ t('messenger.agent.runtime.trendTitle') }}</div>
-        <div class="messenger-settings-subtitle">{{ t('messenger.agent.runtime.trendMeta') }}</div>
+        <div class="messenger-settings-title">{{ t('messenger.agent.runtime.usageTitle') }}</div>
+        <div class="messenger-settings-subtitle">{{ t('messenger.agent.runtime.usageMeta') }}</div>
       </div>
       <AgentDailyTrendChart :agent-id="settingsRuntimeAgentIdForApi" :active="isActive" />
     </section>
@@ -88,16 +88,20 @@
 <script setup lang="ts">
 import { onActivated, onDeactivated, ref } from 'vue';
 
-import AgentDailyTrendChart from '@/components/messenger/AgentDailyTrendChart.vue';
 import { ElMessage } from 'element-plus';
 import { resolveApiBase } from '@/config/runtime';
 import { useI18n } from '@/i18n';
+import { defineRecoverableAsyncComponent } from '@/utils/asyncComponentRecovery';
 import { confirmWithFallback } from '@/utils/confirm';
 import type { MessengerControllerContext } from '@/views/messenger/controller/messengerControllerContext';
 
+// 图表依赖 echarts，异步加载让账号页先完成首屏渲染，避免首次打开被图表 chunk 阻塞。
+const AgentDailyTrendChart = defineRecoverableAsyncComponent(
+  () => import('@/components/messenger/AgentDailyTrendChart.vue')
+);
+
 const props = defineProps<{ controller: MessengerControllerContext }>();
 const { t } = useI18n();
-
 const isActive = ref(true);
 onActivated(() => {
   isActive.value = true;

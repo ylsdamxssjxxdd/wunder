@@ -480,41 +480,68 @@ fn compact(value: f64) -> String {
         format!("{value:.0}")
     }
 }
+fn duration_label(seconds: f64) -> String {
+    let minutes = (seconds.max(0.0) / 60.0).round() as u64;
+    format!("{}h {}m", minutes / 60, minutes % 60)
+}
+/// Projects one daily series into a 1000x200 command path (y flipped, 20%
+/// headroom) and returns the unscaled peak so the axis label stays truthful.
+fn trend_path(
+    days: &[serde_json::Value],
+    value_of: impl Fn(&serde_json::Value) -> f64,
+) -> (String, f64) {
+    let peak = days.iter().map(&value_of).fold(0.0_f64, f64::max);
+    let scale = (peak * 1.2).max(1.0);
+    let denominator = days.len().saturating_sub(1).max(1) as f64;
+    let path = days
+        .iter()
+        .enumerate()
+        .fold(String::new(), |mut path, (index, day)| {
+            let value = (value_of(day) / scale).clamp(0.0, 1.0);
+            path.push_str(&format!(
+                "{} {:.2} {:.2} ",
+                if index == 0 { "M" } else { "L" },
+                index as f64 * 1000.0 / denominator,
+                (1.0 - value) * 200.0
+            ));
+            path
+        });
+    (path, peak)
+}
 fn apply_runtime(app: &MainWindow, value: serde_json::Value) {
     let data = &value["data"];
     let summary = &data["summary"];
     let seconds = summary["runtime_seconds"].as_f64().unwrap_or(0.0) as u64;
     app.set_expert_duration(format!("{}h {}m", seconds / 3600, seconds % 3600 / 60).into());
     app.set_expert_tokens(compact(summary["consumed_tokens"].as_f64().unwrap_or(0.0)).into());
-    app.set_expert_calls(compact(summary["tool_calls"].as_f64().unwrap_or(0.0)).into());
+    app.set_expert_quota(compact(summary["quota_consumed"].as_f64().unwrap_or(0.0)).into());
     let days = data["daily"].as_array().cloned().unwrap_or_default();
-    let max = days
-        .iter()
-        .filter_map(|d| d["consumed_tokens"].as_f64())
-        .fold(1.0_f64, f64::max)
-        * 1.2;
-    app.set_expert_chart_max(compact(max).into());
-    let mut path = String::new();
+    let (runtime_path, runtime_peak) = trend_path(&days, |day| {
+        day["runtime_seconds"].as_f64().unwrap_or(0.0).max(0.0) / 60.0
+    });
+    let (tokens_path, tokens_peak) = trend_path(&days, |day| {
+        day["consumed_tokens"].as_f64().unwrap_or(0.0).max(0.0)
+    });
+    let (quota_path, quota_peak) = trend_path(&days, |day| {
+        day["quota_consumed"].as_f64().unwrap_or(0.0).max(0.0)
+    });
+    app.set_expert_runtime_path(runtime_path.into());
+    app.set_expert_runtime_max(duration_label(runtime_peak * 60.0).into());
+    app.set_expert_tokens_path(tokens_path.into());
+    app.set_expert_tokens_max(compact(tokens_peak).into());
+    app.set_expert_quota_path(quota_path.into());
+    app.set_expert_quota_max(compact(quota_peak).into());
     let points = days
         .iter()
-        .enumerate()
-        .map(|(i, d)| {
-            let date = d["date"].as_str().unwrap_or_default();
-            let value = d["consumed_tokens"].as_f64().unwrap_or(0.0) / max;
-            path.push_str(&format!(
-                "{} {:.2} {:.2} ",
-                if i == 0 { "M" } else { "L" },
-                i as f64 * 1000.0 / (days.len().saturating_sub(1).max(1)) as f64,
-                (1.0 - value) * 200.0
-            ));
+        .map(|day| {
+            let date = day["date"].as_str().unwrap_or_default();
             RuntimePoint {
                 date: date.into(),
                 label: date.get(5..).unwrap_or(date).into(),
-                value: value as f32,
+                value: day["consumed_tokens"].as_f64().unwrap_or(0.0) as f32,
             }
         })
         .collect();
-    app.set_expert_chart_path(path.into());
     app.set_expert_points(model(points));
     let heat = &data["heatmap"];
     app.set_expert_date(heat["date"].as_str().unwrap_or_default().into());

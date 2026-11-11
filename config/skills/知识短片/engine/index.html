@@ -13,8 +13,49 @@
 @font-face{font-family:"VK Type"; src:url("engine/fonts/CourierPrime-Regular.ttf")}
 html,body{margin:0;background:#000;overflow:hidden}
 canvas{display:block;width:100vw;height:56.25vw;max-height:100vh;max-width:177.78vh}
+#boot,#err{position:fixed;inset:0;z-index:9;display:flex;align-items:center;justify-content:center;font:16px/1.7 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;overflow:auto;padding:6vw;box-sizing:border-box}
+#boot{background:#05060a;color:#8b98a8}
+#err{display:none;background:#240b0b;color:#ffd9d9;align-items:flex-start;justify-content:flex-start}
+#err b{color:#ff8a8a}
 </style></head>
 <body><canvas id="stage"></canvas>
+<div id="boot">正在加载字体与首帧…</div>
+<div id="err"></div>
+<script>
+/* 页面级错误必须看得见：语法错误、资源 404、运行时异常都显示在画面上，而不是只剩黑屏。 */
+(function () {
+  const boot = document.getElementById('boot'), box = document.getElementById('err');
+  window.__vkShowError = function (title, detail) {
+    if (boot) boot.style.display = 'none';
+    if (box) {
+      box.style.display = 'flex';
+      box.textContent = String(title || '页面出错') + '\n\n' + String(detail || '') +
+        '\n\n修好 film.js 后刷新；命令行 --stills / --sheet 会报同一处错误。';
+    }
+    document.title = 'vk ERROR';
+    window.__vkError = String(detail || title || '页面出错');
+  };
+  window.addEventListener('error', function (event) {
+    if (event.target && event.target.tagName === 'SCRIPT') {
+      window.__vkShowError('脚本加载失败', event.target.src);
+    } else {
+      window.__vkShowError('JS 运行时错误', (event.error && event.error.stack) ||
+        ((event.filename || '') + ':' + (event.lineno || '') + '  ' + (event.message || '')));
+    }
+  }, true);
+  window.addEventListener('unhandledrejection', function (event) {
+    window.__vkShowError('未处理的 Promise 错误', String((event.reason && event.reason.stack) || event.reason));
+  });
+  const wait = setInterval(function () {
+    if (window.READY) {
+      clearInterval(wait);
+      if (boot) boot.style.display = 'none';
+      document.title = 'vk ' + (window.__vkLastT || 0).toFixed(2) + 's';
+    }
+  }, 50);
+  setTimeout(function () { if (!window.READY && !window.__vkError && boot) boot.textContent = '字体加载较慢…仍在等首帧'; }, 8000);
+})();
+</script>
 <script src="engine/vk.js"></script>
 <script src="engine/vk-kit.js"></script>
 <!-- 长片按章拆文件：在这里加 <script src="ch1.js"></script> …，每个文件往 window.CH 上挂函数，film.js 里调用 -->

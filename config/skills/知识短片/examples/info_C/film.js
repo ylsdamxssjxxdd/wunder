@@ -81,6 +81,7 @@ function ch1(fr, t) {
 
 VK.film({
   dur: 47, theme: 'night', meta: { title: '信息论', family: 'C', bgm: 'synth' },
+  subs: SUBS,
   draw(fr, t) {
     /* 夜空在片名处最满，章节之间整片暗一下 */
     const dip = K.dips(t, [14.05, 38.25]);

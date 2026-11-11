@@ -108,6 +108,7 @@ function chapterMark(fr, t, marks, end = 1e9) {
 /* ---------- A / B：金字片名卡 ----------
  * lt = 片名卡本地时间（0 = 闪白峰值）。o: { la 外文行, zh 片名, tag 副题, motif(fr, lt, a) 片名下方那个"母题图形", a, cy, size, track, rays, specks, tagDy } */
 function rays(fr, cx, cy, lt, a, n = 56, color = '#E7C477') {
+  if (fr.solid) return;   // 实心内容帧：rays 是气氛，不参与字幕带像素检查
   const x = fr.x; x.save(); x.globalCompositeOperation = 'lighter'; x.translate(cx, cy); x.rotate(lt * .012);
   for (let i = 0; i < n; i++) {
     const ang = i / n * Math.PI * 2 + hash(i) * .08, len = 560 + hash(i + 9) * 520, w = .018 + hash(i + 3) * .03, al = (.035 + hash(i + 5) * .06) * a;
@@ -149,7 +150,7 @@ function dustPoints(str, cx, cy, o) {
 }
 function dustText(fr, str, cx, cy, o, k, t) {
   const pts = dustPoints(str, cx, cy, o), x = fr.x, col = o.dustColor || '#CFE4F4', a = o.a == null ? 1 : o.a;
-  const solid = ss(k, .78, 1); x.save(); x.globalCompositeOperation = 'lighter';
+  const solid = fr.solid ? 1 : ss(k, .78, 1); x.save(); x.globalCompositeOperation = 'lighter';
   if (solid < 1) for (const p of pts) {
     const kk = E.io3(seg(k, p.d * .9, p.d * .9 + .5)), px = lerp(p.sx, p.x, kk) + Math.sin(t * 1.3 + p.tw * 9) * 6 * (1 - kk), py = lerp(p.sy, p.y, kk) + Math.cos(t * 1.1 + p.tw * 7) * 6 * (1 - kk);
     const al = (.45 + .5 * kk) * ss(k, 0, .1 + p.d * .25) * (1 - solid * .85) * a * (.65 + .35 * Math.sin(t * 5 + p.tw * 20));
@@ -333,11 +334,12 @@ function flash(fr, t, t0, o = {}) {
   _post(fr, x => { const g = x.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, W * .64), c = o.color || '#EADDB9'; g.addColorStop(0, rgba(c, k * pk)); g.addColorStop(1, rgba(o.edge || c, k * pk * .72)); x.globalCompositeOperation = 'lighter'; x.fillStyle = g; x.fillRect(0, 0, W, H); x.globalCompositeOperation = 'source-over'; });
 }
 /* 一圈扩散的细环：和 flash 一起用，就是"定理落地"的那一下 */
-function ripple(fr, t, t0, cx, cy, o = {}) { const k = seg(t, t0, t0 + (o.dur || 1.1)); if (k <= 0 || k >= 1) return; fr.circle(cx, cy, lerp(o.r0 || 40, o.r1 || 620, E.out3(k)), { color: o.color || '#DCEBFF', w: 1.6, a: (1 - k) * .8, add: true }); }
+function ripple(fr, t, t0, cx, cy, o = {}) { if (fr.solid) return; const k = seg(t, t0, t0 + (o.dur || 1.1)); if (k <= 0 || k >= 1) return; fr.circle(cx, cy, lerp(o.r0 || 40, o.r1 || 620, E.out3(k)), { color: o.color || '#DCEBFF', w: 1.6, a: (1 - k) * .8, add: true }); }
 /* 泛黄旧片（B 讲"当年"的段落）：k 0..1。泛黄 + 椭圆暗角 + 片门抖动（整幅每隔一两秒横跳十几个像素，停几帧再回去）。
  * 它立刻作用在"已经画好的东西"上：先画场景，再调它，然后才画仪表和字幕 —— 这样仪表的红和字幕的白不会被染黄。o.weave === false 关掉抖动 */
 function sepia(fr, k, o = {}) {
-  if (k <= 0) return; const x = fr.x, g = Math.floor(fr.frame / 4); x.save(); x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1;
+  if (fr.solid || k <= 0) return;   // 整幅后期，不参与实心内容帧
+  const x = fr.x, g = Math.floor(fr.frame / 4); x.save(); x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1;
   if (o.weave !== false && hash(g * 7.13) > .86) x.drawImage(x.canvas, Math.round((hash(g * 3.7) - .5) * 28 * k), Math.round((hash(g * 5.1) - .5) * 8 * k));
   x.globalCompositeOperation = 'color'; x.fillStyle = rgba('#8C7550', k * .82); x.fillRect(0, 0, W, H);
   x.globalCompositeOperation = 'multiply'; x.fillStyle = rgba('#C9B38A', k * .35); x.fillRect(0, 0, W, H); x.globalCompositeOperation = 'source-over';

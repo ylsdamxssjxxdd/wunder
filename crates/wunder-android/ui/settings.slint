@@ -2379,7 +2379,7 @@ component AccountPage inherits Rectangle {
     in property <string> device-name: "";
     in property <string> usage-duration: "";
     in property <string> usage-tokens: "";
-    in property <string> usage-calls: "";
+    in property <string> usage-quota: "";
     callback back();
     callback refresh();
     callback login(string, string, string);
@@ -2509,13 +2509,13 @@ component AccountPage inherits Rectangle {
                 }
 
                 SheetCard {
-                    CardTitle { title: "用量统计"; subtitle: "会话、工具与调用使用概况"; }
+                    CardTitle { title: "用量统计"; subtitle: "近 14 天运行、令牌与额度消耗"; }
                     HorizontalLayout {
                         spacing: 8px;
                         for item in [
-                            { label: "累计运行", value: root.usage-duration },
-                            { label: "累计令牌", value: root.usage-tokens },
-                            { label: "工具调用", value: root.usage-calls }
+                            { label: "近 14 天运行", value: root.usage-duration },
+                            { label: "近 14 天令牌", value: root.usage-tokens },
+                            { label: "近 14 天额度", value: root.usage-quota }
                         ] : Rectangle {
                             horizontal-stretch: 1;
                             height: 64px;
@@ -4997,7 +4997,7 @@ export component MobileSettings inherits Rectangle {
     in property <string> cloud-device-name: "";
     in property <string> usage-duration: "";
     in property <string> usage-tokens: "";
-    in property <string> usage-calls: "";
+    in property <string> usage-quota: "";
     in property <int> chat-target: 0;
     in property <string> current-device: "本机";
     in property <[MobileDevice]> devices: [];
@@ -5572,7 +5572,7 @@ export component MobileSettings inherits Rectangle {
             device-name: root.cloud-device-name;
             usage-duration: root.usage-duration;
             usage-tokens: root.usage-tokens;
-            usage-calls: root.usage-calls;
+            usage-quota: root.usage-quota;
             back() => { root.page = 0; }
             refresh() => { root.cloud-refresh(); }
             login(server, username, password) => { root.cloud-login(server, username, password); }

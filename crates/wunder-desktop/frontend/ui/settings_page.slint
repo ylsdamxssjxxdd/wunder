@@ -78,6 +78,29 @@ component SettingsCardHeader inherits VerticalLayout {
     Rectangle { height: 1px; background: Theme.border; }
 }
 
+// Usage-trend metric pill: the selection also decides which pre-projected
+// daily path the account chart draws, mirroring the cloud single-select legend.
+component TrendMetricTab inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    callback clicked();
+    width: 96px;
+    height: 26px;
+    border-radius: 13px;
+    background: root.selected ? Theme.accent-soft : Theme.surface;
+    border-width: 1px;
+    border-color: root.selected ? Theme.accent : Theme.border;
+    Text {
+        width: parent.width; height: parent.height;
+        text: root.label;
+        color: root.selected ? Theme.accent-ink : Theme.muted;
+        font-size: Theme.font-xs;
+        horizontal-alignment: center; vertical-alignment: center;
+        overflow: elide;
+    }
+    touch := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
 // Web-style model form section head: small accent icon plus a bold title.
 component FormSectionHead inherits Rectangle {
     in property <image> icon;
@@ -805,9 +828,15 @@ export component SettingsPage inherits Rectangle {
     in-out property <[RuntimePoint]> expert-points;
     in-out property <string> expert-duration;
     in-out property <string> expert-tokens;
-    in-out property <string> expert-calls;
-    in-out property <string> expert-chart-path;
-    in-out property <string> expert-chart-max;
+    in-out property <string> expert-quota;
+    in-out property <string> expert-runtime-path;
+    in-out property <string> expert-runtime-max;
+    in-out property <string> expert-tokens-path;
+    in-out property <string> expert-tokens-max;
+    in-out property <string> expert-quota-path;
+    in-out property <string> expert-quota-max;
+    // 0 runtime, 1 tokens, 2 quota; matches the cloud trend legend default.
+    private property <int> expert-trend-metric: 1;
     in-out property <string> expert-date;
     in-out property <int> expert-archive-page: 0;
     in-out property <int> expert-archive-total: 0;
@@ -1326,12 +1355,15 @@ export component SettingsPage inherits Rectangle {
                                 }
                             }
                             SettingsCard {
-                                SettingsCardHeader { title: I18n.stc_runs_tab; }
+                                // Same shape as the cloud account page: three
+                                // 14-day summary cards plus a daily trend line
+                                // for the selected metric.
+                                SettingsCardHeader { title: I18n.stc_runs_tab; subtitle: I18n.stc_runs_note; }
                                 HorizontalLayout { spacing: 12px;
                                     for item in [
                                         { label: I18n.stc_runs_duration, value: root.expert-duration },
                                         { label: I18n.stc_runs_tokens, value: root.expert-tokens },
-                                        { label: I18n.stc_runs_calls, value: root.expert-calls }
+                                        { label: I18n.stc_runs_calls, value: root.expert-quota }
                                     ] : Rectangle {
                                         horizontal-stretch: 1; height: 78px; border-radius: Theme.radius-lg;
                                         background: Theme.panel; border-width: 1px; border-color: Theme.border;
@@ -1340,6 +1372,61 @@ export component SettingsPage inherits Rectangle {
                                             Text { height: 32px; text: item.value; color: Theme.text; font-size: Theme.font-display; font-weight: 700; }
                                         }
                                     }
+                                }
+                                Rectangle { height: 10px; }
+                                HorizontalLayout { height: 26px; spacing: 6px;
+                                    TrendMetricTab {
+                                        label: I18n.stc_runs_duration;
+                                        selected: root.expert-trend-metric == 0;
+                                        clicked => { root.expert-trend-metric = 0; }
+                                    }
+                                    TrendMetricTab {
+                                        label: I18n.stc_runs_tokens;
+                                        selected: root.expert-trend-metric == 1;
+                                        clicked => { root.expert-trend-metric = 1; }
+                                    }
+                                    TrendMetricTab {
+                                        label: I18n.stc_runs_calls;
+                                        selected: root.expert-trend-metric == 2;
+                                        clicked => { root.expert-trend-metric = 2; }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Text {
+                                        height: parent.height;
+                                        text: root.expert-trend-metric == 0 ? root.expert-runtime-max : root.expert-trend-metric == 1 ? root.expert-tokens-max : root.expert-quota-max;
+                                        color: Theme.muted; font-size: Theme.font-xs;
+                                        vertical-alignment: center; overflow: elide;
+                                    }
+                                }
+                                Rectangle {
+                                    height: 170px; border-radius: Theme.radius-lg;
+                                    background: Theme.panel; border-width: 1px; border-color: Theme.border;
+                                    clip: true;
+                                    for line in 4 : Rectangle {
+                                        x: 8px; y: line * (parent.height - 16px) / 4 + 8px;
+                                        width: parent.width - 16px; height: 1px; background: Theme.border;
+                                    }
+                                    Path {
+                                        x: 8px; y: 8px; width: parent.width - 16px; height: parent.height - 16px;
+                                        viewbox-width: 1000; viewbox-height: 200;
+                                        commands: root.expert-trend-metric == 0 ? root.expert-runtime-path : root.expert-trend-metric == 1 ? root.expert-tokens-path : root.expert-quota-path;
+                                        fill: transparent;
+                                        stroke: root.expert-trend-metric == 0 ? Theme.info : root.expert-trend-metric == 1 ? #7C3AED : Theme.warning;
+                                        stroke-width: 2px;
+                                        stroke-line-cap: round;
+                                        stroke-line-join: round;
+                                        visible: root.expert-points.length > 1;
+                                    }
+                                    if root.expert-points.length <= 1 && !root.expert-loading : Text {
+                                        width: parent.width; height: parent.height;
+                                        text: I18n.stc_runs_empty; color: Theme.muted; font-size: Theme.font-xs;
+                                        horizontal-alignment: center; vertical-alignment: center;
+                                    }
+                                }
+                                HorizontalLayout { height: 14px;
+                                    Text { text: root.expert-points.length > 0 ? root.expert-points[0].label : ""; color: Theme.muted; font-size: Theme.font-2xs; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Text { text: root.expert-points.length > 0 ? root.expert-points[root.expert-points.length - 1].label : ""; color: Theme.muted; font-size: Theme.font-2xs; }
                                 }
                             }
                             SettingsCard {

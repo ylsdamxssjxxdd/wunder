@@ -25,6 +25,17 @@ const SUBS = [
   { a: 26.4, b: 29.1, zh: '长杆从里面，把细胞顶成了镰刀。', en: 'From inside, the rods push the cell into a sickle.' },
   { a: 29.5, b: 32.3, zh: '一颗珠子，改掉了一个细胞的形状。', en: 'One bead changed the shape of a whole cell.' },
 ];
+const SHOTS = [
+  { no: 1, name: '血管', from: .6, to: 4.9 },
+  { no: 2, name: '换错', from: 5.3, to: 8.1 },
+  { no: 3, name: '镰刀', from: 8.6, to: 12.4 },
+  { no: 4, name: '提问', from: 12.8, to: 15.0 },
+  { no: 5, name: '折叠', from: 15.6, to: 19.2 },
+  { no: 6, name: '黏点', from: 19.6, to: 22.8 },
+  { no: 7, name: '长杆', from: 23.3, to: 26.0 },
+  { no: 8, name: '顶弯', from: 26.4, to: 29.1 },
+  { no: 9, name: '结论', from: 29.5, to: 32.3 },
+];
 const MARKS = [{ t: .4, no: '00', zh: '序', en: 'PROLOGUE' }, { t: T.in2, no: '01', zh: '形', en: 'SHAPE' }];
 const ROSE = '#FF4F7E', INK2 = '#AEB8C2';
 const fadeOut = t => 1 - ss(t, 32.3, 32.9);
@@ -256,6 +267,7 @@ function labels(fr, c, t) {
 
 VK.film({
   dur: T.end, theme: 'night', meta: { title: '折叠', root: -2 },
+  shots: SHOTS, subs: SUBS,
   draw(fr, t) {
     const c = camAt(t), cellVis = (1 - ss(c.sc, 5, 28)) * fadeOut(t), molVis = ss(c.s, .08, .25);
     fr.look.bloom = .5;

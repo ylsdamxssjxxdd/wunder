@@ -22,7 +22,7 @@ engine/
 
 ```bash
 python scripts/new_film.py <工程目录> --world C|B     # 建工程：index.html + 一份没有画面的 film.js 骨架
-python engine/render.py <工程> --serve                  # 预览 http://127.0.0.1:8765/?play
+python engine/render.py <工程> --serve                  # 预览 http://127.0.0.1:8765/?play；?t=41 冻结在 41 秒
 python engine/render.py <工程> --stills 2.5 8.5 21      # 截几帧 → review/
 python engine/render.py <工程> --sheet 16               # 全片均匀 16 帧拼一张 → review/sheet.jpg
 python engine/render.py <工程> --sheet 3.5 9 21.5       # 指定时刻拼一张
@@ -32,11 +32,12 @@ python engine/render.py <工程> --clips 0:12 20:30       # 多段渲染并自�
 python engine/render.py <工程> --preview 8.2 10.6       # 低码率预览片段 → renders/preview_*.mp4
 python engine/render.py <工程> --strip 8.2 9.2 24       # 连续帧条带 → review/strip_*.jpg（看运动）
 python engine/render.py <工程> --stills 8 --mark 船     # 画元素包围盒 → review/m_*.png（需 fr.mark）
-python engine/render.py <工程> --det                    # 确定性自检
+python engine/render.py <工程> --det [样本数]            # 确定性自检；失败报差异区域、元素名、可疑全局写入
 python engine/render.py <工程> --lint                   # END/FPS/字体/音效/meta/分镜表/Math.random 检查
 python engine/render.py <工程> --storyboard             # 分镜表时间列 vs film.js 的 SHOTS 逐镜核对
 python engine/render.py <工程> --check-safe             # 包围盒 + 像素：非字幕内容越过 y=840 的时段
 python engine/render.py <工程> --check-band             # 只做像素检查（手写 ctx / 柔边渐变也查）
+python engine/render.py <工程> --check-band --band-strict # 连 bloom/辉光一起查（更严，容易误报贴地光晕）
 python engine/render.py <工程> --overlap                # 命名元素实际相交面积（可用 allow 放行）
 python engine/render.py <工程>                          # 全片 → renders/raw.mp4（无声）
 python engine/render.py <工程> --jobs 4                 # 按镜头切段，最多 4 路并行渲再无损拼接
@@ -60,12 +61,22 @@ python engine/audio.py  <工程> --bgm 曲子.mp3 -8        # 垫现成配乐（
 `--jobs` 接受 `--jobs 4` 和 `--jobs=4`，不写时按 CPU 核数（最多 4）决定并发；日志里的「渲染 1/N 段」表示其余分段命中 `.done` 被复用，不是并行失效。
 film.js 的 SHOTS 时间窗允许重叠（交叉淡入淡出）；分段时按下一镜起点切分，每镜只保留自己的主区间，不会把重叠镜头合并成一个超长段，`--only 镜号/名字` 因此始终按镜生效。
 日志与临时文件放工程目录（`renders/_part*.log`），不要放 `/tmp`：容器重启会清空 `/tmp` 并终止后台进程，只有工程里的 `.done` 分段能续渲。
-`--check-safe` 的像素检查会隐藏字幕，把整帧和「底 + look.under + 后期」的纯背景帧相减：背景（包括 B 的整幅插画）两边都有，不算越界；
-手写 ctx 画的内容只出现在整帧里，会被查出来。flat（B）整幅场景都在前景层，默认跳过像素检查，装置请用 `fr.mark` 命名。
+`--check-safe` 的像素检查会隐藏字幕，把「实心内容帧」和「底 + look.under + 后期」的纯背景帧相减：
+背景（包括 B 的整幅插画、`look.under` 里的天空/地面）两边都有，不算越界。实心内容帧会跳过 bloom、
+`fr.glow/spark/comet/flash` 和柔边，只留实心几何与文字——**辉光漫进字幕带不算装置越界**，
+太阳贴地时的光晕不需要为了过检查而抬高。手写 ctx 没有这个开关，画进字幕带仍然会被查到；要连辉光一起查加 `--band-strict`。
+flat（B）整幅场景都在前景层，默认跳过像素检查；包围盒也只检查 `fr.mark` 命名的装置，未命名图元视为插画背景，
+不会因为插画/字幕底压到 y>840 就误报。
+越界时报告会写出差异 bbox 和附近的命名元素（没有名字就提示可能是手写 ctx/未 `fr.mark`）。
 阈值可用 `--band-diff`（像素差，默认 10）和 `--band-ratio`（面积占比，默认 0.2%）调；默认每 0.5 秒采样一次。
 
 渲染速度单路约每秒 3–6 帧（1080p，截 PNG），`--jobs 4` 四路真并行（按 CPU 核数和内存调，每路约 0.5–1 GB）。3 分钟的片子仍然要十几分钟——所以先看拼图，再渲片段，最后才渲全片。
-**看图不要靠猜。** 环境里 `file://` 不可用：先 `--serve`，再用浏览器打开 `http://127.0.0.1:8765/review/s_0005.00.png`（`sheet.jpg`、`m_*.png`、`band_*.png` 同理）。
+**看图不要靠猜，也别绕浏览器。** `review/` 下的 `s_*.png`、`sheet.jpg`、`m_*.png`、`motion_*.jpg`、`band_*.png`
+直接用读图工具按路径看，不需要 `--serve`，也不需要 `file://`。局部放大用读图工具的 `crop` + `scale`，不要用 PIL 裁切存图绕圈。
+`--serve` 只在需要交互播放时用：`?play` 实时播，`?t=41` 冻结在 41 秒；`?t=` 优先于 `?play`。
+页面有加载层和错误层：字体加载慢会显示提示，JS 报错/脚本 404 会把错误和堆栈画在页面上，不再只是一片黑；
+自动化也可以等 `window.READY`、读 `window.__vkState`，或调 `await window.__vkSeek(41)` 等两帧合成完成。
+命令行截图（`--stills` / `--sheet`）和页面走同一套 `seek(t)`，两者出的帧应当一致。
 ARM 服务器上单路截帧受单核性能限制，长片优先用 `--jobs`；若明显慢于预期，先确认容器是原生 aarch64、Chrome 可执行文件不是 x86-64（qemu 模拟会慢一个数量级）。
 命令工具的前台等待到 `timeout_s` 时不会杀渲染，而是把它转入后台命令会话继续跑并返回 `command_session_id`；
 看到 `reason: timeout_escalated` 就先轮询会话（带回 `after_seq` 只取新输出），不要重跑。分段渲染中断后，已完成段带 `.done` 标记，
@@ -114,11 +125,15 @@ VK.film({
 })();
 ```
 
-能跑的例子在 `examples/`：`fold_C`（自己的题目，夜曲，33 秒：从血管推进细胞再推到一串珠子，全片一台摄影机；分镜表在同目录 `storyboard.md`）、`pigeon_B`（自己的题目，寓言，33 秒：六个镜头六种景别，计时器按真实时间走）、`stim_B`（寓言，12 秒）、`info_C`（夜曲，47 秒）。
-`examples/kit_gallery` 把所有件各演一遍。
+能跑的例子在 `examples/`：`fold_C`（自己的题目，夜曲，33 秒：从血管推进细胞再推到一串珠子，全片一台摄影机；分镜表在同目录 `storyboard.md`）、`pigeon_B`（自己的题目，寓言，33 秒：六个镜头六种景别，计时器按真实时间走）、`stim_B`（寓言，12.5 秒）、`info_C`（夜曲，47 秒）。
+`examples/kit_gallery` 把所有件各演一遍。示例只带代码和分镜，不带成片 GIF/大图；看图跑 `--sheet` 现生成。
 
 **镜头表是切段和分镜核对的单源。** `SHOTS` 的 `from/to` 就是 storyboard.md 每行的时间列；
 `--jobs` 把它当分段边界，`--storyboard` 用它查“分镜里有、film.js 里没有”的镜头。分镜之间允许留空档——渲染时会把空档补成独立段，拼完仍是 END 的长度。
+分镜表的时间列写得松也能读：`1 · 0.6–4.9`、`0.6–4.9`、`第 1 镜 · 0.6–4.9s` 都认。
+**无字幕镜头**在字幕列写 `—`（或 `无字幕` / `纯画面`）；**片名卡**单独一行、画法写 `片名卡`：
+它们不要求和 `SUBS` 对齐，片名卡也不要求出现在 `SHOTS` 里。只写一个时刻的片名卡（`| 片名 · 6.5 |`）会按到下一镜补全，
+`--lint` 只提示建议写成区间，不再报“黑屏风险”。不要再往 `SUBS` 里塞空字幕骗过检查。
 改一镜只重渲那一镜：`python engine/render.py <工程> --only 3`（也接受镜名或时间区间），其余分段保留并自动重拼。
 新工程请把 `shots`、`subs`、`sfx` 传进 `VK.film`；旧工程没有 `SHOTS` 也能渲，只是 `--storyboard` 只能查时间列本身。
 
@@ -141,6 +156,9 @@ VK.film({
 
 **随机** 只用 `rng(seed)`（返回一个 0…1 的发生器）和 `hash(n)`。不要用 `Math.random()` 和 `Date.now()`——
 同一帧每次渲染必须一模一样，`render.py --det` 会查。
+`--det` 失败不只报时刻：会写出差异 bbox、变化比例、命名元素的前后包围盒，并再从一个邻近时刻跳回来验证
+“状态是不是跟着上一帧走”；同时扫描工程里的模块级 `let/var` 和 `window.*` 写入，直接点名可疑变量
+（例如在 draw 里保存 `fr.glow` 回调）。静态扫描是启发式，找不到时再二分函数体。
 
 **模拟要真算，但要能回放。** 载入时把整场模拟一次算完、存成表，每帧只按时间查表：
 
@@ -233,7 +251,7 @@ function urn(fr, t) {
 | `fr.look.bgo` | 底的参数。gilt：`warm`（0 冷蓝…1 暖棕）`pool`（上方光池）`floor`（脚下暖光）`horizon`（桌面地平线）`dust`；night：`core`（中央深蓝）`stars`（星点密度）`tint`；flat：`color` |
 | `fr.look.bloom` | 辉光强度。默认 night 1、gilt 0.34、flat 0.12 |
 | `fr.look.grain` | 胶片颗粒，默认 0.05 |
-| `fr.look.under(ctx, t)` | 画在底之上、内容之下 |
+| `fr.look.under(ctx, t)` | 画在底之上、内容之下。**只能用参数 ctx 画**；不要用 `fr.*` / `fr.x`，否则会画进内容层，背景差分把整幅背景当成越界 |
 | `fr.look.post(ctx, t)` | 出帧后的全幅效果。一般不直接写，用下面这几个件 |
 
 辉光的做法：内容画在一张透明层上，出帧时把这层缩小、模糊两遍、用加法叠回去。所以**越亮的东西光晕越大**。
@@ -301,12 +319,18 @@ function urn(fr, t) {
 ## 容易踩的坑
 
 - **字幕区被占。** 纵向 80%–95% 只属于字幕。装置的最低点不要低于 y=840；改完用 `--check-safe` 查一遍，
-  不要只靠截图肉眼扫。检查只记录 text/line/poly/rect/ellipse 的包围盒（glow/spark/path 这类气氛元素不算），
+  不要只靠截图肉眼扫。检查只记录 text/line/poly/rect/ellipse 的包围盒（glow/spark/path 这类气氛元素不算）；
+  flat 场景只查命名装置，未命名图元是插画背景，不算装置；
+  像素检查同样跳过 bloom/`fr.glow`，只查实心内容；有意贴地的太阳光晕不会被逼着抬高。
   装置用 `fr.mark('名字', …)` 包住，报告才会写名字；字幕由 `K.subs` 自动标成「字幕」，不会被误报。
 - **遮挡看不见。** 两个装置叠在一起、量尺压住主体时，用 `--overlap` 查命名元素的包围盒相交；先 `fr.mark` 再查。
 - **相邻两站硬切。** `if (t < 17) a(); else b();` 会切。让两个时间窗重叠半秒，各自乘 `ss` 淡入淡出。
 - **辉光过曝。** 见上。A 的实物（骰子、金币、骨头）本身颜色要压暗一档，否则加上辉光会发白。
 - **大块的实心东西。** 细胞、身体、场景这类有体积的东西，画进 `fr.look.under = ctx => { … }`：它在底之上、内容之下，不参加辉光。`ctx` 是原生的 2D 上下文。写法见 `examples/fold_C/film.js` 的 `heroCell`。
+- **贴地/被前景裁掉半截的元素。** 用 `fr.g({ clip: [x, y, w, h] }, …)` 包住再画；`--check-safe` 的包围盒按裁剪后的可见范围算，
+  半截太阳不会因为完整圆的几何越界而被逼着抬高。手写 `fr.x.clip()` 不会被记录，检查会按完整几何算。
+- **辉光不是装置。** `fr.glow/spark/comet`、bloom、`K.rays`、`K.ripple`、`K.sepia` 不参与实心内容帧；
+  贴地的太阳光晕不需要截断。真要连辉光一起查，加 `--band-strict`。
 - **推拉镜头。** 跨好几个数量级的推近、拉远，缩放要在对数空间里插值（`exp(lerp(ln s0, ln s1, k))`），焦点按 `1/s` 插值，否则会先平移再猛冲。自己把点换算到屏幕坐标，不要用 canvas 的缩放——线宽和字号才不会跟着变。见 `fold_C` 的 `camAt`。
 - **老式数字。** Cormorant 默认是高低不齐的老式数字；页面模板已经打开等高数字（`lnum`），自己换字体时记得。
 - **半透明叠半透明。** 线框、粒子堆用 `add: true`；实体叠实体用 `fr.layer` 整组淡。

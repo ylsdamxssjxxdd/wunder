@@ -667,7 +667,7 @@ export component MobileWindow inherits Window {
     in property <string> settings-cloud-device-name: "";
     in property <string> settings-usage-duration: "";
     in property <string> settings-usage-tokens: "";
-    in property <string> settings-usage-calls: "";
+    in property <string> settings-usage-quota: "";
     in property <int> settings-chat-target: 0;
     in property <string> settings-current-device: "本机";
     in property <[MobileDevice]> settings-devices: [];
@@ -2141,7 +2141,7 @@ export component MobileWindow inherits Window {
         cloud-device-name: root.settings-cloud-device-name;
         usage-duration: root.settings-usage-duration;
         usage-tokens: root.settings-usage-tokens;
-        usage-calls: root.settings-usage-calls;
+        usage-quota: root.settings-usage-quota;
         chat-target: root.settings-chat-target;
         current-device: root.settings-current-device;
         devices: root.settings-devices;

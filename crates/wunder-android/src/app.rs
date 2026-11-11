@@ -2503,7 +2503,7 @@ fn start_tick(
         if state.usage_rev != last_usage {
             ui.set_settings_usage_duration(state.usage_duration.as_str().into());
             ui.set_settings_usage_tokens(state.usage_tokens.as_str().into());
-            ui.set_settings_usage_calls(state.usage_calls.as_str().into());
+            ui.set_settings_usage_quota(state.usage_quota.as_str().into());
             last_usage = state.usage_rev;
         }
 
@@ -4517,14 +4517,14 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_settings_open(true);
             ui.set_settings_usage_duration("3h 42m".into());
             ui.set_settings_usage_tokens("128.5K".into());
-            ui.set_settings_usage_calls("1.2K".into());
+            ui.set_settings_usage_quota("1.2K".into());
         }
         "account-in" => {
             ui.set_settings_page(13);
             ui.set_settings_open(true);
             ui.set_settings_usage_duration("3h 42m".into());
             ui.set_settings_usage_tokens("128.5K".into());
-            ui.set_settings_usage_calls("1.2K".into());
+            ui.set_settings_usage_quota("1.2K".into());
             ui.set_settings_cloud_logged_in(true);
             ui.set_settings_cloud_connection("online".into());
             ui.set_settings_cloud_server("https://cloud.example.com".into());

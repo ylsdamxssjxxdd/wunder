@@ -475,17 +475,19 @@ wunder 是一个**多形态的智能体工作台**：桌面版（desktop）是�
 #### `GET /wunder/agents/{agent_id}/runtime-records`
 
 - 方法：`GET`
-- 入参（Query，可选）：`user_id`、`days`（1~30，默认 14）、`date`（`YYYY-MM-DD`，热力图选中日期）
+- 入参（Query，可选）：`user_id`、`days`（1~90，默认 14）、`date`（`YYYY-MM-DD`，热力图选中日期）
 - 返回（JSON）：
   - `data.summary.runtime_seconds`：统计窗口内总运行时长
-  - `data.summary.billed_tokens`：兼容字段，等价于累计消耗
-  - `data.summary.consumed_tokens`：推荐字段，表示统计窗口内累计消耗
+  - `data.summary.billed_tokens`：兼容字段，等价于 `consumed_tokens`
+  - `data.summary.consumed_tokens`：推荐字段，表示统计窗口内累计 Token 消耗
+  - `data.summary.quota_consumed`：统计窗口内累计额度消耗（模型请求数）
   - `data.summary.tool_calls`：统计窗口内工具调用次数
-  - `data.daily[]`：按日拆分，字段包括 `date/runtime_seconds/billed_tokens/consumed_tokens/tool_calls`
+  - `data.daily[]`：按日拆分，字段包括 `date/runtime_seconds/billed_tokens/consumed_tokens/quota_consumed/tool_calls`
   - `data.heatmap`：工具调用热力图（`date/max_calls/items[]`）
   - `data.heatmap.items[]`：按工具运行时名聚合，字段包括 `tool/name/display_name/tool_name/runtime_name/category/hourly_calls/total_calls`；`display_name` 用于界面展示，`runtime_name`/`tool_name` 用于唯一定位与排障。
 - 说明：
-  - `consumed_tokens` 按各次请求的 `round_usage.total_tokens` 累加得到。
+  - 监控记录只持久化聚合事实（不保留事件明细），Token 与额度按会话累计值归集到会话活动日；仅历史记录仍含事件时按事件逐日精确拆分。
+  - `consumed_tokens` 优先取自会话累计计数，`model_usage` 事件仅作为历史兼容补充。
   - `billed_tokens` 为历史兼容字段，新接入优先使用 `consumed_tokens`。
   - MCP 工具热力图不再用展示名作为聚合键，避免中文别名与 `server@tool` 运行时名重复显示。
 

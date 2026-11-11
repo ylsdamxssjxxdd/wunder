@@ -79,6 +79,7 @@ function titleMotif(fr, lt, a) {                                 // 片名卡的
 const CX = [[0, 905], [2.2, 922], [4.5, 1102], [6.9, 949], [8.2, 949]], CY = [[0, 640], [2.2, 636], [4.5, 600], [6.9, 543], [8.2, 540]], CS = [[0, 1.7], [2.2, 1.61], [4.5, 1.31], [6.9, 1.03], [8.2, 1.0]];
 VK.film({
   dur: 12.5, theme: 'flat', meta: { title: '超常刺激', family: 'B', bgm: 'external' },
+  subs: SUBS,
   draw(fr, t) {
     fr.look.bgo = { color: '#0C0705' };
     const dark = ss(t, 7.4, 7.95);                               // 场景压暗进片名

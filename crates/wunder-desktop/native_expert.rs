@@ -141,7 +141,9 @@ impl NativeDesktop {
     }
 
     pub fn expert_runtime(&self, agent: &str, date: Option<&str>) -> Result<serde_json::Value> {
-        self.ensure_expert_access(agent)?;
+        // Usage aggregates are read-only and already scoped by user and agent;
+        // skip agent access resolution so opening the account page does not
+        // rebuild the default-agent tool context first.
         self.runtime
             .block_on(wunder_server::api::user_agents::load_agent_runtime_records(
                 self.state(),

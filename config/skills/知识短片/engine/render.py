@@ -19,14 +19,15 @@
   python render.py <工程> --clips 0:12 20:30    一次渲多段并自动拼 → renders/clips.mp4
   python render.py <工程> --preview 8.2 10.6    低码率预览片段 → renders/preview_*.mp4
   python render.py <工程> --events              导出音效事件表 → audio/events.json（给 audio.py）
-  python render.py <工程> --det                 确定性自检：同一批时刻乱序再截一遍，逐字节比
+  python render.py <工程> --det [样本数]        确定性自检：失败报差异区域、元素名、可疑全局写入
   python render.py <工程> --lint                静态+运行时自检：END/FPS、字体、音效、meta、分镜表、Math.random 等
   python render.py <工程> --storyboard          核对 storyboard.md 的时间列与 film.js 的 SHOTS 是否逐镜对得上
-  python render.py <工程> --check-safe [间隔]   安全区检查：包围盒 + 像素（隐藏字幕后看 y>840）
-  python render.py <工程> --check-band [间隔]   只做像素检查，手写 ctx / 柔边渐变也能查到
+  python render.py <工程> --check-safe [间隔]   安全区检查：包围盒 + 像素（隐藏字幕后看 y>840；忽略辉光/柔边）
+  python render.py <工程> --check-band [间隔]   只做像素检查；手写 ctx 也查，--band-strict 连辉光一起查
   python render.py <工程> --overlap [间隔]      遮挡检查：按实际相交面积报告，可用 fr.mark(..., {allow:'名字'}) 放行
   python render.py --diff A.mp4 B.mp4           两版逐帧差分 → A_diff.jpg + 时刻表
-  python render.py <工程> --serve               起本地预览 http://127.0.0.1:8765/?play（8765 被占用时自动换端口）
+  python render.py <工程> --serve               起本地预览 http://127.0.0.1:8765/?play；?t=41 冻结在 41 秒
+                                                （8765 被占用时自动换端口；页面出错会显示错误层）
 
 工程目录里只需要 index.html + film.js。引擎（vk.js、vk-kit.js）留在本文件所在目录，
 中文优先用补充包 opt/fonts/video 的思源宋体/黑体，缺失时退到 opt/fonts/common 的宋体/雅黑；
@@ -37,9 +38,10 @@
 镜头表：film.js 里 VK.film({ shots: [{ no, name, from, to }, …] }) 声明后，--jobs 按镜头切段、
 --storyboard 用同一张表核对；分镜之间的空档会自动补成「空档」段，保证拼接总时长不变。
 安全区/遮挡/包围盒依赖 vk.js 的 recordFrame：给装置用 fr.mark('船', () => { … }) 命名，
-字幕由 K.subs 自动标成「字幕」。像素检查会临时隐藏字幕，把整帧与「底 + look.under + 后期」的纯背景帧相减：
-背景（包括 B 的整幅插画）两边都有，不算越界；手写 ctx 画的东西只出现在整帧里，会被查出来。
-flat（B 寓言）整幅场景都在前景层，默认跳过像素检查，装置请用 fr.mark 命名后靠包围盒查。
+字幕由 K.subs 自动标成「字幕」。像素检查会临时隐藏字幕，把「实心内容帧」与「底 + look.under + 后期」
+的纯背景帧相减：背景两边都有，不算越界；实心帧跳过 bloom、fr.glow/spark/comet/flash 和柔边，
+辉光漫进字幕带不算越界，手写 ctx 画的东西仍会被查出来。fr.g({clip}) 的包围盒按裁剪后的可见范围算。
+flat（B 寓言）整幅场景都在前景层，默认跳过像素检查，包围盒只查 fr.mark 命名的装置。
 """
 import hashlib, http.server, io, json, math, os, random, re, subprocess, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -271,11 +273,31 @@ def open_page(p, url):
     pg.on("console", lambda m: m.type in ("error", "warning") and print("[page]", m.text))
     pg.on("pageerror", lambda e: print("[pageerror]", e))
     pg.goto(url)
-    pg.wait_for_function("window.READY === true", timeout=180000)
+    try:
+        pg.wait_for_function("window.READY === true || !!window.__vkError", timeout=180000)
+    except Exception as error:
+        b.close()
+        sys.exit(f"页面 180 秒内没有 READY：{error}\n"
+                 "  先看 --serve 的页面错误层；字体缺失可运行 python engine/get_fonts.py。")
+    error = pg.evaluate("window.__vkError || null")
+    if error:
+        b.close()
+        sys.exit("页面代码出错：\n" + str(error))
+    pg.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
     return b, pg
+
+def frame_error(pg):
+    try: return pg.evaluate("window.__vkError || null")
+    except Exception: return None
+
+def raise_if_error(pg, where=""):
+    error = frame_error(pg)
+    if error:
+        sys.exit(("画面代码出错" + (f"（{where}）" if where else "") + "：\n") + str(error))
 
 def shot(pg, t):
     pg.evaluate(f"seek({t})")
+    raise_if_error(pg, f"t={t:g}s")
     return pg.screenshot(type="png")
 
 def with_page(proj, fn):
@@ -902,37 +924,157 @@ def events(proj):
     with_page(proj, go)
 
 # ---------- 分镜表 ----------
-STORY_RE = re.compile(r"^\|\s*(\d+)\s*[·.、]\s*([\d.]+)\s*s?\s*[–—~-]\s*([\d.]+)\s*s?\s*\|")
+# 时间列写得松一点也能读：`1 · 0.6–4.9`、`0.6–4.9`、`1 · 6.5`、`片名 · 6.5–13.4` 都认。
+STORY_RANGE = re.compile(r"(\d+(?:\.\d+)?)\s*s?\s*(?:[–—~～-]|至|到)\s*(\d+(?:\.\d+)?)\s*s?")
+STORY_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+NO_SUB_RE = re.compile(r"^(?:[—–~～/／\-–\s]*|无(?:字幕)?|没有字幕|不出字|纯画面|静默)$", re.I)
+CARD_RE = re.compile(r"片名|标题|题卡|title|card", re.I)
+BLACK_RE = re.compile(r"黑场|黑屏|black", re.I)
+
+def clean_cell(text):
+    return (text or "").strip().replace("**", "").strip()
+
+def is_no_sub(text):
+    text = clean_cell(text)
+    return not text or bool(NO_SUB_RE.match(text))
+
+def storyboard_label(row):
+    if row.get("name"): return row["name"]
+    if row.get("no") is not None: return f"第 {row['no']} 镜"
+    if row.get("kind") == "card": return "片名卡"
+    if row.get("kind") == "black": return "黑场"
+    return f"第 {row.get('line', '?')} 行"
+
+def storyboard_prefix(text):
+    """时间前面的部分：`7 ·` → (7, '')；`第 7 镜 ·` → (7, '')；`片名 ·` → (None, '片名')。"""
+    text = re.sub(r"^#+\s*", "", clean_cell(text)).strip(" ·.、:：—-–")
+    if not text: return None, ""
+    m = re.match(r"第?\s*(\d+)\s*(?:镜|shot)?", text, re.I)
+    if m and m.start() == 0:
+        return int(m.group(1)), (text[m.end():] or "").strip(" ·.、:：—-–")
+    return None, text
+
+def split_story_row(line):
+    if "|" not in line: return None
+    cells = [clean_cell(c) for c in line.strip().strip("|").split("|")]
+    if len(cells) < 2: return None
+    if not any(cells): return None
+    if all(not c or re.fullmatch(r":?-{3,}:?", c) for c in cells): return None
+    return cells
+
+def parse_story_time(cell):
+    """返回 (no, name, from, to, point)。读不出时间就返回 None。"""
+    text = clean_cell(cell)
+    if not text: return None
+    m = STORY_RANGE.search(text)
+    if m:
+        a, b = float(m.group(1)), float(m.group(2))
+        if b < a: a, b = b, a
+        no, name = storyboard_prefix(text[:m.start()])
+        return no, name, a, b, False
+    nums = list(STORY_NUMBER.finditer(text))
+    if not nums: return None
+    last = nums[-1]
+    no, name = storyboard_prefix(text[:last.start()])
+    t = float(last.group(0))
+    return no, name, t, t, True
 
 def read_storyboard(proj):
     path = proj / "storyboard.md"
     if not path.is_file(): return None
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    time_idx, sub_idx, mode_idx, no_idx = 0, 1, 2, None
     rows = []
-    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw.strip().replace("**", "")
-        m = STORY_RE.match(line)
-        if not m: continue
-        cells = [c.strip() for c in line.strip("|").split("|")]
-        rows.append({"no": int(m.group(1)), "from": float(m.group(2)), "to": float(m.group(3)),
-                     "sub": cells[1] if len(cells) > 1 else "",
-                     "mode": cells[2] if len(cells) > 2 else ""})
+    for lineno, raw in enumerate(lines, 1):
+        cells = split_story_row(raw)
+        if not cells: continue
+        time_col = next((i for i, c in enumerate(cells) if re.search(r"时间|时刻|time", c, re.I)), None)
+        if not rows and time_col is not None and not any(re.search(r"\d", c) for c in cells):
+            time_idx, found_mode = time_col, None
+            for i, c in enumerate(cells):
+                if re.search(r"字幕|sub(?:title)?|caption", c, re.I): sub_idx = i
+                elif re.search(r"画法|做法|mode", c, re.I): mode_idx = i
+                elif re.search(r"镜头|景别", c, re.I) and found_mode is None: found_mode = i
+                elif re.fullmatch(r"#|镜号|序号|no", c, re.I): no_idx = i
+            if mode_idx is None and found_mode is not None: mode_idx = found_mode
+            continue
+        if time_idx >= len(cells): continue
+        parsed = parse_story_time(cells[time_idx])
+        if not parsed:
+            # 兼容“片名卡 | 6.5–13.4”这类把时间写在第二列的行；只认明确区间，避免把镜号/字幕里的数字当时间。
+            for i, cell in enumerate(cells[:4]):
+                if i == time_idx or not STORY_RANGE.search(cell): continue
+                parsed = parse_story_time(cell)
+                if parsed: break
+        if not parsed: continue
+        no, name, a, b, point = parsed
+        if no is None and no_idx is not None and no_idx < len(cells):
+            no2, name2 = storyboard_prefix(cells[no_idx])
+            if no2 is not None: no = no2
+            if not name and name2: name = name2
+        row = {"no": no, "name": name, "from": a, "to": b, "point": point,
+               "sub": cells[sub_idx] if sub_idx < len(cells) else "",
+               "mode": cells[mode_idx] if mode_idx < len(cells) else "",
+               "line": lineno}
+        text = f"{row['name']} {row['mode']}"
+        row["kind"] = ("card" if CARD_RE.search(text) else
+                       "black" if BLACK_RE.search(text) else
+                       "no_sub" if is_no_sub(row["sub"]) else "shot")
+        rows.append(row)
     return sorted(rows, key=lambda r: r["from"]) or None
+
+def merge_storyboard(rows):
+    merged = []
+    for row in rows:
+        if row["to"] <= row["from"]: continue
+        if merged and row["from"] <= merged[-1][1] + .05:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], row["to"]), merged[-1][2], row)
+        else:
+            merged.append((row["from"], row["to"], row, row))
+    return merged
 
 def storyboard_report(proj, end, shots=None, subs=None, gap=1.5):
     """分镜表自查：时间空档/重叠/END 对不上，以及分镜里的镜头在 SHOTS 中缺函数。"""
     rows = read_storyboard(proj)
     if rows is None: return None
     errors, warnings = [], []
+
+    # 只写一个时刻的片名卡/无字幕段：按到下一镜（或 END）补全，并提示建议写法。
+    for i, row in enumerate(rows):
+        if row["point"]:
+            if i + 1 < len(rows):
+                nxt = rows[i + 1]["from"]
+            elif isinstance(end, (int, float)) and end > row["from"]:
+                nxt = end
+            else:
+                nxt = row["from"]
+            if nxt > row["from"]:
+                row["to"] = nxt
+                warnings.append(f"{storyboard_label(row)} 只写了时刻 {row['from']:.2f}s，"
+                                f"已按 {row['from']:.2f}–{row['to']:.2f}s 处理；建议写成区间")
+            else:
+                warnings.append(f"{storyboard_label(row)} 只有时刻 {row['from']:.2f}s，没有区间，无法判断覆盖")
+
     for prev, cur in zip(rows, rows[1:]):
         delta = cur["from"] - prev["to"]
         if delta < -.05:
-            errors.append(f"第 {prev['no']} 镜与第 {cur['no']} 镜时间重叠 {-delta:.2f}s")
-        elif delta > gap:
-            errors.append(f"第 {prev['no']} 镜结束到第 {cur['no']} 镜开始空了 {delta:.2f}s（黑屏风险）")
-    last = rows[-1]["to"]
+            errors.append(f"{storyboard_label(prev)} 与 {storyboard_label(cur)} 时间重叠 {-delta:.2f}s")
+
+    merged = merge_storyboard(rows)
+    prev_end, prev_row = 0.0, None
+    for a, b, first, last in merged:
+        if a - prev_end > gap:
+            if prev_row is None:
+                errors.append(f"开头到 {storyboard_label(first)} 开始空了 {a:.2f}s（黑屏风险）")
+            else:
+                errors.append(f"{storyboard_label(prev_row)}结束到{storyboard_label(first)}开始空了 "
+                              f"{a - prev_end:.2f}s（黑屏风险）")
+        prev_end, prev_row = max(prev_end, b), last
     if isinstance(end, (int, float)) and end > 0:
-        if end - last > gap: errors.append(f"最后一镜到 END 空了 {end - last:.2f}s（黑屏风险）")
-        elif last > end + .5: errors.append(f"分镜表结束 {last:.2f}s 晚于 END {end:.2f}s")
+        if end - prev_end > gap:
+            errors.append(f"最后一镜到 END 空了 {end - prev_end:.2f}s（黑屏风险）")
+        elif prev_end > end + .5:
+            errors.append(f"分镜表结束 {prev_end:.2f}s 晚于 END {end:.2f}s")
 
     if shots:
         ranges = []
@@ -949,11 +1091,12 @@ def storyboard_report(proj, end, shots=None, subs=None, gap=1.5):
             if cur < b - .05: out.append((cur, b))
             return out
         for row in rows:
+            if row["kind"] in ("card", "black"): continue
             if re.search(r"不画|只上字|停住|提问", row["mode"]): continue
             holes = [(a, b) for a, b in uncovered(row["from"], row["to"]) if b - a > .35]
             if holes:
                 holes_text = "、".join(f"{a:.2f}–{b:.2f}s" for a, b in holes)
-                errors.append(f"第 {row['no']} 镜（{row['from']:.2f}–{row['to']:.2f}s）在 SHOTS 里没有对应镜头：{holes_text}")
+                errors.append(f"{storyboard_label(row)}（{row['from']:.2f}–{row['to']:.2f}s）在 SHOTS 里没有对应镜头：{holes_text}")
         for shot in ranges:
             if not any(shot[0] < row["to"] and shot[1] > row["from"] for row in rows):
                 warnings.append(f"SHOTS 里的 {shot[0]:.2f}–{shot[1]:.2f}s 没有出现在分镜表")
@@ -965,12 +1108,18 @@ def storyboard_report(proj, end, shots=None, subs=None, gap=1.5):
         def norm(text):
             return re.sub(r"[\s，。！？、；：“”‘’（）()·,\.!\?;:'\"{}!]", "", text or "")
         for row in rows:
+            if row["kind"] in ("card", "black"): continue
             overlap = [s for s in subs if isinstance(s, dict) and isinstance(s.get("a"), (int, float))
                        and isinstance(s.get("b"), (int, float)) and s["a"] < row["to"] and s["b"] > row["from"]]
+            if row["kind"] == "no_sub":
+                if overlap:
+                    warnings.append(f"{storyboard_label(row)} 标为无字幕，但 SUBS 在 "
+                                    f"{row['from']:.2f}–{row['to']:.2f}s 有字幕")
+                continue
             if not overlap:
-                warnings.append(f"第 {row['no']} 镜在分镜表里有字幕，但 SUBS 里没有落在该时段的条目")
+                warnings.append(f"{storyboard_label(row)} 在分镜表里有字幕，但 SUBS 里没有落在该时段的条目")
             elif row["sub"] and not any(norm(row["sub"]) in norm(s.get("zh")) or norm(s.get("zh")) in norm(row["sub"]) for s in overlap):
-                warnings.append(f"第 {row['no']} 镜分镜表字幕与 SUBS 文本对不上：{row['sub'][:24]}")
+                warnings.append(f"{storyboard_label(row)} 分镜表字幕与 SUBS 文本对不上：{row['sub'][:24]}")
     else:
         warnings.append("film.js 没有把 SUBS 传给 VK.film({ subs: SUBS })；跳过字幕对齐检查。")
     return rows, errors, warnings
@@ -985,16 +1134,207 @@ def print_storyboard(proj, end, shots=None, subs=None):
     if errors:
         print(f"storyboard: {len(errors)} 个错误，{len(warnings)} 个警告")
         sys.exit(1)
-    print(f"storyboard: ok（{len(rows)} 镜，{len(warnings)} 个警告）")
+    print(f"storyboard: ok（{len(rows)} 行，{len(warnings)} 个警告）")
 
 # ---------- 自检 ----------
+def mask_js(src):
+    """把注释和字符串换成空格，保留换行与括号：给跨帧状态启发式分析用，不是完整 JS 解析器。"""
+    out = list(src); i, n, state = 0, len(src), "code"
+    while i < n:
+        c = src[i]
+        if state == "code":
+            if c == "/" and i + 1 < n and src[i + 1] == "/":
+                out[i] = out[i + 1] = " "; state = "line"; i += 2
+            elif c == "/" and i + 1 < n and src[i + 1] == "*":
+                out[i] = out[i + 1] = " "; state = "block"; i += 2
+            elif c in ("'", '"', "`"):
+                out[i] = " "; state = c; i += 1
+            else:
+                i += 1
+        elif state == "line":
+            if c == "\n": state = "code"
+            else: out[i] = " "
+            i += 1
+        elif state == "block":
+            if c == "*" and i + 1 < n and src[i + 1] == "/":
+                out[i] = out[i + 1] = " "; state = "code"; i += 2
+            else:
+                if c != "\n": out[i] = " "
+                i += 1
+        else:
+            if c == "\\":
+                out[i] = " "; i += 1
+                if i < n:
+                    if src[i] != "\n": out[i] = " "
+                    i += 1
+            elif c == state:
+                out[i] = " "; state = "code"; i += 1
+            else:
+                if c != "\n": out[i] = " "
+                i += 1
+    return "".join(out)
+
+def js_depths(masked):
+    depths, depth = [], 0
+    for line in masked.splitlines():
+        depths.append(depth)
+        for ch in line:
+            if ch == "{": depth += 1
+            elif ch == "}": depth = max(0, depth - 1)
+    return depths
+
+def suspicious_globals(proj):
+    """找模块级可变变量在函数内被赋值的情况；--det 失败时最常见的根因。"""
+    found, seen = [], set()
+    for path in project_sources(proj):
+        if path.suffix.lower() != ".js": continue
+        try: src = path.read_text(encoding="utf-8", errors="replace")
+        except OSError: continue
+        masked = mask_js(src); lines = src.splitlines(); mlines = masked.splitlines()
+        depths = js_depths(masked)
+        names = {}
+        for index, code in enumerate(mlines):
+            if depths[index] > 1: continue
+            m = re.match(r"\s*(?:let|var)\s+(.+)", code)
+            if not m: continue
+            decl = m.group(1).split("=", 1)[0]
+            for name in re.findall(r"[A-Za-z_$][\w$]*", decl):
+                names.setdefault(name, index + 1)
+        for name, decl_line in names.items():
+            pattern = re.compile(r"(?<![.\w$])" + re.escape(name) + r"\s*=(?!=)")
+            for index, code in enumerate(mlines):
+                if index + 1 == decl_line or not pattern.search(code): continue
+                rhs = lines[index].split("=", 1)[1].strip() if "=" in lines[index] else ""
+                inside = depths[index] > 1
+                strong = bool(re.search(r"\bfr\b|\.bind\s*\(|=>|function\b|requestAnimationFrame|setTimeout", rhs))
+                if not inside and not strong: continue
+                key = (path.name, index + 1, name)
+                if key in seen: continue
+                seen.add(key)
+                why = []
+                if inside: why.append("在函数内赋值")
+                if strong: why.append("右侧含 fr/回调")
+                found.append({"file": path.name, "line": index + 1, "name": name,
+                              "why": "、".join(why) or "模块级可变状态",
+                              "code": lines[index].strip()[:140], "strong": strong})
+        # 直接写 window/globalThis 也是跨帧状态的高危来源
+        for index, code in enumerate(mlines):
+            m = re.search(r"\b(?:window|globalThis)\.([A-Za-z_$][\w$]*)\s*=(?!=)", code)
+            if not m: continue
+            rhs = lines[index].split("=", 1)[1].strip() if "=" in lines[index] else ""
+            inside = depths[index] > 1
+            strong = bool(re.search(r"\bfr\b|\.bind\s*\(|=>|function\b|requestAnimationFrame|setTimeout", rhs))
+            if not inside and not strong: continue   # 顶层挂静态数据（如 window.FOLD = …）不算跨帧状态
+            key = (path.name, index + 1, m.group(1))
+            if key not in seen:
+                seen.add(key)
+                found.append({"file": path.name, "line": index + 1, "name": m.group(1),
+                              "why": "函数内写 window/globalThis" if inside else "写 window/globalThis",
+                              "code": lines[index].strip()[:140], "strong": strong or inside})
+    found.sort(key=lambda item: (not item["strong"], item["file"], item["line"]))
+    return found
+
+def image_difference(png_a, png_b):
+    from PIL import Image
+    import numpy as np
+    a = Image.open(io.BytesIO(png_a)).convert("RGB")
+    b = Image.open(io.BytesIO(png_b)).convert("RGB")
+    aa = np.asarray(a, dtype=np.int16); bb = np.asarray(b, dtype=np.int16)
+    delta = np.abs(aa - bb).max(axis=2)
+    mask = delta > 8
+    ratio = float(mask.mean()); mean = float(delta.mean())
+    ys, xs = np.where(mask)
+    bbox = [int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1] if len(xs) else None
+    return a, b, delta, bbox, ratio, mean
+
+def save_det_pair(path, a, b, delta, t, bbox, ratio):
+    from PIL import Image, ImageDraw, ImageFont
+    import numpy as np
+    tw, th = 640, 360
+    panel = Image.new("RGB", (tw * 3, th), (16, 16, 16))
+    for i, im in enumerate((a, b)):
+        panel.paste(im.resize((tw, th), Image.LANCZOS), (i * tw, 0))
+    heat = Image.fromarray(np.uint8(np.clip(delta * 6, 0, 255))).convert("RGB")
+    panel.paste(heat.resize((tw, th), Image.LANCZOS), (2 * tw, 0))
+    d = ImageDraw.Draw(panel)
+    try: font = ImageFont.truetype(str(font_file("JetBrainsMono.ttf") or (ENGINE / "fonts/JetBrainsMono.ttf")), 18)
+    except Exception: font = ImageFont.load_default()
+    d.rectangle([0, 0, tw * 3, 26], fill=(0, 0, 0))
+    d.text((6, 3), f"t={t:.3f}s  diff={ratio * 100:.2f}%  bbox={bbox}", font=font, fill=(255, 230, 0))
+    panel.save(path, quality=90)
+    # 原尺寸标注帧：直接看到差异落在哪
+    marked = a.copy(); md = ImageDraw.Draw(marked)
+    if bbox: md.rectangle(bbox, outline=(255, 70, 70), width=4)
+    md.rectangle([0, 0, 620, 34], fill=(0, 0, 0))
+    md.text((6, 6), f"t={t:.3f}s  NOT deterministic  diff={ratio * 100:.2f}%", font=font, fill=(255, 70, 70))
+    marked.save(path.with_name(path.stem + "_frame.png"))
+
 def det(proj, n=12):
     def go(pg):
-        end = pg.evaluate("END"); r = random.Random(7); ts = [round(r.uniform(0, end), 3) for _ in range(n)]
-        h1 = {t: hashlib.md5(shot(pg, t)).hexdigest() for t in ts}
+        end = pg.evaluate("END")
+        r = random.Random(7)
+        ts = sorted({round(r.uniform(0, end), 3) for _ in range(max(2, n))})
+        first, boxes_first = {}, {}
+        for t in ts:
+            boxes_first[t] = pg.evaluate("(t) => recordFrame(t)", t)
+            raise_if_error(pg, f"t={t:g}s")
+            first[t] = pg.screenshot(type="png")
         order = ts[:]; r.shuffle(order)
-        bad = [t for t in order if hashlib.md5(shot(pg, t)).hexdigest() != h1[t]]
-        print("deterministic" if not bad else f"NOT deterministic at {bad} —— 有东西在跨帧存状态或用了 Math.random()")
+        second, boxes_second = {}, {}
+        for t in order:
+            boxes_second[t] = pg.evaluate("(t) => recordFrame(t)", t)
+            raise_if_error(pg, f"t={t:g}s")
+            second[t] = pg.screenshot(type="png")
+        bad = [t for t in ts if hashlib.md5(first[t]).hexdigest() != hashlib.md5(second[t]).hexdigest()]
+        if not bad:
+            print(f"det: deterministic（{len(ts)} 个时刻，乱序重渲逐字节一致）")
+            return
+        print(f"det: NOT deterministic at {bad}（{len(ts)} 个时刻）——有东西在跨帧存状态或用了 Math.random()")
+        (proj / "review").mkdir(exist_ok=True)
+        suspects_static = suspicious_globals(proj)
+        static_hint = suspects_static[:6]
+        if static_hint:
+            print("  可疑全局写入（按可能性排序；修法：改成 draw 内局部变量，或每帧按 t 重算）：")
+            for item in static_hint:
+                print(f"    {item['file']}:{item['line']}  {item['name']}（{item['why']}）  {item['code']}")
+        for t in bad:
+            a, b, delta, bbox, ratio, mean = image_difference(first[t], second[t])
+            print(f"  t={t:.3f}s  差异 {ratio * 100:.2f}%（平均 {mean:.1f}）  bbox={bbox}")
+            # 再从一个邻近时刻跳回来，确认是不是“上一帧留下的状态”
+            probe = (t + .37) % max(.001, end)
+            pg.evaluate("(t) => seek(t)", probe)
+            pg.evaluate("(t) => recordFrame(t)", t)
+            raise_if_error(pg, f"t={t:g}s")
+            probe_png = pg.screenshot(type="png")
+            if hashlib.md5(probe_png).hexdigest() != hashlib.md5(first[t]).hexdigest():
+                pd = image_difference(first[t], probe_png)
+                print(f"    从 t={probe:.3f}s 跳回后仍不同：差异 {pd[4] * 100:.2f}%，说明状态跟着上一帧走")
+            changed = []
+            for name, item in ((x.get("name"), x) for x in boxes_first.get(t, []) if x.get("name")):
+                other = next((y for y in boxes_second.get(t, []) if y.get("name") == name), None)
+                if other and other.get("box") != item.get("box"):
+                    changed.append((name, item.get("box"), other.get("box")))
+            if changed:
+                for name, box_a, box_b in changed[:6]:
+                    print(f"    命名元素变化：{name} {box_a} → {box_b}")
+            if bbox:
+                near = []
+                for item in boxes_first.get(t, []):
+                    name = item.get("name") or ""
+                    if not name or SUB_RE.search(name): continue
+                    box = item.get("box") or []
+                    if len(box) >= 4 and box[3] > bbox[1] and box[1] < bbox[3] and box[2] > bbox[0] and box[0] < bbox[2]:
+                        near.append(name)
+                if near:
+                    print("    差异区域内的命名元素：" + "、".join(dict.fromkeys(near)))
+                else:
+                    print("    差异区域内没有命名元素（可能是未 fr.mark 的图元或手写 ctx）")
+            outline = proj / f"review/det_{t:07.3f}.jpg"
+            save_det_pair(outline, a, b, delta, t, bbox, ratio)
+            print(f"    对照图：{outline}（另有 *_frame.png 原尺寸标注帧）")
+        if not static_hint:
+            print("  没有发现明显的模块级可变变量；再查闭包变量、window.* 写入，或把可疑函数体二分替换定位。")
+        sys.exit(1)
     with_page(proj, go)
 
 def lint(proj):
@@ -1049,6 +1389,10 @@ def lint(proj):
                     for p in project_sources(proj) if p.suffix.lower() == ".js")
     if re.search(r"Math\.random\s*\(", src): errors.append("工程用了 Math.random()，--det 会失败；改用 rng(seed)")
     if re.search(r"Date\.now\s*\(", src): errors.append("工程用了 Date.now()，--det 会失败；时间只从 t 取")
+    for item in suspicious_globals(proj):
+        if item["strong"]:
+            warnings.append(f"模块级可变状态 {item['name']}（{item['file']}:{item['line']}，{item['why']}）"
+                            f"在 draw 里赋值；如果它保存跨帧状态，--det 会失败")
     report = storyboard_report(proj, end, info.get("shots"), info.get("subs"))
     if report:
         _, sb_errors, sb_warnings = report
@@ -1088,9 +1432,32 @@ def analyze_band_diff(full_png, bg_png, safe_y=SAFE_Y, diff_max=BAND_DIFF):
              int(xs.max()) + 1, int(ys.max()) + safe_y + 2] if len(xs) else None)
     return ratio, mean, bbox
 
+def band_suspects(boxes, diff_bbox, safe_y, limit=4):
+    """把像素差异区域附近的命名元素找出来，报告里直接写名字而不是只给时刻。"""
+    if not boxes:
+        return []
+    x0, y0, x1, y1 = diff_bbox if diff_bbox else (0, safe_y + 1, 1920, 1080)
+    hits = []
+    for item in boxes:
+        name = item.get("name") or ""
+        if SUB_RE.search(name):
+            continue
+        box = item.get("box") or []
+        if len(box) < 4 or box[3] <= safe_y:
+            continue
+        if box[0] > x1 or box[2] < x0 or box[1] > y1 or box[3] < y0:
+            continue
+        hits.append(item)
+    hits.sort(key=lambda item: item["box"][3], reverse=True)
+    return hits[:limit]
+
 def band_scan(pg, times, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=BAND_RATIO,
-              mean_max=BAND_MEAN, out_dir=None):
-    """隐藏字幕后逐帧比较整帧与纯背景帧；手写 ctx、柔边渐变也会被像素抓到。"""
+              mean_max=BAND_MEAN, out_dir=None, strict=False):
+    """隐藏字幕后逐帧比较整帧与纯背景帧；手写 ctx、柔边渐变也会被像素抓到。
+
+    默认用 __vkSolid 出“实心内容帧”：跳过 bloom、fr.glow/spark/comet/flash 和柔边。
+    辉光是气氛，不算装置越界；实心主体和手写 ctx 仍然会被查到。
+    strict=True 时连辉光一起查（容易把贴地的光晕当成越界）。"""
     from PIL import Image, ImageDraw
     safe_y = int(safe_y)
     if not pg.evaluate("typeof window.__vkBackground === 'function'"):
@@ -1099,47 +1466,76 @@ def band_scan(pg, times, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=BAND_RATIO
     if pg.evaluate("window.__vkTheme || 'night'") == "flat":
         print("band: flat 场景整幅是插画底，跳过像素检查；装置请用 fr.mark 命名，靠 --check-safe 的包围盒")
         return []
+    has_solid = pg.evaluate("typeof window.__vkSolid === 'function'")
+    if not strict and not has_solid:
+        print("band: 引擎没有 __vkSolid（旧版 vk.js）；本次连辉光一起查，贴地光晕可能误报", file=sys.stderr)
     pg.evaluate("() => { if (window.VKit) window.VKit.subs = function () {}; }")
     flagged = []
     for t in times:
-        full = shot(pg, t)
+        if strict or not has_solid:
+            pg.evaluate("(t) => seek(t)", t)
+        else:
+            pg.evaluate("(t) => window.__vkSolid(t)", t)
+        raise_if_error(pg, f"t={t:g}s")
+        full = pg.screenshot(type="png")
         pg.evaluate("(t) => window.__vkBackground(t)", t)
+        raise_if_error(pg, f"t={t:g}s")
         bg = pg.screenshot(type="png")
         ratio, mean, bbox = analyze_band_diff(full, bg, safe_y, diff_max)
         if ratio <= ratio_max and mean <= mean_max:
             continue
-        item = {"t": t, "ratio": ratio, "mean": mean, "bbox": bbox}
+        boxes = pg.evaluate("(t) => recordFrame(t)", t)
+        suspects = band_suspects(boxes, bbox, safe_y)
+        item = {"t": t, "ratio": ratio, "mean": mean, "bbox": bbox, "suspects": suspects}
         if out_dir is not None and len(flagged) < 12:
             out_dir.mkdir(parents=True, exist_ok=True)
             im = Image.open(io.BytesIO(full)).convert("RGB")
-            ImageDraw.Draw(im).line([(0, safe_y), (im.width, safe_y)], fill=(255, 70, 70), width=3)
+            draw = ImageDraw.Draw(im)
+            draw.line([(0, safe_y), (im.width, safe_y)], fill=(255, 70, 70), width=3)
+            for who in suspects:
+                box = who["box"]
+                draw.rectangle(box, outline=(255, 210, 60), width=3)
             path = out_dir / f"band_{t:07.2f}.png"; im.save(path)
             item["path"] = path
         flagged.append(item)
     if not flagged:
-        print(f"band: ok（{len(times)} 个采样时刻，字幕已隐藏，y≤{safe_y} 与背景一致）")
+        mode = "辉光一起查" if strict or not has_solid else "忽略辉光/柔边"
+        print(f"band: ok（{len(times)} 个采样时刻，字幕已隐藏，{mode}，y≤{safe_y} 与背景一致）")
         return flagged
     print(f"band: {len(flagged)} 个时刻字幕带里有非字幕内容（y>{safe_y}）")
     for item in flagged:
         where = f"，{item['path']}" if item.get("path") else ""
         bbox = f"  bbox={item['bbox']}" if item.get("bbox") else ""
-        print(f"  t={item['t']:.2f}s  与背景差 {item['ratio'] * 100:.2f}%（平均 {item['mean']:.1f}）{bbox}{where}")
-    print("  提示：先看标注帧；手写 ctx 也会被查到。可用 --band-diff / --band-ratio 调阈值。")
+        if item.get("suspects"):
+            names = "、".join(f"{s.get('name') or '未命名'}{s['box']}" for s in item["suspects"])
+            names = f"  疑似：{names}"
+        elif item.get("bbox"):
+            names = "  疑似：没有命名元素（手写 ctx 或未 fr.mark 的装置）"
+        else:
+            names = ""
+        print(f"  t={item['t']:.2f}s  与背景差 {item['ratio'] * 100:.2f}%（平均 {item['mean']:.1f}）{bbox}{names}{where}")
+    print("  提示：像素检查已忽略 bloom 与 fr.glow/spark/comet/flash；装置用 fr.mark('名字', …) 包住可直接报名字。"
+          "要连辉光一起查加 --band-strict；阈值用 --band-diff / --band-ratio 调。")
+    print("  如果天空/地面写在 look.under 里却整段误报：under 的回调只能用参数 ctx，不能用 fr.*/fr.x——"
+          "后者画在内容层，背景差分会把整幅背景当成越界。")
     return flagged
 
-def check_safe(proj, interval=0.5, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=BAND_RATIO):
+def check_safe(proj, interval=0.5, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=BAND_RATIO, strict=False):
     def go(pg):
         end = pg.evaluate("END")
         if not isinstance(end, (int, float)) or end <= 0:
             sys.exit("END 未定义或不是正数")
         times = sample_times(end, interval)
+        flat = pg.evaluate("window.__vkTheme || 'night'") == "flat"
         groups = {}
         for t in times:
             boxes = pg.evaluate("(t) => recordFrame(t)", t)
+            raise_if_error(pg, f"t={t:g}s")
             frame_counts = {}
             for item in boxes:
                 name = item.get("name") or ""
                 if SUB_RE.search(name or ""): continue
+                if flat and not name: continue   # B 的整幅插画都在前景层，未命名图元是背景；装置请 fr.mark 命名
                 box = item.get("box") or [0, 0, 0, 0]
                 if len(box) < 4 or box[3] <= safe_y: continue
                 key = name or f"未命名 {item.get('kind') or '?'}"
@@ -1162,19 +1558,22 @@ def check_safe(proj, interval=0.5, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=
                     print(f"  {key}: {run['t0']:.2f}–{run['t1']:.2f}s（{run['frames']} 帧{extra}），"
                           f"最低 y={run['worst'][3]}，示例 bbox={run['worst']}")
             print("  提示：字幕由 K.subs 自动标成「字幕」；装置用 fr.mark('名字', …) 包住，报告里就能看到名字。")
-        flagged = band_scan(pg, times, safe_y, diff_max, ratio_max, out_dir=proj / "review")
+        flagged = band_scan(pg, times, safe_y, diff_max, ratio_max, out_dir=proj / "review", strict=strict)
         if not groups and not flagged:
             print(f"safe: ok（{len(times)} 个采样时刻，包围盒与像素都在安全区内）")
         else:
             print(f"safe: 不通过（包围盒 {sum(len(v) for v in groups.values())} 段，像素 {len(flagged)} 个时刻）")
+            sys.exit(1)
     with_page(proj, go)
 
-def check_band(proj, interval=0.5, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=BAND_RATIO):
+def check_band(proj, interval=0.5, safe_y=SAFE_Y, diff_max=BAND_DIFF, ratio_max=BAND_RATIO, strict=False):
     def go(pg):
         end = pg.evaluate("END")
         if not isinstance(end, (int, float)) or end <= 0:
             sys.exit("END 未定义或不是正数")
-        band_scan(pg, sample_times(end, interval), safe_y, diff_max, ratio_max, out_dir=proj / "review")
+        if band_scan(pg, sample_times(end, interval), safe_y, diff_max, ratio_max,
+                     out_dir=proj / "review", strict=strict):
+            sys.exit(1)
     with_page(proj, go)
 
 def check_overlap(proj, interval=1.0, min_ratio=0.02):
@@ -1197,6 +1596,7 @@ def check_overlap(proj, interval=1.0, min_ratio=0.02):
         allowed = 0
         for t in sample_times(end, interval):
             boxes = [b for b in pg.evaluate("(t) => recordFrame(t)", t) if b.get("name")]
+            raise_if_error(pg, f"t={t:g}s")
             if boxes: named_seen = True
             for i in range(len(boxes)):
                 for j in range(i + 1, len(boxes)):
@@ -1235,6 +1635,7 @@ def check_overlap(proj, interval=1.0, min_ratio=0.02):
                       f"最大实际相交 {run['area']:.0f}px²（占较小图元 {run['ratio'] * 100:.0f}%），"
                       f"示例 bbox={run['box']}")
         print("  提示：有意让两个装置相交时，用 fr.mark('声波圈', () => {…}, {allow:'你'}) 登记。")
+        sys.exit(1)
     with_page(proj, go)
 
 # ---------- 版本差分 ----------
@@ -1319,12 +1720,14 @@ if __name__ == "__main__":
         check_safe(proj, as_float(flag_value(a, "--check-safe", "0.5"), "--check-safe"),
                    as_float(flag_value(a, "--safe-y", str(SAFE_Y)), "--safe-y"),
                    as_float(flag_value(a, "--band-diff", str(BAND_DIFF)), "--band-diff"),
-                   as_float(flag_value(a, "--band-ratio", str(BAND_RATIO)), "--band-ratio"))
+                   as_float(flag_value(a, "--band-ratio", str(BAND_RATIO)), "--band-ratio"),
+                   "--band-strict" in a)
     elif "--check-band" in a:
         check_band(proj, as_float(flag_value(a, "--check-band", "0.5"), "--check-band"),
                    as_float(flag_value(a, "--safe-y", str(SAFE_Y)), "--safe-y"),
                    as_float(flag_value(a, "--band-diff", str(BAND_DIFF)), "--band-diff"),
-                   as_float(flag_value(a, "--band-ratio", str(BAND_RATIO)), "--band-ratio"))
+                   as_float(flag_value(a, "--band-ratio", str(BAND_RATIO)), "--band-ratio"),
+                   "--band-strict" in a)
     elif "--overlap" in a:
         check_overlap(proj, as_float(flag_value(a, "--overlap", "1.0"), "--overlap"))
     elif "--web" in a:
@@ -1337,7 +1740,9 @@ if __name__ == "__main__":
         except OSError:
             srv, url = serve(proj, 0)
             print("8765 被占用，改用", url)
-        print("预览:", url + "?play", "（Ctrl+C 结束）")
+        print("预览:", url + "?play", "（实时播放）")
+        print("  冻结帧:", url + "?t=41", "（把 41 换成任意时刻；页面出错会显示在画面上）")
+        print("  看图还是直接用读图工具打开 review/*.png / review/*.jpg；Ctrl+C 结束")
         try: threading.Event().wait()
         except KeyboardInterrupt: pass
     elif "--stills" in a:
@@ -1376,7 +1781,7 @@ if __name__ == "__main__":
         frames(proj, proj / f"renders/{vals[2] if len(vals) > 2 else '_clip'}.mp4",
                as_float(vals[0], "--clip 起点"), as_float(vals[1], "--clip 终点"), crf, preset)
     elif "--events" in a: events(proj)
-    elif "--det" in a: det(proj)
+    elif "--det" in a: det(proj, as_int(flag_value(a, "--det"), "--det", 12))
     elif "--only" in a or "--parts" in a or "--jobs" in a:
         only = None
         if "--only" in a:

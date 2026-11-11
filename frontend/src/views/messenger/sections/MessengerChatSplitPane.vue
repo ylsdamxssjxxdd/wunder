@@ -50,6 +50,7 @@
         :model-name="modelName"
         :apply-model="applyModel"
         :reasoning-effort="reasoningEffort"
+        :preset-questions="presetQuestions"
         :context-messages="contextMessages"
         :workspace-agent-id="agentId"
         :approval-mode="approvalMode"
@@ -68,13 +69,15 @@ import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessengerTurnRow from './MessengerTurnRow.vue';
 import { openThreadViewDetached } from '@/stores/threadViewLoader';
 import { getSessionMessages } from '@/stores/chatRuntimeState';
+import { startSessionWatcher, stopFollowSessionWatcher } from '@/stores/chatWatcher';
 import {
   setThreadViewVisible,
   threadViewCommitted,
   threadViewError,
   threadViewPhase,
   threadViewSlots,
-  threadViewStatus
+  threadViewStatus,
+  type ViewSlot
 } from '@/realtime/chat/threadViewStore';
 import { buildTranscriptTurnRows } from '../controller/legacyTurnRowAdapter';
 import { chatQueueForSession } from '@/stores/chatQueueState';
@@ -105,6 +108,9 @@ const session = computed(() =>
 );
 const title = computed(() => String(session.value?.title || t('chat.newSession')));
 const agentId = computed(() => String(session.value?.agent_id || ''));
+const presetQuestions = computed(() =>
+  props.controller.resolveAgentPresetQuestions?.(agentId.value) || []
+);
 const modelName = computed(() => String(
   session.value?.session_model_name || session.value?.model_name || session.value?.model || ''
 ));
@@ -117,21 +123,45 @@ const busy = computed(() => {
   return Boolean(chatStore.loadingBySession?.[props.sessionId]) ||
     ['accepted', 'running', 'queued', 'waiting_input', 'waiting_approval'].includes(status);
 });
+type SplitTurnRow = {
+  key: string;
+  rootTurnId: string;
+  kind: 'turn';
+  user: { key: string; sourceIndex: number; message: Record<string, any> };
+  assistant: { key: string; sourceIndex: number; message: Record<string, any> };
+};
+// 行包装对象按 slot 身份缓存：流式期间只有真正变化的那一轮换新对象，
+// 未变化的行保持 prop 引用不变，Vue 不再在每帧重渲染整列历史。
+let rowCache = new Map<string, { slot: ViewSlot; sourceIndex: number; row: SplitTurnRow }>();
 const rows = computed(() => {
   const slots = threadViewSlots(props.sessionId);
   if (threadViewCommitted(props.sessionId) && slots) {
     // 与主时间线同一口径：停在输入区排队条里的轮次不进入聊天记录。
     const queuedItems = chatQueueForSession(props.sessionId).items;
-    return slots
-      .filter((slot) => !isParkedQueueTurn(queuedItems, slot.user, slot.assistant))
-      .map((slot, index) => ({
-        key: slot.key,
-        rootTurnId: slot.rootTurnId,
-        kind: 'turn' as const,
-        user: { key: String(slot.user.id || `${slot.key}:user`), sourceIndex: index * 2, message: slot.user },
-        assistant: { key: String(slot.assistant.id || `${slot.key}:assistant`), sourceIndex: index * 2 + 1, message: slot.assistant }
-      }));
+    const nextCache = new Map<string, { slot: ViewSlot; sourceIndex: number; row: SplitTurnRow }>();
+    const result: SplitTurnRow[] = [];
+    let index = 0;
+    for (const slot of slots) {
+      if (isParkedQueueTurn(queuedItems, slot.user, slot.assistant)) continue;
+      const sourceIndex = index * 2;
+      const cached = rowCache.get(slot.key);
+      const row = cached && cached.slot === slot && cached.sourceIndex === sourceIndex
+        ? cached.row
+        : {
+            key: slot.key,
+            rootTurnId: slot.rootTurnId,
+            kind: 'turn' as const,
+            user: { key: String(slot.user.id || `${slot.key}:user`), sourceIndex, message: slot.user },
+            assistant: { key: String(slot.assistant.id || `${slot.key}:assistant`), sourceIndex: sourceIndex + 1, message: slot.assistant }
+          };
+      nextCache.set(slot.key, { slot, sourceIndex, row });
+      result.push(row);
+      index += 1;
+    }
+    rowCache = nextCache;
+    return result;
   }
+  rowCache = new Map();
   return buildTranscriptTurnRows(getSessionMessages(props.sessionId));
 });
 const contextMessages = computed(() => rows.value.flatMap((row) => [row.user.message, row.assistant.message]));
@@ -164,12 +194,40 @@ const applyModel = async (payload: Record<string, unknown>) => {
   return props.controller.applyComposerModelSelection(payload);
 };
 
+// 非前台窗格也要保持实时：前台会话由 openSessionById 启动正式 watcher，
+// 其余窗格单独挂一条只读跟随流，切换焦点/关闭窗格时立即停止。
+let followWatchKey = '';
+const stopFollowWatch = () => {
+  if (!followWatchKey) return;
+  stopFollowSessionWatcher(followWatchKey);
+  followWatchKey = '';
+};
+const syncFollowWatch = () => {
+  const id = String(props.sessionId || '').trim();
+  if (followWatchKey && followWatchKey !== id) stopFollowWatch();
+  if (!id || props.active || !threadViewCommitted(id)) {
+    stopFollowWatch();
+    return;
+  }
+  if (followWatchKey === id) return;
+  followWatchKey = id;
+  startSessionWatcher(chatStore, id, { follow: true });
+};
+
 watch(() => props.sessionId, (id, previous) => {
   if (previous) setThreadViewVisible(previous, false);
   if (id) setThreadViewVisible(id, true);
 }, { immediate: true });
-onBeforeUnmount(() => setThreadViewVisible(props.sessionId, false));
+onBeforeUnmount(() => {
+  stopFollowWatch();
+  setThreadViewVisible(props.sessionId, false);
+});
 watch(() => props.sessionId, load, { immediate: true });
+watch(
+  () => [props.sessionId, props.active, threadViewCommitted(props.sessionId)] as const,
+  syncFollowWatch,
+  { immediate: true, flush: 'post' }
+);
 watch(
   () => {
     const last = rows.value.at(-1);
