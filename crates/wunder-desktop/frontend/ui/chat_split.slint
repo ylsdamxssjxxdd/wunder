@@ -28,6 +28,7 @@ component SplitPane inherits Rectangle {
     callback send();
     callback stop();
     callback toggle(int);
+    callback process-page(int, int);
     callback copy-text(string);
     callback fork-thread(string, int);
     callback open-resource(string);
@@ -70,6 +71,7 @@ component SplitPane inherits Rectangle {
             spinning: root.busy;
             stream-revision: root.stream-revision;
             toggle(index) => { root.toggle(index); }
+            process-page(index, direction) => { root.process-page(index, direction); }
             copy-text(text) => { root.copy-text(text); }
             fork-thread(round) => { root.fork-thread(root.session-id, round); }
             open-resource(id) => { root.open-resource(id); }
@@ -150,6 +152,7 @@ export component ChatSplitWorkspace inherits Rectangle {
     callback send-pane(int);
     callback stop-pane(int);
     callback toggle-row(int, int);
+    callback process-page(int, int, int);
     callback select-pane-model(int, string);
     callback copy-text(string);
     callback fork-thread(string, int);
@@ -183,7 +186,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                     VerticalLayout {
                         alignment: center; spacing: 10px;
                         Text {
-                            text: I18n.zh ? "拖入线程以填充此分区" : "Drop a thread to fill this pane";
+                            text: I18n.cs_drop_thread_hint;
                             color: Theme.muted; font-size: Theme.font-sm; horizontal-alignment: center;
                         }
                     }
@@ -197,7 +200,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 model-name: root.model-names[0] != "" ? root.model-names[0] : root.model-name; model-key: root.model-keys[0];
                 attachments: root.active-session == root.session-0 ? root.attachments : []; send-key: root.send-key;
                 close => { root.close-pane(0); } activate => { root.activate-pane(0); } send => { root.send-pane(0); } stop => { root.stop-pane(0); }
-                toggle(index) => { root.toggle-row(0, index); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
+                toggle(index) => { root.toggle-row(0, index); } process-page(index, direction) => { root.process-page(0, index, direction); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
                 select-model(key) => { root.select-pane-model(0, key); }
             }
             SplitPane {
@@ -208,7 +211,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 model-name: root.model-names[1] != "" ? root.model-names[1] : root.model-name; model-key: root.model-keys[1];
                 attachments: root.active-session == root.session-1 ? root.attachments : []; send-key: root.send-key;
                 close => { root.close-pane(1); } activate => { root.activate-pane(1); } send => { root.send-pane(1); } stop => { root.stop-pane(1); }
-                toggle(index) => { root.toggle-row(1, index); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
+                toggle(index) => { root.toggle-row(1, index); } process-page(index, direction) => { root.process-page(1, index, direction); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
                 select-model(key) => { root.select-pane-model(1, key); }
             }
             SplitPane {
@@ -219,7 +222,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 model-name: root.model-names[2] != "" ? root.model-names[2] : root.model-name; model-key: root.model-keys[2];
                 attachments: root.active-session == root.session-2 ? root.attachments : []; send-key: root.send-key;
                 close => { root.close-pane(2); } activate => { root.activate-pane(2); } send => { root.send-pane(2); } stop => { root.stop-pane(2); }
-                toggle(index) => { root.toggle-row(2, index); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
+                toggle(index) => { root.toggle-row(2, index); } process-page(index, direction) => { root.process-page(2, index, direction); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
                 select-model(key) => { root.select-pane-model(2, key); }
             }
             SplitPane {
@@ -230,7 +233,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 model-name: root.model-names[3] != "" ? root.model-names[3] : root.model-name; model-key: root.model-keys[3];
                 attachments: root.active-session == root.session-3 ? root.attachments : []; send-key: root.send-key;
                 close => { root.close-pane(3); } activate => { root.activate-pane(3); } send => { root.send-pane(3); } stop => { root.stop-pane(3); }
-                toggle(index) => { root.toggle-row(3, index); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
+                toggle(index) => { root.toggle-row(3, index); } process-page(index, direction) => { root.process-page(3, index, direction); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
                 select-model(key) => { root.select-pane-model(3, key); }
             }
             column-handle := TouchArea {

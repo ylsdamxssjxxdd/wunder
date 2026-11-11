@@ -640,6 +640,11 @@ impl NativeDesktop {
         })?;
         if renaming {
             self.migrate_model_references(&original_key, &new_key);
+            // The built-in agent keeps its record in the shared meta slot, not
+            // in the `user_agents` table, so the table migration above cannot
+            // reach it. Without this the composer keeps projecting the old key
+            // and shows a model the config no longer has.
+            self.point_default_agent_at(&new_key, Some(&original_key));
             // Re-project so the returned list already reflects the migrated
             // display order and the new key.
             return self.get_desktop_settings();
@@ -654,13 +659,15 @@ impl NativeDesktop {
         if key.is_empty() {
             bail!("模型标识为空");
         }
-        self.update_settings(|config, _| {
+        let mut removed_kind = String::new();
+        let settings = self.update_settings(|config, _| {
             let entry = config
                 .llm
                 .models
                 .remove(key)
                 .ok_or_else(|| anyhow!("模型不存在"))?;
             let kind = entry.model_type.as_deref().unwrap_or("llm");
+            removed_kind = kind.to_string();
             if default_for(&config.llm, kind) == key {
                 if let Some(fallback) = fallback_default(&config.llm, kind) {
                     set_default(&mut config.llm, kind, fallback);
@@ -669,7 +676,81 @@ impl NativeDesktop {
                 }
             }
             Ok(())
-        })
+        })?;
+        // The built-in agent must not keep pointing at the removed entry. Only
+        // the conversational slot feeds it; other kinds never do.
+        if removed_kind.eq_ignore_ascii_case("llm") {
+            let promoted = default_for(
+                &self.runtime.block_on(self.state().config_store.get()).llm,
+                &removed_kind,
+            )
+            .to_string();
+            self.point_default_agent_at(&promoted, Some(key));
+        }
+        Ok(settings)
+    }
+
+    /// Point the built-in agent at `model`. `expected` guards the rewrite: pass
+    /// the key the pointer must currently name (`None` forces it), so a model
+    /// change only moves a reference it actually owned.
+    ///
+    /// The built-in agent is persisted in the shared `default_agent` meta slot
+    /// and mirrored to its worker-card file; the `user_agents` table does not
+    /// hold it. Both halves are refreshed here because the file is the import
+    /// side of the bidirectional sync — leaving it stale lets the old key come
+    /// back on the next sync.
+    fn point_default_agent_at(&self, model: &str, expected: Option<&str>) {
+        let model = model.trim();
+        let user_id = self.user_id();
+        let meta_key = wunder_server::default_agent_protocol::default_agent_meta_key(user_id);
+        let state = self.state();
+        let Ok(Some(raw)) = state.user_store.get_meta(&meta_key) else {
+            // No persisted default agent yet: it projects the config default
+            // on its own, nothing to rewrite.
+            return;
+        };
+        let Ok(mut config) =
+            serde_json::from_str::<wunder_server::default_agent_protocol::DefaultAgentConfig>(&raw)
+        else {
+            return;
+        };
+        let current = config
+            .model_name
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default();
+        // A pointer that no longer names a configured model is repaired even
+        // when it is not the entry this change touched: leaving it behind is
+        // what produced a model label the config never had.
+        let still_configured = !current.is_empty()
+            && self
+                .runtime
+                .block_on(self.state().config_store.get())
+                .llm
+                .models
+                .contains_key(current);
+        if still_configured && expected.is_some_and(|key| key != current) {
+            return;
+        }
+        let next = (!model.is_empty()).then(|| model.to_string());
+        if config.model_name == next {
+            return;
+        }
+        config.model_name = next;
+        config.updated_at = super::now_ts();
+        if let Err(error) = state.user_store.set_meta(
+            &meta_key,
+            &serde_json::to_string(&config).unwrap_or_default(),
+        ) {
+            tracing::warn!(%error, "model change could not update the default agent");
+            return;
+        }
+        if let Err(error) = self
+            .runtime
+            .block_on(state.inner_visible.materialize_user_state(user_id))
+        {
+            tracing::warn!(%error, "model change could not refresh the default agent card");
+        }
     }
 
     /// After a model key changes, keep the pointers that named it: agents that
@@ -714,7 +795,8 @@ impl NativeDesktop {
     }
 
     pub fn set_default_model(&self, key: &str) -> Result<DesktopSettings> {
-        self.update_settings(|config, _| {
+        let mut kind = String::new();
+        let settings = self.update_settings(|config, _| {
             let model = config
                 .llm
                 .models
@@ -723,10 +805,18 @@ impl NativeDesktop {
             if model.enable == Some(false) {
                 bail!("请先启用模型");
             }
-            let kind = model.model_type.clone().unwrap_or_else(|| "llm".into());
-            set_default(&mut config.llm, &kind, key.into());
+            let model_kind = model.model_type.clone().unwrap_or_else(|| "llm".into());
+            set_default(&mut config.llm, &model_kind, key.into());
+            kind = model_kind;
             Ok(())
-        })
+        })?;
+        if kind.eq_ignore_ascii_case("llm") {
+            // The built-in agent follows the conversational default; keeping
+            // its stored pointer on the old key made the composer label flip
+            // back to that model on the next agent refresh.
+            self.point_default_agent_at(key, None);
+        }
+        Ok(settings)
     }
 
     #[allow(clippy::too_many_arguments)]

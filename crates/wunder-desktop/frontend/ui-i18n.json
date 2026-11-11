@@ -516,6 +516,11 @@
   "en": "Trajectory view"
  },
  {
+  "key": "sb_thread_split_view",
+  "zh": "分裂视图",
+  "en": "Split view"
+ },
+ {
   "key": "sb_last_finished",
   "zh": "最后完成",
   "en": "Last finished"
@@ -1403,16 +1408,8 @@
  },
  {
   "key": "cp_input_placeholder",
-  "zh": "输入消息，开始新的对话…",
-  "en": "Type a message to start…"
- },
- {
-  "key": "cp_input_placeholder_workspace",
-  "zh": "给 {} 发送消息…",
-  "en": "Message {}…",
-  "params": [
-   "workspace"
-  ]
+  "zh": "请输入文本",
+  "en": "Enter text"
  },
  {
   "key": "cp_preset_questions",
@@ -2336,6 +2333,11 @@
   "key": "traj_token_usage",
   "zh": "新增占用",
   "en": "New tok"
+ },
+ {
+  "key": "cs_drop_thread_hint",
+  "zh": "拖入线程以填充此分区",
+  "en": "Drop a thread to fill this pane"
  },
  {
   "key": "ws_collapse_threads",

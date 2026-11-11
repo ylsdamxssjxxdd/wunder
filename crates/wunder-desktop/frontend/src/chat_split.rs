@@ -1,7 +1,7 @@
 use crate::{MainWindow, TimelineRow};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
@@ -80,7 +80,6 @@ enum PendingAction {
     Send(String),
     Stop,
     Model(String),
-    Toggle(i32),
 }
 
 struct PendingEntry {
@@ -94,6 +93,9 @@ thread_local! {
     static PENDING: RefCell<HashMap<usize, PendingEntry>> = RefCell::new(HashMap::new());
     static DRAFTS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
     static UPDATE_SCHEDULED: Cell<bool> = const { Cell::new(false) };
+    /// One process page read in flight per (pane, process).
+    static PROCESS_READS: RefCell<HashSet<(usize, String)>> = RefCell::new(HashSet::new());
+    static PROCESS_READS_PENDING: Cell<usize> = const { Cell::new(0) };
 }
 
 fn wake_ui(weak: &slint::Weak<MainWindow>, pending: &AtomicBool) {
@@ -458,8 +460,194 @@ fn run_pending(app: &MainWindow, slot: usize) {
             set_model(app, slot, &key, &key);
             app.invoke_select_thread_model(key.into());
         }
-        PendingAction::Toggle(index) => app.invoke_timeline_toggle(index),
     }
+}
+
+/// Fold one row in the pane the user clicked.
+///
+/// A pane renders its own model (`live` while its turn streams, otherwise the
+/// pane's history timeline). Routing the click through the single view's
+/// `timeline-toggle` folded the active thread's timeline behind the pane and
+/// left the visible rows untouched, so the expand button did nothing once the
+/// workspace was split. Folding is pure view state, so it also must not
+/// activate the pane: switching the active thread just to collapse a row made
+/// the other panes reload.
+fn toggle_pane_row(slot: usize, payload: i32) {
+    SLOTS.with(|slots| {
+        let mut slots = slots.borrow_mut();
+        let Some(slot) = slots.get_mut(slot) else {
+            return;
+        };
+        let Some(live) = slot.live.as_ref().map(|live| live.model.clone()) else {
+            slot.timeline.toggle(payload);
+            return;
+        };
+        // A live model hands over to the pane's durable timeline as soon as the
+        // snapshot catches up, so mirror the fold onto that same row by id and
+        // the handoff keeps what the user opened.
+        let id = usize::try_from(payload)
+            .ok()
+            .and_then(|index| live.row_data(index))
+            .map(|row| row.id.to_string());
+        crate::timeline::toggle_rows(&live, payload);
+        match id.as_deref() {
+            Some(id) => slot.timeline.toggle_id(id),
+            None => slot.timeline.toggle(payload),
+        }
+    });
+}
+
+/// The model a pane currently renders: its live projection while a turn
+/// streams, otherwise the pane's own history timeline.
+fn pane_model(slot: usize) -> Option<ModelRc<TimelineRow>> {
+    SLOTS.with(|slots| {
+        let slots = slots.borrow();
+        let slot = slots.get(slot)?;
+        Some(match slot.live.as_ref() {
+            Some(live) => live.model.clone(),
+            None => slot.timeline.model(),
+        })
+    })
+}
+
+/// Read one work-process page for a split pane.
+///
+/// The single view pages into the active thread's timeline, so the process bar
+/// a pane unfolded asked for a page nobody answered and stayed empty — the
+/// second half of "the expand button does nothing" once the workspace splits.
+/// The read targets the pane's own session and patches the model the pane
+/// renders, keeping one read in flight per (pane, process).
+fn process_page(
+    app: &MainWindow,
+    desktop: Arc<NativeDesktop>,
+    slot: usize,
+    payload: i32,
+    direction: i32,
+) {
+    let target = session(app, slot);
+    let Ok(index) = usize::try_from(payload) else {
+        return;
+    };
+    if target.is_empty() {
+        return;
+    }
+    let Some(model) = pane_model(slot) else {
+        return;
+    };
+    let Some(mut row) = model.row_data(index) else {
+        return;
+    };
+    if !(row.open || (row.visible && row.status_kind == crate::timeline::STATUS_RUNNING))
+        || row.process_root.is_empty()
+    {
+        return;
+    }
+    // The stream owns this model until settlement: a durable page is behind its
+    // active tail and must never replace it.
+    if row.process_local && row.status_kind == crate::timeline::STATUS_RUNNING {
+        return;
+    }
+    if row.process_local && direction == 0 && !row.process_error {
+        return;
+    }
+    let root = row.process_root.to_string();
+    // A retry repeats the page the reader asked for.
+    let direction = if direction == 0 && row.process_error && row.process_paged {
+        if row.process_newer {
+            1
+        } else if row.process_older {
+            -1
+        } else {
+            0
+        }
+    } else {
+        direction
+    };
+    if direction == 0 && row.process_paged && !row.process_error {
+        return;
+    }
+    if direction == 2 && row.process_newer {
+        return;
+    }
+    let (before, after) = match direction {
+        -1 if row.process_older => (crate::chat_process::page_edge(row.process_first), None),
+        1 if row.process_newer => (None, crate::chat_process::page_edge(row.process_last)),
+        -1 | 1 => return,
+        _ => (None, None),
+    };
+    let key = (slot, root.clone());
+    if PROCESS_READS.with(|reads| reads.borrow().contains(&key))
+        || PROCESS_READS_PENDING.with(|pending| pending.get()) >= 4
+    {
+        return;
+    }
+    PROCESS_READS.with(|reads| {
+        reads.borrow_mut().insert(key.clone());
+    });
+    PROCESS_READS_PENDING.with(|pending| pending.set(pending.get() + 1));
+    let entries = row.process_entries.clone();
+    row.process_loading = direction != 2;
+    row.process_error = false;
+    model.set_row_data(index, row);
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let lookup = target.clone();
+    let root_id = root.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(desktop.chat_process_page(&lookup, &root_id, before, after));
+    });
+    let weak = app.as_weak();
+    crate::chat_process::poll(move || {
+        let result = match rx.try_recv() {
+            Ok(value) => value,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return false,
+            Err(_) => Err(anyhow::anyhow!("process reader stopped")),
+        };
+        PROCESS_READS_PENDING.with(|pending| pending.set(pending.get().saturating_sub(1)));
+        PROCESS_READS.with(|reads| {
+            reads.borrow_mut().remove(&key);
+        });
+        let Some(app) = weak.upgrade() else {
+            return true;
+        };
+        if session(&app, slot) != target {
+            return true;
+        }
+        let Some(model) = pane_model(slot) else {
+            return true;
+        };
+        let Some(index) = model
+            .iter()
+            .position(|row| row.process_root == root.as_str())
+        else {
+            return true;
+        };
+        let Some(mut row) = model.row_data(index) else {
+            return true;
+        };
+        if !crate::chat_process::page_is_current(&row, &entries) {
+            return true;
+        }
+        row.process_loading = false;
+        match result {
+            Ok(page) => {
+                crate::chat_process::apply_page(&mut row, page, direction);
+                for reason in model.iter().filter(|reason| {
+                    reason.kind == crate::timeline::KIND_REASON
+                        && reason.process_idx == row.process_idx
+                }) {
+                    crate::timeline_text::merge_reasoning_tail(
+                        &row,
+                        crate::timeline_text::process_entry(&reason),
+                    );
+                }
+            }
+            // A failed tail refresh is retried by the live timer; only a read
+            // the reader asked for is worth a retry strip.
+            Err(_) => row.process_error = direction != 2,
+        }
+        model.set_row_data(index, row);
+        true
+    });
 }
 
 fn schedule(app: &MainWindow, slot: usize, action: PendingAction) {
@@ -967,13 +1155,19 @@ pub(crate) fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             );
         }
     });
+    app.on_split_toggle_row(|slot, index| {
+        toggle_pane_row(slot.clamp(0, 3) as usize, index);
+    });
     let weak = app.as_weak();
-    app.on_split_toggle_row(move |slot, index| {
+    let page_desktop = desktop.clone();
+    app.on_split_process_page(move |slot, index, direction| {
         if let Some(app) = weak.upgrade() {
-            schedule(
+            process_page(
                 &app,
+                page_desktop.clone(),
                 slot.clamp(0, 3) as usize,
-                PendingAction::Toggle(index),
+                index,
+                direction,
             );
         }
     });
@@ -1007,6 +1201,38 @@ mod tests {
             question_panel: None,
             failure: None,
         }
+    }
+
+    #[test]
+    fn pane_fold_patches_the_pane_model() {
+        // Each pane renders its own rows; folding has to land on that model,
+        // not on the active thread's timeline behind the single view.
+        let (model, payload) = SLOTS.with(|slots| {
+            let mut slots = slots.borrow_mut();
+            slots[0].turns = vec![turn("fixture-root", "Tail")];
+            refresh_slot(&mut slots[0]);
+            let model = slots[0].timeline.model();
+            let position = model
+                .iter()
+                .position(|row| row.kind == crate::timeline::KIND_PROCESS)
+                .expect("process bar");
+            let payload = model.row_data(position).expect("bar row").payload;
+            (model, payload)
+        });
+        assert!(
+            !model
+                .iter()
+                .any(|row| row.kind == crate::timeline::KIND_PROCESS && row.open),
+            "a durable process bar starts folded"
+        );
+        toggle_pane_row(0, payload);
+        assert!(
+            model
+                .iter()
+                .filter(|row| row.kind == crate::timeline::KIND_PROCESS)
+                .all(|row| row.open),
+            "the clicked pane model must carry the fold"
+        );
     }
 
     #[test]

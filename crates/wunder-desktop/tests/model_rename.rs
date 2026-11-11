@@ -136,3 +136,91 @@ fn rename_rejects_an_existing_key() {
         "failed rename leaves the original entry in place"
     );
 }
+
+/// Pin the built-in agent onto the current default model, the way the settings
+/// page does when the user saves the agent form.
+fn pin_builtin_agent(
+    runtime: &NativeDesktop,
+    model: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let agent = runtime.default_agent()?;
+    runtime.update_agent_settings(
+        "__default__",
+        wunder_desktop::AgentSettingsEdit {
+            name: agent.name,
+            description: agent.description,
+            system_prompt: agent.system_prompt,
+            model_name: model.to_string(),
+            icon_name: agent.icon_name,
+            icon_color: agent.icon_color,
+            icon: None,
+            tool_names: agent.tool_names,
+            preset_questions: agent.preset_questions,
+            approval_mode: agent.approval_mode,
+            preview_skill: agent.preview_skill,
+            silent: agent.silent,
+            prefer_mother: agent.prefer_mother,
+        },
+    )?;
+    Ok(())
+}
+
+/// 回归：内置智能体不在 `user_agents` 表里，只在共享 meta 里；重命名若只迁移
+/// 表就会漏掉它，输入区便一直显示一个配置中已不存在的模型键。
+#[test]
+fn renaming_keeps_the_builtin_agent_on_the_model() {
+    let _serial = serial();
+    let runtime = start_isolated().expect("isolated runtime");
+    runtime
+        .save_model(create("agent-model"))
+        .expect("create model");
+    runtime
+        .set_default_model("agent-model")
+        .expect("make default");
+    pin_builtin_agent(&runtime, "agent-model").expect("pin agent");
+    assert_eq!(runtime.default_agent().expect("agent").model, "agent-model");
+
+    runtime
+        .save_model(rename("agent-model-renamed", "agent-model"))
+        .expect("rename");
+
+    assert_eq!(
+        runtime.default_agent().expect("agent").model,
+        "agent-model-renamed",
+        "内置智能体必须跟随重命名，而不是保留旧键"
+    );
+}
+
+/// 回归：删除智能体所指的模型后，投影不能继续返回已消失的键；它应与新的
+/// 默认模型一致。
+#[test]
+fn deleting_the_agents_model_moves_it_to_the_promoted_default() {
+    let _serial = serial();
+    let runtime = start_isolated().expect("isolated runtime");
+    runtime
+        .save_model(create("doomed-model"))
+        .expect("create model");
+    runtime
+        .save_model(create("spare-model"))
+        .expect("create spare model");
+    runtime
+        .set_default_model("doomed-model")
+        .expect("make default");
+    pin_builtin_agent(&runtime, "doomed-model").expect("pin agent");
+
+    let settings = runtime.delete_model("doomed-model").expect("delete model");
+    let agent = runtime.default_agent().expect("agent");
+    assert!(
+        settings
+            .models
+            .iter()
+            .all(|model| model.key != "doomed-model"),
+        "deleted model is gone"
+    );
+    assert_ne!(agent.model, "doomed-model", "智能体不能指向已删除的模型");
+    assert!(
+        settings.models.iter().any(|model| model.key == agent.model),
+        "投影出来的模型必须仍在配置里：{}",
+        agent.model
+    );
+}

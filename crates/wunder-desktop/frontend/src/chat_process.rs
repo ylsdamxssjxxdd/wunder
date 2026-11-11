@@ -38,7 +38,7 @@ fn session(app: &MainWindow, child: bool) -> String {
 /// A page edge as a durable cursor. `-1` means "this edge is unknown", which
 /// the read turns into an absent cursor: the reader then gets the newest page
 /// instead of a page that cannot be continued.
-fn page_edge(index: i32) -> Option<i64> {
+pub(crate) fn page_edge(index: i32) -> Option<i64> {
     (index >= 0).then_some(index as i64)
 }
 
@@ -334,7 +334,7 @@ pub(crate) fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, directi
     }
 }
 
-fn page_is_current(row: &TimelineRow, entries: &ModelRc<ProcessEntry>) -> bool {
+pub(crate) fn page_is_current(row: &TimelineRow, entries: &ModelRc<ProcessEntry>) -> bool {
     row.process_entries == *entries
         && !(row.process_local && row.status_kind == crate::timeline::STATUS_RUNNING)
 }
@@ -378,7 +378,7 @@ pub fn toggle_entry(model: &impl Model<Data = TimelineRow>, payload: i32) {
     }
 }
 
-fn poll(mut receive: impl FnMut() -> bool + 'static) {
+pub(crate) fn poll(mut receive: impl FnMut() -> bool + 'static) {
     slint::Timer::single_shot(Duration::from_millis(33), move || {
         if !receive() {
             poll(receive);

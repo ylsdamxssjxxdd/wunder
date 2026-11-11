@@ -40,6 +40,7 @@ ENTRIES.extend([
     ("wf_select", "多选", "Select"),
     ("wf_selected_count", "已选 {} 项", "{} selected", ["count"]),
     ("wf_batch_download", "批量下载", "Download"),
+    ("wf_batch_delete", "删除所选", "Delete selected"),
     ("wf_connect_cloud", "连接云端工作目录", "Connect to the cloud workspace"),
     ("wf_empty", "当前目录没有文件", "No files in this directory"),
     ("wf_empty_hint", "拖入文件，或新建目录和文件", "Drop files here, or create a folder or file"),

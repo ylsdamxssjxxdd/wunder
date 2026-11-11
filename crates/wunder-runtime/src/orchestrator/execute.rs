@@ -983,7 +983,12 @@ impl Orchestrator {
                         ))
                         .await
                     {
-                        Ok(response) => break response,
+                        Ok(response) => {
+                            // 一次请求会短暂持有整份请求体（多 MB）；发完就回收空闲页，
+                            // 别让高水位留在进程里。
+                            crate::core::runtime_tuning::release_free_memory();
+                            break response;
+                        }
                         Err(err)
                             if should_recover_from_context_overflow(&err)
                                 && overflow_recovery_attempts

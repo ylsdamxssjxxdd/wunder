@@ -95,6 +95,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 必须最先安装：发布版 panic=abort，任何后续初始化的 panic 都要求
     // 先有崩溃日志落点，闪退才能事后定位。
     crash_log::install();
+    // 多 MB 的请求体与图片像素缓冲释放后 glibc 默认留在 arena 里不还给系统；
+    // 先收窄 arena 并把大块固定走 mmap，峰值过后 RSS 才能落回来。
+    wunder_server::runtime_tuning::tune_allocator_for_large_buffers();
     let mut arguments = std::env::args_os().skip(1);
     let first_argument = arguments.next();
     let mut instance = if matches!(

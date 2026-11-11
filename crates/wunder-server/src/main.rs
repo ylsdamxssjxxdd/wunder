@@ -30,6 +30,7 @@ use wunder_server::{
 use wunder_server::{blocking, long_task, runtime_tuning};
 
 fn main() -> anyhow::Result<()> {
+    runtime_tuning::tune_allocator_for_large_buffers();
     rustls_provider::install_process_default_provider();
     let runtime_threads = runtime_tuning::server_runtime_threads();
     let runtime = tokio::runtime::Builder::new_multi_thread()

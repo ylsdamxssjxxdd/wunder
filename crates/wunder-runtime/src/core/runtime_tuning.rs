@@ -29,6 +29,32 @@ pub struct SessionRunRuntimeThreads {
     pub max_blocking_threads: usize,
 }
 
+/// 常驻进程会反复处理多 MB 级的请求体与图片像素缓冲。glibc 默认让每个线程
+/// 拥有独立 arena，并把超过动态阈值的块留在 arena 里不还给系统，峰值过后 RSS
+/// 就停在高水位。这里收窄 arena 数量、把大块固定走 mmap，失败也不影响功能。
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub fn tune_allocator_for_large_buffers() {
+    unsafe {
+        libc::mallopt(libc::M_ARENA_MAX, 8);
+        libc::mallopt(libc::M_MMAP_THRESHOLD, 1024 * 1024);
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub fn tune_allocator_for_large_buffers() {}
+
+/// 把 arena 顶部的空闲页交还系统。调用点在每轮大块工作结束后，开销是一次
+/// 遍历空闲链，远小于它换回的常驻内存。
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub fn release_free_memory() {
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub fn release_free_memory() {}
+
 pub fn available_parallelism() -> usize {
     let host_parallelism = thread::available_parallelism()
         .map(|value| value.get())

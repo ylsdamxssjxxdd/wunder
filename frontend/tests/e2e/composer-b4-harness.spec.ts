@@ -60,12 +60,12 @@ test('B4 输入区：悬浮卡片 + 模型浮层 + 审批模式 + 引用注入 +
   expect(footerPadding.left).toBe('16px');
   expect(footerPadding.bottom).toBe('12px');
 
-  // §8.1 字号 14px + 无占位文字（发送目标由工具栏的工作目录 chip 说明）+ 多行自适应（1-8 行后内部滚动）
+  // §8.1 字号 14px + 占位文字固定为「请输入文本」+ 多行自适应（1-8 行后内部滚动）
   const textarea = page.locator('[data-testid="chat-composer-input"]').first();
   await expect(textarea).toBeVisible();
   const textareaStyle = await textarea.evaluate((el) => getComputedStyle(el).fontSize);
   expect(textareaStyle).toBe('14px');
-  await expect(textarea).toHaveAttribute('placeholder', '');
+  await expect(textarea).toHaveAttribute('placeholder', '请输入文本');
   await textarea.fill(Array.from({ length: 12 }, (_, index) => `line ${index}`).join('\n'));
   const overflow = await textarea.evaluate((el) => ({
     height: el.getBoundingClientRect().height,

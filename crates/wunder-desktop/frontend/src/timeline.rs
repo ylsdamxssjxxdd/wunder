@@ -363,6 +363,75 @@ impl Default for Timeline {
     }
 }
 
+/// Fold toggle over one timeline model. The single view and every split pane
+/// each own a model, so the click must patch the rows the user is looking at
+/// instead of the active thread's timeline behind the single view.
+pub(crate) fn toggle_rows(model: &ModelRc<TimelineRow>, payload: i32) {
+    if payload < 0 {
+        crate::chat_process::toggle_entry(model, payload);
+        return;
+    }
+    let Ok(payload) = usize::try_from(payload) else {
+        return;
+    };
+    let Some(row) = model.row_data(payload) else {
+        return;
+    };
+    match row.kind {
+        KIND_PROCESS => {
+            let open = !row.open;
+            let process = row.process_idx;
+            for index in 0..model.row_count() {
+                let Some(mut target) = model.row_data(index) else {
+                    continue;
+                };
+                if target.process_idx != process {
+                    continue;
+                }
+                if target.kind == KIND_PROCESS {
+                    target.open = open;
+                }
+                target.process_open = open;
+                // Opening the process is the user asking to see the work, so
+                // the batches inside it come with it. Their own state is left
+                // alone when folding: it is not on screen either way.
+                if open {
+                    if target.kind == KIND_GROUP {
+                        target.open = true;
+                    }
+                    target.group_open = true;
+                }
+                model.set_row_data(index, target);
+            }
+        }
+        KIND_GROUP => {
+            let open = !row.open;
+            let group = row.group_idx;
+            for index in 0..model.row_count() {
+                let Some(mut target) = model.row_data(index) else {
+                    continue;
+                };
+                if target.group_idx != group {
+                    continue;
+                }
+                if target.kind == KIND_GROUP {
+                    target.open = open;
+                }
+                target.group_open = open;
+                model.set_row_data(index, target);
+            }
+        }
+        _ => {
+            let mut row = row;
+            row.open = !row.open;
+            if let Some(rows) = model.as_any().downcast_ref::<VecModel<TimelineRow>>() {
+                crate::timeline_text::sync_process_child(rows, &row);
+            }
+            model.set_row_data(payload, row);
+        }
+    }
+}
+
 impl Timeline {
     pub fn new() -> Self {
         Self {
@@ -1866,66 +1935,15 @@ impl Timeline {
     /// state is never re-derived from the reducer, so a click costs one
     /// bounded model scan.
     pub fn toggle(&self, payload: i32) {
-        if payload < 0 {
-            crate::chat_process::toggle_entry(&self.model, payload);
-            return;
-        }
-        let Ok(payload) = usize::try_from(payload) else {
-            return;
-        };
-        let Some(row) = self.model.row_data(payload) else {
-            return;
-        };
-        match row.kind {
-            KIND_PROCESS => {
-                let open = !row.open;
-                let process = row.process_idx;
-                for index in 0..self.model.row_count() {
-                    let Some(mut target) = self.model.row_data(index) else {
-                        continue;
-                    };
-                    if target.process_idx != process {
-                        continue;
-                    }
-                    if target.kind == KIND_PROCESS {
-                        target.open = open;
-                    }
-                    target.process_open = open;
-                    // Opening the process is the user asking to see the work, so
-                    // the batches inside it come with it. Their own state is left
-                    // alone when folding: it is not on screen either way.
-                    if open {
-                        if target.kind == KIND_GROUP {
-                            target.open = true;
-                        }
-                        target.group_open = true;
-                    }
-                    self.model.set_row_data(index, target);
-                }
-            }
-            KIND_GROUP => {
-                let open = !row.open;
-                let group = row.group_idx;
-                for index in 0..self.model.row_count() {
-                    let Some(mut target) = self.model.row_data(index) else {
-                        continue;
-                    };
-                    if target.group_idx != group {
-                        continue;
-                    }
-                    if target.kind == KIND_GROUP {
-                        target.open = open;
-                    }
-                    target.group_open = open;
-                    self.model.set_row_data(index, target);
-                }
-            }
-            _ => {
-                let mut row = row;
-                row.open = !row.open;
-                crate::timeline_text::sync_process_child(&self.model, &row);
-                self.model.set_row_data(payload, row);
-            }
+        toggle_rows(&self.model(), payload);
+    }
+
+    /// Fold the row with `id`, for a pane that folded it in the live model and
+    /// needs the decision to survive the handoff to its durable timeline.
+    pub fn toggle_id(&self, id: &str) {
+        let model = self.model();
+        if let Some(index) = model.iter().position(|row| row.id == id) {
+            toggle_rows(&model, index as i32);
         }
     }
 

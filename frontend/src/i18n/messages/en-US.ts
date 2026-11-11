@@ -821,7 +821,7 @@ export default {
   'chat.session.running': 'Running',
   'chat.session.waitingApproval': 'Waiting for approval',
   'chat.session.waitingUserInput': 'Waiting for input',
-  'chat.input.placeholder': 'Type your message',
+  'chat.input.placeholder': 'Enter text',
   'chat.input.placeholderCommands': 'Type your message (supports /help /new /stop /compact)',
   'chat.input.send': 'Send',
   'chat.input.sendHintEnter': 'Enter to send',

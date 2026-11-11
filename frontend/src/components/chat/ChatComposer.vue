@@ -737,9 +737,9 @@ const reasoningEffortOptions = computed(() =>
     label: t(`desktop.system.reasoningEffort.${value}`)
   }))
 );
-// 普通输入保持无占位文字；问询轮次只显示当前问题的输入提示。
+// 普通输入显示通用提示；问询轮次改成当前问题的输入提示。
 const inputPlaceholder = computed(() =>
-  props.inquiryActive ? t('chat.input.inquiryPlaceholder') : ''
+  props.inquiryActive ? t('chat.input.inquiryPlaceholder') : t('chat.input.placeholder')
 );
 const formatVoiceDurationLabel = (durationMs: unknown): string => {
   const value = Number(durationMs);

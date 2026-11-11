@@ -17,6 +17,9 @@ pub fn install(app: &MainWindow) {
     app.set_profile_ready(true);
     app.set_threads_ready(true);
     app.set_active_session_id("t1".into());
+    // Preview fixtures have no conversation list to project from, so the
+    // single view's header takes the name straight from the fixture.
+    app.set_active_thread_title("检查示例文件".into());
     app.set_status("本地演示".into());
     app.set_selected_workspace(0);
     app.set_workspaces(ModelRc::new(VecModel::from(vec![
@@ -206,6 +209,13 @@ pub fn install(app: &MainWindow) {
         *select_active.borrow_mut() = target;
         app.set_timeline(ModelRc::from(select_models[target].clone()));
         app.set_draft(select_drafts.borrow()[target].as_str().into());
+        let title = app
+            .get_sidebar_rows()
+            .iter()
+            .find(|row| row.kind == 1 && row.payload == index)
+            .map(|row| row.title)
+            .unwrap_or_default();
+        app.set_active_thread_title(title);
         scroll_to_end(&app);
     });
 
@@ -434,10 +444,16 @@ pub fn install(app: &MainWindow) {
     app.on_split_select_model(|_, _| {});
     let weak = app.as_weak();
     app.on_split_toggle_row(move |slot, index| {
-        if let Some(app) = weak.upgrade() {
-            app.invoke_split_activate(slot);
-            app.invoke_timeline_toggle(index);
-        }
+        // Preview panes hold their own row models, exactly like production, so
+        // the fold has to patch the pane the user clicked.
+        let Some(app) = weak.upgrade() else { return };
+        let rows = match slot {
+            0 => app.get_split_rows_0(),
+            1 => app.get_split_rows_1(),
+            2 => app.get_split_rows_2(),
+            _ => app.get_split_rows_3(),
+        };
+        crate::timeline::toggle_rows(&rows, index);
     });
 }
 

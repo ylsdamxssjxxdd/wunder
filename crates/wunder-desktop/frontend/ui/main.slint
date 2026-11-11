@@ -468,6 +468,10 @@ export component MainWindow inherits Window {
     in-out property <string> split-title-1;
     in-out property <string> split-title-2;
     in-out property <string> split-title-3;
+    // The open thread's own name. Every split pane carries its title; the single
+    // view reads this one so the transcript is named too. Rust projects it from
+    // the conversation list whenever the list or the selection changes.
+    in-out property <string> active-thread-title: "";
     in-out property <[TimelineRow]> split-rows-0: [];
     in-out property <[TimelineRow]> split-rows-1: [];
     in-out property <[TimelineRow]> split-rows-2: [];
@@ -493,6 +497,7 @@ export component MainWindow inherits Window {
     callback split-stop(int);
     callback split-drop-row(int, int);
     callback split-toggle-row(int, int);
+    callback split-process-page(int, int, int);
     callback split-select-model(int, string);
     callback split-thread-update-ready();
     in-out property <[AgentCard]> agents: [];
@@ -1089,12 +1094,23 @@ export component MainWindow inherits Window {
     // The native projection bumps scroll-revision; TimelineView owns the
     // follow-output scroll itself, so no handler is needed here.
 
-    // The workspace the active thread belongs to; feeds the composer's
-    // workspace label. The native layer always seeds one workspace, so
-    // indexing stays in range.
+    // Whether a workspace is selected; guards every index into the workspace
+    // list (root path, branch), since the native layer always seeds one.
     out property <bool> has-active-workspace: root.selected-workspace >= 0
         && root.selected-workspace < root.workspaces.length;
-    out property <string> active-workspace-name: root.has-active-workspace ? root.workspaces[root.selected-workspace].name : "";
+    // What the single view's header names: a local thread from the conversation
+    // projection, a cloud thread from the rows its picker already carries.
+    out property <string> single-thread-title: root.cloud-chat-active
+        ? (root.cloud-thread-index >= 0 && root.cloud-thread-index < root.cloud-thread-rows.length
+            ? root.cloud-thread-rows[root.cloud-thread-index].title : "")
+        : root.active-thread-title;
+    // A thread that has not earned a title yet still gets the header, so the
+    // strip does not appear and vanish on the first send.
+    out property <bool> single-thread-head-visible: root.cloud-chat-active
+        ? (root.cloud-thread-index >= 0 && root.cloud-thread-index < root.cloud-thread-rows.length)
+        : root.active-session-id != "";
+    out property <string> single-thread-head-title: root.single-thread-title != ""
+        ? root.single-thread-title : I18n.chat_new_thread;
     // One timeline fold toggle: the Rust projection patches only the rows the
     // fold owns (itself, its tool batch, or its whole earlier turn).
     callback timeline-toggle(int);
@@ -1382,9 +1398,35 @@ export component MainWindow inherits Window {
                 background: Theme.chat;
                 VerticalLayout {
                     spacing: 0px;
-                    // The transcript owns the full column height: the web form
-                    // dropped the top bar, so the workspace/thread identity it
-                    // carried lives only in the sidebar now.
+                    // Single view header. A split pane names its thread, so a
+                    // one-thread screen that showed no title read as an
+                    // anonymous stream. Same height, dot and type scale as
+                    // SplitPane's head, so the two layouts stay one system.
+                    if root.single-thread-head-visible : Rectangle {
+                        height: 34px;
+                        background: Theme.surface;
+                        HorizontalLayout {
+                            padding-left: 12px; padding-right: 12px; spacing: 8px;
+                            Rectangle {
+                                width: 7px; height: 7px; y: (parent.height - 7px) / 2;
+                                border-radius: 4px;
+                                background: root.busy ? Theme.accent-ink : Theme.border-strong;
+                            }
+                            Text {
+                                horizontal-stretch: 1; min-width: 0px; height: parent.height;
+                                text: root.single-thread-head-title; color: Theme.text;
+                                font-size: Theme.font-md; font-weight: 650;
+                                vertical-alignment: center; overflow: elide;
+                            }
+                        }
+                        Rectangle {
+                            y: parent.height - 1px; width: parent.width; height: 1px;
+                            background: Theme.border;
+                        }
+                    }
+                    // The transcript owns the remaining column height. Context
+                    // that used to sit in a top bar (workspace, thread) now
+                    // lives in the sidebar and this one header line.
                     // The transcript holder is a small wrapper so the timeline
                     // stays reachable from outside: a `public function` cannot
                     // name an element that an `if` may remove, so the two views
@@ -1508,7 +1550,6 @@ export component MainWindow inherits Window {
                             model-saving: root.saving;
                             select-model(index, key) => { root.select-thread-model(key); }
                             open-model-settings => { root.settings-open = true; root.settings-active-panel = 1; root.refresh-settings(); }
-                            workspace-name: root.cloud-chat-active ? I18n.il_browse_title : root.active-workspace-name;
                             branch-name: root.active-workspace-branch;
                             host-cpu: root.host-cpu; host-memory: root.host-memory;
                             host-net: root.host-net; host-disk: root.host-disk;
@@ -1588,6 +1629,7 @@ export component MainWindow inherits Window {
                 send-pane(slot) => { root.split-send(slot); }
                 stop-pane(slot) => { root.split-stop(slot); }
                 toggle-row(slot, index) => { root.split-toggle-row(slot, index); }
+                process-page(slot, index, direction) => { root.split-process-page(slot, index, direction); }
                 select-pane-model(slot, key) => { root.split-select-model(slot, key); }
                 fork-thread(session, round) => { root.fork-thread(session, round); }
                 copy-text(text) => { root.copy-raw(text); }

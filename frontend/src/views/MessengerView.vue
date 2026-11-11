@@ -55,7 +55,7 @@
 
       <section
         class="messenger-main"
-        :class="{ 'is-split-drop-target': singleDropActive }"
+        :class="{ 'is-split-drop-target': singleDropActive, 'has-chat-head': Boolean(chatHeaderTitle) }"
         @dragover="handleSingleSplitDragOver"
         @dragleave="singleDropActive = false"
         @drop="handleSingleSplitDrop"
@@ -89,6 +89,17 @@
           :secondary-session-id="splitSecondaryId"
         />
         <template v-else>
+
+        <!-- 单视图标题行：分屏的每个窗格都有自己的标题，只剩一个视图时聊天区
+             却是一段没有名字的记录流。标题取当前线程，运行中点亮状态点。 -->
+        <header
+          v-if="chatHeaderTitle"
+          class="messenger-chat-head"
+          :data-session-id="String(chatStore.activeSessionId || '')"
+        >
+          <span class="messenger-chat-head-state" :class="{ 'is-running': chatHeaderBusy }" aria-hidden="true"></span>
+          <span class="messenger-chat-head-title" :title="chatHeaderTitle">{{ chatHeaderTitle }}</span>
+        </header>
 
         <!-- 刻度与滚动视口同排：`.messenger-chat-lane` 给刻度留出独立通道，
              刻度不再悬浮在滚动容器右缘的滚动条上。 -->
@@ -567,6 +578,37 @@ const openSessionTrajectory = controller.openSessionTrajectory;
 const renameTimelineSession = controller.renameTimelineSession;
 const resolveAgentRuntimeState = controller.resolveAgentRuntimeState;
 const resolvedMessageConversationKind = controller.resolvedMessageConversationKind;
+
+// 单视图标题行的数据：标题取当前会话，状态点与分屏窗格用同一套运行判定。
+const activeChatSession = vueComputed<Record<string, unknown> | null>(() => {
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  if (!sessionId) {
+    return null;
+  }
+  const sessions = Array.isArray(chatStore.sessions) ? chatStore.sessions : [];
+  return (sessions.find((item: any) => String(item?.id || '').trim() === sessionId) || null) as
+    | Record<string, unknown>
+    | null;
+});
+const chatHeaderTitle = vueComputed(() => {
+  if (localThreadActive.value || resolvedMessageConversationKind.value !== 'agent') {
+    return '';
+  }
+  if (!hasActiveThread.value) {
+    return '';
+  }
+  const title = String(activeChatSession.value?.title || '').trim();
+  return title || t('chat.newSession');
+});
+const chatHeaderBusy = vueComputed(() => {
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  if (!sessionId) {
+    return false;
+  }
+  const status = String(activeChatSession.value?.runtime_status || '');
+  return Boolean(chatStore.loadingBySession?.[sessionId])
+    || ['accepted', 'running', 'queued', 'waiting_input', 'waiting_approval'].includes(status);
+});
 const resourcePreviewContent = controller.resourcePreviewContent;
 const resourcePreviewHint = controller.resourcePreviewHint;
 const resourcePreviewKind = controller.resourcePreviewKind;

@@ -353,19 +353,22 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                                 editor.baseline = Some(clean);
                             }
                         });
+                        // The composer follows the renamed model. The key it
+                        // showed has to be captured before `apply_settings`
+                        // re-projects the catalogue: by then a pin on the old
+                        // key has already been dropped to the fallback, and the
+                        // composer would keep labelling the thread with a
+                        // different model than the one it was pinned to.
+                        let composer_key = app.get_selected_model_key().to_string();
                         crate::native_pages::apply_settings(&app, settings);
                         if let Some(index) =
                             app.get_models().iter().position(|model| model.key == key)
                         {
                             app.set_selected_model(index as i32);
                         }
-                        // The composer follows the renamed model. This runs
-                        // after apply_settings re-projected the catalogue: a
-                        // lookup before it would miss the new key and blank
-                        // the composer instead of selecting it.
-                        let selected = app.get_selected_model_key();
                         if renaming
-                            && (selected.is_empty() || selected == draft.original_key.as_str())
+                            && (composer_key.is_empty()
+                                || composer_key == draft.original_key.as_str())
                         {
                             crate::native_pages::select_model_key(&app, &key);
                         }

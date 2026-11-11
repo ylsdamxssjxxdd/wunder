@@ -244,9 +244,11 @@ component GroupHeaderRow inherits DragRow {
     workspace-id: data.kind == 2 ? "cloud" : data.workspace-id;
     selected: data.selected;
     selected-color: Theme.selected;
+    // 点击这一行是它自己线程树的开关：展开时提示可收起，收起时提示可展开；
+    // 本地工作区收起后仍显示目录，方便确认这一组指向哪里。
     tooltip: data.kind == 2
         ? (data.expanded ? I18n.ws_collapse_threads : I18n.ws_expand_threads)
-        : (data.path != "" ? data.path : data.expanded ? I18n.ws_collapse_threads : I18n.ws_expand_threads);
+        : (data.expanded ? I18n.ws_collapse_threads : data.path != "" ? data.path : I18n.ws_expand_threads);
     actions-width: data.kind == 2 ? 40px : 84px;
 
     // Selection indicator on the workspace row.

@@ -268,11 +268,29 @@ fn build_context_cache_probe(messages: &[ChatMessage], tools: Option<&[Value]>) 
     probe
 }
 
+/// Streams JSON straight into the digest. Messages that carry inline images are
+/// several megabytes, and hashing them through `to_vec` allocated a full second
+/// copy of the payload on every round; the writer keeps the cost at one buffer.
+struct Sha256Sink(Sha256);
+
+impl std::io::Write for Sha256Sink {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.update(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 pub(super) fn stable_json_hash(value: &Value) -> String {
-    let bytes = serde_json::to_vec(value).unwrap_or_default();
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    let digest = hex::encode(hasher.finalize());
+    let mut sink = Sha256Sink(Sha256::new());
+    if serde_json::to_writer(&mut sink, value).is_err() {
+        let empty = hex::encode(Sha256::new().finalize());
+        return empty.chars().take(16).collect();
+    }
+    let digest = hex::encode(sink.0.finalize());
     digest.chars().take(16).collect()
 }
 

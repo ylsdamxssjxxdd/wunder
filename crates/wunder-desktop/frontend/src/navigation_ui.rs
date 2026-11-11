@@ -741,18 +741,41 @@ fn selected_local_workspace_index(app: &MainWindow) -> Option<usize> {
     (cards.row_count() > 0).then_some(0)
 }
 
+/// Set the one expanded group. The tree is an accordion: only one workspace
+/// reveals its threads at a time, so opening another closes the previous one.
+fn expand_only(workspace_id: &str) {
+    EXPANDED.with(|slot| {
+        let mut expanded = slot.borrow_mut();
+        if expanded.len() == 1 && expanded.contains(workspace_id) {
+            return;
+        }
+        expanded.clear();
+        expanded.insert(workspace_id.to_string());
+    });
+}
+
+/// Click on a workspace header: its own tree disclosure. The first click opens
+/// the group, a second click folds it away again; opening another workspace
+/// still closes the previous one.
+fn toggle_workspace(workspace_id: &str) {
+    EXPANDED.with(|slot| {
+        let mut expanded = slot.borrow_mut();
+        let was_expanded = expanded.contains(workspace_id);
+        expanded.clear();
+        if !was_expanded {
+            expanded.insert(workspace_id.to_string());
+        }
+    });
+}
+
+fn is_expanded(workspace_id: &str) -> bool {
+    EXPANDED.with(|slot| slot.borrow().contains(workspace_id))
+}
+
 /// Enter the cloud device: pin the cloud workspace row, drop the local
 /// selection and point the working-directory panel at the cloud root.
-fn activate_cloud_device(app: &MainWindow, api: Arc<NativeDesktop>, force_expand: bool) {
-    let should_expand = EXPANDED.with(|slot| {
-        let mut expanded = slot.borrow_mut();
-        let was_expanded = expanded.contains("cloud");
-        expanded.clear();
-        if force_expand || !was_expanded {
-            expanded.insert("cloud".to_string());
-        }
-        force_expand || !was_expanded
-    });
+fn activate_cloud_device(app: &MainWindow, api: Arc<NativeDesktop>) {
+    toggle_workspace("cloud");
     app.set_selected_workspace(-1);
     let was_cloud = app.get_cloud_chat_active();
     if !was_cloud {
@@ -762,32 +785,27 @@ fn activate_cloud_device(app: &MainWindow, api: Arc<NativeDesktop>, force_expand
     app.set_sidebar_selection_mode(false);
     crate::workspace_files::set_target(app, api, crate::workspace_files::Target::Cloud);
     project_sidebar(app, None);
-    if should_expand && !was_cloud {
+    if !was_cloud {
         app.invoke_cloud_open_threads();
     }
 }
 
-/// Enter a local workspace: mirror its folder in the working-directory panel,
-/// expand its thread tree and leave the cloud conversation view.
-fn activate_local_workspace(
-    app: &MainWindow,
-    api: Arc<NativeDesktop>,
-    workspace: usize,
-    force_expand: bool,
-) {
+/// Click on a local workspace header: reveal or fold its thread tree. Folding
+/// only closes the tree — the workspace stays the selected one, so the
+/// working-directory panel and the next new task keep pointing at its folder.
+fn activate_local_workspace(app: &MainWindow, api: Arc<NativeDesktop>, workspace: usize) {
     let Some(card) = app.get_workspaces().row_data(workspace) else {
         return;
     };
     let id = card.workspace_id.to_string();
     let was_cloud = app.get_cloud_chat_active();
-    EXPANDED.with(|slot| {
-        let mut expanded = slot.borrow_mut();
-        let was_expanded = expanded.contains(id.as_str());
-        expanded.clear();
-        if force_expand || !was_expanded {
-            expanded.insert(id.clone());
-        }
-    });
+    let folding = is_expanded(id.as_str());
+    toggle_workspace(id.as_str());
+    // 收起只是折叠线程树：不切换工作目录，也不改动当前选中的工作区。
+    if folding && !was_cloud {
+        project_sidebar(app, None);
+        return;
+    }
     THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
     app.set_sidebar_selection_mode(false);
     crate::cloud_threads::leave(app);
@@ -834,11 +852,7 @@ fn focus_workspace_card(app: &MainWindow, api: Arc<NativeDesktop>, workspace_id:
             app.set_selected_workspace(index as i32);
             // The focused thread's workspace must show its threads, so the
             // focus implicitly expands the workspace.
-            EXPANDED.with(|slot| {
-                let mut expanded = slot.borrow_mut();
-                expanded.clear();
-                expanded.insert(workspace_id.to_string());
-            });
+            expand_only(workspace_id);
             let root = card.root_path.to_string();
             if !root.is_empty() {
                 crate::workspace_files::set_target(
@@ -902,13 +916,14 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         if row.kind == 2 {
             // Cloud workspace row: toggles its thread tree without leaving
             // the cloud device.
-            activate_cloud_device(&app, api.clone(), false);
+            activate_cloud_device(&app, api.clone());
         } else if row.kind == 0 {
-            // A workspace header is also its tree disclosure. Do not open its
+            // A workspace header is also its tree disclosure: it opens the
+            // group and folds it again on the next click. Do not open its
             // first thread: on Win7/HDD that would start a lease and history
             // read while the user is only trying to reveal the tree.
             if let Ok(workspace) = usize::try_from(row.payload) {
-                activate_local_workspace(&app, api.clone(), workspace, false);
+                activate_local_workspace(&app, api.clone(), workspace);
             }
         } else if row.kind == 3 {
             app.set_cloud_thread_index(row.payload + 1);
@@ -931,14 +946,14 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 if crate::workspace_files::is_cloud_target() {
                     return;
                 }
-                activate_cloud_device(&app, device_api.clone(), true);
+                activate_cloud_device(&app, device_api.clone());
             }
             0 => {
                 if !crate::workspace_files::is_cloud_target() {
                     return;
                 }
                 if let Some(workspace) = selected_local_workspace_index(&app) {
-                    activate_local_workspace(&app, device_api.clone(), workspace, true);
+                    activate_local_workspace(&app, device_api.clone(), workspace);
                 }
             }
             _ => {}
@@ -1103,6 +1118,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 // thread while the archive transaction was on disk.
                 if app.get_active_session_id().as_str() == id.as_str() {
                     app.set_active_session_id("".into());
+                    crate::native_chat::sync_thread_title(&app);
                 }
                 app.invoke_refresh_chat();
                 crate::navigation_ui::project_sidebar(&app, None);
@@ -1217,6 +1233,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 // batch. Only clear the session that was actually archived.
                 if archived_ids.contains(app.get_active_session_id().as_str()) {
                     app.set_active_session_id("".into());
+                    crate::native_chat::sync_thread_title(&app);
                 }
                 if archived > 0 {
                     app.invoke_refresh_chat();
@@ -1389,6 +1406,31 @@ mod tests {
         assert_eq!(refreshed_workspace_selection(Some("gone"), &ids, false), 0);
         assert_eq!(refreshed_workspace_selection(None, &ids, true), -1);
         assert_eq!(refreshed_workspace_selection(None, &[], false), -1);
+    }
+
+    /// A workspace header is its own tree disclosure: the first click opens the
+    /// group, the second folds it away, and opening another workspace still
+    /// closes the previous one (the tree stays an accordion).
+    #[test]
+    fn workspace_click_toggles_its_own_group() {
+        let expanded = |id: &str| EXPANDED.with(|slot| slot.borrow().contains(id));
+        EXPANDED.with(|slot| slot.borrow_mut().clear());
+        toggle_workspace("workspace-a");
+        assert!(expanded("workspace-a"));
+        toggle_workspace("workspace-a");
+        assert!(!expanded("workspace-a"));
+        toggle_workspace("workspace-a");
+        toggle_workspace("workspace-b");
+        assert!(expanded("workspace-b"));
+        assert!(!expanded("workspace-a"));
+        toggle_workspace("cloud");
+        assert!(expanded("cloud"));
+        assert!(!expanded("workspace-b"));
+        // Focusing a thread's workspace always reveals it.
+        expand_only("workspace-a");
+        assert!(expanded("workspace-a"));
+        assert!(!expanded("cloud"));
+        EXPANDED.with(|slot| slot.borrow_mut().clear());
     }
 
     #[test]

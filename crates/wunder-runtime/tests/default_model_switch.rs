@@ -278,3 +278,76 @@ async fn new_thread_follows_admin_default_switch_for_default_agent() {
         json!("model-b")
     );
 }
+
+async fn admin_llm(context: &TestContext) -> Value {
+    let config = context.state.config_store.get().await;
+    json!({ "llm": config.llm })
+}
+
+async fn set_agent_model(context: &TestContext, model: &str) {
+    let (status, payload) = send_json(
+        &context.app,
+        Some(&context.token),
+        Method::PUT,
+        "/wunder/user/agent",
+        Some(json!({ "model_name": model })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{payload}");
+    assert_eq!(payload["data"]["agent"]["configured_model_name"], json!(model));
+}
+
+/// 管理端把 `from` 改名成 `to`：整体写回 llm 配置，旧键从配置里消失。
+async fn rename_admin_model(context: &TestContext, from: &str, to: &str) {
+    let mut llm = admin_llm(context).await;
+    let models = llm["llm"]["models"]
+        .as_object_mut()
+        .expect("models object");
+    let entry = models.remove(from).expect("old model entry");
+    models.insert(to.to_string(), entry);
+    let (status, payload) = send_json(
+        &context.app,
+        Some(&context.token),
+        Method::POST,
+        "/wunder/admin/llm",
+        Some(llm),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{payload}");
+}
+
+/// 改名后智能体记录里还留着旧键。执行侧会自动回退到默认模型，所以请求照常成功；
+/// 但投影不能继续把旧键当配置值报给输入区，否则新建线程仍显示已不存在的模型。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn renamed_model_does_not_linger_on_the_agent() {
+    let context = build_context("switch_user_renamed", base_models).await;
+    set_agent_model(&context, "model-b").await;
+
+    rename_admin_model(&context, "model-b", "model-c").await;
+
+    let after = agent_payload(&context).await;
+    assert_eq!(after["configured_model_name"], Value::Null, "{after}");
+    assert_eq!(after["model_name"], json!("model-a"), "{after}");
+
+    let (status, models) = send_json(
+        &context.app,
+        Some(&context.token),
+        Method::GET,
+        "/wunder/agents/models",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{models}");
+    let names: Vec<&str> = models["data"]["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .filter_map(|item| item["name"].as_str())
+        .collect();
+    assert!(!names.contains(&"model-b"), "{models}");
+    assert_eq!(models["data"]["user_default_model_name"], json!("model-a"));
+
+    let created = create_session(&context, "").await;
+    assert_eq!(created["model_key"], json!("model-a"), "{created}");
+    assert_eq!(created["model_name"], json!("provider-a"), "{created}");
+}

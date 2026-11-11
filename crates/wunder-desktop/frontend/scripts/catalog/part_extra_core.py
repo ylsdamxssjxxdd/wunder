@@ -107,6 +107,7 @@ ENTRIES = [
     ('stc_archives_delete_confirm', '该归档线程及其本地记录将被永久删除，无法恢复。确认删除？', 'Permanently delete this archived thread and its local records? This cannot be undone.'),
     ('stc_archives_restore', '还原', 'Restore'),
     ('traj_token_usage', '新增占用', 'New tok'),
+    ('cs_drop_thread_hint', '拖入线程以填充此分区', 'Drop a thread to fill this pane'),
     ('ws_collapse_threads', '收起工作区线程', 'Collapse workspace threads'),
     ('ws_expand_threads', '展开工作区线程', 'Expand workspace threads'),
     # runtime_status 用来识别运行时返回的状态文本（"已终止"/"已取消"/"已中断"），

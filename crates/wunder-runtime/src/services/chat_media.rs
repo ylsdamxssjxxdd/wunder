@@ -19,9 +19,10 @@ use reqwest::multipart::{Form, Part};
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 use tokio::fs;
 use tokio::process::Command;
 use tracing::warn;
@@ -1455,6 +1456,93 @@ pub(crate) async fn encode_model_ready_data_url(bytes: Vec<u8>, mime: String) ->
     format!("data:{mime};base64,{}", STANDARD.encode(bytes))
 }
 
+/// 跨轮历史里的同一张图会被反复内联：每次都要读盘、解码、缩放并 base64。
+/// 多轮读图会话因此每轮重新分配十几到几十 MB 的临时像素缓冲，堆高水位降不
+/// 下来。这里按「路径 + 文件身份 + 编码策略版本」缓存最终 data URL，命中后
+/// 只复制一次字符串，不再重新解码。
+const IMAGE_VIEW_CACHE_BYTES: usize = 48 * 1024 * 1024;
+/// 入模编码策略变化时递增，避免继续命中旧视图。
+const IMAGE_VIEW_CACHE_VERSION: u32 = 1;
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct ImageViewKey {
+    path: String,
+    len: u64,
+    modified_nanos: u128,
+    version: u32,
+}
+
+#[derive(Default)]
+struct ImageViewCache {
+    entries: HashMap<ImageViewKey, (Arc<str>, usize)>,
+    order: VecDeque<ImageViewKey>,
+    bytes: usize,
+}
+
+static IMAGE_VIEW_CACHE: OnceLock<Mutex<ImageViewCache>> = OnceLock::new();
+
+impl ImageViewCache {
+    fn touch(&mut self, key: &ImageViewKey) {
+        if let Some(position) = self.order.iter().position(|existing| existing == key) {
+            self.order.remove(position);
+        }
+        self.order.push_back(key.clone());
+    }
+
+    fn store(&mut self, key: ImageViewKey, data_url: Arc<str>) {
+        let size = data_url.len();
+        if size > IMAGE_VIEW_CACHE_BYTES {
+            return;
+        }
+        if let Some((_, previous)) = self.entries.remove(&key) {
+            self.bytes = self.bytes.saturating_sub(previous);
+            if let Some(position) = self.order.iter().position(|existing| *existing == key) {
+                self.order.remove(position);
+            }
+        }
+        self.bytes = self.bytes.saturating_add(size);
+        self.entries.insert(key.clone(), (data_url, size));
+        self.order.push_back(key);
+        while self.bytes > IMAGE_VIEW_CACHE_BYTES {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some((_, freed)) = self.entries.remove(&oldest) {
+                self.bytes = self.bytes.saturating_sub(freed);
+            }
+        }
+    }
+}
+
+fn image_view_cache_key(path: &Path, metadata: &std::fs::Metadata) -> ImageViewKey {
+    let modified_nanos = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    ImageViewKey {
+        path: path.to_string_lossy().into_owned(),
+        len: metadata.len(),
+        modified_nanos,
+        version: IMAGE_VIEW_CACHE_VERSION,
+    }
+}
+
+fn image_view_cache_get(key: &ImageViewKey) -> Option<String> {
+    let cache = IMAGE_VIEW_CACHE.get_or_init(|| Mutex::new(ImageViewCache::default()));
+    let mut cache = cache.lock().ok()?;
+    let (data_url, _) = cache.entries.get(key)?.clone();
+    cache.touch(key);
+    Some(data_url.to_string())
+}
+
+fn image_view_cache_insert(key: ImageViewKey, data_url: &str) {
+    let cache = IMAGE_VIEW_CACHE.get_or_init(|| Mutex::new(ImageViewCache::default()));
+    if let Ok(mut cache) = cache.lock() {
+        cache.store(key, Arc::from(data_url));
+    }
+}
+
 /// Re-inline a previously persisted image from its local path. Used when a
 /// resumed turn's history still carries the "analyze this image" instruction
 /// but its pixels were dropped by persistence.
@@ -1469,6 +1557,10 @@ pub async fn load_image_data_url_for_path(path: &str) -> Option<String> {
     if metadata.len() > REINLINE_IMAGE_MAX_BYTES {
         return None;
     }
+    let cache_key = image_view_cache_key(path, &metadata);
+    if let Some(data_url) = image_view_cache_get(&cache_key) {
+        return Some(data_url);
+    }
     let bytes = fs::read(path).await.ok()?;
     let mime = detect_supported_image_content_type(path, &bytes)?;
     if !is_supported_model_image_mime(&mime) || !validate_image_attachment_bytes(&mime, &bytes) {
@@ -1481,7 +1573,9 @@ pub async fn load_image_data_url_for_path(path: &str) -> Option<String> {
     })
     .await
     .ok()?;
-    Some(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
+    let data_url = format!("data:{mime};base64,{}", STANDARD.encode(bytes));
+    image_view_cache_insert(cache_key, &data_url);
+    Some(data_url)
 }
 
 /// 加载持久化历史时，把被省略的图像按路径提示从磁盘重新内联。像素写库时
@@ -2008,10 +2102,34 @@ mod tests {
     use super::{
         detect_media_kind_from_path, effective_frame_rate, extract_workspace_id_from_public_path,
         load_image_data_url_for_path, normalize_filename, normalize_requested_frame_rate,
-        normalize_requested_frame_step, DEFAULT_VIDEO_FRAME_RATE, MAX_GIF_FRAME_STEP,
+        normalize_requested_frame_step, DEFAULT_VIDEO_FRAME_RATE, IMAGE_VIEW_CACHE_BYTES,
+        IMAGE_VIEW_CACHE_VERSION, ImageViewCache, ImageViewKey, MAX_GIF_FRAME_STEP,
         MAX_VIDEO_FRAMES,
     };
     use std::path::Path;
+    use std::sync::Arc;
+
+    fn cache_key(path: &str) -> ImageViewKey {
+        ImageViewKey {
+            path: path.to_string(),
+            len: 1,
+            modified_nanos: 0,
+            version: IMAGE_VIEW_CACHE_VERSION,
+        }
+    }
+
+    #[test]
+    fn image_view_cache_replaces_same_key_and_skips_oversized_entries() {
+        let mut cache = ImageViewCache::default();
+        cache.store(cache_key("a.png"), Arc::from("data:image/png;base64,AAAA"));
+        cache.store(cache_key("a.png"), Arc::from("data:image/png;base64,BBBB"));
+        assert_eq!(cache.entries.len(), 1);
+        assert_eq!(cache.bytes, "data:image/png;base64,BBBB".len());
+
+        let huge = "x".repeat(IMAGE_VIEW_CACHE_BYTES + 1);
+        cache.store(cache_key("huge.png"), Arc::from(huge.as_str()));
+        assert_eq!(cache.entries.len(), 1, "超预算条目不得进缓存");
+    }
 
     #[test]
     fn reinline_image_reads_a_real_png_from_disk() {

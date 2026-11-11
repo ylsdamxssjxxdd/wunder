@@ -801,7 +801,7 @@ export default {
   'chat.session.running': '运行中',
   'chat.session.waitingApproval': '等待审批',
   'chat.session.waitingUserInput': '等待输入',
-  'chat.input.placeholder': '请输入内容',
+  'chat.input.placeholder': '请输入文本',
   'chat.input.placeholderCommands': '请输入内容（支持 /help /new /stop /compact）',
   'chat.input.send': '发送',
   'chat.input.sendHintEnter': 'Enter 发送',

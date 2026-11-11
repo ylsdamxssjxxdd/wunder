@@ -1353,7 +1353,6 @@ export component Composer inherits Rectangle {
     in property <bool> show-host-hud: true;
     in property <bool> show-cli-action: true;
     // §8.5 status line under the box.
-    in property <string> workspace-name: "";
     in property <string> branch-name: "";
     // ---- 本机硬件状态网格 (HostHud) ----
     // 采样在后台线程（wunder-desktop::native_host_hud），这里只承接最近一次
@@ -1623,7 +1622,7 @@ export component Composer inherits Rectangle {
                 accessible-placeholder-text: self.placeholder-text;
                 accessible-action-set-value(value) => { self.text = value; }
                 foreground: Theme.text;
-                placeholder-text: root.workspace-name != "" ? I18n.cp_input_placeholder_workspace(root.workspace-name) : I18n.cp_input_placeholder;
+                placeholder-text: I18n.cp_input_placeholder;
                 placeholder-color: Theme.muted;
                 selection-background-color: Theme.accent-soft;
                 selection-foreground-color: Theme.text;

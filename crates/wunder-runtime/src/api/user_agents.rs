@@ -137,12 +137,18 @@ async fn instance_payload(state: &AppState, instance: &UserAgentInstance) -> Val
         let config = default_agent_config_from_record(&instance.record);
         let context = build_user_tool_context(state, &instance.record.user_id).await;
         let skill_name_keys = collect_context_skill_names(&context);
-        return default_agent_payload(&config, configured_model_name.as_deref(), &skill_name_keys);
+        return default_agent_payload(
+            &config,
+            &app_config.llm,
+            configured_model_name.as_deref(),
+            &skill_name_keys,
+        );
     }
     let context = build_user_tool_context(state, &instance.record.user_id).await;
     let skill_name_keys = collect_context_skill_names(&context);
     agent_payload(
         &instance.record,
+        &app_config.llm,
         configured_model_name.as_deref(),
         &skill_name_keys,
     )
@@ -158,13 +164,14 @@ async fn list_agent_models(
     let default_model_name = resolve_default_model_name(&config);
     let items = resolve_available_models(&config, default_model_name.as_deref());
     // The user's default model is their agent's configured model, falling back
-    // to the system default.
+    // to the system default. A pointer left behind by a rename/delete is not a
+    // configured model, so it must not be advertised here either.
     let user_default_model_name =
         crate::services::user_agent_presets::resolve_user_agent_instance(&state, &resolved.user)
             .await
             .ok()
             .and_then(|instance| {
-                normalize_request_model_name(instance.record.model_name.as_deref())
+                resolve_configured_model_name(instance.record.model_name.as_deref(), &config.llm)
             })
             .or_else(|| default_model_name.clone());
     Ok(Json(json!({
@@ -743,7 +750,7 @@ async fn get_agent(
         let app_config = state.config_store.get().await;
         let configured_model_name = resolve_default_model_name(&app_config);
         return Ok(Json(
-            json!({ "data": default_agent_payload(&config, configured_model_name.as_deref(), &skill_name_keys) }),
+            json!({ "data": default_agent_payload(&config, &app_config.llm, configured_model_name.as_deref(), &skill_name_keys) }),
         ));
     }
     let record = state
@@ -766,7 +773,7 @@ async fn get_agent(
     let app_config = state.config_store.get().await;
     let configured_model_name = resolve_default_model_name(&app_config);
     Ok(Json(
-        json!({ "data": agent_payload(&record, configured_model_name.as_deref(), &skill_name_keys) }),
+        json!({ "data": agent_payload(&record, &app_config.llm, configured_model_name.as_deref(), &skill_name_keys) }),
     ))
 }
 
@@ -1221,12 +1228,29 @@ pub async fn load_agent_runtime_records(
 /// expose to the user.
 const FIELD_NOT_CUSTOMIZABLE: &str = "FIELD_NOT_CUSTOMIZABLE";
 
+/// A stored agent model pointer is only meaningful while it still names a
+/// configured chat model. Renames and deletes leave it dangling; execution
+/// silently falls back to the system default, so the projection would keep
+/// labelling new threads with a model the config no longer has. Project `None`
+/// in that case so clients follow the default instead of a phantom key.
+fn resolve_configured_model_name(
+    stored: Option<&str>,
+    llm: &crate::config::LlmConfig,
+) -> Option<String> {
+    let key = normalize_request_model_name(stored)?;
+    llm.models
+        .get(&key)
+        .is_some_and(is_llm_model)
+        .then_some(key)
+}
+
 fn agent_payload(
     record: &crate::storage::UserAgentRecord,
+    llm: &crate::config::LlmConfig,
     default_model_name: Option<&str>,
     skill_name_keys: &HashSet<String>,
 ) -> Value {
-    let configured_model_name = normalize_request_model_name(record.model_name.as_deref());
+    let configured_model_name = resolve_configured_model_name(record.model_name.as_deref(), llm);
     let effective_model_name = configured_model_name
         .clone()
         .or_else(|| normalize_request_model_name(default_model_name));
@@ -1474,6 +1498,7 @@ async fn apply_single_agent_update(
         return Ok(SingleAgentUpdate {
             agent: default_agent_payload(
                 &config,
+                &app_config.llm,
                 configured_model_name.as_deref(),
                 &skill_name_keys,
             ),
@@ -1572,7 +1597,12 @@ async fn apply_single_agent_update(
     let skill_name_keys = collect_context_skill_names(&tool_context);
     let configured_model_name = resolve_default_model_name(&app_config);
     Ok(SingleAgentUpdate {
-        agent: agent_payload(&record, configured_model_name.as_deref(), &skill_name_keys),
+        agent: agent_payload(
+            &record,
+            &app_config.llm,
+            configured_model_name.as_deref(),
+            &skill_name_keys,
+        ),
         preset_binding,
         customizable,
     })
@@ -2108,10 +2138,11 @@ async fn resolve_default_agent_config(
 
 fn default_agent_payload(
     config: &DefaultAgentConfig,
+    llm: &crate::config::LlmConfig,
     model_name: Option<&str>,
     skill_name_keys: &HashSet<String>,
 ) -> Value {
-    let configured_model_name = normalize_request_model_name(config.model_name.as_deref());
+    let configured_model_name = resolve_configured_model_name(config.model_name.as_deref(), llm);
     let effective_model_name = configured_model_name
         .clone()
         .or_else(|| normalize_request_model_name(model_name));
@@ -2393,9 +2424,28 @@ mod tests {
         default_agent_payload, filter_allowed_tools, has_active_runtime_evidence,
         requested_create_ability_items, AgentCreateRequest, DefaultAgentConfig,
     };
+    use crate::config::{LlmConfig, LlmModelConfig};
     use crate::storage::SessionLockRecord;
     use serde_json::json;
     use std::collections::HashSet;
+
+    /// Chat-only llm config used by the projection tests.
+    fn llm_with(models: &[&str]) -> LlmConfig {
+        let mut config = LlmConfig {
+            default: models.first().copied().unwrap_or_default().to_string(),
+            ..Default::default()
+        };
+        for key in models {
+            config.models.insert(
+                (*key).to_string(),
+                LlmModelConfig {
+                    model_type: Some("llm".to_string()),
+                    ..Default::default()
+                },
+            );
+        }
+        config
+    }
 
     #[test]
     fn create_request_reads_top_level_ability_items() {
@@ -2445,11 +2495,13 @@ mod tests {
 
     #[test]
     fn default_agent_payload_reports_configured_model_over_server_default() {
+        let llm = llm_with(&["model-a", "model-b"]);
         let configured = default_agent_payload(
             &DefaultAgentConfig {
                 model_name: Some("model-b".to_string()),
                 ..Default::default()
             },
+            &llm,
             Some("model-a"),
             &HashSet::new(),
         );
@@ -2458,11 +2510,52 @@ mod tests {
 
         let unset = default_agent_payload(
             &DefaultAgentConfig::default(),
+            &llm,
             Some("model-a"),
             &HashSet::new(),
         );
         assert_eq!(unset["configured_model_name"], serde_json::Value::Null);
         assert_eq!(unset["model_name"], "model-a");
+    }
+
+    /// Admin renames/deletes a model: the agent record keeps the old key.
+    /// Execution falls back to the default, so the projection must not keep
+    /// advertising the vanished key (`configured_model_name`) to the composer.
+    #[test]
+    fn default_agent_payload_drops_model_key_the_config_no_longer_has() {
+        let llm = llm_with(&["model-a"]);
+        let stale = default_agent_payload(
+            &DefaultAgentConfig {
+                model_name: Some("新模型".to_string()),
+                ..Default::default()
+            },
+            &llm,
+            Some("model-a"),
+            &HashSet::new(),
+        );
+        assert_eq!(stale["configured_model_name"], serde_json::Value::Null);
+        assert_eq!(stale["model_name"], "model-a");
+
+        // A key that exists but is not a chat model is equally unusable.
+        let mut embedding_only = llm.clone();
+        embedding_only.models.insert(
+            "embed".to_string(),
+            LlmModelConfig {
+                model_type: Some("embedding".to_string()),
+                ..Default::default()
+            },
+        );
+        let embedding = default_agent_payload(
+            &DefaultAgentConfig {
+                model_name: Some("embed".to_string()),
+                ..Default::default()
+            },
+            &embedding_only,
+            Some("model-a"),
+            &HashSet::new(),
+        );
+        assert_eq!(embedding["configured_model_name"], serde_json::Value::Null);
+        assert_eq!(embedding["model_name"], "model-a");
     }
 
     #[test]
@@ -2489,6 +2582,7 @@ mod tests {
                 created_at: 1.0,
                 updated_at: 1.0,
             },
+            &LlmConfig::default(),
             None,
             &HashSet::from(["planner".to_string()]),
         );

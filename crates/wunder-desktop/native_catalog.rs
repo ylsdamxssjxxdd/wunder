@@ -62,7 +62,7 @@ impl NativeDesktop {
             let record =
                 agent_management::owned(self.state(), self.user_id(), DEFAULT_AGENT_ID).await?;
             let config = self.state().config_store.get().await;
-            Ok(agent_record(record, &config.llm.default))
+            Ok(agent_record(record, &config.llm))
         })
     }
 
@@ -100,7 +100,7 @@ impl NativeDesktop {
             )
             .await?;
             let config = self.state().config_store.get().await;
-            Ok(agent_record(record, &config.llm.default))
+            Ok(agent_record(record, &config.llm))
         })
     }
 
@@ -205,7 +205,7 @@ impl NativeDesktop {
 
 fn agent_record(
     record: wunder_server::storage::UserAgentRecord,
-    default_model: &str,
+    llm: &wunder_server::config::LlmConfig,
 ) -> AgentRecord {
     let icon_config =
         wunder_server::worker_card_settings::parse_agent_icon_config(record.icon.as_deref());
@@ -215,7 +215,7 @@ fn agent_record(
         name: record.name,
         description: record.description,
         system_prompt: record.system_prompt,
-        model: record.model_name.unwrap_or_else(|| default_model.into()),
+        model: resolve_agent_model(record.model_name.as_deref(), llm),
         status: record.status,
         icon_name: icon_config.name.clone(),
         icon_color: icon_config.color.clone(),
@@ -229,6 +229,44 @@ fn agent_record(
         prefer_mother: record.prefer_mother,
         is_shared: record.is_shared,
     }
+}
+
+/// The model an agent projects into the composer.
+///
+/// A stored pointer is only meaningful while it names a configured chat model:
+/// after a rename or a delete it can linger on a key the config no longer has,
+/// and the picker would then label the thread with a model that does not exist
+/// (while requests quietly fall back to the default). Resolve it here the same
+/// way the runtime resolves an unknown key, so the projection can never show a
+/// phantom entry.
+fn resolve_agent_model(stored: Option<&str>, llm: &wunder_server::config::LlmConfig) -> String {
+    if let Some(key) = stored.map(str::trim).filter(|key| !key.is_empty()) {
+        if llm.models.contains_key(key) {
+            return key.to_string();
+        }
+    }
+    let default = llm.default.trim();
+    if !default.is_empty() && llm.models.contains_key(default) {
+        return default.to_string();
+    }
+    let mut candidates = llm
+        .models
+        .iter()
+        .filter(|(_, model)| {
+            model
+                .model_type
+                .as_deref()
+                .unwrap_or("llm")
+                .eq_ignore_ascii_case("llm")
+                && model.enable != Some(false)
+        })
+        .map(|(key, _)| key)
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates
+        .first()
+        .map(|key| key.to_string())
+        .unwrap_or_default()
 }
 
 fn icon_glyph(config: &wunder_server::worker_card_settings::AgentIconConfig, name: &str) -> String {
@@ -254,4 +292,62 @@ fn icon_glyph(config: &wunder_server::worker_card_settings::AgentIconConfig, nam
         _ => "✦",
     }
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_agent_model;
+    use wunder_server::config::LlmConfig;
+
+    fn llm(value: serde_json::Value) -> LlmConfig {
+        serde_json::from_value(value).expect("llm config")
+    }
+
+    fn chat_models() -> LlmConfig {
+        llm(serde_json::json!({
+            "default": "beta-model",
+            "models": {
+                "beta-model": { "model": "beta", "model_type": "llm" },
+                "ephemeral-model": { "model": "gone", "model_type": "llm" }
+            }
+        }))
+    }
+
+    /// 回归：模型改名或删除后，智能体里残留的旧键不能让输入区继续显示一个
+    /// 配置里根本不存在的模型。
+    #[test]
+    fn a_pointer_to_a_missing_model_resolves_to_the_configured_default() {
+        assert_eq!(
+            resolve_agent_model(Some("新模型"), &chat_models()),
+            "beta-model"
+        );
+        assert_eq!(
+            resolve_agent_model(Some("  "), &chat_models()),
+            "beta-model"
+        );
+    }
+
+    #[test]
+    fn a_configured_pointer_is_kept_verbatim() {
+        assert_eq!(
+            resolve_agent_model(Some("ephemeral-model"), &chat_models()),
+            "ephemeral-model"
+        );
+    }
+
+    /// 默认键本身失效时仍有可选项：取第一个可用对话模型，而不是留空。
+    #[test]
+    fn a_broken_default_falls_through_to_the_first_chat_model() {
+        let config = llm(serde_json::json!({
+            "default": "missing-model",
+            "models": {
+                "second": { "model": "b", "model_type": "llm" },
+                "first": { "model": "a", "model_type": "llm" },
+                "off": { "model": "c", "model_type": "llm", "enable": false },
+                "embed": { "model": "d", "model_type": "embedding" }
+            }
+        }));
+        assert_eq!(resolve_agent_model(Some("missing-model"), &config), "first");
+        assert_eq!(resolve_agent_model(None, &config), "first");
+    }
 }

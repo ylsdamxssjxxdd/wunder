@@ -81,6 +81,7 @@ const LOCAL_THREAD_LEASE_TTL_S: f64 = 15.0;
 const LOCAL_THREAD_LEASE_HEARTBEAT: Duration = Duration::from_secs(4);
 
 fn main() -> Result<()> {
+    wunder_server::runtime_tuning::tune_allocator_for_large_buffers();
     wunder_server::local_bootstrap::install_local_home_env();
     wunder_server::rustls_provider::install_process_default_provider();
     init_tracing();
