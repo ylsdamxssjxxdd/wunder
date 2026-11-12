@@ -10,6 +10,9 @@ const MAX_INPUT_BYTES: usize = 16_384;
 /// sending messages behave like the native path without a runtime.
 pub fn install(app: &MainWindow) {
     crate::demo_entities::install(app);
+    // The preview drives the same language callback as the native shell, so the
+    // fixtures show whichever language `runtime-language` asks for.
+    crate::ui_language::install(app);
     // Demo data is opt-in. Production MainWindow starts with empty models so
     // the first native frame cannot show a fabricated running thread.
     app.set_chat_loading(false);

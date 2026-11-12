@@ -535,6 +535,13 @@ export component MobileWindow inherits Window {
     in property <int> settings-font-size: 14;
     in property <string> settings-send-key: "enter";
     in property <string> settings-language: "zh-CN";
+    // 界面语言跟随设置页写入的 `settings-language`（zh-CN / en-US）。所有
+    // `I18n` 文案都是 `zh ? ... : ...` 绑定，所以切换这一个标志即可整屏换语言；
+    // 与桌面版同一规则（en 前缀 → 英文），回调在 src/app.rs 落到 `I18n.zh`。
+    out property <bool> ui-zh: !settings-language.starts-with("en");
+    callback ui-language-changed(bool);
+    init => { root.ui-language-changed(root.ui-zh); }
+    changed ui-zh => { root.ui-language-changed(root.ui-zh); }
     in property <string> settings-workspace: "";
     in property <string> settings-version: "";
     // 数据与恢复页

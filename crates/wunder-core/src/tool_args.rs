@@ -864,6 +864,8 @@ fn build_repair_meta(kind: &str, source: &str, strategy: &str) -> Value {
 /// 就不是合法 JSON，所以在这一层补回来不会误伤正常载荷：只在「容器起始或逗号之后、
 /// 本该是对象的位置」补，且要求后面跟的是键名而不是普通值。
 fn repair_missing_object_opening(raw: &str) -> String {
+    // 最外层对象整体缺起引号时先补上：`"plan": [...]}` 前面没有容器字符可依附。
+    let raw = repair_missing_root_object_opening(raw);
     let chars: Vec<char> = raw.chars().collect();
     let mut output = String::with_capacity(raw.len() + 8);
     // 容器栈：只有「数组里缺对象」才补，对象内部缺 `{"` 会误伤正常的键。
@@ -893,7 +895,11 @@ fn repair_missing_object_opening(raw: &str) -> String {
         if matches!(ch, '[' | ',' | '{') {
             output.push(ch);
             index += 1;
-            let in_array = matches!(ch, '[') || (ch == ',' && stack.last() == Some(&'['));
+            // 先按原文把容器入栈，补出的对象再压在它上面，栈序才是真正的嵌套顺序。
+            if ch == '[' || ch == '{' {
+                stack.push(ch);
+            }
+            let in_array = ch == '[' || (ch == ',' && stack.last() == Some(&'['));
             let mut lookahead = index;
             while lookahead < chars.len() && chars[lookahead].is_whitespace() {
                 lookahead += 1;
@@ -901,13 +907,28 @@ fn repair_missing_object_opening(raw: &str) -> String {
             if lookahead < chars.len() {
                 let next = chars[lookahead];
                 if is_json_identifier_start(next) {
-                    // `[step": …` / `, step": …`：标识符后面紧跟引号，说明它是键名。
+                    // 裸键名：`[step": …` / `, step": …` / `step": …`。
                     let mut end = lookahead;
                     while end < chars.len() && is_json_identifier_char(chars[end]) {
                         end += 1;
                     }
                     if end < chars.len() && chars[end] == '"' {
-                        output.push_str("{\"");
+                        // 补全时连键名的收尾引号一起写出来，并跳过原文那个引号：
+                        // 只补 `{"` 会留下裸键名，后续扫描会把键名的收尾引号当成
+                        // 字符串开头，一路错位并吞掉后面的容器字符。
+                        if ch == '{' {
+                            output.push('"');
+                        } else {
+                            output.push_str("{\"");
+                            // 补出的对象必须入栈，否则对象内部的逗号会被当成
+                            // 「数组里的新对象起点」，把后面的键拆坏。
+                            stack.push('{');
+                        }
+                        for item in &chars[lookahead..end] {
+                            output.push(*item);
+                        }
+                        output.push('"');
+                        index = end + 1;
                     }
                 } else if in_array && next == '"' {
                     // 数组元素本该是对象，却直接以键名开头（`["step"`）；只有字符串
@@ -931,11 +952,9 @@ fn repair_missing_object_opening(raw: &str) -> String {
                     }
                     if after < chars.len() && chars[after] == ':' {
                         output.push('{');
+                        stack.push('{');
                     }
                 }
-            }
-            if ch == '[' || ch == '{' {
-                stack.push(ch);
             }
             continue;
         }
@@ -945,6 +964,33 @@ fn repair_missing_object_opening(raw: &str) -> String {
         output.push(ch);
         index += 1;
     }
+    output
+}
+
+/// 整份参数以裸键名开头（`"plan": [...]}`）时，补回最外层的对象起始。
+/// 宽松修复只对已经解析失败的文本生效，这里再加两道确认：键名只含标识符字符、
+/// 后面紧跟冒号，避免把普通字符串改坏。
+fn repair_missing_root_object_opening(raw: &str) -> String {
+    let trimmed = raw.trim_start();
+    let Some(rest) = trimmed.strip_prefix('"') else {
+        return raw.to_string();
+    };
+    let Some((key, after)) = rest.split_once('"') else {
+        return raw.to_string();
+    };
+    if key.is_empty()
+        || !key
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        || !after.trim_start().starts_with(':')
+    {
+        return raw.to_string();
+    }
+    let mut output = String::with_capacity(raw.len() + 2);
+    output.push_str(&raw[..raw.len() - trimmed.len()]);
+    // 原文已经以键名的开引号开头，这里只补对象起始。
+    output.push('{');
+    output.push_str(trimmed);
     output
 }
 
@@ -959,8 +1005,6 @@ fn is_json_identifier_char(ch: char) -> bool {
 fn repair_json_string_syntax(raw: &str) -> String {
     // 先补回漏掉的对象起始，再走字符串级修复（未闭合引号、裸控制字符）。
     let raw = repair_missing_object_opening(raw);
-    let chars: Vec<char> = raw.chars().collect();
-
     let chars: Vec<char> = raw.chars().collect();
     let mut output = String::with_capacity(raw.len() + 16);
     let mut in_string = false;
@@ -1054,6 +1098,30 @@ mod tests {
             parse_json_with_repairs(valid),
             serde_json::from_str::<serde_json::Value>(valid).ok()
         );
+    }
+
+    /// 多处同时缺对象起始、且对象内部带逗号时，补出来的对象必须入栈，
+    /// 否则后面的键会被当成「数组里的新对象起点」再补一层，文本彻底坏掉。
+    #[test]
+    fn parse_json_with_repairs_survives_several_dropped_openings() {
+        let cases = [
+            "{\"questions\": [question\": \"选哪个\", \"options\": [{\"label\": \"甲\"}, {\"label\": \"乙\"}]}]}",
+            "{\"questions\": [question\": \"选哪个\", \"options\": [label\": \"甲\", \"recommended\": true}, {\"label\": \"乙\"}]}]}",
+            "\"questions\": [{\"question\": \"选哪个\", \"options\": [\"甲\", \"乙\"]}]}",
+        ];
+        for broken in cases {
+            let repaired = parse_json_with_repairs(broken)
+                .unwrap_or_else(|| panic!("必须被修复而不是放弃: {broken}"));
+            let item = &repaired["questions"][0];
+            assert_eq!(item["question"], json!("选哪个"), "原文: {broken}");
+            let options = item["options"].as_array().expect("options");
+            assert!(!options.is_empty(), "原文: {broken}");
+            assert!(
+                options.iter().any(|option| option.as_str() == Some("甲")
+                    || option["label"] == json!("甲")),
+                "原文: {broken}"
+            );
+        }
     }
 
     #[test]

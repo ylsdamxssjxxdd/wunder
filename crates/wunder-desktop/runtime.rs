@@ -226,6 +226,11 @@ impl DesktopRuntime {
         );
 
         step_start = Instant::now();
+        // 语言未选定（首次启动或从未在设置页选过）时跟随系统：中文环境用
+        // zh-CN，其余一律 en-US。显式选择过的值原样保留，后续启动不再改写。
+        if settings.language.trim().is_empty() {
+            settings.language = default_language_for_system().to_string();
+        }
         if settings.desktop_token.trim().is_empty() {
             settings.desktop_token = uuid::Uuid::new_v4().simple().to_string();
         }
@@ -621,6 +626,43 @@ fn is_legacy_desktop_workspace_seed(raw: &str) -> bool {
 
 fn resolve_wunder_home_dir() -> PathBuf {
     wunder_server::local_bootstrap::resolve_home_from_env_or_user()
+}
+
+/// 界面/运行时语言的系统默认值。
+///
+/// 只有中文环境（`zh*`）落到 `zh-CN`，其余一律 `en-US`：产品默认文案是中文，
+/// 但面向非中文系统时英文才是可用界面。读取顺序与常规本地化一致：
+/// `LC_ALL` → `LC_MESSAGES` → `LANG` → 系统 locale 探测（安卓/Windows）。
+fn default_language_for_system() -> &'static str {
+    for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+        if let Ok(value) = std::env::var(key) {
+            if let Some(language) = language_from_locale(&value) {
+                return language;
+            }
+        }
+    }
+    sys_locale::get_locale()
+        .as_deref()
+        .and_then(language_from_locale)
+        .unwrap_or("en-US")
+}
+
+/// `zh_CN.UTF-8` / `zh-Hans-CN` / `en_US` 这类 locale 串 → 受支持语言。
+/// 空串、`C`、`POSIX` 返回 `None`（继续看下一个来源）。
+fn language_from_locale(raw: &str) -> Option<&'static str> {
+    let value = raw.trim();
+    // `LANGUAGE=zh_CN:en_US` 是冒号分隔的优先级列表；`en_US.UTF-8@euro` 带修饰。
+    let first = value.split(':').next().unwrap_or("").trim();
+    let code = first.split(['.', '@']).next().unwrap_or("").trim();
+    let primary = code.split(['_', '-']).next().unwrap_or("").trim();
+    if primary.is_empty() || primary.eq_ignore_ascii_case("c") || primary.eq_ignore_ascii_case("posix")
+    {
+        return None;
+    }
+    if primary.eq_ignore_ascii_case("zh") {
+        return Some("zh-CN");
+    }
+    Some("en-US")
 }
 
 fn resolve_frontend_root(
@@ -2372,6 +2414,30 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn locale_maps_to_supported_language() {
+        // 中文环境（含繁体、带修饰、带编码）统一落到 zh-CN。
+        for raw in [
+            "zh_CN.UTF-8",
+            "zh",
+            "zh-Hans-CN",
+            "zh_TW",
+            "zh_CN:en_US",
+        ] {
+            assert_eq!(language_from_locale(raw), Some("zh-CN"), "{raw}");
+        }
+        // 其余语言一律 en-US：界面只有中英两套文案。
+        for raw in ["en_US.UTF-8", "de_DE", "ja_JP.UTF-8", "fr"] {
+            assert_eq!(language_from_locale(raw), Some("en-US"), "{raw}");
+        }
+        // locale 修饰符不影响主语言判定。
+        assert_eq!(language_from_locale("en_US.UTF-8@euro"), Some("en-US"));
+        // 未设置 / 无语言信息的 locale 返回 None，继续看下一个来源。
+        for raw in ["", "   ", "C", "C.UTF-8", "POSIX"] {
+            assert_eq!(language_from_locale(raw), None, "{raw}");
+        }
+    }
 
     #[test]
     fn apply_desktop_defaults_keeps_channels_available() {

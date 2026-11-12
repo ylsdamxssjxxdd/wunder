@@ -466,9 +466,6 @@ pub fn sync_process_child(model: &VecModel<TimelineRow>, row: &TimelineRow) {
 /// identity. All other entries, disclosure choices and model handles stay put.
 pub fn merge_reasoning_tail(bar: &TimelineRow, mut entry: ProcessEntry) {
     use slint::Model;
-    if bar.process_newer {
-        return;
-    }
     let Some(children) = bar
         .process_entries
         .as_any()
@@ -476,6 +473,15 @@ pub fn merge_reasoning_tail(bar: &TimelineRow, mut entry: ProcessEntry) {
     else {
         return;
     };
+    // A thought that is still streaming is not part of the loaded page, so the
+    // "a newer page exists" guard must not drop its updates: doing so froze the
+    // active thought as soon as the fold outgrew its first page. The guard still
+    // applies to a thought the page has not seen yet — inserting a live row
+    // above an unloaded page would duplicate or misorder the durable history.
+    let exists = children.iter().any(|old| old.id == entry.id);
+    if bar.process_newer && !exists {
+        return;
+    }
     if let Some(index) = children.iter().position(|old| old.id == entry.id) {
         let old = children.row_data(index).unwrap();
         if old.status_kind != crate::timeline::STATUS_RUNNING

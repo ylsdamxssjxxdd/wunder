@@ -61,6 +61,7 @@ mod thread_trajectory;
 mod timeline;
 mod timeline_text;
 mod tools_ui;
+mod ui_language;
 mod touch_keyboard;
 mod tray;
 mod turn_stats;
@@ -128,6 +129,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = MainWindow::new()?;
     startup_log("main_window_new", startup_boot);
+    // 界面语言：窗口把 `runtime-language` 派生成 `ui-zh` 后回传，这里落到
+    // `I18n.zh`。先装回调，任何设置投影（启动加载 / 设置页保存）都会即时生效。
+    ui_language::install(&app);
+    // 语言投影探针（`WUNDER_LANG_PROBE=<dir> --demo`）：强制一次英文/中文投影并
+    // 截图退出，用于人工复核两套文案，不进入发布路径。
+    if ui_language::probe::run(&app) {
+        app.show()?;
+        app.run()?;
+        return Ok(());
+    }
     // A settled mark that predates this window was already old news: the
     // sidebar keeps a completion only when it happened while the window was
     // open and the user has not looked at it yet.

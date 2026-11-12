@@ -630,6 +630,17 @@ export component MainWindow inherits Window {
     in-out property <string> selected-agent-status;
     in-out property <string> workspace-root;
     in-out property <string> runtime-language;
+    // The UI language follows the runtime language the settings page writes
+    // (`zh-CN` / `en-US`). Every `I18n` text is a `zh ? ... : ...` binding, so
+    // this single flag re-renders the whole shell; because it is derived here
+    // rather than set imperatively, it flips the moment settings are applied.
+    // 安卓版 derives the same flag from its own `settings-language`.
+    out property <bool> ui-zh: !runtime-language.starts-with("en");
+    // Slint cannot write another global from a component, so the shell hands the
+    // derived flag to `I18n.zh` through this callback (wired in ui_language.rs).
+    callback ui-language-changed(bool);
+    init => { root.ui-language-changed(root.ui-zh); }
+    changed ui-zh => { root.ui-language-changed(root.ui-zh); }
     in-out property <string> runtime-theme;
     in-out property <string> runtime-send-key;
     in-out property <float> runtime-font-size: 14;

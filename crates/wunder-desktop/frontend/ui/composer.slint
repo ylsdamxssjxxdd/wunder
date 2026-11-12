@@ -1143,9 +1143,9 @@ component QueueRow inherits Rectangle {
             color: Theme.muted; font-size: Theme.font-2xs;
             vertical-alignment: center;
         }
-        // 插话只对引擎已经受理、正在排队的轮次有意义：一条还没发出去的
-        // 消息没有可插的队。
-        if !root.turn.waiting : Action {
+        // 插话对两种行都成立：引擎队列里的行跳到下一个动作边界；还没发出去
+        // 的等待行则先交给引擎，再由队列刷新把它提升为插话。
+        Action {
             width: 76px; height: 24px; y: 2px;
             icon: @image-url("../assets/icons/arrow-up.svg");
             icon-size: 13px;

@@ -618,6 +618,17 @@ fn wire_callbacks(
     commands: &std::sync::mpsc::Sender<Command>,
     shared: &Arc<Mutex<Shared>>,
 ) {
+    // 界面语言：窗口从 `settings-language` 派生出 `ui-zh` 后回传，这里落到
+    // `I18n.zh`。Slint 组件不能直接写全局，所以由宿主承接这一跳。
+    let weak = ui.as_weak();
+    ui.on_ui_language_changed(move |zh| {
+        if let Some(ui) = weak.upgrade() {
+            let i18n = ui.global::<crate::I18n>();
+            if i18n.get_zh() != zh {
+                i18n.set_zh(zh);
+            }
+        }
+    });
     let sender = commands.clone();
     let weak = ui.as_weak();
     ui.on_open_drawer(move || {
@@ -3061,6 +3072,9 @@ fn start_tick(
             ui.set_settings_font_size(state.settings.font_size);
             ui.set_settings_send_key(state.settings.send_key.as_str().into());
             ui.set_settings_language(state.settings.language.as_str().into());
+            // 语言投影后立刻落一次 `I18n.zh`：不依赖 `changed ui-zh` 的通知时序，
+            // 保存语言后整屏文案在同一帧切过去。
+            ui.invoke_ui_language_changed(ui.get_ui_zh());
             ui.set_settings_workspace(state.settings.workspace_root.as_str().into());
             ui.set_settings_version(state.settings.version.as_str().into());
             ui.set_update_channel(
@@ -3659,6 +3673,9 @@ pub fn install_preview_data(
     ui.set_settings_font_size(14);
     ui.set_settings_send_key("enter".into());
     ui.set_settings_language("zh-CN".into());
+    // The preview has no engine, so nothing else would deliver the derived
+    // language flag; the phone build gets it from the settings projection.
+    ui.invoke_ui_language_changed(ui.get_ui_zh());
     ui.set_settings_workspace("应用私有目录 / workspaces".into());
     ui.set_settings_version(env!("CARGO_PKG_VERSION").into());
     ui.set_settings_ubuntu_state("installing".into());

@@ -1570,6 +1570,28 @@ mod tests {
         assert!(text.contains("\"questions\""), "{text}");
     }
 
+    /// 实测失败形态：模型把整份参数写成字符串时，`[` 后面漏了 `{"`，
+    /// 变成 `[question": …`。这类一次性的编码抖动必须在工具边界修好。
+    #[test]
+    fn question_panel_survives_dropped_object_openings() {
+        let cases = [
+            // 只有题目对象缺 `{"`
+            r#"{"questions": [question": "选哪个", "options": [{"label": "甲", "recommended": true}, {"label": "乙"}]}]}"#,
+            // 题目对象与选项对象都缺 `{"`
+            r#"{"questions": [question": "选哪个", "options": [label": "甲", "recommended": true}, {label": "乙"}]}]}"#,
+            // 外层对象也缺 `{"`（`{"questions"` 变成 `questions"`）
+            r#""questions": [{question": "选哪个", "options": ["甲", "乙"]}]}"#,
+        ];
+        for broken in cases {
+            let questions = normalize_question_panel_questions(&json!({ "raw": broken }))
+                .unwrap_or_else(|error| panic!("必须被修复而不是报错: {error}\n原文: {broken}"))
+                .questions;
+            assert_eq!(questions.len(), 1, "原文: {broken}");
+            assert_eq!(questions[0].question, "选哪个", "原文: {broken}");
+            assert!(questions[0].options.len() >= 2, "原文: {broken}");
+        }
+    }
+
     #[test]
     fn question_panel_still_reads_legacy_flat_payload() {
         let questions = normalize_question_panel_questions(&json!({

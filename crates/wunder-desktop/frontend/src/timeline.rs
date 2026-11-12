@@ -701,7 +701,15 @@ impl Timeline {
         let mut entry = crate::timeline_text::process_entry(row);
         if let Some(index) = children.iter().position(|child| child.id == row.id) {
             if bar.process_paged {
-                if bar.process_newer {
+                // A live row that is still streaming is not part of any page:
+                // it is the newest step the engine is writing right now. The
+                // `process_newer` guard exists to stop live data from
+                // overwriting a page that is already loaded, and applying it to
+                // the streaming row froze that row the moment the fold grew
+                // past its first page — the thought stopped mid-sentence while
+                // the turn kept running.
+                let streaming = row.status_kind == STATUS_RUNNING;
+                if bar.process_newer && !streaming {
                     return;
                 }
                 if let Some(previous) = children.row_data(index) {
@@ -2488,6 +2496,86 @@ mod tests {
         timeline.append_body("Fixture answer").unwrap();
         timeline.flush();
         assert_eq!(timeline.last_answer(), "Fixture answer");
+    }
+
+    /// A fold that outgrew its first page keeps the active thought streaming.
+    /// The `process_newer` guard protects a loaded page from live overwrites;
+    /// applying it to the row the engine is still writing froze that thought
+    /// mid-sentence and only the first few steps of a long turn looked live.
+    #[test]
+    fn streaming_thought_survives_a_paged_fold_with_a_newer_page() {
+        use slint::Model;
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("paged-stream", "Fixture input");
+        timeline.set_process_root("paged-stream-root");
+        for round in 1..=3 {
+            timeline.start_body(round);
+            timeline.append_body("Note").unwrap();
+            timeline.close_body();
+            let id = "paged-stream-root:text-%d".replace("%d", &round.to_string());
+            timeline.append_reasoning_item(&id, "Thought ").unwrap();
+            timeline.flush();
+            timeline.close_thinking(false);
+            timeline.upsert_tool(&NativeWorkflowEntry::from_payload(
+                &"paged-tool-%d".replace("%d", &round.to_string()),
+                "read_file",
+                "Fixture result".into(),
+                "completed",
+                &serde_json::json!({"args":{"path":"sample.txt"}}),
+            ));
+        }
+        let live_id = "paged-stream-root:text-4";
+        timeline.append_reasoning_item(live_id, "live ").unwrap();
+        timeline.flush();
+        // The fold now has a loaded page and a newer page behind it.
+        let bar_index = timeline
+            .model
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .unwrap()
+            .payload as usize;
+        let mut bar = timeline.model.row_data(bar_index).unwrap();
+        bar.process_paged = true;
+        bar.process_newer = true;
+        for reason in timeline
+            .model
+            .iter()
+            .filter(|reason| reason.kind == KIND_REASON && reason.process_idx == bar.process_idx)
+            .collect::<Vec<_>>()
+        {
+            crate::timeline_text::merge_reasoning_tail(
+                &bar,
+                crate::timeline_text::process_entry(&reason),
+            );
+        }
+        timeline.model.set_row_data(bar_index, bar);
+
+        timeline.append_reasoning_item(live_id, "grown").unwrap();
+        timeline.flush();
+
+        let bar = timeline.model.row_data(bar_index).unwrap();
+        let children = bar
+            .process_entries
+            .as_any()
+            .downcast_ref::<VecModel<crate::ProcessEntry>>()
+            .unwrap();
+        let tail = children
+            .iter()
+            .filter(|entry| entry.kind == KIND_REASON)
+            .last()
+            .unwrap();
+        assert_eq!(tail.id, "reason-paged-stream-root:text-4");
+        assert_eq!(
+            tail.detail, "live grown",
+            "the active thought keeps streaming after the fold was paged"
+        );
+        assert_eq!(tail.status_kind, STATUS_RUNNING);
+        // A settled thought still belongs to the page and is not overwritten.
+        let settled = children
+            .iter()
+            .find(|entry| entry.kind == KIND_REASON && entry.status_kind != STATUS_RUNNING)
+            .expect("earlier thoughts settle in the page");
+        assert_ne!(settled.id, tail.id);
     }
 
     #[test]

@@ -1031,6 +1031,19 @@ pub fn run_queue(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std
                         }
                         return Ok(false);
                     }
+                    let released_visible = app.get_timeline().iter().any(|row| {
+                        row.kind == crate::timeline::KIND_USER
+                            && row.text.as_str() == "native-queue-second"
+                    });
+                    // The released turn is running: this is the moment to prove
+                    // that a waiting message keeps its 插话 control.
+                    if released_visible && app.get_busy() {
+                        crate::smoke::snapshot(&app, &directory.join("native-queue-sent.png"))?;
+                        app.set_draft("native-queue-third".into());
+                        app.invoke_send_message();
+                        phase = 7;
+                        return Ok(false);
+                    }
                     if !app.get_busy() {
                         let released = app
                             .get_timeline()
@@ -1057,9 +1070,63 @@ pub fn run_queue(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std
                             }),
                             "the held message never reached the transcript",
                         )?;
-                        crate::smoke::snapshot(&app, &directory.join("native-queue-sent.png"))?;
                         return Ok(true);
                     }
+                }
+                7 => {
+                    let Some(row) = app.get_queue_turns().iter().find(|turn| {
+                        turn.text.as_str() == "native-queue-third" && turn.waiting
+                    }) else {
+                        if phase_since.elapsed() > Duration::from_secs(30) {
+                            let strip: Vec<String> = app
+                                .get_queue_turns()
+                                .iter()
+                                .map(|turn| format!("{}:{}", turn.text, turn.waiting))
+                                .collect();
+                            return Err(format!(
+                                "the third message never waited in the strip; strip={strip:?} busy={} status={:?}",
+                                app.get_busy(),
+                                app.get_status()
+                            )
+                            .into());
+                        }
+                        return Ok(false);
+                    };
+                    let queue_id = row.queue_id.to_string();
+                    app.invoke_queue_interject(queue_id.into());
+                    phase = 8;
+                }
+                8 => {
+                    // 插话 takes the message out of the waiting strip and hands
+                    // it to the engine instead of waiting for the turn to end.
+                    if app
+                        .get_queue_turns()
+                        .iter()
+                        .any(|turn| turn.text.as_str() == "native-queue-third" && turn.waiting)
+                    {
+                        if phase_since.elapsed() > Duration::from_secs(30) {
+                            return Err("插话 left the message in the waiting strip".into());
+                        }
+                        return Ok(false);
+                    }
+                    let admitted = app.get_timeline().iter().any(|row| {
+                        row.kind == crate::timeline::KIND_USER
+                            && row.text.as_str() == "native-queue-third"
+                    }) || app
+                        .get_queue_turns()
+                        .iter()
+                        .any(|turn| turn.text.as_str() == "native-queue-third");
+                    if !admitted {
+                        if phase_since.elapsed() > Duration::from_secs(40) {
+                            return Err("插话 never reached the engine".into());
+                        }
+                        return Ok(false);
+                    }
+                    crate::smoke::snapshot(
+                        &app,
+                        &directory.join("native-queue-interjected.png"),
+                    )?;
+                    return Ok(true);
                 }
                 _ => return Err("unexpected queue smoke phase".into()),
             }
@@ -1069,7 +1136,7 @@ pub fn run_queue(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std
             return;
         }
         let report = match &checked {
-            Ok(_) => "PASS: a message typed into a running thread with no foreground stream waits in the composer and is sent after the turn settles\n".to_string(),
+            Ok(_) => "PASS: a message typed into a running thread with no foreground stream waits in the composer, is sent after the turn settles, and 插话 pushes a waiting message into the engine\n".to_string(),
             Err(error) => format!("FAIL: queue phase {phase}: {error}\n"),
         };
         *output.borrow_mut() = Some(

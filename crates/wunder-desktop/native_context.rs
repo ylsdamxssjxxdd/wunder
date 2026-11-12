@@ -129,7 +129,8 @@ mod tests {
             usage,
             NativeContextUsage {
                 used: Some(2400.0),
-                capacity: Some(8000.0)
+                capacity: Some(8000.0),
+                compacted: false
             }
         );
         assert_eq!(
@@ -146,7 +147,8 @@ mod tests {
             usage,
             NativeContextUsage {
                 used: Some(3200.0),
-                capacity: Some(16000.0)
+                capacity: Some(16000.0),
+                compacted: false
             }
         );
         assert_eq!(

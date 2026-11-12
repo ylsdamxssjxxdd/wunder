@@ -487,6 +487,14 @@ struct State {
     /// Stop barrier for a submission whose worker or returned stream is still
     /// settling. Unlike `submitting`, this survives navigation away and back.
     cancelling_submission: Option<CancellingSubmission>,
+    /// Set by the strip's 插话 on a waiting message: the next send must go to
+    /// the engine even though the thread is busy. 插话 is the user overriding
+    /// the local hold for one message, not the hold disagreeing with itself.
+    force_submit: bool,
+    /// A waiting message the user asked to 插话. Its engine row only exists
+    /// after the submission lands, so the queue refresh promotes the row it
+    /// finds; the deadline stops a promotion that can never happen.
+    pending_interject: Option<(String, String, std::time::Instant)>,
     /// Independent low-duty directory reconciliation while another local
     /// process owns one of the visible thread leases.
     lease_refresh_timer: Timer,
@@ -826,6 +834,8 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         queue_due: None,
         recall: Recall::default(),
         send_seq: 0,
+        force_submit: false,
+        pending_interject: None,
     }));
     observer::install(app, state.clone());
     crate::chat_split::install(app, desktop_preview.clone());
@@ -2443,6 +2453,10 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                 return;
             }
             if pending.submitting.is_some() {
+                // Drop the one-shot 插话 override with the refused send: it
+                // belongs to that click, not to whatever the user sends next.
+                drop(pending);
+                state.borrow_mut().force_submit = false;
                 app.set_status("正在提交，请稍候…".into());
                 return;
             }
@@ -2494,7 +2508,8 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         // snapshot is then the only witness, and it is what the composer's
         // busy flag carries — deciding on `active` alone sent the message to
         // the engine, which parked it and painted that second bubble after all.
-        let hold_locally = thread_busy(&app, &state);
+        let force_submit = std::mem::take(&mut state.borrow_mut().force_submit);
+        let hold_locally = !force_submit && thread_busy(&app, &state);
         if hold_locally && queue::parked_is_full(&state.borrow().parked) {
             app.set_status("等待发送的轮次已满，请先撤下几条或稍候".into());
             return;
@@ -3381,6 +3396,65 @@ fn release_next_waiting_turn(app: &MainWindow, state: &Rc<RefCell<State>>) {
     }
 }
 
+/// 插话一条还在等待发送的消息：用户不再等当前轮次结束，要求这条立刻进引擎，
+/// 并在引擎里跳到当前动作的下一个边界执行。
+///
+/// 本地持有的消息没有引擎队列行，所以这里先把消息真正发出去（`force_submit`
+/// 一次性跳过本地等待），再让队列刷新把它的行提升为插话——引擎分配队列行的
+/// 那一刻才知道该插哪一行。
+fn interject_waiting_turn(
+    app: &MainWindow,
+    state: &Rc<RefCell<State>>,
+    session: &str,
+    client_message_id: &str,
+) {
+    let turn = {
+        let mut st = state.borrow_mut();
+        let Some(index) = st
+            .waiting_turns
+            .iter()
+            .position(|turn| turn.client_message_id == client_message_id)
+        else {
+            return;
+        };
+        let turn = st.waiting_turns.remove(index);
+        queue::publish_rows_with_waiting(app, &st.queue_cache, &st.waiting_turns);
+        turn
+    };
+    // The waiting echo leaves the transcript with the strip row; the engine's
+    // own projection paints the bubble from here on.
+    {
+        let st = state.borrow();
+        let timeline = st.timeline.clone();
+        let mut live = timeline.borrow_mut();
+        if live.active_root() == Some(client_message_id) {
+            live.remove_live_turn(client_message_id);
+            publish_timeline_passive(app, &live);
+        }
+    }
+    {
+        let mut st = state.borrow_mut();
+        st.pending_interject = Some((
+            session.to_string(),
+            client_message_id.to_string(),
+            std::time::Instant::now(),
+        ));
+        st.force_submit = true;
+    }
+    app.set_draft(turn.content.clone().into());
+    app.set_pending_attachments(ModelRc::new(VecModel::from(
+        turn.payload
+            .iter()
+            .map(|attachment| crate::ChatAttachment {
+                name: attachment.name.as_str().into(),
+                data_url: attachment.content.as_str().into(),
+                mime_type: attachment.content_type.as_str().into(),
+            })
+            .collect::<Vec<_>>(),
+    )));
+    app.invoke_send_message();
+}
+
 /// 撤下/编辑一条还没被引擎受理的消息。它没有引擎队列行，撤下完全在本窗口
 /// 完成：气泡、等待行和订阅一起走，worker 返回的流会被取消。
 fn withdraw_waiting_turn(
@@ -3464,6 +3538,46 @@ fn request_queue_refresh(
                 let mut st = state.borrow_mut();
                 st.queue_cache = rows.clone();
                 queue::publish_rows_with_waiting(&app, &rows, &st.waiting_turns);
+                // A 插话 on a message that was still waiting here only has a
+                // row to promote once the engine admits it. The strip refresh
+                // is that moment; the deadline drops a promotion whose row
+                // never appears (the turn started straight away instead).
+                let promote = st.pending_interject.as_ref().and_then(|entry| {
+                    let (pending_session, client_message_id, _) = entry;
+                    (pending_session == &session)
+                        .then(|| {
+                            rows.iter()
+                                .find(|row| &row.client_message_id == client_message_id)
+                                .map(|row| row.queue_id.clone())
+                        })
+                        .flatten()
+                });
+                let desktop = st.desktop.clone();
+                match promote {
+                    Some(queue_id) => {
+                        st.pending_interject = None;
+                        let weak = app.as_weak();
+                        std::thread::spawn(move || {
+                            let result = desktop.interject_queue_turn(&session, &queue_id);
+                            let _ = weak.upgrade_in_event_loop(move |app| match result {
+                                Ok(()) => {
+                                    app.set_status("已插话，将在当前动作边界优先执行".into())
+                                }
+                                Err(error) => app.set_status(format!("插话失败：{error}").into()),
+                            });
+                        });
+                    }
+                    None => {
+                        let expired = st.pending_interject.as_ref().is_some_and(|entry| {
+                            let (pending_session, _, since) = entry;
+                            pending_session == &session
+                                && since.elapsed() > std::time::Duration::from_secs(20)
+                        });
+                        if expired {
+                            st.pending_interject = None;
+                        }
+                    }
+                }
             });
         });
     });
@@ -3565,6 +3679,10 @@ fn bind_queue(app: &MainWindow, state: Rc<RefCell<State>>) {
         let Some(app) = weak.upgrade() else { return };
         let session = app.get_active_session_id().to_string();
         if session.is_empty() {
+            return;
+        }
+        if let Some(client_message_id) = queue_id.as_str().strip_prefix("waiting-") {
+            interject_waiting_turn(&app, &state_interject, &session, client_message_id);
             return;
         }
         // 插话 is a SQLite write; run it on a worker and post the outcome back.

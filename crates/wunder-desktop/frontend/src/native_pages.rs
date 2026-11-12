@@ -1130,6 +1130,10 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
     let selected = app.get_settings_model_key();
     app.set_workspace_root(settings.workspace_root.into());
     app.set_runtime_language(settings.language.into());
+    // 界面语言：窗口的 `ui-zh` 由 `runtime-language` 派生，回调负责落到
+    // `I18n.zh`。`apply_settings` 是启动加载、设置页保存、补充包导入的唯一
+    // 投影入口，所以在这里显式推一次，不依赖 `changed` 的触发时序。
+    crate::ui_language::apply(&app);
     // 帮助窗口独立持有一份手册语言，跟随这里的界面语言变化。
     crate::help_browser::sync_language(&app);
     app.set_runtime_theme(settings.theme.clone().into());

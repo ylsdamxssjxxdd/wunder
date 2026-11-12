@@ -17,7 +17,7 @@ class ModelHandler(BaseHTTPRequestHandler):
         payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
         last = next((m.get("content") for m in reversed(payload.get("messages", [])) if m.get("role") == "user"), "")
         delta = "增量测试内容。" * 4 + "\n"
-        if last not in ("native-long", "native-cancel", "native-queue-first", "native-queue-second"):
+        if last not in ("native-long", "native-cancel", "native-queue-first", "native-queue-second", "native-queue-third"):
             self.send_error(400, "unexpected test input")
             return
         count = 600 if last == "native-long" else 2000
@@ -27,7 +27,11 @@ class ModelHandler(BaseHTTPRequestHandler):
             # while no foreground stream exists here.
             count, delta = 240, "测试第一轮"
         elif last == "native-queue-second":
-            count, delta = 10, "测试第二轮"
+            # Long enough to still be running when the interject test types the
+            # next message.
+            count, delta = 400, "测试第二轮"
+        elif last == "native-queue-third":
+            count, delta = 20, "测试第三轮"
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()

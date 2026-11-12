@@ -52,6 +52,9 @@ tracing-subscriber.workspace = true
 url.workspace = true
 uuid.workspace = true
 wunder-runtime = { path = "../wunder-runtime", default-features = false }
+# 首次启动按系统 locale 选界面语言（zh* → zh-CN，其余 en-US）。安卓与桌面版
+# 共用这一条链路，因此放在共享的桌面 crate 而不是前端壳里。
+sys-locale = "0.3"
 
 [target.'cfg(windows)'.dependencies]
 # Win32 宿主探针：GetSystemTimes（CPU 时间）、GlobalMemoryStatusEx（物理内存）、
