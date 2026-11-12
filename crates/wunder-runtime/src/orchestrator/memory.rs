@@ -143,6 +143,15 @@ impl Orchestrator {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Remember that this thread's visible history is now a compaction summary.
+    /// The composer paints its context gauge red from then on, in every shell,
+    /// so the user can tell a compacted thread from a fresh one at a glance.
+    async fn mark_session_compacted(&self, user_id: &str, session_id: &str) {
+        self.workspace
+            .save_session_compacted_async(user_id, session_id)
+            .await;
+    }
+
     pub(super) async fn maybe_compact_messages(
         &self,
         _config: &Config,
@@ -420,6 +429,7 @@ impl Orchestrator {
                 compaction_round.insert_into(map);
             }
             emitter.emit("compaction", compaction_payload).await;
+            self.mark_session_compacted(user_id, session_id).await;
             return Ok(CompactionResult::compacted(
                 if guard_stats.applied {
                     guarded_messages
@@ -650,6 +660,7 @@ impl Orchestrator {
                 compaction_round.insert_into(map);
             }
             emitter.emit("compaction", compaction_payload).await;
+            self.mark_session_compacted(user_id, session_id).await;
             return Ok(CompactionResult::compacted(
                 if guard_stats.applied {
                     guarded_messages
@@ -1113,6 +1124,7 @@ impl Orchestrator {
             compaction_round.insert_into(map);
         }
         emitter.emit("compaction", compaction_payload).await;
+        self.mark_session_compacted(user_id, session_id).await;
 
         Ok(CompactionResult::compacted(rebuilt, compaction_id).with_summary_speed(summary_speed))
     }

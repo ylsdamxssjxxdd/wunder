@@ -181,6 +181,10 @@ pub struct NativeSession {
     pub model_request_count: i64,
     pub quota_used: i64,
     pub runtime_status: String,
+    /// Unix seconds at which the thread's last turn settled, `0.0` while it is
+    /// live or unknown. The status alone cannot say whether a settled mark is
+    /// still news; the front end compares this with its own clock.
+    pub runtime_ended_at: f64,
     pub locked: bool,
     pub reasoning_effort: String,
     /// Thread model override (workspace meta). `None` means the thread follows
@@ -1415,6 +1419,12 @@ impl NativeDesktop {
                 .as_ref()
                 .map(|stats| stats.status.clone())
                 .unwrap_or_else(|| "idle".into()),
+            // When the last turn settled. A reader uses it to tell a
+            // completion it just watched from one that ended long ago.
+            runtime_ended_at: overview
+                .as_ref()
+                .and_then(|stats| stats.ended_at)
+                .unwrap_or(0.0),
             origin: record
                 .spawned_by
                 .as_deref()
@@ -1759,9 +1769,34 @@ impl NativeDesktop {
             .user_store
             .get_chat_session(&self.desktop.user_id, session_id)?
             .ok_or_else(|| anyhow!("线程不存在"))?;
-        // Archiving is a terminal user action. Settle model turns, queued
-        // tasks, goals and monitor state first so an archived row can never be
-        // resurrected as running after the next catalog refresh.
+        // A thread that still owes work is not archivable: the old transaction
+        // cancelled the running turn itself, so clicking archive silently killed
+        // work the user only meant to hide. The sidebar disables the action for
+        // the same reason; this is the backstop for a stale row or a caller that
+        // skips the UI.
+        if self.runtime.block_on(
+            self.desktop
+                .state
+                .kernel
+                .thread_runtime
+                .session_has_live_work(&self.desktop.user_id, session_id),
+        ) {
+            return Err(anyhow!("线程正在运行，请先停止再归档"));
+        }
+        // Another instance may own the thread; archiving underneath it would
+        // leave that process writing into an archived row.
+        if self
+            .desktop
+            .state
+            .storage
+            .get_thread_open_lease(session_id, self.user_id())?
+            .is_some_and(|lease| lease.owner_instance_id != self.instance_id)
+        {
+            return Err(anyhow!("线程正被另一个 wunder 实例占用，无法归档"));
+        }
+        // Archiving is a terminal user action. Sweep leftover goal and monitor
+        // state (a crashed run keeps its row but no lease) so an archived thread
+        // can never be resurrected as running after the next catalog refresh.
         self.ensure_thread_open(session_id)?;
         self.runtime.block_on(
             self.desktop

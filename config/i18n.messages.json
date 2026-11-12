@@ -1103,6 +1103,38 @@
     "en-US": "Keep the panel current: after each finished step call this tool again with the full list and move in_progress to the next step.",
     "zh-CN": "继续维护面板：每完成一步就带完整清单再调一次，把 in_progress 移到下一步。"
   },
+  "tool.plan.current_with_status": {
+    "en-US": "`current` only works with the string-list form; drop `current` or drop the per-step `status`.",
+    "zh-CN": "`current` 只能和字符串数组形态一起用；要么去掉 current，要么去掉每一步的 status。"
+  },
+  "tool.plan.invalid_current": {
+    "en-US": "`current` must be an integer index between 0 and {max} (0 = first step); received `{received}`.",
+    "zh-CN": "`current` 必须是 0 到 {max} 之间的整数下标（0 表示第一步），收到 `{received}`。"
+  },
+  "tool.plan.item_text_required": {
+    "en-US": "`{field}` has no step text; give each step a non-empty `step` string.",
+    "zh-CN": "`{field}` 缺少步骤文字：每一步都要有非空的 `step`。"
+  },
+  "tool.plan.list_conflict": {
+    "en-US": "Pass only one step list, got {fields}. Use `plan`.",
+    "zh-CN": "步骤列表只能传一个，收到 {fields}；统一用 `plan`。"
+  },
+  "tool.plan.missing_in_progress": {
+    "en-US": "No step is in_progress. Mark the step you are working on (status in_progress or current index) so the panel shows real progress.",
+    "zh-CN": "当前没有 in_progress 的步骤：把正在做的那一步标成 in_progress（或用 current 下标），面板才显示真实进度。"
+  },
+  "tool.plan.multiple_in_progress": {
+    "en-US": "Only one step may be in_progress, but {fields} are. Keep the one you are working on.",
+    "zh-CN": "同时只能有一个 in_progress，当前标了 {fields}；只保留正在做的那一步。"
+  },
+  "tool.plan.unknown_field": {
+    "en-US": "Unknown field `{field}`; allowed: {allowed}. Minimal form: {\"plan\":[\"a\",\"b\"],\"current\":0}.",
+    "zh-CN": "未知字段 `{field}`；可用字段：{allowed}。最省形态：{\"plan\":[\"甲\",\"乙\"],\"current\":0}。"
+  },
+  "tool.plan.unknown_status": {
+    "en-US": "`{field}` has unknown status `{received}`; allowed: pending, in_progress, completed (also done / in-progress / 进行中 / 已完成).",
+    "zh-CN": "`{field}` 的状态 `{received}` 不合法；可用值：pending、in_progress、completed（也接受 done / in-progress / 进行中 / 已完成）。"
+  },
   "tool.plan.plan_required": {
     "en-US": "Plan steps are required.",
     "zh-CN": "计划步骤不能为空。"
@@ -2408,8 +2440,8 @@
     "zh-CN": "返回给用户的最终回复。若有图片/文件/报告等产出，必须在回复的最后附上 Markdown 语法将图片或链接展示出来，例如：![雷达图](/workspaces/{user_id}/radar_chart.png) 或 ![xx作文](/workspaces/{user_id}/美好的一天.docx)，这样用户就能在前端或其他渠道看到图片或下载文件。"
   },
   "tool.spec.glob.description": {
-    "en-US": "Find files, not directories, whose paths match a glob pattern. Hidden files are visible; dependency and build-cache directories (node_modules, target, .cargo, ...) and .gitignore rules are skipped by default - pass include_ignored=true to walk everything, and exclude to subtract extra glob patterns. Returns up to 100 paths in modification-time order; a larger result is sampled across top-level entries.",
-    "zh-CN": "查找路径匹配 glob 模式的文件（不含目录），隐藏文件可见。默认剪掉 node_modules、target、.cargo 等依赖/构建目录并尊重 .gitignore，可用 include_ignored=true 放开；用 exclude 追加要排除的 glob。按修改时间排序返回至多 100 条路径；超过上限时在顶层目录间抽样。"
+    "en-US": "Find files, not directories, whose paths match a glob pattern. Hidden files are visible; dependency/build-cache directories and .gitignore rules are skipped by default (include_ignored=true walks everything; exclude subtracts extra globs). Returns up to 32 paths per page; page with offset.",
+    "zh-CN": "查找路径匹配 glob 模式的文件（不含目录），隐藏文件可见。默认剪掉依赖/构建目录并尊重 .gitignore（include_ignored=true 放开；exclude 追加排除项）。每页至多 32 条，按顶层目录轮转；用 offset 翻页。"
   },
   "tool.spec.glob.args.pattern": {
     "en-US": "Required. Glob pattern such as \"*.rs\" or \"src/**/*.rs\". A pattern without a separator matches the file name at any depth.",
@@ -2505,7 +2537,7 @@
   },
   "tool.spec.plan.args.plan.step": {
     "en-US": "Step description.",
-    "zh-CN": "步骤描述。"
+    "zh-CN": "步骤描述（也可直接传字符串数组）。"
   },
   "tool.spec.plan.args.plan.status": {
     "en-US": "Step status (pending, in_progress, completed). At most one step may be in_progress.",
@@ -3092,16 +3124,16 @@
     "zh-CN": "可选，最大扫描文件数（0 表示不限制）。"
   },
   "tool.spec.search.args.path": {
-    "en-US": "Optional. Directory to limit the search. Defaults to the agent's working directory if omitted; relative paths are resolved against that root. Absolute paths and /workspaces/... public paths are also accepted. This tool searches local filesystem text files only, never the web.",
+    "en-US": "Optional. Directory to limit the search. Defaults to the agent's working directory if omitted; relative paths are resolved against that root. Absolute paths and /home/sjxx/桌面/wunder/... public paths are also accepted. This tool only searches plain-text files on the local filesystem and never searches the web.",
     "zh-CN": "可选，限制搜索范围的目录。省略时默认使用智能体工作目录；相对路径按该目录解释。也支持绝对路径和 /workspaces/... 公共路径。这个工具只搜索本地文件系统中的纯文本文件，不会搜索网页。"
   },
   "tool.spec.search.args.pattern": {
     "en-US": "Preferred rg-style input. When pattern is provided without query_mode or -F, it defaults to regex like ripgrep; use -F/query_mode=literal for fixed-string matching.",
-    "zh-CN": "推荐的 rg 风格输入。仅传 `pattern` 且未显式设置 `query_mode` 或 `-F` 时，会像 ripgrep 一样默认按 regex 处理；若要固定字符串匹配，请使用 `-F` 或 `query_mode=literal`。"
+    "zh-CN": "推荐的 rg 风格输入；未设置 `query_mode` 或 `-F` 时按 regex 处理。"
   },
   "tool.spec.search.args.query": {
     "en-US": "Required text query for local filesystem text files. query defaults to literal matching; use query_mode=regex when you need alternation such as `foo|bar`. Do not write boolean words like `OR` expecting them to act as operators.",
-    "zh-CN": "本地文件系统纯文本文件的必填查询词。`query` 默认按 literal 匹配；需要 `foo|bar` 这类并列表达式时请显式使用 `query_mode=regex`。不要在 `query` 中写 `OR` 并期待它成为运算符。"
+    "zh-CN": "本地纯文本文件的必填查询词。本工具只搜索本地文件，不联网。"
   },
   "tool.spec.search.args.glob": {
     "en-US": "Preferred rg-style alias of file_pattern. Supports comma/semicolon/newline separated --glob style filters.",
@@ -3112,7 +3144,7 @@
     "zh-CN": "可选，rg 风格的语言/文件类型快捷写法。例如 rust、rs、ts、tsx、js、py、md、toml、json。"
   },
   "tool.spec.search.args.query_mode": {
-    "en-US": "Optional. Query mode: literal or regex. If omitted, query defaults to literal while pattern defaults to regex; use regex for rg-style alternation like `foo|bar|baz`. Do not use `foo OR bar` as an alternation expression.",
+    "en-US": "Optional. Query mode: literal or regex. If omitted, query defaults to literal while pattern defaults to regex; use regex for rg-style alternation like `foo|bar|baz`. Do not use `foo OR bar` as an alternative.",
     "zh-CN": "可选。查询模式：`literal` 或 `regex`。省略时，`query` 默认按 literal，`pattern` 默认按 regex；需要 rg 风格并列写法如 `foo|bar|baz` 时请使用 regex。不要用 `foo OR bar` 表示并列检索。"
   },
   "tool.spec.search.args.regex": {
@@ -3136,12 +3168,16 @@
     "zh-CN": "可选，共享上下文行数。等价于同时设置 context_before 和 context_after，类似 rg -C。"
   },
   "tool.spec.search.args.context_before": {
-    "en-US": "Optional. Number of context lines before each hit (0-20).",
-    "zh-CN": "可选。每条命中前返回的上下文行数（0-20）。"
+    "en-US": "Optional. Context lines before each hit (0-80).",
+    "zh-CN": "可选。每条命中前返回的上下文行数（0-80）。"
   },
   "tool.spec.search.args.context_after": {
-    "en-US": "Optional. Number of context lines after each hit (0-20).",
-    "zh-CN": "可选。每条命中后返回的上下文行数（0-20）。"
+    "en-US": "Optional. Context lines after each hit (0-80).",
+    "zh-CN": "可选。每条命中后返回的上下文行数（0-80）。"
+  },
+  "tool.spec.search.args.context_matches": {
+    "en-US": "Optional. Only the top N hits (0-32) carry before/after context; the rest return path/line/content.",
+    "zh-CN": "可选。只给排序后前 N 个命中（0-32）带 before/after 上下文，其余只回 path/line/content。"
   },
   "tool.spec.search.args.before_alias": {
     "en-US": "Optional rg-style alias of context_before, equivalent to -B.",
@@ -3160,8 +3196,8 @@
     "zh-CN": "可选的 rg 风格别名，等价于 max_matches/head_limit，用于限制返回的命中条数。"
   },
   "tool.spec.search.description": {
-    "en-US": "Search file contents in the local workspace with a ripgrep-style regular expression. Returns matching lines with line numbers, grouped by file, capped by max_matches (default 200); a hit line longer than 400 characters is truncated and marked content_truncated. Pass mode=paths for a file list only (like rg -l), which returns paths instead of per-line hits. Narrow the scope with path or include (glob). query is required; use query_mode=regex for alternation such as `foo|bar`, not `foo OR bar`. This tool searches local filesystem text files only, never the web.",
-    "zh-CN": "在本地工作区中用 ripgrep 风格的正则表达式搜索文件内容。返回带行号、按文件分组的命中行，并受 max_matches 限制（默认 200）；单行命中正文超过 400 字符会截断并标记 content_truncated。只要文件清单（等价 rg -l）请传 mode=paths，此时返回 paths 而不是逐行命中。用 path 或 include（glob）收窄范围。query 必填；需要 `foo|bar` 这类并列表达式时用 query_mode=regex，不要在 query 中写 `foo OR bar`。本工具只搜索本地文件系统中的纯文本文件，不联网。"
+    "en-US": "Search local workspace file contents, ripgrep-style. Returns hits with line numbers, capped by max_matches (default 200); a hit line over 400 characters is truncated and marked content_truncated. mode=paths returns a file list only (like rg -l). Narrow with path or include (glob).",
+    "zh-CN": "在本地工作区中用 ripgrep 风格检索文件内容。返回带行号的命中行，受 max_matches 限制（默认 200）；命中行超过 400 字符会截断并标记 content_truncated。mode=paths 只回文件清单（等价 rg -l）。用 path 或 include（glob）收窄范围。query 必填；`foo|bar` 这类并列表达式用 query_mode=regex，不要写 `foo OR bar`。仅本地纯文本文件，不联网。"
   },
   "tool.spec.write.args.content": {
     "en-US": "Required string file content. Use an explicit empty string only when you intend to clear the file.",
@@ -3577,7 +3613,11 @@
   },
   "tool.spec.glob.args.exclude": {
     "zh-CN": "可选，追加要排除的 glob，字符串或字符串数组，例如 \"*.min.js\" 或 [\"dist\", \"vendor\"]。不含分隔符的模式匹配文件/目录名，含分隔符的匹配相对路径；命中的目录整棵子树剪掉。",
-    "en-US": "Optional extra globs to subtract, as a string or string array, e.g. \"*.min.js\" or [\"dist\", \"vendor\"]. Patterns without a separator match file or directory names; patterns with a separator match the path relative to the search root; a matched directory prunes its whole subtree."
+    "en-US": "Optional extra globs to subtract, as a string or string array, e.g. *.min.js or [dist, vendor]. Patterns without a separator match file or directory names; patterns with a separator match the path relative to the search root; a matched directory prunes its whole subtree."
+  },
+  "tool.spec.glob.args.offset": {
+    "zh-CN": "可选，分页偏移，默认 0（每页 32 个）。",
+    "en-US": "Optional paging offset (default 0; 32 per page)."
   },
   "tool.spec.glob.args.include_ignored": {
     "zh-CN": "可选，默认 false：剪掉 node_modules、target、.cargo 等目录并尊重 .gitignore。设 true 时遍历原始目录树（版本控制元数据目录仍跳过）。目标就在这些目录里时用它。",
@@ -3593,7 +3633,7 @@
   },
   "tool.spec.search.args.mode": {
     "zh-CN": "可选，content（默认）返回逐行命中；paths 只返回匹配的文件清单（等价 rg -l，适合「哪些文件提到 X」这类问题），响应里用 paths 而不是 hits。",
-    "en-US": "Optional. content (default) returns per-line hits; paths returns only the matching file list (like rg -l, for \"which files mention X\"), with paths instead of hits in the response."
+    "en-US": "Optional. content (default) returns per-line hits; paths returns only the matching file list (like rg -l, for which files mention X), with paths instead of hits in the response."
   },
   "tool.spec.search.args.files_only": {
     "zh-CN": "可选，等价 mode=paths 的布尔写法。",
@@ -3614,5 +3654,13 @@
   "tool.command_session.interrupted": {
     "en-US": "Interrupt requested: the command is being terminated.",
     "zh-CN": "已请求中断：命令正在被终止。"
+  },
+  "tool.plan.minimal_example_hint": {
+    "en-US": "Retry with the minimal form {\"plan\":[\"a\",\"b\"],\"current\":0} or the object form {\"plan\":[{\"step\":\"a\",\"status\":\"in_progress\"}]}.",
+    "zh-CN": "改用最省形态 {\"plan\":[\"甲\",\"乙\"],\"current\":0} 或对象形态 {\"plan\":[{\"step\":\"甲\",\"status\":\"in_progress\"}]} 重试。"
+  },
+  "tool.spec.plan.args.current": {
+    "en-US": "0-based index of the step currently being done; only for the string-list form (it cannot be combined with per-step status).",
+    "zh-CN": "正在做的步骤下标（0 基），只用于字符串数组形态，不能与每一步的 status 同时出现。"
   }
 }

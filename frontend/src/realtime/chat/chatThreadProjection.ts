@@ -32,6 +32,7 @@ import type {
   ChatRuntimeWorkflowItemProjection
 } from './chatRuntimeTypes';
 import { chatPerf } from '@/utils/chatPerf';
+import { resolveModelRoundMetrics } from '@/utils/modelRoundMetrics';
 import { normalizeChatPlan } from './chatPlan';
 import { extractChatInquiryPanel, presentChatInquiry, type ChatInquiryPanel } from './chatInquiry';
 
@@ -672,6 +673,8 @@ type TimelineEvent = {
   round: number;
   /** 仅思考行：该条目自身是否仍在流式输出（整轮 active 不代表思考未结束）。 */
   streaming?: boolean;
+  /** 仅思考行：该轮请求的上下文占用与思考耗时，与同轮工具行同两列。 */
+  metrics?: { tokens: number | null; durationMs: number | null };
 };
 
 const itemSeq = (item: ThreadItemState): number => Number(item.raw?.created_seq) || item.order;
@@ -696,7 +699,8 @@ const buildTurnTimeline = (
         kind: 'reasoning',
         text: reasoning,
         round: item.modelRound,
-        streaming: isActiveItemStatus(item.status)
+        streaming: isActiveItemStatus(item.status),
+        metrics: resolveModelRoundMetrics(item.raw) ?? undefined
       });
     }
     const content = composeItemText(state, item.itemId, 'content');
@@ -729,7 +733,13 @@ const buildTurnTimeline = (
       blocks.push(open);
     }
     open.rows.push(event.kind === 'reasoning'
-      ? { type: 'reasoning', itemId: event.itemId, text: event.text, streaming: event.streaming }
+      ? {
+          type: 'reasoning',
+          itemId: event.itemId,
+          text: event.text,
+          streaming: event.streaming,
+          metrics: event.metrics
+        }
       : { type: 'tool', itemId: event.itemId });
   }
   return blocks;

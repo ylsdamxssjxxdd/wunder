@@ -2239,3 +2239,79 @@ fn search_observation_hides_the_default_files_only_flag() {
     assert!(data.get("files_only").is_none(), "{compacted}");
     assert_eq!(data["returned_match_count"], json!(1), "{compacted}");
 }
+
+#[test]
+fn search_context_matches_widens_context_for_focused_hits() {
+    let build = |context_match_limit: Option<u64>| {
+        let mut data = json!({
+            "query": "needle",
+            "query_mode": "literal",
+            "hits": [{
+                "path": "src/a.rs",
+                "line": 100,
+                "content": "needle",
+                "before": (0..8)
+                    .map(|idx| json!({ "line": 90 + idx, "content": "before-line".to_string() }))
+                    .collect::<Vec<_>>(),
+                "after": (0..8)
+                    .map(|idx| json!({ "line": 101 + idx, "content": "after-line".to_string() }))
+                    .collect::<Vec<_>>()
+            }]
+        });
+        if let Some(limit) = context_match_limit {
+            data["context_match_limit"] = json!(limit);
+        }
+        let compacted =
+            ToolResultPayload::from_value(json!({ "ok": true, "data": data }))
+                .to_compact_payload("搜索内容");
+        compacted["data"].clone()
+    };
+
+    // 给了上下文名额：单个命中可以带整段实现，不再被压成两行。
+    let focused = build(Some(2));
+    assert_eq!(focused["context_match_limit"], json!(2), "{focused}");
+    assert_eq!(focused["hits"][0]["after"].as_array().map(Vec::len), Some(8));
+    assert_eq!(focused["hits"][0]["before"].as_array().map(Vec::len), Some(8));
+
+    // 没有名额时沿用「每处两行」的取样，避免所有命中都搬一遍同样的上下文。
+    let unfocused = build(None);
+    assert!(unfocused.get("context_match_limit").is_none(), "{unfocused}");
+    assert_eq!(
+        unfocused["hits"][0]["after"].as_array().map(Vec::len),
+        Some(2)
+    );
+}
+
+#[test]
+fn glob_projection_keeps_paths_clean_and_carries_paging() {
+    let paths = (0..32)
+        .map(|idx| format!("src/{idx}.rs"))
+        .collect::<Vec<_>>();
+    let payload = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {
+            "pattern": "*.rs",
+            "path": ".",
+            "paths": paths,
+            "count": 32,
+            "total_matched": 244,
+            "offset": 0,
+            "next_offset": 32,
+            "has_more": true,
+            "truncated": true,
+            "exclude": [],
+            "include_ignored": false
+        }
+    }));
+
+    let compacted = payload.to_compact_payload("文件名匹配");
+    let data = &compacted["data"];
+    let returned = data["paths"].as_array().expect("paths");
+    // 32 条路径必须原样是字符串数组：不能混进截断占位对象。
+    assert_eq!(returned.len(), 32, "{compacted}");
+    assert!(returned.iter().all(Value::is_string), "{compacted}");
+    assert_eq!(data["total_matched"], json!(244));
+    assert_eq!(data["next_offset"], json!(32));
+    assert_eq!(data["has_more"], json!(true));
+    assert_eq!(data["offset"], json!(0));
+}

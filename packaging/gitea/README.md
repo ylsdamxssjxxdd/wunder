@@ -43,6 +43,10 @@ win7-installer 两个 qemu 依赖任务受影响；原生任务（linux 双架�
   关 DEBUG_INFO 与模块签名）。
 - 服务器：rpm 与 `install-4k-kernel.sh` 同目录 root 运行，安装并 grubby 设默认，**手动 reboot**
   （旧 64K 内核保留在 grub 菜单兜底）；重启后 `getconf PAGESIZE` 应为 4096。
+- 服务器如有 DKMS 模块（昇腾 `davinci_ascend`、流量监控 `netflow_*` 等），装完内核会报
+  `Your kernel headers ... cannot be found`：kernel-devel 与 `prepare-dkms-4k.sh` 同目录 root 运行，
+  它先在服务器上原生编一次 kbuild 宿主工具（本机需要 gcc/make/dkms），再 `dkms autoinstall -k 4.19.90-4k`
+  把模块编好；**在 reboot 之前执行**，编不过不影响当前系统，编好了再重启卡就绪。
 - binfmt 注册不跨重启：重启后重跑 `./load-images.sh`（或 `binfmt/install-service.sh` 开机单元）再触发工作流。
 
 ### 只有老 Docker / Compose v1 的机器

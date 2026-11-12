@@ -1,9 +1,11 @@
 //! `glob` tool: locate files by glob pattern.
 //!
 //! Returns files (not directories) whose path matches a glob pattern, ordered by
-//! modification time (most recently modified first). The result is capped; when
-//! the cap is exceeded the paths are sampled across top-level directories so
-//! every subtree stays represented and the total match count is reported.
+//! modification time (most recently modified first), then spread round-robin
+//! across top-level directories so a page always represents every subtree. A
+//! page is capped at [`GLOB_PAGE_SIZE`]; when more files match, the result
+//! carries `has_more` plus the `offset` of the next page, so a large match set
+//! stays enumerable instead of being silently dropped.
 //!
 //! Defaults keep the result usable on real repositories: dependency and build
 //! cache directories (`node_modules`, `target`, `.cargo`, …) plus everything
@@ -31,8 +33,12 @@ use super::fs_walk::{self, ExcludeFilter};
 /// Canonical tool name.
 pub(crate) const TOOL_GLOB: &str = "文件名匹配";
 
-/// Hard cap on returned paths, matching the dsh glob tool.
-const GLOB_MAX_RESULTS: usize = 100;
+/// Hard cap on paths returned by one call. The observation envelope samples any
+/// array longer than 32 entries and replaces the dropped range with an omission
+/// marker inside the array, which breaks the "array of paths" contract and makes
+/// the rest unreachable. Keeping a page at that bound means `paths` is always a
+/// clean string array and the remainder is reachable through `offset`.
+const GLOB_PAGE_SIZE: usize = 32;
 
 pub(crate) async fn glob_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let args = super::recover_tool_args_value(args);
@@ -93,6 +99,7 @@ pub(crate) async fn glob_files(context: &ToolContext<'_>, args: &Value) -> Resul
         }
     };
     let include_ignored = fs_walk::parse_include_ignored(&args);
+    let offset = parse_offset(&args);
     let pattern = pattern.to_string();
     let raw_path = args
         .get("path")
@@ -114,9 +121,20 @@ pub(crate) async fn glob_files(context: &ToolContext<'_>, args: &Value) -> Resul
             &matcher,
             &exclude_patterns,
             include_ignored,
+            offset,
         )
     })
     .await
+}
+
+/// 分页偏移，用于在一页之外继续枚举同一批匹配。
+fn parse_offset(args: &Value) -> usize {
+    let raw = match args.get("offset") {
+        Some(Value::Number(num)) => num.as_u64(),
+        Some(Value::String(text)) => text.trim().parse::<u64>().ok(),
+        _ => None,
+    };
+    raw.unwrap_or(0).min(u32::MAX as u64) as usize
 }
 
 struct GlobHit {
@@ -134,6 +152,7 @@ fn glob_files_inner(
     matcher: &GlobMatcher,
     exclude_patterns: &[String],
     include_ignored: bool,
+    offset: usize,
 ) -> Result<Value> {
     let root = resolve_tool_path(workspace, user_id, raw_path, extra_roots)?;
     if !root.exists() {
@@ -207,25 +226,34 @@ fn glob_files_inner(
             .then_with(|| left.rel.cmp(&right.rel))
     });
     let total = hits.len();
-    let truncated = total > GLOB_MAX_RESULTS;
-    let paths: Vec<String> = if truncated {
-        sample_across_top_level(&hits, GLOB_MAX_RESULTS)
-    } else {
-        hits.iter().map(|hit| hit.rel.clone()).collect()
-    };
+    let order = round_robin_order(&hits);
+    let paths: Vec<String> = order
+        .iter()
+        .skip(offset)
+        .take(GLOB_PAGE_SIZE)
+        .map(|hit| hit.rel.clone())
+        .collect();
     let returned = paths.len();
+    let next_offset = offset.saturating_add(returned);
+    let has_more = next_offset < total;
     let resolved_root = root.to_string_lossy().to_string();
     let summary = if total == 0 {
         format!("No files found matching {pattern}.")
-    } else if truncated {
-        format!("Found {total} files matching {pattern}; returning {returned} sampled paths.")
+    } else if has_more {
+        format!(
+            "Found {total} files matching {pattern}; returning {returned} from offset {offset}."
+        )
     } else {
         format!("Found {total} files matching {pattern}.")
     };
     // 0 命中时最可能的原因就是目录被默认忽略或列进了 .gitignore，直接把逃生口写出来。
-    let hint = if truncated {
+    let hint = if has_more {
         Some(format!(
-            "Matched {total} files; showing {returned} sampled across top-level entries. Narrow the pattern or path to see the rest."
+            "Matched {total} files; showing {returned} from offset {offset}. Pass offset={next_offset} for the next page, or narrow the pattern/path."
+        ))
+    } else if offset > 0 && returned == 0 {
+        Some(format!(
+            "offset {offset} is past the end of {total} matched files; drop offset or narrow the pattern/path."
         ))
     } else if total == 0 && !include_ignored {
         Some(
@@ -246,7 +274,14 @@ fn glob_files_inner(
             "paths": paths,
             "count": returned,
             "total_matched": total,
-            "truncated": truncated,
+            "offset": offset,
+            "next_offset": if has_more {
+                json!(next_offset)
+            } else {
+                Value::Null
+            },
+            "has_more": has_more,
+            "truncated": has_more,
             "exclude": exclude_patterns,
             "include_ignored": include_ignored,
         }),
@@ -278,9 +313,12 @@ fn entry_allowed(
     !fs_walk::prunes_dir(&name, include_ignored)
 }
 
-/// Round-robin sampling across top-level directories, preserving the incoming
-/// modification-time order so the most recent files are kept first.
-fn sample_across_top_level(hits: &[GlobHit], cap: usize) -> Vec<String> {
+/// Round-robin order across top-level directories over the incoming
+/// modification-time order: the newest files stay first, and consecutive entries
+/// come from different subtrees so a single page still spreads over the tree.
+/// The result is a permutation, so paging with `offset` walks every match
+/// exactly once.
+fn round_robin_order(hits: &[GlobHit]) -> Vec<&GlobHit> {
     let mut order: Vec<String> = Vec::new();
     let mut groups: HashMap<String, Vec<&GlobHit>> = HashMap::new();
     for hit in hits {
@@ -290,18 +328,15 @@ fn sample_across_top_level(hits: &[GlobHit], cap: usize) -> Vec<String> {
         groups.entry(hit.top.clone()).or_default().push(hit);
     }
     let mut cursor = vec![0usize; order.len()];
-    let mut output = Vec::with_capacity(cap);
-    'outer: loop {
+    let mut output = Vec::with_capacity(hits.len());
+    loop {
         let mut progressed = false;
         for (index, key) in order.iter().enumerate() {
             let group = &groups[key];
             if cursor[index] < group.len() {
-                output.push(group[cursor[index]].rel.clone());
+                output.push(group[cursor[index]]);
                 cursor[index] += 1;
                 progressed = true;
-                if output.len() >= cap {
-                    break 'outer;
-                }
             }
         }
         if !progressed {
@@ -337,5 +372,83 @@ impl GlobMatcher {
         } else {
             self.set.is_match(file_name)
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hit(rel: &str) -> GlobHit {
+        GlobHit {
+            rel: rel.to_string(),
+            top: rel.split('/').next().unwrap_or_default().to_string(),
+            mtime: None,
+        }
+    }
+
+    #[test]
+    fn round_robin_order_visits_every_file_once_and_spreads_tops() {
+        let hits = vec![
+            hit("a/1"),
+            hit("a/2"),
+            hit("a/3"),
+            hit("b/1"),
+            hit("c/1"),
+            hit("c/2"),
+        ];
+        let order = round_robin_order(&hits);
+        assert_eq!(order.len(), hits.len());
+        let mut names = order.iter().map(|item| item.rel.clone()).collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, vec!["a/1", "a/2", "a/3", "b/1", "c/1", "c/2"]);
+        // 一页之内就要覆盖各个顶层目录，避免整页都来自同一个子树。
+        let tops = order
+            .iter()
+            .take(3)
+            .map(|item| item.top.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(tops, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn paging_over_the_order_yields_each_file_exactly_once() {
+        let hits = (0..70)
+            .map(|idx| hit(&format!("d{}/f{}", idx % 5, idx)))
+            .collect::<Vec<_>>();
+        let order = round_robin_order(&hits);
+        assert_eq!(order.len(), 70);
+
+        // 模拟逐页抓取：offset 前进、每页不超过 GLOB_PAGE_SIZE。
+        let mut paged: Vec<String> = Vec::new();
+        let mut page_lens: Vec<usize> = Vec::new();
+        let mut offset = 0usize;
+        while offset < order.len() {
+            let page = order
+                .iter()
+                .skip(offset)
+                .take(GLOB_PAGE_SIZE)
+                .map(|item| item.rel.clone())
+                .collect::<Vec<_>>();
+            page_lens.push(page.len());
+            paged.extend(page);
+            offset += page_lens.last().copied().unwrap_or(0);
+        }
+        assert_eq!(page_lens, vec![32, 32, 6]);
+        assert_eq!(paged.len(), 70);
+        let mut unique = paged.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), 70, "分页必须覆盖全部匹配且不重复");
+    }
+
+    #[test]
+    fn parse_offset_accepts_numbers_strings_and_defaults() {
+        assert_eq!(parse_offset(&json!({})), 0);
+        assert_eq!(parse_offset(&json!({"offset": 32})), 32);
+        assert_eq!(parse_offset(&json!({"offset": "64"})), 64);
+        assert_eq!(parse_offset(&json!({"offset": "  " })), 0);
+        assert_eq!(parse_offset(&json!({"offset": null})), 0);
     }
 }

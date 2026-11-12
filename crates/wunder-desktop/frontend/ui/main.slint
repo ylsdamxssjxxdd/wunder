@@ -8,7 +8,7 @@ import { I18n } from "i18n.slint";
 // the root file get a public wrapper. The fields report focus through
 // components.slint / textedit-base.slint.
 export { TextFieldActivation } from "text_field.slint";
-import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow, CommandTask, SubagentItem } from "theme.slint";
+import { Theme, DesktopPage, Conversation, WorkspaceCard, SidebarRow, CloudThreadCard, WorkflowLine, WorkflowSection, ToolWorkflowEntry, TimelineRow, TimelineCounts, TurnStatMetric, TurnMark, PatchCard, PatchLine, ChatAttachment, FileCard, AgentCard, ToolCard, ModelCard, ProfileCard, TrajRow, TrajSpan, TrajTick, TrajBoundary, TrajTiming, TrajSection, TrajTab, TrajSearchHit, TrajTokenBar, CronCard, CronRunCard, ChannelCatalogCard, ChannelAccountCard, ChannelBindingCard, ChannelLogCard, AvatarOption, AvatarColorChip, CompanionCard, PlanStep, InquiryQuestion, QueueTurn, DraftRecall, InterlinkApproval, WorkspaceFileRow, CommandTask, SubagentItem, SplitContext } from "theme.slint";
 import { Action, EdgeToggle, RailButton, Avatar, FormField, MiddleHeader, MiddleFooter, ConfirmDialog, InfoDialog, ToastHost, ToastState } from "components.slint";
 export { ToastState }
 import { ProcessEntry } from "theme.slint";
@@ -24,6 +24,9 @@ import { SidebarMetrics, PointerChase, DragPreview } from "drag_row.slint";
 // `PointerChase` is reached from Rust (`pointer_chase.rs`), so it has to be
 // re-exported here; only exported globals exist in the generated bindings.
 export { SidebarMetrics, PointerChase }
+// `RuntimeStatus.session-start` is stamped by Rust at startup so a settled
+// mark that predates this window is not celebrated.
+export { RuntimeStatus }
 import { SettingsPage } from "settings_page.slint";
 import { ModelPresets } from "model_presets.slint";
 import { I18n } from "i18n.slint";
@@ -486,6 +489,14 @@ export component MainWindow inherits Window {
     in-out property <bool> split-busy-3;
     in-out property <[string]> split-model-names: ["", "", "", ""];
     in-out property <[string]> split-model-keys: ["", "", "", ""];
+    // Per-pane context gauge. Always four entries: a pane that is empty or has
+    // not been read yet shows an unknown gauge, never another thread's numbers.
+    in-out property <[SplitContext]> split-contexts: [
+        { usage: 0.0, known: false, counts: "", compacted: false },
+        { usage: 0.0, known: false, counts: "", compacted: false },
+        { usage: 0.0, known: false, counts: "", compacted: false },
+        { usage: 0.0, known: false, counts: "", compacted: false }
+    ];
     callback split-layout(int);
     callback split-close(int);
     callback split-activate(int);
@@ -980,6 +991,9 @@ export component MainWindow inherits Window {
     in-out property <int> stream-max-backlog;
     in-out property <float> context-usage: 0.0;
     in-out property <bool> context-known: false;
+    // True once the active thread has been through a context compaction, so
+    // the gauge keeps painting red instead of the calm amber.
+    in-out property <bool> context-compacted: false;
     in-out property <float> context-used: -1;
     in-out property <float> context-capacity: -1;
     in-out property <string> context-counts;
@@ -1509,7 +1523,7 @@ export component MainWindow inherits Window {
                                 draft <=> root.draft; busy: root.command-pending || root.session-loading || root.creating-session || (root.chat-loading && !root.busy) || (root.cloud-chat-active && root.cloud-thread-busy);
                             launch-cli => { root.launch-cli(); }
                             send-key: root.runtime-send-key;
-                            context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts;
+                            context-usage: root.context-usage; context-known: root.context-known; context-counts: root.context-counts; context-compacted: root.context-compacted;
                             models: root.cloud-chat-active ? root.cloud-thread-models : root.composer-models;
                             // The local built-in agent owns the saved quick prompts; a
                             // cloud thread keeps its service-side composer scope.
@@ -1595,6 +1609,7 @@ export component MainWindow inherits Window {
                 model-key: root.selected-model-key;
                 model-names: root.split-model-names;
                 model-keys: root.split-model-keys;
+                contexts: root.split-contexts;
                 attachments: root.pending-attachments;
                 send-key: root.runtime-send-key;
                 layout-changed(count) => { root.split-layout(count); }

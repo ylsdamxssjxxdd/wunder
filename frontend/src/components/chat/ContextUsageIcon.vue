@@ -17,7 +17,7 @@ import { CONTEXT_DANGER_RATIO, CONTEXT_WARNING_RATIO } from '@/components/chat/c
 
 // Liquid fill tracks context window occupancy: null/0 stays an empty gray glyph,
 // and the liquid rises toward full as the context window fills up.
-const props = defineProps<{ ratio: number | null; title?: string }>();
+const props = defineProps< ratio: number | null; title?: string; compacted?: boolean }>();
 
 const clampRatio = (value: number): number => Math.min(1, Math.max(0, value));
 
@@ -34,6 +34,11 @@ const lerpChannel = (from: number, to: number, progress: number): number =>
 // window approaches the hard limit so the icon itself carries the old
 // warning/danger signal from the removed text.
 const liquidGradient = computed(() => {
+  // A compacted thread keeps the danger tone at any occupancy: red then means
+  // "this history is a summary", not "you are about to run out of room".
+  if (props.compacted) {
+    return 'linear-gradient(180deg, #ef4444, #dc2626)';
+  }
   const ratio = Number(props.ratio);
   if (!Number.isFinite(ratio) || ratio < CONTEXT_WARNING_RATIO) {
     return 'linear-gradient(180deg, #ffb35b, #f58a24)';

@@ -99,6 +99,7 @@ import { buildTimelineStructuredView } from './toolTimelineStructured';
 import type { ToolWorkflowPatchView, ToolWorkflowStructuredView } from './toolWorkflowTypes';
 import { entryActivity, processActivityLabel, reasoningPreview, type ProcessActivity } from './timelineActivity';
 import { completeProcessRefresh, requestProcessRefresh, type ProcessRefreshGateState } from './processRefreshGate';
+import { resolveModelRoundMetrics } from '@/utils/modelRoundMetrics';
 
 type ProcessRow =
   | { kind: 'reasoning'; key: string; entry: TimelineReasoningEntry; modelRound?: number }
@@ -182,9 +183,18 @@ const currentReasoningRowKey = computed(() => `reasoning:${currentReasoningItemI
 const hasCurrentReasoningRow = computed(() => rows.value.some(row =>
   row.kind === 'reasoning' && row.key === currentReasoningRowKey.value
 ));
+/** 该思考条目落库后的载荷：右侧两列在条目写入后才可读，实时行直接复用。 */
+const currentReasoningMetrics = computed(() => {
+  const id = currentReasoningItemId.value;
+  if (!id) return undefined;
+  const item = (props.processItems || []).find(entry => entry.item_id === id) ||
+    processItems.value.find(entry => entry.item_id === id);
+  return item ? resolveModelRoundMetrics(item) ?? undefined : undefined;
+});
 const reasoningEntry = computed<TimelineReasoningEntry>(() => ({
   kind: 'reasoning', key: currentReasoningRowKey.value, streaming: currentReasoningStreaming.value,
-  summary: reasoningPreview(reasoningText.value), text: reasoningText.value
+  summary: reasoningPreview(reasoningText.value), text: reasoningText.value,
+  metrics: currentReasoningMetrics.value
 }));
 const currentReasoningStreaming = computed(() => {
   if (!props.reasoningStreaming || ['completed','failed','cancelled','interrupted','rejected','stopped'].includes(props.status || '')) return false;
@@ -838,7 +848,8 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
         entry: {
           kind: 'reasoning', key,
           streaming: isCurrentReasoning && currentReasoningStreaming.value,
-          summary: reasoningPreview(reasoning), text: reasoning
+          summary: reasoningPreview(reasoning), text: reasoning,
+          metrics: resolveModelRoundMetrics(slot.item) ?? undefined
         }
       });
     }

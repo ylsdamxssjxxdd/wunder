@@ -242,6 +242,7 @@ fn clear_pane(app: &MainWindow, slot: usize) {
     publish_rows(app, slot, Vec::new());
     set_loading(app, slot, false);
     set_busy(app, slot, false);
+    set_context(app, slot, wunder_desktop::NativeContextUsage::default());
 }
 
 fn slot_busy(slot: &Slot) -> bool {
@@ -712,6 +713,73 @@ fn attach_watch(app: &MainWindow, slot: usize, mut watch: NativeThreadWatch) {
     });
 }
 
+/// Publish one pane's context gauge. Every pane is a different thread, so the
+/// numbers and the "history is a summary" flag are per slot; a pane that has
+/// not been read yet stays unknown rather than borrowing the visible thread's
+/// values.
+fn set_context(app: &MainWindow, slot: usize, usage: wunder_desktop::NativeContextUsage) {
+    if slot >= 4 {
+        return;
+    }
+    let mut contexts = app.get_split_contexts().iter().collect::<Vec<_>>();
+    contexts.resize(4, crate::SplitContext::default());
+    let used = usage.used.filter(|value| *value >= 0.0);
+    let capacity = usage.capacity.filter(|value| *value > 0.0);
+    let known = used.is_some() && capacity.is_some();
+    let count = |value: Option<f64>| {
+        value
+            .map(|value| crate::native_chat::format_count_i64(value.max(0.0) as i64))
+            .unwrap_or_else(|| "—".to_string())
+    };
+    let next = crate::SplitContext {
+        usage: match (used, capacity) {
+            (Some(used), Some(capacity)) if capacity > 0.0 => {
+                (used / capacity).clamp(0.0, 1.0) as f32
+            }
+            _ => 0.0,
+        },
+        known,
+        counts: format!("{} / {} tokens", count(used), count(capacity)).into(),
+        compacted: usage.compacted,
+    };
+    // A context frame arrives every model round; rewriting the four-entry model
+    // for an unchanged gauge would re-lay out the whole split grid.
+    let current = contexts[slot].clone();
+    if current.usage == next.usage
+        && current.known == next.known
+        && current.counts == next.counts
+        && current.compacted == next.compacted
+    {
+        return;
+    }
+    contexts[slot] = next;
+    app.set_split_contexts(ModelRc::new(VecModel::from(contexts)));
+}
+
+/// Read one pane's context snapshot off the UI thread. The reply is dropped if
+/// the pane was reassigned meanwhile, so a slow read can never paint another
+/// thread's numbers into this pane.
+fn refresh_pane_context(app: &MainWindow, desktop: Arc<NativeDesktop>, slot: usize, session_id: &str) {
+    let target = session_id.trim().to_string();
+    if target.is_empty() {
+        return;
+    }
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let Ok(usage) = desktop.context_usage(&target) else {
+            return;
+        };
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            // A pane can be reassigned while the read is in flight; its reply
+            // must not land on the new thread.
+            if session(&app, slot) != target {
+                return;
+            }
+            set_context(&app, slot, usage);
+        });
+    });
+}
+
 fn open_slot(app: &MainWindow, desktop: Arc<NativeDesktop>, slot: usize, row: usize) {
     let Some(conversation) = app.get_conversations().row_data(row) else {
         return;
@@ -798,6 +866,7 @@ fn open_slot(app: &MainWindow, desktop: Arc<NativeDesktop>, slot: usize, row: us
         app.set_split_count(if open > 2 { 4 } else { 2 });
     }
     SLOTS.with(|slots| slots.borrow_mut()[slot].session = id.clone());
+    refresh_pane_context(app, desktop.clone(), slot, &id);
     let generation = SLOTS.with(|slots| slots.borrow()[slot].generation);
     let weak = app.as_weak();
     std::thread::spawn(move || {
@@ -1002,6 +1071,12 @@ pub(crate) fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                             if changed {
                                 slot.turns.sort_by_key(|turn| turn.user.user_round);
                             }
+                        }
+                        Ok((_, NativeThreadUpdate::Context(usage))) => {
+                            // The pane runs its own thread: its gauge follows
+                            // this pane's frames, including a compaction that
+                            // just turned its history into a summary.
+                            set_context(&app, index, usage);
                         }
                         Ok((_, NativeThreadUpdate::Failed(error))) => {
                             app.set_status(error.into());

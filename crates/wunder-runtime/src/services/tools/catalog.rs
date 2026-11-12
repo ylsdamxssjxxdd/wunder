@@ -346,8 +346,15 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                                     .desc(t("tool.spec.plan.args.plan.status"))
                                     .enums(vec!["pending", "in_progress", "completed"]),
                             ])
-                            .closed(),
+                            // 步骤别名（title/content/…）在解析时也接受，schema 不再
+                            // 声称这些键非法。
+                            .open(),
                     ),
+                super::schema::integer("current")
+                    .desc(t("tool.spec.plan.args.current"))
+                    .min(0)
+                    .max(11)
+                    .optional(),
             ]),
         },
         ToolSpec {
@@ -517,6 +524,10 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .desc(t("tool.spec.glob.args.include_ignored"))
                     .default_value(json!(false))
                     .optional(),
+                super::schema::integer("offset")
+                    .desc(t("tool.spec.glob.args.offset"))
+                    .min(0)
+                    .optional(),
             ]),
         },
         ToolSpec {
@@ -557,12 +568,17 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 super::schema::integer("context_before")
                     .desc(t("tool.spec.search.args.context_before"))
                     .min(0)
-                    .max(20)
+                    .max(80)
                     .optional(),
                 super::schema::integer("context_after")
                     .desc(t("tool.spec.search.args.context_after"))
                     .min(0)
-                    .max(20)
+                    .max(80)
+                    .optional(),
+                super::schema::integer("context_matches")
+                    .desc(t("tool.spec.search.args.context_matches"))
+                    .min(0)
+                    .max(32)
                     .optional(),
                 super::schema::string("mode")
                     .desc(t("tool.spec.search.args.mode"))
@@ -3129,9 +3145,15 @@ mod tests {
             plan_spec.input_schema["properties"]["plan"]["maxItems"].as_i64(),
             Some(12)
         );
+        // 步骤条目允许别名键（title/content/…），schema 因此是开放的。
         assert_eq!(
             plan_spec.input_schema["properties"]["plan"]["items"]["additionalProperties"].as_bool(),
-            Some(false)
+            Some(true)
+        );
+        // current 是最省形态的“进行中”标记，必须出现在 schema 里。
+        assert_eq!(
+            plan_spec.input_schema["properties"]["current"]["type"].as_str(),
+            Some("integer")
         );
         assert_eq!(
             plan_spec.input_schema["additionalProperties"].as_bool(),

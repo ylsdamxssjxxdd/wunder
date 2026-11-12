@@ -504,6 +504,13 @@ impl<'a, T: TargetPixel> target_pixel_buffer::TargetPixelBuffer for TargetPixelS
 ///     in one single buffer
 pub struct SoftwareRenderer {
     repaint_buffer_type: Cell<RepaintBufferType>,
+    /// Physical size of the buffer handed to the last `render()` call.
+    ///
+    /// A backend that grows or shrinks its surface keeps the item cache, so
+    /// the damage rectangles of the previous geometry say nothing about the
+    /// pixels the new geometry added. Recording the size lets the backend
+    /// detect that step and repaint the whole window instead.
+    window_size: Cell<Option<(u32, u32)>>,
     /// This is the area which was dirty on the previous frame.
     /// Only used if repaint_buffer_type == RepaintBufferType::SwappedBuffers
     prev_frame_dirty: Cell<DirtyRegion>,
@@ -526,6 +533,7 @@ impl Default for SoftwareRenderer {
             subpixel_order: Default::default(),
             rendering_metrics_collector: RenderingMetricsCollector::new("software"),
             repaint_buffer_type: Default::default(),
+            window_size: Default::default(),
             #[cfg(feature = "systemfonts")]
             text_layout_cache: Default::default(),
         }
@@ -575,6 +583,19 @@ impl SoftwareRenderer {
     /// Returns the kind of buffer that must be passed to  [`Self::render`]
     pub fn repaint_buffer_type(&self) -> RepaintBufferType {
         self.repaint_buffer_type.get()
+    }
+
+    /// Physical size of the buffer passed to the last [`Self::render`] call.
+    ///
+    /// A backend whose surface changed size must not reuse the cached damage
+    /// region: it describes the previous geometry only.
+    pub fn window_size(&self) -> Option<(u32, u32)> {
+        self.window_size.get()
+    }
+
+    /// Record the physical size of the buffer about to be rendered into.
+    pub fn set_window_size(&self, size: Option<(u32, u32)>) {
+        self.window_size.set(size);
     }
 
     /// Set how the window need to be rotated in the buffer.

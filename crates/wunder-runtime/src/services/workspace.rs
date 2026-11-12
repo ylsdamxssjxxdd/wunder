@@ -787,6 +787,44 @@ impl WorkspaceManager {
         format!("session_context_tokens:{safe_user}:{safe_session}")
     }
 
+    fn session_compacted_key(&self, user_id: &str, session_id: &str) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        let safe_session = session_id
+            .trim()
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        let safe_session = if safe_session.trim().is_empty() {
+            "default".to_string()
+        } else {
+            safe_session
+        };
+        format!("session_compacted:{safe_user}:{safe_session}")
+    }
+
+    /// Whether this thread has ever been through a context compaction. The
+    /// composer's brain gauge paints red from then on so the user can see at a
+    /// glance that the visible history is a summary, not the original turns.
+    pub fn load_session_compacted(&self, user_id: &str, session_id: &str) -> bool {
+        let key = self.session_compacted_key(user_id, session_id);
+        self.storage
+            .get_meta(&key)
+            .ok()
+            .flatten()
+            .is_some_and(|raw| raw.trim() == "1")
+    }
+
+    pub fn save_session_compacted(&self, user_id: &str, session_id: &str, compacted: bool) {
+        let key = self.session_compacted_key(user_id, session_id);
+        let _ = self.storage.set_meta(&key, if compacted { "1" } else { "0" });
+    }
+
     fn session_reasoning_effort_key(&self, user_id: &str, session_id: &str) -> String {
         let safe_user = self.safe_user_id(user_id);
         let safe_session = session_id
@@ -1714,6 +1752,41 @@ impl WorkspaceManager {
         .await;
     }
 
+    pub async fn load_session_compacted_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) -> bool {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        run_workspace_db("workspace.load_session_compacted", move || {
+            Ok(workspace.load_session_compacted(&user_id, &session_id))
+        })
+        .await
+        .unwrap_or(false)
+    }
+
+    /// Record that a compaction actually replaced this thread's model context.
+    /// Idempotent: once set, later compactions keep it set.
+    pub async fn save_session_compacted_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        let _ = run_workspace_db("workspace.save_session_compacted", move || {
+            if workspace.load_session_compacted(&user_id, &session_id) {
+                return Ok(());
+            }
+            workspace.save_session_compacted(&user_id, &session_id, true);
+            Ok(())
+        })
+        .await;
+    }
+
     pub async fn load_session_context_overflow_async(
         self: &Arc<Self>,
         user_id: &str,
@@ -2143,6 +2216,13 @@ impl WorkspaceManager {
         self.storage.delete_meta_prefix(&key).unwrap_or(0) as i64
     }
 
+    /// Drop the "this history is a summary" flag. Used when a thread is purged:
+    /// a later thread reusing the same id must not inherit a red gauge.
+    pub fn delete_session_compacted(&self, user_id: &str, session_id: &str) -> i64 {
+        let key = self.session_compacted_key(user_id, session_id);
+        self.storage.delete_meta_prefix(&key).unwrap_or(0) as i64
+    }
+
     pub fn load_session_context_limit_hint(&self, user_id: &str, session_id: &str) -> Option<i64> {
         let key = self.session_context_limit_hint_key(user_id, session_id);
         let Ok(value) = self.storage.get_meta(&key) else {
@@ -2328,6 +2408,7 @@ impl WorkspaceManager {
         let _ = self.delete_session_model_override(cleaned_user, cleaned_session);
         let _ = self.delete_session_context_overflow(cleaned_user, cleaned_session);
         let _ = self.delete_session_context_limit_hint(cleaned_user, cleaned_session);
+        let _ = self.delete_session_compacted(cleaned_user, cleaned_session);
     }
 
     pub fn purge_session_logs(&self, user_id: &str, session_id: &str) -> Result<()> {
@@ -4527,6 +4608,28 @@ mod tests {
             workspace.load_session_context_limit_hint(user_id, session_id),
             None
         );
+    }
+
+    /// The compacted flag is what turns the composer's brain gauge red. It must
+    /// stick for the thread's whole life, survive a restart, and disappear with
+    /// the thread so a reused id does not inherit it.
+    #[test]
+    fn session_compacted_flag_sticks_and_is_purged_with_the_thread() {
+        let (workspace, _dir) = build_workspace_manager();
+        let user_id = "u3";
+        let session_id = "s-compacted";
+
+        assert!(!workspace.load_session_compacted(user_id, session_id));
+        workspace.save_session_compacted(user_id, session_id, true);
+        assert!(workspace.load_session_compacted(user_id, session_id));
+        // A second compaction keeps it set rather than toggling it.
+        workspace.save_session_compacted(user_id, session_id, true);
+        assert!(workspace.load_session_compacted(user_id, session_id));
+        // Other threads are untouched.
+        assert!(!workspace.load_session_compacted(user_id, "another-thread"));
+
+        workspace.purge_session_data(user_id, session_id);
+        assert!(!workspace.load_session_compacted(user_id, session_id));
     }
 
     #[test]

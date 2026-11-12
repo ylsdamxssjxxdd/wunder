@@ -378,6 +378,28 @@ mod tests {
         assert!(!facts.to_string().contains("private-"));
     }
 
+    /// A settled row must carry *when* it settled: readers compare it with
+    /// their own clock to decide whether the completion is still news.
+    #[test]
+    fn monitor_facts_keep_the_settle_time() {
+        let facts = monitor_facts(&json!({
+            "session_id":"sample-thread", "status":"finished",
+            "updated_time":100.0, "ended_time":100.0
+        }));
+        assert_eq!(facts["ended_time"], json!(100.0));
+        assert_eq!(facts["status"], json!("finished"));
+        // The small navigation projection carries it too: a reader tells a
+        // completion it just watched from one that ended long ago by this.
+        let stats = crate::storage::MonitorSessionStats::from_payload(&facts);
+        assert_eq!(stats.ended_at, Some(100.0));
+        assert_eq!(stats.status, "finished");
+        // A live record has no settle time.
+        let live = crate::storage::MonitorSessionStats::from_payload(&json!({
+            "session_id":"sample-thread", "status":"running", "updated_time":101.0
+        }));
+        assert_eq!(live.ended_at, None);
+    }
+
     #[test]
     fn diagnostic_store_never_copies_execution_bodies_and_enforces_partition_limit() {
         let root = tempfile::tempdir().unwrap();

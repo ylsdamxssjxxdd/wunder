@@ -623,6 +623,10 @@ const OBSERVATION_SEARCH_HIT_LIMIT: usize = 12;
 const OBSERVATION_SEARCH_PATH_LIMIT: usize = 40;
 const OBSERVATION_SEARCH_CONTENT_HEAD_CHARS: usize = 360;
 const OBSERVATION_SEARCH_CONTEXT_LINE_LIMIT: usize = 2;
+/// 调用方用 `context_matches` 把上下文集中到前几个命中时，单个命中可以带整段
+/// 代码。只有少数命中带上下文，总量仍然是有限的；反之不给名额就把每个命中都
+/// 撑到 40 行，才会真的爆掉观察包。
+const OBSERVATION_SEARCH_FOCUS_CONTEXT_LINE_LIMIT: usize = 40;
 const OBSERVATION_SEARCH_CONTEXT_LINE_CHARS: usize = 220;
 // A tool observation that fits in a couple of hundred tokens is usually a
 // clipped one: the model then pays a second round-trip to reread the same
@@ -2724,7 +2728,7 @@ fn project_glob_success(data: &Value) -> Option<Value> {
     if let Some(paths) = map.get("paths").filter(|value| !value.is_null()) {
         projected.insert("paths".to_string(), paths.clone());
     }
-    for key in ["count", "total_matched", "truncated"] {
+    for key in ["count", "total_matched", "truncated", "offset"] {
         if let Some(value) = map.get(key).filter(|value| !value.is_null()) {
             projected.insert(key.to_string(), value.clone());
         }
@@ -3057,6 +3061,8 @@ fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
         "timeout_hit",
         "match_limit_hit",
         "file_limit_hit",
+        // 上下文名额：>0 表示只有前 N 个命中带 before/after，单个命中可以给足上下文。
+        "context_match_limit",
     ] {
         if let Some(value) = map.get(key).filter(|value| !value.is_null()) {
             // 逐行命中是默认行为，files_only:false 只是噪声，不写进观察。
@@ -3095,6 +3101,18 @@ fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
         }
     }
     if let Some(hits) = map.get("hits").and_then(Value::as_array) {
+        // 上下文只留给指定数量的命中时，这些命中可以带整段实现；否则沿用
+        // 「每处两行」的取样，避免每个命中都把同样的上下文搬一遍。
+        let context_line_limit = if map
+            .get("context_match_limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0
+        {
+            OBSERVATION_SEARCH_FOCUS_CONTEXT_LINE_LIMIT
+        } else {
+            OBSERVATION_SEARCH_CONTEXT_LINE_LIMIT
+        };
         let mut compacted_hits = Vec::new();
         for hit in hits.iter().take(OBSERVATION_SEARCH_HIT_LIMIT) {
             let Some(hit_obj) = hit.as_object() else {
@@ -3136,7 +3154,7 @@ fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
                 };
                 let compacted_lines = lines
                     .iter()
-                    .take(OBSERVATION_SEARCH_CONTEXT_LINE_LIMIT)
+                    .take(context_line_limit)
                     .filter_map(|line| {
                         let line_obj = line.as_object()?;
                         let line_no = line_obj.get("line").cloned().unwrap_or(Value::Null);

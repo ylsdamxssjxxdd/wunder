@@ -11,6 +11,31 @@ const PLAN_ITEM_TEXT_KEYS: &[&str] = &["step", "title", "content", "text", "task
 const PLAN_LIST_KEYS: &[&str] = &["plan", "steps", "todos", "items"];
 /// 整份参数被写成字符串时的外层键名：文本/XML 协议会把 `<input>` 落成 `input`，
 /// 宽松恢复路径会落成 `raw`。
+/// 计划参数的顶层字段白名单：超出这个集合的字段一律报错，不再静默丢弃。
+const PLAN_TOP_LEVEL_KEYS: &[&str] = &[
+    "plan",
+    "steps",
+    "todos",
+    "items",
+    "explanation",
+    "note",
+    "current",
+];
+/// 合法状态值：schema 里也只列这三个，别名在解析时归一。
+const PLAN_STATUS_VALUES: &[&str] = &["pending", "in_progress", "completed"];
+/// 报错里回显给模型的示范形态，省得它再猜一遍。
+const PLAN_SHAPE_EXAMPLE: &str = r#"{"plan":["甲","乙"],"current":0}"#;
+/// 步骤条目内部允许出现的键，同样不静默跳过未知键。
+const PLAN_ITEM_KEYS: &[&str] = &[
+    "step",
+    "title",
+    "content",
+    "text",
+    "task",
+    "description",
+    "status",
+    "state",
+];
 const PLAN_WRAPPER_KEYS: &[&str] = &[
     "raw",
     "input",
@@ -22,71 +47,57 @@ const PLAN_WRAPPER_KEYS: &[&str] = &[
 ];
 
 pub(crate) async fn execute_plan_tool(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let args = recover_plan_args(args);
-    let entries = plan_entries(&args)?;
-    if entries.is_empty() {
-        return Err(anyhow!(i18n::t("tool.plan.plan_required")));
+    // 先走全局的宽松恢复（转义引号、换行等），再补计划工具自己的包装解包。
+    let args = recover_plan_args(&super::recover_tool_args_value(args));
+    let request = match parse_plan_request(&args) {
+        Ok(request) => request,
+        Err(error) => return Ok(error.into_tool_result()),
+    };
+    if request.steps.is_empty() {
+        return Ok(
+            PlanArgError::shape(i18n::t("tool.plan.plan_required"), json!({ "keys": [] }))
+                .with_code("TOOL_PLAN_EMPTY")
+                .into_tool_result(),
+        );
     }
-    let explanation = args
-        .get("explanation")
-        .or_else(|| args.get("note"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(str::to_string);
-    let mut seen_in_progress = false;
-    let mut normalized_plan = Vec::new();
-    for (raw_step, raw_status) in entries {
-        let step = raw_step.trim().to_string();
-        if step.is_empty() {
-            continue;
-        }
-        let mut status = normalize_plan_status(raw_status.as_deref());
-        if status == "in_progress" {
-            if seen_in_progress {
-                status = "pending".to_string();
-            } else {
-                seen_in_progress = true;
-            }
-        }
-        normalized_plan.push(json!({
-            "step": step,
-            "status": status
-        }));
-    }
-    if normalized_plan.is_empty() {
-        return Err(anyhow!(i18n::t("tool.plan.plan_required")));
-    }
+    let normalized_plan = request.normalized_plan();
     let progress = plan_progress(&normalized_plan);
+    let hint = progress.hint();
+    // hint 同时放进 data：模型侧的通用投影会剥掉外层 summary/next_step_hint，
+    // 但 data 里的字段一定能读回来，否则「继续维护面板」的提醒等于没发。
+    let mut data = json!({
+        "status": "ok",
+        "completed": progress.done,
+        "total": progress.total,
+        "current_step": progress.current,
+        "next_step": progress.next,
+    });
+    if let Some(text) = hint.clone() {
+        data["hint"] = Value::String(text);
+    }
     if let Some(emitter) = context.event_emitter.as_ref() {
         emitter.emit(
             "plan_update",
             json!({
-                "explanation": explanation,
+                "explanation": request.explanation,
                 "plan": normalized_plan
             }),
         );
     }
-    // 回执里带上进度与下一步：计划本身就是“当前状态”，模型不必再回读历史
-    // 就能知道还剩什么，也才有依据在收尾时把最后一步标成已完成。
+    // 回执是给模型的状态卡：进度、当前步、下一步都在这里，模型不必回读历史
+    // 就知道还剩什么，也才有依据在收尾时把最后一步标成已完成。
     Ok(build_model_tool_success_with_hint(
         "plan_update",
         "completed",
         progress.summary(),
-        json!({
-            "status": "ok",
-            "completed": progress.done,
-            "total": progress.total,
-            "current_step": progress.current,
-            "next_step": progress.next,
-        }),
-        progress.hint(),
+        data,
+        hint,
     ))
 }
 
 /// 计划参数的形状容错。模型（尤其是文本/XML 协议下）常把整份参数写成一个
 /// JSON 字符串、把 plan 列表写成字符串，或直接传一个数组，这些都应被接住；
-/// 真正的格式错误要落到带示例的可执行报错上，而不是 serde 的
+/// 接不住时要落到带示例与键名的可执行报错上，而不是 serde 的
 /// “missing field `plan`”。
 fn recover_plan_args(args: &Value) -> Value {
     match args {
@@ -95,14 +106,25 @@ fn recover_plan_args(args: &Value) -> Value {
             .unwrap_or_else(|| args.clone()),
         Value::Array(_) => json!({ "plan": args.clone() }),
         Value::Object(map) => {
-            // 整份参数被外面包了一层字符串：只有单键时才敢整体换掉。
-            if map.len() == 1 {
-                for key in PLAN_WRAPPER_KEYS {
-                    let Some(text) = map.get(*key).and_then(Value::as_str) else {
-                        continue;
-                    };
-                    if let Some(value) = embedded_json(text).and_then(as_plan_object) {
-                        return value;
+            // 整份参数被包了一层字符串：wrapper 之外只允许再带说明字段，
+            // 这样 explanation + input 并存时也能救回来。
+            if !PLAN_LIST_KEYS.iter().any(|key| map.contains_key(*key)) {
+                if let Some(inner) = map
+                    .iter()
+                    .find(|(key, _)| PLAN_WRAPPER_KEYS.contains(&key.as_str()))
+                    .and_then(|(_, value)| value.as_str())
+                    .and_then(embedded_json)
+                    .and_then(as_plan_object)
+                {
+                    if let Value::Object(mut merged) = inner {
+                        for key in ["explanation", "note"] {
+                            if let Some(text) = map.get(key) {
+                                merged
+                                    .entry(key.to_string())
+                                    .or_insert_with(|| text.clone());
+                            }
+                        }
+                        return Value::Object(merged);
                     }
                 }
             }
@@ -151,41 +173,210 @@ fn as_plan_object(value: Value) -> Option<Value> {
     }
 }
 
-fn plan_entries(args: &Value) -> Result<Vec<(String, Option<String>)>> {
-    let array = PLAN_LIST_KEYS
-        .iter()
-        .find_map(|key| args.get(*key).and_then(Value::as_array))
-        .ok_or_else(|| plan_shape_error(args))?;
-    let mut entries = Vec::with_capacity(array.len());
-    for item in array {
-        match item {
-            Value::String(text) => entries.push((text.clone(), None)),
-            Value::Object(map) => {
-                let step = PLAN_ITEM_TEXT_KEYS
-                    .iter()
-                    .find_map(|key| map.get(*key).and_then(Value::as_str))
-                    .unwrap_or("")
-                    .to_string();
-                let status = map
-                    .get("status")
-                    .or_else(|| map.get("state"))
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
-                entries.push((step, status));
-            }
-            _ => {}
-        }
-    }
-    Ok(entries)
+/// 参数错误的模型侧形态：既要人能读（message），也要结构化（field/received/
+/// allowed），这样模型下一轮能直接按字段改，而不是照原样重试。
+#[derive(Debug)]
+struct PlanArgError {
+    code: &'static str,
+    message: String,
+    data: Value,
+    hint: Option<String>,
 }
 
-fn plan_shape_error(args: &Value) -> anyhow::Error {
+impl PlanArgError {
+    fn new(code: &'static str, message: String, data: Value, hint: Option<String>) -> Self {
+        Self {
+            code,
+            message,
+            data,
+            hint,
+        }
+    }
+
+    fn shape(message: String, data: Value) -> Self {
+        Self::new("TOOL_PLAN_INVALID_ARGS", message, data, None)
+    }
+
+    fn with_code(mut self, code: &'static str) -> Self {
+        self.code = code;
+        self
+    }
+
+    fn with_hint(mut self, hint: String) -> Self {
+        self.hint = Some(hint);
+        self
+    }
+
+    /// 统一失败外壳：`ok:false` + 错误码 + hint，重试由模型自己决定（参数错误
+    /// 天然可重试，所以这里标记 retryable=true）。
+    fn into_tool_result(self) -> Value {
+        super::tool_error::build_failed_tool_result(
+            self.message,
+            self.data,
+            super::tool_error::ToolErrorMeta::new(self.code, self.hint, true, None),
+            false,
+        )
+    }
+}
+
+impl std::fmt::Display for PlanArgError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+#[derive(Debug)]
+struct PlanRequest {
+    explanation: Option<String>,
+    /// 步骤文字与显式状态；没有显式状态时由 `current` 或默认 pending 决定。
+    steps: Vec<(String, Option<String>)>,
+    current: Option<usize>,
+}
+
+impl PlanRequest {
+    fn normalized_plan(&self) -> Vec<Value> {
+        self.steps
+            .iter()
+            .enumerate()
+            .map(|(index, (step, status))| {
+                let status = status.clone().unwrap_or_else(|| {
+                    if self.current == Some(index) {
+                        "in_progress".to_string()
+                    } else {
+                        "pending".to_string()
+                    }
+                });
+                json!({ "step": step, "status": status })
+            })
+            .collect()
+    }
+}
+
+/// 解析并**严格校验**计划参数。未知字段、未知状态、越界下标一律报错并回显
+/// 位置：静默丢弃语义比失败更危险，模型会把错误状态一路带下去。
+fn parse_plan_request(args: &Value) -> Result<PlanRequest, PlanArgError> {
+    let Some(map) = args.as_object() else {
+        return Err(plan_shape_error(args));
+    };
+    if let Some(field) = map
+        .keys()
+        .find(|key| !PLAN_TOP_LEVEL_KEYS.contains(&key.as_str()))
+    {
+        return Err(unknown_field(field, PLAN_TOP_LEVEL_KEYS));
+    }
+    let list_keys = PLAN_LIST_KEYS
+        .iter()
+        .copied()
+        .filter(|key| map.contains_key(*key))
+        .collect::<Vec<_>>();
+    if list_keys.len() > 1 {
+        return Err(list_conflict(&list_keys));
+    }
+    let list_key = *list_keys.first().ok_or_else(|| plan_shape_error(args))?;
+    let Some(array) = map.get(list_key).and_then(Value::as_array) else {
+        return Err(plan_shape_error(args));
+    };
+    let current = match map.get("current") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(parse_current(value, array.len())?),
+    };
+    let mut steps = Vec::with_capacity(array.len());
+    let mut in_progress_fields = Vec::new();
+    for (index, item) in array.iter().enumerate() {
+        let field = format!("{list_key}[{index}]");
+        match item {
+            Value::String(text) => steps.push((text.trim().to_string(), None)),
+            Value::Object(entry) => {
+                if let Some(key) = entry
+                    .keys()
+                    .find(|key| !PLAN_ITEM_KEYS.contains(&key.as_str()))
+                {
+                    return Err(unknown_field(&format!("{field}.{key}"), PLAN_ITEM_KEYS));
+                }
+                let text = PLAN_ITEM_TEXT_KEYS
+                    .iter()
+                    .find_map(|key| entry.get(*key).and_then(Value::as_str))
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if text.is_empty() {
+                    return Err(item_text_required(&field));
+                }
+                let status = entry.get("status").or_else(|| entry.get("state"));
+                let status = match status {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(raw)) => {
+                        let parsed = parse_plan_status(raw, &format!("{field}.status"))?;
+                        if parsed == "in_progress" {
+                            in_progress_fields.push(format!("{field}.status"));
+                        }
+                        Some(parsed)
+                    }
+                    Some(other) => {
+                        return Err(unknown_status(
+                            &format!("{field}.status"),
+                            &other.to_string(),
+                        ))
+                    }
+                };
+                steps.push((text, status));
+            }
+            _ => return Err(item_text_required(&field)),
+        }
+    }
+    if in_progress_fields.len() > 1 {
+        return Err(multiple_in_progress(&in_progress_fields));
+    }
+    if current.is_some() && steps.iter().any(|(_, status)| status.is_some()) {
+        return Err(current_with_status());
+    }
+    let explanation = map
+        .get("explanation")
+        .or_else(|| map.get("note"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string);
+    Ok(PlanRequest {
+        explanation,
+        steps,
+        current,
+    })
+}
+
+fn parse_current(value: &Value, len: usize) -> Result<usize, PlanArgError> {
+    let parsed = match value {
+        Value::Number(number) => number.as_i64(),
+        Value::String(text) => text.trim().parse::<i64>().ok(),
+        _ => None,
+    };
+    match parsed {
+        Some(index) if index >= 0 && (index as usize) < len.max(1) => Ok(index as usize),
+        _ => Err(invalid_current(&value.to_string(), len)),
+    }
+}
+
+fn parse_plan_status(raw: &str, field: &str) -> Result<String, PlanArgError> {
+    let normalized = raw.trim().to_lowercase().replace(['-', ' '], "_");
+    match normalized.as_str() {
+        "pending" | "todo" | "待办" | "未开始" => Ok("pending".to_string()),
+        "in_progress" | "inprogress" | "doing" | "active" | "进行中" | "正在做" => {
+            Ok("in_progress".to_string())
+        }
+        "completed" | "complete" | "done" | "finished" | "已完成" | "完成" | "已结束" => {
+            Ok("completed".to_string())
+        }
+        _ => Err(unknown_status(field, raw)),
+    }
+}
+
+fn plan_shape_error(args: &Value) -> PlanArgError {
     let keys = match args {
-        Value::Object(map) => map.keys().cloned().collect::<Vec<_>>().join(", "),
-        Value::Array(_) => "[array]".to_string(),
-        Value::String(_) => "[string]".to_string(),
-        Value::Null => "null".to_string(),
-        _ => "?".to_string(),
+        Value::Object(map) => map.keys().cloned().collect::<Vec<_>>(),
+        Value::Array(_) => vec!["[array]".to_string()],
+        Value::String(_) => vec!["[string]".to_string()],
+        Value::Null => vec!["null".to_string()],
+        _ => vec!["?".to_string()],
     };
     let mut params = HashMap::new();
     params.insert(
@@ -193,10 +384,98 @@ fn plan_shape_error(args: &Value) -> anyhow::Error {
         if keys.is_empty() {
             "—".to_string()
         } else {
-            keys
+            keys.join(", ")
         },
     );
-    anyhow!(i18n::t_with_params("tool.plan.invalid_shape", &params))
+    PlanArgError::shape(
+        i18n::t_with_params("tool.plan.invalid_shape", &params),
+        json!({ "keys": keys, "expected": PLAN_SHAPE_EXAMPLE }),
+    )
+}
+
+fn unknown_field(field: &str, allowed: &[&str]) -> PlanArgError {
+    let mut params = HashMap::new();
+    params.insert("field".to_string(), field.to_string());
+    params.insert("allowed".to_string(), allowed.join(", "));
+    PlanArgError::shape(
+        i18n::t_with_params("tool.plan.unknown_field", &params),
+        json!({
+            "field": field,
+            "allowed": allowed,
+            "example": PLAN_SHAPE_EXAMPLE,
+        }),
+    )
+    .with_code("TOOL_PLAN_UNKNOWN_FIELD")
+    .with_hint(i18n::t("tool.plan.minimal_example_hint"))
+}
+
+fn unknown_status(field: &str, received: &str) -> PlanArgError {
+    let mut params = HashMap::new();
+    params.insert("field".to_string(), field.to_string());
+    params.insert("received".to_string(), received.to_string());
+    PlanArgError::shape(
+        i18n::t_with_params("tool.plan.unknown_status", &params),
+        json!({
+            "field": field,
+            "received": received,
+            "allowed": PLAN_STATUS_VALUES,
+            "example": PLAN_SHAPE_EXAMPLE,
+        }),
+    )
+    .with_code("TOOL_PLAN_UNKNOWN_STATUS")
+}
+
+fn invalid_current(received: &str, len: usize) -> PlanArgError {
+    let mut params = HashMap::new();
+    params.insert("received".to_string(), received.to_string());
+    params.insert("max".to_string(), len.saturating_sub(1).to_string());
+    PlanArgError::shape(
+        i18n::t_with_params("tool.plan.invalid_current", &params),
+        json!({
+            "field": "current",
+            "received": received,
+            "allowed": format!("0..{}", len.saturating_sub(1)),
+        }),
+    )
+    .with_code("TOOL_PLAN_INVALID_CURRENT")
+}
+
+fn current_with_status() -> PlanArgError {
+    PlanArgError::shape(
+        i18n::t("tool.plan.current_with_status"),
+        json!({ "field": "current", "conflicts_with": "status" }),
+    )
+    .with_code("TOOL_PLAN_CONFLICT")
+}
+
+fn multiple_in_progress(fields: &[String]) -> PlanArgError {
+    let mut params = HashMap::new();
+    params.insert("fields".to_string(), fields.join(", "));
+    PlanArgError::shape(
+        i18n::t_with_params("tool.plan.multiple_in_progress", &params),
+        json!({ "fields": fields, "allowed": "at most one in_progress" }),
+    )
+    .with_code("TOOL_PLAN_CONFLICT")
+}
+
+fn list_conflict(fields: &[&str]) -> PlanArgError {
+    let mut params = HashMap::new();
+    params.insert("fields".to_string(), fields.join(", "));
+    PlanArgError::shape(
+        i18n::t_with_params("tool.plan.list_conflict", &params),
+        json!({ "fields": fields, "allowed": ["plan"] }),
+    )
+    .with_code("TOOL_PLAN_CONFLICT")
+}
+
+fn item_text_required(field: &str) -> PlanArgError {
+    let mut params = HashMap::new();
+    params.insert("field".to_string(), field.to_string());
+    PlanArgError::shape(
+        i18n::t_with_params("tool.plan.item_text_required", &params),
+        json!({ "field": field, "example": PLAN_SHAPE_EXAMPLE }),
+    )
+    .with_code("TOOL_PLAN_INVALID_ARGS")
 }
 
 struct PlanProgress {
@@ -229,6 +508,9 @@ impl PlanProgress {
     fn hint(&self) -> Option<String> {
         if self.done >= self.total {
             return None;
+        }
+        if self.current.is_none() {
+            return Some(i18n::t("tool.plan.missing_in_progress"));
         }
         Some(i18n::t("tool.plan.keep_updating"))
     }
@@ -266,24 +548,6 @@ fn plan_progress(plan: &[Value]) -> PlanProgress {
         }
     }
     progress
-}
-
-fn normalize_plan_status(value: Option<&str>) -> String {
-    let raw = value.unwrap_or("").trim().to_lowercase();
-    if raw.is_empty() {
-        return "pending".to_string();
-    }
-    let normalized = raw.replace(['-', ' '], "_");
-    match normalized.as_str() {
-        "pending" | "todo" | "待办" | "未开始" => "pending".to_string(),
-        "in_progress" | "inprogress" | "doing" | "active" | "进行中" | "正在做" => {
-            "in_progress".to_string()
-        }
-        "completed" | "complete" | "done" | "finished" | "已完成" | "完成" | "已结束" => {
-            "completed".to_string()
-        }
-        _ => "pending".to_string(),
-    }
 }
 
 #[derive(Debug)]
@@ -677,12 +941,104 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalize_plan_status_accepts_expected_aliases() {
-        assert_eq!(normalize_plan_status(Some("in-progress")), "in_progress");
-        assert_eq!(normalize_plan_status(Some("done")), "completed");
-        assert_eq!(normalize_plan_status(Some("unknown")), "pending");
-        assert_eq!(normalize_plan_status(Some("进行中")), "in_progress");
-        assert_eq!(normalize_plan_status(Some("已完成")), "completed");
+    fn plan_status_accepts_aliases_and_rejects_unknown() {
+        assert_eq!(
+            parse_plan_status("in-progress", "plan[0].status").expect("alias"),
+            "in_progress"
+        );
+        assert_eq!(
+            parse_plan_status("已完成", "plan[0].status").expect("zh"),
+            "completed"
+        );
+        let error = parse_plan_status("blocked", "plan[1].status")
+            .expect_err("unknown status")
+            .to_string();
+        // 报错要能定位到具体哪一项，并列出合法值。
+        assert!(error.contains("plan[1].status"), "{error}");
+        assert!(error.contains("blocked"), "{error}");
+        assert!(error.contains("in_progress"), "{error}");
+    }
+
+    #[test]
+    fn plan_arg_error_carries_structured_location() {
+        let result = unknown_field("mode", PLAN_TOP_LEVEL_KEYS).into_tool_result();
+        assert_eq!(result["ok"], json!(false));
+        assert_eq!(result["data"]["field"], json!("mode"));
+        assert_eq!(
+            result["error_meta"]["code"],
+            json!("TOOL_PLAN_UNKNOWN_FIELD")
+        );
+        // 参数错误天然可重试：模型改正形状后立刻能成功。
+        assert_eq!(result["error_meta"]["retryable"], json!(true));
+    }
+
+    #[test]
+    fn plan_request_accepts_minimal_string_form_with_current() {
+        let request = parse_plan_request(&json!({
+            "plan": ["甲", "乙", "丙"], "current": 1
+        }))
+        .expect("minimal form");
+        let plan = request.normalized_plan();
+        assert_eq!(plan[0]["status"], json!("pending"));
+        assert_eq!(plan[1]["status"], json!("in_progress"));
+        assert_eq!(plan[2]["status"], json!("pending"));
+    }
+
+    #[test]
+    fn plan_request_rejects_unknown_field_and_echoes_it() {
+        let error = parse_plan_request(&json!({ "plan": ["甲"], "mode": "fast" }))
+            .expect_err("unknown field")
+            .to_string();
+        assert!(error.contains("mode"), "{error}");
+        assert!(error.contains("current"), "{error}");
+    }
+
+    #[test]
+    fn plan_request_rejects_unknown_status_with_path() {
+        let error = parse_plan_request(&json!({
+            "plan": [{ "step": "甲" }, { "step": "乙", "status": "blocked" }]
+        }))
+        .expect_err("unknown status")
+        .to_string();
+        assert!(error.contains("plan[1].status"), "{error}");
+    }
+
+    #[test]
+    fn plan_request_rejects_two_in_progress_steps() {
+        let error = parse_plan_request(&json!({
+            "plan": [
+                { "step": "甲", "status": "in_progress" },
+                { "step": "乙", "status": "in_progress" }
+            ]
+        }))
+        .expect_err("two in_progress")
+        .to_string();
+        assert!(error.contains("in_progress"), "{error}");
+        assert!(error.contains("plan[0].status"), "{error}");
+    }
+
+    #[test]
+    fn plan_request_rejects_current_mixed_with_status_and_out_of_range() {
+        let error = parse_plan_request(&json!({
+            "plan": ["甲", "乙"],
+            "steps": ["丙"],
+            "current": 0,
+        }))
+        .expect_err("conflicting list keys")
+        .to_string();
+        assert!(error.contains("plan"), "{error}");
+
+        let error = parse_plan_request(&json!({ "plan": ["甲"], "current": 3 }))
+            .expect_err("out of range")
+            .to_string();
+        assert!(error.contains("current"), "{error}");
+
+        let error = parse_plan_request(&json!({
+            "plan": [{ "step": "甲", "status": "completed" }], "current": 0
+        }))
+        .expect_err("current with status")
+        .to_string();
+        assert!(error.contains("current"), "{error}");
     }
 
     #[test]
@@ -691,17 +1047,18 @@ mod tests {
         let recovered = recover_plan_args(&json!({
             "input": "{\"plan\":[{\"step\":\"探测环境\",\"status\":\"in_progress\"}]}"
         }));
-        let entries = plan_entries(&recovered).expect("entries");
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].0, "探测环境");
-        assert_eq!(entries[0].1.as_deref(), Some("in_progress"));
+        let request = parse_plan_request(&recovered).expect("input wrapper");
+        assert_eq!(request.steps[0].0, "探测环境");
+        assert_eq!(request.steps[0].1.as_deref(), Some("in_progress"));
 
-        // 宽松恢复路径落成的 {"raw": "..."} 也一样。
+        // 外层同时带 explanation 也要能救回来。
         let recovered = recover_plan_args(&json!({
-            "raw": "```json\n{\"plan\":[{\"step\":\"跑测试\"}]}\n```"
+            "explanation": "补两步",
+            "raw": "```json\n{\"plan\":[\"跑测试\"]}\n```"
         }));
-        let entries = plan_entries(&recovered).expect("entries");
-        assert_eq!(entries[0].0, "跑测试");
+        let request = parse_plan_request(&recovered).expect("raw + explanation");
+        assert_eq!(request.steps[0].0, "跑测试");
+        assert_eq!(request.explanation.as_deref(), Some("补两步"));
     }
 
     #[test]
@@ -709,13 +1066,13 @@ mod tests {
         let recovered = recover_plan_args(&json!({
             "plan": "[{\"step\":\"写代码\",\"status\":\"进行中\"}]"
         }));
-        let entries = plan_entries(&recovered).expect("entries");
-        assert_eq!(entries[0].1.as_deref(), Some("进行中"));
+        let request = parse_plan_request(&recovered).expect("stringified list");
+        assert_eq!(request.normalized_plan()[0]["status"], json!("in_progress"));
 
         let recovered = recover_plan_args(&json!([{ "step": "第一步" }, "第二步"]));
-        let entries = plan_entries(&recovered).expect("entries");
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[1].0, "第二步");
+        let request = parse_plan_request(&recovered).expect("bare array");
+        assert_eq!(request.steps.len(), 2);
+        assert_eq!(request.steps[1].0, "第二步");
     }
 
     #[test]
@@ -723,33 +1080,16 @@ mod tests {
         let recovered = recover_plan_args(&json!({
             "steps": [{ "title": "改前端", "state": "done" }, { "content": "补测试" }]
         }));
-        let entries = plan_entries(&recovered).expect("entries");
-        assert_eq!(entries[0].0, "改前端");
-        assert_eq!(entries[0].1.as_deref(), Some("done"));
-        assert_eq!(entries[1].0, "补测试");
+        let request = parse_plan_request(&recovered).expect("alias keys");
+        assert_eq!(request.steps[0].0, "改前端");
+        assert_eq!(request.steps[0].1.as_deref(), Some("completed"));
+        assert_eq!(request.steps[1].0, "补测试");
 
-        let err = plan_entries(&json!({ "foo": 1 })).expect_err("bad shape");
-        let message = err.to_string();
-        assert!(message.contains("plan"), "{message}");
-        assert!(message.contains("foo"), "{message}");
+        let error = parse_plan_request(&json!({ "foo": 1 }))
+            .expect_err("bad shape")
+            .to_string();
+        assert!(error.contains("foo"), "{error}");
     }
-
-    #[test]
-    fn plan_progress_reports_current_and_next_step() {
-        let progress = plan_progress(&[
-            json!({ "step": "甲", "status": "completed" }),
-            json!({ "step": "乙", "status": "in_progress" }),
-            json!({ "step": "丙", "status": "pending" }),
-        ]);
-        assert_eq!((progress.done, progress.total), (1, 3));
-        assert_eq!(progress.current.as_deref(), Some("乙"));
-        assert_eq!(progress.next.as_deref(), Some("丙"));
-        assert!(progress.hint().is_some());
-
-        let finished = plan_progress(&[json!({ "step": "甲", "status": "completed" })]);
-        assert!(finished.hint().is_none());
-    }
-
     #[test]
     fn question_panel_keeps_every_question() {
         let questions = normalize_question_panel_questions(&json!({

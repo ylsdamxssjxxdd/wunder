@@ -16,6 +16,8 @@ export type ComposerContextUsageSource = {
   runningContextTokens: number | null;
   contextResetSignature: string;
   contextObserved?: boolean;
+  /** The thread's history is (or has been) replaced by a compaction summary. */
+  compacted?: boolean;
 };
 
 export type ComposerRunningContextDisplayInput = {
@@ -431,12 +433,41 @@ const shouldSkipComposerContextAssistant = (message: Record<string, unknown>): b
       isCompactionMarkerAssistantMessage(message)
   );
 
+/**
+ * Whether this thread has ever been through a context compaction. Once it has,
+ * the composer's brain gauge stays red so the user can tell at a glance that
+ * the visible history is a summary rather than the original turns. A finished
+ * compaction is a durable fact, so a reload keeps it red; a failed or skipped
+ * attempt does not count.
+ */
+export const resolveThreadCompacted = (
+  messages: unknown[],
+  session: ComposerContextSessionSource
+): boolean => {
+  const sessionRecord = asObjectRecord(session);
+  if (sessionRecord) {
+    const flag = sessionRecord.context_compacted ?? sessionRecord.contextCompacted;
+    if (flag === true || flag === '1' || flag === 'true') return true;
+  }
+  const list = Array.isArray(messages) ? messages : [];
+  for (let cursor = 0; cursor < list.length; cursor += 1) {
+    const message = asObjectRecord(list[cursor]);
+    if (!message) continue;
+    if (message.manual_compaction_marker === true || message.manualCompactionMarker === true) {
+      return true;
+    }
+    if (resolveMessageCompletedCompactionReset(message, cursor)) return true;
+  }
+  return false;
+};
+
 export const resolveComposerContextUsageSource = (
   messages: unknown[],
   session: ComposerContextSessionSource,
   loading: boolean
 ): ComposerContextUsageSource => {
   const list = Array.isArray(messages) ? messages : [];
+  const compacted = resolveThreadCompacted(list, session);
   let trailingCompactionReset: ComposerCompactionContextReset | null = null;
   for (let cursor = list.length - 1; cursor >= 0; cursor -= 1) {
     const current =
@@ -493,7 +524,8 @@ export const resolveComposerContextUsageSource = (
         ? compactionContextTokens ?? assistantContextTokens
         : null,
       contextResetSignature,
-      contextObserved: compactionContextTokens !== null || assistantContextTokens !== null
+      contextObserved: compactionContextTokens !== null || assistantContextTokens !== null,
+      compacted
     };
     if (runningAssistant) {
       return {
@@ -529,6 +561,7 @@ export const resolveComposerContextUsageSource = (
       trailingCompactionReset,
       compactionContextTokens
     ),
-    contextObserved: compactionContextTokens !== null
+    contextObserved: compactionContextTokens !== null,
+    compacted
   };
 };

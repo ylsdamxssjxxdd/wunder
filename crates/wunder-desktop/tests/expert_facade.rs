@@ -138,6 +138,34 @@ fn archived_threads_can_be_restored_or_deleted_but_active_threads_are_protected(
     Ok(())
 }
 
+/// A thread that still owes work is not archivable: the old transaction
+/// cancelled the live turn itself, so clicking archive silently killed a
+/// running thread. Settling the queue first makes the same thread archivable.
+#[test]
+fn a_thread_with_live_work_is_refused_before_archiving() -> anyhow::Result<()> {
+    let api = isolated_desktop()?;
+    let session = api.create_session(None)?;
+    api.state().monitor.register_queued(
+        &session.id,
+        api.user_id(),
+        "__default__",
+        "sample-question",
+        false,
+        &serde_json::json!({}),
+    );
+    let error = api
+        .archive_session(&session.id)
+        .expect_err("a queued thread must not be archived")
+        .to_string();
+    assert!(error.contains("正在运行"), "{error}");
+    assert!(api.list_archived_sessions(0, 50)?.0.is_empty());
+
+    api.state().monitor.mark_finished(&session.id);
+    api.archive_session(&session.id)?;
+    assert_eq!(api.list_archived_sessions(0, 50)?.1, 1);
+    Ok(())
+}
+
 #[test]
 fn archived_detail_is_read_only_and_does_not_acquire_a_thread_lease() -> anyhow::Result<()> {
     let api = isolated_desktop()?;

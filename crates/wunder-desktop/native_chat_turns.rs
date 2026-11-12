@@ -166,6 +166,10 @@ pub struct NativeChatRound {
     pub is_answer: bool,
     pub reasoning: String,
     pub text: String,
+    /// Folded-row metrics of this round, shown on its thinking row: context
+    /// occupancy of the request and the measured thinking span.
+    pub tokens: String,
+    pub duration: String,
     pub items: Vec<NativeWorkflowEntry>,
 }
 
@@ -590,6 +594,7 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
                 // no timeline entry of its own.
                 continue;
             }
+            let (tokens, duration) = NativeWorkflowEntry::model_round_metrics(data);
             match rounds
                 .iter_mut()
                 .rev()
@@ -599,6 +604,8 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
                     slot.item_id = item["item_id"].as_str().unwrap_or_default().to_owned();
                     slot.text = text;
                     slot.reasoning = reasoning;
+                    slot.tokens = tokens;
+                    slot.duration = duration;
                     slot.is_answer =
                         latest.is_some_and(|latest| latest["item_id"] == item["item_id"]);
                 }
@@ -609,6 +616,8 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
                     is_answer: latest.is_some_and(|latest| latest["item_id"] == item["item_id"]),
                     reasoning,
                     text,
+                    tokens,
+                    duration,
                     items: Vec::new(),
                 }),
             }
@@ -684,6 +693,8 @@ fn project_turn(root: &Value, items: &[Value]) -> Option<NativeChatTurn> {
                 is_answer: false,
                 reasoning: String::new(),
                 text: String::new(),
+                tokens: String::new(),
+                duration: String::new(),
                 items: vec![entry],
             }),
         }

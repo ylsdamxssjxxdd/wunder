@@ -1,4 +1,4 @@
-import { Theme, TimelineRow, ModelCard, ChatAttachment } from "theme.slint";
+import { Theme, TimelineRow, ModelCard, ChatAttachment, SplitContext } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { TimelineView } from "timeline.slint";
 import { Composer } from "composer.slint";
@@ -21,6 +21,9 @@ component SplitPane inherits Rectangle {
     in property <string> model-key: "";
     in property <[ChatAttachment]> attachments: [];
     in property <string> send-key: "enter";
+    // This pane's own thread gauge: occupancy plus whether its history is a
+    // compaction summary (which paints the brain red).
+    in property <SplitContext> context: { usage: 0.0, known: false, counts: "", compacted: false };
     out property <length> close-x: close-button.absolute-position.x;
     out property <length> close-y: close-button.absolute-position.y + close-button.height / 2;
     callback close();
@@ -91,6 +94,10 @@ component SplitPane inherits Rectangle {
                 send-key: root.send-key;
                 show-host-hud: false;
                 show-cli-action: false;
+                context-usage: root.context.usage;
+                context-known: root.context.known;
+                context-counts: root.context.counts;
+                context-compacted: root.context.compacted;
                 send => { root.send(); }
                 stop => { root.stop(); }
                 select-model(index, key) => { root.select-model(key); }
@@ -135,6 +142,13 @@ export component ChatSplitWorkspace inherits Rectangle {
     in property <int> model-count: 0;
     in property <string> model-name: "";
     in property <string> model-key: "";
+    // Per-pane context gauges, always four entries.
+    in property <[SplitContext]> contexts: [
+        { usage: 0.0, known: false, counts: "", compacted: false },
+        { usage: 0.0, known: false, counts: "", compacted: false },
+        { usage: 0.0, known: false, counts: "", compacted: false },
+        { usage: 0.0, known: false, counts: "", compacted: false }
+    ];
     in property <[string]> model-names: ["", "", "", ""];
     in property <[string]> model-keys: ["", "", "", ""];
     in property <[ChatAttachment]> attachments: [];
@@ -198,6 +212,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 stream-revision: root.stream-revision; models: root.models; model-count: root.model-count;
                 model-name: root.model-names[0] != "" ? root.model-names[0] : root.model-name; model-key: root.model-keys[0];
                 attachments: root.active-session == root.session-0 ? root.attachments : []; send-key: root.send-key;
+                context: root.contexts[0];
                 close => { root.close-pane(0); } activate => { root.activate-pane(0); } send => { root.send-pane(0); } stop => { root.stop-pane(0); }
                 toggle(index) => { root.toggle-row(0, index); } process-page(index, direction) => { root.process-page(0, index, direction); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
                 select-model(key) => { root.select-pane-model(0, key); }
@@ -209,6 +224,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 stream-revision: root.stream-revision; models: root.models; model-count: root.model-count;
                 model-name: root.model-names[1] != "" ? root.model-names[1] : root.model-name; model-key: root.model-keys[1];
                 attachments: root.active-session == root.session-1 ? root.attachments : []; send-key: root.send-key;
+                context: root.contexts[1];
                 close => { root.close-pane(1); } activate => { root.activate-pane(1); } send => { root.send-pane(1); } stop => { root.stop-pane(1); }
                 toggle(index) => { root.toggle-row(1, index); } process-page(index, direction) => { root.process-page(1, index, direction); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
                 select-model(key) => { root.select-pane-model(1, key); }
@@ -220,6 +236,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 stream-revision: root.stream-revision; models: root.models; model-count: root.model-count;
                 model-name: root.model-names[2] != "" ? root.model-names[2] : root.model-name; model-key: root.model-keys[2];
                 attachments: root.active-session == root.session-2 ? root.attachments : []; send-key: root.send-key;
+                context: root.contexts[2];
                 close => { root.close-pane(2); } activate => { root.activate-pane(2); } send => { root.send-pane(2); } stop => { root.stop-pane(2); }
                 toggle(index) => { root.toggle-row(2, index); } process-page(index, direction) => { root.process-page(2, index, direction); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
                 select-model(key) => { root.select-pane-model(2, key); }
@@ -231,6 +248,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 stream-revision: root.stream-revision; models: root.models; model-count: root.model-count;
                 model-name: root.model-names[3] != "" ? root.model-names[3] : root.model-name; model-key: root.model-keys[3];
                 attachments: root.active-session == root.session-3 ? root.attachments : []; send-key: root.send-key;
+                context: root.contexts[3];
                 close => { root.close-pane(3); } activate => { root.activate-pane(3); } send => { root.send-pane(3); } stop => { root.stop-pane(3); }
                 toggle(index) => { root.toggle-row(3, index); } process-page(index, direction) => { root.process-page(3, index, direction); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
                 select-model(key) => { root.select-pane-model(3, key); }

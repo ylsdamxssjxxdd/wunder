@@ -8,6 +8,10 @@ use wunder_server::{blocking, state::AppState};
 pub struct NativeContextUsage {
     pub used: Option<f64>,
     pub capacity: Option<f64>,
+    /// True once this thread's model context has been replaced by a compaction
+    /// summary. The composer paints its gauge red from then on so the user can
+    /// tell a compacted thread from a fresh one at a glance.
+    pub compacted: bool,
 }
 
 impl super::NativeDesktop {
@@ -74,6 +78,7 @@ impl NativeContextUsage {
             capacity: number(stats, &capacity_keys)
                 .or_else(|| nested.and_then(|v| number(v, &capacity_keys)))
                 .filter(|v| *v > 0.0),
+            compacted: false,
         }
     }
 }
@@ -93,12 +98,21 @@ pub(super) async fn snapshot(
         Ok(db.workspace.load_session_context_tokens(&owner, &target))
     })
     .await?;
+    let db = state.clone();
+    let owner = user.to_owned();
+    let target = session.to_owned();
+    let compacted = blocking::run_db("native.context.compacted", move || {
+        Ok(db.workspace.load_session_compacted(&owner, &target))
+    })
+    .await
+    .unwrap_or(false);
     let capacity = wunder_server::api::chat::native_chat_context_capacity(state, user, session)
         .await?
         .map(f64::from);
     Ok(NativeContextUsage {
         used: Some(used.max(0) as f64),
         capacity,
+        compacted,
     })
 }
 

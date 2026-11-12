@@ -25,12 +25,14 @@ use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tokio::time::timeout;
 
-const MAX_CONTEXT_LINES: usize = 20;
+const MAX_CONTEXT_LINES: usize = 80;
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const MAX_TIMEOUT_MS: u64 = 120_000;
 const DEFAULT_MAX_CANDIDATES: usize = 4000;
 const MAX_MAX_CANDIDATES: usize = 20_000;
 const MAX_MATCHES_CAP: usize = 2000;
+/// 带上下文的命中数量上限。上下文只用于「看清实现」，不需要和命中上限一样大。
+const MAX_CONTEXT_MATCHES_CAP: usize = 32;
 const MIN_OUTPUT_BUDGET_BYTES: usize = 2 * 1024;
 const MAX_OUTPUT_BUDGET_BYTES: usize = 4 * 1024 * 1024;
 const BINARY_SAMPLE_BYTES: usize = 4096;
@@ -134,6 +136,11 @@ struct SearchParams {
     case_sensitive: bool,
     context_before: usize,
     context_after: usize,
+    /// 只给前 N 个命中带上下文（0 = 全部命中都带）。
+    /// 上下文窗口是全局参数：窗口小了不起作用，窗口大了每个命中都跟着膨胀，
+    /// 结果就是「搜索定位」和「读实现」被拆成两次往返。把窗口集中留给排序后
+    /// 最相关的几处，一次搜索就能看清实现。
+    context_match_limit: usize,
     max_depth: usize,
     max_files: usize,
     max_matches: usize,
@@ -378,6 +385,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
                 "file_pattern_items": params.file_pattern_items,
                 "context_before": params.context_before,
                 "context_after": params.context_after,
+                "context_matches": params.context_match_limit,
                 "max_depth": params.max_depth,
                 "max_files": params.max_files,
                 "max_matches": params.max_matches,
@@ -512,7 +520,8 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
     if hits.len() > params.max_matches {
         hits.truncate(params.max_matches);
     }
-    let (hits, output_budget_hit) = limit_hits_by_output_budget(hits, params.output_budget_bytes);
+    let (hits, output_budget_hit) =
+        limit_hits_by_output_budget(hits, params.output_budget_bytes, params.context_match_limit);
     let matched_files = collect_matched_files(&hits);
     let matched_file_count = matched_files.len();
     let returned_match_count = hits.len();
@@ -568,6 +577,10 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
     let (query_mode, query_mode_inferred) = parse_query_mode(args, query_source);
     let case_sensitive = parse_case_sensitive(args);
     let (context_before, context_after) = parse_context_windows(args);
+    let context_match_limit = parse_optional_usize(args.get("context_matches"))
+        .or_else(|| parse_optional_usize(args.get("context_match_count")))
+        .unwrap_or(0)
+        .min(MAX_CONTEXT_MATCHES_CAP);
     let budget = parse_search_budget(args);
     let max_depth = parse_optional_usize(args.get("max_depth")).unwrap_or(0);
     let mut max_files = parse_optional_usize(args.get("max_files")).unwrap_or(0);
@@ -614,6 +627,7 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
         case_sensitive,
         context_before,
         context_after,
+        context_match_limit,
         max_depth,
         max_files,
         max_matches,
@@ -2260,21 +2274,34 @@ fn compact_context_lines(lines: &[ContextLine]) -> Vec<Value> {
         .collect()
 }
 
-fn compact_search_hits_for_model(hits: &[SearchHit]) -> Vec<Value> {
+fn compact_search_hits_for_model(
+    hits: &[SearchHit],
+    context_match_limit: usize,
+) -> Vec<Value> {
+    let with_context = if context_match_limit == 0 {
+        usize::MAX
+    } else {
+        context_match_limit
+    };
     hits.iter()
-        .map(|hit| {
+        .enumerate()
+        .map(|(index, hit)| {
             let content = truncate_hit_chars(&hit.content, MAX_HIT_CONTENT_CHARS);
             let content_chars = hit.content.chars().count();
             let content_truncated = content.chars().count() < content_chars;
-            json!({
-                "path": hit.path,
-                "line": hit.line,
-                "content": content,
-                "content_chars": content_chars,
-                "content_truncated": content_truncated,
-                "before": compact_context_lines(&hit.before),
-                "after": compact_context_lines(&hit.after),
-            })
+            let mut item = serde_json::Map::new();
+            item.insert("path".to_string(), json!(hit.path));
+            item.insert("line".to_string(), json!(hit.line));
+            item.insert("content".to_string(), json!(content));
+            item.insert("content_chars".to_string(), json!(content_chars));
+            item.insert("content_truncated".to_string(), json!(content_truncated));
+            // 超出带上下文名额的命中只保留定位信息：它们的作用是让调用方知道
+            // 还有哪些位置命中，不需要再把周围代码也搬一遍。
+            if index < with_context {
+                item.insert("before".to_string(), json!(compact_context_lines(&hit.before)));
+                item.insert("after".to_string(), json!(compact_context_lines(&hit.after)));
+            }
+            Value::Object(item)
         })
         .collect()
 }
@@ -2378,6 +2405,9 @@ fn build_model_search_success(
             "truncation_reasons": truncation_reasons,
             "elapsed_ms": elapsed_ms,
             "files_only": params.files_only,
+            // 0 表示每个命中都带上下文；正数表示只有前 N 个命中带上下文。
+            // 投影层据此决定单个命中可以带多少行上下文。
+            "context_match_limit": params.context_match_limit,
             "paths": if params.files_only {
                 json!(collect_matched_files(&hits))
             } else {
@@ -2386,14 +2416,17 @@ fn build_model_search_success(
             "hits": if params.files_only {
                 Value::Array(Vec::new())
             } else {
-                json!(compact_search_hits_for_model(&hits))
+                json!(compact_search_hits_for_model(
+                    &hits,
+                    params.context_match_limit
+                ))
             },
         }),
         summary.next_hint,
     )
 }
 
-fn estimate_hit_bytes(hit: &SearchHit) -> usize {
+fn estimate_hit_bytes(hit: &SearchHit, with_context: bool) -> usize {
     let mut total = hit
         .path
         .len()
@@ -2405,6 +2438,11 @@ fn estimate_hit_bytes(hit: &SearchHit) -> usize {
             .map(|segment| segment.text.len().saturating_add(8))
             .sum::<usize>(),
     );
+    // 超出上下文名额的命中不会输出 before/after，其上下文也就不该计入输出预算，
+    // 否则一个大的上下文窗口会把命中名额白白挤掉。
+    if !with_context {
+        return total;
+    }
     total = total.saturating_add(
         hit.before
             .iter()
@@ -2422,6 +2460,7 @@ fn estimate_hit_bytes(hit: &SearchHit) -> usize {
 fn limit_hits_by_output_budget(
     hits: Vec<SearchHit>,
     output_budget_bytes: Option<usize>,
+    context_match_limit: usize,
 ) -> (Vec<SearchHit>, bool) {
     let Some(output_budget_bytes) = output_budget_bytes else {
         return (hits, false);
@@ -2429,10 +2468,15 @@ fn limit_hits_by_output_budget(
     if hits.is_empty() {
         return (hits, false);
     }
+    let with_context = if context_match_limit == 0 {
+        usize::MAX
+    } else {
+        context_match_limit
+    };
     let mut kept = Vec::new();
     let mut used = 0usize;
     for hit in hits {
-        let weight = estimate_hit_bytes(&hit).max(1);
+        let weight = estimate_hit_bytes(&hit, kept.len() < with_context).max(1);
         if kept.is_empty() {
             kept.push(hit);
             used = weight.min(output_budget_bytes);
@@ -2499,7 +2543,7 @@ mod tests {
             before: Vec::new(),
             after: Vec::new(),
         };
-        let compacted = compact_search_hits_for_model(&[hit]);
+        let compacted = compact_search_hits_for_model(&[hit], 0);
         let content = compacted[0]["content"].as_str().expect("content");
         assert_eq!(content.chars().count(), MAX_HIT_CONTENT_CHARS + 1);
         assert_eq!(compacted[0]["content_truncated"], json!(true));
@@ -2507,6 +2551,58 @@ mod tests {
             compacted[0]["content_chars"].as_u64().expect("chars"),
             (MAX_HIT_CONTENT_CHARS + 50) as u64
         );
+    }
+
+    #[test]
+    fn parse_search_params_reads_context_matches() {
+        let params = parse_search_params(&json!({
+            "query": "alpha",
+            "context_after": 40,
+            "context_matches": 2
+        }))
+        .expect("params");
+        assert_eq!(params.context_after, 40);
+        assert_eq!(params.context_match_limit, 2);
+
+        let defaulted = parse_search_params(&json!({ "query": "alpha" })).expect("params");
+        assert_eq!(defaulted.context_match_limit, 0);
+
+        let capped = parse_search_params(&json!({
+            "query": "alpha",
+            "context_matches": 9999
+        }))
+        .expect("params");
+        assert_eq!(capped.context_match_limit, MAX_CONTEXT_MATCHES_CAP);
+    }
+
+    #[test]
+    fn compact_hits_keep_context_only_for_leading_matches() {
+        let make_hit = |line: usize| SearchHit {
+            path: "src/main.rs".to_string(),
+            line,
+            content: "alpha".to_string(),
+            segments: Vec::new(),
+            matched_terms: Vec::new(),
+            before: vec![ContextLine {
+                line: line - 1,
+                content: "before".to_string(),
+            }],
+            after: vec![ContextLine {
+                line: line + 1,
+                content: "after".to_string(),
+            }],
+        };
+        let compacted = compact_search_hits_for_model(&[make_hit(10), make_hit(20)], 1);
+        assert_eq!(compacted[0]["after"].as_array().map(Vec::len), Some(1));
+        assert!(compacted[1].get("after").is_none());
+        assert!(compacted[1].get("before").is_none());
+        // 定位信息仍然完整：不带上下文的命中依然有 path/line/content。
+        assert_eq!(compacted[1]["line"], json!(20));
+        assert_eq!(compacted[1]["content"], json!("alpha"));
+
+        // 0 表示沿用旧行为：每个命中都带上下文。
+        let all = compact_search_hits_for_model(&[make_hit(10), make_hit(20)], 0);
+        assert!(all.iter().all(|item| item.get("after").is_some()));
     }
 
     #[test]
@@ -2804,9 +2900,9 @@ mod tests {
             before: vec![],
             after: vec![],
         };
-        let one_weight = estimate_hit_bytes(&hit1);
+        let one_weight = estimate_hit_bytes(&hit1, true);
         let (hits, budget_hit) =
-            limit_hits_by_output_budget(vec![hit1, hit2], Some(one_weight + 1));
+            limit_hits_by_output_budget(vec![hit1, hit2], Some(one_weight + 1), 0);
         assert_eq!(hits.len(), 1);
         assert!(budget_hit);
     }
@@ -2932,6 +3028,7 @@ mod tests {
             case_sensitive: false,
             context_before: 0,
             context_after: 0,
+            context_match_limit: 0,
             max_depth: 0,
             max_files: 0,
             max_matches: 50,
@@ -3026,6 +3123,7 @@ mod tests {
             case_sensitive: false,
             context_before: 0,
             context_after: 0,
+            context_match_limit: 0,
             max_depth: 0,
             max_files: 0,
             max_matches: 20,
@@ -3079,6 +3177,7 @@ mod tests {
             case_sensitive: false,
             context_before: 1,
             context_after: 1,
+            context_match_limit: 0,
             max_depth: 0,
             max_files: 0,
             max_matches: 20,
@@ -3239,6 +3338,7 @@ mod tests {
             case_sensitive: false,
             context_before: 0,
             context_after: 0,
+            context_match_limit: 0,
             max_depth: 0,
             max_files: 0,
             max_matches: 20,

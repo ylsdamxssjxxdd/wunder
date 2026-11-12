@@ -52,6 +52,13 @@ pub(super) fn result_data(payload: &Value) -> &Value {
 }
 
 impl NativeWorkflowEntry {
+    /// Folded metrics of one model round, for the thinking row that has no tool
+    /// payload of its own. Same two columns as a tool row, so the frontend does
+    /// not need its own copy of the number formatting.
+    pub fn model_round_metrics(data: &Value) -> (String, String) {
+        model_round_metrics(data)
+    }
+
     pub fn from_payload(id: &str, title: &str, detail: String, state: &str, data: &Value) -> Self {
         let args = data.get("args").or_else(|| data.get("arguments"));
         let compaction = title == "上下文压缩" || title == "context_compaction";
@@ -86,15 +93,7 @@ impl NativeWorkflowEntry {
                     0,
                 )
             })
-            .map(|ms| {
-                if ms < 1000.0 {
-                    format!("{:.0}ms", ms.round())
-                } else if ms < 10000.0 {
-                    format!("{:.1}s", (ms / 100.0).round() / 10.0)
-                } else {
-                    format!("{:.0}s", (ms / 1000.0).round())
-                }
-            })
+            .map(format_duration_ms)
             .unwrap_or_default();
         let sections = sections::project(title, data, state, &detail);
         let patch_files = patch::project(title, data, args.unwrap_or(&Value::Null));
@@ -395,6 +394,52 @@ fn number(value: &Value, keys: &[&str], depth: usize) -> Option<f64> {
                 .find_map(|key| value.get(*key).and_then(|v| number(v, keys, depth + 1)))
         })
 }
+/// Collapsed-row duration: milliseconds under a second, one decimal up to
+/// ten seconds, whole seconds beyond. Shared by tool rows and model rounds so
+/// both columns read identically.
+pub(crate) fn format_duration_ms(ms: f64) -> String {
+    if ms < 1000.0 {
+        return format!("{}ms", ms.round() as i64);
+    }
+    if ms < 10000.0 {
+        let tenths = (ms / 100.0).round() as i64;
+        return format!("{}.{}s", tenths / 10, tenths % 10);
+    }
+    format!("{}s", (ms / 1000.0).round() as i64)
+}
+
+/// Folded model-round metadata, in the same two columns as a tool row: the
+/// request's context occupancy on the left, how long the round thought on the
+/// right. A thinking row has no tool payload of its own, so its numbers come
+/// from the assistant item of that round: `usage.input_tokens` is the prompt
+/// that was actually sent and `stream_timing.reasoning_ms` is the span between
+/// the first and last reasoning chunk.
+pub(crate) fn model_round_metrics(data: &Value) -> (String, String) {
+    let tokens = data
+        .get("request_context_tokens")
+        .and_then(positive_count)
+        .or_else(|| {
+            data.get("usage")
+                .and_then(|usage| usage.get("input_tokens"))
+                .and_then(positive_count)
+        })
+        .or_else(|| {
+            data.get("request_usage")
+                .and_then(|usage| usage.get("input_tokens"))
+                .and_then(positive_count)
+        })
+        .map(compact)
+        .unwrap_or_default();
+    let duration = number(
+        data.get("stream_timing").unwrap_or(&Value::Null),
+        &["reasoning_ms"],
+        0,
+    )
+    .map(format_duration_ms)
+    .unwrap_or_default();
+    (tokens, duration)
+}
+
 fn compact(n: f64) -> String {
     let n = n.floor();
     if n < 1000.0 {
@@ -672,4 +717,33 @@ mod tests {
             assert_eq!((row.tokens.as_str(), row.duration.as_str()), expected);
         }
     }
+    /// A thinking row has no tool payload: its two columns come from the
+    /// assistant item of the round — the prompt actually sent and the span
+    /// between the first and last reasoning chunk.
+    #[test]
+    fn round_metrics_read_context_occupancy_and_thinking_span() {
+        let data = json!({
+            "reasoning":"思考",
+            "usage":{"input_tokens":1800,"output_tokens":20,"total_tokens":1820},
+            "stream_timing":{"decode_ms":4000,"content_decode_ms":3000,"reasoning_ms":1250}
+        });
+        assert_eq!(
+            NativeWorkflowEntry::model_round_metrics(&data),
+            ("1.8k".to_string(), "1.3s".to_string())
+        );
+        // Legacy rounds carry no reasoning span; the token column still reads
+        // and the duration stays empty instead of showing the decode time.
+        let legacy = json!({"usage":{"input_tokens":2000,"output_tokens":5},
+            "stream_timing":{"decode_ms":4000}});
+        assert_eq!(
+            NativeWorkflowEntry::model_round_metrics(&legacy),
+            ("2k".to_string(), String::new())
+        );
+        // A failed round without usage keeps both columns empty.
+        assert_eq!(
+            NativeWorkflowEntry::model_round_metrics(&json!({"reasoning":"x"})),
+            (String::new(), String::new())
+        );
+    }
+
 }

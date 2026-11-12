@@ -401,6 +401,13 @@ pub fn merge_reasoning_tail(bar: &TimelineRow, mut entry: ProcessEntry) {
         }
         entry.open = old.open;
         entry.payload = old.payload;
+        // The live thought row and the durable page row can carry different
+        // halves of the collapsing metadata; a merge must not blank the two
+        // right-hand columns that one side already knows.
+        if entry.tokens.is_empty() && entry.duration.is_empty() {
+            entry.tokens = old.tokens.clone();
+            entry.duration = old.duration.clone();
+        }
         if entry.status_kind != crate::timeline::STATUS_RUNNING
             && old.detail.len() > entry.detail.len()
         {
@@ -440,6 +447,10 @@ pub fn merge_reasoning_tail(bar: &TimelineRow, mut entry: ProcessEntry) {
         let old = children.row_data(index).unwrap();
         entry.open = old.open;
         entry.payload = old.payload;
+        if entry.tokens.is_empty() && entry.duration.is_empty() {
+            entry.tokens = old.tokens.clone();
+            entry.duration = old.duration.clone();
+        }
         children.set_row_data(index, entry);
     } else {
         // A new live segment settles any previous running thought. Do this

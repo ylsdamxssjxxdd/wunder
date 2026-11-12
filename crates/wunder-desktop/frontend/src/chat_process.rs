@@ -229,6 +229,9 @@ pub(crate) fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, directi
                 .into(),
                 summary: crate::message_blocks::reasoning_preview(&item.reasoning),
                 detail: item.reasoning.into(),
+                // Same two right-hand columns as the tool rows of this round.
+                tokens: item.tokens.into(),
+                duration: item.duration.into(),
                 status_kind: crate::timeline::status_kind(&item.state),
                 ..Default::default()
             });
@@ -434,6 +437,8 @@ mod tests {
                     state: "completed".into(),
                     reasoning: String::new(),
                     text: String::new(),
+                    tokens: String::new(),
+                    duration: String::new(),
                     tool: Some(wunder_desktop::native::NativeWorkflowEntry {
                         id: "fixture-call".into(),
                         state: "completed".into(),
@@ -503,6 +508,8 @@ mod tests {
                 state: "completed".into(),
                 reasoning: "Fixture thought".into(),
                 text: String::new(),
+                tokens: "12k".into(),
+                duration: "1.2s".into(),
                 tool: None,
             }],
             first: Some(101),
@@ -573,6 +580,8 @@ mod tests {
                     state: "running".into(),
                     reasoning: "Fixture thought".into(),
                     text: String::new(),
+                    tokens: String::new(),
+                    duration: String::new(),
                     tool: None,
                 }],
                 ..Default::default()
@@ -614,6 +623,8 @@ mod tests {
             state: "completed".into(),
             reasoning: reasoning.into(),
             text: String::new(),
+            tokens: String::new(),
+            duration: String::new(),
             tool: None,
         };
         apply_page(

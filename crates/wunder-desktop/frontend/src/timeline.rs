@@ -283,6 +283,10 @@ pub struct Timeline {
     marks_dirty: Cell<bool>,
     body: Option<Body>,
     thinking: Option<Thinking>,
+    /// Newest thinking row of the live turn. Its right-hand columns arrive with
+    /// the model call's usage, i.e. after the thought already stopped
+    /// streaming, so the row stays addressable once `thinking` is gone.
+    last_reason: Option<usize>,
     tools: Vec<ToolItem>,
     /// Known batch bars of this turn, newest last.
     bars: Vec<BatchBar>,
@@ -443,6 +447,10 @@ impl Timeline {
 
             body: None,
             thinking: None,
+            // Newest thinking row of the live turn: its right-hand columns
+            // arrive with the model call's usage, i.e. after the thought has
+            // already stopped streaming and `thinking` is gone.
+            last_reason: None,
             tools: Vec::new(),
             bars: Vec::new(),
             group: NO_GROUP,
@@ -1075,6 +1083,11 @@ impl Timeline {
                     thinking.index -= 1;
                 }
             }
+            if self.last_reason.is_some_and(|reason| reason > index) {
+                self.last_reason = self.last_reason.map(|reason| reason - 1);
+            } else if self.last_reason == Some(index) {
+                self.last_reason = None;
+            }
             if self.last_body != usize::MAX && self.last_body > index {
                 self.last_body -= 1;
             }
@@ -1203,6 +1216,7 @@ impl Timeline {
                 row.foldable = true;
             });
             self.reasons += 1;
+            self.last_reason = Some(index);
             self.thinking = Some(Thinking {
                 text: String::new(),
                 index,
@@ -1260,6 +1274,7 @@ impl Timeline {
         let Some(thinking) = self.thinking.take() else {
             return;
         };
+        self.last_reason = Some(thinking.index);
         let text = thinking.text.clone();
         let summary = crate::message_blocks::reasoning_preview(&text);
         let label = if failed {
@@ -1276,6 +1291,42 @@ impl Timeline {
             row.reasoning_blocks = crate::message_blocks::from_text(&text);
             row.status_kind = if failed { STATUS_FAILED } else { STATUS_DONE };
         });
+    }
+
+    /// Right-hand columns of the newest thinking row. A model call reports its
+    /// usage and stream timing only once the round finished, so the values are
+    /// applied to the open thought, or to the row that held it after the
+    /// thought has already been closed by an answer or a tool call. The two
+    /// columns read like the tool rows of the same round: context occupancy of
+    /// the request, then how long this row itself took.
+    pub fn set_reason_metrics(&mut self, tokens: &str, duration: &str) {
+        if tokens.is_empty() && duration.is_empty() {
+            return;
+        }
+        let index = self
+            .thinking
+            .as_ref()
+            .map(|thinking| thinking.index)
+            .or(self.last_reason);
+        let Some(index) = index else {
+            return;
+        };
+        if !self
+            .model
+            .row_data(index)
+            .is_some_and(|row| row.kind == KIND_REASON)
+        {
+            return;
+        }
+        self.patch(index, |row| {
+            if !tokens.is_empty() {
+                row.tokens = tokens.into();
+            }
+            if !duration.is_empty() {
+                row.duration = duration.into();
+            }
+        });
+        self.refresh_process_bar();
     }
 
     /// Insert the batch bar before its first entry. The bar label is rewritten
@@ -2522,7 +2573,10 @@ mod tests {
             .row_data(timeline.process_bar)
             .expect("a process bar");
         assert_eq!(bar.duration, "10s");
-        assert!(timeline.elapsed.is_none(), "the stopwatch stops at settlement");
+        assert!(
+            timeline.elapsed.is_none(),
+            "the stopwatch stops at settlement"
+        );
     }
 
     #[test]
@@ -2626,6 +2680,36 @@ mod tests {
             children.row_data(0).unwrap().detail,
             "First live thought · continued"
         );
+    }
+
+    #[test]
+    fn reasoning_row_takes_the_round_metrics_before_and_after_it_closes() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-reason-metrics", "Fixture input");
+        timeline.append_reasoning("First live thought").unwrap();
+        timeline.flush();
+
+        // 该轮的用量与 stream_timing 在响应结束时才回来，此时思考还在开着。
+        timeline.set_reason_metrics("1.8k", "4.2s");
+        timeline.flush();
+        let bar = timeline.model.row_data(timeline.process_bar).unwrap();
+        assert_eq!(bar.process_entries.row_data(0).unwrap().tokens, "1.8k");
+        assert_eq!(bar.process_entries.row_data(0).unwrap().duration, "4.2s");
+
+        // 模型开始调工具后条目已关闭，数字仍然落在同一条已思考行上。
+        timeline.close_thinking(false);
+        timeline.set_reason_metrics("1.8k", "4.2s");
+        timeline.flush();
+        let bar = timeline.model.row_data(timeline.process_bar).unwrap();
+        assert_eq!(bar.process_entries.row_count(), 1);
+        assert_eq!(bar.process_entries.row_data(0).unwrap().kind, KIND_REASON);
+        assert_eq!(bar.process_entries.row_data(0).unwrap().tokens, "1.8k");
+
+        // 没有这两个数的旧回合保持空列，不清空已经写好的值，也不写到工具行。
+        timeline.set_reason_metrics("", "");
+        timeline.flush();
+        let bar = timeline.model.row_data(timeline.process_bar).unwrap();
+        assert_eq!(bar.process_entries.row_data(0).unwrap().duration, "4.2s");
     }
 
     #[test]

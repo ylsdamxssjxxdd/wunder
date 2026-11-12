@@ -18,15 +18,19 @@ The standalone "sleep and wait" tool has also been deleted, and waiting semantic
 
 Use it to build and maintain an execution checklist when a task takes several steps and the user wants to follow progress. Work that finishes in one go does not need a plan.
 
+Two equivalent shapes: the string list is the cheapest, `{"plan":["a","b"],"current":0}`, where `current` is the 0-based index of the step being done (optional); the object list carries the most detail, `{"plan":[{"step":"a","status":"in_progress"}]}`. Do not mix them: when `current` is present, per-step `status` is rejected.
+
 Call it at three fixed moments: when the work starts (one step `in_progress`), after every finished step with the same full list (mark the finished one `completed`, move `in_progress` to the next), and once more at the end so no half-finished progress is left on the panel. Updating only at the end means the panel lied to the user in between.
 
 A plan is a set of steps, 1 to 12 items, each a step plus a status; items with an empty step are dropped. Statuses are `pending` / `in_progress` / `completed`, and variants such as `in-progress`, `done`, `complete`, `进行中`, `已完成` are normalized. Step text can use `step`, or `title` / `content` / `text`; the list key can be `plan`, `steps`, `todos`, or `items`. You can attach one line describing the change to the plan.
 
 The call replaces the whole plan rather than patching it. Only one step may be in progress at a time; if a second one appears, it is downgraded to pending.
 
-An empty plan, or one whose steps are all dropped, reports an error. Argument shapes are tolerated: a payload wrapped as one string (the `input` / `raw` wrappers common in text and XML protocols) or a `plan` list written as a string is unwrapped; when it still cannot be parsed the error names the expected shape, an example, and the keys that arrived, so do not retry the same payload verbatim.
+An empty plan, or one whose steps are all dropped, reports an error. Shapes are tolerated, semantics are not. Shapes: a payload wrapped as one string (the `input` / `raw` wrappers common in text and XML protocols) or a `plan` list written as a string is unwrapped. Semantics: unknown fields, unknown statuses, an out-of-range `current`, or two `in_progress` steps all fail immediately and name the location (for example `plan[1].status`) together with the allowed values. Silently ignoring an argument is worse than failing, because the caller believes it succeeded and carries the wrong state forward. A payload that still cannot be parsed reports the expected shape, an example, and the keys that arrived, so do not retry it verbatim.
 
-The result is a model-facing status card, not user copy: it carries `completed` / `total` / `current_step` / `next_step` plus a `next_step_hint` that keeps reminding while steps remain. The plan itself reaches the user through a frontend event and never enters model context, so the model must not assume it will remember the checklist next turn; the receipt is the source of truth.
+Argument errors use the standard failure envelope: `ok:false`, a human-readable `error`, `data` carrying `field` / `received` / `allowed` / `example`, and `error_meta.code` set to `TOOL_PLAN_UNKNOWN_FIELD`, `TOOL_PLAN_UNKNOWN_STATUS`, `TOOL_PLAN_INVALID_CURRENT`, or `TOOL_PLAN_CONFLICT`. `retryable` is true: fix the named field and retry, no need to guess a different shape.
+
+The result is a model-facing status card, not user copy: it carries `completed` / `total` / `current_step` / `next_step`, and while steps remain `data.hint` holds the reminder to keep the panel current (it says so explicitly when no step is in_progress). The generic model-side projection drops the outer `summary`, so the reminder lives in `data`. The plan itself reaches the user through a frontend event and never enters model context, so the model must not assume it will remember the checklist next turn; the receipt is the source of truth.
 
 ## Question Panel
 

@@ -34,6 +34,7 @@ mod queue;
 use queue::{drain_entry, EntrySignal, ParkedTurn, Recall};
 #[path = "native_chat_status.rs"]
 mod status;
+pub(crate) use status::settled_now;
 
 struct Active {
     stream: NativeStream,
@@ -80,6 +81,10 @@ struct TurnOutput {
     /// events. Session-scoped in spirit, so a new turn resumes the last plan.
     plan_steps: Vec<(String, String)>,
     plan_explanation: String,
+    /// A finished compaction within this turn replaced the thread's model
+    /// context. The composer paints its gauge red from then on, without
+    /// waiting for the next context snapshot.
+    compacted: bool,
 }
 
 impl TurnOutput {
@@ -100,6 +105,7 @@ impl TurnOutput {
             command_output: std::collections::HashMap::new(),
             plan_steps: Vec::new(),
             plan_explanation: String::new(),
+            compacted: false,
         }
     }
 
@@ -590,6 +596,59 @@ pub(crate) fn take_initial_history(
 
 fn clear_initial_history() {
     INITIAL_HISTORY.with(|slot| *slot.borrow_mut() = None);
+}
+
+/// Detach the window from a thread that left the catalogue (archived or
+/// deleted). Its transcript, draft, dock and question panel all belong to it,
+/// so keeping them on screen made an archived thread look like it was still
+/// open. The caller decides where the window lands afterwards.
+pub(crate) fn close_visible_thread(app: &MainWindow, session: &str) {
+    if session.is_empty() {
+        return;
+    }
+    let desktop = CHAT_STATE.with(|slot| {
+        let Some(state) = slot.borrow().upgrade() else {
+            return None;
+        };
+        let mut state = state.borrow_mut();
+        state.timer.stop();
+        state.observation.detach();
+        state.history_generation.fetch_add(1, Ordering::AcqRel);
+        state.history_before = None;
+        state.history_has_more = false;
+        state.history_loading_older = false;
+        state.session_loading_since = None;
+        state.parked.clear();
+        queue::reset_recall(&mut state.recall);
+        {
+            let timeline = state.timeline.clone();
+            let mut timeline = timeline.borrow_mut();
+            timeline.clear();
+            // The window keeps the same model instance; clearing it in place
+            // is what makes the transcript vanish without a reload.
+            app.set_timeline(timeline.model());
+            timeline.sync_turn_marks();
+            app.set_turn_marks(timeline.marks_model());
+        }
+        Some(state.desktop.clone())
+    });
+    app.set_active_session_id("".into());
+    app.set_draft("".into());
+    app.set_session_loading(false);
+    app.set_busy(false);
+    app.set_stopping(false);
+    app.set_goal_visible(false);
+    app.set_goal_active(false);
+    app.set_inquiry_visible(false);
+    app.set_queue_turns(ModelRc::default());
+    app.set_queue_overflow(0);
+    app.set_pending_attachments(ModelRc::default());
+    reset_activity(app);
+    // Release the open lease through the idle-aware reaper rather than an
+    // eager close: another surface may still be draining this thread.
+    if let Some(desktop) = desktop {
+        desktop.defer_close_session(session, Duration::from_secs(2));
+    }
 }
 
 /// Hand the existing timeline to a remote data source. Local execution keeps
@@ -1530,6 +1589,7 @@ fn refresh_chat(app: &MainWindow, state: Rc<RefCell<State>>, silent: bool) {
                                 quota_used: format_count_i64(item.quota_used).into(),
                                 runtime_phase: Phase::of(item.runtime_status.as_str()).code(),
                                 runtime_status: item.runtime_status.into(),
+                                runtime_ended_at: item.runtime_ended_at as f32,
                                 locked: item.locked,
                                 draft: item.draft,
                                 goal_active,
@@ -1662,9 +1722,10 @@ fn reconcile_catalogue_statuses(
             .find(|(session, _)| session == row.id.as_str())
             .map(|(_, status)| status.as_str());
         let reconciled = SESSION_STATUSES.with(|slot| {
-            slot.borrow_mut().reconcile(
+            slot.borrow_mut().reconcile_settled(
                 row.id.as_str(),
                 row.runtime_status.as_str(),
+                row.runtime_ended_at as f64,
                 read_revision,
                 local_status,
                 now,
@@ -1688,6 +1749,7 @@ fn reconcile_catalogue_statuses(
         if reconciled.retired {
             row.runtime_status = "".into();
             row.runtime_phase = Phase::Idle.code();
+            row.runtime_ended_at = 0.0;
         } else if Phase::from_code(row.runtime_phase).terminal() {
             holds_terminal = true;
         }
@@ -1824,7 +1886,12 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         app.set_busy(false);
         app.set_stopping(false);
         reset_context_usage(&app);
+        refresh_context_async(&app, &state, &id);
         app.set_active_session_id(id.clone().into());
+        // Opening the thread is what makes its settle mark old news: record
+        // the mark on screen now so the sidebar drops it, and keep later
+        // completions of the same thread visible as fresh news.
+        crate::navigation_ui::mark_settle_seen(&app, &id);
         app.set_session_loading(true);
         state.borrow_mut().session_loading_since = Some(std::time::Instant::now());
         app.set_status("正在打开线程，读取历史记录…".into());
@@ -2102,6 +2169,7 @@ fn open_created_session(app: &MainWindow, session: NativeSession) {
         quota_used: format_count_i64(session.quota_used).into(),
         runtime_phase: Phase::of(session.runtime_status.as_str()).code(),
         runtime_status: session.runtime_status.into(),
+        runtime_ended_at: session.runtime_ended_at as f32,
         locked: session.locked,
         draft: session.draft,
         ..Default::default()
@@ -3001,6 +3069,29 @@ fn finish_voice_recording(
 /// Load a bounded queue snapshot off the Slint event loop. Selection and queue
 /// actions share this helper so a cold SQLite cache on an old HDD never delays
 /// the click acknowledgement.
+/// Pull one thread's context snapshot so the brain gauge carries facts that
+/// outlive this window's event stream — notably "this history is a compaction
+/// summary", which must still paint red after a restart or a thread switch.
+fn refresh_context_async(app: &MainWindow, state: &Rc<RefCell<State>>, session: &str) {
+    let session = session.trim().to_string();
+    if session.is_empty() {
+        return;
+    }
+    let desktop = state.borrow().desktop.clone();
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let Ok(usage) = desktop.context_usage(&session) else {
+            return;
+        };
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if app.get_active_session_id() != session {
+                return;
+            }
+            apply_context_usage(&app, usage);
+        });
+    });
+}
+
 fn refresh_queue_async(app: &MainWindow, state: &Rc<RefCell<State>>, session: &str) {
     let session = session.trim().to_string();
     if session.is_empty() {
@@ -3274,10 +3365,21 @@ fn write_session_row(app: &MainWindow, session: &str, status: &str, phase: Phase
     let rows = app.get_conversations();
     if let Some(index) = rows.iter().position(|row| row.id == session) {
         if let Some(mut row) = rows.row_data(index) {
-            // The phrase is free-form; the phase is what every view reads.
-            if row.runtime_status != status || row.runtime_phase != phase.code() {
+            // The phrase is free-form; the phase is what every view reads. The
+            // settle time travels with a terminal so a catalogue read that
+            // arrives later can still tell whether the mark is news.
+            let ended_at = if phase.terminal() {
+                crate::native_chat::settled_now() as f32
+            } else {
+                0.0
+            };
+            if row.runtime_status != status
+                || row.runtime_phase != phase.code()
+                || row.runtime_ended_at != ended_at
+            {
                 row.runtime_status = status.into();
                 row.runtime_phase = phase.code();
+                row.runtime_ended_at = ended_at;
                 rows.set_row_data(index, row);
                 update_active_thread_filter_model(app, &rows);
                 crate::navigation_ui::project(app);
@@ -3901,6 +4003,13 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
                         done = true;
                     }
                 }
+                // A compaction that finished in this turn turns the context
+                // gauge red immediately; the snapshot keeps it red after a
+                // restart and on thread switches.
+                if active.compacted && !app.get_context_compacted() {
+                    app.set_context_compacted(true);
+                    dirty = true;
+                }
             }
             NativeChatEvent::Queued => {
                 active.set_state("任务已排队…", Phase::Pending);
@@ -4211,6 +4320,12 @@ fn apply_event(
             return Ok(changed);
         }
         "llm_output" | "final" => {
+            // The round's usage and stream timing are known only now, so the
+            // thinking row of this round receives its right-hand columns before
+            // the answer body or a tool call moves the reducer on.
+            let (round_tokens, round_duration) =
+                wunder_desktop::NativeWorkflowEntry::model_round_metrics(data);
+            timeline.set_reason_metrics(&round_tokens, &round_duration);
             // A tool-only round still emits llm_output with empty content.
             // Materializing it opened a body block that stayed empty, and the
             // work process rendered that placeholder as a blank entry under
@@ -4316,6 +4431,10 @@ fn apply_event(
                 || matches!(data["status"].as_str(), Some("running"));
             if running {
                 active.set_state("上下文压缩中…", Phase::Running);
+            } else if matches!(data["status"].as_str(), Some("done" | "completed" | "fallback")) {
+                // The summary now stands in for the earlier turns: the gauge
+                // turns red for the rest of this thread's life.
+                active.compacted = true;
             }
             active.upsert_workflow(
                 timeline,
@@ -4613,9 +4732,17 @@ fn reset_context_usage(app: &MainWindow) {
     app.set_context_usage(0.0);
     app.set_context_known(false);
     app.set_context_counts("".into());
+    app.set_context_compacted(false);
 }
 
 fn apply_context_usage(app: &MainWindow, usage: wunder_desktop::NativeContextUsage) {
+    // Compaction is a per-thread fact that survives restarts, so it is taken
+    // from the snapshot rather than re-derived from this window's events. It is
+    // applied before the occupancy guard: a compacted thread with no token
+    // numbers yet must still paint red.
+    if usage.compacted {
+        app.set_context_compacted(true);
+    }
     if usage.used.is_none() && usage.capacity.is_none() {
         return;
     }
@@ -4666,7 +4793,7 @@ fn format_time(value: f64) -> String {
     }
 }
 
-fn format_count_i64(value: i64) -> String {
+pub(crate) fn format_count_i64(value: i64) -> String {
     if value >= 1_000_000 {
         format!("{:.1}m", value as f64 / 1_000_000.0)
     } else if value >= 1_000 {

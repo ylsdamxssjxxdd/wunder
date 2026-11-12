@@ -1025,6 +1025,9 @@ pub struct Shared {
     pub context_usage: f32,
     pub context_known: bool,
     pub context_counts: String,
+    /// True once this thread's history is a compaction summary: the brain
+    /// gauge paints red from then on, so a compacted thread is obvious.
+    pub context_compacted: bool,
     pub context_rev: u64,
     pub ubuntu: UbuntuView,
     pub ubuntu_rev: u64,
@@ -3146,17 +3149,25 @@ fn reset_context_usage(shared: &Arc<Mutex<Shared>>) {
         state.context_usage = 0.0;
         state.context_known = false;
         state.context_counts.clear();
+        state.context_compacted = false;
         state.context_rev = state.context_rev.wrapping_add(1);
     }
 }
 
 fn apply_context_usage(shared: &Arc<Mutex<Shared>>, usage: wunder_desktop::NativeContextUsage) {
-    if usage.used.is_none() && usage.capacity.is_none() {
-        return;
-    }
     let Ok(mut state) = shared.lock() else {
         return;
     };
+    // Compaction is sticky per thread and is applied before the occupancy
+    // guard: a just-compacted thread has no fresh token numbers yet but must
+    // still paint red.
+    if usage.compacted && !state.context_compacted {
+        state.context_compacted = true;
+        state.context_rev = state.context_rev.wrapping_add(1);
+    }
+    if usage.used.is_none() && usage.capacity.is_none() {
+        return;
+    }
     if let Some(used) = usage.used {
         state.context_used = Some(used.max(0.0));
     }
@@ -7743,6 +7754,12 @@ fn apply_event(live: &mut LiveTurn, value: &Value) {
             }
         }
         "llm_output" | "final" => {
+            // The round's usage and stream timing are known only now, so the
+            // thinking entry takes its right-hand columns before the answer or
+            // a tool call closes it.
+            let (round_tokens, round_duration) =
+                wunder_desktop::NativeWorkflowEntry::model_round_metrics(data);
+            live.set_reason_metrics(&round_tokens, &round_duration);
             if let Some(reasoning) = data
                 .get("reasoning_delta")
                 .and_then(Value::as_str)

@@ -754,11 +754,7 @@ pub(crate) fn tool_target(entry: &NativeWorkflowEntry) -> String {
 /// names the same file in another form.
 fn file_name(value: &str) -> &str {
     let trimmed = value.trim().trim_end_matches(['/', '\\']);
-    trimmed
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(trimmed)
-        .trim()
+    trimmed.rsplit(['/', '\\']).next().unwrap_or(trimmed).trim()
 }
 
 /// The folded row prints only the file name of the call target. A full path
@@ -813,13 +809,21 @@ fn tool_child(turn_id: &str, entry: &NativeWorkflowEntry) -> ProcessChildData {
     }
 }
 
-fn reason_child(turn_id: &str, item_id: &str, text: &str) -> ProcessChildData {
+fn reason_child(
+    turn_id: &str,
+    item_id: &str,
+    text: &str,
+    tokens: &str,
+    duration: &str,
+) -> ProcessChildData {
     ProcessChildData {
         id: format!("{turn_id}-reason-{item_id}"),
         kind: KIND_REASON,
         summary: preview_text(text, 120),
         tool_name: "思考".into(),
         detail: text.to_string(),
+        tokens: tokens.to_string(),
+        duration: duration.to_string(),
         open: false,
         ..Default::default()
     }
@@ -1025,7 +1029,13 @@ pub fn project_turn(turn: &NativeChatTurn) -> Vec<RowData> {
             } else {
                 round.item_id.clone()
             };
-            children.push(reason_child(&turn.root_id, &item_id, &round.reasoning));
+            children.push(reason_child(
+                &turn.root_id,
+                &item_id,
+                &round.reasoning,
+                &round.tokens,
+                &round.duration,
+            ));
         }
         for entry in &round.items {
             children.push(tool_child(&turn.root_id, entry));
@@ -1106,6 +1116,9 @@ pub struct LiveReason {
     pub text: String,
     pub status: i32,
     round: i64,
+    /// Right-hand columns: context occupancy of the round and its thinking span.
+    pub tokens: String,
+    pub duration: String,
 }
 
 pub struct LiveTool {
@@ -1198,6 +1211,30 @@ impl LiveTurn {
         }
     }
 
+    /// The round reports its usage and stream timing once it finished, so the
+    /// thinking entry of that round takes the two right-hand columns then,
+    /// mirroring the desktop and web rows. Prefer the still-open entry; after a
+    /// close the numbers land on that round's settled row instead.
+    pub fn set_reason_metrics(&mut self, tokens: &str, duration: &str) {
+        if tokens.is_empty() && duration.is_empty() {
+            return;
+        }
+        let index = self.active_reason.or_else(|| {
+            self.steps
+                .iter()
+                .rposition(|step| matches!(step, LiveStep::Reasoning(_)))
+        });
+        if let Some(LiveStep::Reasoning(reason)) = index.and_then(|index| self.steps.get_mut(index))
+        {
+            if !tokens.is_empty() {
+                reason.tokens = tokens.to_owned();
+            }
+            if !duration.is_empty() {
+                reason.duration = duration.to_owned();
+            }
+        }
+    }
+
     /// Append one reasoning delta. `replace` is used by the full-text
     /// `reasoning` frame, `append` by stream deltas.
     pub fn append_reasoning(&mut self, round: i64, text: &str, replace: bool) {
@@ -1226,6 +1263,8 @@ impl LiveTurn {
                 STATUS_DONE
             },
             round,
+            tokens: String::new(),
+            duration: String::new(),
         }));
         self.active_reason = Some(self.steps.len() - 1);
         self.phase = "thinking".into();
@@ -1294,6 +1333,8 @@ impl LiveTurn {
                         } else {
                             reason.status
                         },
+                        tokens: reason.tokens.clone(),
+                        duration: reason.duration.clone(),
                         open: false,
                         payload: -2 - index as i32,
                         ..Default::default()
@@ -1518,7 +1559,10 @@ mod tests {
     fn chip_summary_stays_when_it_names_another_resource() {
         // The chip prints only the file name, so a differently folded form of
         // the same file still counts as the same resource.
-        assert_eq!(row_summary(".../src/lib.rs", "crates/engine/src/lib.rs"), "");
+        assert_eq!(
+            row_summary(".../src/lib.rs", "crates/engine/src/lib.rs"),
+            ""
+        );
         assert_eq!(row_summary("/home/assets/lib.rs", "lib.rs"), "");
         // A query is not the file the chip names and stays readable.
         assert_eq!(row_summary("fixture query", "src/main.rs"), "fixture query");
@@ -1746,6 +1790,42 @@ mod tests {
             .find(|row| row.kind == KIND_PROCESS)
             .expect("process bar");
         assert_eq!(bar.process_children[2].status_kind, STATUS_DONE);
+    }
+
+    #[test]
+    fn reasoning_rows_carry_the_round_metrics_beside_the_text() {
+        let mut live = LiveTurn::new("hi".into());
+        live.append_reasoning(1, "想一下", false);
+        // 该轮的用量与耗时在响应结束时才回来，落在仍然开着的思考条目上。
+        live.set_reason_metrics("1.8k", "4.2s");
+        let rows = live.rows();
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .expect("process bar");
+        assert_eq!(bar.process_children[0].tokens, "1.8k");
+        assert_eq!(bar.process_children[0].duration, "4.2s");
+
+        // 条目已关闭（模型开始调工具）后仍然补得上，不会新起一行。
+        live.close_reason(STATUS_DONE);
+        live.set_reason_metrics("", "4.2s");
+        let rows = live.rows();
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .expect("process bar");
+        assert_eq!(bar.process_children.len(), 1);
+        assert_eq!(bar.process_children[0].tokens, "1.8k");
+        assert_eq!(bar.process_children[0].duration, "4.2s");
+
+        // 旧记录没有这两个数时保持空列，不写占位符。
+        live.set_reason_metrics("", "");
+        let rows = live.rows();
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .expect("process bar");
+        assert_eq!(bar.process_children[0].tokens, "1.8k");
     }
 
     #[test]

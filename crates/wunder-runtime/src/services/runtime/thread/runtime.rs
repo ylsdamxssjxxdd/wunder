@@ -1376,6 +1376,58 @@ impl ThreadRuntime {
             .await
     }
 
+    /// Whether the engine still owes this session work: an execution is
+    /// registered, the queue holds it, or an unsettled task row remains.
+    ///
+    /// Unlike [`Self::is_session_available_for_submit`] the caller's own open
+    /// lease is not part of the verdict, so a thread the UI merely has on
+    /// screen but idle does not read as busy. Terminal user actions (archive,
+    /// delete) use this to refuse a live thread instead of settling it behind
+    /// the user's back.
+    pub async fn session_has_live_work(&self, user_id: &str, session_id: &str) -> bool {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return false;
+        }
+        if self
+            .active_runtime_sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(cleaned_session)
+        {
+            return true;
+        }
+        let locked = self.holds_session_lock(cleaned_user, cleaned_session).await;
+        if let Some(record) = self.monitor.get_record(cleaned_session) {
+            let status = record.get("status").and_then(Value::as_str).unwrap_or("");
+            // queued/waiting 合法地不持有会话锁，仍是在途工作。
+            if status == crate::monitor::MonitorState::STATUS_QUEUED
+                || status == crate::monitor::MonitorState::STATUS_WAITING
+            {
+                return true;
+            }
+            // 崩溃残留的 running/cancelling 只在锁仍存活时作数。
+            if locked
+                && (status == crate::monitor::MonitorState::STATUS_RUNNING
+                    || status == crate::monitor::MonitorState::STATUS_CANCELLING)
+            {
+                return true;
+            }
+        }
+        let thread_id = format!("thread_{cleaned_session}");
+        if let Ok(tasks) = self.list_thread_tasks(&thread_id, None, 8).await {
+            if tasks.iter().any(|task| {
+                task.status == TASK_STATUS_PENDING
+                    || task.status == TASK_STATUS_RETRY
+                    || task.status == TASK_STATUS_RUNNING
+            }) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// `allow_waiting` lets the caller treat a `waiting` monitor row as idle.
     /// An inquiry answer is that user action: the session holds no execution
     /// lock, so the answer must run instead of waiting behind a queue slot.

@@ -581,14 +581,14 @@ component FoldEntry inherits Rectangle {
                         overflow: elide; vertical-alignment: center;
                     }
                 }
-                if root.data.kind == EntryKind.tool && (root.data.tokens != "" || root.data.duration != "") : Text {
+                if root.data.tokens != "" || root.data.duration != "" : Text {
                     width: 44px * Theme.font-scale; height: parent.height;
                     text: root.data.tokens;
                     color: Theme.muted; font-size: Theme.font-xs;
                     font-family: Theme.font-mono;
                     horizontal-alignment: left; vertical-alignment: center;
                 }
-                if root.data.kind == EntryKind.tool && (root.data.tokens != "" || root.data.duration != "") : Text {
+                if root.data.tokens != "" || root.data.duration != "" : Text {
                     width: 40px * Theme.font-scale; height: parent.height;
                     text: root.data.duration;
                     color: Theme.muted; font-size: Theme.font-xs;

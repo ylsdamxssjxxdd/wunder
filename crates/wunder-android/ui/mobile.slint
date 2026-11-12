@@ -499,8 +499,12 @@ export component MobileWindow inherits Window {
     in property <float> context-usage: 0.0;
     in property <bool> context-known: false;
     in property <string> context-counts: "";
+    // A compacted thread keeps a red brain at any occupancy: red then means
+    // "this history is a summary", not "you are about to run out of room".
+    in property <bool> context-compacted: false;
     private property <float> context-fill: min(1.0, max(0.0, root.context-usage));
-    private property <color> context-color: root.context-usage >= 0.92 ? #DC2626
+    private property <color> context-color: root.context-compacted ? #DC2626
+        : root.context-usage >= 0.92 ? #DC2626
         : root.context-usage >= 0.82 ? #EA580C : #F97316;
     // The top-centre model chip opens this sheet; the composer's own trigger
     // is hidden on phones.

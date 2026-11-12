@@ -19,12 +19,30 @@ component StatusDot inherits Rectangle {
     // Phase decided by the backend (`runtime_phase::Phase`), -1 when the row
     // is not a thread. A live phase always wins over the phrase table.
     in property <int> phase: -1;
+    // Unix second the turn settled (0 while live or unknown) and whether this
+    // row is the thread on screen.
+    in property <float> ended-at: 0;
+    in property <bool> visited: false;
     width: 11px; height: 11px;
     private property <bool> inquiry: root.phase == 3 || status == "waiting_input" || status == "waiting_user_input"
         || status.starts-with("等待用户输入") || status.starts-with("等待回答");
     private property <bool> approval: status == "waiting_approval"
         || status.starts-with("等待确认") || status.starts-with("等待审批");
-    private property <string> state: RuntimeStatus.state-of(root.phase, root.status);
+    private property <string> settled: RuntimeStatus.state-of(root.phase, root.status);
+    // A settled mark is news until the user has seen it. The backend retires a
+    // mark once it ages out, but a completion that lands while the user is
+    // elsewhere is still unseen — dropping it then made the green check appear
+    // only sometimes. The mark therefore outlives the backend's hold until the
+    // thread is opened, and is only dropped for a mark that was already old
+    // when this window first read it (it settled before this window's start).
+    private property <bool> unseen: root.settled == "done" && !root.visited
+        && (root.ended-at <= 0 || root.ended-at >= RuntimeStatus.session-start);
+    // A completion is a mark, not a state: once the user has seen it the row
+    // goes back to idle instead of keeping a green check forever. Failures and
+    // user stops stay as they are — those are states the user may need to act
+    // on, and they are not "news" that expires.
+    private property <string> state: root.unseen ? "done"
+        : root.settled == "done" ? "idle" : root.settled;
     // Stopped is terminal but neutral: the user ended the run on purpose, so it
     // paints muted with the stop glyph instead of the red failure triangle.
     private property <color> tint: root.inquiry ? Theme.accent-ink : root.approval || root.state == "pending" ? Theme.warning
@@ -98,6 +116,8 @@ component ThreadRow inherits ContextMenuArea {
             y: (parent.height - self.height) / 2;
             status: data.status;
             phase: data.phase;
+            ended-at: data.ended-at;
+            visited: data.visited;
         }
         Text {
             vertical-alignment: center;
@@ -216,7 +236,8 @@ component ThreadRow inherits ContextMenuArea {
                 mouse-cursor: data.archivable ? pointer : default;
                 enabled: data.archivable;
                 accessible-role: button; accessible-label: I18n.sb_thread_archive;
-                Tooltip { text: @markdown("\{I18n.sb_thread_archive}"); }
+                // A greyed icon explains itself: running or owned elsewhere.
+                Tooltip { text: @markdown("\{data.archivable ? I18n.sb_thread_archive : I18n.sb_thread_archive_hint}"); }
                 pointer-event(event) => {
                     if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
                         root.show({ x: self.absolute-position.x - root.absolute-position.x + self.mouse-x,

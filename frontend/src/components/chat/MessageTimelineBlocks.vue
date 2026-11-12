@@ -339,7 +339,9 @@ const timeline = computed<{ blocks: RenderBlock[]; fold: TimelineFold }>(() => {
               ? index === lastActivityIndex && props.streaming
               : Boolean(row.streaming),
             summary: reasoningPreview(text),
-            text
+            text,
+            // 与工具行同两列：该轮请求的上下文占用 + 思考耗时。
+            metrics: row.metrics
           }
         });
         return;

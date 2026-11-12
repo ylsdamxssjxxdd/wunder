@@ -90,6 +90,8 @@ export type TimelineReasoningEntry = {
   summary: string;
   /** 完整思考内容（展开后限高滚动）。 */
   text: string;
+  /** 右侧两列：该轮请求的上下文占用与思考耗时（缺失时不渲染）。 */
+  metrics?: TimelineToolMetrics;
 };
 
 export type TimelineEntry = TimelineToolEntry | TimelineReasoningEntry;

@@ -103,6 +103,7 @@ export global I18n {
     out property <string> sb_thread_select_all: zh ? "全选" : "Select all";
     public pure function sb_thread_selected(count: string) -> string { return zh ? "已选 " + count + " 项" : "" + count + " selected"; }
     out property <string> sb_thread_archive: zh ? "归档" : "Archive";
+    out property <string> sb_thread_archive_hint: zh ? "线程正在运行或已被其他实例占用，无法归档" : "A running thread, or one owned by another instance, cannot be archived";
     out property <string> sb_thread_trajectory: zh ? "轨迹视图" : "Trajectory view";
     out property <string> sb_thread_split_view: zh ? "分裂视图" : "Split view";
     out property <string> sb_last_finished: zh ? "最后完成" : "Last finished";

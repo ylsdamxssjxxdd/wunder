@@ -34,6 +34,7 @@ mod model_editor;
 mod model_editor_smoke;
 mod model_setup_smoke;
 mod native_chat;
+
 mod native_interlink;
 mod native_markdown;
 mod native_pages;
@@ -127,6 +128,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = MainWindow::new()?;
     startup_log("main_window_new", startup_boot);
+    // A settled mark that predates this window was already old news: the
+    // sidebar keeps a completion only when it happened while the window was
+    // open and the user has not looked at it yet.
+    app.global::<crate::RuntimeStatus>()
+        .set_session_start(crate::native_chat::settled_now() as f32);
     install_composer_popover_dismissal(&app);
     install_first_frame_probe(startup_boot);
     let close_weak = app.as_weak();

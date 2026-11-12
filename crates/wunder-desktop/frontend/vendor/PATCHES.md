@@ -40,6 +40,14 @@ Ported from the 1.17.1 patch set with these upstream changes:
   patch). The local remainder is the deferred-error handling (transient GDI
   failures set `force_full_repaint` and retry instead of terminating the
   event loop) plus the frame diagnostics recording.
+- Resize repaints the whole surface again: the damage region computed from
+  the previous frame's item geometry never covers the band a growing window
+  gains, so `softbuffer` kept the old size's pixels there and the compositor
+  scaled that stale frame into the new geometry while the user dragged an
+  edge (visible as a stretched ghost of the previous content). The renderer
+  now records the physical buffer size (`SoftwareRenderer::window_size` /
+  `set_window_size`) and `renderer/sw.rs` forces a full repaint
+  (`RepaintBufferType::NewBuffer`, cache cleared) on every size step.
 - `i-slint-core` 1.18 ships `RetainedLineBreaking` in
   `textlayout/sharedparley/`: line breaking and its derived metrics are
   cached in the paragraph cache and reused while width/alignment/overflow are

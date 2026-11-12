@@ -13,6 +13,10 @@ pub struct NativeProcessItem {
     pub reasoning: String,
     pub text: String,
     pub tool: Option<NativeWorkflowEntry>,
+    /// Collapsed-row metrics of this model round (context occupancy and the
+    /// thinking span), shown on the thinking row when it has no tool of its own.
+    pub tokens: String,
+    pub duration: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -141,6 +145,8 @@ pub(super) fn project_page(page: &Value, final_id: &str) -> NativeProcessPage {
                     reasoning: String::new(),
                     text: String::new(),
                     tool: None,
+                    tokens: String::new(),
+                    duration: String::new(),
                 };
                 match row["kind"].as_str().unwrap_or_default() {
                     "assistant_message" => {
@@ -158,6 +164,9 @@ pub(super) fn project_page(page: &Value, final_id: &str) -> NativeProcessPage {
                             }
                         }
                         item.reasoning = data["reasoning"].as_str().unwrap_or_default().into();
+                        let (tokens, duration) = NativeWorkflowEntry::model_round_metrics(data);
+                        item.tokens = tokens;
+                        item.duration = duration;
                         if id != final_id {
                             item.text = data["content"].as_str().unwrap_or_default().into();
                         }

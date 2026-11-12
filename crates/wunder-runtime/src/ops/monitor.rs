@@ -2177,6 +2177,7 @@ impl MonitorState {
                 consumed_tokens: record.consumed_tokens.max(0),
                 tool_calls: record.tool_calls.max(0),
                 model_request_count: record.model_request_count.unwrap_or(0).max(0),
+                ended_at: record.ended_time,
             });
         }
         drop(sessions);
@@ -2195,6 +2196,7 @@ impl MonitorState {
                 consumed_tokens: record.consumed_tokens.max(0),
                 tool_calls: record.tool_calls.max(0),
                 model_request_count: record.model_request_count.unwrap_or(0).max(0),
+                ended_at: record.ended_time,
             })
     }
 

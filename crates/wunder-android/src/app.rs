@@ -3171,6 +3171,7 @@ fn start_tick(
             ui.set_context_usage(state.context_usage);
             ui.set_context_known(state.context_known);
             ui.set_context_counts(state.context_counts.as_str().into());
+            ui.set_context_compacted(state.context_compacted);
             last_context = state.context_rev;
         }
 

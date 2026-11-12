@@ -447,7 +447,7 @@ def main():
         print("WARN: 未提供 --android-dir；套件缺安卓工具链，android 任务会失败（仅影响安卓构建）", flush=True)
     (output / ".env").write_text(write_env(source, profile, labels, str(android_target)), encoding="utf-8")
     for name in ("compose.yaml", "bootstrap.sh", "load-images.sh",
-                 "prepare-sdk.sh", "upgrade-docker.sh", "install-4k-kernel.sh",
+                 "prepare-sdk.sh", "upgrade-docker.sh", "install-4k-kernel.sh", "prepare-dkms-4k.sh",
                  ".env.example", "README.md"):
         shutil.copy2(source / name, output / name)
     # Compose v1 的卷名与网络名写在键上，键不能用 ${VAR} 插值，所以这里按剖面渲染真实前缀。

@@ -141,8 +141,8 @@ struct SurfaceRule {
 const SURFACE_RULES: &[SurfaceRule] = &[
     SurfaceRule {
         tool: "计划面板",
-        brief_en: "Progress ledger for multi-step work, visible to the user live. Build it when the task has several steps (one step in_progress), call it again with the full list as soon as a step finishes (full replace, at most one in_progress), and call it once more at the end with every step completed.",
-        brief_zh: "多步任务的进度台账，用户实时可见。开工时建清单（正在做的那步标 in_progress），每完成一步立刻带同一份完整清单再调一次（全量替换，只能有一个 in_progress），收尾时把全部步骤标 completed。",
+        brief_en: "Progress ledger for multi-step work. Shortest form {\"plan\":[\"a\",\"b\"],\"current\":0} (current = 0-based index of the step being done); object form takes step + status (pending/in_progress/completed only). Full replace, one in_progress max. Re-call with the full list after each finished step and at the end with all completed. Unknown fields/statuses are rejected with their location.",
+        brief_zh: "多步任务的进度台账。最省写法 {\"plan\":[\"甲\",\"乙\"],\"current\":0}（current 为进行中步骤的 0 基下标）；也可用对象数组 {\"plan\":[{\"step\":\"甲\",\"status\":\"in_progress\"}]}。status 只接受 pending / in_progress / completed；全量替换、同时只能一个 in_progress。每完成一步立刻带完整清单再调一次，收尾全部 completed。未知字段或状态会报错并指出位置。",
         drop_actions: &[],
         drop_fields: &[],
     },
@@ -197,15 +197,15 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "文件名匹配",
-        brief_en: "Match file names with a glob pattern under path.",
-        brief_zh: "按 glob 模式匹配 path 下的文件名。",
+        brief_en: "Match file names with a glob pattern under path. At most 32 paths per page; when has_more is true, pass offset=next_offset for the rest.",
+        brief_zh: "按 glob 模式匹配 path 下的文件名；每页至多 32 个，has_more 为真时用 offset=next_offset 翻页。",
         drop_actions: &[],
         drop_fields: &[],
     },
     SurfaceRule {
         tool: "搜索内容",
-        brief_en: "Ripgrep-style search by query (literal|regex via query_mode) or pattern. Narrow with path/glob/include, cap with max_matches, add context_before/context_after.",
-        brief_zh: "按 query（query_mode=literal|regex）或 pattern 检索文件内容；path/glob/include 收窄范围，max_matches 限量，context_before/after 带上下文。",
+        brief_en: "Ripgrep-style search by query (literal|regex via query_mode) or pattern. Narrow with path/glob/include, cap with max_matches. context_before/context_after widen context for every hit; context_matches=N keeps it on the top N hits only, so one call both locates and shows the implementation.",
+        brief_zh: "按 query（query_mode=literal|regex）或 pattern 检索文件内容；path/glob/include 收窄范围，max_matches 限量。context_before/after 给所有命中带上下文；配 context_matches=N 则只给前 N 个命中，一次调用即可定位并看清实现。",
         drop_actions: &[],
         drop_fields: &["timeout_ms"],
     },
@@ -596,12 +596,38 @@ mod tests {
     fn plan_brief_carries_the_update_discipline() {
         let rule = rule_for("计划面板").expect("plan rule");
         // 工具面是模型唯一必读的位置：何时建、何时更新、收尾要求都要在这里。
-        for needle in ["多步", "in_progress", "全量替换", "completed"] {
+        for needle in ["多步", "in_progress", "全量替换", "completed", "current"] {
             assert!(rule.brief_zh.contains(needle), "zh brief missing {needle}");
         }
-        for needle in ["multi-step", "in_progress", "full replace", "completed"] {
+        for needle in [
+            "multi-step",
+            "in_progress",
+            "Full replace",
+            "completed",
+            "current",
+        ] {
             assert!(rule.brief_en.contains(needle), "en brief missing {needle}");
         }
+    }
+
+    #[test]
+    fn plan_surface_exposes_current_and_status_enum() {
+        let spec = crate::services::tools::catalog::builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == "计划面板")
+            .expect("plan spec");
+        let projected = prompt_tool_spec(&spec, "zh-CN");
+        // 最省形态靠 current 表达“进行中”，它必须出现在模型看到的 schema 里。
+        assert_eq!(
+            projected.input_schema["properties"]["current"]["type"].as_str(),
+            Some("integer")
+        );
+        // status 只有三个合法值，枚举要让模型直接看见。
+        let status = &projected.input_schema["properties"]["plan"]["items"]["properties"]["status"];
+        assert_eq!(
+            status["enum"],
+            serde_json::json!(["pending", "in_progress", "completed"])
+        );
     }
 
     #[test]

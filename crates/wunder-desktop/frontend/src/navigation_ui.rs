@@ -5,7 +5,7 @@ use crate::{MainWindow, SidebarMetrics, SidebarRow, WorkspaceCard};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{
     cell::{Cell, RefCell},
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::Arc,
 };
 use wunder_desktop::NativeDesktop;
@@ -35,6 +35,12 @@ thread_local! {
     /// selection mode; every projection re-derives each row's `checked` from
     /// it so status refreshes and reorders never drop a tick.
     static THREAD_SELECTION: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    /// Settled marks the user has already looked at: session id -> the settle
+    /// time that was on screen when the thread was opened. A row is "seen"
+    /// while its settle time is not newer than the recorded one, so a fresh
+    /// completion after that visit shows up again. Keyed by time rather than a
+    /// bare flag because a thread can settle many times.
+    static SEEN_SETTLES: RefCell<HashMap<String, f64>> = RefCell::new(HashMap::new());
     /// Last selected local workspace id, remembered while the cloud device is
     /// active so switching back lands on the same workspace instead of index 0.
     static LAST_LOCAL_WORKSPACE: RefCell<Option<String>> = const { RefCell::new(None) };
@@ -279,12 +285,44 @@ fn commit_order(cell: &RefCell<Vec<String>>, next: &[String]) -> bool {
 /// 100 entries, so this only guards against pathological projections.
 const MAX_TREE_ROWS: usize = 300;
 
-/// A thread may be archived whenever it is not actively owned by another
-/// instance. The native facade settles running/queued work as part of the
-/// archive transaction, so a stale status cannot make a thread permanent.
+/// A thread may be archived whenever no engine work is pending and no other
+/// instance owns it. A running, queued or user-parked thread must be stopped
+/// first: archiving used to settle that work itself, so the click silently
+/// killed a live turn. The native façade rejects the same case, which keeps a
+/// stale row or a non-UI caller from bypassing this gate.
 fn thread_archivable(status: &str, locked: bool) -> bool {
-    let _ = status;
-    !locked
+    !locked && !crate::runtime_phase::Phase::of(status).live()
+}
+
+/// Finish an archive from the reader's point of view.
+///
+/// Archiving keeps the window state otherwise: the transcript, draft, dock and
+/// active highlight all still point at the hidden thread, so the user keeps
+/// reading a thread that is no longer in the sidebar. When the archived set
+/// contains the open thread, leave it first and then land on the newest
+/// remaining thread; with nothing left the window stays on the welcome screen.
+fn finish_archive(app: &MainWindow, archived: &[String]) {
+    let active = app.get_active_session_id().to_string();
+    let left_active = !active.is_empty() && archived.iter().any(|id| id == &active);
+    let next = if left_active {
+        // Resolved before the view is cleared: the same catalogue model is read
+        // by `select-conversation`, and the archived rows are still in it.
+        let next = app
+            .get_conversations()
+            .iter()
+            .position(|row| !row.locked && !archived.iter().any(|id| row.id == id.as_str()));
+        crate::native_chat::close_visible_thread(app, &active);
+        next
+    } else {
+        None
+    };
+    // Refresh before selecting: the next thread's open marks `session-loading`,
+    // which makes an ordinary catalogue refresh a no-op.
+    app.invoke_refresh_chat();
+    crate::navigation_ui::project_sidebar(app, None);
+    if let Some(index) = next {
+        app.invoke_select_conversation(index as i32);
+    }
 }
 
 /// Rebuild the sidebar from the workspace facade plus the bounded conversation
@@ -441,11 +479,16 @@ fn rebuild_rows(app: &MainWindow) {
                             title: thread.title.clone(),
                             status: thread.status.clone(),
                             phase: crate::runtime_phase::Phase::of(thread.status.as_str()).code(),
+                            ended_at: 0.0,
+                            visited: false,
                             active: app.get_cloud_chat_active()
                                 && app.get_cloud_active_thread_id() == thread.id,
                             payload: index as i32,
                             origin: "cloud".into(),
-                            archivable: thread_archivable(thread.status.as_str(), false),
+                            // Cloud rows carry the session lifecycle
+                            // (`active`/`archived`), not a local runtime phase,
+                            // so their gate stays "not archived".
+                            archivable: !thread.status.eq_ignore_ascii_case("archived"),
                             checked: false,
                             path: "".into(),
                             hint: "".into(),
@@ -483,6 +526,8 @@ fn rebuild_rows(app: &MainWindow) {
                 title: "".into(),
                 status: "".into(),
                 phase: -1,
+                ended_at: 0.0,
+                visited: false,
                 active: false,
                 payload: wi as i32,
                 origin: "".into(),
@@ -537,7 +582,9 @@ fn rebuild_rows(app: &MainWindow) {
                     title: conv.title.clone(),
                     status: conv.runtime_status.clone(),
                     phase: conv.runtime_phase,
+                    ended_at: conv.runtime_ended_at,
                     active: conv.id == active,
+                    visited: seen_settle(&id, conv.runtime_ended_at),
                     payload: ci as i32,
                     origin: conv.origin.clone(),
                     archivable,
@@ -670,7 +717,12 @@ pub(crate) fn update_thread_status(
     status: &str,
     phase: crate::runtime_phase::Phase,
 ) {
-    patch_thread_status(&app.get_sidebar_rows(), session, status, phase);
+    let ended_at = if phase.terminal() {
+        crate::native_chat::settled_now() as f32
+    } else {
+        0.0
+    };
+    patch_thread_status(&app.get_sidebar_rows(), session, status, phase, ended_at);
 }
 
 fn patch_thread_status(
@@ -678,6 +730,7 @@ fn patch_thread_status(
     session: &str,
     status: &str,
     phase: crate::runtime_phase::Phase,
+    ended_at: f32,
 ) -> bool {
     let Some(index) = rows
         .iter()
@@ -688,13 +741,73 @@ fn patch_thread_status(
     let Some(mut row) = rows.row_data(index) else {
         return false;
     };
-    if row.status.as_str() == status && row.phase == phase.code() {
+    let visited = seen_settle(session, ended_at);
+    if row.status.as_str() == status
+        && row.phase == phase.code()
+        && row.ended_at == ended_at
+        && row.visited == visited
+    {
         return false;
     }
     row.status = status.into();
     row.phase = phase.code();
+    row.ended_at = ended_at;
+    row.visited = visited;
     rows.set_row_data(index, row);
     true
+}
+
+/// Whether the settle mark on a row has already been looked at. A row counts
+/// as seen while its settle time is not newer than the one recorded when the
+/// thread was last opened, so a later completion is news again.
+fn seen_settle(session: &str, ended_at: f32) -> bool {
+    if ended_at <= 0.0 {
+        return false;
+    }
+    SEEN_SETTLES.with(|slot| {
+        slot.borrow()
+            .get(session)
+            .is_some_and(|seen| ended_at as f64 <= *seen)
+    })
+}
+
+/// Record that the user is looking at `session` now: whatever settle mark it
+/// carries at this moment stops being news, and the sidebar row is updated in
+/// place so the mark disappears without waiting for the next catalogue read.
+pub(crate) fn mark_settle_seen(app: &MainWindow, session: &str) {
+    if session.is_empty() {
+        return;
+    }
+    let Some(ended_at) = app
+        .get_conversations()
+        .iter()
+        .find(|conv| conv.id == session)
+        .map(|conv| conv.runtime_ended_at)
+    else {
+        return;
+    };
+    if ended_at <= 0.0 {
+        return;
+    }
+    SEEN_SETTLES.with(|slot| {
+        let mut seen = slot.borrow_mut();
+        let entry = seen.entry(session.to_string()).or_insert(0.0);
+        if ended_at as f64 > *entry {
+            *entry = ended_at as f64;
+        }
+    });
+    let rows = app.get_sidebar_rows();
+    if let Some(index) = rows
+        .iter()
+        .position(|row| row.kind == 1 && row.thread_id.as_str() == session)
+    {
+        if let Some(mut row) = rows.row_data(index) {
+            if !row.visited {
+                row.visited = true;
+                rows.set_row_data(index, row);
+            }
+        }
+    }
 }
 
 /// The pinned "cloud workspace" row: a sentinel (kind 2) whose click points
@@ -718,6 +831,8 @@ fn cloud_row(app: &MainWindow) -> SidebarRow {
         title: "".into(),
         status: "".into(),
         phase: -1,
+        ended_at: 0.0,
+        visited: false,
         active: false,
         payload: -1,
         origin: "".into(),
@@ -1142,11 +1257,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 // Decide from the state that exists *now*, rather than from
                 // the click-time snapshot. The user may have opened another
                 // thread while the archive transaction was on disk.
-                if app.get_active_session_id().as_str() == id.as_str() {
-                    app.set_active_session_id("".into());
-                }
-                app.invoke_refresh_chat();
-                crate::navigation_ui::project_sidebar(&app, None);
+                finish_archive(&app, std::slice::from_ref(&id));
             });
         });
     });
@@ -1256,13 +1367,8 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 }
                 // A newer user selection wins over the old multi-select
                 // batch. Only clear the session that was actually archived.
-                if archived_ids.contains(app.get_active_session_id().as_str()) {
-                    app.set_active_session_id("".into());
-                }
-                if archived > 0 {
-                    app.invoke_refresh_chat();
-                }
-                crate::navigation_ui::project_sidebar(&app, None);
+                let archived_ids: Vec<String> = archived_ids.into_iter().collect();
+                finish_archive(&app, &archived_ids);
             });
         });
     });
@@ -1334,6 +1440,8 @@ mod tests {
             title: id.into(),
             status: status.into(),
             phase: crate::runtime_phase::Phase::of(status).code(),
+            ended_at: 0.0,
+            visited: false,
             active: false,
             payload: 0,
             origin: "".into(),
@@ -1344,6 +1452,68 @@ mod tests {
             group_top: 0.0,
             group_end: 0.0,
         }
+    }
+
+    /// A settle mark is news only until it has been looked at. Opening the
+    /// thread retires the mark on screen, and a later completion of the same
+    /// thread is news again — that is what keeps the green check from either
+    /// vanishing immediately or sticking forever.
+    #[test]
+    fn a_settle_mark_retires_once_seen_and_returns_on_the_next_settle() {
+        let id = "fixture-thread";
+        assert!(!seen_settle(id, 1_800_000_000.0), "nothing seen yet");
+
+        SEEN_SETTLES.with(|slot| {
+            let mut seen = slot.borrow_mut();
+            seen.insert(id.to_string(), 1_800_000_000.0);
+        });
+        assert!(seen_settle(id, 1_800_000_000.0), "the same mark is old news");
+        assert!(
+            !seen_settle(id, 1_800_000_100.0),
+            "a newer settle is a new completion"
+        );
+        assert!(!seen_settle(id, 0.0), "a live row carries no mark");
+        assert!(!seen_settle("another-thread", 1_800_000_000.0));
+        SEEN_SETTLES.with(|slot| slot.borrow_mut().remove(id));
+    }
+
+    /// The status patch must re-derive `visited` from the settle time it
+    /// writes, otherwise a fresh completion would inherit the previous visit
+    /// and never show up.
+    #[test]
+    fn patching_a_fresh_settle_clears_the_seen_state() {
+        let id = "fixture-patch";
+        SEEN_SETTLES.with(|slot| {
+            slot.borrow_mut().insert(id.to_string(), 1_800_000_000.0);
+        });
+        let rows = ModelRc::new(VecModel::from(vec![thread_row(id, "请求中")]));
+        let done = crate::runtime_phase::Phase::of("任务完成");
+        assert!(patch_thread_status(&rows, id, "任务完成", done, 1_800_000_500.0));
+        let row = rows.row_data(0).unwrap();
+        assert!(!row.visited, "a newer settle is unseen");
+        assert!(patch_thread_status(&rows, id, "任务完成", done, 1_800_000_500.0) == false);
+        SEEN_SETTLES.with(|slot| slot.borrow_mut().remove(id));
+    }
+
+    /// A live thread cannot be archived, whoever asks: the façade rejects it
+    /// too. Settled and idle threads stay archivable, and another instance's
+    /// lease always wins.
+    #[test]
+    fn only_settled_threads_without_a_foreign_lease_are_archivable() {
+        for live in [
+            "请求中",
+            "正在生成…",
+            "正在排队",
+            "等待用户输入",
+            "running",
+            "queued",
+        ] {
+            assert!(!thread_archivable(live, false), "{live} still owes work");
+        }
+        for settled in ["", "idle", "任务完成", "已停止", "执行失败"] {
+            assert!(thread_archivable(settled, false), "{settled} is settled");
+        }
+        assert!(!thread_archivable("", true));
     }
 
     /// The sidebar tree snapshots the conversation list, so a live status
@@ -1360,15 +1530,22 @@ mod tests {
             },
         ]));
         let running = crate::runtime_phase::Phase::Running;
-        assert!(patch_thread_status(&rows, "a", "正在生成…", running));
+        assert!(patch_thread_status(&rows, "a", "正在生成…", running, 0.0));
         assert_eq!(rows.row_data(0).unwrap().status, "正在生成…");
         assert_eq!(rows.row_data(0).unwrap().phase, running.code());
         assert_eq!(rows.row_data(1).unwrap().status, "任务完成");
         // Cloud rows carry their own status pipeline and stay untouched.
         assert_eq!(rows.row_data(2).unwrap().status, "idle");
         // A repeated or unknown update changes nothing and reports so.
-        assert!(!patch_thread_status(&rows, "a", "正在生成…", running));
-        assert!(!patch_thread_status(&rows, "gone", "正在生成…", running));
+        assert!(!patch_thread_status(&rows, "a", "正在生成…", running, 0.0));
+        assert!(!patch_thread_status(&rows, "gone", "正在生成…", running, 0.0));
+        // A settle stamps the row with when it happened, so the view can keep
+        // the mark until the user has seen it.
+        let done = crate::runtime_phase::Phase::Done;
+        assert!(patch_thread_status(&rows, "a", "任务完成", done, 1_800_000_000.0));
+        assert_eq!(rows.row_data(0).unwrap().phase, done.code());
+        assert_eq!(rows.row_data(0).unwrap().ended_at, 1_800_000_000.0);
+        assert!(!patch_thread_status(&rows, "a", "任务完成", done, 1_800_000_000.0));
     }
 
     /// The diff commit lands the rebuilt tree in the model instance itself:

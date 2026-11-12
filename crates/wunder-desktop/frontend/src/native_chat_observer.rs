@@ -743,6 +743,9 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
                     .into();
                 latest = reason.summary.clone();
                 reason.detail = round.reasoning.as_str().into();
+                // Same right-hand columns as the tool rows of this round.
+                reason.tokens = round.tokens.as_str().into();
+                reason.duration = round.duration.as_str().into();
                 reason.payload = rows.len() as i32;
                 reason.group_idx = group;
                 reason.group_open = true;
@@ -863,7 +866,32 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
         }
     }
     crate::timeline_text::process_models(&mut rows);
+    expand_newest_process(&mut rows);
     rows
+}
+
+/// Expand the newest visible work process and fold every older one.
+///
+/// Opening a thread is a request to read what just happened, and a folded bar
+/// hid that behind a click. A bar that is not visible (a turn with no tool work)
+/// is skipped, so the reader still lands on the last process that has steps.
+/// `restore_folds` runs afterwards on every durable refresh, which is what keeps
+/// the user's own collapse decision from being undone by the next poll.
+fn expand_newest_process(rows: &mut [TimelineRow]) {
+    let Some(newest) = rows
+        .iter()
+        .rev()
+        .find(|row| row.kind == crate::timeline::KIND_PROCESS && row.visible)
+        .map(|row| row.process_idx)
+    else {
+        return;
+    };
+    for row in rows.iter_mut().filter(|row| row.process_idx == newest) {
+        if row.kind == crate::timeline::KIND_PROCESS {
+            row.open = true;
+        }
+        row.process_open = true;
+    }
 }
 
 /// Project the cloud presentation page into the same row vocabulary used by
@@ -1200,6 +1228,32 @@ fn blank_row(kind: i32, id: String) -> TimelineRow {
 mod tests {
     use super::*;
 
+    /// Only the newest visible process opens; older processes stay folded, and
+    /// an invisible bar (a turn without tool work) is not a landing target.
+    #[test]
+    fn only_the_newest_visible_process_ships_expanded() {
+        let process = |id: &str, idx: i32, visible: bool| {
+            let mut row = blank_row(crate::timeline::KIND_PROCESS, id.to_string());
+            row.process_idx = idx;
+            row.visible = visible;
+            row
+        };
+        let mut step = blank_row(crate::timeline::KIND_TOOL, "tool-2".to_string());
+        step.process_idx = 2;
+        let mut rows = vec![
+            process("process-1", 1, true),
+            process("process-2", 2, true),
+            process("process-3", 3, false),
+        ];
+        let step_at = rows.len();
+        rows.push(step);
+        expand_newest_process(&mut rows);
+        assert!(!rows[0].open, "an older process stays folded");
+        assert!(rows[1].open, "the newest visible process opens");
+        assert!(rows[step_at].process_open, "its steps follow the bar");
+        assert!(!rows[2].open, "a bar without steps earns no landing");
+    }
+
     /// A running turn's bubble is keyed by the client request id while the
     /// durable snapshot keys it by root id. Republishing the snapshot mid-run
     /// (for example after withdrawing a queued sibling) appended the running
@@ -1382,6 +1436,8 @@ mod tests {
                 is_answer: true,
                 reasoning: String::new(),
                 text: text.into(),
+                tokens: String::new(),
+                duration: String::new(),
                 items: Vec::new(),
             }],
             subagents: Vec::new(),
@@ -1574,6 +1630,8 @@ mod tests {
                 is_answer: false,
                 reasoning: "先想想第一步".into(),
                 text: "第一步说明".into(),
+                tokens: "12k".into(),
+                duration: "1.4s".into(),
                 items: vec![NativeWorkflowEntry::from_payload(
                     "fixture-round-tool",
                     "read_file",
@@ -1589,6 +1647,8 @@ mod tests {
                 is_answer: true,
                 reasoning: "再想想第二步".into(),
                 text: "结论".into(),
+                tokens: String::new(),
+                duration: String::new(),
                 items: Vec::new(),
             },
         ];
@@ -1616,6 +1676,9 @@ mod tests {
         assert_eq!(rows[2].group_idx, rows[5].group_idx);
         assert_ne!(rows[2].group_idx, rows[6].group_idx);
         assert_eq!(rows[3].detail, "先想想第一步");
+        // The thinking row carries the same right-hand columns as its tools.
+        assert_eq!(rows[3].tokens, "12k");
+        assert_eq!(rows[3].duration, "1.4s");
         assert_eq!(
             rows[3].tool_name.as_str(),
             crate::timeline_text::thought_done()
@@ -1640,15 +1703,18 @@ mod tests {
             );
         }
         // The turn's process bar counts every step before the newest answer:
-        // two thinking segments, one intermediate note and one tool call. The
-        // batches inside it are stamped open — unfolding the process is the
-        // request to see them — while the newest answer stays outside the fold.
+        // two thinking segments, one intermediate note and one tool call. It
+        // ships expanded so the reader lands on the latest work without a
+        // click, and its batches are already stamped open inside it.
         let process = rows[1].process_idx;
         assert_ne!(process, crate::timeline::NO_PROCESS);
         assert_eq!(rows[1].text, crate::timeline_text::process_label(4));
         assert_eq!(rows[1].summary, "已完成");
         assert!(rows[1].visible, "a real process earns its bar");
-        assert!(!rows[1].open && !rows[1].process_open, "it ships folded");
+        assert!(
+            rows[1].open && rows[1].process_open,
+            "the newest process ships expanded"
+        );
         for row in &rows[2..8] {
             assert_eq!(row.process_idx, process, "step {row:?} escaped the fold");
             if row.group_idx != crate::timeline::NO_GROUP {
@@ -1701,8 +1767,9 @@ mod tests {
         };
         assert_eq!(
             laid_out(&timeline.model()),
-            50 * 4,
-            "the default column is bubble, process, answer and footer per turn",
+            50 * 4 + entries_per_turn,
+            "the default column is bubble, process, answer and footer per turn, \
+             plus the newest process's own steps",
         );
 
         // Reach the fully opened column the way a user does: one handle at a
@@ -1720,7 +1787,7 @@ mod tests {
 
         let rows = timeline.model();
         let exposed = laid_out(&rows);
-        assert_eq!(opened, 50, "every turn's process ships folded");
+        assert_eq!(opened, 49, "the newest process already ships expanded");
         assert_eq!(
             exposed, 1400,
             "each process exposes its tools without an extra batch row",

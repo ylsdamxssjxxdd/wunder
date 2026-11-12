@@ -1456,6 +1456,14 @@ impl WinitWindowAdapter {
                 }
 
                 resized?;
+
+                // The window is already at its new size in the compositor, but
+                // the surface still shows the previous frame there. Asking for
+                // a redraw directly — instead of through the frame throttle —
+                // keeps a resize from waiting out the pacing period, so the
+                // band the window just gained is filled on the next pass of
+                // the event loop rather than up to a refresh later.
+                winit_window.request_redraw();
             }
             // Win7/GDI can discard portions of a software surface while a
             // native window is dragged across another window. Winit 0.30 does

@@ -11,6 +11,11 @@ struct OutputTiming {
     last_output_at: Option<Instant>,
     first_content_at: Option<Instant>,
     last_content_at: Option<Instant>,
+    /// Hidden reasoning window: the collapsed thinking row reports how long it
+    /// thought, so the span is measured on its own instead of reusing the
+    /// answer decode interval.
+    first_reasoning_at: Option<Instant>,
+    last_reasoning_at: Option<Instant>,
     output_chunk_count: u64,
     content_delta_chars: usize,
     reasoning_delta_chars: usize,
@@ -47,6 +52,10 @@ impl OutputTiming {
         }
         if content_delta_len == 0 && reasoning_delta_len == 0 {
             return;
+        }
+        if reasoning_delta_len > 0 {
+            self.first_reasoning_at.get_or_insert(now);
+            self.last_reasoning_at = Some(now);
         }
         if self.first_output_at.is_none() {
             self.first_output_at = Some(now);
@@ -117,6 +126,18 @@ impl OutputTiming {
             };
             duration.as_millis() as u64
         });
+        // A provider may deliver the whole thought in one chunk, so a zero span
+        // is measured up to the response boundary instead of reporting 0ms.
+        let reasoning_ms = self.first_reasoning_at.map(|first| {
+            let last = self.last_reasoning_at.unwrap_or(response_end);
+            let duration = last.saturating_duration_since(first);
+            let duration = if duration.is_zero() {
+                response_end.saturating_duration_since(first)
+            } else {
+                duration
+            };
+            duration.as_millis() as u64
+        });
         Some(json!({
             "chunk_count": self.output_chunk_count,
             "content_delta_chars": self.content_delta_chars,
@@ -124,6 +145,7 @@ impl OutputTiming {
             "prefill_ms": prefill_ms,
             "decode_ms": decode_ms,
             "content_decode_ms": content_decode_ms,
+            "reasoning_ms": reasoning_ms,
             "max_chunk_gap_ms": (self.max_chunk_gap_s * 1000.0).round() as u64,
         }))
     }
@@ -1735,6 +1757,42 @@ mod tests {
         assert_eq!(payload["prefill_ms"], json!(120));
         assert_eq!(payload["decode_ms"], json!(35));
         assert_eq!(payload["max_chunk_gap_ms"], json!(35));
+        // One reasoning chunk still measures up to the response boundary.
+        assert_eq!(payload["reasoning_ms"], json!(10));
+    }
+
+    #[test]
+    fn output_timing_measures_the_reasoning_span_on_its_own() {
+        let start = Instant::now();
+        let mut timing = super::OutputTiming::default();
+        timing.mark_output(start + Duration::from_secs(1), 0, 128);
+        timing.mark_output(start + Duration::from_secs(4), 0, 128);
+        timing.mark_output(start + Duration::from_secs(5), 32, 0);
+        timing.mark_output(start + Duration::from_secs(9), 32, 0);
+        let end = start + Duration::from_secs(10);
+
+        let payload = timing
+            .stream_timing_payload(start, end)
+            .expect("stream timing payload");
+        // Thinking ends when the answer starts; it must not inherit the answer
+        // decode interval, and the visible decode must stay answer-only.
+        assert_eq!(payload["reasoning_ms"], json!(3000));
+        assert_eq!(payload["content_decode_ms"], json!(4000));
+    }
+
+    #[test]
+    fn output_timing_measures_single_reasoning_chunk_until_response_end() {
+        let start = Instant::now();
+        let mut timing = super::OutputTiming::default();
+        timing.mark_output(start + Duration::from_secs(1), 0, 64);
+        let end = start + Duration::from_secs(3);
+
+        let payload = timing
+            .stream_timing_payload(start, end)
+            .expect("stream timing payload");
+        assert_eq!(payload["reasoning_ms"], json!(2000));
+        // A reasoning-only round reports no visible answer timing.
+        assert!(payload["content_decode_ms"].is_null());
     }
 
     #[test]

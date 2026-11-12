@@ -32,6 +32,13 @@ pub struct WinitSoftwareRenderer {
     /// Win32 can erase a hidden or moved GDI surface without updating the
     /// softbuffer age. The next visible frame must therefore ignore the age
     /// and render every pixel once.
+    ///
+    /// A surface resize sets it too: the partial-rendering cache only knows
+    /// the items of the previous frame, so nothing dirties the band the window
+    /// just gained (or the rows a shorter window no longer covers), and the
+    /// buffer keeps the previous size's pixels there. The compositor scales
+    /// that stale frame into the new geometry while the user drags an edge,
+    /// which reads as a stretched ghost of the old content.
     force_full_repaint: Cell<bool>,
     popup_repaint: popup_repaint::PopupRepaint,
 }
@@ -182,6 +189,14 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
             eprintln!("Slint software surface resize deferred: {error}");
             self.retry_deferred_resize(&winit_window);
             return Ok(DrawOutcome::Success);
+        }
+        // `set_repaint_buffer_type` below only clears the item cache when the
+        // buffer kind changes, so a resize that keeps the same kind would
+        // repaint just the damage rectangles of the old geometry.
+        let surface_size = (width.get(), height.get());
+        if self.renderer.window_size() != Some(surface_size) {
+            self.force_full_repaint.set(true);
+            self.renderer.set_window_size(Some(surface_size));
         }
 
         let mut target_buffer = match surface.buffer_mut() {

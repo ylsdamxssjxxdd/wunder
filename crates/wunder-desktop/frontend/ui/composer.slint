@@ -54,6 +54,10 @@ component ModelPicker inherits Rectangle {
     in property <float> context-usage: 0.0;
     in property <bool> context-known: false;
     in property <string> context-counts;
+    // The thread's history is a compaction summary. Red is not a warning here,
+    // it is a marker: the brain stays red so the user can see at a glance that
+    // earlier turns were folded into a summary.
+    in property <bool> context-compacted: false;
     in property <bool> saving: false;
     callback select-model(int, string);
     callback open-settings();
@@ -79,7 +83,12 @@ component ModelPicker inherits Rectangle {
     }
 
     private property <float> fill: min(1.0, max(0.0, root.context-usage));
-    private property <color> usage-color: root.context-usage >= 0.92 ? #DC2626
+    // Occupancy tone: amber in the safe range, warning orange near the limit,
+    // danger red at the hard limit. A compacted thread paints red at any
+    // occupancy — the colour then means "this history is a summary", not
+    // "you are running out of room".
+    private property <color> usage-color: root.context-compacted ? #DC2626
+        : root.context-usage >= 0.92 ? #DC2626
         : root.context-usage >= 0.82 ? #EA580C : #F97316;
 
     trigger := Rectangle {
@@ -1326,6 +1335,9 @@ export component Composer inherits Rectangle {
     in property <float> context-usage: 0.0;
     in property <bool> context-known: false;
     in property <string> context-counts;
+    // The active thread's history is a compaction summary: the gauge stays red
+    // so the user can tell at a glance that earlier turns were folded away.
+    in property <bool> context-compacted: false;
     // §8.3: the action row owns the model switcher. The catalogue comes
     // straight from the settings projection, so the picker needs no separate
     // fetch.
@@ -2120,6 +2132,7 @@ export component Composer inherits Rectangle {
                 context-usage: root.context-usage;
                 context-known: root.context-known;
                 context-counts: root.context-counts;
+                context-compacted: root.context-compacted;
                 saving: root.model-saving;
                 open <=> root.model-open;
                 opened => {

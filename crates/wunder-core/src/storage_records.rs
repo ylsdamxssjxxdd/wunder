@@ -9,6 +9,13 @@ pub struct MonitorSessionStats {
     pub consumed_tokens: i64,
     pub tool_calls: i64,
     pub model_request_count: i64,
+    /// Unix seconds at which the turn last settled (`ended_time`), or `None`
+    /// while it is still live. A reader compares it with its own clock to tell
+    /// a completion it just watched from one that ended hours ago: the
+    /// catalogue answers the same terminal for the rest of a thread's life, so
+    /// the status alone cannot say whether it is news.
+    #[serde(default)]
+    pub ended_at: Option<f64>,
 }
 
 impl MonitorSessionStats {
@@ -35,6 +42,10 @@ impl MonitorSessionStats {
                 .and_then(Value::as_i64)
                 .unwrap_or(0)
                 .max(0),
+            ended_at: payload
+                .get("ended_time")
+                .and_then(Value::as_f64)
+                .filter(|value| *value > 0.0),
         }
     }
 }

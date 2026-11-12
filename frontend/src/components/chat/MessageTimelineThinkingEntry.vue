@@ -18,6 +18,11 @@
         {{ entry.streaming ? t('chat.timeline.thinkingRunning') : t('chat.timeline.thinkingDone') }}
       </span>
       <span v-if="entry.summary" ref="summaryRef" class="tl-thinking-summary" :title="entry.summary">{{ entry.summary }}</span>
+      <!-- 与工具条目同一套右侧两列：该轮请求的上下文占用 + 思考耗时。 -->
+      <span v-if="tokenMetric || durationMetric" class="tl-thinking-metrics">
+        <span>{{ tokenMetric }}</span>
+        <span>{{ durationMetric }}</span>
+      </span>
     </button>
 
     <div v-if="open" class="tl-thinking-body">
@@ -27,14 +32,18 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useI18n } from '@/i18n';
 import type { TimelineReasoningEntry } from './toolTimelineModel';
+import { formatDurationLabel, formatTokenLabel } from './toolWorkflowCollapsedMetadata';
 
 const props = defineProps<{
   entry: TimelineReasoningEntry;
   open?: boolean;
 }>();
+
+const tokenMetric = computed(() => formatTokenLabel(props.entry.metrics?.tokens ?? null));
+const durationMetric = computed(() => formatDurationLabel(props.entry.metrics?.durationMs ?? null));
 
 const textRef = ref<HTMLElement | null>(null);
 const summaryRef = ref<HTMLElement | null>(null);
@@ -183,6 +192,21 @@ const { t } = useI18n();
 
 .is-streaming .tl-thinking-summary {
   text-overflow: clip;
+}
+
+/* 右侧两列与工具条目完全同宽同字：跨条目的数值从同一位置起排。 */
+.tl-thinking-metrics {
+  flex: 0 0 auto;
+  display: inline-grid;
+  grid-template-columns: 6ch 5ch;
+  column-gap: 8px;
+  justify-items: start;
+  margin-left: auto;
+  color: var(--mz-text-muted, #8a8f99);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
 }
 
 /* 展开内容左内边距保持 24px（沟槽 20px + 24px = 44px）。 */

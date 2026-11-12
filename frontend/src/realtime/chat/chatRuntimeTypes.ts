@@ -140,7 +140,14 @@ export type ChatRuntimePendingSequentialEvent = {
  */
 /** 批次内的一行：思考正文（KIND_REASON）或一次工具调用（KIND_TOOL）。 */
 export type ChatRuntimeTimelineActivityRow =
-  | { type: 'reasoning'; itemId: string; text: string; streaming?: boolean }
+  | {
+      type: 'reasoning';
+      itemId: string;
+      text: string;
+      streaming?: boolean;
+      /** 该轮请求的上下文占用与思考耗时（与工具行同两列）。 */
+      metrics?: { tokens: number | null; durationMs: number | null };
+    }
   | { type: 'tool'; itemId: string };
 
 export type ChatRuntimeTimelineActivity = {

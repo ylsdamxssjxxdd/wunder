@@ -305,7 +305,7 @@
                 :aria-expanded="modelMenuVisible"
                 @click.stop="toggleModelMenu"
               >
-                <ContextUsageIcon class="composer-model-usage-icon" :ratio="contextUsage.ratio" />
+                <ContextUsageIcon class="composer-model-usage-icon" :ratio="contextUsage.ratio" :compacted="contextUsage.compacted" />
                 <span class="composer-model-name">{{ modelTriggerLabel }}</span>
                 <span v-if="reasoningEffortCompactLabel" class="composer-model-effort">
                   {{ reasoningEffortCompactLabel }}

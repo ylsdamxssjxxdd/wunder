@@ -27,6 +27,8 @@ export type SessionContextUsageDisplay = {
   counts: string;
   level: '' | 'is-warning' | 'is-danger';
   overflow: boolean;
+  /** The thread's history is a compaction summary: the gauge paints red. */
+  compacted: boolean;
 };
 
 export type SessionContextUsageInput = {
@@ -109,7 +111,8 @@ export const useSessionContextUsage = (
       percentText: ratio === null ? '--' : `${Math.min(999, Math.round(ratio * 100))}%`,
       counts,
       level,
-      overflow: ratio !== null && ratio >= CONTEXT_DANGER_RATIO
+      overflow: ratio !== null && ratio >= CONTEXT_DANGER_RATIO,
+      compacted: usageSource.value.compacted === true
     };
   });
 };
