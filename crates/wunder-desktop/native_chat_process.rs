@@ -17,6 +17,9 @@ pub struct NativeProcessItem {
     /// thinking span), shown on the thinking row when it has no tool of its own.
     pub tokens: String,
     pub duration: String,
+    /// Model round that produced this step, from the item payload. Zero when
+    /// the adapter did not record one (fixtures, legacy rows).
+    pub round: i64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -147,6 +150,7 @@ pub(super) fn project_page(page: &Value, final_id: &str) -> NativeProcessPage {
                     tool: None,
                     tokens: String::new(),
                     duration: String::new(),
+                    round: data["model_round"].as_i64().unwrap_or_default(),
                 };
                 match row["kind"].as_str().unwrap_or_default() {
                     "assistant_message" => {

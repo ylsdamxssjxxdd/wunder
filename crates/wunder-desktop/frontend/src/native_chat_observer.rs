@@ -1232,6 +1232,7 @@ fn blank_row(kind: i32, id: String) -> TimelineRow {
     TimelineRow {
         user_round: 0,
         kind,
+        model_round: 0,
         id: id.into(),
         visible: true,
         text: Default::default(),

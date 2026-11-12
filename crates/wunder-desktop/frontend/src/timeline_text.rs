@@ -430,6 +430,7 @@ pub fn process_entry_for(row: &TimelineRow, narrow: bool) -> ProcessEntry {
         diff_add: diff_add.into(),
         diff_del: diff_del.into(),
         lines_read: row.read_lines.clone(),
+        round: row.model_round,
         tokens: row.tokens.clone(),
         duration: row.duration.clone(),
         status_kind: row.status_kind,
@@ -987,6 +988,7 @@ mod tests {
             read_lines: String::new(),
             sections: Vec::new(),
             patch_files: Vec::new(),
+            round: 0,
         };
         assert_eq!(tool_target(&entry), ("fixture/sample.txt".into(), false));
         assert!(is_patch_tool(&entry.title));
@@ -1011,6 +1013,7 @@ mod tests {
             read_lines: String::new(),
             sections: Vec::new(),
             patch_files: Vec::new(),
+            round: 0,
         };
         assert_eq!(tool_summary(&entry), "list files");
         entry.preview.clear();
@@ -1044,6 +1047,7 @@ mod tests {
             read_lines: String::new(),
             sections: Vec::new(),
             patch_files: Vec::new(),
+            round: 0,
         };
         let (target, _) = tool_target(&entry);
         assert_eq!(target, "fixture/sample.txt");
@@ -1088,6 +1092,7 @@ mod tests {
             read_lines: String::new(),
             sections: Vec::new(),
             patch_files: Vec::new(),
+            round: 0,
         };
         assert_eq!(tool_row_summary(&entry, "crates/engine/src/lib.rs"), "");
         // A different file keeps its summary.

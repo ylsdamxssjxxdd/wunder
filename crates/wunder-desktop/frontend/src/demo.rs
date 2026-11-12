@@ -586,6 +586,7 @@ fn fixture_row(kind: i32, index: usize, text: &str) -> TimelineRow {
             0
         },
         kind,
+        model_round: 0,
         id: format!("demo-{index}").into(),
         visible: true,
         text: text.into(),

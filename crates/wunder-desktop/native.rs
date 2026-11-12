@@ -260,6 +260,9 @@ pub struct NativeWorkflowEntry {
     pub preview: String,
     pub detail: String,
     pub state: String,
+    /// Model round that issued this call, from the event payload. Zero when the
+    /// adapter did not record one (fixtures, legacy rows).
+    pub round: i32,
     pub tokens: String,
     pub duration: String,
     /// Pre-formatted line count of a read call ("142 行" / "120/676 行"); empty

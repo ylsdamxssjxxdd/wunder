@@ -342,9 +342,10 @@ fn project_page_entries(items: Vec<NativeProcessItem>) -> Vec<ProcessEntry> {
                 .into(),
                 summary: crate::message_blocks::reasoning_preview(&item.reasoning),
                 detail: item.reasoning.into(),
-                // Same two right-hand columns as the tool rows of this round.
+                // Same right-hand columns as the tool rows of this round.
                 tokens: item.tokens.into(),
                 duration: item.duration.into(),
+                round: i32::try_from(item.round).unwrap_or_default(),
                 status_kind: crate::timeline::status_kind(&item.state),
                 ..Default::default()
             });
@@ -355,6 +356,7 @@ fn project_page_entries(items: Vec<NativeProcessItem>) -> Vec<ProcessEntry> {
                 id: format!("print-{}", item.id).into(),
                 blocks: crate::message_blocks::from_text(&item.text),
                 text: item.text.into(),
+                round: i32::try_from(item.round).unwrap_or_default(),
                 ..Default::default()
             });
         }
@@ -398,6 +400,7 @@ fn project_page_entries(items: Vec<NativeProcessItem>) -> Vec<ProcessEntry> {
                 lines_read: tool.read_lines.into(),
                 tokens: tool.tokens.into(),
                 duration: tool.duration.into(),
+                round: i32::try_from(item.round).unwrap_or_default(),
                 status_kind: status,
                 ..Default::default()
             });
@@ -469,6 +472,62 @@ mod tests {
     use super::*;
     use wunder_desktop::native::NativeProcessItem;
 
+    /// The fold's right-hand columns name the model round that produced each
+    /// step; the durable page has to carry it through the projection.
+    #[test]
+    fn page_projection_keeps_the_model_round_of_every_step() {
+        let page = NativeProcessPage {
+            items: vec![
+                NativeProcessItem {
+                    id: "fixture-thought".into(),
+                    item_index: 0,
+                    state: "completed".into(),
+                    reasoning: "Fixture thought".into(),
+                    text: String::new(),
+                    tool: None,
+                    tokens: "8.2k".into(),
+                    duration: "0.2s".into(),
+                    round: 3,
+                },
+                NativeProcessItem {
+                    id: "fixture-call".into(),
+                    item_index: 1,
+                    state: "completed".into(),
+                    reasoning: String::new(),
+                    text: String::new(),
+                    tool: Some(wunder_desktop::native::NativeWorkflowEntry {
+                        id: "fixture-call".into(),
+                        state: "completed".into(),
+                        title: "read_file".into(),
+                        preview: String::new(),
+                        detail: String::new(),
+                        round: 4,
+                        tokens: "9.1k".into(),
+                        duration: "0.1s".into(),
+                        read_lines: String::new(),
+                        sections: Vec::new(),
+                        patch_files: Vec::new(),
+                    }),
+                    tokens: String::new(),
+                    duration: String::new(),
+                    round: 4,
+                },
+            ],
+            ..Default::default()
+        };
+        let mut row = TimelineRow {
+            kind: crate::timeline::KIND_PROCESS,
+            process_idx: 2,
+            process_entries: ModelRc::new(VecModel::<ProcessEntry>::default()),
+            ..Default::default()
+        };
+        apply_page(&mut row, page, 2);
+        let entries = row.process_entries.iter().collect::<Vec<_>>();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].round, 3, "the thought names its own round");
+        assert_eq!(entries[1].round, 4, "the call names the round it ran in");
+    }
+
     #[test]
     fn terminal_history_invalidates_a_paged_running_tool() {
         let old = TimelineRow {
@@ -524,7 +583,9 @@ mod tests {
                         read_lines: String::new(),
                         sections: Vec::new(),
                         patch_files: Vec::new(),
+                        round: 0,
                     }),
+                    round: 0,
                 }],
                 first: Some(1),
                 last: Some(1),
@@ -585,6 +646,7 @@ mod tests {
                 tokens: "12k".into(),
                 duration: "1.2s".into(),
                 tool: None,
+                round: 0,
             }],
             first: Some(101),
             last: Some(200),
@@ -657,6 +719,7 @@ mod tests {
                     tokens: String::new(),
                     duration: String::new(),
                     tool: None,
+                    round: 0,
                 }],
                 ..Default::default()
             },
@@ -700,6 +763,7 @@ mod tests {
             tokens: String::new(),
             duration: String::new(),
             tool: None,
+            round: 0,
         };
         apply_page(
             &mut row,
@@ -741,6 +805,7 @@ mod tests {
             tokens: String::new(),
             duration: String::new(),
             tool: None,
+            round: 0,
         };
         let mut row = TimelineRow {
             kind: crate::timeline::KIND_PROCESS,

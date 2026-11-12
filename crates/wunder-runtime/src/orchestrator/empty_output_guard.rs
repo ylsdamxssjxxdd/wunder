@@ -6,6 +6,11 @@ use serde_json::{json, Value};
 #[derive(Default)]
 pub(super) struct EmptyOutputGuard {
     recovery_used: bool,
+    /// The next request only must go out with thinking off. This is the
+    /// recovery retry itself, not a property of the whole turn: latching it
+    /// until the turn ended meant one exhausted thinking budget silenced the
+    /// model's thoughts for every later round of a long tool-driven turn.
+    thinking_override: bool,
     last_output: OutputDiagnostics,
 }
 
@@ -18,17 +23,25 @@ impl EmptyOutputGuard {
         // answer. The budget is deliberately turn-wide, not per layer.
         if output.transport_recovery_used {
             self.recovery_used = true;
+            // That resend already carried `thinking: none` inside its own call.
+            // The recovery is spent, but the user's reasoning setting has to
+            // apply again from the next round on.
+            self.thinking_override = false;
         }
         self.last_output = output;
     }
 
-    pub(super) fn config_override(&self, config: &LlmModelConfig) -> Option<LlmModelConfig> {
-        self.recovery_used.then(|| {
-            let mut recovery = config.clone();
-            recovery.reasoning_effort = Some("none".into());
-            recovery.thinking_token_budget = None;
-            recovery
-        })
+    /// Consulted once per model round. It answers "does the *next* request need
+    /// thinking off", never "is this turn in recovery mode".
+    pub(super) fn config_override(&mut self, config: &LlmModelConfig) -> Option<LlmModelConfig> {
+        if !self.thinking_override {
+            return None;
+        }
+        self.thinking_override = false;
+        let mut recovery = config.clone();
+        recovery.reasoning_effort = Some("none".into());
+        recovery.thinking_token_budget = None;
+        Some(recovery)
     }
 
     pub(super) fn exhausted_error(&self) -> OrchestratorError {
@@ -57,6 +70,8 @@ impl EmptyOutputGuard {
         // This budget lasts for the entire user turn, even after successful tool calls.
         // Alternating empty answers and valid calls must not replenish recovery attempts.
         self.recovery_used = true;
+        // Only the retry this notice triggers runs without thinking.
+        self.thinking_override = true;
         let instruction = if allow_tools {
             "Stop reasoning. Output one allowed tool call with complete JSON arguments, or a concise final answer now. Do not repeat task analysis. Split large tool payloads into smaller complete calls."
         } else {
@@ -148,6 +163,54 @@ mod tests {
         assert_eq!(
             (error.code(), error.recovery_action()),
             ("LLM_OUTPUT_LOOP", "retry_next_turn")
+        );
+    }
+
+    /// One exhausted thinking budget used to latch `thinking: none` on every
+    /// later round of the turn, so a 31-round tool run only ever thought in the
+    /// first few rounds. The override belongs to the retry it was created for.
+    #[test]
+    fn thinking_override_covers_only_the_recovery_retry() {
+        let config = LlmModelConfig {
+            thinking_token_budget: Some(4096),
+            ..Default::default()
+        };
+        let mut guard = EmptyOutputGuard::default();
+        guard.recover(true, "empty_output").unwrap();
+        assert!(
+            guard.config_override(&config).is_some(),
+            "the retry the recovery notice triggers runs without thinking"
+        );
+        assert!(
+            guard.config_override(&config).is_none(),
+            "the round after the retry gets the user's reasoning setting back"
+        );
+        assert!(
+            guard.recover(true, "empty_output").is_err(),
+            "the recovery budget itself stays turn-wide"
+        );
+    }
+
+    /// The transport resend already disabled thinking inside its own call, so it
+    /// must not ask for a second override on the following round.
+    #[test]
+    fn transport_recovery_spends_the_budget_without_latching_the_override() {
+        let config = LlmModelConfig {
+            thinking_token_budget: Some(4096),
+            ..Default::default()
+        };
+        let mut guard = EmptyOutputGuard::default();
+        guard.observe(OutputDiagnostics {
+            transport_recovery_used: true,
+            ..Default::default()
+        });
+        assert!(
+            guard.config_override(&config).is_none(),
+            "the next round thinks again"
+        );
+        assert!(
+            guard.recover(true, "empty_output").is_err(),
+            "a second recovery in the same turn is still refused"
         );
     }
 

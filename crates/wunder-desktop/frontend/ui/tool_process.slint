@@ -152,6 +152,13 @@ component ProcessEntryCard inherits Rectangle {
                 // Right-side metrics share fixed columns so every row starts
                 // its token count and duration at the same x; an empty side
                 // still keeps its column instead of shifting the other one.
+                // The model round leads them, so a long turn reads as rounds.
+                if root.entry.round > 0 : Text {
+                    width: 26px * Theme.font-scale; height: parent.height;
+                    text: "R" + root.entry.round; color: Theme.timeline-entry-soft;
+                    font-size: Theme.font-xs; font-family: Theme.font-mono;
+                    horizontal-alignment: left; vertical-alignment: center;
+                }
                 if root.entry.tokens != "" || root.entry.duration != "" : Text {
                     width: 44px * Theme.font-scale; height: parent.height;
                     text: root.entry.tokens; color: Theme.muted;

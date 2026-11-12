@@ -223,6 +223,10 @@ export struct ProcessEntry {
     // Read calls state the returned line count ("142 行", or "120/676 行" when
     // the call returned a window). Empty for every other tool.
     lines-read: string,
+    // Which model round produced this step. Shown beside the token count so a
+    // long tool-driven turn can be read round by round; 0 means the source row
+    // carried no round envelope (fixtures, legacy adapters).
+    round: int,
     tokens: string, duration: string, status-kind: int, open: bool, payload: int
 }
 
@@ -242,6 +246,9 @@ export struct TimelineRow {
     target: string,
     tokens: string,
     duration: string,
+    // Model round that produced this row. The fold copies it onto its step
+    // entry, so the reader can tell which round a thought or call came from.
+    model-round: int,
     // Returned line count of a read call, shown beside its file chip.
     read-lines: string,
     detail: string,

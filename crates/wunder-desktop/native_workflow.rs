@@ -98,12 +98,18 @@ impl NativeWorkflowEntry {
         let sections = sections::project(title, data, state, &detail);
         let patch_files = patch::project(title, data, args.unwrap_or(&Value::Null));
         let read_lines = read_line_label(title, state, data);
+        // The step's model round travels with the payload; the fold prints it
+        // beside the token count so a long turn can be read round by round.
+        let round = number(data, &["model_round"], 0)
+            .map(|round| round as i32)
+            .unwrap_or_default();
         Self {
             id: id.into(),
             title: title.into(),
             preview,
             detail: complete_copy_text(data).unwrap_or(detail),
             state: state.into(),
+            round,
             tokens,
             duration,
             read_lines,

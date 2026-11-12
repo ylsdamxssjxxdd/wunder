@@ -197,6 +197,7 @@ fn blank(kind: i32, id: String) -> TimelineRow {
     TimelineRow {
         user_round: 0,
         kind,
+        model_round: 0,
         id: id.into(),
         visible: true,
         text: slint::SharedString::default(),
@@ -287,6 +288,10 @@ pub struct Timeline {
     /// the model call's usage, i.e. after the thought already stopped
     /// streaming, so the row stays addressable once `thinking` is gone.
     last_reason: Option<usize>,
+    /// Model round the live reducer is currently in. Every row created while
+    /// it holds this value carries it, so the fold can label each step with the
+    /// round that produced it instead of only its token cost.
+    model_round: i32,
     tools: Vec<ToolItem>,
     /// Known batch bars of this turn, newest last.
     bars: Vec<BatchBar>,
@@ -456,6 +461,7 @@ impl Timeline {
             // arrive with the model call's usage, i.e. after the thought has
             // already stopped streaming and `thinking` is gone.
             last_reason: None,
+            model_round: 0,
             tools: Vec::new(),
             bars: Vec::new(),
             group: NO_GROUP,
@@ -655,8 +661,18 @@ impl Timeline {
         self.waiting = false;
     }
 
+    /// Name the model round the reducer is in. Rows created from now on carry
+    /// it, including the ones a tool result or a thought reopens.
+    pub fn set_model_round(&mut self, round: i32) {
+        self.model_round = round.max(0);
+    }
+
     fn push(&mut self, row: TimelineRow) -> usize {
         self.marks_dirty.set(true);
+        let mut row = row;
+        // Stamp the round at creation, so the fold's right-hand columns can
+        // name it without every caller threading it through.
+        row.model_round = self.model_round;
         let footer = self.footer.get();
         if footer < self.model.row_count() {
             // Only the footer moves; existing step handles remain stable.
@@ -1188,6 +1204,9 @@ impl Timeline {
     pub fn start_body(&mut self, round: i64) -> usize {
         self.close_thinking(false);
         self.close_body();
+        // The round is authoritative here: a body block belongs to the model
+        // round that is printing it, whatever the last stray frame set.
+        self.model_round = i32::try_from(round).unwrap_or(i32::MAX).max(0);
         let blocks = crate::message_blocks::Blocks::new();
         self.body_serial = self.body_serial.wrapping_add(1);
         let mut row = blank(
@@ -1520,6 +1539,11 @@ impl Timeline {
             self.mark_batch();
         }
         let index = self.push(blank(KIND_TOOL, format!("tool-{}", entry.id)));
+        // A tool frame can arrive after the next round already started, so the
+        // step keeps the round that issued the call rather than the reducer's.
+        if entry.round > 0 {
+            self.patch(index, |row| row.model_round = entry.round);
+        }
         let icon = wunder_desktop::tool_icons::workflow_icon(&entry.title).to_string();
         let summary = crate::timeline_text::tool_summary(entry);
         let row_summary = crate::timeline_text::tool_row_summary(entry, &target);
@@ -2496,6 +2520,56 @@ mod tests {
         timeline.append_body("Fixture answer").unwrap();
         timeline.flush();
         assert_eq!(timeline.last_answer(), "Fixture answer");
+    }
+
+    /// The fold prints each step's model round beside its token cost, so a row
+    /// created by a round's frame must remember that round.
+    #[test]
+    fn live_rows_carry_the_model_round_that_created_them() {
+        use slint::Model;
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("round-tag", "Fixture input");
+        timeline.set_process_root("round-tag-root");
+        timeline.set_model_round(2);
+        timeline
+            .append_reasoning_item("round-tag-root:text-2", "Second thought")
+            .unwrap();
+        timeline.flush();
+        timeline.start_body(3);
+        timeline.append_body("Third answer").unwrap();
+        timeline.flush();
+        let mut tool = NativeWorkflowEntry::from_payload(
+            "round-tag-tool",
+            "read_file",
+            "Fixture result".into(),
+            "completed",
+            &serde_json::json!({"args":{"path":"sample.txt"}}),
+        );
+        tool.round = 3;
+        timeline.upsert_tool(&tool);
+        timeline.flush();
+
+        let bar = timeline
+            .model
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .unwrap();
+        let entries = bar
+            .process_entries
+            .as_any()
+            .downcast_ref::<VecModel<crate::ProcessEntry>>()
+            .unwrap()
+            .iter()
+            .collect::<Vec<_>>();
+        assert_eq!(entries[0].round, 2, "the thought keeps its own round");
+        assert_eq!(
+            entries
+                .iter()
+                .find(|entry| entry.kind == KIND_TOOL)
+                .map(|entry| entry.round),
+            Some(3),
+            "the call names the round that issued it"
+        );
     }
 
     /// A fold that outgrew its first page keeps the active thought streaming.
@@ -3615,6 +3689,7 @@ mod tests {
             read_lines: String::new(),
             sections: Vec::new(),
             patch_files: Vec::new(),
+            round: 0,
         };
 
         timeline.upsert_tool(&entry("tool-a", "running", "first call"));
@@ -3660,6 +3735,7 @@ mod tests {
             read_lines: String::new(),
             sections: Vec::new(),
             patch_files: Vec::new(),
+            round: 0,
         };
         timeline.upsert_tool(&entry);
         entry.state = "running".into();

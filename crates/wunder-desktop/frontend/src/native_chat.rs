@@ -4844,6 +4844,9 @@ fn apply_event(
     ) {
         active.round = active.round.max(round);
     }
+    // Every row this frame creates belongs to `round`; the fold prints it in
+    // its right-hand columns so a long turn can be read round by round.
+    timeline.set_model_round(i32::try_from(round).unwrap_or_default());
     match kind {
         "native_turn_identity" | "native_execution_identity" => {
             if let Some(root) = data["root_turn_id"].as_str() {
