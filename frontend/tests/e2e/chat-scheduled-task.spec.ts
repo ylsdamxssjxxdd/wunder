@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { resolve } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { ChatMockService, MOCK_SESSION } from '../support/chatMockService';
+import { openWorkProcess } from '../support/workProcess';
 import { installChatTurnDomAudit } from '../support/chatTurnDomAudit';
 import { captureConversation, saveChatEvidence } from '../support/chatEvidenceCapture';
 
@@ -39,9 +40,9 @@ test('speed survives completion off-page, navigation back and reload with readab
     await expect(bubble.locator('.messenger-message-stats')).toContainText('token/s');
     await page.screenshot({ path: resolve(directory, 'speed-after-navigation.png'), fullPage: true });
     // Open the actual tool row to verify the production structured result renderer.
-    // The process region is collapsed by default and hydrates from the durable
-    // turn log on first expand, so the user flow here is: open process -> open row.
-    await bubble.locator('.timeline-process-head').click();
+    // The newest turn's process region ships expanded and hydrates from the
+    // durable turn log, so the flow here is: ensure process open -> open row.
+    await openWorkProcess(bubble.locator('.timeline-process-head'));
     const row = bubble.locator('.tl-entry').filter({ hasText: /schedule_task|定时任务/ });
     await expect(row).toHaveCount(1);
     await row.locator('.tl-entry-head').click();

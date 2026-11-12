@@ -301,6 +301,15 @@ export component ToolProcess inherits Rectangle {
     // `changed measured-height`: a declarative binding back into the height
     // would close a layout loop through the list's own viewport.
     private property <length> viewport-height: min(root.viewport-limit, max(26px, root.entries.length * 26px));
+    /// Viewport height in whole steps of one step row. A thinking row that
+    /// grows a wrapped line at a time used to resize the fold on every frame,
+    /// which the reader saw as the whole process bouncing while it streamed.
+    /// Rounding up to the next row keeps a short fold stable; once the fold is
+    /// capped the value does not move at all.
+    function steady-height(measured: length) -> length {
+        let rows = ceil(measured / 26px);
+        return min(root.viewport-limit, max(26px, rows * 26px));
+    }
     // Follow the newest step only while the reader already sits at the tail.
     // Scrolling up hands the position to the reader until they return to it.
     private property <bool> follow-tail: true;
@@ -317,7 +326,7 @@ export component ToolProcess inherits Rectangle {
     // page exactly once instead of once per scroll notification.
     private property <length> last-content-y: 0px;
     changed measured-height => {
-        root.viewport-height = min(root.viewport-limit, max(26px, root.measured-height));
+        root.viewport-height = root.steady-height(root.measured-height);
         // A streaming entry grows taller without adding a row: neither `count`
         // nor `revision` moves, so re-arm the tail follow here or the new text
         // sinks below the capped viewport until the reader scrolls by hand.
@@ -360,6 +369,24 @@ export component ToolProcess inherits Rectangle {
             }
         }
     }
+    // A live fold keeps its tail in view. `content-height` is only re-measured
+    // when something writes into the list, so the single `settle` pass corrected
+    // one frame and then stopped: with more steps than the viewport holds, the
+    // growing text ran off the bottom and the fold looked frozen until the turn
+    // settled and every row was rebuilt. Keep a slow beat while the turn runs;
+    // writing the offset it already has is a no-op, so an idle fold costs
+    // nothing and a reader who scrolled up is honoured by `follow-tail`.
+    Timer {
+        interval: 50ms;
+        running: !root.mobile && root.follow-tail && !root.keep-anchor
+            && !root.loading && !root.failed && (root.live || root.active);
+        triggered => {
+            let bottom = min(0px, process-list.visible-height - process-list.content-height);
+            if process-list.content-y != bottom {
+                process-list.content-y = bottom;
+            }
+        }
+    }
     process-list := ListView {
         visible: !root.mobile;
         y: page-top.height;
@@ -378,11 +405,18 @@ export component ToolProcess inherits Rectangle {
             show-context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
         }
         scrolled => {
-            // "At the tail" means the last line is really on screen. The old
-            // -32px window treated "almost at the bottom" as following, so the
-            // 33ms pass could still drag a reader who had just started to
-            // scroll back up.
-            root.follow-tail = self.visible-height - self.content-height - self.content-y >= -8px;
+            // "At the tail" means the last line is really on screen. Comparing
+            // the height difference is not evidence of a scroll: a row that
+            // grows makes that difference negative on every frame, so the old
+            // -8px window read "the text grew" as "the reader scrolled up" and
+            // dropped the follow for the rest of the turn. Only an offset that
+            // actually moved up ends the follow; reaching the bottom resumes it.
+            let bottom = min(0px, self.visible-height - self.content-height);
+            if self.content-y <= bottom + 0.5px {
+                root.follow-tail = true;
+            } else if self.content-y > root.last-content-y + 1px {
+                root.follow-tail = false;
+            }
             // Reaching the top is the request for the older page.
             if root.active && root.has-older && !root.loading && !root.failed
                 && self.content-y >= -1px && root.last-content-y < -1px {

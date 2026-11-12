@@ -105,5 +105,5 @@ python "D:/proj/参考/diagram-design-main/skills/diagram-design/scripts/self_ch
 
 ## 7. 与发布链的关系
 
-现有 `scripts/sync_art.py` / `render_art_previews.py` 面向 SVG，对本目录的 HTML **尚未接入**。
+现有 `scripts/sync_art.py` 面向 SVG 与文档站，对本目录的 HTML **尚未接入**。
 如需把编辑版发布到文档站，需另加一步「HTML 直出 + iframe 缩略图」，当前未做。

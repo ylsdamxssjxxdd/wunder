@@ -12,6 +12,7 @@
         :controller="controller"
         :item="item"
         :session-id="sessionId"
+        :default-process-open="Boolean(defaultProcessOpen)"
       />
 
       <div
@@ -142,6 +143,8 @@ const props = defineProps<{
   controller: MessengerControllerContext;
   item: { key: string; sourceIndex: number; message: Record<string, any> };
   sessionId?: string;
+  /** 本行是否是「最近的工作过程」所在轮次（透传给时间线条）。 */
+  defaultProcessOpen?: boolean;
 }>();
 
 const isUser = computed(() => String(props.item.message?.role || '') === 'user');

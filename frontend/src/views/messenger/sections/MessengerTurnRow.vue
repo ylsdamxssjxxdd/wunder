@@ -17,6 +17,7 @@
         :controller="controller"
         :item="turn.assistant"
         :session-id="sessionId"
+        :default-process-open="Boolean(defaultProcessOpen)"
       />
     </div>
   </section>
@@ -32,11 +33,15 @@ import type { MessengerControllerContext } from '../controller/messengerControll
  * 还在引擎队列里的轮次不会走到这里：`agentTurnSlots` 已经把整行让给排队条。
  *
  * 行级不再维护「最近 N 轮默认展开」的集合：一轮的中间内容已经整体折进
- * 「工作过程」（默认收起、收起时不渲染），长会话的高度由块渲染层收敛。
+ * 「工作过程」，长会话的高度由块渲染层收敛。默认展开只给**最新一条带工作过程**
+ * 的轮次（`defaultProcessOpen`，判定见 `components/chat/timelineProcessDefault.ts`），
+ * 与桌面端时间线一致。
  */
 defineProps<{
   controller: MessengerControllerContext;
   sessionId?: string;
+  /** 本行是否是「最近的工作过程」所在轮次。 */
+  defaultProcessOpen?: boolean;
   turn: {
     key: string;
     rootTurnId: string;

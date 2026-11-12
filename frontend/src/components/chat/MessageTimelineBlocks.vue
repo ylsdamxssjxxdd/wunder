@@ -151,7 +151,11 @@ const props = withDefaults(defineProps<{
   sessionId?: string;
   /** 身份变化时复位展开状态（虚拟列表复用行组件 / 弹窗切换运行）。 */
   identityKey?: string;
-  /** 本轮是否默认展开：过程区与其中的批次一起展开（子智能体详情用），主时间线收起。 */
+  /**
+   * 本轮是否默认展开：过程区与其中的批次一起展开。
+   * 两个来源共用：子智能体详情（整轮展开）与主时间线最新的工作过程
+   * （见 `timelineProcessDefault.ts`）；只影响首次渲染，用户点过后以用户为准。
+   */
   defaultOpen?: boolean;
   /** 最后一段正文是否仍在流式输出。 */
   streaming?: boolean;
@@ -516,11 +520,15 @@ watch(
 );
 
 // 默认开合由调用方下发；用户点过的批次不再跟随。
+// 只在「默认展开」为真时铺开：一轮不再是最新那一条时（新轮次顶上来）不要把它
+// 重新收起——读者正在看的过程区不该被下一次轮次切换改掉，这也和桌面端
+// restore_folds「已存在的行沿用上一次开合」的口径一致。
 watch(
   () => props.defaultOpen,
   (open) => {
-    groupOpen.value = Boolean(open);
-    processOpen.value = Boolean(open);
+    if (!open) return;
+    groupOpen.value = true;
+    processOpen.value = true;
     activityOpenState.value = {};
   }
 );

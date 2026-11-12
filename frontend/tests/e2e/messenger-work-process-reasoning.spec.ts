@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 import { ChatMockService, MOCK_SESSION } from '../support/chatMockService';
+import { openWorkProcess } from '../support/workProcess';
 
 test('export-shaped running reload keeps completed thoughts still and never reports a task completion',async({page})=>{
   const service=new ChatMockService();
@@ -15,7 +16,7 @@ test('export-shaped running reload keeps completed thoughts still and never repo
     await page.goto(`/app/chat?session_id=${MOCK_SESSION}`);
     for(let attempt=0;attempt<2;attempt++){
       const bubble=page.locator('.messenger-turn[data-root-turn-id="fixture-turn-1"]');
-      await bubble.locator('.timeline-process-head').click();
+      await openWorkProcess(bubble.locator('.timeline-process-head'));
       await expect(bubble.locator('.tl-thinking')).toHaveCount(1);
       await expect(bubble.locator('.tl-thinking.is-streaming')).toHaveCount(0);
       await expect(bubble.locator('.tl-entry-head')).toHaveCount(1);
@@ -44,7 +45,7 @@ test('six-round export-shaped reload restores all six tools and settles the bubb
     for(let attempt=0;attempt<2;attempt++){
       const bubble=page.locator('.messenger-turn[data-root-turn-id="fixture-turn-1"]');
       await expect(bubble).toContainText('Fixture final answer');
-      await bubble.locator('.timeline-process-head').click();
+      await openWorkProcess(bubble.locator('.timeline-process-head'));
       await expect(bubble.locator('.tl-entry-head')).toHaveCount(6);
       await expect(bubble.locator('.tl-thinking')).toHaveCount(6);
       await expect(bubble.locator('.tl-thinking.is-streaming')).toHaveCount(0);
@@ -69,7 +70,7 @@ test('new live reasoning is appended after durable process entries', async ({ pa
     const bubble = page.locator('.messenger-turn[data-root-turn-id="fixture-turn-1"]');
     const process = bubble.locator('.timeline-process-head');
     await expect(process).toBeVisible();
-    await process.click();
+    await openWorkProcess(process);
 
     const thoughts = bubble.locator('.tl-thinking');
     await expect(thoughts).toHaveCount(2);

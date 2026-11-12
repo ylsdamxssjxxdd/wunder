@@ -38,7 +38,12 @@
                 data-chat-measure :data-virtual-key="row.key">
                 <MessengerAgentBubble :controller="controller" :item="row.assistant" />
               </div>
-              <MessengerTurnRow v-else-if="row.kind !== 'greeting'" :controller="controller" :turn="row" />
+              <MessengerTurnRow
+                v-else-if="row.kind !== 'greeting'"
+                :controller="controller"
+                :turn="row"
+                :default-process-open="isLatestProcessTurn(row.key, latestProcessTurnKey)"
+              />
             </template>
           </div>
 
@@ -171,7 +176,7 @@
 
 <script setup lang="ts">
 import { threadViewPhase, threadViewError, threadViewAtLatest } from '@/realtime/chat/threadViewStore';
-import { computed, onUpdated } from 'vue';
+import { computed, onUpdated, shallowRef, watch } from 'vue';
 import MessengerTurnRow from './MessengerTurnRow.vue';
 import MessengerAgentBubble from './MessengerAgentBubble.vue';
 import SessionActivityCard from '@/components/messenger/SessionActivityCard.vue';
@@ -179,6 +184,7 @@ import type { MessengerControllerContext } from '../controller/messengerControll
 import { resolveShowThreadActivityCard } from '../controller/legacyTurnRowAdapter';
 import MessageMarkdownBody from '@/components/chat/MessageMarkdownBody.vue';
 import { chatPerf } from '@/utils/chatPerf';
+import { isLatestProcessTurn, resolveLatestProcessTurnKey } from '@/components/chat/timelineProcessDefault';
 
 // The stable controller carries refs/actions; only this subtree tracks message render dependencies.
 const props = defineProps<{ controller: MessengerControllerContext }>();
@@ -223,6 +229,20 @@ const chatStore = props.controller.chatStore;
 const threadPhase=computed(()=>threadViewPhase(String(chatStore?.activeSessionId??'')));
 const atLatest=computed(()=>threadViewAtLatest(String(chatStore?.activeSessionId??'')));
 const threadError=computed(()=>threadViewError(String(chatStore?.activeSessionId??'')));
+// 最近的工作过程默认展开（对齐桌面端时间线）：整条线程里只有最新一条带工作
+// 过程的轮次铺开，判定只看数据（见 `components/chat/timelineProcessDefault.ts`）。
+// 用 watch + shallowRef 而不是 computed：判定要读消息里的过程/思考字段，做成
+// computed 会让整列历史的时间线在**每个 token 帧**上失效重渲染（面板级更新数
+// 直接翻倍）。这里只订阅轮次表的粗粒度身份，逐字文本帧不参与。
+const latestProcessTurnKey = shallowRef('');
+watch(
+  () => agentTurnSlots?.value,
+  (slots) => {
+    const next = resolveLatestProcessTurnKey(slots);
+    if (next !== latestProcessTurnKey.value) latestProcessTurnKey.value = next;
+  },
+  { immediate: true }
+);
 const showThreadActivityCard = computed(() =>
   resolveShowThreadActivityCard({
     renderKind: retainedMessageRenderKind?.value,

@@ -14,8 +14,8 @@ updated_at: 2026-10-16
 | Server | server | The **user and agent management platform**: the server form, aimed at teams and organizations, handling multi-user access, permissions, and channel access, and providing the Cloud. |
 | Admin | bridge | The governance frontend: the system administrator's management interface for system configuration and for user and channel governance. |
 | Channel bridge node | bridge node | A channel bridging node: it carries channel account access and message routing and is managed uniformly by the backend, with no standalone frontend page today. Keep it distinct from the governance frontend "Admin". |
-| Cloud | web | The **cloud AI workbench**: the web form, provided with the Server and opened by users in a browser. |
-| Desktop | desktop | The **local AI workbench**: the desktop form, the default entry point for individual users, running locally with direct access to local files. Formerly Pupa (and earlier Honeycomb). |
+| Cloud | web | The **cloud AI workbench**: the web form, provided with the Server and opened by users in a browser. English name wunder Cloud, formerly Hive. |
+| Desktop | desktop | The **local AI workbench**: the desktop form, the default entry point for individual users, running locally with direct access to local files. English name wunder Desktop, formerly Pupa. |
 | Android | android | **The Desktop's Android form, a local AI workbench on a phone**: install the APK; a single native Activity shell reuses the Desktop UI components and calls the engine in-process with a local SQLite. |
 | CLI | cli | The **manual local entry point**: the command-line form, aimed at hands-on operation, developers, and automation scripts. |
 

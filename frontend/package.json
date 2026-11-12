@@ -57,6 +57,7 @@
     "test:tool-workflow-render-batcher": "node scripts/run-regression-tests.mjs tool-workflow-render-batcher-regression.test.ts",
     "test:tool-workflow-collapsed-summary": "node scripts/run-regression-tests.mjs tool-workflow-collapsed-summary-regression.test.ts",
     "test:tool-timeline-entry": "node scripts/run-regression-tests.mjs tool-timeline-entry-regression.test.ts",
+    "test:timeline-process-default": "node scripts/run-regression-tests.mjs timeline-process-default-regression.test.ts",
     "test:message-conversation-retention": "node scripts/run-regression-tests.mjs message-conversation-retention-regression.test.ts",
     "test:message-virtual-window": "node scripts/run-regression-tests.mjs message-virtual-window-regression.test.ts",
     "test:message-virtual-window-estimate": "node scripts/run-regression-tests.mjs message-virtual-window-estimate-regression.test.ts",

@@ -1,6 +1,6 @@
 # 桌面版聊天打开后端基准
 
-统一场景、复测频率和优化流程见 [桌面版体验测试方案](../../docs/蛹体验测试方案.md)。本基准作为该方案的 UX-01，被 `measure-experience.py` 直接复用。
+统一场景、复测频率和优化流程见 [桌面版体验测试方案](../../docs/桌面版体验测试方案.md)。本基准作为该方案的 UX-01，被 `measure-experience.py` 直接复用。
 
 这是开发用的外部测试，直接链接 `wunder-desktop` 和 `wunder-runtime`，调用聊天页面实际使用的 `NativeDesktop::open_chat_snapshot()`。不构建或启动最终桌面版程序，不依赖 Slint、桌面窗口、浏览器、HTTP bridge、模型或补充包。测试工作进程位于 `crates/wunder-desktop/examples/chat_open_probe.rs`，不会编入桌面版的产品入口。
 

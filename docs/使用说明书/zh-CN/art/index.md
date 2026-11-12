@@ -150,15 +150,13 @@ updated_at: 2026-10-25
 python scripts/sync_art.py
 ```
 
-它会依次完成三件事：
+它会重建文档站：
 
-1. 把桌面版稿 SVG 渲染成 1200px PNG，写到 `crates/wunder-desktop/frontend/assets/help/art`（桌面版内嵌用）。
-2. 用这些 PNG 重建桌面版的中英手册 JSON。
-3. 重建文档站，把 SVG 发布到 `web/docs/art`（桌面版）与 `web/docs/art/servo`（命令行），并复制统一画廊及 `art-viewer` 资产；发布版自动把应用图标内嵌为 data URI。
+1. 把 SVG 发布到 `web/docs/art`（桌面版）与 `web/docs/art/servo`（命令行），并复制统一画廊及 `art-viewer` 资产；发布版自动把应用图标内嵌为 data URI。
 
-Web 端重建站点后即生效；桌面版需要重新编译桌面程序，预览图通过 `include_bytes!` 编进二进制。
+Web 端重建站点后即生效。桌面版帮助不再内嵌设计稿预览，只放一张真实界面截图：`crates/wunder-desktop/frontend/assets/help/art/ui-overview.png`。这张图不由本流程生成，需要更新时直接替换，桌面版重新编译后通过 `include_bytes!` 编进二进制。
 
-桌面版新增或删除分页时，需要同步 `scripts/render_art_previews.py` 的 `SHEETS`、`scripts/build_help_manual.py` 的 `ART_TOPICS`、统一画廊 `docs/wunder美术设计稿/index.html` 中的稿件数据，以及本页章节。不要手改 `crates/wunder-desktop/frontend/assets/help/art` 里的 PNG。
+桌面版新增或删除分页时，同步统一画廊 `docs/wunder美术设计稿/index.html` 中的稿件数据与本页章节即可，不涉及桌面版内嵌资产。
 
 命令行新增或删除分页时，同步统一画廊稿件数据、本页章节与 `docs/wunder美术设计稿/舵机/README.md` 即可，不涉及桌面版内嵌资产。
 

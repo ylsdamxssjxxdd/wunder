@@ -891,6 +891,22 @@ The **Tools & Skills** page in settings centrally manages the capabilities the a
 
 > Local capabilities run under least privilege: system capability calls must be declared explicitly and are never silently exposed to remote ends.
 
+<!-- topic id="ui-screenshot" block="interface" title="Interface Screenshot" group="Surfaces" keywords="screenshot,window,layout,sidebar,composer,working directory" -->
+
+# Interface Screenshot
+
+Below is the real content area of a running Desktop window: workspaces and threads on the left, the reading column in the middle, the composer at the bottom.
+
+![Desktop window screenshot](art/ui-overview.png)
+
+*Actual Desktop window content area*
+
+- **Sidebar**: the running location (Local) and the new-thread action on top; threads are listed per workspace, and groups such as `默认工作区` can be collapsed.
+- **Working directory**: the lower half of the sidebar shows the directory bound to this thread; search, create, refresh, or drop files straight into it.
+- **Reading column**: user messages, work process and replies in round order; the round footer reports elapsed time, output speed and token usage.
+- **Composer**: input and the stop button on top, the model switcher at the lower right; the bottom bar holds attachments, terminal, voice and screenshot entries.
+- **Bottom left**: the settings entry for general preferences, model configuration, cloud account and device interlink.
+
 <!-- topic id="interface" block="interface" title="Interface Tour" group="Surfaces" keywords="interface,sidebar,working process,trajectory,layout" -->
 
 # Interface Tour
@@ -953,7 +969,7 @@ Two columns:
 
 - The input area holds the model switch (its popover links to model settings), approval mode, attachments, a voice-input button (when available), a screenshot button (when available), and send / stop
 
-- Below each reply, "Work process" folds away intermediate thinking, tool batches, and interim output
+- Below each reply, "Work process" folds away intermediate thinking, tool batches, and interim output; the most recent round is expanded by default and earlier rounds stay folded
 
 With the session queue on, messages sent to a new thread during a run queue up instead of being rejected as "user busy".
 
@@ -1051,108 +1067,6 @@ It cleans up the working state rather than performing a factory reset.
 | Tray / system notifications / global hotkey / screenshot | ✅ | ❌ |
 | Device-interconnection settings panel | Category not opened; only the cloud workspace + approval pop-up | ✅ Devices category + interconnection view |
 | One agent | Multiple threads, multiple workspaces | The same |
-
-<!-- topic id="art-overview" block="interface" title="00 Overview" group="Art" keywords="art,design sheet,overview,window layout" -->
-
-# 00 Overview
-
-Whole-window baseline for the wunder Desktop app: 1462×866 logical pixels, a 240 sidebar, a 1000 reading column and a 154-high composer band.
-
-![00 Overview](art/00-overview.png)
-
-*00 Overview · window 1462×866 (reference screenshot 2558×1515 at 175% DPI)*
-
-> The sources live in docs/wunder美术设计稿/蛹. After editing an SVG run python scripts/render\_art\_previews.py, then python scripts/build\_help\_manual.py to refresh the manual.
-
-<!-- topic id="art-foundations" block="interface" title="01 Foundations" group="Art" keywords="art,foundations,color,type scale,spacing,radii" -->
-
-# 01 Foundations
-
-Neutral, accent and semantic colors, the type scale, spacing, radii and the window layout baseline; the tokens map to design\_tokens.slint.
-
-![01 Foundations](art/01-foundations.png)
-
-*01 Foundations · color, type, spacing, radii*
-
-<!-- topic id="art-icons" block="interface" title="02 Icons" group="Art" keywords="art,icons,production assets,desktop icon,status icons" -->
-
-# 02 Icons
-
-Thirty production icons grouped by purpose and state, preserving solid, line and code-drawn differences.
-
-![02 Icons](art/02-icons.png)
-
-*02 Icons · production assets, sizes, color and states*
-
-<!-- topic id="art-shell" block="interface" title="03 Shell and Sidebar" group="Art" keywords="art,shell,sidebar,title bar,splitter" -->
-
-# 03 Shell and Sidebar
-
-Title bar, sidebar width, groups, workspace rows, thread rows, the working-directory toolbar, and the splitter at rest, hover and drag. The sidebar splitter shows no rail at rest and a 2×32 pill on hover.
-
-![03 Shell and Sidebar](art/03-shell-sidebar.png)
-
-*03 Shell and sidebar · title bar, sidebar, splitter*
-
-<!-- topic id="art-timeline" block="interface" title="04 Timeline" group="Art" keywords="art,timeline,message,turn footer,state capsule" -->
-
-# 04 Timeline
-
-Reading column and scrolling, user messages, turn footers, the run-state capsule, Markdown fallback styles and the empty state. Streaming updates only the active tail block.
-
-![04 Timeline](art/04-timeline.png)
-
-*04 Timeline · messages, footers, state capsule*
-
-<!-- topic id="art-process" block="interface" title="05 Process and Tools" group="Art" keywords="art,process,tools,thinking,subagent" -->
-
-# 05 Process and Tools
-
-Process bar, thinking entries, tool rows, the expanded output panel, tool groups and subagent cards, including icon sizes, fold budgets and indentation.
-
-![05 Process and Tools](art/05-process-tools.png)
-
-*05 Process and tools · process bar, tool rows, subagents*
-
-<!-- topic id="art-plan" block="interface" title="06 Plan and Inquiry" group="Art" keywords="art,plan,inquiry,goal,no preference" -->
-
-# 06 Plan and Inquiry
-
-Plan capsule, expanded card, goal banner and inquiry panel. Option rows include no preference and other, and the inquiry panel has no separate submit button.
-
-![06 Plan and Inquiry](art/06-plan-inquiry.png)
-
-*06 Plan and inquiry · plan card, goal banner, inquiry panel*
-
-<!-- topic id="art-composer" block="interface" title="07 Composer" group="Art" keywords="art,composer,send,stop,queue" -->
-
-# 07 Composer
-
-The 972×100 input card, the 30-high footer, attachment rows, recording, generating and disabled-send states, plus queue and model menu specs. Stop square 10.5, send arrow 16.
-
-![07 Composer](art/07-composer.png)
-
-*07 Composer · input card, footer, stop and queue*
-
-<!-- topic id="art-settings" block="interface" title="08 Settings and Dialogs" group="Art" keywords="art,settings,dialogs,controls,validation" -->
-
-# 08 Settings and Dialogs
-
-Settings row anatomy, input and select controls, buttons, validation and hints, and the density and layering of dialogs.
-
-![08 Settings and Dialogs](art/08-settings-dialogs.png)
-
-*08 Settings and dialogs · rows, controls, validation*
-
-<!-- topic id="art-motion" block="interface" title="09 States and Motion" group="Art" keywords="art,interaction,states,motion,keys,breakpoints" -->
-
-# 09 States and Motion
-
-Row and input states, the motion timeline, performance limits, key bindings, accessibility feedback and breakpoints, including which actions must not block during streaming.
-
-![09 States and Motion](art/09-states-motion.png)
-
-*09 States and motion · states, timing, keys*
 
 <!-- topic id="interlink" block="capabilities" title="Interlink" group="Capabilities" keywords="interlink,devices,tunnel,remote" -->
 

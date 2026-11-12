@@ -18,6 +18,7 @@
       :reasoning-streaming="Boolean(message.reasoningStreaming)"
       :final-item-id="String(message.item_id || message.assistant_item_id || '')"
       :duration-label="processDurationLabel"
+      :default-open="Boolean(defaultProcessOpen)"
       @open-change="processOpen = $event"
     />
     <!-- 有工具的轮次：流式文本进过程区实时行，不外显为正文；过程区收起时外显保证输出可见；
@@ -45,6 +46,7 @@
       :runtime-user-turn-id="runtimeUserTurnId"
       :runtime-model-turn-id="runtimeModelTurnId"
       :content-truncated="message.content_truncated === true"
+      :default-open="Boolean(defaultProcessOpen)"
       :resolve-workspace-path="resolveAgentMarkdownWorkspacePath"
       :throttle-ms="MARKDOWN_STREAM_THROTTLE_MS"
       @markdown-rendered="handleMessageMarkdownRendered(item.key, $event)"
@@ -276,6 +278,11 @@ const props = defineProps<{
   controller: MessengerControllerContext;
   item: { key: string; sourceIndex: number; message: Record<string, any> };
   sessionId?: string;
+  /**
+   * 本轮是否是「最近的工作过程」：是则过程区首次渲染即展开（对齐桌面端
+   * 时间线的默认展开口径，见 `components/chat/timelineProcessDefault.ts`）。
+   */
+  defaultProcessOpen?: boolean;
 }>();
 
 const controller = props.controller;

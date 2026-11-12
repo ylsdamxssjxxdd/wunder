@@ -2,11 +2,13 @@
 
 wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是本地 AI 工作台，云端版（web）是云端 AI 工作台，命令行（cli）是手工本地操作入口，服务端（server）是用户与智能体管理平台。本文档描述服务端（server）对外提供的 HTTP / WebSocket 接口，桌面版与命令行在本地复用同一套引擎语义。
 
+> 阅读提示：本文按时间顺序累积增补。蜂群编排（蜂群工具 / 蜂房 / 编排态 / team run / 蜂群包 / 广场）已从引擎与协议层全链路移除，凡涉及其工具与接口的描述均为历史记录，不代表当前行为；当前契约以文末「蜂群编排移除」「单智能体与唯一云端目录（本次重构）」两节为准。
+
 ## 4. API 设计
 
 ### 4.0 实现说明
 
-- Slint 桌面版复用本地 bridge 既有接口：`/wunder/chat/ws` 用于 start/watch 与事件恢复，HTTP 用于会话、专家、工具目录和桌面版设置；目录浏览使用 `/wunder/workspace` 的 path/offset/limit/agent_id，文本预览使用 `/wunder/workspace/content` 的 max_bytes。专家更新提交配置键空字符串表示继承默认模型，不以有效模型名称覆盖继承关系。未增加桌面版专属业务协议或存储。
+- 桌面版沿用本地引擎既有语义，不新增专属业务协议或存储：聊天 start/watch 与事件恢复、会话、专家、工具目录、桌面版设置仍对应 `/wunder/chat/ws` 与同名 HTTP 路由；目录浏览使用 `/wunder/workspace` 的 path/offset/limit/agent_id，文本预览使用 `/wunder/workspace/content` 的 max_bytes。默认启动在同一进程内通过 `wunder-desktop::NativeDesktop` 直接调用引擎，不经本机 HTTP/WebSocket、也不拉起 bridge 子进程；独立 bridge 仅为已有兼容客户端保留。专家更新提交配置键空字符串表示继承默认模型，不以有效模型名称覆盖继承关系。
 
 - Slint 原生化迁移新增 `wunder-desktop` 库 façade：桌面版进程可直接复用 `AppState`、`ThreadRuntime` 和 `Orchestrator`，通过有界内存通道接收聊天 `StreamEvent`，绕过本机 HTTP/WebSocket；Slint 默认启动覆盖聊天、子线程目录、智能体、工具、文件及系统/模型设置；已移除 Slint bridge 适配和启动路径。`NativeStream::try_recv` 区分暂时为空和订阅关闭，通道容量 128；生产端异步等待容量，消费者 33 ms 合并增量。显式 `cancel` 清理目标/线程活动并持久化停止标记；正常完成或丢弃订阅不会隐式取消会话。排队路径按任务 ID 回读有界持久化事件；即时执行持有线程 lease 直到流结束，原生窗口不开放本机监听端口。
 
@@ -44,9 +46,9 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
 - 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；`/login?token=<team_jwt>&user_id=<id>[&agent_name=<name>]` 当前走 `/wunder/auth/external/token_login` 直换 wunder `access_token`（JWT 校验失败不阻断登录）。当前也支持 `/login?user_id=<id>[&agent_name=<name>]` 无 token 直登。外链登录成功后统一进入 `/app/embed/chat`（desktop 为 `/desktop/embed/chat`）嵌入壳，并隐藏侧边栏与中栏；当未传 `agent_name`，或名称未命中当前用户可访问的已有智能体时，前端进入嵌入态消息页并使用默认智能体 `agent_id=__default__` / `entry=default`；当 `agent_name` 命中当前用户可访问的已有智能体时，接口返回对应 `agent_id` 与 `focus_mode=true`，前端进入同一嵌入壳并聚焦该智能体。嵌入壳内消息页与智能体页都可访问，但左/中栏保持隐藏。`POST /wunder/auth/login`、`/wunder/auth/register`、`/wunder/auth/demo` 以及会直接签发用户 token 的 `/wunder/auth/external/*` 登录接口支持可选请求头 `X-Wunder-Session-Scope`；同一用户仅在同一 `session_scope` 内执行“新登录顶旧登录”，不同 scope（如 `user_web` 与 `admin_web`）互不影响。
 - 用户资料接口：`GET /wunder/auth/me` 会额外返回 `usage_summary`（当前用于用户侧“我的概况”展示累计消耗与工具调用数）与 `session_summary`（`total_sessions/sessions_last_7d/trend_last_7d/last_active_at`，用于统一展示总会话、近 7 天会话、7 天趋势与最后活跃时间），并补充等级字段 `level/max_level/experience_total/experience_current/experience_for_next_level/experience_remaining/experience_progress/reached_max_level`，以及额度账户字段 `quota_balance/quota_granted_total/quota_used_total/daily_quota_grant/last_quota_grant_date`；其中 `quota_balance` 是用户当前可支配的额度余额，`quota_granted_total` 记录累计发放总额，`quota_used_total` 记录累计消耗。`PATCH /wunder/auth/me` 支持更新 `username/email/unit_id`，并保持返回同一结构；已登录用户如同时提交 `current_password` 与 `new_password`，服务端会先校验当前密码，再更新自己的登录密码。另提供未登录的 `POST /wunder/auth/reset_password`，仅凭账号、邮箱和新密码即可重置登录密码。
 - 注册开关接口：`GET /wunder/auth/settings` 无需登录，返回 `data.allow_user_registration`，供云端版决定是否展示注册入口。`security.allow_user_registration=false` 时，`POST /wunder/auth/register` 会返回 403，管理员仍可通过用户管理创建或批量导入账号。
-- 用户偏好接口：`GET /wunder/auth/me/preferences` / `PATCH /wunder/auth/me/preferences` 当前除主题与头像外，还支持 `messenger_order`，用于同步用户侧消息页/智能体页/蜂群页中栏条目顺序。`messenger_order` 结构为 `messages[] / agents_owned[] / agents_shared[] / swarms[]`，均为字符串 key 数组；服务端会去重并过滤空字符串，前端可用它在刷新后恢复用户自定义排序。
-- 用户态工作状态重置接口：`POST /wunder/auth/me/reset_work_state`，按当前登录用户中止运行中的会话/排队任务/蜂群任务，清空相关工作区内容，并为默认智能体与各用户智能体重建新的任务线程。
-- 蜂群整体重置接口：`POST /wunder/beeroom/groups/{group_id}/reset`，仅作用于当前用户指定蜂群；中止该蜂群成员的活动会话、排队任务和蜂群任务，关闭活动编排，清除蜂群任务与右栏消息投影，并为母蜂及全部工蜂创建新的任务线程。返回 `member_threads[]`（`agent_id/agent_name/role/session_id`）以及取消、清理计数。
+- 用户偏好接口：`GET /wunder/auth/me/preferences` / `PATCH /wunder/auth/me/preferences` 当前除主题与头像外，还支持 `messenger_order`，用于同步用户侧消息页/智能体页中栏条目顺序。`messenger_order` 结构为 `messages[] / agents_owned[] / agents_shared[]`，均为字符串 key 数组；服务端会去重并过滤空字符串，未知字段忽略，前端可用它在刷新后恢复用户自定义排序。
+- 用户态工作状态重置接口：`POST /wunder/auth/me/reset_work_state`，按当前登录用户中止运行中的会话/排队任务，清空相关工作区内容，并为默认智能体与各用户智能体重建新的任务线程。
+- 蜂群整体重置接口（`POST /wunder/beeroom/groups/{group_id}/reset`）随蜂群编排一并移除，不再提供；重置语义只保留上述按用户与桌面版本地模式两条入口。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 云端版请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 模型配置支持 `model_type=llm|embedding|tts|image`；向量知识库依赖 embedding 模型调用 `/v1/embeddings`，聊天页语音播放通过 TTS 模型代理 `/v1/audio/speech`。
@@ -62,7 +64,7 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
 - draw.io 在线图表编辑：配置 `drawio.enabled/editor_url` 后，用户侧工作区中的 `.drawio`、`.dio`、`.drawio.xml` 文件可通过 `/wunder/workspace/drawio/config` 获取 diagrams.net/draw.io 嵌入编辑器地址；前端通过现有 `/wunder/workspace/content` 读取 XML，并通过 `/wunder/workspace/file` 保存回写。仓库 compose 默认提供 `wunder-drawio` 服务，宿主机默认端口为 `18081`。
 - 桌面版本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
 - 桌面版现仅保留本地模式，不再提供 desktop 内部的服务端连接切换与端云协同入口；需要服务端能力时请直接使用浏览器访问 server 形态。Desktop 本地模式固定优先使用安装包附带的 Python 运行时，不再通过 `/wunder/desktop/settings` 配置自定义解释器，也不再提供 `/wunder/desktop/python/interpreters` 本机探测接口；`GET /wunder/desktop/fs/list` 仍保留用于本地目录浏览等通用场景。
-- 桌面版本地模式新增 `POST /wunder/desktop/reset_work_state`：统一中止当前 desktop 用户的运行中会话、队列任务与蜂群任务，为默认智能体和全部用户智能体切换到新的任务线程，并清空各自工作目录内容，供系统设置页执行“一键重置工作状态”。
+- 桌面版本地模式新增 `POST /wunder/desktop/reset_work_state`：统一中止当前 desktop 用户的运行中会话与队列任务，为默认智能体和全部用户智能体切换到新的任务线程，并清空各自工作目录内容，供系统设置页执行“一键重置工作状态”。
   - 智能体形象能力统一复用智能体 icon 字段；用户私有形象保存在浏览器 IndexedDB，管理员全局形象由 /wunder/admin/companions* 管理并通过 /wunder/companions/global* 供用户侧读取；当前桌面版回退为界面内形象展示。
 - 桌面版 GUI 使用 crates/wunder-desktop/frontend 与 NativeDesktop 同进程运行，不新增远程 API。
 - 桌面版引导接口 `GET /config.json` 与 `GET /wunder/desktop/bootstrap` 现补充 `runtime_profile` 与 `runtime_capabilities`：前者用于标识 `desktop_embedded` / 其他运行形态，后者用于下发 `embedded_mode/thread_runtime_active/gateway_maintenance_active/cron_active/channels_enabled/channel_outbox_worker_enabled/lan_overlay_supported` 等能力位，供前端按实际运行能力启用订阅、恢复与降级策略。
@@ -141,7 +143,7 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
 - `attachments`：数组，可选，附件列表（图片/音频支持 data URL；服务端会持久化到用户私有容器并补充 `public_path`）
 - 约束：注册用户以 `quota_balance` 限制模型请求；每次实际请求扣 1 额度，与 `total_tokens` 无关。多个线程共享用户额度，数据库原子准入禁止透支；最后 1 额度可正常使用。不足返回 429（`detail.code=USER_QUOTA_INSUFFICIENT`）。
 - 约束：`question` 与非图片附件文本合计最多 `1048576` 个字符，超出返回 400（`detail.field=input_text`，并携带 `detail.max_chars/detail.actual_chars`）。
-- 忙时队列：当 `agent_queue.enabled=true` 时，直接用户聊天请求在 `server.max_active_sessions` 达到上限后进入可见队列，非流式返回 202（`data.queue_id`/`data.thread_id`/`data.session_id`/`data.queue_ahead`/`data.queue_total`/`data.active_ahead`/`data.wait_ahead`/`data.queue_event_id`/`data.queue_after_event_id`），SSE/WS 返回排队事件或排队确认；`queue_ahead` 表示队列内排在当前任务前方的 pending/retry 任务数，`active_ahead` 表示当前阻塞执行槽的运行中直接用户轮次数，`wait_ahead` 表示用户侧可展示的总等待人数/请求数；`queue_event_id` 是 `queue_enter` 的持久事件 id，`queue_after_event_id` 是恢复时应使用的 `after_event_id` 锚点。请求带 `client_message_id` 时，`queue_enter.data.client_message_id` 与后续同轮对象型流事件会原样使用服务端归一化后的值。子智能体、蜂群工蜂与后台内部任务不计入用户可见队列。
+- 忙时队列：当 `agent_queue.enabled=true` 时，直接用户聊天请求在 `server.max_active_sessions` 达到上限后进入可见队列，非流式返回 202（`data.queue_id`/`data.thread_id`/`data.session_id`/`data.queue_ahead`/`data.queue_total`/`data.active_ahead`/`data.wait_ahead`/`data.queue_event_id`/`data.queue_after_event_id`），SSE/WS 返回排队事件或排队确认；`queue_ahead` 表示队列内排在当前任务前方的 pending/retry 任务数，`active_ahead` 表示当前阻塞执行槽的运行中直接用户轮次数，`wait_ahead` 表示用户侧可展示的总等待人数/请求数；`queue_event_id` 是 `queue_enter` 的持久事件 id，`queue_after_event_id` 是恢复时应使用的 `after_event_id` 锚点。请求带 `client_message_id` 时，`queue_enter.data.client_message_id` 与后续同轮对象型流事件会原样使用服务端归一化后的值。子智能体与后台内部任务不计入用户可见队列。
 - 队列回放：`queue_enter/queue_start/queue_finish/queue_fail` 现已进入 `stream_events` 持久化流，`watch/resume`、刷新重连和 SSE/WS 补偿都可回放。队列终止事件写入前会先 flush 当前任务已产生的流式事件持久化队列，避免恢复端先看到 `queue_finish` 再补到旧增量。
 - 聊天 WS 排队语义：`/wunder/chat/ws` 的 `start` 被排队后，服务端会沿同一个 request-scoped WS 流从 `queue_after_event_id` 继续转发本 `queue_id` 的 `queue_enter -> queue_start -> 模型/工具流式事件 -> queue_finish/queue_fail`；客户端不要在收到 `queue_enter` 或 queued ack 后主动切换到 `watch`。队列回放在匹配本 `queue_id` 的 `queue_start` 前不会转发无 `queue_id` 的模型/工具事件，遇到本 `queue_id` 的 `queue_finish/queue_fail` 会立即截断，避免旧任务尾部或下一轮事件混入当前请求。
 - WS 恢复语义：只有在连接断开、收到 `slow_client`、页面恢复补水或主动重连时，客户端才应使用 `watch/resume` 与 `queue_after_event_id`/本地最新 `event_id` 补齐事件。
@@ -361,6 +363,7 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
 - 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn|batch_spawn|status|wait|interrupt|close|resume` 统一完成子会话派生、批量调度、状态聚合与生命周期控制。
 - 新增内置工具 `会话让出`（英文别名 `sessions_yield`/`yield`），用于在完成子智能体派发后主动结束当前轮次，向用户返回一句简短提示，并等待后台子智能体完成后自动唤醒父会话继续。
 - 新增内置工具 `会话线程控制`（英文别名 `thread_control`/`session_thread`），通过 `action=list|info|create|switch|back|update_title|archive|restore| 控制当前用户的线程树，并可触发 `thread_control` 工作流事件驱动前端同步切换线程。
+- **已移除**：以下 `智能体蜂群`（`agent_swarm` / `swarm_control`）条目随蜂群编排全链路移除，工具不再注册，仅作历史记录；当前协作形态只有 `subagent_control` 子智能体。
 - 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn|batch_send|wait` 管理当前用户“当前智能体以外”的其他智能体。
 - `智能体蜂群` 的 `send`/`batch_send`/`spawn` 默认会复用目标工蜂当前任务线程；当任务线程不存在时会先创建并绑定。若显式传入 `threadStrategy=new_thread`，则会为目标工蜂新建干净线程并将其绑定为新的任务线程；`threadStrategy=task_thread`（或 `reuseThread=true`）则显式要求复用任务线程。`send`/`batch_send` 在显式提供 `sessionKey` 时仍会优先复用指定线程。
 - `智能体蜂群` 新增 `wait` 动作：可直接等待 `run_ids` 结果并返回聚合状态，避免母蜂反复轮询 `status`。
@@ -422,9 +425,7 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
 - 与模型选择相关字段：
   - `configured_model_name`：该智能体显式配置的模型；为空表示跟随默认模型
   - `model_name`：当前生效模型（优先取 `configured_model_name`，否则回退到默认模型）
-- 与蜂群协作相关字段：
-  - `silent`：是否静默；为 `true` 时，用户侧消息中栏和蜂群右侧消息栏默认隐藏该智能体的消息入口/消息项
-  - `prefer_mother`：是否优先作为母蜂；当蜂群未显式设置母蜂时，会优先使用该智能体作为默认母蜂
+- 遗留字段（蜂群编排已移除）：`silent` 与 `prefer_mother` 仅保留存储兼容与旧数据回读，不再影响消息可见性、母蜂选择或任何运行时行为；新智能体按默认值写入即可。
 - 与能力模型相关字段：
   - `ability_items`：结构化能力列表，字段包括 `id/name/runtime_name/display_name/description/input_schema/group/source/kind/owner_id/available/selected`
   - `abilities.items`：与 `ability_items` 等价的嵌套兼容字段
@@ -2991,6 +2992,8 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
 
 ## 2026-03-26 增补：beeroom 实时链路重构与观测
 
+> **已移除**：本节接口属蜂群编排（beeroom / 编排态 / 团队运行）能力，已从引擎与协议层全链路移除，仅作历史记录，不再是接口契约的一部分；当前契约见文末「蜂群编排移除」与「单智能体与唯一云端目录（本次重构）」。
+
 ### `GET /wunder/beeroom/realtime/metrics`
 
 - 方法：`GET`
@@ -3133,6 +3136,8 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
 
 ## 2026-04-13 增补：beeroom 蜂群元数据编辑
 
+> **已移除**：本节接口属蜂群编排（beeroom / 编排态 / 团队运行）能力，已从引擎与协议层全链路移除，仅作历史记录，不再是接口契约的一部分；当前契约见文末「蜂群编排移除」与「单智能体与唯一云端目录（本次重构）」。
+
 ### `POST /wunder/beeroom/groups/{group_id}/mother-session`
 
 - 用途：解析或创建当前蜂群专属的母蜂聊天会话，并在发送前将其绑定为母蜂任务线程；蜂群右栏不得从普通聊天页活动会话或母蜂“最近会话”猜测归属。
@@ -3162,6 +3167,8 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
   - 当蜂群未显式绑定 `mother_agent_id` 时，服务端会优先回退到首个 `prefer_mother=true` 的成员作为默认母蜂。
 
 ## 2026-04-16 增补：beeroom 编排提示词模板
+
+> **已移除**：本节接口属蜂群编排（beeroom / 编排态 / 团队运行）能力，已从引擎与协议层全链路移除，仅作历史记录，不再是接口契约的一部分；当前契约见文末「蜂群编排移除」与「单智能体与唯一云端目录（本次重构）」。
 
 ### `GET /wunder/beeroom/orchestration/prompts`
 

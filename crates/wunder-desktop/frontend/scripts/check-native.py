@@ -22,7 +22,10 @@ class ModelHandler(BaseHTTPRequestHandler):
             return
         count = 600 if last == "native-long" else 2000
         if last == "native-queue-first":
-            count, delta = 80, "测试第一轮"
+            # Long enough that the window can navigate away and back before the
+            # turn settles: the hold is about a thread the engine still runs
+            # while no foreground stream exists here.
+            count, delta = 240, "测试第一轮"
         elif last == "native-queue-second":
             count, delta = 10, "测试第二轮"
         self.send_response(200)

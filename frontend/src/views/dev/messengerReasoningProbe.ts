@@ -36,8 +36,10 @@ export const runMessengerReasoningProbe = async (sessionId: string) => {
   let reasoning = 'reasoning '.repeat(12000);
   applyThreadCompletedItem(chat, sessionId, textItemId, userTurnId, reasoning, 'reasoning');
   await settle(600);
-  // 条目区默认展开由轮次行的「有内容」上报决定；探针直接展开以稳定断言。
-  document.querySelector<HTMLElement>('.timeline-group-head')?.click();
+  // 条目区默认展开由轮次行的「有内容」上报决定；最新一轮的工作过程默认已铺开
+  // （与线上同口径），只能在收起时补点一次，否则会把展开的批次又收起来。
+  const groupHead = document.querySelector<HTMLElement>('.timeline-group-head');
+  if (groupHead && !groupHead.closest('.timeline-group')?.classList.contains('is-open')) groupHead.click();
   await nextTick();
   await settle(60);
   if (!document.querySelector('.tl-thinking')) throw new Error('Thinking row failed to mount');

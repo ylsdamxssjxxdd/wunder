@@ -2481,16 +2481,24 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             }
             return;
         }
-        if state.borrow().active.is_some() && queue::parked_is_full(&state.borrow().parked) {
-            app.set_status("等待发送的轮次已满，请先撤下几条或稍候".into());
-            return;
-        }
         // A running turn owns this thread. The message the user just typed is
         // *not* submitted: it waits locally, above the input box, and goes out
         // when the running turn settles. Sending it now would make the engine
         // park it and paint a second bubble with a「排队中」status the user
         // never asked for.
-        let hold_locally = state.borrow().active.is_some();
+        //
+        // `active` only covers the turn *this window* pumps. A thread can be
+        // running in the engine with no foreground stream here: the user
+        // switched away and came back, the app was restarted, or the runtime
+        // started the successor round of a goal by itself. The durable
+        // snapshot is then the only witness, and it is what the composer's
+        // busy flag carries — deciding on `active` alone sent the message to
+        // the engine, which parked it and painted that second bubble after all.
+        let hold_locally = thread_busy(&app, &state);
+        if hold_locally && queue::parked_is_full(&state.borrow().parked) {
+            app.set_status("等待发送的轮次已满，请先撤下几条或稍候".into());
+            return;
+        }
         if hold_locally && queue::waiting_is_full(&state.borrow().waiting_turns) {
             app.set_status("等待发送的消息已满，请先撤下几条或稍候".into());
             return;
@@ -2598,7 +2606,11 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         // keep showing「等待用户输入」until the new turn ends.
         let settles_inquiry = answered.is_some();
         let submission_cancelled = Arc::new(AtomicBool::new(false));
-        if idle_before_submit {
+        // Only a submission that is really going out takes the fence. A held
+        // message returns below without a worker, and an unanswered fence would
+        // keep the composer in「提交中」and stop the history watcher from
+        // publishing — the thread would look busy forever.
+        if idle_before_submit && !hold_locally {
             state.borrow_mut().submitting = Some(PendingSubmission {
                 session: session.clone(),
                 client_message_id: client_message_id.clone(),
@@ -2969,16 +2981,17 @@ fn echo_image_attachments(
 fn bind_attachments(app: &MainWindow) {
     let weak = app.as_weak();
     app.on_capture_screenshot(move || {
-        // 截图入口固定为「隐藏窗口 + 整屏截图」：点击后不再弹二级菜单。
+        // 截图入口固定为「隐藏窗口 + 区域截图」：点击后不再弹二级菜单，
+        // 但仍要先藏主窗口再冻结整屏，然后弹出选区让用户框选。
         // The composer menu is closed by the same Slint callback that starts
         // the capture. Defer one event-loop turn so its popup and the final
         // composer frame are painted before the main window is hidden. Without
         // this boundary the desktop read can retain the pre-close frame in
-        // the compositor, which looks like a partial ghost in the capture.
+        // the compositor, which looks like a partial ghost in the selector.
         slint::Timer::single_shot(std::time::Duration::from_millis(32), {
             let weak = weak.clone();
             move || {
-                crate::screenshot::capture_fullscreen(weak, true);
+                crate::screenshot::capture(weak, true);
             }
         });
     });
@@ -3229,6 +3242,29 @@ pub(crate) fn waiting_for(_app: &MainWindow, session: &str) -> Vec<queue::Waitin
     })
 }
 
+/// True when the visible thread must be treated as busy: this window pumps its
+/// turn, its submission is still acquiring a lease, or the durable snapshot
+/// shows the engine working in it without a foreground stream here.
+///
+/// The last case is the one the composer used to miss. Losing the live turn
+/// (thread switch, restart, a goal round the runtime started) left `active`
+/// empty while the engine was still running, so the next message went out and
+/// got parked — the「排队中」bubble the local hold exists to prevent.
+fn thread_busy(app: &MainWindow, state: &Rc<RefCell<State>>) -> bool {
+    let pumping = {
+        let st = state.borrow();
+        st.active.is_some()
+            || st
+                .submitting
+                .as_ref()
+                .is_some_and(|pending| !pending.cancelled.load(Ordering::Acquire))
+    };
+    // The flag is only ever set from this thread's own pump or its durable
+    // snapshot, so it cannot describe a different thread. Without a ready
+    // observation it means nothing and must not block a send.
+    pumping || (state.borrow().observation.is_ready() && app.get_busy())
+}
+
 /// True while this thread owns the engine in this window: a running turn, or
 /// a submission still acquiring its lease.
 pub(crate) fn is_running(_app: &MainWindow, session: &str) -> bool {
@@ -3324,7 +3360,10 @@ fn release_next_waiting_turn(app: &MainWindow, state: &Rc<RefCell<State>>) {
         return;
     };
     // The composer is the only path that submits a message in this window, so
-    // the released one goes back through it with its exact payload.
+    // the released one goes back through it with its exact payload. Whatever
+    // the user had already typed in the meantime stays in the box: this can now
+    // fire from the observer while they are writing the next message.
+    let typed = app.get_draft().to_string();
     app.set_draft(turn.content.clone().into());
     app.set_pending_attachments(ModelRc::new(VecModel::from(
         turn.payload
@@ -3337,6 +3376,9 @@ fn release_next_waiting_turn(app: &MainWindow, state: &Rc<RefCell<State>>) {
             .collect::<Vec<_>>(),
     )));
     app.invoke_send_message();
+    if !typed.trim().is_empty() && typed != turn.content {
+        app.set_draft(typed.into());
+    }
 }
 
 /// 撤下/编辑一条还没被引擎受理的消息。它没有引擎队列行，撤下完全在本窗口
@@ -4314,8 +4356,11 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
         state.parked.retain(|entry| entry.session == active_session);
         if state.parked.is_empty() {
             // Nothing left to pump: release the running state and stop
-            // the timer until the next submission.
-            if app.get_busy() {
+            // the timer until the next submission. The durable snapshot may
+            // already show a successor turn (a goal round), and only it can
+            // say so — clearing the flag here would let the next message run
+            // straight into the engine's queue.
+            if app.get_busy() && !state.observation.durable_busy() {
                 app.set_busy(false);
                 app.set_activity_running(false);
             }
@@ -4326,6 +4371,7 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
     let _ = &desktop;
     let started = Instant::now();
     let mut done = false;
+    let mut durable_busy = false;
     let mut dirty = false;
     let mut new_plan_sig: Option<String> = None;
     app.set_stream_max_backlog(
@@ -4523,10 +4569,15 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
         set_session_status(&app, &active.session, active.state(), active.phase);
         app.set_stopping(false);
         // Idle stops the capsule spinner; the plan attributes stay and
-        // reappear with the next turn's flush.
+        // reappear with the next turn's flush. A successor turn the runtime
+        // already started keeps the thread busy, so the durable snapshot has
+        // the last word here too.
+        durable_busy = state.observation.durable_busy();
         if state.parked.is_empty() {
-            app.set_busy(false);
-            app.set_activity_running(false);
+            if !durable_busy {
+                app.set_busy(false);
+                app.set_activity_running(false);
+            }
             state.timer.stop();
         }
         // With parked submissions still waiting the pump keeps running:
@@ -4548,9 +4599,13 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
     if done {
         // The thread is free again: the message the user typed while it was
         // busy can finally go out. It was never submitted, so the engine
-        // cannot have parked it — it simply waited in the composer.
+        // cannot have parked it — it simply waited in the composer. A durable
+        // row that still shows work means the runtime moved on to the next
+        // round, and the observer releases the waiting turn once that settles.
         drop(state);
-        release_next_waiting_turn(&app, &state_ref);
+        if !durable_busy {
+            release_next_waiting_turn(&app, &state_ref);
+        }
     }
 }
 

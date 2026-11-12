@@ -860,11 +860,21 @@ pub fn run_queue(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std
     let started = Instant::now();
     let mut phase = 0;
     let mut held_bubble_seen = false;
+    let mut first_session = String::new();
+    // Every phase gets its own budget: navigating away and back legitimately
+    // takes seconds, and judging that against the run's total clock made the
+    // smoke report a stall while the turn was still streaming.
+    let mut seen_phase = usize::MAX;
+    let mut phase_since = Instant::now();
     timer.start(TimerMode::Repeated, Duration::from_millis(50), move || {
         let Some(app) = weak.upgrade() else { return };
+        if phase != seen_phase {
+            seen_phase = phase;
+            phase_since = Instant::now();
+        }
         let checked = (|| -> Result<bool, Box<dyn std::error::Error>> {
             ensure(
-                started.elapsed() < Duration::from_secs(60),
+                started.elapsed() < Duration::from_secs(150),
                 "queue smoke timed out",
             )?;
             if app.get_chat_loading() || app.get_session_loading() || app.get_creating_session() {
@@ -877,6 +887,7 @@ pub fn run_queue(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std
                 }
                 1 => {
                     ensure(!app.get_active_session_id().is_empty(), "session missing")?;
+                    first_session = app.get_active_session_id().to_string();
                     app.set_draft("native-queue-first".into());
                     app.invoke_send_message();
                     phase = 2;
@@ -886,11 +897,53 @@ pub fn run_queue(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std
                     if !app.get_busy() || app.get_stream_bytes() == 0 {
                         return Ok(false);
                     }
-                    app.set_draft("native-queue-second".into());
-                    app.invoke_send_message();
+                    // Leave the running thread and come back before typing the
+                    // next message. Navigating away drops this window's live
+                    // turn while the engine keeps running, and that is exactly
+                    // the state where the send used to fall through to the
+                    // engine's queue and paint「排队中」.
+                    app.invoke_new_thread();
                     phase = 3;
                 }
                 3 => {
+                    let other = app.get_active_session_id().to_string();
+                    if other.is_empty() || other == first_session {
+                        return Ok(false);
+                    }
+                    let Some(index) = app
+                        .get_conversations()
+                        .iter()
+                        .position(|row| row.id == first_session)
+                    else {
+                        return Ok(false);
+                    };
+                    app.invoke_select_conversation(index as i32);
+                    phase = 4;
+                }
+                4 => {
+                    if app.get_active_session_id() != first_session || app.get_session_loading() {
+                        return Ok(false);
+                    }
+                    // Only the durable snapshot can tell that this returned-to
+                    // thread is still running; without it the send below would
+                    // not be testing anything.
+                    if !app.get_busy() {
+                        if phase_since.elapsed() > Duration::from_secs(25) {
+                            return Err(format!(
+                                "returned-to thread never reported busy; status={:?} busy={} loading={}",
+                                app.get_status(),
+                                app.get_busy(),
+                                app.get_session_loading()
+                            )
+                            .into());
+                        }
+                        return Ok(false);
+                    }
+                    app.set_draft("native-queue-second".into());
+                    app.invoke_send_message();
+                    phase = 5;
+                }
+                5 => {
                     // The second message is held: it is listed above the input
                     // box and echoed as a bare bubble, and the thread's status
                     // is still the first turn's — never「排队中」.
@@ -937,11 +990,11 @@ pub fn run_queue(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std
                     }
                     // The first turn may already have settled on its own; the
                     // held message then goes out at the next pump tick.
-                    phase = 4;
+                    phase = 6;
                 }
-                4 => {
+                6 => {
                     // The first turn settled, so the held message went out.
-                    if started.elapsed() > Duration::from_secs(25) {
+                    if phase_since.elapsed() > Duration::from_secs(60) {
                         let rows: Vec<String> = app
                             .get_timeline()
                             .iter()
@@ -958,15 +1011,20 @@ pub fn run_queue(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std
                     }
                     let strip = app.get_queue_turns().row_count();
                     if strip != 0 {
-                        if started.elapsed() > Duration::from_secs(20) {
+                        if phase_since.elapsed() > Duration::from_secs(50) {
+                            let _ = crate::smoke::snapshot(
+                                &app,
+                                &directory.join("native-queue-stalled.png"),
+                            );
                             let texts: Vec<String> = app
                                 .get_queue_turns()
                                 .iter()
                                 .map(|turn| turn.text.to_string())
                                 .collect();
                             return Err(format!(
-                                "strip still lists {texts:?}; busy={} status={:?}",
+                                "strip still lists {texts:?}; busy={} loading={} status={:?}",
                                 app.get_busy(),
+                                app.get_session_loading(),
                                 app.get_status()
                             )
                             .into());
@@ -1011,7 +1069,7 @@ pub fn run_queue(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std
             return;
         }
         let report = match &checked {
-            Ok(_) => "PASS: a message typed while busy waits in the composer and is sent after the turn settles\n".to_string(),
+            Ok(_) => "PASS: a message typed into a running thread with no foreground stream waits in the composer and is sent after the turn settles\n".to_string(),
             Err(error) => format!("FAIL: queue phase {phase}: {error}\n"),
         };
         *output.borrow_mut() = Some(

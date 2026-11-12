@@ -81,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, shallowRef, triggerRef, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, triggerRef, watch } from 'vue';
 
 import MessageMarkdownBody from './MessageMarkdownBody.vue';
 import MessageTimelineThinkingEntry from './MessageTimelineThinkingEntry.vue';
@@ -127,14 +127,37 @@ const props = defineProps<{
   finalItemId?: string;
   /** 本轮总耗时；空串表示没有可用统计，不渲染。 */
   durationLabel?: string;
+  /**
+   * 是否默认展开：主时间线里「最近的工作过程」由调用方下发（见
+   * `timelineProcessDefault.ts`），第一次打开线程就把最新一轮的过程铺开；
+   * 用户手动收起后不再自动重开。
+   */
+  defaultOpen?: boolean;
 }>();
 
 // 展开状态上报：父组件据此决定流式尾部是否外显（过程区收起时正文已让位，
 // tail 若再不外显，流式期间用户将看不到任何输出）。
 const emit = defineEmits<{ 'open-change': [open: boolean] }>();
 
-const open = ref(false);
+const open = ref(Boolean(props.defaultOpen));
 watch(open, (value) => emit('open-change', value));
+
+/** 展开态需要持久条目：首次铺开就地拉取（默认展开也走同一条路）。 */
+const ensureLoaded = (): void => {
+  if (!open.value || loaded.value || loading.value) return;
+  clearReloadTimer();
+  void load();
+};
+
+// 默认展开只在抬升时生效：一轮不再是最新的那条时不要把它收起来。
+watch(
+  () => Boolean(props.defaultOpen),
+  (value) => {
+    if (!value) return;
+    open.value = true;
+    ensureLoaded();
+  }
+);
 const loading = ref(false);
 const error = ref(false);
 const loaded = ref(false);
@@ -442,7 +465,8 @@ const resetState = (): void => {
   refreshGate.pending = false;
   loadAbort?.abort();
   loadAbort = null;
-  open.value = false;
+  // 虚拟列表复用行：新轮次按它自己的默认开合重新起（最新那一轮仍铺开）。
+  open.value = Boolean(props.defaultOpen);
   loading.value = false;
   error.value = false;
   loaded.value = false;
@@ -465,13 +489,20 @@ const resetState = (): void => {
   lastItemIndex.value = null;
   openKeys.value = new Set();
   fallbackReasoningKey.value = 'projected:0';
-  processBodyRef.value = null;
+  // 展开态沿用（默认展开的行复位后仍铺开）时不要丢掉已挂载的滚动容器引用。
+  if (!open.value) processBodyRef.value = null;
   patchViews.clear();
   structuredViews.clear();
 };
 
 // 轮次身份变化（虚拟列表行复用）即复位；轮次仍在运行时步数会增长，展开态跟随刷新。
-watch(() => [props.sessionId, props.turnId], resetState);
+watch(() => [props.sessionId, props.turnId], () => {
+  resetState();
+  ensureLoaded();
+});
+
+// 默认展开的那一轮（最近的工作过程）进来就拉持久条目，不等用户点开。
+onMounted(ensureLoaded);
 
 // Some legacy row sources do not yet carry `reasoning_item_id`. Their current
 // preview still represents one model round; advance a local identity when its

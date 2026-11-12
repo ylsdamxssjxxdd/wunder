@@ -2540,8 +2540,8 @@
     "zh-CN": "多步任务的进度台账：每次传完整步骤清单，每步都带 status（全量替换，同时只能有一个 in_progress）。每完成一步就带完整清单再调一次；全部做完时再调一次、把每一步都标成 completed，面板才会打钩停下。"
   },
   "tool.spec.question_panel.args.questions": {
-    "en-US": "Questions to ask in this inquiry, 1-4 items. The client shows them one page at a time and the user answers each page. Use a single-element array when there is only one question.",
-    "zh-CN": "本次问询的问题列表，1-4 题。前端按页展示，用户逐题作答；只有一题时也用单元素数组。"
+    "en-US": "The only top-level field. Array of 1-4 questions, each {question, options, multiple?}; use a single-element array for one question. Example: {\"questions\":[{\"question\":\"Which route next?\",\"options\":[\"A\",\"B\"]}]}",
+    "zh-CN": "唯一的顶层字段。问题数组，1-4 题，每项 {question, options, multiple?}；只有一题也用单元素数组。示例：{\"questions\":[{\"question\":\"接下来从哪个方向推进？\",\"options\":[\"甲\",\"乙\"]}]}"
   },
   "tool.spec.question_panel.args.questions.question": {
     "en-US": "Question text shown to the user. One sentence stating what has to be decided; do not list the options here.",
@@ -2568,8 +2568,8 @@
     "zh-CN": "该题是否允许多选，默认单选。"
   },
   "tool.spec.question_panel.description": {
-    "en-US": "Ask the user questions in a panel and end this turn, waiting for the answer. Put every question that needs a user decision in one call instead of asking turn by turn. Mark one option as recommended when there is a preferred route; the user can always type a free-text answer instead of choosing.",
-    "zh-CN": "用问询面板向用户提问并结束本轮，等待用户作答。需要用户拍板的问题一次问完，不要一轮一题。有倾向性时把其中一个选项标为推荐；用户也可以不选项、直接输入自由回答。"
+    "en-US": "Ask the user questions in a panel and end this turn, waiting for the answer. Put every question that needs a user decision in one call instead of asking turn by turn. Mark one option as recommended when there is a preferred route; the user can always type a free-text answer instead of choosing. Arguments are exactly {\"questions\":[{...}]} — do not wrap them in raw/input/arguments, and do not pass a bare string.",
+    "zh-CN": "用问询面板向用户提问并结束本轮，等待用户作答。需要用户拍板的问题一次问完，不要一轮一题。有倾向性时把其中一个选项标为推荐；用户也可以不选项、直接输入自由回答。参数就是 {\"questions\":[{...}]}：不要再包一层 raw/input/arguments，也不要把整份参数写成字符串。"
   },
   "tool.spec.schedule_task.args.action": {
     "en-US": "Action to perform: add, update, remove, enable, disable, get, list, run, or status.",

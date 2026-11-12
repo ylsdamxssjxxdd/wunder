@@ -397,3 +397,37 @@ test('automatic compaction system records render as one process entry', async ({
   });
   expect(result).toEqual({ compaction: true, summary: true });
 });
+
+test('a lone batch round opens its batch row when the caller marks it as the latest process', async ({ page }) => {
+  await page.goto('/__e2e/composer-b4');
+  const result = await page.evaluate(async () => {
+    const source = await (await fetch('/src/components/chat/MessageTimelineBlocks.vue')).text();
+    const runtimeUrl = source.match(/from\s+["']([^"']*\/vue\.js[^"']*)["']/)?.[1];
+    if (!runtimeUrl) throw new Error('Missing fixture Vue runtime');
+    const [{ createApp, h, nextTick }, { default: Blocks }] = await Promise.all([
+      import(runtimeUrl), import('/src/components/chat/MessageTimelineBlocks.vue')
+    ]);
+    const blocks = [
+      { kind: 'activity', id: 'act-1', seq: 1, rows: [{ type: 'reasoning', itemId: 'fixture-turn:text-1', text: 'durable thought', streaming: false }] },
+      { kind: 'body', id: 'body-1', seq: 2, round: 1, text: 'final answer' }
+    ];
+    const read = async (defaultOpen: boolean) => {
+      const host = document.createElement('div');
+      document.body.append(host);
+      const app = createApp({ setup: () => () => h(Blocks, {
+        blocks, workflowItems: [], identityKey: 'fixture-turn', defaultOpen
+      }) });
+      try {
+        app.mount(host); await nextTick(); await nextTick();
+        const group = host.querySelector('.timeline-group');
+        return { open: Boolean(group?.classList.contains('is-open')),
+          entries: host.querySelectorAll('.tl-thinking-head').length };
+      } finally {
+        app.unmount(); host.remove();
+      }
+    };
+    // 单批次轮次没有过程区外壳，批次栏自己就是那行折叠：最新一轮同样铺开。
+    return { latest: await read(true), folded: await read(false) };
+  });
+  expect(result).toEqual({ latest: { open: true, entries: 1 }, folded: { open: false, entries: 0 } });
+});

@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { ChatMockService, MOCK_SESSION } from '../support/chatMockService';
+import { openWorkProcess } from '../support/workProcess';
 
 test('chat and trajectory fetch older pages from scroll edges without a load button', async ({ page }) => {
   test.setTimeout(120_000);
@@ -96,7 +97,7 @@ test('work process crosses the retained window in both directions and keeps its 
     await page.locator('button[type="submit"]').click();
     await page.waitForURL('**/app/**');
     await page.goto(`/app/chat?session_id=${MOCK_SESSION}`);
-    await page.locator('.timeline-turn-process .timeline-process-head').click();
+    await openWorkProcess(page.locator('.timeline-turn-process .timeline-process-head'));
     const body = page.locator('.timeline-turn-process .timeline-process-body');
     await expect(body.locator('[data-process-key]').first()).toBeVisible();
     const readEdge = async (direction: 'item_before' | 'item_after') => {

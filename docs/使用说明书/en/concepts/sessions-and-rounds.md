@@ -68,7 +68,7 @@ A session records only events with timeline value:
 ## Interface Reading
 
 - The chat page shows **one user round per row** (12 per page by default, up to 20), folding everything between the final reply into a "**working process**".
-- The working process is collapsed by default; the first expansion fetches that user round's persistent entries on demand rather than pulling the entire history into the frontend.
+- The most recent round's working process is expanded by default (opening a thread shows what just happened); earlier rounds stay collapsed. Expansion fetches that user round's persistent entries on demand rather than pulling the entire history into the frontend.
 - The entry-by-entry panorama lives in the "**thread trace**" view (80 per page by default, up to 100), with long bodies fetched in 8 KB chunks.
 - The directory list reads the tail of each round (highest user round, that round's state, a recent-activity summary, and the backfill cursor), querying a page of sessions in one batch.
 

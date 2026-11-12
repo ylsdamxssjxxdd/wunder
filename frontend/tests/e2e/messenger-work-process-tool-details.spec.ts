@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { ChatMockService, MOCK_SESSION } from '../support/chatMockService';
+import { openWorkProcess } from '../support/workProcess';
 
 test('work process shows panel, media, plan and fallback details after durable hydration', async ({ page }) => {
   const service = new ChatMockService();
@@ -43,7 +44,7 @@ test('work process shows panel, media, plan and fallback details after durable h
     for (let pass = 0; pass < 2; pass++) {
       if (pass) await page.reload();
       const process = page.locator('.messenger-turn .timeline-turn-process');
-      await process.locator('.timeline-process-head').click();
+      await openWorkProcess(process.locator('.timeline-process-head'));
       const entries = process.locator('.tl-entry');
       await expect(entries).toHaveCount(5);
       for (const [index, expected] of [

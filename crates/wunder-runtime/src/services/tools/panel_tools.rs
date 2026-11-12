@@ -649,6 +649,23 @@ const MAX_QUESTION_PANEL_OPTIONS: usize = 4;
 /// 顶层写成单题（question/options 平铺）时的兼容字段。
 const QUESTION_PANEL_FLAT_QUESTION_KEYS: &[&str] = &["question", "prompt", "title", "header"];
 const QUESTION_PANEL_FLAT_OPTION_KEYS: &[&str] = &["options", "routes", "choices"];
+/// 问题列表本身的键名别名：模型常把 `questions` 写成单数或换成别的集合名，
+/// 多认几个键比让整次调用失败划算。
+const QUESTION_PANEL_LIST_KEYS: &[&str] = &["questions", "question", "items", "ask", "asks"];
+/// 整份参数被写成字符串时的外层键名：文本/XML 协议会把 `<input>` 落成 `input`，
+/// 宽松恢复路径会落成 `raw`。
+const QUESTION_PANEL_WRAPPER_KEYS: &[&str] = &[
+    "raw",
+    "input",
+    "value",
+    "arguments",
+    "args",
+    "payload",
+    "text",
+    "content",
+];
+/// 解不开的整份参数回给模型时，只给这一种示范形态：少一种写法就少一次重试。
+const QUESTION_PANEL_SHAPE_EXAMPLE: &str = r#"{"questions":[{"question":"要决定什么？","options":["甲","乙"]}]}"#;
 
 pub(crate) async fn execute_question_panel_tool(
     context: &ToolContext<'_>,
@@ -709,15 +726,35 @@ struct QuestionPanelParse {
 }
 
 fn normalize_question_panel_questions(args: &Value) -> Result<QuestionPanelParse> {
+    // 先走与计划面板同一套宽松恢复（字符串化包装、漏字符、列表被写成字符串），
+    // 再定位问题列表。调用方的一次编码抖动不该换来一轮重试。
+    let recovery = recover_question_panel_args(&super::recover_tool_args_value(args));
+    if let Some(broken) = recovery.broken.as_ref() {
+        return Err(question_panel_unparsable(broken));
+    }
+    let args = &recovery.value;
     let Some(obj) = args.as_object() else {
         return Err(question_panel_shape_error(format!(
             "没有收到参数对象，实际是 {}",
             value_kind(args)
         )));
     };
-    let raw_items: Vec<Value> = match obj.get("questions") {
-        // questions 存在但不是数组时不要退化成单题：那会把错误指向合成出来的
-        // 字段，让调用方以为自己的 options 写错了。
+    let raw_items: Vec<Value> = match locate_question_panel_list(obj) {
+        // 列表字段是字符串时先当“被写成字符串的列表”解开，解不开再报类型错误：
+        // 模型把整份参数塞进 questions 里是常见抖动，不该让它重发一遍。
+        Some(Value::String(text)) => match embedded_json(text) {
+            Ok(Value::Array(items)) => items,
+            Ok(Value::Object(inner)) if locate_question_panel_list(&inner).is_some() => {
+                return normalize_question_panel_questions(&Value::Object(inner));
+            }
+            _ => {
+                return Err(question_panel_unparsable(&PlanJsonBroken {
+                    wrapper: "questions".to_string(),
+                    error: "里面不是 JSON 数组".to_string(),
+                    snippet: snippet(text),
+                }))
+            }
+        },
         Some(value) if !value.is_array() => {
             return Err(question_panel_shape_error(format!(
                 "questions 必须是数组，实际是 {}",
@@ -792,7 +829,8 @@ fn normalize_question_panel_questions(args: &Value) -> Result<QuestionPanelParse
         let raw_options = record
             .get("options")
             .or_else(|| record.get("routes"))
-            .or_else(|| record.get("choices"));
+            .or_else(|| record.get("choices"))
+            .or_else(|| record.get("option"));
         let option_total = raw_options.map(option_item_count).unwrap_or(0);
         let options = normalize_question_panel_options(raw_options);
         if options.is_empty() {
@@ -811,7 +849,14 @@ fn normalize_question_panel_questions(args: &Value) -> Result<QuestionPanelParse
             .get("multiple")
             .or_else(|| record.get("allow_multiple"))
             .or_else(|| record.get("multi"))
-            .and_then(Value::as_bool)
+            .map(|value| match value {
+                Value::Bool(flag) => *flag,
+                Value::String(text) => matches!(
+                    text.trim().to_lowercase().as_str(),
+                    "true" | "yes" | "1" | "是" | "多选"
+                ),
+                _ => false,
+            })
             .unwrap_or(false);
         questions.push(QuestionPanelQuestion {
             question,
@@ -840,6 +885,180 @@ fn question_panel_options_error(checked: &[&Value], args: &Value) -> anyhow::Err
         });
     }
     question_panel_shape_error_with(details)
+}
+
+/// 问询面板参数的形状容错，与计划面板同一套思路：整份参数被写成字符串
+/// （`input` / `raw` 包装）、问题列表被写成字符串、或直接传一个数组，都应被
+/// 接住；接不住时才落到带示例与键名的可执行报错上。
+struct QuestionPanelRecovery {
+    value: Value,
+    broken: Option<PlanJsonBroken>,
+}
+
+fn recover_question_panel_args(args: &Value) -> QuestionPanelRecovery {
+    match args {
+        Value::String(text) => match embedded_json(text).map(as_question_panel_object) {
+            Ok(Some(value)) => QuestionPanelRecovery {
+                value,
+                broken: None,
+            },
+            Ok(None) => QuestionPanelRecovery {
+                value: Value::Null,
+                broken: Some(PlanJsonBroken {
+                    wrapper: "[arguments]".to_string(),
+                    error: "顶层不是 JSON 对象或数组".to_string(),
+                    snippet: snippet(text),
+                }),
+            },
+            Err(error) => QuestionPanelRecovery {
+                value: Value::Null,
+                broken: Some(PlanJsonBroken {
+                    wrapper: "[arguments]".to_string(),
+                    error,
+                    snippet: snippet(text),
+                }),
+            },
+        },
+        // 裸数组：按问题列表解释，少写一层 `questions`。
+        Value::Array(items) => QuestionPanelRecovery {
+            value: json!({ "questions": items }),
+            broken: None,
+        },
+        Value::Object(map) => {
+            // 列表字段本身就是字符串时交给 normalize_question_panel_questions：
+            // 那里会先尝试解开，解不开才报「里面不是 JSON 数组」。
+            if locate_question_panel_list(map).is_some_and(|value| !value.is_string()) {
+                return recover_question_panel_list(map);
+            }
+            if locate_question_panel_list(map).is_some() {
+                return QuestionPanelRecovery {
+                    value: args.clone(),
+                    broken: None,
+                };
+            }
+            // 整份参数被包了一层字符串：wrapper 之外只允许再带说明字段。
+            if let Some((wrapper, raw)) = map
+                .iter()
+                .find(|(key, _)| QUESTION_PANEL_WRAPPER_KEYS.contains(&key.as_str()))
+                .and_then(|(key, value)| value.as_str().map(|text| (key.clone(), text)))
+            {
+                return match embedded_json(raw).map(as_question_panel_object) {
+                    Ok(Some(Value::Object(mut merged))) => {
+                        for (key, value) in map {
+                            if key == &wrapper {
+                                continue;
+                            }
+                            merged.entry(key.clone()).or_insert_with(|| value.clone());
+                        }
+                        recover_question_panel_list(&merged)
+                    }
+                    Ok(_) => QuestionPanelRecovery {
+                        value: Value::Null,
+                        broken: Some(PlanJsonBroken {
+                            wrapper,
+                            error: "里面不是 JSON 对象或数组".to_string(),
+                            snippet: snippet(raw),
+                        }),
+                    },
+                    Err(error) => QuestionPanelRecovery {
+                        value: Value::Null,
+                        broken: Some(PlanJsonBroken {
+                            wrapper,
+                            error,
+                            snippet: snippet(raw),
+                        }),
+                    },
+                };
+            }
+            QuestionPanelRecovery {
+                value: args.clone(),
+                broken: None,
+            }
+        }
+        _ => QuestionPanelRecovery {
+            value: args.clone(),
+            broken: None,
+        },
+    }
+}
+
+/// 问题列表本身被写成字符串时解开；字符串里其实包着整份参数时按外层参数用。
+fn recover_question_panel_list(map: &serde_json::Map<String, Value>) -> QuestionPanelRecovery {
+    for key in QUESTION_PANEL_LIST_KEYS {
+        let Some(text) = map.get(*key).and_then(Value::as_str) else {
+            continue;
+        };
+        match embedded_json(text) {
+            Ok(Value::Object(inner)) if locate_question_panel_list(&inner).is_some() => {
+                return QuestionPanelRecovery {
+                    value: Value::Object(inner),
+                    broken: None,
+                };
+            }
+            Ok(parsed) if parsed.is_array() => {
+                let mut next = map.clone();
+                next.insert((*key).to_string(), parsed);
+                return QuestionPanelRecovery {
+                    value: Value::Object(next),
+                    broken: None,
+                };
+            }
+            Ok(_) => {
+                return QuestionPanelRecovery {
+                    value: Value::Null,
+                    broken: Some(PlanJsonBroken {
+                        wrapper: (*key).to_string(),
+                        error: "里面不是 JSON 数组".to_string(),
+                        snippet: snippet(text),
+                    }),
+                };
+            }
+            Err(error) => {
+                return QuestionPanelRecovery {
+                    value: Value::Null,
+                    broken: Some(PlanJsonBroken {
+                        wrapper: (*key).to_string(),
+                        error,
+                        snippet: snippet(text),
+                    }),
+                };
+            }
+        }
+    }
+    QuestionPanelRecovery {
+        value: Value::Object(map.clone()),
+        broken: None,
+    }
+}
+
+fn as_question_panel_object(value: Value) -> Option<Value> {
+    match value {
+        Value::Object(_) => Some(value),
+        Value::Array(items) => Some(json!({ "questions": items })),
+        _ => None,
+    }
+}
+
+/// 找到承载问题列表的字段。`questions` 优先，其余别名只在它是数组时才算数，
+/// 避免把单题扁平写法里的 `question` 字符串误当成列表。
+fn locate_question_panel_list(obj: &serde_json::Map<String, Value>) -> Option<&Value> {
+    if let Some(value) = obj.get("questions") {
+        return Some(value);
+    }
+    QUESTION_PANEL_LIST_KEYS
+        .iter()
+        .skip(1)
+        .find_map(|key| obj.get(*key).filter(|value| value.is_array()))
+}
+
+fn question_panel_unparsable(broken: &PlanJsonBroken) -> anyhow::Error {
+    anyhow!(
+        "问询面板参数不可用：字段 {} 里的内容解不开（{}），收到的是 {}。正确形状：{}。",
+        broken.wrapper,
+        broken.error,
+        broken.snippet,
+        QUESTION_PANEL_SHAPE_EXAMPLE
+    )
 }
 
 fn question_panel_shape_error(detail: String) -> anyhow::Error {
@@ -882,6 +1101,7 @@ fn question_panel_problems(items: &[&Value]) -> Vec<String> {
                     .get("options")
                     .or_else(|| record.get("routes"))
                     .or_else(|| record.get("choices"))
+                    .or_else(|| record.get("option"))
                     .map(option_item_count)
                     .unwrap_or(0);
                 if option_count > 0 {
@@ -922,7 +1142,8 @@ fn question_panel_problems(items: &[&Value]) -> Vec<String> {
     details
 }
 
-/// options 既可能是数组，也可能是 `甲|乙` 这样的整串；两种都算数。
+/// options 既可能是数组，也可能是 `甲|乙` 这样的整串，或单个字符串 / 单个对象；
+/// 这些都要算数，否则「只给一个选项」会被误判成缺 options。
 fn option_item_count(value: &Value) -> usize {
     match value {
         Value::Array(items) => items.len(),
@@ -930,6 +1151,7 @@ fn option_item_count(value: &Value) -> usize {
             .split(['|', '，'])
             .filter(|part| !part.trim().is_empty())
             .count(),
+        Value::Object(_) => 1,
         _ => 0,
     }
 }
@@ -953,13 +1175,15 @@ fn first_panel_value(obj: &serde_json::Map<String, Value>, keys: &[&str]) -> Val
 }
 
 fn normalize_question_panel_options(value: Option<&Value>) -> Vec<QuestionPanelOption> {
-    // options 既接受对象/字符串数组，也接受用 | 或，分隔的一整串，少写一层嵌套。
+    // options 既接受对象/字符串数组，也接受用 | 或，分隔的一整串，少写一层嵌套；
+    // 单个字符串或单个对象（只给了一个选项）同样算数。
     let items = match value {
         Some(Value::Array(items)) => items.clone(),
         Some(Value::String(text)) => text
             .split(['|', '，'])
             .map(|part| Value::String(part.trim().to_string()))
             .collect(),
+        Some(Value::Object(_)) => vec![value.cloned().unwrap_or(Value::Null)],
         _ => Vec::new(),
     };
     let mut normalized = Vec::new();
@@ -971,6 +1195,8 @@ fn normalize_question_panel_options(value: Option<&Value>) -> Vec<QuestionPanelO
                     .get("label")
                     .or_else(|| map.get("title"))
                     .or_else(|| map.get("name"))
+                    .or_else(|| map.get("text"))
+                    .or_else(|| map.get("value"))
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string();
@@ -984,7 +1210,16 @@ fn normalize_question_panel_options(value: Option<&Value>) -> Vec<QuestionPanelO
                 let recommended = map
                     .get("recommended")
                     .or_else(|| map.get("preferred"))
-                    .and_then(Value::as_bool)
+                    .or_else(|| map.get("recommend"))
+                    .or_else(|| map.get("is_recommended"))
+                    .map(|value| match value {
+                        Value::Bool(flag) => *flag,
+                        Value::String(text) => matches!(
+                            text.trim().to_lowercase().as_str(),
+                            "true" | "yes" | "1" | "是" | "推荐"
+                        ),
+                        _ => false,
+                    })
                     .unwrap_or(false);
                 (label, description, recommended)
             }
@@ -1279,6 +1514,63 @@ mod tests {
     }
 
     #[test]
+    fn question_panel_recovers_stringified_wrappers_and_bare_arrays() {
+        // 文本/XML 协议下 `<input>` 会落成 {"input": "<json>"}，宽松恢复路径落成 raw。
+        for args in [
+            json!({ "input": "{\"questions\":[{\"question\":\"选哪个\",\"options\":[\"甲\",\"乙\"]}]}" }),
+            json!({ "raw": "```json\n{\"questions\":[{\"question\":\"选哪个\",\"options\":[\"甲\",\"乙\"]}]}\n```" }),
+            json!({ "questions": "[{\"question\":\"选哪个\",\"options\":[\"甲\",\"乙\"]}]" }),
+        ] {
+            let questions = normalize_question_panel_questions(&args)
+                .expect("wrapped payload must be recovered")
+                .questions;
+            assert_eq!(questions.len(), 1);
+            assert_eq!(questions[0].options.len(), 2);
+        }
+
+        // 裸数组按问题列表解释，少写一层 questions。
+        let questions = normalize_question_panel_questions(&json!([
+            { "question": "选哪个", "options": ["甲"] }
+        ]))
+        .expect("bare array")
+        .questions;
+        assert_eq!(questions[0].question, "选哪个");
+    }
+
+    #[test]
+    fn question_panel_accepts_single_option_and_alias_keys() {
+        // 只给一个选项（字符串或对象）不该被当成缺 options。
+        for args in [
+            json!({ "questions": [{ "question": "确认吗", "options": "继续" }] }),
+            json!({ "questions": [{ "question": "确认吗", "options": { "label": "继续" } }] }),
+            json!({ "questions": [{ "question": "确认吗", "option": ["继续"] }] }),
+        ] {
+            let questions = normalize_question_panel_questions(&args)
+                .expect("single option")
+                .questions;
+            assert_eq!(questions[0].options.len(), 1);
+        }
+
+        // 单数键名与字符串布尔值都归一。
+        let questions = normalize_question_panel_questions(&json!({
+            "question": [{ "question": "多选哪些", "options": "甲|乙", "multiple": "true" }]
+        }))
+        .expect("singular list key")
+        .questions;
+        assert!(questions[0].multiple);
+        assert_eq!(questions[0].options.len(), 2);
+    }
+
+    #[test]
+    fn question_panel_unparsable_payload_names_the_field_and_the_shape() {
+        let err = normalize_question_panel_questions(&json!({ "raw": "{oops" }))
+            .expect_err("broken payload");
+        let text = err.to_string();
+        assert!(text.contains("raw"), "{text}");
+        assert!(text.contains("\"questions\""), "{text}");
+    }
+
+    #[test]
     fn question_panel_still_reads_legacy_flat_payload() {
         let questions = normalize_question_panel_questions(&json!({
             "question": "旧版单题",
@@ -1376,19 +1668,30 @@ mod tests {
         let err = normalize_question_panel_questions(&json!({ "raw": "{oops" }))
             .expect_err("unparsed payload");
         let text = err.to_string();
-        assert!(text.contains("缺少 questions 数组"), "{}", text);
-        assert!(text.contains("raw"), "{}", text);
+        assert!(text.contains("raw"), "{text}");
+        assert!(text.contains("解不开"), "{text}");
+        assert!(text.contains("\"questions\""), "{text}");
 
+        // 整份参数是普通字符串（不是 JSON）：报错要说清收到的是字符串。
         let err = normalize_question_panel_questions(&json!("甲|乙")).expect_err("not an object");
-        assert!(err.to_string().contains("字符串"), "{}", err);
+        let text = err.to_string();
+        assert!(text.contains("收到的是 甲|乙"), "{text}");
+        assert!(text.contains("正确形状"), "{text}");
     }
 
     #[test]
     fn question_panel_rejects_non_array_questions() {
+        // 列表字段是纯文本（不是 JSON）时，报错要指向该字段并说明里面解不开。
         let err = normalize_question_panel_questions(&json!({ "questions": "要问什么？" }))
             .expect_err("questions is a string");
         let text = err.to_string();
-        assert!(text.contains("必须是数组"), "{}", text);
+        assert!(text.contains("questions"), "{text}");
+        assert!(text.contains("解不开"), "{text}");
+
+        // 数字之类的非数组、非字符串仍然按类型错误报。
+        let err = normalize_question_panel_questions(&json!({ "questions": 3 }))
+            .expect_err("questions is a number");
+        assert!(err.to_string().contains("必须是数组"), "{err}");
     }
 
     #[test]

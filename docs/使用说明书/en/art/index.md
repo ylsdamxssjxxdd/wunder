@@ -12,7 +12,7 @@ These sheets focus on Desktop, the local AI workbench, while also covering CLI, 
 - Drag with the primary mouse button or one finger. Fit width, fit window, 100%, zoom and previous/next navigation are available. Arrow keys pan, `+/-` zoom, `0` resets and Esc closes.
 - Large images embedded on this page also pan directly. The normal wheel scrolls the document; Ctrl/Command + wheel zooms the image. Raw SVG links remain available without JavaScript.
 - Every sheet follows “real UI → functional structure → state presentation → dimensions and behavior”. Control interaction states and task lifecycle states are separate, and proposals are never drawn as current behavior.
-- The Desktop help manual embeds raster previews so no SVG renderer is needed. CLI sheets are not included in that manual.
+- The Desktop help manual embeds one real interface screenshot instead of design sheets, so no SVG renderer is needed. CLI sheets are not included in that manual.
 
 ## 00 Overview
 
@@ -150,15 +150,11 @@ After editing an SVG, run once from the repository root:
 python scripts/sync_art.py
 ```
 
-It performs three steps:
+It rebuilds the docs site, publishing SVGs to `web/docs/art` (Desktop) and `web/docs/art/servo` (CLI), copying the unified gallery and viewer assets, and embedding the app icon as a data URI in published SVGs.
 
-1. Renders the Desktop SVGs into 1200px PNGs under `crates/wunder-desktop/frontend/assets/help/art` for desktop help.
-2. Rebuilds the Chinese and English manual JSON from those images.
-3. Rebuilds the docs site, publishing SVGs to `web/docs/art` (Desktop) and `web/docs/art/servo` (CLI), copying the unified gallery and viewer assets, and embedding the app icon as a data URI in published SVGs.
+The web side updates immediately after rebuilding. The Desktop help no longer embeds design-sheet previews: it ships one real interface screenshot at `crates/wunder-desktop/frontend/assets/help/art/ui-overview.png`. That image is not produced by this flow; replace it directly and recompile the desktop app, which embeds it with `include_bytes!`.
 
-The web side updates immediately after rebuilding. The desktop app must be recompiled because its previews are embedded with `include_bytes!`.
-
-When adding or removing a Desktop sheet, update `SHEETS` in `scripts/render_art_previews.py`, `ART_TOPICS` in `scripts/build_help_manual.py`, the sheet data in `docs/wunder美术设计稿/index.html`, and this page. Do not edit generated PNGs manually.
+When adding or removing a Desktop sheet, update the sheet data in `docs/wunder美术设计稿/index.html` and this page; no in-app assets are involved.
 
 For CLI changes, update the unified gallery data, this page and `docs/wunder美术设计稿/舵机/README.md`; no in-app assets are involved.
 

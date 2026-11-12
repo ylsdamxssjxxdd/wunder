@@ -38,6 +38,7 @@
         :controller="controller"
         :turn="row"
         :session-id="sessionId"
+        :default-process-open="isLatestProcessTurn(row.key, latestProcessTurnKey)"
       />
     </div>
 
@@ -64,7 +65,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessengerTurnRow from './MessengerTurnRow.vue';
 import { openThreadViewDetached } from '@/stores/threadViewLoader';
@@ -80,6 +81,7 @@ import {
   type ViewSlot
 } from '@/realtime/chat/threadViewStore';
 import { buildTranscriptTurnRows } from '../controller/legacyTurnRowAdapter';
+import { isLatestProcessTurn, resolveLatestProcessTurnKey } from '@/components/chat/timelineProcessDefault';
 import { chatQueueForSession } from '@/stores/chatQueueState';
 import { isParkedQueueTurn } from '@/stores/chatQueueProjection';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
@@ -165,6 +167,17 @@ const rows = computed(() => {
   return buildTranscriptTurnRows(getSessionMessages(props.sessionId));
 });
 const contextMessages = computed(() => rows.value.flatMap((row) => [row.user.message, row.assistant.message]));
+// 分屏沿用主时间线的默认展开口径：只有最新一条带工作过程的轮次铺开。
+// 同主时间线：用 watch + shallowRef 而不是 computed，避免逐字帧让整列行失效。
+const latestProcessTurnKey = shallowRef('');
+watch(
+  () => rows.value,
+  (list) => {
+    const next = resolveLatestProcessTurnKey(list);
+    if (next !== latestProcessTurnKey.value) latestProcessTurnKey.value = next;
+  },
+  { immediate: true }
+);
 const draftKey = computed(() =>
   `messenger:agent:${props.controller.resolveCurrentUserScope()}:conversation:${props.sessionId}`
 );

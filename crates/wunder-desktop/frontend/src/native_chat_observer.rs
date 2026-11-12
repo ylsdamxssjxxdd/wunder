@@ -124,6 +124,20 @@ impl Observation {
         self.ready
     }
 
+    /// The durable snapshot still shows work in this thread. Unlike the
+    /// foreground pump, it survives losing the live stream (thread switch, app
+    /// restart) and covers a successor round the runtime started on its own, so
+    /// it is the only honest answer to "is this thread busy?" when no local turn
+    /// is being pumped.
+    pub(super) fn durable_busy(&self) -> bool {
+        self.turns.iter().any(|turn| {
+            matches!(
+                turn.assistant.stats_status.as_str(),
+                "正在生成…" | "正在排队"
+            ) || turn.assistant.stats_status.starts_with("正在排队 ·")
+        })
+    }
+
     /// The durable turns this observer currently holds, for projections that
     /// live outside the history model (the composer's inquiry card).
     pub(super) fn durable_turns(&self) -> &[NativeChatTurn] {
@@ -424,6 +438,12 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                 .submitting
                 .as_ref()
                 .is_some_and(|pending| pending.session == session);
+        // Read before the observation borrow below splits `current`.
+        let waiting_here = current
+            .waiting_turns
+            .iter()
+            .any(|turn| turn.session == session);
+        let mut release_waiting = false;
         let mut reconciled_history = false;
         let observation = &mut current.observation;
         let mut dirty = false;
@@ -540,12 +560,7 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
             observation.rows = project_history(&observation.turns);
             observation.publish(&app, &timeline, local_busy);
             reconciled_history = true;
-            let durable_busy = observation.turns.iter().any(|turn| {
-                matches!(
-                    turn.assistant.stats_status.as_str(),
-                    "正在生成…" | "正在排队"
-                ) || turn.assistant.stats_status.starts_with("正在排队 ·")
-            });
+            let durable_busy = observation.durable_busy();
             // A durable snapshot can lag the foreground stream by one
             // commit. Never let that lag clear the local busy indicator or
             // stop the composer while the stream/parked hand-off is live.
@@ -575,6 +590,12 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
             if finished {
                 crate::workspace_files::execution_finished(&app, desktop.clone());
             }
+            // The thread just went quiet while this window held messages for
+            // it: send the oldest one. The foreground pump does this on its own
+            // `done`, but a turn this window never pumped (a returned-to thread
+            // or a runtime-started successor round) settles here and nowhere
+            // else, and its held message would otherwise wait forever.
+            release_waiting = !busy && waiting_here;
             if !busy {
                 app.set_stopping(false);
             }
@@ -595,6 +616,9 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
         }
         let queue_due = queue_active && queue::due_arrived(&mut current.queue_due);
         drop(current);
+        if release_waiting {
+            crate::native_chat::release_next_waiting_turn(&app, &state);
+        }
         if drain_again {
             let weak = app.as_weak();
             slint::Timer::single_shot(Duration::ZERO, move || {

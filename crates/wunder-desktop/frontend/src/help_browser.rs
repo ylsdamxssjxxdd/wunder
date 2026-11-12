@@ -45,7 +45,7 @@ pub struct Topic {
     pub title: String,
     /// 侧栏一级分区：start / tools / interface / capabilities。
     pub block: String,
-    /// 侧栏二级分组名（入门 / 核心能力 / 美术 / 参考 …）。
+    /// 侧栏二级分组名（入门 / 核心能力 / 界面 / 参考 …）。
     pub group: String,
     pub keywords: Vec<String>,
     /// 主题的 Markdown 正文，不含元数据行。
@@ -177,27 +177,19 @@ fn searchable_text(topic: &Topic) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// 美术图册：预览图按需解码
+// 手册配图：真实界面截图按需解码
 // ---------------------------------------------------------------------------
 
-/// 预览图随应用内嵌；Markdown 里写成 `![alt](art/<slug>.png)`。
-fn art_preview(slug: &str) -> Option<&'static [u8]> {
+/// 配图随应用内嵌；Markdown 里写成 `![alt](art/<slug>.png)`。
+/// 手册只放真实界面截图，不再内嵌美术设计稿预览。
+fn help_image(slug: &str) -> Option<&'static [u8]> {
     Some(match slug {
-        "00-overview" => include_bytes!("../assets/help/art/00-overview.png"),
-        "01-foundations" => include_bytes!("../assets/help/art/01-foundations.png"),
-        "02-icons" => include_bytes!("../assets/help/art/02-icons.png"),
-        "03-shell-sidebar" => include_bytes!("../assets/help/art/03-shell-sidebar.png"),
-        "04-timeline" => include_bytes!("../assets/help/art/04-timeline.png"),
-        "05-process-tools" => include_bytes!("../assets/help/art/05-process-tools.png"),
-        "06-plan-inquiry" => include_bytes!("../assets/help/art/06-plan-inquiry.png"),
-        "07-composer" => include_bytes!("../assets/help/art/07-composer.png"),
-        "08-settings-dialogs" => include_bytes!("../assets/help/art/08-settings-dialogs.png"),
-        "09-states-motion" => include_bytes!("../assets/help/art/09-states-motion.png"),
+        "ui-overview" => include_bytes!("../assets/help/art/ui-overview.png"),
         _ => return None,
     })
 }
 
-/// 手册一次只显示一页，缓存最近一张解码图就够，避免整套图册常驻内存。
+/// 手册一次只显示一页，缓存最近一张解码图就够，避免整套配图常驻内存。
 #[derive(Default)]
 struct ArtCache {
     slug: String,
@@ -211,7 +203,7 @@ impl ArtCache {
         if let Some(image) = self.image.as_ref().filter(|_| self.slug == slug) {
             return Some((image.clone(), self.width, self.height));
         }
-        let decoded = image::load_from_memory(art_preview(slug)?).ok()?.to_rgba8();
+        let decoded = image::load_from_memory(help_image(slug)?).ok()?.to_rgba8();
         let (width, height) = decoded.dimensions();
         let buffer = slint::SharedPixelBuffer::clone_from_slice(decoded.as_raw(), width, height);
         let image = slint::Image::from_rgba8(buffer);
@@ -736,7 +728,7 @@ mod tests {
                         .collect::<String>()
                         .trim_end_matches(".png")
                         .to_string();
-                    assert!(art_preview(&slug).is_some(), "预览图资源不存在: {slug}");
+                    assert!(help_image(&slug).is_some(), "配图资源不存在: {slug}");
                 }
             }
         }
@@ -795,27 +787,27 @@ mod tests {
     }
 
     #[test]
-    fn art_sheet_images_are_hydrated() {
+    fn help_screenshot_image_is_hydrated() {
         let _ui = crate::test_support::lock();
         crate::register_bundled_font().expect("注册内嵌字体");
         let manual = Manual::load(true);
         let topic = manual
             .topics
             .iter()
-            .find(|topic| topic.id == "art-overview")
-            .expect("缺少美术图册主题");
+            .find(|topic| topic.id == "ui-screenshot")
+            .expect("缺少界面实拍主题");
         let mut art = ArtCache::default();
         let rows = project_topic(topic, &mut art);
         let images: Vec<_> = rows
             .iter()
             .filter(|row| row.kind == crate::md::block::IMAGE)
             .collect();
-        assert_eq!(images.len(), 1, "美术主题应带一张预览图");
+        assert_eq!(images.len(), 1, "界面实拍主题应带一张真实截图");
         assert!(images[0].image.size().width > 700);
         assert!(images[0].image_height > 500.0);
         assert!(
-            rows.iter().any(|row| row.plain.contains("1462×866")),
-            "图注应进入正文"
+            rows.iter().any(|row| row.plain.contains("侧栏")),
+            "正文文本应完整进入块的纯文本投影"
         );
     }
 

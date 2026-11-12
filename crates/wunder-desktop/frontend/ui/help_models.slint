@@ -21,7 +21,7 @@ export struct HelpEntry {
     topic: int,
     title: string,
     detail: string,
-    // 所属二级分组名（入门 / 核心能力 / 美术 / 参考 …）；索引与搜索结果为空。
+    // 所属二级分组名（入门 / 核心能力 / 界面 / 参考 …）；索引与搜索结果为空。
     group: string,
 }
 
@@ -61,7 +61,7 @@ export struct HelpRect {
     radius: float,
 }
 
-// 美术图册的预览图：按排版后的绝对位置绘制，和文字共用同一套缩放坐标。
+// 手册配图（真实界面截图）：按排版后的绝对位置绘制，和文字共用同一套缩放坐标。
 export struct HelpImage {
     x: float,
     y: float,

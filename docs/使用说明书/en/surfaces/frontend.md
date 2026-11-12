@@ -76,7 +76,7 @@ The Cloud's settings hang off the chat page as categories and share the same bac
 
 ## Timeline and status
 
-- Below each reply, "Work process" folds away intermediate thinking, tool batches, and interim output
+- Below each reply, "Work process" folds away intermediate thinking, tool batches, and interim output; the most recent round is expanded by default and earlier rounds stay folded
 - Status: 🔄 Running / ⏳ Waiting (needs your input or approval) / ✅ Complete
 - Context usage and duration belong to the model request that issued the tool; tools running in parallel within one request share the same numbers and are not added up per entry
 - Very fast calls may show `0ms`; failed and cancelled calls also record their duration

@@ -6,13 +6,19 @@
       <div class="messenger-chat-empty-icon"><i class="fa-regular fa-comments" aria-hidden="true"></i></div>
       <div class="messenger-chat-empty-title">{{ text('还没有消息，发送第一条消息开始工作。', 'No messages yet. Send the first message to start.') }}</div>
     </div>
-    <MessengerTurnRow v-for="slot in slots" :key="slot.key" :controller="props.controller" :turn="slot" />
+    <MessengerTurnRow
+      v-for="slot in slots"
+      :key="slot.key"
+      :controller="props.controller"
+      :turn="slot"
+      :default-process-open="isLatestProcessTurn(slot.key, latestProcessTurnKey)"
+    />
     <p v-if="status" class="remote-thread-status" role="status">{{ status }}</p>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
 import { useI18n } from '@/i18n';
 import { resolveAccessToken } from '@/api/requestAuth';
 import { resolveApiBase } from '@/config/runtime';
@@ -21,6 +27,7 @@ import { remoteThreadModel, remoteHistoryItems, type RemoteThreadItem } from './
 import MessengerTurnRow from '@/views/messenger/sections/MessengerTurnRow.vue';
 import type { MessengerControllerContext } from '@/views/messenger/controller/messengerControllerContext';
 import { buildChatThreadTurnSlots } from '@/realtime/chat/chatThreadProjection';
+import { isLatestProcessTurn, resolveLatestProcessTurnKey } from '@/components/chat/timelineProcessDefault';
 
 type RemoteThreadAttachment = {
   name?: unknown;
@@ -48,6 +55,18 @@ const slots = computed(() => {
     assistant: { key: `${slot.key}:assistant`, sourceIndex: index * 2 + 1, message: normalizeProjectionMessage(slot.assistant) }
   }));
 });
+
+// 远端线程预览沿用主时间线的默认展开口径：最新一条带工作过程的轮次铺开。
+// 同主时间线：用 watch + shallowRef 而不是 computed，避免逐字帧让整列行失效。
+const latestProcessTurnKey = shallowRef('');
+watch(
+  () => slots.value,
+  (list) => {
+    const next = resolveLatestProcessTurnKey(list);
+    if (next !== latestProcessTurnKey.value) latestProcessTurnKey.value = next;
+  },
+  { immediate: true }
+);
 
 const normalizeProjectionMessage = (message: Record<string, unknown>): Record<string, any> => {
   // MessengerAgentBubble consumes the legacy runtime field names while the

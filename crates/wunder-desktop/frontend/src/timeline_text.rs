@@ -84,7 +84,7 @@ pub fn target_of(title: &str, detail: &str, sections: &[NativeWorkflowSection]) 
     let patch = is_patch_tool(title);
     if patch {
         if let Some(section) = sections.iter().find(|section| section.kind == "patch") {
-            return (short(&section.title, 64), true);
+            return (target_text(&section.title), true);
         }
     }
     if matches!(
@@ -95,7 +95,26 @@ pub fn target_of(title: &str, detail: &str, sections: &[NativeWorkflowSection]) 
     }
     let mut lines = detail.lines();
     let _action = lines.next();
-    (short(lines.next().unwrap_or_default(), 64), patch)
+    (target_text(lines.next().unwrap_or_default()), patch)
+}
+
+/// The call target as the chip acts on it. A path is never cut: a character
+/// budget slices it mid-segment, which for the chip's file-name label reads as
+/// a stray fragment ("…/tools/pa") and for opening the resource is plain
+/// broken. Only a non-path value (a query, a one-line description) is bounded,
+/// and that cut is marked so it cannot pass for the whole text.
+fn target_text(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.contains(['/', '\\']) {
+        return trimmed.to_string();
+    }
+    const TEXT_LIMIT: usize = 240;
+    if trimmed.chars().count() <= TEXT_LIMIT {
+        return trimmed.to_string();
+    }
+    let mut kept: String = trimmed.chars().take(TEXT_LIMIT).collect();
+    kept.push('…');
+    kept
 }
 
 pub fn tool_target(entry: &NativeWorkflowEntry) -> (String, bool) {
@@ -884,6 +903,28 @@ mod tests {
     }
 
     #[test]
+    fn a_deep_path_target_keeps_the_file_name_whole() {
+        // A 64-character budget used to slice this path mid-segment, so the
+        // chip printed the fragment "pa" instead of "panel_tools.rs".
+        let path = "/home/fixture/wunder/crates/wunder-runtime/src/services/tools/panel_tools.rs";
+        assert!(path.chars().count() > 64);
+        let section = NativeWorkflowSection {
+            title: path.into(),
+            kind: "patch".into(),
+            ..Default::default()
+        };
+        let (target, patch) = target_of("文本编辑", "", &[section]);
+        assert!(patch);
+        assert_eq!(target, path);
+        assert_eq!(target_label(&target), "panel_tools.rs");
+        // A non-path target (a query) is still bounded, and says so.
+        let long = "查".repeat(300);
+        let (target, _) = target_of("搜索内容", &format!("搜索 · 完成\n{long}"), &[]);
+        assert!(target.ends_with('…'), "{}", target.len());
+        assert_eq!(target.chars().count(), 241);
+    }
+
+    #[test]
     fn chip_label_fits_the_printed_width_instead_of_the_renderer_eliding_it() {
         // A short name is printed whole.
         assert_eq!(fit_chip_label("main.rs", false), "main.rs");
@@ -1005,8 +1046,9 @@ mod tests {
         entry.preview = "a".repeat(200);
         let (target, _) = tool_target(&entry);
         assert_eq!(tool_row_summary(&entry, &target), "");
-        // The chip clips a long path while the preview keeps it whole; the
-        // clipped prefix is still the same resource and must not print again.
+        // A long path reaches the row whole: clipping it here turned the chip's
+        // file name into a fragment ("…/tools/pa") and left open-resource with
+        // a path that cannot be opened. The chip shortens only what it prints.
         let long = format!("fixture/{}.rs", "a".repeat(90));
         entry.title = "文本编辑".into();
         entry.preview = long.clone();
@@ -1016,8 +1058,7 @@ mod tests {
             ..Default::default()
         }];
         let (target, _) = tool_target(&entry);
-        assert_eq!(target.chars().count(), 64);
-        assert!(long.starts_with(target.as_str()));
+        assert_eq!(target, long);
         assert_eq!(tool_row_summary(&entry, &target), "");
         // An unrelated summary is kept.
         entry.title = "read_file".into();

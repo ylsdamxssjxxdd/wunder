@@ -32,7 +32,7 @@
 1. 使用统一画廊直接拖动大 SVG；支持适宽、适窗、100%、缩放、键盘与离线打开。
 2. 改稿优先复用每页 `<defs>` 的图形与 `01` 的 token，不在页面里发明新的灰色、字号或控件状态。
 3. 需要落地到代码时，仍以 `crates/wunder-desktop/frontend/ui/design_tokens.slint` 为唯一变量来源；本稿不是运行时代码。
-4. 改完运行 `python scripts/sync_art.py`，刷新 Web 文档、统一画廊与蛹内嵌预览图。
+4. 改完运行 `python scripts/sync_art.py`，刷新 Web 文档与统一画廊。
 5. 生产图标本就混用 Font Awesome 实心与仓库线性 SVG，不得再写成“统一 1.7px 线性重绘”。新增或替换图标必须核对真实资产、viewBox、光学尺寸与 colorize 行为。
 
 ## 核心布局与控件事实
@@ -89,5 +89,5 @@
 
 - 所有分页使用 Edge 按原始 1600px 宽渲染，检查文字溢出、卡片遮挡、真实图标与状态。
 - 源文件保留 `assets/app-icon.png` 外链；发布时 `build_docs_site.py` 自动内嵌为 data URI，避免 `<img>` 加载时丢失嵌套资源。
-- 蛹帮助手册使用 `render_art_previews.py` 生成的 1200px PNG，输出只在 `crates/wunder-desktop/frontend/assets/help/art`；不要手工编辑生成图。
+- 桌面版帮助已不再内嵌本稿预览图，改为真实界面截图 `crates/wunder-desktop/frontend/assets/help/art/ui-overview.png`；本稿只服务设计对照与文档站画廊。
 - 若在 Inkscape/Figma 中编辑，保留 `defs` 与命名分组；避免将文字转曲，除非确定不再修改文案。
