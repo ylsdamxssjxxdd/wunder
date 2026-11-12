@@ -264,6 +264,8 @@ export component MainWindow inherits Window {
     // ---- status dock (plan capsule above the goal banner) ----
     // The dock only exists while the active thread has a published plan.
     in-out property <bool> activity-running: false;
+    // 计划全部完成：胶囊打钩并停住，不再跟着新一轮的 phase 转。
+    in-out property <bool> activity-plan-complete: false;
     in-out property <int> activity-steps-done: 0;
     in-out property <int> activity-steps-total: 0;
     in-out property <string> activity-plan-explanation;
@@ -1494,6 +1496,7 @@ export component MainWindow inherits Window {
                             }
                             if root.activity-steps-total > 0 : StatusDock {
                                 running: root.activity-running;
+                                plan-complete: root.activity-plan-complete;
                                 steps-done: root.activity-steps-done;
                                 steps-total: root.activity-steps-total;
                                 plan-explanation: root.activity-plan-explanation;

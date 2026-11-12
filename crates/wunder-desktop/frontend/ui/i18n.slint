@@ -1243,6 +1243,8 @@ export global I18n {
     out property <string> st_cl_queue_suffix: zh ? " 人" : " ahead";
     out property <string> dock_steps: zh ? "步骤" : "Steps";
     out property <string> dock_plan_title: zh ? "计划" : "Plan";
+    // 计划全部完成后的胶囊文案：条目打钩停住，不再跟着新一轮转。
+    out property <string> dock_plan_done: zh ? "已完成" : "Done";
     out property <string> runtime_status_await: zh ? "模型响应中" : "Waiting for the model";
     out property <string> runtime_status_queue: zh ? "模型请求正在排队" : "Model request queued";
     out property <string> dock_demo_explain: zh ? "已根据目标拆解为以下步骤，将逐项执行并汇报。" : "The goal is broken into the steps below; they run one by one and report back.";
@@ -1290,7 +1292,6 @@ export global I18n {
     out property <string> tl_status_requesting: zh ? "请求中" : "Requesting";
     out property <string> tl_status_running: zh ? "处理中" : "Processing";
     out property <string> tl_process_loading: zh ? "正在加载…" : "Loading…";
-    out property <string> tl_process_older: zh ? "加载更早的步骤" : "Load earlier steps";
     out property <string> tl_process_retry: zh ? "加载失败，重试" : "Loading failed. Retry";
     out property <string> tl_md_image_loading: zh ? "图片加载中…" : "Loading image…";
     out property <string> tl_md_image_error: zh ? "图片加载失败 · " : "Image failed to load · ";

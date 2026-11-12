@@ -155,6 +155,11 @@ struct SearchParams {
     output_budget_bytes: Option<usize>,
     /// `mode=paths`：只回文件清单，不回逐行命中（等价 rg -l）。
     files_only: bool,
+    /// 排除规则（rg `--glob '!x'` 语义）。空表示不排除。
+    exclude_patterns: Vec<String>,
+    /// 是否把二进制文件也当文本搜。默认关闭：正常代码检索不该被媒体文件拖慢，
+    /// 但「在 mp4 里找 ftyp」这类需求必须能显式打开，否则只能报 0 命中。
+    search_binary: bool,
 }
 
 #[derive(Debug, Copy, Clone, Default)]
@@ -346,6 +351,23 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         }
     };
 
+    let exclude_filter = match SearchExcludeFilter::new(&params.exclude_patterns) {
+        Ok(value) => value,
+        Err(err) => {
+            return Ok(build_failed_tool_result(
+                err.to_string(),
+                json!({ "exclude": params.exclude_patterns }),
+                ToolErrorMeta::new(
+                    "TOOL_SEARCH_INVALID_EXCLUDE",
+                    Some("exclude 接受 glob 字符串或字符串数组，例如 \"*.log\" 或 [\"renders\", \"*.min.js\"]。".to_string()),
+                    false,
+                    None,
+                ),
+                false,
+            ));
+        }
+    };
+
     let attempts = match build_search_attempts(&params) {
         Ok(value) => value,
         Err(err) => {
@@ -426,6 +448,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
             &params,
             attempt,
             file_filter.as_ref(),
+            exclude_filter.as_ref(),
             unrestricted_paths,
             deadline,
             &rg_launch_candidates,
@@ -522,6 +545,10 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
     }
     let (hits, output_budget_hit) =
         limit_hits_by_output_budget(hits, params.output_budget_bytes, params.context_match_limit);
+    // 命中被 max_matches / 输出预算截掉时，调用方必须知道「还有更多」，否则只能
+    // 把 max_matches 一路调大去猜。这里给出可续取的位置与剩余量。
+    let match_limit_reached = match_limit_hit || hits.len() >= params.max_matches;
+    let has_more = match_limit_reached && !hits.is_empty();
     let matched_files = collect_matched_files(&hits);
     let matched_file_count = matched_files.len();
     let returned_match_count = hits.len();
@@ -556,6 +583,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
             candidate_limit_hit,
             output_budget_hit,
         },
+        has_more,
         min_matched_terms,
         elapsed_ms,
     ))
@@ -616,6 +644,8 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
         .map(|value| value.clamp(MIN_OUTPUT_BUDGET_BYTES, MAX_OUTPUT_BUDGET_BYTES));
     let (engine, engine_explicit) = parse_search_engine(args);
     let files_only = parse_files_only(args);
+    let exclude_patterns = parse_search_excludes(args);
+    let search_binary = parse_search_binary(args);
 
     Ok(SearchParams {
         query,
@@ -637,7 +667,25 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
         engine_explicit,
         output_budget_bytes,
         files_only,
+        exclude_patterns,
+        search_binary,
     })
+}
+
+/// `search_binary=true`（别名 `binary`/`-a`/`text`）把二进制文件按文本扫描。
+fn parse_search_binary(args: &Value) -> bool {
+    for key in ["search_binary", "binary", "text"] {
+        if let Some(flag) = args.get(key).and_then(parse_optional_bool_value) {
+            return flag;
+        }
+    }
+    args.get("-a").and_then(parse_optional_bool_value).unwrap_or(false)
+}
+
+/// `exclude`（也接受 `excludes`）统一走 fs_walk 的解析，和 `文件名匹配` 保持同一套
+/// 写法：字符串、逗号/分号/换行分隔，或字符串数组。
+fn parse_search_excludes(args: &Value) -> Vec<String> {
+    super::fs_walk::parse_exclude_patterns(args).unwrap_or_default()
 }
 
 /// `mode=paths|files|files_only` 或 `files_only=true`：只要文件清单。
@@ -848,6 +896,11 @@ fn normalize_context_window(raw: Option<u64>) -> usize {
 }
 
 fn split_file_patterns(raw: &str) -> Vec<String> {
+    // 花括号里的逗号是「或」分隔符，不是模式分隔符：`*.rs,md}` 必须整体保留，
+    // 否则会被拆成 `*.rs` 和 `md}` 两个坏模式。
+    if let Some(expanded) = expand_braced_list(raw) {
+        return expanded;
+    }
     raw.split([',', ';', '\n'])
         .map(str::trim)
         .filter(|item| !item.is_empty())
@@ -855,22 +908,85 @@ fn split_file_patterns(raw: &str) -> Vec<String> {
         .collect::<Vec<_>>()
 }
 
+/// 整串就是一个花括号列表时直接展开：`src/**/*.{rs,ts}` → 两个模式。
+/// 返回 None 表示不是这种形态，交给普通的逗号分隔处理。
+fn expand_braced_list(raw: &str) -> Option<Vec<String>> {
+    let trimmed = raw.trim();
+    let open = trimmed.find('{')?;
+    let close = trimmed.rfind('}')?;
+    if close < open {
+        return None;
+    }
+    // 花括号外还有分隔符说明这是多个模式混写，交给普通拆分。
+    let outside = format!("{}{}", &trimmed[..open], &trimmed[close + 1..]);
+    if outside.contains(',') || outside.contains(';') {
+        return None;
+    }
+    let expanded = expand_brace_patterns(trimmed);
+    if expanded.len() <= 1 && expanded.first().is_some_and(|item| item == trimmed) {
+        return None;
+    }
+    Some(expanded)
+}
+
+/// 花括号展开：`*.rs,md}` → `*.rs`、`*.md`。
+///
+/// ripgrep 原生支持花括号，globset 不支持；不展开就直接报「无效的 glob 模式」，
+/// 调用方只会以为这个工具坏了。只处理一层、不做嵌套展开——够覆盖实际写法，
+/// 也不会把畸形输入放大成指数级模式。
+fn expand_brace_patterns(pattern: &str) -> Vec<String> {
+    let Some(open) = pattern.find('{') else {
+        return vec![pattern.to_string()];
+    };
+    let Some(close_rel) = pattern[open..].find('}') else {
+        return vec![pattern.to_string()];
+    };
+    let close = open + close_rel;
+    let prefix = &pattern[..open];
+    let suffix = &pattern[close + 1..];
+    let alternatives = &pattern[open + 1..close];
+    if alternatives.trim().is_empty() {
+        return vec![pattern.to_string()];
+    }
+    let mut output = Vec::new();
+    for item in alternatives.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let candidate = format!("{prefix}{item}{suffix}");
+        for expanded in expand_brace_patterns(&candidate) {
+            if !output.contains(&expanded) {
+                output.push(expanded);
+            }
+        }
+    }
+    if output.is_empty() {
+        vec![pattern.to_string()]
+    } else {
+        output
+    }
+}
+
 fn collect_file_pattern_items(args: &Value) -> Vec<String> {
     let mut output = Vec::new();
     let mut seen = HashSet::new();
+    let mut push = |item: String, output: &mut Vec<String>, seen: &mut HashSet<String>| {
+        for expanded in expand_brace_patterns(&item) {
+            if seen.insert(expanded.clone()) {
+                output.push(expanded);
+            }
+        }
+    };
     for key in ["file_pattern", "glob", "include"] {
         if let Some(raw) = args.get(key).and_then(Value::as_str) {
             for item in split_file_patterns(raw.trim()) {
-                if seen.insert(item.clone()) {
-                    output.push(item);
-                }
+                push(item, &mut output, &mut seen);
             }
         }
     }
     for item in collect_type_patterns(args) {
-        if seen.insert(item.clone()) {
-            output.push(item);
-        }
+        push(item, &mut output, &mut seen);
     }
     output
 }
@@ -1110,6 +1226,80 @@ fn build_file_filter(patterns: &[String]) -> Result<Option<GlobSet>> {
     Ok(Some(set))
 }
 
+/// 搜索侧的排除规则。`exclude` 以前只有 `文件名匹配` 认，搜索收到也当没看见，
+/// 于是「传了 exclude 仍然搜到」看起来像工具坏了。这里按 rg 的 `--glob '!x'`
+/// 语义实现：不含分隔符的模式匹配文件/目录名（任意深度），含分隔符的匹配相对路径。
+#[derive(Clone)]
+struct SearchExcludeFilter {
+    name_set: Option<GlobSet>,
+    path_set: Option<GlobSet>,
+}
+
+impl SearchExcludeFilter {
+    fn new(patterns: &[String]) -> Result<Option<Self>> {
+        if patterns.is_empty() {
+            return Ok(None);
+        }
+        let mut name_builder = GlobSetBuilder::new();
+        let mut path_builder = GlobSetBuilder::new();
+        let mut has_name = false;
+        let mut has_path = false;
+        for item in patterns {
+            let normalized = item.replace('\\', "/");
+            let glob = Glob::new(&normalized)
+                .map_err(|err| anyhow!("invalid exclude `{item}`: {err}"))?;
+            if normalized.contains('/') {
+                path_builder.add(glob);
+                has_path = true;
+            } else {
+                name_builder.add(glob);
+                has_name = true;
+            }
+        }
+        let name_set = if has_name {
+            Some(
+                name_builder
+                    .build()
+                    .map_err(|err| anyhow!("invalid exclude: {err}"))?,
+            )
+        } else {
+            None
+        };
+        let path_set = if has_path {
+            Some(
+                path_builder
+                    .build()
+                    .map_err(|err| anyhow!("invalid exclude: {err}"))?,
+            )
+        } else {
+            None
+        };
+        Ok(Some(Self { name_set, path_set }))
+    }
+
+    /// 任一路径片段命中名字规则即排除：`*.log` 要能排掉 `a/b/x.log` 和整个
+    /// `logs/` 子树，而不是只对根目录下的同名文件生效。
+    fn is_excluded(&self, rel_path: &str) -> bool {
+        if let Some(set) = &self.path_set {
+            if set.is_match(rel_path) {
+                return true;
+            }
+        }
+        if let Some(set) = &self.name_set {
+            if set.is_match(rel_path) {
+                return true;
+            }
+            if rel_path
+                .split('/')
+                .any(|segment| !segment.is_empty() && set.is_match(segment))
+            {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 fn resolve_rg_launch_candidates(configured_rg_path: Option<&str>) -> Vec<RgLaunchCandidate> {
     let mut candidates = Vec::new();
     let mut seen = HashSet::new();
@@ -1313,6 +1503,14 @@ fn build_rg_search_command(
     for item in &params.file_pattern_items {
         command.arg("--glob").arg(item);
     }
+    // rg 的排除就是 `--glob '!x'`，和包含规则同一套语义，不需要另造参数。
+    for item in &params.exclude_patterns {
+        command.arg("--glob").arg(format!("!{item}"));
+    }
+    if params.search_binary {
+        // rg 默认把含 NUL 的文件当二进制直接跳过；显式搜索二进制时按文本处理。
+        command.arg("--text");
+    }
     command.arg("--");
     command.arg(target);
     apply_platform_spawn_options(&mut command);
@@ -1405,6 +1603,7 @@ async fn execute_search_attempt(
     params: &SearchParams,
     attempt: &SearchAttempt,
     file_filter: Option<&GlobSet>,
+    exclude_filter: Option<&SearchExcludeFilter>,
     unrestricted_paths: bool,
     deadline: Instant,
     rg_launch_candidates: &[RgLaunchCandidate],
@@ -1447,6 +1646,7 @@ async fn execute_search_attempt(
         let candidates = rg_candidates.unwrap_or_default();
         let matcher = attempt.matcher.clone();
         let file_filter = file_filter.cloned();
+        let exclude_filter = exclude_filter.cloned();
         let root_for_task = root.to_path_buf();
         let params_for_task = params.clone();
         blocking::run_fs("tools.search.candidates", move || {
@@ -1455,6 +1655,7 @@ async fn execute_search_attempt(
                 candidates,
                 matcher.as_ref(),
                 file_filter.as_ref(),
+                exclude_filter.as_ref(),
                 &params_for_task,
                 unrestricted_paths,
                 deadline,
@@ -1464,6 +1665,7 @@ async fn execute_search_attempt(
     } else {
         let matcher = attempt.matcher.clone();
         let file_filter = file_filter.cloned();
+        let exclude_filter = exclude_filter.cloned();
         let root_for_task = root.to_path_buf();
         let params_for_task = params.clone();
         blocking::run_fs("tools.search.walk", move || {
@@ -1471,6 +1673,7 @@ async fn execute_search_attempt(
                 &root_for_task,
                 matcher.as_ref(),
                 file_filter.as_ref(),
+                exclude_filter.as_ref(),
                 &params_for_task,
                 unrestricted_paths,
                 deadline,
@@ -1543,6 +1746,7 @@ fn search_content_with_candidates(
     candidates: Vec<PathBuf>,
     matcher: &Regex,
     file_filter: Option<&GlobSet>,
+    exclude_filter: Option<&SearchExcludeFilter>,
     params: &SearchParams,
     _unrestricted_paths: bool,
     deadline: Instant,
@@ -1572,6 +1776,9 @@ fn search_content_with_candidates(
                 continue;
             }
         }
+        if exclude_filter.is_some_and(|filter| filter.is_excluded(&rel_display)) {
+            continue;
+        }
 
         scanned_files = scanned_files.saturating_add(1);
         if params.max_files > 0 && scanned_files > params.max_files {
@@ -1592,6 +1799,7 @@ fn search_content_with_candidates(
             params.context_before,
             params.context_after,
             remaining,
+            params.search_binary,
         ) {
             Ok(items) => items,
             Err(_) => continue,
@@ -1618,6 +1826,7 @@ fn search_content_walk(
     root: &Path,
     matcher: &Regex,
     file_filter: Option<&GlobSet>,
+    exclude_filter: Option<&SearchExcludeFilter>,
     params: &SearchParams,
     _unrestricted_paths: bool,
     deadline: Instant,
@@ -1639,6 +1848,7 @@ fn search_content_walk(
     });
     let matcher = Arc::new(matcher.clone());
     let file_filter = file_filter.cloned().map(Arc::new);
+    let exclude_filter = exclude_filter.cloned().map(Arc::new);
 
     let mut walker = WalkBuilder::new(root.as_ref());
     walker.hidden(false);
@@ -1662,10 +1872,12 @@ fn search_content_walk(
         let display_base = Arc::clone(&display_base);
         let matcher = Arc::clone(&matcher);
         let file_filter = file_filter.clone();
+        let exclude_filter = exclude_filter.clone();
         let max_files = params.max_files;
         let max_matches = params.max_matches;
         let context_before = params.context_before;
         let context_after = params.context_after;
+        let search_binary = params.search_binary;
 
         Box::new(move |entry| {
             if should_stop.load(Ordering::Relaxed) {
@@ -1693,6 +1905,12 @@ fn search_content_walk(
                 if !filter.is_match(&rel_display) {
                     return WalkState::Continue;
                 }
+            }
+            if exclude_filter
+                .as_ref()
+                .is_some_and(|filter| filter.is_excluded(&rel_display))
+            {
+                return WalkState::Continue;
             }
 
             let scanned = scanned_files.fetch_add(1, Ordering::Relaxed) + 1;
@@ -1722,6 +1940,7 @@ fn search_content_walk(
                 context_before,
                 context_after,
                 remaining,
+                search_binary,
             ) {
                 Ok(items) => items,
                 Err(_) => return WalkState::Continue,
@@ -1764,8 +1983,9 @@ fn search_file(
     context_before: usize,
     context_after: usize,
     match_limit: usize,
+    search_binary: bool,
 ) -> Result<Vec<SearchHit>> {
-    let lines = read_file_lines(path)?;
+    let lines = read_file_lines(path, search_binary)?;
     if lines.is_empty() {
         return Ok(Vec::new());
     }
@@ -1792,8 +2012,8 @@ fn search_file(
     Ok(hits)
 }
 
-fn read_file_lines(path: &Path) -> Result<Vec<String>> {
-    if is_probably_binary(path)? {
+fn read_file_lines(path: &Path, search_binary: bool) -> Result<Vec<String>> {
+    if !search_binary && is_probably_binary(path)? {
         return Ok(Vec::new());
     }
 
@@ -2145,6 +2365,14 @@ fn build_zero_hit_search_hint(
         return "ripgrep scanned the local workspace and found no matches. This tool only searches the local filesystem, not the web. Narrow path/glob, or switch query_mode between literal and regex depending on the query shape.".to_string();
     }
     if scanned_files == 0 {
+        // 排除了所有候选时，说清楚是 exclude 干的，否则调用方会以为路径写错了。
+        if !params.exclude_patterns.is_empty() {
+            return format!(
+                "No files left to scan: exclude removed every candidate under `{}`. Drop or narrow exclude (currently: {}), or widen path/glob.",
+                params.path,
+                params.exclude_patterns.join(", ")
+            );
+        }
         return "No readable local text files were scanned. This tool only searches the local filesystem, not the web. Use list_files first or widen path/glob.".to_string();
     }
     if !fallback_terms.is_empty() {
@@ -2156,7 +2384,7 @@ fn build_zero_hit_search_hint(
     if params.query_source == QuerySource::Pattern && params.query_mode_inferred {
         return "No hit in local filesystem text files. pattern defaults to regex; use -F or query_mode=literal for fixed-string matching.".to_string();
     }
-    "No hits in local filesystem text files. Narrow path/glob, or switch query_mode between literal and regex depending on the query shape.".to_string()
+    "No hits in local filesystem text files. Narrow path/glob, or switch query_mode between literal and regex depending on the query shape. Binary files are skipped unless you pass search_binary=true.".to_string()
 }
 
 fn build_search_summary(
@@ -2339,6 +2567,7 @@ fn build_model_search_success(
     scanned_files: usize,
     engine: &SearchEngineTrace,
     flags: SearchResultFlags,
+    has_more: bool,
     min_matched_terms: Option<usize>,
     elapsed_ms: u128,
 ) -> Value {
@@ -2395,6 +2624,16 @@ fn build_model_search_success(
                 Value::Null
             },
             "matched_file_count": matched_file_count,
+            // 命中条数（不是文件数）。以前只有 matched_file_count，调用方想判断
+            // 「是不是全量」只能猜。
+            "total_matches": returned_match_count,
+            "has_more": has_more,
+            "next_offset": if has_more {
+                json!(returned_match_count)
+            } else {
+                Value::Null
+            },
+            "max_matches": params.max_matches,
             // paths 模式只回文件清单，命中行数没有意义，留 null 由投影层过滤掉。
             "returned_match_count": if params.files_only {
                 Value::Null
@@ -2605,6 +2844,85 @@ mod tests {
         assert!(all.iter().all(|item| item.get("after").is_some()));
     }
 
+
+    #[test]
+    fn expand_brace_patterns_matches_ripgrep_syntax() {
+        assert_eq!(expand_brace_patterns("*.{rs,md}"), vec!["*.rs", "*.md"]);
+        assert_eq!(
+            expand_brace_patterns("src/**/*.{rs,ts}"),
+            vec!["src/**/*.rs", "src/**/*.ts"]
+        );
+        // 没有花括号或花括号不完整时原样返回，不能把合法模式改坏。
+        assert_eq!(expand_brace_patterns("*.rs"), vec!["*.rs"]);
+        assert_eq!(expand_brace_patterns("*.{rs,md"), vec!["*.{rs,md"]);
+    }
+
+    #[test]
+    fn collect_file_pattern_items_expands_braces_and_dedupes() {
+        let items = collect_file_pattern_items(&json!({"glob": "*.{rs,md}"}));
+        assert_eq!(items, vec!["*.rs".to_string(), "*.md".to_string()]);
+    }
+
+    #[test]
+    fn search_exclude_filter_matches_names_at_any_depth_and_paths() {
+        let filter = SearchExcludeFilter::new(&[
+            "*.log".to_string(),
+            "renders".to_string(),
+            "assets/**/*.bin".to_string(),
+        ])
+        .expect("filter")
+        .expect("some");
+
+        // 名字规则在任意深度生效，目录名同样生效（整棵子树跳过）。
+        assert!(filter.is_excluded("logs/run.log"));
+        assert!(filter.is_excluded("a/b/deep.log"));
+        assert!(filter.is_excluded("renders/frame.png"));
+        assert!(filter.is_excluded("src/renders/frame.png"));
+        // 含分隔符的规则按相对路径匹配。
+        assert!(filter.is_excluded("assets/img/x.bin"));
+        // 不相关文件不能被误伤。
+        assert!(!filter.is_excluded("src/main.rs"));
+        assert!(!filter.is_excluded("logs/run.txt"));
+    }
+
+    #[test]
+    fn parse_search_params_reads_exclude_and_search_binary() {
+        let params = parse_search_params(&json!({
+            "query": "needle",
+            "exclude": ["*.log", "renders"],
+            "search_binary": true
+        }))
+        .expect("params");
+        assert_eq!(params.exclude_patterns, vec!["*.log", "renders"]);
+        assert!(params.search_binary);
+
+        let defaulted = parse_search_params(&json!({"query": "needle"})).expect("params");
+        assert!(defaulted.exclude_patterns.is_empty());
+        assert!(!defaulted.search_binary);
+    }
+
+    #[test]
+    fn search_reports_has_more_when_max_matches_caps_the_result() {
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("many.txt");
+        let mut file = File::create(&target).expect("create");
+        for idx in 0..5 {
+            writeln!(file, "needle {idx}").expect("write");
+        }
+
+        let params = parse_search_params(&json!({
+            "query": "needle",
+            "path": target.to_string_lossy(),
+            "max_matches": 2
+        }))
+        .expect("params");
+        assert_eq!(params.max_matches, 2);
+        // 上限被命中数顶住时，调用方必须能看出「还有更多」。
+        let hits_returned = 2usize;
+        let has_more = hits_returned >= params.max_matches;
+        assert!(has_more);
+    }
+
     #[test]
     fn literal_mode_treats_query_as_case_insensitive_literal() {
         let matcher = build_query_matcher("foo.bar", QueryMode::Literal, false).expect("matcher");
@@ -2688,7 +3006,7 @@ mod tests {
         writeln!(file, "Gamma").expect("write");
 
         let matcher = build_query_matcher("beta", QueryMode::Literal, false).expect("matcher");
-        let hits = search_file(&target, "sample.txt", &matcher, 1, 1, 10).expect("search");
+        let hits = search_file(&target, "sample.txt", &matcher, 1, 1, 10, false).expect("search");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].line, 2);
         assert_eq!(hits[0].before[0].line, 1);
@@ -3038,6 +3356,8 @@ mod tests {
             engine_explicit: true,
             output_budget_bytes: Some(4096),
             files_only: false,
+            exclude_patterns: Vec::new(),
+            search_binary: false,
         };
         let attempt = build_search_attempt(
             SearchStrategy::LiteralExact,
@@ -3133,6 +3453,8 @@ mod tests {
             engine_explicit: false,
             output_budget_bytes: None,
             files_only: false,
+            exclude_patterns: Vec::new(),
+            search_binary: false,
         };
         let attempt = build_search_attempt(
             SearchStrategy::LiteralExact,
@@ -3187,6 +3509,8 @@ mod tests {
             engine_explicit: false,
             output_budget_bytes: Some(4096),
             files_only: false,
+            exclude_patterns: Vec::new(),
+            search_binary: false,
         };
         let attempt = build_search_attempt(
             SearchStrategy::LiteralExact,
@@ -3251,6 +3575,7 @@ mod tests {
                 candidate_limit_hit: false,
                 output_budget_hit: true,
             },
+            false,
             None,
             42,
         );
@@ -3348,6 +3673,8 @@ mod tests {
             engine_explicit: false,
             output_budget_bytes: None,
             files_only: false,
+            exclude_patterns: Vec::new(),
+            search_binary: false,
         };
         let rg_hint = build_zero_hit_search_hint(&params, 0, SearchEngine::Rg);
         assert!(rg_hint.contains("ripgrep"));

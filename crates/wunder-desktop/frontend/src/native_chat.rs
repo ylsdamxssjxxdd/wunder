@@ -1081,6 +1081,7 @@ fn reset_activity(app: &MainWindow) {
     app.set_activity_plan_current("".into());
     app.set_activity_plan_position(0);
     app.set_activity_plan_steps(ModelRc::default());
+    app.set_activity_plan_complete(false);
     app.set_activity_plan_expanded(false);
 }
 
@@ -1100,6 +1101,13 @@ fn plan_signature(explanation: &str, steps: &[(String, String)]) -> String {
         sig.push_str(step);
     }
     sig
+}
+
+/// Whether every step of the published plan is done. The capsule uses this to
+/// check off and stop moving: a finished plan must not start spinning again
+/// just because the user asked the next question.
+fn plan_all_done(steps: &[(String, String)]) -> bool {
+    !steps.is_empty() && steps.iter().all(|(_, status)| status == "completed")
 }
 
 /// The step the capsule names: the running one, else the first unfinished one;
@@ -1130,6 +1138,7 @@ fn publish_activity(app: &MainWindow, active: &TurnOutput, last_sig: &str) -> St
         .count() as i32;
     app.set_activity_steps_done(done);
     app.set_activity_steps_total(total);
+    app.set_activity_plan_complete(plan_all_done(&active.plan_steps));
     app.set_activity_plan_explanation(active.plan_explanation.as_str().into());
     let (current, position) = plan_current(&active.plan_steps);
     app.set_activity_plan_current(current.into());
@@ -1170,6 +1179,7 @@ fn publish_idle_plan(app: &MainWindow, state: &State, session: &str) {
         .count() as i32;
     app.set_activity_steps_done(done);
     app.set_activity_steps_total(total);
+    app.set_activity_plan_complete(plan_all_done(steps));
     app.set_activity_plan_explanation(explanation.as_str().into());
     let (current, position) = plan_current(steps);
     app.set_activity_plan_current(current.into());
@@ -6372,6 +6382,23 @@ mod turn_tests {
 
     /// The runtime wraps every payload as `{session_id, timestamp, data}`, so
     /// the panel reads the questions one level below the stream envelope.
+    /// A finished plan checks off in the capsule and never spins again: the
+    /// predicate that drives the pill keys on the steps, not on the phase.
+    #[test]
+    fn finished_plan_is_the_check_off_state() {
+        let done = [("甲".to_string(), "completed".to_string())];
+        assert!(plan_all_done(&done));
+        let mixed = [
+            ("甲".to_string(), "completed".to_string()),
+            ("乙".to_string(), "in_progress".to_string()),
+        ];
+        assert!(!plan_all_done(&mixed));
+        let pending = [("甲".to_string(), "pending".to_string())];
+        assert!(!plan_all_done(&pending));
+        // 没有计划就不该出现对勾：胶囊本身此时也隐藏。
+        assert!(!plan_all_done(&[]));
+    }
+
     #[test]
     fn inquiry_event_unwraps_the_stream_envelope() {
         let panel = inquiry_from_payload(event_data(&json!({

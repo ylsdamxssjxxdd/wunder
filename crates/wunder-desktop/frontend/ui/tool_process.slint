@@ -297,7 +297,10 @@ export component ToolProcess inherits Rectangle {
         triggered => { root.page(2); }
     }
     private property <length> measured-height: process-list.content-height;
-    private property <length> viewport-height: min(root.viewport-limit, max(26px, root.measured-height));
+    // Seeded from the entry count, then updated from the measured content in
+    // `changed measured-height`: a declarative binding back into the height
+    // would close a layout loop through the list's own viewport.
+    private property <length> viewport-height: min(root.viewport-limit, max(26px, root.entries.length * 26px));
     // Follow the newest step only while the reader already sits at the tail.
     // Scrolling up hands the position to the reader until they return to it.
     private property <bool> follow-tail: true;
@@ -307,12 +310,14 @@ export component ToolProcess inherits Rectangle {
     // An older page grows the list above the viewport. Remember where the
     // reader was so the pass can shift by exactly the inserted height.
     private property <bool> keep-anchor: false;
+    private property <int> anchor-retries: 0;
     private property <length> anchor-y: 0px;
     private property <length> anchor-height: 0px;
     // Previous scroll offset, so one flick past the top asks for the older
     // page exactly once instead of once per scroll notification.
     private property <length> last-content-y: 0px;
     changed measured-height => {
+        root.viewport-height = min(root.viewport-limit, max(26px, root.measured-height));
         // A streaming entry grows taller without adding a row: neither `count`
         // nor `revision` moves, so re-arm the tail follow here or the new text
         // sinks below the capped viewport until the reader scrolls by hand.
@@ -322,8 +327,9 @@ export component ToolProcess inherits Rectangle {
         root.settle = true;
         if root.revision < 0 {
             root.keep-anchor = true;
+            root.anchor-retries = 1;
             root.anchor-y = root.last-content-y;
-            root.anchor-height = root.process-list.content-height;
+            root.anchor-height = process-list.content-height;
         }
     }
     Timer {
@@ -332,12 +338,19 @@ export component ToolProcess inherits Rectangle {
             root.settle = false;
             let bottom = min(0px, process-list.visible-height - process-list.content-height);
             if root.keep-anchor {
-                root.keep-anchor = false;
                 // The prepended page inserted exactly the height the content
                 // grew by; shift the viewport by that delta to keep the step
                 // the reader was looking at in place.
                 let added = max(0px, process-list.content-height - root.anchor-height);
-                process-list.content-y = max(bottom, min(0px, root.anchor-y - added));
+                if added <= 0px && root.anchor-retries > 0 {
+                    // Layout has not folded the merged page in yet; wait one
+                    // more frame instead of dropping the reader at the top.
+                    root.anchor-retries -= 1;
+                    root.settle = true;
+                } else {
+                    root.keep-anchor = false;
+                    process-list.content-y = max(bottom, min(0px, root.anchor-y - added));
+                }
             } else if root.follow-tail {
                 process-list.content-y = bottom;
             } else if process-list.content-y > 0px || process-list.content-y < bottom {
@@ -393,29 +406,40 @@ export component ToolProcess inherits Rectangle {
             show-context-menu(x, y, selected) => { root.show-context-menu(x, y, selected); }
         }
     }
-    // One explicit strip above the list: load the previous page, report a load
-    // in flight, or retry a failed one. It works even when so few entries are
-    // loaded that the list itself cannot scroll.
+    // Only a failed load keeps a strip, because retrying needs an explicit
+    // target. Older pages load automatically when the list reaches the top.
     page-top := Rectangle {
         x: 24px; y: 0px; width: parent.width - 48px;
-        height: root.failed || (root.loading && root.entries.length == 0) || (root.has-older && root.active) ? 20px : 0px;
+        height: root.failed ? 20px : 0px;
         visible: self.height > 0px;
         border-radius: Theme.radius-tag;
-        background: root.loading ? transparent : (retry-hit.has-hover ? Theme.hover : transparent);
+        background: retry-hit.has-hover ? Theme.hover : transparent;
         accessible-role: button;
-        accessible-label: root.failed ? I18n.tl_process_retry
-            : root.loading ? I18n.tl_process_loading : I18n.tl_process_older;
-        accessible-action-default => { if !root.loading { root.page(root.failed && !root.paged ? 0 : -1); } }
+        accessible-label: I18n.tl_process_retry;
+        accessible-action-default => { root.page(0); }
         Text {
             width: parent.width; height: parent.height;
-            text: root.failed ? I18n.tl_process_retry
-                : root.loading ? I18n.tl_process_loading : I18n.tl_process_older;
-            color: root.failed ? Theme.danger : Theme.muted; font-size: Theme.font-xs;
+            text: I18n.tl_process_retry; color: Theme.danger; font-size: Theme.font-xs;
             horizontal-alignment: center; vertical-alignment: center;
         }
         retry-hit := TouchArea {
-            mouse-cursor: root.loading ? default : pointer;
-            clicked => { if !root.loading { root.page(root.failed && !root.paged ? 0 : -1); } }
+            mouse-cursor: pointer;
+            clicked => { root.page(0); }
+        }
+    }
+    // The first durable page is reported without taking layout height: the
+    // reader's scroll position must not jump while the page is in flight.
+    if root.loading && root.entries.length == 0 : Rectangle {
+        x: (parent.width - loading-label.preferred-width - 16px) / 2;
+        y: 3px;
+        width: loading-label.preferred-width + 16px; height: 18px;
+        border-radius: Theme.radius-tag;
+        background: Theme.panel;
+        border-width: 1px; border-color: Theme.border;
+        loading-label := Text {
+            width: parent.width; height: parent.height;
+            text: I18n.tl_process_loading; color: Theme.muted; font-size: Theme.font-xs;
+            horizontal-alignment: center; vertical-alignment: center;
         }
     }
 }

@@ -601,7 +601,7 @@ mod tests {
         }];
         crate::timeline_text::restore_folds(&mut refreshed, &model);
         let token = refreshed[0].process_entries.row_data(0).unwrap().payload;
-        assert_eq!(token, -3073);
+        assert_eq!(token, -1 - 3 * PROCESS_SLOT);
         let refreshed = VecModel::from(refreshed);
         toggle_entry(&refreshed, token);
         assert!(
@@ -715,5 +715,77 @@ mod tests {
         assert_eq!(reasons.len(), 2);
         assert_eq!(reasons[0].id, "reason-fixture-root:text-1");
         assert_eq!(reasons[1].id, "reason-fixture-root:text-2");
+    }
+
+    fn process_ids(row: &TimelineRow) -> Vec<String> {
+        row.process_entries
+            .iter()
+            .map(|entry| entry.id.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn older_page_extends_the_loaded_range_instead_of_replacing_it() {
+        let item = |id: &str| NativeProcessItem {
+            id: id.into(),
+            item_index: 0,
+            state: "completed".into(),
+            reasoning: format!("thought {id}"),
+            text: String::new(),
+            tokens: String::new(),
+            duration: String::new(),
+            tool: None,
+        };
+        let mut row = TimelineRow {
+            kind: crate::timeline::KIND_PROCESS,
+            process_idx: 2,
+            ..Default::default()
+        };
+        apply_page(
+            &mut row,
+            NativeProcessPage {
+                items: vec![item("fixture-3"), item("fixture-4")],
+                first: Some(3),
+                last: Some(4),
+                has_older: true,
+                has_newer: false,
+            },
+            0,
+        );
+        assert_eq!(
+            process_ids(&row),
+            vec!["reason-fixture-3", "reason-fixture-4"]
+        );
+        assert_eq!(row.process_last, 4);
+
+        apply_page(
+            &mut row,
+            NativeProcessPage {
+                items: vec![item("fixture-1"), item("fixture-2")],
+                first: Some(1),
+                last: Some(2),
+                has_older: false,
+                has_newer: true,
+            },
+            -1,
+        );
+        assert_eq!(
+            process_ids(&row),
+            vec![
+                "reason-fixture-1",
+                "reason-fixture-2",
+                "reason-fixture-3",
+                "reason-fixture-4"
+            ],
+            "the older page must extend the list, not replace it"
+        );
+        assert!(!row.process_older);
+        assert_eq!(row.process_first, 1);
+        assert_eq!(row.process_last, 4, "the loaded tail edge must stay");
+        assert_eq!(
+            row.process_entries.row_data(2).unwrap().payload,
+            -1 - 2 * PROCESS_SLOT - 2,
+            "payloads address the merged position"
+        );
     }
 }

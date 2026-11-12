@@ -3099,6 +3099,11 @@ fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
         "timeout_hit",
         "match_limit_hit",
         "file_limit_hit",
+        // 命中条数与是否还有更多：调用方判断「是不是全量」不能只看文件数。
+        "total_matches",
+        "max_matches",
+        "has_more",
+        "next_offset",
         // 上下文名额：>0 表示只有前 N 个命中带 before/after，单个命中可以给足上下文。
         "context_match_limit",
     ] {

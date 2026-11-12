@@ -496,12 +496,9 @@ export component WorkspaceFilesPanel inherits Rectangle {
                                             }
                                             Text { text: row.name; color: row.kind == 2 ? Theme.muted : Theme.text-secondary; font-size: row.kind == 2 ? Theme.font-sm : Theme.font-md; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                                             if row.loading && row.remaining >= 0 : Text { text: I18n.wf_loading_dir; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; }
-                                            if !row-touch.has-hover && row.kind == 0 : Text { text: row.size-text; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; }
-                                            if row-touch.has-hover && row.kind != 2 : Action {
-                                                width: 20px; height: 24px; icon-size: 13px;
-                                                icon: @image-url("../assets/icons/ellipsis.svg"); label: I18n.common_more;
-                                                clicked => { row-menu.show({x: row-menu.width - 4px, y: 28px}); }
-                                            }
+                                            // 行内操作只有右键菜单：悬停再冒出一个「更多」按钮会和
+                                            // 右击职责重复，还把文件大小挤掉。尺寸因此常显。
+                                            if row.kind == 0 : Text { text: row.size-text; color: Theme.muted; font-size: Theme.font-2xs; vertical-alignment: center; }
                                         }
                                         Tooltip { text: @markdown("\{row.path}  \{row.size-text}"); }
                                     }

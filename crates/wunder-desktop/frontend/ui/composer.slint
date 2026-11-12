@@ -334,6 +334,8 @@ component GoalTool inherits Rectangle {
 // plan cache.
 export component StatusDock inherits Rectangle {
     in property <bool> running: false;
+    // 计划已全部完成：胶囊右侧的转轮换成对勾并停住，用户继续提问也不再转。
+    in property <bool> plan-complete: false;
     in property <int> steps-done: 0;
     in property <int> steps-total: 0;
     in property <string> plan-explanation: "";
@@ -364,14 +366,26 @@ export component StatusDock inherits Rectangle {
             drop-shadow-color: #0F172A10; drop-shadow-blur: 8px; drop-shadow-offset-y: 1px;
             HorizontalLayout {
                 padding-left: 14px; padding-right: 12px; spacing: 6px;
-                if root.running : DockSpinner { y: (parent.height - self.height) / 2; }
+                if root.running && !root.plan-complete : DockSpinner { y: (parent.height - self.height) / 2; }
+                if root.plan-complete : Image {
+                    y: (parent.height - self.height) / 2;
+                    width: 13px; height: 13px;
+                    source: @image-url("../assets/icons/status-check.svg");
+                    colorize: Theme.success; image-fit: contain;
+                }
                 Text {
                     height: parent.height;
                     text: I18n.dock_plan_title;
                     color: #4B5563; font-size: Theme.font-sm;
                     vertical-alignment: center;
                 }
-                Text {
+                if root.plan-complete : Text {
+                    height: parent.height;
+                    text: I18n.dock_plan_done;
+                    color: Theme.success; font-size: Theme.font-sm;
+                    vertical-alignment: center;
+                }
+                if !root.plan-complete : Text {
                     height: parent.height;
                     width: min(self.preferred-width, 260px);
                     text: root.current-step;

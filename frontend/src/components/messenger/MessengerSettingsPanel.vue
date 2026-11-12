@@ -89,25 +89,6 @@
             <div class="messenger-settings-label">{{ lastActiveTime }}</div>
           </div>
         </div>
-        <div class="messenger-profile-chart-card">
-          <div class="messenger-profile-chart-head">
-            <span>{{ t('profile.stats.sessions7d') }}</span>
-            <span>{{ weeklySessionTotal }}</span>
-          </div>
-          <div class="messenger-profile-chart-bars">
-            <div
-              v-for="item in weeklySessionTrend"
-              :key="item.key"
-              class="messenger-profile-chart-bar-item"
-            >
-              <span class="messenger-profile-chart-value">{{ item.count }}</span>
-              <span class="messenger-profile-chart-bar-wrap">
-                <span class="messenger-profile-chart-bar" :style="{ height: `${item.height}%` }"></span>
-              </span>
-              <span class="messenger-profile-chart-day">{{ item.label }}</span>
-            </div>
-          </div>
-        </div>
         <div class="messenger-profile-quota-card">
           <div class="messenger-profile-quota-head">
             <span>{{ t('profile.quota.remaining') }}</span>
@@ -772,13 +753,6 @@ const userUnitLabel = computed(() => {
   return String(unit.path_name || unit.pathName || unit.name || user.unit_id || '-');
 });
 
-const formatDateKey = (value: unknown): string => {
-  const parsed = new Date(value as string | number);
-  if (Number.isNaN(parsed.getTime())) return '';
-  const pad = (part: number) => String(part).padStart(2, '0');
-  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
-};
-
 const usageSummary = computed(() => {
   const user = (authStore.user || {}) as Record<string, unknown>;
   return (user.usage_summary || user.usageSummary || null) as Record<string, unknown> | null;
@@ -842,57 +816,6 @@ const lastActiveTime = computed(() => {
   if (!latest) return '-';
   return formatTime(latest.updated_at || latest.created_at);
 });
-
-const weeklySessionTrend = computed(() => {
-  const summaryTrend = sessionSummary.value?.trend_last_7d ?? sessionSummary.value?.trendLast7d;
-  if (Array.isArray(summaryTrend) && summaryTrend.length) {
-    const points = summaryTrend.map((item, index) => {
-      const record = (item || {}) as Record<string, unknown>;
-      const key = String(record.date || record.key || `day-${index}`);
-      const count = Math.max(0, Number(record.count) || 0);
-      const label = key.length >= 10 ? key.slice(5).replace('-', '/') : key;
-      return { key, label, count, height: 8 };
-    });
-    const maxCount = Math.max(...points.map((item) => item.count), 1);
-    return points.map((item) => ({
-      ...item,
-      height: item.count > 0 ? Math.max(18, Math.round((item.count / maxCount) * 100)) : 8
-    }));
-  }
-  const days = 7;
-  const today = new Date();
-  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const points: Array<{ key: string; label: string; count: number; height: number }> = [];
-  const countMap = new Map<string, number>();
-  for (let index = days - 1; index >= 0; index -= 1) {
-    const target = new Date(start);
-    target.setDate(start.getDate() - index);
-    const key = formatDateKey(target);
-    countMap.set(key, 0);
-  }
-  chatStore.sessions.forEach((session) => {
-    const raw = session?.last_message_at || session?.updated_at || session?.created_at;
-    const key = formatDateKey(raw);
-    if (!key || !countMap.has(key)) return;
-    countMap.set(key, (countMap.get(key) || 0) + 1);
-  });
-  const maxCount = Math.max(...Array.from(countMap.values()), 1);
-  countMap.forEach((count, key) => {
-    const label = key.slice(5).replace('-', '/');
-    const ratio = count > 0 ? Math.max(18, Math.round((count / maxCount) * 100)) : 8;
-    points.push({
-      key,
-      label,
-      count,
-      height: ratio
-    });
-  });
-  return points;
-});
-
-const weeklySessionTotal = computed(() =>
-  weeklySessionTrend.value.reduce((sum, item) => sum + item.count, 0)
-);
 
 const parseQuotaNumber = (value: unknown): number | null => {
   const parsed = Number(value);

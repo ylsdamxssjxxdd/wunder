@@ -1096,20 +1096,12 @@
     "zh-CN": "wunder@run 调用失败: {detail}"
   },
   "tool.plan.invalid_shape": {
-    "en-US": "Plan arguments must be an object like {\"plan\":[{\"step\":\"…\",\"status\":\"in_progress\"}]}; send plan as a JSON array of objects, not as a string. Received keys: {keys}.",
-    "zh-CN": "计划参数格式不对：需要 {\"plan\":[{\"step\":\"…\",\"status\":\"in_progress\"}]}，plan 必须是对象数组而不是字符串。收到的键：{keys}。"
+    "en-US": "Plan arguments must be an object like {\"plan\":[{\"step\":\"…\",\"status\":\"in_progress\"}]}; plan is an array of objects with step and status. Received keys: {keys}.",
+    "zh-CN": "计划参数必须是对象：{\"plan\":[{\"step\":\"…\",\"status\":\"in_progress\"}]}，plan 是带 step 与 status 的对象数组。收到的键：{keys}。"
   },
   "tool.plan.keep_updating": {
-    "en-US": "Keep the panel current: after each finished step call this tool again with the full list and move in_progress to the next step.",
-    "zh-CN": "继续维护面板：每完成一步就带完整清单再调一次，把 in_progress 移到下一步。"
-  },
-  "tool.plan.current_with_status": {
-    "en-US": "`current` only works with the string-list form; drop `current` or drop the per-step `status`.",
-    "zh-CN": "`current` 只能和字符串数组形态一起用；要么去掉 current，要么去掉每一步的 status。"
-  },
-  "tool.plan.invalid_current": {
-    "en-US": "`current` must be an integer index between 0 and {max} (0 = first step); received `{received}`.",
-    "zh-CN": "`current` 必须是 0 到 {max} 之间的整数下标（0 表示第一步），收到 `{received}`。"
+    "en-US": "Keep the panel current: after each finished step call this tool again with the full list, marking finished steps completed and the next one in_progress. When all steps are done, call it once with every step completed so the panel checks off and stops.",
+    "zh-CN": "继续维护面板：每完成一步就带完整清单再调一次，已完成的标 completed、下一步标 in_progress。全部做完时再调一次、每一步都标 completed，面板才会打钩停下。"
   },
   "tool.plan.item_text_required": {
     "en-US": "`{field}` has no step text; give each step a non-empty `step` string.",
@@ -1120,16 +1112,16 @@
     "zh-CN": "步骤列表只能传一个，收到 {fields}；统一用 `plan`。"
   },
   "tool.plan.missing_in_progress": {
-    "en-US": "No step is in_progress. Mark the step you are working on (status in_progress or current index) so the panel shows real progress.",
-    "zh-CN": "当前没有 in_progress 的步骤：把正在做的那一步标成 in_progress（或用 current 下标），面板才显示真实进度。"
+    "en-US": "No step is in_progress. Mark the step you are working on with status in_progress so the panel shows real progress.",
+    "zh-CN": "当前没有 in_progress 的步骤：把正在做的那一步的 status 标成 in_progress，面板才显示真实进度。"
   },
   "tool.plan.multiple_in_progress": {
     "en-US": "Only one step may be in_progress, but {fields} are. Keep the one you are working on.",
     "zh-CN": "同时只能有一个 in_progress，当前标了 {fields}；只保留正在做的那一步。"
   },
   "tool.plan.unknown_field": {
-    "en-US": "Unknown field `{field}`; allowed: {allowed}. Minimal form: {\"plan\":[\"a\",\"b\"],\"current\":0}.",
-    "zh-CN": "未知字段 `{field}`；可用字段：{allowed}。最省形态：{\"plan\":[\"甲\",\"乙\"],\"current\":0}。"
+    "en-US": "Unknown field `{field}`; allowed: {allowed}. Canonical shape: {\"plan\":[{\"step\":\"a\",\"status\":\"in_progress\"}]}.",
+    "zh-CN": "未知字段 `{field}`；可用字段：{allowed}。标准形态：{\"plan\":[{\"step\":\"甲\",\"status\":\"in_progress\"}]}。"
   },
   "tool.plan.unknown_status": {
     "en-US": "`{field}` has unknown status `{received}`; allowed: pending, in_progress, completed (also done / in-progress / 进行中 / 已完成).",
@@ -2532,20 +2524,20 @@
     "zh-CN": "可选，计划说明。"
   },
   "tool.spec.plan.args.plan": {
-    "en-US": "Complete step list; replaces the previous plan.",
+    "en-US": "The full step list; replaces the previous plan.",
     "zh-CN": "完整步骤清单，会整体替换上一份计划。"
   },
   "tool.spec.plan.args.plan.step": {
-    "en-US": "Step description.",
-    "zh-CN": "步骤描述（也可直接传字符串数组）。"
+    "en-US": "Step text.",
+    "zh-CN": "步骤文字。"
   },
   "tool.spec.plan.args.plan.status": {
-    "en-US": "Step status (pending, in_progress, completed). At most one step may be in_progress.",
-    "zh-CN": "步骤状态（pending/in_progress/completed）；同时只能有一个 in_progress。"
+    "en-US": "Step status: pending, in_progress or completed. At most one step may be in_progress.",
+    "zh-CN": "步骤状态：pending / in_progress / completed；同时只能有一个 in_progress。"
   },
   "tool.spec.plan.description": {
-    "en-US": "Progress ledger for multi-step work: writes the full step list and each status (full replace, at most one in_progress).",
-    "zh-CN": "多步任务的进度台账：写入完整步骤清单与各自状态（全量替换，同时只能有一个 in_progress）。"
+    "en-US": "Progress ledger for multi-step work: send the complete step list with each step's status (full replace, at most one in_progress). After each finished step call it again with the full list; when everything is done call it once more with every step completed so the panel checks off and stops.",
+    "zh-CN": "多步任务的进度台账：每次传完整步骤清单，每步都带 status（全量替换，同时只能有一个 in_progress）。每完成一步就带完整清单再调一次；全部做完时再调一次、把每一步都标成 completed，面板才会打钩停下。"
   },
   "tool.spec.question_panel.args.questions": {
     "en-US": "Questions to ask in this inquiry, 1-4 items. The client shows them one page at a time and the user answers each page. Use a single-element array when there is only one question.",
@@ -3647,16 +3639,20 @@
     "en-US": "Interrupt requested: the command is being terminated.",
     "zh-CN": "已请求中断：命令正在被终止。"
   },
-  "tool.plan.minimal_example_hint": {
-    "en-US": "Retry with the minimal form {\"plan\":[\"a\",\"b\"],\"current\":0} or the object form {\"plan\":[{\"step\":\"a\",\"status\":\"in_progress\"}]}.",
-    "zh-CN": "改用最省形态 {\"plan\":[\"甲\",\"乙\"],\"current\":0} 或对象形态 {\"plan\":[{\"step\":\"甲\",\"status\":\"in_progress\"}]} 重试。"
-  },
-  "tool.spec.plan.args.current": {
-    "en-US": "0-based index of the step currently being done; only for the string-list form (it cannot be combined with per-step status). Steps before it are treated as completed.",
-    "zh-CN": "正在做的步骤下标（0 基），只用于字符串数组形态，不能与每一步的 status 同时出现；它之前的步骤视为已完成。"
-  },
   "tool.plan.unparsable_wrapper": {
-    "en-US": "`{field}` holds a string that is not valid JSON; pass the plan as a JSON object instead of a quoted string. Example: {\"plan\":[\"a\",\"b\"],\"current\":0}.",
-    "zh-CN": "`{field}` 里的内容不是合法 JSON：不要把它整个当字符串传，直接给 JSON 对象。示例：{\"plan\":[\"甲\",\"乙\"],\"current\":0}。"
+    "en-US": "`{field}` is not valid JSON: {error}. Received: {snippet}. Fix the brackets/quotes at that position and resend as a JSON object like {\"plan\":[{\"step\":\"a\",\"status\":\"in_progress\"}]}.",
+    "zh-CN": "`{field}` 不是合法 JSON：{error}。收到的原文：{snippet}。按指出的位置修好括号/引号，再以 JSON 对象重发：{\"plan\":[{\"step\":\"甲\",\"status\":\"in_progress\"}]}。"
+  },
+  "tool.plan.example_hint": {
+    "en-US": "Retry with the canonical shape {\"plan\":[{\"step\":\"a\",\"status\":\"in_progress\"},{\"step\":\"b\",\"status\":\"pending\"}]}: every step carries step + status.",
+    "zh-CN": "改用标准形态 {\"plan\":[{\"step\":\"甲\",\"status\":\"in_progress\"},{\"step\":\"乙\",\"status\":\"pending\"}]} 重试：每一步都带 step + status。"
+  },
+  "tool.spec.search.args.exclude": {
+    "zh-CN": "可选，排除规则，字符串或字符串数组，rg 的 --glob '!x' 语义。不含分隔符的模式匹配文件/目录名（任意深度），含分隔符的匹配相对路径；命中的目录整棵子树跳过。例如 [\"*.log\", \"renders\"] 会排掉所有 .log 和 renders 目录。",
+    "en-US": "Optional excludes, as a string or string array, rg --glob '!x' semantics. Patterns without a separator match file or directory names at any depth; patterns with a separator match the path relative to the search root; a matched directory prunes its whole subtree."
+  },
+  "tool.spec.search.args.search_binary": {
+    "zh-CN": "可选，默认 false：跳过二进制文件。设 true 时把二进制文件按文本扫描，用于在 mp4/图片等文件里找特征串（例如 ftyp）。",
+    "en-US": "Optional, default false: skip binary files. Set true to scan binary files as text, e.g. to find a signature like ftyp inside an mp4 or image."
   }
 }

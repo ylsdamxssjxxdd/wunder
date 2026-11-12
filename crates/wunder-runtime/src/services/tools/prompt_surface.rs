@@ -141,8 +141,8 @@ struct SurfaceRule {
 const SURFACE_RULES: &[SurfaceRule] = &[
     SurfaceRule {
         tool: "计划面板",
-        brief_en: "Progress ledger for multi-step work. Shortest form {\"plan\":[\"a\",\"b\"],\"current\":0} (current = 0-based index of the step being done); object form takes step + status (pending/in_progress/completed only). Full replace, one in_progress max. Re-call with the full list after each finished step and at the end with all completed. Unknown fields/statuses are rejected with their location.",
-        brief_zh: "多步任务的进度台账。最省写法 {\"plan\":[\"甲\",\"乙\"],\"current\":0}（current 为进行中步骤的 0 基下标）；也可用对象数组 {\"plan\":[{\"step\":\"甲\",\"status\":\"in_progress\"}]}。status 只接受 pending / in_progress / completed；全量替换、同时只能一个 in_progress。每完成一步立刻带完整清单再调一次，收尾全部 completed。未知字段或状态会报错并指出位置。",
+        brief_en: "Progress ledger for multi-step work. One shape: {\"plan\":[{\"step\":\"a\",\"status\":\"in_progress\"},{\"step\":\"b\",\"status\":\"pending\"}]} — every step carries step + status (pending/in_progress/completed only), optional explanation. Full replace, one in_progress max. Re-call with the full list after each finished step, and once more with every step completed at the end so the panel checks off and stops.",
+        brief_zh: "多步任务的进度台账。只有一种写法：{\"plan\":[{\"step\":\"甲\",\"status\":\"in_progress\"},{\"step\":\"乙\",\"status\":\"pending\"}]}，每步带 step + status（仅 pending / in_progress / completed），可选 explanation。全量替换、同时只能一个 in_progress。每完成一步立刻带完整清单再调一次；全部做完时再调一次、每步都标 completed，面板才会打钩停下。",
         drop_actions: &[],
         drop_fields: &[],
     },
@@ -204,8 +204,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "搜索内容",
-        brief_en: "Ripgrep-style search by query (literal|regex via query_mode) or pattern. Narrow with path/glob/include, cap with max_matches. context_before/context_after widen context for every hit; context_matches=N keeps it on the top N hits only, so one call both locates and shows the implementation.",
-        brief_zh: "按 query（query_mode=literal|regex）或 pattern 检索文件内容；path/glob/include 收窄范围，max_matches 限量。context_before/after 给所有命中带上下文；配 context_matches=N 则只给前 N 个命中，一次调用即可定位并看清实现。",
+        brief_en: "Ripgrep-style search by query (literal|regex via query_mode) or pattern. Narrow with path/glob/include, subtract with exclude (rg --glob '!x'), cap with max_matches; has_more/next_offset tell whether more remain. context_before/after add context to every hit; context_matches=N gives it to the top N only, so one call both locates and shows the code. Binary files need search_binary=true.",
+        brief_zh: "按 query（query_mode=literal|regex）或 pattern 检索内容；path/glob/include 收窄，exclude 排除，max_matches 限量，has_more/next_offset 说明是否还有更多。context_before/after 给所有命中带上下文，context_matches=N 只给前 N 个，一次调用即可定位并看清代码。搜二进制需 search_binary=true。",
         drop_actions: &[],
         drop_fields: &["timeout_ms"],
     },
@@ -589,7 +589,7 @@ mod tests {
     fn plan_brief_carries_the_update_discipline() {
         let rule = rule_for("计划面板").expect("plan rule");
         // 工具面是模型唯一必读的位置：何时建、何时更新、收尾要求都要在这里。
-        for needle in ["多步", "in_progress", "全量替换", "completed", "current"] {
+        for needle in ["多步", "in_progress", "全量替换", "completed", "打钩"] {
             assert!(rule.brief_zh.contains(needle), "zh brief missing {needle}");
         }
         for needle in [
@@ -597,23 +597,28 @@ mod tests {
             "in_progress",
             "Full replace",
             "completed",
-            "current",
+            "checks off",
         ] {
             assert!(rule.brief_en.contains(needle), "en brief missing {needle}");
         }
+        // 只宣传一种写法：旧的 current 形态不许再出现，否则模型又会混着用。
+        assert!(!rule.brief_zh.contains("current"));
+        assert!(!rule.brief_en.contains("current"));
     }
 
     #[test]
-    fn plan_surface_exposes_current_and_status_enum() {
+    fn plan_surface_exposes_one_shape_and_status_enum() {
         let spec = crate::services::tools::catalog::builtin_tool_specs_with_language("zh-CN")
             .into_iter()
             .find(|spec| spec.name == "计划面板")
             .expect("plan spec");
         let projected = prompt_tool_spec(&spec, "zh-CN");
-        // 最省形态靠 current 表达“进行中”，它必须出现在模型看到的 schema 里。
+        // 只有一种形态：current 不再出现在模型看到的 schema 里。
+        assert!(projected.input_schema["properties"].get("current").is_none());
+        // 步骤条目 step + status 都必填，模型不会漏 status 再被提示补一次。
         assert_eq!(
-            projected.input_schema["properties"]["current"]["type"].as_str(),
-            Some("integer")
+            projected.input_schema["properties"]["plan"]["items"]["required"],
+            json!(["step", "status"])
         );
         // status 只有三个合法值，枚举要让模型直接看见。
         let status = &projected.input_schema["properties"]["plan"]["items"]["properties"]["status"];

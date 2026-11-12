@@ -346,15 +346,12 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                                     .desc(t("tool.spec.plan.args.plan.status"))
                                     .enums(vec!["pending", "in_progress", "completed"]),
                             ])
-                            // 步骤别名（title/content/…）在解析时也接受，schema 不再
-                            // 声称这些键非法。
-                            .open(),
+                            // 单一形态（对齐 codex 的 update_plan）：每步必带
+                            // step + status，步骤内不再接受额外键；运行时仍容忍
+                            // title/content 等别名与字符串清单，但 schema 只宣传一种写法，
+                            // 少一种选择就少一次“两种形态混着用”的重试。
+                            .closed(),
                     ),
-                super::schema::integer("current")
-                    .desc(t("tool.spec.plan.args.current"))
-                    .min(0)
-                    .max(11)
-                    .optional(),
             ]),
         },
         ToolSpec {
@@ -548,6 +545,10 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 super::schema::string("include")
                     .desc(t("tool.spec.search.args.include"))
                     .optional(),
+                super::schema::array("exclude")
+                    .desc(t("tool.spec.search.args.exclude"))
+                    .items(super::schema::string("_"))
+                    .optional(),
                 super::schema::string("query_mode")
                     .desc(t("tool.spec.search.args.query_mode"))
                     .enums(vec!["literal", "regex"])
@@ -586,6 +587,10 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .optional(),
                 super::schema::boolean("files_only")
                     .desc(t("tool.spec.search.args.files_only"))
+                    .optional(),
+                super::schema::boolean("search_binary")
+                    .desc(t("tool.spec.search.args.search_binary"))
+                    .default_value(json!(false))
                     .optional(),
             ]),
         },
@@ -3129,16 +3134,12 @@ mod tests {
             plan_spec.input_schema["properties"]["plan"]["maxItems"].as_i64(),
             Some(12)
         );
-        // 步骤条目允许别名键（title/content/…），schema 因此是开放的。
-        assert_eq!(
-            plan_spec.input_schema["properties"]["plan"]["items"]["additionalProperties"].as_bool(),
-            Some(true)
-        );
-        // current 是最省形态的“进行中”标记，必须出现在 schema 里。
-        assert_eq!(
-            plan_spec.input_schema["properties"]["current"]["type"].as_str(),
-            Some("integer")
-        );
+        // 单一形态：步骤条目只认 step + status，且两者都必填。
+        let item = &plan_spec.input_schema["properties"]["plan"]["items"];
+        assert_eq!(item["additionalProperties"].as_bool(), Some(false));
+        assert_eq!(item["required"], serde_json::json!(["step", "status"]));
+        // 旧的 current 形态不再出现在 schema 里：只宣传一种写法。
+        assert!(plan_spec.input_schema["properties"].get("current").is_none());
         assert_eq!(
             plan_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
