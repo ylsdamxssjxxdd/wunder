@@ -722,10 +722,14 @@ impl Orchestrator {
             messages = context_manager.normalize_messages(messages);
             let mut user_message_appended = false;
 
-            let desktop_unlimited_rounds =
-                config.server.mode.trim().eq_ignore_ascii_case("desktop");
-            let max_rounds = if is_admin || desktop_unlimited_rounds {
+            let desktop_mode = config.server.mode.trim().eq_ignore_ascii_case("desktop");
+            let max_rounds = if is_admin {
                 None
+            } else if desktop_mode {
+                Some(resolve_desktop_max_rounds(
+                    &llm_config,
+                    prepared.skip_tool_calls,
+                ))
             } else {
                 Some(resolve_non_admin_max_rounds(
                     &llm_config,

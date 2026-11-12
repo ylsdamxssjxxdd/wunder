@@ -711,14 +711,19 @@ fn stamp_group_spans(app: &MainWindow, rows: &mut [SidebarRow]) {
 /// snapshot of the conversation list, so a live transition (running, waiting,
 /// done) must be patched into the matching row here; waiting for the next
 /// catalogue rebuild is what left entries stale until a thread switch.
+/// `settled_at` is the moment the turn ended: `None` means it ended here and
+/// now (a live transition), while `Some` carries the time storage recorded, so
+/// a thread read back from history keeps the mark it already had instead of
+/// being re-stamped as a fresh completion.
 pub(crate) fn update_thread_status(
     app: &MainWindow,
     session: &str,
     status: &str,
     phase: crate::runtime_phase::Phase,
+    settled_at: Option<f32>,
 ) {
     let ended_at = if phase.terminal() {
-        crate::native_chat::settled_now() as f32
+        settled_at.unwrap_or_else(|| crate::native_chat::settled_now() as f32)
     } else {
         0.0
     };

@@ -1,4 +1,4 @@
-import { Theme, TimelineRow, ModelCard, ChatAttachment, SplitContext } from "theme.slint";
+import { Theme, TimelineRow, ModelCard, ChatAttachment, SplitContext, QueueTurn } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { TimelineView } from "timeline.slint";
 import { Composer } from "composer.slint";
@@ -21,6 +21,10 @@ component SplitPane inherits Rectangle {
     in property <string> model-key: "";
     in property <[ChatAttachment]> attachments: [];
     in property <string> send-key: "enter";
+    // Messages this pane's thread is holding until its running turn settles.
+    // They are listed above the input box and nowhere else.
+    in property <[QueueTurn]> queue-turns: [];
+    in property <int> queue-overflow: 0;
     // This pane's own thread gauge: occupancy plus whether its history is a
     // compaction summary (which paints the brain red).
     in property <SplitContext> context: { usage: 0.0, known: false, counts: "", compacted: false };
@@ -92,6 +96,8 @@ component SplitPane inherits Rectangle {
                 model-key: root.model-key;
                 attachments: root.attachments;
                 send-key: root.send-key;
+                queue-turns: root.queue-turns;
+                queue-overflow: root.queue-overflow;
                 show-host-hud: false;
                 show-cli-action: false;
                 context-usage: root.context.usage;
@@ -120,6 +126,15 @@ export component ChatSplitWorkspace inherits Rectangle {
     in-out property <string> title-1;
     in-out property <string> title-2;
     in-out property <string> title-3;
+    // Each pane's own held messages, listed above its input box.
+    in property <[QueueTurn]> queue-0: [];
+    in property <[QueueTurn]> queue-1: [];
+    in property <[QueueTurn]> queue-2: [];
+    in property <[QueueTurn]> queue-3: [];
+    in property <int> queue-overflow-0: 0;
+    in property <int> queue-overflow-1: 0;
+    in property <int> queue-overflow-2: 0;
+    in property <int> queue-overflow-3: 0;
     in property <[TimelineRow]> rows-0: [];
     in property <[TimelineRow]> rows-1: [];
     in property <[TimelineRow]> rows-2: [];
@@ -212,6 +227,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 stream-revision: root.stream-revision; models: root.models; model-count: root.model-count;
                 model-name: root.model-names[0] != "" ? root.model-names[0] : root.model-name; model-key: root.model-keys[0];
                 attachments: root.active-session == root.session-0 ? root.attachments : []; send-key: root.send-key;
+                queue-turns: root.queue-0; queue-overflow: root.queue-overflow-0;
                 context: root.contexts[0];
                 close => { root.close-pane(0); } activate => { root.activate-pane(0); } send => { root.send-pane(0); } stop => { root.stop-pane(0); }
                 toggle(index) => { root.toggle-row(0, index); } process-page(index, direction) => { root.process-page(0, index, direction); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
@@ -224,6 +240,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 stream-revision: root.stream-revision; models: root.models; model-count: root.model-count;
                 model-name: root.model-names[1] != "" ? root.model-names[1] : root.model-name; model-key: root.model-keys[1];
                 attachments: root.active-session == root.session-1 ? root.attachments : []; send-key: root.send-key;
+                queue-turns: root.queue-1; queue-overflow: root.queue-overflow-1;
                 context: root.contexts[1];
                 close => { root.close-pane(1); } activate => { root.activate-pane(1); } send => { root.send-pane(1); } stop => { root.stop-pane(1); }
                 toggle(index) => { root.toggle-row(1, index); } process-page(index, direction) => { root.process-page(1, index, direction); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
@@ -236,6 +253,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 stream-revision: root.stream-revision; models: root.models; model-count: root.model-count;
                 model-name: root.model-names[2] != "" ? root.model-names[2] : root.model-name; model-key: root.model-keys[2];
                 attachments: root.active-session == root.session-2 ? root.attachments : []; send-key: root.send-key;
+                queue-turns: root.queue-2; queue-overflow: root.queue-overflow-2;
                 context: root.contexts[2];
                 close => { root.close-pane(2); } activate => { root.activate-pane(2); } send => { root.send-pane(2); } stop => { root.stop-pane(2); }
                 toggle(index) => { root.toggle-row(2, index); } process-page(index, direction) => { root.process-page(2, index, direction); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }
@@ -248,6 +266,7 @@ export component ChatSplitWorkspace inherits Rectangle {
                 stream-revision: root.stream-revision; models: root.models; model-count: root.model-count;
                 model-name: root.model-names[3] != "" ? root.model-names[3] : root.model-name; model-key: root.model-keys[3];
                 attachments: root.active-session == root.session-3 ? root.attachments : []; send-key: root.send-key;
+                queue-turns: root.queue-3; queue-overflow: root.queue-overflow-3;
                 context: root.contexts[3];
                 close => { root.close-pane(3); } activate => { root.activate-pane(3); } send => { root.send-pane(3); } stop => { root.stop-pane(3); }
                 toggle(index) => { root.toggle-row(3, index); } process-page(index, direction) => { root.process-page(3, index, direction); } copy-text(text) => { root.copy-text(text); } fork-thread(session, round) => { root.fork-thread(session, round); } open-resource(id) => { root.open-resource(id); }

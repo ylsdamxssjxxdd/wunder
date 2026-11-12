@@ -468,12 +468,13 @@ pub fn merge_reasoning_tail(bar: &TimelineRow, mut entry: ProcessEntry) {
                 children.set_row_data(index, old);
             }
         }
-        // Process pages retain at most 100 items, each with at most two rows.
-        // Reserve one bounded live tail rather than grow a second transcript.
-        if children.row_count() >= 201 {
+        // A live-only bar keeps one bounded tail. A paged bar has already
+        // merged its pages into the same model, and trimming at a fixed index
+        // would cut a loaded page in half.
+        if !bar.process_paged && children.row_count() >= 201 {
             children.remove(200);
         }
-        entry.payload = -1 - bar.process_idx * 1024 - children.row_count() as i32;
+        entry.payload = -1 - bar.process_idx * crate::chat_process::PROCESS_SLOT - children.row_count() as i32;
         children.push(entry);
     }
 }
@@ -591,7 +592,7 @@ pub fn restore_folds(rows: &mut [TimelineRow], previous: &VecModel<TimelineRow>)
                 if row.process_paged {
                     for index in 0..row.process_entries.row_count() {
                         if let Some(mut entry) = row.process_entries.row_data(index) {
-                            let payload = -1 - row.process_idx * 1024 - index as i32;
+                            let payload = -1 - row.process_idx * crate::chat_process::PROCESS_SLOT - index as i32;
                             if entry.payload != payload {
                                 entry.payload = payload;
                                 row.process_entries.set_row_data(index, entry);

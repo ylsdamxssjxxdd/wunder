@@ -1129,7 +1129,9 @@ component QueueRow inherits Rectangle {
             color: Theme.muted; font-size: Theme.font-2xs;
             vertical-alignment: center;
         }
-        Action {
+        // 插话只对引擎已经受理、正在排队的轮次有意义：一条还没发出去的
+        // 消息没有可插的队。
+        if !root.turn.waiting : Action {
             width: 76px; height: 24px; y: 2px;
             icon: @image-url("../assets/icons/arrow-up.svg");
             icon-size: 13px;
@@ -1150,7 +1152,7 @@ component QueueRow inherits Rectangle {
         QueueTool {
             y: 2px;
             icon: @image-url("../assets/icons/trash.svg");
-            tip: I18n.cp_queue_remove_hint;
+            tip: root.turn.waiting ? I18n.cp_queue_remove_waiting_hint : I18n.cp_queue_remove_hint;
             clicked => { root.remove(root.turn.queue-id); }
         }
     }

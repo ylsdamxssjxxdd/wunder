@@ -1738,6 +1738,116 @@ fn write_carrier_never_replays_content_or_diff_to_the_model() {
 }
 
 #[test]
+fn noop_write_reports_unchanged_and_warns_the_model() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "action": "write_file",
+        "state": "completed",
+        "summary": "Updated file temp/fix.py.",
+        "data": {
+            "path": "temp/fix.py",
+            "bytes": 12,
+            "dry_run": false,
+            "existed": true,
+            "previous_bytes": 12,
+            "added_lines": 0,
+            "deleted_lines": 0,
+            "changed_files": 1,
+            "hunks_applied": 0
+        }
+    }));
+    let observation = result.to_compact_payload("write_file");
+    assert_eq!(
+        observation["data"]["changed"],
+        json!(false),
+        "覆盖写同内容没有改动文件，不能报成变更"
+    );
+    assert_eq!(observation["data"]["no_op"], json!(true));
+    assert!(observation["data"]["notice"]
+        .as_str()
+        .unwrap_or_default()
+        .starts_with("no_op:"));
+}
+
+#[test]
+fn real_write_change_still_reports_changed_without_noop_notice() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "action": "write_file",
+        "state": "completed",
+        "summary": "Updated file temp/fix.py.",
+        "data": {
+            "path": "temp/fix.py",
+            "bytes": 12,
+            "dry_run": false,
+            "existed": true,
+            "previous_bytes": 9,
+            "added_lines": 2,
+            "deleted_lines": 1,
+            "changed_files": 1,
+            "hunks_applied": 1
+        }
+    }));
+    let observation = result.to_compact_payload("write_file");
+    assert_eq!(observation["data"]["changed"], json!(true));
+    assert!(observation["data"].get("no_op").is_none());
+    assert!(observation["data"].get("notice").is_none());
+}
+
+#[test]
+fn created_file_counts_as_changed_even_when_empty() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "action": "write_file",
+        "state": "completed",
+        "summary": "Created file temp/empty.txt.",
+        "data": {
+            "path": "temp/empty.txt",
+            "bytes": 0,
+            "dry_run": false,
+            "existed": false,
+            "previous_bytes": 0,
+            "added_lines": 0,
+            "deleted_lines": 0,
+            "changed_files": 1,
+            "hunks_applied": 0
+        }
+    }));
+    let observation = result.to_compact_payload("write_file");
+    assert_eq!(observation["data"]["changed"], json!(true));
+    assert!(observation["data"].get("no_op").is_none());
+}
+
+#[test]
+fn write_with_unavailable_diff_keeps_conservative_changed() {
+    let result = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "action": "write_file",
+        "state": "completed",
+        "summary": "Updated file temp/large.bin.",
+        "data": {
+            "path": "temp/large.bin",
+            "bytes": 4096,
+            "dry_run": false,
+            "existed": true,
+            "previous_bytes": 4096,
+            "added_lines": 0,
+            "deleted_lines": 0,
+            "changed_files": 1,
+            "hunks_applied": 0,
+            "diff_unavailable": "source_too_large"
+        }
+    }));
+    let observation = result.to_compact_payload("write_file");
+    assert_eq!(
+        observation["data"]["changed"],
+        json!(true),
+        "diff 不可用时无法证明没变，保持原有计数口径"
+    );
+    assert!(observation["data"].get("no_op").is_none());
+}
+
+#[test]
 fn test_compact_observation_payload_projects_apply_patch_to_change_counts() {
     let mut payload = json!({
         "tool": "apply_patch",
@@ -2297,4 +2407,39 @@ fn glob_projection_keeps_paths_clean_and_carries_paging() {
     assert_eq!(data["next_offset"], json!(32));
     assert_eq!(data["has_more"], json!(true));
     assert_eq!(data["offset"], json!(0));
+}
+
+
+#[test]
+fn search_focused_context_survives_the_generic_array_sampler() {
+    // 40 行上下文超过通用数组取样阈值（32），但指名了上下文名额后必须整段保留，
+    // 否则「一次调用看清实现」又会被压回两次往返。
+    let lines = (0..40)
+        .map(|idx| json!({"line": 100 + idx, "content": "ctx".to_string()}))
+        .collect::<Vec<_>>();
+    let mut payload = json!({
+        "tool": "search_content",
+        "ok": true,
+        "data": {
+            "query": "needle",
+            "query_mode": "literal",
+            "context_match_limit": 1,
+            "hits": [{
+                "path": "src/a.rs",
+                "line": 1,
+                "content": "needle",
+                "after": lines
+            }]
+        }
+    });
+
+    compact_observation_payload(&mut payload, "搜索内容");
+    let after = payload["data"]["hits"][0]["after"]
+        .as_array()
+        .expect("after array");
+    assert_eq!(after.len(), 40, "40 行上下文不该被再次取样");
+    assert!(
+        after.iter().all(|item| item.get("__truncated__").is_none()),
+        "上下文数组里不该出现省略占位对象"
+    );
 }

@@ -611,6 +611,9 @@ export const useCompanionStore = defineStore('companions', () => {
       settings.value.selectedId = record.id;
       settings.value.enabled = true;
       persistSettings();
+      if (isCompanionHidden(record.id)) {
+        setCompanionVisible(record.id, true);
+      }
       await saveDesktopCompanionLibraryState({
         companions: companions.value,
         settings: settings.value,
@@ -707,11 +710,21 @@ export const useCompanionStore = defineStore('companions', () => {
     }
     settings.value.selectedId = cleaned;
     persistSettings();
+    // 选用形象即视为「要看见它」：清掉该形象上次右键隐藏留下的 show=false，
+    // 否则用户选完形象却什么都不显示，且再没有右键入口可以恢复。
+    if (isCompanionHidden(cleaned)) {
+      setCompanionVisible(cleaned, true);
+    }
   };
 
   const setEnabled = (value: boolean): void => {
     settings.value.enabled = value === true;
     persistSettings();
+    // 形象总开关重新打开时同样解除当前形象的隐藏标记，让「关闭再打开」成为可靠的恢复路径。
+    const selectedId = String(settings.value.selectedId || '').trim();
+    if (settings.value.enabled && selectedId && isCompanionHidden(selectedId)) {
+      setCompanionVisible(selectedId, true);
+    }
   };
 
   const setPosition = (position: CompanionPosition): void => {
@@ -756,6 +769,22 @@ export const useCompanionStore = defineStore('companions', () => {
     return agentOverrides.value[key] || null;
   };
 
+  /**
+   * 桌宠形象按形象包 id 存偏好，key 统一为 `desktop:<id>`。
+   * 右键「隐藏」就是往这个 key 写 show=false；隐藏后形象不再渲染，
+   * 因此必须提供一个不依赖形象本身的恢复入口（设置页开关/重新选用形象/重开总开关）。
+   */
+  const companionOverrideKey = (companionId: string): string => {
+    const cleaned = String(companionId || '').trim();
+    return cleaned ? `desktop:${cleaned}` : '';
+  };
+
+  const isCompanionHidden = (companionId: string): boolean => {
+    const key = companionOverrideKey(companionId);
+    if (!key) return false;
+    return agentOverrides.value[key]?.show === false;
+  };
+
   const setAgentOverride = (
     agentId: string,
     patch: Partial<Pick<AgentCompanionOverride, 'show' | 'scale'>>
@@ -789,6 +818,13 @@ export const useCompanionStore = defineStore('companions', () => {
     persistAgentOverrides();
   };
 
+  /** 显示/隐藏指定形象（只改 show，保留缩放）；隐藏状态的唯一恢复入口。 */
+  const setCompanionVisible = (companionId: string, visible: boolean): void => {
+    const key = companionOverrideKey(companionId);
+    if (!key) return;
+    setAgentOverride(key, { show: visible === true });
+  };
+
   return {
     agentOverrides,
     companions,
@@ -811,12 +847,14 @@ export const useCompanionStore = defineStore('companions', () => {
     getAgentOverride,
     hydrate,
     importPackage,
+    isCompanionHidden,
     findCompanion,
     loadGlobalCompanions,
     ensureGlobalCompanion,
     removeCompanion,
     selectCompanion,
     setAgentOverride,
+    setCompanionVisible,
     setEnabled,
     setMessageHintsEnabled,
     setPosition,

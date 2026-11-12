@@ -48,8 +48,12 @@ const PLAN_WRAPPER_KEYS: &[&str] = &[
 
 pub(crate) async fn execute_plan_tool(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     // 先走全局的宽松恢复（转义引号、换行等），再补计划工具自己的包装解包。
-    let args = recover_plan_args(&super::recover_tool_args_value(args));
-    let request = match parse_plan_request(&args) {
+    let recovery = recover_plan_args(&super::recover_tool_args_value(args));
+    if let Some(wrapper) = recovery.broken_wrapper.clone() {
+        return Ok(unparsable_wrapper(&wrapper).into_tool_result());
+    }
+    let args = &recovery.value;
+    let request = match parse_plan_request(args) {
         Ok(request) => request,
         Err(error) => return Ok(error.into_tool_result()),
     };
@@ -99,33 +103,58 @@ pub(crate) async fn execute_plan_tool(context: &ToolContext<'_>, args: &Value) -
 /// JSON 字符串、把 plan 列表写成字符串，或直接传一个数组，这些都应被接住；
 /// 接不住时要落到带示例与键名的可执行报错上，而不是 serde 的
 /// “missing field `plan`”。
-fn recover_plan_args(args: &Value) -> Value {
+/// 参数恢复结果：除了能用的参数，还要记住“包装键存在但里面不是合法 JSON”，
+/// 这样报错能说“raw 里的 JSON 解不开”，而不是含糊地报“未知字段 raw”。
+struct PlanRecovery {
+    value: Value,
+    broken_wrapper: Option<String>,
+}
+
+impl PlanRecovery {
+    fn ok(value: Value) -> Self {
+        Self {
+            value,
+            broken_wrapper: None,
+        }
+    }
+
+    fn broken(value: Value, wrapper: impl Into<String>) -> Self {
+        Self {
+            value,
+            broken_wrapper: Some(wrapper.into()),
+        }
+    }
+}
+
+fn recover_plan_args(args: &Value) -> PlanRecovery {
     match args {
-        Value::String(text) => embedded_json(text)
-            .and_then(as_plan_object)
-            .unwrap_or_else(|| args.clone()),
-        Value::Array(_) => json!({ "plan": args.clone() }),
+        Value::String(text) => match embedded_json(text).and_then(as_plan_object) {
+            Some(value) => PlanRecovery::ok(value),
+            None => PlanRecovery::broken(args.clone(), "[arguments]"),
+        },
+        Value::Array(_) => PlanRecovery::ok(json!({ "plan": args.clone() })),
         Value::Object(map) => {
             // 整份参数被包了一层字符串：wrapper 之外只允许再带说明字段，
             // 这样 explanation + input 并存时也能救回来。
             if !PLAN_LIST_KEYS.iter().any(|key| map.contains_key(*key)) {
-                if let Some(inner) = map
+                if let Some((wrapper, raw)) = map
                     .iter()
                     .find(|(key, _)| PLAN_WRAPPER_KEYS.contains(&key.as_str()))
-                    .and_then(|(_, value)| value.as_str())
-                    .and_then(embedded_json)
-                    .and_then(as_plan_object)
+                    .and_then(|(key, value)| value.as_str().map(|text| (key.clone(), text)))
                 {
-                    if let Value::Object(mut merged) = inner {
-                        for key in ["explanation", "note"] {
-                            if let Some(text) = map.get(key) {
-                                merged
-                                    .entry(key.to_string())
-                                    .or_insert_with(|| text.clone());
+                    return match embedded_json(raw).and_then(as_plan_object) {
+                        Some(Value::Object(mut merged)) => {
+                            for key in ["explanation", "note"] {
+                                if let Some(text) = map.get(key) {
+                                    merged
+                                        .entry(key.to_string())
+                                        .or_insert_with(|| text.clone());
+                                }
                             }
+                            PlanRecovery::ok(Value::Object(merged))
                         }
-                        return Value::Object(merged);
-                    }
+                        _ => PlanRecovery::broken(args.clone(), wrapper),
+                    };
                 }
             }
             // 只有列表本身被写成字符串。
@@ -134,17 +163,18 @@ fn recover_plan_args(args: &Value) -> Value {
                     continue;
                 };
                 let Some(parsed) = embedded_json(text) else {
-                    continue;
+                    return PlanRecovery::broken(args.clone(), (*key).to_string());
                 };
                 if parsed.is_array() {
                     let mut next = map.clone();
                     next.insert((*key).to_string(), parsed);
-                    return Value::Object(next);
+                    return PlanRecovery::ok(Value::Object(next));
                 }
+                return PlanRecovery::broken(args.clone(), (*key).to_string());
             }
-            args.clone()
+            PlanRecovery::ok(args.clone())
         }
-        _ => args.clone(),
+        _ => PlanRecovery::ok(args.clone()),
     }
 }
 
@@ -234,17 +264,18 @@ struct PlanRequest {
 }
 
 impl PlanRequest {
+    /// 归一成步骤状态对（`step` + `status`）。显式状态优先；用最省形态（字符串清单 + `current`）
+    /// 时按线性清单解释：`current` 之前的步骤算已完成，当前步进行中，其余待办。
+    /// 否则最省形态永远累计不到 completed，面板进度条推到最后也停在 0。
     fn normalized_plan(&self) -> Vec<Value> {
         self.steps
             .iter()
             .enumerate()
             .map(|(index, (step, status))| {
-                let status = status.clone().unwrap_or_else(|| {
-                    if self.current == Some(index) {
-                        "in_progress".to_string()
-                    } else {
-                        "pending".to_string()
-                    }
+                let status = status.clone().unwrap_or_else(|| match self.current {
+                    Some(current) if index < current => "completed".to_string(),
+                    Some(current) if index == current => "in_progress".to_string(),
+                    _ => "pending".to_string(),
                 });
                 json!({ "step": step, "status": status })
             })
@@ -391,6 +422,17 @@ fn plan_shape_error(args: &Value) -> PlanArgError {
         i18n::t_with_params("tool.plan.invalid_shape", &params),
         json!({ "keys": keys, "expected": PLAN_SHAPE_EXAMPLE }),
     )
+}
+
+fn unparsable_wrapper(wrapper: &str) -> PlanArgError {
+    let mut params = HashMap::new();
+    params.insert("field".to_string(), wrapper.to_string());
+    PlanArgError::shape(
+        i18n::t_with_params("tool.plan.unparsable_wrapper", &params),
+        json!({ "field": wrapper, "expected": PLAN_SHAPE_EXAMPLE }),
+    )
+    .with_code("TOOL_PLAN_INVALID_JSON")
+    .with_hint(i18n::t("tool.plan.minimal_example_hint"))
 }
 
 fn unknown_field(field: &str, allowed: &[&str]) -> PlanArgError {
@@ -960,6 +1002,23 @@ mod tests {
     }
 
     #[test]
+    fn plan_recovery_reports_unparsable_wrapper_instead_of_unknown_field() {
+        // 包装键里不是合法 JSON：要报“解不开”，不能含糊地说“未知字段 raw”。
+        let recovered = recover_plan_args(&json!({
+            "raw": "{\"plan\": [step\": \"拼错了\"}]}"
+        }));
+        assert_eq!(recovered.broken_wrapper.as_deref(), Some("raw"));
+
+        let result = unparsable_wrapper("raw").into_tool_result();
+        assert_eq!(
+            result["error_meta"]["code"],
+            json!("TOOL_PLAN_INVALID_JSON")
+        );
+        assert_eq!(result["error_meta"]["retryable"], json!(true));
+        assert_eq!(result["data"]["field"], json!("raw"));
+    }
+
+    #[test]
     fn plan_arg_error_carries_structured_location() {
         let result = unknown_field("mode", PLAN_TOP_LEVEL_KEYS).into_tool_result();
         assert_eq!(result["ok"], json!(false));
@@ -979,9 +1038,37 @@ mod tests {
         }))
         .expect("minimal form");
         let plan = request.normalized_plan();
-        assert_eq!(plan[0]["status"], json!("pending"));
+        // 最省形态按线性清单解释：current 之前都是已完成。
+        assert_eq!(plan[0]["status"], json!("completed"));
         assert_eq!(plan[1]["status"], json!("in_progress"));
         assert_eq!(plan[2]["status"], json!("pending"));
+        // 进度必须跟着 current 走，否则面板推到末尾也停在 0。
+        let progress = plan_progress(&plan);
+        assert_eq!((progress.done, progress.total), (1, 3));
+        assert_eq!(progress.current.as_deref(), Some("乙"));
+        assert_eq!(progress.next.as_deref(), Some("丙"));
+    }
+
+    #[test]
+    fn plan_progress_counts_steps_before_current_as_done() {
+        let request = parse_plan_request(&json!({
+            "plan": ["甲", "乙", "丙"], "current": 2
+        }))
+        .expect("minimal form");
+        let progress = plan_progress(&request.normalized_plan());
+        assert_eq!((progress.done, progress.total), (2, 3));
+        assert_eq!(progress.current.as_deref(), Some("丙"));
+        assert_eq!(progress.next, None);
+        // 显式状态照旧以 status 为准，不被 current 覆盖。
+        let explicit = parse_plan_request(&json!({
+            "plan": [
+                { "step": "甲", "status": "pending" },
+                { "step": "乙", "status": "in_progress" }
+            ]
+        }))
+        .expect("explicit form");
+        let progress = plan_progress(&explicit.normalized_plan());
+        assert_eq!((progress.done, progress.total), (0, 2));
     }
 
     #[test]
@@ -1047,7 +1134,8 @@ mod tests {
         let recovered = recover_plan_args(&json!({
             "input": "{\"plan\":[{\"step\":\"探测环境\",\"status\":\"in_progress\"}]}"
         }));
-        let request = parse_plan_request(&recovered).expect("input wrapper");
+        assert!(recovered.broken_wrapper.is_none());
+        let request = parse_plan_request(&recovered.value).expect("input wrapper");
         assert_eq!(request.steps[0].0, "探测环境");
         assert_eq!(request.steps[0].1.as_deref(), Some("in_progress"));
 
@@ -1056,7 +1144,7 @@ mod tests {
             "explanation": "补两步",
             "raw": "```json\n{\"plan\":[\"跑测试\"]}\n```"
         }));
-        let request = parse_plan_request(&recovered).expect("raw + explanation");
+        let request = parse_plan_request(&recovered.value).expect("raw + explanation");
         assert_eq!(request.steps[0].0, "跑测试");
         assert_eq!(request.explanation.as_deref(), Some("补两步"));
     }
@@ -1066,11 +1154,11 @@ mod tests {
         let recovered = recover_plan_args(&json!({
             "plan": "[{\"step\":\"写代码\",\"status\":\"进行中\"}]"
         }));
-        let request = parse_plan_request(&recovered).expect("stringified list");
+        let request = parse_plan_request(&recovered.value).expect("stringified list");
         assert_eq!(request.normalized_plan()[0]["status"], json!("in_progress"));
 
         let recovered = recover_plan_args(&json!([{ "step": "第一步" }, "第二步"]));
-        let request = parse_plan_request(&recovered).expect("bare array");
+        let request = parse_plan_request(&recovered.value).expect("bare array");
         assert_eq!(request.steps.len(), 2);
         assert_eq!(request.steps[1].0, "第二步");
     }
@@ -1080,7 +1168,7 @@ mod tests {
         let recovered = recover_plan_args(&json!({
             "steps": [{ "title": "改前端", "state": "done" }, { "content": "补测试" }]
         }));
-        let request = parse_plan_request(&recovered).expect("alias keys");
+        let request = parse_plan_request(&recovered.value).expect("alias keys");
         assert_eq!(request.steps[0].0, "改前端");
         assert_eq!(request.steps[0].1.as_deref(), Some("completed"));
         assert_eq!(request.steps[1].0, "补测试");

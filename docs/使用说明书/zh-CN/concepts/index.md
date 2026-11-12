@@ -6,7 +6,7 @@ updated_at: 2026-11-08
 
 # 核心概览
 
-wunder（心舰）是多形态的智能体工作台：把目标交给智能体，由它拆解任务、调用工具、交付结果。功能清单见[工具](/docs/zh-CN/tools/)与[能力速查](/docs/zh-CN/capabilities/api-index/)。
+wunder（心舰）是通用型人工智能工作台：把目标交给智能体，由它拆解任务、调用工具、交付结果。功能清单见[工具](/docs/zh-CN/tools/)与[能力速查](/docs/zh-CN/capabilities/api-index/)。
 
 ## 多快好省
 

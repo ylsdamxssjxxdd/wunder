@@ -232,6 +232,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | "--native-model-smoke"
                 | "--native-setup-smoke"
                 | "--native-split-smoke"
+                | "--native-queue-smoke"
         )
     ) {
         let directory = std::path::PathBuf::from(
@@ -252,6 +253,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let setup = first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-setup-smoke"));
         let splitting =
             first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-split-smoke"));
+        let queueing =
+            first_argument.as_deref() == Some(std::ffi::OsStr::new("--native-queue-smoke"));
         if !restoring {
             args.workspace = Some(directory.join("workspace"));
         }
@@ -264,7 +267,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // The restore phase deliberately runs a read-only guard: the streaming
         // phase's guard writes probe fixtures, and a check that mutates the
         // store cannot prove what survived the restart.
-        if !restoring && !reasoning && !models && !setup && !splitting {
+        if !restoring && !reasoning && !models && !setup && !splitting && !queueing {
             native_smoke::check_runtime(&runtime)?;
         }
         native_runtime::install_ready_without_pets(&app, runtime.clone());
@@ -278,6 +281,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             native_smoke::run_reasoning(&app, directory)
         } else if splitting {
             native_smoke::run_split(&app, directory)
+        } else if queueing {
+            native_smoke::run_queue(&app, directory)
         } else if restoring {
             native_restore::run(&app, directory, runtime)
         } else {

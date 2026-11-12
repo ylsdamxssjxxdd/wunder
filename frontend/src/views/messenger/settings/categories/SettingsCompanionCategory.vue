@@ -32,6 +32,28 @@
 
       <div class="messenger-settings-row">
         <div class="messenger-settings-page-row-main">
+          <i class="fa-solid fa-eye messenger-settings-page-row-icon" aria-hidden="true"></i>
+          <div>
+            <div class="messenger-settings-label">{{ t('companions.setting.visible') }}</div>
+            <div class="messenger-settings-hint">{{ t('companions.setting.visibleHint') }}</div>
+          </div>
+        </div>
+        <div class="messenger-settings-page-row-actions">
+          <label class="messenger-settings-switch">
+            <input
+              type="checkbox"
+              data-testid="settings-companion-visible"
+              :disabled="!selectedCompanionId"
+              :checked="companionVisible"
+              @change="handleVisibleChange"
+            />
+            <span></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="messenger-settings-row">
+        <div class="messenger-settings-page-row-main">
           <i class="fa-solid fa-comment-dots messenger-settings-page-row-icon" aria-hidden="true"></i>
           <div>
             <div class="messenger-settings-label">{{ t('companions.setting.messageHints') }}</div>
@@ -222,6 +244,12 @@ const pagedLibraryItems = computed(() =>
 
 const scaleText = computed(() => `${Number(settings.value.scale || 1).toFixed(1)}x`);
 
+// 形象被右键「隐藏」后不会再渲染，右键入口也随之消失，所以设置页必须给出开关作为恢复入口。
+const selectedCompanionId = computed(() => String(settings.value.selectedId || '').trim());
+const companionVisible = computed(
+  () => Boolean(selectedCompanionId.value) && !companionStore.isCompanionHidden(selectedCompanionId.value)
+);
+
 const loadMissingPreviews = () => {
   pagedLibraryItems.value.forEach((item) => {
     if (item.scope !== 'global' || item.spritesheetDataUrl) return;
@@ -235,6 +263,17 @@ watch(libraryPage, () => {
 
 const handleEnabledChange = (event: Event) => {
   companionStore.setEnabled((event.target as HTMLInputElement).checked === true);
+};
+
+const handleVisibleChange = (event: Event) => {
+  const visible = (event.target as HTMLInputElement).checked === true;
+  const id = selectedCompanionId.value;
+  if (!id) return;
+  companionStore.setCompanionVisible(id, visible);
+  // 恢复显示时同步打开总开关，否则勾选后仍然看不见形象。
+  if (visible && settings.value.enabled !== true) {
+    companionStore.setEnabled(true);
+  }
 };
 
 const handleMessageHintsChange = (event: Event) => {

@@ -15,6 +15,23 @@ fn tool_timeout_never_advertises_blind_side_effect_retries() {
 }
 
 #[test]
+fn desktop_max_rounds_keeps_a_loose_hard_cap() {
+    let mut config = LlmModelConfig::default();
+    assert_eq!(
+        resolve_desktop_max_rounds(&config, false),
+        i64::from(DESKTOP_MAX_MODEL_ROUNDS)
+    );
+    config.max_rounds = Some(50);
+    assert_eq!(resolve_desktop_max_rounds(&config, false), 50);
+    config.max_rounds = Some(5000);
+    assert_eq!(
+        resolve_desktop_max_rounds(&config, false),
+        i64::from(DESKTOP_MAX_MODEL_ROUNDS),
+        "再高的配置也不能让桌面版单轮无上限"
+    );
+}
+
+#[test]
 fn build_max_rounds_user_guidance_encourages_continue_or_raise_limit() {
     let answer = build_max_rounds_user_guidance(Some(10));
     assert!(!answer.trim().is_empty());

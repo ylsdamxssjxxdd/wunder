@@ -10,7 +10,7 @@ use crate::{DraftRecall, MainWindow, QueueTurn};
 use slint::{ModelRc, SharedString, VecModel};
 use std::collections::VecDeque;
 use std::rc::Rc;
-use wunder_desktop::{NativeChatEvent, NativeQueueTurn, NativeStream};
+use wunder_desktop::{NativeChatAttachment, NativeChatEvent, NativeQueueTurn, NativeStream};
 
 /// Parked submissions this window still holds a subscriber for. A thread's
 /// queue is short by design and every entry owns a bounded event channel, so
@@ -163,23 +163,90 @@ fn is_admission_event(value: &serde_json::Value) -> bool {
 
 /// Engine rows → strip rows, plus how many rows were left out.
 pub fn project_rows(rows: &[NativeQueueTurn]) -> (Vec<QueueTurn>, usize) {
-    let hidden = rows.len().saturating_sub(STRIP_ROWS);
-    let projected = rows
+    project_rows_with_waiting(rows, &[])
+}
+
+/// A message this window submitted that the engine has not admitted yet: it
+/// waits inside the composer's strip, not in the transcript.
+///
+/// A waiting turn is a *local* hold, not an engine queue row. The window keeps
+/// everything needed to send it, and only calls the engine once the thread's
+/// running turn has settled. That is the only way the transcript can stay free
+/// of a second bubble and of a「排队中」status the user never asked for.
+#[derive(Debug, Clone)]
+pub struct WaitingTurn {
+    pub client_message_id: String,
+    /// What the transcript shows for this message (an attachment-only send has
+    /// no text, so it carries the same placeholder the bubble uses).
+    pub text: String,
+    pub attachments: usize,
+    /// Thread the message belongs to. A waiting turn is only ever released
+    /// into the thread it was typed in.
+    pub session: String,
+    /// Exactly what the user typed, kept verbatim: the release puts it back
+    /// into the composer, so it is indistinguishable from a direct send.
+    pub content: String,
+    /// Attachments the composer held when the message was sent.
+    pub payload: Vec<NativeChatAttachment>,
+}
+
+impl WaitingTurn {
+    /// The strip row for this message: it is not an engine queue row yet.
+    pub fn to_queue_turn(&self) -> QueueTurn {
+        QueueTurn {
+            queue_id: SharedString::from(format!("waiting-{}", self.client_message_id)),
+            text: SharedString::from(self.text.as_str()),
+            attachments: self.attachments as i32,
+            interjected: false,
+            waiting: true,
+        }
+    }
+}
+
+/// Strip projection that also carries this window's own waiting turns. They
+/// are listed first: they are the messages the user just sent and the engine
+/// has not started, while the engine's rows are turns already admitted and
+/// parked behind a running one. A waiting turn whose engine row already
+/// exists is dropped in favour of that row, so the strip never shows one
+/// message twice.
+pub fn project_rows_with_waiting(
+    rows: &[NativeQueueTurn],
+    waiting: &[WaitingTurn],
+) -> (Vec<QueueTurn>, usize) {
+    let mut projected = waiting
         .iter()
-        .take(STRIP_ROWS)
-        .map(|row| QueueTurn {
-            queue_id: SharedString::from(row.queue_id.as_str()),
-            text: SharedString::from(row.content.as_str()),
-            attachments: row.attachment_count as i32,
-            interjected: row.priority > 0,
+        .filter(|turn| {
+            !rows
+                .iter()
+                .any(|row| row.client_message_id == turn.client_message_id)
         })
+        .map(|turn| turn.to_queue_turn())
         .collect::<Vec<_>>();
+    let hidden = rows.len().saturating_sub(STRIP_ROWS);
+    projected.extend(rows.iter().take(STRIP_ROWS).map(|row| QueueTurn {
+        queue_id: SharedString::from(row.queue_id.as_str()),
+        text: SharedString::from(row.content.as_str()),
+        attachments: row.attachment_count as i32,
+        interjected: row.priority > 0,
+        waiting: false,
+    }));
     (projected, hidden)
 }
 
 /// Put an already-read queue onto the strip.
 pub fn publish_rows(app: &MainWindow, rows: &[NativeQueueTurn]) {
     let (projected, hidden) = project_rows(rows);
+    app.set_queue_turns(ModelRc::from(Rc::new(VecModel::from(projected))));
+    app.set_queue_overflow(hidden as i32);
+}
+
+/// Put the engine rows and this window's waiting turns onto the strip.
+pub fn publish_rows_with_waiting(
+    app: &MainWindow,
+    rows: &[NativeQueueTurn],
+    waiting: &[WaitingTurn],
+) {
+    let (projected, hidden) = project_rows_with_waiting(rows, waiting);
     app.set_queue_turns(ModelRc::from(Rc::new(VecModel::from(projected))));
     app.set_queue_overflow(hidden as i32);
 }
@@ -207,6 +274,13 @@ pub fn due_arrived(due: &mut Option<std::time::Instant>) -> bool {
 
 pub fn parked_is_full(parked: &VecDeque<ParkedTurn>) -> bool {
     parked.len() >= PARKED_LIMIT
+}
+
+/// True when this window already holds as many local waiting messages as the
+/// strip can show. Waiting turns never reach the engine, so their bound is the
+/// strip's, not the parked-channel limit.
+pub fn waiting_is_full(waiting: &[WaitingTurn]) -> bool {
+    waiting.len() >= STRIP_ROWS
 }
 
 /// Move `queue_id` by `delta` inside the current order and hand back the whole

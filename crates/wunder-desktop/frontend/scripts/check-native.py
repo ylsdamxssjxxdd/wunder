@@ -55,11 +55,15 @@ def main():
     parser.add_argument("--reasoning-only", action="store_true")
     parser.add_argument("--models-only", action="store_true")
     parser.add_argument("--split-only", action="store_true")
+    parser.add_argument("--queue-only", action="store_true")
     # A fresh install has no models at all: the engine seeds only the 虚拟模型
     # and the chat surface must offer the first-run setup banner.
     parser.add_argument("--setup-only", action="store_true")
     args = parser.parse_args()
-    import psutil
+    try:
+        import psutil
+    except ImportError:  # offline hosts: the smoke itself does not need it
+        psutil = None
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     config = output / "runtime" / "config"
@@ -84,14 +88,19 @@ def main():
     peak = 0
     try:
         with (output / "process.log").open("wb") as log:
-            mode = "--native-setup-smoke" if args.setup_only else "--native-model-smoke" if args.models_only else "--native-reasoning-smoke" if args.reasoning_only else "--native-split-smoke" if args.split_only else "--native-smoke"
+            mode = "--native-setup-smoke" if args.setup_only else "--native-model-smoke" if args.models_only else "--native-reasoning-smoke" if args.reasoning_only else "--native-split-smoke" if args.split_only else "--native-queue-smoke" if args.queue_only else "--native-smoke"
             process = subprocess.Popen([str(args.ui.resolve()), mode, str(output)],
                                        stdout=log, stderr=subprocess.STDOUT,
                                        env=runtime_env,
                                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-            watched = psutil.Process(process.pid)
+            watched = psutil.Process(process.pid) if psutil is not None else None
             deadline = time.monotonic() + 110
             while process.poll() is None:
+                if watched is None:
+                    if time.monotonic() > deadline:
+                        raise RuntimeError("native smoke timeout")
+                    time.sleep(0.1)
+                    continue
                 try:
                     peak = max(peak, watched.memory_info().rss)
                     # Debug builds keep a console, so Windows auto-spawns
@@ -113,7 +122,7 @@ def main():
         report = (output / "smoke.txt").read_text(encoding="utf-8") if (output / "smoke.txt").exists() else "missing report"
         if process.returncode != 0 or not report.startswith("PASS"):
             raise RuntimeError(report)
-        if args.reasoning_only or args.models_only or args.setup_only or args.split_only:
+        if args.reasoning_only or args.models_only or args.setup_only or args.split_only or args.queue_only:
             print(report.strip())
             return
         metrics = json.loads((output / "stream-metrics.json").read_text())

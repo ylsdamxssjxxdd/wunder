@@ -77,7 +77,9 @@ impl Slot {
 }
 
 enum PendingAction {
-    Send(String),
+    /// A message that is already echoed into the thread's transcript and
+    /// listed in the composer strip, waiting for the thread to settle.
+    Send(Option<crate::native_chat::queue::WaitingTurn>),
     Stop,
     Model(String),
 }
@@ -245,6 +247,21 @@ fn clear_pane(app: &MainWindow, slot: usize) {
     set_context(app, slot, wunder_desktop::NativeContextUsage::default());
 }
 
+/// True while this thread still owns the engine: the single view's running
+/// turn, or a pane's. A message typed meanwhile is held by the window instead
+/// of being submitted, so the engine never parks it behind another turn.
+fn session_busy(app: &MainWindow, session: &str) -> bool {
+    if crate::native_chat::is_running(app, session) {
+        return true;
+    }
+    SLOTS.with(|slots| {
+        let slots = slots.borrow();
+        slots.iter().any(|slot| {
+            slot.session == session && slot.live.as_ref().is_some_and(|live| live.active)
+        })
+    })
+}
+
 fn slot_busy(slot: &Slot) -> bool {
     slot.turns.iter().any(|turn| {
         // A waiting echo of a message the engine has not admitted yet is not
@@ -294,11 +311,39 @@ fn durable_caught_up(slot: &Slot, live: &LiveProjection) -> bool {
             })
 }
 
+/// Put one pane's held messages onto its own strip. A pane lists only the
+/// messages its thread is holding; the engine's queue rows belong to the
+/// single view's strip.
+fn publish_pane_queue(app: &MainWindow, index: usize, session: &str) {
+    let waiting = crate::native_chat::waiting_for(app, session);
+    let (projected, hidden) = crate::native_chat::queue::project_rows_with_waiting(&[], &waiting);
+    let turns = ModelRc::new(VecModel::from(projected));
+    let hidden = hidden as i32;
+    match index {
+        0 => {
+            app.set_split_queue_0(turns);
+            app.set_split_queue_overflow_0(hidden);
+        }
+        1 => {
+            app.set_split_queue_1(turns);
+            app.set_split_queue_overflow_1(hidden);
+        }
+        2 => {
+            app.set_split_queue_2(turns);
+            app.set_split_queue_overflow_2(hidden);
+        }
+        _ => {
+            app.set_split_queue_3(turns);
+            app.set_split_queue_overflow_3(hidden);
+        }
+    }
+}
+
 fn publish_slot(app: &MainWindow, index: usize) {
-    SLOTS.with(|slots| {
+    let session = SLOTS.with(|slots| -> Option<String> {
         let mut slots = slots.borrow_mut();
         let Some(slot) = slots.get_mut(index) else {
-            return;
+            return None;
         };
         let durable_busy = if slot.live.as_ref().is_some_and(|live| live.active) {
             slot_busy(slot)
@@ -320,7 +365,11 @@ fn publish_slot(app: &MainWindow, index: usize) {
             publish_model(app, index, model);
         }
         set_busy(app, index, busy);
+        Some(slot.session.clone())
     });
+    if let Some(session) = session {
+        publish_pane_queue(app, index, &session);
+    }
     app.set_stream_updates(app.get_stream_updates().wrapping_add(1));
 }
 
@@ -459,9 +508,15 @@ fn run_pending(app: &MainWindow, slot: usize) {
     let action = PENDING.with(|pending| pending.borrow_mut().remove(&slot));
     let Some(entry) = action else { return };
     match entry.action {
-        PendingAction::Send(content) => {
-            app.set_draft(content.into());
+        PendingAction::Send(None) => {
+            // The thread was free: the composer's own send path submits it.
             app.invoke_send_message();
+        }
+        PendingAction::Send(Some(turn)) => {
+            // The thread is busy, so this pane holds the message locally. It
+            // goes out when the running turn settles — never before, or the
+            // engine would park it and paint a second bubble.
+            crate::native_chat::hold_local_turn(app, turn);
         }
         PendingAction::Stop => app.invoke_stop_generation(),
         PendingAction::Model(key) => {
@@ -1217,8 +1272,20 @@ pub(crate) fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         if let Some(app) = weak.upgrade() {
             let slot = slot.clamp(0, 3) as usize;
             let content = draft(&app, slot);
+            if content.trim().is_empty() {
+                return;
+            }
+            let id = session(&app, slot);
             set_draft(&app, slot, String::new());
-            schedule(&app, slot, PendingAction::Send(content));
+            if !id.is_empty() && session_busy(&app, &id) {
+                // The pane's thread is still running: hold the message above
+                // the input box instead of submitting it to a busy engine.
+                let turn = crate::native_chat::new_waiting_turn(&app, &id, &content);
+                schedule(&app, slot, PendingAction::Send(Some(turn)));
+                return;
+            }
+            app.set_draft(content.into());
+            schedule(&app, slot, PendingAction::Send(None));
         }
     });
     let weak = app.as_weak();

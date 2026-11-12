@@ -1,6 +1,6 @@
 # wunder (Xinjian)
 
-wunder (Xinjian) is a **multi-form agent workbench**:
+wunder (Xinjian) is a **general-purpose AI workbench**:
 
 - **Diverse**: multiple platforms — 32-bit Windows 7 and Ubuntu 18.04 — and multiple forms — web, local, and mobile.
 - **Fast**: starts instantly and responds without lag.

@@ -561,6 +561,20 @@ pub(super) fn resolve_non_admin_max_rounds(
     i64::from(configured.max(minimum))
 }
 
+/// 桌面版是本地单用户形态，没有运营侧配额，也没有服务端可中途兜底。单轮一旦
+/// 被模型带进循环就会一直烧 token 直到用户手动取消（真实事故：一轮 123 个模型
+/// 轮次、2100 万输入 token）。这里给一个足够宽松的硬上限：正常长任务远达不到，
+/// 真正的死循环在耗尽预算前会被截断。无进展守卫仍是第一道防线，此处只兜底。
+const DESKTOP_MAX_MODEL_ROUNDS: u32 = 300;
+
+pub(super) fn resolve_desktop_max_rounds(
+    llm_config: &LlmModelConfig,
+    skip_tool_calls: bool,
+) -> i64 {
+    resolve_non_admin_max_rounds(llm_config, skip_tool_calls)
+        .min(i64::from(DESKTOP_MAX_MODEL_ROUNDS))
+}
+
 pub(super) fn resolve_db_query_tool_budget(question: &str) -> u32 {
     if should_allow_extended_db_query_budget(question) {
         EXTENDED_DB_QUERY_TOOL_BUDGET_PER_TURN

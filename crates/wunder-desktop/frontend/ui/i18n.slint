@@ -342,6 +342,7 @@ export global I18n {
     out property <string> cp_queue_interjected: zh ? "已插话" : "Interjected";
     out property <string> cp_queue_edit_hint: zh ? "撤下并回填输入框" : "Withdraw and refill the input";
     out property <string> cp_queue_remove_hint: zh ? "撤下这条排队轮次" : "Withdraw this queued turn";
+    out property <string> cp_queue_remove_waiting_hint: zh ? "撤下这条等待发送的消息" : "Withdraw this waiting message";
     public pure function cp_queue_more(count: string) -> string { return zh ? "还有 " + count + " 条未显示" : "" + count + " more not shown"; }
     out property <string> cp_queue_attachment_only: zh ? "仅附件" : "Attachment only";
     public pure function cp_queue_attachments(count: string) -> string { return zh ? "附件 " + count + "" : "" + count + " attachment(s)"; }
@@ -1289,6 +1290,7 @@ export global I18n {
     out property <string> tl_status_requesting: zh ? "请求中" : "Requesting";
     out property <string> tl_status_running: zh ? "处理中" : "Processing";
     out property <string> tl_process_loading: zh ? "正在加载…" : "Loading…";
+    out property <string> tl_process_older: zh ? "加载更早的步骤" : "Load earlier steps";
     out property <string> tl_process_retry: zh ? "加载失败，重试" : "Loading failed. Retry";
     out property <string> tl_md_image_loading: zh ? "图片加载中…" : "Loading image…";
     out property <string> tl_md_image_error: zh ? "图片加载失败 · " : "Image failed to load · ";

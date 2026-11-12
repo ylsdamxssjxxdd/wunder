@@ -966,7 +966,7 @@ impl Timeline {
         self.trim_process();
         let mut steps = self.discarded_steps;
         let mut region = Vec::new();
-        for index in (self.process_bar + 1)..self.model.row_count() {
+        for index in (self.process_bar.saturating_add(1))..self.model.row_count() {
             let Some(row) = self.model.row_data(index) else {
                 continue;
             };
@@ -1033,7 +1033,7 @@ impl Timeline {
             if self.body.is_some() {
                 activity = "正在生成回复…".into();
             }
-            for index in (self.process_bar + 1)..self.model.row_count() {
+            for index in (self.process_bar.saturating_add(1))..self.model.row_count() {
                 let Some(row) = self.model.row_data(index) else {
                     continue;
                 };
@@ -1089,10 +1089,13 @@ impl Timeline {
     }
 
     fn trim_process(&mut self) {
-        while self.model.row_count().saturating_sub(self.process_bar + 1) > MAX_LIVE_PROCESS_ROWS {
+        while self.model.row_count().saturating_sub(self.process_bar.saturating_add(1))
+            > MAX_LIVE_PROCESS_ROWS
+        {
             let protected_body = self.body.as_ref().map(|body| body.index);
             let protected_thinking = self.thinking.as_ref().map(|thinking| thinking.index);
-            let Some(index) = ((self.process_bar + 1)..self.model.row_count()).find(|index| {
+            let Some(index) =
+                ((self.process_bar.saturating_add(1))..self.model.row_count()).find(|index| {
                 *index != self.last_body
                     && Some(*index) != protected_body
                     && Some(*index) != protected_thinking
@@ -2125,9 +2128,11 @@ impl Timeline {
 
     /// 过程条右侧的本轮耗时。运行中由秒表按真实时间推进，落地的统计值只在
     /// 轮次结束后接管，避免流式期间数字停住、结束后再跳一大截。
-    fn set_process_duration(&self, duration: &str) {
+    ///
+    /// 返回是否真的写了行；值没变时不产生任何模型通知。
+    fn set_process_duration(&self, duration: &str) -> bool {
         if self.process == NO_PROCESS {
-            return;
+            return false;
         }
         let bar = self.process_bar;
         if self
@@ -2136,28 +2141,37 @@ impl Timeline {
             .is_some_and(|row| row.duration.as_str() != duration)
         {
             self.patch(bar, |row| row.duration = duration.into());
+            return true;
         }
+        false
     }
 
     /// 秒表推进：只重画过程条右侧的耗时，不动 footer 与折叠体。运行中的轮次
     /// 用「已走秒数」覆盖统计值，轮次结束（`finish`）后停表并让终值落地。
-    pub fn tick_elapsed(&mut self) {
+    ///
+    /// 返回这一拍是否真的改了行。调用方据此把帧推给视图：秒表只在整秒跳变时
+    /// 返回 true，于是 33 ms 的泵在两次跳变之间不产生任何 Slint 通知。
+    pub fn tick_elapsed(&mut self) -> bool {
         let Some(elapsed) = self.elapsed else {
-            return;
+            return false;
         };
         if self.settled {
             self.elapsed = None;
-            return;
+            return false;
         }
         let seconds = elapsed.elapsed().as_secs_f64();
         let label = crate::turn_stats::duration(seconds);
-        self.set_process_duration(&label);
+        // 过程条是这一拍的唯一读者：它的耗时没变，footer 的秒表也一定是同一个
+        // 值，整拍可以直接跳过。
+        if !self.set_process_duration(&label) {
+            return false;
+        }
         let footer = self.footer.get();
         if footer == usize::MAX || footer >= self.model.row_count() {
-            return;
+            return true;
         }
         let Some(stats) = self.model.row_data(footer).map(|row| row.stats) else {
-            return;
+            return true;
         };
         let mut next: Vec<crate::TurnStatMetric> = stats.iter().collect();
         match next.iter_mut().find(|metric| metric.key == "stopwatch") {
@@ -2171,6 +2185,7 @@ impl Timeline {
         if next.iter().ne(stats.iter().collect::<Vec<_>>().iter()) {
             self.patch(footer, |row| row.stats = ModelRc::new(VecModel::from(next)));
         }
+        true
     }
 
     fn ensure_footer(&self) -> Option<usize> {
@@ -2259,7 +2274,9 @@ impl Timeline {
             .iter()
             .filter(|metric| !metric.key.starts_with("status-") && metric.key != "hashtag")
             .collect();
-        let has_running_subagent = (self.process_bar + 1..index).any(|at| {
+        // A waiting turn owns no process bar, so the scan starts at the
+        // turn's own rows instead of `usize::MAX + 1`.
+        let has_running_subagent = (self.process_bar.saturating_add(1)..index).any(|at| {
             self.model.row_data(at).is_some_and(|entry| {
                 entry.kind == KIND_SUBAGENT && entry.status_kind == STATUS_RUNNING
             })
@@ -2649,18 +2666,22 @@ mod tests {
         timeline.set_turn_stats(stat_metrics(&crate::turn_stats::metrics(
             &serde_json::json!({"interaction_duration_s": 1.2}),
         )));
-        timeline.tick_elapsed();
+        // 整秒跳变必须报告给泵：否则这一帧不会被推给视图，秒表只能跟着工具
+        // 条目一起动。
+        assert!(timeline.tick_elapsed(), "a new second is a frame");
         let bar = timeline
             .model
             .row_data(timeline.process_bar)
             .expect("a process bar");
         assert_eq!(bar.duration, "7s");
+        // 同一秒内的下一拍没有改动任何行，泵不该为它重画。
+        assert!(!timeline.tick_elapsed(), "the same second is not a frame");
         // 轮次结束：停表，终值接管。
         timeline.finish(Settle::Done);
         timeline.set_turn_stats(stat_metrics(&crate::turn_stats::metrics(
             &serde_json::json!({"interaction_duration_s": 9.6}),
         )));
-        timeline.tick_elapsed();
+        assert!(!timeline.tick_elapsed(), "a settled turn has no stopwatch");
         let bar = timeline
             .model
             .row_data(timeline.process_bar)

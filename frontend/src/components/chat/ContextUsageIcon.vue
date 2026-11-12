@@ -17,7 +17,7 @@ import { CONTEXT_DANGER_RATIO, CONTEXT_WARNING_RATIO } from '@/components/chat/c
 
 // Liquid fill tracks context window occupancy: null/0 stays an empty gray glyph,
 // and the liquid rises toward full as the context window fills up.
-const props = defineProps< ratio: number | null; title?: string; compacted?: boolean }>();
+const props = defineProps<{ ratio: number | null; title?: string; compacted?: boolean }>();
 
 const clampRatio = (value: number): number => Math.min(1, Math.max(0, value));
 

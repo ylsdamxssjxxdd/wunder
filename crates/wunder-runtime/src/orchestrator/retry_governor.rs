@@ -59,8 +59,13 @@ pub(super) struct RetryGovernor {
 
 /// Detect a successful tool loop separately from failure retries. A command
 /// can return `ok=true` forever while producing the same observation; failure
-/// guards cannot see that case. The detector stays narrow to command-like tools
-/// so ordinary file reads and idempotent writes are never judged by it.
+/// guards cannot see that case.
+///
+/// Command-like calls are judged on their observations. Write-family calls are
+/// judged on path, requested content hash and the real diff counts, so a
+/// rewrite that leaves the file byte-identical is visible as no progress even
+/// though the tool answered `ok=true` (a real incident repeated one no-op
+/// write 86 times and burned a whole turn's budget).
 ///
 /// Three shapes are covered:
 /// * the same call repeated verbatim (`MAX_SAME_SUCCESS_NO_PROGRESS`),
@@ -361,6 +366,9 @@ fn success_progress_fingerprint(
     result: &ToolResultPayload,
 ) -> Option<(String, String)> {
     let canonical = resolve_tool_name(tool_name);
+    if matches!(canonical.as_str(), "写入文件" | "write_file") {
+        return write_progress_fingerprint(args, result);
+    }
     if !matches!(canonical.as_str(), "执行命令" | "execute_command") {
         return None;
     }
@@ -433,6 +441,41 @@ fn compact_progress_text(value: &str) -> String {
         .chars()
         .take(FINGERPRINT_DETAIL_MAX_CHARS)
         .collect()
+}
+
+/// Write-family progress fingerprint. The observation for a write is not stdout
+/// but the real disk effect: same path, same requested content and the same
+/// "nothing changed" counts mean the call cannot teach the model anything new.
+/// A newly created file counts as progress even when it is empty.
+fn write_progress_fingerprint(
+    args: &Value,
+    result: &ToolResultPayload,
+) -> Option<(String, String)> {
+    let change = super::tool_result_payload::file_write_change(&result.data)?;
+    let content = args
+        .as_object()
+        .and_then(|object| object.get("content"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let mut hasher = DefaultHasher::new();
+    content.hash(&mut hasher);
+    let detail = format!(
+        "write:path={} added={} deleted={} hunks={} changed={}",
+        change.path, change.added_lines, change.deleted_lines, change.hunks, change.changed
+    );
+    let fingerprint = format!(
+        "path:{} content_hash:{:016x} added:{} deleted:{} hunks:{} changed:{}",
+        change.path,
+        hasher.finish(),
+        change.added_lines,
+        change.deleted_lines,
+        change.hunks,
+        change.changed
+    );
+    Some((
+        normalize_detail(&fingerprint),
+        detail.chars().take(FINGERPRINT_DETAIL_MAX_CHARS).collect(),
+    ))
 }
 
 #[derive(Clone, Debug)]
@@ -670,7 +713,8 @@ mod tests {
     use super::{
         RetryGovernor, SuccessProgressGovernor, ToolResultPayload, MAX_SAME_ARGUMENT_FAILURES,
         MAX_SAME_NON_RETRYABLE_FAILURES, MAX_SAME_RETRYABLE_FAILURES,
-        MAX_SUCCESS_NO_PROGRESS_WARNINGS, SUCCESS_STALL_NO_NEW_LINE_STREAK, SUCCESS_STALL_WINDOW,
+        MAX_SAME_SUCCESS_NO_PROGRESS, MAX_SUCCESS_NO_PROGRESS_WARNINGS,
+        SUCCESS_STALL_NO_NEW_LINE_STREAK, SUCCESS_STALL_WINDOW,
     };
     use crate::tools::resolve_tool_name;
     use chrono::Utc;
@@ -1042,5 +1086,128 @@ mod tests {
         assert!(governor
             .record("execute_command", &json!({"command": "probe-a"}), &payload)
             .is_none());
+    }
+
+    fn noop_write_payload() -> ToolResultPayload {
+        ToolResultPayload {
+            ok: true,
+            data: json!({
+                "action": "write_file",
+                "state": "completed",
+                "summary": "Updated file temp/fix.py.",
+                "data": {
+                    "path": "temp/fix.py",
+                    "bytes": 12,
+                    "dry_run": false,
+                    "existed": true,
+                    "previous_bytes": 12,
+                    "added_lines": 0,
+                    "deleted_lines": 0,
+                    "changed_files": 1,
+                    "hunks_applied": 0
+                }
+            }),
+            error: String::new(),
+            sandbox: false,
+            timestamp: Utc::now(),
+            meta: None,
+        }
+    }
+
+    #[test]
+    fn stops_on_repeated_noop_write() {
+        let mut governor = SuccessProgressGovernor::default();
+        let payload = noop_write_payload();
+        let args = json!({"path": "temp/fix.py", "content": "print('x')\n"});
+        for _ in 0..(MAX_SAME_SUCCESS_NO_PROGRESS - 1) {
+            assert!(governor.record("write_file", &args, &payload).is_none());
+        }
+        let stop = governor
+            .record("write_file", &args, &payload)
+            .expect("同一处空写重复到阈值必须告警");
+        assert_eq!(stop.repeat_count, MAX_SAME_SUCCESS_NO_PROGRESS);
+        assert!(!stop.escalated, "第一次只提示模型换策略");
+        assert!(stop.detail.contains("changed=false"));
+        // 告警后模型仍照原样重发：同样的证据复发，直接停轮。
+        let mut escalation = None;
+        for _ in 0..MAX_SAME_SUCCESS_NO_PROGRESS {
+            if let Some(stop) = governor.record("write_file", &args, &payload) {
+                escalation = Some(stop);
+                break;
+            }
+        }
+        assert!(
+            escalation.expect("复发必须停轮").escalated,
+            "重复空写在告警后复发要硬停"
+        );
+    }
+
+    #[test]
+    fn real_write_changes_are_progress() {
+        let mut governor = SuccessProgressGovernor::default();
+        for index in 1..=8u64 {
+            let args = json!({"path": "temp/fix.py", "content": format!("line {index}\n")});
+            let payload = ToolResultPayload {
+                ok: true,
+                data: json!({
+                    "action": "write_file",
+                    "state": "completed",
+                    "summary": "Updated file temp/fix.py.",
+                    "data": {
+                        "path": "temp/fix.py",
+                        "bytes": 8,
+                        "dry_run": false,
+                        "existed": true,
+                        "previous_bytes": 8,
+                        "added_lines": 1,
+                        "deleted_lines": 1,
+                        "changed_files": 1,
+                        "hunks_applied": 1
+                    }
+                }),
+                error: String::new(),
+                sandbox: false,
+                timestamp: Utc::now(),
+                meta: None,
+            };
+            assert!(
+                governor.record("write_file", &args, &payload).is_none(),
+                "每次内容都真的变了，属于正常迭代"
+            );
+        }
+    }
+
+    #[test]
+    fn write_with_unknown_diff_is_not_judged() {
+        // dry_run 只校验、diff_unavailable 无法判定：都不能算「空写」，否则
+        // 正常的预览/大文件写入会被误判成循环。
+        let mut governor = SuccessProgressGovernor::default();
+        let payload = ToolResultPayload {
+            ok: true,
+            data: json!({
+                "action": "write_file",
+                "state": "completed",
+                "summary": "Validated write target for temp/fix.py without writing content.",
+                "data": {
+                    "path": "temp/fix.py",
+                    "bytes": 12,
+                    "dry_run": true,
+                    "existed": true,
+                    "previous_bytes": 12,
+                    "added_lines": 0,
+                    "deleted_lines": 0,
+                    "changed_files": 1,
+                    "hunks_applied": 0
+                }
+            }),
+            error: String::new(),
+            sandbox: false,
+            timestamp: Utc::now(),
+            meta: None,
+        };
+        let args = json!({"path": "temp/fix.py", "content": "print('x')\n"});
+        for _ in 0..(MAX_SAME_SUCCESS_NO_PROGRESS * 2) {
+            assert!(governor.record("write_file", &args, &payload).is_none());
+        }
     }
 }

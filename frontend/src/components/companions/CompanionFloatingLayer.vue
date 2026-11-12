@@ -41,12 +41,8 @@
       <button class="companion-floating-menu__item" type="button" @click="openCompanionChat(menuState.entry)">
         {{ t('messenger.action.openConversation') }}
       </button>
-      <button
-        class="companion-floating-menu__item"
-        type="button"
-        @click="menuState.entry.config.show === false ? showCompanion(menuState.entry) : hideCompanion(menuState.entry)"
-      >
-        {{ menuState.entry.config.show === false ? t('portal.agent.companion.show') : t('common.hide') }}
+      <button class="companion-floating-menu__item" type="button" @click="hideCompanion(menuState.entry)">
+        {{ t('common.hide') }}
       </button>
       <div class="companion-floating-menu__group">
         <span class="companion-floating-menu__label">{{ t('companions.scale') }}</span>
@@ -73,6 +69,7 @@ import { useRouter } from 'vue-router';
 
 import CompanionSprite from '@/components/companions/CompanionSprite.vue';
 import { useI18n } from '@/i18n';
+import { ElMessage } from 'element-plus';
 import { useAgentStore } from '@/stores/agents';
 import { useChatStore } from '@/stores/chat';
 import {
@@ -760,15 +757,8 @@ async function hideCompanion(entry: FloatingEntry): Promise<void> {
     scale: resolveCompanionScale(entry)
   }));
   closeEntryMenu();
-}
-
-async function showCompanion(entry: FloatingEntry): Promise<void> {
-  await persistCompanionConfig(entry, (current) => ({
-    ...current,
-    show: true,
-    scale: resolveCompanionScale(entry)
-  }));
-  closeEntryMenu();
+  // 隐藏后形象本身不再渲染，右键入口也随之消失：必须告诉用户恢复入口在哪里。
+  ElMessage.info(t('companions.hiddenHint'));
 }
 
 async function openCompanionChat(entry: FloatingEntry): Promise<void> {

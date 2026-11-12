@@ -483,6 +483,15 @@ export component MainWindow inherits Window {
     in-out property <bool> split-loading-1;
     in-out property <bool> split-loading-2;
     in-out property <bool> split-loading-3;
+    // Messages each pane's thread is holding until its running turn settles.
+    in-out property <[QueueTurn]> split-queue-0;
+    in-out property <[QueueTurn]> split-queue-1;
+    in-out property <[QueueTurn]> split-queue-2;
+    in-out property <[QueueTurn]> split-queue-3;
+    in-out property <int> split-queue-overflow-0;
+    in-out property <int> split-queue-overflow-1;
+    in-out property <int> split-queue-overflow-2;
+    in-out property <int> split-queue-overflow-3;
     in-out property <bool> split-busy-0;
     in-out property <bool> split-busy-1;
     in-out property <bool> split-busy-2;
@@ -1595,6 +1604,12 @@ export component MainWindow inherits Window {
                 title-2 <=> root.split-title-2; title-3 <=> root.split-title-3;
                 rows-0: root.split-rows-0; rows-1: root.split-rows-1;
                 rows-2: root.split-rows-2; rows-3: root.split-rows-3;
+                queue-0: root.split-queue-0; queue-1: root.split-queue-1;
+                queue-2: root.split-queue-2; queue-3: root.split-queue-3;
+                queue-overflow-0: root.split-queue-overflow-0;
+                queue-overflow-1: root.split-queue-overflow-1;
+                queue-overflow-2: root.split-queue-overflow-2;
+                queue-overflow-3: root.split-queue-overflow-3;
                 draft-0 <=> root.split-draft-0; draft-1 <=> root.split-draft-1;
                 draft-2 <=> root.split-draft-2; draft-3 <=> root.split-draft-3;
                 loading-0: root.split-loading-0; loading-1: root.split-loading-1;

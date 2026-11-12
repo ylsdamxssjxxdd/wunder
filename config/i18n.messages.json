@@ -3652,7 +3652,11 @@
     "zh-CN": "改用最省形态 {\"plan\":[\"甲\",\"乙\"],\"current\":0} 或对象形态 {\"plan\":[{\"step\":\"甲\",\"status\":\"in_progress\"}]} 重试。"
   },
   "tool.spec.plan.args.current": {
-    "en-US": "0-based index of the step currently being done; only for the string-list form (it cannot be combined with per-step status).",
-    "zh-CN": "正在做的步骤下标（0 基），只用于字符串数组形态，不能与每一步的 status 同时出现。"
+    "en-US": "0-based index of the step currently being done; only for the string-list form (it cannot be combined with per-step status). Steps before it are treated as completed.",
+    "zh-CN": "正在做的步骤下标（0 基），只用于字符串数组形态，不能与每一步的 status 同时出现；它之前的步骤视为已完成。"
+  },
+  "tool.plan.unparsable_wrapper": {
+    "en-US": "`{field}` holds a string that is not valid JSON; pass the plan as a JSON object instead of a quoted string. Example: {\"plan\":[\"a\",\"b\"],\"current\":0}.",
+    "zh-CN": "`{field}` 里的内容不是合法 JSON：不要把它整个当字符串传，直接给 JSON 对象。示例：{\"plan\":[\"甲\",\"乙\"],\"current\":0}。"
   }
 }

@@ -325,6 +325,8 @@ export struct QueueTurn {
     text: string,
     attachments: int,
     interjected: bool,
+    // 这条消息还没有被引擎受理：它只是在等当前这一轮结束，不是并发排队。
+    waiting: bool,
 }
 
 // Result of an ArrowUp/ArrowDown history recall in the composer. `handled` is

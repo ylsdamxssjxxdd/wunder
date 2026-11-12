@@ -9,7 +9,10 @@ use std::{
     sync::{mpsc::sync_channel, Arc},
     time::Duration,
 };
-use wunder_desktop::{native::NativeProcessPage, NativeDesktop};
+use wunder_desktop::{
+    native::{NativeProcessItem, NativeProcessPage},
+    NativeDesktop,
+};
 
 pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let pending = Rc::new(Cell::new(0usize));
@@ -41,6 +44,11 @@ fn session(app: &MainWindow, child: bool) -> String {
 pub(crate) fn page_edge(index: i32) -> Option<i64> {
     (index >= 0).then_some(index as i64)
 }
+
+/// A process entry is addressed by `-1 - process * PROCESS_SLOT - index`.
+/// The slot is wide enough for a long process whose older pages were merged
+/// into one continuous list, while still keeping the process unambiguous.
+pub(crate) const PROCESS_SLOT: i32 = 1 << 16;
 
 fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell<usize>>) {
     // One read in flight per (thread, process). The page edges themselves live
@@ -208,13 +216,118 @@ fn bind(app: &MainWindow, api: Arc<NativeDesktop>, child: bool, pending: Rc<Cell
 
 pub(crate) fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, direction: i32) {
     let (page_first, page_last) = (page.first, page.last);
-    let previous: HashMap<_, _> = row
+    let previous: HashMap<String, bool> = row
         .process_entries
         .iter()
-        .map(|entry| (entry.id.clone(), entry.open))
+        .map(|entry| (entry.id.to_string(), entry.open))
         .collect();
+    let page_entries = project_page_entries(page.items);
+
+    // An older page extends the loaded range upwards instead of replacing it.
+    // The reader keeps everything that was already loaded and can scroll back
+    // down to the newest step; replacing the page used to leave a viewport
+    // showing neither the newest nor the oldest work.
+    let entries = if direction < 0 {
+        let loaded: HashSet<String> = row
+            .process_entries
+            .iter()
+            .map(|entry| entry.id.to_string())
+            .collect();
+        let mut merged: Vec<ProcessEntry> = page_entries
+            .into_iter()
+            .filter(|entry| !loaded.contains(entry.id.as_str()))
+            .collect();
+        merged.extend(row.process_entries.iter());
+        merged
+    } else if direction > 0 && direction != 2 {
+        // A later page extends the tail and refreshes entries that appear in
+        // both; entries only the loaded range knows stay in place.
+        let mut merged: Vec<ProcessEntry> = row.process_entries.iter().collect();
+        let mut index_of: HashMap<String, usize> = merged
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| (entry.id.to_string(), index))
+            .collect();
+        for entry in page_entries {
+            match index_of.get(entry.id.as_str()) {
+                Some(&index) => merged[index] = entry,
+                None => {
+                    index_of.insert(entry.id.to_string(), merged.len());
+                    merged.push(entry);
+                }
+            }
+        }
+        merged
+    } else {
+        page_entries
+    };
+
+    let mut entries = entries;
+    for (index, entry) in entries.iter_mut().enumerate() {
+        // Negative payloads address a child in its own process, never an outer
+        // timeline index. The bounded process slot makes this unambiguous.
+        entry.payload = -1 - row.process_idx * PROCESS_SLOT - index as i32;
+        entry.open = previous.get(entry.id.as_str()).copied().unwrap_or(false);
+    }
+    if let Some(model) = row
+        .process_entries
+        .as_any()
+        .downcast_ref::<VecModel<ProcessEntry>>()
+    {
+        if direction == 2
+            && model.row_count() == entries.len()
+            && model
+                .iter()
+                .zip(&entries)
+                .all(|(old, new)| old.id == new.id)
+        {
+            for (index, entry) in entries.into_iter().enumerate() {
+                if model.row_data(index).as_ref() != Some(&entry) {
+                    model.set_row_data(index, entry);
+                }
+            }
+        } else {
+            model.set_vec(entries);
+        }
+    } else {
+        row.process_entries = ModelRc::new(VecModel::from(entries));
+    }
+    row.process_paged = true;
+    row.process_local = false;
+    // The page carries its own exclusive edges; keeping them on the row is what
+    // makes the next read continue this page instead of restarting at the tail.
+    // A one-sided page only moves the edge it extends: the other edge still
+    // belongs to the contiguous range that is already loaded.
+    match direction {
+        -1 => {
+            row.process_older = page.has_older;
+            row.process_first = page_first.unwrap_or(-1) as i32;
+        }
+        1 => {
+            row.process_newer = page.has_newer;
+            row.process_last = page_last.unwrap_or(-1) as i32;
+        }
+        _ => {
+            row.process_older = page.has_older;
+            row.process_newer = page.has_newer;
+            row.process_first = page_first.unwrap_or(-1) as i32;
+            row.process_last = page_last.unwrap_or(-1) as i32;
+        }
+    }
+    row.process_error = false;
+    // Sign tells the viewport which edge to retain after changing pages.
+    if direction != 2 {
+        row.process_revision = if direction < 0 {
+            -row.process_revision.abs().saturating_add(1)
+        } else {
+            row.process_revision.abs().saturating_add(1)
+        };
+    }
+}
+
+fn project_page_entries(items: Vec<NativeProcessItem>) -> Vec<ProcessEntry> {
     let mut entries = Vec::new();
-    for item in page.items {
+    for item in items {
         if !item.reasoning.is_empty() {
             entries.push(ProcessEntry {
                 kind: crate::timeline::KIND_REASON,
@@ -290,52 +403,7 @@ pub(crate) fn apply_page(row: &mut TimelineRow, page: NativeProcessPage, directi
     // thoughts.  Canonical local pages already filter random assistant copies
     // in `native_chat_process::project_page` by (execution, model_round).
     dedupe_reasoning_entries(&mut entries);
-    for (index, entry) in entries.iter_mut().enumerate() {
-        // Negative payloads address a child in its own process, never an outer
-        // timeline index. The bounded process slot makes this unambiguous.
-        entry.payload = -1 - row.process_idx * 1024 - index as i32;
-        entry.open = previous.get(&entry.id).copied().unwrap_or(false);
-    }
-    if let Some(model) = row
-        .process_entries
-        .as_any()
-        .downcast_ref::<VecModel<ProcessEntry>>()
-    {
-        if direction == 2
-            && model.row_count() == entries.len()
-            && model
-                .iter()
-                .zip(&entries)
-                .all(|(old, new)| old.id == new.id)
-        {
-            for (index, entry) in entries.into_iter().enumerate() {
-                if model.row_data(index).as_ref() != Some(&entry) {
-                    model.set_row_data(index, entry);
-                }
-            }
-        } else {
-            model.set_vec(entries);
-        }
-    } else {
-        row.process_entries = ModelRc::new(VecModel::from(entries));
-    }
-    row.process_paged = true;
-    row.process_local = false;
-    row.process_older = page.has_older;
-    row.process_newer = page.has_newer;
-    // The page carries its own exclusive edges; keeping them on the row is what
-    // makes the next read continue this page instead of restarting at the tail.
-    row.process_first = page_first.unwrap_or(-1) as i32;
-    row.process_last = page_last.unwrap_or(-1) as i32;
-    row.process_error = false;
-    // Sign tells the viewport which edge to retain after changing pages.
-    if direction != 2 {
-        row.process_revision = if direction < 0 {
-            -row.process_revision.abs().saturating_add(1)
-        } else {
-            row.process_revision.abs().saturating_add(1)
-        };
-    }
+    entries
 }
 
 pub(crate) fn page_is_current(row: &TimelineRow, entries: &ModelRc<ProcessEntry>) -> bool {
@@ -369,8 +437,8 @@ fn dedupe_reasoning_entries(entries: &mut Vec<ProcessEntry>) {
 
 pub fn toggle_entry(model: &impl Model<Data = TimelineRow>, payload: i32) {
     let token = -1 - payload;
-    let process = token / 1024;
-    let index = (token % 1024) as usize;
+    let process = token / PROCESS_SLOT;
+    let index = (token % PROCESS_SLOT) as usize;
     if let Some(bar) = model
         .iter()
         .find(|row| row.kind == crate::timeline::KIND_PROCESS && row.process_idx == process)

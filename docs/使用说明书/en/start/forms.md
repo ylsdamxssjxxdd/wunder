@@ -6,7 +6,7 @@ updated_at: 2026-11-08
 
 # Form matrix
 
-wunder is a multi-form agent workbench. One engine is shipped as several program forms; the difference is only in the access layer.
+wunder is a general-purpose AI workbench. One engine is shipped as several program forms; the difference is only in the access layer.
 
 | Icon | Form | Tech stack | Purpose | Run model | OS support |
 | :--- | :--- | :--- | :--- | :--- | :--- |

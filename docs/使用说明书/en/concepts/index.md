@@ -4,7 +4,7 @@ summary: The Diverse, Fast, Superior, and Efficient cores, the design philosophy
 updated_at: 2026-11-08
 ---
 
-wunder is a multi-form agent workbench: hand it a goal and the agent breaks the task down, calls tools, and delivers results. The feature list lives in [Tools](/docs/en/tools/) and the [Capability Quick Reference](/docs/en/capabilities/api-index/).
+wunder is a general-purpose AI workbench: hand it a goal and the agent breaks the task down, calls tools, and delivers results. The feature list lives in [Tools](/docs/en/tools/) and the [Capability Quick Reference](/docs/en/capabilities/api-index/).
 
 ## Diverse, Fast, Superior, Efficient
 

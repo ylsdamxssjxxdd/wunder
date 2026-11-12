@@ -559,11 +559,16 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
             app.set_activity_running(busy);
             if !local_busy {
                 if let Some(latest) = observation.turns.last() {
-                    crate::native_chat::set_session_status(
+                    // A durable snapshot reports what storage already knows.
+                    // Its terminal keeps the settle time it was stored with, so
+                    // reopening a finished thread does not re-stamp a green
+                    // check the user has already seen.
+                    crate::native_chat::observe_history_status(
                         &app,
                         &session,
                         latest.assistant.stats_status.as_str(),
                         crate::runtime_phase::Phase::of(latest.assistant.stats_status.as_str()),
+                        latest.assistant.created_at,
                     );
                 }
             }

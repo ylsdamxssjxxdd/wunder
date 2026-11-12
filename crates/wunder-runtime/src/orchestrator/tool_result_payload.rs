@@ -625,8 +625,9 @@ const OBSERVATION_SEARCH_CONTENT_HEAD_CHARS: usize = 360;
 const OBSERVATION_SEARCH_CONTEXT_LINE_LIMIT: usize = 2;
 /// 调用方用 `context_matches` 把上下文集中到前几个命中时，单个命中可以带整段
 /// 代码。只有少数命中带上下文，总量仍然是有限的；反之不给名额就把每个命中都
-/// 撑到 40 行，才会真的爆掉观察包。
-const OBSERVATION_SEARCH_FOCUS_CONTEXT_LINE_LIMIT: usize = 40;
+/// 撑到 40 行，才会真的爆掉观察包。上限与搜索侧 `MAX_CONTEXT_LINES` 对齐，避免
+/// 「工具给了 80 行、观察层只留 40 行」这种没有提示的静默丢失。
+const OBSERVATION_SEARCH_FOCUS_CONTEXT_LINE_LIMIT: usize = 80;
 const OBSERVATION_SEARCH_CONTEXT_LINE_CHARS: usize = 220;
 // A tool observation that fits in a couple of hundred tokens is usually a
 // clipped one: the model then pays a second round-trip to reread the same
@@ -1102,8 +1103,22 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
             .and_then(|data| data.get("top_level_only"))
             .and_then(Value::as_bool)
             == Some(true);
+    // 搜索指名了上下文名额（context_matches>0）时，带上下文的那几处会输出整段
+    // 代码；通用数组取样会把 40 行的 before/after 再砍成 20+8 并在中间塞占位对象，
+    // 等于把「一次调用看清实现」又退化成两次往返。名额本身已经限制了总量，这里
+    // 只需要把取样阈值提到单命中上下文上限。
+    let focused_search_context = matches!(canonical.as_str(), "搜索内容" | "search_content")
+        && map
+            .get("data")
+            .and_then(model_tool_result_data_map)
+            .and_then(|data| data.get("context_match_limit"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0;
     let array_limit = if top_level_listing {
         TOP_LEVEL_LIST_INLINE_MAX_ITEMS
+    } else if focused_search_context {
+        OBSERVATION_SEARCH_FOCUS_CONTEXT_LINE_LIMIT
     } else {
         OBSERVATION_MAX_ARRAY_ITEMS
     };
@@ -2591,6 +2606,55 @@ fn project_command_row(row: &Map<String, Value>) -> Value {
     Value::Object(projected)
 }
 
+/// 写入类工具的变更摘要：路径与真实 diff 计数。空写提示和无进展守卫都从这里
+/// 取值，保证「这次写入到底改了什么」只有一个口径。
+pub(super) struct FileWriteChange {
+    pub(super) path: String,
+    pub(super) changed: bool,
+    pub(super) added_lines: u64,
+    pub(super) deleted_lines: u64,
+    pub(super) hunks: u64,
+}
+
+/// 判定一次写入是否真的改动了文件内容。
+///
+/// * 新建文件始终算变更，空文件也是新事实。
+/// * 既有文件只有在 diff 可用、且增删行与 hunk 全为 0 时才算空写。
+/// * `dry_run`、diff 不可用或缺少判定字段时返回 `None`：无法判定就不能断言
+///   「没变」，调用方保留原有计数口径。
+pub(super) fn file_write_change(data: &Value) -> Option<FileWriteChange> {
+    let map = model_tool_result_data_map(data)?;
+    let path = map.get("path").and_then(Value::as_str)?.to_string();
+    if map.get("dry_run").and_then(Value::as_bool) == Some(true) {
+        return None;
+    }
+    let existed = map.get("existed").and_then(Value::as_bool)?;
+    let has_counts = ["added_lines", "deleted_lines", "hunks_applied"]
+        .iter()
+        .any(|key| map.get(*key).and_then(Value::as_u64).is_some());
+    if existed && (!has_counts || map.get("diff_unavailable").is_some()) {
+        return None;
+    }
+    let added_lines = map.get("added_lines").and_then(Value::as_u64).unwrap_or(0);
+    let deleted_lines = map
+        .get("deleted_lines")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let hunks = map.get("hunks_applied").and_then(Value::as_u64).unwrap_or(0);
+    Some(FileWriteChange {
+        path,
+        changed: !existed || added_lines > 0 || deleted_lines > 0 || hunks > 0,
+        added_lines,
+        deleted_lines,
+        hunks,
+    })
+}
+
+/// 模型只看到投影后的写入结果，空写必须显式说明，否则它会继续相信那一次
+/// 「成功写入」已经改变了文件。
+const NO_OP_WRITE_NOTICE: &str =
+    "no_op: file content was already identical, nothing changed on disk. Do not repeat this write; re-read the file if you expected a different result.";
+
 fn project_file_write_success(data: &Value) -> Option<Value> {
     let map = model_tool_result_data_map(data)?;
     // `command=view` reads a file or directory without mutating anything. Its
@@ -2615,12 +2679,26 @@ fn project_file_write_success(data: &Value) -> Option<Value> {
         ],
     );
     if !projected.contains_key("changed") {
-        let changed = map
-            .get("changed_files")
-            .and_then(Value::as_u64)
-            .map(|count| count > 0)
+        // `changed_files` 只统计「碰了哪些文件」，覆盖写同内容也会是 1，不能
+        // 拿来判断是否真的改动了内容。
+        let changed = file_write_change(data)
+            .map(|change| change.changed)
+            .or_else(|| {
+                map.get("changed_files")
+                    .and_then(Value::as_u64)
+                    .map(|count| count > 0)
+            })
             .unwrap_or(true);
         projected.insert("changed".to_string(), Value::Bool(changed));
+    }
+    if projected.get("changed").and_then(Value::as_bool) == Some(false)
+        && map.get("dry_run").and_then(Value::as_bool) != Some(true)
+    {
+        projected.insert("no_op".to_string(), Value::Bool(true));
+        projected.insert(
+            "notice".to_string(),
+            Value::String(NO_OP_WRITE_NOTICE.to_string()),
+        );
     }
     Some(Value::Object(projected))
 }

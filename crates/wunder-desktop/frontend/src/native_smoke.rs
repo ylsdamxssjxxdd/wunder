@@ -436,8 +436,10 @@ fn advance(
         3 => {
             let expected = DELTA.repeat(600);
             let answer = app.invoke_timeline_last_answer();
+            // The body carries the stream verbatim, including a trailing
+            // newline the delta itself ends with; compare the visible text.
             ensure(
-                answer.as_str() == expected.trim_end(),
+                answer.trim_end() == expected.trim_end(),
                 &format!(
                     "stream text mismatch: got {} bytes want {} bytes; got_start={:?} got_end={:?} status={:?}",
                     answer.len(),
@@ -844,6 +846,187 @@ pub fn run_split(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std
         .borrow_mut()
         .take()
         .ok_or("split smoke did not run")??;
+    Ok(())
+}
+
+/// A message typed while the thread is busy must wait in the composer, not be
+/// submitted: no second bubble, no「排队中」status, and the engine only sees it
+/// once the running turn settles.
+pub fn run_queue(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let result = Rc::new(RefCell::new(None));
+    let output = result.clone();
+    let weak = app.as_weak();
+    let timer = Timer::default();
+    let started = Instant::now();
+    let mut phase = 0;
+    let mut held_bubble_seen = false;
+    timer.start(TimerMode::Repeated, Duration::from_millis(50), move || {
+        let Some(app) = weak.upgrade() else { return };
+        let checked = (|| -> Result<bool, Box<dyn std::error::Error>> {
+            ensure(
+                started.elapsed() < Duration::from_secs(60),
+                "queue smoke timed out",
+            )?;
+            if app.get_chat_loading() || app.get_session_loading() || app.get_creating_session() {
+                return Ok(false);
+            }
+            match phase {
+                0 => {
+                    app.invoke_new_thread();
+                    phase = 1;
+                }
+                1 => {
+                    ensure(!app.get_active_session_id().is_empty(), "session missing")?;
+                    app.set_draft("native-queue-first".into());
+                    app.invoke_send_message();
+                    phase = 2;
+                }
+                2 => {
+                    // Wait for the first turn to actually stream.
+                    if !app.get_busy() || app.get_stream_bytes() == 0 {
+                        return Ok(false);
+                    }
+                    app.set_draft("native-queue-second".into());
+                    app.invoke_send_message();
+                    phase = 3;
+                }
+                3 => {
+                    // The second message is held: it is listed above the input
+                    // box and echoed as a bare bubble, and the thread's status
+                    // is still the first turn's — never「排队中」.
+                    let strip: Vec<String> = app
+                        .get_queue_turns()
+                        .iter()
+                        .map(|turn| turn.text.to_string())
+                        .collect();
+                    if !strip.iter().any(|text| text == "native-queue-second") {
+                        // The strip is published a frame after the send.
+                        return Ok(false);
+                    }
+                    ensure(
+                        app.get_queue_turns()
+                            .iter()
+                            .all(|turn| !turn.waiting || turn.text == "native-queue-second"),
+                        "the strip lists an engine row as a local hold",
+                    )?;
+                    let rows: Vec<_> = app.get_timeline().iter().collect();
+                    let bubbles = rows
+                        .iter()
+                        .filter(|row| {
+                            row.kind == crate::timeline::KIND_USER
+                                && row.text.as_str() == "native-queue-second"
+                        })
+                        .count();
+                    ensure(
+                        bubbles == 0,
+                        "a message that has not been sent appeared in the transcript",
+                    )?;
+                    ensure(
+                        !rows.iter().any(|row| {
+                            row.kind == crate::timeline::KIND_FOOTER
+                                && row
+                                    .stats
+                                    .iter()
+                                    .any(|metric| metric.key == "status-queued")
+                        }),
+                        "the held message was presented as a queued turn",
+                    )?;
+                    if !held_bubble_seen {
+                        crate::smoke::snapshot(&app, &directory.join("native-queue-held.png"))?;
+                        held_bubble_seen = true;
+                    }
+                    // The first turn may already have settled on its own; the
+                    // held message then goes out at the next pump tick.
+                    phase = 4;
+                }
+                4 => {
+                    // The first turn settled, so the held message went out.
+                    if started.elapsed() > Duration::from_secs(25) {
+                        let rows: Vec<String> = app
+                            .get_timeline()
+                            .iter()
+                            .map(|row| format!("{:?}:{}", row.kind, row.text))
+                            .collect();
+                        return Err(format!(
+                            "held message never ran; busy={} stopping={} strip={} status={:?} rows={rows:?}",
+                            app.get_busy(),
+                            app.get_stopping(),
+                            app.get_queue_turns().row_count(),
+                            app.get_status()
+                        )
+                        .into());
+                    }
+                    let strip = app.get_queue_turns().row_count();
+                    if strip != 0 {
+                        if started.elapsed() > Duration::from_secs(20) {
+                            let texts: Vec<String> = app
+                                .get_queue_turns()
+                                .iter()
+                                .map(|turn| turn.text.to_string())
+                                .collect();
+                            return Err(format!(
+                                "strip still lists {texts:?}; busy={} status={:?}",
+                                app.get_busy(),
+                                app.get_status()
+                            )
+                            .into());
+                        }
+                        return Ok(false);
+                    }
+                    if !app.get_busy() {
+                        let released = app
+                            .get_timeline()
+                            .iter()
+                            .any(|row| row.text.as_str().contains("测试第二轮"));
+                        if !released {
+                            let rows: Vec<String> = app
+                                .get_timeline()
+                                .iter()
+                                .map(|row| format!("{:?}:{}", row.kind, row.text))
+                                .collect();
+                            return Err(format!(
+                                "released message never ran; busy={} status={:?} rows={rows:?}",
+                                app.get_busy(),
+                                app.get_status()
+                            )
+                            .into());
+                        }
+                        let rows: Vec<_> = app.get_timeline().iter().collect();
+                        ensure(
+                            rows.iter().any(|row| {
+                                row.kind == crate::timeline::KIND_USER
+                                    && row.text.as_str() == "native-queue-second"
+                            }),
+                            "the held message never reached the transcript",
+                        )?;
+                        crate::smoke::snapshot(&app, &directory.join("native-queue-sent.png"))?;
+                        return Ok(true);
+                    }
+                }
+                _ => return Err("unexpected queue smoke phase".into()),
+            }
+            Ok(false)
+        })();
+        if matches!(checked, Ok(false)) {
+            return;
+        }
+        let report = match &checked {
+            Ok(_) => "PASS: a message typed while busy waits in the composer and is sent after the turn settles\n".to_string(),
+            Err(error) => format!("FAIL: queue phase {phase}: {error}\n"),
+        };
+        *output.borrow_mut() = Some(
+            std::fs::write(directory.join("smoke.txt"), report)
+                .map_err(|error| error.to_string())
+                .and(checked.map(|_| ()).map_err(|error| error.to_string())),
+        );
+        let _ = slint::quit_event_loop();
+    });
+    app.run()?;
+    timer.stop();
+    result
+        .borrow_mut()
+        .take()
+        .ok_or("queue smoke did not run")??;
     Ok(())
 }
 

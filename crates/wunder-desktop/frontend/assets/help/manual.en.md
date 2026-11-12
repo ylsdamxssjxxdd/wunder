@@ -45,7 +45,7 @@ The model switcher beside the input box affects only the **current thread**; the
 
 # Form matrix
 
-wunder is a multi-form agent workbench. One engine is shipped as several program forms; the difference is only in the access layer.
+wunder is a general-purpose AI workbench. One engine is shipped as several program forms; the difference is only in the access layer.
 
 | Icon | Form | Tech stack | Purpose | Run model | OS support |
 | --- | --- | --- | --- | --- | --- |
@@ -223,7 +223,7 @@ Two default behaviors are worth separating:
 
 # Core Concepts
 
-wunder is a multi-form agent workbench: hand it a goal and the agent breaks the task down, calls tools, and delivers results. The feature list lives in Tools and the Capability Quick Reference.
+wunder is a general-purpose AI workbench: hand it a goal and the agent breaks the task down, calls tools, and delivers results. The feature list lives in Tools and the Capability Quick Reference.
 
 ## Diverse, Fast, Superior, Efficient
 
