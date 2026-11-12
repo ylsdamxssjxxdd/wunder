@@ -1024,7 +1024,7 @@ fn collect_pattern_values(args: &Value, keys: &[&str]) -> (Vec<String>, Vec<Stri
             continue;
         };
         let items = match value {
-            Value::String(text) => split_file_patterns(text.trim()),
+            Value::String(text) => parse_pattern_text_list(text),
             Value::Array(entries) => entries
                 .iter()
                 .filter_map(Value::as_str)
@@ -1045,6 +1045,24 @@ fn collect_pattern_values(args: &Value, keys: &[&str]) -> (Vec<String>, Vec<Stri
         }
     }
     (includes, excludes)
+}
+
+/// 解析一个字符串形态的 glob 参数。调用方经常把数组写成字符串化的 JSON
+/// （`["*.rs", "!*.log"]`），直接按逗号拆会把它切成 `["*.rs"` 这种非法片段：
+/// 要么报 glob 语法错，要么匹配不到任何文件，看起来就是「过滤没生效」。
+fn parse_pattern_text_list(text: &str) -> Vec<String> {
+    let trimmed = text.trim();
+    if trimmed.starts_with('[') {
+        if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(trimmed) {
+            return items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(|item| item.trim().to_string())
+                .filter(|item| !item.is_empty())
+                .collect();
+        }
+    }
+    split_file_patterns(trimmed)
 }
 
 fn expand_and_dedupe(items: Vec<String>) -> Vec<String> {
@@ -3102,6 +3120,24 @@ mod tests {
         assert_eq!(items, vec!["*.rs".to_string(), "*.md".to_string()]);
         let includes = collect_include_pattern_items(&json!({"include": ["src/**", "docs/**"]}));
         assert_eq!(includes, vec!["src/**".to_string(), "docs/**".to_string()]);
+    }
+
+    #[test]
+    fn stringified_json_array_globs_are_untangled() {
+        // 实测里调用方会把数组写成字符串化的 JSON：整个数组被当成一个 glob
+        // 字面量，`!` 也跟着失效。这里必须拆回数组。
+        let params = parse_search_params(&json!({
+            "query": "needle",
+            "glob": "[\"*.rs\", \"!*_test.rs\"]"
+        }))
+        .expect("params");
+        assert_eq!(params.file_pattern_items, vec!["*.rs".to_string()]);
+        assert_eq!(params.exclude_patterns, vec!["*_test.rs".to_string()]);
+
+        let includes =
+            parse_search_params(&json!({"query": "needle", "include": "[\"src/**\"]"}))
+                .expect("params");
+        assert_eq!(includes.include_pattern_items, vec!["src/**".to_string()]);
     }
 
     #[test]

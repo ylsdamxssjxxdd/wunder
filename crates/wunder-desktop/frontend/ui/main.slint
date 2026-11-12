@@ -122,10 +122,6 @@ export component MainWindow inherits Window {
     out property <length> composer-preset-menu-y: composer.preset-menu-y;
     out property <length> composer-preset-menu-width: composer.preset-menu-width;
     out property <length> composer-preset-menu-height: composer.preset-menu-height;
-    out property <length> composer-screenshot-menu-x: composer.screenshot-menu-x;
-    out property <length> composer-screenshot-menu-y: composer.screenshot-menu-y;
-    out property <length> composer-screenshot-menu-width: composer.screenshot-menu-width;
-    out property <length> composer-screenshot-menu-height: composer.screenshot-menu-height;
     out property <length> composer-editor-x: composer.editor-x;
     out property <length> composer-editor-y: composer.editor-y;
     out property <length> composer-editor-width: composer.editor-width;
@@ -1032,7 +1028,7 @@ export component MainWindow inherits Window {
     // ArrowUp/ArrowDown recall: (direction, cursor byte offset, anchor byte
     // offset, draft) in, the draft to show (or the unchanged one) back.
     callback recall-history(int, int, int, string) -> DraftRecall;
-    callback capture-screenshot(bool, bool);
+    callback capture-screenshot();
     callback record-voice();
     callback remove-attachment(int);
     callback select-conversation(int);
@@ -1573,7 +1569,7 @@ export component MainWindow inherits Window {
                             generating: root.busy || root.goal-active; stopping: root.stopping; stop => { root.stop-generation(); }
                             recording: root.recording; transcribing: root.transcribing; recording-elapsed: root.recording-elapsed; recording-pulse: root.recording-pulse;
                             send => { root.send-message(); }
-                            screenshot(hide-window, region) => { root.capture-screenshot(hide-window, region); }
+                            screenshot() => { root.capture-screenshot(); }
                             file-drop(event) => { root.composer-file-drop(event); }
                             record-voice => { root.record-voice(); }
                             remove-attachment(index) => { root.remove-attachment(index); }

@@ -470,11 +470,6 @@ fn install_composer_popover_dismissal(app: &MainWindow) {
             app.get_composer_preset_menu_y(),
             app.get_composer_preset_menu_width(),
             app.get_composer_preset_menu_height(),
-        ) || inside(
-            app.get_composer_screenshot_menu_x(),
-            app.get_composer_screenshot_menu_y(),
-            app.get_composer_screenshot_menu_width(),
-            app.get_composer_screenshot_menu_height(),
         );
 
         // Keep clicks on the currently open popover and its trigger intact.

@@ -3074,7 +3074,6 @@ component GeneralPage inherits Rectangle {
     in property <int> font-size: 14;
     in property <string> send-key: "enter";
     in property <string> language: "zh-CN";
-    in property <string> permission-mode: "full_auto";
     callback back();
     callback save-theme(string);
     callback save-font-size(int);
@@ -3085,12 +3084,6 @@ component GeneralPage inherits Rectangle {
             : value == "none" ? I18n.st_send_button
             : I18n.st_send_enter_direct;
     }
-    pure function permission-label(value: string) -> string {
-        return value == "auto_edit" ? I18n.cp_permission_write
-            : value == "suggest" ? I18n.cp_permission_command
-            : I18n.cp_permission_full;
-    }
-
     VerticalLayout {
         SheetHeader {
             title: I18n.st_tab_general;
@@ -3209,7 +3202,7 @@ component GeneralPage inherits Rectangle {
                 }
 
                 SheetCard {
-                    CardTitle { title: "交互"; subtitle: "输入方式与工具权限"; }
+                    CardTitle { title: "交互"; subtitle: "输入方式与发送行为"; }
                     SettingRow {
                         label: I18n.st_send_key;
                         PickerField {
@@ -3220,18 +3213,10 @@ component GeneralPage inherits Rectangle {
                     SettingRow {
                         label: I18n.st_ui_language;
                         note: I18n.st_language_hint;
+                        last: true;
                         PickerField {
                             text: root.language;
                             picked => { root.open-picker(2, I18n.st_ui_language, root.language); }
-                        }
-                    }
-                    SettingRow {
-                        label: I18n.ag_permission_mode;
-                        note: I18n.cp_permission_note;
-                        last: true;
-                        PickerField {
-                            text: root.permission-label(root.permission-mode);
-                            picked => { root.open-picker(3, I18n.ag_permission_mode, root.permission-mode); }
                         }
                     }
                 }
@@ -4878,7 +4863,6 @@ export component MobileSettings inherits Rectangle {
     in property <int> font-size: 14;
     in property <string> send-key: "enter";
     in property <string> language: "zh-CN";
-    in-out property <string> permission-mode: "full_auto";
     in property <string> current-model: "";
     in property <int> model-count: 0;
     in property <string> workspace: "";
@@ -5050,7 +5034,6 @@ export component MobileSettings inherits Rectangle {
     callback download-update();
     callback install-update();
     callback select-update-source(string);
-    callback permission-changed(string);
     callback open-model-editor(string);
     callback close-model-editor();
     callback save-model(ModelCard, string);
@@ -5147,9 +5130,6 @@ export component MobileSettings inherits Rectangle {
         } else if (id == 2) {
             root.picker-options = ["zh-CN", "en-US"];
             root.picker-values = ["zh-CN", "en-US"];
-        } else if (id == 3) {
-            root.picker-options = [I18n.cp_permission_full, I18n.cp_permission_write, I18n.cp_permission_command];
-            root.picker-values = ["full_auto", "auto_edit", "suggest"];
         } else if (id == 4) {
             root.picker-options = [I18n.st_type_llm, I18n.st_type_embedding, I18n.st_type_asr, I18n.st_type_tts, I18n.st_type_image, I18n.st_type_video];
             root.picker-values = ["llm", "embedding", "asr", "tts", "image", "video"];
@@ -5222,10 +5202,6 @@ export component MobileSettings inherits Rectangle {
     function apply-pick(id: int, value: string) {
         if (id == 1) { root.save-send-key(value); }
         else if (id == 2) { root.save-language(value); }
-        else if (id == 3) {
-            root.permission-mode = value;
-            root.permission-changed(value);
-        }
         else if (id == 4) { root.draft.model-type = value; }
         else if (id == 5) {
             root.draft.provider = value;
@@ -5330,7 +5306,6 @@ export component MobileSettings inherits Rectangle {
             font-size: root.font-size;
             send-key: root.send-key;
             language: root.language;
-            permission-mode: root.permission-mode;
             back() => { root.page = 0; }
             save-theme(value) => {
                 Theme.palette = value;

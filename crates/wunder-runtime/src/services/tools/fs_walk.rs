@@ -65,10 +65,28 @@ pub(crate) fn parse_exclude_patterns(args: &Value) -> std::result::Result<Vec<St
     match raw {
         Value::Null => {}
         Value::String(text) => {
-            for part in text.split([',', ';', '\n']) {
-                let pattern = part.trim();
-                if !pattern.is_empty() {
-                    patterns.push(pattern.to_string());
+            // 调用方可能把数组写成字符串化的 JSON（`["*.log","dist"]`），
+            // 按逗号硬拆会得到 `["*.log"` 这种片段，排除规则就整体失效。
+            let trimmed = text.trim();
+            let parsed = if trimmed.starts_with('[') {
+                serde_json::from_str::<Value>(trimmed).ok()
+            } else {
+                None
+            };
+            if let Some(Value::Array(items)) = parsed {
+                for item in items {
+                    let Some(text) = item.as_str() else { continue };
+                    let pattern = text.trim();
+                    if !pattern.is_empty() {
+                        patterns.push(pattern.to_string());
+                    }
+                }
+            } else {
+                for part in trimmed.split([',', ';', '\n']) {
+                    let pattern = part.trim();
+                    if !pattern.is_empty() {
+                        patterns.push(pattern.to_string());
+                    }
                 }
             }
         }

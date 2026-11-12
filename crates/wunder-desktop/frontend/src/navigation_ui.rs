@@ -769,28 +769,34 @@ fn patch_thread_status(
 }
 
 /// The settle time recorded for a thread opened while it had no known mark.
-/// A row whose `ended_at` is positive is never "not newer" than this, so the
-/// mark that lands after the visit is still news. It is not `0.0` because the
-/// first genuine settle of a thread can be stamped with a small unix second
-/// (fixtures, a clock far behind the engine's), and that mark must not slip
-/// under an unknown visit either.
+/// It is not a real time and never stays one: the first mark the thread shows
+/// after that visit is the one the user was looking at, so it is retired and
+/// becomes the pinned time. A later completion is news again. It is not `0.0`
+/// because `0.0` already means "this row carries no mark".
 const UNKNOWN_SETTLE: f64 = -1.0;
 
 /// Whether the settle mark on a row has already been looked at. A row counts
 /// as seen while its settle time is not newer than the one recorded when the
 /// thread was last opened, so a later completion is news again.
+///
+/// An unknown visit is spent here, on the first mark it is asked about: the
+/// thread was opened while it had no mark, so whatever shows up next is what
+/// the user was sitting in front of. Without consuming it the visit would
+/// suppress every later completion of that thread for the rest of the run.
 fn seen_settle(session: &str, ended_at: f32) -> bool {
     if ended_at <= 0.0 {
         return false;
     }
     SEEN_SETTLES.with(|slot| {
-        let seen = slot.borrow();
-        let Some(seen) = seen.get(session) else {
+        let mut seen = slot.borrow_mut();
+        let Some(seen) = seen.get_mut(session) else {
             return false;
         };
-        // An unknown visit retires the first mark the thread shows: that mark
-        // is the one the user was already looking at when they opened it.
-        *seen == UNKNOWN_SETTLE || ended_at as f64 <= *seen
+        if *seen == UNKNOWN_SETTLE {
+            *seen = ended_at as f64;
+            return true;
+        }
+        ended_at as f64 <= *seen
     })
 }
 
@@ -1493,7 +1499,8 @@ mod tests {
 
     /// A thread opened before its settle time is known still counts as looked
     /// at: the mark that lands a moment later (history read, poll) must not
-    /// flash a green check the user is already staring at.
+    /// flash a green check the user is already staring at. That visit is spent
+    /// on the first mark, so the next completion is news again.
     #[test]
     fn opening_a_thread_before_its_mark_is_known_still_retires_that_mark() {
         let id = "fixture-early-visit";
@@ -1504,11 +1511,6 @@ mod tests {
             seen_settle(id, 1_800_000_000.0),
             "a mark landing after the visit is not news"
         );
-        // Looking at that mark is what makes it old news; the next completion
-        // of the same thread is news again.
-        SEEN_SETTLES.with(|slot| {
-            slot.borrow_mut().insert(id.to_string(), 1_800_000_000.0);
-        });
         assert!(
             !seen_settle(id, 1_800_000_100.0),
             "a later settle is news again"

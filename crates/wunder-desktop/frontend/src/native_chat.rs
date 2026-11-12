@@ -2968,20 +2968,17 @@ fn echo_image_attachments(
 
 fn bind_attachments(app: &MainWindow) {
     let weak = app.as_weak();
-    app.on_capture_screenshot(move |hide_window, region| {
+    app.on_capture_screenshot(move || {
+        // 截图入口固定为「隐藏窗口 + 整屏截图」：点击后不再弹二级菜单。
         // The composer menu is closed by the same Slint callback that starts
         // the capture. Defer one event-loop turn so its popup and the final
         // composer frame are painted before the main window is hidden. Without
         // this boundary the desktop read can retain the pre-close frame in
-        // the compositor, which looks like a partial ghost in the selector.
+        // the compositor, which looks like a partial ghost in the capture.
         slint::Timer::single_shot(std::time::Duration::from_millis(32), {
             let weak = weak.clone();
             move || {
-                if region {
-                    crate::screenshot::capture(weak, hide_window);
-                } else {
-                    crate::screenshot::capture_fullscreen(weak, hide_window);
-                }
+                crate::screenshot::capture_fullscreen(weak, true);
             }
         });
     });

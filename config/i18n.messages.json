@@ -3128,8 +3128,8 @@
     "zh-CN": "本地纯文本文件的必填查询词。本工具只搜索本地文件，不联网。"
   },
   "tool.spec.search.args.glob": {
-    "en-US": "Preferred rg-style alias of file_pattern. Accepts a string (comma/semicolon/newline separated, braces like *.{rs,md} expanded) or a string array. An entry prefixed with ! is an exclusion, e.g. [\"*.txt\", \"!*_part0*.txt\"].",
-    "zh-CN": "推荐的 rg 风格别名，等价于 file_pattern。可传字符串（逗号、分号或换行分隔，支持 *.{rs,md} 花括号）或字符串数组；以 ! 开头的项是排除规则，例如 [\"*.txt\", \"!*_part0*.txt\"]。"
+    "en-US": "Preferred rg-style alias of file_pattern. A single glob string (comma/semicolon/newline separated, braces like *.{rs,md} expanded) and a string array are equivalent, e.g. \"*.rs\" or [\"*.rs\", \"!*_test.rs\"]. An entry prefixed with ! is an exclusion.",
+    "zh-CN": "推荐的 rg 风格别名，等价于 file_pattern。单个 glob 字符串（逗号、分号或换行分隔，支持 *.{rs,md} 花括号）与字符串数组等价，例如 \"*.rs\" 或 [\"*.rs\", \"!*_test.rs\"]；以 ! 开头的项是排除规则。"
   },
   "tool.spec.search.args.type": {
     "en-US": "Optional rg-style language/file-type shortcut. Examples: rust, rs, ts, tsx, js, py, md, toml, json.",
@@ -3584,7 +3584,7 @@
     "zh-CN": "可选。仅在使用 input 补丁模式时生效：只校验补丁能否解析与匹配，不写盘。"
   },
   "tool.spec.search.args.include": {
-    "en-US": "Optional whitelist that narrows the candidate files. Accepts a string or string array, e.g. [\"src/**\", \"docs/**\"]. When glob is also given the two are intersected, not merged.",
+    "en-US": "Optional whitelist that narrows the candidate files. A string and a string array are equivalent, e.g. \"src/**\" or [\"src/**\", \"docs/**\"]. When glob is also given the two are intersected, not merged.",
     "zh-CN": "可选的白名单，用于收窄候选文件。可传字符串或字符串数组，例如 [\"src/**\", \"docs/**\"]；与 glob 同时给出时取交集而不是并集。"
   },
   "tool.title.文件名匹配": {

@@ -154,7 +154,6 @@ pub enum Command {
         font_size: i32,
     },
     SaveLanguage(String),
-    PermissionMode(String),
     OpenModelEditor {
         key: Option<String>,
     },
@@ -1045,7 +1044,6 @@ pub struct Shared {
     pub model_name: String,
     pub model_key: String,
     pub send_key: String,
-    pub permission_mode: String,
     pub generating: bool,
     pub stopping: bool,
     pub loading: bool,
@@ -1169,7 +1167,6 @@ fn run(
     }
     {
         let mut state = shared.lock().unwrap();
-        state.permission_mode = "full_auto".into();
         state.loading = true;
         state.touch();
     }
@@ -1891,18 +1888,6 @@ fn run(
                 },
                 Err(error) => notify(&shared, format!("读取配置失败：{error}")),
             },
-            Command::PermissionMode(mode) => {
-                let label = match mode.as_str() {
-                    "auto_edit" => "写入自动",
-                    "suggest" => "执行前确认",
-                    _ => "完全访问",
-                };
-                if let Ok(mut state) = shared.lock() {
-                    state.permission_mode = mode;
-                    state.notify(format!("权限模式已设为「{label}」"));
-                    state.touch();
-                }
-            }
             Command::OpenModelEditor { key } => {
                 open_model_editor(&desktop, &shared, key.as_deref());
             }

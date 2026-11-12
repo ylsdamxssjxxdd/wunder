@@ -520,7 +520,6 @@ export component MobileWindow inherits Window {
     in property <string> workspace-name: "";
     in property <string> workspace-id: "";
     in property <string> branch-name: "";
-    in-out property <string> permission-mode: "full_auto";
 
     // ---- 问询面板 ----------------------------------------------------
     in property <[InquiryQuestion]> inquiry-questions: [];
@@ -747,7 +746,6 @@ export component MobileWindow inherits Window {
     callback goal-pause-toggle();
     callback goal-clear();
     callback activity-plan-dismiss();
-    callback permission-changed(string);
     callback remove-attachment(int);
     callback copy-text(string);
     callback fork-thread(int);
@@ -1288,7 +1286,6 @@ export component MobileWindow inherits Window {
                     show-host-hud: false;
                     show-cli-action: false;
                     branch-name: root.branch-name;
-                    permission-mode <=> root.permission-mode;
                     send() => {
                         root.close-plus();
                         root.send();
@@ -1296,7 +1293,6 @@ export component MobileWindow inherits Window {
                     stop() => { root.stop(); }
                     select-model(index, key) => { root.select-model(index, key); }
                     open-model-settings() => { root.open-model-settings(); }
-                    permission-changed(value) => { root.permission-changed(value); }
                     remove-attachment(index) => { root.remove-attachment(index); }
                 }
             }
@@ -1367,12 +1363,6 @@ export component MobileWindow inherits Window {
                         clicked => { root.plus-view = 1; }
                     }
                     PlusTile {
-                        visible: root.settings-chat-target == 0;
-                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-shield.svg");
-                        label: "权限";
-                        clicked => { root.plus-view = 3; }
-                    }
-                    PlusTile {
                         icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/lc-wand-sparkles.svg");
                         label: "预设";
                         enabled: root.preset-questions.length > 0;
@@ -1403,8 +1393,7 @@ export component MobileWindow inherits Window {
                         Text {
                             horizontal-stretch: 1;
                             text: root.plus-view == 1 ? I18n.cp_commands
-                                : root.plus-view == 2 ? I18n.ag_preset_questions
-                                : I18n.cp_permission;
+                                : I18n.ag_preset_questions;
                             color: Theme.text;
                             font-size: Theme.font-md;
                             font-weight: 600;
@@ -1430,41 +1419,6 @@ export component MobileWindow inherits Window {
                                 label: question;
                                 clicked => { root.pick-draft(question); }
                             }
-                        }
-                        if root.plus-view == 3 : PanelOption {
-                            label: I18n.cp_permission_full;
-                            selected: root.permission-mode == "full_auto";
-                            clicked => {
-                                root.permission-mode = "full_auto";
-                                root.permission-changed("full_auto");
-                                root.close-plus();
-                            }
-                        }
-                        if root.plus-view == 3 : PanelOption {
-                            label: I18n.cp_permission_write;
-                            selected: root.permission-mode == "auto_edit";
-                            clicked => {
-                                root.permission-mode = "auto_edit";
-                                root.permission-changed("auto_edit");
-                                root.close-plus();
-                            }
-                        }
-                        if root.plus-view == 3 : PanelOption {
-                            label: I18n.cp_permission_command;
-                            selected: root.permission-mode == "suggest";
-                            clicked => {
-                                root.permission-mode = "suggest";
-                                root.permission-changed("suggest");
-                                root.close-plus();
-                            }
-                        }
-                        if root.plus-view == 3 : Text {
-                            height: 54px;
-                            text: I18n.cp_permission_note;
-                            color: Theme.muted;
-                            font-size: Theme.font-xs;
-                            wrap: word-wrap;
-                            vertical-alignment: top;
                         }
                     }
                 }
@@ -2022,7 +1976,6 @@ export component MobileWindow inherits Window {
         font-size: root.settings-font-size;
         send-key: root.settings-send-key;
         language: root.settings-language;
-        permission-mode <=> root.permission-mode;
         current-model: root.model-name;
         model-count: root.model-catalogue-count;
         workspace: root.settings-workspace;
@@ -2189,7 +2142,6 @@ export component MobileWindow inherits Window {
         download-update() => { root.download-update(); }
         install-update() => { root.install-update(); }
         select-update-source(source) => { root.select-update-source(source); }
-        permission-changed(value) => { root.permission-changed(value); }
         open-model-editor(key) => { root.open-model-editor(key); }
         close-model-editor() => { root.close-model-editor(); }
         save-model(card, secret) => { root.save-model(card, secret); }

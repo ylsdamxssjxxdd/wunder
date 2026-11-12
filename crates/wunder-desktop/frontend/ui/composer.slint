@@ -1277,31 +1277,6 @@ component PresetFlyout inherits Rectangle {
     }
 }
 
-component ScreenshotFlyout inherits Rectangle {
-    callback pick(bool, bool);
-    width: 268px;
-    height: body.preferred-height;
-    border-radius: Theme.radius-md; background: Theme.surface;
-    border-width: 1px; border-color: Theme.border;
-    drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
-    body := VerticalLayout {
-        padding: 8px; spacing: 4px;
-        Text { text: I18n.cp_screenshot_mode; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; }
-        for option in [
-            { label: I18n.cp_shot_fullscreen_hidden, hide: true, region: false },
-            { label: I18n.cp_shot_region_hidden, hide: true, region: true },
-            { label: I18n.cp_shot_fullscreen_kept, hide: false, region: false },
-            { label: I18n.cp_shot_region_kept, hide: false, region: true }
-        ] : Rectangle {
-            height: 24px; border-radius: 5px;
-            background: shot-touch.has-hover ? Theme.accent-soft : transparent;
-            accessible-role: list-item; accessible-label: option.label;
-            Text { x: 8px; width: parent.width - 16px; height: parent.height; text: option.label; color: Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; }
-            shot-touch := TouchArea { mouse-cursor: pointer; clicked => { root.pick(option.hide, option.region); } }
-        }
-    }
-}
-
 export component Composer inherits Rectangle {
     in-out property <string> draft <=> editor.text;
     in property <bool> busy: false;
@@ -1395,7 +1370,7 @@ export component Composer inherits Rectangle {
     callback remove-attachment(int);
     callback record-voice();
     callback launch-cli();
-    callback screenshot(bool, bool);
+    callback screenshot();
     callback file-drop(DropEvent);
     // ---- 发送队列 (§发送队列) ----
     // Parked turns come straight from the engine's queue projection; the strip
@@ -1450,7 +1425,6 @@ export component Composer inherits Rectangle {
     private property <bool> model-open: false;
     private property <bool> preset-open: false;
     private property <bool> command-open: false;
-    private property <bool> screenshot-open: false;
     // Keyboard walk over the slash-command flyout (云端版同款): arrows move the
     // highlight, Enter commits it instead of sending, Escape puts the flyout
     // away until the next real edit. The pinned cascade inside the plus menu
@@ -1498,10 +1472,6 @@ export component Composer inherits Rectangle {
     out property <length> preset-menu-y: root.preset-open ? preset_flyout.absolute-position.y : -1px;
     out property <length> preset-menu-width: root.preset-open ? preset_flyout.width : 0px;
     out property <length> preset-menu-height: root.preset-open ? preset_flyout.height : 0px;
-    out property <length> screenshot-menu-x: root.screenshot-open ? screenshot_flyout.absolute-position.x : -1px;
-    out property <length> screenshot-menu-y: root.screenshot-open ? screenshot_flyout.absolute-position.y : -1px;
-    out property <length> screenshot-menu-width: root.screenshot-open ? screenshot_flyout.width : 0px;
-    out property <length> screenshot-menu-height: root.screenshot-open ? screenshot_flyout.height : 0px;
     // Actual editor bounds for the Winit touch filter. This lets the native
     // layer handle a second touch after the editor already has focus without
     // adding an input-catching layer over TextInput.
@@ -1523,7 +1493,6 @@ export component Composer inherits Rectangle {
     function close-submenus() {
         root.command-open = false;
         root.preset-open = false;
-        root.screenshot-open = false;
     }
     background: transparent;
     if !root.mobile : Rectangle {
@@ -1855,7 +1824,6 @@ export component Composer inherits Rectangle {
                                     clicked => {
                                         root.command-open = !root.command-open;
                                         root.preset-open = false;
-                                        root.screenshot-open = false;
                                     }
                                     // 级联跟随悬停（云端版 hoverPlusSubmenu 同款）：
                                     // 指到有子面板的行即呼出并收掉其余，移开不
@@ -1864,7 +1832,6 @@ export component Composer inherits Rectangle {
                                         if root.plus-open && self.has-hover {
                                             root.command-open = true;
                                             root.preset-open = false;
-                                            root.screenshot-open = false;
                                         }
                                     }
                                 }
@@ -1889,13 +1856,11 @@ export component Composer inherits Rectangle {
                                     clicked => {
                                         root.preset-open = !root.preset-open;
                                         root.command-open = false;
-                                        root.screenshot-open = false;
                                     }
                                     changed has-hover => {
                                         if root.plus-open && self.has-hover {
                                             root.preset-open = true;
                                             root.command-open = false;
-                                            root.screenshot-open = false;
                                         }
                                     }
                                 }
@@ -1942,35 +1907,23 @@ export component Composer inherits Rectangle {
                                     clicked => { root.record-voice(); }
                                 }
                             }
-                            // 截图
+                            // 截图：点击即隐藏窗口并整屏截图，不再弹二级菜单。
                             Rectangle {
                                 height: 34px; border-radius: Theme.radius-sm;
-                                background: root.screenshot-open || shot-row-touch.has-hover ? Theme.hover : transparent;
+                                background: shot-row-touch.has-hover ? Theme.hover : transparent;
                                 accessible-role: list-item; accessible-label: I18n.cp_screenshot;
                                 Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/lc-camera.svg"); colorize: Theme.text-secondary; image-fit: contain; }
                                 Text { x: 32px; width: parent.width - 44px; height: parent.height; text: I18n.cp_screenshot; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
-                                Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
                                 shot-row-touch := TouchArea {
                                     mouse-cursor: pointer;
-                                    clicked => {
-                                        root.screenshot-open = !root.screenshot-open;
-                                        root.command-open = false;
-                                        root.preset-open = false;
-                                    }
                                     changed has-hover => {
-                                        if root.plus-open && self.has-hover {
-                                            root.screenshot-open = true;
-                                            root.command-open = false;
-                                            root.preset-open = false;
-                                        }
+                                        if self.has-hover { root.close-submenus(); }
                                     }
-                                }
-                                screenshot_flyout := ScreenshotFlyout {
-                                    visible: root.screenshot-open;
-                                    x: parent.width + 12px;
-                                    y: parent.height + 7px - self.height;
-                                    z: 2;
-                                    pick(hide, region) => { root.plus-open = false; root.close-submenus(); root.screenshot(hide, region); }
+                                    clicked => {
+                                        root.plus-open = false;
+                                        root.close-submenus();
+                                        root.screenshot();
+                                    }
                                 }
                             }
                             if root.show-cli-action : Rectangle {

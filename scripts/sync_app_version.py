@@ -44,6 +44,27 @@ def set_version_field(payload: dict, version: str) -> bool:
     return True
 
 
+def set_package_lock_version(payload: dict, version: str) -> bool:
+    """Re-pin the local package version inside an npm lock file.
+
+    Only the lock's own metadata entries are touched: the root ``version``,
+    ``packages[""].version`` and the workspace entry ``packages["frontend"]``.
+    Third-party pins stay untouched.
+    """
+    changed = False
+    if payload.get("version") and payload["version"] != version:
+        payload["version"] = version
+        changed = True
+    packages = payload.get("packages")
+    if isinstance(packages, dict):
+        for key in ("", "frontend"):
+            entry = packages.get(key)
+            if isinstance(entry, dict) and entry.get("version") and entry["version"] != version:
+                entry["version"] = version
+                changed = True
+    return changed
+
+
 def replace_toml_package_version(path: Path, version: str) -> bool:
     text = path.read_text(encoding="utf-8-sig")
     pattern = re.compile(
@@ -67,6 +88,9 @@ def main() -> int:
         (ROOT / "Cargo.toml", ["-w"]),
         (ROOT / "crates" / "wunder-desktop" / "Cargo.toml", None),
         (ROOT / "crates/wunder-desktop/frontend" / "Cargo.toml", ["-p", "wunder-frontend-slint"]),
+        # wunder-android is a standalone workspace (its own Cargo.lock), so the
+        # workspace bump above does not reach it; sync and re-pin it explicitly.
+        (ROOT / "crates" / "wunder-android" / "Cargo.toml", ["-p", "wunder-android"]),
     ]
     lock_jobs = []
     for target, repin_args in sync_targets:
@@ -88,10 +112,14 @@ def main() -> int:
             raise SystemExit(f"failed to re-pin lock in {directory}: {repin.stderr.strip()}")
 
     json_targets = [
-        ROOT / "frontend" / "package.json",
+        (ROOT / "frontend" / "package.json", set_version_field),
+        (ROOT / "frontend" / "package-lock.json", set_package_lock_version),
+        (ROOT / "package-lock.json", set_package_lock_version),
     ]
-    for target in json_targets:
-        if write_json(target, lambda payload, value=version: set_version_field(payload, value)):
+    for target, updater in json_targets:
+        if not target.is_file():
+            continue
+        if write_json(target, lambda payload, value=version, fn=updater: fn(payload, value)):
             changed_files.append(str(target.relative_to(ROOT)))
 
     if changed_files:

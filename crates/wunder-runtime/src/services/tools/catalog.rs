@@ -539,11 +539,15 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 super::schema::string("path")
                     .desc(t("tool.spec.search.args.path"))
                     .optional(),
-                super::schema::string("glob")
+                // 声明为数组：调用方天然按清单传多个模式，若这里声明 string，
+                // 参数层会把数组整串转成 `["*.rs"]` 这样的字面量，过滤就失效了。
+                super::schema::array("glob")
                     .desc(t("tool.spec.search.args.glob"))
+                    .items(super::schema::string("_"))
                     .optional(),
-                super::schema::string("include")
+                super::schema::array("include")
                     .desc(t("tool.spec.search.args.include"))
+                    .items(super::schema::string("_"))
                     .optional(),
                 super::schema::array("exclude")
                     .desc(t("tool.spec.search.args.exclude"))

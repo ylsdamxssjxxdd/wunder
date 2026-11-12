@@ -1455,10 +1455,6 @@ fn wire_callbacks(
     });
 
     let sender = commands.clone();
-    ui.on_permission_changed(move |value| {
-        let _ = sender.send(Command::PermissionMode(value.to_string()));
-    });
-    let sender = commands.clone();
     ui.on_record_voice(move || {
         let _ = sender.send(Command::VoiceToggle);
     });
