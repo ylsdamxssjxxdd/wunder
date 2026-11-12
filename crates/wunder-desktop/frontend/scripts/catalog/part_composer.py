@@ -39,11 +39,6 @@ ENTRIES = [
     ("cp_more_new_thread", "新建线程", "New thread"),
     ("cp_more_upload", "上传文件", "Upload file"),
     ("cp_more_workspace", "打开工作区文件夹", "Open workspace folder"),
-    ("cp_permission", "审批模式", "Approval mode"),
-    ("cp_permission_full", "完全访问", "Full access"),
-    ("cp_permission_write", "写入自动", "Auto-edit"),
-    ("cp_permission_command", "执行前确认", "Confirm commands"),
-    ("cp_permission_note", "与运行时 approval_mode 同名：full_auto 直接执行；auto_edit 仅放行编辑；suggest 在执行前确认。桌面版本地链路尚未接审批往返，当前选择只记录偏好。", "Named after the runtime approval_mode: full_auto runs directly, auto_edit allows edits only, suggest confirms before executing. The local desktop path has no approval round-trip yet, so the choice is recorded as a preference only."),
 
     # ---- model picker (§8.3) ----
     ("cp_model", "模型", "Model"),

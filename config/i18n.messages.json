@@ -3128,8 +3128,8 @@
     "zh-CN": "本地纯文本文件的必填查询词。本工具只搜索本地文件，不联网。"
   },
   "tool.spec.search.args.glob": {
-    "en-US": "Preferred rg-style alias of file_pattern. Supports comma/semicolon/newline separated --glob style filters.",
-    "zh-CN": "推荐的 rg 风格别名，等价于 file_pattern。支持逗号、分号或换行分隔的 --glob 风格过滤。"
+    "en-US": "Preferred rg-style alias of file_pattern. Accepts a string (comma/semicolon/newline separated, braces like *.{rs,md} expanded) or a string array. An entry prefixed with ! is an exclusion, e.g. [\"*.txt\", \"!*_part0*.txt\"].",
+    "zh-CN": "推荐的 rg 风格别名，等价于 file_pattern。可传字符串（逗号、分号或换行分隔，支持 *.{rs,md} 花括号）或字符串数组；以 ! 开头的项是排除规则，例如 [\"*.txt\", \"!*_part0*.txt\"]。"
   },
   "tool.spec.search.args.type": {
     "en-US": "Optional rg-style language/file-type shortcut. Examples: rust, rs, ts, tsx, js, py, md, toml, json.",
@@ -3584,8 +3584,8 @@
     "zh-CN": "可选。仅在使用 input 补丁模式时生效：只校验补丁能否解析与匹配，不写盘。"
   },
   "tool.spec.search.args.include": {
-    "en-US": "Optional rg-style alias of glob, aligned with dsh include. A single glob to narrow files, e.g. *.rs or src/**/*.ts.",
-    "zh-CN": "可选的 rg 风格别名，等价于 glob，与 dsh 的 include 对齐。用单个 glob 收窄文件，例如 *.rs 或 src/**/*.ts。"
+    "en-US": "Optional whitelist that narrows the candidate files. Accepts a string or string array, e.g. [\"src/**\", \"docs/**\"]. When glob is also given the two are intersected, not merged.",
+    "zh-CN": "可选的白名单，用于收窄候选文件。可传字符串或字符串数组，例如 [\"src/**\", \"docs/**\"]；与 glob 同时给出时取交集而不是并集。"
   },
   "tool.title.文件名匹配": {
     "en-US": "File Glob Match",
@@ -3654,5 +3654,13 @@
   "tool.spec.search.args.search_binary": {
     "zh-CN": "可选，默认 false：跳过二进制文件。设 true 时把二进制文件按文本扫描，用于在 mp4/图片等文件里找特征串（例如 ftyp）。",
     "en-US": "Optional, default false: skip binary files. Set true to scan binary files as text, e.g. to find a signature like ftyp inside an mp4 or image."
+  },
+  "tool.spec.search.args.max_matches": {
+    "zh-CN": "可选，单页最多返回多少条，默认 200、上限 2000。返回里的 total_matches 是真实命中总数，不是本次返回数；has_more 与 next_offset 说明还有没有下一页。",
+    "en-US": "Optional page size (default 200, max 2000). total_matches is the true hit count, not the number returned; has_more and next_offset tell you whether another page exists."
+  },
+  "tool.spec.search.args.offset": {
+    "zh-CN": "可选，分页起点，默认 0。把上一次返回的 next_offset 原值传进来即可续页，不要重新调大 max_matches；mode=paths 时偏移单位是文件，其余模式是命中行。",
+    "en-US": "Optional paging start (default 0). Pass the previous next_offset back to continue instead of raising max_matches; the unit is files in mode=paths and hit lines otherwise."
   }
 }

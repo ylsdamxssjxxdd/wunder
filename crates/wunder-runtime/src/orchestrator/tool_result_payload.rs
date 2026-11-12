@@ -3103,7 +3103,12 @@ fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
         "total_matches",
         "max_matches",
         "has_more",
+        // 分页位置与单位：续页要能直接对上，不能只给 next_offset 却不说
+        // 数的是文件还是命中行。
+        "offset",
         "next_offset",
+        "page_unit",
+        "total_files",
         // 上下文名额：>0 表示只有前 N 个命中带 before/after，单个命中可以给足上下文。
         "context_match_limit",
     ] {

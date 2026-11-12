@@ -9,9 +9,15 @@
       @click="expanded = !expanded"
       @keydown.esc.stop="closePanel"
     >
-      <span v-if="loading" class="status-dock-spinner" aria-hidden="true">
+      <span v-if="loading && !planComplete" class="status-dock-spinner" aria-hidden="true">
         <i class="fa-solid fa-circle-notch"></i>
       </span>
+      <!-- 计划全部完成后不再转动：已完成的计划没有「进行中」可言，
+           新的一轮开始也不该让旧计划读成仍在执行。 -->
+      <svg v-else-if="planComplete" class="status-dock-check" viewBox="0 0 20 20" aria-hidden="true">
+        <circle cx="10" cy="10" r="8.25" />
+        <path d="M6.3 10.3 8.9 12.9 13.7 7.4" />
+      </svg>
       <span class="status-dock-title">{{ t('chat.workflow.plan.title') }}</span>
       <span class="status-dock-current" :title="currentStepText">{{ currentStepText }}</span>
       <span class="status-dock-steps">{{ t('chat.workflow.plan.progress', { current: currentStepPosition, total: planProgress.total }) }}</span>
@@ -85,6 +91,11 @@ const panelId = useId();
 const planProgress = computed(() => summarizePlanProgress(props.plan));
 
 const hasPlan = computed(() => planProgress.value.total > 0);
+
+// 与桌面版同口径：全部步骤完成即为「计划完成」，此时胶囊只给绿勾，不转圈。
+const planComplete = computed(
+  () => planProgress.value.total > 0 && planProgress.value.done >= planProgress.value.total
+);
 
 const planSteps = computed(() => {
   const steps = Array.isArray((props.plan as { steps?: unknown } | null)?.steps)
@@ -188,6 +199,17 @@ const closePanel = () => {
 
 .status-dock-spinner .fa-circle-notch {
   animation: status-dock-spin 1.1s linear infinite;
+}
+
+.status-dock-check {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: #16a34a;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .status-dock-steps {

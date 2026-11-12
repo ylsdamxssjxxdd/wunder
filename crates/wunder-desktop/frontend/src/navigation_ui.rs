@@ -40,6 +40,12 @@ thread_local! {
     /// while its settle time is not newer than the recorded one, so a fresh
     /// completion after that visit shows up again. Keyed by time rather than a
     /// bare flag because a thread can settle many times.
+    ///
+    /// The key is the settle time, never "now": a thread whose settle time is
+    /// still unknown when it is opened (the catalogue has no `ended_at` and the
+    /// history read has not landed yet) records an unknown visit instead, so
+    /// the mark that lands a moment later still counts as the one the user was
+    /// looking at.
     static SEEN_SETTLES: RefCell<HashMap<String, f64>> = RefCell::new(HashMap::new());
     /// Last selected local workspace id, remembered while the cloud device is
     /// active so switching back lands on the same workspace instead of index 0.
@@ -762,6 +768,14 @@ fn patch_thread_status(
     true
 }
 
+/// The settle time recorded for a thread opened while it had no known mark.
+/// A row whose `ended_at` is positive is never "not newer" than this, so the
+/// mark that lands after the visit is still news. It is not `0.0` because the
+/// first genuine settle of a thread can be stamped with a small unix second
+/// (fixtures, a clock far behind the engine's), and that mark must not slip
+/// under an unknown visit either.
+const UNKNOWN_SETTLE: f64 = -1.0;
+
 /// Whether the settle mark on a row has already been looked at. A row counts
 /// as seen while its settle time is not newer than the one recorded when the
 /// thread was last opened, so a later completion is news again.
@@ -770,34 +784,42 @@ fn seen_settle(session: &str, ended_at: f32) -> bool {
         return false;
     }
     SEEN_SETTLES.with(|slot| {
-        slot.borrow()
-            .get(session)
-            .is_some_and(|seen| ended_at as f64 <= *seen)
+        let seen = slot.borrow();
+        let Some(seen) = seen.get(session) else {
+            return false;
+        };
+        // An unknown visit retires the first mark the thread shows: that mark
+        // is the one the user was already looking at when they opened it.
+        *seen == UNKNOWN_SETTLE || ended_at as f64 <= *seen
     })
 }
 
 /// Record that the user is looking at `session` now: whatever settle mark it
 /// carries at this moment stops being news, and the sidebar row is updated in
 /// place so the mark disappears without waiting for the next catalogue read.
+///
+/// A thread opened before its mark is known still records the visit. Skipping
+/// it left the thread unvisited, so the completion that landed a moment later
+/// (the history read, a poll) presented as a brand-new green check the user had
+/// just been looking at.
 pub(crate) fn mark_settle_seen(app: &MainWindow, session: &str) {
     if session.is_empty() {
         return;
     }
-    let Some(ended_at) = app
+    let ended_at = app
         .get_conversations()
         .iter()
         .find(|conv| conv.id == session)
         .map(|conv| conv.runtime_ended_at)
-    else {
-        return;
-    };
-    if ended_at <= 0.0 {
-        return;
-    }
+        .unwrap_or(0.0);
     SEEN_SETTLES.with(|slot| {
         let mut seen = slot.borrow_mut();
-        let entry = seen.entry(session.to_string()).or_insert(0.0);
-        if ended_at as f64 > *entry {
+        let entry = seen
+            .entry(session.to_string())
+            .or_insert(UNKNOWN_SETTLE);
+        // A known mark supersedes an unknown one; an unknown visit never
+        // rewrites a mark already recorded.
+        if ended_at > 0.0 && ended_at as f64 > *entry {
             *entry = ended_at as f64;
         }
     });
@@ -1412,19 +1434,6 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
             });
         });
     });
-    // §8.4: the permission chip is a recorded preference. The runtime reads
-    // `security.approval_mode`, and the local desktop link has no approval
-    // round-trip yet, so this deliberately does not pretend to enforce.
-    let weak = app.as_weak();
-    app.on_save_permission_mode(move |mode| {
-        let Some(app) = weak.upgrade() else { return };
-        let label = match mode.as_str() {
-            "auto_edit" => "写入自动",
-            "suggest" => "执行前确认",
-            _ => "完全访问",
-        };
-        app.set_status(format!("权限模式已设为「{label}」").into());
-    });
 }
 
 #[cfg(test)]
@@ -1479,6 +1488,31 @@ mod tests {
         );
         assert!(!seen_settle(id, 0.0), "a live row carries no mark");
         assert!(!seen_settle("another-thread", 1_800_000_000.0));
+        SEEN_SETTLES.with(|slot| slot.borrow_mut().remove(id));
+    }
+
+    /// A thread opened before its settle time is known still counts as looked
+    /// at: the mark that lands a moment later (history read, poll) must not
+    /// flash a green check the user is already staring at.
+    #[test]
+    fn opening_a_thread_before_its_mark_is_known_still_retires_that_mark() {
+        let id = "fixture-early-visit";
+        SEEN_SETTLES.with(|slot| {
+            slot.borrow_mut().insert(id.to_string(), UNKNOWN_SETTLE);
+        });
+        assert!(
+            seen_settle(id, 1_800_000_000.0),
+            "a mark landing after the visit is not news"
+        );
+        // Looking at that mark is what makes it old news; the next completion
+        // of the same thread is news again.
+        SEEN_SETTLES.with(|slot| {
+            slot.borrow_mut().insert(id.to_string(), 1_800_000_000.0);
+        });
+        assert!(
+            !seen_settle(id, 1_800_000_100.0),
+            "a later settle is news again"
+        );
         SEEN_SETTLES.with(|slot| slot.borrow_mut().remove(id));
     }
 

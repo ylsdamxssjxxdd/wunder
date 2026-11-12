@@ -1,6 +1,6 @@
-# wunder (Xinjian)
+# <img src="images/eva01-head.png" alt="eva01 head" width="44" align="absmiddle"> wunder
 
-<img src="images/eva01-head.png" alt="eva01 head" width="28" align="absmiddle"> wunder (Xinjian) is a **general-purpose AI workbench**:
+wunder is a **general-purpose AI workbench**:
 
 - **Diverse**: multiple platforms — 32-bit Windows 7 and Ubuntu 18.04 — and multiple forms — web, local, and mobile.
 - **Fast**: starts instantly and responds without lag.

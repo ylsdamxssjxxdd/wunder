@@ -232,7 +232,9 @@ impl RowData {
                         target: child.target.as_str().into(),
                         // The chip prints the file name only; `target` keeps the
                         // full path for opening the resource and the tooltip.
-                        target_label: target_label(&child.target).into(),
+                        // A phone row is always narrow, so the label is cut to
+                        // the narrow chip width in the same pass.
+                        target_label: fit_chip_label(&target_label(&child.target), true).into(),
                         detail: child.detail.as_str().into(),
                         sections: workflow_sections(&child.sections),
                         patch: patch_cards(&child.patch),
@@ -764,6 +766,57 @@ fn file_name(value: &str) -> &str {
 /// URL) is left as it is.
 pub(crate) fn target_label(target: &str) -> String {
     file_name(target).chars().take(64).collect()
+}
+
+/// A phone row gives the chip less width than a desktop row (the change size
+/// takes part of it), so the label is shortened to what the chip can print
+/// instead of letting the renderer drop the tail behind an ellipsis.
+const CHIP_TEXT_WIDTH: f32 = 166.0;
+const CHIP_TEXT_WIDTH_NARROW: f32 = 94.0;
+const CHIP_ELLIPSIS_WIDTH: f32 = 12.0;
+
+fn glyph_width(ch: char) -> f32 {
+    // CJK, Hangul, kana, fullwidth forms and astral ideographs are one em wide;
+    // every other glyph of a file name (ASCII, Latin accents) is about half.
+    let wide = matches!(
+        ch as u32,
+        0x1100..=0x115F
+            | 0x2E80..=0xA4CF
+            | 0xAC00..=0xD7A3
+            | 0xF900..=0xFAFF
+            | 0xFE30..=0xFE4F
+            | 0xFF00..=0xFF60
+            | 0xFFE0..=0xFFE6
+            | 0x20000..=0x2FFFD
+    );
+    if wide {
+        12.0
+    } else {
+        6.2
+    }
+}
+
+pub(crate) fn fit_chip_label(label: &str, narrow: bool) -> String {
+    let budget = if narrow {
+        CHIP_TEXT_WIDTH_NARROW
+    } else {
+        CHIP_TEXT_WIDTH
+    } - CHIP_ELLIPSIS_WIDTH;
+    if label.chars().map(glyph_width).sum::<f32>() <= budget {
+        return label.to_string();
+    }
+    let mut used = 0.0;
+    let mut kept = String::new();
+    for ch in label.chars() {
+        let width = glyph_width(ch);
+        if used + width > budget {
+            break;
+        }
+        used += width;
+        kept.push(ch);
+    }
+    kept.push('…');
+    kept
 }
 
 /// The chip already names the file; a summary that resolves to the same file
@@ -1553,6 +1606,20 @@ mod tests {
         assert_eq!(child.summary, "");
         assert_eq!(workflow_sections(&child.sections).row_count(), 1);
         assert_eq!(patch_cards(&child.patch).row_count(), 1);
+    }
+
+    #[test]
+    fn chip_label_fits_the_narrow_printed_width() {
+        // A short name is printed whole.
+        assert_eq!(fit_chip_label("main.rs", true), "main.rs");
+        // A long name is cut to the head plus an ellipsis instead of leaving
+        // the tail to the renderer's tail elide.
+        let long = "desktop_timeline_target_label_fixture_test.rs";
+        let fitted = fit_chip_label(long, true);
+        assert!(fitted.ends_with('…'), "{fitted}");
+        assert!(long.starts_with(fitted.trim_end_matches('…')));
+        // The narrow chip holds fewer characters than the wide one.
+        assert!(fitted.chars().count() < fit_chip_label(long, false).chars().count());
     }
 
     #[test]

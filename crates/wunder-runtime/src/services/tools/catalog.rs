@@ -557,9 +557,13 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .desc(t("tool.spec.search.args.case_sensitive"))
                     .optional(),
                 super::schema::integer("max_matches")
-                    .desc("Maximum number of matches to return (default 200).")
+                    .desc(t("tool.spec.search.args.max_matches"))
                     .min(1)
                     .max(2000)
+                    .optional(),
+                super::schema::integer("offset")
+                    .desc(t("tool.spec.search.args.offset"))
+                    .min(0)
                     .optional(),
                 super::schema::integer("timeout_ms")
                     .desc("Search timeout in milliseconds (default 30000).")

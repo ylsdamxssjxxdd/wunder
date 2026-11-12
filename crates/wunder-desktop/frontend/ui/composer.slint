@@ -1277,32 +1277,6 @@ component PresetFlyout inherits Rectangle {
     }
 }
 
-component PermissionFlyout inherits Rectangle {
-    in property <string> mode;
-    callback changed(string);
-    width: 268px;
-    height: body.preferred-height;
-    border-radius: Theme.radius-md; background: Theme.surface;
-    border-width: 1px; border-color: Theme.border;
-    drop-shadow-color: #00000024; drop-shadow-blur: 16px; drop-shadow-offset-y: 3px;
-    body := VerticalLayout {
-        padding: 8px; spacing: 4px;
-        Text { text: I18n.cp_permission; color: Theme.text; font-size: Theme.font-xs; font-weight: 600; }
-        for option in [
-            { value: "full_auto", label: I18n.cp_permission_full },
-            { value: "auto_edit", label: I18n.cp_permission_write },
-            { value: "suggest", label: I18n.cp_permission_command }
-        ] : Rectangle {
-            height: 28px; border-radius: 5px;
-            background: root.mode == option.value ? Theme.accent-soft : perm-touch.has-hover ? Theme.hover : transparent;
-            accessible-role: list-item; accessible-label: option.label;
-            Text { x: 10px; width: parent.width - 18px; height: parent.height; text: option.label; color: root.mode == option.value ? Theme.accent-ink : Theme.text; font-size: Theme.font-2xs; vertical-alignment: center; }
-            perm-touch := TouchArea { mouse-cursor: pointer; clicked => { root.changed(option.value); } }
-        }
-        Text { height: 54px; text: I18n.cp_permission_note; color: Theme.muted; font-size: Theme.font-2xs; wrap: word-wrap; vertical-alignment: top; }
-    }
-}
-
 component ScreenshotFlyout inherits Rectangle {
     callback pick(bool, bool);
     width: 268px;
@@ -1416,12 +1390,6 @@ export component Composer inherits Rectangle {
     in property <int> subagent-running-count: 0;
     callback open-subagent(string);
     callback stop-subagent(string);
-    // §8.4 permission mode: a plain preference string, reported by the runtime
-    // sheet; enforcement itself stays in the backend.
-    // §8.4 permission mode, named after the runtime's `approval_mode` values
-    // (full_auto / auto_edit / suggest) so the chip and the engine agree.
-    in-out property <string> permission-mode: "full_auto";
-    callback permission-changed(string);
     callback stop();
     callback send();
     callback remove-attachment(int);
@@ -1483,7 +1451,6 @@ export component Composer inherits Rectangle {
     private property <bool> preset-open: false;
     private property <bool> command-open: false;
     private property <bool> screenshot-open: false;
-    private property <bool> permission-open: false;
     // Keyboard walk over the slash-command flyout (云端版同款): arrows move the
     // highlight, Enter commits it instead of sending, Escape puts the flyout
     // away until the next real edit. The pinned cascade inside the plus menu
@@ -1500,9 +1467,6 @@ export component Composer inherits Rectangle {
     // visible so the next turn can enter the queue.
     private property <bool> stop-action: root.generating && root.draft == ""
         && root.attachments.length == 0 && !root.inquiry-ready;
-    private property <string> permission-label: root.permission-mode == "auto_edit" ? I18n.cp_permission_write
-        : root.permission-mode == "suggest" ? I18n.cp_permission_command
-        : I18n.cp_permission_full;
     // The native Winit filter uses these window-local rectangles to dismiss
     // popovers without putting a full-window TouchArea above the real controls.
     // Keeping the geometry in Slint means DPI and responsive layout changes do
@@ -1534,10 +1498,6 @@ export component Composer inherits Rectangle {
     out property <length> preset-menu-y: root.preset-open ? preset_flyout.absolute-position.y : -1px;
     out property <length> preset-menu-width: root.preset-open ? preset_flyout.width : 0px;
     out property <length> preset-menu-height: root.preset-open ? preset_flyout.height : 0px;
-    out property <length> permission-menu-x: root.permission-open ? permission_flyout.absolute-position.x : -1px;
-    out property <length> permission-menu-y: root.permission-open ? permission_flyout.absolute-position.y : -1px;
-    out property <length> permission-menu-width: root.permission-open ? permission_flyout.width : 0px;
-    out property <length> permission-menu-height: root.permission-open ? permission_flyout.height : 0px;
     out property <length> screenshot-menu-x: root.screenshot-open ? screenshot_flyout.absolute-position.x : -1px;
     out property <length> screenshot-menu-y: root.screenshot-open ? screenshot_flyout.absolute-position.y : -1px;
     out property <length> screenshot-menu-width: root.screenshot-open ? screenshot_flyout.width : 0px;
@@ -1563,7 +1523,6 @@ export component Composer inherits Rectangle {
     function close-submenus() {
         root.command-open = false;
         root.preset-open = false;
-        root.permission-open = false;
         root.screenshot-open = false;
     }
     background: transparent;
@@ -1896,7 +1855,6 @@ export component Composer inherits Rectangle {
                                     clicked => {
                                         root.command-open = !root.command-open;
                                         root.preset-open = false;
-                                        root.permission-open = false;
                                         root.screenshot-open = false;
                                     }
                                     // 级联跟随悬停（云端版 hoverPlusSubmenu 同款）：
@@ -1906,7 +1864,6 @@ export component Composer inherits Rectangle {
                                         if root.plus-open && self.has-hover {
                                             root.command-open = true;
                                             root.preset-open = false;
-                                            root.permission-open = false;
                                             root.screenshot-open = false;
                                         }
                                     }
@@ -1932,14 +1889,12 @@ export component Composer inherits Rectangle {
                                     clicked => {
                                         root.preset-open = !root.preset-open;
                                         root.command-open = false;
-                                        root.permission-open = false;
                                         root.screenshot-open = false;
                                     }
                                     changed has-hover => {
                                         if root.plus-open && self.has-hover {
                                             root.preset-open = true;
                                             root.command-open = false;
-                                            root.permission-open = false;
                                             root.screenshot-open = false;
                                         }
                                     }
@@ -1951,51 +1906,6 @@ export component Composer inherits Rectangle {
                                     y: parent.height + 7px - self.height;
                                     z: 2;
                                     pick(value) => { root.plus-open = false; root.close-submenus(); root.draft = value; editor.focus(); }
-                                }
-                            }
-                            // 审批模式: the row carries the current mode, the flyout
-                            // switches it.
-                            Rectangle {
-                                height: 34px; border-radius: Theme.radius-sm;
-                                background: root.permission-open || perm-row-touch.has-hover ? Theme.hover : transparent;
-                                accessible-role: list-item; accessible-label: I18n.cp_permission;
-                                Image { x: 8px; y: 9px; width: 16px; height: 16px; source: @image-url("../assets/icons/lc-shield.svg"); colorize: Theme.text-secondary; image-fit: contain; }
-                                Text { x: 32px; width: parent.width - 110px; height: parent.height; text: I18n.cp_permission; color: Theme.text; font-size: Theme.font-md; vertical-alignment: center; overflow: elide; }
-                                Text {
-                                    x: parent.width - 78px; width: 56px; height: parent.height;
-                                    text: root.permission-label;
-                                    color: Theme.muted; font-size: Theme.font-xs;
-                                    vertical-alignment: center; horizontal-alignment: right; overflow: elide;
-                                }
-                                Image { x: parent.width - 17px; y: 12px; width: 9px; height: 9px; source: @image-url("../assets/icons/chevron-right.svg"); colorize: Theme.muted; image-fit: contain; }
-                                perm-row-touch := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => {
-                                        root.permission-open = !root.permission-open;
-                                        root.command-open = false;
-                                        root.preset-open = false;
-                                        root.screenshot-open = false;
-                                    }
-                                    changed has-hover => {
-                                        if root.plus-open && self.has-hover {
-                                            root.permission-open = true;
-                                            root.command-open = false;
-                                            root.preset-open = false;
-                                            root.screenshot-open = false;
-                                        }
-                                    }
-                                }
-                                permission_flyout := PermissionFlyout {
-                                    visible: root.permission-open;
-                                    x: parent.width + 12px;
-                                    y: parent.height + 7px - self.height;
-                                    z: 2;
-                                    mode: root.permission-mode;
-                                    changed(value) => {
-                                        root.permission-mode = value;
-                                        root.permission-changed(value);
-                                        root.permission-open = false;
-                                    }
                                 }
                             }
                             // 语音输入: direct action; the row flips to a stop glyph
@@ -2046,14 +1956,12 @@ export component Composer inherits Rectangle {
                                         root.screenshot-open = !root.screenshot-open;
                                         root.command-open = false;
                                         root.preset-open = false;
-                                        root.permission-open = false;
                                     }
                                     changed has-hover => {
                                         if root.plus-open && self.has-hover {
                                             root.screenshot-open = true;
                                             root.command-open = false;
                                             root.preset-open = false;
-                                            root.permission-open = false;
                                         }
                                     }
                                 }

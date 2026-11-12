@@ -130,7 +130,12 @@ const COMPACTION_EVENT_TYPES = new Set(['compaction', 'compaction_progress', 'co
 
 const SUMMARY_LIMIT = 160;
 const TARGET_LIMIT = 4;
-const TARGET_LABEL_LIMIT = 48;
+// 徽章文字宽度：12px 字号、左右各 7px 内边距，宽行 166px、窄行 94px。按实测
+// 字宽（ASCII 约 6.2px、CJK 12px）预留省略号后裁剪，名字要么整段显示，要么在
+// 这里就带上省略号，不交给 text-overflow 去吞掉尾部字符。
+const CHIP_TEXT_WIDTH = 166;
+const CHIP_TEXT_WIDTH_NARROW = 94;
+const CHIP_ELLIPSIS_WIDTH = 12;
 
 export const TIMELINE_ENTRY_RENDER_LIMIT = 40;
 export const TIMELINE_ENTRY_PAGE_SIZE = 40;
@@ -206,6 +211,40 @@ const normalizePathLike = (value: unknown): string =>
 const basenameOfPath = (value: string): string => {
   const segments = normalizePathLike(value).replace(/\/+$/, '').split('/').filter(Boolean);
   return segments.length > 0 ? segments[segments.length - 1] : '';
+};
+
+/** 单个字符的显示宽度：CJK/假名/谚文/全角与增补平面汉字按一个全角宽，其余按半角。 */
+const glyphWidth = (ch: string): number => {
+  const code = ch.codePointAt(0) ?? 0;
+  const wide =
+    (code >= 0x1100 && code <= 0x115f) ||
+    (code >= 0x2e80 && code <= 0xa4cf) ||
+    (code >= 0xac00 && code <= 0xd7a3) ||
+    (code >= 0xf900 && code <= 0xfaff) ||
+    (code >= 0xfe30 && code <= 0xfe4f) ||
+    (code >= 0xff00 && code <= 0xff60) ||
+    (code >= 0xffe0 && code <= 0xffe6) ||
+    (code >= 0x20000 && code <= 0x2fffd);
+  return wide ? 12 : 6.2;
+};
+
+/**
+ * 把徽章文字裁到徽章真正能印出来的宽度：保留文件名开头（识别文件的部分）并
+ * 补省略号。交给 CSS 的 text-overflow 只会吞掉尾部，留不住更多字符。
+ */
+const fitChipLabel = (label: string, narrow = false): string => {
+  const budget = (narrow ? CHIP_TEXT_WIDTH_NARROW : CHIP_TEXT_WIDTH) - CHIP_ELLIPSIS_WIDTH;
+  const chars = Array.from(label);
+  if (chars.reduce((sum, ch) => sum + glyphWidth(ch), 0) <= budget) return label;
+  let used = 0;
+  let kept = '';
+  for (const ch of chars) {
+    const width = glyphWidth(ch);
+    if (used + width > budget) break;
+    used += width;
+    kept += ch;
+  }
+  return `${kept}…`;
 };
 
 /**
@@ -555,7 +594,7 @@ const buildTargets = (run: RawToolRun): TimelineTargetChip[] => {
       return {
         key: path,
         path,
-        label: label.length > TARGET_LABEL_LIMIT ? `${label.slice(0, TARGET_LABEL_LIMIT)}…` : label
+        label: fitChipLabel(label)
       };
     });
 };

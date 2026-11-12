@@ -160,6 +160,64 @@ pub fn target_label(target: &str) -> String {
     file_name(target).chars().take(64).collect()
 }
 
+/// The chip's text width (12px font, 7px padding each side) is 166px on a wide
+/// row and 94px on a narrow one. Measured on the real UI font, a 12px ASCII
+/// glyph averages ~6.2px and a CJK glyph is 12px, so this budget keeps the
+/// whole name on screen instead of letting the last characters fall behind the
+/// ellipsis. The name is whole or elided by the chip; it is never cut here.
+const CHIP_TEXT_WIDTH: f32 = 166.0;
+const CHIP_TEXT_WIDTH_NARROW: f32 = 94.0;
+const CHIP_ELLIPSIS_WIDTH: f32 = 12.0;
+
+fn glyph_width(ch: char) -> f32 {
+    // CJK, Hangul, kana, fullwidth forms and astral ideographs are one em wide;
+    // every other glyph of a file name (ASCII, Latin accents) is about half.
+    let wide = matches!(
+        ch as u32,
+        0x1100..=0x115F
+            | 0x2E80..=0xA4CF
+            | 0xAC00..=0xD7A3
+            | 0xF900..=0xFAFF
+            | 0xFE30..=0xFE4F
+            | 0xFF00..=0xFF60
+            | 0xFFE0..=0xFFE6
+            | 0x20000..=0x2FFFD
+    );
+    if wide {
+        12.0
+    } else {
+        6.2
+    }
+}
+
+/// Shorten a chip label to what the chip can actually print. The chip keeps
+/// the head of the name (the part that identifies the file) and marks the cut,
+/// so a long name shows more characters than the renderer's own tail elide,
+/// which only reserves room for the ellipsis and drops the rest.
+pub fn fit_chip_label(label: &str, narrow: bool) -> String {
+    let budget = if narrow {
+        CHIP_TEXT_WIDTH_NARROW
+    } else {
+        CHIP_TEXT_WIDTH
+    } - CHIP_ELLIPSIS_WIDTH;
+    let total: f32 = label.chars().map(glyph_width).sum();
+    if total <= budget {
+        return label.to_string();
+    }
+    let mut used = 0.0;
+    let mut kept = String::new();
+    for ch in label.chars() {
+        let width = glyph_width(ch);
+        if used + width > budget {
+            break;
+        }
+        used += width;
+        kept.push(ch);
+    }
+    kept.push('…');
+    kept
+}
+
 pub fn is_patch_tool(tool: &str) -> bool {
     matches!(
         tool,
@@ -316,6 +374,13 @@ fn format_diff(added: u64, deleted: u64) -> (String, String) {
 }
 
 pub fn process_entry(row: &TimelineRow) -> ProcessEntry {
+    process_entry_for(row, false)
+}
+
+/// Project one timeline row for the folded work-process row. `narrow` matches
+/// the chip width the shell gives the row (a phone hands part of it to the
+/// change size), so the label is shortened to what the chip can print.
+pub fn process_entry_for(row: &TimelineRow, narrow: bool) -> ProcessEntry {
     let body = row.kind == crate::timeline::KIND_BODY;
     let (diff_add, diff_del) = change_size(row);
     ProcessEntry {
@@ -335,7 +400,7 @@ pub fn process_entry(row: &TimelineRow) -> ProcessEntry {
         },
         tool_icon: row.tool_icon.clone(),
         target: row.target.clone(),
-        target_label: target_label(&row.target).into(),
+        target_label: fit_chip_label(&target_label(&row.target), narrow).into(),
         detail: if body {
             row.text.clone()
         } else {
@@ -816,6 +881,27 @@ mod tests {
         };
         let entry = process_entry(&failed);
         assert!(entry.diff_add.is_empty() && entry.diff_del.is_empty());
+    }
+
+    #[test]
+    fn chip_label_fits_the_printed_width_instead_of_the_renderer_eliding_it() {
+        // A short name is printed whole.
+        assert_eq!(fit_chip_label("main.rs", false), "main.rs");
+        // A 40-character name fits the 166px chip (40 * 6.2px ≈ 248px would
+        // not): it is cut to the head plus an ellipsis, so the tail is not
+        // silently dropped by the renderer.
+        let long = "desktop_timeline_target_label_fixture_test.rs";
+        let fitted = fit_chip_label(long, false);
+        assert!(fitted.ends_with('…'), "{fitted}");
+        assert!(fitted.chars().count() > 20, "{fitted}");
+        assert!(long.starts_with(fitted.trim_end_matches('…')));
+        // A CJK name is measured one em per glyph, so far fewer fit.
+        let cjk = "工作过程工具行目标芯片的长文件名验证.txt";
+        let fitted = fit_chip_label(cjk, false);
+        assert!(fitted.ends_with('…'), "{fitted}");
+        assert!(fitted.chars().count() <= 14, "{fitted}");
+        // A phone row hands part of the chip to the change size.
+        assert!(fit_chip_label(long, true).chars().count() < fit_chip_label(long, false).chars().count());
     }
 
     #[test]

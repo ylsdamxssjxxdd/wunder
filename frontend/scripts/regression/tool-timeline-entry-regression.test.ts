@@ -254,6 +254,20 @@ test('path tools do not render the same file name twice beside the target chip',
   assert.equal(deep.targets[0]?.path, 'crates/engine/src/lib.rs');
   assert.equal(deep.summary, '');
 
+  // 长文件名：徽章文字裁到 166px 宽度并补省略号，而不是交给 CSS 吞掉尾部。
+  const longName = 'desktop_timeline_target_label_fixture_test.rs';
+  const long = buildTimelineToolEntry(baseRun({
+    toolName: 'write_file',
+    toolDisplayName: '写入文件',
+    toolRuntimeName: 'write_file',
+    callItem: callItem({ path: `crates/engine/src/${longName}`, content: '# hi\n' })
+  }), t);
+  const longLabel = long.targets[0]?.label || '';
+  assert.ok(longLabel.endsWith('…'), longLabel);
+  assert.ok(longLabel.length > 20, longLabel);
+  assert.ok(longName.startsWith(longLabel.slice(0, -1)), longLabel);
+  assert.equal(long.targets[0]?.path, `crates/engine/src/${longName}`);
+
   // 摘要与徽章内容不同（命令/query）时保持原样。
   const command = buildTimelineToolEntry(baseRun({
     toolName: 'execute_command',

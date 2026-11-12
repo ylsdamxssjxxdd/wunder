@@ -834,6 +834,13 @@ fn parse_json_value_lossy(raw: &str) -> Option<Value> {
     Some(value)
 }
 
+/// 严格解析优先，失败后走与参数管线同一套宽松修复（补回漏掉的对象起始、
+/// 未闭合字符串、裸控制字符）。工具自己拆字符串化参数时应统一走这里：
+/// 模型的一次编码抖动不该换一轮重试。
+pub fn parse_json_with_repairs(raw: &str) -> Option<Value> {
+    strict_parse_json_value(raw).or_else(|| parse_json_value_lossy(raw))
+}
+
 fn strip_empty_object_prefix(raw: &str) -> Option<&str> {
     let stripped = raw.strip_prefix("{}")?.trim_start();
     stripped.starts_with('{').then_some(stripped)
@@ -847,7 +854,113 @@ fn build_repair_meta(kind: &str, source: &str, strategy: &str) -> Value {
     })
 }
 
+/// 模型把整份参数写成一个字符串时，偶尔会漏掉对象起始的 `{"`：
+/// `{""plan": [{""step": …` 变成 `{""plan": [step": …`。
+/// 这种文本本来就不是合法 JSON，所以在修复通道里补回 `{"` 不会误伤正常载荷：
+/// 只有「`[` / `,` / `{` 后面紧跟裸标识符再接引号」这一种形状会被改写，
+/// 而合法 JSON 里这三处之后只可能是引号、括号、数字或字面量。
+/// 模型把整份参数写成一个字符串时，偶尔会漏掉对象起始的 `{"`：
+/// `{""plan": [{""step": …` 变成 `{""plan": [step": …`。这种文本本来
+/// 就不是合法 JSON，所以在这一层补回来不会误伤正常载荷：只在「容器起始或逗号之后、
+/// 本该是对象的位置」补，且要求后面跟的是键名而不是普通值。
+fn repair_missing_object_opening(raw: &str) -> String {
+    let chars: Vec<char> = raw.chars().collect();
+    let mut output = String::with_capacity(raw.len() + 8);
+    // 容器栈：只有「数组里缺对象」才补，对象内部缺 `{"` 会误伤正常的键。
+    let mut stack: Vec<char> = Vec::new();
+    let mut index = 0usize;
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch == '"' {
+            // 字符串内部原样拷贝：结构修复只在字符串之外发生。
+            output.push(ch);
+            index += 1;
+            let mut escaped = false;
+            while index < chars.len() {
+                let current = chars[index];
+                output.push(current);
+                index += 1;
+                if escaped {
+                    escaped = false;
+                } else if current == '\\' {
+                    escaped = true;
+                } else if current == '"' {
+                    break;
+                }
+            }
+            continue;
+        }
+        if matches!(ch, '[' | ',' | '{') {
+            output.push(ch);
+            index += 1;
+            let in_array = matches!(ch, '[') || (ch == ',' && stack.last() == Some(&'['));
+            let mut lookahead = index;
+            while lookahead < chars.len() && chars[lookahead].is_whitespace() {
+                lookahead += 1;
+            }
+            if lookahead < chars.len() {
+                let next = chars[lookahead];
+                if is_json_identifier_start(next) {
+                    // `[step": …` / `, step": …`：标识符后面紧跟引号，说明它是键名。
+                    let mut end = lookahead;
+                    while end < chars.len() && is_json_identifier_char(chars[end]) {
+                        end += 1;
+                    }
+                    if end < chars.len() && chars[end] == '"' {
+                        output.push_str("{\"");
+                    }
+                } else if in_array && next == '"' {
+                    // 数组元素本该是对象，却直接以键名开头（`["step"`）；只有字符串
+                    // 后面跟冒号才算键名，字符串数组不受影响。
+                    let mut end = lookahead + 1;
+                    let mut escaped = false;
+                    while end < chars.len() {
+                        let current = chars[end];
+                        if escaped {
+                            escaped = false;
+                        } else if current == '\\' {
+                            escaped = true;
+                        } else if current == '"' {
+                            break;
+                        }
+                        end += 1;
+                    }
+                    let mut after = end + 1;
+                    while after < chars.len() && chars[after].is_whitespace() {
+                        after += 1;
+                    }
+                    if after < chars.len() && chars[after] == ':' {
+                        output.push('{');
+                    }
+                }
+            }
+            if ch == '[' || ch == '{' {
+                stack.push(ch);
+            }
+            continue;
+        }
+        if ch == ']' || ch == '}' {
+            stack.pop();
+        }
+        output.push(ch);
+        index += 1;
+    }
+    output
+}
+
+fn is_json_identifier_start(ch: char) -> bool {
+    ch.is_ascii_alphabetic() || ch == '_'
+}
+
+fn is_json_identifier_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
 fn repair_json_string_syntax(raw: &str) -> String {
+    // 先补回漏掉的对象起始，再走字符串级修复（未闭合引号、裸控制字符）。
+    let raw = repair_missing_object_opening(raw);
+    let chars: Vec<char> = raw.chars().collect();
+
     let chars: Vec<char> = raw.chars().collect();
     let mut output = String::with_capacity(raw.len() + 16);
     let mut in_string = false;
@@ -912,11 +1025,52 @@ fn next_non_whitespace_char(chars: &[char], start: usize) -> Option<char> {
 mod tests {
     use super::{
         normalize_tool_arguments_json_with_meta, normalize_tool_arguments_value,
-        recover_tool_args_value, recover_tool_args_value_against_schema_with_meta,
-        recover_tool_args_value_with_meta, sanitize_tool_call_payload,
-        sanitize_tool_call_payload_with_meta,
+        parse_json_with_repairs, recover_tool_args_value,
+        recover_tool_args_value_against_schema_with_meta, recover_tool_args_value_with_meta,
+        sanitize_tool_call_payload, sanitize_tool_call_payload_with_meta,
     };
     use serde_json::{json, Value};
+
+    /// 模型把参数写成字符串时，偶尔会漏掉对象起始的 `{"`；这类输入不是合法
+    /// JSON，必须在修复通道里救回来，否则每次都要模型重发一遍。
+    #[test]
+    fn parse_json_with_repairs_restores_dropped_object_opening() {
+        let broken = r#"{"plan": [step": "接收测试指令，初始化计划", "status": "in_progress"}, {"step": "逐步推进示例任务", "status": "pending"}]}"#;
+        let value = parse_json_with_repairs(broken).expect("repaired");
+        assert_eq!(value["plan"][0]["step"], json!("接收测试指令，初始化计划"));
+        assert_eq!(value["plan"][0]["status"], json!("in_progress"));
+        assert_eq!(value["plan"][1]["step"], json!("逐步推进示例任务"));
+
+        // 同样的文本走参数管线也要被接住：raw 包装直接变成可用的对象。
+        let recovered = recover_tool_args_value(&json!({ "raw": broken }));
+        assert_eq!(recovered["plan"][1]["status"], json!("pending"));
+    }
+
+    /// 字符串数组不能被结构修复误伤：`["甲","乙"]` 里的引号不是键名。
+    #[test]
+    fn repair_never_touches_string_arrays() {
+        let valid = r#"{"plan":["甲","乙"],"note":"a, b"}"#;
+        assert_eq!(
+            parse_json_with_repairs(valid),
+            serde_json::from_str::<serde_json::Value>(valid).ok()
+        );
+    }
+
+    #[test]
+    fn parse_json_with_repairs_leaves_valid_payloads_alone() {
+        for valid in [
+            r#"{"plan":[{"step":"甲","status":"in_progress"},{"step":"乙","status":"pending"}]}"#,
+            r#"{"plan":["甲","乙"]}"#,
+            r#"{"plan":[{"step":"甲","status":"in_progress"}],"current":0}"#,
+            r#"{"content":"echo ok","timeout_s":30}"#,
+        ] {
+            assert_eq!(
+                parse_json_with_repairs(valid),
+                serde_json::from_str::<serde_json::Value>(valid).ok(),
+                "{valid}"
+            );
+        }
+    }
 
     #[test]
     fn recover_tool_args_value_repairs_multiline_raw_json() {

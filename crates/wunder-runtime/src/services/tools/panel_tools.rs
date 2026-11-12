@@ -182,6 +182,19 @@ fn recover_plan_args(args: &Value) -> PlanRecovery {
                     continue;
                 };
                 match embedded_json(text) {
+                    // 列表字符串里其实包着整份参数：当成外层参数用，别让模型再发一次。
+                    Ok(Value::Object(mut inner))
+                        if PLAN_LIST_KEYS
+                            .iter()
+                            .any(|key| inner.contains_key(*key)) =>
+                    {
+                        for key in ["explanation", "note"] {
+                            if let Some(value) = map.get(key) {
+                                inner.entry(key.to_string()).or_insert_with(|| value.clone());
+                            }
+                        }
+                        return PlanRecovery::ok(Value::Object(inner));
+                    }
                     Ok(parsed) if parsed.is_array() => {
                         let mut next = map.clone();
                         next.insert((*key).to_string(), parsed);
@@ -210,6 +223,11 @@ fn embedded_json(text: &str) -> std::result::Result<Value, String> {
     };
     if !(body.starts_with('{') || body.starts_with('[')) {
         return Err("not a JSON object or array".to_string());
+    }
+    // 严格解析失败后走与参数管线同一套宽松修复（补回漏掉的 {"、未闭合字符串），
+    // 模型的一次编码抖动不该换来一轮重试；真解不开才把解析器位置回给模型。
+    if let Some(value) = crate::core::tool_args::parse_json_with_repairs(body) {
+        return Ok(value);
     }
     serde_json::from_str::<Value>(body).map_err(|error| error.to_string())
 }
@@ -1019,17 +1037,39 @@ mod tests {
         assert!(error.contains("in_progress"), "{error}");
     }
 
+    /// 实测会话里的原始失败形态：模型把整份参数写成字符串，`[` 后面漏了 `{"`。
+    /// 这种一次性的编码抖动必须在工具边界修好，不能再让模型重发一遍。
+    #[test]
+    fn plan_args_survive_a_dropped_object_opening() {
+        let broken = "{\"plan\": [step\": \"接收测试指令，初始化计划\", \"status\": \"in_progress\"}, {\"step\": \"逐步推进示例任务\", \"status\": \"pending\"}]}";
+        let recovered = recover_plan_args(&json!({ "raw": broken }));
+        assert!(recovered.broken.is_none(), "must be repaired, not reported");
+        let request = parse_plan_request(&recovered.value).expect("repaired plan");
+        assert_eq!(request.steps.len(), 2);
+        assert_eq!(request.steps[0].0, "接收测试指令，初始化计划");
+        assert_eq!(request.steps[0].1.as_deref(), Some("in_progress"));
+        assert_eq!(request.steps[1].1.as_deref(), Some("pending"));
+
+        // 列表整体被写成字符串时同样适用。
+        let nested = "{\"plan\": [{\"step\": \"甲\", \"status\": \"in_progress\"}]}";
+        let args = json!({ "plan": nested });
+        let recovered = recover_plan_args(&args);
+        let request = parse_plan_request(&recovered.value).expect("stringified list");
+        assert_eq!(request.steps[0].1.as_deref(), Some("in_progress"));
+    }
+
     #[test]
     fn plan_recovery_reports_unparsable_wrapper_instead_of_unknown_field() {
         // 包装键里不是合法 JSON：要报“解不开”，不能含糊地说“未知字段 raw”。
         let recovered = recover_plan_args(&json!({
-            "raw": "{\"plan\": [step\": \"拼错了\"}]}"
+            "raw": "{\"plan\": [{\"step\": 拼错了}]}"
         }));
         let broken = recovered.broken.as_ref().expect("broken wrapper");
         assert_eq!(broken.wrapper, "raw");
         // serde 的行列定位 + 原文片段都要回给模型，它才能看见自己漏的引号。
         assert!(broken.error.contains("line 1"), "{}", broken.error);
         assert!(broken.snippet.contains("拼错了"), "{}", broken.snippet);
+        assert!(broken.error.contains("line 1"), "{}", broken.error);
 
         let result = unparsable_wrapper(broken).into_tool_result();
         assert_eq!(

@@ -204,8 +204,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "搜索内容",
-        brief_en: "Ripgrep-style search by query (literal|regex via query_mode) or pattern. Narrow with path/glob/include, subtract with exclude (rg --glob '!x'), cap with max_matches; has_more/next_offset tell whether more remain. context_before/after add context to every hit; context_matches=N gives it to the top N only, so one call both locates and shows the code. Binary files need search_binary=true.",
-        brief_zh: "按 query（query_mode=literal|regex）或 pattern 检索内容；path/glob/include 收窄，exclude 排除，max_matches 限量，has_more/next_offset 说明是否还有更多。context_before/after 给所有命中带上下文，context_matches=N 只给前 N 个，一次调用即可定位并看清代码。搜二进制需 search_binary=true。",
+        brief_en: "Ripgrep-style search by query (literal|regex via query_mode) or pattern. Narrow with path/glob/include, subtract with exclude (rg --glob '!x'). total_matches is the true hit count; page with offset=next_offset instead of raising max_matches. context_before/after add context to every hit; context_matches=N gives it to the top N only, so one call both locates and shows the code. Binary files need search_binary=true.",
+        brief_zh: "按 query（query_mode=literal|regex）或 pattern 检索内容；path/glob/include 收窄，exclude 排除。total_matches 是真实命中总数，续页用 offset=next_offset，不要调大 max_matches。context_before/after 给所有命中带上下文，context_matches=N 只给前 N 个，一次调用即可定位并看清代码。搜二进制需 search_binary=true。",
         drop_actions: &[],
         drop_fields: &["timeout_ms"],
     },

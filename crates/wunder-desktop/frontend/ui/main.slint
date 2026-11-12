@@ -122,10 +122,6 @@ export component MainWindow inherits Window {
     out property <length> composer-preset-menu-y: composer.preset-menu-y;
     out property <length> composer-preset-menu-width: composer.preset-menu-width;
     out property <length> composer-preset-menu-height: composer.preset-menu-height;
-    out property <length> composer-permission-menu-x: composer.permission-menu-x;
-    out property <length> composer-permission-menu-y: composer.permission-menu-y;
-    out property <length> composer-permission-menu-width: composer.permission-menu-width;
-    out property <length> composer-permission-menu-height: composer.permission-menu-height;
     out property <length> composer-screenshot-menu-x: composer.screenshot-menu-x;
     out property <length> composer-screenshot-menu-y: composer.screenshot-menu-y;
     out property <length> composer-screenshot-menu-width: composer.screenshot-menu-width;
@@ -1169,9 +1165,6 @@ export component MainWindow inherits Window {
     out property <length> settings-back-y: Theme.titlebar-height
         + (root.height - Theme.titlebar-height - min(720px, root.height - 56px)) / 2
         + 22px;
-    // §8.4 permission mode preference; the backend remains the authority.
-    in-out property <string> permission-mode: "full_auto";
-    callback save-permission-mode(string);
     // §9.1 settings search. Slint 1.18 strings have no substring test, so the
     // query is filtered natively and the matching categories come back as one
     // flag per category, in §9.2 order.
@@ -1566,8 +1559,6 @@ export component MainWindow inherits Window {
                             subagent-running-count: root.subagent-running-count;
                             open-subagent(id) => { root.dock-open-subagent(id); }
                             stop-subagent(id) => { root.dock-stop-subagent(id); }
-                            permission-mode <=> root.permission-mode;
-                            permission-changed(value) => { root.save-permission-mode(value); }
                             attachments: root.pending-attachments;
                             inquiry-ready: root.inquiry-ready;
                             queue-turns: root.queue-turns;

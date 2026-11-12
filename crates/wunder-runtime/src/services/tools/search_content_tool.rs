@@ -31,6 +31,13 @@ const MAX_TIMEOUT_MS: u64 = 120_000;
 const DEFAULT_MAX_CANDIDATES: usize = 4000;
 const MAX_MAX_CANDIDATES: usize = 20_000;
 const MAX_MATCHES_CAP: usize = 2000;
+/// 收集阶段的上限，必须与「每页多少条」解耦：收集停在 max_matches 上，就等于
+/// 永远不知道真实总数，total_matches 只能等于 max_matches。
+const MAX_COLLECTED_MATCHES: usize = 5_000;
+/// 带上下文时单条命中重得多，收集上限随之收紧。
+const MAX_COLLECTED_MATCHES_WITH_CONTEXT: usize = 1_000;
+/// 续页偏移上限，避免一次请求跳过整张结果表。
+const MAX_OFFSET_CAP: usize = 100_000;
 /// 带上下文的命中数量上限。上下文只用于「看清实现」，不需要和命中上限一样大。
 const MAX_CONTEXT_MATCHES_CAP: usize = 32;
 const MIN_OUTPUT_BUDGET_BYTES: usize = 2 * 1024;
@@ -131,6 +138,8 @@ struct SearchParams {
     query_source: QuerySource,
     path: String,
     file_pattern_items: Vec<String>,
+    /// `include` 白名单：与 `glob` 取交集收窄，不是并集。
+    include_pattern_items: Vec<String>,
     query_mode: QueryMode,
     query_mode_inferred: bool,
     case_sensitive: bool,
@@ -144,6 +153,10 @@ struct SearchParams {
     max_depth: usize,
     max_files: usize,
     max_matches: usize,
+    /// 分页起点。命中被 max_matches / 输出预算截断后，只有配上真实偏移量，
+    /// `next_offset` 才是可兑现的续页位置，而不是「再猜一次」。
+    /// `mode=paths` 时偏移单位是文件，其余模式是命中行。
+    offset: usize,
     max_candidates: usize,
     timeout_ms: u64,
     engine: SearchEngine,
@@ -207,6 +220,21 @@ struct SearchSummary {
     matched_terms: Vec<String>,
     focus_points: Vec<String>,
     next_hint: Option<String>,
+}
+
+/// 本次返回的分页位置。`mode=paths` 时 `total_units` / `next_offset` 的单位是
+/// 文件，其余模式是命中行；`total_matches` 与 `matched_file_count` 永远是全量
+/// 真实值，用来判断「还有多少没取」。
+#[derive(Debug, Clone)]
+struct SearchPage {
+    offset: usize,
+    returned: usize,
+    total_units: usize,
+    total_matches: usize,
+    matched_file_count: usize,
+    has_more: bool,
+    next_offset: Option<usize>,
+    paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -334,7 +362,10 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
     let scope = build_search_scope(&resolved_path);
     let scope_note = build_search_scope_note(&resolved_path);
 
-    let file_filter = match build_file_filter(&params.file_pattern_items) {
+    let file_filter = match build_file_pattern_filter(
+        &params.file_pattern_items,
+        &params.include_pattern_items,
+    ) {
         Ok(value) => value,
         Err(err) => {
             return Ok(build_failed_tool_result(
@@ -535,23 +566,15 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
     };
 
     let hits = rank_search_hits(raw_hits, selected_attempt, params.case_sensitive);
-    let (mut hits, min_matched_terms) = if selected_attempt.strategy.is_literal_terms_fallback() {
+    let (hits, min_matched_terms) = if selected_attempt.strategy.is_literal_terms_fallback() {
         filter_hits_by_term_coverage(hits, &selected_attempt.match_terms)
     } else {
         (hits, None)
     };
-    if hits.len() > params.max_matches {
-        hits.truncate(params.max_matches);
-    }
-    let (hits, output_budget_hit) =
-        limit_hits_by_output_budget(hits, params.output_budget_bytes, params.context_match_limit);
-    // 命中被 max_matches / 输出预算截掉时，调用方必须知道「还有更多」，否则只能
-    // 把 max_matches 一路调大去猜。这里给出可续取的位置与剩余量。
-    let match_limit_reached = match_limit_hit || hits.len() >= params.max_matches;
-    let has_more = match_limit_reached && !hits.is_empty();
+    // 先记全量再切页：total_matches 必须是真实命中数，不能是「截断后的数量」，
+    // 否则调用方永远看不出还有多少没取。
     let matched_files = collect_matched_files(&hits);
-    let matched_file_count = matched_files.len();
-    let returned_match_count = hits.len();
+    let (hits, page, output_budget_hit) = plan_search_page(&params, hits, &matched_files);
     let elapsed_ms = started_at.elapsed().as_millis();
     let timeout_hit = any_timeout_hit || selected_timeout_hit;
     let summary = build_search_summary(
@@ -572,8 +595,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         &scope,
         &scope_note,
         hits,
-        matched_file_count,
-        returned_match_count,
+        page,
         scanned_files,
         &engine_trace,
         SearchResultFlags {
@@ -583,7 +605,6 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
             candidate_limit_hit,
             output_budget_hit,
         },
-        has_more,
         min_matched_terms,
         elapsed_ms,
     ))
@@ -602,6 +623,7 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
         .unwrap_or(".")
         .to_string();
     let file_pattern_items = collect_file_pattern_items(args);
+    let include_pattern_items = collect_include_pattern_items(args);
     let (query_mode, query_mode_inferred) = parse_query_mode(args, query_source);
     let case_sensitive = parse_case_sensitive(args);
     let (context_before, context_after) = parse_context_windows(args);
@@ -617,6 +639,10 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
         .or_else(|| parse_optional_usize(args.get("head_limit")))
         .unwrap_or(MAX_SEARCH_MATCHES)
         .clamp(1, MAX_MATCHES_CAP);
+    let offset = parse_optional_usize(args.get("offset"))
+        .or_else(|| parse_optional_usize(args.get("skip")))
+        .unwrap_or(0)
+        .min(MAX_OFFSET_CAP);
     let mut max_candidates = parse_optional_usize(args.get("max_candidates"))
         .unwrap_or(DEFAULT_MAX_CANDIDATES)
         .clamp(1, MAX_MAX_CANDIDATES);
@@ -644,7 +670,14 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
         .map(|value| value.clamp(MIN_OUTPUT_BUDGET_BYTES, MAX_OUTPUT_BUDGET_BYTES));
     let (engine, engine_explicit) = parse_search_engine(args);
     let files_only = parse_files_only(args);
-    let exclude_patterns = parse_search_excludes(args);
+    let mut exclude_patterns = parse_search_excludes(args);
+    // `!x` 写在 glob/include 里时按 rg 语义当排除规则，别让它变成匹配不到任何
+    // 文件的字面模式（那会把整次搜索变成 0 命中）。
+    for pattern in collect_negated_file_patterns(args) {
+        if !exclude_patterns.contains(&pattern) {
+            exclude_patterns.push(pattern);
+        }
+    }
     let search_binary = parse_search_binary(args);
 
     Ok(SearchParams {
@@ -652,6 +685,7 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
         query_source,
         path,
         file_pattern_items,
+        include_pattern_items,
         query_mode,
         query_mode_inferred,
         case_sensitive,
@@ -661,6 +695,7 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
         max_depth,
         max_files,
         max_matches,
+        offset,
         max_candidates,
         timeout_ms,
         engine,
@@ -670,6 +705,16 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
         exclude_patterns,
         search_binary,
     })
+}
+
+/// 本次搜索最多收集多少条命中（用于算真实总数），与分页大小无关。
+fn collect_match_limit(params: &SearchParams) -> usize {
+    let context_weight = params.context_before.saturating_add(params.context_after);
+    if context_weight == 0 {
+        MAX_COLLECTED_MATCHES
+    } else {
+        MAX_COLLECTED_MATCHES_WITH_CONTEXT
+    }
 }
 
 /// `search_binary=true`（别名 `binary`/`-a`/`text`）把二进制文件按文本扫描。
@@ -968,25 +1013,76 @@ fn expand_brace_patterns(pattern: &str) -> Vec<String> {
     }
 }
 
-fn collect_file_pattern_items(args: &Value) -> Vec<String> {
+/// glob 系列参数统一解析：字符串（逗号/分号/换行分隔）或字符串数组都接受。
+/// 以前只认字符串，传 `glob: ["*.rs"]` 会被静默忽略，看起来像「过滤没生效」。
+/// `!x` 是 rg 的否定写法，这里翻成排除规则，而不是让它当字面模式去匹配文件。
+fn collect_pattern_values(args: &Value, keys: &[&str]) -> (Vec<String>, Vec<String>) {
+    let mut includes = Vec::new();
+    let mut excludes = Vec::new();
+    for key in keys {
+        let Some(value) = args.get(key) else {
+            continue;
+        };
+        let items = match value {
+            Value::String(text) => split_file_patterns(text.trim()),
+            Value::Array(entries) => entries
+                .iter()
+                .filter_map(Value::as_str)
+                .flat_map(|text| split_file_patterns(text.trim()))
+                .collect::<Vec<_>>(),
+            _ => continue,
+        };
+        for item in items {
+            let item = item.trim();
+            if item.is_empty() {
+                continue;
+            }
+            match item.strip_prefix('!') {
+                Some(rest) if !rest.trim().is_empty() => excludes.push(rest.trim().to_string()),
+                Some(_) => {}
+                None => includes.push(item.to_string()),
+            }
+        }
+    }
+    (includes, excludes)
+}
+
+fn expand_and_dedupe(items: Vec<String>) -> Vec<String> {
     let mut output = Vec::new();
     let mut seen = HashSet::new();
-    let mut push = |item: String, output: &mut Vec<String>, seen: &mut HashSet<String>| {
+    for item in items {
         for expanded in expand_brace_patterns(&item) {
             if seen.insert(expanded.clone()) {
                 output.push(expanded);
             }
         }
-    };
+    }
+    output
+}
+
+fn collect_file_pattern_items(args: &Value) -> Vec<String> {
+    let (raw_items, _) = collect_pattern_values(args, &["file_pattern", "glob"]);
+    let mut items = raw_items;
+    items.extend(collect_type_patterns(args));
+    expand_and_dedupe(items)
+}
+
+/// `include` 是独立的白名单：与 `glob` 同时出现时取交集（收窄），不是并集。
+fn collect_include_pattern_items(args: &Value) -> Vec<String> {
+    let (raw_items, _) = collect_pattern_values(args, &["include"]);
+    expand_and_dedupe(raw_items)
+}
+
+/// 从 `glob`/`include`/`file_pattern` 里挑出 `!x` 写法，转成排除规则。
+fn collect_negated_file_patterns(args: &Value) -> Vec<String> {
+    let mut output = Vec::new();
     for key in ["file_pattern", "glob", "include"] {
-        if let Some(raw) = args.get(key).and_then(Value::as_str) {
-            for item in split_file_patterns(raw.trim()) {
-                push(item, &mut output, &mut seen);
+        let (_, negated) = collect_pattern_values(args, &[key]);
+        for item in expand_and_dedupe(negated) {
+            if !output.contains(&item) {
+                output.push(item);
             }
         }
-    }
-    for item in collect_type_patterns(args) {
-        push(item, &mut output, &mut seen);
     }
     output
 }
@@ -1223,6 +1319,59 @@ fn build_file_filter(patterns: &[String]) -> Result<Option<GlobSet>> {
     let set = builder
         .build()
         .map_err(|err| anyhow!("invalid file_pattern: {err}"))?;
+    Ok(Some(set))
+}
+
+/// 文件名过滤：`glob`/`file_pattern`/`type` 定义候选集，`include` 在其上再收窄。
+/// 两者同时出现时取交集 —— 以前都塞进同一个列表变成并集，`include` 看起来就像
+/// 完全没生效。
+#[derive(Clone)]
+struct FilePatternFilter {
+    base: Option<GlobSet>,
+    include: Option<GlobSet>,
+}
+
+impl FilePatternFilter {
+    fn is_match(&self, rel_path: &str) -> bool {
+        if let Some(set) = &self.base {
+            if !set.is_match(rel_path) {
+                return false;
+            }
+        }
+        if let Some(set) = &self.include {
+            if !set.is_match(rel_path) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+fn build_file_pattern_filter(
+    base: &[String],
+    include: &[String],
+) -> Result<Option<FilePatternFilter>> {
+    let base = build_file_filter(base)?;
+    let include = build_include_filter(include)?;
+    if base.is_none() && include.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(FilePatternFilter { base, include }))
+}
+
+fn build_include_filter(patterns: &[String]) -> Result<Option<GlobSet>> {
+    if patterns.is_empty() {
+        return Ok(None);
+    }
+    let mut builder = GlobSetBuilder::new();
+    for item in patterns {
+        let glob = Glob::new(item)
+            .map_err(|err| anyhow!("invalid include pattern: {err}"))?;
+        builder.add(glob);
+    }
+    let set = builder
+        .build()
+        .map_err(|err| anyhow!("invalid include: {err}"))?;
     Ok(Some(set))
 }
 
@@ -1602,7 +1751,7 @@ async fn execute_search_attempt(
     root: &Path,
     params: &SearchParams,
     attempt: &SearchAttempt,
-    file_filter: Option<&GlobSet>,
+    file_filter: Option<&FilePatternFilter>,
     exclude_filter: Option<&SearchExcludeFilter>,
     unrestricted_paths: bool,
     deadline: Instant,
@@ -1745,7 +1894,7 @@ fn search_content_with_candidates(
     root: &Path,
     candidates: Vec<PathBuf>,
     matcher: &Regex,
-    file_filter: Option<&GlobSet>,
+    file_filter: Option<&FilePatternFilter>,
     exclude_filter: Option<&SearchExcludeFilter>,
     params: &SearchParams,
     _unrestricted_paths: bool,
@@ -1786,7 +1935,8 @@ fn search_content_with_candidates(
             break;
         }
 
-        let remaining = params.max_matches.saturating_sub(hits.len());
+        let collect_limit = collect_match_limit(params);
+        let remaining = collect_limit.saturating_sub(hits.len());
         if remaining == 0 {
             match_limit_hit = true;
             break;
@@ -1806,7 +1956,7 @@ fn search_content_with_candidates(
         };
         if !local_hits.is_empty() {
             hits.extend(local_hits);
-            if hits.len() >= params.max_matches {
+            if hits.len() >= collect_limit {
                 match_limit_hit = true;
                 break;
             }
@@ -1825,7 +1975,7 @@ fn search_content_with_candidates(
 fn search_content_walk(
     root: &Path,
     matcher: &Regex,
-    file_filter: Option<&GlobSet>,
+    file_filter: Option<&FilePatternFilter>,
     exclude_filter: Option<&SearchExcludeFilter>,
     params: &SearchParams,
     _unrestricted_paths: bool,
@@ -1874,7 +2024,7 @@ fn search_content_walk(
         let file_filter = file_filter.clone();
         let exclude_filter = exclude_filter.clone();
         let max_files = params.max_files;
-        let max_matches = params.max_matches;
+        let max_matches = collect_match_limit(params);
         let context_before = params.context_before;
         let context_after = params.context_after;
         let search_binary = params.search_binary;
@@ -2554,6 +2704,60 @@ fn search_truncation_reasons(flags: SearchResultFlags) -> Vec<&'static str> {
     reasons
 }
 
+/// 把全量命中切成当前页。分页单位随模式变化：`mode=paths` 数的是文件，其余
+/// 模式数的是命中行。`total_matches` / `has_more` / `next_offset` 一律由全量
+/// 总数推导 —— 取满 `max_matches` 不等于「还有更多」，输出预算砍掉当前页却同样
+/// 属于「还有更多」，两者都不能靠反推本次返回量得到。
+fn plan_search_page(
+    params: &SearchParams,
+    hits: Vec<SearchHit>,
+    matched_files: &[String],
+) -> (Vec<SearchHit>, SearchPage, bool) {
+    let total_matches = hits.len();
+    let matched_file_count = matched_files.len();
+    let (hits, page_paths, total_units) = if params.files_only {
+        let page_paths = matched_files
+            .iter()
+            .skip(params.offset)
+            .take(params.max_matches)
+            .cloned()
+            .collect::<Vec<_>>();
+        (hits, page_paths, matched_file_count)
+    } else {
+        let page_hits = hits
+            .into_iter()
+            .skip(params.offset)
+            .take(params.max_matches)
+            .collect::<Vec<_>>();
+        (page_hits, Vec::new(), total_matches)
+    };
+    // paths 模式不回命中行，输出预算对它没有意义；只有 content 模式才需要按预算
+    // 砍页，砍掉后 has_more 依然由总数推导。
+    let (hits, output_budget_hit) = if params.files_only {
+        (hits, false)
+    } else {
+        limit_hits_by_output_budget(hits, params.output_budget_bytes, params.context_match_limit)
+    };
+    let returned = if params.files_only {
+        page_paths.len()
+    } else {
+        hits.len()
+    };
+    let consumed = params.offset.saturating_add(returned);
+    let has_more = consumed < total_units;
+    let page = SearchPage {
+        offset: params.offset,
+        returned,
+        total_units,
+        total_matches,
+        matched_file_count,
+        has_more,
+        next_offset: if has_more { Some(consumed) } else { None },
+        paths: page_paths,
+    };
+    (hits, page, output_budget_hit)
+}
+
 fn build_model_search_success(
     params: &SearchParams,
     attempt: &SearchAttempt,
@@ -2562,42 +2766,64 @@ fn build_model_search_success(
     scope: &Value,
     scope_note: &str,
     hits: Vec<SearchHit>,
-    matched_file_count: usize,
-    returned_match_count: usize,
+    page: SearchPage,
     scanned_files: usize,
     engine: &SearchEngineTrace,
     flags: SearchResultFlags,
-    has_more: bool,
     min_matched_terms: Option<usize>,
     elapsed_ms: u128,
 ) -> Value {
-    let truncation_reasons = search_truncation_reasons(flags);
+    let mut truncation_reasons = search_truncation_reasons(flags);
+    // 本次只是一页时同样算截断：调用方看到 truncated 才知道自己拿到的是部分结果，
+    // 而不是「就这么多」。
+    if page.has_more && !truncation_reasons.contains(&"max_matches") {
+        truncation_reasons.push("max_matches");
+    }
     let truncated = !truncation_reasons.is_empty();
     // Term-level hits look like phrase hits in the payload, so the caller has to
     // be told which one it got. Regex and explicit `|` searches are intentional
     // and must not be labelled as a fallback.
     let phrase_fallback = attempt.strategy.is_literal_terms_fallback();
-    let summary_text = if returned_match_count == 0 {
+    // 有剩余或已翻过页时把当前页位置写进摘要，调用方不用自己算。
+    let progress = if page.has_more {
+        format!(" Showing {} from offset {}.", page.returned, page.offset)
+    } else if page.offset > 0 {
+        format!(
+            " Showing the last {} from offset {}.",
+            page.returned, page.offset
+        )
+    } else {
+        String::new()
+    };
+    let summary_text = if page.total_matches == 0 {
         format!(
             "No hits in local workspace files (engine: {}).",
             engine.engine.as_str()
         )
     } else if params.files_only {
         format!(
-            "Found {matched_file_count} files containing the query (engine: {}).",
-            engine.engine.as_str()
+            "Found {} files containing the query (engine: {}).{}",
+            page.matched_file_count,
+            engine.engine.as_str(),
+            progress
         )
     } else if phrase_fallback {
         // Reported explicitly so the caller does not trust these hits as a
         // phrase match: the exact phrase missed and only individual terms hit.
         format!(
-            "Found {returned_match_count} term matches in {matched_file_count} files (engine: {}); the full phrase did not match, so results are term-level only.",
-            engine.engine.as_str()
+            "Found {} term matches in {} files (engine: {}); the full phrase did not match, so results are term-level only.{}",
+            page.total_matches,
+            page.matched_file_count,
+            engine.engine.as_str(),
+            progress
         )
     } else {
         format!(
-            "Found {returned_match_count} hits in {matched_file_count} files (engine: {}).",
-            engine.engine.as_str()
+            "Found {} hits in {} files (engine: {}).{}",
+            page.total_matches,
+            page.matched_file_count,
+            engine.engine.as_str(),
+            progress
         )
     };
     super::build_model_tool_success_with_hint(
@@ -2623,22 +2849,28 @@ fn build_model_search_success(
             } else {
                 Value::Null
             },
-            "matched_file_count": matched_file_count,
-            // 命中条数（不是文件数）。以前只有 matched_file_count，调用方想判断
-            // 「是不是全量」只能猜。
-            "total_matches": returned_match_count,
-            "has_more": has_more,
-            "next_offset": if has_more {
-                json!(returned_match_count)
-            } else {
-                Value::Null
+            "matched_file_count": page.matched_file_count,
+            // 命中条数（不是文件数），始终是全量真实值，与本次是否截断无关。
+            "total_matches": page.total_matches,
+            "offset": page.offset,
+            "has_more": page.has_more,
+            "next_offset": match page.next_offset {
+                Some(value) => json!(value),
+                None => Value::Null,
             },
+            // 分页单位：paths 模式数的是文件，其余模式数的是命中行。
+            "page_unit": if params.files_only { "files" } else { "matches" },
             "max_matches": params.max_matches,
             // paths 模式只回文件清单，命中行数没有意义，留 null 由投影层过滤掉。
             "returned_match_count": if params.files_only {
                 Value::Null
             } else {
-                json!(returned_match_count)
+                json!(page.returned)
+            },
+            "total_files": if params.files_only {
+                json!(page.total_units)
+            } else {
+                Value::Null
             },
             "truncated": truncated,
             "truncation_reasons": truncation_reasons,
@@ -2648,7 +2880,7 @@ fn build_model_search_success(
             // 投影层据此决定单个命中可以带多少行上下文。
             "context_match_limit": params.context_match_limit,
             "paths": if params.files_only {
-                json!(collect_matched_files(&hits))
+                json!(page.paths)
             } else {
                 Value::Null
             },
@@ -2864,6 +3096,43 @@ mod tests {
     }
 
     #[test]
+    fn collect_file_pattern_items_accepts_arrays() {
+        // 数组以前被静默忽略，等于「过滤没生效」。
+        let items = collect_file_pattern_items(&json!({"glob": ["*.rs", "*.md"]}));
+        assert_eq!(items, vec!["*.rs".to_string(), "*.md".to_string()]);
+        let includes = collect_include_pattern_items(&json!({"include": ["src/**", "docs/**"]}));
+        assert_eq!(includes, vec!["src/**".to_string(), "docs/**".to_string()]);
+    }
+
+    #[test]
+    fn negated_glob_pattern_becomes_an_exclude_rule() {
+        let params = parse_search_params(&json!({
+            "query": "needle",
+            "glob": ["*.txt", "!*_part0*.txt"]
+        }))
+        .expect("params");
+        // 否定写法不能留在候选集里，否则字面模式匹配不到文件，整次搜索 0 命中。
+        assert_eq!(params.file_pattern_items, vec!["*.txt".to_string()]);
+        assert_eq!(params.exclude_patterns, vec!["*_part0*.txt".to_string()]);
+    }
+
+    #[test]
+    fn include_narrows_glob_instead_of_widening_it() {
+        let filter = build_file_pattern_filter(&["*.rs".to_string()], &["src/**".to_string()])
+            .expect("filter")
+            .expect("some");
+        assert!(filter.is_match("src/main.rs"));
+        assert!(!filter.is_match("docs/build.rs"));
+
+        // 只有 include 时它就是白名单本身。
+        let only_include = build_file_pattern_filter(&[], &["src/**".to_string()])
+            .expect("filter")
+            .expect("some");
+        assert!(only_include.is_match("src/main.rs"));
+        assert!(!only_include.is_match("docs/build.rs"));
+    }
+
+    #[test]
     fn search_exclude_filter_matches_names_at_any_depth_and_paths() {
         let filter = SearchExcludeFilter::new(&[
             "*.log".to_string(),
@@ -2901,8 +3170,20 @@ mod tests {
         assert!(!defaulted.search_binary);
     }
 
+    fn make_paging_hit(path: &str, line: usize) -> SearchHit {
+        SearchHit {
+            path: path.to_string(),
+            line,
+            content: "needle".to_string(),
+            segments: vec![],
+            matched_terms: vec!["needle".to_string()],
+            before: vec![],
+            after: vec![],
+        }
+    }
+
     #[test]
-    fn search_reports_has_more_when_max_matches_caps_the_result() {
+    fn collection_is_not_capped_by_page_size() {
         let dir = tempdir().expect("tempdir");
         let target = dir.path().join("many.txt");
         let mut file = File::create(&target).expect("create");
@@ -2910,17 +3191,146 @@ mod tests {
             writeln!(file, "needle {idx}").expect("write");
         }
 
+        let params =
+            parse_search_params(&json!({"query": "needle", "max_matches": 2})).expect("params");
+        let matcher = build_query_matcher("needle", QueryMode::Literal, false).expect("matcher");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let computed = search_content_with_candidates(
+            dir.path(),
+            vec![target],
+            &matcher,
+            None,
+            None,
+            &params,
+            false,
+            deadline,
+        )
+        .expect("search");
+
+        // 收集阶段不能停在 max_matches 上，否则真实总数永远等于每页大小。
+        assert_eq!(computed.hits.len(), 5);
+        let files = collect_matched_files(&computed.hits);
+        let (_, page, _) = plan_search_page(&params, computed.hits, &files);
+        assert_eq!(page.total_matches, 5);
+        assert_eq!(page.returned, 2);
+        assert_eq!(page.next_offset, Some(2));
+    }
+
+    #[test]
+    fn search_page_reports_real_total_and_continuable_offset() {
         let params = parse_search_params(&json!({
             "query": "needle",
-            "path": target.to_string_lossy(),
             "max_matches": 2
         }))
         .expect("params");
-        assert_eq!(params.max_matches, 2);
-        // 上限被命中数顶住时，调用方必须能看出「还有更多」。
-        let hits_returned = 2usize;
-        let has_more = hits_returned >= params.max_matches;
-        assert!(has_more);
+        let hits = (0..5)
+            .map(|idx| make_paging_hit("many.txt", idx + 1))
+            .collect::<Vec<_>>();
+        let files = collect_matched_files(&hits);
+
+        let (page_hits, page, _) = plan_search_page(&params, hits.clone(), &files);
+        assert_eq!(page_hits.len(), 2);
+        // 总数是真实命中数，不是本次返回数。
+        assert_eq!(page.total_matches, 5);
+        assert_eq!(page.returned, 2);
+        assert!(page.has_more);
+        assert_eq!(page.next_offset, Some(2));
+
+        // 拿 next_offset 继续取，必须能接着往下翻。
+        let mut next = params.clone();
+        next.offset = page.next_offset.expect("next offset");
+        let (page_hits, page, _) = plan_search_page(&next, hits.clone(), &files);
+        assert_eq!(page_hits.len(), 2);
+        assert_eq!(page.returned, 2);
+        assert_eq!(page.next_offset, Some(4));
+
+        let mut last = params.clone();
+        last.offset = 4;
+        let (page_hits, page, _) = plan_search_page(&last, hits, &files);
+        assert_eq!(page_hits.len(), 1);
+        assert_eq!(page.total_matches, 5);
+        assert!(!page.has_more);
+        assert_eq!(page.next_offset, None);
+    }
+
+    #[test]
+    fn search_page_does_not_claim_more_when_total_equals_cap() {
+        let params = parse_search_params(&json!({
+            "query": "needle",
+            "max_matches": 2
+        }))
+        .expect("params");
+        let hits = (0..2)
+            .map(|idx| make_paging_hit("many.txt", idx + 1))
+            .collect::<Vec<_>>();
+        let files = collect_matched_files(&hits);
+        let (_, page, _) = plan_search_page(&params, hits, &files);
+        // 正好取满不等于「还有更多」：以前这里会误报 has_more=true。
+        assert_eq!(page.returned, 2);
+        assert!(!page.has_more);
+        assert_eq!(page.next_offset, None);
+    }
+
+    #[test]
+    fn search_page_counts_files_in_paths_mode() {
+        let params = parse_search_params(&json!({
+            "query": "needle",
+            "mode": "paths",
+            "max_matches": 2
+        }))
+        .expect("params");
+        let hits = vec![
+            make_paging_hit("a.md", 1),
+            make_paging_hit("a.md", 2),
+            make_paging_hit("b.md", 1),
+            make_paging_hit("b.md", 2),
+            make_paging_hit("c.md", 1),
+            make_paging_hit("c.md", 2),
+        ];
+        let files = collect_matched_files(&hits);
+        assert_eq!(files.len(), 3);
+
+        let (page_hits, page, _) = plan_search_page(&params, hits, &files);
+        // paths 模式分的是文件：2 个文件成页，命中总数仍报真实值。
+        assert!(page_hits.len() > 2);
+        assert_eq!(page.paths, vec!["a.md".to_string(), "b.md".to_string()]);
+        assert_eq!(page.returned, 2);
+        assert_eq!(page.total_units, 3);
+        assert_eq!(page.total_matches, 6);
+        assert_eq!(page.matched_file_count, 3);
+        assert!(page.has_more);
+        assert_eq!(page.next_offset, Some(2));
+    }
+
+    #[test]
+    fn rank_search_hits_is_independent_of_input_order() {
+        let attempt = build_search_attempt(
+            SearchStrategy::LiteralExact,
+            "done".to_string(),
+            QueryMode::Literal,
+            vec!["done".to_string()],
+            Some("done".to_string()),
+            false,
+        )
+        .expect("attempt");
+        let mut hits = Vec::new();
+        for file in ["a.md", "b.md", "c.md"] {
+            for line in [3usize, 9, 21] {
+                hits.push(make_paging_hit(file, line));
+            }
+        }
+        let forward = rank_search_hits(hits.clone(), &attempt, false);
+        let mut reversed_input = hits;
+        reversed_input.reverse();
+        let reversed = rank_search_hits(reversed_input, &attempt, false);
+        let key = |items: &[SearchHit]| {
+            items
+                .iter()
+                .map(|hit| format!("{}:{}", hit.path, hit.line))
+                .collect::<Vec<_>>()
+        };
+        // 同一批命中的最终顺序不能依赖收集顺序，否则分页结果无法复现。
+        assert_eq!(key(&forward), key(&reversed));
     }
 
     #[test]
@@ -3341,6 +3751,7 @@ mod tests {
             query_source: QuerySource::Query,
             path: ".".to_string(),
             file_pattern_items: vec!["*.md".to_string()],
+            include_pattern_items: vec![],
             query_mode: QueryMode::Literal,
             query_mode_inferred: false,
             case_sensitive: false,
@@ -3350,6 +3761,7 @@ mod tests {
             max_depth: 0,
             max_files: 0,
             max_matches: 50,
+            offset: 0,
             max_candidates: 4000,
             timeout_ms: 30_000,
             engine: SearchEngine::Rust,
@@ -3438,6 +3850,7 @@ mod tests {
             query_source: QuerySource::Query,
             path: ".".to_string(),
             file_pattern_items: vec![],
+            include_pattern_items: vec![],
             query_mode: QueryMode::Literal,
             query_mode_inferred: false,
             case_sensitive: false,
@@ -3447,6 +3860,7 @@ mod tests {
             max_depth: 0,
             max_files: 0,
             max_matches: 20,
+            offset: 0,
             max_candidates: DEFAULT_MAX_CANDIDATES,
             timeout_ms: DEFAULT_TIMEOUT_MS,
             engine: SearchEngine::Auto,
@@ -3494,6 +3908,7 @@ mod tests {
             query_source: QuerySource::Query,
             path: "src".to_string(),
             file_pattern_items: vec!["*.rs".to_string()],
+            include_pattern_items: vec![],
             query_mode: QueryMode::Literal,
             query_mode_inferred: false,
             case_sensitive: false,
@@ -3503,6 +3918,7 @@ mod tests {
             max_depth: 0,
             max_files: 0,
             max_matches: 20,
+            offset: 0,
             max_candidates: DEFAULT_MAX_CANDIDATES,
             timeout_ms: DEFAULT_TIMEOUT_MS,
             engine: SearchEngine::Auto,
@@ -3560,8 +3976,16 @@ mod tests {
                     content: "after".to_string(),
                 }],
             }],
-            1,
-            1,
+            SearchPage {
+                offset: 0,
+                returned: 1,
+                total_units: 1,
+                total_matches: 1,
+                matched_file_count: 1,
+                has_more: false,
+                next_offset: None,
+                paths: Vec::new(),
+            },
             1,
             &SearchEngineTrace {
                 engine: SearchEngine::Rust,
@@ -3575,7 +3999,6 @@ mod tests {
                 candidate_limit_hit: false,
                 output_budget_hit: true,
             },
-            false,
             None,
             42,
         );
@@ -3658,6 +4081,7 @@ mod tests {
             query_source: QuerySource::Query,
             path: ".".to_string(),
             file_pattern_items: vec![],
+            include_pattern_items: vec![],
             query_mode: QueryMode::Literal,
             query_mode_inferred: false,
             case_sensitive: false,
@@ -3667,6 +4091,7 @@ mod tests {
             max_depth: 0,
             max_files: 0,
             max_matches: 20,
+            offset: 0,
             max_candidates: DEFAULT_MAX_CANDIDATES,
             timeout_ms: DEFAULT_TIMEOUT_MS,
             engine: SearchEngine::Rg,

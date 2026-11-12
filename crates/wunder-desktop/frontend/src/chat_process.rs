@@ -378,7 +378,13 @@ fn project_page_entries(items: Vec<NativeProcessItem>) -> Vec<ProcessEntry> {
                 tool_name: crate::timeline_text::tool_label(&tool.title).into(),
                 tool_icon: wunder_desktop::tool_icons::workflow_icon(&tool.title).into(),
                 target: target.as_str().into(),
-                target_label: crate::timeline_text::target_label(&target).into(),
+                // The durable page does not know the shell width, so it takes
+                // the wide chip budget; the chip elides whatever still spills.
+                target_label: crate::timeline_text::fit_chip_label(
+                    &crate::timeline_text::target_label(&target),
+                    false,
+                )
+                .into(),
                 summary: summary.into(),
                 detail: crate::timeline_text::copy_text(&[], &tool.detail),
                 sections: crate::timeline_text::sections(&tool.sections),

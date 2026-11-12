@@ -395,6 +395,38 @@ fn compact_projection_unwraps_read_file_and_search_carriers() {
 }
 
 #[test]
+fn compact_projection_keeps_search_paging_position() {
+    // 续页要靠 offset/next_offset/total_matches：投影层一旦漏了它们，
+    // 工具算得再准，模型看到的也只是「就这么多」。
+    let search = ToolResultPayload::from_value(json!({
+        "ok": true,
+        "data": {"action":"search_content", "state":"completed", "summary":"ok", "data": {
+            "query":"needle",
+            "hits":[],
+            "paths":["a.md","b.md"],
+            "files_only": true,
+            "total_matches": 31,
+            "total_files": 3,
+            "matched_file_count": 3,
+            "returned_match_count": null,
+            "offset": 0,
+            "has_more": true,
+            "next_offset": 2,
+            "page_unit": "files",
+            "max_matches": 2
+        }}
+    }));
+    let projected = search.to_compact_payload("search_content");
+    let data = &projected["data"];
+    assert_eq!(data["total_matches"], 31);
+    assert_eq!(data["total_files"], 3);
+    assert_eq!(data["offset"], 0);
+    assert_eq!(data["next_offset"], 2);
+    assert_eq!(data["has_more"], true);
+    assert_eq!(data["page_unit"], "files");
+}
+
+#[test]
 fn compact_projection_web_fetch_keeps_content_and_drops_diagnostics() {
     let result = ToolResultPayload::from_value(json!({
         "ok": true,
