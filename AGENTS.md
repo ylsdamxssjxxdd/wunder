@@ -40,7 +40,7 @@
 - frontend中有大量的依赖库，搜索时会返回大量内容，一定要做好限制，不要直接搜索frontend的根目录
 - 会话轮次拆分为“用户轮次/模型轮次”：用户每发送一条消息记 1 轮用户轮次；模型每执行一次动作（模型调用、工具调用或最终回复）记 1 轮模型轮次；一次会话可包含多轮用户轮次，每轮用户轮次可包含多轮模型轮次。
 - 你在开发的过程中，其他开发者也会在修改文件，如果你遇到了不是你修改的文件，不必理会
-- 反复出现的问题，解决后把经验写为一条记录到docs\经验教训.md里，避免下次再犯同样的错误
+- 反复出现的问题，值得后续参考的，写为一条简短的经验补充docs\经验教训.md里，避免下次再犯同样的错误
 - 测试、代码、日志和文档记录中不要出现具体业务名称、真实身份、真实密钥、真实路径或暴露场景意图的示例值
 - 写文档遵循形态定位基准：wunder=通用型人工智能工作台，桌面版=本地 AI 工作台，云端版=云端 AI 工作台（web，随服务端提供），命令行=手工本地操作入口，服务端=用户与智能体管理平台；面向用户的文档以桌面版为主线
 - 解决问题时应当从源头从后端或深层彻底重构修复，既是为了解决问题也是为了未来发展，不要一直在前端或表层缝缝补补
@@ -80,3 +80,7 @@
 - 本地版本 桌面版和命令行 靠补充包预制运行环境，面向32位win7以及64位ubuntu18.04，包含chrome109 python3.8 rg git ffmpeg等组件
 
 - 服务版本 服务端 靠ubuntu22.04 docker镜像预制运行环境，部分可能频繁更新的组件，如remotion、blender等放置于config\runtime，通过挂载到镜像中使用；blender来自Debian bookworm官方源（与运行镜像同glibc/Python基线，纯CPU渲染），x64与arm64双架构同版本
+
+- 安卓版本 安卓版 把整套运行环境装进 APK 自带：Ubuntu 24.04.1 LTS（noble）aarch64 rootfs 与静态 proot/busybox（operit 版，必须以 so 形式放 jniLibs——Android 拒绝 execve 应用私有目录里的可执行文件）随包分发，首次启动在应用私有目录解压、探测本内核可用的 proot 参数（含 --link2symlink、私有 /dev/shm）并生成 `wunder-shell` 包装器（POSIX `-lc` 契约，引擎只需把 `WUNDER_SHELL_BIN` 指过去）；安装期间全屏展示部署进度，完成后自动进主界面
+
+- 安卓版本 运行环境分三块按需叠加，都随 APK 预置、全程离线：rootfs 之上的常用工具包（common，含 python3.12+pip、git、ripgrep、静态 ffmpeg、curl/wget/unzip/7z/procps/sqlite3/jq/tmux 等，以及图像/文档/短片字体；Python 依赖以 wheelhouse 放 `/opt/wunder/wheels`，设备端 `pip --no-index` 装进系统站点目录）、可选浏览器包（browser，Playwright + arm64 Chromium 放 `/opt/browser/chrome-linux/chrome`，就绪后才发布 `WUNDER_BROWSER_BIN`）；各包用版本 marker 判定，marker 变了才在设备上重解压。三件大资产不入 git，由 builders 脚本构建、`packaging/android/pack-runtime.sh` 打成 `wunder-android-runtime-arm64.tar.gz`，CI 从草稿 release 取；xz 压缩一律不能用 BCJ 过滤器（随包 busybox 1.36 解不了，会在设备上装完才报损坏），minSdk 26、页面按 16 KiB 对齐，仅发布 arm64-v8a（x86_64 仅供模拟器验证）

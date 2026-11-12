@@ -3584,8 +3584,8 @@
     "zh-CN": "可选。仅在使用 input 补丁模式时生效：只校验补丁能否解析与匹配，不写盘。"
   },
   "tool.spec.search.args.include": {
-    "en-US": "Optional whitelist that narrows the candidate files. A string and a string array are equivalent, e.g. \"src/**\" or [\"src/**\", \"docs/**\"]. When glob is also given the two are intersected, not merged.",
-    "zh-CN": "可选的白名单，用于收窄候选文件。可传字符串或字符串数组，例如 [\"src/**\", \"docs/**\"]；与 glob 同时给出时取交集而不是并集。"
+    "en-US": "Optional whitelist that narrows the candidate files. A string and a string array are equivalent, e.g. \"src/**\" or [\"src/**\", \"docs/**\"]. Patterns are relative to the search path root, not the repository root. When glob is also given the two are intersected, not merged.",
+    "zh-CN": "可选的白名单，用于收窄候选文件。可传字符串或字符串数组，例如 [\"src/**\", \"docs/**\"]；模式相对搜索根（path）而不是仓库根；与 glob 同时给出时取交集而不是并集。"
   },
   "tool.title.文件名匹配": {
     "en-US": "File Glob Match",
