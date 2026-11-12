@@ -313,6 +313,8 @@ pub struct Timeline {
     /// The live turn ran to its end but its rows are still the only copy: the
     /// durable snapshot has not caught up with it yet.
     settled: bool,
+    /// 本轮秒表起点：运行中过程条右侧的耗时按它推进，`None` 表示没有在走的轮次。
+    elapsed: Option<std::time::Instant>,
     /// Whether frozen body blocks get syntax highlighting; the reducer turns
     /// this on for the chat view and off elsewhere.
     /// Whether MainWindow.timeline already observes `model`. Binding once
@@ -458,6 +460,7 @@ impl Timeline {
             turn: None,
             active_user_row: usize::MAX,
             settled: false,
+            elapsed: None,
             published: Cell::new(false),
             markdown_desktop: None,
             markdown_root: String::new(),
@@ -754,6 +757,9 @@ impl Timeline {
         self.footer.set(usize::MAX);
         self.turn = Some(root.to_string());
         self.settled = false;
+        // 本轮秒表从用户提交这一刻起走，过程条右侧的耗时因此逐秒推进，
+        // 而不是等统计值到达后一次跳过去。
+        self.elapsed = Some(std::time::Instant::now());
         let user_id = format!("user-turn-{root}");
         if let Some(index) = self.model.iter().position(|row| row.id == user_id) {
             if let Some(mut row) = self.model.row_data(index) {
@@ -1494,6 +1500,8 @@ impl Timeline {
         self.close_batch();
         self.interrupt_running();
         self.settled = true;
+        // 停表：终值来自运行时统计，秒表不再覆盖它。
+        self.elapsed = None;
         if let Some(footer) = self.ensure_footer() {
             let text = self
                 .model
@@ -1869,6 +1877,7 @@ impl Timeline {
         self.turn = None;
         self.active_user_row = usize::MAX;
         self.settled = false;
+        self.elapsed = None;
         self.body = None;
         self.thinking = None;
         self.tools.clear();
@@ -1957,15 +1966,8 @@ impl Timeline {
             .map(|metric| metric.value.clone())
             .filter(|value| value != "-" && value != "--")
             .unwrap_or_default();
-        if self.process != NO_PROCESS && !duration.is_empty() {
-            let bar = self.process_bar;
-            if self
-                .model
-                .row_data(bar)
-                .is_some_and(|row| row.duration.as_str() != duration.as_str())
-            {
-                self.patch(bar, |row| row.duration = duration.as_str().into());
-            }
+        if !duration.is_empty() {
+            self.set_process_duration(&duration);
         }
         let Some(index) = self.ensure_footer() else {
             return;
@@ -1981,6 +1983,56 @@ impl Timeline {
                 row.stats = ModelRc::new(VecModel::from(stats));
                 row.user_round = user_round;
             });
+        }
+    }
+
+    /// 过程条右侧的本轮耗时。运行中由秒表按真实时间推进，落地的统计值只在
+    /// 轮次结束后接管，避免流式期间数字停住、结束后再跳一大截。
+    fn set_process_duration(&self, duration: &str) {
+        if self.process == NO_PROCESS {
+            return;
+        }
+        let bar = self.process_bar;
+        if self
+            .model
+            .row_data(bar)
+            .is_some_and(|row| row.duration.as_str() != duration)
+        {
+            self.patch(bar, |row| row.duration = duration.into());
+        }
+    }
+
+    /// 秒表推进：只重画过程条右侧的耗时，不动 footer 与折叠体。运行中的轮次
+    /// 用「已走秒数」覆盖统计值，轮次结束（`finish`）后停表并让终值落地。
+    pub fn tick_elapsed(&mut self) {
+        let Some(elapsed) = self.elapsed else {
+            return;
+        };
+        if self.settled {
+            self.elapsed = None;
+            return;
+        }
+        let seconds = elapsed.elapsed().as_secs_f64();
+        let label = crate::turn_stats::duration(seconds);
+        self.set_process_duration(&label);
+        let footer = self.footer.get();
+        if footer == usize::MAX || footer >= self.model.row_count() {
+            return;
+        }
+        let Some(stats) = self.model.row_data(footer).map(|row| row.stats) else {
+            return;
+        };
+        let mut next: Vec<crate::TurnStatMetric> = stats.iter().collect();
+        match next.iter_mut().find(|metric| metric.key == "stopwatch") {
+            Some(metric) if metric.value.as_str() != label => metric.value = label.as_str().into(),
+            Some(_) => {}
+            None => next.push(crate::TurnStatMetric {
+                key: "stopwatch".into(),
+                value: label.as_str().into(),
+            }),
+        }
+        if next.iter().ne(stats.iter().collect::<Vec<_>>().iter()) {
+            self.patch(footer, |row| row.stats = ModelRc::new(VecModel::from(next)));
         }
     }
 
@@ -2441,7 +2493,36 @@ mod tests {
             .model
             .row_data(timeline.process_bar)
             .expect("a process bar");
-        assert_eq!(bar.duration, "12.4s");
+        assert_eq!(bar.duration, "12s");
+    }
+
+    #[test]
+    fn running_turn_advances_the_process_stopwatch_and_settles_on_the_final_value() {
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("fixture-tick", "Fixture input");
+        // 运行中：秒表按真实时间推进，统计值不覆盖它。
+        timeline.elapsed = Some(std::time::Instant::now() - std::time::Duration::from_secs(7));
+        timeline.set_turn_stats(stat_metrics(&crate::turn_stats::metrics(
+            &serde_json::json!({"interaction_duration_s": 1.2}),
+        )));
+        timeline.tick_elapsed();
+        let bar = timeline
+            .model
+            .row_data(timeline.process_bar)
+            .expect("a process bar");
+        assert_eq!(bar.duration, "7s");
+        // 轮次结束：停表，终值接管。
+        timeline.finish(Settle::Done);
+        timeline.set_turn_stats(stat_metrics(&crate::turn_stats::metrics(
+            &serde_json::json!({"interaction_duration_s": 9.6}),
+        )));
+        timeline.tick_elapsed();
+        let bar = timeline
+            .model
+            .row_data(timeline.process_bar)
+            .expect("a process bar");
+        assert_eq!(bar.duration, "10s");
+        assert!(timeline.elapsed.is_none(), "the stopwatch stops at settlement");
     }
 
     #[test]

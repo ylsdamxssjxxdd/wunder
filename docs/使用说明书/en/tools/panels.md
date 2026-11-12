@@ -1,7 +1,7 @@
 ---
 title: Plan Panel / Question Panel / Sessions Yield
 summary: Aliases of the three interaction-control tools, their argument limits and normalized spellings, the replacement and turn-ending semantics that apply at call time, and their item caps.
-updated_at: 2026-10-16
+updated_at: 2026-11-12
 ---
 
 The three tools belong to the same interaction-control family. None of them produces a business side effect; they only change what the frontend shows or how the current turn ends.
@@ -18,11 +18,15 @@ The standalone "sleep and wait" tool has also been deleted, and waiting semantic
 
 Use it to build and maintain an execution checklist when a task takes several steps and the user wants to follow progress. Work that finishes in one go does not need a plan.
 
-A plan is a set of steps, 1 to 12 items, each a step plus a status; items with an empty step are dropped. Statuses are `pending` / `in_progress` / `completed`, and variants such as `in-progress`, `done`, and `complete` are normalized. You can attach one line describing the change to the plan.
+Call it at three fixed moments: when the work starts (one step `in_progress`), after every finished step with the same full list (mark the finished one `completed`, move `in_progress` to the next), and once more at the end so no half-finished progress is left on the panel. Updating only at the end means the panel lied to the user in between.
+
+A plan is a set of steps, 1 to 12 items, each a step plus a status; items with an empty step are dropped. Statuses are `pending` / `in_progress` / `completed`, and variants such as `in-progress`, `done`, `complete`, `进行中`, `已完成` are normalized. Step text can use `step`, or `title` / `content` / `text`; the list key can be `plan`, `steps`, `todos`, or `items`. You can attach one line describing the change to the plan.
 
 The call replaces the whole plan rather than patching it. Only one step may be in progress at a time; if a second one appears, it is downgraded to pending.
 
-An empty plan, or one whose steps are all dropped, reports an error. The result does not echo the plan content back; the plan reaches the user through a frontend event.
+An empty plan, or one whose steps are all dropped, reports an error. Argument shapes are tolerated: a payload wrapped as one string (the `input` / `raw` wrappers common in text and XML protocols) or a `plan` list written as a string is unwrapped; when it still cannot be parsed the error names the expected shape, an example, and the keys that arrived, so do not retry the same payload verbatim.
+
+The result is a model-facing status card, not user copy: it carries `completed` / `total` / `current_step` / `next_step` plus a `next_step_hint` that keeps reminding while steps remain. The plan itself reaches the user through a frontend event and never enters model context, so the model must not assume it will remember the checklist next turn; the receipt is the source of truth.
 
 ## Question Panel
 

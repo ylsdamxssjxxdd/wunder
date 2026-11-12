@@ -1,5 +1,7 @@
 use super::*;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 
 const MAX_SAME_NON_RETRYABLE_FAILURES: u32 = 5;
@@ -11,6 +13,27 @@ const MAX_SAME_RETRYABLE_FAILURES: u32 = 5;
 const MAX_SAME_TOOL_FAILURES: u32 = 5;
 const MAX_SAME_APPLY_PATCH_FAILURES: u32 = 5;
 const MAX_SAME_SUCCESS_NO_PROGRESS: u32 = 4;
+// A stalled agent rarely repeats one byte-identical call: it usually alternates
+// between two "patch" and "verify" calls whose arguments differ slightly while
+// the observations keep repeating. Watch a short window of successful calls and
+// treat a window filled by at most two recurring observations as no progress.
+const SUCCESS_STALL_WINDOW: usize = 8;
+const SUCCESS_STALL_DISTINCT_LIMIT: usize = 2;
+// Warnings a single turn may spend on freshly-typed stalled patterns before the
+// guard stops trusting the model to escape on its own.
+const MAX_SUCCESS_NO_PROGRESS_WARNINGS: u32 = 3;
+// A real loop often mixes a few slightly different probes (write, grep, sed,
+// od) so no single call repeats and the distinct-observation count stays above
+// two. What never changes is the *content*: every new call only prints lines
+// that the window already saw. This streak threshold catches that shape without
+// needing identical calls.
+const SUCCESS_STALL_NO_NEW_LINE_STREAK: usize = 6;
+// Successful command steps kept as the "already printed" baseline. Long enough
+// to cover a slow patch/verify cycle, short enough that an old probe cannot make
+// fresh work look recycled.
+const SUCCESS_STALL_HISTORY: usize = 24;
+const OBSERVATION_MAX_LINES: usize = 200;
+const OBSERVATION_LINE_MAX_CHARS: usize = 200;
 const FINGERPRINT_DETAIL_MAX_CHARS: usize = 240;
 
 #[derive(Clone, Debug)]
@@ -36,14 +59,44 @@ pub(super) struct RetryGovernor {
 
 /// Detect a successful tool loop separately from failure retries. A command
 /// can return `ok=true` forever while producing the same observation; failure
-/// guards cannot see that case. Keep the detector narrow to command-like tools
-/// and require several identical non-empty observations to avoid stopping
-/// ordinary polling or idempotent writes.
+/// guards cannot see that case. The detector stays narrow to command-like tools
+/// so ordinary file reads and idempotent writes are never judged by it.
+///
+/// Three shapes are covered:
+/// * the same call repeated verbatim (`MAX_SAME_SUCCESS_NO_PROGRESS`),
+/// * a short cycle where one or two calls alternate while their observations
+///   never change (`SUCCESS_STALL_WINDOW`), and
+/// * a call sequence that keeps changing its command tail but only ever reprints
+///   lines the turn has already seen (`SUCCESS_STALL_NO_NEW_LINE_STREAK`). This
+///   is what a model does when it re-runs "patch, then look" without the patch
+///   ever taking effect.
+///
+/// The first detection only warns the model so it can change strategy; a relapse
+/// of the same evidence, or repeated fresh-but-stalled patterns, escalates to a
+/// hard stop so the loop cannot run until the round budget is exhausted.
 #[derive(Clone, Debug, Default)]
 pub(super) struct SuccessProgressGovernor {
     last_tool: String,
     last_fingerprint: String,
     repeat_count: u32,
+    /// Recent successful command steps. The tail (`SUCCESS_STALL_WINDOW`) drives
+    /// the cycle detector; the whole queue is the baseline for "already seen".
+    recent: VecDeque<SuccessStep>,
+    warnings: u32,
+    previous_trigger_signatures: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct SuccessStep {
+    signature: String,
+    detail: String,
+    /// Normalized first command segment. A loop that keeps re-running the same
+    /// script with different verification tails shares this prefix while
+    /// unrelated probes (different patterns, different files) do not.
+    subject: String,
+    /// Normalized observation lines; used to prove that a call printed nothing
+    /// the turn had not already printed.
+    lines: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -52,6 +105,12 @@ pub(super) struct SuccessProgressStop {
     pub(super) repeat_count: u32,
     pub(super) threshold: u32,
     pub(super) detail: String,
+    /// Distinct observations the stalled window kept replaying (`0` when the
+    /// trigger came from recycled output instead of repeated calls).
+    pub(super) distinct_steps: usize,
+    /// `false` on the first detection (warn only), `true` when the model already
+    /// ignored a warning and the turn must stop.
+    pub(super) escalated: bool,
 }
 
 impl SuccessProgressGovernor {
@@ -59,6 +118,7 @@ impl SuccessProgressGovernor {
         self.last_tool.clear();
         self.last_fingerprint.clear();
         self.repeat_count = 0;
+        self.recent.clear();
     }
 
     pub(super) fn record(
@@ -76,20 +136,223 @@ impl SuccessProgressGovernor {
             self.reset();
             return None;
         };
-        if self.last_tool == tool_name && self.last_fingerprint == fingerprint {
+        let signature = format!("{tool_name}|{fingerprint}");
+        if self.last_tool == tool_name && self.last_fingerprint == signature {
             self.repeat_count = self.repeat_count.saturating_add(1);
         } else {
             self.last_tool = tool_name.to_string();
-            self.last_fingerprint = fingerprint;
+            self.last_fingerprint = signature.clone();
             self.repeat_count = 1;
         }
-        (self.repeat_count >= MAX_SAME_SUCCESS_NO_PROGRESS).then(|| SuccessProgressStop {
+        self.recent.push_back(SuccessStep {
+            signature,
+            detail: detail.clone(),
+            subject: success_command_subject(args),
+            lines: success_observation_lines(result),
+        });
+        while self.recent.len() > SUCCESS_STALL_HISTORY {
+            self.recent.pop_front();
+        }
+
+        let (repeat_count, distinct_steps, threshold) =
+            if self.repeat_count >= MAX_SAME_SUCCESS_NO_PROGRESS {
+                (self.repeat_count, 1usize, MAX_SAME_SUCCESS_NO_PROGRESS)
+            } else if let Some(distinct_steps) = stalled_window_distinct(&self.recent) {
+                (
+                    u32::try_from(SUCCESS_STALL_WINDOW).unwrap_or(u32::MAX),
+                    distinct_steps,
+                    u32::try_from(SUCCESS_STALL_WINDOW).unwrap_or(u32::MAX),
+                )
+            } else if let Some(streak) = stalled_without_new_lines(&self.recent) {
+                (
+                    u32::try_from(streak).unwrap_or(u32::MAX),
+                    0usize,
+                    u32::try_from(SUCCESS_STALL_NO_NEW_LINE_STREAK).unwrap_or(u32::MAX),
+                )
+            } else {
+                return None;
+            };
+
+        // Only a relapse of the same evidence escalates. A different stalled
+        // pattern means the model did try something else, so it earns a warning
+        // again instead of being cut off for a loop it already escaped.
+        let trigger_signatures: Vec<String> = self
+            .recent
+            .iter()
+            .skip(self.recent.len().saturating_sub(SUCCESS_STALL_WINDOW))
+            .map(|step| step.signature.clone())
+            .collect();
+        let repeated_evidence = !self.previous_trigger_signatures.is_empty()
+            && !trigger_signatures.is_empty()
+            && trigger_signatures
+                .iter()
+                .all(|signature| self.previous_trigger_signatures.contains(signature));
+        self.warnings = self.warnings.saturating_add(1);
+        let escalated = repeated_evidence || self.warnings > MAX_SUCCESS_NO_PROGRESS_WARNINGS;
+        self.previous_trigger_signatures = trigger_signatures;
+        // Drop the evidence so the model gets a full window to prove it changed
+        // strategy; a relapse has to rebuild the same pattern before escalating.
+        self.recent.clear();
+        self.repeat_count = 0;
+        self.last_fingerprint.clear();
+        Some(SuccessProgressStop {
             tool: tool_name.to_string(),
-            repeat_count: self.repeat_count,
-            threshold: MAX_SAME_SUCCESS_NO_PROGRESS,
+            repeat_count,
+            threshold,
             detail,
+            distinct_steps,
+            escalated,
         })
     }
+}
+
+/// Normalized observation lines for a successful tool result. Only command
+/// stdout/stderr feeds the "no new information" check; the exact same text is
+/// already part of the fingerprint, so this stays a cheap per-call scan.
+fn success_observation_lines(result: &ToolResultPayload) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut collect = |text: &str| {
+        for line in text.lines() {
+            if lines.len() >= OBSERVATION_MAX_LINES {
+                return;
+            }
+            let normalized = line.split_whitespace().collect::<Vec<_>>().join(" ");
+            if normalized.is_empty() {
+                continue;
+            }
+            lines.push(
+                normalized
+                    .chars()
+                    .take(OBSERVATION_LINE_MAX_CHARS)
+                    .collect(),
+            );
+        }
+    };
+    if let Some(text) = result.data.get("stdout").and_then(Value::as_str) {
+        collect(text);
+    }
+    if let Some(text) = result.data.get("stderr").and_then(Value::as_str) {
+        collect(text);
+    }
+    if let Some(rows) = result.data.get("results").and_then(Value::as_array) {
+        for row in rows {
+            let Some(row) = row.as_object() else { continue };
+            for key in ["stdout", "stderr"] {
+                if let Some(text) = row.get(key).and_then(Value::as_str) {
+                    collect(text);
+                }
+            }
+        }
+    }
+    lines
+}
+
+/// Streak of trailing calls whose observation printed only lines the window had
+/// already printed. Catches loops that vary their commands (so no call repeats)
+/// while every result is recycled content, which is what a model does when it
+/// keeps re-reading a file it believes it just changed.
+fn stalled_without_new_lines(recent: &VecDeque<SuccessStep>) -> Option<usize> {
+    if recent.len() < SUCCESS_STALL_NO_NEW_LINE_STREAK {
+        return None;
+    }
+    // Everything older than the trailing window is the "already seen" baseline:
+    // reprinting it is no new information for the model.
+    let baseline_len = recent.len().saturating_sub(SUCCESS_STALL_WINDOW);
+    let mut seen: HashSet<&str> = HashSet::new();
+    for step in recent.iter().take(baseline_len) {
+        for line in &step.lines {
+            seen.insert(line.as_str());
+        }
+    }
+
+    let mut streak = 0usize;
+    let mut streak_subjects: Vec<&str> = Vec::new();
+    for step in recent.iter().skip(baseline_len) {
+        if step.lines.is_empty() {
+            // An empty observation proves nothing; never count it either way.
+            streak = 0;
+            streak_subjects.clear();
+            continue;
+        }
+        let introduces_new_line = step.lines.iter().any(|line| !seen.contains(line.as_str()));
+        for line in &step.lines {
+            seen.insert(line.as_str());
+        }
+        if introduces_new_line {
+            streak = 0;
+            streak_subjects.clear();
+        } else {
+            streak += 1;
+            streak_subjects.push(step.subject.as_str());
+        }
+    }
+    if streak < SUCCESS_STALL_NO_NEW_LINE_STREAK {
+        return None;
+    }
+    // Recycled output alone is not a loop: six searches over different targets
+    // can legitimately print the same shared lines. Require the streak to keep
+    // re-running the same command subject, which is what "still no progress"
+    // looks like in practice.
+    let mut subjects: Vec<&str> = Vec::new();
+    for subject in &streak_subjects {
+        if !subjects.iter().any(|seen| *seen == *subject) {
+            subjects.push(subject);
+            if subjects.len() > SUCCESS_STALL_DISTINCT_LIMIT {
+                return None;
+            }
+        }
+    }
+    Some(streak)
+}
+
+/// Command text up to the first `;`, normalized. Verification tails (`; grep`,
+/// `; sed -n`) drop out, so re-running the same script keeps one subject while
+/// unrelated probes keep distinct ones.
+fn success_command_subject(args: &Value) -> String {
+    let Some(command) = args.as_object().and_then(|object| {
+        ["content", "command", "cmd"]
+            .iter()
+            .find_map(|key| object.get(*key).and_then(Value::as_str))
+    }) else {
+        return String::new();
+    };
+    let head = command.split(';').next().unwrap_or(command);
+    head.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(FINGERPRINT_DETAIL_MAX_CHARS)
+        .collect()
+}
+
+/// Returns how many distinct observations a full window kept replaying when the
+/// window looks like a stalled cycle. Every observation must recur, otherwise a
+/// single fresh probe followed by replayed calls would be misread as a loop.
+fn stalled_window_distinct(recent: &VecDeque<SuccessStep>) -> Option<usize> {
+    if recent.len() < SUCCESS_STALL_WINDOW {
+        return None;
+    }
+    let window: Vec<&SuccessStep> = recent
+        .iter()
+        .skip(recent.len().saturating_sub(SUCCESS_STALL_WINDOW))
+        .collect();
+    let mut distinct: Vec<&str> = Vec::new();
+    for step in &window {
+        if !distinct.iter().any(|seen| *seen == step.signature.as_str()) {
+            distinct.push(step.signature.as_str());
+            if distinct.len() > SUCCESS_STALL_DISTINCT_LIMIT {
+                return None;
+            }
+        }
+    }
+    let every_observation_recurs = distinct.iter().all(|signature| {
+        window
+            .iter()
+            .filter(|step| step.signature == *signature)
+            .count()
+            >= 2
+    });
+    every_observation_recurs.then_some(distinct.len())
 }
 
 fn success_progress_fingerprint(
@@ -407,6 +670,7 @@ mod tests {
     use super::{
         RetryGovernor, SuccessProgressGovernor, ToolResultPayload, MAX_SAME_ARGUMENT_FAILURES,
         MAX_SAME_NON_RETRYABLE_FAILURES, MAX_SAME_RETRYABLE_FAILURES,
+        MAX_SUCCESS_NO_PROGRESS_WARNINGS, SUCCESS_STALL_NO_NEW_LINE_STREAK, SUCCESS_STALL_WINDOW,
     };
     use crate::tools::resolve_tool_name;
     use chrono::Utc;
@@ -563,5 +827,220 @@ mod tests {
                 .record("execute_command", &args, &payload)
                 .is_none());
         }
+    }
+
+    #[test]
+    fn warns_then_stops_when_two_calls_alternate_without_progress() {
+        let mut governor = SuccessProgressGovernor::default();
+        let patch_result = ToolResultPayload {
+            ok: true,
+            data: json!({"results": [{"returncode": 0, "stdout": "1\n1"}]}),
+            error: String::new(),
+            sandbox: true,
+            timestamp: Utc::now(),
+            meta: None,
+        };
+        let verify_result = ToolResultPayload {
+            ok: true,
+            data: json!({"results": [{"returncode": 0, "stdout": "1\n1\npub fn duration"}]}),
+            error: String::new(),
+            sandbox: true,
+            timestamp: Utc::now(),
+            meta: None,
+        };
+        let mut first_warning = None;
+        for index in 0..8 {
+            let (args, result) = if index % 2 == 0 {
+                (json!({"command": "patch turn_stats"}), &patch_result)
+            } else {
+                (json!({"command": "verify turn_stats"}), &verify_result)
+            };
+            if let Some(stop) = governor.record("execute_command", &args, result) {
+                first_warning = Some(stop);
+                break;
+            }
+        }
+        let warning = first_warning.expect("alternating no-progress calls should be detected");
+        assert_eq!(warning.distinct_steps, 2);
+        assert!(
+            !warning.escalated,
+            "the first detection only warns the model"
+        );
+        assert_eq!(warning.threshold as usize, SUCCESS_STALL_WINDOW);
+
+        // Ignoring the warning must not earn another warning: the second
+        // detection stops the turn instead of letting the loop run to the
+        // round budget.
+        let mut escalation = None;
+        for index in 0..8 {
+            let (args, result) = if index % 2 == 0 {
+                (json!({"command": "patch turn_stats"}), &patch_result)
+            } else {
+                (json!({"command": "verify turn_stats"}), &verify_result)
+            };
+            if let Some(stop) = governor.record("execute_command", &args, result) {
+                escalation = Some(stop);
+                break;
+            }
+        }
+        assert!(
+            escalation.expect("a relapse must stop the turn").escalated,
+            "the second detection escalates to a hard stop"
+        );
+    }
+
+    #[test]
+    fn detects_a_loop_that_varies_the_command_tail() {
+        // Shape of a real incident: the same patch script is re-run with a few
+        // different verification tails, so no call ever repeats and up to four
+        // observations rotate — but every new observation only reprints lines
+        // seen before, and the file never changes.
+        let mut governor = SuccessProgressGovernor::default();
+        let script = "cd repo && python3 -c \"rewrite duration()\"";
+        let tails = ["; grep -c fmt f", "; sed -n 1,5p f", "; od -c f", ""];
+        let observations = [
+            "1\n1",
+            "1\n1\npub fn duration",
+            "0000000 f o r m a t ! (",
+            "1\n1\npub fn duration\nlet total = total",
+        ];
+        let mut detected = None;
+        for index in 0..16 {
+            let command = format!("{script}{}", tails[index % tails.len()]);
+            let result = ToolResultPayload {
+                ok: true,
+                data: json!({"results": [{"returncode": 0, "stdout": observations[index % observations.len()]}]}),
+                error: String::new(),
+                sandbox: true,
+                timestamp: Utc::now(),
+                meta: None,
+            };
+            if let Some(stop) =
+                governor.record("execute_command", &json!({"command": command}), &result)
+            {
+                detected = Some((index, stop));
+                break;
+            }
+        }
+        let (index, stop) = detected.expect("a recycled-output loop must be detected");
+        // Four rotating observations each print one new line before the loop
+        // settles, so detection lands a few calls after the streak threshold.
+        assert!(
+            index <= SUCCESS_STALL_NO_NEW_LINE_STREAK + 6,
+            "detection should arrive shortly after the streak threshold, got index {index}"
+        );
+        assert_eq!(stop.threshold as usize, SUCCESS_STALL_NO_NEW_LINE_STREAK);
+        assert!(!stop.escalated, "the first detection only warns");
+    }
+
+    #[test]
+    fn a_newly_typed_stalled_pattern_only_warns_again() {
+        let mut governor = SuccessProgressGovernor::default();
+        let payload = ToolResultPayload {
+            ok: true,
+            data: json!({"results": [{"returncode": 0, "stdout": "no change"}]}),
+            error: String::new(),
+            sandbox: true,
+            timestamp: Utc::now(),
+            meta: None,
+        };
+        let run_cycle = |governor: &mut SuccessProgressGovernor, left: &str, right: &str| {
+            for index in 0..8 {
+                let command = if index % 2 == 0 { left } else { right };
+                if let Some(stop) =
+                    governor.record("execute_command", &json!({"command": command}), &payload)
+                {
+                    return Some(stop);
+                }
+            }
+            None
+        };
+
+        let first = run_cycle(&mut governor, "patch-a", "verify-a").expect("first cycle detected");
+        assert!(!first.escalated);
+        // A different pair of calls is a different (still useless) approach: the
+        // model gets a fresh warning instead of an immediate hard stop.
+        let second =
+            run_cycle(&mut governor, "patch-b", "verify-b").expect("second cycle detected");
+        assert!(!second.escalated, "changed evidence must not escalate");
+        // Relapsing into the first pattern is what proves the model ignored the
+        // warning.
+        let relapse = run_cycle(&mut governor, "patch-a", "verify-a").expect("relapse detected");
+        assert!(
+            !relapse.escalated,
+            "the previous evidence changed in between, so the relapse warns once more"
+        );
+    }
+
+    #[test]
+    fn repeated_warnings_on_new_patterns_eventually_stop_the_turn() {
+        let mut governor = SuccessProgressGovernor::default();
+        let payload = ToolResultPayload {
+            ok: true,
+            data: json!({"results": [{"returncode": 0, "stdout": "no change"}]}),
+            error: String::new(),
+            sandbox: true,
+            timestamp: Utc::now(),
+            meta: None,
+        };
+        let mut escalations = 0;
+        for cycle in 0..=MAX_SUCCESS_NO_PROGRESS_WARNINGS {
+            let left = format!("patch-{}", cycle);
+            let right = format!("verify-{}", cycle);
+            for index in 0..8 {
+                let command = if index % 2 == 0 { &left } else { &right };
+                if let Some(stop) =
+                    governor.record("execute_command", &json!({"command": command}), &payload)
+                {
+                    if stop.escalated {
+                        escalations += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            escalations, 1,
+            "only the warning past the budget escalates, and only once"
+        );
+    }
+
+    #[test]
+    fn fresh_probe_mid_window_is_not_a_stalled_cycle() {
+        let mut governor = SuccessProgressGovernor::default();
+        let payload = ToolResultPayload {
+            ok: true,
+            data: json!({"results": [{"returncode": 0, "stdout": "identical"}]}),
+            error: String::new(),
+            sandbox: true,
+            timestamp: Utc::now(),
+            meta: None,
+        };
+        // Alternate two calls, then make a call whose observation is new: that is
+        // still progress, so the stalled streak has to restart instead of
+        // accumulating towards the threshold.
+        let commands = ["probe-a", "probe-b", "probe-a", "probe-b", "probe-a"];
+        for command in commands {
+            assert!(governor
+                .record("execute_command", &json!({"command": command}), &payload)
+                .is_none());
+        }
+        let fresh = ToolResultPayload {
+            ok: true,
+            data: json!({"results": [{"returncode": 0, "stdout": "a line never seen before"}]}),
+            error: String::new(),
+            sandbox: true,
+            timestamp: Utc::now(),
+            meta: None,
+        };
+        assert!(governor
+            .record(
+                "execute_command",
+                &json!({"command": "probe-fresh"}),
+                &fresh
+            )
+            .is_none());
+        assert!(governor
+            .record("execute_command", &json!({"command": "probe-a"}), &payload)
+            .is_none());
     }
 }

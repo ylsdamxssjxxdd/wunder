@@ -560,6 +560,8 @@ impl NativeDesktop {
         let original_key = edit.original_key.trim().to_string();
         let new_key = edit.key.trim().to_string();
         let renaming = !original_key.is_empty() && original_key != new_key;
+        // The default seat this save vacated, when it moved to the saved model.
+        let mut promoted_default: Option<String> = None;
         let settings = self.update_settings(|config, _| {
             let key = new_key.clone();
             if renaming {
@@ -633,11 +635,25 @@ impl NativeDesktop {
             if !edit.api_key.trim().is_empty() {
                 entry.api_key = Some(edit.api_key.trim().into());
             }
-            if default_for(&config.llm, kind).is_empty() {
-                set_default(&mut config.llm, kind, key);
+            let enabled = entry.enable != Some(false);
+            // 首次配置模型时接管默认位。全新安装只有预置的「虚拟模型」，
+            // 而它占着会话默认位，用户配好真实模型后每一条新线程仍然回放
+            // 到虚拟模型，只能手动再点一次「设为默认」。这里让第一个真实
+            // 模型直接坐上默认位；已经有真实模型占位时不再抢。
+            if enabled && should_take_default_seat(&config.llm, kind, &key) {
+                promoted_default = Some(default_for(&config.llm, kind).to_string());
+                set_default(&mut config.llm, kind, key.clone());
             }
             Ok(())
         })?;
+        if let Some(previous) = promoted_default.as_deref() {
+            if kind.eq_ignore_ascii_case("llm") {
+                // The built-in agent carries its own model pointer; leaving it
+                // on the vacated seat would keep the composer labelled with the
+                // replay stub and hide the model the user just configured.
+                self.point_default_agent_at(&new_key, (!previous.is_empty()).then_some(previous));
+            }
+        }
         if renaming {
             self.migrate_model_references(&original_key, &new_key);
             // The built-in agent keeps its record in the shared meta slot, not
@@ -1100,6 +1116,34 @@ fn retarget_model_default(llm: &mut LlmConfig, old: &str, new: &str) {
     }
 }
 
+/// The synthetic model a fresh install seeds (`provider = virtual_replay`). It
+/// replays a canned trajectory instead of calling a provider, so it must never
+/// keep the default seat once the user has a real model configured.
+fn is_seeded_virtual_model(llm: &LlmConfig, key: &str) -> bool {
+    llm.models.get(key).is_some_and(|model| {
+        model
+            .provider
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .eq_ignore_ascii_case("virtual_replay")
+    })
+}
+
+/// Whether saving `key` should also hand it the default seat of its type. True
+/// while that seat is empty or still held by the seeded virtual model; a seat a
+/// real model already holds, and the saved entry itself, stay untouched.
+fn should_take_default_seat(llm: &LlmConfig, kind: &str, key: &str) -> bool {
+    if key.starts_with("cloud/") {
+        return false;
+    }
+    let current = default_for(llm, kind);
+    if current == key {
+        return false;
+    }
+    current.is_empty() || is_seeded_virtual_model(llm, current)
+}
+
 fn fallback_default(llm: &LlmConfig, kind: &str) -> Option<String> {
     llm.models
         .iter()
@@ -1119,7 +1163,7 @@ fn fallback_default(llm: &LlmConfig, kind: &str) -> Option<String> {
 
 #[cfg(test)]
 mod model_default_tests {
-    use super::fallback_default;
+    use super::{fallback_default, set_default, should_take_default_seat};
     use wunder_server::config::{LlmConfig, LlmModelConfig};
 
     #[test]
@@ -1154,6 +1198,31 @@ mod model_default_tests {
             fallback_default(&llm, "llm").as_deref(),
             Some("remaining-model")
         );
+    }
+
+    /// 回归：全新安装只预置「虚拟模型」，且它占着会话默认位。第一个真实模型
+    /// 保存时必须接管默认位，否则每条新线程都回放到虚拟模型；之后的模型不再
+    /// 抢真实模型已经占住的默认位。
+    #[test]
+    fn the_first_real_model_takes_the_seeded_virtual_default_seat() {
+        let mut llm: LlmConfig = serde_json::from_value(serde_json::json!({
+            "default": "虚拟模型",
+            "models": {
+                "虚拟模型": {
+                    "provider": "virtual_replay",
+                    "model_type": "llm",
+                    "model": "virtual-replay"
+                }
+            }
+        }))
+        .expect("valid model fixture");
+        assert!(should_take_default_seat(&llm, "llm", "first-model"));
+        set_default(&mut llm, "llm", "first-model".into());
+        assert_eq!(llm.default, "first-model");
+        assert!(!should_take_default_seat(&llm, "llm", "second-model"));
+        assert!(!should_take_default_seat(&llm, "llm", "first-model"));
+        // Engine-managed cloud rows never inherit a local default seat.
+        assert!(!should_take_default_seat(&llm, "embedding", "cloud/remote"));
     }
 }
 

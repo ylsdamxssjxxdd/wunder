@@ -1095,9 +1095,25 @@
     "en-US": "wunder@run call failed: {detail}",
     "zh-CN": "wunder@run 调用失败: {detail}"
   },
+  "tool.plan.invalid_shape": {
+    "en-US": "Plan arguments must be an object like {\"plan\":[{\"step\":\"…\",\"status\":\"in_progress\"}]}; send plan as a JSON array of objects, not as a string. Received keys: {keys}.",
+    "zh-CN": "计划参数格式不对：需要 {\"plan\":[{\"step\":\"…\",\"status\":\"in_progress\"}]}，plan 必须是对象数组而不是字符串。收到的键：{keys}。"
+  },
+  "tool.plan.keep_updating": {
+    "en-US": "Keep the panel current: after each finished step call this tool again with the full list and move in_progress to the next step.",
+    "zh-CN": "继续维护面板：每完成一步就带完整清单再调一次，把 in_progress 移到下一步。"
+  },
   "tool.plan.plan_required": {
     "en-US": "Plan steps are required.",
     "zh-CN": "计划步骤不能为空。"
+  },
+  "tool.plan.updated": {
+    "en-US": "Plan updated: {done}/{total} completed; current: {current}; next: {next}.",
+    "zh-CN": "计划已更新：{done}/{total} 完成；当前：{current}；下一步：{next}。"
+  },
+  "tool.plan.updated_all": {
+    "en-US": "Plan updated: all {total} steps completed.",
+    "zh-CN": "计划已更新：{total} 步全部完成。"
   },
   "tool.question_panel.default_question": {
     "en-US": "Which route should we take next?",
@@ -2484,20 +2500,20 @@
     "zh-CN": "可选，计划说明。"
   },
   "tool.spec.plan.args.plan": {
-    "en-US": "Plan step list.",
-    "zh-CN": "计划步骤列表。"
+    "en-US": "Complete step list; replaces the previous plan.",
+    "zh-CN": "完整步骤清单，会整体替换上一份计划。"
   },
   "tool.spec.plan.args.plan.step": {
     "en-US": "Step description.",
     "zh-CN": "步骤描述。"
   },
   "tool.spec.plan.args.plan.status": {
-    "en-US": "Step status (pending, in_progress, completed).",
-    "zh-CN": "步骤状态（pending/in_progress/completed）。"
+    "en-US": "Step status (pending, in_progress, completed). At most one step may be in_progress.",
+    "zh-CN": "步骤状态（pending/in_progress/completed）；同时只能有一个 in_progress。"
   },
   "tool.spec.plan.description": {
-    "en-US": "Update the plan board with steps and their status.",
-    "zh-CN": "更新计划看板，写入步骤与状态。"
+    "en-US": "Progress ledger for multi-step work: writes the full step list and each status (full replace, at most one in_progress).",
+    "zh-CN": "多步任务的进度台账：写入完整步骤清单与各自状态（全量替换，同时只能有一个 in_progress）。"
   },
   "tool.spec.question_panel.args.questions": {
     "en-US": "Questions to ask in this inquiry, 1-4 items. The client shows them one page at a time and the user answers each page. Use a single-element array when there is only one question.",

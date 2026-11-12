@@ -254,7 +254,7 @@ import type { ChatRuntimeTimelineBlock } from '@/realtime/chat/chatRuntimeTypes'
 import type { WorkflowItem } from '@/components/chat/toolWorkflowRunModel';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
 import { buildAssistantDisplayContent } from '@/utils/assistantFailureNotice';
-import { resolveAssistantTurnDurationLabel } from '@/utils/messageStats';
+import { useTurnDurationLabel } from '@/components/chat/useTurnDurationLabel';
 
 /**
  * 助手轮次的时间线条目区（方案 §7.3 / §7.4，形态对齐桌面端
@@ -283,7 +283,6 @@ const translate = controller.t;
 const t = (key: string, params?: Record<string, unknown>): string => String(translate(key, params) ?? key);
 const chatStore = controller.chatStore;
 const message = computed<Record<string, any>>(() => props.item.message);
-const processDurationLabel = computed(() => resolveAssistantTurnDurationLabel(message.value));
 
 const activeSessionId = computed(() => String(props.sessionId || chatStore.activeSessionId || '').trim());
 const conversationKey = computed(() => String(controller.sessionHub?.activeConversationKey || ''));
@@ -391,6 +390,8 @@ const hasBody = computed(() => Boolean(controller.hasMessageContent?.(displayCon
 const bodyStreaming = computed(() =>
   Boolean(message.value.streaming || message.value.stream_incomplete || message.value.workflowStreaming || message.value.reasoningStreaming)
 );
+// 过程条右侧的本轮耗时：运行中逐秒推进，结束后落回权威统计值。
+const processDurationLabel = useTurnDurationLabel(message, bodyStreaming);
 
 /**
  * 统计行保留「每次行发布换一个浅拷贝」的既有口径：`MessageStats` 的计算属性

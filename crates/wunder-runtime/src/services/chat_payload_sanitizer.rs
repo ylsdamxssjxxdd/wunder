@@ -96,8 +96,18 @@ pub fn parse_sanitized_persisted_chat_payload(text: &str) -> (Option<Value>, Opt
 }
 
 /// 文本是否为「图片已省略」占位（持久化省略图像像素后的标记）。
+///
+/// 占位有两种形态：裸文案，以及裸文案后跟 `[image_omitted_path:...]` 的
+/// 带路径版本。凡是占位都必须能在这里被认出来，否则恢复流程会把它当成
+/// 普通文本跳过，图片再也回不到上下文。
 pub fn is_omitted_image_placeholder_text(text: &str) -> bool {
-    text.trim() == INLINE_IMAGE_OMITTED_TEXT
+    let text = text.trim();
+    if text == INLINE_IMAGE_OMITTED_TEXT {
+        return true;
+    }
+    text.strip_prefix(INLINE_IMAGE_OMITTED_TEXT)
+        .map(str::trim_start)
+        .is_some_and(|rest| rest.starts_with(IMAGE_OMITTED_PATH_PREFIX))
 }
 
 /// 占位 + 路径提示的完整形态：`[inline image omitted ...] [image_omitted_path:/a.png]`。
@@ -155,8 +165,27 @@ fn sanitize_inline_images_in_value(value: &mut Value) -> bool {
 
 fn sanitize_inline_images_in_array(items: &mut Vec<Value>) -> bool {
     let mut changed = false;
+    // content 数组里，图片前面通常有一条 `[image_path:...]` 提示。持久化成
+    // 占位时必须带上同一个路径，否则同一条消息在“请求内预算淘汰”和“持久化
+    // 省略”两条路径上得到不同文本，下一轮前缀会从这条消息断开。
+    let mut last_path: Option<String> = None;
     for item in items.iter_mut() {
-        changed |= sanitize_inline_images_in_value(item);
+        if let Some(text) = item.get("text").and_then(Value::as_str) {
+            if let Some(path) = image_path_marker_in_text(text) {
+                last_path = Some(path);
+            }
+        }
+        let was_image_part = item
+            .get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.eq_ignore_ascii_case("image_url"));
+        let item_changed = sanitize_inline_images_in_value(item);
+        changed |= item_changed;
+        if item_changed && was_image_part {
+            if let Some(path) = last_path.as_deref() {
+                item["text"] = Value::String(omitted_image_placeholder_with_path(Some(path)));
+            }
+        }
     }
     changed
 }

@@ -2193,6 +2193,28 @@ impl WorkspaceManager {
         }
     }
 
+    /// 上一轮请求实际内联的图片数。新一轮恢复占位时以此为预算，只还原上一轮
+    /// 真正发出去的图，避免每轮都把图片预算重新填满、把更早的占位复活。
+    pub fn save_session_inline_image_count(&self, user_id: &str, session_id: &str, count: usize) {
+        let key = format!(
+            "{}:inline_images",
+            self.session_sent_prefix_key(user_id, session_id)
+        );
+        let _ = self.storage.set_meta(&key, &count.to_string());
+    }
+
+    pub fn load_session_inline_image_count(&self, user_id: &str, session_id: &str) -> Option<usize> {
+        let key = format!(
+            "{}:inline_images",
+            self.session_sent_prefix_key(user_id, session_id)
+        );
+        self.storage
+            .get_meta(&key)
+            .ok()
+            .flatten()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+    }
+
     /// 记录该前缀属于哪个用户轮次，供跨轮分歧事件标注 `previous_turn`。
     pub fn save_session_sent_prefix_turn(&self, user_id: &str, session_id: &str, turn: u64) {
         let key = format!("{}:turn", self.session_sent_prefix_key(user_id, session_id));

@@ -30,6 +30,11 @@ pub(super) trait SqliteThreadOpenLeaseStorage {
         session_id: &str,
         user_id: &str,
     ) -> Result<Option<ThreadOpenLeaseRecord>>;
+    fn purge_thread_open_leases_impl(
+        &self,
+        client_kind: &str,
+        owner_instance_id: &str,
+    ) -> Result<i64>;
 }
 
 impl SqliteThreadOpenLeaseStorage for SqliteStorage {
@@ -175,6 +180,24 @@ impl SqliteThreadOpenLeaseStorage for SqliteStorage {
                 expires_at: row.get(6)?,
             }),
         ).optional().map_err(Into::into)
+    }
+
+    fn purge_thread_open_leases_impl(
+        &self,
+        client_kind: &str,
+        owner_instance_id: &str,
+    ) -> Result<i64> {
+        self.ensure_initialized()?;
+        // 过期行先清；同 kind 的其它实例行只可能来自本机上一个已退出/被强杀
+        // 的进程（调用方以单实例锁为前提），因此可以立即释放，不必等 TTL。
+        // 别种客户端的行保持不动：命令行可能仍在正常运行。
+        let removed = self.open_queue()?.execute(
+            "DELETE FROM thread_open_leases
+             WHERE expires_at <= (julianday('now')-2440587.5)*86400.0
+                OR (client_kind = ?1 AND owner_instance_id <> ?2)",
+            params![client_kind.trim(), owner_instance_id.trim()],
+        )?;
+        Ok(removed as i64)
     }
 }
 
@@ -325,5 +348,45 @@ mod tests {
                 .unwrap(),
             ThreadOpenLeaseStatus::Acquired { .. }
         ));
+    }
+
+    #[test]
+    fn purge_releases_dead_same_kind_leases_but_keeps_other_clients() {
+        let dir = tempdir().expect("tempdir");
+        let storage = SqliteStorage::new(
+            dir.path()
+                .join("purge.db")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        for (thread, instance, kind) in [
+            ("dead-desktop", "old-instance", "desktop"),
+            ("live-desktop", "current-instance", "desktop"),
+            ("cli-thread", "cli-process", "cli"),
+        ] {
+            assert!(matches!(
+                storage
+                    .try_acquire_thread_open_lease(thread, "user", instance, kind, 30.0)
+                    .expect("lease"),
+                ThreadOpenLeaseStatus::Acquired { .. }
+            ));
+        }
+        let removed = storage
+            .purge_thread_open_leases("desktop", "current-instance")
+            .expect("purge");
+        assert_eq!(removed, 1);
+        assert!(storage
+            .get_thread_open_lease("dead-desktop", "user")
+            .expect("read dead lease")
+            .is_none());
+        assert!(storage
+            .get_thread_open_lease("live-desktop", "user")
+            .expect("read live lease")
+            .is_some());
+        // 另一个命令行进程可能仍在正常运行，不得被桌面版的启动清扫删掉。
+        assert!(storage
+            .get_thread_open_lease("cli-thread", "user")
+            .expect("read cli lease")
+            .is_some());
     }
 }

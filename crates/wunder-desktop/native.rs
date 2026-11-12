@@ -543,6 +543,19 @@ fn recover_restarted_threads(desktop: &DesktopRuntime, instance_id: &str) -> usi
         }
         candidates.push(session_id.to_string());
     }
+    // 崩溃时正在执行的线程还会留下一条 120 秒 TTL 的执行锁。打开线程时
+    // 这道锁直接判 Busy，同样表现为“线程打不开”，而监视缓存里未必还有
+    // 对应的运行记录。本进程刚启动，没有任何本地执行者，因此这些锁在
+    // 结算孤儿轮次后只要线程没有活跃轮次就可以立即释放。
+    if let Ok(locks) = storage.list_session_locks_by_user(user) {
+        for lock in locks {
+            let session_id = lock.session_id.trim();
+            if session_id.is_empty() || !seen.insert(session_id.to_string()) {
+                continue;
+            }
+            candidates.push(session_id.to_string());
+        }
+    }
     let mut settled = 0usize;
     for session_id in &candidates {
         match storage.get_thread_open_lease(session_id, user) {
@@ -582,6 +595,11 @@ fn recover_restarted_threads(desktop: &DesktopRuntime, instance_id: &str) -> usi
         if still_active {
             // 待派发任务会继续执行，保留监视状态。
             continue;
+        }
+        // 线程已无活跃轮次：残留的执行锁只可能属于已退出的上一进程。
+        // 保留它会让下一次打开在 TTL 内一直回 Busy（呈现为锁定）。
+        if let Err(error) = storage.force_release_session_lock(session_id) {
+            tracing::warn!(%error, session_id, "release orphaned session lock failed");
         }
         if desktop.state.monitor.settle_restarted_session(session_id) {
             settled += 1;
@@ -657,6 +675,16 @@ impl NativeDesktop {
         // 显示“运行中”。A background tick must never settle turns owned by
         // the live UI process.
         if !args.background_runtime {
+            // 桌面版由单实例锁保证本机只有一个桌面进程，因此上一次崩溃/强杀
+            // 留下的 desktop 打开租约必然是死的。不清扫时线程要等满 15 秒
+            // TTL 才能重新打开，中间每一次点击都只回 THREAD_IN_USE。
+            match desktop.state.storage.purge_thread_open_leases("desktop", &instance_id) {
+                Ok(removed) if removed > 0 => {
+                    tracing::info!(removed, "released stale desktop thread leases");
+                }
+                Ok(_) => {}
+                Err(error) => tracing::warn!(%error, "purge stale thread leases failed"),
+            }
             let recovered = recover_restarted_threads(&desktop, &instance_id);
             if recovered > 0 {
                 tracing::info!(recovered, "settled restarted thread status");

@@ -30,22 +30,25 @@ type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
 type WorkflowItemLike = Record<string, any>;
 type MessageLike = Record<string, any>;
 
+/**
+ * 耗时一律取整到秒：运行中的秒表逐秒推进，带小数的数字每 0.1 秒跳一次反而看不清。
+ * 单位按量级取最大可用单位（秒 / 分 / 时）。
+ */
+export const formatDurationSeconds = (seconds: number): string => {
+  const total = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(total / 60);
+  const hours = Math.floor(minutes / 60);
+  const secondsPart = total % 60;
+  if (hours > 0) return `${hours}h ${minutes % 60}m ${secondsPart}s`;
+  if (minutes > 0) return `${minutes}m ${secondsPart}s`;
+  return `${secondsPart}s`;
+};
+
 const formatDuration = (seconds: unknown): string => {
   if (seconds === null || seconds === undefined || Number.isNaN(Number(seconds))) return '-';
   const value = Number(seconds);
   if (!Number.isFinite(value) || value < 0) return '-';
-  // Keep the bubble compact while retaining enough precision for short turns.
-  // Use the largest useful unit and always render seconds with one decimal.
-  if (value < 60) return `${value.toFixed(1)}s`;
-  const totalMinutes = Math.floor(value / 60);
-  const minutes = totalMinutes % 60;
-  const hours = Math.floor(totalMinutes / 60);
-  const secondsPart = value - totalMinutes * 60;
-  const parts: string[] = [];
-  if (hours > 0) parts.push(`${hours}h`);
-  if (minutes > 0 || hours > 0) parts.push(`${minutes}m`);
-  parts.push(`${secondsPart.toFixed(1)}s`);
-  return parts.join(' ');
+  return formatDurationSeconds(value);
 };
 
 const formatCount = (value: unknown): string => {
@@ -340,15 +343,23 @@ const resolveDurationSeconds = (stats: Record<string, any>): number | null => {
 };
 
 /** 过程条右侧的总耗时：只取本轮 interaction duration，无值时返回空串。 */
+/** 本轮总耗时的数值口径；无统计时返回 null。 */
+export const resolveAssistantTurnSeconds = (
+  message: Record<string, any> | null | undefined
+): number | null => {
+  if (!message || message.role !== 'assistant' || message.isGreeting) return null;
+  const stats = message.stats && typeof message.stats === 'object' ? message.stats : null;
+  if (!stats) return null;
+  const seconds = resolveDurationSeconds(stats);
+  if (seconds === null || !Number.isFinite(seconds) || seconds <= 0) return null;
+  return seconds;
+};
+
 export const resolveAssistantTurnDurationLabel = (
   message: Record<string, any> | null | undefined
 ): string => {
-  if (!message || message.role !== 'assistant' || message.isGreeting) return '';
-  const stats = message.stats && typeof message.stats === 'object' ? message.stats : null;
-  if (!stats) return '';
-  const seconds = resolveDurationSeconds(stats);
-  if (seconds === null || !Number.isFinite(seconds) || seconds <= 0) return '';
-  return formatDuration(seconds);
+  const seconds = resolveAssistantTurnSeconds(message);
+  return seconds === null ? '' : formatDurationSeconds(seconds);
 };
 
 const resolveTokenSpeed = (stats: Record<string, any>): number | null => {

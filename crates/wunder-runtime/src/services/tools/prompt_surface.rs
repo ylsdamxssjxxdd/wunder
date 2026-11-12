@@ -141,8 +141,8 @@ struct SurfaceRule {
 const SURFACE_RULES: &[SurfaceRule] = &[
     SurfaceRule {
         tool: "计划面板",
-        brief_en: "Show a compact plan panel. Provide plan steps and an optional explanation.",
-        brief_zh: "显示紧凑计划面板，传入 plan 步骤与可选 explanation。",
+        brief_en: "Progress ledger for multi-step work, visible to the user live. Build it when the task has several steps (one step in_progress), call it again with the full list as soon as a step finishes (full replace, at most one in_progress), and call it once more at the end with every step completed.",
+        brief_zh: "多步任务的进度台账，用户实时可见。开工时建清单（正在做的那步标 in_progress），每完成一步立刻带同一份完整清单再调一次（全量替换，只能有一个 in_progress），收尾时把全部步骤标 completed。",
         drop_actions: &[],
         drop_fields: &[],
     },
@@ -591,6 +591,18 @@ fn tidy_required(value: &mut Value) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn plan_brief_carries_the_update_discipline() {
+        let rule = rule_for("计划面板").expect("plan rule");
+        // 工具面是模型唯一必读的位置：何时建、何时更新、收尾要求都要在这里。
+        for needle in ["多步", "in_progress", "全量替换", "completed"] {
+            assert!(rule.brief_zh.contains(needle), "zh brief missing {needle}");
+        }
+        for needle in ["multi-step", "in_progress", "full replace", "completed"] {
+            assert!(rule.brief_en.contains(needle), "en brief missing {needle}");
+        }
+    }
 
     #[test]
     fn minify_drops_prose_but_preserves_schema_data() {

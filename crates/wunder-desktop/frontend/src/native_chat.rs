@@ -1858,7 +1858,7 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
             // Lease acquisition and metadata stay on the worker. The first
             // history pass reads headers only; folded process details are
             // paged on demand after the user opens that process.
-            let result = desktop.open_chat_snapshot(&id);
+            let result = open_with_busy_retry(&desktop, &id, &generation, request);
             let opened = result.is_ok();
             let _ = weak.upgrade_in_event_loop(move |app| {
                 if app.get_active_session_id() != id
@@ -1946,11 +1946,13 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
                         // say so instead of showing a raw storage error that
                         // reads like a permanent failure.
                         let text = error.to_string();
-                        let busy = text.contains("database is locked")
-                            || text.contains("SQLITE_BUSY")
-                            || text.contains("busy");
+                        let leased = text.contains("THREAD_IN_USE");
+                        let busy = !leased && open_conflict_is_transient(&text);
                         app.set_status(
-                            if busy {
+                            if leased {
+                                "该线程正被另一个 wunder 实例占用；关闭占用实例或稍候再打开"
+                                    .to_string()
+                            } else if busy {
                                 "本地数据正忙，请稍候再打开该线程".to_string()
                             } else {
                                 format!("无法打开线程：{text}")
@@ -2030,6 +2032,40 @@ fn bind_history_paging(app: &MainWindow, state: Rc<RefCell<State>>) {
             });
         });
     });
+}
+
+/// Open a thread, riding out a short-lived ownership conflict. A thread whose
+/// previous owner was just killed keeps its lease until the TTL lapses; the
+/// first click used to fail immediately with THREAD_IN_USE and looked like a
+/// permanently locked thread. The waits stay on the worker thread, and an
+/// abandoned selection stops before the next retry.
+fn open_with_busy_retry(
+    desktop: &Arc<NativeDesktop>,
+    id: &str,
+    generation: &Arc<AtomicU64>,
+    request: u64,
+) -> anyhow::Result<wunder_desktop::native::NativeChatSnapshot> {
+    let mut attempt = 0u32;
+    loop {
+        match desktop.open_chat_snapshot(id) {
+            Ok(snapshot) => return Ok(snapshot),
+            Err(error) if attempt < 3 && open_conflict_is_transient(&error.to_string()) => {
+                attempt += 1;
+                std::thread::sleep(Duration::from_millis(500 * u64::from(attempt)));
+                if generation.load(Ordering::Relaxed) != request {
+                    return Err(error);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn open_conflict_is_transient(text: &str) -> bool {
+    text.contains("THREAD_IN_USE")
+        || text.contains("database is locked")
+        || text.contains("database table is locked")
+        || text.contains("SQLITE_BUSY")
 }
 
 // A thread is the reusable "new thread" target only when it is a durable draft
@@ -3894,6 +3930,11 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
             break;
         }
     }
+    // 过程条右侧的本轮耗时按真实时间逐秒推进：即使这一帧没有新事件，也要让
+    // 秒表继续走，否则用户看到的是停住的数字加一次跳跃。
+    if !done {
+        timeline.borrow_mut().tick_elapsed();
+    }
     if dirty || done {
         // One frame flush: the active tail block and the measured
         // cells, never the whole history.
@@ -5111,7 +5152,7 @@ mod turn_tests {
             metrics,
             vec![
                 ("hashtag".to_string(), "57".to_string()),
-                ("stopwatch".to_string(), "12.4s".to_string()),
+                ("stopwatch".to_string(), "12s".to_string()),
                 ("gauge-high".to_string(), "68234.0 token/s".to_string()),
                 ("layer-group".to_string(), "12.3k".to_string()),
                 ("bolt".to_string(), "4.1k".to_string()),
@@ -5161,7 +5202,7 @@ mod turn_tests {
         assert_eq!(
             metrics,
             vec![
-                ("stopwatch".into(), "1.5s".into()),
+                ("stopwatch".into(), "2s".into()),
                 ("gauge-high".into(), "-".into()),
                 ("layer-group".into(), "--".into()),
                 ("bolt".into(), "--".into()),

@@ -1483,7 +1483,7 @@ mod tests {
             metrics,
             vec![
                 ("hashtag".to_string(), "57".to_string()),
-                ("stopwatch".to_string(), "12.4s".to_string()),
+                ("stopwatch".to_string(), "12s".to_string()),
                 ("gauge-high".to_string(), "68234.0 token/s".to_string()),
                 ("layer-group".to_string(), "12.3k".to_string()),
                 ("bolt".to_string(), "4.1k".to_string()),
@@ -1518,7 +1518,7 @@ mod tests {
             .iter()
             .find(|row| row.kind == crate::timeline::KIND_PROCESS)
             .expect("a process bar");
-        assert_eq!(bar.duration, "1m 5.4s");
+        assert_eq!(bar.duration, "1m 5s");
     }
 
     #[test]
@@ -1537,7 +1537,7 @@ mod tests {
             rows[0].time,
             crate::timeline_text::clock_hhmm(1_700_000_000.0)
         );
-        assert_eq!(rows[1].duration, "1m 5.4s");
+        assert_eq!(rows[1].duration, "1m 5s");
     }
 
     #[test]

@@ -47,6 +47,8 @@ ENTRIES = [
     ("stc_runs_empty", "暂无运行记录", "No runtime records"),
     ("stc_archives", "归档线程", "Archived threads"),
     ("stc_archives_note", "已归档线程，可查看或彻底删除", "Archived threads: review or delete"),
+    ("stc_archives_workspace", "工作区", "Workspace"),
+    ("stc_archives_workspace_missing", "未知工作区", "Unknown workspace"),
     ("stc_help", "帮助", "Help"),
     ("stc_help_note", "在本机打开使用手册", "Open the user manual on this machine"),
 

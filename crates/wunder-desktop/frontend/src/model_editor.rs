@@ -214,6 +214,21 @@ pub(crate) fn defer_delete(app: &MainWindow, key: String) -> bool {
     defer(app, AfterSave::Delete(key))
 }
 
+/// 保存成功的提示文案。首次配置的真实模型会自动接管默认位（见
+/// `NativeDesktop::save_model`），那时要顺带说明它已经是默认模型。
+fn saved_message(app: &MainWindow, key: &str) -> String {
+    let i18n = app.global::<crate::I18n>();
+    let is_default = app
+        .get_models()
+        .iter()
+        .any(|model| model.key == key && model.is_default);
+    if is_default {
+        i18n.get_st_model_saved_default().to_string()
+    } else {
+        i18n.get_st_model_saved().to_string()
+    }
+}
+
 fn finish_action(app: &MainWindow) {
     let action = EDITOR.with(|slot| {
         slot.borrow_mut()
@@ -374,6 +389,13 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         }
                         app.set_model_projecting(projecting);
                         app.set_model_save_error("".into());
+                        // 新建模型只能由表单上的「保存」显式提交（见
+                        // `edit_should_autosave`），所以这一次保存要回答用户
+                        // 「点下去有没有生效」；已存在的模型是边改边存，每次都
+                        // 弹提示反而变成干扰。
+                        if creating {
+                            crate::native_pages::show_toast(&app, saved_message(&app, &key), 1);
+                        }
                         if changed {
                             schedule(&app, Duration::from_millis(500));
                         } else {

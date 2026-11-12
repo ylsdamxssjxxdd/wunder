@@ -4532,6 +4532,11 @@
   "en": "Model settings saved to the local runtime"
  },
  {
+  "key": "st_model_saved_default",
+  "zh": "模型配置已保存，并已设为默认模型",
+  "en": "Model settings saved and set as the default"
+ },
+ {
   "key": "st_default_model_updated",
   "zh": "默认模型已更新",
   "en": "Default model updated"
@@ -4910,6 +4915,16 @@
   "key": "stc_archives_note",
   "zh": "已归档线程，可查看或彻底删除",
   "en": "Archived threads: review or delete"
+ },
+ {
+  "key": "stc_archives_workspace",
+  "zh": "工作区",
+  "en": "Workspace"
+ },
+ {
+  "key": "stc_archives_workspace_missing",
+  "zh": "未知工作区",
+  "en": "Unknown workspace"
  },
  {
   "key": "stc_help",

@@ -183,16 +183,20 @@ pub fn resolve_status(state: &str, has_running_subagent: bool) -> &str {
     }
 }
 
-/// Match the web footer's precision for seconds, minutes and hours.
+/// Match the web footer's precision for seconds, minutes and hours. 秒一律取整：
+/// 运行中的秒表逐秒推进，带小数的数字每 0.1 秒跳一次反而看不清。
 pub fn duration(seconds: f64) -> String {
-    let minutes = (seconds / 60.0).floor() as u64;
+    let total = seconds.max(0.0).round() as u64;
+    let minutes = total / 60;
     let hours = minutes / 60;
+    let sec = total % 60;
+    let m = minutes % 60;
     if hours > 0 {
-        format!("{hours}h {}m {:.1}s", minutes % 60, seconds % 60.0)
+        format!("{}h {}m {}s", hours, m, sec)
     } else if minutes > 0 {
-        format!("{minutes}m {:.1}s", seconds % 60.0)
+        format!("{}m {}s", minutes, sec)
     } else {
-        format!("{seconds:.1}s")
+        format!("{}s", sec)
     }
 }
 
@@ -251,7 +255,7 @@ mod tests {
             values(&live),
             vec![
                 ("round", "57"),
-                ("duration", "1h 2m 5.2s"),
+                ("duration", "1h 2m 5s"),
                 ("speed", "68234.0 token/s"),
                 ("context", "120k"),
                 ("quota", "4.1k"),
@@ -275,7 +279,7 @@ mod tests {
                 ("credits", "--")
             ]
         );
-        assert_eq!(duration(125.4), "2m 5.4s");
+        assert_eq!(duration(125.4), "2m 5s");
         assert_eq!(count(2048.0), "2k");
     }
 

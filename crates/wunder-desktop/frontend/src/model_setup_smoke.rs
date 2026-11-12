@@ -88,6 +88,12 @@ pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::erro
                         !app.get_needs_model_setup(),
                         "the setup banner stayed on after a real model was saved",
                     )?;
+                    assert_state(
+                        app.get_models()
+                            .iter()
+                            .any(|model| model.key == "first-model" && model.is_default),
+                        "the first real model did not take over the default seat",
+                    )?;
                     app.set_settings_open(false);
                     phase = 3;
                 }

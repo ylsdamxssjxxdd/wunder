@@ -30,6 +30,21 @@ docker compose logs --tail=100 gitea bootstrap runner
 
 默认关闭自助注册与外部头像，私有仓库需登录。HTTP 不加密，仅用于可信内网。
 
+### 64K 页大小宿主（鲲鹏/麒麟默认 64K）
+
+qemu-user 在 64K 页 + 老内核（4.19）宿主上无法加载 x86 guest：4K 对齐的文件映射返回
+EFAULT/SIGBUS，6.2→11 全版本实测失败（见 docs/经验教训.md 2026-11-12），android 与
+win7-installer 两个 qemu 依赖任务受影响；原生任务（linux 双架构、win7 桌面/CLI）不受影响。
+社区答案是换 4K 内核（鲲鹏官方 FAQ、openEuler 共识），用户态无现成修复：
+
+- 准备机：`bash builders/build-kylin-4k-kernel.sh --sdk-root <kit-x86>/rust-builder/offline --out <dir>`
+  交叉编译 4.19.90-4k 内核 rpm（openEuler 同系源码 + 麒麟 kernel-devel 的 config 基线，驱动配置不动；
+  改页大小、关 RELOCATABLE/KASLR——4.19 的重定位在新 binutils 下链不了 -shared，构建机不需要 KASLR、
+  关 DEBUG_INFO 与模块签名）。
+- 服务器：rpm 与 `install-4k-kernel.sh` 同目录 root 运行，安装并 grubby 设默认，**手动 reboot**
+  （旧 64K 内核保留在 grub 菜单兜底）；重启后 `getconf PAGESIZE` 应为 4096。
+- binfmt 注册不跨重启：重启后重跑 `./load-images.sh`（或 `binfmt/install-service.sh` 开机单元）再触发工作流。
+
 ### 只有老 Docker / Compose v1 的机器
 
 `compose.yaml` 用的是 v2 语法（顶层 `name:`、`pull_policy`、卷与网络的 `name:`）。老机器上有两条路：

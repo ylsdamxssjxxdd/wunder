@@ -1131,32 +1131,25 @@ pub(super) fn collect_tool_calls_from_output(
     tool_calls_payload: Option<&Value>,
     tool_call_mode: ToolCallMode,
 ) -> Vec<ToolCall> {
+    // 原生 tool_calls 是权威通道：提供方一旦给出这个字段，本轮调用就以它为准，
+    // 不再去正文和推理里扫文本标记。模型在正文/思考中引用调用格式（说明、示例、
+    // 报错复盘）时经常写出带工具名的块，旧实现会把它当成真调用执行，凭空失败
+    // 并把模型拖进重试循环。
+    if let Some(payload) = tool_calls_payload {
+        return dedupe_tool_calls(normalize_tool_calls(payload.clone()));
+    }
+
     let mut calls = match tool_call_mode {
-        ToolCallMode::FunctionCall => {
-            let mut calls = parse_tool_calls_from_text_strict(content);
-            if !reasoning.trim().is_empty() {
-                calls.extend(parse_tool_calls_from_text_strict(reasoning));
-            }
-            calls
+        ToolCallMode::FunctionCall | ToolCallMode::ToolCall => {
+            parse_tool_calls_from_text_strict(content)
         }
-        ToolCallMode::ToolCall => {
-            let mut calls = parse_tool_calls_from_text_strict(content);
-            if !reasoning.trim().is_empty() {
-                calls.extend(parse_tool_calls_from_text_strict(reasoning));
-            }
-            calls
-        }
-        ToolCallMode::FreeformCall => {
-            let mut calls = parse_tool_calls_from_text(content);
-            if calls.is_empty() {
-                calls.extend(parse_tool_calls_from_text_strict(reasoning));
-            }
-            calls
-        }
+        ToolCallMode::FreeformCall => parse_tool_calls_from_text(content),
     };
 
-    if let Some(payload) = tool_calls_payload {
-        calls.extend(normalize_tool_calls(payload.clone()));
+    // 没有原生通道时才看推理：文本协议模型会把调用写在正文，推理里的多半仍是
+    // 讨论，只作为最后的兜底。
+    if calls.is_empty() && !reasoning.trim().is_empty() {
+        calls.extend(parse_tool_calls_from_text_strict(reasoning));
     }
 
     dedupe_tool_calls(calls)
@@ -1517,6 +1510,50 @@ mod tests {
         let content = r#"{"tool":"read_file","ok":true,"data":{"path":"a.txt"}}"#;
         let calls = parse_tool_calls_from_text(content);
         assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn test_reasoning_markup_is_not_executed_when_native_calls_exist() {
+        // 推理里只是在讨论格式，不该凭空发起一次真实调用。
+        let reasoning =
+            "例如可以写 <tool_call><name>计划面板</name><input>{\"plan\":[]}</input></tool_call> 这样调用。";
+        let payload = json!([{
+            "id": "call_1",
+            "name": "读取文件",
+            "arguments": { "path": "a.txt" }
+        }]);
+        let calls = collect_tool_calls_from_output(
+            "",
+            reasoning,
+            Some(&payload),
+            ToolCallMode::FunctionCall,
+        );
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "读取文件");
+    }
+
+    #[test]
+    fn test_content_markup_is_ignored_when_native_calls_exist() {
+        // 正文里引用调用形状（说明/示例/复盘）不等于一次调用；原生通道已经给了
+        // 真调用时，只执行原生那一个。
+        let content = r#"上一轮报错是 <tool_call><name>计划面板</name><input>{"plan":[]}</input></tool_call> 这样造成的。"#;
+        let payload = json!([{
+            "id": "call_1",
+            "name": "读取文件",
+            "arguments": { "path": "a.txt" }
+        }]);
+        let calls =
+            collect_tool_calls_from_output(content, "", Some(&payload), ToolCallMode::FunctionCall);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "读取文件");
+    }
+
+    #[test]
+    fn test_reasoning_markup_still_works_without_native_calls() {
+        let reasoning = r#"<tool_call><name>读取文件</name><arguments>{"path":"a.txt"}</arguments></tool_call>"#;
+        let calls = collect_tool_calls_from_output("", reasoning, None, ToolCallMode::ToolCall);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "读取文件");
     }
 
     #[test]

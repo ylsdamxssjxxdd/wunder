@@ -694,9 +694,19 @@ impl Orchestrator {
                 .filter_map(normalize_model_context_message).collect::<Vec<_>>();
             messages.extend(model_context_entries);
             messages = context_manager.normalize_messages(messages);
+            // 恢复预算取上一轮实际内联的图片数：占位只还原“上一轮真的发出去
+            // 的那几张”，不重新填满预算。否则每轮都会把更早的占位复活，跨轮
+            // 前缀必然断开。
+            let mut restore_policy = image_policy.clone();
+            if let Some(previous) = self
+                .workspace
+                .load_session_inline_image_count(&user_id, &session_id)
+            {
+                restore_policy.max_images = previous.min(image_policy.max_images);
+            }
             let restore_report = crate::services::chat_media::restore_omitted_inline_images(
                 &mut messages,
-                &image_policy,
+                &restore_policy,
             )
             .await;
             if restore_report.placeholders > 0 {
@@ -950,6 +960,12 @@ impl Orchestrator {
                     }
                     emitter.emit("context_image_budget", payload).await;
                 }
+                // 记住本轮真正内联的图片数，下一轮恢复占位时以此为预算。
+                self.workspace.save_session_inline_image_count(
+                    &user_id,
+                    &session_id,
+                    image_report.images_after,
+                );
                 let current_prefix_hashes: Vec<String> = messages
                     .iter()
                     .map(super::context::stable_json_message_hash)
@@ -1675,6 +1691,7 @@ impl Orchestrator {
 
                 let mut should_finish = false;
                 let mut failure_reroute_notice: Option<Value> = None;
+                let mut no_progress_notice: Option<Value> = None;
                 if !exec_calls.is_empty() {
                     let mut cached_recall_outcomes = Vec::new();
                     let mut executable_calls = Vec::new();
@@ -2242,40 +2259,68 @@ impl Orchestrator {
                             ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                         }
 
+                        if !result.ok {
+                            // A failed call changes what the agent knows, so it
+                            // breaks the "same observations, no progress" chain.
+                            success_progress_governor.reset();
+                        }
                         if failure_reroute_notice.is_none() {
                             if result.ok {
                                 if let Some(stop) =
                                     success_progress_governor.record(&name, &args, &result)
                                 {
-                                    let detail = stop.detail.clone();
-                                    let guard_answer = build_tool_no_progress_guard_answer(
-                                        &stop.tool,
-                                        stop.repeat_count,
-                                        stop.threshold,
-                                        &detail,
-                                    );
-                                    stop_reason = Some("tool_no_progress_guard".to_string());
-                                    stop_meta = Some(json!({
-                                        "type": "tool_no_progress_guard",
-                                        "tool": stop.tool.clone(),
-                                        "repeat_count": stop.repeat_count,
-                                        "threshold": stop.threshold,
-                                        "detail": detail,
-                                    }));
-                                    let mut guard_payload = json!({
-                                        "stage": "tool_no_progress_guard",
-                                        "summary": "Repeated successful tool observations produced no new progress; stopped the loop.",
-                                        "tool": stop.tool,
-                                        "repeat_count": stop.repeat_count,
-                                        "threshold": stop.threshold,
-                                        "detail": stop.detail,
-                                    });
-                                    if let Value::Object(ref mut map) = guard_payload {
-                                        round_info.insert_into(map);
+                                    retry_governor.record_success();
+                                    if stop.escalated {
+                                        let detail = stop.detail.clone();
+                                        let guard_answer = build_tool_no_progress_guard_answer(
+                                            &stop.tool,
+                                            stop.repeat_count,
+                                            stop.threshold,
+                                            &detail,
+                                        );
+                                        stop_reason = Some("tool_no_progress_guard".to_string());
+                                        stop_meta = Some(json!({
+                                            "type": "tool_no_progress_guard",
+                                            "tool": stop.tool.clone(),
+                                            "repeat_count": stop.repeat_count,
+                                            "threshold": stop.threshold,
+                                            "distinct_steps": stop.distinct_steps,
+                                            "detail": detail,
+                                        }));
+                                        let mut guard_payload = json!({
+                                            "stage": "tool_no_progress_guard",
+                                            "summary": "Repeated successful tool observations produced no new progress; stopped the loop.",
+                                            "tool": stop.tool,
+                                            "repeat_count": stop.repeat_count,
+                                            "threshold": stop.threshold,
+                                            "distinct_steps": stop.distinct_steps,
+                                            "detail": stop.detail,
+                                        });
+                                        if let Value::Object(ref mut map) = guard_payload {
+                                            round_info.insert_into(map);
+                                        }
+                                        emitter.emit("progress", guard_payload).await;
+                                        answer = guard_answer;
+                                        should_finish = true;
+                                    } else {
+                                        // First detection: keep the turn alive but
+                                        // tell the model its calls changed nothing.
+                                        let mut notice_payload = json!({
+                                            "stage": "tool_no_progress_notice",
+                                            "summary": "Repeated successful tool observations produced no new progress; model notified to change strategy.",
+                                            "tool": stop.tool.clone(),
+                                            "repeat_count": stop.repeat_count,
+                                            "threshold": stop.threshold,
+                                            "distinct_steps": stop.distinct_steps,
+                                            "detail": stop.detail.clone(),
+                                        });
+                                        if let Value::Object(ref mut map) = notice_payload {
+                                            round_info.insert_into(map);
+                                        }
+                                        emitter.emit("progress", notice_payload).await;
+                                        no_progress_notice =
+                                            Some(build_tool_no_progress_model_notice(&stop));
                                     }
-                                    emitter.emit("progress", guard_payload).await;
-                                    answer = guard_answer;
-                                    should_finish = true;
                                 } else {
                                     retry_governor.record_success();
                                 }
@@ -2482,6 +2527,25 @@ impl Orchestrator {
                             &session_id,
                             &model_notice_message,
                             "tool_failure_reroute",
+                            round_info,
+                        ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
+                        continue;
+                    }
+                }
+
+                if let Some(model_notice) = no_progress_notice.take() {
+                    if !should_finish && answer.is_empty() {
+                        let model_notice = encode_observation_prefixed_json(&model_notice);
+                        let model_notice_message = json!({
+                            "role": "user",
+                            "content": model_notice,
+                        });
+                        messages.push(model_notice_message.clone());
+                        self.try_append_internal_model_context_chat(
+                            &user_id,
+                            &session_id,
+                            &model_notice_message,
+                            "tool_no_progress_notice",
                             round_info,
                         ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
                         continue;

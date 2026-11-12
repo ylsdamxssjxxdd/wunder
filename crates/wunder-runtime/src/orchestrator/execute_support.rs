@@ -846,6 +846,36 @@ pub(super) fn build_tool_no_progress_guard_answer(
     )
 }
 
+/// Model-facing notice for a stalled-but-successful tool loop. It has to say
+/// what repeated, why it counts as no progress, and what to do instead, because
+/// the model has already proven it will keep re-issuing the same call.
+pub(super) fn build_tool_no_progress_model_notice(
+    stop: &super::retry_governor::SuccessProgressStop,
+) -> Value {
+    let detail_head = stop
+        .detail
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(TOOL_FAILURE_SIGNATURE_MAX_CHARS)
+        .collect::<String>();
+    json!({
+        "type": "tool_no_progress_notice",
+        "ok": true,
+        "tool": stop.tool,
+        "repeat_count": stop.repeat_count,
+        "threshold": stop.threshold,
+        "distinct_steps": stop.distinct_steps,
+        "observation": if detail_head.is_empty() {
+            Value::Null
+        } else {
+            Value::String(detail_head)
+        },
+        "instruction": "Your last calls kept returning one of a couple of identical observations, so they produced no new information. The turn will be stopped if this pattern repeats. Before calling any tool again: re-read the current file or the last observation, verify whether your previous edit actually took effect (compare the exact text you expected with what the file now contains), and only then act once. Do not re-issue a replace/patch whose old and new text are identical, do not re-run a command that already printed the same output, and change strategy instead of retrying the same pair of calls.",
+    })
+}
+
 pub(super) fn should_request_tool_failure_reroute(
     reason: &str,
     reroute_notice_count: u32,

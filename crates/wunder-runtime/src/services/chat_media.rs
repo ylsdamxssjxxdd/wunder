@@ -1476,6 +1476,16 @@ pub async fn load_image_attachment_data_url(
 /// request. Non-PNG formats (GIF animation, WebP/TIFF/BMP) keep their original
 /// bytes so frame semantics are not silently changed.
 pub(crate) async fn encode_model_ready_data_url(bytes: Vec<u8>, mime: String) -> String {
+    model_ready_data_url_from_bytes(bytes, mime).await
+}
+
+/// 唯一一份「图片进入模型上下文」的编码：入模上限内（2048 长边 / 2500 个
+/// 32px patch）直接复用源文件字节，只有超限才重采样编码。
+///
+/// 工具首次内联、跨轮恢复占位、附件加载都必须走这里。任何一条走了别的
+/// 编码，同一张图就会在两轮里拿到不同字节，模型侧的提示词前缀从那张图
+/// 开始失效——实测表现为“发一条新消息要等很久”。
+pub(crate) async fn model_ready_data_url_from_bytes(bytes: Vec<u8>, mime: String) -> String {
     // 动图（GIF）与视频等非静态格式原样内联，避免重编码丢帧。
     if !matches!(
         mime.as_str(),
@@ -1484,14 +1494,20 @@ pub(crate) async fn encode_model_ready_data_url(bytes: Vec<u8>, mime: String) ->
         return format!("data:{mime};base64,{}", STANDARD.encode(bytes));
     }
     let original = bytes.clone();
-    let mime_hint = mime.clone();
+    let fallback_mime = mime.clone();
     let encoded = blocking::run_cpu("model_image_view", move || {
-        encode_model_ready_image_bytes(&bytes, &mime_hint)
+        let Some((width, height)) = image_dimensions(&bytes) else {
+            return Ok((bytes, mime));
+        };
+        if view_fits_limits(width, height, MODEL_VIEW_MAX_DIMENSION, MODEL_VIEW_MAX_PATCHES) {
+            return Ok((bytes, mime));
+        }
+        encode_model_ready_image_bytes(&bytes, &mime)
     })
     .await;
     let (bytes, mime) = match encoded {
         Ok(encoded) => encoded,
-        Err(_) => (original, mime),
+        Err(_) => (original, fallback_mime),
     };
     format!("data:{mime};base64,{}", STANDARD.encode(bytes))
 }
@@ -1625,21 +1641,7 @@ pub async fn load_image_data_url_for_path(path: &str) -> Option<String> {
     if !is_supported_model_image_mime(&mime) || !validate_image_attachment_bytes(&mime, &bytes) {
         return None;
     }
-    // 对齐 codex：入模上限内（2048 长边 / 2500 patch）的图直接复用源文件字节，
-    // 只有超限才重采样编码。重编码只减小体积、不改变模型看到的内容，但它要在
-    // 每个新用户消息的首个请求上额外解码一次；能省就省，结果同样写进视图缓存。
-    let (bytes, mime) = blocking::run_cpu("reinstate_image_view", move || {
-        let Some((width, height)) = image_dimensions(&bytes) else {
-            return Ok((bytes, mime));
-        };
-        if view_fits_limits(width, height, MODEL_VIEW_MAX_DIMENSION, MODEL_VIEW_MAX_PATCHES) {
-            return Ok((bytes, mime));
-        }
-        encode_model_ready_image_bytes(&bytes, &mime)
-    })
-    .await
-    .ok()?;
-    let data_url = format!("data:{mime};base64,{}", STANDARD.encode(bytes));
+    let data_url = model_ready_data_url_from_bytes(bytes, mime).await;
     image_view_cache_insert(cache_key, &data_url);
     image_view_cache_insert(content_key, &data_url);
     Some(data_url)

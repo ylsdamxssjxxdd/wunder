@@ -114,6 +114,7 @@ ENTRIES = [
     ("st_agent_saved", "智能体配置已保存", "Agent settings saved"),
     ("st_local_settings_synced", "本地设置已同步", "Local settings synced"),
     ("st_model_saved", "模型配置已保存到本地运行时", "Model settings saved to the local runtime"),
+    ("st_model_saved_default", "模型配置已保存，并已设为默认模型", "Model settings saved and set as the default"),
     ("st_default_model_updated", "默认模型已更新", "Default model updated"),
     ("st_channel_saved", "渠道账号已保存", "Channel account saved"),
     ("st_channel_deleted", "渠道账号已删除", "Channel account deleted"),

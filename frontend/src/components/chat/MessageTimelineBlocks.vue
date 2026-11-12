@@ -126,7 +126,7 @@ import type { WorkflowItem } from './toolWorkflowRunModel';
 import type { ChatRuntimeTimelineBlock } from '@/realtime/chat/chatRuntimeTypes';
 import { t } from '@/i18n';
 import { reasoningPreview } from './timelineActivity';
-import { resolveAssistantTurnDurationLabel } from '@/utils/messageStats';
+import { useTurnDurationLabel } from './useTurnDurationLabel';
 
 /**
  * 云端版时间线的块渲染单元（§7.3 / §7.4，形态对齐桌面端
@@ -233,7 +233,11 @@ type TimelineFold = {
 
 // ------------------------------------------------------- 工具/思考条目
 
-const processDurationLabel = computed(() => resolveAssistantTurnDurationLabel(props.message));
+// 运行中逐秒推进，结束后落回权威统计值。
+const processDurationLabel = useTurnDurationLabel(
+  computed(() => (props.message || null) as Record<string, any> | null),
+  computed(() => Boolean(props.streaming))
+);
 const toolEntryModel = computed(() => buildTimelineToolEntries(props.workflowItems, t));
 const allToolEntries = computed(() => toolEntryModel.value.entries);
 const omittedRuns = computed(() => toolEntryModel.value.omittedRuns);
