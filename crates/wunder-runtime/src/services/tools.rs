@@ -45,7 +45,6 @@ pub(crate) mod registry;
 mod schedule_task_tool;
 mod schema;
 mod search_content_tool;
-mod self_status_tool;
 mod session_announce_support;
 mod session_run_lifecycle;
 mod session_run_stream;

@@ -655,6 +655,13 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
         // live rows are matched against when the durable snapshot takes over.
         user.id = format!("user-turn-{}", turn.root_id).into();
         rows.push(user);
+        if is_waiting_turn(turn) {
+            // The engine admitted this message but has not started it: the
+            // bubble is the whole turn. A process bar here would read as a
+            // running (or queued) turn, which is exactly what the user is not
+            // waiting for — the composer's strip owns that state.
+            continue;
+        }
         process += 1;
         let process_bar_at = rows.len();
         let mut bar = blank_row(
@@ -1042,6 +1049,19 @@ fn cloud_status_label(status: &str) -> &'static str {
         "waiting_approval" => "等待确认",
         _ => "正在生成…",
     }
+}
+
+/// A turn the engine admitted but has not started yet: it has no status, no
+/// answer and no work behind it. Only its user bubble belongs on screen; the
+/// waiting state lives in the composer's strip, never in the transcript.
+fn is_waiting_turn(turn: &NativeChatTurn) -> bool {
+    turn.assistant.stats_status.trim().is_empty()
+        && turn.assistant.state.trim().is_empty()
+        && turn.assistant.text.trim().is_empty()
+        && turn.rounds.is_empty()
+        && turn.subagents.is_empty()
+        && turn.failure.is_none()
+        && turn.question_panel.is_none()
 }
 
 fn is_queue_only_turn(turn: &NativeChatTurn) -> bool {

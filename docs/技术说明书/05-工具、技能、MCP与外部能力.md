@@ -42,7 +42,6 @@
 | `网页抓取` | `web_fetch` | 抓取网页正文与低噪声摘要 |
 | `网页搜索` | `web_search` | 关键词搜索公开网页（当前临时下架，见 §4.1） |
 | `桌面控制` | `desktop_control` | 桌面点击、输入、快捷键，以及 `wait` 等待观察 |
-| `自我状态` | `self_status` | 当前线程与工具链状态摘要 |
 | `goal` | `action=get|edit|pause|resume|complete|blocked` | 常驻目标工具，由运行时按会话注入；创建目标只能由用户发起 |
 | `语音生成` / `声转文` / `图像生成` / `视频生成` | 见 catalog 多模态 spec | 多模态四件套，需对应模型可用 |
 
@@ -113,8 +112,6 @@ services/tools/dispatch.rs:27  真正分发到实现
 | 启用网页抓取配置 | `网页抓取`（provider 与开关） | `services/tools/web_fetch_provider.rs`、`wunder-core/src/config.rs` |
 | desktop 运行模式 + 显式开关 | 桌面类工具 | `crates/wunder-desktop/`、`capabilities.rs` |
 | 浏览器能力启用 | `browser(action=...)` | `services/browser/providers/playwright.rs` |
-
-`自我状态` 不在任何默认名单，按需勾选。
 
 ## 4. 工具协议按 provider 解析
 

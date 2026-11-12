@@ -247,10 +247,17 @@ fn clear_pane(app: &MainWindow, slot: usize) {
 
 fn slot_busy(slot: &Slot) -> bool {
     slot.turns.iter().any(|turn| {
-        matches!(
-            turn.assistant.state.as_str(),
-            "running" | "queued" | "accepted" | "waiting_input" | "waiting_approval"
-        )
+        // A waiting echo of a message the engine has not admitted yet is not
+        // a running turn. Its durable header has no status and no answer, so
+        // it is a bare user bubble the engine will start later.
+        let waiting = turn.rounds.is_empty()
+            && turn.assistant.text.trim().is_empty()
+            && turn.assistant.stats_status.trim().is_empty();
+        !waiting
+            && matches!(
+                turn.assistant.state.as_str(),
+                "running" | "queued" | "accepted" | "waiting_input" | "waiting_approval"
+            )
     })
 }
 

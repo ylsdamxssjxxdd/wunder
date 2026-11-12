@@ -3,7 +3,7 @@
 //! 用通用启发式安全合成的工具改为一份固定调用内容，见 [`FIXED_ARGS`]），最终轮次输出总结文本。
 //! 所有行为由 (session, user_round, model_round) 确定性推导，取消恢复与重放保持一致。
 //! 由于这些工具调用会被**真实执行**，参数一律做无害化：只读工具沿用常规取值；有
-//! 副作用工具的路径参数改写到工作区 `.temp/` 目录、命令参数改为无副作用回显，从而
+//! 副作用工具的路径参数改写到工作区 `temp/` 目录、命令参数改为无副作用回显，从而
 //! 既不误改工作区其它位置，也不影响外部系统。
 
 use super::{VirtualReplayTurn, RANDOM_REPLAY_FORMAT, RANDOM_REPLAY_LOG_ID};
@@ -21,7 +21,7 @@ const READ_ONLY_HINTS: &[&str] = &[
     "检索", "查看", "浏览", "获取", "查询", "状态", "时间", "召回",
 ];
 /// 副作用关键词：命中它的工具按“有副作用工具”处理，参数必须无害化（路径改写进
-/// 工作区 `.temp/` 目录、命令改为无副作用回显等）。
+/// 工作区 `temp/` 目录、命令改为无副作用回显等）。
 const MUTATION_HINTS: &[&str] = &[
     "write",
     "edit",
@@ -60,7 +60,7 @@ const MUTATION_HINTS: &[&str] = &[
 /// 取参，而是发出一条**固定的无害调用内容**（以规范名或原始名精确匹配，大小写不敏感）。
 /// 覆盖三类：回合/用户可见控制（会话让出、问询面板）、真实机器控制与付费生成（桌面控制、
 /// 图像/视频/语音生成）、已单独提供入口的目标与子智能体工具。固定参数不消耗随机数；凡
-/// 会落地文件的固定调用，产物一律写入工作区 `.temp/`。
+/// 会落地文件的固定调用，产物一律写入工作区 `temp/`。
 const FIXED_ARGS: &[(&str, &str)] = &[
     // 回合控制：不实际让出，只发一条可忽略的提示文本。
     ("会话让出", r#"{"message":"__virtual_sim__"}"#),
@@ -86,30 +86,30 @@ const FIXED_ARGS: &[(&str, &str)] = &[
     // 手机控制：只发 wait，不点击、不打开应用，避免模拟轨迹干扰设备。
     ("手机控制", r#"{"action":"wait","delay_ms":0}"#),
     ("phone_control", r#"{"action":"wait","delay_ms":0}"#),
-    // 付费生成：最小提示词，产物落工作区 .temp/。
+    // 付费生成：最小提示词，产物落工作区 temp/。
     (
         "语音生成",
-        r#"{"text":"__virtual_sim__","path":".temp/__virtual_sim__.wav"}"#,
+        r#"{"text":"__virtual_sim__","path":"temp/__virtual_sim__.wav"}"#,
     ),
     (
         "generate_speech",
-        r#"{"text":"__virtual_sim__","path":".temp/__virtual_sim__.wav"}"#,
+        r#"{"text":"__virtual_sim__","path":"temp/__virtual_sim__.wav"}"#,
     ),
     (
         "图像生成",
-        r#"{"prompt":"a plain gray square on a white background","path":".temp/__virtual_sim__.png"}"#,
+        r#"{"prompt":"a plain gray square on a white background","path":"temp/__virtual_sim__.png"}"#,
     ),
     (
         "generate_image",
-        r#"{"prompt":"a plain gray square on a white background","path":".temp/__virtual_sim__.png"}"#,
+        r#"{"prompt":"a plain gray square on a white background","path":"temp/__virtual_sim__.png"}"#,
     ),
     (
         "视频生成",
-        r#"{"prompt":"a plain gray square on a white background","path":".temp/__virtual_sim__.mp4"}"#,
+        r#"{"prompt":"a plain gray square on a white background","path":"temp/__virtual_sim__.mp4"}"#,
     ),
     (
         "generate_video",
-        r#"{"prompt":"a plain gray square on a white background","path":".temp/__virtual_sim__.mp4"}"#,
+        r#"{"prompt":"a plain gray square on a white background","path":"temp/__virtual_sim__.mp4"}"#,
     ),
     // 目标工具：只读快照。目标只能由用户发起，模拟模型不得创建或替换目标。
     ("goal", r#"{"action":"get"}"#),
@@ -578,9 +578,9 @@ fn build_final_turn(
 /// 依据 input_schema 生成必填参数。
 ///
 /// * `mutating=false`（只读工具）：沿用启发式取值，让只读调用大概率成功。
-/// * `mutating=true`（有副作用工具）：一律无害化——路径类参数改写到工作区 `.temp/`
+/// * `mutating=true`（有副作用工具）：一律无害化——路径类参数改写到工作区 `temp/`
 ///   下的哨兵名，命令类参数改为无副作用回显。这样即使被真实执行，落地文件也只会
-///   集中落在 `.temp/`（便于清理），不会污染工作区其它位置或影响外部系统。
+///   集中落在 `temp/`（便于清理），不会污染工作区其它位置或影响外部系统。
 fn sample_arguments(schema: &Value, rng: &mut u64, mutating: bool) -> Value {
     sample_object(schema, rng, 0, mutating)
 }
@@ -633,7 +633,7 @@ fn sample_value(name: &str, schema: &Value, rng: &mut u64, depth: u32, mutating:
 fn string_argument(name: &str, rng: &mut u64, mutating: bool) -> String {
     let lowered = name.to_lowercase();
     if is_path_like(&lowered) {
-        // 只读工具指向当前目录；有副作用工具改到工作区 .temp/ 下，落地文件集中可清理。
+        // 只读工具指向当前目录；有副作用工具改到工作区 temp/ 下，落地文件集中可清理。
         return if mutating {
             workspace_temp_path(rng)
         } else {
@@ -676,11 +676,11 @@ fn is_command_like(lowered: &str) -> bool {
         .any(|key| lowered.contains(key))
 }
 
-/// 工作区 `.temp/` 目录下的相对哨兵路径：让有文件落地的模拟调用集中落在工作区内的
-/// `.temp/` 子目录，既无害化又便于清理，且不会散落到工作区其它位置。
+/// 工作区 `temp/` 目录下的相对哨兵路径：让有文件落地的模拟调用集中落在工作区内的
+/// `temp/` 子目录，既无害化又便于清理，且不会散落到工作区其它位置。
 fn workspace_temp_path(rng: &mut u64) -> String {
     let name = format!("__virtual_sim_{}__", (next_u64(rng) % 1_000_000) + 1);
-    format!(".temp/{name}")
+    format!("temp/{name}")
 }
 
 fn numeric_argument(name: &str, rng: &mut u64) -> i64 {
@@ -840,8 +840,8 @@ mod tests {
             "mutating tools must not target the working directory"
         );
         assert!(
-            path.starts_with(".temp/"),
-            "mutating paths should live under the workspace .temp/ dir, got {path}"
+            path.starts_with("temp/"),
+            "mutating paths should live under the workspace temp/ dir, got {path}"
         );
     }
 
@@ -868,7 +868,7 @@ mod tests {
             Some(yield_args)
         );
 
-        // 有文件落地的固定参数一律指向工作区 .temp/。
+        // 有文件落地的固定参数一律指向工作区 temp/。
         for (zh, en) in [
             ("语音生成", "generate_speech"),
             ("图像生成", "generate_image"),
@@ -877,8 +877,8 @@ mod tests {
             let args = fixed_arguments(zh, zh).expect("fixed args");
             let path = args.get("path").and_then(Value::as_str).expect("path set");
             assert!(
-                path.starts_with(".temp/"),
-                "fixed payloads must land under .temp/, got {path}"
+                path.starts_with("temp/"),
+                "fixed payloads must land under temp/, got {path}"
             );
             assert_eq!(
                 fixed_arguments(en, en),

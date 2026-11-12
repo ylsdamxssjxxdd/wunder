@@ -20,7 +20,6 @@ const TOOL_RULES: &[(&[&str], &str)] = &[
         &["会话让出", "sessions_yield", "session yield", "yield"],
         "share-from-square",
     ),
-    (&["自我状态", "self_status", "self status"], "gauge-high"),
     (
         &["桌面控制", "desktop_control", "desktop control"],
         "computer-mouse",
@@ -218,11 +217,6 @@ const ABILITY_RULES: &[(&[&str], &str, &str)] = &[
         &["会话让出", "sessions_yield", "session yield", "yield"],
         "share-from-square",
         "automation",
-    ),
-    (
-        &["自我状态", "self_status", "self status"],
-        "gauge-high",
-        "general",
     ),
     (&["桌面控制"], "computer-mouse", "general"),
     (

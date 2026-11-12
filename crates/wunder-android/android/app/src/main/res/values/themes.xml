@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The shell paints edge to edge itself, so the theme only owns the window
+  before the native surface exists. Painting it in the shell's own panel tone
+  (Theme.panel) makes the launch window indistinguishable from the first frame.
+
+  API 31+ has a mandatory system splash; values-v31/themes.xml overrides the
+  same style there (transparent icon, same background) so nothing is drawn
+  before the shell.
+-->
+<resources>
+    <style name="WunderTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/wunder_window_background</item>
+    </style>
+</resources>

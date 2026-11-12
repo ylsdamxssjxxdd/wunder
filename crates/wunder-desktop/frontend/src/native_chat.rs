@@ -2586,7 +2586,34 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             app.set_stopping(false);
             app.set_follow_output(true);
         }
-        if idle_before_submit {
+        if idle_before_submit && !optimistic {
+            // The thread looks idle, but the engine decides whether it really
+            // is. Until it admits this message the bubble is only a
+            // provisional echo: it shows the user's text and nothing else — no
+            // process bar, no status footer — and it is not the turn the
+            // thread is running. `admit_turn` upgrades it the moment the
+            // engine starts it; a queued admission settles it back.
+            //
+            // The echo is published passively: it is the user's own message
+            // landing in the transcript, not streamed output, and the thread
+            // has not started anything yet.
+            let (timeline, desktop) = {
+                let st = state.borrow();
+                (st.timeline.clone(), st.desktop.clone())
+            };
+            let mut live = timeline.borrow_mut();
+            let row = live.begin_waiting_turn(&client_message_id, &display_content);
+            echo_image_attachments(
+                &app,
+                &desktop,
+                &mut live,
+                row,
+                &display_content,
+                &preview_images,
+            );
+            publish_timeline_passive(&app, &live);
+        }
+        if idle_before_submit && optimistic {
             // This is the ordering fence for a directory request that began
             // before the user submitted. A busy thread keeps its live running
             // status until the engine confirms that the new request queued.
@@ -2709,8 +2736,8 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                                     publish_inquiry(&app, &session, &st);
                                 }
                             }
-                            if same_thread && optimistic_visible {
-                                // The optimistic bubble did not reach the
+                            if same_thread && (optimistic_visible || idle_before_submit) {
+                                // The provisional bubble did not reach the
                                 // engine. Remove only its provisional tail;
                                 // a durable snapshot can be stale while the
                                 // selected-thread watcher is mid-refresh.
@@ -2782,7 +2809,24 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                     // Ordinary sends get their bubble only after the worker
                     // returns, preserving a running turn's live projection.
                     let timeline = state.borrow().timeline.clone();
-                    if !optimistic_visible {
+                    let mut provisional = idle_before_submit && !optimistic_visible;
+                    if provisional {
+                        // The thread looked idle but the engine parked the
+                        // message behind someone else's turn. The echo must not
+                        // pretend to be a running turn: it stays a bare user
+                        // bubble, exactly like the composer's waiting row, and
+                        // the engine's queue strip carries the waiting state.
+                        let mut live = timeline.borrow_mut();
+                        if live.is_waiting()
+                            && live.active_root() == Some(client_message_id.as_str())
+                        {
+                            live.finish(crate::timeline::Settle::Done);
+                            publish_timeline_passive(&app, &live);
+                        } else {
+                            provisional = false;
+                        }
+                    }
+                    if !optimistic_visible && !provisional {
                         let desktop = state.borrow().desktop.clone();
                         let mut live = timeline.borrow_mut();
                         if settles_inquiry {
@@ -2798,6 +2842,18 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                             &preview_images,
                         );
                         live.set_turn_status("请求中", 0);
+                        publish_timeline(&app, &live);
+                        app.set_busy(true);
+                        app.set_activity_running(true);
+                        app.set_stopping(false);
+                        app.set_follow_output(true);
+                        set_session_status(&app, &session, "请求中", Phase::Running);
+                    } else if provisional {
+                        // The engine started the message this window echoed
+                        // while the thread looked idle: the bubble becomes the
+                        // running turn it was waiting to be.
+                        let mut live = timeline.borrow_mut();
+                        live.admit_turn(&client_message_id);
                         publish_timeline(&app, &live);
                         app.set_busy(true);
                         app.set_activity_running(true);
@@ -3846,9 +3902,17 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
             if entry.settles_inquiry {
                 live.settle_answered_inquiry();
             }
-            let row = live.begin_turn(&entry.client_message_id, &content);
-            echo_image_attachments(&app, &desktop, &mut live, row, &content, &entry.images);
-            live.set_turn_status("请求中", 0);
+            // The bubble may already be on screen: a message submitted while
+            // the thread looked idle is echoed as a waiting turn until the
+            // engine starts it. Promote that echo instead of adding a second
+            // bubble for the same submission.
+            if live.is_waiting() && live.active_root() == Some(entry.client_message_id.as_str()) {
+                live.admit_turn(&entry.client_message_id);
+            } else {
+                let row = live.begin_turn(&entry.client_message_id, &content);
+                echo_image_attachments(&app, &desktop, &mut live, row, &content, &entry.images);
+                live.set_turn_status("请求中", 0);
+            }
             publish_timeline(&app, &live);
         }
         let mut output = TurnOutput::new(session.clone(), timeline.clone());
@@ -4806,6 +4870,46 @@ pub(crate) fn format_count_i64(value: i64) -> String {
 #[cfg(test)]
 mod turn_tests {
     use super::*;
+
+    /// A message the user has submitted but the engine has not admitted yet is
+    /// only an echo: its bubble must not claim a status, a process fold or a
+    /// footer, and the durable snapshot must not wipe it while it waits.
+    #[test]
+    fn waiting_turn_shows_only_its_bubble_until_the_engine_admits_it() {
+        let mut timeline = crate::timeline::Timeline::new();
+        timeline.begin_waiting_turn("native-send-1", "第二个问题");
+        timeline.set_turn_status("排队中", 0);
+        timeline.flush();
+        let rows: Vec<_> = timeline.model().iter().collect();
+        assert_eq!(rows.len(), 1, "a waiting turn owns its user bubble only");
+        assert_eq!(rows[0].kind, crate::timeline::KIND_USER);
+        assert_eq!(rows[0].text.as_str(), "第二个问题");
+
+        // A durable snapshot that does not carry the turn yet must not drop it.
+        timeline.publish_history(Vec::new());
+        assert_eq!(timeline.model().row_count(), 1);
+
+        // The engine starts it: the bubble becomes an ordinary running turn.
+        timeline.admit_turn("native-send-1");
+        timeline.set_turn_status("请求中", 0);
+        let rows: Vec<_> = timeline.model().iter().collect();
+        assert_eq!(rows[0].kind, crate::timeline::KIND_USER);
+        assert!(
+            rows.iter().any(|row| row.kind == crate::timeline::KIND_PROCESS),
+            "an admitted turn gets its process bar"
+        );
+        assert!(!timeline.is_waiting());
+    }
+
+    /// The durable header of an admitted-but-unstarted turn projects as a bare
+    /// user bubble: no process bar, no answer body, no footer.
+    #[test]
+    fn unstarted_durable_turn_projects_only_its_bubble() {
+        let turn = panel_turn("root-waiting", None);
+        let rows = crate::native_chat::project_history(&[turn]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, crate::timeline::KIND_USER);
+    }
 
     fn panel_turn(root: &str, panel: Option<Value>) -> wunder_desktop::NativeChatTurn {
         let message = wunder_desktop::NativeMessage {

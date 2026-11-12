@@ -47,6 +47,10 @@
         </intent>
     </queries>
 
+    <!-- @style/WunderTheme only owns the window/splash before the native
+         surface exists: it paints the shell's panel tone and (API 31+) draws no
+         splash icon, so the launch never flashes the blown-up launcher icon.
+         See res/values/themes.xml and res/values-v31/themes.xml. -->
     <application
         android:label="wunder 安卓版"
         android:icon="@mipmap/ic_launcher"
@@ -55,7 +59,7 @@
         android:hasCode="true"
         android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="true"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:theme="@style/WunderTheme">
 
         <!-- android-activity's native-activity feature owns the window. The
              thin WunderActivity subclass only forwards file-picker results. -->

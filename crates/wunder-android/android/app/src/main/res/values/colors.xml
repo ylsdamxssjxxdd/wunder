@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Launcher (adaptive icon) background: warm paper behind the coconut. -->
     <color name="ic_launcher_background">#FFF6E6</color>
+    <!--
+      The window surface the shell paints its first frame on. Theme.panel in
+      ui/design_tokens.slint is #FBFAF8; the launch window background must be
+      the exact same tone, otherwise the platform window shows through for a
+      frame and the user sees a flash between the splash and the shell.
+    -->
+    <color name="wunder_window_background">#FBFAF8</color>
 </resources>

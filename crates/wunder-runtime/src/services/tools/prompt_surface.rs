@@ -371,13 +371,6 @@ const SURFACE_RULES: &[SurfaceRule] = &[
         drop_fields: &[],
     },
     SurfaceRule {
-        tool: "自我状态",
-        brief_en: "Report the current agent's own status; detail_level=basic|full.",
-        brief_zh: "查询当前智能体自身状态；detail_level=basic|full。",
-        drop_actions: &[],
-        drop_fields: &[],
-    },
-    SurfaceRule {
         tool: "goal",
         brief_en: "Track the current task goal. get reads it; edit/pause/resume/complete/blocked need goal_id + revision from get. Goals are started by the user only; never create one.",
         brief_zh: "跟踪当前任务目标：get 读取，edit/pause/resume/complete/blocked 需 get 返回的 goal_id + revision。目标只能由用户发起，模型不得创建。",

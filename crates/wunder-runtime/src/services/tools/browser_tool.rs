@@ -19,7 +19,9 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
-const BROWSER_SCREENSHOT_DIR: &str = "browser/screenshots";
+/// 截图落点：工作区里唯一的 `temp/` 目录下的 `browser/screenshots/`，
+/// 与 `temp/chat_media/` 同属运行时中间产物，不散落到工作区根上。
+const BROWSER_SCREENSHOT_DIR: &str = "temp/browser/screenshots";
 const MAX_MODEL_SCREENSHOT_BYTES: usize = 8 * 1024 * 1024;
 const MODEL_SCREENSHOT_MAX_WIDTH: u32 = 1280;
 const MODEL_SCREENSHOT_MAX_HEIGHT: u32 = 2000;
@@ -509,5 +511,75 @@ mod tests {
             .as_str()
             .unwrap()
             .starts_with("data:image/png;base64,"));
+    }
+
+    /// 没给 `path` 的截图是运行时中间产物，必须落在工作区的 `temp/` 下，
+    /// 不能在工作区根上长出 `browser/`。
+    #[cfg(feature = "sqlite-storage")]
+    #[tokio::test]
+    async fn default_screenshot_lands_under_workspace_temp_dir() {
+        use crate::services::tools::ToolContext;
+        use crate::storage::{SqliteStorage, StorageBackend};
+        use std::{collections::HashMap, sync::Arc};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            dir.path().join("sample.db").to_string_lossy().to_string(),
+        ));
+        let workspace_root = dir.path().join("workspace");
+        std::fs::create_dir_all(&workspace_root).expect("create workspace root");
+        let workspace = Arc::new(crate::workspace::WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        let config = crate::config::Config::default();
+        let skills = crate::skills::SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let context = ToolContext {
+            user_id: "sample-user",
+            session_id: "sample-thread",
+            workspace_id: "sample-user",
+            agent_id: None,
+            user_round: None,
+            model_round: None,
+            is_admin: false,
+            storage,
+            orchestrator: None,
+            monitor: None,
+            lsp_manager: crate::lsp::LspManager::new_disabled(workspace.clone()),
+            workspace,
+            config: &config,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+        let mut result = json!({"ok":true,"data":{"format":"png"},"content":[
+            {"type":"image","mime_type":"image/png","data":"c2FtcGxl"}
+        ]});
+        super::persist_image_blocks(&context, &json!({}), &mut result).unwrap();
+        let relative = result["content"][0]["attachment"]["path"]
+            .as_str()
+            .expect("attachment path");
+        assert!(
+            relative.starts_with("temp/browser/screenshots/"),
+            "default screenshot should land under workspace temp/, got {relative}"
+        );
+        // 附件里的相对路径必须能反解回刚才写出的文件（工作区根 + temp/…）。
+        let resolved = context
+            .workspace
+            .resolve_path(context.workspace_id, relative)
+            .expect("resolve screenshot path");
+        assert!(resolved.is_file(), "screenshot file missing at {resolved:?}");
     }
 }

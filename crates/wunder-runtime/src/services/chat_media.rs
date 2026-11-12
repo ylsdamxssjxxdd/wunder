@@ -28,8 +28,12 @@ use tokio::process::Command;
 use tracing::warn;
 use uuid::Uuid;
 
-const CHAT_MEDIA_SOURCE_DIR: &str = "chat_media/source";
-const CHAT_MEDIA_DERIVED_DIR: &str = "chat_media/derived";
+/// 聊天媒体的落点：工作区里唯一的 `temp/` 目录下的 `chat_media/`。
+///
+/// `temp/` 是运行时中间产物的统一去处（浏览器截图同样是 `temp/browser/`），
+/// 不再让 `chat_media/` 直接长在工作区根上。
+const CHAT_MEDIA_SOURCE_DIR: &str = "temp/chat_media/source";
+const CHAT_MEDIA_DERIVED_DIR: &str = "temp/chat_media/derived";
 const DEFAULT_VIDEO_FRAME_RATE: f64 = 1.0;
 const MIN_VIDEO_FRAME_RATE: f64 = 0.1;
 const MAX_VIDEO_FRAME_RATE: f64 = 12.0;
@@ -2713,8 +2717,14 @@ mod tests {
                 .await
                 .expect("cap large")
                 .expect("large image is capped");
+        let public_path = attachment.public_path.as_deref().unwrap();
+        // 派生产物是运行时中间文件，统一落在工作区的 temp/ 下。
+        assert!(
+            public_path.replace('\\', "/").contains("temp/chat_media/derived/"),
+            "derived view should land under workspace temp/, got {public_path}"
+        );
         let path = workspace
-            .resolve_path("user", attachment.public_path.as_deref().unwrap())
+            .resolve_path("user", public_path)
             .expect("resolve derived");
         let decoded = image::open(&path).expect("open derived");
         assert!(decoded.width() <= 2048 && decoded.height() <= 2048);

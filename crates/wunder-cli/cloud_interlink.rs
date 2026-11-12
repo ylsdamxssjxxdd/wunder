@@ -476,7 +476,7 @@ pub(crate) async fn status_interlink_lines(is_zh: bool) -> Vec<String> {
         // instead of leaving the tunnel slot empty.
         Err(_) => return vec![interlink_status_line(None, None, is_zh)],
     };
-    let self_status = node_status_of(
+    let node_state = node_status_of(
         node_array(&nodes).as_slice(),
         &format!("device:{}", session.device_id),
     );
@@ -485,7 +485,7 @@ pub(crate) async fn status_interlink_lines(is_zh: bool) -> Vec<String> {
         Err(_) => None,
     };
     vec![
-        interlink_status_line(self_status.as_deref(), pending, is_zh),
+        interlink_status_line(node_state.as_deref(), pending, is_zh),
         account_nodes_line(&nodes, is_zh),
         workspace_usage_line(&session, is_zh).await,
     ]

@@ -46,8 +46,6 @@ TOOL_ALIASES = {
     "session_thread": "thread_control",
     "桌面控制": "desktop_control",
     "desktop": "desktop_control",
-    "自我状态": "self_status",
-    "自身状态": "self_status",
     "浏览器": "browser",
     "browser": "browser",
     "读取文件": "read_file",

@@ -2831,7 +2831,7 @@ mod observation_budget_tests {
     #[test]
     fn observation_budgets_share_capacity_without_exceeding_tool_caps() {
         let budgets = resolve_observation_token_budgets(
-            ["self_status", "read_file", "execute_command"],
+            ["list_files", "read_file", "execute_command"],
             128_000,
             1_000,
             Some(8_192),
@@ -2839,7 +2839,7 @@ mod observation_budget_tests {
         // The caps sum stays below the turn content target, so every tool keeps
         // its full per-tool budget.
         let caps = [
-            default_observation_token_budget("self_status"),
+            default_observation_token_budget("list_files"),
             default_observation_token_budget("read_file"),
             default_observation_token_budget("execute_command"),
         ];

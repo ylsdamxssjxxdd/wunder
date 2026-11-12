@@ -367,7 +367,7 @@ fn tool_profile(name: &str) -> ToolProfile {
             ToolProfile::Media
         }
         "桌面控制" | "手机控制" => ToolProfile::Desktop,
-        "goal" | "self_status" | "会话线程控制" | "会话让出" | "定时任务" => {
+        "goal" | "会话线程控制" | "会话让出" | "定时任务" => {
             ToolProfile::Runtime
         }
         "browser" => ToolProfile::Research,
@@ -377,7 +377,7 @@ fn tool_profile(name: &str) -> ToolProfile {
 fn tool_effect(name: &str) -> ToolEffect {
     match name {
         "列出文件" | "文件名匹配" | "搜索内容" | "读取文件" | "读取图片" | "读图工具"
-        | "技能调用" | "网页抓取" | "网页搜索" | "self_status" => ToolEffect::Read,
+        | "技能调用" | "网页抓取" | "网页搜索" => ToolEffect::Read,
         "goal" => ToolEffect::Mixed,
         "写入文件" | "文本编辑" | "计划面板" => ToolEffect::Write,
         "执行命令" | "命令会话" => ToolEffect::Execute,

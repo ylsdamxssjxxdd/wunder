@@ -3351,14 +3351,6 @@
     "en-US": "Whether the frontend should switch to the target thread after the action.",
     "zh-CN": "动作后前端是否切换到目标线程。"
   },
-  "tool.spec.self_status.description": {
-    "en-US": "Inspect the current session runtime state. The default basic view is for next-step decisions; use detail_level=full only for explicit administrator diagnostics, and do not call it frequently during normal task solving.",
-    "zh-CN": "诊断当前会话运行状态。默认返回 basic 摘要供下一步决策；仅管理员按需使用 detail_level=full 获取诊断信息，普通任务中不要高频调用。"
-  },
-  "tool.spec.self_status.args.detail_level": {
-    "en-US": "Detail level for output: basic or full; full is for administrator diagnostics.",
-    "zh-CN": "输出详情级别：basic 或 full；full 仅管理员诊断使用。"
-  },
   "tool.spec.read.args.path": {
     "en-US": "Path to a local plain-text file (code, config, logs, markdown); use read_image for images. Slice and indentation return raw file lines. Only \">>> path\" separators and outline source line numbers are display metadata, not file content.",
     "zh-CN": "本地纯文本文件路径（代码、配置、日志、Markdown），图片请用 read_image。slice 与 indentation 返回文件裸行；仅 \">>> 路径\" 分隔头和大纲源行号属于展示元数据，不是文件内容。"

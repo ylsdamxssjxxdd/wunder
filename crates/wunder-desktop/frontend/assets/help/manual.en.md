@@ -816,7 +816,6 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | 桌面控制 | ` desktop\_control ` | 操作本机桌面并观察（鼠标、键盘、窗口） | 桌面|
 | 子智能体控制 | ` subagent\_control ` | 在任务中临时派生子智能体，结果回传后回收 | 线程与子智能体|
 | 会话线程控制 | ` thread\_control ` | 管理任务线程 / 分支线程（桌面端不开放） | 线程与子智能体|
-| 自我状态 | ` self\_status ` | 查询智能体自身的运行状态 | 系统与记忆|
 | 记忆管理 | ` memory\_manager ` | 读写长期记忆 | 系统与记忆|
 | 定时任务 | ` schedule\_task ` | 创建与管理定时 / 周期任务 | 系统与记忆|
 | ` goal ` | \`action=get / create / edit / pause / resume / complete / blocked\` | Goal-state tool, auto-injected per session by the runtime; not selectable on desktop | 目标态 |
@@ -849,7 +848,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | Multimodal | Read image: Read Image; generate image / generate video / generate speech / transcribe speech: canonical names ` 图像生成 ` / ` 视频生成 ` / ` 语音生成 ` / ` 声转文 `, aliases ` generate\_image ` / ` generate\_video ` / ` generate\_speech ` / ` transcribe\_speech `; no dedicated page in this section|
 | Desktop | Desktop control: Desktop Control|
 | Threads and subagents | Subagent control: Subagent Control; thread control: Thread Control|
-| System and memory | Self status: Self Status; memory manager: Memory Manager; schedule task: Schedule Task|
+| System and memory | memory manager: Memory Manager; schedule task: Schedule Task|
 | Goal state | ` goal ` (\`action=get / create / edit / pause / resume / complete / blocked\`) is injected by the runtime per session and is not offered for selection on the desktop endpoint |
 
 ## Result shell

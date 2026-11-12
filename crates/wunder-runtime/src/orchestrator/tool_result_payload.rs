@@ -702,8 +702,7 @@ pub(super) fn default_observation_token_budget(tool_name: &str) -> i64 {
         // Browser action is selected at runtime from the structured response.
         // Use the document cap as the safe default before that response exists.
         "browser" => OBSERVATION_DOCUMENT_TOKEN_BUDGET,
-        "自身状态" | "自我状态" | "self_status" | "写入文件" | "write_file" | "apply_patch"
-        | "应用补丁" => OBSERVATION_STATUS_TOKEN_BUDGET,
+        "写入文件" | "write_file" | "apply_patch" | "应用补丁" => OBSERVATION_STATUS_TOKEN_BUDGET,
         // `command=view` shares the edit tool but returns line-numbered file
         // content; give it the same room as a document read.
         "编辑" | "文本编辑" => OBSERVATION_DOCUMENT_TOKEN_BUDGET,
@@ -1292,7 +1291,6 @@ fn project_success_observation_data(tool_name: &str, data: &Value) -> Option<Val
         name if name.ends_with("@__mcp_pack__") => project_mcp_pack_success(data),
         "定时任务" | "schedule_task" => project_schedule_task_success(data),
         "记忆管理" | "memory_manager" | "memory_manage" => project_memory_manager_success(data),
-        "自身状态" | "自我状态" | "self_status" => project_self_status(data),
         "goal" => project_goal_success(data),
         "桌面控制" | "desktop_control" => project_desktop_control(data),
         "手机控制" | "phone_control" => project_phone_control(data),
@@ -1957,30 +1955,6 @@ fn compact_browser_value(value: &Value, max_chars: usize) -> Value {
             Value::Object(projected)
         }
         _ => value.clone(),
-    }
-}
-
-fn project_self_status(data: &Value) -> Option<Value> {
-    let map = data.as_object()?;
-    let monitor = map.get("monitor").and_then(Value::as_object);
-    let rounds = map.get("rounds").and_then(Value::as_object);
-    let context = map.get("context").and_then(Value::as_object);
-    let mut projected = Map::new();
-    copy_field(&mut projected, "stage", monitor, "stage");
-    copy_field(&mut projected, "status", monitor, "status");
-    copy_field(&mut projected, "round", rounds, "model_rounds_peak");
-    copy_field(
-        &mut projected,
-        "context_tokens",
-        context,
-        "context_occupancy_tokens",
-    );
-    copy_field(&mut projected, "context_ratio", context, "context_ratio");
-    copy_field(&mut projected, "last_error", monitor, "last_error");
-    if projected.is_empty() {
-        None
-    } else {
-        Some(Value::Object(projected))
     }
 }
 
@@ -2805,20 +2779,6 @@ fn pick_non_empty_fields(map: &Map<String, Value>, keys: &[&str]) -> Map<String,
         }
     }
     projected
-}
-
-fn copy_field(
-    target: &mut Map<String, Value>,
-    target_key: &str,
-    source: Option<&Map<String, Value>>,
-    source_key: &str,
-) {
-    if let Some(value) = source
-        .and_then(|source| source.get(source_key))
-        .filter(|value| !value.is_null() && !is_empty_string(value))
-    {
-        target.insert(target_key.to_string(), value.clone());
-    }
 }
 
 fn copy_first_present(

@@ -27,7 +27,6 @@ fn parallel_safe_builtin_names() -> &'static HashSet<String> {
             "read_image",
             "web_search",
             "web_fetch",
-            "self_status",
         ]
         .into_iter()
         .map(resolve_tool_name)

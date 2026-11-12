@@ -120,7 +120,6 @@
               {
                 "group": "系统与记忆",
                 "pages": [
-                  "zh-CN/tools/self-status",
                   "zh-CN/tools/memory-manager",
                   "zh-CN/tools/schedule-task"
                 ]
@@ -327,7 +326,6 @@
               {
                 "group": "System and Memory",
                 "pages": [
-                  "en/tools/self-status",
                   "en/tools/memory-manager",
                   "en/tools/schedule-task"
                 ]

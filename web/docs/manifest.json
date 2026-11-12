@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-11-10T07:18:41.869615+00:00",
+  "generated_at": "2026-11-12T08:39:20.594626+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is a multi-form agent workbench: Desktop is the local AI workbench, Android is the Desktop's phone form, Cloud (web) is the cloud AI workbench, CLI is the manual local entry point, and the Server is the user and agent management platform. / wunder 是多形态的智能体工作台：桌面版（desktop）是本地 AI 工作台，安卓版（android）是桌面版的手机形态，云端版（web）是云端 AI 工作台，命令行（cli）是手工本地操作入口，服务端（server）是用户与智能体管理平台。",
@@ -255,12 +255,6 @@
               {
                 "group": "系统与记忆",
                 "pages": [
-                  {
-                    "slug": "zh-CN/tools/self-status",
-                    "title": "自我状态",
-                    "summary": "`self_status` 的基础摘要、管理员诊断档位、模型侧精简结果与数据来源口径。",
-                    "url": "/docs/zh-CN/tools/self-status/"
-                  },
                   {
                     "slug": "zh-CN/tools/memory-manager",
                     "title": "记忆管理",
@@ -822,12 +816,6 @@
                 "group": "System and Memory",
                 "pages": [
                   {
-                    "slug": "en/tools/self-status",
-                    "title": "Self Status",
-                    "summary": "The basic summary, administrator diagnostic mode, compact model result, and data sources of `self_status`.",
-                    "url": "/docs/en/tools/self-status/"
-                  },
-                  {
                     "slug": "en/tools/memory-manager",
                     "title": "Memory Manager",
                     "summary": "The seven actions of `memory_manager`, the short-index-injection plus fetch-on-demand usage pattern, a write example, and field constraints.",
@@ -1173,7 +1161,6 @@
     "zh-CN/tools/desktop-control",
     "zh-CN/tools/subagent-control",
     "zh-CN/tools/thread-control",
-    "zh-CN/tools/self-status",
     "zh-CN/tools/memory-manager",
     "zh-CN/tools/schedule-task",
     "zh-CN/tools/extensibility",
@@ -1244,7 +1231,6 @@
     "en/tools/read-image",
     "en/tools/subagent-control",
     "en/tools/thread-control",
-    "en/tools/self-status",
     "en/tools/memory-manager",
     "en/tools/schedule-task",
     "en/surfaces/index",
@@ -2447,7 +2433,7 @@
       "language": "zh-CN",
       "title": "计划面板 / 问询面板 / 会话让出",
       "summary": "三个交互控制工具的别名、各自的入参上限与归一写法、操作时生效的替换 / 结束语义，以及它们的两项数上限。",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-11-12",
       "read_when": [],
       "source_docs": [],
       "tab": "工具",
@@ -2559,7 +2545,7 @@
       "language": "zh-CN",
       "title": "执行命令",
       "summary": "`execute_command` 的参数、阻塞与后台两种执行模式、命令会话的轮询与写入、输出守卫与预算，以及失败后的诊断。",
-      "updated_at": "2026-11-09",
+      "updated_at": "2026-11-12",
       "read_when": [],
       "source_docs": [],
       "tab": "工具",
@@ -3024,50 +3010,9 @@
         }
       ],
       "prev_slug": "zh-CN/tools/subagent-control",
-      "next_slug": "zh-CN/tools/self-status",
+      "next_slug": "zh-CN/tools/memory-manager",
       "source_path": "zh-CN/tools/thread-control.md",
       "output_path": "zh-CN/tools/thread-control/index.html"
-    },
-    "zh-CN/tools/self-status": {
-      "slug": "zh-CN/tools/self-status",
-      "language": "zh-CN",
-      "title": "自我状态",
-      "summary": "`self_status` 的基础摘要、管理员诊断档位、模型侧精简结果与数据来源口径。",
-      "updated_at": "2026-10-16",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "工具",
-      "group": "系统与记忆",
-      "group_path": [
-        "系统与记忆"
-      ],
-      "url": "/docs/zh-CN/tools/self-status/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "自我状态"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "参数"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "返回字段"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "错误与处理"
-        }
-      ],
-      "prev_slug": "zh-CN/tools/thread-control",
-      "next_slug": "zh-CN/tools/memory-manager",
-      "source_path": "zh-CN/tools/self-status.md",
-      "output_path": "zh-CN/tools/self-status/index.html"
     },
     "zh-CN/tools/memory-manager": {
       "slug": "zh-CN/tools/memory-manager",
@@ -3105,7 +3050,7 @@
           "text": "限制"
         }
       ],
-      "prev_slug": "zh-CN/tools/self-status",
+      "prev_slug": "zh-CN/tools/thread-control",
       "next_slug": "zh-CN/tools/schedule-task",
       "source_path": "zh-CN/tools/memory-manager.md",
       "output_path": "zh-CN/tools/memory-manager/index.html"
@@ -6990,7 +6935,7 @@
       "language": "en",
       "title": "Plan Panel / Question Panel / Sessions Yield",
       "summary": "Aliases of the three interaction-control tools, their argument limits and normalized spellings, the replacement and turn-ending semantics that apply at call time, and their item caps.",
-      "updated_at": "2026-10-16",
+      "updated_at": "2026-11-12",
       "read_when": [],
       "source_docs": [],
       "tab": "Tools",
@@ -7097,7 +7042,7 @@
       "language": "en",
       "title": "Execute Command",
       "summary": "Arguments for `execute_command`, the blocking and background execution modes, polling and writing in a command session, output guards and budgets, and failure diagnosis.",
-      "updated_at": "2026-11-09",
+      "updated_at": "2026-11-12",
       "read_when": [],
       "source_docs": [],
       "tab": "Tools",
@@ -7466,45 +7411,9 @@
         }
       ],
       "prev_slug": "en/tools/subagent-control",
-      "next_slug": "en/tools/self-status",
+      "next_slug": "en/tools/memory-manager",
       "source_path": "en/tools/thread-control.md",
       "output_path": "en/tools/thread-control/index.html"
-    },
-    "en/tools/self-status": {
-      "slug": "en/tools/self-status",
-      "language": "en",
-      "title": "Self Status",
-      "summary": "The basic summary, administrator diagnostic mode, compact model result, and data sources of `self_status`.",
-      "updated_at": "2026-10-16",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "Tools",
-      "group": "System and Memory",
-      "group_path": [
-        "System and Memory"
-      ],
-      "url": "/docs/en/tools/self-status/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 2,
-          "text": "Arguments"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "Return fields"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "Errors"
-        }
-      ],
-      "prev_slug": "en/tools/thread-control",
-      "next_slug": "en/tools/memory-manager",
-      "source_path": "en/tools/self-status.md",
-      "output_path": "en/tools/self-status/index.html"
     },
     "en/tools/memory-manager": {
       "slug": "en/tools/memory-manager",
@@ -7537,7 +7446,7 @@
           "text": "Boundaries"
         }
       ],
-      "prev_slug": "en/tools/self-status",
+      "prev_slug": "en/tools/thread-control",
       "next_slug": "en/tools/schedule-task",
       "source_path": "en/tools/memory-manager.md",
       "output_path": "en/tools/memory-manager/index.html"

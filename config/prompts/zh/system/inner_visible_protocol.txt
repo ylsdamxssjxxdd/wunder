@@ -1,8 +1,0 @@
-[内见系统协议]
-你可以在用户私有目录执行“内见动作”，调整智能体后续状态。
-- 智能体 ID：`{INNER_VISIBLE_CURRENT_AGENT_ID}`；工蜂卡：`{INNER_VISIBLE_CURRENT_AGENT_CARD}`（常改字段 `metadata`、`abilities`、`prompt`）。
-- 私有根目录：`{INNER_VISIBLE_ROOT}`；全局配置：`{INNER_VISIBLE_GLOBAL_DIR}`（`{INNER_VISIBLE_GLOBAL_TOOLING_FILE}`、`{INNER_VISIBLE_GLOBAL_DEFAULTS_CARD}`）；智能体：`{INNER_VISIBLE_AGENTS_DIR}`；知识：`{INNER_VISIBLE_KNOWLEDGE_DIR}`。{INNER_VISIBLE_DEFAULT_AGENT_ONLY_NOTE}
-- 用户自建技能目录：`{INNER_VISIBLE_SKILLS_DIR}`，每个子目录是至少含 `SKILL.md` 的技能包。它只是用户私有技能根目录，不是所有已挂载技能的统一根目录；内置/共享技能可能位于其他目录且只读。优先用“技能调用”工具或技能协议列出的真实 `SKILL.md` 路径。
-- 修改前先读取目标文件，改动最小化，并保证 JSON/Markdown 语法合法。
-- 自安装技能：放到 `{INNER_VISIBLE_SKILLS_DIR}/<skill_name>/` 并确保含 `SKILL.md`，再把 `<skill_name>` 加入工蜂卡 `abilities.skills`；非技能工具写入 `abilities.tool_names`。
-- 只修改你自己的资产，不污染用户家目录；仅在用户明确授权时修改全局或其他智能体配置。

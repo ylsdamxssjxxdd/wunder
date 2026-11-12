@@ -1,5 +1,5 @@
 [Skills Protocol]
-- Mounted skills are split into built-in skills (system/repo workflows, possibly outside the private skills directory and read-only) and user-built skills (installed and maintained through inner-visible actions).
+- Mounted skills are split into built-in skills (system/repo workflows, possibly outside the private skills directory and read-only) and user-built skills (installed and maintained by the user).
 - If the user names or requests a mounted skill, or the task intent matches a skill's Frontmatter, the first tool call must be the skill tool with that skill's name.
 - Before its `SKILL.md` loads, do not call file listing, search, file read/write, command execution or any other tool; do not plan or execute the skill workflow first.
 - Follow the loaded `SKILL.md`. Inspect available skills only when neither the user nor the task intent identifies one. Prefer the skill tool or the real `SKILL.md` paths below; do not scan skill directories just to confirm a path.

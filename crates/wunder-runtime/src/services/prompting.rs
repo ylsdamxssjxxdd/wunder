@@ -6,11 +6,7 @@ use crate::schemas::ToolSpec;
 use crate::services::default_agent_protocol::DEFAULT_AGENT_ID_ALIAS;
 use crate::services::tools::skill_call::render_skill_markdown_for_model;
 use crate::services::user_prompt_templates;
-use crate::services::worker_card_files::{
-    stable_id_from_worker_card_file_name, worker_card_file_name as canonical_worker_card_file_name,
-};
 use crate::skills::{SkillRegistry, SkillSpec};
-use crate::storage::USER_PRIVATE_CONTAINER_ID;
 use crate::tools::{
     builtin_aliases, collect_available_tool_names, collect_prompt_tool_specs,
     expand_browser_group_selection, render_prompt_tool_spec, resolve_tool_name,
@@ -32,7 +28,6 @@ const SYSTEM_PROMPT_ROLE_PATH: &str = "prompts/system/role.txt";
 const SYSTEM_PROMPT_ENGINEERING_PATH: &str = "prompts/system/engineering.txt";
 const SYSTEM_PROMPT_TOOLS_PROTOCOL_PATH: &str = "prompts/system/tools_protocol.txt";
 const SYSTEM_PROMPT_SKILLS_PROTOCOL_PATH: &str = "prompts/system/skills_protocol.txt";
-const SYSTEM_PROMPT_INNER_VISIBLE_PROTOCOL_PATH: &str = "prompts/system/inner_visible_protocol.txt";
 const SYSTEM_PROMPT_MEMORY_PATH: &str = "prompts/system/memory.txt";
 const SYSTEM_PROMPT_EXTRA_PATH: &str = "prompts/system/extra.txt";
 pub const SYSTEM_PROMPT_MEMORY_PLACEHOLDER: &str = "<<WUNDER_HISTORY_MEMORY>>";
@@ -183,7 +178,7 @@ impl PromptComposer {
             .unwrap_or(0.0);
         let overrides_key = build_overrides_key(overrides);
         let agent_prompt_key = build_prompt_key(agent_prompt);
-        let current_agent_key = normalize_inner_visible_agent_id(current_agent_id);
+        let current_agent_key = normalize_prompt_agent_id(current_agent_id);
         let prompt_template_scope = resolve_prompt_template_scope(config, prompt_owner_user_id);
         let prompt_template_key = build_prompt_template_cache_key(&prompt_template_scope);
         let templates_revision = system_prompt_templates_revision();
@@ -298,12 +293,6 @@ impl PromptComposer {
                 &user_skills_for_prompt,
                 agent_prompt,
                 preview_skill,
-                &build_inner_visible_prompt_mapping(
-                    workspace,
-                    prompt_owner_user_id,
-                    current_agent_id,
-                    is_local_runtime_mode(&config.server.mode),
-                ),
             );
 
             self.insert_cached_prompt(cache_key, prompt.clone(), now_ts());
@@ -540,7 +529,6 @@ fn build_system_prompt_skeleton(
     user_skills: &[SkillSpec],
     agent_prompt: Option<&str>,
     preview_skill: bool,
-    inner_visible_mapping: &HashMap<String, String>,
 ) -> String {
     let os_name = system_name();
     let date_str = Local::now().format("%Y-%m-%d").to_string();
@@ -590,13 +578,6 @@ fn build_system_prompt_skeleton(
             ("WORKSPACE_TREE".to_string(), workspace_tree.to_string()),
         ]),
     );
-
-    let inner_visible_template = read_prompt_template_from_scope(
-        config,
-        template_scope,
-        Path::new(SYSTEM_PROMPT_INNER_VISIBLE_PROTOCOL_PATH),
-    );
-    let inner_visible_block = render_template(&inner_visible_template, inner_visible_mapping);
 
     // When `tool_call_mode=function_call`, tool specs and invocation protocol are
     // provided by the LLM API itself, so we omit the entire tools-protocol block
@@ -706,14 +687,7 @@ fn build_system_prompt_skeleton(
         )]),
     );
 
-    let mut blocks = vec![
-        role,
-        engineering,
-        inner_visible_block,
-        tools_block,
-        skills_block,
-        memory_block,
-    ];
+    let mut blocks = vec![role, engineering, tools_block, skills_block, memory_block];
     blocks.retain(|value| !value.trim().is_empty());
     if !blocks
         .iter()
@@ -743,75 +717,8 @@ fn build_system_prompt_skeleton(
     blocks.join("\n\n")
 }
 
-fn build_inner_visible_prompt_mapping(
-    workspace: &WorkspaceManager,
-    prompt_owner_user_id: &str,
-    current_agent_id: Option<&str>,
-    is_local_runtime: bool,
-) -> HashMap<String, String> {
-    let private_workspace_id =
-        workspace.scoped_user_id_by_container(prompt_owner_user_id, USER_PRIVATE_CONTAINER_ID);
-    let private_root = workspace.workspace_root(&private_workspace_id);
-    let global_dir = private_root.join("global");
-    let skills_dir = private_root.join("skills");
-    let knowledge_dir = private_root.join("knowledge");
-    let agents_dir = private_root.join("agents");
-    let global_tooling_file = global_dir.join("tooling.json");
-    let global_defaults_card = global_dir.join("defaults.worker-card.json");
-    let current_agent_id = normalize_inner_visible_agent_id(current_agent_id);
-    let current_agent_card = resolve_inner_visible_agent_card_path(&agents_dir, &current_agent_id);
-    let default_agent_card =
-        resolve_inner_visible_agent_card_path(&agents_dir, DEFAULT_AGENT_ID_ALIAS);
-    let default_agent_note_path = default_agent_card
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| format!("agents/{name}"))
-        .unwrap_or_else(|| "agents/__default__.worker-card.json".to_string());
-    let default_agent_only_note = if current_agent_id == DEFAULT_AGENT_ID_ALIAS {
-        format!("当前为默认智能体 / default agent in use: {default_agent_note_path}")
-    } else {
-        format!(
-            "当前为普通智能体 / non-default agent: do not edit {default_agent_note_path} unless user explicitly asks"
-        )
-    };
-
-    let display = |path: &Path| -> String {
-        resolve_inner_visible_display_path(workspace, &private_workspace_id, path, is_local_runtime)
-    };
-
-    HashMap::from([
-        ("INNER_VISIBLE_ROOT".to_string(), display(&private_root)),
-        ("INNER_VISIBLE_GLOBAL_DIR".to_string(), display(&global_dir)),
-        ("INNER_VISIBLE_SKILLS_DIR".to_string(), display(&skills_dir)),
-        (
-            "INNER_VISIBLE_KNOWLEDGE_DIR".to_string(),
-            display(&knowledge_dir),
-        ),
-        ("INNER_VISIBLE_AGENTS_DIR".to_string(), display(&agents_dir)),
-        (
-            "INNER_VISIBLE_GLOBAL_TOOLING_FILE".to_string(),
-            display(&global_tooling_file),
-        ),
-        (
-            "INNER_VISIBLE_GLOBAL_DEFAULTS_CARD".to_string(),
-            display(&global_defaults_card),
-        ),
-        (
-            "INNER_VISIBLE_CURRENT_AGENT_ID".to_string(),
-            current_agent_id,
-        ),
-        (
-            "INNER_VISIBLE_CURRENT_AGENT_CARD".to_string(),
-            display(&current_agent_card),
-        ),
-        (
-            "INNER_VISIBLE_DEFAULT_AGENT_ONLY_NOTE".to_string(),
-            default_agent_only_note,
-        ),
-    ])
-}
-
-fn normalize_inner_visible_agent_id(agent_id: Option<&str>) -> String {
+/// 规范化提示词缓存 key 里的智能体标识：空值或 `default` 统一到默认智能体。
+fn normalize_prompt_agent_id(agent_id: Option<&str>) -> String {
     let cleaned = agent_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -821,42 +728,6 @@ fn normalize_inner_visible_agent_id(agent_id: Option<&str>) -> String {
     } else {
         cleaned.to_string()
     }
-}
-
-fn resolve_inner_visible_agent_card_path(agents_dir: &Path, agent_id: &str) -> PathBuf {
-    if let Ok(entries) = std::fs::read_dir(agents_dir) {
-        let mut matched = entries
-            .filter_map(|entry| entry.ok())
-            .filter_map(|entry| {
-                let file_type = entry.file_type().ok()?;
-                if !file_type.is_file() {
-                    return None;
-                }
-                let file_name = entry.file_name().to_string_lossy().to_string();
-                let stable_id = stable_id_from_worker_card_file_name(&file_name)?;
-                (stable_id == agent_id).then(|| entry.path())
-            })
-            .collect::<Vec<_>>();
-        matched.sort();
-        if let Some(path) = matched.into_iter().next_back() {
-            return path;
-        }
-    }
-    agents_dir.join(canonical_worker_card_file_name(None, Some(agent_id)))
-}
-
-fn resolve_inner_visible_display_path(
-    workspace: &WorkspaceManager,
-    private_workspace_id: &str,
-    path: &Path,
-    is_local_runtime: bool,
-) -> String {
-    let raw = if is_local_runtime {
-        absolute_path_str(path)
-    } else {
-        workspace.display_path(private_workspace_id, path)
-    };
-    raw.replace('\\', "/")
 }
 
 /// Local forms (命令行 cli / 桌面版 desktop) execute tools in-process against the
@@ -1437,7 +1308,6 @@ mod tests {
             for name in [
                 "role.txt",
                 "engineering.txt",
-                "inner_visible_protocol.txt",
                 "skills_protocol.txt",
                 "memory.txt",
                 "extra.txt",

@@ -37,7 +37,7 @@ async function benchmark() {
   throw new Error("Benchmark did not finish");
 }
 async function chat() {
-  const response = await fetch(`${base}/wunder`,{method:"POST",headers,body:JSON.stringify({user_id:"test_virtual",question:"test",model_name:modelName,tool_names:["self_status"],stream:true,language:"en"}),signal:AbortSignal.timeout(90000)});
+  const response = await fetch(`${base}/wunder`,{method:"POST",headers,body:JSON.stringify({user_id:"test_virtual",question:"test",model_name:modelName,tool_names:["list_files"],stream:true,language:"en"}),signal:AbortSignal.timeout(90000)});
   assert.equal(response.status,200);
   const body = await response.text();
   return body.split(/\r?\n\r?\n/).flatMap(block=> {
@@ -48,9 +48,9 @@ async function chat() {
 }
 const uploadedLogs = [];
 try {
-  assert.equal((await api("/admin/tools",{enabled:[...originalTools,"self_status"]})).response.status,200);
+  assert.equal((await api("/admin/tools",{enabled:[...originalTools,"list_files"]})).response.status,200);
   for (const textual of [false, true]) {
-    const call = {id:"call_1",name:"self_status",arguments:{detail_level:"basic"}};
+    const call = {id:"call_1",name:"list_files",arguments:{path:"."}};
     const first = textual ? {content:`<tool_call>${JSON.stringify(call)}</tool_call>`} : {tool_calls:[{id:call.id,type:"function",function:{name:call.name,arguments:JSON.stringify(call.arguments)}}]};
     const log = [{role:"user",content:"test"},{role:"assistant",...first},{role:"assistant",content:"Recorded final reply."}].map(item=>JSON.stringify(item)).join("\n");
     const form = new FormData();
@@ -70,7 +70,7 @@ try {
       assert.equal(outputs.length,2);
       assert.equal(outputs[0].finish_reason,native ? "tool_calls" : "stop");
       if (native) {
-        assert.equal(outputs[0].tool_calls[0].function.name,"self_status");
+        assert.equal(outputs[0].tool_calls[0].function.name,"list_files");
         assert.equal(outputs[0].tool_calls[0].id,"call_1");
         assert.equal(outputs[0].content.includes("<tool_call>"),false);
       } else {

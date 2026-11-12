@@ -1,7 +1,7 @@
 use super::mcp_pack;
 use super::{
     android_notifications, android_screen, browser_tool, desktop_control,
-    multimodal_generation_tool, phone_control, read_image_tool, self_status_tool,
+    multimodal_generation_tool, phone_control, read_image_tool,
     sessions_yield_tool, thread_control_tool, web_fetch_tool, web_search_tool,
 };
 use crate::config::Config;
@@ -1153,17 +1153,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         desktop_control::desktop_control_tool_spec(language),
         phone_control::phone_control_tool_spec(language),
-        ToolSpec {
-            name: self_status_tool::TOOL_SELF_STATUS.to_string(),
-            title: None,
-            description: t("tool.spec.self_status.description"),
-            input_schema: super::schema::object(vec![
-                super::schema::string("detail_level")
-                    .desc(t("tool.spec.self_status.args.detail_level"))
-                    .enums(vec!["basic", "full"])
-                    .optional(),
-            ]),
-        },
     ];
     // Android-only surfaces are listed only after their device host is
     // installed, so desktop, CLI and server catalogues never advertise tools
@@ -1197,10 +1186,6 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
 pub fn builtin_aliases() -> HashMap<String, String> {
     let mut map = HashMap::new();
     // 浏览器整组工具在用户侧是一条聚合条目，英文名与管理员侧的组条目同名。
-    map.insert(
-        self_status_tool::TOOL_SELF_STATUS_ALIAS.to_string(),
-        self_status_tool::TOOL_SELF_STATUS.to_string(),
-    );
     map.insert(
         sessions_yield_tool::TOOL_SESSIONS_YIELD_ALIAS.to_string(),
         sessions_yield_tool::TOOL_SESSIONS_YIELD.to_string(),
@@ -1992,7 +1977,6 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         android_notifications::TOOL_ANDROID_NOTIFICATIONS => {
             Some(android_notifications::TOOL_ANDROID_NOTIFICATIONS_ALIAS)
         }
-        self_status_tool::TOOL_SELF_STATUS => Some(self_status_tool::TOOL_SELF_STATUS_ALIAS),
         read_image_tool::TOOL_READ_IMAGE => Some(read_image_tool::TOOL_READ_IMAGE_ALIAS),
         multimodal_generation_tool::TOOL_GENERATE_SPEECH => {
             Some(multimodal_generation_tool::TOOL_GENERATE_SPEECH_ALIAS)
@@ -3539,14 +3523,6 @@ mod tests {
     }
 
     #[test]
-    fn self_status_alias_resolves_to_builtin_tool_name() {
-        assert_eq!(
-            resolve_tool_name(super::self_status_tool::TOOL_SELF_STATUS_ALIAS),
-            super::self_status_tool::TOOL_SELF_STATUS
-        );
-    }
-
-    #[test]
     fn browser_tool_auto_registers_without_builtin_whitelist_entry() {
         let mut config = Config::default();
         config.server.mode = "api".to_string();
@@ -3667,23 +3643,6 @@ mod tests {
         }
         assert!(!memory_properties.contains_key("summary"));
         assert!(!memory_properties.contains_key("entities"));
-
-        let self_status_spec = specs
-            .iter()
-            .find(|spec| spec.name == super::self_status_tool::TOOL_SELF_STATUS)
-            .expect("self status spec");
-        assert!(self_status_spec.description.contains("不要高频调用"));
-        assert!(self_status_spec.input_schema["properties"]["include_system_metrics"].is_null());
-        assert!(self_status_spec.input_schema["properties"]["include_events"].is_null());
-        assert!(self_status_spec.input_schema["properties"]["events_limit"].is_null());
-        assert_eq!(
-            self_status_spec.input_schema["properties"]["detail_level"]["enum"],
-            serde_json::json!(["basic", "full"])
-        );
-        assert_eq!(
-            self_status_spec.input_schema["additionalProperties"].as_bool(),
-            Some(false)
-        );
 
         let execute_spec = specs
             .iter()

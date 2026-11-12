@@ -4,12 +4,18 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import android.Manifest;
 import android.app.Instrumentation;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.content.Context;
+import android.content.res.Resources;
+import android.content.res.TypedValue;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.Drawable;
+import android.os.Build;
 import android.os.SystemClock;
 import android.service.notification.StatusBarNotification;
 
@@ -140,6 +146,58 @@ public class WunderSmokeTest {
             scenario.onActivity(activity -> finishing.set(activity.isFinishing()));
             assertFalse("WunderActivity must not be finishing after launch", finishing.get());
         }
+    }
+
+    /**
+     * Launching must not flash a blown-up launcher icon before the shell
+     * paints: the launch theme uses the shell's own panel tone (Theme.panel),
+     * and on API 31+ the mandatory system splash draws no icon at all. Asserted
+     * through the resolved theme so a revert of the theme or the values-v31
+     * override fails here instead of being noticed by eye on a phone.
+     */
+    @Test
+    public void launchThemeMatchesShellSurfaceAndDrawsNoSplashIcon() {
+        try (ActivityScenario<WunderActivity> scenario = launchResumed()) {
+            scenario.onActivity(activity -> {
+                Resources resources = activity.getResources();
+                Resources.Theme theme = activity.getTheme();
+
+                TypedValue background = new TypedValue();
+                assertTrue("windowBackground should resolve",
+                        theme.resolveAttribute(android.R.attr.windowBackground, background, true));
+                assertEquals("launch window must paint Theme.panel (#FBFAF8)",
+                        (int) 0xFFFBFAF8L, resolveColor(resources, theme, background));
+
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                    return;
+                }
+                TypedValue splashBackground = new TypedValue();
+                assertTrue("windowSplashScreenBackground should resolve",
+                        theme.resolveAttribute(
+                                android.R.attr.windowSplashScreenBackground, splashBackground, true));
+                assertEquals("splash must use the same tone as the first frame",
+                        (int) 0xFFFBFAF8L, resolveColor(resources, theme, splashBackground));
+
+                TypedValue icon = new TypedValue();
+                assertTrue("windowSplashScreenAnimatedIcon should resolve",
+                        theme.resolveAttribute(
+                                android.R.attr.windowSplashScreenAnimatedIcon, icon, true));
+                Drawable drawable = icon.resourceId == 0
+                        ? null
+                        : resources.getDrawable(icon.resourceId, theme);
+                if (!(drawable instanceof ColorDrawable)) {
+                    fail("splash icon should be a transparent colour drawable: " + drawable);
+                    return;
+                }
+                assertEquals("splash icon must be fully transparent",
+                        0, ((ColorDrawable) drawable).getColor());
+            });
+        }
+    }
+
+    /** Attribute values arrive either as a colour literal or as a resource. */
+    private static int resolveColor(Resources resources, Resources.Theme theme, TypedValue value) {
+        return value.resourceId == 0 ? value.data : resources.getColor(value.resourceId, theme);
     }
 
     /**

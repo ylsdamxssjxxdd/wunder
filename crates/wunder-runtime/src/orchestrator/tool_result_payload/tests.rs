@@ -231,24 +231,7 @@ fn packaged_mcp_call_projects_remote_content_without_raw_blobs() {
 }
 
 #[test]
-fn self_status_and_command_success_drop_runtime_details() {
-    let status = ToolResultPayload::from_value(json!({
-        "ok": true,
-        "data": {
-            "session": {"user_id":"user", "session_id":"session"},
-            "model": {"provider":"provider", "base_url":"https://llm.invalid"},
-            "monitor": {"status":"running", "stage":"tools", "updated_time":"now"},
-            "context": {"context_occupancy_tokens": 1234, "context_overflow": false},
-            "rounds": {"model_rounds_peak": 4},
-            "events": {"by_type": {"tool_result": 20}}
-        }
-    }));
-    let status = status.to_compact_payload("self_status");
-    assert_eq!(
-        status["data"],
-        json!({"stage":"tools", "status":"running", "round":4, "context_tokens":1234})
-    );
-
+fn command_success_drops_runtime_details() {
     let command = ToolResultPayload::from_value(json!({
         "ok": true,
         "data": {"results":[{"command":"echo ok", "returncode":0, "stdout":"ok", "stderr":"", "output_meta":{"total_bytes":2}}], "budget":{"max":1000}, "output_guard":{"truncated":false}}

@@ -97,7 +97,6 @@ Canonical tool names are mostly Chinese (what the model sees), each with English
 | 桌面控制 | `desktop_control` | Operate and observe the local desktop (mouse, keyboard, windows) | Desktop |
 | 子智能体控制 | `subagent_control` | Spawn temporary subagents during a task and reclaim them after results return | Threads & subagents |
 | 会话线程控制 | `thread_control` | Manage task threads / forked threads (not exposed on desktop) | Threads & subagents |
-| 自我状态 | `self_status` | Query the agent's own runtime status | System & memory |
 | 记忆管理 | `memory_manager` | Read and write long-term memory | System & memory |
 | 定时任务 | `schedule_task` | Create and manage scheduled / periodic tasks | System & memory |
 | `goal` | `get / create / edit / pause / resume / complete / blocked` | Goal-state tool, auto-injected per session by the runtime; not selectable on desktop | Goal state |

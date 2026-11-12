@@ -16,7 +16,7 @@ use super::{
 };
 use super::{
     execute_mcp_tool, execute_memory_manager_tool, execute_thread_control_tool, execute_user_tool,
-    is_mcp_tool_name, self_status_tool, subagent_control,
+    is_mcp_tool_name, subagent_control,
 };
 use crate::i18n;
 use crate::services::goal;
@@ -74,9 +74,6 @@ pub async fn execute_builtin_tool(
     match canonical.as_str() {
         canonical if goal::is_goal_tool_name(canonical) => {
             goal::execute_goal_tool(context, &canonical, args).await
-        }
-        self_status_tool::TOOL_SELF_STATUS => {
-            self_status_tool::execute_self_status_tool(context, args).await
         }
         "执行命令" => command_tool::execute_command(context, args).await,
         "命令会话" => command_tool::command_session_control(context, args).await,

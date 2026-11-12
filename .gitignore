@@ -100,8 +100,7 @@ supplement-build/
 # JiuwenSwarm runtime file operation logs
 .agent_history/
 .trash
-# Virtual-model simulation scratch outputs (harmless landing zone)
-.temp/
+# Runtime scratch outputs all land in temp/ (see the `temp` rule below)
 docs/性能基线/assets
 test-results
 tests/preview
@@ -130,4 +129,3 @@ metadata_win7.err
 metadata_win7.json
 videos/
 .venv*/
-chat_media/

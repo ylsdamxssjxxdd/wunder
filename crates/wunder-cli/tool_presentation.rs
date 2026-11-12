@@ -382,7 +382,6 @@ fn classify(name: &str) -> Option<ToolPresentation> {
         "问询面板" => call(ToolAccess::Other, "问询", "Ask"),
         "定时任务" => call(ToolAccess::Other, "定时任务", "Schedule task"),
         "记忆管理" => call(ToolAccess::Other, "记忆管理", "Memory"),
-        "自我状态" => call(ToolAccess::Explore, "读取状态", "Status"),
         "goal" => call(ToolAccess::Other, "管理目标", "Manage goal"),
         // Generated artefacts: the result is a file the reader picks up, not a diff.
         "语音生成" => call(ToolAccess::Other, "生成语音", "Generate speech"),
@@ -456,7 +455,6 @@ mod tests {
         ("问询面板", ToolAccess::Other, "问询", "Ask"),
         ("定时任务", ToolAccess::Other, "定时任务", "Schedule task"),
         ("记忆管理", ToolAccess::Other, "记忆管理", "Memory"),
-        ("自我状态", ToolAccess::Explore, "读取状态", "Status"),
         ("goal", ToolAccess::Other, "管理目标", "Manage goal"),
         ("语音生成", ToolAccess::Other, "生成语音", "Generate speech"),
         ("声转文", ToolAccess::Other, "语音转写", "Transcribe"),
@@ -542,7 +540,6 @@ mod tests {
             ("thread_control", "会话线程控制"),
             ("session_thread", "会话线程控制"),
             ("sessions_yield", "会话让出"),
-            ("self_status", "自我状态"),
             ("memory_manager", "记忆管理"),
             ("update_plan", "计划面板"),
             ("ask_panel", "问询面板"),

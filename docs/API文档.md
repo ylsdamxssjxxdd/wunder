@@ -3465,7 +3465,7 @@ Slint 程序默认链接 `wunder-desktop` library；不拉起 bridge，不通过
 ### 保留说明
 
 - 子智能体工具（`subagent_control`）**保留**：子智能体是主智能体在任务中临时创建的工作单元，与蜂群无关，接口语义不变，仍见上文「子智能体池与级联中断」「子智能体运行中消息」等条目。
-- 其他智能体工具（`thread_control`、`memory_manager`、`self_status` 等）不受影响（`channel_tool` 已移除）。
+- 其他智能体工具（`thread_control`、`memory_manager` 等）不受影响（`channel_tool` 已移除）。
 - 渠道、网关、定时任务与评估（wunderbench）链路不受影响：渠道桥、定时任务与模型评估中引用预设智能体的部分照常工作。
 - 用户侧只保留唯一智能体实例，由预设绑定生成；工作区为唯一云端目录，工具以该目录为根。
 - 移除前运行中的 `team_runs` 数据应清理或归档导出；`hives` / `team_runs` / `team_tasks` 表在升级时按迁移流程删除。

@@ -32,7 +32,6 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | 桌面控制 | `desktop_control` | 操作本机桌面并观察（鼠标、键盘、窗口） | 桌面 |
 | 子智能体控制 | `subagent_control` | 在任务中临时派生子智能体，结果回传后回收 | 线程与子智能体 |
 | 会话线程控制 | `thread_control` | 管理任务线程 / 分支线程（桌面端不开放） | 线程与子智能体 |
-| 自我状态 | `self_status` | 查询智能体自身的运行状态 | 系统与记忆 |
 | 记忆管理 | `memory_manager` | 读写长期记忆 | 系统与记忆 |
 | 定时任务 | `schedule_task` | 创建与管理定时 / 周期任务 | 系统与记忆 |
 | `goal` | `action=get|edit|pause|resume|complete|blocked` | Goal-state tool, auto-injected per session by the runtime; not selectable on desktop; only the user can create a goal | 目标态 |
@@ -65,7 +64,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | Multimodal | Read image: [Read Image](/docs/en/tools/read-image/); generate image / generate video / generate speech / transcribe speech: canonical names `图像生成` / `视频生成` / `语音生成` / `声转文`, aliases `generate_image` / `generate_video` / `generate_speech` / `transcribe_speech`; no dedicated page in this section |
 | Desktop | Desktop control: [Desktop Control](/docs/en/tools/desktop-control/) |
 | Threads and subagents | Subagent control: [Subagent Control](/docs/en/tools/subagent-control/); thread control: [Thread Control](/docs/en/tools/thread-control/) |
-| System and memory | Self status: [Self Status](/docs/en/tools/self-status/); memory manager: [Memory Manager](/docs/en/tools/memory-manager/); schedule task: [Schedule Task](/docs/en/tools/schedule-task/) |
+| System and memory | memory manager: [Memory Manager](/docs/en/tools/memory-manager/); schedule task: [Schedule Task](/docs/en/tools/schedule-task/) |
 | Goal state | `goal` (`action=get|edit|pause|resume|complete|blocked`) is injected by the runtime per session and is not offered for selection on the desktop endpoint; only the user can create a goal |
 
 ## Result shell

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ always shows a system splash window before the activity draws
+  its first frame; its default content is the launcher icon blown up to the
+  centre of the screen. That icon was the "flash" on every launch, so the
+  splash is reduced to a bare field of the shell's own panel tone:
+
+    - windowSplashScreenBackground: same tone as the first frame, so the
+      hand-off from splash to shell is invisible.
+    - windowSplashScreenAnimatedIcon: transparent, so no icon (and none of the
+      platform's icon-background mask) is ever drawn.
+    - windowSplashScreenIconBackgroundColor: the same tone again, in case an
+      OEM still paints the icon plate.
+    - windowSplashScreenAnimationDuration: 0, there is no icon animation left
+      to run.
+
+  The platform can hold the splash until the app reports that it is drawn, so
+  this also keeps the launch bounded by the shell's real first frame instead of
+  a fixed animation.
+-->
+<resources>
+    <style name="WunderTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/wunder_window_background</item>
+        <item name="android:windowSplashScreenBackground">@color/wunder_window_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/wunder_window_background</item>
+        <item name="android:windowSplashScreenAnimationDuration">0</item>
+    </style>
+</resources>
