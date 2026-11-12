@@ -1557,11 +1557,11 @@ pub(crate) async fn command_session_control(
     let input = parse_command_session_input(args);
     let wait = parse_command_session_wait(args);
     let yield_time_ms = wait.yield_time_ms;
-    // 喂完输入通常就是在等结果（`echo y | 命令` 的语义），所以没有显式声明
-    // wait_for 时按「等退出」处理；纯轮询仍然是读一眼就走。窗口不放大，
-    // 交互式程序照样能在几百毫秒内把控制权交回来。
-    let wait_for_exit =
-        wait.wait_for_exit || (input.writes_stdin() && args.get("wait_for").is_none());
+    // 喂完输入通常就是在等结果（`echo y | 命令` 的语义），中断更是在等进程真的
+    // 收尾，所以这两种意图在没显式声明 wait_for 时按「等退出」处理；纯轮询
+    // 仍然是读一眼就走。窗口不放大，交互式程序照样能很快把控制权交回来。
+    let settles_session = input.writes_stdin() || matches!(input, CommandSessionInput::Interrupt);
+    let wait_for_exit = wait.wait_for_exit || (settles_session && args.get("wait_for").is_none());
     let after_seq = args.get("after_seq").and_then(Value::as_u64);
     let broker = context.command_sessions.as_ref();
     let managed = broker.is_some_and(|broker| {
@@ -1700,6 +1700,20 @@ pub(crate) async fn command_session_control(
         )
         .await
         .map_err(|error| anyhow!(error))?;
+    let mut data = data;
+    // 模型自己要求的中断不是故障：把终止事件换算成「已中断」的成功结果，
+    // 只保留它关心的状态与已产出的输出。
+    if matches!(input, CommandSessionInput::Interrupt)
+        && data
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|error| error.starts_with("command cancelled"))
+    {
+        if let Value::Object(ref mut map) = data {
+            map.insert("error".to_string(), Value::Null);
+            map.insert("interrupted".to_string(), Value::Bool(true));
+        }
+    }
     let data = match stdin_note {
         Some(note) => with_stdin_note(data, note),
         None => data,

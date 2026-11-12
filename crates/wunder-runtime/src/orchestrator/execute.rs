@@ -741,7 +741,12 @@ impl Orchestrator {
             // (see `docs/形式化证明/context-cache-prefix/`). Every round must repeat
             // the previous round's message prefix byte for byte; a breach means
             // the provider prompt cache cannot reuse the shared prefix.
-            let mut last_sent_message_hashes: Vec<String> = Vec::new();
+            // 上一轮（可能是上一个用户轮次）真正发出的前缀：从会话 meta 里取，
+            // 这样“发新消息时前缀是否被改写”在跨用户轮次时也可验证。
+            let mut last_sent_message_hashes: Vec<String> = self
+                .workspace
+                .load_session_sent_prefix(&user_id, &session_id)
+                .unwrap_or_default();
 
             // Every admitted goal round is its own visible user turn, so the
             // model-round sequence always starts fresh inside that turn.
@@ -954,14 +959,33 @@ impl Orchestrator {
                     .enumerate()
                     .position(|(index, hash)| current_prefix_hashes.get(index) != Some(hash));
                 if let Some(index) = divergence {
+                    // 上一轮发出的是别的用户轮次的尾部时，这次分歧就是“新消息
+                    // 把旧前缀改写了”，比轮内分歧更值得关注。
+                    let previous_turn = self
+                        .workspace
+                        .load_session_sent_prefix_turn(&user_id, &session_id);
                     emitter.emit("context_cache_prefix", json!({
                         "append_only": false,
                         "previous_len": last_sent_message_hashes.len(),
                         "current_len": messages.len(),
                         "diverged_at": index,
+                        "previous_turn": previous_turn,
+                        "current_turn": round_info.user_round,
                     })).await;
                 }
-                last_sent_message_hashes = current_prefix_hashes;
+                last_sent_message_hashes = current_prefix_hashes.clone();
+                self.workspace.save_session_sent_prefix(
+                    &user_id,
+                    &session_id,
+                    &last_sent_message_hashes,
+                );
+                if let Some(turn) = round_info.user_round {
+                    self.workspace.save_session_sent_prefix_turn(
+                        &user_id,
+                        &session_id,
+                        turn.max(0) as u64,
+                    );
+                }
                 let (mut content, reasoning, usage, mut tool_calls_payload, round_speed, output) = loop {
                     match Box::pin(self.call_llm(
                             &apply_context_window_limit_hint(

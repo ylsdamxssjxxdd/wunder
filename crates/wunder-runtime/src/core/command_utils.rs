@@ -515,6 +515,13 @@ pub fn build_direct_command_with_overrides(
             Some(rg_bin) => command_for_executable_path(rg_bin),
             None => Command::new(program),
         }
+    } else if let Some(pwsh) = powershell_alias_target(program) {
+        // The supplement ships `pwsh.exe`, never `powershell.exe`. A bare
+        // `powershell` token therefore resolves through PATH to the machine's
+        // own Windows PowerShell (2.0 on a stock Windows 7), which is the
+        // opposite of the product's runtime. Redirecting the token keeps the
+        // model's habitual spelling working on the bundled shell.
+        Command::new(pwsh)
     } else {
         Command::new(program)
     };
@@ -569,17 +576,15 @@ fn prefer_powershell() -> bool {
     powershell_host().is_some()
 }
 
-/// A `pwsh.exe` that exists on disk but was not chosen as the shell.
+/// A `pwsh.exe` that exists on disk but is not the shell running commands.
 ///
-/// When probing fails (missing VC runtime, policy block, a hung startup) the
-/// command tool falls back to cmd.exe, and the model has no way to learn that a
-/// portable PowerShell is sitting right next to it. Reporting the path is only
-/// for that explanation — it never changes which shell runs.
+/// Two different situations end up on cmd.exe while a portable PowerShell sits
+/// on disk: the probe failed (missing VC runtime, policy block, a hung startup)
+/// or the user explicitly prefers cmd in the settings. In both cases the model
+/// has no way to learn that pwsh is one command away, so report the path. This
+/// never changes which shell runs — the note only explains the environment.
 #[cfg(windows)]
 pub fn unused_pwsh() -> Option<PathBuf> {
-    if powershell_host().is_some() {
-        return None;
-    }
     pwsh_on_disk()
 }
 
@@ -1117,6 +1122,39 @@ fn is_rg_program(program: &str) -> bool {
     lower == "rg" || lower == "rg.exe"
 }
 
+/// The bundled `pwsh.exe` that a bare `powershell` token should resolve to.
+///
+/// `powershell` and `pwsh` are two different executables: only PATH decides
+/// which one a bare token reaches, and the supplement's `opt/powershell` can
+/// never satisfy a `powershell.exe` lookup because the portable build is named
+/// `pwsh.exe`. Aliasing the token onto the probed host keeps a model that
+/// habitually writes `powershell -Command ...` on the product's own shell.
+///
+/// Constraints:
+/// * only a bare program token is rewritten — an explicit path
+///   (`C:\...\powershell.exe`), a `.ps1` script or any other program is left
+///   alone, so a caller can still reach the system host deliberately;
+/// * the alias only exists when the probe accepted the bundled binary; without
+///   it there is nothing better than the system shell, and a missing
+///   `powershell.exe` must keep failing loudly instead of turning into a
+///   different error;
+/// * `pwsh` itself is untouched — it already resolves to the same file.
+#[cfg(windows)]
+fn powershell_alias_target(program: &str) -> Option<PathBuf> {
+    let lower = program.to_ascii_lowercase();
+    if lower != "powershell" && lower != "powershell.exe" {
+        return None;
+    }
+    powershell_host()
+        .filter(|host| host.bundled)
+        .map(|host| host.exe)
+}
+
+#[cfg(not(windows))]
+fn powershell_alias_target(_program: &str) -> Option<PathBuf> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1361,6 +1399,32 @@ mod tests {
             .to_string_lossy()
             .to_ascii_lowercase();
         assert!(program.ends_with("bash"));
+    }
+
+    /// Only a bare `powershell`/`powershell.exe` token is a candidate for the
+    /// alias. Explicit paths, other programs and `pwsh` itself must pass
+    /// through untouched, on every platform.
+    #[test]
+    fn powershell_alias_only_matches_a_bare_token() {
+        for program in [
+            "pwsh",
+            "pwsh.exe",
+            "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+            "python",
+        ] {
+            assert_eq!(powershell_alias_target(program), None, "{program}");
+        }
+        // A bare token resolves to the bundled host only when the probe
+        // accepted one; otherwise the token stays as written.
+        #[cfg(windows)]
+        let expected = powershell_host()
+            .filter(|host| host.bundled)
+            .map(|host| host.exe);
+        #[cfg(not(windows))]
+        let expected: Option<PathBuf> = None;
+        for program in ["powershell", "PowerShell.EXE"] {
+            assert_eq!(powershell_alias_target(program), expected, "{program}");
+        }
     }
 
     #[test]

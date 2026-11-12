@@ -871,6 +871,27 @@ impl WorkspaceManager {
         format!("session_context_limit_hint:{safe_user}:{safe_session}")
     }
 
+    fn session_sent_prefix_key(&self, user_id: &str, session_id: &str) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        let safe_session = session_id
+            .trim()
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        let safe_session = if safe_session.trim().is_empty() {
+            "default".to_string()
+        } else {
+            safe_session
+        };
+        ["session_sent_prefix", &safe_user, &safe_session].join(":")
+    }
+
     fn session_frozen_tool_overrides_key(&self, user_id: &str, session_id: &str) -> String {
         let safe_user = self.safe_user_id(user_id);
         let safe_session = session_id
@@ -2146,6 +2167,49 @@ impl WorkspaceManager {
 
     pub fn delete_session_context_limit_hint(&self, user_id: &str, session_id: &str) -> i64 {
         let key = self.session_context_limit_hint_key(user_id, session_id);
+        self.storage.delete_meta_prefix(&key).unwrap_or(0) as i64
+    }
+
+    /// 上一次请求实际发送的消息前缀哈希（逗号分隔），用于跨用户轮次验证
+    /// 「新请求逐字节重复旧前缀」。只在内存 meta 里存一行，不参与模型输入。
+    pub fn load_session_sent_prefix(&self, user_id: &str, session_id: &str) -> Option<Vec<String>> {
+        let key = self.session_sent_prefix_key(user_id, session_id);
+        let raw = self.storage.get_meta(&key).ok().flatten()?;
+        let hashes: Vec<String> = raw
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect();
+        (!hashes.is_empty()).then_some(hashes)
+    }
+
+    pub fn save_session_sent_prefix(&self, user_id: &str, session_id: &str, hashes: &[String]) {
+        let key = self.session_sent_prefix_key(user_id, session_id);
+        if hashes.is_empty() {
+            let _ = self.storage.delete_meta_prefix(&key);
+        } else {
+            let _ = self.storage.set_meta(&key, &hashes.join(","));
+        }
+    }
+
+    /// 记录该前缀属于哪个用户轮次，供跨轮分歧事件标注 `previous_turn`。
+    pub fn save_session_sent_prefix_turn(&self, user_id: &str, session_id: &str, turn: u64) {
+        let key = format!("{}:turn", self.session_sent_prefix_key(user_id, session_id));
+        let _ = self.storage.set_meta(&key, &turn.to_string());
+    }
+
+    pub fn load_session_sent_prefix_turn(&self, user_id: &str, session_id: &str) -> Option<u64> {
+        let key = format!("{}:turn", self.session_sent_prefix_key(user_id, session_id));
+        self.storage
+            .get_meta(&key)
+            .ok()
+            .flatten()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+    }
+
+    pub fn delete_session_sent_prefix(&self, user_id: &str, session_id: &str) -> i64 {
+        let key = self.session_sent_prefix_key(user_id, session_id);
         self.storage.delete_meta_prefix(&key).unwrap_or(0) as i64
     }
 

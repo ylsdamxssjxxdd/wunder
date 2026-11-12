@@ -132,7 +132,6 @@ services:
 
   wunder-sandbox:
     container_name: wunder-sandbox
-    build: *rust-build
     shm_size: "2gb"
     image: wunder-x86
     pull_policy: never
@@ -195,7 +194,6 @@ services:
 
   extra-mcp:
     container_name: extra-mcp
-    build: *rust-build
     image: wunder-x86
     pull_policy: never
     working_dir: /app

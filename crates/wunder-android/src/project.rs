@@ -1041,12 +1041,19 @@ pub fn project_turn(turn: &NativeChatTurn) -> Vec<RowData> {
     }
 
     if !children.is_empty() {
+        // A turn committed mid-call still holds one open tool; the bar names it
+        // instead of falling back to a generic 正在处理….
+        let running_tool = children
+            .iter()
+            .rev()
+            .find(|child| child.kind == KIND_TOOL && child.status_kind == STATUS_RUNNING)
+            .map(|child| child.tool_name.to_string());
         let mut bar = RowData::new(KIND_PROCESS, format!("{}-process", turn.root_id));
         bar.text = format!("工作过程 · {} 步", children.len());
         bar.summary = if turn.failure.is_some() {
             "已失败".into()
         } else if status_kind(&turn.assistant.state) == STATUS_RUNNING {
-            "正在处理…".into()
+            running_tool.unwrap_or_else(|| "正在处理…".into()).into()
         } else {
             "已完成".into()
         };
@@ -1233,7 +1240,23 @@ impl LiveTurn {
             .unwrap_or(-1)
     }
 
-    fn process_summary(&self) -> &'static str {
+    /// The tool call that is still open, if any. The bar names it instead of
+    /// printing a generic phrase, matching 桌面版 and 云端版.
+    fn running_tool(&self) -> Option<&LiveTool> {
+        self.steps.iter().rev().find_map(|step| match step {
+            LiveStep::Tool(tool) if status_kind(&tool.state) == STATUS_RUNNING => Some(tool),
+            _ => None,
+        })
+    }
+
+    /// The work-process bar's activity line. A running tool reads as its own
+    /// name (执行命令 / 读取文件); every other phase is a fixed phrase.
+    fn process_summary(&self) -> String {
+        if self.phase == "tool" {
+            if let Some(tool) = self.running_tool() {
+                return tool_label(&tool.title);
+            }
+        }
         match self.phase.as_str() {
             "requesting" => "请求中…",
             "thinking" | "outputting" => "正在生成回复…",
@@ -1243,6 +1266,7 @@ impl LiveTurn {
             "waiting" => "等待确认…",
             _ => "正在处理…",
         }
+        .to_string()
     }
 
     pub fn rows(&self) -> Vec<RowData> {
@@ -1640,6 +1664,42 @@ mod tests {
         assert_eq!(bar.duration, "1m 5.4s");
         let shared = bar.to_row(&mut MarkdownRenderer::default());
         assert_eq!(shared.duration, "1m 5.4s");
+    }
+
+    #[test]
+    fn running_tool_names_the_work_process_bar() {
+        let mut live = LiveTurn::new("hi".into());
+        live.phase = "tool".into();
+        live.push_tool(LiveTool {
+            id: "call-1".into(),
+            title: "执行命令".into(),
+            tool_icon: "terminal".into(),
+            summary: "cargo test".into(),
+            state: "running".into(),
+            detail: String::new(),
+            target: String::new(),
+            sections: Vec::new(),
+            patch: Vec::new(),
+            tokens: String::new(),
+            duration: String::new(),
+        });
+        let rows = live.rows();
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .expect("process bar");
+        // The tool name is its own verb phrase, so no 正在执行工具… wrapper.
+        assert_eq!(bar.summary, "执行命令");
+        // A settled call leaves the phase phrase in place.
+        if let Some(tool) = live.tool_mut("call-1") {
+            tool.state = "completed".into();
+        }
+        let rows = live.rows();
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == KIND_PROCESS)
+            .expect("process bar");
+        assert_eq!(bar.summary, "正在执行工具…");
     }
 
     #[test]

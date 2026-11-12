@@ -1045,7 +1045,7 @@ export default {
   'chat.timeline.downloadMarkdown': '下载 Markdown',
   'chat.timeline.workProcess': '工作过程',
   'chat.timeline.workProcessSteps': '{count} 步',
-  'chat.timeline.executingTool': '执行工具：{tool}',
+  'chat.timeline.executingTool': '{tool}',
   'chat.timeline.generatingReply': '正在生成回复…',
   'chat.timeline.processing': '正在处理…',
   'chat.timeline.processCompleted': '已完成',

@@ -54,6 +54,13 @@ pub fn thought_failed() -> &'static str {
     "思考中断"
 }
 
+/// The work-process bar's running activity line. Every built-in tool is named
+/// as a verb phrase already (执行命令 / 读取文件 / 搜索内容), so the bar shows the
+/// name alone: prefixing 执行工具： made the command tool read 执行工具：执行命令.
+pub fn tool_running(tool: &str) -> String {
+    tool_label(tool)
+}
+
 /// The tool batch bar label of §7.3 D. A batch that only holds thinking has no
 /// tool count to show, and reads as the settled verb instead.
 pub fn tool_calls(count: i32) -> String {
@@ -748,6 +755,18 @@ fn is_same_target(target: &str, summary: &str) -> bool {
 mod tests {
     use super::*;
     use slint::Model;
+
+    #[test]
+    fn running_activity_names_the_tool_without_a_prefix() {
+        // The bar used to print 执行工具：执行命令; the tool name is its own verb
+        // phrase, so the prefix only repeated it.
+        assert_eq!(tool_running("execute_command"), "执行命令");
+        assert_eq!(tool_running("执行命令"), "执行命令");
+        assert_eq!(tool_running("读取文件"), "读取文件");
+        assert!(!tool_running(COMMAND_TOOL).contains("执行工具"));
+        // An unmapped name still reads as itself rather than an empty chip.
+        assert_eq!(tool_running("fixture_tool"), "fixture_tool");
+    }
 
     #[test]
     fn folded_row_states_the_change_size_beside_the_file_chip() {

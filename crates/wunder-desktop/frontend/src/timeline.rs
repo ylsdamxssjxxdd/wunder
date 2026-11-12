@@ -964,7 +964,7 @@ impl Timeline {
                 if row.kind == KIND_REASON {
                     activity = crate::timeline_text::thought_running().into();
                 } else if row.kind == KIND_TOOL {
-                    activity = format!("执行工具：{}", row.tool_name);
+                    activity = crate::timeline_text::tool_running(row.tool_name.as_str());
                 }
             }
         }

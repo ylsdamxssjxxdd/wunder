@@ -319,6 +319,81 @@ async fn background_session_takes_stdin_and_still_returns_final_output_after_exi
     assert_eq!(after_exit["data"]["exit_code"], 0, "{after_exit}");
 }
 
+/// 模型主动发 Ctrl-C 是正常操作，不是工具故障：要返回成功并说明已中断。
+#[tokio::test]
+#[cfg(feature = "sqlite-storage")]
+async fn interrupt_input_cancels_the_session_without_reporting_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+        root.path()
+            .join("state.sqlite3")
+            .to_string_lossy()
+            .into_owned(),
+    ));
+    storage.ensure_initialized().unwrap();
+    let workspace = Arc::new(WorkspaceManager::new(
+        root.path().join("workspace").to_string_lossy().as_ref(),
+        storage.clone(),
+        0,
+        &HashMap::new(),
+    ));
+    let lsp_manager = LspManager::new(workspace.clone());
+    let mut config = Config::default();
+    config.server.mode = "cli".into();
+    config.security.allow_commands = vec!["*".into()];
+    let skills = SkillRegistry::default();
+    let http = reqwest::Client::new();
+    let broker = Arc::new(CommandSessionBroker::new());
+    let context = ToolContext {
+        user_id: "fixture-user",
+        session_id: "fixture-thread",
+        workspace_id: "fixture-user",
+        agent_id: None,
+        user_round: None,
+        model_round: None,
+        is_admin: true,
+        storage,
+        orchestrator: None,
+        monitor: None,
+        workspace: workspace.clone(),
+        lsp_manager,
+        config: &config,
+        skills: &skills,
+        gateway: None,
+        user_world: None,
+        cron_wake_signal: None,
+        user_tool_manager: None,
+        user_tool_bindings: None,
+        user_tool_store: None,
+        request_config_overrides: None,
+        allow_roots: None,
+        read_roots: None,
+        command_sessions: Some(broker.clone()),
+        event_emitter: None,
+        http: &http,
+    };
+    let started = execute_command(
+        &context,
+        &json!({"content": "echo alive; sleep 30", "timeout_s": 60, "run_in_background": true, "yield_time_ms": 100}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(started["ok"], true, "{started}");
+    let id = started["data"]["command_session_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("command session id missing: {started}"))
+        .to_string();
+    let interrupted = command_session_control(
+        &context,
+        &json!({"command_session_id": id, "input": "", "yield_time_ms": 3000}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(interrupted["ok"], true, "{interrupted}");
+    assert_eq!(interrupted["data"]["interrupted"], true, "{interrupted}");
+    assert_eq!(interrupted["data"]["status"], "exited", "{interrupted}");
+}
+
 #[test]
 fn model_sandbox_poll_contains_each_output_once() {
     let result = compact_sandbox_poll_result(json!({

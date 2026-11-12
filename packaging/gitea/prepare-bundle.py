@@ -3,10 +3,12 @@
 import argparse
 import gzip
 import hashlib
+import io
 import json
 from pathlib import Path
 import shutil
 import subprocess
+import tarfile
 
 
 GITEA = "docker.gitea.com/gitea:28.2.0"
@@ -120,6 +122,118 @@ def export_stream(command, archive):
 
 def run(*arguments):
     subprocess.run(arguments, check=True)
+
+
+def _is_attestation(entry):
+    if entry.get("annotations", {}).get("vnd.docker.reference.type") == "attestation-manifest":
+        return True
+    # containerd 拉取的镜像用 artifactType + subject 标记 attestation，没有 platform 字段。
+    if "attestation" in entry.get("artifactType", ""):
+        return True
+    platform = entry.get("platform", {})
+    return platform.get("architecture") == "unknown" or platform.get("os") == "unknown"
+
+
+def strip_attestation(archive):
+    """剥掉 buildx provenance 在导出包里留下的 attestation 清单。
+
+    arm64 剖面的安装包镜像只导出不构建，--skip-build 也跳过构建标志，
+    --provenance=false 覆盖不到所有导出路径，故在导出后统一兜底。
+    老 daemon 只认 manifest.json，新 daemon 走 index.json：混着 unknown/unknown
+    的 attestation 时，异架构宿主会判「no match for platform」。
+    只重写 JSON 与小 blob，层 blob 流式原样复制。
+    """
+    with tarfile.open(archive, "r:gz") as tar:
+        members = tar.getmembers()
+        small = {}
+        for member in members:
+            if member.name == "index.json" or (
+                    member.name.startswith("blobs/sha256/") and member.size < 200000):
+                try:
+                    small[member.name] = json.loads(tar.extractfile(member).read())
+                except (ValueError, UnicodeDecodeError):
+                    pass
+    outer = small.get("index.json")
+    if not isinstance(outer, dict) or "manifests" not in outer:
+        return False
+    indexes = {name: doc for name, doc in small.items()
+               if name != "index.json" and isinstance(doc, dict)
+               and doc.get("mediaType", "").endswith(("index.v1+json", "list.v2+json"))}
+
+    drop = set()
+    rewritten = {}
+    remap = {}
+
+    def blob_name(digest):
+        return "blobs/sha256/" + digest.split(":")[1]
+
+    def discard(entry):
+        # 只丢 attestation 清单本身；config 可能是共享空 blob，层孤儿 blob 仅几 KB，留着无害。
+        drop.add(blob_name(entry["digest"]))
+
+    for name, doc in indexes.items():
+        kept = [entry for entry in doc["manifests"] if not _is_attestation(entry)]
+        if len(kept) == len(doc["manifests"]):
+            continue
+        for entry in doc["manifests"]:
+            if _is_attestation(entry):
+                discard(entry)
+        data = json.dumps(dict(doc, manifests=kept)).encode("utf-8")
+        new_digest = "sha256:" + hashlib.sha256(data).hexdigest()
+        rewritten[name] = (blob_name(new_digest), data)
+        drop.add(name)
+        remap["sha256:" + name[len("blobs/sha256/"):]] = (new_digest, len(data))
+
+    kept = []
+    outer_changed = False
+    for entry in outer["manifests"]:
+        if _is_attestation(entry):
+            discard(entry)
+            outer_changed = True
+            continue
+        if entry["digest"] in remap:
+            new_digest, size = remap[entry["digest"]]
+            entry = dict(entry, digest=new_digest, size=size)
+            outer_changed = True
+        kept.append(entry)
+    if outer_changed:
+        rewritten["index.json"] = ("index.json", json.dumps(dict(outer, manifests=kept)).encode("utf-8"))
+    if not rewritten:
+        return False
+
+    referenced = {"blobs/sha256/" + entry["digest"].split(":")[1]
+                  for entry in kept}
+    for new_name, data in rewritten.values():
+        if new_name != "index.json":
+            referenced.add(new_name)
+            referenced.update("blobs/sha256/" + entry["digest"].split(":")[1]
+                              for entry in json.loads(data)["manifests"])
+
+    temporary = archive.with_suffix(archive.suffix + ".tmp")
+    written = set()
+    with tarfile.open(archive, "r:gz") as source, \
+            tarfile.open(temporary, "w:gz", compresslevel=1) as dest:
+        for member in source.getmembers():
+            if member.name in rewritten:
+                new_name, data = rewritten[member.name]
+                info = tarfile.TarInfo(new_name)
+                info.size = len(data)
+                info.mode = member.mode
+                dest.addfile(info, io.BytesIO(data))
+                written.add(new_name)
+            elif member.name in drop:
+                continue
+            elif member.isfile():
+                dest.addfile(member, source.extractfile(member))
+                written.add(member.name)
+            else:
+                dest.addfile(member)
+    missing = referenced - written
+    if missing:
+        temporary.unlink()
+        raise RuntimeError("stripped archive references missing blobs: " + ", ".join(sorted(missing)))
+    temporary.replace(archive)
+    return True
 
 
 def has_image(reference):
@@ -374,6 +488,8 @@ def main():
             raise RuntimeError("image architecture is not " + expected_arch + ": " + image)
         print("Exporting " + image, flush=True)
         export_stream(["docker", "save", image], archive)
+        if strip_attestation(archive):
+            print("Stripped buildx attestation: " + filename, flush=True)
         digest = sha256(archive)
         checksums.append(digest + "  images/" + filename)
         entry = {"image": image, "id": inspection["Id"], "architecture": inspection["Architecture"],

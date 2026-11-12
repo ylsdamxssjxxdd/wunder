@@ -1077,7 +1077,7 @@ fn fold_history_process(
                 continue;
             }
             if row.kind == crate::timeline::KIND_TOOL {
-                activity = format!("执行工具：{}", row.tool_name);
+                activity = crate::timeline_text::tool_running(row.tool_name.as_str());
             } else if row.kind == crate::timeline::KIND_REASON {
                 activity = crate::timeline_text::thought_running().into();
             }

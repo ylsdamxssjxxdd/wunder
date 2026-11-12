@@ -4,6 +4,9 @@
 #
 # 注册用 F（fix binary）标志：解释器在注册时按本目录的绝对路径打开，容器里不需要再挂载。
 # 因此套件目录移动后必须重跑本脚本；重复执行是幂等的。
+# 不加 P（preserve argv[0]）标志：argv[0] 与目标路径相同（如 --entrypoint /bin/sh）时
+# qemu 会误判保留参数，guest shell 多收一个 /bin/sh 操作数，把自己的 ELF 当脚本读，
+# 报 Syntax error: "(" unexpected。OF 布局经嵌套 qemu 复现验证。
 set -euo pipefail
 cd -- "$(dirname -- "$0")"
 
@@ -22,19 +25,11 @@ register_one() {
     local interp="$PWD/$name-static"
     [[ -x "$interp" ]] || die "缺少解释器: $interp"
     if [[ -e "/proc/sys/fs/binfmt_misc/$name" ]]; then
-        local current flags
-        current="$(sed -n 's/^interpreter //p' "/proc/sys/fs/binfmt_misc/$name" | head -n 1)"
-        flags="$(sed -n 's/^flags: //p' "/proc/sys/fs/binfmt_misc/$name" | head -n 1)"
-        # 没有 F 标志的注册（发行版 qemu-user-static 常见）在容器里按路径找不到解释器，
-        # exec 阶段才报 exec format error，必须换成本目录带 F 的注册。
-        if grep -q '^enabled' "/proc/sys/fs/binfmt_misc/$name" && [[ -x "$current" && "$flags" == *F* ]]; then
-            echo "[binfmt] $name 已由 $current 提供（带 F 标志），复用"
-            return
-        fi
-        echo "[binfmt] $name 现有注册不可用（解释器缺失或无 F 标志），按当前目录重建"
+        # 一律禁用重建：F 标志在注册时钉住解释器文件，更换二进制后
+        # 路径与 flags 比对察觉不到，复用会让旧解释器继续生效。
         echo -1 > "/proc/sys/fs/binfmt_misc/$name" 2>/dev/null || true
     fi
-    printf ':%s:M::%s:%s:%s:OPF\n' "$name" "$magic" "$mask" "$interp" \
+    printf ':%s:M::%s:%s:%s:OF\n' "$name" "$magic" "$mask" "$interp" \
         > /proc/sys/fs/binfmt_misc/register || die "注册 $name 失败"
     echo "[binfmt] 已注册 $name -> $interp"
 }

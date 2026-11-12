@@ -210,8 +210,8 @@ fn exec_shell_note(language: &str) -> Option<String> {
         },
         // cmd is either an explicit setting or the only shell this host has
         // (no PowerShell installed / blocked by policy). When a `pwsh.exe` is
-        // present but the probe rejected it, saying "no PowerShell here" is
-        // simply wrong: the model can still call `pwsh -Command ...` directly.
+        // present but not in use, saying "no PowerShell here" is simply wrong:
+        // the model can still call `pwsh -Command ...` directly.
         ShellKind::Cmd => {
             if command_utils::unused_pwsh().is_some() {
                 "tool.spec.exec.shell_cmd_with_pwsh"

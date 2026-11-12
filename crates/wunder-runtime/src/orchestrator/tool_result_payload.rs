@@ -2198,6 +2198,7 @@ fn project_command_session_success(data: &Value) -> Option<Value> {
             "next_seq",
             "next_step",
             "stdin_note",
+            "interrupted",
         ],
     );
     for key in ["stdout", "stderr", "pty", "error"] {

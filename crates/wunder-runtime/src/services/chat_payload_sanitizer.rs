@@ -2,7 +2,13 @@ use serde_json::{Map, Value};
 use std::borrow::Cow;
 
 const INLINE_IMAGE_OMITTED_MARKER: &str = "wunder://omitted-inline-image";
-const INLINE_IMAGE_OMITTED_TEXT: &str = "[inline image omitted from persisted context]";
+/// 唯一的内联图省略占位。持久化省略、请求预算淘汰、跨轮不还原三条路径都用
+/// 这一份文案：同一张图在不同轮次里必须是同一段文本，否则前缀会来回抖动，
+/// 提示词缓存整段失效（见 `docs/形式化证明/context-cache-prefix/`）。
+pub const INLINE_IMAGE_OMITTED_TEXT: &str = "[inline image omitted from persisted context]";
+/// 占位后面紧跟的路径提示。与读图 followup 的 `[image_path:]` 分开命名，避免
+/// 被当成“这张图就在此处”的路径标记而触发重新内联。
+const IMAGE_OMITTED_PATH_PREFIX: &str = "[image_omitted_path:";
 // 读图 followup 用纯文本记录原图路径，既能让模型知道该重读哪个文件，
 // 又不会把非标准字段带进模型的 image_url 请求结构。
 const IMAGE_PATH_MARKER_PREFIX: &str = "[image_path:";
@@ -94,10 +100,45 @@ pub fn is_omitted_image_placeholder_text(text: &str) -> bool {
     text.trim() == INLINE_IMAGE_OMITTED_TEXT
 }
 
+/// 占位 + 路径提示的完整形态：`[inline image omitted ...] [image_omitted_path:/a.png]`。
+/// 预算淘汰后的图靠它保留“该重读哪个文件”的信息，同时不改变占位本体的文本。
+pub fn omitted_image_placeholder_with_path(path: Option<&str>) -> String {
+    let path = path.map(str::trim).filter(|path| !path.is_empty());
+    match path {
+        Some(path) => {
+            let mut text = String::with_capacity(INLINE_IMAGE_OMITTED_TEXT.len() + path.len() + 32);
+            text.push_str(INLINE_IMAGE_OMITTED_TEXT);
+            text.push(' ');
+            text.push_str(IMAGE_OMITTED_PATH_PREFIX);
+            text.push_str(path);
+            text.push(']');
+            text
+        }
+        None => INLINE_IMAGE_OMITTED_TEXT.to_string(),
+    }
+}
+
+/// 从占位文本里解析被省略图像的原始路径。
+pub fn omitted_image_path_in_text(text: &str) -> Option<String> {
+    let start = text.find(IMAGE_OMITTED_PATH_PREFIX)? + IMAGE_OMITTED_PATH_PREFIX.len();
+    let end = text[start..].find(']')? + start;
+    let path = text[start..end].trim();
+    (!path.is_empty()).then(|| path.to_string())
+}
+
 /// 从一段文本里解析 `[image_path:...]` 提示中的原始路径。占位与路径提示
 /// 都是纯文本 part，恢复时按出现顺序把每个占位配给它前面最近的路径提示。
 pub fn image_path_marker_in_text(text: &str) -> Option<String> {
-    let start = text.find(IMAGE_PATH_MARKER_PREFIX)? + IMAGE_PATH_MARKER_PREFIX.len();
+    // 预算淘汰的占位把路径写在 `[image_omitted_path:]` 里；它同样表达“这张图
+    // 来自这个文件”，但恢复时只按占位本体识别，不会因为看到它就重新内联。
+    let (start, prefix_len) = match text.find(IMAGE_PATH_MARKER_PREFIX) {
+        Some(position) => (position, IMAGE_PATH_MARKER_PREFIX.len()),
+        None => (
+            text.find(IMAGE_OMITTED_PATH_PREFIX)?,
+            IMAGE_OMITTED_PATH_PREFIX.len(),
+        ),
+    };
+    let start = start + prefix_len;
     let end = text[start..].find(']')? + start;
     let path = text[start..end].trim();
     (!path.is_empty()).then(|| path.to_string())

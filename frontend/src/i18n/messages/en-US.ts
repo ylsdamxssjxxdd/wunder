@@ -1069,7 +1069,7 @@ export default {
   'chat.timeline.downloadMarkdown': 'Download Markdown',
   'chat.timeline.workProcess': 'Work process',
   'chat.timeline.workProcessSteps': '{count} steps',
-  'chat.timeline.executingTool': 'Running tool: {tool}',
+  'chat.timeline.executingTool': '{tool}',
   'chat.timeline.generatingReply': 'Generating reply…',
   'chat.timeline.processing': 'Processing…',
   'chat.timeline.processCompleted': 'Completed',

@@ -1568,6 +1568,18 @@ fn image_view_cache_key(path: &Path, metadata: &std::fs::Metadata) -> ImageViewK
     }
 }
 
+/// 内容摘要键：同一份像素无论来自哪个路径、mtime 如何变化都命中同一条目。
+fn image_view_content_cache_key(bytes: &[u8]) -> ImageViewKey {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(bytes);
+    ImageViewKey {
+        path: format!("sha256:{}", hex::encode(&digest[..16])),
+        len: bytes.len() as u64,
+        modified_nanos: 0,
+        version: IMAGE_VIEW_CACHE_VERSION,
+    }
+}
+
 fn image_view_cache_get(key: &ImageViewKey) -> Option<String> {
     let cache = IMAGE_VIEW_CACHE.get_or_init(|| Mutex::new(ImageViewCache::default()));
     let mut cache = cache.lock().ok()?;
@@ -1597,24 +1609,39 @@ pub async fn load_image_data_url_for_path(path: &str) -> Option<String> {
     if metadata.len() > REINLINE_IMAGE_MAX_BYTES {
         return None;
     }
+    // 同一份内容只编码一次：键用内容摘要而不是 mtime，文件被重新渲染成同样
+    // 字节时也能命中，避免每轮为新用户消息重复解码。
     let cache_key = image_view_cache_key(path, &metadata);
     if let Some(data_url) = image_view_cache_get(&cache_key) {
         return Some(data_url);
     }
     let bytes = fs::read(path).await.ok()?;
+    let content_key = image_view_content_cache_key(&bytes);
+    if let Some(data_url) = image_view_cache_get(&content_key) {
+        image_view_cache_insert(cache_key, &data_url);
+        return Some(data_url);
+    }
     let mime = detect_supported_image_content_type(path, &bytes)?;
     if !is_supported_model_image_mime(&mime) || !validate_image_attachment_bytes(&mime, &bytes) {
         return None;
     }
-    // 恢复历史时按入模上限重新压缩：磁盘原图可能远大于首轮看到的视图，
-    // 直接内联会让跨轮常驻成本超出单图估价。
+    // 对齐 codex：入模上限内（2048 长边 / 2500 patch）的图直接复用源文件字节，
+    // 只有超限才重采样编码。重编码只减小体积、不改变模型看到的内容，但它要在
+    // 每个新用户消息的首个请求上额外解码一次；能省就省，结果同样写进视图缓存。
     let (bytes, mime) = blocking::run_cpu("reinstate_image_view", move || {
+        let Some((width, height)) = image_dimensions(&bytes) else {
+            return Ok((bytes, mime));
+        };
+        if view_fits_limits(width, height, MODEL_VIEW_MAX_DIMENSION, MODEL_VIEW_MAX_PATCHES) {
+            return Ok((bytes, mime));
+        }
         encode_model_ready_image_bytes(&bytes, &mime)
     })
     .await
     .ok()?;
     let data_url = format!("data:{mime};base64,{}", STANDARD.encode(bytes));
     image_view_cache_insert(cache_key, &data_url);
+    image_view_cache_insert(content_key, &data_url);
     Some(data_url)
 }
 
@@ -1632,6 +1659,7 @@ pub async fn restore_omitted_inline_images(
 ) -> ImageRestoreReport {
     use crate::services::chat_payload_sanitizer::{
         image_path_marker_in_text, is_omitted_image_placeholder_text,
+        omitted_image_path_in_text,
     };
 
     let mut candidates: Vec<(usize, usize, String)> = Vec::new();
@@ -1650,8 +1678,11 @@ pub async fn restore_omitted_inline_images(
             }
             if is_omitted_image_placeholder_text(text) {
                 report.placeholders = report.placeholders.saturating_add(1);
-                match last_path.as_ref() {
-                    Some(path) => candidates.push((message_index, part_index, path.clone())),
+                // 预算淘汰留下的占位自带 `[image_omitted_path:]`；它只用于
+                // 后续轮次重新内联，模型看到的就是这一行占位文本。
+                let path = omitted_image_path_in_text(text).or_else(|| last_path.clone());
+                match path {
+                    Some(path) => candidates.push((message_index, part_index, path)),
                     None => {
                         report.skipped_missing = report.skipped_missing.saturating_add(1);
                     }
@@ -2137,6 +2168,16 @@ fn render_image_view(
 /// 编码一次——分辨率不变，请求体小 5–10 倍。GIF/WebP/BMP/TIFF 保留原字节，
 /// 避免动画与多帧语义被静默改变。
 pub fn encode_model_ready_image_bytes(bytes: &[u8], mime_hint: &str) -> Result<(Vec<u8>, String)> {
+    encode_model_ready_image_bytes_with_hint(bytes, mime_hint, None)
+}
+
+/// 与 `encode_model_ready_image_bytes` 相同，但可以传入已经解码好的像素与
+/// 尺寸，避免调用方为了判断“要不要重编码”先解码一遍、这里再解码一遍。
+pub fn encode_model_ready_image_bytes_with_hint(
+    bytes: &[u8],
+    mime_hint: &str,
+    decoded: Option<(image::DynamicImage, u32, u32)>,
+) -> Result<(Vec<u8>, String)> {
     let normalized = mime_hint.trim().to_ascii_lowercase();
     let mime = if normalized.starts_with("image/") {
         normalized
@@ -2150,11 +2191,17 @@ pub fn encode_model_ready_image_bytes(bytes: &[u8], mime_hint: &str) -> Result<(
     ) {
         return Ok((bytes.to_vec(), mime));
     }
-    let Some((width, height)) = image_dimensions(bytes) else {
-        return Ok((bytes.to_vec(), mime));
+    let (image, width, height) = match decoded {
+        Some((image, width, height)) => (image, width, height),
+        None => {
+            let Some((width, height)) = image_dimensions(bytes) else {
+                return Ok((bytes.to_vec(), mime));
+            };
+            let image = image::load_from_memory(bytes)
+                .map_err(|_| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
+            (image, width, height)
+        }
     };
-    let image = image::load_from_memory(bytes)
-        .map_err(|_| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
     let view = match model_view_size(width, height) {
         Some((target_width, target_height)) => image.resize_exact(
             target_width,
@@ -2721,6 +2768,7 @@ mod tests {
             max_total_bytes: 24 * 1024 * 1024,
             max_versions_per_path: 2,
             max_request_bytes: 32 * 1024 * 1024,
+            max_current_turn_images: 24,
         };
         super::restore_omitted_inline_images(&mut messages, &policy).await;
 
@@ -2777,6 +2825,7 @@ mod tests {
             max_total_bytes: 24 * 1024 * 1024,
             max_versions_per_path: 1,
             max_request_bytes: 32 * 1024 * 1024,
+            max_current_turn_images: 24,
         };
 
         let report = super::restore_omitted_inline_images(&mut messages, &policy).await;
@@ -2821,6 +2870,7 @@ mod tests {
             max_total_bytes: 24 * 1024 * 1024,
             max_versions_per_path: 2,
             max_request_bytes: 32 * 1024 * 1024,
+            max_current_turn_images: 24,
         };
 
         let report = super::restore_omitted_inline_images(&mut messages, &policy).await;

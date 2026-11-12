@@ -1,8 +1,16 @@
 version: "2.4"
 
+x-rust-build: &rust-build
+  context: .
+  dockerfile: Dockerfile
+  args:
+    RUST_BASE_IMAGE: public.ecr.aws/docker/library/rust:1.92-slim-bookworm
+    INSTALL_PLAYWRIGHT_BROWSERS: ${INSTALL_PLAYWRIGHT_BROWSERS:-1}
+
 services:
   wunder-server:
     container_name: wunder-server
+    build: *rust-build
     shm_size: "2gb"
     image: wunder-arm
     platform: linux/arm64
