@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, error::TryRecvError};
 use unicode_width::UnicodeWidthStr;
@@ -186,7 +187,10 @@ pub struct TranscriptRenderWindow {
 
 #[derive(Debug, Clone)]
 pub struct TranscriptRenderedView {
-    pub lines: Vec<Line<'static>>,
+    /// Tab-projected display lines, shared with the cache so a frame only pays
+    /// one Vec clone for the lines it is about to mark. The projection itself is
+    /// done once per cache build, not once per frame.
+    pub lines: Arc<Vec<Line<'static>>>,
     pub local_scroll: u16,
 }
 
@@ -200,7 +204,10 @@ struct TranscriptRenderCache {
     archived_entries: usize,
     log_entries: usize,
     raw_output: bool,
-    lines: Vec<Line<'static>>,
+    /// Logical text (tabs intact): what copying, word picks and URL hits read.
+    lines: Arc<Vec<Line<'static>>>,
+    /// The same lines after eight-column tab projection: what the frame paints.
+    projected: Arc<Vec<Line<'static>>>,
     local_scroll: u16,
 }
 
@@ -648,7 +655,11 @@ pub struct TuiApp {
     key_paste_burst_last_at: Option<Instant>,
     plain_char_burst_last_at: Option<Instant>,
     plain_char_burst_len: usize,
+    /// Terminals that cannot bracket a paste echo the clipboard back as key events
+    /// after we already inserted it. `cursor` walks that text instead of rebuilding
+    /// the remainder per key: swallowing an N-character paste used to be O(N^2).
     suppressed_clipboard_paste: String,
+    suppressed_clipboard_paste_cursor: usize,
     suppressed_clipboard_paste_last_at: Option<Instant>,
     workspace_project_name: Option<String>,
     workspace_git_branch: Option<String>,
@@ -875,6 +886,7 @@ impl TuiApp {
             plain_char_burst_last_at: None,
             plain_char_burst_len: 0,
             suppressed_clipboard_paste: String::new(),
+            suppressed_clipboard_paste_cursor: 0,
             suppressed_clipboard_paste_last_at: None,
             workspace_project_name: None,
             workspace_git_branch: None,
@@ -964,23 +976,18 @@ impl TuiApp {
             env!("CARGO_PKG_VERSION")
         );
         // The welcome avatar is colourless relief: the grey head sits above the
-        // brand header, sized to the terminal that just opened. `session_header`
-        // stays the single owner of the text so the two never drift apart.
-        let columns = crossterm::terminal::size()
-            .map(|(columns, _)| columns)
-            .unwrap_or(80);
+        // brand header, centred and re-fitted to whatever width the transcript
+        // is painted at. `session_header` stays the single owner of the text so
+        // the two never drift apart.
+        let banner = crate::empty_state_animation::Banner::new(
+            env!("CARGO_PKG_VERSION"),
+            app.runtime.launch_dir.to_string_lossy().as_ref(),
+            is_zh,
+        );
         app.push_special_log(
             LogKind::Tool,
             brand_summary.clone(),
-            build_static_art_log(
-                brand_summary,
-                crate::empty_state_animation::banner_lines(
-                    columns,
-                    env!("CARGO_PKG_VERSION"),
-                    app.runtime.launch_dir.to_string_lossy().as_ref(),
-                    is_zh,
-                ),
-            ),
+            build_welcome_banner_log(brand_summary, banner),
         );
         if !app.pending_attachments.is_empty() {
             app.push_log(
@@ -1355,6 +1362,10 @@ impl TuiApp {
         }
     }
 
+    /// Left side of the footer: what the thread is about, where it runs, and the
+    /// key that opens the thread center. The model and the context figure form
+    /// the right cluster (`composer_footer_context`), so the two halves never
+    /// compete for the same columns.
     pub fn composer_footer_items(&self) -> Vec<(String, String)> {
         // While a history search is running the footer reports the search instead
         // of the usual hints: the query, the direction and the way out.
@@ -1409,10 +1420,6 @@ impl TuiApp {
             items.push((String::new(), title));
         }
 
-        if !self.model_name.trim().is_empty() && self.model_name != "<none>" {
-            items.push((String::new(), self.model_name.clone()));
-        }
-
         let cwd_display = crate::path_display::format_directory_display(
             self.runtime.launch_dir.as_path(),
             Some(self.runtime.repo_root.as_path()),
@@ -1431,19 +1438,6 @@ impl TuiApp {
             "thread center ←"
         };
         items.push(("←".to_string(), hint.to_string()));
-
-        // The shortcut key belongs in the footer, not in the stats fallback line: the
-        // footer is what the reader's eye reaches for, and `build_footer_spans` sheds the
-        // description before the key when the terminal gets narrow.
-        items.push((
-            "?".to_string(),
-            if self.is_zh_language() {
-                "快捷键"
-            } else {
-                "for shortcuts"
-            }
-            .to_string(),
-        ));
 
         items
     }
@@ -1471,18 +1465,30 @@ impl TuiApp {
         })
     }
 
-    /// Right-aligned footer context as styled spans: the context summary keeps
-    /// the dim tone, while the cloud badge carries the warning colour when the
-    /// engine reports a reconnecting connection.
+    /// Right-aligned footer context as styled spans: the model id and the
+    /// context summary keep the dim tone, while the cloud badge carries the
+    /// warning colour when the engine reports a reconnecting connection.
+    ///
+    /// The model sits here rather than among the left hints because it qualifies
+    /// the context figure it precedes — "which model is this 72% for".
     pub fn composer_footer_context(&mut self) -> Option<Vec<Span<'static>>> {
-        let mut spans = vec![Span::styled(
+        let mut spans = Vec::new();
+        let model = self.model_name.trim();
+        if !model.is_empty() && model != "<none>" {
+            spans.push(Span::styled(
+                self.model_name.clone(),
+                super::theme::secondary_text(),
+            ));
+            spans.push(Span::raw(" · "));
+        }
+        spans.push(Span::styled(
             format_footer_context_summary(
                 self.is_zh_language(),
                 self.session_stats.context_used_tokens,
                 self.model_max_context,
             ),
             super::theme::secondary_text(),
-        )];
+        ));
         if let Some(badge) = self.cloud_badge() {
             let style = if self.cloud_badge_reconnecting {
                 super::theme::warning_text()
@@ -3613,7 +3619,7 @@ impl TuiApp {
                 && cache.raw_output == self.raw_output
         }) {
             return TranscriptRenderedView {
-                lines: cache.lines.clone(),
+                lines: Arc::clone(&cache.projected),
                 local_scroll: cache.local_scroll,
             };
         }
@@ -3658,8 +3664,9 @@ impl TuiApp {
 
         // Nothing below the last row the viewport can show is addressable, so the map
         // stops there instead of mirroring a long card's every row.
+        let logical = Arc::new(transcript_lines);
         let next_hit = build_transcript_hit_map(
-            &transcript_lines,
+            logical.as_ref(),
             &render_window,
             self.logs.as_slice(),
             usize::from(transcript_scroll) + usize::from(height),
@@ -3672,6 +3679,15 @@ impl TuiApp {
         if self.transcript_selection.is_some() && !self.transcript_selection_is_alive() {
             self.transcript_selection = None;
         }
+        // The frame paints tab-projected text. Project once here rather than
+        // once per frame: a drag used to re-expand every visible line on every
+        // pointer event, on top of cloning the whole logical window.
+        let projected = Arc::new(
+            logical
+                .iter()
+                .map(crate::tui::text_tabs::expand_line)
+                .collect::<Vec<_>>(),
+        );
         self.transcript_hit = next_hit;
         self.set_transcript_rendered_lines(transcript_total_lines);
         self.transcript_render_cache = Some(TranscriptRenderCache {
@@ -3683,12 +3699,13 @@ impl TuiApp {
             archived_entries: self.history_archived_entries,
             log_entries: self.logs.len(),
             raw_output,
-            lines: transcript_lines.clone(),
+            lines: Arc::clone(&logical),
+            projected: Arc::clone(&projected),
             local_scroll: transcript_scroll,
         });
 
         TranscriptRenderedView {
-            lines: transcript_lines,
+            lines: projected,
             local_scroll: transcript_scroll,
         }
     }
@@ -4772,7 +4789,7 @@ impl TuiApp {
             || !self.pending_large_pastes.is_empty()
             || !self.pending_attachments.is_empty()
             || self.key_paste_burst_active()
-            || !self.suppressed_clipboard_paste.is_empty();
+            || self.suppressed_clipboard_paste_pending();
         if !had_draft {
             return false;
         }
@@ -4976,13 +4993,43 @@ impl TuiApp {
         self.input_cursor = self.input_cursor.min(self.input.len());
     }
 
+    /// Consume one echoed character of a suppressed clipboard paste. The cursor
+    /// always lands on a char boundary, so each key costs a borrow and one
+    /// `chars().next()` — never a rebuild of the remaining text (which made a
+    /// long paste quadratic on terminals that echo Ctrl+V as key events).
+    fn consume_suppressed_paste_char(text: &str, cursor: &mut usize, key: KeyEvent) -> bool {
+        let Some(expected) = text.get(*cursor..).and_then(|tail| tail.chars().next()) else {
+            return false;
+        };
+        let matches = match key.code {
+            KeyCode::Char(ch) => ch == expected,
+            KeyCode::Enter => expected == '\n',
+            _ => false,
+        };
+        if matches {
+            *cursor += expected.len_utf8();
+        }
+        matches
+    }
+
+    fn suppressed_clipboard_paste_pending(&self) -> bool {
+        self.suppressed_clipboard_paste_cursor < self.suppressed_clipboard_paste.len()
+    }
+
     fn clear_suppressed_clipboard_paste(&mut self) {
         self.suppressed_clipboard_paste.clear();
+        self.suppressed_clipboard_paste_cursor = 0;
         self.suppressed_clipboard_paste_last_at = None;
     }
 
+    fn set_suppressed_clipboard_paste(&mut self, text: String) {
+        self.suppressed_clipboard_paste = text;
+        self.suppressed_clipboard_paste_cursor = 0;
+        self.suppressed_clipboard_paste_last_at = Some(Instant::now());
+    }
+
     fn try_consume_suppressed_clipboard_key(&mut self, key: KeyEvent) -> bool {
-        if self.suppressed_clipboard_paste.is_empty() {
+        if !self.suppressed_clipboard_paste_pending() {
             return false;
         }
         let now = Instant::now();
@@ -4992,23 +5039,16 @@ impl TuiApp {
             self.clear_suppressed_clipboard_paste();
             return false;
         }
-        let mut remaining = self.suppressed_clipboard_paste.chars();
-        let Some(expected) = remaining.next() else {
-            self.clear_suppressed_clipboard_paste();
-            return false;
-        };
-        let matches = match key.code {
-            KeyCode::Char(ch) => ch == expected,
-            KeyCode::Enter => expected == '\n',
-            _ => false,
-        };
-        if !matches {
+        if !Self::consume_suppressed_paste_char(
+            self.suppressed_clipboard_paste.as_str(),
+            &mut self.suppressed_clipboard_paste_cursor,
+            key,
+        ) {
             self.clear_suppressed_clipboard_paste();
             return false;
         }
-        self.suppressed_clipboard_paste = remaining.collect();
         self.suppressed_clipboard_paste_last_at = Some(now);
-        if self.suppressed_clipboard_paste.is_empty() {
+        if !self.suppressed_clipboard_paste_pending() {
             self.clear_suppressed_clipboard_paste();
         }
         true
@@ -5119,6 +5159,21 @@ impl TuiApp {
         if self.clipboard_paste_rx.is_some() {
             return;
         }
+        #[cfg(target_os = "windows")]
+        {
+            // A native text read costs microseconds. Apply it in this very event
+            // instead of hopping through a blocking task and a later frame: that
+            // hop is what made a right-click paste feel sticky. An image-only
+            // clipboard still needs the slow probe, which stays off the loop.
+            if let Some(text) = read_native_clipboard_text() {
+                self.apply_clipboard_snapshot(ClipboardSnapshot {
+                    text: Some(text),
+                    ..Default::default()
+                });
+                self.request_redraw();
+                return;
+            }
+        }
         let (tx, rx) = tokio::sync::oneshot::channel();
         let frames = self.frame_requester.clone();
         tokio::task::spawn_blocking(move || {
@@ -5161,13 +5216,13 @@ impl TuiApp {
             return;
         }
         if let Some(text) = snapshot.text {
-            let normalized = normalize_clipboard_text(text.clone());
+            // The reader normalised this text already. One copy swallows the
+            // terminal's echo of Ctrl+V, the other goes into the draft; a large
+            // paste no longer pays for a second full normalisation pass.
+            let suppressed = text.clone();
             self.on_paste(text);
             self.flush_pending_paste();
-            if let Some(normalized) = normalized {
-                self.suppressed_clipboard_paste = normalized;
-                self.suppressed_clipboard_paste_last_at = Some(Instant::now());
-            }
+            self.set_suppressed_clipboard_paste(suppressed);
         }
         if let Some(error) = snapshot.image_error {
             let hint = crate::locale::tr(
@@ -6059,18 +6114,33 @@ impl TuiApp {
             return;
         }
         let characters = text.chars().count();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let frames = self.frame_requester.clone();
-        tokio::task::spawn_blocking(move || {
+        #[cfg(target_os = "windows")]
+        {
+            // A native SetClipboardData takes microseconds. Finish the copy in
+            // the same event as the right click: no task hop, no extra frame,
+            // and the reader sees the copy feedback immediately.
             let result = write_system_clipboard_text(text.as_str());
-            let _ = tx.send(ClipboardWriteOutcome {
+            self.finish_clipboard_write(ClipboardWriteOutcome {
                 characters,
                 result,
                 kind,
             });
-            frames.schedule_frame();
-        });
-        self.clipboard_write_rx = Some(rx);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let frames = self.frame_requester.clone();
+            tokio::task::spawn_blocking(move || {
+                let result = write_system_clipboard_text(text.as_str());
+                let _ = tx.send(ClipboardWriteOutcome {
+                    characters,
+                    result,
+                    kind,
+                });
+                frames.schedule_frame();
+            });
+            self.clipboard_write_rx = Some(rx);
+        }
     }
 
     fn poll_clipboard_write(&mut self) {
@@ -6086,6 +6156,10 @@ impl TuiApp {
             }
         };
         self.clipboard_write_rx = None;
+        self.finish_clipboard_write(outcome);
+    }
+
+    fn finish_clipboard_write(&mut self, outcome: ClipboardWriteOutcome) {
         match outcome.kind {
             #[cfg(not(test))]
             ClipboardWriteKind::Selection => match outcome.result {
@@ -6845,8 +6919,11 @@ impl TuiApp {
             .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)
         {
             if let Some(point) = self.transcript_point(mouse) {
-                let lines = self.transcript_window_lines();
-                if let Some(url) = self.url_at_point(lines.as_slice(), point) {
+                let url = {
+                    let lines = self.transcript_window_lines();
+                    self.url_at_point(lines, point)
+                };
+                if let Some(url) = url {
                     self.open_transcript_url(url);
                 }
             }
@@ -7018,10 +7095,12 @@ impl TuiApp {
         self.request_redraw();
     }
 
-    fn transcript_window_lines(&self) -> Vec<Line<'static>> {
+    /// Borrow the cached logical lines. Copying a selection, picking a word and
+    /// resolving a URL used to clone every line of the visible window first.
+    fn transcript_window_lines(&self) -> &[Line<'static>] {
         self.transcript_render_cache
             .as_ref()
-            .map(|cache| cache.lines.clone())
+            .map(|cache| cache.lines.as_slice())
             .unwrap_or_default()
     }
 
@@ -7029,13 +7108,16 @@ impl TuiApp {
     /// is the feedback, and a log line here would rebuild the window and erase it. The
     /// gap row above the draft carries the count instead, for a moment.
     fn copy_transcript_selection(&mut self) {
-        let lines = self.transcript_window_lines();
-        let text = self.transcript_selection_text(lines.as_slice());
+        let text = {
+            let lines = self.transcript_window_lines();
+            self.transcript_selection_text(lines)
+        };
         self.publish_clipboard_text(text.as_str());
     }
 
-    /// The one selection clipboard channel. Production writes run beside the event loop so
-    /// a slow clipboard owner cannot freeze pointer and keyboard handling. Tests use the
+    /// The one selection clipboard channel. On Windows the native write completes
+    /// in this event; other platforms still run beside the event loop so a slow
+    /// clipboard owner cannot freeze pointer and keyboard handling. Tests use the
     /// synchronous `CLIPBOARD_WRITER` seam instead of touching the machine clipboard.
     fn publish_clipboard_text(&mut self, text: &str) {
         if text.is_empty() {
@@ -9931,7 +10013,7 @@ fn format_footer_context_summary(
     if let Some(max_context) = max_context {
         let percent_left = crate::context_left_percent(used_tokens, Some(max_context)).unwrap_or(0);
         if is_zh {
-            return format!("上下文余量 {percent_left}%");
+            return format!("上下文 {percent_left}%");
         }
         return format!("{percent_left}% context left");
     }
@@ -9939,13 +10021,13 @@ fn format_footer_context_summary(
     let used_tokens = used_tokens.max(0);
     if used_tokens > 0 {
         if is_zh {
-            return format!("上下文占用 {used_tokens}");
+            return format!("上下文 {used_tokens}");
         }
         return format!("{used_tokens} used");
     }
 
     if is_zh {
-        "上下文余量 100%".to_string()
+        "上下文 100%".to_string()
     } else {
         "100% context left".to_string()
     }

@@ -59,11 +59,11 @@ Tools outside the parallelism allowlist run serially, deliberately: write and ex
 | Channel | Behavior | Impact |
 | --- | --- | --- |
 | Display | Preview 2400 characters and 16 lines, with an ellipsis beyond that | Affects client rendering only; the original message and copied content stay complete |
-| Model input | Truncate head and tail by budget; older reproducible observations go to micro-compaction | Decides what the model sees next |
+| Model input | Truncate head and tail by budget; older history is summarized by full compaction | Decides what the model sees next |
 
 The budget into the model: 10000 characters at each of head and tail; arrays at most 128 items (48 head + 16 tail); paged results 500 items (180 head + 60 tail). Clipping adds a "truncated" marker, so the model can see that content was cut.
 
-Micro-compaction conventions: keep the most recent 5 groups, collapse older observations into a 768-byte preview, and only act when at least 256 tokens are saved.
+Full-compaction conventions: the summary model produces the replacement history; standalone micro-compaction has been removed, so there is no more "most recent 5 groups / 768-byte preview" clipping.
 
 ## MCP Integration
 

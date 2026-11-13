@@ -68,7 +68,7 @@ With the master switch off (`cron.enabled=false`), four kinds of write operation
 
 | Surface | Status |
 | --- | --- |
-| API | `/wunder/cron/*`, 11 endpoints in all (status / list / runs / add / update / remove / enable / disable / get / run / action), on the **user side**, isolated by user ownership |
+| API | `/wunder/cron/*`, 12 endpoints in all (status / list / workspaces / runs / add / update / remove / enable / disable / get / run / action), on the **user side**, isolated by user ownership |
 | Tool | The built-in scheduled-tasks tool (canonical name `定时任务`, alias `schedule_task`), sharing the same handler as the API, so the model can create tasks on its own |
 | Cloud | A scheduled-tasks category page under settings |
 | Desktop | A scheduled-tasks page plus a native entry point, calling the same handler in-process |

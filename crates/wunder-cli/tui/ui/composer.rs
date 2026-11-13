@@ -149,10 +149,8 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
         let body = if app.input_is_empty() {
             let placeholder = if app.read_only_notice().is_some() {
                 crate::tui::app::read_only_placeholder(is_zh)
-            } else if is_zh {
-                "输入消息，@ 提及文件，/ 查看命令"
             } else {
-                "Ask anything, @ to mention files, / for commands"
+                idle_placeholder(is_zh)
             };
             Text::from(vec![Line::from(Span::styled(
                 placeholder,
@@ -186,6 +184,16 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
         let x = text_area.x + view.cursor_x.min(text_area.width.saturating_sub(1));
         let y = text_area.y + view.cursor_y.min(text_area.height.saturating_sub(1));
         frame.set_cursor_position((x, y));
+    }
+}
+
+/// What an idle composer says before the first keystroke: one short line, no
+/// shortcut legend — the keys a reader needs are in the footer and `?`.
+fn idle_placeholder(is_zh: bool) -> &'static str {
+    if is_zh {
+        "请输入文本"
+    } else {
+        "Type a message"
     }
 }
 
@@ -228,6 +236,10 @@ fn build_footer_line(app: &mut TuiApp, width: u16) -> Option<Line<'static>> {
     let items = app.composer_footer_items();
 
     if let Some(right_spans) = app.composer_footer_context() {
+        // The right group leads with the model id, which can be longer than the
+        // terminal: shed its head rather than the context figure the group exists
+        // for, so the number a reader checks stays on screen.
+        let right_spans = fit_right_group(right_spans, usize::from(width));
         if let Some(line) = build_footer_line_with_right(items.clone(), right_spans.clone(), width)
         {
             return Some(line);
@@ -246,6 +258,26 @@ fn build_footer_line(app: &mut TuiApp, width: u16) -> Option<Line<'static>> {
         )));
     }
     Some(Line::from(spans))
+}
+
+/// Drops leading spans until the right group fits `width`, then a separator left
+/// hanging at the front, so the group never opens with " · ".
+fn fit_right_group(mut spans: Vec<Span<'static>>, width: usize) -> Vec<Span<'static>> {
+    while !spans.is_empty() && spans_width(spans.as_slice()) > width {
+        spans.remove(0);
+        while spans
+            .first()
+            .is_some_and(|span| is_right_group_separator(span))
+        {
+            spans.remove(0);
+        }
+    }
+    spans
+}
+
+fn is_right_group_separator(span: &Span<'static>) -> bool {
+    let text = span.content.trim();
+    text.is_empty() || text == "·"
 }
 
 /// Project one visible draft line for the frame. First the placeholder split, so a
@@ -591,6 +623,12 @@ mod tests {
     }
 
     #[test]
+    fn the_idle_composer_says_only_what_to_type() {
+        assert_eq!(idle_placeholder(true), "请输入文本");
+        assert_eq!(idle_placeholder(false), "Type a message");
+    }
+
+    #[test]
     fn footer_uses_labels_when_width_allows() {
         let spans = build_footer_spans(
             vec![
@@ -708,10 +746,10 @@ mod tests {
     }
 
     #[test]
-    fn footer_supports_label_only_items_for_model_and_cwd() {
+    fn footer_supports_label_only_items_for_the_task_and_cwd() {
         let spans = build_footer_spans(
             vec![
-                (String::new(), "gpt-5.1-codex".to_string()),
+                (String::new(), "summarise the flaky test".to_string()),
                 (String::new(), "workspace/app".to_string()),
             ],
             80,
@@ -720,7 +758,7 @@ mod tests {
             .iter()
             .map(|span| span.content.as_ref())
             .collect::<String>();
-        assert!(rendered.contains("gpt-5.1-codex"));
+        assert!(rendered.contains("summarise the flaky test"));
         assert!(rendered.contains("workspace/app"));
     }
 
@@ -733,13 +771,13 @@ mod tests {
                     "\u{2190}".to_string(),
                     "command center /threads".to_string(),
                 ),
-                ("?".to_string(), "for shortcuts".to_string()),
+                ("Esc".to_string(), "cancel".to_string()),
             ],
             6,
         );
         let rendered = render_spans(spans);
         assert!(rendered.contains('\u{2190}'), "{rendered}");
-        assert!(rendered.contains('?'), "{rendered}");
+        assert!(rendered.contains("Esc"), "{rendered}");
         assert!(!rendered.contains("command center"), "{rendered}");
         assert!(!rendered.contains("working directory"), "{rendered}");
     }
@@ -756,14 +794,34 @@ mod tests {
                     "\u{2190}".to_string(),
                     "command center /threads".to_string(),
                 ),
-                ("?".to_string(), "for shortcuts".to_string()),
+                ("Esc".to_string(), "cancel".to_string()),
             ],
             24,
         );
         let rendered = render_spans(spans);
         assert!(rendered.contains('\u{2190}'), "{rendered}");
-        assert!(rendered.contains('?'), "{rendered}");
+        assert!(rendered.contains("Esc"), "{rendered}");
         assert!(!rendered.contains("command center /threads"), "{rendered}");
-        assert!(!rendered.contains("for shortcuts"), "{rendered}");
+        assert!(!rendered.contains("cancel"), "{rendered}");
+    }
+
+    #[test]
+    fn a_right_group_wider_than_the_footer_sheds_its_head() {
+        // The model id leads the right group and the context figure closes it:
+        // when the terminal is too narrow for both, the head goes.
+        let spans = vec![
+            Span::styled("a-very-long-model-id-2026".to_string(), theme::secondary_text()),
+            Span::raw(" · "),
+            Span::styled("72% context left".to_string(), theme::secondary_text()),
+        ];
+        let fitted = fit_right_group(spans, 20);
+        assert_eq!(render_spans(fitted), "72% context left");
+        // Wide enough for everything: nothing is dropped.
+        let spans = vec![
+            Span::styled("demo".to_string(), theme::secondary_text()),
+            Span::raw(" · "),
+            Span::styled("72% context left".to_string(), theme::secondary_text()),
+        ];
+        assert_eq!(render_spans(fit_right_group(spans, 40)), "demo · 72% context left");
     }
 }

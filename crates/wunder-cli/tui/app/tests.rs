@@ -235,6 +235,16 @@ fn footer_context_defaults_to_full_when_empty() {
 }
 
 #[test]
+fn footer_context_uses_the_short_label_in_chinese() {
+    assert_eq!(
+        format_footer_context_summary(true, 280, Some(1000)),
+        "上下文 72%"
+    );
+    assert_eq!(format_footer_context_summary(true, 0, None), "上下文 100%");
+    assert_eq!(format_footer_context_summary(true, 280, None), "上下文 280");
+}
+
+#[test]
 fn transcript_entry_spacing_is_only_added_after_first_item() {
     assert_eq!(transcript_entry_spacing_before(0), 0);
     assert_eq!(transcript_entry_spacing_before(1), 1);
@@ -717,4 +727,41 @@ fn temp_tool_kinds_only_match_pending_cards_of_the_same_shape() {
         .matches_result("read_file", pending_patch.as_ref()));
     assert!(!TempToolKind::Generic("list_dir".into())
         .matches_result("read_file", pending_tool.as_ref()));
+}
+
+#[test]
+fn suppressed_paste_cursor_walks_long_multibyte_text_in_linear_time() {
+    // A terminal that echoes Ctrl+V as key events used to make swallowing this
+    // paste quadratic: every key rebuilt the entire remaining string.
+    let text = format!("{}中\n文{}", "a".repeat(20_000), "b".repeat(20));
+    let mut cursor = 0usize;
+    for ch in text.chars() {
+        let (code, modifiers) = if ch == '\n' {
+            (KeyCode::Enter, KeyModifiers::NONE)
+        } else {
+            (KeyCode::Char(ch), KeyModifiers::NONE)
+        };
+        assert!(TuiApp::consume_suppressed_paste_char(
+            text.as_str(),
+            &mut cursor,
+            KeyEvent::new(code, modifiers),
+        ));
+    }
+    assert_eq!(cursor, text.len());
+    assert!(!TuiApp::consume_suppressed_paste_char(
+        text.as_str(),
+        &mut cursor,
+        KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+    ));
+}
+
+#[test]
+fn a_mismatched_echoed_key_does_not_advance_the_suppressed_paste_cursor() {
+    let mut cursor = 0usize;
+    assert!(!TuiApp::consume_suppressed_paste_char(
+        "abc",
+        &mut cursor,
+        KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+    ));
+    assert_eq!(cursor, 0);
 }

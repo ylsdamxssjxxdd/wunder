@@ -25,6 +25,7 @@ ROOT_GENERATED_FILES = [
     "search.json",
     "assets",
     "art",
+    "images",
 ]
 LEGACY_OUTPUT_PATHS = [
     Path("diagrams"),
@@ -34,8 +35,18 @@ LOGO_SOURCE_PATH = REPO_ROOT / "images" / "eva01-head.svg"
 LOGO_TARGET_PATH = Path("assets") / "eva01-head.svg"
 DOCS_ASSET_SOURCE_DIR = DOCS_SOURCE_DIR / "assets"
 DOCS_ASSET_TARGET_PATH = Path("assets") / "manual"
-DESIGN_SOURCE_DIR = REPO_ROOT / "docs" / "wunder美术设计稿" / "蛹"
+DESIGN_SOURCE_DIR = REPO_ROOT / "docs" / "wunder美术设计稿" / "desktop"
 DESIGN_TARGET_PATH = Path("art")
+PREVIEW_SOURCE_DIR = REPO_ROOT / "docs" / "images"
+PREVIEW_TARGET_PATH = Path("images")
+PREVIEW_FILES = (
+    "wunder-pupa.png",
+    "wunder-bridge.png",
+    "wunder-hive.png",
+    "wunder-servo.png",
+    "wunder-cocoon.png",
+    "wunder-cocoon-settings.png",
+)
 FENCE_PATTERN = re.compile(r"^(```|~~~)")
 HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -499,6 +510,15 @@ def copy_docs_assets() -> None:
         shutil.copy2(source_path, target_path)
 
 
+def copy_preview_images() -> None:
+    """Publish the README interface previews for the manual's surface overview."""
+    target = OUTPUT_DIR / PREVIEW_TARGET_PATH
+    target.mkdir(parents=True, exist_ok=True)
+    for name in PREVIEW_FILES:
+        source_path = PREVIEW_SOURCE_DIR / name
+        if source_path.is_file():
+            shutil.copy2(source_path, target / name)
+
 def copy_design_assets() -> None:
     """Publish both sheet sets, their shared gallery and the pan/zoom viewer.
 
@@ -520,13 +540,13 @@ def copy_design_assets() -> None:
         content = read_text(source_path).replace('href="assets/app-icon.png"', f'href="{icon_uri}"')
         (target_root / source_path.name).write_text(content, encoding="utf-8", newline="\n")
 
-    servo_source_dir = source_root / "舵机"
-    if servo_source_dir.is_dir():
-        servo_target = target_root / "servo"
-        servo_target.mkdir(parents=True, exist_ok=True)
-        for source_path in servo_source_dir.glob("*.svg"):
+    cli_source_dir = source_root / "cli"
+    if cli_source_dir.is_dir():
+        cli_target = target_root / "cli"
+        cli_target.mkdir(parents=True, exist_ok=True)
+        for source_path in cli_source_dir.glob("*.svg"):
             content = read_text(source_path).replace('href="assets/app-icon.png"', f'href="{icon_uri}"')
-            (servo_target / source_path.name).write_text(content, encoding="utf-8", newline="\n")
+            (cli_target / source_path.name).write_text(content, encoding="utf-8", newline="\n")
 
     gallery_assets = source_root / "assets"
     if gallery_assets.is_dir():
@@ -537,12 +557,12 @@ def copy_design_assets() -> None:
         raise FileNotFoundError(f"缺少设计稿画廊: {index_path}")
     gallery = read_text(index_path)
     for source, target in (
-        ('data-pupa-base="蛹/"', 'data-pupa-base=""'),
-        ('data-servo-base="舵机/"', 'data-servo-base="servo/"'),
-        ('src="蛹/', 'src="'),
-        ('src="舵机/', 'src="servo/'),
-        ('href="蛹/', 'href="'),
-        ('href="舵机/', 'href="servo/'),
+        ('data-desktop-base="desktop/"', 'data-desktop-base=""'),
+        ('data-cli-base="cli/"', 'data-cli-base="cli/"'),
+        ('src="desktop/', 'src="'),
+        ('src="cli/', 'src="cli/'),
+        ('href="desktop/', 'href="'),
+        ('href="cli/', 'href="cli/'),
     ):
         gallery = gallery.replace(source, target)
     (target_root / "index.html").write_text(gallery, encoding="utf-8", newline="\n")
@@ -567,6 +587,7 @@ def build() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     copy_site_assets()
     copy_docs_assets()
+    copy_preview_images()
     copy_design_assets()
     asset_version = compute_asset_version(
         OUTPUT_DIR / "site.js",

@@ -44,7 +44,7 @@ Approval is triggered because the action may be risky or affect important files;
 | --- | --- | --- | --- |
 | Failed | The agent ran into a problem and could not finish the task | A file is missing or unreadable; a network request failed; a tool errored out; the AI model service had a problem | Read the error for the cause, adjust the request as it suggests, such as giving the right file path, then retry |
 | Cancelled | The conversation was stopped, by you or by the system | You clicked Stop; the system timed out and cancelled; some other deliberate stop | Start the conversation again, or review the record of what ran before the cancellation |
-| Stuck session | It stays in one state for a long time with no progress | The network connection dropped; the backend service had a problem; task handling timed out | Wait a few minutes first; if it is genuinely stuck, click Stop; use the reset work state option in settings to clear the abnormal state; if it still does not recover, contact an administrator |
+| Stuck session | It stays in one state for a long time with no progress | The network connection dropped; the backend service had a problem; task handling timed out | Wait a few minutes first; if it is genuinely stuck, click Stop; call `POST /wunder/auth/me/reset_work_state` to clear the abnormal state (since v1.0.0 the Settings page exposes no such entry); if it still does not recover, contact an administrator |
 
 ## Connection status
 
@@ -66,4 +66,4 @@ Approval is triggered because the action may be risky or affect important files;
 
 **Slow responses**: a complex task that needs several steps, a slow AI model service, or high system load all lengthen the response time. Wait rather than resending the same message.
 
-**Status display looks wrong**: wait first to see whether it recovers on its own; if not, use the reset work state option; then refresh the page or restart the app. If it still persists, follow [Troubleshooting](/docs/en/help/troubleshooting/).
+**Status display looks wrong**: wait first to see whether it recovers on its own; if not, call `POST /wunder/auth/me/reset_work_state` (since v1.0.0 the Settings page exposes no such entry); then refresh the page or restart the app. If it still persists, follow [Troubleshooting](/docs/en/help/troubleshooting/).

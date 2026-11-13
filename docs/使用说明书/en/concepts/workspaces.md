@@ -1,10 +1,10 @@
 ---
 title: Workspaces and the Working Directory
-summary: One workspace per user isolation policy, location and the three firm rules on the Desktop and the Server, file operations, usage statistics, and the local boundary.
+summary: Per-user workspace isolation, the difference between the Cloud's single directory and the Desktop's multiple roots, location and rules, file operations, usage statistics, and the local boundary.
 updated_at: 2026-10-16
 ---
 
-A user has exactly one workspace, and the agent's file tools are rooted at it. On the Desktop it is a persistent directory on your machine; on a Server deployment it is a single per-user directory under the server data root.
+In a Server deployment every user has exactly one cloud workspace, and the agent's file tools are rooted at it. The Desktop and Android can register several workspaces (local directories, the cloud workspace, and remote device workspaces reached through device interlink) and resolve each root by `workspace_id`. Tool execution is always bounded by the path fence.
 
 ## Isolation Policy
 
@@ -21,27 +21,28 @@ User B's workspace (fully isolated, invisible to A and vice versa)
 ```
 
 - Files of different users are fully isolated; neither side can see the other.
-- A user has exactly one workspace; there is no second "personal files / agent files" layer.
-- User, agent instance, and workspace map one to one: one user, one agent, one workspace.
+- Server: a user has exactly one cloud workspace; there is no second "personal files / agent files" layer, and user, agent instance, and cloud workspace map one to one.
+- Desktop / Android: the same user may own several workspace roots, but each root is still bounded by that user and never shared across users.
 
 ## Location
 
 | Form | Location | How to access |
 | --- | --- | --- |
-| Desktop (default) | A persistent directory on your machine | Browse with your system file manager; the agent reads and writes directly |
+| Desktop (default) | A persistent directory on your machine; several local / cloud / interlink remote workspaces can be registered at once | Browse with your system file manager; the agent reads and writes directly |
 | Server | A single per-user directory under the server data root | Upload, download, and edit through the "Working directory" area in the Desktop's left sidebar |
 
 Three firm rules:
 
 | Rule | Meaning |
 | --- | --- |
-| Unique | Each user has exactly one workspace at a time; no second directory is opened for another agent |
-| Fixed | Once assigned it is fixed; a user cannot add, delete, or replace it |
+| Unique in the Cloud | In a Server deployment each user has exactly one cloud workspace at a time; no second directory is opened for another agent |
+| Multiple roots on the Desktop | The Desktop / Android can add and switch several workspace roots; one tool call only acts on the current workspace |
+| Fixed | In a Server deployment the cloud directory is fixed once assigned; a user cannot add, delete, or replace it |
 | Relative paths | Paths shown in the interface and exchanged through APIs are always workspace-relative; absolute paths are never exposed |
 
 ## What It Carries
 
-- **Data isolation**: a user can only access their own workspace; path checks use the user root as the boundary, and out-of-bounds reads and writes are rejected; the agent's file tools are rooted at this directory and no second root is derived.
+- **Data isolation**: a user can only access their own workspace; path checks use the user root as the boundary, and out-of-bounds reads and writes are rejected; in a Server deployment the agent's file tools are rooted at that user's cloud directory and no second root is derived.
 - **File persistence**: the workspace is not cleaned automatically, so the files put in and the files the agent generates are kept long term. Long-lived files go in the workspace and transient transfers in the temporary directory.
 - **Root of configuration**: the workspace is also the root of "what the agent can see" — the skills directory, knowledge files, and global settings, which the agent reads at startup to initialize. The agent's model, prompts, tools, and approval mode are bound through admin-side presets and managed on the settings page, not by hand-writing files in the workspace.
 
@@ -70,7 +71,7 @@ The Desktop runs locally, and its working directory is a persistent directory on
 
 ## Limits
 
-- A workspace cannot be moved to another directory, nor can a second one be added.
-- More agents do not mean more working directories: each user has one agent instance and one workspace.
+- In a Server deployment the cloud workspace cannot be moved to another directory, nor can a second one be added; the Desktop / Android can register several workspace roots.
+- The agent instance and the cloud workspace are still one-to-one: each user has one agent instance; the Server has one cloud workspace, while the Desktop can have multiple roots.
 - Files no longer split into a "personal container" and an "agent container"; that layering is gone, and the user and the agent share the same workspace.
 - The API exchanges paths relative to the workspace root, and absolute paths are not exposed.

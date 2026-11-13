@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-11-13T03:07:36.871112+00:00",
+  "generated_at": "2026-11-13T13:55:07.467195+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is a general-purpose AI workbench: Desktop is the local AI workbench, Android is the Desktop's phone form, Cloud (web) is the cloud AI workbench, CLI is the manual local entry point, and the Server is the user and agent management platform. / wunder 是通用型人工智能工作台：桌面版（desktop）是本地 AI 工作台，安卓版（android）是桌面版的手机形态，云端版（web）是云端 AI 工作台，命令行（cli）是手工本地操作入口，服务端（server）是用户与智能体管理平台。",
@@ -31,7 +31,7 @@
                   {
                     "slug": "zh-CN/index",
                     "title": "wunder 心舰",
-                    "summary": "wunder 的多个形态、能力范围、任务并行与会话队列，以及说明书导航入口。",
+                    "summary": "wunder 的多个形态、能力范围、任务并行与本地等待队列，以及说明书导航入口。",
                     "url": "/docs/"
                   }
                 ]
@@ -99,7 +99,7 @@
                   {
                     "slug": "zh-CN/start/docs-directory",
                     "title": "常用说明目录",
-                    "summary": "仓库文档生态导航：总体设计、设计文档、技术说明书、API 文档、使用说明书、性能标准与评分、功能迭代与经验教训的分工与读法。",
+                    "summary": "仓库文档生态导航：总体设计、设计文档、技术说明书、API 文档、使用说明书、性能基线、功能迭代与经验教训的分工与读法。",
                     "url": "/docs/zh-CN/start/docs-directory/"
                   },
                   {
@@ -292,7 +292,7 @@
                   {
                     "slug": "zh-CN/surfaces/index",
                     "title": "界面概览",
-                    "summary": "多个形态对应多套界面：桌面版（本地 AI 工作台，默认入口）、安卓版（手机上的本地 AI 工作台）、云端版（云端 AI 工作台）、命令行（终端界面）、管理端（治理后台）；含主区域说明与能力矩阵。",
+                    "summary": "多个形态对应多套界面：桌面版（本地 AI 工作台，默认入口）、安卓版（手机上的本地 AI 工作台）、云端版（云端 AI 工作台）、命令行（终端界面）、管理端（治理后台）；含真实界面截图、主区域说明与能力矩阵。",
                     "url": "/docs/zh-CN/surfaces/"
                   }
                 ]
@@ -309,25 +309,14 @@
                   {
                     "slug": "zh-CN/surfaces/web-admin",
                     "title": "管理端界面",
-                    "summary": "服务端自带的治理与调试后台，仅管理员可见。顶层导航 4 组 19 项：系统 4、智能体 6、调试 6、文档 2；另有未落地面板的说明。",
+                    "summary": "服务端自带的治理与调试后台，仅管理员可见。顶层导航 4 组 19 项：系统 7、智能体 5、调试 5、文档 2；另有未落地面板的说明。",
                     "url": "/docs/zh-CN/surfaces/web-admin/"
                   },
                   {
                     "slug": "zh-CN/surfaces/desktop-ui",
                     "title": "桌面版界面",
-                    "summary": "本地 AI 工作台，个人用户的默认入口。主窗只有对话、设置两页，设置内 12 个分类，其余能力以面板和对话框呈现；含桌面侧独占能力与未开放入口。",
+                    "summary": "本地 AI 工作台，个人用户的默认入口。主窗只有对话、设置两页，设置内 11 个分类，其余能力以面板和对话框呈现；含桌面侧独占能力与未开放入口。",
                     "url": "/docs/zh-CN/surfaces/desktop-ui/"
-                  }
-                ]
-              },
-              {
-                "group": "美术",
-                "pages": [
-                  {
-                    "slug": "zh-CN/art/index",
-                    "title": "美术设计稿",
-                    "summary": "桌面版桌面端的十张实机界面设计稿与命令行终端端的六张设计稿，按真实界面、功能结构、控件状态和尺寸约束组织，可在网页中直接拖动、缩放查看。",
-                    "url": "/docs/zh-CN/art/"
                   }
                 ]
               }
@@ -396,13 +385,13 @@
                   {
                     "slug": "zh-CN/concepts/core-memory",
                     "title": "记忆",
-                    "summary": "长期资料在线程创建时注入一次并冻结的两层结构，结构化碎片的组织方式，以及与工作区、知识库的来源分工。",
+                    "summary": "长期资料在线程创建时以索引注入一次并冻结，片段三层（L0/L1/L2）与 core/working/peripheral 分级，以及与工作区、知识库的来源分工。",
                     "url": "/docs/zh-CN/concepts/core-memory/"
                   },
                   {
                     "slug": "zh-CN/concepts/core-multithreading",
                     "title": "多线程",
-                    "summary": "单进程内按线程隔离的调度、锁与实时状态：引擎级会话队列、会话锁 TTL 120 秒、工具并行度 ≤ 4 与轮次上限 1000。",
+                    "summary": "单进程内按线程隔离的调度、锁与实时状态：桌面版前端本地等待队列与云端版引擎会话队列、会话锁 TTL 120 秒、工具并行度 ≤ 4 与轮次上限 1000。",
                     "url": "/docs/zh-CN/concepts/core-multithreading/"
                   },
                   {
@@ -472,7 +461,7 @@
                   {
                     "slug": "zh-CN/concepts/workspaces",
                     "title": "工作区与工作目录",
-                    "summary": "单用户单工作区的隔离策略、桌面版与服务端下的位置与三条约定、文件操作与用量统计、本地边界。",
+                    "summary": "按用户隔离的工作区策略、云端单目录与桌面版多根的差异、位置与约定、文件操作与用量统计、本地边界。",
                     "url": "/docs/zh-CN/concepts/workspaces/"
                   },
                   {
@@ -556,7 +545,7 @@
                   {
                     "slug": "zh-CN/capabilities/admin-panels",
                     "title": "管理端面板指南",
-                    "summary": "四个面板分组的职能，以及吞吐量测试、模拟模型能力与随机模拟的取值约定。",
+                    "summary": "四个分组 19 个面板的职能，以及吞吐量测试、模拟模型能力与随机模拟的取值约定。",
                     "url": "/docs/zh-CN/capabilities/admin-panels/"
                   },
                   {
@@ -580,6 +569,23 @@
                 ]
               }
             ]
+          },
+          {
+            "tab": "参考",
+            "entry_url": "/docs/zh-CN/art/",
+            "groups": [
+              {
+                "group": "设计稿",
+                "pages": [
+                  {
+                    "slug": "zh-CN/art/index",
+                    "title": "美术设计稿",
+                    "summary": "wunder 桌面版的十张实机界面设计稿与 wunder 命令行的六张终端设计稿，按真实界面、功能结构、控件状态和尺寸约束组织；页面可滚动查看，点击图片打开可缩放浏览器。",
+                    "url": "/docs/zh-CN/art/"
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
@@ -597,7 +603,7 @@
                   {
                     "slug": "en/index",
                     "title": "wunder",
-                    "summary": "The forms of wunder, its capability range, parallel tasks and the session queue, plus navigation entries into the manual.",
+                    "summary": "The forms of wunder, its capability range, parallel tasks and the local waiting queue, plus navigation entries into the manual.",
                     "url": "/docs/en/"
                   }
                 ]
@@ -665,7 +671,7 @@
                   {
                     "slug": "en/start/docs-directory",
                     "title": "Documentation Directory",
-                    "summary": "A guide to the repo's documentation ecosystem: how the overview and design docs, technical manual, API reference, user manual, performance standards and scoring, changelog, and lessons-learned divide the work, and how to read them.",
+                    "summary": "A guide to the repo's documentation ecosystem: how the overview and design docs, technical manual, API reference, user manual, performance baselines, changelog, and lessons-learned divide the work, and how to read them.",
                     "url": "/docs/en/start/docs-directory/"
                   },
                   {
@@ -792,6 +798,12 @@
                     "title": "Read Image",
                     "summary": "The `read_image` path and frame-sampling arguments, how static images, GIFs, and video enter context, and the returned fields.",
                     "url": "/docs/en/tools/read-image/"
+                  },
+                  {
+                    "slug": "en/tools/multimodal-generation",
+                    "title": "Multimodal Generation",
+                    "summary": "Model dependencies, arguments, artifact landing rules, returned fields, and failure handling for the speech-generation / speech-to-text / image-generation / video-generation tools.",
+                    "url": "/docs/en/tools/multimodal-generation/"
                   }
                 ]
               },
@@ -828,6 +840,17 @@
                     "url": "/docs/en/tools/schedule-task/"
                   }
                 ]
+              },
+              {
+                "group": "Extensions",
+                "pages": [
+                  {
+                    "slug": "en/tools/extensibility",
+                    "title": "Extensions and Dynamic Tools",
+                    "summary": "The four layers of tools / skills / abilities / user tools and their dispatch order, plus how MCP, skills, and knowledge bases register, route, and land dynamically.",
+                    "url": "/docs/en/tools/extensibility/"
+                  }
+                ]
               }
             ]
           },
@@ -841,7 +864,7 @@
                   {
                     "slug": "en/surfaces/index",
                     "title": "Interface Overview",
-                    "summary": "Multiple forms, multiple interfaces — the Desktop (local AI workbench, the default entry), Android (the Desktop's phone form), the Cloud (cloud AI workbench), the CLI (terminal interface), and the Admin (admin governance console); plus main-area notes and the capability matrix.",
+                    "summary": "Multiple forms, multiple interfaces — the Desktop (local AI workbench, the default entry), Android (the Desktop's phone form), the Cloud (cloud AI workbench), the CLI (terminal interface), and the Admin (admin governance console); with real interface screenshots, main-area notes and the capability matrix.",
                     "url": "/docs/en/surfaces/"
                   }
                 ]
@@ -858,25 +881,14 @@
                   {
                     "slug": "en/surfaces/web-admin",
                     "title": "Admin Interface",
-                    "summary": "The governance and debugging console built into the Server, visible to administrators only. Top-level navigation has 4 groups and 19 items: System 4, Agents 6, Debug 6, Docs 2; plus notes on panels never implemented.",
+                    "summary": "The governance and debugging console built into the Server, visible to administrators only. Top-level navigation has 4 groups and 19 items: System 7, Agents 5, Debug 5, Docs 2; plus notes on panels never implemented.",
                     "url": "/docs/en/surfaces/web-admin/"
                   },
                   {
                     "slug": "en/surfaces/desktop-ui",
                     "title": "Desktop Interface",
-                    "summary": "The local AI workbench and the default entry for individual users. Its main window has only two pages, chat and settings, with 12 categories in settings; everything else appears as panels and dialogs, including desktop-only capabilities and entries not yet wired up.",
+                    "summary": "The local AI workbench and the default entry for individual users. Its main window has only two pages, chat and settings, with 11 categories in settings; everything else appears as panels and dialogs, including desktop-only capabilities and entries not yet wired up.",
                     "url": "/docs/en/surfaces/desktop-ui/"
-                  }
-                ]
-              },
-              {
-                "group": "Art",
-                "pages": [
-                  {
-                    "slug": "en/art/index",
-                    "title": "Art Sheets",
-                    "summary": "Ten implementation-based interface sheets for the Desktop desktop app and six for the CLI terminal app, organized around real UI, functional structure, control states and constraints, with drag-to-pan and zoom in the browser.",
-                    "url": "/docs/en/art/"
                   }
                 ]
               }
@@ -945,13 +957,13 @@
                   {
                     "slug": "en/concepts/core-memory",
                     "title": "Memory",
-                    "summary": "The two layers in which long-term material is injected once at thread creation and then frozen, how structured fragments are organized, and how memory divides the work with the workspace and the knowledge base.",
+                    "summary": "Long-term material injected once as an index at thread creation and then frozen, the three fragment layers (L0/L1/L2) with core/working/peripheral tiers, and how memory divides the work with the workspace and the knowledge base.",
                     "url": "/docs/en/concepts/core-memory/"
                   },
                   {
                     "slug": "en/concepts/core-multithreading",
                     "title": "Multi-threading",
-                    "summary": "Scheduling, locks, and realtime state isolated per thread inside one process: the engine-level session queue, a 120-second session lock TTL, tool parallelism ≤ 4, and a round cap of 1000.",
+                    "summary": "Scheduling, locks, and realtime state isolated per thread inside one process: the Desktop frontend's local waiting queue and the Cloud engine session queue, a 120-second session lock TTL, tool parallelism ≤ 4, and a round cap of 1000.",
                     "url": "/docs/en/concepts/core-multithreading/"
                   },
                   {
@@ -1021,7 +1033,7 @@
                   {
                     "slug": "en/concepts/workspaces",
                     "title": "Workspaces and the Working Directory",
-                    "summary": "One workspace per user isolation policy, location and the three firm rules on the Desktop and the Server, file operations, usage statistics, and the local boundary.",
+                    "summary": "Per-user workspace isolation, the difference between the Cloud's single directory and the Desktop's multiple roots, location and rules, file operations, usage statistics, and the local boundary.",
                     "url": "/docs/en/concepts/workspaces/"
                   },
                   {
@@ -1105,7 +1117,7 @@
                   {
                     "slug": "en/capabilities/admin-panels",
                     "title": "Admin Panel Guide",
-                    "summary": "What each panel in the four groups manages, plus the throughput-test, simulated-model, and random-simulator conventions.",
+                    "summary": "What each of the 19 panels in the four groups manages, plus the throughput-test, simulated-model, and random-simulator conventions.",
                     "url": "/docs/en/capabilities/admin-panels/"
                   },
                   {
@@ -1125,6 +1137,23 @@
                     "title": "MCP Endpoint",
                     "summary": "The address and transport of the MCP service wunder exposes, the built-in `excute` and `doc2md` tools, and how to configure an external MCP service.",
                     "url": "/docs/en/capabilities/mcp-endpoint/"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Reference",
+            "entry_url": "/docs/en/art/",
+            "groups": [
+              {
+                "group": "Design drafts",
+                "pages": [
+                  {
+                    "slug": "en/art/index",
+                    "title": "Art Sheets",
+                    "summary": "Ten implementation-based interface sheets for wunder Desktop and six for the wunder CLI terminal app, organized around real UI, functional structure, control states and constraints; the page scrolls normally and clicking an image opens a zoomable viewer.",
+                    "url": "/docs/en/art/"
                   }
                 ]
               }
@@ -1168,7 +1197,6 @@
     "zh-CN/surfaces/frontend",
     "zh-CN/surfaces/web-admin",
     "zh-CN/surfaces/desktop-ui",
-    "zh-CN/art/index",
     "zh-CN/capabilities/index",
     "zh-CN/capabilities/api-index",
     "zh-CN/concepts/core-goal",
@@ -1206,6 +1234,7 @@
     "zh-CN/capabilities/weixin-channel",
     "zh-CN/capabilities/chat-ws",
     "zh-CN/capabilities/mcp-endpoint",
+    "zh-CN/art/index",
     "en/index",
     "en/start/quickstart",
     "en/start/desktop",
@@ -1229,15 +1258,16 @@
     "en/tools/browser",
     "en/tools/desktop-control",
     "en/tools/read-image",
+    "en/tools/multimodal-generation",
     "en/tools/subagent-control",
     "en/tools/thread-control",
     "en/tools/memory-manager",
     "en/tools/schedule-task",
+    "en/tools/extensibility",
     "en/surfaces/index",
     "en/surfaces/frontend",
     "en/surfaces/web-admin",
     "en/surfaces/desktop-ui",
-    "en/art/index",
     "en/capabilities/index",
     "en/capabilities/api-index",
     "en/concepts/core-goal",
@@ -1274,7 +1304,8 @@
     "en/capabilities/admin-panels",
     "en/capabilities/weixin-channel",
     "en/capabilities/chat-ws",
-    "en/capabilities/mcp-endpoint"
+    "en/capabilities/mcp-endpoint",
+    "en/art/index"
   ],
   "generated_paths": [
     "index.html",
@@ -1284,6 +1315,7 @@
     "search.json",
     "assets",
     "art",
+    "images",
     "zh-CN",
     "en"
   ],
@@ -1292,7 +1324,7 @@
       "slug": "zh-CN/index",
       "language": "zh-CN",
       "title": "wunder 心舰",
-      "summary": "wunder 的多个形态、能力范围、任务并行与会话队列，以及说明书导航入口。",
+      "summary": "wunder 的多个形态、能力范围、任务并行与本地等待队列，以及说明书导航入口。",
       "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
@@ -1498,7 +1530,7 @@
         {
           "id": "section-15",
           "level": 2,
-          "text": "一键重置工作状态"
+          "text": "重置工作状态（无 UI 入口）"
         },
         {
           "id": "section-16",
@@ -1835,7 +1867,7 @@
       "slug": "zh-CN/start/docs-directory",
       "language": "zh-CN",
       "title": "常用说明目录",
-      "summary": "仓库文档生态导航：总体设计、设计文档、技术说明书、API 文档、使用说明书、性能标准与评分、功能迭代与经验教训的分工与读法。",
+      "summary": "仓库文档生态导航：总体设计、设计文档、技术说明书、API 文档、使用说明书、性能基线、功能迭代与经验教训的分工与读法。",
       "updated_at": "2026-10-16",
       "read_when": [],
       "source_docs": [],
@@ -1894,7 +1926,7 @@
         {
           "id": "section-10",
           "level": 2,
-          "text": "性能标准与评分（docs/）"
+          "text": "性能基线（docs/）"
         },
         {
           "id": "section-11",
@@ -3176,8 +3208,8 @@
       "slug": "zh-CN/surfaces/index",
       "language": "zh-CN",
       "title": "界面概览",
-      "summary": "多个形态对应多套界面：桌面版（本地 AI 工作台，默认入口）、安卓版（手机上的本地 AI 工作台）、云端版（云端 AI 工作台）、命令行（终端界面）、管理端（治理后台）；含主区域说明与能力矩阵。",
-      "updated_at": "2026-11-08",
+      "summary": "多个形态对应多套界面：桌面版（本地 AI 工作台，默认入口）、安卓版（手机上的本地 AI 工作台）、云端版（云端 AI 工作台）、命令行（终端界面）、管理端（治理后台）；含真实界面截图、主区域说明与能力矩阵。",
+      "updated_at": "2026-11-13",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -3200,20 +3232,25 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "主区域"
+          "text": "界面预览"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "能力矩阵"
+          "text": "主区域"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "选择依据"
+          "text": "能力矩阵"
         },
         {
           "id": "section-6",
+          "level": 2,
+          "text": "选择依据"
+        },
+        {
+          "id": "section-7",
           "level": 2,
           "text": "边界澄清"
         }
@@ -3303,7 +3340,7 @@
       "slug": "zh-CN/surfaces/web-admin",
       "language": "zh-CN",
       "title": "管理端界面",
-      "summary": "服务端自带的治理与调试后台，仅管理员可见。顶层导航 4 组 19 项：系统 4、智能体 6、调试 6、文档 2；另有未落地面板的说明。",
+      "summary": "服务端自带的治理与调试后台，仅管理员可见。顶层导航 4 组 19 项：系统 7、智能体 5、调试 5、文档 2；另有未落地面板的说明。",
       "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
@@ -3349,7 +3386,7 @@
       "slug": "zh-CN/surfaces/desktop-ui",
       "language": "zh-CN",
       "title": "桌面版界面",
-      "summary": "本地 AI 工作台，个人用户的默认入口。主窗只有对话、设置两页，设置内 12 个分类，其余能力以面板和对话框呈现；含桌面侧独占能力与未开放入口。",
+      "summary": "本地 AI 工作台，个人用户的默认入口。主窗只有对话、设置两页，设置内 11 个分类，其余能力以面板和对话框呈现；含桌面侧独占能力与未开放入口。",
       "updated_at": "2026-11-08",
       "read_when": [],
       "source_docs": [],
@@ -3403,7 +3440,7 @@
         {
           "id": "section-9",
           "level": 2,
-          "text": "一键重置工作状态"
+          "text": "重置工作状态（无 UI 入口）"
         },
         {
           "id": "section-10",
@@ -3412,120 +3449,9 @@
         }
       ],
       "prev_slug": "zh-CN/surfaces/web-admin",
-      "next_slug": "zh-CN/art/index",
+      "next_slug": "zh-CN/capabilities/index",
       "source_path": "zh-CN/surfaces/desktop-ui.md",
       "output_path": "zh-CN/surfaces/desktop-ui/index.html"
-    },
-    "zh-CN/art/index": {
-      "slug": "zh-CN/art/index",
-      "language": "zh-CN",
-      "title": "美术设计稿",
-      "summary": "桌面版桌面端的十张实机界面设计稿与命令行终端端的六张设计稿，按真实界面、功能结构、控件状态和尺寸约束组织，可在网页中直接拖动、缩放查看。",
-      "updated_at": "2026-10-25",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "界面",
-      "group": "美术",
-      "group_path": [
-        "美术"
-      ],
-      "url": "/docs/zh-CN/art/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "美术设计稿"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "00 整体总览"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "01 基础规范"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "02 图标系统"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "03 外壳与侧栏"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "04 会话时间线"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "05 过程与工具"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "06 计划与问询"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "07 输入区"
-        },
-        {
-          "id": "section-10",
-          "level": 2,
-          "text": "08 设置与弹窗"
-        },
-        {
-          "id": "section-11",
-          "level": 2,
-          "text": "09 交互状态与动效"
-        },
-        {
-          "id": "section-12",
-          "level": 2,
-          "text": "命令行 00 整体总览"
-        },
-        {
-          "id": "section-13",
-          "level": 2,
-          "text": "命令行 01 基础规范"
-        },
-        {
-          "id": "section-14",
-          "level": 2,
-          "text": "命令行 02 布局与底栏"
-        },
-        {
-          "id": "section-15",
-          "level": 2,
-          "text": "命令行 03 会话时间线"
-        },
-        {
-          "id": "section-16",
-          "level": 2,
-          "text": "命令行 04 工具与计划"
-        },
-        {
-          "id": "section-17",
-          "level": 2,
-          "text": "命令行 05 输入与弹层"
-        },
-        {
-          "id": "section-18",
-          "level": 2,
-          "text": "维护方式"
-        }
-      ],
-      "prev_slug": "zh-CN/surfaces/desktop-ui",
-      "next_slug": "zh-CN/capabilities/index",
-      "source_path": "zh-CN/art/index.md",
-      "output_path": "zh-CN/art/index.html"
     },
     "zh-CN/capabilities/index": {
       "slug": "zh-CN/capabilities/index",
@@ -3553,7 +3479,7 @@
           "text": "核心能力"
         }
       ],
-      "prev_slug": "zh-CN/art/index",
+      "prev_slug": "zh-CN/surfaces/desktop-ui",
       "next_slug": "zh-CN/capabilities/api-index",
       "source_path": "zh-CN/capabilities/index.md",
       "output_path": "zh-CN/capabilities/index.html"
@@ -3914,7 +3840,7 @@
       "slug": "zh-CN/concepts/core-memory",
       "language": "zh-CN",
       "title": "记忆",
-      "summary": "长期资料在线程创建时注入一次并冻结的两层结构，结构化碎片的组织方式，以及与工作区、知识库的来源分工。",
+      "summary": "长期资料在线程创建时以索引注入一次并冻结，片段三层（L0/L1/L2）与 core/working/peripheral 分级，以及与工作区、知识库的来源分工。",
       "updated_at": "2026-10-16",
       "read_when": [],
       "source_docs": [],
@@ -3928,7 +3854,7 @@
         {
           "id": "section-1",
           "level": 2,
-          "text": "两层结构"
+          "text": "分层结构"
         },
         {
           "id": "section-2",
@@ -3970,7 +3896,7 @@
       "slug": "zh-CN/concepts/core-multithreading",
       "language": "zh-CN",
       "title": "多线程",
-      "summary": "单进程内按线程隔离的调度、锁与实时状态：引擎级会话队列、会话锁 TTL 120 秒、工具并行度 ≤ 4 与轮次上限 1000。",
+      "summary": "单进程内按线程隔离的调度、锁与实时状态：桌面版前端本地等待队列与云端版引擎会话队列、会话锁 TTL 120 秒、工具并行度 ≤ 4 与轮次上限 1000。",
       "updated_at": "2026-10-16",
       "read_when": [],
       "source_docs": [],
@@ -4550,7 +4476,7 @@
       "slug": "zh-CN/concepts/workspaces",
       "language": "zh-CN",
       "title": "工作区与工作目录",
-      "summary": "单用户单工作区的隔离策略、桌面版与服务端下的位置与三条约定、文件操作与用量统计、本地边界。",
+      "summary": "按用户隔离的工作区策略、云端单目录与桌面版多根的差异、位置与约定、文件操作与用量统计、本地边界。",
       "updated_at": "2026-10-16",
       "read_when": [],
       "source_docs": [],
@@ -5474,7 +5400,7 @@
       "slug": "zh-CN/capabilities/admin-panels",
       "language": "zh-CN",
       "title": "管理端面板指南",
-      "summary": "四个面板分组的职能，以及吞吐量测试、模拟模型能力与随机模拟的取值约定。",
+      "summary": "四个分组 19 个面板的职能，以及吞吐量测试、模拟模型能力与随机模拟的取值约定。",
       "updated_at": "2026-10-16",
       "read_when": [],
       "source_docs": [],
@@ -5508,95 +5434,105 @@
         {
           "id": "section-5",
           "level": 3,
-          "text": "单位管理"
+          "text": "系统消息"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "用户管理"
+          "text": "单位管理"
         },
         {
           "id": "section-7",
-          "level": 2,
-          "text": "智能体分组"
+          "level": 3,
+          "text": "用户管理"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "模型配置"
+          "text": "线程管理"
         },
         {
           "id": "section-9",
           "level": 3,
-          "text": "线程管理"
+          "text": "在线更新"
         },
         {
           "id": "section-10",
-          "level": 3,
-          "text": "预设智能体"
+          "level": 2,
+          "text": "智能体分组"
         },
         {
           "id": "section-11",
           "level": 3,
-          "text": "工具管理"
+          "text": "模型配置"
         },
         {
           "id": "section-12",
           "level": 3,
-          "text": "系统提示词"
+          "text": "预设智能体"
         },
         {
           "id": "section-13",
-          "level": 2,
-          "text": "调试分组"
+          "level": 3,
+          "text": "形象管理"
         },
         {
           "id": "section-14",
           "level": 3,
-          "text": "吞吐量测试"
+          "text": "工具管理"
         },
         {
           "id": "section-15",
           "level": 3,
-          "text": "模拟模型能力"
+          "text": "系统提示词"
         },
         {
           "id": "section-16",
-          "level": 3,
-          "text": "随机模拟的轮次约定"
+          "level": 2,
+          "text": "调试分组"
         },
         {
           "id": "section-17",
           "level": 3,
-          "text": "性能测试"
+          "text": "吞吐量测试"
         },
         {
           "id": "section-18",
           "level": 3,
-          "text": "能力评估"
+          "text": "模拟模型能力"
         },
         {
           "id": "section-19",
           "level": 3,
-          "text": "调试面板"
+          "text": "随机模拟的轮次约定"
         },
         {
           "id": "section-20",
           "level": 3,
-          "text": "LSP"
+          "text": "性能测试"
         },
         {
           "id": "section-21",
-          "level": 2,
-          "text": "文档分组"
+          "level": 3,
+          "text": "能力评估"
         },
         {
           "id": "section-22",
           "level": 3,
-          "text": "使用说明书"
+          "text": "调试面板"
         },
         {
           "id": "section-23",
+          "level": 2,
+          "text": "文档分组"
+        },
+        {
+          "id": "section-24",
+          "level": 3,
+          "text": "使用说明书"
+        },
+        {
+          "id": "section-25",
           "level": 3,
           "text": "接口参考"
         }
@@ -5745,15 +5681,126 @@
         }
       ],
       "prev_slug": "zh-CN/capabilities/chat-ws",
-      "next_slug": "en/index",
+      "next_slug": "zh-CN/art/index",
       "source_path": "zh-CN/capabilities/mcp-endpoint.md",
       "output_path": "zh-CN/capabilities/mcp-endpoint/index.html"
+    },
+    "zh-CN/art/index": {
+      "slug": "zh-CN/art/index",
+      "language": "zh-CN",
+      "title": "美术设计稿",
+      "summary": "wunder 桌面版的十张实机界面设计稿与 wunder 命令行的六张终端设计稿，按真实界面、功能结构、控件状态和尺寸约束组织；页面可滚动查看，点击图片打开可缩放浏览器。",
+      "updated_at": "2026-11-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "参考",
+      "group": "设计稿",
+      "group_path": [
+        "设计稿"
+      ],
+      "url": "/docs/zh-CN/art/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "美术设计稿"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "00 整体总览"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "01 基础规范"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "02 图标系统"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "03 外壳与侧栏"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "04 会话时间线"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "05 过程与工具"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "06 计划与问询"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "07 输入区"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "08 设置与弹窗"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "09 交互状态与动效"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "命令行 00 整体总览"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "命令行 01 基础规范"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "命令行 02 布局与底栏"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "命令行 03 会话时间线"
+        },
+        {
+          "id": "section-16",
+          "level": 2,
+          "text": "命令行 04 工具与计划"
+        },
+        {
+          "id": "section-17",
+          "level": 2,
+          "text": "命令行 05 输入与弹层"
+        },
+        {
+          "id": "section-18",
+          "level": 2,
+          "text": "维护方式"
+        }
+      ],
+      "prev_slug": "zh-CN/capabilities/mcp-endpoint",
+      "next_slug": "en/index",
+      "source_path": "zh-CN/art/index.md",
+      "output_path": "zh-CN/art/index.html"
     },
     "en/index": {
       "slug": "en/index",
       "language": "en",
       "title": "wunder",
-      "summary": "The forms of wunder, its capability range, parallel tasks and the session queue, plus navigation entries into the manual.",
+      "summary": "The forms of wunder, its capability range, parallel tasks and the local waiting queue, plus navigation entries into the manual.",
       "updated_at": "2026-11-08",
       "read_when": [
         "You are new to wunder and choosing which form to use",
@@ -5808,7 +5855,7 @@
           "text": "Navigation"
         }
       ],
-      "prev_slug": "zh-CN/capabilities/mcp-endpoint",
+      "prev_slug": "zh-CN/art/index",
       "next_slug": "en/start/quickstart",
       "source_path": "en/index.md",
       "output_path": "en/index.html"
@@ -5983,7 +6030,7 @@
         {
           "id": "section-15",
           "level": 2,
-          "text": "Resetting the working state"
+          "text": "Resetting the working state (no UI entry)"
         },
         {
           "id": "section-16",
@@ -6340,7 +6387,7 @@
       "slug": "en/start/docs-directory",
       "language": "en",
       "title": "Documentation Directory",
-      "summary": "A guide to the repo's documentation ecosystem: how the overview and design docs, technical manual, API reference, user manual, performance standards and scoring, changelog, and lessons-learned divide the work, and how to read them.",
+      "summary": "A guide to the repo's documentation ecosystem: how the overview and design docs, technical manual, API reference, user manual, performance baselines, changelog, and lessons-learned divide the work, and how to read them.",
       "updated_at": "2026-10-16",
       "read_when": [
         "You want to know which doc layer answers your question",
@@ -6348,7 +6395,7 @@
       ],
       "source_docs": [
         "docs/使用说明书/site.json",
-        "docs/性能标准.md",
+        "docs/性能基线/README.md",
         "docs/SOP.md",
         "docs/功能迭代.md"
       ],
@@ -6407,7 +6454,7 @@
         {
           "id": "section-10",
           "level": 2,
-          "text": "Performance standards and scoring (docs/)"
+          "text": "Performance baselines (docs/)"
         },
         {
           "id": "section-11",
@@ -7309,9 +7356,90 @@
         }
       ],
       "prev_slug": "en/tools/desktop-control",
-      "next_slug": "en/tools/subagent-control",
+      "next_slug": "en/tools/multimodal-generation",
       "source_path": "en/tools/read-image.md",
       "output_path": "en/tools/read-image/index.html"
+    },
+    "en/tools/multimodal-generation": {
+      "slug": "en/tools/multimodal-generation",
+      "language": "en",
+      "title": "Multimodal Generation",
+      "summary": "Model dependencies, arguments, artifact landing rules, returned fields, and failure handling for the speech-generation / speech-to-text / image-generation / video-generation tools.",
+      "updated_at": "2026-11-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "Tools",
+      "group": "Multimodal",
+      "group_path": [
+        "Multimodal"
+      ],
+      "url": "/docs/en/tools/multimodal-generation/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Multimodal Generation"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Model dependencies"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Arguments"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "Speech generation"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "Speech to text"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Image generation"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Video generation"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Artifact paths"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Return structure"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Errors and handling"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Limits"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Related"
+        }
+      ],
+      "prev_slug": "en/tools/read-image",
+      "next_slug": "en/tools/subagent-control",
+      "source_path": "en/tools/multimodal-generation.md",
+      "output_path": "en/tools/multimodal-generation/index.html"
     },
     "en/tools/subagent-control": {
       "slug": "en/tools/subagent-control",
@@ -7354,7 +7482,7 @@
           "text": "Target resolution and caps"
         }
       ],
-      "prev_slug": "en/tools/read-image",
+      "prev_slug": "en/tools/multimodal-generation",
       "next_slug": "en/tools/thread-control",
       "source_path": "en/tools/subagent-control.md",
       "output_path": "en/tools/subagent-control/index.html"
@@ -7478,16 +7606,97 @@
         }
       ],
       "prev_slug": "en/tools/memory-manager",
-      "next_slug": "en/surfaces/index",
+      "next_slug": "en/tools/extensibility",
       "source_path": "en/tools/schedule-task.md",
       "output_path": "en/tools/schedule-task/index.html"
+    },
+    "en/tools/extensibility": {
+      "slug": "en/tools/extensibility",
+      "language": "en",
+      "title": "Extensions and Dynamic Tools",
+      "summary": "The four layers of tools / skills / abilities / user tools and their dispatch order, plus how MCP, skills, and knowledge bases register, route, and land dynamically.",
+      "updated_at": "2026-11-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "Tools",
+      "group": "Extensions",
+      "group_path": [
+        "Extensions"
+      ],
+      "url": "/docs/en/tools/extensibility/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Extensions and Dynamic Tools"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "The four layers"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Dispatch order"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "MCP"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "The server@tool client"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "The /wunder/mcp server"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Example service"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Skills"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Knowledge bases"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Errors and handling"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Limits"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Related"
+        }
+      ],
+      "prev_slug": "en/tools/schedule-task",
+      "next_slug": "en/surfaces/index",
+      "source_path": "en/tools/extensibility.md",
+      "output_path": "en/tools/extensibility/index.html"
     },
     "en/surfaces/index": {
       "slug": "en/surfaces/index",
       "language": "en",
       "title": "Interface Overview",
-      "summary": "Multiple forms, multiple interfaces — the Desktop (local AI workbench, the default entry), Android (the Desktop's phone form), the Cloud (cloud AI workbench), the CLI (terminal interface), and the Admin (admin governance console); plus main-area notes and the capability matrix.",
-      "updated_at": "2026-11-08",
+      "summary": "Multiple forms, multiple interfaces — the Desktop (local AI workbench, the default entry), Android (the Desktop's phone form), the Cloud (cloud AI workbench), the CLI (terminal interface), and the Admin (admin governance console); with real interface screenshots, main-area notes and the capability matrix.",
+      "updated_at": "2026-11-13",
       "read_when": [
         "You are choosing between the forms and need to know what each interface can do",
         "You expect a capability in one interface and want to check whether it exists there at all"
@@ -7519,25 +7728,30 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "Main areas"
+          "text": "Interface previews"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "Capability matrix"
+          "text": "Main areas"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "Choosing by scenario"
+          "text": "Capability matrix"
         },
         {
           "id": "section-6",
           "level": 2,
+          "text": "Choosing by scenario"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
           "text": "Boundaries worth clarifying"
         }
       ],
-      "prev_slug": "en/tools/schedule-task",
+      "prev_slug": "en/tools/extensibility",
       "next_slug": "en/surfaces/frontend",
       "source_path": "en/surfaces/index.md",
       "output_path": "en/surfaces/index.html"
@@ -7631,7 +7845,7 @@
       "slug": "en/surfaces/web-admin",
       "language": "en",
       "title": "Admin Interface",
-      "summary": "The governance and debugging console built into the Server, visible to administrators only. Top-level navigation has 4 groups and 19 items: System 4, Agents 6, Debug 6, Docs 2; plus notes on panels never implemented.",
+      "summary": "The governance and debugging console built into the Server, visible to administrators only. Top-level navigation has 4 groups and 19 items: System 7, Agents 5, Debug 5, Docs 2; plus notes on panels never implemented.",
       "updated_at": "2026-11-08",
       "read_when": [
         "You administer the Server as an administrator through the Admin",
@@ -7685,7 +7899,7 @@
       "slug": "en/surfaces/desktop-ui",
       "language": "en",
       "title": "Desktop Interface",
-      "summary": "The local AI workbench and the default entry for individual users. Its main window has only two pages, chat and settings, with 12 categories in settings; everything else appears as panels and dialogs, including desktop-only capabilities and entries not yet wired up.",
+      "summary": "The local AI workbench and the default entry for individual users. Its main window has only two pages, chat and settings, with 11 categories in settings; everything else appears as panels and dialogs, including desktop-only capabilities and entries not yet wired up.",
       "updated_at": "2026-11-08",
       "read_when": [
         "You use the Desktop desktop app and want to know where a capability lives",
@@ -7748,7 +7962,7 @@
         {
           "id": "section-9",
           "level": 2,
-          "text": "Resetting the working state"
+          "text": "Resetting the working state (no UI entry)"
         },
         {
           "id": "section-10",
@@ -7757,120 +7971,9 @@
         }
       ],
       "prev_slug": "en/surfaces/web-admin",
-      "next_slug": "en/art/index",
+      "next_slug": "en/capabilities/index",
       "source_path": "en/surfaces/desktop-ui.md",
       "output_path": "en/surfaces/desktop-ui/index.html"
-    },
-    "en/art/index": {
-      "slug": "en/art/index",
-      "language": "en",
-      "title": "Art Sheets",
-      "summary": "Ten implementation-based interface sheets for the Desktop desktop app and six for the CLI terminal app, organized around real UI, functional structure, control states and constraints, with drag-to-pan and zoom in the browser.",
-      "updated_at": "2026-10-25",
-      "read_when": [],
-      "source_docs": [],
-      "tab": "Surfaces",
-      "group": "Art",
-      "group_path": [
-        "Art"
-      ],
-      "url": "/docs/en/art/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "Art Sheets"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "00 Overview"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "01 Foundations"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "02 Icons"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "03 Shell and Sidebar"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "04 Timeline"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "05 Process and Tools"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "06 Plan and Inquiry"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "07 Composer"
-        },
-        {
-          "id": "section-10",
-          "level": 2,
-          "text": "08 Settings and Dialogs"
-        },
-        {
-          "id": "section-11",
-          "level": 2,
-          "text": "09 States and Motion"
-        },
-        {
-          "id": "section-12",
-          "level": 2,
-          "text": "CLI 00 Overview"
-        },
-        {
-          "id": "section-13",
-          "level": 2,
-          "text": "CLI 01 Foundations"
-        },
-        {
-          "id": "section-14",
-          "level": 2,
-          "text": "CLI 02 Layout and Footer"
-        },
-        {
-          "id": "section-15",
-          "level": 2,
-          "text": "CLI 03 Timeline"
-        },
-        {
-          "id": "section-16",
-          "level": 2,
-          "text": "CLI 04 Tools and Plan"
-        },
-        {
-          "id": "section-17",
-          "level": 2,
-          "text": "CLI 05 Input and Popups"
-        },
-        {
-          "id": "section-18",
-          "level": 2,
-          "text": "Maintenance"
-        }
-      ],
-      "prev_slug": "en/surfaces/desktop-ui",
-      "next_slug": "en/capabilities/index",
-      "source_path": "en/art/index.md",
-      "output_path": "en/art/index.html"
     },
     "en/capabilities/index": {
       "slug": "en/capabilities/index",
@@ -7893,7 +7996,7 @@
           "text": "Core capabilities"
         }
       ],
-      "prev_slug": "en/art/index",
+      "prev_slug": "en/surfaces/desktop-ui",
       "next_slug": "en/capabilities/api-index",
       "source_path": "en/capabilities/index.md",
       "output_path": "en/capabilities/index.html"
@@ -8258,7 +8361,7 @@
       "slug": "en/concepts/core-memory",
       "language": "en",
       "title": "Memory",
-      "summary": "The two layers in which long-term material is injected once at thread creation and then frozen, how structured fragments are organized, and how memory divides the work with the workspace and the knowledge base.",
+      "summary": "Long-term material injected once as an index at thread creation and then frozen, the three fragment layers (L0/L1/L2) with core/working/peripheral tiers, and how memory divides the work with the workspace and the knowledge base.",
       "updated_at": "2026-10-16",
       "read_when": [],
       "source_docs": [],
@@ -8272,7 +8375,7 @@
         {
           "id": "section-1",
           "level": 2,
-          "text": "The two layers"
+          "text": "Layered structure"
         },
         {
           "id": "section-2",
@@ -8314,7 +8417,7 @@
       "slug": "en/concepts/core-multithreading",
       "language": "en",
       "title": "Multi-threading",
-      "summary": "Scheduling, locks, and realtime state isolated per thread inside one process: the engine-level session queue, a 120-second session lock TTL, tool parallelism ≤ 4, and a round cap of 1000.",
+      "summary": "Scheduling, locks, and realtime state isolated per thread inside one process: the Desktop frontend's local waiting queue and the Cloud engine session queue, a 120-second session lock TTL, tool parallelism ≤ 4, and a round cap of 1000.",
       "updated_at": "2026-10-16",
       "read_when": [],
       "source_docs": [],
@@ -8903,7 +9006,7 @@
       "slug": "en/concepts/workspaces",
       "language": "en",
       "title": "Workspaces and the Working Directory",
-      "summary": "One workspace per user isolation policy, location and the three firm rules on the Desktop and the Server, file operations, usage statistics, and the local boundary.",
+      "summary": "Per-user workspace isolation, the difference between the Cloud's single directory and the Desktop's multiple roots, location and rules, file operations, usage statistics, and the local boundary.",
       "updated_at": "2026-10-16",
       "read_when": [],
       "source_docs": [],
@@ -9777,7 +9880,7 @@
       "slug": "en/capabilities/admin-panels",
       "language": "en",
       "title": "Admin Panel Guide",
-      "summary": "What each panel in the four groups manages, plus the throughput-test, simulated-model, and random-simulator conventions.",
+      "summary": "What each of the 19 panels in the four groups manages, plus the throughput-test, simulated-model, and random-simulator conventions.",
       "updated_at": "2026-10-16",
       "read_when": [],
       "source_docs": [],
@@ -9806,95 +9909,105 @@
         {
           "id": "section-4",
           "level": 3,
-          "text": "Organization management"
+          "text": "System messages"
         },
         {
           "id": "section-5",
           "level": 3,
-          "text": "User management"
+          "text": "Organization management"
         },
         {
           "id": "section-6",
-          "level": 2,
-          "text": "Agent group"
+          "level": 3,
+          "text": "User management"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "Model configuration"
+          "text": "Thread management"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "Thread management"
+          "text": "Online updates"
         },
         {
           "id": "section-9",
-          "level": 3,
-          "text": "Preset agents"
+          "level": 2,
+          "text": "Agent group"
         },
         {
           "id": "section-10",
           "level": 3,
-          "text": "Tool management"
+          "text": "Model configuration"
         },
         {
           "id": "section-11",
           "level": 3,
-          "text": "System prompts"
+          "text": "Preset agents"
         },
         {
           "id": "section-12",
-          "level": 2,
-          "text": "Debug group"
+          "level": 3,
+          "text": "Companion management"
         },
         {
           "id": "section-13",
           "level": 3,
-          "text": "Throughput testing"
+          "text": "Tool management"
         },
         {
           "id": "section-14",
           "level": 3,
-          "text": "Simulated model capabilities"
+          "text": "System prompts"
         },
         {
           "id": "section-15",
-          "level": 3,
-          "text": "Round conventions of the random simulator"
+          "level": 2,
+          "text": "Debug group"
         },
         {
           "id": "section-16",
           "level": 3,
-          "text": "Performance testing"
+          "text": "Throughput testing"
         },
         {
           "id": "section-17",
           "level": 3,
-          "text": "Capability evaluation"
+          "text": "Simulated model capabilities"
         },
         {
           "id": "section-18",
           "level": 3,
-          "text": "Debug panel"
+          "text": "Round conventions of the random simulator"
         },
         {
           "id": "section-19",
           "level": 3,
-          "text": "LSP"
+          "text": "Performance testing"
         },
         {
           "id": "section-20",
-          "level": 2,
-          "text": "Documentation group"
+          "level": 3,
+          "text": "Capability evaluation"
         },
         {
           "id": "section-21",
           "level": 3,
-          "text": "User guide"
+          "text": "Debug panel"
         },
         {
           "id": "section-22",
+          "level": 2,
+          "text": "Documentation group"
+        },
+        {
+          "id": "section-23",
+          "level": 3,
+          "text": "User guide"
+        },
+        {
+          "id": "section-24",
           "level": 3,
           "text": "Interface reference"
         }
@@ -10028,9 +10141,120 @@
         }
       ],
       "prev_slug": "en/capabilities/chat-ws",
-      "next_slug": null,
+      "next_slug": "en/art/index",
       "source_path": "en/capabilities/mcp-endpoint.md",
       "output_path": "en/capabilities/mcp-endpoint/index.html"
+    },
+    "en/art/index": {
+      "slug": "en/art/index",
+      "language": "en",
+      "title": "Art Sheets",
+      "summary": "Ten implementation-based interface sheets for wunder Desktop and six for the wunder CLI terminal app, organized around real UI, functional structure, control states and constraints; the page scrolls normally and clicking an image opens a zoomable viewer.",
+      "updated_at": "2026-11-13",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "Reference",
+      "group": "Design drafts",
+      "group_path": [
+        "Design drafts"
+      ],
+      "url": "/docs/en/art/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Art Sheets"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "00 Overview"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "01 Foundations"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "02 Icons"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "03 Shell and Sidebar"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "04 Timeline"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "05 Process and Tools"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "06 Plan and Inquiry"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "07 Composer"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "08 Settings and Dialogs"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "09 States and Motion"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "CLI 00 Overview"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "CLI 01 Foundations"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "CLI 02 Layout and Footer"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "CLI 03 Timeline"
+        },
+        {
+          "id": "section-16",
+          "level": 2,
+          "text": "CLI 04 Tools and Plan"
+        },
+        {
+          "id": "section-17",
+          "level": 2,
+          "text": "CLI 05 Input and Popups"
+        },
+        {
+          "id": "section-18",
+          "level": 2,
+          "text": "Maintenance"
+        }
+      ],
+      "prev_slug": "en/capabilities/mcp-endpoint",
+      "next_slug": null,
+      "source_path": "en/art/index.md",
+      "output_path": "en/art/index.html"
     }
   }
 }

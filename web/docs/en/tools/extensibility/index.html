@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Extensions and Dynamic Tools | 使用说明书</title>
+  <meta name="description" content="The four layers of tools / skills / abilities / user tools and their dispatch order, plus how MCP, skills, and knowledge bases register, route, and land dynamically.">
+  <link rel="stylesheet" href="/docs/site.css?v=fb1611f43e8e">
+
+  <script type="module" src="/docs/site.js?v=fb1611f43e8e"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/extensibility","language":"en","title":"Extensions and Dynamic Tools","summary":"The four layers of tools / skills / abilities / user tools and their dispatch order, plus how MCP, skills, and knowledge bases register, route, and land dynamically.","updated_at":"2026-11-13","read_when":[],"source_docs":[],"tab":"Tools","group":"Extensions","group_path":["Extensions"],"url":"/docs/en/tools/extensibility/","headings":[{"id":"section-1","level":1,"text":"Extensions and Dynamic Tools"},{"id":"section-2","level":2,"text":"The four layers"},{"id":"section-3","level":2,"text":"Dispatch order"},{"id":"section-4","level":2,"text":"MCP"},{"id":"section-5","level":3,"text":"The server@tool client"},{"id":"section-6","level":3,"text":"The /wunder/mcp server"},{"id":"section-7","level":3,"text":"Example service"},{"id":"section-8","level":2,"text":"Skills"},{"id":"section-9","level":2,"text":"Knowledge bases"},{"id":"section-10","level":2,"text":"Errors and handling"},{"id":"section-11","level":2,"text":"Limits"},{"id":"section-12","level":2,"text":"Related"}],"prev_slug":"en/tools/schedule-task","next_slug":"en/surfaces/index","markdown":"# Extensions and Dynamic Tools\n\nSome tool names the model sees come from the built-in table; others are registered dynamically from configuration at runtime. Dispatch works across four layers: tools, skills, abilities, and user tools.\n\n## The four layers\n\n| Layer | What it is | Who uses it |\n| --- | --- | --- |\n| **Tool** | An executor: it has an argument schema and a dispatch branch, and can produce side effects or read data | Called by the model, executed by the runtime |\n| **Skill** | Knowledge + scripts: a directory containing `SKILL.md` (with frontmatter) and an entry script | Can be called as a tool, or read as reference material |\n| **Ability** | An entry in the administrator's selection layer, not an executor: folds tools and skills into selectable, grantable items | Checked, granted, and shared in the Admin / Cloud |\n| **User tool** | A user-supplied extension: MCP / skill / knowledge base, routed by alias | Configured on the user side, matched by alias at runtime |\n\n\"Selecting an ability\" means putting a tool name or skill name into that agent's selection set; the actual execution is still done by the tool layer or skill layer.\n\n## Dispatch order\n\nTool dispatch has a fixed hit order:\n\n1. Normalize the English alias to the Chinese canonical name.\n2. **User-tool alias table hit** → route directly to your user MCP, user skill, or user knowledge base. Your own skills can be called by bare name; another owner's skill is written as `owner@skill-name`.\n3. **Skill-name hit** → execute the skill entry script directly.\n4. **Name contains `@`** → treat it as MCP.\n5. **Knowledge-base-name hit** → run retrieval against that base.\n6. Everything else goes to built-in tools.\n\nNote that step 2 **takes precedence over built-in tools**: when a user tool and a built-in tool share a name, the user tool changes the route. This is expected behavior.\n\n## MCP\n\n### The `server@tool` client\n\nAfter an external MCP server is connected, every allowed tool is registered as `server-name@tool-name`.\n\n- **Packed mode**: when a server is marked as packed, it folds into **one** tool with only three actions — list available tools, fetch one tool's description, and call one tool. This keeps dozens of work details out of the context at once; the model looks them up on demand.\n- **Only one transport**: streamable-http. Old transport types are rejected when listing tools or calling; stdio is not supported on the wunder side.\n- The tool list has a short cache: 30 seconds, at most 128 entries.\n- Arguments must be objects; non-objects are treated as no arguments.\n- **Return shape**: a direct call returns the MCP server's own result structure; a call routed through a user-tool alias is wrapped in the shared envelope.\n\n### The `/wunder/mcp` server\n\nThe Server / Desktop mounts an MCP service at `/wunder/mcp` exposing two tools (for external access, see [MCP endpoint access](/docs/en/capabilities/mcp-endpoint/)):\n\n- `excute`: runs one agent task and returns the final reply (the tool name really is spelled this way; treat it as authoritative when integrating)\n- `doc2md`: parses a document and returns Markdown\n\nWhen the endpoint runs a task, it computes the tool set for the agent on the fly and explicitly removes itself, so an endpoint-driven agent cannot call the endpoint back.\n\n### Example service\n\nThere is also a standalone MCP service example registering database query, database export, knowledge-base query, and PPT read / write / delete / refine / template-read tools. To connect it, configure a streamable-http endpoint by the rules above.\n\n## Skills\n\n- A skill is a directory: `SKILL.md` with frontmatter, plus an entry script probed in a fixed order (`run.py` → `skill.py` → `main.py`).\n- **The skill name itself is a callable tool name**; it does not need to go through \"skill call\".\n- `技能调用` (alias `skill_call`) is responsible for \"reading the body\": it returns the skill name, description, path, root directory, and body, and replaces the skill-root placeholder in the body with the real path. The name may be `owner@skill-name` or a bare skill name; duplicates produce an ambiguity error listing the candidates.\n- Packaged import (including compressed archives and duplicate-name handling) is handled by the platform.\n- The global skills directory comes from configuration, and the script executor path can be overridden.\n\n## Knowledge bases\n\n- **Registered dynamically by base name**: every enabled base name becomes a tool name directly; when it collides with a skill name, the skill wins.\n- Arguments: a query string or an array of keywords (keywords take precedence; multiple keywords are retrieved in groups and deduplicated), plus an optional limit.\n- Three base types: literal retrieval, built-in vector retrieval, and external RAGFlow. When vector retrieval fails or no embedding profile is available, it **falls back to literal retrieval**, and the result shows whether fallback mode is active.\n- Zero hits suggest narrowing the query; document items in the result are compacted to save context.\n\n## Errors and handling\n\n| Symptom | Check first |\n| --- | --- |\n| MCP configured but no tools | Whether the server is enabled, whether the allowlist blocks it, whether the transport type is a legacy value |\n| Told the legacy transport type is no longer supported | Switch to streamable-http |\n| Told the built-in tool is unknown | The name is neither a canonical name / alias, nor contains `@`, nor a skill name, nor a base name |\n| Skill call fails | Whether the entry script is missing or exits non-zero; first check whether skill call can read the body |\n| Knowledge-base name cannot be called | Whether the base is enabled, whether its root directory is empty, or whether a same-name skill occupies the name |\n| A user tool \"steals\" a built-in name | Alias routing takes precedence over built-in dispatch; this is expected |\n| A tool disappears entirely | It may be temporarily hidden or desktop-hidden; see [Tools](/docs/en/tools/index/) |\n\n## Limits\n\n- Dynamic names share one table with built-in names: avoid built-in canonical names and aliases when naming skills / knowledge bases, or the alias will rewrite the meaning.\n- MCP tool listing and calls are both constrained by the allowlist, and packed folding still validates each time.\n- Skill execution **runs a script in a subprocess** with a 60-second timeout; it inherits the platform's path and permission boundaries, so do not put privileged operations in skill scripts.\n- Before an extension enters the model context, it still passes through the ability selection set and model-availability filters (vision, multimodal, and desktop thresholds differ; see [Tools](/docs/en/tools/index/)).\n\n## Related\n\n- [Tools](/docs/en/tools/index/) — the built-in tool matrix and shared result shell\n- [MCP endpoint access](/docs/en/capabilities/mcp-endpoint/) — the external `/wunder/mcp` surface\n- [Skills and prompts](/docs/en/concepts/prompt-and-skills/) — how skills bind to prompts\n","source_path":"使用说明书/en/tools/extensibility.md"}</script>
+</body>
+</html>

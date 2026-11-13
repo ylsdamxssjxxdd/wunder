@@ -73,9 +73,9 @@ wunder 的能力面是四层，不是一套概念的四个别名。混用任何�
 | 通道 | 位置 | 语义 | 约束 |
 | --- | --- | --- | --- |
 | 展示通道 | `services/tool_result_display.rs`，preview 2400 字符 / 16 行 | 客户端可读摘要 | 只影响人看到的，不影响模型输入；原始结果必须完整可查 |
-| 模型输入通道 | `finalize_tool_result`（`orchestrator/execute_tools.rs:741`）+ microcompaction + model_observation | 进入下轮 prompt 的观测 | 受 token 预算、头尾各 10000 字符等裁剪常量（`orchestrator/constants.rs:41-50`）与「只信任 provider 观测到的 token」约束 |
+| 模型输入通道 | `finalize_tool_result`（`orchestrator/execute_tools.rs:741`）+ 完整历史压缩 + model_observation | 进入下轮 prompt 的观测 | 受 token 预算、头尾各 10000 字符等裁剪常量（`orchestrator/constants.rs:41-50`）与「只信任 provider 观测到的 token」约束 |
 
-为什么必须分开：模型输入通道直接改变上下文与 prompt 前缀，裁剪策略要与缓存复用、微压缩（旧观测折成 768B 预览、保留最近 5 组）联动演进；展示通道只受人的可读性约束。合并成一条通道会导致「为了展示好看截断模型输入」或「为了模型完整撑爆 UI」两类事故。细节链路见 `../技术说明书/11-工具结果裁剪与观测链路.md`。
+为什么必须分开：模型输入通道直接改变上下文与 prompt 前缀，裁剪策略要与缓存复用、完整历史压缩联动演进（独立 microcompaction 已移除）；展示通道只受人的可读性约束。合并成一条通道会导致「为了展示好看截断模型输入」或「为了模型完整撑爆 UI」两类事故。细节链路见 `../技术说明书/11-工具结果裁剪与观测链路.md`。
 
 ## 6. MCP 边界
 

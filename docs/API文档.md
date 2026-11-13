@@ -64,7 +64,7 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
 - draw.io 在线图表编辑：配置 `drawio.enabled/editor_url` 后，用户侧工作区中的 `.drawio`、`.dio`、`.drawio.xml` 文件可通过 `/wunder/workspace/drawio/config` 获取 diagrams.net/draw.io 嵌入编辑器地址；前端通过现有 `/wunder/workspace/content` 读取 XML，并通过 `/wunder/workspace/file` 保存回写。仓库 compose 默认提供 `wunder-drawio` 服务，宿主机默认端口为 `18081`。
 - 桌面版本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
 - 桌面版现仅保留本地模式，不再提供 desktop 内部的服务端连接切换与端云协同入口；需要服务端能力时请直接使用浏览器访问 server 形态。Desktop 本地模式固定优先使用安装包附带的 Python 运行时，不再通过 `/wunder/desktop/settings` 配置自定义解释器，也不再提供 `/wunder/desktop/python/interpreters` 本机探测接口；`GET /wunder/desktop/fs/list` 仍保留用于本地目录浏览等通用场景。
-- 桌面版本地模式新增 `POST /wunder/desktop/reset_work_state`：统一中止当前 desktop 用户的运行中会话与队列任务，为默认智能体和全部用户智能体切换到新的任务线程，并清空各自工作目录内容，供系统设置页执行“一键重置工作状态”。
+- 桌面版本地模式新增 `POST /wunder/desktop/reset_work_state`：统一中止当前 desktop 用户的运行中会话与队列任务，为默认智能体和全部用户智能体切换到新的任务线程，并清空各自工作目录内容。该接口为 API-only，v1.0.0 起桌面版与云端版设置页均不再提供「一键重置工作状态」入口。
   - 智能体形象能力统一复用智能体 icon 字段；用户私有形象保存在浏览器 IndexedDB，管理员全局形象由 /wunder/admin/companions* 管理并通过 /wunder/companions/global* 供用户侧读取；当前桌面版回退为界面内形象展示。
 - 桌面版 GUI 使用 crates/wunder-desktop/frontend 与 NativeDesktop 同进程运行，不新增远程 API。
 - 桌面版引导接口 `GET /config.json` 与 `GET /wunder/desktop/bootstrap` 现补充 `runtime_profile` 与 `runtime_capabilities`：前者用于标识 `desktop_embedded` / 其他运行形态，后者用于下发 `embedded_mode/thread_runtime_active/gateway_maintenance_active/cron_active/channels_enabled/channel_outbox_worker_enabled/lan_overlay_supported` 等能力位，供前端按实际运行能力启用订阅、恢复与降级策略。
@@ -1029,6 +1029,7 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
 - 说明：定时任务管理（用户侧）。
 - `GET /wunder/cron/list`：列出当前用户的定时任务（可选 `agent_id`，按智能体作用域过滤）
   - 返回：`data.jobs`（包含 job_id/name/schedule/next_run_at/last_status/consecutive_failures/auto_disabled_reason 等）
+- `GET /wunder/cron/workspaces`：列出当前用户可用于定时任务的工作区（`workspace_id` 与展示名）
 - `GET /wunder/cron/status`：查询调度器健康状态与当前用户任务概况
   - 返回：`data.scheduler`（started/enabled/running_jobs/next_run_at/last_tick_at/last_error、`poll_interval_ms`、`max_idle_sleep_ms`、`lease_ttl_ms`、`lease_heartbeat_ms`、`max_concurrent_runs`、`idle_retry_ms`、`max_busy_wait_ms`、`max_consecutive_failures` 等）+ `data.jobs_total/jobs_enabled/jobs_running`；任务项额外返回派生字段 `running/heartbeat_at/lease_expires_at` 用于前端与模型判断当前执行态。
 - `GET /wunder/cron/runs?job_id=...&limit=...&agent_id=...`：查询任务运行记录（传入 `agent_id` 时校验任务归属）

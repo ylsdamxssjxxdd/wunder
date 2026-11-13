@@ -167,7 +167,7 @@ services/tools/dispatch.rs:27  真正分发到实现
 | 通道 | 位置 | 影响 |
 | --- | --- | --- |
 | 展示通道 | `services/tool_result_display.rs`，preview 2400 字符 / 16 行 | **只影响客户端展示**，不回写后端结果 |
-| 模型输入通道 | `finalize_tool_result`（`execute_tools.rs:741`）+ microcompaction + `model_observation` | 决定模型实际看到什么 |
+| 模型输入通道 | `finalize_tool_result`（`execute_tools.rs:741`）+ 完整历史压缩 + `model_observation` | 决定模型实际看到什么 |
 
 模型输入侧的六层裁剪与统一排障顺序在 [11-工具结果裁剪与观测链路](./11-工具结果裁剪与观测链路.md)，本章不重复展开。判断「模型是不是没看到内容」只看第二条通道；判断「用户界面为什么只显示一半」只看第一条。
 
@@ -248,7 +248,7 @@ services/tools/dispatch.rs:27  真正分发到实现
 - 别名进 `UserToolBindings.alias_map`，**dispatch 最优先按别名路由**（`dispatch.rs:29-33`）。
 - 用户 MCP 仍走 `server@tool` 命名。
 - 端点 `/wunder/user_tools/{mcp|skills|knowledge}`（`api/user_tools.rs:96-110`），共 33 条路由，是用户面里规模最大的一组。
-- 云端版有独立目录 `frontend/src/components/user-tools/`；管理端在「工具管理」导航下统一装配 builtin / mcp / knowledge / skills / toolVisibility（`web/app.js:196`）。
+- 云端版有独立目录 `frontend/src/components/user-tools/`；管理端在「工具管理」导航下统一装配 builtin / mcp / knowledge / skills / toolVisibility（`web/app.js:202`）。
 
 ## 9. 本地能力与执行边界
 
@@ -278,7 +278,7 @@ services/tools/dispatch.rs:27  真正分发到实现
 | 6 档位 | `services/default_tool_profile.rs` | 是否进 `DEFAULT_BUILTIN`；要临时下架写进 `TEMPORARILY_HIDDEN`，不要删代码 |
 | 7 并行 | `orchestrator/tool_parallel.rs:6-45` | 只读工具才加白名单；写类保持独占 |
 | 8 审批 | `ToolKind` 归档 | `Read` / `Write` / `Exec` / `Control` 选对档，决定缓存与提示语义 |
-| 9 文案 | 三端展示 | 云端版 i18n `frontend/src/i18n/messages/`；管理端 `web/shared/tool-visuals.js` 与 `web/modules/`；桌面版 `crates/wunder-desktop/frontend/src/tool_icons.rs`；Slint 文案由 `scripts/build_i18n.py` 生成 `ui/i18n.slint`，**勿手改生成物** |
+| 9 文案 | 三端展示 | 云端版 i18n `frontend/src/i18n/messages/`；管理端 `web/shared/tool-visuals.js` 与 `web/modules/`；桌面版 `crates/wunder-desktop/tool_icons.rs`；Slint 文案由 `scripts/build_i18n.py` 生成 `ui/i18n.slint`，**勿手改生成物** |
 | 10 测试 | `crates/wunder-runtime/tests/` | 至少一条 dispatch 与一条结果裁剪边界用例 |
 
 工具的系统描述（description）是模型唯一的选择依据，写模糊就会误调用或不被调用。返回要精简，长内容落文件路径而不是塞回上下文。

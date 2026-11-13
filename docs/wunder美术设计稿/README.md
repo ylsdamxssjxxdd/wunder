@@ -4,19 +4,14 @@
 
 | 目录 | 形态 | 基线 |
 | --- | --- | --- |
-| [`蛹/`](蛹/README.md) | 本地 AI 工作台（desktop） | `crates/wunder-desktop/frontend/` · Slint 窗口 UI · 10 张稿 |
-| [`舵机/`](舵机/README.md) | 手工本地操作入口（cli） | `crates/wunder-cli/tui/` · 终端 TUI · 6 张稿 |
-| [`editorial/`](editorial/README.md) | 编辑版重做（结构 / 状态 / 约束） | 同基线 · 10 张自包含 HTML · 1280×780 |
+| [`desktop/`](desktop/README.md) | wunder 桌面版（本地 AI 工作台） | `crates/wunder-desktop/frontend/` · Slint 窗口 UI · 10 张稿 |
+| [`cli/`](cli/README.md) | wunder 命令行（手工本地操作入口） | `crates/wunder-cli/tui/` · 终端 TUI · 6 张稿 |
 
-### 两版关系
-
-- `蛹/`、`舵机/` 是**像素级实现规范**（1600px、逐区域尺寸标注），继续作为实现手册与验收依据。
-- `editorial/` 是**编辑型图表**，按 `diagram-design` 技能重做：每张只回答一个问题，统一形状语义、正交连接线与排版规则，用于改稿讨论、决策对照与新人理解「为什么这样切」。不做界面像素复刻。
-- 两版并存，互不覆盖；`editorial/` 有独立索引 [`editorial/index.html`](editorial/index.html)。
+两套稿都是**实现规范**（1600px 画布、逐区域尺寸标注与状态矩阵），作为实现手册与验收依据；不做营销稿，也不做第二套重绘。
 
 ## 阅读方式
 
-- 直接打开根目录 [`index.html`](index.html)，统一浏览全部 16 张稿；蛹与舵机目录下的旧 `index.html` 会转到同一画廊。
+- 直接打开根目录 [`index.html`](index.html)，统一浏览全部 16 张稿。
 - 点击稿件进入大图浏览器：鼠标左键或触屏单指拖动平移；支持适宽、适窗、100%、缩放、前后翻页与原始 SVG。
 - 键盘：方向键移动，`+` / `-` 缩放，`0` 重置，`1` 原始尺寸，`F` 适窗，`W` 适宽，PageUp/PageDown 翻页，Esc 关闭。
 - 文档站内嵌图使用同一查看器。普通滚轮继续滚动文档，Ctrl/Command + 滚轮缩放图片。
@@ -41,7 +36,7 @@
 
 ## 维护
 
-1. 修改 SVG 后统一运行 `python scripts/sync_art.py`：刷新蛹内嵌预览、手册 JSON、统一画廊与文档站。
+1. 修改 SVG 后统一运行 `python scripts/sync_art.py`：重建文档站与统一画廊。
 2. 查看器共享代码位于 `assets/art-viewer.js` / `assets/art-viewer.css`；发布由 `scripts/build_docs_site.py` 复制并处理路径。
 3. 事实来源以各稿 README 的清单为准；稿与代码冲突时，先核对当前实现与真实渲染，再决定修改哪边。
 4. 所有分页应通过 XML、内部引用和资产检查，并用 Edge 按原始宽度渲染，检查遮挡、溢出和真实样式。

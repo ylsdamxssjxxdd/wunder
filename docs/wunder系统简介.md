@@ -6,7 +6,7 @@ wunder（心舰）是一个**通用型人工智能工作台**：把目标交给�
 
 **桌面版（desktop）是 wunder 的本地 AI 工作台，也是主推的应用。** 个人用户下载安装即可使用，不需要先部署任何服务，打开就能把目标交给智能体。
 
-桌面版在本地运行：默认前端 `crates/wunder-desktop/frontend/`（Rust + Slint 原生界面、软件渲染），启动后在**同一进程内**直接调用引擎，不经本机 HTTP / WebSocket；SQLite 本地存储；兼容目标下探到 Windows 7 32 位，Linux 侧按 ubuntu18.04 基线打包（x64 / arm64 AppImage）。它可以操作本地文件、窗口和浏览器，也可以在需要时经互通隧道连接云端。Electron / Tauri 前端壳已停止日常维护——停止的是壳，不是桌面版后端。
+桌面版在本地运行：默认前端 `crates/wunder-desktop/frontend/`（Rust + Slint 原生界面、软件渲染），启动后在**同一进程内**直接调用引擎，不经本机 HTTP / WebSocket；SQLite 本地存储；兼容目标下探到 Windows 7 32 位，Linux 侧按 ubuntu18.04 基线打包（x64 / arm64 交付 AppDir 归档 tar.gz、`.run` 安装包与 `.portable` 便携包，不依赖 FUSE 或 AppImage runtime）。它可以操作本地文件、窗口和浏览器，也可以在需要时经互通隧道连接云端。Electron / Tauri 前端壳已停止日常维护——停止的是壳，不是桌面版后端。
 
 ## 手机端：安卓版（android）
 
@@ -34,7 +34,7 @@ wunder
 ## 它怎么干活
 
 1. 目标进入线程。system prompt 在首次确定后冻结，长期记忆以索引形式只注入一次，之后不再改写，以保住模型的提示词缓存。
-2. orchestrator 组装上下文，发起模型调用。运行中再发消息会进引擎级会话队列（排队条可见、按序执行）。
+2. orchestrator 组装上下文，发起模型调用。运行中再发消息时，桌面版进入前端本地等待队列（`waiting_turns`），云端版进入引擎级会话队列，都按序执行。
 3. 模型返回工具调用时，运行时解析参数、按需请求审批（读 / 写 / 执行 / 控制四档，执行策略支持 Allow / Audit / Enforce 三态），并行执行工具（可并行白名单内并发不超过 4），把裁剪后的结果喂回模型，进入下一轮循环。文件、命令、浏览器、桌面控制、网页抓取、外部渠道，全部走这一条治理链路。
 4. 全程以流式事件对外发布（六个 WebSocket 通道）。桌面端、网页端都只是这些事件的投影：按帧合并增量、分页读取投影表、有界缓冲；断线后靠游标快照与补水端点恢复现场。
 5. 上下文快满时，统一通过完整 compaction 生成交接摘要，以当前初始上下文、真实用户消息和摘要重建历史，并持久化检查点。独立微压缩已移除。长会话因此可以一直工作下去。
@@ -80,21 +80,21 @@ wunder 的多个形态各有明确分工：
 
 ## 上手
 
-- **个人用户**：从 Releases 下载桌面版安装包，装上就能用（本地 AI 工作台），见[桌面版入门](docs/使用说明书/zh-CN/start/desktop.md)。
-- **手机用户**：安装安卓版 APK，手机上的本地 AI 工作台，会话、工作目录、语音与截图都在手机上，见[形态矩阵](docs/使用说明书/zh-CN/start/forms.md)。
-- **团队**：需要统一治理时部署服务端（用户与智能体管理平台），成员通过浏览器访问云端版（云端 AI 工作台），管理员用管理端治理，见[服务端部署](docs/使用说明书/zh-CN/start/server.md)。
-- **开发者与自动化**：用命令行（手工本地操作入口）或直接调 API，见[命令行使用](docs/使用说明书/zh-CN/start/cli.md)。
+- **个人用户**：从 Releases 下载桌面版安装包，装上就能用（本地 AI 工作台），见[桌面版入门](使用说明书/zh-CN/start/desktop.md)。
+- **手机用户**：安装安卓版 APK，手机上的本地 AI 工作台，会话、工作目录、语音与截图都在手机上，见[形态矩阵](使用说明书/zh-CN/start/forms.md)。
+- **团队**：需要统一治理时部署服务端（用户与智能体管理平台），成员通过浏览器访问云端版（云端 AI 工作台），管理员用管理端治理，见[服务端部署](使用说明书/zh-CN/start/server.md)。
+- **开发者与自动化**：用命令行（手工本地操作入口）或直接调 API，见[命令行使用](使用说明书/zh-CN/start/cli.md)。
 
 对外集成面一览：REST `/wunder/*`、WebSocket 实时通道（聊天、core、网关、互通、世界会话、LAN）、MCP 端点 `/wunder/mcp`、外部工作流 SSE `/wunder/external/workflow*`、渠道 webhook 回调。错误统一返回 `{ok:false, error:{code, message, hint, trace_id}}` 包络并回写 `x-trace-id` 响应头。
 
 ## 文档入口
 
-- 使用说明书（用户 / 管理员 / 开发者）：[docs/使用说明书/zh-CN/index.md](docs/使用说明书/zh-CN/index.md)
-- API 文档：[docs/API文档.md](docs/API文档.md)
-- 技术说明书：[docs/技术说明书/README.md](docs/技术说明书/README.md)
-- 设计文档：[docs/设计文档/README.md](docs/设计文档/README.md)
-- 总体设计：[docs/总体设计.md](docs/总体设计.md)
-- 性能标准：[docs/性能标准.md](docs/性能标准.md)；性能评分体系：[docs/性能评分体系.md](docs/性能评分体系.md)
-- 功能迭代：[docs/功能迭代.md](docs/功能迭代.md)；经验教训：[docs/经验教训.md](docs/经验教训.md)
+- 使用说明书（用户 / 管理员 / 开发者）：[使用说明书/zh-CN/index.md](使用说明书/zh-CN/index.md)
+- API 文档：[API文档.md](API文档.md)
+- 技术说明书：[技术说明书/README.md](技术说明书/README.md)
+- 设计文档：[设计文档/README.md](设计文档/README.md)
+- 总体设计：[总体设计.md](总体设计.md)
+- 性能基线：[性能基线/](性能基线/)
+- 功能迭代：[功能迭代.md](功能迭代.md)；经验教训：[经验教训.md](经验教训.md)
 
 wunder 在开发过程中吸收了不少开源项目的代码和思路，清单见仓库根 README 的「吞噬矩阵」一节。

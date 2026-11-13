@@ -464,9 +464,25 @@ const postProcessContent = () => {
     }
   });
   if (state.pageData.slug.endsWith("/art/index") && window.WunderArtViewer) {
-    window.WunderArtViewer.enhance(elements.content, {
-      selector: 'img[src$=".svg"]',
-      initialFit: "width"
+    const images = Array.from(elements.content.querySelectorAll('img[src$=".svg"]'));
+    const items = images.map((image, index) => ({
+      src: image.currentSrc || image.src,
+      title: image.alt || `设计稿 ${index + 1}`
+    }));
+    images.forEach((image, index) => {
+      image.loading = index < 2 ? "eager" : "lazy";
+      image.classList.add("docs-art-preview");
+      image.tabIndex = 0;
+      image.setAttribute("role", "button");
+      image.setAttribute("aria-label", `${image.alt || "设计稿"}，点击打开可缩放查看器`);
+      const open = () => window.WunderArtViewer?.openGallery({ items, index });
+      image.addEventListener("click", open);
+      image.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          open();
+        }
+      });
     });
   }
 };
@@ -475,6 +491,7 @@ const renderContent = async () => {
   if (!elements.content) {
     return;
   }
+  window.WunderArtViewer?.closeGallery();
   window.WunderArtViewer?.destroyEnhancements(elements.content);
   const renderer = new marked.Renderer();
   let headingIndex = 0;

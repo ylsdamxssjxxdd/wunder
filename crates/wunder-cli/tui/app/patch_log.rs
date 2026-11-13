@@ -7,6 +7,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::plan_panel::PlanLogEntry;
 use crate::command_session_display::{CommandSessionDisplayStatus, CommandSessionView};
+use crate::empty_state_animation::Banner;
 use crate::patch_diff::{
     build_patch_diff_preview, patch_diff_preview_from_blocks, PatchDiffBlock, PatchDiffBlockKind,
     PatchDiffLine, PatchDiffLineKind, PatchDiffPreview,
@@ -168,7 +169,7 @@ impl SpecialLogEntry {
 #[derive(Debug, Clone)]
 pub(super) struct ArtLogEntry {
     summary: String,
-    lines: Vec<Line<'static>>,
+    banner: Banner,
 }
 
 impl ArtLogEntry {
@@ -176,8 +177,11 @@ impl ArtLogEntry {
         self.summary.clone()
     }
 
-    fn render_lines_for_width(&self, _width: u16) -> Vec<Line<'static>> {
-        self.lines.clone()
+    /// The banner is laid out for the width it is painted at, so a resize
+    /// re-fits the head and re-centres the block instead of leaving the art
+    /// baked at the column count of the first frame.
+    fn render_lines_for_width(&self, width: u16) -> Vec<Line<'static>> {
+        self.banner.lines(width)
     }
 }
 
@@ -1531,8 +1535,8 @@ pub(super) fn build_command_session_log(view: &CommandSessionView, is_zh: bool) 
     })
 }
 
-pub(super) fn build_static_art_log(summary: String, lines: Vec<Line<'static>>) -> SpecialLogEntry {
-    SpecialLogEntry::Art(ArtLogEntry { summary, lines })
+pub(super) fn build_welcome_banner_log(summary: String, banner: Banner) -> SpecialLogEntry {
+    SpecialLogEntry::Art(ArtLogEntry { summary, banner })
 }
 
 pub(super) fn build_completed_command_log(payload: &Value, is_zh: bool) -> Option<SpecialLogEntry> {

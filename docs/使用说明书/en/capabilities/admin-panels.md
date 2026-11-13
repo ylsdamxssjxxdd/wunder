@@ -1,10 +1,10 @@
 ---
 title: Admin Panel Guide
-summary: What each panel in the four groups manages, plus the throughput-test, simulated-model, and random-simulator conventions.
+summary: What each of the 19 panels in the four groups manages, plus the throughput-test, simulated-model, and random-simulator conventions.
 updated_at: 2026-10-16
 ---
 
-The Admin is reached at its own address: open the Admin URL in a browser and sign in with an administrator account, and the management panels are available. The exact address is fixed at deployment time; ask whoever deployed the system or check the deployment documentation. Panels are organized into four groups: system, agent, debug, and documentation.
+The Admin is reached at its own address: open the Admin URL in a browser and sign in with an administrator account, and the management panels are available. The exact address is fixed at deployment time; ask whoever deployed the system or check the deployment documentation. Panels are organized into four groups — system (7), agent (5), debug (5), and documentation (2) — 19 in all.
 
 The Admin holds the highest privileges in the system:
 
@@ -52,6 +52,14 @@ Changing a system setting:
 3. Save (usually takes effect immediately)
 4. Confirm the effect in Internal status
 
+### System messages
+
+Edit and push an announcement to all users:
+
+- Fill in the title and body
+- Set "push to users when online"
+- Saving creates a new version; users who confirmed the old version see it again
+
 ### Organization management
 
 Manages the organizational structure:
@@ -85,16 +93,6 @@ Adding a new user:
 3. Grant quota as needed
 4. The user can now log in and start working
 
-## Agent group
-
-### Model configuration
-
-Manages the AI models available:
-
-- Add a model by filling in its API key and endpoint
-- Configure model parameters
-- Set the default model
-
 ### Thread management
 
 Views and manages active threads:
@@ -110,6 +108,25 @@ Handling an abnormal session:
 3. To stop it, click cancel
 4. Review the related logs to locate the problem
 
+
+### Online updates
+
+Upload update packages and publish the version manifest:
+
+- The Desktop, the CLI, and the supplement pack fetch online updates here
+- Publishing takes effect immediately, with no server restart
+- The release directory and manifest status are shown here
+
+## Agent group
+
+### Model configuration
+
+Manages the AI models available:
+
+- Add a model by filling in its API key and endpoint
+- Configure model parameters
+- Set the default model
+
 ### Preset agents
 
 There can be several preset agent templates, and each user is bound one-to-one to one of them.
@@ -118,6 +135,14 @@ There can be several preset agent templates, and each user is bound one-to-one t
 - Configure a preset's tools, model, prompts, and the fields the user may customize
 - View bound users and adjust bindings in bulk (bind, rebind, unbind); unbinding requires naming a new preset
 - Apply preset-managed system configuration to bound users' instances, with a dry run that previews the affected users; user-created MCP, skills, and knowledge-base selection states are preserved
+
+### Companion management
+
+Manage the global animated companions available to all users and preset agents:
+
+- Import ZIP companion packages
+- Search, preview, and delete global companions
+- Refresh the companion list
 
 ### Tool management
 
@@ -186,12 +211,6 @@ Live debugging tools:
 - Tool-call logs
 - Error investigation
 
-### LSP
-
-Language service protocol debugging:
-
-- Code intelligence service status
-- LSP configuration validation
 
 ## Documentation group
 

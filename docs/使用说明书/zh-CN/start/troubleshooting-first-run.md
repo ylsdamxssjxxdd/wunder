@@ -24,10 +24,10 @@ updated_at: 2026-10-16
 | 启动页长时间不结束 | `~/.wunder` 权限；工作树扫描耗时（最多 4096 项） | [桌面版入门](/docs/zh-CN/start/desktop/) |
 | 窗口出现但工作区空 | 工作目录区是否显示「离线」 | [桌面版界面](/docs/zh-CN/surfaces/desktop-ui/) |
 | 模型请求 401/403 | 设置 → 模型 → API Key、接口地址；「测试连接」重跑 | [配置说明](/docs/zh-CN/capabilities/config/) |
-| 运行中再发消息被判「用户忙」 | 会话队列默认开着；关掉会破坏排队条 | [快速开始](/docs/zh-CN/start/quickstart/) |
+| 运行中再发消息被判「用户忙」 | 仅云端版可能因关闭会话队列出现；桌面版由前端本地等待队列接管 | [快速开始](/docs/zh-CN/start/quickstart/) |
 | 想要 TTS 播放但没有声音 | **桌面版 TTS 未实现**，只能配模型；需要 TTS 请用云端版 | [桌面版界面](/docs/zh-CN/surfaces/desktop-ui/) |
 | 找不到「设备互通」设置类目 | 类目未接入界面；可用面只有侧栏云端工作区 + 远端命令审批弹窗 | [界面概览](/docs/zh-CN/surfaces/index/) |
-| 状态混乱 | 设置 → 通用 → 一键重置工作状态（保留技能、知识库、长期记忆、配置与工作区文件） | [桌面版入门](/docs/zh-CN/start/desktop/) |
+| 状态混乱 | 设置页已无重置入口；调用 `POST /wunder/auth/me/reset_work_state`（保留技能、知识库、长期记忆、配置与工作区文件） | [桌面版入门](/docs/zh-CN/start/desktop/) |
 
 ## 服务端（server）
 

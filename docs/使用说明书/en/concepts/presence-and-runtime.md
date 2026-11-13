@@ -45,7 +45,7 @@ If the interface and the actual state do not match:
 
 1. Wait a few seconds to see whether it recovers on its own.
 2. Refresh the page or restart the app.
-3. Use "Reset working state".
+3. Call `POST /wunder/auth/me/reset_work_state` (no UI entry since v1.0.0).
 
 ## Limits
 

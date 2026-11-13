@@ -46,8 +46,8 @@ The coordinates of the four layers:
 | --- | --- |
 | Submit idempotency | The same client message id reuses the existing round, so a network retry does not create an extra round |
 | Serialization within a session | The session lock is isolated per session, with a 120-second timeout and a 5-second heartbeat; an abnormal exit releases it on timeout |
-| Queueing | The queue toggle is on by default; messages sent while running enter the queue and run in order |
-| Turning queueing off | A message sent while running is judged "user busy" and not queued (the Server warns at startup), so do not turn it off as a performance tweak |
+| Queueing | Since Desktop v1.0.0 the frontend local waiting queue (`waiting_turns`) holds messages sent while running above the input box and sends them when the current turn settles; switching away hands them to the engine queue. The Cloud build still uses the engine session queue (on by default, in-order execution) |
+| Turning queueing off | In the Cloud build, a message sent while running is judged "user busy" and not queued (the Server warns at startup); the Desktop build is unaffected |
 | Background delivery | Scheduled messages take the forced-enqueue path so they are not lost while competing for the lock with human messages |
 
 ## Timeline Entries
@@ -61,7 +61,7 @@ A session records only events with timeline value:
 | Visible reply | The output item of that model round |
 | Approval | Waiting → decided |
 | Subagent message | Uses the producer-supplied message id as a persistent identity, so a replay never becomes a new entry |
-| Queue ledger | Pending → running (upserted on the same entry); the interface skips it |
+| Queue ledger | Engine side: pending → running (upserted on the same entry); the interface skips it. Desktop local waiting turns do not enter the timeline until sent |
 
 **Not recorded**: transport deltas, heartbeats, progress, context occupancy, workspace updates, model usage, and streaming retries, together with lifecycle receipts (ended, status, model response, and so on — failure details are carried by the round's terminal state). These are visible in the stream but do not become empty timeline entries.
 

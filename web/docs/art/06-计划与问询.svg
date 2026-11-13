@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1880" viewBox="0 0 1600 1880" role="img" aria-label="蛹 桌面端计划目标与问询规范">
-  <title>06 计划与问询 · 蛹 Desktop UI Spec</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1880" viewBox="0 0 1600 1880" role="img" aria-label="wunder 桌面版 桌面端计划目标与问询规范">
+  <title>06 计划与问询 · wunder 桌面版 UI Spec</title>
   <style>svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}.mono{font-family:Consolas,monospace}.h1{font-size:30px;font-weight:700}.sub{font-size:13px;fill:#6F747B}.kicker{font-size:11px;font-weight:700;letter-spacing:1.4px;fill:#D87616}.sect{font-size:18px;font-weight:700}.sect-note{font-size:12px;fill:#8A8F99}.card{fill:#FFF;stroke:#DED9D1}.card-t{font-size:14px;font-weight:700}.note{font-size:12px;fill:#6F747B}.tiny{font-size:11px;fill:#8A8F99}.chip{font-size:11px;font-weight:700;fill:#D87616}.ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.ui11{font-size:11px}.muted{fill:#8A8F99}.secondary{fill:#3D3D3D}</style>
   <rect width="1600" height="1880" fill="#F5F3EF"/>
-  <g id="header"><text x="64" y="42" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text><text x="64" y="84" class="h1">06　计划与问询</text><text x="64" y="114" class="sub">计划、目标和问询都位于输入带，不是时间线里的装饰卡；运行时拥有状态，前端只呈现并回传操作。</text><text x="1536" y="44" text-anchor="end" class="mono tiny">SHEET 06 / 09</text><text x="1536" y="84" text-anchor="end" class="mono ui12">PLAN · GOAL · INQUIRY</text><line x1="64" y1="140" x2="1536" y2="140" stroke="#D8D5D0"/></g>
+  <g id="header"><text x="64" y="42" class="kicker">WUNDER 桌面版 / DESKTOP UI SPEC</text><text x="64" y="84" class="h1">06　计划与问询</text><text x="64" y="114" class="sub">计划、目标和问询都位于输入带，不是时间线里的装饰卡；运行时拥有状态，前端只呈现并回传操作。</text><text x="1536" y="44" text-anchor="end" class="mono tiny">SHEET 06 / 09</text><text x="1536" y="84" text-anchor="end" class="mono ui12">PLAN · GOAL · INQUIRY</text><line x1="64" y1="140" x2="1536" y2="140" stroke="#D8D5D0"/></g>
 
   <g id="placement">
     <rect x="64" y="160" width="28" height="24" rx="6" fill="#FDF0DE"/><text x="78" y="177" text-anchor="middle" class="chip">01</text><text x="104" y="178" class="sect">位置关系 · 共用阅读列，按职责垂直堆叠</text><text x="1536" y="177" text-anchor="end" class="sect-note">StatusDock → GoalBanner → InquiryPanel → Composer</text>

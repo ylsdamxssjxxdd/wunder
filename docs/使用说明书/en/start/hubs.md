@@ -41,7 +41,7 @@ The starting point is the [Desktop](/docs/en/start/desktop/): download the insta
   </a>
   <a class="docs-card" href="/docs/en/surfaces/desktop-ui/">
     <strong>Desktop interface</strong>
-    <span>The main window's two pages + 12 settings categories + panels and dialogs.</span>
+    <span>The main window's two pages + 11 settings categories + panels and dialogs.</span>
   </a>
   <a class="docs-card" href="/docs/en/surfaces/frontend/">
     <strong>Cloud interface</strong>
@@ -88,5 +88,5 @@ Individual users need only the Desktop; the following are needed only for team c
 - [Troubleshooting](/docs/en/help/troubleshooting/)
 - [FAQ](/docs/en/help/faq/)
 - [Configuration reference](/docs/en/capabilities/config/)
-- [Documentation directory](/docs/en/start/docs-directory/): how the manual / design docs / technical manual / API reference / performance standards and scoring / changelog / lessons-learned divide the work and how to read them
+- [Documentation directory](/docs/en/start/docs-directory/): how the manual / design docs / technical manual / API reference / performance baselines / changelog / lessons-learned divide the work and how to read them
 - [API index](/docs/en/capabilities/api-index/)

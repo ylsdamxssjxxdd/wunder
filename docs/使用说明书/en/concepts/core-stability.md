@@ -38,7 +38,7 @@ Background tasks all start with a tag; a long run raises an alert, and one loop 
 | Active session cap | 300 by default (constrains non-admins) |
 | Approval cache | 600 seconds |
 
-Session queueing is on by default. With it turned off, sending a message while a run is in progress is immediately judged "user busy" and no queue entry is created either (the Server warns about this at startup). This is a configuration trade-off, not a failure.
+Session queueing is on by default in the Cloud build. With it turned off, sending a message while a run is in progress is immediately judged "user busy" and no queue entry is created either (the Server warns about this at startup). This is a configuration trade-off, not a failure; the Desktop build uses the frontend local waiting queue instead.
 
 ## Session locks and the single writer
 
@@ -90,9 +90,9 @@ Every interface error uses the same structure: it marks the failure and carries 
 | --- | --- | --- |
 | Shows compacting or queued | Normal processing | Wait |
 | `slow_client` or `resume_recommended` appears | The subscription was uncoupled to protect the stream | Rebuild the projection through the catch-up endpoints |
-| Judged "user busy" | That task thread is still executing (the session lock is held) | Queue, or cancel that thread |
+| Judged "user busy" | That task thread is still executing (the session lock is held) | Desktop: wait locally; Cloud: queue or cancel that thread |
 | Stopped after the same tool failed repeatedly | Fingerprint circuit breaking has tripped | Change the parameters or the path; resubmitting is useless |
 | Reports an output error | The one-time recovery has been used up | Change the model configuration or rephrase |
 | Reports insufficient quota | The admission-stage deduction did not pass | See [Quota and Token Usage](/docs/en/concepts/quota-and-token-usage/) |
 | The UI and backend state disagree | The projection is behind | Refresh or re-enter; if it still disagrees, look at the runtime state |
-| You need to start completely over | — | Use "reset work state" (cancels the user's sessions and tasks, clears the workspace, and returns a brand-new session) |
+| You need to start completely over | — | Call `POST /wunder/auth/me/reset_work_state` (cancels the user's sessions and tasks, clears the workspace, and returns a brand-new session; no UI entry since v1.0.0) |

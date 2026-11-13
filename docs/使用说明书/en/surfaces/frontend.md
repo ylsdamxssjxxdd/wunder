@@ -54,15 +54,12 @@ The rendering optimization for extremely large threads is a rewritten plan whose
 
 ## Settings categories
 
-The Cloud's settings hang off the chat page as categories and share the same backend capabilities as the Desktop. They include:
+The Cloud's settings hang off the chat page as categories and share the same backend capabilities as the Desktop. There are **10 categories**:
 
-- **General / Account / Models / Agent / Companion / Help** (the same as the Desktop)
+- **General / Account / Tools / Agent / Companion / Scheduled tasks / Memories / Channels / My devices / Archived threads**
 - **Tools**: four tabs — built-in / MCP / skills / knowledge bases
-- **Memory**: long-term memory management
-- **Channels**: channel binding and status
-- **Scheduled**: scheduled tasks
-- **Devices**: entry to device-interconnection management; command approvals pop up inline in the timeline
-- **Archive**: archived threads
+- **My devices**: entry to device-interconnection management; command approvals pop up inline in the timeline
+- Models are reached through the model switch in the input area, not a separate settings category; the help entry lives under General
 
 ## Input area
 

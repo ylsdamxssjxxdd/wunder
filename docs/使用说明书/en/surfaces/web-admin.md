@@ -1,6 +1,6 @@
 ---
 title: Admin Interface
-summary: The governance and debugging console built into the Server, visible to administrators only. Top-level navigation has 4 groups and 19 items: System 4, Agents 6, Debug 6, Docs 2; plus notes on panels never implemented.
+summary: The governance and debugging console built into the Server, visible to administrators only. Top-level navigation has 4 groups and 19 items: System 7, Agents 5, Debug 5, Docs 2; plus notes on panels never implemented.
 read_when:
   - You administer the Server as an administrator through the Admin
   - You want to know what the Admin does not have (memory, interconnection, goal editing)
@@ -24,30 +24,31 @@ The Admin follows the same radically minimal philosophy: information density ser
 
 The Admin has 4 groups and 19 items.
 
-**System (4)**
+**System (7)**
 
 - Internal status: process health, locks and queues, runtime metrics
 - System settings: hot-update configuration while running
+- System messages: edit and push announcements to all users
 - Organization management: the organization tree, up to 4 levels deep
 - User management: accounts, quotas, and online status (split by Cloud / Desktop / CLI)
+- Thread management: a cross-user thread list with status and goal state (**read-only display**, with no goal editor)
+- Online updates: upload update packages and publish the version manifest
 
-**Agents (6)**
+**Agents (5)**
 
 - Model configuration: LLM / TTS / image / video models
-- Thread management: a cross-user thread list with status and goal state (**read-only display**, with no goal editor)
 - Preset agents: agent templates that can declare which fields users may customize; user-level scheduled tasks and channels exist here as templates rather than as separate navigation items
-- Companion management
+- Companion management: global animated companion packages
 - Tool management: groups built-in tools, MCP, knowledge bases, skills, and tool visibility together
 - System prompts: prompt templates
 
-**Debug (6)**
+**Debug (5)**
 
+- Debug panel: thread list + thread details; the **log area on the right is now a thread-trajectory view**, with the old log output kept only as a fallback
 - Throughput test: preset inputs from 1024 bytes to 1 MiB and outputs from 1024 to 8192, with a maximum concurrency of 1024
 - Performance test: uses fixed test users and a separate data root, with a 5-second command timeout
 - Capability evaluation: runs capability benchmarks and scores them
 - Multimodal debugging: direct tests of image / video / transcription / speech synthesis
-- Debug panel: thread list + thread details; the **log area on the right is now a thread-trajectory view**, with the old log output kept only as a fallback
-- LSP: language service
 
 **Docs (2)**
 

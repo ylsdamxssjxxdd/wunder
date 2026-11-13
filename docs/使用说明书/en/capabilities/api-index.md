@@ -12,7 +12,7 @@ updated_at: 2026-10-16
 | Customize the agent's style | Settings at the bottom of the left sidebar → Agent → prompt template |
 | Create a scheduled task | Settings at the bottom of the left sidebar → Scheduled tasks → create task |
 | Manage users (administrator) | Admin → User management |
-| Configure channels (administrator) | Admin → Channel management |
+| Configure channels (administrator) | Admin → channel templates under "Preset agents"; on the user side, Settings → Channels |
 
 ## Chat
 
@@ -31,7 +31,7 @@ Entry point: the workbench → the Working directory area below the workspace in
 
 - Upload documents, images, audio, and other files for the agent to use
 - Download files the agent generates
-- Browse and manage your single cloud directory
+- Browse and manage the current workspace directory (the Cloud has a single cloud directory; the Desktop can switch between several roots)
 - See the files produced while the agent works
 
 Directory layout and path conventions are covered by [Workspace Routing and File Management](/docs/en/capabilities/workspace-routing/).

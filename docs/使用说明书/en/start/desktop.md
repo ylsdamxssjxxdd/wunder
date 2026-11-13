@@ -74,7 +74,7 @@ The main window has two switchable pages, Chat and Settings; everything else han
 
 ### Settings page
 
-**11 categories**: General, Account, Model, Tools, Agents, Personas, Scheduled, Memory, Channels, Archive, Help.
+**11 categories**: General, Local runtime, Account, Models, Tools, Agents, Companions, Scheduled tasks, Memories, Channels, Archived threads. The help entry is a button on the General page, not a category.
 
 The category navigation supports search filtering. There is **no "device interlink" category**.
 
@@ -127,9 +127,9 @@ Only **two** interlink surfaces are available in the Desktop:
 
 The Settings page still holds a set of device-interlink options, but they aren't wired to any interface; **that entry point is not open yet**.
 
-## Resetting the working state
+## Resetting the working state (no UI entry)
 
-When sessions, subagents, or workspaces get into a bad state, use "Settings → General → Reset workspace state":
+Since Desktop v1.0.0 the Settings page no longer exposes a reset entry; the backend capability remains available through `POST /wunder/auth/me/reset_work_state` (or the compatible `POST /wunder/desktop/reset_work_state`):
 
 - **It does**: stop running sessions, clear queued tasks, clean up session locks
 - **It keeps**: skills, knowledge bases, long-term memory, user configuration, workspace files, session history
@@ -140,5 +140,5 @@ It **clears working state**; it is not a factory reset.
 
 Two default behaviors are worth separating:
 
-- **The session queue is on by default**: sending another message during a run queues it instead of rejecting it as "user busy." Turn it off and messages sent during a run are bounced outright without entering the queue bar.
+- **Local waiting queue**: since Desktop v1.0.0 the frontend local waiting queue (`waiting_turns`) holds messages sent during a run above the input box and sends them when the current turn settles; the engine session queue does not need to be on.
 - **The subagent activity indicator**: when a task has spawned subagents, the chat area shows the child runs that are still working; subagents are temporary work units the main agent creates, reclaimed once the task ends.

@@ -59,4 +59,4 @@ When a conversation is busy, new requests are not turned away but queued and run
 - An agent answering does not mean everything is fine; check whether it stays stable over time and whether it reports failures when they happen.
 - Retrying applies to some error types only.
 - Boundary cases show up often in long conversations and complex tasks.
-- If there is no response for a long time, try cancelling or resetting first; if the state is clearly wrong, use "reset working state"; if it keeps happening, ask an administrator to troubleshoot.
+- If there is no response for a long time, try cancelling or resetting first; if the state is clearly wrong, call `POST /wunder/auth/me/reset_work_state` (since v1.0.0 the Settings page exposes no such entry); if it keeps happening, ask an administrator to troubleshoot.
