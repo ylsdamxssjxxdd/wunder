@@ -698,6 +698,9 @@ pub(crate) fn compact_command_result_for_model(item: &Value) -> Value {
     if let Some(exit_note) = item.get("exit_note").filter(|value| !value.is_null()) {
         compacted["exit_note"] = exit_note.clone();
     }
+    if let Some(shell_note) = item.get("shell_note").filter(|value| !value.is_null()) {
+        compacted["shell_note"] = shell_note.clone();
+    }
     if item
         .get("output_truncated_by_pipe")
         .and_then(Value::as_bool)
@@ -1233,6 +1236,7 @@ async fn run_command_streaming(
     command_index: usize,
     yield_time: Option<Duration>,
     escalate_after: Option<Duration>,
+    force_shell_launch: bool,
 ) -> Result<CommandRunResult> {
     let command_text = command.to_string();
     let command_env = python_runtime::resolve_desktop_command_env();
@@ -1244,7 +1248,12 @@ async fn run_command_streaming(
     // A shell script override means the host shell is a gateway into another
     // runtime (安卓版's Ubuntu). Direct-spawning `uname` or `git` would silently
     // bypass that runtime and answer from Android/toybox instead.
-    let force_shell = std::env::var_os(command_utils::SHELL_SCRIPT_ENV).is_some();
+    // `force_shell_launch` covers the other case where the text is known to be a
+    // script rather than a single program: an unwrapped nested PowerShell
+    // wrapper (`Write-Output ...` has no cmdlet on PATH, so a direct spawn would
+    // fail once before falling back to the shell).
+    let force_shell =
+        force_shell_launch || std::env::var_os(command_utils::SHELL_SCRIPT_ENV).is_some();
     let shell_command =
         || command_utils::build_shell_command_with_shell(command, cwd, &command_env.shell);
     let (mut cmd, used_direct) = if force_shell {
@@ -2511,6 +2520,10 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
     let mut guarded_omitted_bytes: usize = 0;
     let mut guarded_total_commands: usize = 0;
     let mut guarded_truncated_commands: usize = 0;
+    // 只有在 PowerShell 语境下才处理「再包一层 powershell」：cmd 与 POSIX 下
+    // 那个子进程是合法用法，改动它等于改语义。
+    let nested_powershell_enabled = python_runtime::resolve_desktop_command_env().shell.kind
+        == command_utils::ShellKind::PowerShell;
     let execute_tool_name = resolve_tool_name("execute_command");
     let (stdout_policy, stderr_policy) =
         derive_capture_policies(command_budget.output_budget_bytes);
@@ -2608,6 +2621,30 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             }
         }
         let command_started = SystemTime::now();
+        // 模型习惯把整条命令再包一层 `powershell -Command "..."`。当前 shell 本来
+        // 就是 pwsh 时，这层包装只会多出一次文本解析：`$var`/`$_` 被外层提前展开，
+        // `\"` 与 `` `" `` 被外层吃掉。冗余包装直接剥掉；显式指向系统 Windows
+        // PowerShell 的调用保留子进程，但把内层脚本改走 -EncodedCommand。
+        let mut shell_note: Option<String> = None;
+        let mut force_shell_launch = false;
+        let command = if nested_powershell_enabled {
+            match command_utils::rewrite_nested_powershell(&command) {
+                Some(command_utils::NestedPowerShell::Unwrap(script)) => {
+                    shell_note = Some(i18n::t("tool.exec.shell_unwrapped"));
+                    // 剥出来的是脚本文本，不是单个程序：直接交给 shell，别先试一次
+                    // 直启（`Write-Output` 不是可执行文件，只会多一次失败）。
+                    force_shell_launch = true;
+                    script
+                }
+                Some(command_utils::NestedPowerShell::Recode(text)) => {
+                    shell_note = Some(i18n::t("tool.exec.shell_reencoded"));
+                    text
+                }
+                None => command,
+            }
+        } else {
+            command
+        };
         let run = run_command_streaming(
             context,
             &command,
@@ -2619,6 +2656,7 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
             command_index,
             run_in_background.then(|| parse_command_yield_time(&args)),
             escalate_after,
+            force_shell_launch,
         )
         .await?;
         let command_total_bytes = run
@@ -2656,6 +2694,9 @@ pub(crate) async fn execute_command(context: &ToolContext<'_>, args: &Value) -> 
                 "退出码为 0 但 stderr 非空；若命令包含管道，PowerShell/Cmd 下中间命令的失败可能不影响退出码，请检查 stderr 确认结果可信。"
                     .to_string(),
             );
+        }
+        if let Some(note) = shell_note {
+            result_entry["shell_note"] = Value::String(note);
         }
         results.push(result_entry);
         if run.running {

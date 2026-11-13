@@ -15,6 +15,21 @@
 'use strict';
 const W = 1920, H = 1080;
 
+/* ---------- 位图素材（可选） ----------
+ * 画面以代码绘制为主。代码画不像的东西（器物、材质、真实照片类的东西）可以用图像生成工具做好，
+ * 存进工程 assets/，在 VK.film({ images: { 船: 'assets/boat.png' } }) 里声明。
+ * READY 会等所有图加载完（缺图只警告、不阻塞）；画的时候用 fr.img('船', x, y, w, h)，
+ * 图没就绪返回 false，调用方自己跳过这一笔，不要改画黑块。 */
+const IMAGES = {};
+function loadImages(map) {
+  return Object.entries(map || {}).map(([name, src]) => new Promise(resolve => {
+    const im = new Image();
+    im.onload = () => { IMAGES[name] = im; resolve(null); };
+    im.onerror = () => resolve(`${name} ← ${src}`);
+    im.src = src;
+  }));
+}
+
 /* ---------- 时间与数学 ---------- */
 const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
 const lerp = (a, b, k) => a + (b - a) * k;
@@ -89,6 +104,29 @@ class Frame {
     if (bx <= ax || by <= ay) return;
     this.rec.push({ name: this.markName || '', kind, box: [Math.round(ax), Math.round(ay), Math.round(bx), Math.round(by)], allow: this.markAllow });
   }
+  /* 画一张 VK.film({ images }) 里声明过的位图；返回 false 表示图没就绪（缺图），调用方跳过这一笔。
+   * o.a 透明度、o.blend 混合模式、o.fit:'cover' 按目标框居中裁切（避免拉伸变形）。
+   * 顺手记包围盒：--check-safe / --overlap 才管得住位图（B 场景还要在外面包 fr.mark 命名）。 */
+  img(name, x, y, w, h, o) {
+    const im = IMAGES[name];
+    if (!im) return false;
+    const x2 = this.x, pa = x2.globalAlpha, pb = x2.globalCompositeOperation;
+    if (o && o.a != null) x2.globalAlpha = pa * clamp(o.a);
+    if (o && o.blend) x2.globalCompositeOperation = o.blend;
+    if (o && o.fit === 'cover' && im.width && im.height) {
+      const sr = im.width / im.height, dr = w / h;
+      let sx = 0, sy = 0, sw = im.width, sh = im.height;
+      if (sr > dr) { sw = im.height * dr; sx = (im.width - sw) / 2; }
+      else { sh = im.width / dr; sy = (im.height - sh) / 2; }
+      x2.drawImage(im, sx, sy, sw, sh, x, y, w, h);
+    } else {
+      x2.drawImage(im, x, y, w, h);
+    }
+    this._rec(x, y, x + w, y + h, 'image');
+    x2.globalAlpha = pa; x2.globalCompositeOperation = pb;
+    return true;
+  }
+
   /* 给一组图元起名字：fr.mark('船', () => { ... })；名字会出现在检查报告里。
    * 第三个参数可写 { allow: '你' }，--overlap 会跳过这两个名字之间的相交。 */
   mark(name, fn, o) {
@@ -421,26 +459,34 @@ function film(spec) {
     return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(
       () => resolve({ t: G.__vkLastT, frame: G.__vkFrameNo, error: G.__vkError || null }))));
   };
-  /* 字体逐个加载、逐个容错：缺一个字体只警告，不阻塞 READY。 */
+  /* 字体逐个加载、逐个容错：缺一个字体只警告，不阻塞 READY。位图同理。 */
   const fontLoads = Object.entries(FONTS).map(([key, f]) =>
     document.fonts.load(`${f[0]} 40px ${f[1].split(',')[0]}`, '运A1').then(() => null, () => key));
+  const imageLoads = loadImages(spec.images);
   const params = new URLSearchParams(location.search);
   const tParam = params.get('t');
   const play = params.has('play') && (tParam == null || tParam === '');
   G.__vkState.mode = play ? 'play' : (tParam == null ? 'still' : 't');
-  document.fonts.ready.then(() => Promise.all(fontLoads)).then(failed => {
-    const bad = [...new Set(failed.filter(Boolean))];
-    if (bad.length) console.warn('[vk] fonts not loaded:', bad.join(', '));
-    G.VK_MISSING_FONTS = bad;
-    G.READY = true; G.__vkState.ready = true;
-    const start = tParam == null || tParam === '' ? 0 : Number(tParam);
-    seek(Number.isFinite(start) ? start : 0);
-  });
-  /* 预览：?play 实时播；?t=41 冻结在 41 秒；←/→ 步进一帧。 */
+  const readyP = document.fonts.ready
+    .then(() => Promise.all([Promise.all(fontLoads), Promise.all(imageLoads)]))
+    .then(([failed, missingRaw]) => {
+      const bad = [...new Set(failed.filter(Boolean))];
+      const missing = missingRaw.filter(Boolean);
+      if (bad.length) console.warn('[vk] fonts not loaded:', bad.join(', '));
+      G.VK_MISSING_FONTS = bad;
+      if (missing.length) console.warn('[vk] images not loaded:', missing.join(', '));
+      G.VK_MISSING_IMAGES = missing;
+      G.READY = true; G.__vkState.ready = true;
+      const start = tParam == null || tParam === '' ? 0 : Number(tParam);
+      seek(Number.isFinite(start) ? start : 0);
+    });
+  /* 预览：?play 实时播；?t=41 冻结在 41 秒；←/→ 步进一帧。等素材就绪再起播，免得头一秒是空的。 */
   if (play) {
-    let t0 = performance.now();
-    const loop = () => { seek(((performance.now() - t0) / 1000) % spec.dur); requestAnimationFrame(loop); };
-    document.fonts.ready.then(() => requestAnimationFrame(loop));
+    readyP.then(() => {
+      const t0 = performance.now();
+      const loop = () => { seek(((performance.now() - t0) / 1000) % spec.dur); requestAnimationFrame(loop); };
+      requestAnimationFrame(loop);
+    });
   } else {
     addEventListener('keydown', event => {
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
@@ -454,5 +500,6 @@ function film(spec) {
 /* 一段戏：在 [a,b] 内才画，带进出包络；fn(本地时间 lt, 包络 k) */
 function scene(fr, t, a, b, fn, fin = .6, fout = .6) { if (t < a - .001 || t > b + .001) return; const k = fade(t, a, b, fin, fout); if (k <= 0) return; fr.g({ a: k }, () => fn(t - a, k)); }
 
-G.VK = { W, H, clamp, lerp, seg, smooth, ss, E, fade, hash, rng, noise1, hex, rgba, mix, film, scene, BG, FONTS, fontOf, vignette };
+G.VK = { W, H, clamp, lerp, seg, smooth, ss, E, fade, hash, rng, noise1, hex, rgba, mix, film, scene, BG, FONTS, fontOf, vignette,
+         img: name => IMAGES[name] || null };    // 取预加载好的位图，没声明/没就绪返回 null
 })(window);

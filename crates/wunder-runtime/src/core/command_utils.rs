@@ -256,7 +256,6 @@ fn powershell_script(command: &str) -> String {
 /// Encoding the script instead of passing it inline removes three classes of
 /// breakage: quoting layering (`cmd` → interpreter), `$`/`%`/`&` being re-parsed
 /// on the way in, and non-ASCII text being flattened through the ANSI code page.
-#[cfg(windows)]
 fn encode_powershell_script(script: &str) -> String {
     use base64::engine::general_purpose::STANDARD;
     use base64::Engine;
@@ -266,6 +265,20 @@ fn encode_powershell_script(script: &str) -> String {
         bytes.extend_from_slice(&unit.to_le_bytes());
     }
     STANDARD.encode(bytes)
+}
+
+/// 仅用于测试：把 `-EncodedCommand` 载荷还原成脚本文本。
+#[cfg(test)]
+fn decode_powershell_script(encoded: &str) -> Option<String> {
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
+
+    let bytes = STANDARD.decode(encoded).ok()?;
+    let units = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect::<Vec<_>>();
+    String::from_utf16(&units).ok()
 }
 
 /// Roughly the point where base64 (×2.67) plus the rest of the command line
@@ -1155,6 +1168,243 @@ fn powershell_alias_target(_program: &str) -> Option<PathBuf> {
     None
 }
 
+// ---------------------------------------------------------------------------
+// 嵌套 PowerShell 包装
+// ---------------------------------------------------------------------------
+
+/// 命令里再套一层 PowerShell 时，内层脚本的去处。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NestedPowerShell {
+    /// 包装是多余的：当前 shell 就是同一个解释器，内层脚本直接执行。
+    Unwrap(String),
+    /// 调用方明确要机器自带的 Windows PowerShell（完整路径或 `-Version`）：
+    /// 保留子进程，但内层脚本改走 `-EncodedCommand`，不再经外层重新拼命令行。
+    Recode(String),
+}
+
+/// 最多连续剥几层包装。三层足够覆盖「pwsh 里套 powershell 里再套 powershell」
+/// 这类重复书写，同时保证异常文本不会让我们无限循环。
+const MAX_NESTED_REWRITES: usize = 3;
+
+struct ParsedNested {
+    script: String,
+    flags: Vec<String>,
+    /// 命令写的是带路径的可执行文件（`C:\...\powershell.exe`）。
+    explicit_program: Option<String>,
+    /// 调用方要的是系统 Windows PowerShell，而不是当前这个解释器。
+    system_host: bool,
+}
+
+/// 重写「命令里再套一层 PowerShell」。
+///
+/// 模型习惯把整条命令写成 `powershell -Command "..."`，而执行命令的工具本身
+/// 就跑在 pwsh 里。这层包装带来第二次文本解析：`$var`、`$_`、`$env:` 被外层
+/// 提前展开，`\"` 与 `` `" `` 被外层吃掉，结果或报解析错误、或静默算错。
+///
+/// 边界：
+/// * 裸 `powershell` / `pwsh`（本来就会被 alias 指向同一个随包 pwsh）→ 剥掉包装，
+///   内层脚本在当前 shell 直接执行；
+/// * 显式路径的 `powershell.exe`、带 `-Version` 的调用 → 视为「确实要用系统
+///   Windows PowerShell」，保留子进程，只把内层脚本换成 `-EncodedCommand`；
+/// * `-File`、`-EncodedCommand`、位置参数等形态不动，避免改变语义；
+/// * 包装不是整条命令（后面还跟别的语句）时不动，保持保守。
+pub fn rewrite_nested_powershell(command: &str) -> Option<NestedPowerShell> {
+    let mut current = command.to_string();
+    let mut rewritten: Option<NestedPowerShell> = None;
+    for _ in 0..MAX_NESTED_REWRITES {
+        let Some(parsed) = parse_nested_powershell(&current) else {
+            break;
+        };
+        if parsed.system_host {
+            let program = match parsed.explicit_program {
+                Some(program) => program,
+                None => system_powershell_exe()?.to_string_lossy().to_string(),
+            };
+            let mut text = format!("\"{program}\"");
+            for flag in &parsed.flags {
+                text.push(' ');
+                text.push_str(flag);
+            }
+            text.push_str(" -EncodedCommand ");
+            text.push_str(&encode_powershell_script(&parsed.script));
+            return Some(NestedPowerShell::Recode(text));
+        }
+        current = parsed.script.clone();
+        rewritten = Some(NestedPowerShell::Unwrap(parsed.script));
+    }
+    rewritten
+}
+
+/// 机器自带的 Windows PowerShell（5.x / 2.0），用于「确实需要系统宿主」的调用。
+fn system_powershell_exe() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let root = env::var_os("SystemRoot")?;
+        let path = PathBuf::from(root)
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        return path.exists().then_some(path);
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+fn parse_nested_powershell(text: &str) -> Option<ParsedNested> {
+    let (program, mut rest) = read_command_word(text.trim_start())?;
+    let base = program
+        .rsplit(|ch| ch == '\\' || ch == '/')
+        .next()
+        .unwrap_or(program.as_str())
+        .to_ascii_lowercase();
+    if !matches!(
+        base.as_str(),
+        "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe"
+    ) {
+        return None;
+    }
+    let explicit = program.contains('\\') || program.contains('/');
+    let mut flags = Vec::new();
+    loop {
+        rest = rest.trim_start();
+        if rest.is_empty() {
+            return None;
+        }
+        let (token, after) = read_command_word(rest)?;
+        let lower = token.to_ascii_lowercase();
+        if lower == "-command" || lower == "-c" {
+            rest = after;
+            break;
+        }
+        // 位置参数、`-File`（脚本文件不受引号层影响）与 `-EncodedCommand`
+        // 都不属于「包一层 -Command」，原样放行。
+        if !lower.starts_with('-') {
+            return None;
+        }
+        if matches!(lower.as_str(), "-file" | "-encodedcommand" | "-ec") {
+            return None;
+        }
+        flags.push(token);
+        rest = after;
+    }
+    let (script, tail) = read_command_script(rest)?;
+    if !tail.trim().is_empty() {
+        return None;
+    }
+    let version_flag = flags.iter().any(|flag| {
+        let lower = flag.to_ascii_lowercase();
+        lower == "-version" || lower.starts_with("-version:")
+    });
+    Some(ParsedNested {
+        script,
+        flags,
+        explicit_program: explicit.then_some(program),
+        system_host: explicit || version_flag,
+    })
+}
+
+/// 读一个命令行词：带引号取到配对引号为止，否则取到空白。
+fn read_command_word(text: &str) -> Option<(String, &str)> {
+    let trimmed = text.trim_start();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(body) = trimmed.strip_prefix('"') {
+        let end = body.find('"')?;
+        return Some((body[..end].to_string(), &body[end + 1..]));
+    }
+    let end = trimmed.find(char::is_whitespace).unwrap_or(trimmed.len());
+    Some((trimmed[..end].to_string(), &trimmed[end..]))
+}
+
+/// 读 `-Command` 的内层脚本，并按「外层那一层」的转义还原。
+///
+/// 还原只针对确实由外层引入的转义：`""`、`\"`（Windows 参数习惯）、
+/// `` `" ``（PowerShell 习惯）。其他反引号序列（`` `n `` 等）属于内层语法，
+/// 必须原样保留，否则等于替模型改写了脚本。
+fn read_command_script(text: &str) -> Option<(String, &str)> {
+    let trimmed = text.trim_start();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut chars = trimmed.char_indices().peekable();
+    let mut out = String::new();
+    match trimmed.chars().next()? {
+        '\'' => {
+            chars.next();
+            while let Some((index, ch)) = chars.next() {
+                if ch == '\'' {
+                    if chars.peek().is_some_and(|(_, next)| *next == '\'') {
+                        chars.next();
+                        out.push('\'');
+                        continue;
+                    }
+                    return Some((out, &trimmed[index + 1..]));
+                }
+                out.push(ch);
+            }
+            None
+        }
+        '"' => {
+            chars.next();
+            while let Some((index, ch)) = chars.next() {
+                match ch {
+                    // 反斜杠不是 PowerShell 的转义符：只有 `\"` 后面还留着
+                    // 收尾引号时才按「模型想写转义引号」处理，否则它就是路径
+                    // 里的普通字符（`"...\Windows\"`）。
+                    '\\' => {
+                        let escaped_quote = chars.peek().is_some_and(|(_, next)| *next == '"')
+                            && trimmed[index + 2..].contains('"');
+                        if escaped_quote {
+                            chars.next();
+                            out.push('"');
+                        } else {
+                            out.push('\\');
+                            if chars.peek().is_some_and(|(_, next)| *next == '"') {
+                                return Some((out, &trimmed[index + 2..]));
+                            }
+                        }
+                    }
+                    '`' => match chars.peek().copied() {
+                        Some((_, '"')) => {
+                            chars.next();
+                            out.push('"');
+                        }
+                        Some((_, '`')) => {
+                            chars.next();
+                            out.push('`');
+                        }
+                        _ => out.push('`'),
+                    },
+                    '"' => {
+                        if chars.peek().is_some_and(|(_, next)| *next == '"') {
+                            chars.next();
+                            out.push('"');
+                            continue;
+                        }
+                        return Some((out, &trimmed[index + 1..]));
+                    }
+                    other => out.push(other),
+                }
+            }
+            None
+        }
+        _ => {
+            // 不带引号时 `-Command` 吃掉整行；跨行文本交给外层 shell 顺序执行，
+            // 剥壳会改变语义，直接放行。
+            let end = trimmed.find('\n').unwrap_or(trimmed.len());
+            if trimmed[end..].trim().is_empty() {
+                Some((trimmed[..end].trim().to_string(), ""))
+            } else {
+                None
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1425,6 +1675,116 @@ mod tests {
         for program in ["powershell", "PowerShell.EXE"] {
             assert_eq!(powershell_alias_target(program), expected, "{program}");
         }
+    }
+
+    /// 冗余包装被剥掉，内层脚本原样保留：`$_`、`$env:`、管道都不能被外层吃掉。
+    #[test]
+    fn redundant_powershell_wrapper_is_unwrapped() {
+        for (command, expected) in [
+            (
+                r#"powershell -Command "Get-ChildItem | ForEach-Object { $_.Name }""#,
+                "Get-ChildItem | ForEach-Object { $_.Name }",
+            ),
+            (
+                r#"powershell -NoProfile -Command "$p = 'C:\a'; Get-ChildItem $p""#,
+                "$p = 'C:\\a'; Get-ChildItem $p",
+            ),
+            (
+                r#"pwsh -Command "Write-Output ($env:COMPUTERNAME)""#,
+                "Write-Output ($env:COMPUTERNAME)",
+            ),
+            (
+                r#"powershell -Command 'Write-Output "a b"'"#,
+                r#"Write-Output "a b""#,
+            ),
+            (
+                r#"powershell -Command "Write-Output \"quoted\"""#,
+                r#"Write-Output "quoted""#,
+            ),
+            (
+                r#"powershell -command "Write-Output `"a b`"""#,
+                r#"Write-Output "a b""#,
+            ),
+            (r"powershell -Command Get-ChildItem", "Get-ChildItem"),
+        ] {
+            assert_eq!(
+                rewrite_nested_powershell(command),
+                Some(NestedPowerShell::Unwrap(expected.to_string())),
+                "{command}"
+            );
+        }
+    }
+
+    /// 真正需要系统 Windows PowerShell 的调用保留子进程，只把脚本改成编码传递。
+    #[test]
+    fn explicit_system_powershell_is_reencoded_not_unwrapped() {
+        let command = r#"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -Command "Get-ChildItem | ForEach-Object { $_.Name }""#;
+        let Some(NestedPowerShell::Recode(text)) = rewrite_nested_powershell(command) else {
+            panic!(
+                "expected recode, got {:?}",
+                rewrite_nested_powershell(command)
+            );
+        };
+        assert!(text.starts_with(r#""C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -EncodedCommand "#));
+        assert!(!text.contains("$_.Name"), "{text}");
+        assert!(!text.contains("-Command"), "{text}");
+        // 编码的正是内层脚本，可逆回原样。
+        let encoded = text.rsplit(' ').next().expect("payload");
+        let decoded = decode_powershell_script(encoded).expect("decode");
+        assert_eq!(decoded, "Get-ChildItem | ForEach-Object { $_.Name }");
+    }
+
+    /// 不是「包一层 -Command」的形态必须原样放行，避免改变语义。
+    #[test]
+    fn nested_powershell_rewrite_skips_other_shapes() {
+        for command in [
+            r"powershell -File C:\tools\build.ps1",
+            r"powershell -EncodedCommand ZQBjAGgAbwA=",
+            r#"powershell -Command "Get-ChildItem"; Write-Output done"#,
+            r"powershell $profile",
+            r"python C:\tools\x.py",
+            r"Get-ChildItem -Recurse",
+        ] {
+            assert_eq!(rewrite_nested_powershell(command), None, "{command}");
+        }
+    }
+
+    /// 路径以反斜杠结尾时，那个引号是收尾引号而不是 `\"` 转义。
+    #[test]
+    fn trailing_backslash_path_keeps_its_closing_quote() {
+        assert_eq!(
+            rewrite_nested_powershell(r#"powershell -Command "Get-ChildItem C:\Windows\""#),
+            Some(NestedPowerShell::Unwrap(
+                r"Get-ChildItem C:\Windows\".to_string()
+            ))
+        );
+    }
+
+    /// 端到端：`$_` 这类变量经重写后能在真实解释器里存活（重写之前会被外层
+    /// 提前展开成空串，命令变成 `.Name` 不是可识别的命令）。
+    #[cfg(windows)]
+    #[test]
+    fn unwrapped_nested_powershell_runs_with_variables_intact() {
+        let shell = ShellLaunch {
+            kind: ShellKind::PowerShell,
+            posix_bin: None,
+            path_dirs: Vec::new(),
+        };
+        let original =
+            r#"powershell -NoProfile -Command "'a','b' | ForEach-Object { $_ + '-ok' }""#;
+        let Some(NestedPowerShell::Unwrap(script)) = rewrite_nested_powershell(original) else {
+            panic!("expected unwrap");
+        };
+        let mut command = build_shell_command_with_shell(&script, Path::new("."), &shell);
+        let output = command.as_std_mut().output().expect("spawn interpreter");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "stderr={stderr}");
+        assert!(
+            stdout.contains("a-ok") && stdout.contains("b-ok"),
+            "stdout={stdout:?}"
+        );
+        assert!(!stderr.contains(".Name"), "stderr={stderr}");
     }
 
     #[test]

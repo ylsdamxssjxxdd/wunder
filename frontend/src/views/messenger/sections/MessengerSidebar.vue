@@ -224,7 +224,7 @@
         :aria-label="t('messenger.sidebar.announcement')"
         @click="emit('open-announcement')"
       >
-        <i class="fa-solid fa-bell" aria-hidden="true"></i>
+        <i class="fa-regular fa-bell" aria-hidden="true"></i>
         <span
           v-if="props.announcementUnread"
           class="messenger-sidebar-announcement-dot"

@@ -43,7 +43,7 @@
 | `网页搜索` | `web_search` | 关键词搜索公开网页（当前临时下架，见 §4.1） |
 | `桌面控制` | `desktop_control` | 桌面点击、输入、快捷键，以及 `wait` 等待观察 |
 | `goal` | `action=get|edit|pause|resume|complete|blocked` | 常驻目标工具，由运行时按会话注入；创建目标只能由用户发起 |
-| `语音生成` / `声转文` / `图像生成` / `视频生成` | 见 catalog 多模态 spec | 多模态四件套，需对应模型可用 |
+| `语音生成` / `声转文` / `图像生成` / `视频生成` | 见 catalog 多模态 spec | 多模态四件套，需对应模型可用；`图像生成` 同时承担修图/改图（`input_path` 原图、`mask_path` 局部、`strength` 幅度），工具可用时系统提示要求修图需求优先用它 |
 
 浏览器是单一严格工具：`services/browser/providers/playwright.rs` 注册 `browser(action=...)`，以互斥的 action 分支覆盖导航、标签、观察、交互、等待、截图和有界批处理；用户侧「浏览器」是同一能力的聚合展示名（`services/tools/browser_tool.rs`）。
 

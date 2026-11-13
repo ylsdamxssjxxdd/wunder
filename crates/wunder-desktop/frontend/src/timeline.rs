@@ -749,7 +749,7 @@ impl Timeline {
                 }
             }
             children.set_row_data(index, entry);
-        } else if !bar.process_paged {
+        } else if !bar.process_paged || crate::timeline_text::live_tail_fits(&bar, row) {
             let index = children
                 .iter()
                 .position(|child| child.payload > row.payload)
@@ -3950,5 +3950,146 @@ mod tests {
             card.image_source, "workspaces/fixture/chat_attachments/shot.png",
             "the durable card keeps its own stored source"
         );
+    }
+
+    /// A fold that already loaded its durable page still has to accept the
+    /// row the engine is writing: the page cannot carry a step that has not
+    /// been committed, so dropping it left the fold showing only older rounds
+    /// and the new thought surfaced as one finished block on a refresh.
+    #[test]
+    fn a_paged_fold_keeps_a_new_running_thought_streaming() {
+        use slint::Model;
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("paged-new", "Fixture input");
+        timeline.set_process_root("paged-new-root");
+        timeline.set_model_round(1);
+        timeline
+            .append_reasoning_item("paged-new-root:text-1", "First thought")
+            .unwrap();
+        timeline.close_thinking(false);
+        timeline.flush();
+        let bar_index = timeline
+            .model
+            .iter()
+            .position(|row| row.kind == KIND_PROCESS)
+            .unwrap();
+        let mut bar = timeline.model.row_data(bar_index).unwrap();
+        bar.process_paged = true;
+        timeline.model.set_row_data(bar_index, bar);
+
+        timeline.set_model_round(2);
+        timeline
+            .append_reasoning_item("paged-new-root:text-2", "Second")
+            .unwrap();
+        timeline.flush();
+        timeline
+            .append_reasoning_item("paged-new-root:text-2", " thought")
+            .unwrap();
+        timeline.flush();
+
+        let bar = timeline.model.row_data(bar_index).unwrap();
+        let children = bar
+            .process_entries
+            .as_any()
+            .downcast_ref::<VecModel<crate::ProcessEntry>>()
+            .unwrap();
+        let tail = children.iter().last().unwrap();
+        assert_eq!(
+            tail.id, "reason-paged-new-root:text-2",
+            "the running thought joins the loaded page at its tail"
+        );
+        assert_eq!(tail.detail, "Second thought");
+        assert_eq!(tail.status_kind, STATUS_RUNNING);
+        assert_eq!(
+            children.iter().filter(|entry| entry.id == tail.id).count(),
+            1,
+            "the tail must not be duplicated by its own deltas"
+        );
+    }
+
+    /// The same fold must not accept a live row while a newer page is known to
+    /// exist: that row belongs above the unloaded steps, and inserting it would
+    /// reorder the history the reader is scrolling.
+    #[test]
+    fn a_paged_fold_with_an_unloaded_newer_page_refuses_a_new_thought() {
+        use slint::Model;
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("paged-guard", "Fixture input");
+        timeline.set_process_root("paged-guard-root");
+        timeline.set_model_round(1);
+        timeline
+            .append_reasoning_item("paged-guard-root:text-1", "First thought")
+            .unwrap();
+        timeline.close_thinking(false);
+        timeline.flush();
+        let bar_index = timeline
+            .model
+            .iter()
+            .position(|row| row.kind == KIND_PROCESS)
+            .unwrap();
+        let mut bar = timeline.model.row_data(bar_index).unwrap();
+        bar.process_paged = true;
+        bar.process_newer = true;
+        timeline.model.set_row_data(bar_index, bar);
+
+        timeline.set_model_round(2);
+        timeline
+            .append_reasoning_item("paged-guard-root:text-2", "Second thought")
+            .unwrap();
+        timeline.flush();
+
+        let bar = timeline.model.row_data(bar_index).unwrap();
+        let children = bar
+            .process_entries
+            .as_any()
+            .downcast_ref::<VecModel<crate::ProcessEntry>>()
+            .unwrap();
+        assert!(
+            !children
+                .iter()
+                .any(|entry| entry.id == "reason-paged-guard-root:text-2"),
+            "a newer unloaded page keeps the tail out"
+        );
+    }
+
+    /// A settled row the page does not carry is either a deduplicated duplicate
+    /// or a step that belongs to an unloaded page; a page refresh must not
+    /// append it above the page the reader is looking at.
+    #[test]
+    fn a_settled_step_never_joins_a_paged_fold() {
+        use slint::Model;
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("paged-settled", "Fixture input");
+        timeline.set_process_root("paged-settled-root");
+        timeline
+            .append_reasoning_item("paged-settled-root:text-1", "First thought")
+            .unwrap();
+        timeline.close_thinking(false);
+        timeline.flush();
+        let bar_index = timeline
+            .model
+            .iter()
+            .position(|row| row.kind == KIND_PROCESS)
+            .unwrap();
+        let mut bar = timeline.model.row_data(bar_index).unwrap();
+        bar.process_paged = true;
+        timeline.model.set_row_data(bar_index, bar.clone());
+        let row = TimelineRow {
+            kind: KIND_REASON,
+            id: "reason-paged-settled-root:text-9".into(),
+            detail: "Settled thought".into(),
+            status_kind: STATUS_DONE,
+            ..Default::default()
+        };
+        crate::timeline_text::merge_reasoning_tail(&bar, crate::timeline_text::process_entry(&row));
+        let bar = timeline.model.row_data(bar_index).unwrap();
+        let children = bar
+            .process_entries
+            .as_any()
+            .downcast_ref::<VecModel<crate::ProcessEntry>>()
+            .unwrap();
+        assert!(!children
+            .iter()
+            .any(|entry| entry.detail == "Settled thought"));
     }
 }

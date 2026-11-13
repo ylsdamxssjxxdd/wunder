@@ -1035,6 +1035,14 @@
     "en-US": "Shell execution is not allowed.",
     "zh-CN": "不允许使用 shell 执行。"
   },
+  "tool.exec.shell_unwrapped": {
+    "en-US": "The redundant `powershell` wrapper was removed: commands already run inside pwsh, so the inner script ran directly instead of going through a second round of quote and `$` expansion.",
+    "zh-CN": "命令里的 powershell 包装已去掉：当前 shell 本来就是 pwsh，内层脚本直接执行，不再经受二次引号与 $ 变量展开。"
+  },
+  "tool.exec.shell_reencoded": {
+    "en-US": "The inner script was handed to the machine's own Windows PowerShell through -EncodedCommand, so the outer shell no longer re-quotes it.",
+    "zh-CN": "内层脚本已改用 -EncodedCommand 交给机器自带的 Windows PowerShell，外层不再重新拼一遍命令行。"
+  },
   "tool.exec.workdir_not_dir": {
     "en-US": "Working directory is not a directory.",
     "zh-CN": "工作目录不是目录。"
@@ -2176,8 +2184,8 @@
     "zh-CN": "Shell 环境：Windows PowerShell 2.0（Win7 的老版本，按 2.0–4.0 的能力写命令）。只用这一代支持的语法：不要用 `::new()`、`Get-FileHash`、`Get-Content -Raw`、`-AsHashtable`、`??` 和三元运算。文件大小用 `(Get-Item x).Length`，哈希用 `certutil -hashfile x SHA256`，整段文本用 `Get-Content x | Out-String`。需要现代命令时直接调用外部程序（python、rg、git 等），或改写成 cmd 语法用 `cmd /c ...` 执行；嵌套 `powershell.exe` 不会提升版本。输出可能是 GBK，含中文的路径请加引号。"
   },
   "tool.spec.exec.shell_pwsh": {
-    "en-US": "Shell environment: PowerShell 7 (`pwsh`, bundled with the app; commands already run inside it). Modern PowerShell is fully available: `::new()`, `??`, ternary, `Get-ChildItem -File`, `-Raw`, `Get-FileHash`, `&&`/`||` chains. Write commands directly in PowerShell: a bare `powershell` token is redirected to this bundled `pwsh`, while a full path to `powershell.exe` still reaches the machine's own Windows PowerShell (2.0 on a stock Windows 7) and loses this syntax plus UTF-8 output. For a separate process use `pwsh -NoProfile -Command \"...\"`. Two differences from Windows PowerShell: `Get-WmiObject` is gone (use `Get-CimInstance`), and the `-ComputerName` parameter on service/process cmdlets is gone (run locally or use `Invoke-Command`). Windows-only modules that ship with PowerShell 5.1 (ActiveDirectory, DnsServer, SmbShare, WebAdministration) are not present. Paths use backslashes; chain commands with `;`. Output is UTF-8.",
-    "zh-CN": "Shell 环境：PowerShell 7（`pwsh`，随应用内置，命令已直接在其中执行）。现代语法全部可用：`::new()`、`??`、三元运算、`Get-ChildItem -File`、`-Raw`、`Get-FileHash`、`&&`/`||` 串联。直接写 PowerShell 命令即可：裸写 `powershell` 会被重定向到这个随包 `pwsh`，而写 `powershell.exe` 的完整路径仍会落到本机自带的 Windows PowerShell（Win7 出厂仅 2.0），会丢掉这些语法和 UTF-8 输出。需要独立进程时用 `pwsh -NoProfile -Command \"...\"`。与 Windows PowerShell 的两点差异：没有 `Get-WmiObject`（改用 `Get-CimInstance`），服务/进程类 cmdlet 的 `-ComputerName` 参数已移除（本地执行或改用 `Invoke-Command`）；5.1 自带的 Windows 专属模块（ActiveDirectory、DnsServer、SmbShare、WebAdministration）不存在。路径用反斜杠，串联用 `;`。输出为 UTF-8。"
+    "en-US": "Shell environment: PowerShell 7 (`pwsh`, bundled with the app; commands already run inside it). Modern PowerShell is fully available: `::new()`, `??`, ternary, `Get-ChildItem -File`, `-Raw`, `Get-FileHash`, `&&`/`||` chains. Write commands directly: do not wrap them in `powershell -Command \"...\"` or `pwsh -Command \"...\"` — that wrapper is removed and the inner script runs as-is, so `$vars` and quotes need no extra escaping. Reach the machine's own Windows PowerShell only when you really need it (5.1-only modules, or checking 2.0 behaviour) by giving the full path: `%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -Command \"...\"`; the inner script is then passed as -EncodedCommand automatically, so `$_`, `$env:` and quotes survive. Two differences from Windows PowerShell: `Get-WmiObject` is gone (use `Get-CimInstance`), and the `-ComputerName` parameter on service/process cmdlets is gone (run locally or use `Invoke-Command`). Windows-only modules that ship with PowerShell 5.1 (ActiveDirectory, DnsServer, SmbShare, WebAdministration) are not present. Paths use backslashes; chain commands with `;`. Output is UTF-8.",
+    "zh-CN": "Shell 环境：PowerShell 7（`pwsh`，随应用内置，命令已直接在其中执行）。现代语法全部可用：`::new()`、`??`、三元运算、`Get-ChildItem -File`、`-Raw`、`Get-FileHash`、`&&`/`||` 串联。直接写 PowerShell 命令即可，不要再用 `powershell -Command \"...\"` 或 `pwsh -Command \"...\"` 包一层（包装会被去掉、内层脚本直接执行，`$变量`与引号不需要为外层再加转义）。只有确实需要机器自带的 Windows PowerShell 时（仅 5.1 有的模块，或要验证 2.0 行为），才写完整路径 `%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -Command \"...\"`——内层脚本会自动以 -EncodedCommand 传递，`$_`、`$env:` 与引号不会丢。与 Windows PowerShell 的两点差异：没有 `Get-WmiObject`（改用 `Get-CimInstance`），服务/进程类 cmdlet 的 `-ComputerName` 参数已移除（本地执行或改用 `Invoke-Command`）；5.1 自带的 Windows 专属模块（ActiveDirectory、DnsServer、SmbShare、WebAdministration）不存在。路径用反斜杠，串联用 `;`。输出为 UTF-8。"
   },
   "tool.spec.exec.shell_cmd": {
     "en-US": "Shell environment: cmd.exe (this host has no usable PowerShell). Use cmd syntax (dir, type, copy, del, set, %VAR%, &&); do not use PowerShell cmdlets or $variables. For anything beyond basic file and flow control, call an external program (python, rg, git).",
@@ -2836,8 +2844,8 @@
     "zh-CN": "本地视觉媒体路径，可使用工作区相对路径或允许的绝对路径。"
   },
   "tool.spec.read_image.description": {
-    "en-US": "Read a local image, GIF, or video into the current model context; not a web image-search tool. The default view is auto-fitted for the model (long side <=2048px, ~2500 patches); use crop=x,y,w,h plus scale to inspect original-resolution details. stats returns region numbers (mean luma, non-background/edge pixel ratios); stats_only returns numbers without pixels. Videos use frame_rate to extract frames. Images stay in context across rounds; re-read the path only when you need the pixels again (e.g. after compaction).",
-    "zh-CN": "读取本地图片、GIF 或视频并送入当前模型上下文，不是联网看图工具。默认视图会自动压到适合模型的尺寸（长边 ≤2048px、约 2500 个 32px patch）；要看清原尺寸小字细节，用 crop=x,y,w,h 指定区域再配合 scale 放大。stats 附带区域平均亮度、非背景/边缘像素占比等数值，stats_only 只返回数值不回图。视频用 frame_rate 抽帧。图像随上下文保留，不必每轮重读；确实需要再看像素时（如压缩清退后）再按路径重读。"
+    "en-US": "Read a local image, GIF, or video into the current model context; not a web image-search tool. The default view is auto-fitted for the model (long side <=2048px, ~2500 patches); use crop=x,y,w,h plus scale to inspect original-resolution details. stats returns region numbers (mean luma, non-background/edge pixel ratios); stats_only returns numbers without pixels. Videos use frame_rate to extract frames. Images stay in context across rounds; re-read the path only when you need the pixels again (e.g. after compaction). To edit or retouch this image, pass its path to the image generation tool as input_path.",
+    "zh-CN": "读取本地图片、GIF 或视频并送入当前模型上下文，不是联网看图工具。默认视图会自动压到适合模型的尺寸（长边 ≤2048px、约 2500 个 32px patch）；要看清原尺寸小字细节，用 crop=x,y,w,h 指定区域再配合 scale 放大。stats 附带区域平均亮度、非背景/边缘像素占比等数值，stats_only 只返回数值不回图。视频用 frame_rate 抽帧。图像随上下文保留，不必每轮重读；确实需要再看像素时（如压缩清退后）再按路径重读。需要修改或修图（换背景、去杂物、降噪、增强清晰度等）时，把这张图的路径交给图像生成工具的 input_path。"
   },
   "tool.spec.read_image.args.crop": {
     "en-US": "Optional still-image crop in source pixels: \"x,y,w,h\". Applied before scale; stats are computed on this region.",
@@ -2956,12 +2964,12 @@
     "zh-CN": "可选，源音频的 MIME 类型覆盖值。"
   },
   "tool.spec.generate_image.description": {
-    "en-US": "Generate or edit a creative raster image with the configured image model and save it into the workspace. Do not use it for charts, diagrams, formulas, or reproducible data graphics; create those with code such as Python/matplotlib.",
-    "zh-CN": "使用已配置的图像模型生成或编辑创意位图并保存到工作区。不要用它做图表、示意图、公式图或可复现的数据图，这类任务改用 Python/matplotlib 等代码生成。"
+    "en-US": "Generate a new raster image, or edit an existing workspace image: replace the background, inpaint, remove watermarks or objects, denoise, sharpen, outpaint, or restyle. Prefer this tool whenever the user asks to retouch, edit, clean up, or beautify a photo, instead of falling back to code or external software. For edits, pass the source image path as input_path, describe only the change in prompt, and add mask_path for local edits. Do not use it for charts, diagrams, formulas, or reproducible data graphics; create those with code such as Python/matplotlib.",
+    "zh-CN": "生成新图，或修改工作区中已有的图片：换背景、局部重绘、去水印/去杂物、降噪、提升清晰度、扩图、风格化等。用户提出修图、改图、清杂质、美化照片等需求时优先使用本工具，不要改用代码或外部软件。编辑时把原图路径传给 input_path，prompt 只写要改的地方，局部修改再配 mask_path。不要用它做图表、示意图、公式图或可复现的数据图，这类任务改用 Python/matplotlib 等代码生成。"
   },
   "tool.spec.generate_image.args.prompt": {
-    "en-US": "Prompt describing the target image.",
-    "zh-CN": "描述目标图片的提示词。"
+    "en-US": "Prompt. For text-to-image, describe the target image. For edits, describe only the change, e.g. 'replace the background with a night scene' or 'remove the person at the bottom right'; do not re-describe the whole image.",
+    "zh-CN": "提示词。文生图时描述目标画面；编辑或修图时只描述要改动的内容，例如“把背景换成夜景”“去掉右下角的路人”，不要重新描述整张图。"
   },
   "tool.spec.generate_image.args.path": {
     "en-US": "Optional workspace-relative output path. Empty means auto-generate under generated_media/.",
@@ -2996,24 +3004,24 @@
     "zh-CN": "可选，随机种子。"
   },
   "tool.spec.generate_image.args.input_path": {
-    "en-US": "Optional workspace image path for image-to-image or editing mode. When omitted, the tool uses text-to-image generation.",
-    "zh-CN": "可选，工作区中的输入图片路径；填写后进入图生图或编辑模式，不填则为文生图。"
+    "en-US": "Optional workspace image path to edit. Supplying it enters image-to-image/edit mode (also used for retouching such as background replacement, object removal, denoise, or sharpening); omit it for text-to-image. Pass the path returned by a previous result to keep iterating on the same image.",
+    "zh-CN": "可选，要修改的工作区图片路径。填写后进入图生图/编辑模式（换背景、去杂物、降噪、增强清晰度等修图需求也走这里）；不填则为文生图。可把上一次结果返回的 path 再次传入，连续改同一张图。"
   },
   "tool.spec.generate_image.args.input_paths": {
-    "en-US": "Optional workspace image paths for multi-image editing models.",
-    "zh-CN": "可选，多图编辑模型使用的工作区输入图片路径列表。"
+    "en-US": "Optional list of workspace image paths for multi-image editing or reference composition. Use input_path for single-image edits.",
+    "zh-CN": "可选，多图编辑或参考合成模型使用的工作区输入图片路径列表；需要同时参考多张图时使用，单图编辑用 input_path。"
   },
   "tool.spec.generate_image.args.mask_path": {
-    "en-US": "Optional workspace mask image path for inpainting or local edits.",
-    "zh-CN": "可选，局部重绘或局部编辑使用的工作区蒙版图片路径。"
+    "en-US": "Optional workspace mask image path for inpainting; use it with input_path when only part of the image should change. The mask marks the region to repaint (provider conventions apply).",
+    "zh-CN": "可选，局部重绘用的蒙版图片路径；只想改画面某一部分时配合 input_path 使用，蒙版标出允许重绘的区域（具体约定以模型提供方为准）。"
   },
   "tool.spec.generate_image.args.reference_path": {
     "en-US": "Optional workspace reference image path for models that support an additional reference image.",
     "zh-CN": "可选，支持参考图模型使用的工作区参考图片路径。"
   },
   "tool.spec.generate_image.args.strength": {
-    "en-US": "Optional image edit strength for image-to-image models.",
-    "zh-CN": "可选，图生图或编辑强度。"
+    "en-US": "Optional edit strength: lower values stay closer to the source image, higher values change more. Use it to control how much of the original is preserved.",
+    "zh-CN": "可选，编辑强度：数值越小越贴近原图，越大改动越明显；修图时用来控制保留原图的程度。"
   },
   "tool.spec.generate_image.args.true_cfg_scale": {
     "en-US": "Optional true CFG scale for compatible image models.",

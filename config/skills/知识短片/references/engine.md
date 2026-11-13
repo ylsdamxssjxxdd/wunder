@@ -112,6 +112,7 @@ function ch1(fr, t)  { const a = ss(t, 38.6, 39.5); … }
 VK.film({
   dur: 300, theme: 'night', meta: { title: '……' },
   shots: SHOTS, subs: SUBS,                              // 暴露给 --jobs 切段与 --storyboard 核对
+  images: { 船: 'assets/boat.png' },                     // 可选：位图素材，相对工程目录；预加载完才 READY
   sfx: [[14.02, 'chord', { gain: .8 }], [24.03, 'thud']], // 音效也可以声明在这里
   draw(fr, t) {
     fr.look.bgo = { stars: K.dips(t, [14.05, 38.25]) };   // 底的参数每帧可以改
@@ -178,6 +179,15 @@ function urn(fr, t) {
 ## Frame：`fr`
 
 `fr.t` 当前时间，`fr.frame` 帧号，`fr.x` 原生的 2D context（需要时可以直接用）。
+
+**位图**（可选，用不用、用多少见 `SKILL.md`「位图素材」）
+
+| | |
+|---|---|
+| `fr.img('船', x, y, w, h, o)` | 画 `VK.film({ images: { 船: 'assets/boat.png' } })` 声明过的图。返回 `false` 表示图没就绪（缺图），跳过这一笔，不要改画黑块。`o.a` 透明度、`o.blend` 混合模式、`o.fit:'cover'` 按目标框居中裁切（不拉伸变形）。会记包围盒，`--check-safe`/`--overlap` 管得住 |
+| `VK.img('船')` | 取原图，自己 `ctx.drawImage` 时用；没声明或没就绪返回 `null` |
+
+声明过的图在 `READY` 之前全部加载完（缺图只 `console.warn`，不阻塞）；`?play` 预览也等素材就绪才起播。`--lint` 会把缺图报成错误。
 
 **成组**
 
@@ -319,10 +329,13 @@ function urn(fr, t) {
 ## 容易踩的坑
 
 - **字幕区被占。** 纵向 80%–95% 只属于字幕。装置的最低点不要低于 y=840；改完用 `--check-safe` 查一遍，
-  不要只靠截图肉眼扫。检查只记录 text/line/poly/rect/ellipse 的包围盒（glow/spark/path 这类气氛元素不算）；
+  不要只靠截图肉眼扫。检查只记录 text/line/poly/rect/ellipse/image 的包围盒（glow/spark/path 这类气氛元素不算）；
   flat 场景只查命名装置，未命名图元是插画背景，不算装置；
   像素检查同样跳过 bloom/`fr.glow`，只查实心内容；有意贴地的太阳光晕不会被逼着抬高。
   装置用 `fr.mark('名字', …)` 包住，报告才会写名字；字幕由 `K.subs` 自动标成「字幕」，不会被误报。
+- **位图临时加载。** 别在 `draw` 里 `new Image()`——`seek` 是任意跳帧的，图没就绪那一帧就是空的，`--det` 也可能对不上。
+  一律写进 `VK.film({ images })`，用 `fr.img`。B 场景的位图还要包在 `fr.mark` 里，否则 `--check-safe` 把它当插画背景跳过。
+- **往 `VK` 上加东西。** 页面里能用的导出只有文件末尾 `G.VK = { … }` 那一份；`G` 是 `window`，在别处写 `G.foo = …` 只是挂到 window 上，`VK.foo` 仍是 `undefined`。
 - **遮挡看不见。** 两个装置叠在一起、量尺压住主体时，用 `--overlap` 查命名元素的包围盒相交；先 `fr.mark` 再查。
 - **相邻两站硬切。** `if (t < 17) a(); else b();` 会切。让两个时间窗重叠半秒，各自乘 `ss` 淡入淡出。
 - **辉光过曝。** 见上。A 的实物（骰子、金币、骨头）本身颜色要压暗一档，否则加上辉光会发白。

@@ -1344,7 +1344,8 @@ def lint(proj):
           try { ev = events(); } catch (e) { err = String(e); }
           const c = document.getElementById('stage');
           return { end: window.END, fps: window.FPS, meta: window.META || {},
-                   missing: window.VK_MISSING_FONTS || [], events: ev, events_error: err,
+                   missing: window.VK_MISSING_FONTS || [], images: window.VK_MISSING_IMAGES || [],
+                   events: ev, events_error: err,
                    stage: c ? [c.width, c.height] : null,
                    shots: window.SHOTS || null, subs: window.SUBS || null };
         }""")
@@ -1356,6 +1357,7 @@ def lint(proj):
     if not isinstance(fps, (int, float)) or fps <= 0: errors.append("FPS 未定义或不是正数")
     if info.get("events_error"): errors.append("events() 抛错：" + str(info["events_error"]))
     if info.get("missing"): errors.append("字体未加载：" + "、".join(info["missing"]))
+    if info.get("images"): errors.append("位图素材未加载：" + "、".join(info["images"]))
     if info.get("stage") != [1920, 1080]: errors.append(f"stage 画布是 {info.get('stage')}，应为 1920×1080")
     meta = info.get("meta") or {}
     if not meta.get("title"): warnings.append("meta.title 为空")

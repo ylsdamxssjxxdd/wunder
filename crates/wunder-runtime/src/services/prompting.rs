@@ -562,6 +562,14 @@ fn build_system_prompt_skeleton(
             .iter()
             .any(|name| resolve_tool_name(name) == "browser"),
     );
+    // 修图指引放在工程指导里而不是工具协议块：function_call 模式会整块省略
+    // 工具协议，只有工程指导在所有调用模式下都会进入系统提示词。
+    engineering_flags.insert(
+        "HAS_GENERATE_IMAGE_TOOL".to_string(),
+        allowed_tool_names
+            .iter()
+            .any(|name| resolve_tool_name(name) == "图像生成"),
+    );
 
     let engineering_template = read_prompt_template_from_scope(
         config,
@@ -1218,6 +1226,35 @@ mod tests {
             build_prompt_template_cache_key(&scope),
             "system:pack-a|locale:en"
         );
+    }
+
+    #[test]
+    fn shipped_engineering_prompt_documents_image_retouching() {
+        // 图像工具可用时，系统提示必须明确“修图优先用它”；否则模型面对
+        // 修图需求容易绕开工具去写代码或重新生成一张无关的图。
+        for (template, heading) in [
+            (
+                include_str!("../../../../config/prompts/zh/system/engineering.txt"),
+                "[图像生成与修图]",
+            ),
+            (
+                include_str!("../../../../config/prompts/en/system/engineering.txt"),
+                "[Image generation and retouching]",
+            ),
+        ] {
+            assert!(template.contains("[[HAS_GENERATE_IMAGE_TOOL]]"));
+            let shown = apply_prompt_flags(
+                template,
+                &HashMap::from([("HAS_GENERATE_IMAGE_TOOL".to_string(), true)]),
+            );
+            assert!(shown.contains(heading));
+            assert!(shown.contains("input_path"));
+            let hidden = apply_prompt_flags(
+                template,
+                &HashMap::from([("HAS_GENERATE_IMAGE_TOOL".to_string(), false)]),
+            );
+            assert!(!hidden.contains(heading));
+        }
     }
 
     #[test]

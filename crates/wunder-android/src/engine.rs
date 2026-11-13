@@ -6999,7 +6999,7 @@ fn new_model_card() -> ModelCard {
         temperature: "0.7".into(),
         timeout_s: "120".into(),
         max_output: "32768".into(),
-        thinking_token_budget: "4096".into(),
+        thinking_token_budget: "16384".into(),
         max_rounds: "1000".into(),
         max_context: "262144".into(),
         history_compaction_ratio: "0.9".into(),

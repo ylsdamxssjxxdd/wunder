@@ -42,6 +42,7 @@ function scene1(fr, t) {{
 VK.film({{
   dur: T.end, theme: '{theme}', meta: {{ title: '' }},
   shots: SHOTS, subs: SUBS,
+  // images: {{ 船: 'assets/boat.png' }},                  // 可选：代码画不像的实物，图放 assets/，用 fr.img('船', …) 画
   sfx: [                                                   // 可选：音效写在这里，比在 draw() 里 fr.sfx(...) 更直观
     // [3.2, 'tock', {{ pitch: 2 }}],
   ],

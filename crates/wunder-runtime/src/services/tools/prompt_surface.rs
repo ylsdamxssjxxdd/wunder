@@ -252,19 +252,19 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     },
     SurfaceRule {
         tool: "图像生成",
-        brief_en: "Generate an image from prompt into path; optional size, seed, negative_prompt, reference_path or input_path for edits.",
-        brief_zh: "按 prompt 生成图片写入 path；可选 size、seed、negative_prompt，reference_path/input_path 用于图生图或编辑。",
+        // 修图入口必须写进 brief：内置工具的参数说明会被整体裁掉，模型只能
+        // 从这里得知“改图传 input_path、prompt 只写改动、mask/strength 可用”。
+        brief_en: "Generate an image from prompt into path, or edit one by passing its path as input_path and describing only the change. Prefer this tool for photo retouching; mask_path marks local edits, strength controls how much changes.",
+        brief_zh: "按 prompt 生成图片写入 path；改图时把原图路径传给 input_path，prompt 只写改动之处，修图优先用本工具。可选 mask_path 标出局部重绘区域，strength 控制改动幅度。",
         drop_actions: &[],
         drop_fields: &[
             "guidance_scale",
             "input_paths",
             "layers",
-            "mask_path",
             "num_inference_steps",
             "output_compression",
             "output_format",
             "resolution",
-            "strength",
             "true_cfg_scale",
         ],
     },
@@ -626,6 +626,34 @@ mod tests {
             status["enum"],
             serde_json::json!(["pending", "in_progress", "completed"])
         );
+    }
+
+    #[test]
+    fn image_surface_keeps_edit_entry_points_visible() {
+        let spec = crate::services::tools::catalog::builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == "图像生成")
+            .expect("image spec");
+        for language in ["zh-CN", "en-US"] {
+            let projected = prompt_tool_spec(&spec, language);
+            let props = projected.input_schema["properties"]
+                .as_object()
+                .expect("image properties");
+            // 改图入口和局部重绘参数必须留在模型可见的精简 schema 里，
+            // 否则模型只会把它当成文生图工具。
+            for field in ["prompt", "input_path", "mask_path", "strength"] {
+                assert!(
+                    props.contains_key(field),
+                    "{language}: {field} should stay visible to the model"
+                );
+            }
+            assert!(projected.description.contains("input_path"));
+            assert!(projected.description.contains(if language == "zh-CN" {
+                "修图"
+            } else {
+                "retouch"
+            }));
+        }
     }
 
     #[test]

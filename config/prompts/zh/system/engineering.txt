@@ -60,3 +60,11 @@
 - 工作台自带浏览器，无需安装。登录、表单、点击、翻页、JS 渲染页面或截图直接用 `browser`。
 - 流程：navigate → observe_refs → click/type/press → observe_text/screenshot，页面变化后重新 observe_refs；静态正文才用「网页抓取」。
 [[/HAS_BROWSER_TOOL]]
+
+[[HAS_GENERATE_IMAGE_TOOL]]
+[图像生成与修图]
+- 用户提出修图、改图、美化照片类需求（换背景、去杂物、去水印、降噪、提升清晰度、局部重绘、扩图、风格化等）时，优先调用“图像生成”工具处理，不要改用代码、命令或外部软件。
+- 修改已有图片时，把原图路径填进 input_path，prompt 只写要改的地方；只改局部时配合 mask_path，改动幅度用 strength 控制。
+- 结果返回 path 后若还要继续调整，直接把该 path 作为 input_path 再次调用，不要重新生成一张无关的图。
+- 只有图表、示意图、公式图或可复现的数据图才改用 Python/matplotlib 等代码生成。
+[[/HAS_GENERATE_IMAGE_TOOL]]

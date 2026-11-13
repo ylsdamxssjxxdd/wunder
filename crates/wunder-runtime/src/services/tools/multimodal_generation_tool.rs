@@ -384,10 +384,28 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
         &result.bytes,
     )
     .await?;
+    let edited = mode == "image_edit";
+    // 编辑模式必须说清“从哪张图改的”，否则模型会把结果当成一次新的文生图，
+    // 后续用户要求继续修图时又回到重新生成。
+    let summary = if edited {
+        match input_paths.as_slice() {
+            [source] => format!(
+                "Edited image from {source} and saved it to {}.",
+                saved.public_path
+            ),
+            sources => format!(
+                "Edited image from {} input images and saved it to {}.",
+                sources.len(),
+                saved.public_path
+            ),
+        }
+    } else {
+        format!("Generated image and saved it to {}.", saved.public_path)
+    };
     Ok(build_model_tool_success(
         "generate_image",
         "completed",
-        format!("Generated image and saved it to {}.", saved.public_path),
+        summary,
         json!({
             "prompt": prompt,
             "content_type": result.content_type,
@@ -395,6 +413,7 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
             "workspace_relative_path": saved.workspace_relative_path,
             "bytes": saved.size_bytes,
             "mode": mode,
+            "edited": edited,
             "model_name": resolved_model_name,
             "provider": normalize_provider(model_config.provider.as_deref()),
             "size": effective_size,

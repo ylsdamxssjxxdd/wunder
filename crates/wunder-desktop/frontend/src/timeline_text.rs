@@ -483,6 +483,13 @@ pub fn merge_reasoning_tail(bar: &TimelineRow, mut entry: ProcessEntry) {
     if bar.process_newer && !exists {
         return;
     }
+    // Above a loaded page only the running row may be new. A settled row the
+    // page does not carry is either a duplicate the page deduplicated or a step
+    // that belongs to a page the reader has not loaded yet; appending it would
+    // reorder the history the reader is scrolling.
+    if bar.process_paged && !exists && entry.status_kind != crate::timeline::STATUS_RUNNING {
+        return;
+    }
     if let Some(index) = children.iter().position(|old| old.id == entry.id) {
         let old = children.row_data(index).unwrap();
         if old.status_kind != crate::timeline::STATUS_RUNNING
@@ -587,6 +594,17 @@ fn stable_reasoning_identity(id: &str) -> bool {
     id.rsplit_once(":text-").is_some_and(|(_, round)| {
         !round.is_empty() && round.chars().all(|value| value.is_ascii_digit())
     })
+}
+
+/// Whether a live row may be appended to a fold whose durable page is already
+/// loaded. A page only carries steps the engine has committed, so the step
+/// being written right now is never part of it; refusing to insert it left the
+/// fold showing nothing but older rounds, and the new thought only appeared
+/// when a tail refresh pulled its finished block in — from the reader's side
+/// exactly "the streaming stopped after N rounds". Only the running row may do
+/// this, and only while the fold knows no unloaded newer page above it.
+pub(crate) fn live_tail_fits(bar: &TimelineRow, row: &TimelineRow) -> bool {
+    bar.process_paged && !bar.process_newer && row.status_kind == crate::timeline::STATUS_RUNNING
 }
 
 /// History replacement builds one child model per process; live deltas patch

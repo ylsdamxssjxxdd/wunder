@@ -259,7 +259,7 @@ pub(crate) fn new_model_card(key: String) -> ModelCard {
         temperature: "0.7".into(),
         timeout_s: "120".into(),
         max_output: "32768".into(),
-        thinking_token_budget: "4096".into(),
+        thinking_token_budget: "16384".into(),
         max_rounds: "1000".into(),
         max_context: "262144".into(),
         history_compaction_ratio: "0.9".into(),
@@ -436,7 +436,7 @@ mod tests {
         assert_eq!(card.temperature.as_str(), "0.7");
         assert_eq!(card.timeout_s.as_str(), "120");
         assert_eq!(card.max_output.as_str(), "32768");
-        assert_eq!(card.thinking_token_budget.as_str(), "4096");
+        assert_eq!(card.thinking_token_budget.as_str(), "16384");
         assert_eq!(card.max_rounds.as_str(), "1000");
         assert_eq!(card.max_context.as_str(), "262144");
         assert_eq!(card.history_compaction_ratio.as_str(), "0.9");

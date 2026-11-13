@@ -2426,13 +2426,15 @@ mod tests {
             // Ceilings apply to the model-facing projection, not the
             // authoritative schemas. A verbose new tool must not silently
             // add another few thousand tokens to every first turn.
+            // 图像生成在精简面暴露 mask_path/strength 两个修图参数后突破 20k，
+            // 这是有意增加的改图入口，故把总预算上调到 20.2k 而不是裁掉参数。
             let largest = rows.first().map(|row| row.0).unwrap_or(0);
             assert!(
                 largest < 2_500,
                 "largest model-facing tool spec is {largest} chars in {language}"
             );
             assert!(
-                total < 20_000,
+                total < 20_200,
                 "model-facing tool catalogue grew to {total} chars in {language}"
             );
             let authoritative_chars: usize = authoritative
@@ -3401,6 +3403,57 @@ mod tests {
         assert!(browser.input_schema["properties"]["action"]["enum"].is_array());
         assert!(specs.iter().all(|spec| !spec.name.starts_with("browser_")));
         assert!(specs.iter().all(|spec| spec.name != "浏览器"));
+    }
+
+    #[test]
+    fn image_tool_description_prefers_retouching_over_regeneration() {
+        for language in ["zh-CN", "en-US"] {
+            let specs = builtin_tool_specs_with_language(language);
+            let image = specs
+                .iter()
+                .find(|spec| spec.name == "图像生成")
+                .expect("image generation spec");
+            let property = |name: &str| {
+                image.input_schema["properties"][name]["description"]
+                    .as_str()
+                    .unwrap_or_default()
+            };
+            let description = image.description.as_str();
+            let prompt = property("prompt");
+            let input_path = property("input_path");
+            let expected: &[(&str, &str)] = if language == "zh-CN" {
+                &[
+                    (description, "优先使用本工具"),
+                    (description, "修图"),
+                    (description, "input_path"),
+                    (prompt, "只描述要改动"),
+                    (input_path, "编辑模式"),
+                ]
+            } else {
+                &[
+                    (description, "Prefer this tool"),
+                    (description, "retouch"),
+                    (description, "input_path"),
+                    (prompt, "describe only the change"),
+                    (input_path, "image-to-image/edit"),
+                ]
+            };
+            for (text, needle) in expected {
+                assert!(
+                    text.contains(needle),
+                    "{language}: expected {needle:?} in {text}"
+                );
+            }
+            let read_image = specs
+                .iter()
+                .find(|spec| spec.name == "读图工具")
+                .expect("read image spec");
+            assert!(
+                read_image.description.contains("input_path"),
+                "{}: read_image should point editing back to the image tool",
+                language
+            );
+        }
     }
 
     #[test]

@@ -660,7 +660,7 @@ const buildNewLlmConfig = () =>
   normalizeLlmConfig({
     support_vision: true,
     max_output: 32768,
-    thinking_token_budget: 8192,
+    thinking_token_budget: 16384,
   });
 
 // 规范化多模型配置集合。
