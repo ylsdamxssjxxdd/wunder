@@ -18,7 +18,9 @@ use crate::storage::{
     normalize_sandbox_container_id, UserAccountRecord, UserAgentPresetBinding,
     UserAgentPresetSnapshot, UserAgentRecord, DEFAULT_SANDBOX_CONTAINER_ID,
 };
-use crate::user_access::{build_user_tool_context, compute_allowed_tool_names};
+use crate::user_access::{
+    build_user_tool_context, compute_allowed_tool_names, UserToolContext, UserToolContextBase,
+};
 use anyhow::Result;
 use chrono::Utc;
 use std::collections::HashSet;
@@ -207,14 +209,23 @@ pub async fn load_effective_default_agent_config(
     let context = build_user_tool_context(state, user_id).await;
     let allowed = compute_allowed_tool_names(&owner, &context);
     let skill_name_keys = collect_context_skill_names(&context);
-    let mut config =
-        resolve_default_agent_config(state, &owner, &allowed, &skill_name_keys).await?;
+    resolve_effective_default_agent_config(state, &owner, &allowed, &skill_name_keys).await
+}
+
+/// 已持有用户、权限与技能键时复用它们求默认智能体配置，避免重复建上下文。
+pub(crate) async fn resolve_effective_default_agent_config(
+    state: &AppState,
+    owner: &UserAccountRecord,
+    allowed: &HashSet<String>,
+    skill_name_keys: &HashSet<String>,
+) -> Result<DefaultAgentConfig> {
+    let mut config = resolve_default_agent_config(state, owner, allowed, skill_name_keys).await?;
     initialize_default_builtin_tools(
         &state.user_store,
-        user_id,
+        owner.user_id.trim(),
         &mut config,
-        &allowed,
-        &skill_name_keys,
+        allowed,
+        skill_name_keys,
     )?;
     Ok(config)
 }
@@ -277,8 +288,18 @@ async fn build_target_snapshot(
     current: &UserAgentRecord,
 ) -> UserAgentPresetSnapshot {
     let context = build_user_tool_context(state, &user.user_id).await;
-    let allowed_tool_names = compute_allowed_tool_names(user, &context);
-    let skill_name_keys = collect_context_skill_names(&context);
+    build_target_snapshot_from_context(user, template, current, &context)
+}
+
+/// 目标快照只依赖当前用户上下文，批量同步时复用已建好的上下文即可。
+fn build_target_snapshot_from_context(
+    user: &UserAccountRecord,
+    template: &DefaultAgentConfig,
+    current: &UserAgentRecord,
+    context: &UserToolContext,
+) -> UserAgentPresetSnapshot {
+    let allowed_tool_names = compute_allowed_tool_names(user, context);
+    let skill_name_keys = collect_context_skill_names(context);
     let tool_names = build_requested_tool_names_for_sync(
         &template.tool_names,
         &template.declared_tool_names,
@@ -308,7 +329,7 @@ async fn build_target_snapshot(
     );
     snapshot.model_name = None;
     let current = snapshot_from_default_record(current, &skill_name_keys);
-    merge_user_owned_tool_selections(&mut snapshot, &context, &user.user_id, &current);
+    merge_user_owned_tool_selections(&mut snapshot, context, &user.user_id, &current);
     snapshot
 }
 
@@ -535,6 +556,9 @@ pub async fn sync_default_agent_across_users(
     .await?;
 
     let mut offset = 0;
+    // 配置、技能与组织架构在整轮同步内视为只读快照；逐用户重建会让耗时随
+    // 用户数线性膨胀，这是大舰队下保存后预览、推送都很慢的主因。
+    let context_base = UserToolContextBase::load(state).await;
     loop {
         let (users, total) = state.user_store.list_users(None, unit_scope, offset, 200)?;
         if users.is_empty() {
@@ -559,11 +583,17 @@ pub async fn sync_default_agent_across_users(
             if bound_users.contains(&user.user_id) {
                 continue;
             }
-            let current_record = load_effective_default_agent_record(state, &user.user_id).await?;
-            let current_skill_name_keys = collect_user_skill_name_keys(state, &user.user_id).await;
+            // 一个用户只建一次上下文，allowed / 技能键 / 目标快照全部复用。
+            let context = context_base.context_for(state, &user.user_id);
+            let allowed = compute_allowed_tool_names(&user, &context);
+            let current_skill_name_keys = collect_context_skill_names(&context);
+            let current_config =
+                resolve_effective_default_agent_config(state, &user, &allowed, &current_skill_name_keys)
+                    .await?;
+            let current_record = record_from_config(&user.user_id, &current_config);
             let current = snapshot_from_default_record(&current_record, &current_skill_name_keys);
             let target =
-                build_target_snapshot(state, &user, &template_config, &current_record).await;
+                build_target_snapshot_from_context(&user, &template_config, &current_record, &context);
             let binding = load_sync_binding(state, &user.user_id)?;
             let binding_matches = binding
                 .as_ref()

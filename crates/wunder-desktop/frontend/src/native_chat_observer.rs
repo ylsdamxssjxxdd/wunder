@@ -338,8 +338,11 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
         // per second. Keep the catalogue as a bounded backstop at a
         // faster cadence while work is active; the direct event
         // projection remains the primary path for the selected row.
-        let refresh_interval =
-            if current.active.is_some() || !current.parked.is_empty() || any_live_row(&app) {
+        let refresh_interval = if current.active.is_some()
+            || !current.background.is_empty()
+            || !current.parked.is_empty()
+            || any_live_row(&app)
+        {
                 Duration::from_millis(500)
             } else {
                 Duration::from_secs(3)
@@ -355,7 +358,8 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
         // them while a foreground or parked turn exists so an interject
         // and its successor are reflected even when the durable turn
         // watcher has not emitted a new history row yet.
-        let queue_active = current.active.is_some() || !current.parked.is_empty();
+        let queue_active =
+            current.active.is_some() || !current.background.is_empty() || !current.parked.is_empty();
         if queue_active {
             queue::schedule_due(&mut current.queue_due, Duration::from_millis(500));
         }
@@ -402,7 +406,16 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
                     current.history_before = *history_before;
                     current.history_has_more = *history_has_more && history_before.is_some();
                     current.history_loading_older = false;
-                    current.observation.publish(&app, &timeline, false);
+                    // A thread that kept streaming while it was off screen
+                    // still has its live rows in its own reducer: merging the
+                    // durable prefix now would append the running question a
+                    // second time. The gate remembers the snapshot and the tick
+                    // after the turn settles publishes it.
+                    let live_here = current
+                        .active
+                        .as_ref()
+                        .is_some_and(|turn| turn.session == session);
+                    current.observation.publish(&app, &timeline, live_here);
                     app.set_session_loading(false);
                 }
                 // The thread's last published plan and a pending 问询面板
@@ -432,8 +445,14 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
             let watch = desktop.watch_chat_with_initial_cursor(&session, None, None);
             current.observation.attach_watch(&app, watch, &session);
         }
-        let local_busy = current.active.is_some()
-            || !current.parked.is_empty()
+        // Only this thread's own live turn defers its durable snapshot. The
+        // turn of a thread the user left keeps streaming into that thread's
+        // reducer, which is not the model being published here.
+        let local_busy = current
+            .active
+            .as_ref()
+            .is_some_and(|turn| turn.session == session)
+            || current.parked.iter().any(|entry| entry.session == session)
             || current
                 .submitting
                 .as_ref()

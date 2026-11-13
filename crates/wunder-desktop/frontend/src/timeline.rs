@@ -4015,4 +4015,75 @@ mod tests {
             .iter()
             .any(|entry| entry.detail == "Settled thought"));
     }
+
+    /// Two threads, two reducers. The thread that is off screen keeps its live
+    /// tail: the thought that was streaming when the user looked away is still
+    /// there when they come back, and it keeps growing from the very next
+    /// delta.
+    ///
+    /// This is what the window relies on instead of replaying durable
+    /// snapshots. A snapshot carries a thought only once its model round has
+    /// committed, so a rebuild from history shows the finished thought glued to
+    /// the tool row that ended the round — the streaming was lost, not the text.
+    #[test]
+    fn a_thread_reducer_keeps_streaming_while_another_thread_is_shown() {
+        use slint::Model;
+        // Thread A is mid-thought when the user switches away.
+        let mut away = Timeline::new();
+        away.begin_turn("away-turn", "第一个问题");
+        away.set_process_root("away-root");
+        away.append_reasoning_item("away-root:text-1", "Sec").unwrap();
+        away.flush();
+        let away_rows = away.row_count();
+
+        // Thread B is opened in another reducer; A is not cleared, not folded
+        // and not rebuilt.
+        let mut shown = Timeline::new();
+        shown.begin_turn("shown-turn", "第二个问题");
+        shown.set_process_root("shown-root");
+        shown
+            .append_reasoning_item("shown-root:text-1", "另一个线程的思考")
+            .unwrap();
+        shown.flush();
+        assert_eq!(away.row_count(), away_rows, "A keeps its rows");
+        assert!(
+            shown
+                .model
+                .iter()
+                .all(|row| !row.id.contains("away")),
+            "B never shows A's rows"
+        );
+
+        // Returning to A: the next delta extends the very same thought.
+        away.append_reasoning_item("away-root:text-1", "ond ").unwrap();
+        away.flush();
+        away.append_reasoning_item("away-root:text-1", "thought").unwrap();
+        away.flush();
+
+        let bar = away
+            .model
+            .row_data(away.process_bar)
+            .expect("A still owns its process fold");
+        let children = bar
+            .process_entries
+            .as_any()
+            .downcast_ref::<VecModel<crate::ProcessEntry>>()
+            .unwrap();
+        let tail = children.iter().last().expect("A still has its thought");
+        assert_eq!(tail.id, "reason-away-root:text-1");
+        assert_eq!(
+            tail.detail, "Second thought",
+            "the thought keeps streaming across the switch instead of arriving whole"
+        );
+        assert_eq!(tail.status_kind, STATUS_RUNNING);
+        // B is untouched by A's frames.
+        assert_eq!(
+            shown
+                .model
+                .iter()
+                .filter(|row| row.kind == KIND_REASON)
+                .count(),
+            1
+        );
+    }
 }

@@ -481,6 +481,13 @@ struct State {
     observation: observer::Observation,
     desktop: Arc<NativeDesktop>,
     active: Option<Active>,
+    /// Turns this window still owns but is no longer showing: switching to
+    /// another thread hands the foreground reducer here instead of dropping
+    /// it. Each entry keeps its own [`Timeline`], so returning to that thread
+    /// rebinds the live model and its streaming thought/answer continues from
+    /// where it was, rather than being replayed only as durable snapshots
+    /// (which land one whole model round at a time).
+    background: Vec<Active>,
     /// One idle-thread submission owns its provisional timeline until the
     /// worker returns. Running threads retain their ordinary queue path.
     submitting: Option<PendingSubmission>,
@@ -498,8 +505,22 @@ struct State {
     /// Independent low-duty directory reconciliation while another local
     /// process owns one of the visible thread leases.
     lease_refresh_timer: Timer,
-    /// History plus the live turn; the timeline is the single chat model.
+    /// History plus the live turn of the thread on screen; this is the model
+    /// the window is bound to right now (see [`bind_reducer`]).
     timeline: Rc<RefCell<crate::timeline::Timeline>>,
+    /// One reducer per thread this window has shown, keyed by thread id; the
+    /// empty key is the thread-less surface (welcome card, cloud view).
+    ///
+    /// A thread keeps its own rows so a turn that is still streaming survives
+    /// navigation: the pump writes into this reducer while the thread is off
+    /// screen, and coming back rebinds it instead of rebuilding the transcript
+    /// from durable snapshots. Those snapshots arrive one whole model round at
+    /// a time, so a thought that is mid-flight is not in them yet — which is
+    /// why a return used to show the finished thought glued to the first tool
+    /// row.
+    reducers: std::collections::HashMap<String, Rc<RefCell<crate::timeline::Timeline>>>,
+    /// Bounded least-recently-used order of `reducers`.
+    reducer_order: VecDeque<String>,
     history_generation: Arc<AtomicU64>,
     /// Oldest loaded durable user round and the next-page state.
     history_before: Option<i64>,
@@ -616,6 +637,92 @@ fn clear_initial_history() {
     INITIAL_HISTORY.with(|slot| *slot.borrow_mut() = None);
 }
 
+thread_local! {
+    /// The reducer currently bound to the window's transcript.
+    ///
+    /// The timeline callbacks resolve their rows through this cell instead of
+    /// `State`: they can fire from inside a `State` borrow, and a second borrow
+    /// there aborts the process. Rebinding a thread replaces the cell, so a
+    /// bounded introspection callback always reads the rows that are on screen.
+    static VISIBLE_TIMELINE: RefCell<Option<Rc<RefCell<crate::timeline::Timeline>>>> =
+        const { RefCell::new(None) };
+}
+
+fn visible_timeline() -> Option<Rc<RefCell<crate::timeline::Timeline>>> {
+    VISIBLE_TIMELINE.with(|slot| slot.borrow().clone())
+}
+
+/// Live turns this window keeps draining after the user looked away. Beyond
+/// this the oldest subscriber is released; the runtime settles its turn durably
+/// either way, so the only cost is that thread's live frames.
+const MAX_BACKGROUND_TURNS: usize = 4;
+
+/// Most threads that keep a live reducer. A reducer costs the rows of the pages
+/// that thread had loaded, so the pool stays small: the thread on screen plus
+/// the ones still streaming, which is one in practice.
+const REDUCER_POOL: usize = 4;
+
+/// The rows of `session`, created on first use. Never reuse one thread's
+/// reducer for another: the live turn of a thread the user left keeps writing
+/// into it, and that is exactly what makes returning lossless.
+fn reducer_for(state: &mut State, session: &str) -> Rc<RefCell<crate::timeline::Timeline>> {
+    if let Some(reducer) = state.reducers.get(session) {
+        return reducer.clone();
+    }
+    let reducer = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+    reducer.borrow_mut().set_markdown_desktop(state.desktop.clone());
+    state.reducers.insert(session.to_string(), reducer.clone());
+    state.reducer_order.push_back(session.to_string());
+    // Evict least-recently-used threads that own no work in flight. A live
+    // turn's reducer is never a victim: its rows are the only copy of the
+    // frames that have not been committed yet.
+    while state.reducers.len() > REDUCER_POOL {
+        let victim = state.reducer_order.iter().position(|id| {
+            id != session
+                && state.active.as_ref().is_none_or(|turn| turn.session != *id)
+                && !state.background.iter().any(|turn| turn.session == *id)
+        });
+        let Some(index) = victim else {
+            break;
+        };
+        let id = state.reducer_order.remove(index);
+        if let Some(id) = id {
+            state.reducers.remove(&id);
+        }
+    }
+    reducer
+}
+
+/// Drop `session`'s reducer. Used when the thread leaves the catalogue or its
+/// live turn is demoted: the next open rebuilds it from the durable history.
+fn forget_reducer(state: &mut State, session: &str) {
+    state.reducers.remove(session);
+    state.reducer_order.retain(|id| id != session);
+}
+
+/// Point the window's transcript at `session`'s reducer.
+///
+/// The bound model handle changes with the thread, so every view holding the
+/// transcript is re-set here. This is the whole mechanism behind keeping a
+/// streaming turn alive: the reducer never lost its thinking row, its fold or
+/// its body block, so a return continues the same frames instead of replaying
+/// committed rounds.
+fn bind_reducer(app: &MainWindow, state: &mut State, session: &str) {
+    let reducer = reducer_for(state, session);
+    let switched = !Rc::ptr_eq(&state.timeline, &reducer);
+    state.timeline = reducer.clone();
+    VISIBLE_TIMELINE.with(|slot| *slot.borrow_mut() = Some(reducer.clone()));
+    reducer.borrow_mut().set_markdown_root(markdown_root(app));
+    let live = reducer.borrow();
+    // `needs_publish` answers true exactly once per reducer, so a return to an
+    // already-shown thread must re-set the model explicitly.
+    if switched || live.needs_publish() {
+        app.set_timeline(live.model());
+    }
+    app.set_turn_marks(live.marks_model());
+    live.sync_turn_marks();
+}
+
 /// Detach the window from a thread that left the catalogue (archived or
 /// deleted). Its transcript, draft, dock and question panel all belong to it,
 /// so keeping them on screen made an archived thread look like it was still
@@ -638,15 +745,24 @@ pub(crate) fn close_visible_thread(app: &MainWindow, session: &str) {
         state.session_loading_since = None;
         state.parked.clear();
         queue::reset_recall(&mut state.recall);
-        {
-            let timeline = state.timeline.clone();
-            let mut timeline = timeline.borrow_mut();
-            timeline.clear();
-            // The window keeps the same model instance; clearing it in place
-            // is what makes the transcript vanish without a reload.
-            app.set_timeline(timeline.model());
-            timeline.sync_turn_marks();
-            app.set_turn_marks(timeline.marks_model());
+        // The thread is gone from the catalogue: its reducer, its live turn and
+        // a held stream would only keep writing into rows nobody can reach.
+        state.background.retain(|turn| turn.session != session);
+        if state.active.as_ref().is_some_and(|turn| turn.session == session) {
+            state.active = None;
+        }
+        forget_reducer(&mut state, session);
+        if app.get_active_session_id() == session {
+            // A closed thread's transcript must go, not stay frozen: the next
+            // thread starts from its own reducer, and the empty key owns the
+            // thread-less surface this window falls back to.
+            state.reducers.insert(
+                String::new(),
+                Rc::new(RefCell::new(crate::timeline::Timeline::new())),
+            );
+            state.reducer_order.retain(|id| !id.is_empty());
+            state.reducer_order.push_front(String::new());
+            bind_reducer(app, &mut state, "");
         }
         Some(state.desktop.clone())
     });
@@ -679,7 +795,14 @@ pub(crate) fn prepare_external_timeline(app: &MainWindow) {
         let mut state = state.borrow_mut();
         state.timer.stop();
         state.lease_refresh_timer.stop();
-        state.active = None;
+        // The local turn loses its stream here: a cloud page is a different
+        // surface, and a reducer with a frozen running row would claim the
+        // thread is still streaming when it is next opened. Dropping the
+        // stream never cancels the run — the runtime settles it durably.
+        if let Some(turn) = state.active.take() {
+            forget_reducer(&mut state, &turn.session);
+        }
+        state.background.clear();
         // A local submission may still be acquiring its lease while cloud
         // navigation changes the visible page. Retain it (and any stop
         // barrier) so returning to its thread cannot start a second request
@@ -690,7 +813,15 @@ pub(crate) fn prepare_external_timeline(app: &MainWindow) {
         state.history_before = None;
         state.history_has_more = false;
         state.history_loading_older = false;
-        state.timeline.borrow_mut().clear();
+        // The cloud rows own the thread-less reducer; a local thread's rows
+        // must never appear under the cloud page.
+        state.reducers.insert(
+            String::new(),
+            Rc::new(RefCell::new(crate::timeline::Timeline::new())),
+        );
+        state.reducer_order.retain(|id| !id.is_empty());
+        state.reducer_order.push_front(String::new());
+        bind_reducer(app, &mut state, "");
         let local_id = app.get_active_session_id().to_string();
         crate::chat_split::release_live(app, &local_id);
         if !local_id.is_empty() {
@@ -809,10 +940,13 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         observation: observer::Observation::default(),
         desktop,
         active: None,
+        background: Vec::new(),
         submitting: None,
         cancelling_submission: None,
         lease_refresh_timer: Timer::default(),
         timeline: Rc::new(RefCell::new(crate::timeline::Timeline::new())),
+        reducers: std::collections::HashMap::new(),
+        reducer_order: VecDeque::new(),
         history_generation: Arc::new(AtomicU64::new(0)),
         history_before: None,
         history_has_more: false,
@@ -840,6 +974,18 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     observer::install(app, state.clone());
     crate::chat_split::install(app, desktop_preview.clone());
     CHAT_STATE.with(|slot| *slot.borrow_mut() = Rc::downgrade(&state));
+    {
+        // Register the thread-less reducer as the one the window starts on.
+        let mut st = state.borrow_mut();
+        let blank = st.timeline.clone();
+        st.reducers.insert(String::new(), blank);
+        st.reducer_order.push_back(String::new());
+        st.timeline
+            .borrow_mut()
+            .set_markdown_desktop(st.desktop.clone());
+        st.timeline.borrow_mut().set_markdown_root(markdown_root(app));
+    }
+    VISIBLE_TIMELINE.with(|slot| *slot.borrow_mut() = Some(state.borrow().timeline.clone()));
     bind_refresh(app, state.clone());
     bind_selection(app, state.clone());
     bind_history_paging(app, state.clone());
@@ -870,8 +1016,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
     crate::workspace_files::install(app, desktop_preview.clone());
     crate::navigation_ui::install(app, desktop_preview.clone());
     crate::workspace_ui::install(app, desktop_preview.clone());
-    let timeline = state.borrow().timeline.clone();
-    bind_timeline(app, timeline, desktop_preview.clone());
+    bind_timeline(app, desktop_preview.clone());
     crate::chat_process::install(app, desktop_preview.clone());
     {
         let timeline = state.borrow().timeline.clone();
@@ -933,21 +1078,22 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
 /// routes resource opens back to the native layer, and the block actions save or
 /// copy the answer text the row already carries.
 ///
-/// These bind the row model's own handle instead of reaching through `State`:
-/// the sidebar and pet projection invoke them from inside a `State` borrow, and
-/// a second borrow of `State` there aborts the process.
-fn bind_timeline(
-    app: &MainWindow,
-    timeline: Rc<RefCell<crate::timeline::Timeline>>,
-    desktop: Arc<NativeDesktop>,
-) {
-    timeline.borrow_mut().set_markdown_desktop(desktop.clone());
-    timeline.borrow_mut().set_markdown_root(markdown_root(app));
-    let toggle_timeline = timeline.clone();
+/// These resolve the bound reducer through [`VISIBLE_TIMELINE`] instead of
+/// reaching through `State`: the sidebar and pet projection invoke them from
+/// inside a `State` borrow, and a second borrow of `State` there aborts the
+/// process. Every thread has its own reducer, so pinning one handle here would
+/// also patch a thread that is no longer on screen.
+fn bind_timeline(app: &MainWindow, desktop: Arc<NativeDesktop>) {
+    if let Some(timeline) = visible_timeline() {
+        timeline.borrow_mut().set_markdown_desktop(desktop.clone());
+        timeline.borrow_mut().set_markdown_root(markdown_root(app));
+    }
     app.on_timeline_toggle(move |payload| {
         // A fold patches only the rows it owns, so the click never re-runs the
         // reducer or rebuilds the list.
-        toggle_timeline.borrow().toggle(payload);
+        if let Some(timeline) = visible_timeline() {
+            timeline.borrow().toggle(payload);
+        }
     });
     let weak = app.as_weak();
     app.on_timeline_open(move |resource| {
@@ -991,16 +1137,21 @@ fn bind_timeline(
     });
     // Bounded introspection for the native smoke checks and the companion
     // bubble: both need the active thread's tail without reading every row.
-    let counts_timeline = timeline.clone();
     app.on_timeline_counts(move || {
-        let live = counts_timeline.borrow();
+        let Some(timeline) = visible_timeline() else {
+            return crate::TimelineCounts::default();
+        };
+        let live = timeline.borrow();
         crate::TimelineCounts {
             rows: live.row_count() as i32,
             answers: live.answer_count() as i32,
         }
     });
-    let answer_timeline = timeline;
-    app.on_timeline_last_answer(move || answer_timeline.borrow().last_answer().into());
+    app.on_timeline_last_answer(move || {
+        visible_timeline()
+            .map(|timeline| timeline.borrow().last_answer().into())
+            .unwrap_or_default()
+    });
 }
 
 /// Whether a Markdown target is a remote reference rather than a workspace
@@ -1067,12 +1218,40 @@ fn publish_timeline_with_follow(
     }
 }
 
-/// Whether this window's foreground owns the live tail of `session`. A parked
-/// send and an in-flight lease acquisition count too: both may already show a
-/// provisional bubble keyed by the client request id.
+/// Publish one frame of `session`'s reducer.
+///
+/// A thread the user left keeps streaming: its rows must advance so a return
+/// shows the frame that is current then, but the window itself stays on the
+/// thread on screen. Only the bound reducer may claim the transcript model or
+/// bump the follow-tail revision, otherwise the background frames would drag
+/// the reader into another thread's rows.
+fn publish_live_frame(app: &MainWindow, session: &str, live: &crate::timeline::Timeline) {
+    let visible = app.get_active_session_id() == session;
+    if visible && live.needs_publish() {
+        app.set_timeline(live.model());
+        app.set_turn_marks(live.marks_model());
+    }
+    live.sync_turn_marks();
+    if !visible {
+        return;
+    }
+    crate::chat_split::sync_live(app, session, live.model());
+    app.set_stream_updates(app.get_stream_updates().wrapping_add(1));
+}
+
+/// Whether this window owns the live tail of `session`. A parked send and an
+/// in-flight lease acquisition count too: both may already show a provisional
+/// bubble keyed by the client request id.
+///
+/// The live turn of *another* thread does not count: that reducer is not on
+/// screen, so the durable projection of this session is free to replace its
+/// rows.
 fn foreground_live(state: &State, session: &str) -> bool {
-    state.active.is_some()
-        || !state.parked.is_empty()
+    state
+        .active
+        .as_ref()
+        .is_some_and(|turn| turn.session == session)
+        || state.parked.iter().any(|entry| entry.session == session)
         || state
             .submitting
             .as_ref()
@@ -1806,6 +1985,12 @@ fn local_status_overrides(state: &State) -> Vec<(String, String)> {
     if let Some(active) = state.active.as_ref() {
         upsert(&active.output.session, active.output.state());
     }
+    // A thread running off screen keeps its own status: the sidebar row must
+    // not fall back to a stale durable phrase just because the user looked
+    // away from it.
+    for background in &state.background {
+        upsert(&background.output.session, background.output.state());
+    }
     statuses
 }
 
@@ -1860,15 +2045,40 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         publish_inquiry(&app, &id, &state.borrow());
         {
             let mut current = state.borrow_mut();
-            // Navigation is independent from execution: switching away demotes
-            // the foreground stream to background execution. The runtime still
-            // settles durably, and the observer replays it on return.
-            if let Some(active) = current.active.take() {
-                if active.session == id {
-                    current.active = Some(active);
-                    return;
+            // Navigation is independent from execution: the turn of the thread
+            // being left keeps running in this window. Its stream stays
+            // attached and its own reducer keeps receiving frames, so the pump
+            // can keep draining it off screen — dropping the subscriber here
+            // was what left the thread with nothing but durable snapshots, and
+            // those arrive one whole model round at a time.
+            if current
+                .active
+                .as_ref()
+                .is_some_and(|active| active.session == id)
+            {
+                return;
+            }
+            if let Some(turn) = current.active.take() {
+                // One live turn per thread, and only a handful of threads can be
+                // streaming at once: a thread that falls out of that window
+                // keeps running durably and is replayed on return, which costs
+                // its live frames but never its work.
+                current.background.retain(|other| other.session != turn.session);
+                if current.background.len() >= MAX_BACKGROUND_TURNS {
+                    current.background.remove(0);
                 }
-                current.timer.stop();
+                current.background.push(turn);
+            }
+            if let Some(index) = current
+                .background
+                .iter()
+                .position(|turn| turn.session == id)
+            {
+                // Coming back to a thread that is still running: it takes the
+                // live slot again, so its frames reach the window from the
+                // first tick after this one.
+                let turn = current.background.remove(index);
+                current.active = Some(turn);
             }
             current.observation.detach();
             current.history_before = None;
@@ -1899,7 +2109,14 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         let generation = state.borrow().history_generation.clone();
         let request = generation.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         let weak = app.as_weak();
-        app.set_busy(false);
+        // A thread that kept streaming while it was off screen already owns a
+        // composer state; only an idle one starts from a clean slate.
+        let live_here = state
+            .borrow()
+            .active
+            .as_ref()
+            .is_some_and(|active| active.session == id);
+        app.set_busy(live_here);
         app.set_stopping(false);
         reset_context_usage(&app);
         refresh_context_async(&app, &state, &id);
@@ -1936,27 +2153,21 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         // leftover of the one that was just left behind. Queue reads are
         // SQLite I/O, so the visible selection never waits for them.
         refresh_queue_async(&app, &state, &id);
-        let timeline = state.borrow().timeline.clone();
-        {
-            // A held message is never a transcript bubble: it has not been
-            // sent, so the composer's strip is the only place it may appear.
-            // The old projection re-created it here, which is why switching
-            // away and back turned a pending message into a user bubble glued
-            // to the settled history.
-            let mut live = timeline.borrow_mut();
-            live.clear();
-        }
-        // Keep MainWindow attached to the one stable VecModel owned by the
-        // reducer. Replacing it with a detached empty model makes later stream
-        // deltas look stale until a full page reload.
-        {
-            let timeline = state.borrow().timeline.clone();
-            let live = timeline.borrow();
-            if live.needs_publish() {
-                app.set_timeline(live.model());
-                app.set_turn_marks(live.marks_model());
-            }
-            live.sync_turn_marks();
+        let resume_pump = {
+            // Bind the transcript to this thread's own reducer. A reducer that
+            // already exists is not cleared: its rows are this thread's rows,
+            // including the live turn that kept streaming while the user was
+            // elsewhere. Durable history is merged into it by the observer, and
+            // the frame that is current at this instant is what the user sees —
+            // no waiting for the next commit.
+            let mut current = state.borrow_mut();
+            bind_reducer(&app, &mut current, &id);
+            // A live turn here means the pump has frames to deliver again.
+            (current.active.is_some() || !current.background.is_empty())
+                && !current.timer.running()
+        };
+        if resume_pump {
+            start_timer(&app, state.clone());
         }
         std::thread::spawn(move || {
             // Lease acquisition and metadata stay on the worker. The first
@@ -3245,10 +3456,17 @@ pub(crate) fn is_running(_app: &MainWindow, session: &str) -> bool {
             return false;
         };
         let state = state.borrow();
+        // A thread the user left keeps running, so its engine ownership must
+        // stay visible to the hold path: a message typed into it from a pane
+        // is held locally instead of being parked behind its own turn.
         state
             .active
             .as_ref()
             .is_some_and(|active| active.session == session)
+            || state
+                .background
+                .iter()
+                .any(|turn| turn.session == session)
             || state
                 .submitting
                 .as_ref()
@@ -3386,10 +3604,17 @@ fn restore_waiting_turn(app: &MainWindow, turn: queue::WaitingTurn, error: &str)
 fn release_next_waiting_turn(app: &MainWindow, state: &Rc<RefCell<State>>) {
     let next = {
         let mut st = state.borrow_mut();
-        if st.active.is_some() || !st.parked.is_empty() {
+        let session = app.get_active_session_id().to_string();
+        // Only this thread's own run keeps its held message waiting; a turn
+        // that runs in another thread must not hold this one's queue hostage.
+        if st
+            .active
+            .as_ref()
+            .is_some_and(|turn| turn.session == session)
+            || st.parked.iter().any(|entry| entry.session == session)
+        {
             return;
         }
-        let session = app.get_active_session_id().to_string();
         let index = st
             .waiting_turns
             .iter()
@@ -4308,13 +4533,16 @@ pub(crate) fn resume_rendering(app: &MainWindow) {
             };
             let has_work = {
                 let state = state.borrow();
-                state.active.is_some() || !state.parked.is_empty()
+                state.active.is_some() || !state.background.is_empty() || !state.parked.is_empty()
             };
             if has_work {
                 pump_stream(app, &state);
                 let restart = {
                     let state = state.borrow();
-                    !state.timer.running() && (state.active.is_some() || !state.parked.is_empty())
+                    !state.timer.running()
+                        && (state.active.is_some()
+                            || !state.background.is_empty()
+                            || !state.parked.is_empty())
                 };
                 if restart {
                     start_timer(app, state.clone());
@@ -4348,7 +4576,6 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
     // timeline while the stream is polled.
     let timeline = state.timeline.clone();
     let desktop = state.desktop.clone();
-    let last_plan_sig = state.plan_sig.clone();
     // ---- parked submissions ----
     // A parked turn stays silent until the engine starts its own root
     // turn, so the first parked stream that speaks is the turn that just
@@ -4447,39 +4674,91 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
             queue_generation,
         );
     }
-    // The turn is taken out of the state for the tick so the flush can
-    // also touch the plan cache and signature without fighting the
-    // active borrow; it goes back (or drops on completion) below.
-    let mut live_turn = state.active.take();
-    let Some(active) = live_turn.as_mut() else {
-        // A parked subscriber of another thread can never be pumped
-        // from here, and its bounded channel would only back-pressure
-        // the engine, so it goes with the thread that was left behind.
-        state.parked.retain(|entry| entry.session == active_session);
-        if state.parked.is_empty() {
-            // Nothing left to pump: release the running state and stop
-            // the timer until the next submission. The durable snapshot may
-            // already show a successor turn (a goal round), and only it can
-            // say so — clearing the flag here would let the next message run
-            // straight into the engine's queue.
-            if app.get_busy() && !state.observation.durable_busy() {
-                app.set_busy(false);
-                app.set_activity_running(false);
-            }
-            state.timer.stop();
+    // ---- the thread on screen ----
+    let mut visible_done = false;
+    if let Some(mut active) = state.active.take() {
+        visible_done = drive_turn(app, &mut state, &mut active, &mut pending, true);
+        if !visible_done {
+            state.active = Some(active);
         }
-        return;
-    };
-    let _ = &desktop;
+    } else {
+        // A parked subscriber of another thread can never be pumped from here,
+        // and its bounded channel would only back-pressure the engine, so it
+        // goes with the thread that was left behind.
+        state.parked.retain(|entry| entry.session == active_session);
+    }
+    // ---- the threads the user left ----
+    // Their streams stay attached: the runtime keeps writing into the same
+    // reducer, so a thought and an answer keep growing off screen and coming
+    // back shows the frame that is current at that instant. None of it reaches
+    // the window — `visible` is what keeps a background frame out of the
+    // transcript, the composer busy state and the plan dock.
+    let mut background_index = 0;
+    while background_index < state.background.len() {
+        let mut active = state.background.remove(background_index);
+        let done = drive_turn(app, &mut state, &mut active, &mut VecDeque::new(), false);
+        if !done {
+            state.background.insert(background_index, active);
+            background_index += 1;
+        }
+    }
+    let idle = state.active.is_none() && state.background.is_empty() && state.parked.is_empty();
+    let durable_busy = state.observation.durable_busy();
+    if idle {
+        // Nothing left to pump: release the running state and stop the timer
+        // until the next submission. The durable snapshot may already show a
+        // successor turn (a goal round), and only it can say so — clearing the
+        // flag here would let the next message run straight into the engine's
+        // queue.
+        if app.get_busy() && !durable_busy {
+            app.set_busy(false);
+            app.set_activity_running(false);
+        }
+        state.timer.stop();
+    }
+    drop(state);
+    if visible_done && !durable_busy {
+        // The thread is free again: the message the user typed while it was
+        // busy can finally go out. It was never submitted, so the engine
+        // cannot have parked it — it simply waited in the composer. A durable
+        // row that still shows work means the runtime moved on to the next
+        // round, and the observer releases the waiting turn once that settles.
+        release_next_waiting_turn(app, &state_ref);
+    }
+}
+
+/// Pump one live turn: drain its stream into its own reducer and, when its
+/// thread is the one on screen, publish the frame.
+///
+/// `visible` is the whole difference between the foreground turn and a turn the
+/// user left behind: both reduce events into their own rows the same way, but
+/// only the visible one may touch the transcript model, the composer busy
+/// state, the plan dock and the follow-tail revision. That separation is what
+/// lets a thread keep streaming while another thread is on screen.
+///
+/// Returns whether the turn finished (its stream closed).
+fn drive_turn(
+    app: &MainWindow,
+    state: &mut State,
+    active: &mut Active,
+    pending: &mut VecDeque<NativeChatEvent>,
+    visible: bool,
+) -> bool {
+    // The reducer of this turn, never the one on screen: a turn whose thread
+    // the user left must keep growing its own rows.
+    let timeline = active.timeline.clone();
+    let desktop = state.desktop.clone();
+    let last_plan_sig = state.plan_sig.clone();
     let started = Instant::now();
     let mut done = false;
-    let mut durable_busy = false;
     let mut dirty = false;
     let mut new_plan_sig: Option<String> = None;
-    app.set_stream_max_backlog(
-        app.get_stream_max_backlog()
-            .max(active.stream.pending_events() as i32),
-    );
+    if visible {
+        app.set_stream_max_backlog(
+            app.get_stream_max_backlog()
+                .max(active.stream.pending_events() as i32),
+        );
+    }
     for _ in 0..128 {
         // A promoted parked turn may already hold events; they replay
         // first so the handover never loses a token.
@@ -4489,7 +4768,9 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
                 Ok(Some(event)) => event,
                 Ok(None) => break,
                 Err(error) => {
-                    app.set_status(error.into());
+                    if visible {
+                        app.set_status(error.into());
+                    }
                     active.set_state("执行失败", Phase::Error);
                     active.settlement_failed = true;
                     done = true;
@@ -4500,7 +4781,9 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
         match event {
             NativeChatEvent::Event(event) => {
                 update_active_stats(active, &event);
-                apply_context_usage(&app, wunder_desktop::NativeContextUsage::from_value(&event));
+                if visible {
+                    apply_context_usage(&app, wunder_desktop::NativeContextUsage::from_value(&event));
+                }
                 // Cloud queue visibility (§4.4.4): `cloud_queue`
                 // incremental events carry the waiting position for the
                 // turn; any other streamed event means the turn is
@@ -4510,13 +4793,17 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
                     let position = data["position"].as_i64().unwrap_or(0);
                     let queue_session = data["session_id"].as_str().unwrap_or("");
                     if queue_session.is_empty() || queue_session == active.session {
-                        app.set_cloud_queue_position(position.clamp(0, i32::MAX as i64) as i32);
+                        if visible {
+                            app.set_cloud_queue_position(
+                                position.clamp(0, i32::MAX as i64) as i32,
+                            );
+                        }
                         active.set_state(
                             format!("模型请求正在排队 · 前方 {position} 个任务"),
                             Phase::Pending,
                         );
                     }
-                } else if app.get_cloud_queue_position() >= 0 {
+                } else if visible && app.get_cloud_queue_position() >= 0 {
                     app.set_cloud_queue_position(-1);
                 }
                 // The 问询面板 tool publishes its questions once and the
@@ -4564,7 +4851,9 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
                 match applied {
                     Ok(changed) => dirty |= changed,
                     Err(error) => {
-                        app.set_status(error.into());
+                        if visible {
+                            app.set_status(error.into());
+                        }
                         active.set_state("执行失败", Phase::Error);
                         active.settlement_failed = true;
                         done = true;
@@ -4573,7 +4862,7 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
                 // A compaction that finished in this turn turns the context
                 // gauge red immediately; the snapshot keeps it red after a
                 // restart and on thread switches.
-                if active.compacted && !app.get_context_compacted() {
+                if visible && active.compacted && !app.get_context_compacted() {
                     app.set_context_compacted(true);
                     dirty = true;
                 }
@@ -4586,7 +4875,10 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
                 queue::schedule_due(&mut state.queue_due, Duration::from_millis(0));
             }
             NativeChatEvent::Failed(error) => {
-                app.set_status(error.clone().into());
+                if visible {
+                    app.set_status(error.clone().into());
+                    app.set_cloud_queue_position(-1);
+                }
                 // The stream failed outside the structured event path,
                 // so the sentence is the only diagnosis there is.
                 timeline
@@ -4595,11 +4887,12 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
                 active.set_state("执行失败", Phase::Error);
                 active.settlement_failed = true;
                 done = true;
-                app.set_cloud_queue_position(-1);
             }
             NativeChatEvent::Finished => {
                 done = true;
-                app.set_cloud_queue_position(-1);
+                if visible {
+                    app.set_cloud_queue_position(-1);
+                }
             }
         }
         if done || started.elapsed() > Duration::from_millis(5) {
@@ -4619,20 +4912,24 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
         let mut live = timeline.borrow_mut();
         live.flush();
         live.set_turn_status(active.state(), active.user_round);
-        publish_timeline(&app, &live);
-        app.set_stream_bytes(live.body_len().min(i32::MAX as usize) as i32);
-        drop(live);
-        set_session_status(&app, &active.session, active.state(), active.phase);
-        // Status dock: capsule state plus plan progress and file
-        // stats; the session plan cache only moves when the plan did.
-        let sig = publish_activity(&app, active, &last_plan_sig);
-        if sig != last_plan_sig {
-            state.plans.insert(
-                active.session.clone(),
-                (active.plan_explanation.clone(), active.plan_steps.clone()),
-            );
+        publish_live_frame(app, &active.session, &live);
+        if visible {
+            app.set_stream_bytes(live.body_len().min(i32::MAX as usize) as i32);
         }
-        new_plan_sig = Some(sig);
+        drop(live);
+        set_session_status(app, &active.session, active.state(), active.phase);
+        if visible {
+            // Status dock: capsule state plus plan progress and file
+            // stats; the session plan cache only moves when the plan did.
+            let sig = publish_activity(app, active, &last_plan_sig);
+            if sig != last_plan_sig {
+                state.plans.insert(
+                    active.session.clone(),
+                    (active.plan_explanation.clone(), active.plan_steps.clone()),
+                );
+                new_plan_sig = Some(sig);
+            }
+        }
     }
     if done {
         if active.state() == "正在生成…" {
@@ -4645,50 +4942,36 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
         live.finish(settle);
         live.set_turn_status(active.state(), active.user_round);
         live.flush();
-        publish_timeline(&app, &live);
+        publish_live_frame(app, &active.session, &live);
         drop(live);
-        crate::chat_split::finish_live(&app, &active.session);
-        set_session_status(&app, &active.session, active.state(), active.phase);
-        app.set_stopping(false);
-        // Idle stops the capsule spinner; the plan attributes stay and
-        // reappear with the next turn's flush. A successor turn the runtime
-        // already started keeps the thread busy, so the durable snapshot has
-        // the last word here too.
-        durable_busy = state.observation.durable_busy();
-        if state.parked.is_empty() {
+        crate::chat_split::finish_live(app, &active.session);
+        set_session_status(app, &active.session, active.state(), active.phase);
+        // A thread that settles off screen keeps its own row state; the window
+        // belongs to whichever thread is on screen, so only the visible turn
+        // may release the composer. The pump decides when the timer stops.
+        if visible {
+            app.set_stopping(false);
+            let durable_busy = state.observation.durable_busy();
             if !durable_busy {
                 app.set_busy(false);
                 app.set_activity_running(false);
             }
-            state.timer.stop();
         }
         // With parked submissions still waiting the pump keeps running:
         // the engine starts the successor as soon as this lease drops,
         // and the next tick hands it the live slot.
-        crate::workspace_files::execution_finished(&app, desktop.clone());
+        crate::workspace_files::execution_finished(app, desktop.clone());
     }
-    if done {
-        live_turn = None;
-    }
-    state.active = live_turn;
     if let Some(sig) = new_plan_sig {
         state.plan_sig = sig;
     }
-    app.set_stream_max_ui_ms(
-        app.get_stream_max_ui_ms()
-            .max(started.elapsed().as_secs_f32() * 1000.0),
-    );
-    if done {
-        // The thread is free again: the message the user typed while it was
-        // busy can finally go out. It was never submitted, so the engine
-        // cannot have parked it — it simply waited in the composer. A durable
-        // row that still shows work means the runtime moved on to the next
-        // round, and the observer releases the waiting turn once that settles.
-        drop(state);
-        if !durable_busy {
-            release_next_waiting_turn(&app, &state_ref);
-        }
+    if visible {
+        app.set_stream_max_ui_ms(
+            app.get_stream_max_ui_ms()
+                .max(started.elapsed().as_secs_f32() * 1000.0),
+        );
     }
+    done
 }
 
 /// Reduce one runtime event into the live turn. `output` carries the turn's

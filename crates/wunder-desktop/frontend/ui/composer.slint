@@ -609,14 +609,16 @@ component InquiryOptionRow inherits Rectangle {
     }
     // The row is one line tall, so a long answer and its description end in an
     // ellipsis; hovering prints both in full instead of leaving them unread.
-    if row-label.preferred-width > row-label.width || (row-desc.text != "" && row-desc.preferred-width > row-desc.width) : Tooltip {
-        InquiryTipCard { title: root.label; detail: root.description; }
-    }
-    // The row itself is the hit area; the mark is decoration.
+    // The card hangs inside the hit area: a Tooltip only sees hover when the
+    // event route passes through it, and the row's TouchArea is what the
+    // pointer actually lands on.
     row-touch := TouchArea {
         x: 0px; y: 0px; width: parent.width; height: parent.height;
         mouse-cursor: pointer;
         clicked => { root.picked(); }
+        if row-label.preferred-width > row-label.width || (row-desc.text != "" && row-desc.preferred-width > row-desc.width) : Tooltip {
+            InquiryTipCard { title: root.label; detail: root.description; }
+        }
     }
 }
 
@@ -746,8 +748,14 @@ export component InquiryPanel inherits Rectangle {
                             color: #6B7280; font-size: Theme.font-sm;
                             vertical-alignment: center; overflow: elide;
                         }
-                        if progress-line.preferred-width > progress-line.width : Tooltip {
-                            InquiryTipCard { title: heading; }
+                        // Hover is hosted by a touch area: a Tooltip only sees the
+                        // pointer when the event route runs through it, and a plain
+                        // sibling of a Text never gets that route.
+                        TouchArea {
+                            x: 0px; y: 0px; width: parent.width; height: parent.height;
+                            if progress-line.preferred-width > progress-line.width : Tooltip {
+                                InquiryTipCard { title: heading; }
+                            }
                         }
                     }
                     for option[option-index] in question.options : InquiryOptionRow {

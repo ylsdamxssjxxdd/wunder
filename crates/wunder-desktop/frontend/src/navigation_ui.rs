@@ -950,23 +950,46 @@ fn toggle_cloud_workspace(app: &MainWindow, api: Arc<NativeDesktop>) {
     activate_cloud_device(app, api);
 }
 
+/// A workspace with no live thread has nothing to disclose. Both the card's
+/// counter (DB count of active sessions) and the loaded thread catalogue must
+/// agree it is empty: the counter alone is a snapshot, and a stale `0` would
+/// spawn a thread on every click after the first one created a row.
+fn workspace_is_empty(thread_count: i32, has_thread_rows: bool) -> bool {
+    thread_count <= 0 && !has_thread_rows
+}
+
 /// Click on a local workspace header: fold its thread tree if it is already
 /// open, otherwise open it and make it the current workspace. Folding only
 /// closes the tree — the working-directory panel and the selected workspace
 /// stay where they are — and it never folds another open workspace.
+///
+/// An empty workspace has no tree to reveal, so the same click lands in the
+/// workspace *and* starts its first thread: revealing an empty group and then
+/// asking the user to find the row's plus made the entry look dead.
 fn toggle_local_workspace(app: &MainWindow, api: Arc<NativeDesktop>, workspace: usize) {
     let Some(card) = app.get_workspaces().row_data(workspace) else {
         return;
     };
-    if is_expanded(card.workspace_id.as_str()) {
-        toggle_workspace(card.workspace_id.as_str());
+    let id = card.workspace_id.to_string();
+    if is_expanded(id.as_str()) {
+        toggle_workspace(id.as_str());
         // 收起只折叠树：多选勾选属于被隐藏的行，一并退出选择态。
         THREAD_SELECTION.with(|slot| slot.borrow_mut().clear());
         app.set_sidebar_selection_mode(false);
         project_sidebar(app, None);
         return;
     }
+    let has_thread_rows = app
+        .get_conversations()
+        .iter()
+        .any(|conv| conv.workspace_id.as_str() == id.as_str());
+    let empty = workspace_is_empty(card.thread_count, has_thread_rows);
     activate_local_workspace(app, api, workspace);
+    if empty {
+        // `new-thread` runs in the workspace this click just selected, and it
+        // reuses an untouched draft instead of stacking empty sessions.
+        app.invoke_new_thread();
+    }
 }
 
 /// Enter a local workspace: mirror its folder in the working-directory panel,
@@ -1820,5 +1843,15 @@ mod tests {
         let next = ["a".to_string(), "b".to_string()];
         assert!(!reorder_in_order(&mut order, &next));
         assert_eq!(order, vec!["a", "a", "b"]);
+    }
+
+    /// Clicking an empty workspace starts its first thread; a workspace that
+    /// still owns a thread only discloses its tree, and a counter snapshot the
+    /// catalogue already contradicts never counts as empty.
+    #[test]
+    fn only_a_workspace_without_threads_autostarts_one() {
+        assert!(workspace_is_empty(0, false));
+        assert!(!workspace_is_empty(3, false), "the counter says it has threads");
+        assert!(!workspace_is_empty(0, true), "a visible row contradicts the counter");
     }
 }

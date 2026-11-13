@@ -19,7 +19,7 @@ use crate::storage::{
     normalize_sandbox_container_id, UserAccountRecord, UserAgentPresetBinding,
     UserAgentPresetSnapshot, UserAgentRecord,
 };
-use crate::user_access::{build_user_tool_context, compute_allowed_tool_names};
+use crate::user_access::{build_user_tool_context, compute_allowed_tool_names, UserToolContextBase};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use serde_json::Value;
@@ -1091,6 +1091,9 @@ pub async fn sync_preset_across_users(
 ) -> Result<PresetSyncSummary> {
     let mut summary = PresetSyncSummary::default();
     let mut offset = 0;
+    // 与默认智能体同步一致：整轮只取一次配置/技能/组织架构快照，
+    // 避免逐用户深拷贝，让耗时不再随用户数线性放大。
+    let context_base = UserToolContextBase::load(state).await;
     loop {
         let (users, total) =
             state
@@ -1170,7 +1173,7 @@ pub async fn sync_preset_across_users(
                 continue;
             }
 
-            let context = build_user_tool_context(state, &user.user_id).await;
+            let context = context_base.context_for(state, &user.user_id);
             let skill_name_keys = collect_context_skill_names(&context);
             let mut target = build_target_snapshot_from_context(&user, preset, &context);
             let current = snapshot_from_record(&record, &skill_name_keys);

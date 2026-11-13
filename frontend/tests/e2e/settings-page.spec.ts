@@ -56,6 +56,13 @@ test('设置页：11 分类可进入并可返回', async ({ page, request }) => 
 
   await expect(page.locator('.messenger-view').first()).toBeVisible({ timeout: 30_000 });
 
+  // 系统公告（服务端可配）弹的是模态框，会挡住左栏「设置」的点击。
+  // 公告内容随环境变化，只在确实弹出来时关掉，避免污染后续交互断言。
+  const announcementDismiss = page.locator('.mz-dialog button', { hasText: /知道了|Got it/ }).first();
+  if (await announcementDismiss.count()) {
+    await announcementDismiss.click({ timeout: 5_000 }).catch(() => undefined);
+  }
+
   const overlay = page.locator('[data-testid="messenger-settings"]').first();
   const settingsButton = page.locator('.messenger-sidebar-settings').first();
 
@@ -80,6 +87,17 @@ test('设置页：11 分类可进入并可返回', async ({ page, request }) => 
   };
 
   // 入口：左栏底部「设置」
+  await openSettings();
+
+  // 点窗口外的遮罩即关闭，与桌面版一致；窗口内部点击不应关闭。
+  const windowCard = page.locator('[data-testid="messenger-settings"]').first();
+  await windowCard.click({ position: { x: 8, y: 8 } });
+  await expect(windowCard, 'clicking inside the settings window must keep it open').toBeVisible();
+  await page.locator('.messenger-settings-overlay').first().click({ position: { x: 8, y: 8 } });
+  await expect(
+    page.locator('[data-testid="messenger-settings"]'),
+    'clicking the scrim outside the settings window must close it'
+  ).toHaveCount(0);
   await openSettings();
 
   const nav = page.locator('[data-testid="settings-nav"]').first();

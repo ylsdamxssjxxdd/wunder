@@ -41,6 +41,47 @@ pub async fn build_user_tool_context(state: &AppState, user_id: &str) -> UserToo
     }
 }
 
+/// 跨用户批量操作（预设/默认智能体同步、批量推送）复用的上下文基座。
+///
+/// 配置、技能注册表与组织架构在一次批量操作内视为只读快照：逐用户重复读取
+/// 会让开销随用户数线性放大（上千用户即上千次深拷贝与查询）。
+/// 每个用户仍要各自计算工具绑定与工具白名单，这部分与用户强相关，不能共享。
+pub struct UserToolContextBase {
+    pub config: Config,
+    pub skills: SkillRegistry,
+    pub org_units: Vec<OrgUnitRecord>,
+}
+
+impl UserToolContextBase {
+    pub async fn load(state: &AppState) -> Self {
+        let config = state.config_store.get().await;
+        let skills = state.skills.read().await.clone();
+        let org_units = state.user_store.list_org_units().unwrap_or_default();
+        Self {
+            config,
+            skills,
+            org_units,
+        }
+    }
+
+    pub fn context_for(&self, state: &AppState, user_id: &str) -> UserToolContext {
+        let bindings = state
+            .user_tool_manager
+            .build_bindings(&self.config, &self.skills, user_id);
+        let tool_access = state
+            .user_store
+            .get_user_tool_access(user_id)
+            .unwrap_or(None);
+        UserToolContext {
+            config: self.config.clone(),
+            skills: self.skills.clone(),
+            bindings,
+            tool_access,
+            org_units: self.org_units.clone(),
+        }
+    }
+}
+
 pub async fn build_user_tool_context_for_catalog(
     state: &AppState,
     user_id: &str,

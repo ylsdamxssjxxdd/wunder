@@ -285,6 +285,7 @@ const ensureState = () => {
       syncPreview: null,
       syncLoading: false,
       syncRequestToken: 0,
+      syncPromise: null,
       syncLog: [],
       bindings: null,
       picker: null,
@@ -3320,7 +3321,9 @@ const savePreset = async ({ silentSuccess = false } = {}) => {
         setSelectedPreset(nextDefaultPreset);
         state.presetAgents.userAgent = normalizeUserAgent(savedDefaultPayload?.data || {});
         await refreshContext({ ensureAgent: true, silent: true });
-        await loadSyncPreview({ silent: true });
+        // 影响面统计是全舰队扫描，与「保存配置」无关，必须放后台：
+        // 挂在保存等待链上会让保存按钮的耗时随用户数线性增长。
+        void loadSyncPreview({ silent: true });
         renderAll();
       } else {
         state.presetAgents.presets = state.presetAgents.presets.map((item) =>
@@ -3329,7 +3332,7 @@ const savePreset = async ({ silentSuccess = false } = {}) => {
         setSelectedPreset(next);
         await persistPresets({ selectedName: next.name, selectedPresetId: next.preset_id });
         await refreshContext({ ensureAgent: false, silent: true });
-        await loadSyncPreview({ silent: true });
+        void loadSyncPreview({ silent: true });
         renderAll();
       }
       if ((Number(state.presetAgents.draftVersion) || 0) === draftVersion) {
@@ -3419,7 +3422,7 @@ const deletePreset = async () => {
     });
     if (selectedPreset()) {
       await refreshContext({ ensureAgent: true, silent: true });
-      await loadSyncPreview({ silent: true });
+      void loadSyncPreview({ silent: true });
     } else {
       state.presetAgents.userAgent = null;
       state.presetAgents.cronJobs = [];
@@ -3594,13 +3597,13 @@ const deleteChannelAccount = async (channel, accountId) => {
 };
 
 // 覆盖预览：mode=force + dry_run=true，只统计影响面，不落库。
-const loadSyncPreview = async ({ silent = false, force = false } = {}) => {
+const loadSyncPreview = ({ silent = false, force = false } = {}) => {
   const preset = selectedPreset();
   if (!preset?.preset_id) {
     state.presetAgents.syncPreview = null;
     state.presetAgents.syncLoading = false;
     renderSyncSummary();
-    return null;
+    return Promise.resolve(null);
   }
 
   const requestToken = (Number(state.presetAgents.syncRequestToken) || 0) + 1;
@@ -3608,28 +3611,47 @@ const loadSyncPreview = async ({ silent = false, force = false } = {}) => {
   state.presetAgents.syncLoading = true;
   renderSyncSummary();
 
-  const result = await syncPresetAgents({
-    presetId: normalizePresetId(preset.preset_id),
-    mode: "force",
-    dryRun: true,
-    force,
-  });
-  if (state.presetAgents.syncRequestToken !== requestToken) {
-    return null;
-  }
-  state.presetAgents.syncLoading = false;
-  if (!result.ok) {
-    state.presetAgents.syncPreview = null;
-    if (!result.unavailable && !silent) {
-      notify(t("presetAgents.toast.syncFailed", { message: result.message || "-" }), "error");
+  // 记录在跑的预览，推送时可复用它，避免同一轮全舰队扫描跑两遍。
+  const task = (async () => {
+    const result = await syncPresetAgents({
+      presetId: normalizePresetId(preset.preset_id),
+      mode: "force",
+      dryRun: true,
+      force,
+    });
+    if (state.presetAgents.syncRequestToken !== requestToken) {
+      return null;
     }
+    state.presetAgents.syncLoading = false;
+    if (!result.ok) {
+      state.presetAgents.syncPreview = null;
+      if (!result.unavailable && !silent) {
+        notify(t("presetAgents.toast.syncFailed", { message: result.message || "-" }), "error");
+      }
+      renderSyncSummary();
+      renderBindings();
+      return null;
+    }
+    state.presetAgents.syncPreview = result.result;
     renderSyncSummary();
-    renderBindings();
-    return null;
-  }
-  state.presetAgents.syncPreview = result.result;
-  renderSyncSummary();
-  return result.result;
+    return result.result;
+  })();
+  const tracked = task.then(
+    (value) => {
+      if (state.presetAgents.syncPromise === tracked) {
+        state.presetAgents.syncPromise = null;
+      }
+      return value;
+    },
+    (error) => {
+      if (state.presetAgents.syncPromise === tracked) {
+        state.presetAgents.syncPromise = null;
+      }
+      throw error;
+    }
+  );
+  state.presetAgents.syncPromise = tracked;
+  return tracked;
 };
 
 // 覆盖系统全局配置：先预览（dry_run=true）→ 二次确认 → dry_run=false 落库。
@@ -3644,6 +3666,10 @@ const runPresetSync = async () => {
   }
   const normalizedMode = "force";
   const presetId = normalizePresetId(preset.preset_id);
+  // 保存后预览在后台跑；点推送时先等它落地，别让同一次全舰队扫描并行两遍。
+  if (state.presetAgents.syncPromise) {
+    await state.presetAgents.syncPromise.catch(() => null);
+  }
   // The page keeps a dry-run result for the selected revision. Reusing it
   // avoids running the full fleet scan a second time when the administrator
   // clicks the action immediately after the preview has loaded.
