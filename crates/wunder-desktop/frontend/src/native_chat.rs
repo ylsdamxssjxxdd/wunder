@@ -1745,8 +1745,6 @@ fn reconcile_catalogue_statuses(
     read_revision: u64,
     local_statuses: &[(String, String)],
 ) {
-    let now = Instant::now();
-    let mut holds_terminal = false;
     for row in rows.iter_mut() {
         let local_status = local_statuses
             .iter()
@@ -1756,10 +1754,8 @@ fn reconcile_catalogue_statuses(
             slot.borrow_mut().reconcile_settled(
                 row.id.as_str(),
                 row.runtime_status.as_str(),
-                row.runtime_ended_at as f64,
                 read_revision,
                 local_status,
-                now,
             )
         });
         row.runtime_status = reconciled.status.into();
@@ -1773,20 +1769,10 @@ fn reconcile_catalogue_statuses(
                 Phase::from_code(row.runtime_phase),
             );
         }
-        // The catalogue keeps answering the same terminal (completed, cancelled,
-        // failed) for the rest of the thread's life. Once it is no longer news
-        // the row presents as idle, so a restart or a poll cannot resurrect an
-        // outcome — a celebration or a stop square — that ended long ago.
-        if reconciled.retired {
-            row.runtime_status = "".into();
-            row.runtime_phase = Phase::Idle.code();
-            row.runtime_ended_at = 0.0;
-        } else if Phase::from_code(row.runtime_phase).terminal() {
-            holds_terminal = true;
-        }
-    }
-    if holds_terminal {
-        schedule_settle_decay(app);
+        // A durable terminal is the row's state for as long as the thread is
+        // idle, not a passing notification. Freshness belongs to the toast and
+        // the companion only, so an aged-out notice must never demote the row
+        // to idle here or on a later catalogue poll.
     }
     SESSION_STATUSES.with(|slot| {
         slot.borrow_mut().retain(|session| {
@@ -3791,24 +3777,15 @@ fn bind_queue(app: &MainWindow, state: Rc<RefCell<State>>) {
 
 // Mutate just the matching thread row. Runtime state must not wait for catalogue polling.
 fn set_session_status(app: &MainWindow, session: &str, status: &str, phase: Phase) {
-    let now = Instant::now();
-    let retired = SESSION_STATUSES.with(|slot| {
-        let mut slot = slot.borrow_mut();
-        slot.record_local(session, status, now);
-        slot.should_retire(session, now)
-    });
-    if retired {
-        // A finish nobody is waiting for presents as idle, and the local record
-        // is dropped: fencing an aged-out completion would keep this client
-        // from ever adopting the next run's status.
-        retire_session_status(app, session);
-        return;
-    }
+    SESSION_STATUSES.with(|slot| slot.borrow_mut().record_local(session, status));
+    // A terminal is a durable outcome, not news that expires. Always write it:
+    // an aged-out notice must never swallow the row's own result.
     write_session_row(app, session, status, phase);
     // The hot→done completion gate must see every report, including repeated
     // ones, so it sits outside the row-change branch.
     crate::completion_notice::observe_status(app, session, phase);
     if phase.terminal() {
+        crate::completion_notice::mark_recent_settle(session);
         schedule_settle_decay(app);
     }
 }
@@ -3845,7 +3822,8 @@ pub(crate) fn observe_history_status(
         phase,
         Some(history_settle_time(recorded, observed_at)),
     );
-    schedule_settle_decay(app);
+    // Reading a finished thread back is an observation, not an event: it must
+    // not start a celebration timer or re-fence the local status projection.
 }
 
 /// The settle time to present for a terminal reported from history. The
@@ -3861,12 +3839,12 @@ fn history_settle_time(recorded: f32, observed_at: f64) -> f32 {
     }
 }
 
-/// Present one session as idle and forget what this client knew about its
-/// settled mark, so the next catalogue read can adopt whatever the thread does
-/// next.
-fn retire_session_status(app: &MainWindow, session: &str) {
+/// Retire the *notice* for one settlement without touching the row. The status
+/// fence is released so a later catalogue read (or another instance's new run)
+/// can be adopted, and the completion gate resets for the next turn. The row
+/// keeps its durable outcome.
+fn release_settle_fence(app: &MainWindow, session: &str) {
     SESSION_STATUSES.with(|slot| slot.borrow_mut().forget(session));
-    write_session_row(app, session, "", Phase::Idle);
     crate::completion_notice::observe_status(app, session, Phase::Idle);
 }
 
@@ -3915,11 +3893,9 @@ fn write_session_row_settled(
     crate::navigation_ui::update_thread_status(app, session, status, phase, settled_at);
 }
 
-/// Settled marks are retired on a tick rather than at read time: the durable
-/// catalogue keeps answering the same terminal (completed, cancelled, failed)
-/// forever, so nothing else would ever take the mark down. Every settled phase
-/// is covered, so a stop square or a failure triangle ages out exactly like a
-/// completion. The timer only runs while a row still carries one.
+/// Settled news is short-lived; the row's outcome is not. This timer expires
+/// only the companion/toast/fence bookkeeping, never the durable terminal,
+/// and stops as soon as no news is pending so an idle app owns no timer.
 const SETTLE_DECAY_TICK: Duration = Duration::from_millis(500);
 /// Upper bound on any single loading flag. A flag wedged past this (a worker
 /// that never returned, an event-loop callback that never ran) is treated as
@@ -3940,27 +3916,14 @@ fn schedule_settle_decay(app: &MainWindow) {
             let Some(app) = weak.upgrade() else {
                 return;
             };
-            let now = Instant::now();
-            let due: Vec<String> = app
-                .get_conversations()
-                .iter()
-                .filter(|row| Phase::from_code(row.runtime_phase).terminal())
-                .map(|row| row.id.to_string())
-                .filter(|session| {
-                    SESSION_STATUSES.with(|slot| slot.borrow().should_retire(session, now))
-                })
-                .collect();
-            for session in &due {
-                retire_session_status(&app, session);
+            let (expired, pending) = crate::completion_notice::expire_recent_settles();
+            for session in &expired {
+                release_settle_fence(&app, session);
             }
-            if !due.is_empty() {
+            if !expired.is_empty() {
                 crate::companion_pet::sync(&app);
             }
-            // Nothing left to retire: an idle app owns no timer.
-            let pending = app
-                .get_conversations()
-                .iter()
-                .any(|row| Phase::from_code(row.runtime_phase).terminal());
+            // Nothing left to expire: an idle app owns no timer.
             if !pending {
                 SETTLE_DECAY.with(|timer| timer.stop());
             }

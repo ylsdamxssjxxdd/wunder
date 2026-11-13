@@ -47,8 +47,21 @@ export const mergeSessionRuntimeFields = (
   applyThreadViewHead(sessionId, incomingRecord.runtime_head);
   if (threadViewOwnsExecution(sessionId)) {
     const status = threadViewStatus(sessionId);
-    merged.runtime_status=status; merged.runtimeStatus=status;
-    merged.thread_status=status; merged.threadStatus=status;
+    // A terminal turn is durable. `session_idle` is only the transport
+    // cleanup frame after it, so it must not erase the outcome from the
+    // catalog row: otherwise every catalog refresh turns a finished thread
+    // back into an idle one and the sidebar loses its check.
+    const transport = ['idle', 'ready', 'not_loaded', 'active', ''].includes(
+      String(status || '').trim().toLowerCase()
+    );
+    const currentTerminal = [
+      'completed', 'finished', 'done', 'failed', 'error', 'rejected',
+      'cancelled', 'canceled', 'interrupted', 'stopped'
+    ].includes(currentRuntime);
+    if (!(transport && currentTerminal)) {
+      merged.runtime_status=status; merged.runtimeStatus=status;
+      merged.thread_status=status; merged.threadStatus=status;
+    }
   }
   const quotaUsed = mergeSessionQuotaUsed(currentRecord, incomingRecord);
   if (quotaUsed !== null) {

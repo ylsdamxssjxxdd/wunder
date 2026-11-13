@@ -24,8 +24,8 @@ import { SidebarMetrics, PointerChase, DragPreview } from "drag_row.slint";
 // `PointerChase` is reached from Rust (`pointer_chase.rs`), so it has to be
 // re-exported here; only exported globals exist in the generated bindings.
 export { SidebarMetrics, PointerChase }
-// `RuntimeStatus.session-start` is stamped by Rust at startup so a settled
-// mark that predates this window is not celebrated.
+// RuntimeStatus maps the Rust phase to a glyph. Outcomes are durable; only
+// the toast and companion treat a fresh settlement as news.
 export { RuntimeStatus }
 import { SettingsPage } from "settings_page.slint";
 import { ModelPresets } from "model_presets.slint";

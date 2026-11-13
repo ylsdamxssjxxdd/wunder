@@ -157,6 +157,7 @@ import { selectSessionRuntimeStatus } from '@/realtime/chat/chatRuntimeSelectors
 import { getChatThreadStatus } from '@/realtime/chat/chatThreadRuntime';
 import { resolveVisibleTaskRows, taskWindow, type TaskListItem } from '@/views/messenger/taskList';
 import { hasCompletedTaskTurn, resolveTaskIndicatorState, resolveTaskRuntimeState, type TaskIndicatorState } from '@/views/messenger/taskRuntimeState';
+import { rememberTaskSettledState } from '@/views/messenger/taskSettledMemory';
 import { getRuntime, getSessionMessages, hasRuntimeControllers } from '@/stores/chatRuntimeState';
 import { useTaskListPages } from '@/views/messenger/useTaskListPages';
 import { formatDateTime } from '@/utils/formatDateTime';
@@ -220,12 +221,21 @@ const resolveItemState = (item: TaskListItem): AgentRuntimeState => {
     durableStatus || runtime?.threadStatus,
     hasRuntimeControllers(runtime)
   );
+  // The outcome outlives the catalog row and the message cache: both are
+  // rebuilt on a refresh, an agent switch or a cache eviction, and none of
+  // those events mean the task stopped being finished. Transport `idle`
+  // frames must therefore read the remembered terminal, not repaint the row.
+  const remembered = rememberTaskSettledState(item.id, state);
+  if (state === 'idle' && remembered) return remembered;
   if (
     state === 'idle' &&
     hasCompletedTaskTurn(
       String(store.activeSessionId || '').trim() === item.id ? store.messages : getSessionMessages(item.id)
     )
   ) {
+    // The transcript is another source of the durable outcome; remember it so
+    // a later cache eviction cannot take the check away.
+    rememberTaskSettledState(item.id, 'done');
     return 'done';
   }
   return state;

@@ -13,10 +13,14 @@ use crate::{CompletionNotice, I18n, MainWindow};
 use slint::{ComponentHandle, Model};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long one notice stays on screen before hiding itself.
 const SHOW_DURATION: Duration = Duration::from_secs(4);
+/// How long a just-watched outcome still counts as news for the companion and
+/// the status fence. The sidebar row itself keeps the outcome until the next
+/// turn; freshness is a notification concern, never a row-state concern.
+const SETTLE_NOTICE_HOLD: Duration = Duration::from_secs(6);
 /// Right/bottom margin from the work-area edge, matching the tray notice.
 const SCREEN_MARGIN: f64 = 24.0;
 /// Card corner radius in logical pixels, mirroring `Theme.radius-md` in
@@ -30,6 +34,9 @@ thread_local! {
     /// records its kind: a snapshot is history, never news, so a fresh start
     /// cannot replay old completions.
     static LAST_KIND: RefCell<HashMap<String, &'static str>> = RefCell::new(HashMap::new());
+    /// Sessions whose outcome this window just watched, with the instant the
+    /// news stops being fresh. Sized by the number of in-flight threads.
+    static RECENT_SETTLES: RefCell<HashMap<String, Instant>> = RefCell::new(HashMap::new());
     static NOTICE: RefCell<Option<CompletionNotice>> = RefCell::new(None);
     static HIDE_TIMER: slint::Timer = slint::Timer::default();
     /// The session the visible toast opens on click.
@@ -66,6 +73,46 @@ fn kind_of(phase: Phase) -> &'static str {
 /// snapshot was hot and the new kind is a successful terminal.
 fn completion_fires(previous: &str, next: &str) -> bool {
     previous == "hot" && next == "done"
+}
+
+/// Mark a settlement this window actually watched. Only the notification side
+/// uses it: the durable row keeps `done` until the next turn starts.
+pub fn mark_recent_settle(session: &str) {
+    if session.is_empty() {
+        return;
+    }
+    RECENT_SETTLES.with(|slot| {
+        slot.borrow_mut()
+            .insert(session.to_string(), Instant::now() + SETTLE_NOTICE_HOLD);
+    });
+}
+
+/// Whether this session's outcome is still news to the companion sprite.
+pub fn recent_settle_active(session: &str) -> bool {
+    RECENT_SETTLES.with(|slot| {
+        slot.borrow()
+            .get(session)
+            .is_some_and(|until| *until > Instant::now())
+    })
+}
+
+/// Retire expired news. Returns the sessions whose hold ended (their status
+/// fence can now be released) and whether any news is still pending, so the
+/// caller only keeps a timer alive while there is something to expire.
+pub fn expire_recent_settles() -> (Vec<String>, bool) {
+    RECENT_SETTLES.with(|slot| {
+        let mut recent = slot.borrow_mut();
+        let now = Instant::now();
+        let expired: Vec<String> = recent
+            .iter()
+            .filter(|(_, until)| **until <= now)
+            .map(|(session, _)| session.clone())
+            .collect();
+        for session in &expired {
+            recent.remove(session);
+        }
+        (expired, !recent.is_empty())
+    })
 }
 
 /// Observe one thread status transition.
@@ -474,5 +521,37 @@ mod tests {
         assert!(completion_fires("hot", "done"));
         assert!(!completion_fires("done", "done"), "no repeat notices");
         assert!(!completion_fires("done", "hot"));
+    }
+
+    /// Freshness is a notification concern only. Expiring the news hands back
+    /// an id so the caller can release the status fence; it can never rewrite
+    /// the durable row.
+    #[test]
+    fn recent_settle_expires_without_touching_the_durable_row() {
+        let session = "fixture-settled-thread";
+        assert!(!recent_settle_active(session));
+        mark_recent_settle(session);
+        assert!(recent_settle_active(session));
+        let (expired, pending) = expire_recent_settles();
+        assert!(expired.is_empty(), "a fresh outcome is not expired yet");
+        assert!(pending, "the notice timer stays alive while news is pending");
+
+        RECENT_SETTLES.with(|slot| {
+            slot.borrow_mut().insert(
+                session.to_string(),
+                Instant::now() - Duration::from_secs(1),
+            );
+        });
+        let (expired, pending) = expire_recent_settles();
+        assert_eq!(expired, vec![session.to_string()]);
+        assert!(!pending, "an idle app owns no timer");
+        assert!(!recent_settle_active(session));
+    }
+
+    #[test]
+    fn an_unknown_session_has_no_recent_outcome() {
+        assert!(!recent_settle_active("fixture-never-ran"));
+        mark_recent_settle("");
+        assert!(!recent_settle_active(""));
     }
 }

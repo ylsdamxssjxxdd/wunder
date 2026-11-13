@@ -544,7 +544,15 @@ fn agent_runtimes(app: &MainWindow) -> HashMap<String, Runtime> {
     let mut active_runtime = Runtime::Idle;
     for row in app.get_conversations().iter() {
         let agent = agent_key(Some(row.agent_id.as_str())).to_string();
-        let runtime = classify_runtime(row.runtime_status.as_str());
+        // The row keeps its last outcome until the next turn starts. Only
+        // in-flight work and an outcome this window just watched may move the
+        // pet; otherwise every historical thread would pin a companion in its
+        // finish frame forever.
+        let runtime = match classify_runtime(row.runtime_status.as_str()) {
+            live @ (Runtime::Running | Runtime::Pending) => live,
+            settled if crate::completion_notice::recent_settle_active(row.id.as_str()) => settled,
+            _ => Runtime::Idle,
+        };
         if row.id == session {
             active_agent = agent.clone();
             active_runtime = runtime;

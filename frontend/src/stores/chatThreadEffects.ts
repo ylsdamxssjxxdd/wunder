@@ -58,6 +58,20 @@ export const applyThreadViewEffects=(store,key:string,prior:Map<string,string>)=
 
 const terminal = (status: unknown) => ['completed', 'failed', 'cancelled', 'interrupted', 'rejected', 'stopped'].includes(String(status));
 
+// The catalog row is the durable record of the last turn. A transport frame
+// (`idle`/`ready`) only says the stream detached; writing it over a terminal
+// outcome makes the work-thread icon forget that the task finished.
+const transportShellStatus = (status: unknown) =>
+  ['idle', 'ready', 'not_loaded', 'active', ''].includes(String(status ?? '').trim().toLowerCase());
+const durableOutcomeStatus = (status: unknown) =>
+  ['completed', 'finished', 'done', 'failed', 'error', 'rejected', 'cancelled', 'canceled', 'interrupted', 'stopped']
+    .includes(String(status ?? '').trim().toLowerCase());
+const catalogStatusOf = (session: Record<string, unknown>) =>
+  String(session.runtime_status ?? session.runtimeStatus ?? session.thread_status ?? session.threadStatus ?? '')
+    .trim().toLowerCase();
+const wouldEraseOutcome = (session: Record<string, unknown>, status: string) =>
+  transportShellStatus(status) && durableOutcomeStatus(catalogStatusOf(session));
+
 /** Bridge committed state to shell controls. Never feed timeline data into another reducer. */
 export const syncChatThreadShell = (store, key: string, options: { refreshWorkspace?: boolean } = {}): string | null => {
   const previousStatus = ensureRuntime(key).threadStatus;
@@ -74,7 +88,7 @@ export const syncChatThreadShell = (store, key: string, options: { refreshWorksp
     const status=String(threadViewStatus(key)??active?.assistant.status??latest?.assistant.status??'idle');
     const runtime=ensureRuntime(key);runtime.threadStatus=status;runtime.loaded=true;runtime.activeTurnId=threadViewOwnsExecution(key)?threadViewActiveTurnId(key):active?.rootTurnId??'';
     runtime.lastThreadStatusAt = Date.now();
-    const session=store.sessions?.find(s=>s.id===key);if(session){session.runtime_status=status;session.runtimeStatus=status;session.thread_status=status;session.threadStatus=status;}
+    const session=store.sessions?.find(s=>s.id===key);if(session&&!wouldEraseOutcome(session,status)){session.runtime_status=status;session.runtimeStatus=status;session.thread_status=status;session.threadStatus=status;}
     const busy = ['accepted','running','queued','waiting_input','waiting_approval'].includes(status);
     if (busy) store.loadingBySession[key] = true;
     else {
@@ -109,7 +123,7 @@ export const syncChatThreadShell = (store, key: string, options: { refreshWorksp
   const session = Array.isArray(store.sessions)
     ? store.sessions.find((item) => String(item?.id || '').trim() === key)
     : null;
-  if (session) {
+  if (session && !wouldEraseOutcome(session, status)) {
     // Keep the catalog row aligned with the durable turn state. The transport
     // may emit session_idle immediately after a terminal turn; retaining the
     // completed/failed status here lets the work-thread icon communicate the

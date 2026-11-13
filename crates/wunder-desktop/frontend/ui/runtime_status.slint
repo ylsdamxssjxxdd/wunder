@@ -1,11 +1,6 @@
 import { Theme } from "theme.slint";
 
 export global RuntimeStatus {
-    // Unix second this window started. A settled mark that predates it was
-    // already old when the window opened, so the sidebar presents it idle
-    // instead of celebrating a run nobody here watched.
-    in-out property <float> session-start: 0;
-
     // Rust `runtime_phase::Phase` discriminants. Views read the number the
     // backend decided, so they never re-derive a state from the status phrase.
     public pure function from-phase(code: int) -> string {

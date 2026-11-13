@@ -19,30 +19,17 @@ component StatusDot inherits Rectangle {
     // Phase decided by the backend (`runtime_phase::Phase`), -1 when the row
     // is not a thread. A live phase always wins over the phrase table.
     in property <int> phase: -1;
-    // Unix second the turn settled (0 while live or unknown) and whether this
-    // row is the thread on screen.
-    in property <float> ended-at: 0;
-    in property <bool> visited: false;
     width: 11px; height: 11px;
     private property <bool> inquiry: root.phase == 3 || status == "waiting_input" || status == "waiting_user_input"
         || status.starts-with("等待用户输入") || status.starts-with("等待回答");
     private property <bool> approval: status == "waiting_approval"
         || status.starts-with("等待确认") || status.starts-with("等待审批");
-    private property <string> settled: RuntimeStatus.state-of(root.phase, root.status);
-    // A settled mark is news until the user has seen it. The backend retires a
-    // mark once it ages out, but a completion that lands while the user is
-    // elsewhere is still unseen — dropping it then made the green check appear
-    // only sometimes. The mark therefore outlives the backend's hold until the
-    // thread is opened, and is only dropped for a mark that was already old
-    // when this window first read it (it settled before this window's start).
-    private property <bool> unseen: root.settled == "done" && !root.visited
-        && (root.ended-at <= 0 || root.ended-at >= RuntimeStatus.session-start);
-    // A completion is a mark, not a state: once the user has seen it the row
-    // goes back to idle instead of keeping a green check forever. Failures and
-    // user stops stay as they are — those are states the user may need to act
-    // on, and they are not "news" that expires.
-    private property <string> state: root.unseen ? "done"
-        : root.settled == "done" ? "idle" : root.settled;
+    // The last turn's outcome is a durable state, not a notification. A thread
+    // that finished keeps its check until the next turn starts; only a thread
+    // that never ran is idle. Freshness and "already seen" belong to the toast
+    // and the companion, never to the row, so a catalogue read or a window
+    // restart cannot silently demote a completion back to idle.
+    private property <string> state: RuntimeStatus.state-of(root.phase, root.status);
     // Stopped is terminal but neutral: the user ended the run on purpose, so it
     // paints muted with the stop glyph instead of the red failure triangle.
     private property <color> tint: root.inquiry ? Theme.accent-ink : root.approval || root.state == "pending" ? Theme.warning
@@ -116,8 +103,6 @@ component ThreadRow inherits ContextMenuArea {
             y: (parent.height - self.height) / 2;
             status: data.status;
             phase: data.phase;
-            ended-at: data.ended-at;
-            visited: data.visited;
         }
         Text {
             vertical-alignment: center;

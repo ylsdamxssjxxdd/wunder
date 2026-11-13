@@ -509,14 +509,25 @@ async fn list_sessions(
             running: false,
         }
         .runtime_status();
-        let runtime_status = durable_turn_tails
+        // The runtime head is the live execution projection. Its transport
+        // placeholders ("idle"/"ready"/...) mean "nothing in flight", not
+        // "the last turn vanished": keep the durable outcome the signals
+        // derived above. Only a head carrying real work or an explicit
+        // outcome may override it.
+        let head_status = durable_turn_tails
             .get(&record.session_id)
-            .and_then(|tail| {
-                tail.runtime_head
-                    .as_ref()
-                    .map(|head| head.runtime_status.as_str())
-            })
-            .unwrap_or(runtime_status);
+            .and_then(|tail| tail.runtime_head.as_ref())
+            .map(|head| head.runtime_status.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        let head_is_transport = matches!(
+            head_status.as_str(),
+            "" | "idle" | "ready" | "not_loaded" | "paused" | "none"
+        );
+        let runtime_status = if head_is_transport {
+            runtime_status
+        } else {
+            head_status.as_str()
+        };
         if let Value::Object(map) = &mut payload {
             if let Some(head) = durable_turn_tails
                 .get(&record.session_id)

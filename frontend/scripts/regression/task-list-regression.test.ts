@@ -9,6 +9,23 @@ import { moveKeyWithinOrder, prependFreshKeys } from '../../src/views/messenger/
 import { resolveTaskRuntimeState } from '../../src/views/messenger/taskRuntimeState';
 import { applySessionQuotaUsage } from '../../src/stores/chatSessionQuota';
 import { mergeSessionRuntimeFields } from '../../src/stores/chatSessionMerge';
+import { clearTaskSettledStates, forgetTaskSettledState, rememberTaskSettledState } from '../../src/views/messenger/taskSettledMemory';
+
+test('a settled outcome survives transport idle frames and catalog rebuilds', () => {
+  clearTaskSettledStates();
+  const id = 'fixture-finished-thread';
+  assert.equal(rememberTaskSettledState(id, 'idle'), null, 'a thread that never ran stays idle');
+  assert.equal(rememberTaskSettledState(id, 'done'), 'done', 'a completion is remembered');
+  assert.equal(rememberTaskSettledState(id, 'idle'), 'done', 'session_idle must not repaint the row');
+  assert.equal(
+    resolveTaskRuntimeState('idle', 'completed', false, 'idle'),
+    'done',
+    'the durable catalog terminal outranks an idle projection'
+  );
+  assert.equal(rememberTaskSettledState(id, 'running'), null, 'a new turn retires the outcome');
+  assert.equal(rememberTaskSettledState(id, 'idle'), null, 'no stale check after the new run');
+  forgetTaskSettledState(id);
+});
 
 test('work thread list excludes archived and subagent sessions', () => {
   assert.equal(isArchivedTaskRecord({ status: 'archived' }), true);

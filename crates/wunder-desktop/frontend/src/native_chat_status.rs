@@ -1,44 +1,15 @@
-//! One place that decides which thread status a row may show.
+//! One place that fences a status this process authored from a stale read.
 //!
-//! Two things live here. The first is the fencing between a status this process
-//! authored and one it read back: a stale read must never reopen a thread the
-//! local owner just settled. The second is settled freshness — a thread that
-//! reached a terminal keeps its mark only while the mark is news. The durable
-//! catalogue keeps answering the same terminal (`completed`, `cancelled`,
-//! `failed`) for the rest of the thread's life, so without this every restart,
-//! every poll and every pet projection re-announced an outcome that ended
-//! yesterday — and a freshly selected thread flashed a stop square that had
-//! nothing to do with what it is doing now.
+//! A status this process wrote outranks a catalogue read that started before
+//! it; otherwise a late poll could reopen a thread the local owner just
+//! settled. Freshness ("is this outcome still news?") deliberately does not
+//! live here: the toast and the companion own that short-lived signal, while
+//! the thread row keeps its durable outcome until the next turn starts.
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::runtime_phase::Phase;
-
-/// How long a settled mark stays once the thread settled.
-///
-/// A terminal is news, not a state: after a beat the row settles back to idle,
-/// the sidebar stops claiming an outcome nobody is waiting for, and the
-/// desktop pet stops reacting. This covers every settled phase alike — a
-/// completion, a failure, and a user stop.
-pub(super) const TERMINAL_HOLD: Duration = Duration::from_secs(6);
-
-/// How far a settle time may run ahead of this process's clock before it is
-/// treated as another clock's reading rather than a settle that just happened.
-const CLOCK_SKEW: Duration = Duration::from_secs(60);
-
-/// A settle this process watched happen is news even when the local clock is
-/// ahead of the engine's, so it gets at least this long.
-const LOCAL_MIN_HOLD: Duration = Duration::from_secs(1);
-
-/// What a settled thread is allowed to show right now.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Completion {
-    /// Not a settled thread.
-    None,
-    /// The mark may stay until this instant.
-    Until(Instant),
-}
 
 #[derive(Default)]
 pub(super) struct StatusProjection {
@@ -50,17 +21,13 @@ struct SessionStatus {
     revision: u64,
     status: String,
     local: bool,
-    completion: Completion,
 }
 
-/// The verdict for one row: the phrase it should carry, whether this read was
-/// adopted from the catalogue, and whether its settled mark has aged out.
+/// The verdict for one row: the phrase it should carry and whether this read
+/// was adopted from the catalogue.
 pub(super) struct Reconciled {
     pub(super) status: String,
     pub(super) accepted: bool,
-    /// True when the row must be presented as idle instead: the thread reached
-    /// a terminal, but that terminal is no longer news.
-    pub(super) retired: bool,
 }
 
 impl StatusProjection {
@@ -68,13 +35,13 @@ impl StatusProjection {
         self.revision
     }
 
-    pub(super) fn record_local(&mut self, session: &str, status: &str, now: Instant) {
+    pub(super) fn record_local(&mut self, session: &str, status: &str) {
         self.revision = self.revision.saturating_add(1);
         let revision = self.revision;
         let entry = self.entry(session);
         entry.revision = revision;
         entry.local = true;
-        note(entry, status, None, now);
+        entry.status = status.to_string();
     }
 
     #[cfg(test)]
@@ -84,26 +51,19 @@ impl StatusProjection {
         status: &str,
         read_revision: u64,
         local_status: Option<&str>,
-        now: Instant,
     ) -> Reconciled {
-        self.reconcile_settled(session, status, 0.0, read_revision, local_status, now)
+        self.reconcile_settled(session, status, read_revision, local_status)
     }
 
-    /// Reconcile one catalogue read. `ended_at` is the unix second the durable
-    /// record says the turn settled (`0.0` when the record carries none).
-    ///
-    /// The settle time is what makes a cold read trustworthy: the catalogue
-    /// answers the same terminal for the rest of a thread's life, so a mark is
-    /// only news when it happened within [`TERMINAL_HOLD`] of *now* — whether
-    /// this process watched the run or read it back after a missed event.
+    /// Reconcile one catalogue read. A terminal read is a durable outcome, not
+    /// news: no matter how old it is, the row keeps it. Only a live transition
+    /// or a newer local claim can replace it.
     pub(super) fn reconcile_settled(
         &mut self,
         session: &str,
         status: &str,
-        ended_at: f64,
         read_revision: u64,
         local_status: Option<&str>,
-        now: Instant,
     ) -> Reconciled {
         let (status, accepted) = if let Some(status) = local_status {
             (status.to_string(), false)
@@ -121,35 +81,19 @@ impl StatusProjection {
         } else {
             (status.to_string(), true)
         };
-        let current = self.entry(session);
         if accepted {
-            // An adopted catalogue read supersedes the local authorship: the
-            // fence is a guard around a live local claim, not a permanent brand.
-            // Without this a locally settled mark keeps every later catalogue
-            // read out of the session for good.
+            // An adopted read supersedes the local authorship: the fence is a
+            // guard around a live local claim, not a permanent brand.
+            let current = self.entry(session);
             current.local = false;
-            note(current, status.as_str(), Some(ended_at), now);
+            current.status = status.clone();
         }
-        Reconciled {
-            retired: retired(current, now),
-            status,
-            accepted,
-        }
+        Reconciled { status, accepted }
     }
 
-    /// Whether this session's completion mark has aged out. Callers present an
-    /// idle row when it returns true for a row that still shows the finish.
-    pub(super) fn should_retire(&self, session: &str, now: Instant) -> bool {
-        self.sessions
-            .get(session)
-            .is_some_and(|entry| retired(entry, now))
-    }
-
-    /// Drop everything this client knows about one session's status.
-    ///
-    /// A retired completion must not fence the thread: keeping a local "idle"
-    /// record would make the next run start from another client invisible here,
-    /// because a local terminal outranks every catalogue read.
+    /// Drop everything this client knows about one session's status. Releasing
+    /// the fence lets the next run — from this client or another one — reach
+    /// the row. It does not change the row's durable outcome.
     pub(super) fn forget(&mut self, session: &str) {
         self.sessions.remove(session);
     }
@@ -165,58 +109,8 @@ impl StatusProjection {
                 revision: 0,
                 status: String::new(),
                 local: false,
-                completion: Completion::None,
             })
     }
-}
-
-/// Fold one observed status into a session's settled bookkeeping.
-///
-/// `ended_at` is the settle time the source reported, `None` for a local
-/// report (this process watched the turn settle, so "now" is the settle time).
-fn note(entry: &mut SessionStatus, status: &str, ended_at: Option<f64>, now: Instant) {
-    let phase = Phase::of(status);
-    entry.completion = if phase.terminal() {
-        match entry.completion {
-            // A second report of the same terminal never extends the hold, and
-            // never re-arms a mark that already aged out.
-            Completion::Until(until) => Completion::Until(until),
-            Completion::None => match ended_at {
-                // A local report is the moment the turn settled.
-                None => Completion::Until(now + TERMINAL_HOLD),
-                Some(ended_at) => match settle_hold(ended_at, now) {
-                    Some(until) => Completion::Until(until),
-                    // Settled long ago: the mark is history, not news.
-                    None => Completion::None,
-                },
-            },
-        }
-    } else {
-        Completion::None
-    };
-    entry.status = status.to_string();
-}
-
-/// When a settle that happened at `ended_at` (unix seconds) stops being news,
-/// or `None` when it already is. A settle time ahead of this process's clock is
-/// another clock's reading, so the mark is given the full hold from now.
-fn settle_hold(ended_at: f64, now: Instant) -> Option<Instant> {
-    let now_unix = unix_now();
-    let age = now_unix - ended_at;
-    if age <= 0.0 {
-        // Ahead of this clock. A small lead is the engine settling a moment
-        // before the read; a large one is another clock, not a settle that just
-        // happened, so it is not news here.
-        return (age > -(CLOCK_SKEW.as_secs_f64())).then_some(now + TERMINAL_HOLD);
-    }
-    let age = Duration::from_secs_f64(age);
-    if age >= TERMINAL_HOLD {
-        return None;
-    }
-    // A settle this process watched may look older than it is when the local
-    // clock runs ahead of the engine's; keep it briefly rather than dropping a
-    // completion the user is looking at right now.
-    Some(now + (TERMINAL_HOLD - age).max(LOCAL_MIN_HOLD))
 }
 
 fn unix_now() -> f64 {
@@ -231,21 +125,6 @@ fn unix_now() -> f64 {
 /// with this instead of leaving the settle time unknown.
 pub(crate) fn settled_now() -> f64 {
     unix_now()
-}
-
-fn retired(entry: &SessionStatus, now: Instant) -> bool {
-    // A settled mark is news: once it is no longer fresh the row presents idle
-    // again. Every terminal phase is covered — a completion that ended
-    // yesterday must not sit on the row forever, and neither must a stop square
-    // or a failure triangle that a fresh catalogue read resurfaces.
-    if !Phase::of(entry.status.as_str()).terminal() {
-        return false;
-    }
-    match entry.completion {
-        Completion::Until(until) => until <= now,
-        // Nothing to hold: the terminal was already old news on arrival.
-        Completion::None => true,
-    }
 }
 
 fn catalogue_matches_local(local_status: &str, catalogue_status: &str) -> bool {
@@ -283,20 +162,15 @@ fn status_kind(status: &str) -> &'static str {
 mod tests {
     use super::*;
 
-    fn now() -> Instant {
-        Instant::now()
-    }
-
     #[test]
     fn an_old_read_is_rejected_even_after_the_local_owner_has_settled() {
-        let at = now();
         let mut projection = StatusProjection::default();
-        projection.record_local("fixture-session", "请求中", at);
+        projection.record_local("fixture-session", "请求中");
         let read_revision = projection.revision();
-        projection.record_local("fixture-session", "任务完成", at);
+        projection.record_local("fixture-session", "任务完成");
         assert_eq!(
             projection
-                .reconcile("fixture-session", "running", read_revision, None, at)
+                .reconcile("fixture-session", "running", read_revision, None)
                 .status,
             "任务完成".to_string(),
         );
@@ -304,26 +178,24 @@ mod tests {
 
     #[test]
     fn a_newer_local_status_does_not_fence_an_independent_thread() {
-        let at = now();
         let mut projection = StatusProjection::default();
         let read_revision = projection.revision();
-        projection.record_local("fixture-local", "请求中", at);
+        projection.record_local("fixture-local", "请求中");
         let reconciled =
-            projection.reconcile("fixture-background", "done", read_revision, None, at);
+            projection.reconcile("fixture-background", "done", read_revision, None);
         assert_eq!(reconciled.status, "done");
         assert!(reconciled.accepted);
     }
 
     #[test]
     fn an_old_terminal_stays_fenced_for_the_entire_local_execution() {
-        let at = now();
         let mut projection = StatusProjection::default();
-        projection.record_local("fixture-session", "请求中", at);
+        projection.record_local("fixture-session", "请求中");
         let read_revision = projection.revision();
         for status in ["请求中", "正在生成…", "正在执行工具…", "已停止"] {
             assert_eq!(
                 projection
-                    .reconcile("fixture-session", "done", read_revision, Some(status), at)
+                    .reconcile("fixture-session", "done", read_revision, Some(status))
                     .status,
                 status.to_string(),
             );
@@ -332,13 +204,12 @@ mod tests {
 
     #[test]
     fn the_next_read_can_reconcile_after_local_settlement() {
-        let at = now();
         let mut projection = StatusProjection::default();
-        projection.record_local("fixture-session", "任务完成", at);
+        projection.record_local("fixture-session", "任务完成");
         let read_revision = projection.revision();
         assert!(
             projection
-                .reconcile("fixture-session", "done", read_revision, None, at)
+                .reconcile("fixture-session", "done", read_revision, None)
                 .accepted
         );
         projection.retain(|_| false);
@@ -347,33 +218,31 @@ mod tests {
 
     #[test]
     fn a_read_started_after_local_completion_cannot_reopen_running_state() {
-        let at = now();
         let mut projection = StatusProjection::default();
-        projection.record_local("fixture-session", "任务完成", at);
+        projection.record_local("fixture-session", "任务完成");
         let read_revision = projection.revision();
         assert_eq!(
             projection
-                .reconcile("fixture-session", "running", read_revision, None, at)
+                .reconcile("fixture-session", "running", read_revision, None)
                 .status,
             "任务完成".to_string(),
         );
         assert!(
             projection
-                .reconcile("fixture-session", "done", read_revision, None, at)
+                .reconcile("fixture-session", "done", read_revision, None)
                 .accepted
         );
     }
 
     #[test]
     fn a_failed_or_stopped_local_terminal_cannot_become_success() {
-        let at = now();
         let mut projection = StatusProjection::default();
         for terminal in ["执行失败", "已停止"] {
-            projection.record_local("fixture-session", terminal, at);
+            projection.record_local("fixture-session", terminal);
             let read_revision = projection.revision();
             assert_eq!(
                 projection
-                    .reconcile("fixture-session", "done", read_revision, None, at)
+                    .reconcile("fixture-session", "done", read_revision, None)
                     .status,
                 terminal.to_string(),
             );
@@ -381,221 +250,55 @@ mod tests {
     }
 
     /// The catalogue keeps answering "completed" for the rest of a thread's
-    /// life. A settle that happened long before this read is not news, so the
-    /// row must open idle instead of celebrating a finish from last week.
+    /// life. Time must never demote that outcome back to idle: freshness is a
+    /// notification concern, not a row-state concern.
     #[test]
-    fn a_completion_this_process_never_watched_is_not_celebrated() {
-        let at = now();
+    fn a_catalogue_terminal_stays_the_row_state_however_old_it_is() {
         let mut projection = StatusProjection::default();
-        let reconciled = projection.reconcile_settled(
-            "fixture-session",
-            "completed",
-            unix_now() - 3_600.0,
-            0,
-            None,
-            at,
-        );
-        assert!(reconciled.retired);
-        assert!(projection.should_retire("fixture-session", at));
-    }
-
-    /// A settle that reached the row only through a catalogue read — the live
-    /// event was missed, or the row was projected after the turn ended — is
-    /// still news when it just happened. The settle time, not "did this process
-    /// watch the run", decides: otherwise a completed thread flashed its check
-    /// only sometimes.
-    #[test]
-    fn a_settle_this_process_only_read_back_is_still_news() {
-        let at = now();
-        let mut projection = StatusProjection::default();
-        let reconciled =
-            projection.reconcile_settled("fixture-session", "finished", unix_now() - 1.0, 0, None, at);
-        assert!(reconciled.accepted);
-        assert!(!reconciled.retired, "a settle one second old is news");
-        assert!(!projection.should_retire("fixture-session", at));
-        assert!(projection.should_retire("fixture-session", at + TERMINAL_HOLD * 2));
-    }
-
-    /// A settle time from another clock far in the future is not a settle that
-    /// just happened here.
-    #[test]
-    fn a_settle_time_far_ahead_of_this_clock_is_not_news() {
-        let at = now();
-        let mut projection = StatusProjection::default();
-        let reconciled = projection.reconcile_settled(
-            "fixture-session",
-            "finished",
-            unix_now() + 3_600.0,
-            0,
-            None,
-            at,
-        );
-        assert!(reconciled.retired);
-    }
-
-    /// A local settle is news even when the local clock runs ahead of the
-    /// engine's: it is dropped after the hold, never on arrival.
-    #[test]
-    fn a_local_settle_survives_a_clock_that_runs_ahead() {
-        let at = now();
-        let mut projection = StatusProjection::default();
-        projection.record_local("fixture-session", "正在生成…", at);
-        projection.record_local("fixture-session", "任务完成", at);
-        assert!(!projection.should_retire("fixture-session", at));
+        let first = projection.reconcile_settled("fixture-session", "completed", 0, None);
+        assert_eq!(first.status, "completed");
+        assert!(first.accepted);
+        let repeated = projection.reconcile_settled("fixture-session", "completed", 0, None);
+        assert_eq!(repeated.status, "completed");
+        let stopped = projection.reconcile_settled("fixture-session", "cancelled", 0, None);
+        assert_eq!(stopped.status, "cancelled", "a real new outcome still wins");
     }
 
     #[test]
-    fn a_completion_this_process_watched_held_then_aged_out() {
-        let at = now();
+    fn forgetting_releases_the_fence_without_changing_the_row() {
         let mut projection = StatusProjection::default();
-        projection.record_local("fixture-session", "正在生成…", at);
-        projection.record_local("fixture-session", "任务完成", at);
-        assert!(!projection.should_retire("fixture-session", at));
-        assert!(!projection.should_retire("fixture-session", at + TERMINAL_HOLD / 2));
-        assert!(projection.should_retire("fixture-session", at + TERMINAL_HOLD * 2));
-        // A repeated report of the same finish neither extends the hold nor
-        // re-arms the mark.
-        projection.record_local("fixture-session", "任务完成", at + TERMINAL_HOLD * 3);
-        assert!(projection.should_retire("fixture-session", at + TERMINAL_HOLD * 3));
-    }
-
-    #[test]
-    fn a_new_run_clears_a_retired_completion() {
-        let at = now();
-        let mut projection = StatusProjection::default();
-        projection.record_local("fixture-session", "正在生成…", at);
-        projection.record_local("fixture-session", "任务完成", at);
-        assert!(projection.should_retire("fixture-session", at + TERMINAL_HOLD * 2));
-        projection.record_local("fixture-session", "请求中", at + TERMINAL_HOLD * 3);
-        assert!(!projection.should_retire("fixture-session", at + TERMINAL_HOLD * 3));
-    }
-
-    /// A retired completion must not fence the thread: the next run, started
-    /// from any client, has to reach this row.
-    #[test]
-    fn forgetting_a_retired_completion_lets_the_next_run_through() {
-        let at = now();
-        let mut projection = StatusProjection::default();
-        projection.record_local("fixture-session", "正在生成…", at);
-        projection.record_local("fixture-session", "任务完成", at);
-        assert!(projection.should_retire("fixture-session", at + TERMINAL_HOLD * 2));
+        projection.record_local("fixture-session", "任务完成");
         projection.forget("fixture-session");
-        let reconciled = projection.reconcile("fixture-session", "running", 0, None, at);
+        let reconciled = projection.reconcile("fixture-session", "running", 0, None);
         assert_eq!(reconciled.status, "running");
         assert!(reconciled.accepted);
-        assert!(!reconciled.retired);
     }
 
-    /// A stop this process never watched is only news while it is fresh, so
-    /// merely selecting a thread stopped long ago must not flash the square.
-    #[test]
-    fn a_stop_this_process_never_watched_is_not_a_state() {
-        let at = now();
-        let mut projection = StatusProjection::default();
-        let reconciled = projection.reconcile_settled(
-            "fixture-session",
-            "cancelled",
-            unix_now() - 600.0,
-            0,
-            None,
-            at,
-        );
-        assert!(reconciled.retired, "a cold stop must present as idle");
-        assert!(projection.should_retire("fixture-session", at));
-    }
-
-    /// A stop this process watched happen is news: it holds for a beat, then
-    /// retires to idle exactly like a completion.
-    #[test]
-    fn a_stop_this_process_watched_held_then_aged_out() {
-        let at = now();
-        let mut projection = StatusProjection::default();
-        projection.record_local("fixture-session", "正在生成…", at);
-        projection.record_local("fixture-session", "已停止", at);
-        assert!(!projection.should_retire("fixture-session", at));
-        assert!(!projection.should_retire("fixture-session", at + TERMINAL_HOLD / 2));
-        assert!(projection.should_retire("fixture-session", at + TERMINAL_HOLD * 2));
-        // A repeated report of the same stop neither extends the hold nor
-        // re-arms a mark that already aged out.
-        projection.record_local("fixture-session", "已停止", at + TERMINAL_HOLD * 3);
-        assert!(projection.should_retire("fixture-session", at + TERMINAL_HOLD * 3));
-    }
-
-    /// The same rule holds for a failure: a durable `failed` read cold is
-    /// history, not a red triangle that clings to the row for good.
-    #[test]
-    fn a_failure_this_process_never_watched_is_not_a_state() {
-        let at = now();
-        let mut projection = StatusProjection::default();
-        let reconciled = projection.reconcile_settled(
-            "fixture-session",
-            "failed",
-            unix_now() - 600.0,
-            0,
-            None,
-            at,
-        );
-        assert!(reconciled.retired, "a cold failure must present as idle");
-    }
-
-    /// A retired stop must not fence the thread: the next run's status has to
-    /// reach the row again.
-    #[test]
-    fn a_new_run_clears_a_retired_stop() {
-        let at = now();
-        let mut projection = StatusProjection::default();
-        assert!(
-            projection
-                .reconcile_settled("fixture-session", "cancelled", unix_now() - 600.0, 0, None, at)
-                .retired
-        );
-        projection.record_local("fixture-session", "请求中", at);
-        assert!(!projection.should_retire("fixture-session", at));
-    }
-
-    /// A run this process started locally and then stopped driving (the user
-    /// switched away) can settle on the backend while it is not selected. The
-    /// catalogue's terminal must still reach the row: a leftover local "hot"
-    /// mark must not fence it for good, or the sidebar keeps claiming the old
-    /// run and its completion never raises the toast until it is reopened.
+    /// A run this process started and then stopped driving can settle on the
+    /// backend while it is not selected. Its terminal must still reach the row.
     #[test]
     fn an_abandoned_local_run_does_not_fence_a_background_settle() {
-        let at = now();
         let mut projection = StatusProjection::default();
-        projection.record_local("fixture-session", "请求中", at);
+        projection.record_local("fixture-session", "请求中");
         let read_revision = projection.revision();
-        // The owner has moved on: no local override for this session any more.
-        let reconciled = projection.reconcile_settled(
-            "fixture-session",
-            "completed",
-            unix_now() - 0.5,
-            read_revision,
-            None,
-            at,
-        );
+        let reconciled =
+            projection.reconcile_settled("fixture-session", "completed", read_revision, None);
         assert!(reconciled.accepted, "the background settle must land");
         assert_eq!(reconciled.status, "completed");
-        assert!(
-            !reconciled.retired,
-            "a settle half a second old is fresh news"
-        );
     }
 
-    /// Once a catalogue read is adopted the local authorship is spent, so a run
-    /// later started by another client is not fenced by a settled local mark.
     #[test]
     fn an_adopted_read_lets_a_later_remote_run_through() {
-        let at = now();
         let mut projection = StatusProjection::default();
-        projection.record_local("fixture-session", "任务完成", at);
+        projection.record_local("fixture-session", "任务完成");
         let read_revision = projection.revision();
         assert!(
             projection
-                .reconcile("fixture-session", "completed", read_revision, None, at)
+                .reconcile("fixture-session", "completed", read_revision, None)
                 .accepted
         );
         let reconciled =
-            projection.reconcile("fixture-session", "running", read_revision, None, at);
+            projection.reconcile("fixture-session", "running", read_revision, None);
         assert!(reconciled.accepted, "a new remote run must not be fenced");
         assert_eq!(reconciled.status, "running");
     }
