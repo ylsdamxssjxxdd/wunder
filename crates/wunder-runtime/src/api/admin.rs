@@ -57,6 +57,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(identity_admin::router())
         .merge(resource_admin::router())
         .merge(update_admin::router())
+        .merge(crate::api::announcement::admin_router())
         .route(
             "/wunder/admin/llm",
             get(admin_llm_get).post(admin_llm_update),

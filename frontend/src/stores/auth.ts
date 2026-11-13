@@ -22,6 +22,7 @@ import {
   readAccessToken,
   writePersistentAccessToken
 } from '@/utils/authTokenStorage';
+import { useSystemAnnouncementStore } from '@/stores/systemAnnouncement';
 
 let profileInFlight: Promise<any> | null = null;
 let authSettingsInFlight: Promise<any> | null = null;
@@ -174,6 +175,7 @@ export const useAuthStore = defineStore('auth', {
         this.token = '';
         this.user = null;
         clearAccessToken();
+        useSystemAnnouncementStore().resetForLogout();
       }
     }
   }

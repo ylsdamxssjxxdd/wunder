@@ -3,6 +3,7 @@ pub mod admin_bridge;
 pub mod admin_interlink;
 pub mod admin_multimodal;
 pub mod admin_prompt_templates;
+pub mod announcement;
 pub(crate) mod attachment_convert;
 pub mod auth;
 pub mod benchmark;
@@ -53,6 +54,7 @@ use tower_http::compression::CompressionLayer;
 pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(auth::router())
+        .merge(announcement::router())
         .merge(browser_control::router())
         .merge(channel::router())
         .merge(chat::router())

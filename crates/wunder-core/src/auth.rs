@@ -24,6 +24,9 @@ pub fn is_admin_path(path: &str) -> bool {
     if path_is_prefix_or_child(path, "/wunder/chat") {
         return false;
     }
+    if path_is_prefix_or_child(path, "/wunder/announcement") {
+        return false;
+    }
     if path_is_prefix_or_child(path, "/wunder/workspace") {
         return false;
     }
@@ -124,6 +127,8 @@ mod tests {
         assert!(!is_admin_path("/wunder/temp_dir/download"));
         assert!(!is_admin_path("/wunder/auth/login"));
         assert!(!is_admin_path("/wunder/chat/sessions"));
+        assert!(!is_admin_path("/wunder/announcement"));
+        assert!(is_admin_path("/wunder/announcements"));
         assert!(!is_admin_path("/wunder/workspace"));
         assert!(!is_admin_path("/wunder/user_world/contacts"));
         assert!(!is_admin_path("/wunder/user_world/ws"));

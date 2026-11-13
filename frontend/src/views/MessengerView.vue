@@ -14,6 +14,7 @@
       <MessengerSidebar
         v-show="!isEmbeddedChatRoute && !sidebarCollapsed"
         :controller="controller"
+        :announcement-unread="announcementUnread"
         @new-task="startNewSession"
         @select-workspace="selectWorkspace"
         @open-thread="openThread"
@@ -23,6 +24,7 @@
         @archive-thread="archiveTimelineSession"
         @archive-threads="archiveTimelineSessions"
         @open-settings="openSettingsPage"
+        @open-announcement="openSystemAnnouncement"
       />
       <!-- 桌面端侧栏拖宽线：悬停/拖拽显色，双击复位；窄视口抽屉模式不显示。 -->
       <div
@@ -284,8 +286,10 @@ import { useMessengerViewController } from '@/views/messenger/useMessengerViewCo
 import { useInterlinkNodeTarget } from '@/views/messenger/interlink/interlinkNodeTarget';
 import { onUpdated as trackShellUpdate } from 'vue';
 import { chatPerf } from '@/utils/chatPerf';
-import { computed as vueComputed, ref as vueRef } from 'vue';
+import { computed as vueComputed, onMounted, ref as vueRef } from 'vue';
 import { defineRecoverableAsyncComponent } from '@/utils/asyncComponentRecovery';
+import { useSystemAnnouncementStore } from '@/stores/systemAnnouncement';
+import { mzConfirm } from '@/utils/mzDialog';
 import MessengerMessagePanel from '@/views/messenger/sections/MessengerMessagePanel.vue';
 import MessengerChatSplitView from '@/views/messenger/sections/MessengerChatSplitView.vue';
 import { CHAT_THREAD_DRAG_TYPE, type ChatSplitCount } from '@/views/messenger/chatSplitLayout';
@@ -501,6 +505,47 @@ const openSettingsPage = () => {
 const closeSettingsPage = () => {
   controller.switchSection?.('messages');
 };
+
+// ------------------------------------------------------- system announcement
+
+const systemAnnouncementStore = useSystemAnnouncementStore();
+const announcementUnread = vueComputed(() => systemAnnouncementStore.unread);
+let announcementDialogOpen = false;
+
+const showSystemAnnouncement = async () => {
+  if (announcementDialogOpen) return;
+  const announcement = systemAnnouncementStore.record;
+  const content = String(announcement?.content || '').trim();
+  announcementDialogOpen = true;
+  try {
+    const acknowledged = await mzConfirm({
+      title: String(announcement?.title || '').trim() || t('announcement.defaultTitle'),
+      message: content || t('announcement.empty'),
+      alertOnly: true,
+      confirmText: t('announcement.dismiss')
+    });
+    if (acknowledged && content) {
+      systemAnnouncementStore.dismiss();
+    }
+  } finally {
+    announcementDialogOpen = false;
+  }
+};
+
+const openSystemAnnouncement = async () => {
+  closeDrawerOnNarrow();
+  await systemAnnouncementStore.load(true);
+  await showSystemAnnouncement();
+};
+
+onMounted(async () => {
+  await systemAnnouncementStore.load();
+  if (!systemAnnouncementStore.unread) return;
+  const userId = String(controller.currentUserId?.value || '').trim();
+  if (systemAnnouncementStore.promptedForUserId === userId) return;
+  systemAnnouncementStore.promptedForUserId = userId;
+  await showSystemAnnouncement();
+});
 
 // -------------------------------------------------------------- controller
 

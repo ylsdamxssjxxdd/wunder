@@ -217,6 +217,20 @@
         </span>
         <span class="messenger-sidebar-settings-name">{{ currentUsername || t('user.guest') }}</span>
       </button>
+      <button
+        class="messenger-sidebar-announcement"
+        type="button"
+        :title="t('messenger.sidebar.announcement')"
+        :aria-label="t('messenger.sidebar.announcement')"
+        @click="emit('open-announcement')"
+      >
+        <i class="fa-solid fa-bell" aria-hidden="true"></i>
+        <span
+          v-if="props.announcementUnread"
+          class="messenger-sidebar-announcement-dot"
+          aria-hidden="true"
+        ></span>
+      </button>
     </div>
   </aside>
 </template>
@@ -254,7 +268,7 @@ import {
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
 import { buildTaskList } from '@/views/messenger/taskList';
 
-const props = defineProps<{ controller: MessengerControllerContext }>();
+const props = defineProps<{ controller: MessengerControllerContext; announcementUnread?: boolean }>();
 const emit = defineEmits<{
   'new-task': [];
   'select-workspace': [];
@@ -265,6 +279,7 @@ const emit = defineEmits<{
   'archive-thread': [id: string];
   'archive-threads': [ids: string[]];
   'open-settings': [];
+  'open-announcement': [];
 }>();
 
 const t = props.controller.t;

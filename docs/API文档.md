@@ -1554,6 +1554,28 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
 - `POST` 入参：以上字段均可选，支持分组更新
 - `POST` 返回：同 `GET`
 
+### 4.1.6.2.1 `/wunder/admin/announcement`
+
+- 方法：`GET/POST`
+- 说明：管理员查看并编辑面向全体用户的系统消息；保存新内容后生成新版本，云端版用户下次上线会再次收到提示。
+- `GET` 返回：
+  - `announcement`：当前记录，未配置时为全空字段；包含 `revision`、`title`、`content`、`enabled`、`updated_at`
+- `POST` 入参（JSON）：
+  - `title`：标题（可选，最多 100 字符）
+  - `content`：正文（最多 4000 字符；启用时不能为空）
+  - `enabled`：是否在用户上线时推送
+- `POST` 返回：保存后的 `announcement` 记录；`title`/`content` 变化时 `revision` 与 `updated_at` 更新。
+
+### 4.1.6.2.2 `/wunder/announcement`
+
+- 方法：`GET`
+- 说明：登录用户读取当前生效的系统消息。未启用或正文为空时返回 `announcement: null`。
+- 返回（JSON）：
+  - `announcement.revision`：消息版本，用户确认后据此去重
+  - `announcement.title`：标题（可为空）
+  - `announcement.content`：正文
+  - `announcement.updated_at`：更新时间（RFC 3339）
+
 ### 4.1.6.3 `/wunder/admin/server`
 
 - 方法：`GET/POST`
@@ -2140,7 +2162,7 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
 - 内部状态/线程日志：`/wunder/admin/monitor`、`/wunder/admin/monitor/tool_usage`、`/wunder/admin/monitor/{session_id}`、`/wunder/admin/monitor/{session_id}/cancel`、`/wunder/admin/monitor/{session_id}/compaction`。
 - 线程管理：`/wunder/admin/users`、`/wunder/admin/users/{user_id}/sessions`、`/wunder/admin/users/{user_id}`、`/wunder/admin/users/throughput/cleanup`。
 - 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/import`、`/wunder/admin/user_accounts/test/seed`、`/wunder/admin/user_accounts/test/cleanup`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/quota_adjustment`、`/wunder/admin/user_accounts/{user_id}/logout`、`/wunder/admin/user_accounts/{user_id}/login_token`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
-- 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/multimodal/transcription`、`/wunder/admin/multimodal/speech`、`/wunder/admin/multimodal/image`、`/wunder/admin/multimodal/video`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
+- 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/multimodal/transcription`、`/wunder/admin/multimodal/speech`、`/wunder/admin/multimodal/image`、`/wunder/admin/multimodal/video`、`/wunder/admin/system`、`/wunder/admin/announcement`、`/wunder/announcement`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
 - 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/content`、`/wunder/admin/skills/files`、`/wunder/admin/skills/file`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
 - 渠道监控与治理：`/wunder/admin/channels/accounts`、`/wunder/admin/channels/accounts/batch`、`/wunder/admin/channels/accounts/{channel}/{account_id}`、`/wunder/admin/channels/accounts/{channel}/{account_id}/impact`、`/wunder/admin/channels/bindings`、`/wunder/admin/channels/user_bindings`、`/wunder/admin/channels/sessions`。
 - 渠道桥接节点治理：`/wunder/admin/bridge/metadata`、`/wunder/admin/bridge/supported_channels`、`/wunder/admin/bridge/centers`、`/wunder/admin/bridge/centers/{center_id}`、`/wunder/admin/bridge/centers/{center_id}/accounts`、`/wunder/admin/bridge/centers/{center_id}/weixin_bind`、`/wunder/admin/bridge/accounts/{center_account_id}`、`/wunder/admin/bridge/routes`、`/wunder/admin/bridge/routes/{route_id}`、`/wunder/admin/bridge/delivery_logs`。

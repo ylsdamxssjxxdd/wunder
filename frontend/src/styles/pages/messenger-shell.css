@@ -1526,6 +1526,9 @@ button.messenger-sidebar-workspace-row {
 }
 
 .messenger-sidebar-footer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   flex-shrink: 0;
   /* 4px 上气口 + 32px 行 + 4px 下气口，与树里的行同高同留白。 */
   padding: 4px var(--mz-sidebar-padding);
@@ -1537,7 +1540,8 @@ button.messenger-sidebar-workspace-row {
   align-items: center;
   gap: var(--mz-row-gap);
   box-sizing: border-box;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   height: var(--mz-settings-btn-height);
   margin: 0;
   padding: 0 var(--mz-row-padding);
@@ -1548,6 +1552,42 @@ button.messenger-sidebar-workspace-row {
   font: inherit;
   font-size: var(--mz-font-md);
   cursor: pointer;
+}
+
+/* 设置按钮右侧的系统消息入口：未读时显示圆点。 */
+.messenger-sidebar-announcement {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: var(--mz-settings-btn-height);
+  height: var(--mz-settings-btn-height);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--mz-row-radius);
+  color: var(--mz-text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: var(--mz-font-md);
+  cursor: pointer;
+}
+
+.messenger-sidebar-announcement:hover {
+  color: var(--mz-primary);
+  background: var(--mz-hover);
+}
+
+.messenger-sidebar-announcement-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mz-danger, #d04a43);
 }
 
 /* 按钮上的当前用户名：溢出省略，保持与参考主页面一致的单行形态。 */

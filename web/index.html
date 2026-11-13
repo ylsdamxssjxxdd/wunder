@@ -52,6 +52,10 @@
                 <i class="fa-solid fa-gear"></i>
                 <span data-i18n="panel.settings">系统设置</span>
               </button>
+              <button id="navAnnouncement" class="nav-btn">
+                <i class="fa-solid fa-bell"></i>
+                <span data-i18n="panel.announcement">系统消息</span>
+              </button>
               <button id="navOrgUnits" class="nav-btn">
                 <i class="fa-solid fa-sitemap"></i>
                 <span data-i18n="panel.orgUnits">单位管理</span>
@@ -2066,6 +2070,62 @@
                 </div>
                 <div class="settings-hint" data-i18n="settings.hint.firecrawl">
                   These settings only control Wunder's Firecrawl connection; they do not start or stop the Docker service.
+                </div>
+              </div>
+            </div>
+          </div>
+        </section><section id="announcementPanel" class="panel">
+          <div class="list-header">
+            <h1 data-i18n="announcement.title">系统消息</h1>
+            <div class="header-actions">
+              <button id="announcementRefreshBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-arrows-rotate"></i>
+                <span data-i18n="common.refresh">刷新</span>
+              </button>
+              <button id="announcementSaveBtn" class="btn-with-icon" type="button">
+                <i class="fa-solid fa-paper-plane"></i>
+                <span data-i18n="announcement.action.save">保存并推送</span>
+              </button>
+            </div>
+          </div>
+          <div class="tips" data-i18n="announcement.tip">
+            编辑并推送面向全体用户的消息：用户上线时自动弹出，确认后同一版本不再弹出，保存新内容后再次弹出。
+          </div>
+          <div class="settings-layout">
+            <div class="settings-card">
+              <div class="settings-card-title">
+                <i class="fa-solid fa-bell"></i>
+                <span data-i18n="announcement.card.compose">消息内容</span>
+                <span id="announcementStatusBadge" class="settings-badge"></span>
+              </div>
+              <div class="settings-card-body">
+                <div class="form-row">
+                  <label for="announcementTitle" data-i18n="announcement.label.title">标题</label>
+                  <input
+                    id="announcementTitle"
+                    type="text"
+                    maxlength="100"
+                    data-i18n-placeholder="announcement.placeholder.title"
+                    placeholder="系统消息"
+                  />
+                </div>
+                <div class="form-row">
+                  <label for="announcementContent" data-i18n="announcement.label.content">正文</label>
+                  <textarea
+                    id="announcementContent"
+                    rows="7"
+                    maxlength="4000"
+                    data-i18n-placeholder="announcement.placeholder.content"
+                    placeholder="输入要推送给用户的消息…"
+                  ></textarea>
+                </div>
+                <label class="checkbox-row">
+                  <input id="announcementEnabled" type="checkbox" />
+                  <span data-i18n="announcement.label.enabled">上线时推送给用户</span>
+                </label>
+                <div id="announcementStatus" class="settings-field-hint"></div>
+                <div class="settings-hint" data-i18n="announcement.hint">
+                  保存新内容后会生成新版本；已确认过旧版本的用户会再次收到提示。
                 </div>
               </div>
             </div>
@@ -4805,6 +4865,6 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20261110-01"></script>
+    <script type="module" src="./app.js?v=20261113-01"></script>
   </body>
 </html>

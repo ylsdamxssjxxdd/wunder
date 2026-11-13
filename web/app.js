@@ -11,7 +11,7 @@ import {
 
 } from "./app.config.js?v=20260215-01";
 
-import { elements } from "./modules/elements.js?v=20261016-01";
+import { elements } from "./modules/elements.js?v=20261113-01";
 
 import { state } from "./modules/state.js";
 
@@ -64,6 +64,10 @@ import { initKnowledgePanel, loadKnowledgeConfig } from "./modules/knowledge.js?
 import { initLlmPanel, loadLlmConfig } from "./modules/llm.js?v=20261110-01";
 
 import { initSettingsPanel, loadAdminDefaults } from "./modules/settings.js?v=20260602-01";
+import {
+  initAnnouncementPanel,
+  loadAnnouncementPanel,
+} from "./modules/announcement.js?v=20261113-01";
 import { initUpdatesPanel, loadUpdatesPanel } from "./modules/updates.js?v=20261101-01";
 
 import { initApiDocsPanel } from "./modules/api-docs.js?v=20260215-01";
@@ -76,7 +80,7 @@ import {
 } from "./modules/multimodal-debug.js?v=20261011-01";
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20261017-04";
 
-import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20261015-06";
+import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20261113-01";
 import { initWunderModelPanel, toggleWunderModelPanel } from "./modules/wunder-model.js?v=20261108-01";
 
 
@@ -157,6 +161,8 @@ const panelMap = {
   llm: { panel: elements.llmPanel, nav: elements.navLlm },
 
   settings: { panel: elements.settingsPanel, nav: elements.navSettings },
+
+  announcement: { panel: elements.announcementPanel, nav: elements.navAnnouncement },
 
   updates: { panel: elements.updatesPanel, nav: elements.navUpdates },
 
@@ -754,6 +760,11 @@ const bindNavigation = () => {
 
   elements.navSettings.addEventListener("click", () => switchPanel("settings"));
 
+  elements.navAnnouncement.addEventListener("click", async () => {
+    switchPanel("announcement");
+    await loadAnnouncementPanel();
+  });
+
   if (elements.navBuiltin) {
     elements.navBuiltin.addEventListener("click", openBuiltinPanel);
   }
@@ -1099,6 +1110,7 @@ const bootstrap = async () => {
   initMultimodalDebugPanel();
 
   initSettingsPanel();
+  initAnnouncementPanel();
   initUpdatesPanel();
   initApiDocsPanel();
   bindNavigation();
