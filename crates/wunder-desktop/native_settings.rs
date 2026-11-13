@@ -39,7 +39,8 @@ pub struct ModelRecord {
     pub asr_response_format: String,
     pub asr_temperature: String,
     pub asr_prompt: String,
-    pub image_size: String,
+    pub image_default_size: String,
+    pub image_max_size: String,
     pub image_output_format: String,
     pub image_steps: String,
     pub image_guidance_scale: String,
@@ -137,7 +138,8 @@ pub struct ModelEdit<'a> {
     pub asr_response_format: &'a str,
     pub asr_temperature: &'a str,
     pub asr_prompt: &'a str,
-    pub image_size: &'a str,
+    pub image_default_size: &'a str,
+    pub image_max_size: &'a str,
     pub image_output_format: &'a str,
     pub image_steps: &'a str,
     pub image_guidance_scale: &'a str,
@@ -540,7 +542,8 @@ impl NativeDesktop {
             optional_choice(edit.asr_response_format, "返回格式", &ASR_FORMATS)?;
         let asr_temperature = parse_f32(edit.asr_temperature, "识别 temperature", 0.0, 2.0)?;
         let asr_prompt = optional_text(edit.asr_prompt, 4096)?;
-        let image_size = optional_text(edit.image_size, 64)?;
+        let image_default_size = optional_text(edit.image_default_size, 64)?;
+        let image_max_size = optional_text(edit.image_max_size, 64)?;
         let image_output_format =
             optional_choice(edit.image_output_format, "输出格式", &IMAGE_FORMATS)?;
         let image_steps = parse_u32_range(edit.image_steps, "采样步数", 1, 200)?;
@@ -613,7 +616,8 @@ impl NativeDesktop {
             entry.asr_response_format = asr_response_format.clone();
             entry.asr_temperature = asr_temperature;
             entry.asr_prompt = asr_prompt.clone();
-            entry.image_size = image_size.clone();
+            entry.image_default_size = image_default_size.clone();
+            entry.image_max_size = image_max_size.clone();
             entry.image_output_format = image_output_format.clone();
             entry.image_num_inference_steps = image_steps;
             entry.image_guidance_scale = image_guidance_scale;
@@ -1288,7 +1292,8 @@ fn project(
                 asr_response_format: optional_string(value.asr_response_format.as_deref()),
                 asr_temperature: value.asr_temperature.map(format_number).unwrap_or_default(),
                 asr_prompt: optional_string(value.asr_prompt.as_deref()),
-                image_size: optional_string(value.image_size.as_deref()),
+                image_default_size: optional_string(value.image_default_size.as_deref()),
+                image_max_size: optional_string(value.image_max_size.as_deref()),
                 image_output_format: optional_string(value.image_output_format.as_deref()),
                 image_steps: value
                     .image_num_inference_steps

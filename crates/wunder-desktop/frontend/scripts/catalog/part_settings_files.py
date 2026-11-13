@@ -208,8 +208,10 @@ ENTRIES = [
     ("st_param_tts_format", "音频格式", "Audio format"),
     ("st_param_tts_speed", "语速", "Speed"),
     ("st_param_tts_instructions", "语音风格", "Voice style"),
-    ("st_param_image_size", "图片尺寸", "Image size"),
-    ("st_param_image_size_hint", "例如：1024x1024", "e.g. 1024x1024"),
+    ("st_param_image_default_size", "默认尺寸", "Default size"),
+    ("st_param_image_default_size_hint", "文生图默认，留空 1024x1024", "Text-to-image default; empty uses 1024x1024"),
+    ("st_param_image_max_size", "最大尺寸", "Max size"),
+    ("st_param_image_max_size_hint", "宽或高超出则退回默认尺寸", "Wider or taller requests use the default size"),
     ("st_param_image_format", "输出格式", "Output format"),
     ("st_param_image_steps", "采样步数", "Sampling steps"),
     ("st_param_image_guidance", "引导系数", "Guidance scale"),
@@ -346,6 +348,7 @@ ENTRIES = [
     # ---- status dock (plan capsule above the goal banner) ----
     ("dock_steps", "步骤", "Steps"),
     ("dock_plan_title", "计划", "Plan"),
+    ("dock_plan_done", "已完成", "Done"),
     # runtime_status.slint classifies the runtime's Chinese phrases by prefix,
     # so those phrases need a catalog entry even though no widget labels with
     # them any more (the plan capsule is the only dock left).

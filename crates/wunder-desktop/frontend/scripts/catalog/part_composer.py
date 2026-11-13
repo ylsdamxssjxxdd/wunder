@@ -68,6 +68,7 @@ ENTRIES = [
     ("cp_queue_interjected", "已插话", "Interjected"),
     ("cp_queue_edit_hint", "撤下并回填输入框", "Withdraw and refill the input"),
     ("cp_queue_remove_hint", "撤下这条排队轮次", "Withdraw this queued turn"),
+    ("cp_queue_remove_waiting_hint", "撤下这条等待发送的消息", "Withdraw this waiting message"),
     ("cp_queue_more", "还有 {} 条未显示", "{} more not shown", ["count"]),
     ("cp_queue_attachment_only", "仅附件", "Attachment only"),
     ("cp_queue_attachments", "附件 {}", "{} attachment(s)", ["count"]),

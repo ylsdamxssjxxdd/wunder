@@ -52,7 +52,6 @@ mod session_tool;
 mod session_tool_access;
 mod session_tool_args;
 mod session_tool_support;
-pub(crate) mod sessions_yield_tool;
 pub(crate) mod skill_call;
 mod specification;
 mod str_replace_editor_tool;

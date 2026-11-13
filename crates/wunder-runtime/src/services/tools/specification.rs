@@ -367,9 +367,7 @@ fn tool_profile(name: &str) -> ToolProfile {
             ToolProfile::Media
         }
         "桌面控制" | "手机控制" => ToolProfile::Desktop,
-        "goal" | "会话线程控制" | "会话让出" | "定时任务" => {
-            ToolProfile::Runtime
-        }
+        "goal" | "会话线程控制" | "定时任务" => ToolProfile::Runtime,
         "browser" => ToolProfile::Research,
         _ => ToolProfile::Dynamic,
     }

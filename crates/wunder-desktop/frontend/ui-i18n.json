@@ -511,6 +511,11 @@
   "en": "Archive"
  },
  {
+  "key": "sb_thread_archive_hint",
+  "zh": "线程正在运行或已被其他实例占用，无法归档",
+  "en": "A running thread, or one owned by another instance, cannot be archived"
+ },
+ {
   "key": "sb_thread_trajectory",
   "zh": "轨迹视图",
   "en": "Trajectory view"
@@ -1657,6 +1662,11 @@
   "en": "Withdraw this queued turn"
  },
  {
+  "key": "cp_queue_remove_waiting_hint",
+  "zh": "撤下这条等待发送的消息",
+  "en": "Withdraw this waiting message"
+ },
+ {
   "key": "cp_queue_more",
   "zh": "还有 {} 条未显示",
   "en": "{} more not shown",
@@ -2425,11 +2435,6 @@
   "en": "Shows total usage by default; click a day to switch the heatmap date"
  },
  {
-  "key": "epv_yield",
-  "zh": "会话让出",
-  "en": "Session yield"
- },
- {
   "key": "epv_greet_long",
   "zh": "你好，我可以帮助你整理资料、分析数据和完成日常任务。",
   "en": "Hi, I can help organize materials, analyze data and handle daily tasks."
@@ -2543,11 +2548,6 @@
   "key": "epv_export_result",
   "zh": "结果导出",
   "en": "Result export"
- },
- {
-  "key": "epv_yield_desc",
-  "zh": "让出当前回合控制权，并可附带一条简短说明。",
-  "en": "Yield the current turn, optionally with a short note."
  },
  {
   "key": "epv_memory_mgmt",
@@ -5585,14 +5585,24 @@
   "en": "Voice style"
  },
  {
-  "key": "st_param_image_size",
-  "zh": "图片尺寸",
-  "en": "Image size"
+  "key": "st_param_image_default_size",
+  "zh": "默认尺寸",
+  "en": "Default size"
  },
  {
-  "key": "st_param_image_size_hint",
-  "zh": "例如：1024x1024",
-  "en": "e.g. 1024x1024"
+  "key": "st_param_image_default_size_hint",
+  "zh": "文生图默认，留空 1024x1024",
+  "en": "Text-to-image default; empty uses 1024x1024"
+ },
+ {
+  "key": "st_param_image_max_size",
+  "zh": "最大尺寸",
+  "en": "Max size"
+ },
+ {
+  "key": "st_param_image_max_size_hint",
+  "zh": "宽或高超出则退回默认尺寸",
+  "en": "Wider or taller requests use the default size"
  },
  {
   "key": "st_param_image_format",
@@ -6191,6 +6201,11 @@
   "key": "dock_plan_title",
   "zh": "计划",
   "en": "Plan"
+ },
+ {
+  "key": "dock_plan_done",
+  "zh": "已完成",
+  "en": "Done"
  },
  {
   "key": "runtime_status_await",

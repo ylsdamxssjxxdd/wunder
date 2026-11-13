@@ -90,7 +90,7 @@ Every interface error uses the same structure: it marks the failure and carries 
 | --- | --- | --- |
 | Shows compacting or queued | Normal processing | Wait |
 | `slow_client` or `resume_recommended` appears | The subscription was uncoupled to protect the stream | Rebuild the projection through the catch-up endpoints |
-| Judged "user busy" | That task thread is still executing (the session lock is held) | Queue, or yield/cancel that thread |
+| Judged "user busy" | That task thread is still executing (the session lock is held) | Queue, or cancel that thread |
 | Stopped after the same tool failed repeatedly | Fingerprint circuit breaking has tripped | Change the parameters or the path; resubmitting is useless |
 | Reports an output error | The one-time recovery has been used up | Change the model configuration or rephrase |
 | Reports insufficient quota | The admission-stage deduction did not pass | See [Quota and Token Usage](/docs/en/concepts/quota-and-token-usage/) |

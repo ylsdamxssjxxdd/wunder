@@ -17,10 +17,6 @@ pub struct AbilityVisual {
 const TOOL_RULES: &[(&[&str], &str)] = &[
     (&["用户世界工具", "user_world", "user world"], "earth-asia"),
     (
-        &["会话让出", "sessions_yield", "session yield", "yield"],
-        "share-from-square",
-    ),
-    (
         &["桌面控制", "desktop_control", "desktop control"],
         "computer-mouse",
     ),
@@ -212,11 +208,6 @@ const ABILITY_RULES: &[(&[&str], &str, &str)] = &[
         &["用户世界工具", "user_world", "user world"],
         "earth-asia",
         "general",
-    ),
-    (
-        &["会话让出", "sessions_yield", "session yield", "yield"],
-        "share-from-square",
-        "automation",
     ),
     (&["桌面控制"], "computer-mouse", "general"),
     (

@@ -77,7 +77,6 @@ Canonical tool names are mostly Chinese (what the model sees), each with English
 | :--- | :--- | :--- | :--- |
 | 计划面板 | `update_plan` | Push a structured task plan panel to the frontend | Wrap-up & frontend |
 | 问询面板 | `question_panel` | Show structured options, ask the user, and wait for a choice | Wrap-up & frontend |
-| 会话让出 | `sessions_yield` | Yield the current turn's control and be woken later | Wrap-up & frontend |
 | 列出文件 | `list_files` | List directory contents | Workspace & code |
 | 文件名匹配 | `glob` | Find file paths by glob pattern | Workspace & code |
 | 搜索内容 | `search_content` | Search file contents by regex | Workspace & code |
@@ -85,7 +84,7 @@ Canonical tool names are mostly Chinese (what the model sees), each with English
 | 写入文件 | `write_file` | Write or overwrite a file | Workspace & code |
 | 文本编辑 | `edit` / `edit_file` | Exact replacement / patch / subcommand modes (`apply_patch` merged in) | Workspace & code |
 | 执行命令 | `execute_command` | Run shell / system commands | Workspace & code |
-| 命令会话 | `command_session` | Manage long-lived background command sessions with foreground/background switching | Workspace & code |
+| 命令会话 | `command_session` | Read background command output, write stdin, or interrupt | Workspace & code |
 | 技能调用 | `skill_call` | Read a skill's body and run its scripts | Workspace & code |
 | 网页抓取 | `web_fetch` | Fetch and parse web page content (requires enabling) | Web |
 | 浏览器 | `browser` | One strict action tool for navigation, observation, interaction, waits, and screenshots | Web |

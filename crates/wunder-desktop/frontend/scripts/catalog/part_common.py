@@ -7,6 +7,7 @@ ENTRIES = [
     ("sb_thread_select_all", "全选", "Select all"),
     ("sb_thread_selected", "已选 {} 项", "{} selected", ["count"]),
     ("sb_thread_archive", "归档", "Archive"),
+    ("sb_thread_archive_hint", "线程正在运行或已被其他实例占用，无法归档", "A running thread, or one owned by another instance, cannot be archived"),
     ("sb_thread_trajectory", "轨迹视图", "Trajectory view"),
     ("sb_thread_split_view", "分裂视图", "Split view"),
     ("sb_last_finished", "最后完成", "Last finished"),

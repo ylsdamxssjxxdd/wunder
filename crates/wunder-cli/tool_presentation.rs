@@ -376,7 +376,6 @@ fn classify(name: &str) -> Option<ToolPresentation> {
         "会话线程控制" | "线程控制" => {
             call(ToolAccess::Delegate, "会话线程控制", "Thread control")
         }
-        "会话让出" => call(ToolAccess::Delegate, "让出会话", "Yield session"),
         // Panels, schedules and self-reporting: no target file, no output stream.
         "计划面板" => call(ToolAccess::Other, "更新计划", "Update plan"),
         "问询面板" => call(ToolAccess::Other, "问询", "Ask"),
@@ -444,12 +443,6 @@ mod tests {
             ToolAccess::Delegate,
             "会话线程控制",
             "Thread control",
-        ),
-        (
-            "会话让出",
-            ToolAccess::Delegate,
-            "让出会话",
-            "Yield session",
         ),
         ("计划面板", ToolAccess::Other, "更新计划", "Update plan"),
         ("问询面板", ToolAccess::Other, "问询", "Ask"),
@@ -539,7 +532,6 @@ mod tests {
             ("subagent_control", "子智能体控制"),
             ("thread_control", "会话线程控制"),
             ("session_thread", "会话线程控制"),
-            ("sessions_yield", "会话让出"),
             ("memory_manager", "记忆管理"),
             ("update_plan", "计划面板"),
             ("ask_panel", "问询面板"),

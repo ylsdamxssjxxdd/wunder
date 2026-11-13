@@ -321,7 +321,6 @@ fn enforce_tool_result_transport_guard(result: &mut ToolResultPayload) -> Option
                 "workspace_version",
                 "workspace_changed",
                 "workspace_changed_paths",
-                "turn_control",
                 "parallel_execution",
             ],
             &mut remaining,
@@ -1746,7 +1745,7 @@ mod tests {
                 "results": [{"returncode": 9, "command_session_id": "command-1", "status": "completed", "stdout": "large"}],
                 "content": [{"type":"image", "attachment":{"path":"artifacts/frame.png", "bytes":64}}],
             },
-            "meta": {"turn_control":{"kind":"yield", "message":"Waiting"}, "workspace_version":8},
+            "meta": {"workspace_version":8},
         }));
         assert!(enforce_tool_result_transport_guard(&mut result).is_some());
         assert_eq!(result.data["next_cursor"], cursor);
@@ -1758,10 +1757,6 @@ mod tests {
             "artifacts/frame.png"
         );
         assert_eq!(result.meta.as_ref().unwrap()["exit_code"], 9);
-        assert_eq!(
-            result.meta.as_ref().unwrap()["turn_control"]["kind"],
-            "yield"
-        );
         assert!(result.data["recovery_hint"]
             .as_str()
             .unwrap()

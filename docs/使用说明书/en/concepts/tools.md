@@ -30,7 +30,7 @@ Two points are easy to get wrong:
 | Not registered | The name is not in the canonical-name / alias table, and no matching MCP, skill, or knowledge base exists |
 | Temporarily withdrawn | Web search: the code is still there but it is invisible in every case |
 | Not in the capability selection layer | The administrator has not selected that capability for this agent |
-| Filtered by form | Desktop mode hides target-management actions and session thread control / session yield |
+| Filtered by form | Desktop mode hides target-management actions and session thread control |
 | Filtered by a capability threshold | Without vision, image reading and desktop tools are filtered out; the multimodal set needs a matching model; web fetching / browser need configuration enabled first |
 | Name short-circuited | When an alias and a skill share a name, the earlier route matches first |
 
@@ -88,9 +88,8 @@ The text protocol's lark syntax is currently reserved for the patch form of text
 
 | Status | Item |
 | --- | --- |
-| Removed | `ptc`, user-world tools, channel tools, `a2a_*` tools, `final_response`, `a2ui` tools, LSP query / node-call tools, and the standalone sleep-and-wait tool |
+| Removed | `ptc`, user-world tools, channel tools, `a2a_*` tools, `final_response`, `a2ui` tools, LSP query / node-call tools, the standalone sleep-and-wait tool, and session yield |
 | Merged | `apply_patch` merged into **text editing** (one tool with three forms: replace / patch / subcommand) |
-| Semantics changed | Session yield replaces the old sleep-and-wait |
 | Temporarily withdrawn | Web search (code kept, invisible) |
 
 ## Limits

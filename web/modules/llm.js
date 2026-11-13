@@ -603,7 +603,8 @@ const normalizeLlmConfig = (raw) => {
       typeof raw?.asr_temperature === "number" && !Number.isNaN(raw.asr_temperature)
         ? raw.asr_temperature
         : 0,
-    image_size: raw?.image_size || "",
+    image_default_size: raw?.image_default_size || raw?.image_size || "",
+    image_max_size: raw?.image_max_size || "",
     image_output_format: normalizeImageOutputFormat(raw?.image_output_format),
     image_negative_prompt: raw?.image_negative_prompt || "",
     image_num_inference_steps:
@@ -767,7 +768,8 @@ const clearLlmForm = () => {
   if (elements.llmAsrPrompt) elements.llmAsrPrompt.value = "";
   if (elements.llmAsrResponseFormat) elements.llmAsrResponseFormat.value = "json";
   if (elements.llmAsrTemperature) elements.llmAsrTemperature.value = formatFloatForInput(0, 0);
-  if (elements.llmImageSize) elements.llmImageSize.value = "";
+  if (elements.llmImageDefaultSize) elements.llmImageDefaultSize.value = "";
+  if (elements.llmImageMaxSize) elements.llmImageMaxSize.value = "";
   if (elements.llmImageOutputFormat) elements.llmImageOutputFormat.value = "";
   if (elements.llmImageSteps) elements.llmImageSteps.value = "";
   if (elements.llmImageGuidanceScale) elements.llmImageGuidanceScale.value = "";
@@ -910,7 +912,10 @@ const applyLlmConfigToForm = (name, config) => {
   if (elements.llmAsrTemperature) {
     elements.llmAsrTemperature.value = formatFloatForInput(llm.asr_temperature ?? 0, 0);
   }
-  if (elements.llmImageSize) elements.llmImageSize.value = llm.image_size || "";
+  if (elements.llmImageDefaultSize) {
+    elements.llmImageDefaultSize.value = llm.image_default_size || "";
+  }
+  if (elements.llmImageMaxSize) elements.llmImageMaxSize.value = llm.image_max_size || "";
   if (elements.llmImageOutputFormat) {
     elements.llmImageOutputFormat.value = normalizeImageOutputFormat(llm.image_output_format);
   }
@@ -1167,7 +1172,8 @@ const buildLlmConfigFromForm = (baseConfig) => {
   if (modelType === "image") {
     return {
       ...commonConfig,
-      image_size: elements.llmImageSize?.value.trim() || undefined,
+      image_default_size: elements.llmImageDefaultSize?.value.trim() || undefined,
+      image_max_size: elements.llmImageMaxSize?.value.trim() || undefined,
       image_output_format:
         normalizeImageOutputFormat(elements.llmImageOutputFormat?.value) || undefined,
       image_negative_prompt: elements.llmImageNegativePrompt?.value.trim() || undefined,
@@ -1258,7 +1264,8 @@ const buildLlmConfigForPayload = (rawConfig) => {
   if (commonConfig.model_type === "image") {
     return {
       ...commonConfig,
-      image_size: config.image_size || undefined,
+      image_default_size: config.image_default_size || undefined,
+      image_max_size: config.image_max_size || undefined,
       image_output_format: config.image_output_format || undefined,
       image_negative_prompt: config.image_negative_prompt || undefined,
       image_num_inference_steps:

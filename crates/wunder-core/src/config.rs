@@ -819,8 +819,13 @@ pub struct LlmModelConfig {
     pub asr_response_format: Option<String>,
     #[serde(default)]
     pub asr_temperature: Option<f32>,
+    /// 文生图的默认输出尺寸；请求尺寸超过 `image_max_size` 时也回退到这里。
+    /// 旧配置的单尺寸字段迁移为默认尺寸。
+    #[serde(default, alias = "image_size")]
+    pub image_default_size: Option<String>,
+    /// 允许的请求尺寸上限，宽或高超出即整张回退到默认尺寸。
     #[serde(default)]
-    pub image_size: Option<String>,
+    pub image_max_size: Option<String>,
     #[serde(default)]
     pub image_response_format: Option<String>,
     #[serde(default)]
@@ -3022,6 +3027,16 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::fs;
+
+    #[test]
+    fn legacy_image_size_migrates_to_default_size() {
+        let model: LlmModelConfig = serde_json::from_value(serde_json::json!({
+            "image_size": "768x512"
+        }))
+        .expect("legacy image size");
+        assert_eq!(model.image_default_size.as_deref(), Some("768x512"));
+        assert!(model.image_max_size.is_none());
+    }
 
     #[test]
     fn a_model_without_a_usable_window_uses_the_default() {

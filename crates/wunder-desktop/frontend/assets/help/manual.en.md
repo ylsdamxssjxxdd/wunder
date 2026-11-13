@@ -395,7 +395,7 @@ Parent–child round references are encoded as ` user\_round ` + ` model\_round 
 
 The task definition is persisted in storage, and a background loop claims work by due time, independent of which session you happen to be viewing. Every run is recorded (` /wunder/cron/runs `): whether it ran, whether it succeeded, and when it will run next; failures come with backoff and auto-disable; and a process restart does not lose the task definitions.
 
-This differs from waiting inside a session: yielding in a session only affects the current thread, whereas a scheduled task creates a new run in the future.
+This differs from waiting inside a session: a scheduled task creates a new run in the future and does not occupy the current thread's turn.
 
 ## Schedule kinds
 
@@ -602,7 +602,7 @@ A single user can hold several task threads at once, and scheduling, locks, and 
 
 ## Concurrency control
 
-- The **engine-level session queue** is enabled by default, with ` 会话让出 ` as the way to yield.
+- The **engine-level session queue** is enabled by default: sending a message while a turn is running queues it for in-order execution.
 
 - A **session lock** has a TTL of 120 seconds with heartbeat renewal; when its holder exits abnormally, the TTL releases it.
 
@@ -704,7 +704,7 @@ When failures with the same fingerprint repeat, the circuit breaker trips: non-r
 | Shows "compacting" or "queued" | Normal processing | Wait |
 | Stopped after the same tool failed repeatedly | The circuit breaker has tripped | Change parameters or take another path; resubmitting unchanged is useless |
 | Reports an output error | Automatic recovery is exhausted | Change the model configuration or rephrase |
-| Judged "user busy" | That task thread is still executing | Send again later, or yield/cancel the thread |
+| Judged "user busy" | That task thread is still executing | Send again later, or cancel the thread |
 | UI and backend state disagree | The projection lags behind | Refresh or restart; if it still disagrees, use [Reset](topic:desktop-ui) |
 
 <!-- topic id="core-multi-user-management" block="capabilities" title="Multi-user Management" group="Core Capabilities" keywords="multi-tenancy,account,quota,permission" -->
@@ -796,7 +796,6 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | --- | --- | --- | --- |
 | 计划面板 | ` update\_plan ` | 向前端推送结构化的任务计划面板 | 收尾与前端协同|
 | 问询面板 | ` question\_panel ` | 弹出结构化选项，向用户提问并等待选择 | 收尾与前端协同|
-| 会话让出 | ` sessions\_yield ` | 主动让出当前回合控制权，稍后再被唤起 | 收尾与前端协同|
 | 列出文件 | ` list\_files ` | 列出目录内容 | 工作区与代码|
 | 文件名匹配 | ` glob ` | 按通配模式查找文件路径 | 工作区与代码|
 | 搜索内容 | ` search\_content ` | 在文件中按正则搜索匹配内容 | 工作区与代码|
@@ -804,7 +803,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | 写入文件 | ` write\_file ` | 写入或整体覆盖文件 | 工作区与代码|
 | 文本编辑 | ` edit ` / ` edit\_file ` | 精确替换 / 补丁 / 子命令三形态（` apply\_patch ` 已并入） | 工作区与代码|
 | 执行命令 | ` execute\_command ` | 执行 Shell / 系统命令 | 工作区与代码|
-| 命令会话 | ` command\_session ` | 管理后台长驻命令会话，支持前后台切换 | 工作区与代码|
+| 命令会话 | ` command\_session ` | 读取后台命令会话输出、写入 stdin 或中断 | 工作区与代码|
 | 技能调用 | ` skill\_call ` | 读取技能正文并执行技能脚本 | 工作区与代码|
 | 网页抓取 | ` web\_fetch ` | 抓取并解析网页正文（需启用配置） | Web|
 | 浏览器 | ` browser ` | 单一严格 action 工具，覆盖导航、观察、交互、等待与截图 | Web|
@@ -842,7 +841,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 
 | Category | Pages|
 | --- | --- |
-| Turn finishing and frontend coordination | Plan Panel / Question Panel / Sessions Yield: Plan Panel / Question Panel / Sessions Yield|
+| Turn finishing and frontend coordination | Plan Panel / Question Panel: Plan Panel / Question Panel|
 | Workspace and code | List files / file name match / search content / read file / write file / text edit: Workspace Files; execute command / command session: Execute Command; skill call: Skill Call|
 | Web | Web fetch: Web Fetch; browser: Browser Tools|
 | Multimodal | Read image: Read Image; generate image / generate video / generate speech / transcribe speech: canonical names ` 图像生成 ` / ` 视频生成 ` / ` 语音生成 ` / ` 声转文 `, aliases ` generate\_image ` / ` generate\_video ` / ` generate\_speech ` / ` transcribe\_speech `; no dedicated page in this section|
@@ -855,7 +854,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 
 Most built-in tools return the same shell on success: whether it succeeded, the action name, a state, a one-line summary, and a data area that carries the business result. Read the business result from the data area first. Some tools add one more line telling you what to do next.
 
-Common states include: completed, dry run only, accepted, running, yielded, awaiting input, partially complete, timed out, and no change. A timeout does not always mean a permanent failure.
+Common states include: completed, dry run only, accepted, running, awaiting input, partially complete, timed out, and no change. A timeout does not always mean a permanent failure.
 
 Failures use the same shell: an error line, a readable reason and fix hint, and data that helps with diagnosis.
 

@@ -1,18 +1,17 @@
 ---
-title: Plan Panel / Question Panel / Sessions Yield
-summary: Aliases of the three interaction-control tools, their argument limits and normalized spellings, the replacement and turn-ending semantics that apply at call time, and their item caps.
-updated_at: 2026-11-12
+title: Plan Panel / Question Panel
+summary: Aliases of the two interaction-control tools, their argument limits and normalized spellings, and the replacement and turn-ending semantics that apply at call time.
+updated_at: 2026-11-13
 ---
 
-The three tools belong to the same interaction-control family. None of them produces a business side effect; they only change what the frontend shows or how the current turn ends.
+The two tools belong to the same interaction-control family. Neither produces a business side effect; they only change what the frontend shows or how the current turn ends.
 
 | Canonical name | Aliases |
 | --- | --- |
 | `计划面板` | `update_plan` |
 | `问询面板` | `question_panel`, `ask_panel` |
-| `会话让出` | `sessions_yield`, `yield` |
 
-The standalone "sleep and wait" tool has also been deleted, and waiting semantics are now carried by `会话让出`.
+The standalone "sleep and wait" tool has also been deleted; use [Schedule Task](/docs/en/tools/schedule-task/) for delayed or periodic work.
 
 ## Plan Panel
 
@@ -44,21 +43,13 @@ More than 4 questions keeps only the first 4; a question with no options is drop
 
 The panel is sent in a "stay open" form, and the turn ends there: the closing text tells the user to answer in the panel, and the stop reason is recorded as the question panel: opening the panel ends the turn and waits for the user's next message.
 
-## Sessions Yield
-
-Use it when the turn has nothing left to do but you want to state explicitly that you are yielding and waiting for an external event, rather than hard-coding a closing line. It is not a substitute for a final reply, nor a timer. Waking on schedule is handled by [Schedule Task](/docs/en/tools/schedule-task/).
-
-You can give one line of yield note to tell the user the current state; leaving it empty uses the default waiting text. The result state is "yielded", the turn's answer is set to that note, and the stop reason is recorded as a yield.
-
-In desktop mode (Desktop) `会话让出` is listed as a hidden tool and is not exposed to the agent.
-
 ## Errors
 
-All three use the shared failure shell. The most common failures are argument validation: an empty plan in the Plan Panel, no usable options in the Question Panel, and parse errors from a malformed argument structure.
+Both use the shared failure shell. The most common failures are argument validation: an empty plan in the Plan Panel, no usable options in the Question Panel, and parse errors from a malformed argument structure.
 
 ## Boundaries
 
 - Panels neither authenticate nor approve: they only handle presentation and turn control, and have nothing to do with the approval tier for writing files or running commands.
 - The results of the plan and the question are deliberately thin, to save context; do not stuff detailed content into the note for the model to read back.
-- When the frontend stream drops, panel events may not render, but the turn-ending semantics still take effect: after a question or a yield, do not expect the same turn to continue.
+- When the frontend stream drops, panel events may not render, but the turn-ending semantics still take effect: after a question, do not expect the same turn to continue.
 - Limits: at most 12 plan items, at most 4 questions, and at most 4 options per question; anything beyond is rejected or trimmed.

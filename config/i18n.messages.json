@@ -891,10 +891,6 @@
     "en-US": "Please choose a route from the inquiry panel, or send a message to continue.",
     "zh-CN": "请在问询面板选择路线，或直接发送消息继续。"
   },
-  "response.sessions_yield_waiting": {
-    "en-US": "Background sub-agents are continuing. I will resume automatically when new results arrive.",
-    "zh-CN": "后台子智能体正在继续执行；有新的结果后我会自动恢复。"
-  },
   "sandbox.error.image_missing": {
     "en-US": "Sandbox image is not configured; cannot execute tool.",
     "zh-CN": "沙盒镜像未配置，无法执行工具。"
@@ -2844,8 +2840,8 @@
     "zh-CN": "本地视觉媒体路径，可使用工作区相对路径或允许的绝对路径。"
   },
   "tool.spec.read_image.description": {
-    "en-US": "Read a local image, GIF, or video into the current model context; not a web image-search tool. The default view is auto-fitted for the model (long side <=2048px, ~2500 patches); use crop=x,y,w,h plus scale to inspect original-resolution details. stats returns region numbers (mean luma, non-background/edge pixel ratios); stats_only returns numbers without pixels. Videos use frame_rate to extract frames. Images stay in context across rounds; re-read the path only when you need the pixels again (e.g. after compaction). To edit or retouch this image, pass its path to the image generation tool as input_path.",
-    "zh-CN": "读取本地图片、GIF 或视频并送入当前模型上下文，不是联网看图工具。默认视图会自动压到适合模型的尺寸（长边 ≤2048px、约 2500 个 32px patch）；要看清原尺寸小字细节，用 crop=x,y,w,h 指定区域再配合 scale 放大。stats 附带区域平均亮度、非背景/边缘像素占比等数值，stats_only 只返回数值不回图。视频用 frame_rate 抽帧。图像随上下文保留，不必每轮重读；确实需要再看像素时（如压缩清退后）再按路径重读。需要修改或修图（换背景、去杂物、降噪、增强清晰度等）时，把这张图的路径交给图像生成工具的 input_path。"
+    "en-US": "Read a local image, GIF, or video into the current model context; not a web image-search tool. The default view is auto-fitted for the model (long side <=2048px, ~2500 patches); use crop=x,y,w,h plus scale to inspect original-resolution details. stats returns region numbers (mean luma, non-background/edge pixel ratios); stats_only returns numbers without pixels. Videos use frame_rate to extract frames. Images stay in context across rounds; re-read the path only when you need the pixels again (e.g. after compaction). To edit or retouch this image, pass its path to the image generation tool as input_path; for clarity enhancement keep the source dimensions and do not pass size.",
+    "zh-CN": "读取本地图片、GIF 或视频并送入当前模型上下文，不是联网看图工具。默认视图会自动压到适合模型的尺寸（长边 ≤2048px、约 2500 个 32px patch）；要看清原尺寸小字细节，用 crop=x,y,w,h 指定区域再配合 scale 放大。stats 附带区域平均亮度、非背景/边缘像素占比等数值，stats_only 只返回数值不回图。视频用 frame_rate 抽帧。图像随上下文保留，不必每轮重读；确实需要再看像素时（如压缩清退后）再按路径重读。需要修改或修图（换背景、去杂物、降噪、增强清晰度等）时，把这张图的路径交给图像生成工具的 input_path；高清化保持原图尺寸，不要传 size。"
   },
   "tool.spec.read_image.args.crop": {
     "en-US": "Optional still-image crop in source pixels: \"x,y,w,h\". Applied before scale; stats are computed on this region.",
@@ -2964,8 +2960,8 @@
     "zh-CN": "可选，源音频的 MIME 类型覆盖值。"
   },
   "tool.spec.generate_image.description": {
-    "en-US": "Generate a new raster image, or edit an existing workspace image: replace the background, inpaint, remove watermarks or objects, denoise, sharpen, outpaint, or restyle. Prefer this tool whenever the user asks to retouch, edit, clean up, or beautify a photo, instead of falling back to code or external software. For edits, pass the source image path as input_path, describe only the change in prompt, and add mask_path for local edits. Do not use it for charts, diagrams, formulas, or reproducible data graphics; create those with code such as Python/matplotlib.",
-    "zh-CN": "生成新图，或修改工作区中已有的图片：换背景、局部重绘、去水印/去杂物、降噪、提升清晰度、扩图、风格化等。用户提出修图、改图、清杂质、美化照片等需求时优先使用本工具，不要改用代码或外部软件。编辑时把原图路径传给 input_path，prompt 只写要改的地方，局部修改再配 mask_path。不要用它做图表、示意图、公式图或可复现的数据图，这类任务改用 Python/matplotlib 等代码生成。"
+    "en-US": "Generate a new raster image, or edit an existing workspace image: replace the background, inpaint, remove watermarks or objects, denoise, sharpen, outpaint, or restyle. Prefer this tool whenever the user asks to retouch, edit, clean up, or beautify a photo, instead of falling back to code or external software. For edits, pass the source image path as input_path, describe only the change in prompt, and add mask_path for local edits. Enhancing clarity or making an image HD is not upscaling: do not pass size and do not enlarge the image; keep the source dimensions and let the model restore blurry details, noise, and compression artifacts. Do not use it for charts, diagrams, formulas, or reproducible data graphics; create those with code such as Python/matplotlib.",
+    "zh-CN": "生成新图，或修改工作区中已有的图片：换背景、局部重绘、去水印/去杂物、降噪、提升清晰度、扩图、风格化等。用户提出修图、改图、清杂质、美化照片等需求时优先使用本工具，不要改用代码或外部软件。编辑时把原图路径传给 input_path，prompt 只写要改的地方，局部修改再配 mask_path。提升清晰度/高清化不是放大尺寸：不要传 size、不要放大图片，保持原图宽高，只让模型修复模糊、噪点与压缩痕迹。不要用它做图表、示意图、公式图或可复现的数据图，这类任务改用 Python/matplotlib 等代码生成。"
   },
   "tool.spec.generate_image.args.prompt": {
     "en-US": "Prompt. For text-to-image, describe the target image. For edits, describe only the change, e.g. 'replace the background with a night scene' or 'remove the person at the bottom right'; do not re-describe the whole image.",
@@ -2980,8 +2976,8 @@
     "zh-CN": "可选，图像生成模型配置名；留空使用默认图像生成模型。"
   },
   "tool.spec.generate_image.args.size": {
-    "en-US": "Optional output size, such as 1024x1024. For some providers such as vllm-omni / Z-Image, use sizes whose width and height are both divisible by 16, for example 1344x768 or 1920x1088.",
-    "zh-CN": "可选，输出尺寸，如 1024x1024。对于 vllm-omni / Z-Image 这类提供方，请使用宽高都能被 16 整除的尺寸，例如 1344x768 或 1920x1088。"
+    "en-US": "Optional output size, such as 1024x1024. For text-to-image, leaving it empty uses the configured default size; requests above the configured maximum fall back to that default. For edits, retouching, and clarity enhancement, omit it to keep the source dimensions instead of scaling. For some providers such as vllm-omni / Z-Image, use sizes whose width and height are both divisible by 16 and stay within the maximum size, for example 768x512 or 1024x1024.",
+    "zh-CN": "可选，输出尺寸，如 1024x1024。文生图留空时使用配置的默认尺寸；超过配置的最大尺寸时自动退回默认尺寸。修图、高清化、增强清晰度时不要传该参数，保持原图尺寸，不要放大。对于 vllm-omni / Z-Image 这类提供方，请使用宽高都能被 16 整除且不超过最大尺寸的尺寸，例如 768x512 或 1024x1024。"
   },
   "tool.spec.generate_image.args.output_format": {
     "en-US": "Optional output image format preference.",
@@ -3004,8 +3000,8 @@
     "zh-CN": "可选，随机种子。"
   },
   "tool.spec.generate_image.args.input_path": {
-    "en-US": "Optional workspace image path to edit. Supplying it enters image-to-image/edit mode (also used for retouching such as background replacement, object removal, denoise, or sharpening); omit it for text-to-image. Pass the path returned by a previous result to keep iterating on the same image.",
-    "zh-CN": "可选，要修改的工作区图片路径。填写后进入图生图/编辑模式（换背景、去杂物、降噪、增强清晰度等修图需求也走这里）；不填则为文生图。可把上一次结果返回的 path 再次传入，连续改同一张图。"
+    "en-US": "Optional workspace image path to edit. Supplying it enters image-to-image/edit mode (also used for retouching such as background replacement, object removal, denoise, or sharpening); omit it for text-to-image. For clarity enhancement, keep the source dimensions and do not pass size. Pass the path returned by a previous result to keep iterating on the same image.",
+    "zh-CN": "可选，要修改的工作区图片路径。填写后进入图生图/编辑模式（换背景、去杂物、降噪、增强清晰度等修图需求也走这里）；不填则为文生图。高清化/增强清晰度时保持原图尺寸，不要传 size。可把上一次结果返回的 path 再次传入，连续改同一张图。"
   },
   "tool.spec.generate_image.args.input_paths": {
     "en-US": "Optional list of workspace image paths for multi-image editing or reference composition. Use input_path for single-image edits.",
@@ -3272,8 +3268,8 @@
     "zh-CN": "可选。等待回复的秒数（0 表示只发送不等待）。"
   },
   "tool.spec.sessions_spawn.description": {
-    "en-US": "Spawn a sub-agent session and run a task. For background work, prefer returning immediately and yielding the parent turn instead of polling in place.",
-    "zh-CN": "创建子智能体会话并执行任务。对于后台任务，优先立即返回并让出父会话，而不是原地轮询等待。"
+    "en-US": "Spawn a sub-agent session and run a task. For background work, return immediately; completion auto-wakes the parent thread, or use wait/status when you need the result in this turn.",
+    "zh-CN": "创建子智能体会话并执行任务。后台任务可立即返回，完成后会自动唤醒父线程；需要在当前轮次拿到结果时用 wait/status。"
   },
   "tool.spec.sessions_spawn.args.task": {
     "en-US": "Initial task or first prompt for the sub-agent. spawn dispatches this task immediately; prefer task here instead of sending the same message again in a follow-up send call.",
@@ -3298,14 +3294,6 @@
   "tool.spec.sessions_spawn.args.cleanup": {
     "en-US": "Optional. Cleanup policy after completion (keep/delete).",
     "zh-CN": "可选。完成后的清理策略（keep/delete）。"
-  },
-  "tool.spec.sessions_yield.description": {
-    "en-US": "Yield control of the current turn, optionally with a short note. It is not a final answer; it only means the current step is pausing or waiting.",
-    "zh-CN": "让出当前回合控制权，可附带一句简短说明。它不是最终回复，只表示当前步骤暂停或等待。"
-  },
-  "tool.spec.sessions_yield.args.message": {
-    "en-US": "Optional. Short user-facing message shown before the turn yields.",
-    "zh-CN": "可选。本轮让出前向用户显示的一句简短提示。"
   },
   "tool.spec.thread_control.description": {
     "en-US": "Manage conversation threads. Common flow: list/info to inspect, create to open, switch/back to move, archive/restore for lifecycle.",

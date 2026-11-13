@@ -338,7 +338,7 @@ const syncImageParamsFromModel = () => {
     elements.multimodalDebugImageNegativePrompt.value = negativePrompt;
   }
   // Sync size
-  const size = config?.image_size ?? "";
+  const size = config?.image_default_size ?? config?.image_size ?? "";
   if (elements.multimodalDebugImageSize) {
     elements.multimodalDebugImageSize.value = size;
   }

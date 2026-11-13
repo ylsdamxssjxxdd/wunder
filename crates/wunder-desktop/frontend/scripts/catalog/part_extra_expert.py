@@ -26,7 +26,6 @@ ENTRIES = [
     ("ed_duration", "运行时长", "Run duration"),
     ("ed_trend_hint", "默认显示累计消耗，点击趋势图中的某一天可切换工具调用热力图日期", "Shows total usage by default; click a day to switch the heatmap date"),
     # expert_preview.slint
-    ("epv_yield", "会话让出", "Session yield"),
     ("epv_greet_long", "你好，我可以帮助你整理资料、分析数据和完成日常任务。", "Hi, I can help organize materials, analyze data and handle daily tasks."),
     ("epv_greet_short", "你好，我可以帮助你整理资料。", "Hi, I can help organize materials."),
     ("epv_system_sample", "你是一个乐于助人的智能体～", "You are a helpful agent."),
@@ -50,7 +49,6 @@ ENTRIES = [
     ("epv_sample_memory", "示例记忆", "Sample memory"),
     ("epv_sample_greeting", "示例问候语", "Sample greeting"),
     ("epv_export_result", "结果导出", "Result export"),
-    ("epv_yield_desc", "让出当前回合控制权，并可附带一条简短说明。", "Yield the current turn, optionally with a short note."),
     ("epv_memory_mgmt", "记忆管理", "Memory management"),
     ("epv_knowledge_search", "资料检索", "Knowledge search"),
     ("epv_final_reply_desc", "返回给用户的最终回复，包含文件和报告等产出。", "The final reply to the user, including files and reports."),

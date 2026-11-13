@@ -58,13 +58,10 @@ const MUTATION_HINTS: &[&str] = &[
 ];
 /// 少数无法用通用启发式安全合成的工具：它们照常进入随机池，但调用时不按 schema 随机
 /// 取参，而是发出一条**固定的无害调用内容**（以规范名或原始名精确匹配，大小写不敏感）。
-/// 覆盖三类：回合/用户可见控制（会话让出、问询面板）、真实机器控制与付费生成（桌面控制、
+/// 覆盖三类：用户可见控制（问询面板）、真实机器控制与付费生成（桌面控制、
 /// 图像/视频/语音生成）、已单独提供入口的目标与子智能体工具。固定参数不消耗随机数；凡
 /// 会落地文件的固定调用，产物一律写入工作区 `temp/`。
 const FIXED_ARGS: &[(&str, &str)] = &[
-    // 回合控制：不实际让出，只发一条可忽略的提示文本。
-    ("会话让出", r#"{"message":"__virtual_sim__"}"#),
-    ("sessions_yield", r#"{"message":"__virtual_sim__"}"#),
     // 用户可见问询：固定文案，供人工一键选择，不携带任何真实业务参数。
     (
         "问询面板",
@@ -746,16 +743,12 @@ mod tests {
             json!({"type":"function","function":{"name":"读取文件","parameters":json!({"type":"object"})}}),
             json!({"type":"function","function":{"name":"写入文件","parameters":json!({"type":"object"})}}),
             json!({"type":"function","function":{"name":"执行命令","parameters":json!({"type":"object"})}}),
-            json!({"type":"function","function":{"name":"会话让出","parameters":json!({"type":"object"})}}),
             json!({"type":"function","function":{"name":"桌面控制","parameters":json!({"type":"object"})}}),
         ];
         let summaries = tool_summaries(Some(&tools));
         let names: Vec<&str> = summaries.iter().map(|(name, _)| name.as_str()).collect();
         // 全部工具都进入随机池，不再有“永不调用”的排除项。
-        assert_eq!(
-            names,
-            vec!["读取文件", "写入文件", "执行命令", "会话让出", "桌面控制"]
-        );
+        assert_eq!(names, vec!["读取文件", "写入文件", "执行命令", "桌面控制"]);
         assert!(tool_summaries(None).is_empty());
     }
 
@@ -856,18 +849,6 @@ mod tests {
 
     #[test]
     fn fixed_arguments_are_harmless_and_land_under_workspace_temp() {
-        // 会话让出：固定为可忽略的提示文本，不实际让出。
-        let yield_args = fixed_arguments("会话让出", "会话让出").expect("yield fixed args");
-        assert_eq!(
-            yield_args.get("message").and_then(Value::as_str),
-            Some("__virtual_sim__")
-        );
-        // 英文别名命中同一份固定内容。
-        assert_eq!(
-            fixed_arguments("sessions_yield", "sessions_yield"),
-            Some(yield_args)
-        );
-
         // 有文件落地的固定参数一律指向工作区 temp/。
         for (zh, en) in [
             ("语音生成", "generate_speech"),

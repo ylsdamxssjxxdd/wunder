@@ -483,7 +483,6 @@ export global I18n {
     out property <string> ed_replicate: zh ? "记忆复刻" : "Memory replication";
     out property <string> ed_duration: zh ? "运行时长" : "Run duration";
     out property <string> ed_trend_hint: zh ? "默认显示累计消耗，点击趋势图中的某一天可切换工具调用热力图日期" : "Shows total usage by default; click a day to switch the heatmap date";
-    out property <string> epv_yield: zh ? "会话让出" : "Session yield";
     out property <string> epv_greet_long: zh ? "你好，我可以帮助你整理资料、分析数据和完成日常任务。" : "Hi, I can help organize materials, analyze data and handle daily tasks.";
     out property <string> epv_greet_short: zh ? "你好，我可以帮助你整理资料。" : "Hi, I can help organize materials.";
     out property <string> epv_system_sample: zh ? "你是一个乐于助人的智能体～" : "You are a helpful agent.";
@@ -507,7 +506,6 @@ export global I18n {
     out property <string> epv_sample_memory: zh ? "示例记忆" : "Sample memory";
     out property <string> epv_sample_greeting: zh ? "示例问候语" : "Sample greeting";
     out property <string> epv_export_result: zh ? "结果导出" : "Result export";
-    out property <string> epv_yield_desc: zh ? "让出当前回合控制权，并可附带一条简短说明。" : "Yield the current turn, optionally with a short note.";
     out property <string> epv_memory_mgmt: zh ? "记忆管理" : "Memory management";
     out property <string> epv_knowledge_search: zh ? "资料检索" : "Knowledge search";
     out property <string> epv_final_reply_desc: zh ? "返回给用户的最终回复，包含文件和报告等产出。" : "The final reply to the user, including files and reports.";
@@ -1112,8 +1110,10 @@ export global I18n {
     out property <string> st_param_tts_format: zh ? "音频格式" : "Audio format";
     out property <string> st_param_tts_speed: zh ? "语速" : "Speed";
     out property <string> st_param_tts_instructions: zh ? "语音风格" : "Voice style";
-    out property <string> st_param_image_size: zh ? "图片尺寸" : "Image size";
-    out property <string> st_param_image_size_hint: zh ? "例如：1024x1024" : "e.g. 1024x1024";
+    out property <string> st_param_image_default_size: zh ? "默认尺寸" : "Default size";
+    out property <string> st_param_image_default_size_hint: zh ? "文生图默认，留空 1024x1024" : "Text-to-image default; empty uses 1024x1024";
+    out property <string> st_param_image_max_size: zh ? "最大尺寸" : "Max size";
+    out property <string> st_param_image_max_size_hint: zh ? "宽或高超出则退回默认尺寸" : "Wider or taller requests use the default size";
     out property <string> st_param_image_format: zh ? "输出格式" : "Output format";
     out property <string> st_param_image_steps: zh ? "采样步数" : "Sampling steps";
     out property <string> st_param_image_guidance: zh ? "引导系数" : "Guidance scale";
@@ -1233,7 +1233,6 @@ export global I18n {
     out property <string> st_cl_queue_suffix: zh ? " 人" : " ahead";
     out property <string> dock_steps: zh ? "步骤" : "Steps";
     out property <string> dock_plan_title: zh ? "计划" : "Plan";
-    // 计划全部完成后的胶囊文案：条目打钩停住，不再跟着新一轮转。
     out property <string> dock_plan_done: zh ? "已完成" : "Done";
     out property <string> runtime_status_await: zh ? "模型响应中" : "Waiting for the model";
     out property <string> runtime_status_queue: zh ? "模型请求正在排队" : "Model request queued";

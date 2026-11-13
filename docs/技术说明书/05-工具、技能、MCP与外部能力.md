@@ -24,11 +24,10 @@
 | --- | --- | --- |
 | `计划面板` | `update_plan` | 更新任务计划与步骤状态，仅展示无副作用 |
 | `问询面板` | `question_panel` / `ask_panel` | 向用户发起多题问询，执行后停轮 |
-| `会话让出` | `sessions_yield` / `yield` | 让出当前会话等待外部恢复 |
 | `定时任务` | `schedule_task` | 管理 cron / at / every 定时任务 |
 | `记忆管理` | `memory_manager` / `memory_manage` | 长期记忆条目读写 |
 | `执行命令` | `execute_command` | 执行 shell 命令 |
-| `命令会话` | `command_session` / `write_command_stdin` | 长驻命令会话轮询与 stdin 写入 |
+| `命令会话` | `command_session` / `write_command_stdin` | 长驻命令会话轮询、stdin 写入与中断 |
 | `列出文件` | `list_files` | 工作区目录列举 |
 | `glob` | — | 文件名与路径模式匹配 |
 | `搜索内容` | `search_content` | 关键字 / 正则内容搜索 |
@@ -93,7 +92,7 @@ services/tools/dispatch.rs:27  真正分发到实现
 | 常量 | 位置 | 内容 | 语义 |
 | --- | --- | --- | --- |
 | `DEFAULT_BUILTIN_TOOL_NAMES` | `:4-18` | `定时任务`、`记忆管理`、`执行命令`、`命令会话`、`列出文件`、`glob`、`搜索内容`、`读取文件`、`网页抓取`、`技能调用`、`写入文件`、`文本编辑` | 新建智能体的初始勾选集合；另带默认技能 `技能创建器`、`公文写作`、`文稿校对`、`3D网页` |
-| `DESKTOP_HIDDEN_TOOL_NAMES` | `:23-29` | `goal`、`会话线程控制`、`会话让出` | 桌面端不可选也不默认启用；goal 工具由运行时按会话自动注入 |
+| `DESKTOP_HIDDEN_TOOL_NAMES` | `:23-29` | `goal`、`会话线程控制` | 桌面端不可选也不默认启用；goal 工具由运行时按会话自动注入 |
 | `DESKTOP_EXTRA_TOOL_NAMES` | `:32-34` | `读图工具`、`桌面控制`、`子智能体控制` | 桌面端额外默认启用 |
 | `TEMPORARILY_HIDDEN_TOOL_NAMES` | `:75` 附近 | `网页搜索` | **临时下架，不是已移除** |
 
@@ -303,7 +302,7 @@ services/tools/dispatch.rs:27  真正分发到实现
 ## 12. 已删除与已合并
 
 - 已合并：`apply_patch` 并入 `文本编辑`（一个工具三形态，`catalog.rs:1219-1226`）。
-- 已删除（无 dispatch 分支，工具文档应移除）：用户世界工具、渠道工具、`a2a_*`、`final_response`、`a2ui`、LSP 查询/节点调用工具、独立的「休眠等待」工具（现在由 `会话让出` 承担）。
+- 已删除（无 dispatch 分支，工具文档应移除）：用户世界工具、渠道工具、`a2a_*`、`final_response`、`a2ui`、LSP 查询/节点调用工具、独立的「休眠等待」工具与「会话让出」。
 - 未实现：**A2A 互操作**。`grep -rniE "a2a|agent2agent" crates/ --include=*.rs` 零命中，管理端仅残留读不到后端数据的幽灵文案。对外集成面是「外部工作流 `/wunder/external/workflow*` + MCP 端点 + 渠道 webhook」，不要写 A2A。
 - 蜂群编排已从引擎与调度面移除，协作形态只剩子智能体；前端标签与兼容垫片仍在（`docs/技术说明书/02-仓库结构与模块职责.md` 记了残留清单）。
 

@@ -4432,9 +4432,14 @@ component ModelEditorPage inherits Rectangle {
                     if root.draft.model-type == "image" : VerticalLayout {
                         spacing: 0px;
                         FormField {
-                            label: I18n.st_param_image_size;
-                            placeholder: I18n.st_param_image_size_hint;
-                            text <=> root.draft.image-size;
+                            label: I18n.st_param_image_default_size;
+                            placeholder: I18n.st_param_image_default_size_hint;
+                            text <=> root.draft.image-default-size;
+                        }
+                        FormField {
+                            label: I18n.st_param_image_max_size;
+                            placeholder: I18n.st_param_image_max_size_hint;
+                            text <=> root.draft.image-max-size;
                         }
                         SettingRow {
                             label: I18n.st_param_image_format;

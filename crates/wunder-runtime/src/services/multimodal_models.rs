@@ -26,6 +26,7 @@ const DEFAULT_TTS_RESPONSE_FORMAT: &str = "wav";
 const DEFAULT_TTS_TIMEOUT_S: u64 = 120;
 const DEFAULT_IMAGE_TIMEOUT_S: u64 = 300;
 const DEFAULT_VIDEO_TIMEOUT_S: u64 = 1800;
+pub const DEFAULT_IMAGE_SIZE: &str = "1024x1024";
 const WHISPER_CPP_PROVIDER: &str = "whisper_cpp";
 const WHISPER_CPP_INFERENCE_PATH: &str = "/inference";
 const FFMPEG_BIN_ENV: &str = "WUNDER_FFMPEG_BIN";
@@ -995,6 +996,56 @@ fn summarize_raw_provider_error(body: &str) -> String {
         .unwrap_or_else(|| trimmed.to_string())
 }
 
+/// 解析真正发给上游的图片尺寸。
+///
+/// - 未传尺寸：文生图用配置的默认尺寸，修图返回 `None`（由调用方保留原图尺寸）；
+/// - 显式尺寸超过配置上限：整张回退到默认尺寸，而不是截断到上限（截断会悄悄
+///   改变构图比例）；
+/// - 无法解析的尺寸（如 `auto`）原样透传。
+pub fn resolve_requested_image_size(
+    config: &LlmModelConfig,
+    requested: Option<&str>,
+    preserve_source_size: bool,
+) -> Option<String> {
+    let default_size =
+        configured_image_size(config.image_default_size.as_deref()).unwrap_or(DEFAULT_IMAGE_SIZE);
+    let Some(requested) = requested.map(str::trim).filter(|value| !value.is_empty()) else {
+        return if preserve_source_size {
+            None
+        } else {
+            Some(default_size.to_string())
+        };
+    };
+    let max_size =
+        configured_image_size(config.image_max_size.as_deref()).unwrap_or(DEFAULT_IMAGE_SIZE);
+    if exceeds_image_size(requested, max_size) {
+        return Some(default_size.to_string());
+    }
+    Some(requested.to_string())
+}
+
+fn configured_image_size(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn exceeds_image_size(requested: &str, max_size: &str) -> bool {
+    let Some((width, height)) = parse_image_dimensions(requested) else {
+        return false;
+    };
+    let Some((max_width, max_height)) = parse_image_dimensions(max_size) else {
+        return false;
+    };
+    width > max_width || height > max_height
+}
+
+pub(crate) fn parse_image_dimensions(size: &str) -> Option<(u32, u32)> {
+    let cleaned = size.trim().to_ascii_lowercase().replace(' ', "");
+    let (width, height) = cleaned.split_once('x')?;
+    let width = width.parse::<u32>().ok()?;
+    let height = height.parse::<u32>().ok()?;
+    (width > 0 && height > 0).then_some((width, height))
+}
+
 fn build_image_payload(
     config: &LlmModelConfig,
     model: &str,
@@ -1007,13 +1058,7 @@ fn build_image_payload(
         "response_format": "b64_json",
     });
     if let Some(map) = payload.as_object_mut() {
-        if let Some(size) = request
-            .size
-            .as_deref()
-            .or(config.image_size.as_deref())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
+        if let Some(size) = resolve_requested_image_size(config, request.size.as_deref(), false) {
             map.insert("size".to_string(), json!(size));
         }
         if let Some(negative_prompt) = request
@@ -1081,14 +1126,9 @@ fn build_image_edit_form(
             .or(config.image_output_format.as_deref()),
     );
     form = form.text("output_format", output_format);
-    let size = request
-        .size
-        .as_deref()
-        .or(config.image_size.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("auto");
-    form = form.text("size", size.to_string());
+    let size = resolve_requested_image_size(config, request.size.as_deref(), true)
+        .unwrap_or_else(|| "auto".to_string());
+    form = form.text("size", size);
     let image_field = if request.input_images.len() > 1 {
         "image[]"
     } else {
@@ -1785,7 +1825,7 @@ mod tests {
     #[test]
     fn image_payload_forwards_omni_extensions_without_inputs() {
         let mut config = model("image");
-        config.image_size = Some("768x512".to_string());
+        config.image_default_size = Some("768x512".to_string());
         let request = super::ImageGenerationRequest {
             prompt: "draw".to_string(),
             model_name: None,
@@ -1818,6 +1858,75 @@ mod tests {
         assert_eq!(payload["output_compression"], 90);
         assert_eq!(payload["layers"], 4);
         assert_eq!(payload["resolution"], 1024);
+    }
+
+    #[test]
+    fn image_payload_falls_back_when_request_exceeds_max() {
+        let mut config = model("image");
+        config.image_default_size = Some("768x512".to_string());
+        let request = super::ImageGenerationRequest {
+            prompt: "draw".to_string(),
+            model_name: None,
+            size: Some("1536x864".to_string()),
+            output_format: None,
+            negative_prompt: None,
+            num_inference_steps: None,
+            guidance_scale: None,
+            seed: None,
+            input_images: Vec::new(),
+            mask_image: None,
+            reference_image: None,
+            strength: None,
+            true_cfg_scale: None,
+            output_compression: None,
+            layers: None,
+            resolution: None,
+        };
+
+        let payload = build_image_payload(&config, "image-model", &request);
+
+        // 默认上限 1024x1024，1536 宽超限，整张回退默认尺寸。
+        assert_eq!(payload["size"], "768x512");
+    }
+
+    #[test]
+    fn image_size_resolution_uses_default_and_max() {
+        let mut config = model("image");
+        assert_eq!(
+            super::resolve_requested_image_size(&config, None, false).as_deref(),
+            Some("1024x1024")
+        );
+        assert_eq!(
+            super::resolve_requested_image_size(&config, None, true),
+            None
+        );
+        assert_eq!(
+            super::resolve_requested_image_size(&config, Some("768x512"), false).as_deref(),
+            Some("768x512")
+        );
+        // 默认上限 1024x1024：任一维超出即整张回退默认尺寸。
+        assert_eq!(
+            super::resolve_requested_image_size(&config, Some("1536x864"), false).as_deref(),
+            Some("1024x1024")
+        );
+        assert_eq!(
+            super::resolve_requested_image_size(&config, Some("1024x1280"), false).as_deref(),
+            Some("1024x1024")
+        );
+        config.image_default_size = Some("768x512".to_string());
+        config.image_max_size = Some("2048x2048".to_string());
+        assert_eq!(
+            super::resolve_requested_image_size(&config, Some("1536x864"), false).as_deref(),
+            Some("1536x864")
+        );
+        assert_eq!(
+            super::resolve_requested_image_size(&config, Some("4096x864"), false).as_deref(),
+            Some("768x512")
+        );
+        assert_eq!(
+            super::resolve_requested_image_size(&config, Some("auto"), false).as_deref(),
+            Some("auto")
+        );
     }
 
     #[test]

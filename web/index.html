@@ -2986,14 +2986,25 @@
                   <div id="llmImageRows">
                     <div class="grid">
                       <div class="form-row">
-                        <label for="llmImageSize" data-i18n="llm.field.imageSize">图片尺寸</label>
+                        <label for="llmImageDefaultSize" data-i18n="llm.field.imageDefaultSize">默认尺寸</label>
                         <input
-                          id="llmImageSize"
+                          id="llmImageDefaultSize"
                           type="text"
-                          placeholder="例如：1024x1024"
-                          data-i18n-placeholder="llm.placeholder.imageSize"
+                          placeholder="文生图默认，留空 1024x1024"
+                          data-i18n-placeholder="llm.placeholder.imageDefaultSize"
                         />
                       </div>
+                      <div class="form-row">
+                        <label for="llmImageMaxSize" data-i18n="llm.field.imageMaxSize">最大尺寸</label>
+                        <input
+                          id="llmImageMaxSize"
+                          type="text"
+                          placeholder="宽或高超出则退回默认尺寸"
+                          data-i18n-placeholder="llm.placeholder.imageMaxSize"
+                        />
+                      </div>
+                    </div>
+                    <div class="grid">
                       <div class="form-row">
                         <label for="llmImageOutputFormat" data-i18n="llm.field.imageOutputFormat">输出格式</label>
                         <select id="llmImageOutputFormat">
@@ -3003,20 +3014,20 @@
                           <option value="webp">webp</option>
                         </select>
                       </div>
-                    </div>
-                    <div class="grid">
                       <div class="form-row">
                         <label for="llmImageSteps" data-i18n="llm.field.imageSteps">采样步数</label>
                         <input id="llmImageSteps" type="number" min="1" max="200" step="1" value="30" />
                       </div>
+                    </div>
+                    <div class="grid">
                       <div class="form-row">
                         <label for="llmImageGuidanceScale" data-i18n="llm.field.imageGuidanceScale">引导系数</label>
                         <input id="llmImageGuidanceScale" type="number" min="0" max="20" step="0.1" />
                       </div>
-                    </div>
-                    <div class="form-row">
-                      <label for="llmImageNegativePrompt" data-i18n="llm.field.imageNegativePrompt">负向提示词</label>
-                      <textarea id="llmImageNegativePrompt" rows="2"></textarea>
+                      <div class="form-row">
+                        <label for="llmImageNegativePrompt" data-i18n="llm.field.imageNegativePrompt">负向提示词</label>
+                        <textarea id="llmImageNegativePrompt" rows="2"></textarea>
+                      </div>
                     </div>
                   </div>
                   <div id="llmVideoRows">

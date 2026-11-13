@@ -15,7 +15,7 @@ updated_at: 2026-10-16
 
 The task definition is persisted in storage, and a background loop claims work by due time, independent of which session you happen to be viewing. Every run is recorded (`/wunder/cron/runs`): whether it ran, whether it succeeded, and when it will run next; failures come with backoff and auto-disable; and a process restart does not lose the task definitions.
 
-This differs from waiting inside a session: yielding in a session only affects the current thread, whereas a scheduled task creates a new run in the future.
+This differs from waiting inside a session: a scheduled task creates a new run in the future and does not occupy the current thread's turn.
 
 ![Scheduled tasks diagram: scheduling rules enter the scheduler, then dispatch to background execution and execution records](/docs/assets/manual/core-scheduled-tasks.svg)
 

@@ -634,7 +634,8 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> model-asr-format-draft;
     in-out property <string> model-asr-temperature-draft;
     in-out property <string> model-asr-prompt-draft;
-    in-out property <string> model-image-size-draft;
+    in-out property <string> model-image-default-size-draft;
+    in-out property <string> model-image-max-size-draft;
     in-out property <string> model-image-format-draft;
     in-out property <string> model-image-steps-draft;
     in-out property <string> model-image-guidance-draft;
@@ -1657,7 +1658,10 @@ export component SettingsPage inherits Rectangle {
                                                 if root.model-type-draft == "image" : VerticalLayout {
                                                     spacing: 0px;
                                                     HorizontalLayout { spacing: 10px;
-                                                        FormField { horizontal-stretch: 1; label: I18n.st_param_image_size; placeholder: I18n.st_param_image_size_hint; text <=> root.model-image-size-draft; }
+                                                        FormField { horizontal-stretch: 1; label: I18n.st_param_image_default_size; placeholder: I18n.st_param_image_default_size_hint; text <=> root.model-image-default-size-draft; }
+                                                        FormField { horizontal-stretch: 1; label: I18n.st_param_image_max_size; placeholder: I18n.st_param_image_max_size_hint; text <=> root.model-image-max-size-draft; }
+                                                    }
+                                                    HorizontalLayout { spacing: 10px;
                                                         FormCombo {
                                                             horizontal-stretch: 1;
                                                             label: I18n.st_param_image_format;
@@ -1665,12 +1669,12 @@ export component SettingsPage inherits Rectangle {
                                                             values: ["", "png", "jpeg", "webp"];
                                                             value <=> root.model-image-format-draft;
                                                         }
+                                                        FormField { horizontal-stretch: 1; label: I18n.st_param_image_steps; placeholder: "1 - 200"; text <=> root.model-image-steps-draft; }
                                                     }
                                                     HorizontalLayout { spacing: 10px;
-                                                        FormField { horizontal-stretch: 1; label: I18n.st_param_image_steps; placeholder: "1 - 200"; text <=> root.model-image-steps-draft; }
                                                         FormField { horizontal-stretch: 1; label: I18n.st_param_image_guidance; placeholder: "0 - 20"; text <=> root.model-image-guidance-draft; }
+                                                        FormField { horizontal-stretch: 1; label: I18n.st_param_negative; placeholder: I18n.st_param_model_default; text <=> root.model-image-negative-draft; }
                                                     }
-                                                    FormField { label: I18n.st_param_negative; placeholder: I18n.st_param_model_default; text <=> root.model-image-negative-draft; }
                                                 }
                                                 if root.model-type-draft == "video" : VerticalLayout {
                                                     spacing: 0px;

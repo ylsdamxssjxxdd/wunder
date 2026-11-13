@@ -29,7 +29,7 @@ const DEFAULT_SKILL_NAMES: &[&str] = &[
 /// 桌面端不对智能体开放选择的内置工具：goal 由运行时按会话自动注入，
 /// 其余为会话调度等系统级内部工具。桌面模式的
 /// 内置工具集合以此过滤，保持与网页版"管理员未开放即不展示"的语义一致。
-const DESKTOP_HIDDEN_TOOL_NAMES: &[&str] = &["goal", "会话线程控制", "会话让出"];
+const DESKTOP_HIDDEN_TOOL_NAMES: &[&str] = &["goal", "会话线程控制"];
 
 /// 默认选择直接来自内置工具目录；浏览器成员统一投影为可选择的聚合项。
 pub fn default_tool_candidates() -> Vec<String> {

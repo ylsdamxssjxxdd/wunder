@@ -154,13 +154,6 @@ const SURFACE_RULES: &[SurfaceRule] = &[
         drop_fields: &[],
     },
     SurfaceRule {
-        tool: "会话让出",
-        brief_en: "Yield the turn with a short message for the user.",
-        brief_zh: "用一条简短消息结束当前轮次。",
-        drop_actions: &[],
-        drop_fields: &[],
-    },
-    SurfaceRule {
         tool: "定时任务",
         brief_en: "Manage scheduled jobs. add needs message + schedule_text (English or Chinese natural language, or cron); other actions use job_id. session=main injects into the bound thread, isolated starts a fresh child thread; enabled toggles a job; run is async (queued = accepted, not finished).",
         brief_zh: "管理定时任务：add 需 message + schedule_text（支持中文如“每天 09:00”“每 5 分钟”，也支持英文与 cron），其余动作用 job_id；session=main 注入绑定线程、isolated 新建子线程，enabled 控制开关；run 是异步的（queued 仅表示已接收，不要轮询等结果）。",
@@ -254,8 +247,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
         tool: "图像生成",
         // 修图入口必须写进 brief：内置工具的参数说明会被整体裁掉，模型只能
         // 从这里得知“改图传 input_path、prompt 只写改动、mask/strength 可用”。
-        brief_en: "Generate an image from prompt into path, or edit one by passing its path as input_path and describing only the change. Prefer this tool for photo retouching; mask_path marks local edits, strength controls how much changes.",
-        brief_zh: "按 prompt 生成图片写入 path；改图时把原图路径传给 input_path，prompt 只写改动之处，修图优先用本工具。可选 mask_path 标出局部重绘区域，strength 控制改动幅度。",
+        brief_en: "Generate an image from prompt into path, or edit one by passing its path as input_path and describing only the change. Prefer this tool for photo retouching; mask_path marks local edits, strength controls how much changes. Enhancing clarity (HD) is not upscaling: omit size and keep the source dimensions, letting the model restore detail.",
+        brief_zh: "按 prompt 生成图片写入 path；改图时把原图路径传给 input_path，prompt 只写改动之处，修图优先用本工具。可选 mask_path 标出局部重绘区域，strength 控制改动幅度。提升清晰度/高清化不是放大尺寸：不要传 size，保持原图宽高，只让模型修复细节。",
         drop_actions: &[],
         drop_fields: &[
             "guidance_scale",
@@ -641,7 +634,7 @@ mod tests {
                 .expect("image properties");
             // 改图入口和局部重绘参数必须留在模型可见的精简 schema 里，
             // 否则模型只会把它当成文生图工具。
-            for field in ["prompt", "input_path", "mask_path", "strength"] {
+            for field in ["prompt", "input_path", "mask_path", "strength", "size"] {
                 assert!(
                     props.contains_key(field),
                     "{language}: {field} should stay visible to the model"
@@ -652,6 +645,12 @@ mod tests {
                 "修图"
             } else {
                 "retouch"
+            }));
+            // 高清化必须被描述成“保持原尺寸”，否则模型会传超大 size 去放大图片。
+            assert!(projected.description.contains(if language == "zh-CN" {
+                "不要传 size"
+            } else {
+                "omit size"
             }));
         }
     }

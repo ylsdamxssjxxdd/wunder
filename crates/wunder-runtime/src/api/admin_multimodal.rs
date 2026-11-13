@@ -386,19 +386,28 @@ async fn admin_generate_image(
     let workspace_id = state.workspace.scoped_user_id(&resolved.user.user_id, None);
 
     let config = state.config_store.get().await;
-    let selected_model_name =
-        multimodal_models::resolve_image_model(&config, payload.model_name.as_deref())
-            .map(|(name, _)| name)
-            .ok_or_else(|| {
+    let (selected_model_name, selected_model_config) =
+        multimodal_models::resolve_image_model(&config, payload.model_name.as_deref()).ok_or_else(
+            || {
                 error_response(
                     StatusCode::BAD_REQUEST,
                     "image model is not configured".to_string(),
                 )
-            })?;
+            },
+        )?;
     let output_format = normalize_optional_string(payload.output_format.as_deref());
     let negative_prompt = normalize_optional_string(payload.negative_prompt.as_deref());
-    let size = normalize_optional_string(payload.size.as_deref());
     let input_paths = collect_admin_image_input_paths(&payload);
+    let mode = if input_paths.is_empty() {
+        "text_to_image"
+    } else {
+        "image_edit"
+    };
+    let size = multimodal_models::resolve_requested_image_size(
+        &selected_model_config,
+        payload.size.as_deref(),
+        mode == "image_edit",
+    );
     let input_images = load_admin_image_input_files(state.as_ref(), &workspace_id, &input_paths)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -475,7 +484,7 @@ async fn admin_generate_image(
                 "num_inference_steps": payload.num_inference_steps,
                 "guidance_scale": payload.guidance_scale,
                 "seed": payload.seed,
-                "mode": if input_paths.is_empty() { "text_to_image" } else { "image_edit" },
+                "mode": mode,
                 "input_paths": input_paths,
                 "mask_path": normalize_optional_string(payload.mask_path.as_deref()),
                 "reference_path": normalize_optional_string(payload.reference_path.as_deref()),

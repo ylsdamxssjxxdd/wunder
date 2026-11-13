@@ -1,8 +1,8 @@
 use super::mcp_pack;
 use super::{
     android_notifications, android_screen, browser_tool, desktop_control,
-    multimodal_generation_tool, phone_control, read_image_tool,
-    sessions_yield_tool, thread_control_tool, web_fetch_tool, web_search_tool,
+    multimodal_generation_tool, phone_control, read_image_tool, thread_control_tool,
+    web_fetch_tool, web_search_tool,
 };
 use crate::config::Config;
 use crate::core::json_schema::normalize_tool_input_schema;
@@ -395,16 +395,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         ])
                         .closed(),
                 ),
-            ]),
-        },
-        ToolSpec {
-            name: sessions_yield_tool::TOOL_SESSIONS_YIELD.to_string(),
-            title: None,
-            description: t("tool.spec.sessions_yield.description"),
-            input_schema: super::schema::object(vec![
-                super::schema::string("message")
-                    .desc(t("tool.spec.sessions_yield.args.message"))
-                    .optional(),
             ]),
         },
         ToolSpec {
@@ -1198,15 +1188,6 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
 
 pub fn builtin_aliases() -> HashMap<String, String> {
     let mut map = HashMap::new();
-    // 浏览器整组工具在用户侧是一条聚合条目，英文名与管理员侧的组条目同名。
-    map.insert(
-        sessions_yield_tool::TOOL_SESSIONS_YIELD_ALIAS.to_string(),
-        sessions_yield_tool::TOOL_SESSIONS_YIELD.to_string(),
-    );
-    map.insert(
-        sessions_yield_tool::TOOL_SESSIONS_YIELD_ALIAS_ALT.to_string(),
-        sessions_yield_tool::TOOL_SESSIONS_YIELD.to_string(),
-    );
     map.insert("update_plan".to_string(), "计划面板".to_string());
     map.insert("question_panel".to_string(), "问询面板".to_string());
     map.insert("ask_panel".to_string(), "问询面板".to_string());
@@ -1971,9 +1952,6 @@ pub fn resolve_runtime_tool_display_name(config: &Config, runtime_name: &str) ->
 
 fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
     match canonical {
-        sessions_yield_tool::TOOL_SESSIONS_YIELD => {
-            Some(sessions_yield_tool::TOOL_SESSIONS_YIELD_ALIAS)
-        }
         "问询面板" => Some("question_panel"),
         "技能调用" => Some("skill_call"),
         // 合并后以字面替换为主，模型侧优先暴露 `edit`。
@@ -3426,16 +3404,20 @@ mod tests {
                     (description, "优先使用本工具"),
                     (description, "修图"),
                     (description, "input_path"),
+                    (description, "不要传 size"),
                     (prompt, "只描述要改动"),
                     (input_path, "编辑模式"),
+                    (property("size"), "保持原图尺寸"),
                 ]
             } else {
                 &[
                     (description, "Prefer this tool"),
                     (description, "retouch"),
                     (description, "input_path"),
+                    (description, "do not pass size"),
                     (prompt, "describe only the change"),
                     (input_path, "image-to-image/edit"),
+                    (property("size"), "keep the source dimensions"),
                 ]
             };
             for (text, needle) in expected {
@@ -3652,16 +3634,6 @@ mod tests {
     #[test]
     fn simple_builtin_schemas_disallow_extra_model_side_fields() {
         let specs = builtin_tool_specs_with_language("zh-CN");
-
-        let sessions_yield_spec = specs
-            .iter()
-            .find(|spec| spec.name == super::sessions_yield_tool::TOOL_SESSIONS_YIELD)
-            .expect("sessions yield spec");
-        assert!(sessions_yield_spec.description.contains("不是最终回复"));
-        assert_eq!(
-            sessions_yield_spec.input_schema["additionalProperties"].as_bool(),
-            Some(false)
-        );
 
         let schedule_spec = specs
             .iter()

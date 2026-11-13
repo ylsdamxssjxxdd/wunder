@@ -313,13 +313,18 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
                 ));
             }
         };
-    let effective_size = resolve_effective_image_size(&payload, &model_config);
     let input_paths = collect_image_input_paths(&payload);
     let mode = if input_paths.is_empty() {
         "text_to_image"
     } else {
         "image_edit"
     };
+    // 修图未指定尺寸时保持原图尺寸（下游传 auto），高清化不会被悄悄改成默认尺寸。
+    let effective_size = multimodal_models::resolve_requested_image_size(
+        &model_config,
+        payload.size.as_deref(),
+        mode == "image_edit",
+    );
     if let Some(result) =
         validate_image_generation_request(&model_config, effective_size.as_deref(), mode)
     {
@@ -424,14 +429,6 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
     ))
 }
 
-fn resolve_effective_image_size(
-    payload: &GenerateImageArgs,
-    model_config: &LlmModelConfig,
-) -> Option<String> {
-    normalize_optional_string(payload.size.as_deref())
-        .or_else(|| normalize_optional_string(model_config.image_size.as_deref()))
-}
-
 fn validate_image_generation_request(
     model_config: &LlmModelConfig,
     requested_size: Option<&str>,
@@ -445,7 +442,7 @@ fn validate_image_generation_request(
     if size.is_empty() {
         return None;
     }
-    let (width, height) = parse_image_size(size).ok()?;
+    let (width, height) = multimodal_models::parse_image_dimensions(size)?;
     if width % VLLM_OMNI_IMAGE_ALIGNMENT == 0 && height % VLLM_OMNI_IMAGE_ALIGNMENT == 0 {
         return None;
     }
@@ -457,17 +454,6 @@ fn validate_image_generation_request(
     Some(format!(
         "vllm-omni {mode_hint} size `{size}` is invalid: width and height must both be divisible by {VLLM_OMNI_IMAGE_ALIGNMENT}."
     ))
-}
-
-fn parse_image_size(size: &str) -> std::result::Result<(u32, u32), ()> {
-    let cleaned = size.trim().to_ascii_lowercase().replace(' ', "");
-    let (width, height) = cleaned.split_once('x').ok_or(())?;
-    let width = width.parse::<u32>().map_err(|_| ())?;
-    let height = height.parse::<u32>().map_err(|_| ())?;
-    if width == 0 || height == 0 {
-        return Err(());
-    }
-    Ok((width, height))
 }
 
 fn build_image_generation_failure_result(
@@ -541,14 +527,14 @@ fn classify_image_generation_failure(
     }
     if provider == VLLM_OMNI_PROVIDER && lower.contains("divisible by 16") {
         let suggested_size = size
-            .and_then(|value| parse_image_size(value).ok())
+            .and_then(multimodal_models::parse_image_dimensions)
             .map(|(width, height)| suggest_aligned_image_size(width, height));
         let hint = match suggested_size.as_deref() {
             Some(candidate) => format!(
-                "改用宽高都能被 16 整除的尺寸后重试，例如 `{candidate}`、`1024x1024` 或 `1344x768`。"
+                "改用宽高都能被 16 整除且不超过最大尺寸的尺寸后重试，例如 `{candidate}`、`1024x1024` 或 `1344x768`。"
             ),
             None => {
-                "改用宽高都能被 16 整除的尺寸后重试，例如 `1024x1024`、`1344x768` 或 `1920x1088`。"
+                "改用宽高都能被 16 整除且不超过最大尺寸的尺寸后重试，例如 `1024x1024`、`1344x768` 或 `1920x1088`。"
                     .to_string()
             }
         };
@@ -1038,13 +1024,15 @@ fn extension_from_content_type(content_type: &str, fallback: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_image_generation_failure_result, parse_image_size,
-        resolve_reference_audio_path_with_roots, should_resolve_ref_audio_as_path,
-        suggest_aligned_image_size, validate_image_generation_request, GenerateImageArgs,
-        VLLM_OMNI_PROVIDER,
+        build_image_generation_failure_result, resolve_reference_audio_path_with_roots,
+        should_resolve_ref_audio_as_path, suggest_aligned_image_size,
+        validate_image_generation_request, VLLM_OMNI_PROVIDER,
     };
     use crate::config::LlmModelConfig;
     use crate::path_utils::normalize_path_for_compare;
+    use crate::services::multimodal_models::{
+        parse_image_dimensions, resolve_requested_image_size,
+    };
     use crate::storage::SqliteStorage;
     use serde_json::Value;
     use std::collections::HashMap;
@@ -1064,8 +1052,8 @@ mod tests {
 
     #[test]
     fn parse_image_size_accepts_common_format() {
-        assert_eq!(parse_image_size("1920x1080"), Ok((1920, 1080)));
-        assert_eq!(parse_image_size(" 1024 x 1024 "), Ok((1024, 1024)));
+        assert_eq!(parse_image_dimensions("1920x1080"), Some((1920, 1080)));
+        assert_eq!(parse_image_dimensions(" 1024 x 1024 "), Some((1024, 1024)));
     }
 
     #[test]
@@ -1124,40 +1112,22 @@ mod tests {
     }
 
     #[test]
-    fn payload_size_resolution_prefers_request_then_model_default() {
-        let payload = GenerateImageArgs {
-            prompt: "demo".to_string(),
-            path: None,
-            model_name: None,
-            size: Some("1536x864".to_string()),
-            output_format: None,
-            negative_prompt: None,
-            num_inference_steps: None,
-            guidance_scale: None,
-            seed: None,
-            input_path: None,
-            input_paths: None,
-            mask_path: None,
-            reference_path: None,
-            strength: None,
-            true_cfg_scale: None,
-            output_compression: None,
-            layers: None,
-            resolution: None,
-        };
+    fn image_size_resolution_prefers_request_then_default_and_caps_at_max() {
         let mut config = image_model(VLLM_OMNI_PROVIDER);
-        config.image_size = Some("1024x1024".to_string());
+        config.image_default_size = Some("1024x1024".to_string());
+        config.image_max_size = Some("2048x2048".to_string());
         assert_eq!(
-            super::resolve_effective_image_size(&payload, &config).as_deref(),
+            resolve_requested_image_size(&config, Some("1536x864"), false).as_deref(),
             Some("1536x864")
         );
-
-        let payload_without_size = GenerateImageArgs {
-            size: None,
-            ..payload
-        };
         assert_eq!(
-            super::resolve_effective_image_size(&payload_without_size, &config).as_deref(),
+            resolve_requested_image_size(&config, None, false).as_deref(),
+            Some("1024x1024")
+        );
+        // 修图未指定尺寸时保持原图尺寸，交给下游 auto 处理。
+        assert_eq!(resolve_requested_image_size(&config, None, true), None);
+        assert_eq!(
+            resolve_requested_image_size(&config, Some("4096x4096"), false).as_deref(),
             Some("1024x1024")
         );
     }

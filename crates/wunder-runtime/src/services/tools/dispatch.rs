@@ -8,7 +8,6 @@ use super::multimodal_generation_tool;
 use super::panel_tools;
 use super::schedule_task_tool;
 use super::search_content_tool::search_content;
-use super::sessions_yield_tool;
 use super::skill_call;
 use super::{
     android_notifications, android_screen, browser_tool, desktop_control, phone_control,
@@ -118,9 +117,6 @@ pub async fn execute_builtin_tool(
         }
         android_notifications::TOOL_ANDROID_NOTIFICATIONS => {
             android_notifications::tool_android_notifications(context, args).await
-        }
-        sessions_yield_tool::TOOL_SESSIONS_YIELD => {
-            sessions_yield_tool::execute_sessions_yield_tool(context, args).await
         }
         "计划面板" => panel_tools::execute_plan_tool(context, args).await,
         "问询面板" => panel_tools::execute_question_panel_tool(context, args).await,

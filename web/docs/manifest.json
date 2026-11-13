@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-11-12T14:30:46.181035+00:00",
+  "generated_at": "2026-11-13T03:07:36.871112+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is a general-purpose AI workbench: Desktop is the local AI workbench, Android is the Desktop's phone form, Cloud (web) is the cloud AI workbench, CLI is the manual local entry point, and the Server is the user and agent management platform. / wunder 是通用型人工智能工作台：桌面版（desktop）是本地 AI 工作台，安卓版（android）是桌面版的手机形态，云端版（web）是云端 AI 工作台，命令行（cli）是手工本地操作入口，服务端（server）是用户与智能体管理平台。",
@@ -161,8 +161,8 @@
                 "pages": [
                   {
                     "slug": "zh-CN/tools/panels",
-                    "title": "计划面板 / 问询面板 / 会话让出",
-                    "summary": "三个交互控制工具的别名、各自的入参上限与归一写法、操作时生效的替换 / 结束语义，以及它们的两项数上限。",
+                    "title": "计划面板 / 问询面板",
+                    "summary": "两个交互控制工具的别名、各自的入参上限与归一写法，以及操作时生效的替换 / 结束语义。",
                     "url": "/docs/zh-CN/tools/panels/"
                   }
                 ]
@@ -727,8 +727,8 @@
                 "pages": [
                   {
                     "slug": "en/tools/panels",
-                    "title": "Plan Panel / Question Panel / Sessions Yield",
-                    "summary": "Aliases of the three interaction-control tools, their argument limits and normalized spellings, the replacement and turn-ending semantics that apply at call time, and their item caps.",
+                    "title": "Plan Panel / Question Panel",
+                    "summary": "Aliases of the two interaction-control tools, their argument limits and normalized spellings, and the replacement and turn-ending semantics that apply at call time.",
                     "url": "/docs/en/tools/panels/"
                   }
                 ]
@@ -2431,9 +2431,9 @@
     "zh-CN/tools/panels": {
       "slug": "zh-CN/tools/panels",
       "language": "zh-CN",
-      "title": "计划面板 / 问询面板 / 会话让出",
-      "summary": "三个交互控制工具的别名、各自的入参上限与归一写法、操作时生效的替换 / 结束语义，以及它们的两项数上限。",
-      "updated_at": "2026-11-12",
+      "title": "计划面板 / 问询面板",
+      "summary": "两个交互控制工具的别名、各自的入参上限与归一写法，以及操作时生效的替换 / 结束语义。",
+      "updated_at": "2026-11-13",
       "read_when": [],
       "source_docs": [],
       "tab": "工具",
@@ -2446,7 +2446,7 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "计划面板 / 问询面板 / 会话让出"
+          "text": "计划面板 / 问询面板"
         },
         {
           "id": "section-2",
@@ -2461,15 +2461,10 @@
         {
           "id": "section-4",
           "level": 2,
-          "text": "会话让出"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
           "text": "错误与处理"
         },
         {
-          "id": "section-6",
+          "id": "section-5",
           "level": 2,
           "text": "限制"
         }
@@ -6933,9 +6928,9 @@
     "en/tools/panels": {
       "slug": "en/tools/panels",
       "language": "en",
-      "title": "Plan Panel / Question Panel / Sessions Yield",
-      "summary": "Aliases of the three interaction-control tools, their argument limits and normalized spellings, the replacement and turn-ending semantics that apply at call time, and their item caps.",
-      "updated_at": "2026-11-12",
+      "title": "Plan Panel / Question Panel",
+      "summary": "Aliases of the two interaction-control tools, their argument limits and normalized spellings, and the replacement and turn-ending semantics that apply at call time.",
+      "updated_at": "2026-11-13",
       "read_when": [],
       "source_docs": [],
       "tab": "Tools",
@@ -6958,15 +6953,10 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "Sessions Yield"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
           "text": "Errors"
         },
         {
-          "id": "section-5",
+          "id": "section-4",
           "level": 2,
           "text": "Boundaries"
         }

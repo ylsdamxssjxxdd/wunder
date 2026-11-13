@@ -625,9 +625,6 @@ fn build_system_prompt_skeleton(
         let has_subagent_control = allowed_tool_names
             .iter()
             .any(|name| resolve_tool_name(name) == "子智能体控制");
-        let has_sessions_yield = allowed_tool_names
-            .iter()
-            .any(|name| resolve_tool_name(name) == "会话让出");
         let has_phone_control = allowed_tool_names
             .iter()
             .any(|name| resolve_tool_name(name) == "手机控制");
@@ -639,7 +636,6 @@ fn build_system_prompt_skeleton(
             "HAS_SUBAGENT_CONTROL_TOOL".to_string(),
             has_subagent_control,
         );
-        tools_flags.insert("HAS_SESSIONS_YIELD_TOOL".to_string(), has_sessions_yield);
         let tools_template = read_prompt_template_from_scope(
             config,
             template_scope,

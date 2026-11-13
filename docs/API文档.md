@@ -230,7 +230,7 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
 - `batch_spawn` 支持一次派发多个子智能体任务，返回稳定 `dispatch_id`；支持 `strategy=parallel_all|first_success|review_then_merge`，其中 `first_success` 用于对齐 Codex 式的“首个成功即先返回”协作收敛语义，并会在同次等待收敛时默认对未完成兄弟分支执行 `remainingAction=interrupt`。
 - `wait` 现支持 `waitMode=all|any|first_success`：`all` 等待全部目标结束，`any` 在首个目标进入终态后返回，`first_success` 在首个成功出现后返回，否则继续等到全部结束或超时。
 - `batch_spawn/wait` 现支持 `remainingAction=keep|interrupt|close`：用于在 `first_success/any` 这类提前收敛场景下处理尚未结束的兄弟分支；`wait` 默认 `keep`，`batch_spawn.strategy=first_success` 默认 `interrupt`。
-- 新增一级编排工具 `会话让出`（英文别名 `sessions_yield`/`yield`）：用于在成功派发后台子智能体后显式结束当前轮次，并等待子智能体回流结果自动唤醒父线程继续。
+- 新增一级编排工具 `会话让出`（英文别名 `sessions_yield`/`yield`）：用于在成功派发后台子智能体后显式结束当前轮次，并等待子智能体回流结果自动唤醒父线程继续（2026-11-13 已随工具移除；后台子智能体完成后仍自动回流唤醒）。
 - `status/wait` 支持按 `runId/runIds/sessionId/sessionIds/dispatchId/parentId` 查询或等待；未显式传目标时，`status` 默认查询当前会话下最近子会话运行态。
 - `interrupt` 基于 monitor 对目标子会话发起取消；`close/resume` 直接切换子会话 `status=closed|active`，并可通过 `cascade=true` 递归作用到后代子会话。
 - 子智能体批量调度的运行账本统一落在 `session_runs`，新增元数据字段 `dispatch_id/run_kind/requested_by/metadata`；其中 `metadata` 当前包含 `controller_session_id/parent_turn_ref/depth/role/control_scope`，批量任务还会补充 `dispatch_index/dispatch_size/dispatch_label/strategy/completion_mode/remaining_action`，便于批次级聚合、追踪与恢复。
@@ -251,7 +251,7 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
 - 说明：直接调用编排器的管理员运维/评测/内部任务仍可跳过会话锁、额度余额或并发上限；用户侧聊天入口不因管理员身份绕过 `server.max_active_sessions`。
 - 说明：`最终回复`（final_response）工具已移除。当 `tool_names` 显式包含 `a2ui` 时，系统改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
 - 流式异常事件：`error` 事件现在会统一附带 `error_meta`（`category/severity/retryable/retry_after_ms/source_stage/recovery_action`），便于前端与调用方区分“可重试失败”和“需人工修正失败”。
-- 流式终结事件：新增 `turn_terminal`，作为每轮执行的唯一终结语义，`status` 取值包括 `completed/failed/cancelled/rejected`；`final.stop_reason` 现可能为 `yield`，表示模型主动调用 `sessions_yield` 结束本轮并转入后台子智能体续跑；调用方不应再仅靠 `final/error` 自行猜测一轮是否已结束。
+- 流式终结事件：新增 `turn_terminal`，作为每轮执行的唯一终结语义，`status` 取值包括 `completed/failed/cancelled/rejected`；`final.stop_reason` 历史上可能为 `yield`（2026-11-13 起不再产生，`会话让出` 工具已移除）；调用方不应再仅靠 `final/error` 自行猜测一轮是否已结束。
 - 审批闭环事件：新增 `approval_resolved`，表示待审批请求已进入终态；`approval_result` 保持兼容，但新接入方应优先消费 `approval_resolved`。
 - 工具工作流关联语义：`tool_call/tool_output_delta/tool_result/approval_request/approval_result` 现在会尽量附带稳定的 `tool_call_id`；当上游没有原生 call id 时，服务端会补发合成 id，便于前端将命令输出、审批等待与最终结果持续合并到同一张工作流卡片。
 - `execute_command` 实时协议已落地：每条命令拥有独立 `command_session_id/command_index`；生命周期事件与每条命令结果用于拆分子命令工作流条目，在线运行时通过 `command_session_delta` 向客户端推送 stdout/stderr/pty 增量，用于在聊天工具循环内展示小型终端输出区。
@@ -361,7 +361,7 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
   - `skill_call` 结果不再走通用长度裁剪，避免模型因拿不到完整技能正文而反复回读同一个 `SKILL.md`。
 - `读取文件` 的切片读取结果会在 `meta.files[]` 里补充 `hit_eof/range_reaches_eof`，帮助模型判断当前分段是否已触达文件末尾，避免继续请求越界范围；若同文件一次请求了多个离散切片，正文里会增加 `[lines a-b]` 小标题以保持范围边界清晰。
 - 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn|batch_spawn|status|wait|interrupt|close|resume` 统一完成子会话派生、批量调度、状态聚合与生命周期控制。
-- 新增内置工具 `会话让出`（英文别名 `sessions_yield`/`yield`），用于在完成子智能体派发后主动结束当前轮次，向用户返回一句简短提示，并等待后台子智能体完成后自动唤醒父会话继续。
+- 新增内置工具 `会话让出`（英文别名 `sessions_yield`/`yield`），用于在完成子智能体派发后主动结束当前轮次，向用户返回一句简短提示，并等待后台子智能体完成后自动唤醒父会话继续（2026-11-13 已移除）。
 - 新增内置工具 `会话线程控制`（英文别名 `thread_control`/`session_thread`），通过 `action=list|info|create|switch|back|update_title|archive|restore| 控制当前用户的线程树，并可触发 `thread_control` 工作流事件驱动前端同步切换线程。
 - **已移除**：以下 `智能体蜂群`（`agent_swarm` / `swarm_control`）条目随蜂群编排全链路移除，工具不再注册，仅作历史记录；当前协作形态只有 `subagent_control` 子智能体。
 - 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn|batch_send|wait` 管理当前用户“当前智能体以外”的其他智能体。
@@ -373,7 +373,7 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
 - `智能体蜂群` 的动态提示仅注入到工具描述本身，展示“工蜂名称 + 一句话描述”；已冻结线程的 system prompt 不会因工蜂变化而改写。
 - 推荐最短调用路径：`list -> batch_send -> wait -> history/status`（单目标用 `send` 替代 `batch_send`）。
 - `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`；`batch_spawn` 会返回稳定 `dispatch_id` 并把父轮次引用写入每个子任务，便于后续在消息气泡内聚合展示。
-- 推荐的 Codex 风格子智能体调用路径更新为：`subagent_control.spawn/batch_spawn -> sessions_yield -> 子智能体自动回流唤醒 -> status/wait(按需)`；其中 `sessions_yield` 是显式“本轮先结束”的一级原语。
+- 子智能体调用路径：`subagent_control.spawn/batch_spawn -> 子智能体自动回流唤醒 -> status/wait(按需)`；当前轮次需要结果时用 `wait`，后台完成后自动回流唤醒父线程。`sessions_yield` 已随「会话让出」工具移除。
 - `会话线程控制` 的 `create/switch/back/ 可同时更新任务线程绑定；当工具通过流式通道返回 `thread_control` 事件时，云端版会先合并会话摘要，再按 payload 决定是否切换到目标线程。
 - 新增内置工具 `用户世界工具`（英文别名 `user_world`），通过 `action=list_users|send_message` 获取用户列表或发送私信（消息会在用户世界页面可见）。
 - `渠道工具`（英文别名 `channel_tool`）已移除（对智能体与用户不可见）。其历史能力为通过 `action=list_contacts|send_message` 查询渠道可联系对象并向指定渠道对象发送消息（支持工作区文件引用转下载链接后发送）。
@@ -1342,7 +1342,7 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力；配置页只需要连接字段。
   - 说明：`model_type=asr` 表示声转文模型，按 OpenAI 兼容 `/v1/audio/transcriptions` 发起 multipart 转写；额外支持默认 `asr_language/asr_prompt/asr_response_format/asr_temperature`，请求体同名字段可临时覆盖。
   - 说明：`model_type=tts` 表示文转声模型，聊天页语音播放会经 `/wunder/chat/tts` 转发到 OpenAI 兼容 `/v1/audio/speech`；额外支持默认 `tts_voice/tts_instructions/tts_response_format/tts_speed`，请求体同名字段可临时覆盖。
-  - 说明：`model_type=image` 表示图像生成模型，配置层预留 OpenAI 兼容 `/v1/images/generations` 能力；额外支持默认 `image_size/image_output_format/image_negative_prompt/image_num_inference_steps/image_guidance_scale`。
+  - 说明：`model_type=image` 表示图像生成模型，配置层预留 OpenAI 兼容 `/v1/images/generations` 能力；额外支持 `image_default_size`（默认输出尺寸，留空按 1024x1024）与 `image_max_size`（请求上限，宽或高超出时整张退回默认尺寸，留空按 1024x1024），以及 `image_output_format/image_negative_prompt/image_num_inference_steps/image_guidance_scale`。
   - 说明：带原生工具调用的请求默认仍走流式；工具参数会先归一化，再进入工具 schema/admission 校验。参数缺失或格式错误直接作为短工具错误回传模型，不切换非流式，也不触发 provider 重试；真实 provider/网络失败仍按 `llm_stream_retry` 恢复。
   - 说明：`history_compaction_ratio` 默认 `0.9`，达到 `max_context * ratio` 后会优先触发预压缩。
   - 说明：当前压缩策略已对齐 Codex，不再支持 `history_compaction_reset`。压缩后统一提交 `replacement_history`，其主体为首尾归一化交互窗口与一条 `[上下文摘要]` 消息，不再依赖前后锚点与 reset mode；运行中压缩还会为当前轮追加临时 `user` 续跑指令，但该指令不会写入 `replacement_history`。压缩摘要会输出 `resume_action=final|continue|retry|ask_user`，用于指导当前轮续跑。

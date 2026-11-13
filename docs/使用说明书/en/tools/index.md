@@ -12,7 +12,6 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | :--- | :--- | :--- | :--- |
 | 计划面板 | `update_plan` | 向前端推送结构化的任务计划面板 | 收尾与前端协同 |
 | 问询面板 | `question_panel` | 弹出结构化选项，向用户提问并等待选择 | 收尾与前端协同 |
-| 会话让出 | `sessions_yield` | 主动让出当前回合控制权，稍后再被唤起 | 收尾与前端协同 |
 | 列出文件 | `list_files` | 列出目录内容 | 工作区与代码 |
 | 文件名匹配 | `glob` | 按通配模式查找文件路径 | 工作区与代码 |
 | 搜索内容 | `search_content` | 在文件中按正则搜索匹配内容 | 工作区与代码 |
@@ -20,7 +19,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | 写入文件 | `write_file` | 写入或整体覆盖文件 | 工作区与代码 |
 | 文本编辑 | `edit` / `edit_file` | 精确替换 / 补丁 / 子命令三形态（`apply_patch` 已并入） | 工作区与代码 |
 | 执行命令 | `execute_command` | 执行 Shell / 系统命令 | 工作区与代码 |
-| 命令会话 | `command_session` | 管理后台长驻命令会话，支持前后台切换 | 工作区与代码 |
+| 命令会话 | `command_session` | Read background command-session output, write stdin, or interrupt | 工作区与代码 |
 | 技能调用 | `skill_call` | 读取技能正文并执行技能脚本 | 工作区与代码 |
 | 网页抓取 | `web_fetch` | 抓取并解析网页正文（需启用配置） | Web |
 | 浏览器 | `browser` | 单一严格 action 工具，覆盖导航、观察、交互、等待与截图 | Web |
@@ -36,7 +35,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | 定时任务 | `schedule_task` | 创建与管理定时 / 周期任务 | 系统与记忆 |
 | `goal` | `action=get|edit|pause|resume|complete|blocked` | Goal-state tool, auto-injected per session by the runtime; not selectable on desktop; only the user can create a goal | 目标态 |
 
-`网页搜索` is retained in code but currently **temporarily delisted** — invisible to the model and to the user (see `default_tool_profile.rs`). Removed entirely: `ptc`, channel tools, user-world tools, `a2a_*` tools, `final_response`, `a2ui`, LSP query tools.
+`网页搜索` is retained in code but currently **temporarily delisted** — invisible to the model and to the user (see `default_tool_profile.rs`). Removed entirely: `ptc`, channel tools, user-world tools, `a2a_*` tools, `final_response`, `a2ui`, the standalone "sleep and wait" tool, `会话让出`, LSP query tools.
 
 ## Situations and tools
 
@@ -58,7 +57,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 
 | Category | Pages |
 | --- | --- |
-| Turn finishing and frontend coordination | Plan Panel / Question Panel / Sessions Yield: [Plan Panel / Question Panel / Sessions Yield](/docs/en/tools/panels/) |
+| Turn finishing and frontend coordination | Plan Panel / Question Panel: [Plan Panel / Question Panel](/docs/en/tools/panels/) |
 | Workspace and code | List files / 文件名匹配 / search content / read file / write file / text edit: [Workspace Files](/docs/en/tools/workspace-files/); execute command / command session: [Execute Command](/docs/en/tools/exec/); skill call: [Skill Call](/docs/en/tools/skill-call/) |
 | Web | Web fetch: [Web Fetch](/docs/en/tools/web-fetch/); browser: [Browser Tools](/docs/en/tools/browser/) |
 | Multimodal | Read image: [Read Image](/docs/en/tools/read-image/); generate image / generate video / generate speech / transcribe speech: canonical names `图像生成` / `视频生成` / `语音生成` / `声转文`, aliases `generate_image` / `generate_video` / `generate_speech` / `transcribe_speech`; no dedicated page in this section |
@@ -71,7 +70,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 
 Most built-in tools return the same shell on success: whether it succeeded, the action name, a state, a one-line summary, and a data area that carries the business result. Read the business result from the data area first. Some tools add one more line telling you what to do next.
 
-Common states include: completed, dry run only, accepted, running, yielded, awaiting input, partially complete, timed out, and no change. A timeout does not always mean a permanent failure.
+Common states include: completed, dry run only, accepted, running, awaiting input, partially complete, timed out, and no change. A timeout does not always mean a permanent failure.
 
 Failures use the same shell: an error line, a readable reason and fix hint, and data that helps with diagnosis.
 

@@ -144,7 +144,8 @@ pub(crate) fn draft_model_card(app: &MainWindow, fallback_key: &str) -> ModelCar
         asr_response_format: app.get_model_asr_format_draft(),
         asr_temperature: app.get_model_asr_temperature_draft(),
         asr_prompt: app.get_model_asr_prompt_draft(),
-        image_size: app.get_model_image_size_draft(),
+        image_default_size: app.get_model_image_default_size_draft(),
+        image_max_size: app.get_model_image_max_size_draft(),
         image_output_format: app.get_model_image_format_draft(),
         image_steps: app.get_model_image_steps_draft(),
         image_guidance_scale: app.get_model_image_guidance_draft(),
@@ -277,7 +278,8 @@ pub(crate) fn new_model_card(key: String) -> ModelCard {
         asr_response_format: "".into(),
         asr_temperature: "0".into(),
         asr_prompt: "".into(),
-        image_size: "".into(),
+        image_default_size: "".into(),
+        image_max_size: "".into(),
         image_output_format: "".into(),
         image_steps: "30".into(),
         image_guidance_scale: "7.5".into(),
@@ -399,7 +401,8 @@ fn apply_model_with_creation_state(app: &MainWindow, model: ModelCard, creating:
     app.set_model_asr_format_draft(model.asr_response_format.clone());
     app.set_model_asr_temperature_draft(model.asr_temperature.clone());
     app.set_model_asr_prompt_draft(model.asr_prompt.clone());
-    app.set_model_image_size_draft(model.image_size.clone());
+    app.set_model_image_default_size_draft(model.image_default_size.clone());
+    app.set_model_image_max_size_draft(model.image_max_size.clone());
     app.set_model_image_format_draft(model.image_output_format.clone());
     app.set_model_image_steps_draft(model.image_steps.clone());
     app.set_model_image_guidance_draft(model.image_guidance_scale.clone());

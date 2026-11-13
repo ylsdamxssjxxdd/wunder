@@ -13,7 +13,6 @@ use crate::orchestrator_constants::{COMPACTION_SAFETY_MARGIN, DEFAULT_MAX_OUTPUT
 use crate::services::chat_attachments::persist_user_chat_attachments;
 use crate::services::goal;
 use crate::services::subagents;
-use crate::services::tools::sessions_yield_tool;
 
 use super::execute_support::*;
 
@@ -1839,22 +1838,6 @@ impl Orchestrator {
                             stop_reason = Some("question_panel".to_string());
                             should_finish = true;
                         }
-                        let turn_yield_message = if result.ok {
-                            sessions_yield_tool::extract_turn_yield_message(
-                                result.meta.as_ref(),
-                                &result.data,
-                            )
-                        } else {
-                            None
-                        };
-                        if let Some(message) = turn_yield_message.as_ref() {
-                            answer = message.clone();
-                            stop_reason = Some("yield".to_string());
-                            stop_meta = Some(
-                                sessions_yield_tool::build_turn_yield_stop_meta(message.as_str()),
-                            );
-                            should_finish = true;
-                        }
 
                         let mut observation_payload = result.to_compact_payload_with_token_budget(
                             &name, Some(observation_budget),
@@ -2193,11 +2176,6 @@ impl Orchestrator {
                         } else {
                             None
                         };
-                        let sessions_yield_meta = turn_yield_message
-                            .as_ref()
-                            .map(|message| {
-                                sessions_yield_tool::build_turn_yield_stop_meta(message.as_str())
-                            });
                         if question_panel_finished {
                             let content = if answer.trim().is_empty() {
                                 None
@@ -2224,37 +2202,6 @@ impl Orchestrator {
                                 content,
                                 None,
                                 meta.as_ref(),
-                                None,
-                                None,
-                                None,
-                                None,
-                                round_info,
-                            ).await.map_err(|error| OrchestratorError::internal(error.to_string()))?;
-                        }
-                        if let Some(meta) = sessions_yield_meta.as_ref() {
-                            let content = if answer.trim().is_empty() {
-                                None
-                            } else {
-                                Some(&json!(answer.clone()))
-                            };
-                            let message_stats = build_persisted_message_stats(
-                                &usage,
-                                &round_usage,
-                                confirmed_context_occupancy_tokens,
-                                &turn_decode_speed,
-                                turn_started_at.elapsed().as_secs_f64(),
-                                emitter.accumulated_model_requests(),
-                                emitter.accumulated_billable_account_credits(is_admin),
-                                emitter.accumulated_tool_calls(),
-                            );
-                            let meta = merge_persisted_message_stats_meta(meta, message_stats);
-                            self.try_append_chat(
-                                &user_id,
-                                &session_id,
-                                "assistant",
-                                content,
-                                None,
-                                Some(&meta),
                                 None,
                                 None,
                                 None,

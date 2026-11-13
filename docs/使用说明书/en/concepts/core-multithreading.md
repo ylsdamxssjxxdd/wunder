@@ -10,7 +10,7 @@ A single user can hold several task threads at once, and scheduling, locks, and 
 
 ## Concurrency control
 
-- The **engine-level session queue** is enabled by default, with `会话让出` as the way to yield.
+- The **engine-level session queue** is enabled by default: sending a message while a turn is running queues it for in-order execution.
 - A **session lock** has a TTL of 120 seconds with heartbeat renewal; when its holder exits abnormally, the TTL releases it.
 - **Tool parallelism ≤ 4**: tools that run in parallel take a read lock, and tools that run exclusively take a write lock.
 - **Round caps, active-session caps, daily quotas, and retry circuit breaking** form four hard constraints.

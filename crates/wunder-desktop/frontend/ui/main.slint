@@ -929,7 +929,8 @@ export component MainWindow inherits Window {
     changed model-asr-format-draft => { root.model-edited(); }
     changed model-asr-temperature-draft => { root.model-edited(); }
     changed model-asr-prompt-draft => { root.model-edited(); }
-    changed model-image-size-draft => { root.model-edited(); }
+    changed model-image-default-size-draft => { root.model-edited(); }
+    changed model-image-max-size-draft => { root.model-edited(); }
     changed model-image-format-draft => { root.model-edited(); }
     changed model-image-steps-draft => { root.model-edited(); }
     changed model-image-guidance-draft => { root.model-edited(); }
@@ -969,7 +970,8 @@ export component MainWindow inherits Window {
     in-out property <string> model-asr-format-draft;
     in-out property <string> model-asr-temperature-draft;
     in-out property <string> model-asr-prompt-draft;
-    in-out property <string> model-image-size-draft;
+    in-out property <string> model-image-default-size-draft;
+    in-out property <string> model-image-max-size-draft;
     in-out property <string> model-image-format-draft;
     in-out property <string> model-image-steps-draft;
     in-out property <string> model-image-guidance-draft;
@@ -1841,7 +1843,8 @@ export component MainWindow inherits Window {
         model-asr-format-draft <=> root.model-asr-format-draft;
         model-asr-temperature-draft <=> root.model-asr-temperature-draft;
         model-asr-prompt-draft <=> root.model-asr-prompt-draft;
-        model-image-size-draft <=> root.model-image-size-draft;
+        model-image-default-size-draft <=> root.model-image-default-size-draft;
+        model-image-max-size-draft <=> root.model-image-max-size-draft;
         model-image-format-draft <=> root.model-image-format-draft;
         model-image-steps-draft <=> root.model-image-steps-draft;
         model-image-guidance-draft <=> root.model-image-guidance-draft;

@@ -25,9 +25,6 @@ pub(crate) fn truncate_tool_log_column(text: &str) -> String {
 
 pub(crate) const TOOL_LOG_EXCLUDED_NAMES: &[&str] = &[
     "update_plan",
-    "sessions_yield",
-    "yield",
-    "会话让出",
     "计划面板",
     "question_panel",
     "ask_panel",
