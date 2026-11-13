@@ -1223,7 +1223,9 @@ async fn the_footer_names_the_task_and_sheds_it_before_the_keys() {
         "the first user turn titles the thread: {items:?}"
     );
 
-    let frame = draw_rows(&mut app, 40, 24).join("\n");
+    // Narrow enough that the task description cannot survive beside the
+    // shortcut key and the context figure.
+    let frame = draw_rows(&mut app, 30, 24).join("\n");
     assert!(frame.contains('\u{2190}'), "the keys stay: {frame}");
     assert!(
         !frame
@@ -1239,7 +1241,7 @@ async fn the_footer_names_the_task_and_sheds_it_before_the_keys() {
 }
 
 /// The footer's right cluster qualifies the context figure with the model it
-/// belongs to: model id first, then the percentage.
+/// belongs to: model id first, then used over total.
 #[tokio::test]
 async fn the_footer_puts_the_model_beside_the_context_figure() {
     let root = TempRoot::new("footer_model");
@@ -1251,7 +1253,7 @@ async fn the_footer_puts_the_model_beside_the_context_figure() {
     let rows = draw_rows(&mut app, 100, 24);
     let footer = rows.last().cloned().unwrap_or_default();
     assert!(
-        footer.contains("demo-model \u{b7} 72% context left"),
+        footer.contains("demo-model \u{b7} 280/1k"),
         "model qualifies the context figure: {footer:?}"
     );
 
@@ -1259,7 +1261,7 @@ async fn the_footer_puts_the_model_beside_the_context_figure() {
     app.model_name = "an-extremely-long-model-identifier-2026".to_string();
     let rows = draw_rows(&mut app, 40, 24);
     let footer = rows.last().cloned().unwrap_or_default();
-    assert!(footer.ends_with("72% context left"), "{footer:?}");
+    assert!(footer.ends_with("280/1k"), "{footer:?}");
     assert!(!footer.contains("an-extremely"), "{footer:?}");
 }
 

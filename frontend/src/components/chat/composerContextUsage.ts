@@ -90,9 +90,24 @@ const parseDetailRecord = (value: unknown): Record<string, unknown> | null => {
   }
 };
 
+// Durable compaction records (persisted thread items) carry their identity in
+// `kind` instead of a tool name: the runtime writes the summary as a standalone
+// `compaction` item, not as a tool call.
+const COMPACTION_DURABLE_KINDS = new Set(['compaction', 'compacted', 'compaction_summary']);
+
+const isDurableCompactionRecord = (value: unknown): boolean => {
+  const record = asObjectRecord(value);
+  if (!record) return false;
+  return (
+    COMPACTION_DURABLE_KINDS.has(normalizeText(record.kind)) ||
+    COMPACTION_DURABLE_KINDS.has(normalizeText(record.itemType ?? record.item_type))
+  );
+};
+
 const isComposerCompactionWorkflowItem = (value: unknown): boolean => {
   const record = asObjectRecord(value);
   if (!record) return false;
+  if (isDurableCompactionRecord(record)) return true;
   const eventType = normalizeText(record.eventType || record.event);
   const toolName = normalizeText(record.toolName || record.tool || record.name);
   const toolCallId = normalizeText(record.toolCallId || record.tool_call_id);
@@ -135,6 +150,9 @@ const isCompletedCompactionResetItem = (
   if (negative.has(detailStatus) || negative.has(itemStatus) || negative.has(result)) {
     return false;
   }
+  // A durable compaction item only exists once a compaction actually replaced
+  // this thread's context, so it counts without a per-item status.
+  if (isDurableCompactionRecord(item)) return true;
   const positive = new Set(['done', 'completed', 'complete', 'success', 'succeeded', 'ok']);
   if (positive.has(detailStatus) || positive.has(itemStatus) || positive.has(result)) {
     return true;
@@ -454,6 +472,15 @@ export const resolveThreadCompacted = (
     const message = asObjectRecord(list[cursor]);
     if (!message) continue;
     if (message.manual_compaction_marker === true || message.manualCompactionMarker === true) {
+      return true;
+    }
+    // Durable compaction rows may arrive as their own message instead of a
+    // workflow item; the record itself is the signal then.
+    if (
+      isDurableCompactionRecord(message) ||
+      isDurableCompactionRecord(message.payload) ||
+      isDurableCompactionRecord(message.detail)
+    ) {
       return true;
     }
     if (resolveMessageCompletedCompactionReset(message, cursor)) return true;

@@ -93,7 +93,8 @@ import {
   type TimelineReasoningEntry,
   type TimelineToolEntry
 } from './toolTimelineModel';
-import { buildWorkflowToolRuns, type WorkflowItem } from './toolWorkflowRunModel';
+import { buildWorkflowToolRuns } from './toolWorkflowRunModel';
+import { collectProcessSlots, flattenItemPayload, type ProcessSlot } from './turnProcessRows';
 import { buildTimelinePatchView } from './toolTimelinePatch';
 import { buildTimelineStructuredView } from './toolTimelineStructured';
 import type { ToolWorkflowPatchView, ToolWorkflowStructuredView } from './toolWorkflowTypes';
@@ -598,185 +599,6 @@ onBeforeUnmount(() => {
   loadAbort?.abort();
 });
 
-// ---------------------------------------------------------------- 条目装配
-
-const TERMINAL_TOOL_STATUS = new Set(['completed', 'failed', 'cancelled', 'interrupted']);
-const SKIP_KINDS = new Set(['user_message', 'tool_message']);
-
-const asObject = (value: unknown): Record<string, unknown> =>
-  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-
-const safeJsonParse = (text: string): unknown => {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-};
-
-/** ThreadLog 条目封装：payload 里可能再嵌一层原始事件体，摊平成一份数据。 */
-const flattenItemPayload = (payload: unknown): Record<string, unknown> => {
-  const outer = asObject(payload);
-  const inner = asObject(outer.payload);
-  const nestedData = { ...asObject(outer.data), ...asObject(inner.data) };
-  if (Object.keys(inner).length === 0 && Object.keys(nestedData).length === 0) return outer;
-  const merged: Record<string, unknown> = { ...outer, ...inner, ...nestedData };
-  for (const key of ['tool', 'tool_name', 'tool_call_id', 'model_round', 'process_seq', 'status', 'kind', 'event_type']) {
-    if (inner[key] !== undefined || outer[key] !== undefined) merged[key] = inner[key] ?? outer[key];
-  }
-  delete merged.payload;
-  return merged;
-};
-
-const pickText = (source: Record<string, unknown>, keys: string[]): string => {
-  for (const key of keys) {
-    const value = source[key];
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return '';
-};
-
-const stringifyDetail = (value: unknown): string => {
-  try {
-    const text = JSON.stringify(value ?? {});
-    return text.length > 131072 ? `${text.slice(0, 131072)}…` : text;
-  } catch {
-    return '';
-  }
-};
-
-const isCompactionSystemItem = (item: Record<string, unknown>): boolean => {
-  if (String(item?.kind || '') !== 'system_message') return false;
-  const data = flattenItemPayload(item?.payload);
-  const meta = asObject(data.meta);
-  const type = String(meta.type ?? data.type ?? '').trim().toLowerCase();
-  const id = String(meta.compaction_id ?? meta.compactionId ?? data.compaction_id ?? data.compactionId ?? '').trim();
-  return type === 'compaction_summary' || Boolean(id);
-};
-
-type PersistedToolCallIdentity = { name: string; functionName: string; arguments?: unknown };
-
-const collectAssistantToolCalls = (
-  items: Array<Record<string, unknown>>
-): Map<string, PersistedToolCallIdentity> => {
-  const identities = new Map<string, PersistedToolCallIdentity>();
-  for (const item of items) {
-    if (String(item?.kind || '') !== 'assistant_message') continue;
-    const data = flattenItemPayload(item?.payload);
-    const calls = data.tool_calls ?? data.toolCalls;
-    if (!Array.isArray(calls)) continue;
-    for (const rawCall of calls) {
-      const call = asObject(rawCall);
-      if (!call) continue;
-      const functionPayload = Object.keys(asObject(call.function)).length > 0
-        ? asObject(call.function)
-        : call;
-      const callId = pickText(call, ['id', 'tool_call_id', 'toolCallId', 'call_id', 'callId']);
-      const name = pickText(functionPayload, ['name', 'tool', 'tool_name', 'toolName']) ||
-        pickText(call, ['name', 'tool', 'tool_name', 'toolName']);
-      if (!callId || !name) continue;
-      identities.set(callId, {
-        name,
-        functionName: pickText(functionPayload, ['name', 'function_name', 'functionName']) || name,
-        arguments: functionPayload.arguments ?? call.arguments
-      });
-    }
-  }
-  return identities;
-};
-
-/**
- * 持久条目 → WorkflowItem：字段口径与运行时 reducer 的投影条目一致
- * （eventType / tool 身份 / call 引用 / detail），让 run 折叠与条目渲染
- * 直接复用 toolTimelineModel 的既有链路。
- */
-const mapWorkflowItem = (
-  item: Record<string, unknown>,
-  persistedToolCalls: ReadonlyMap<string, PersistedToolCallIdentity>
-): WorkflowItem | null => {
-  const kind = String(item?.kind || '');
-  if (!kind || kind === 'assistant_message' || SKIP_KINDS.has(kind) ||
-    (kind === 'system_message' && !isCompactionSystemItem(item))) return null;
-  const data = flattenItemPayload(item?.payload);
-  const status = String(item?.status || data.status || 'completed');
-  const eventType =
-    kind === 'system_message'
-      ? 'compaction'
-      : kind === 'tool_call'
-      ? TERMINAL_TOOL_STATUS.has(status)
-        ? 'tool_result'
-        : 'tool_call'
-      : String(data.event_type || data.eventType || kind);
-  const mapped: WorkflowItem = {
-    id: String(item?.item_id || ''),
-    eventType,
-    status,
-    isTool: true,
-    detail: stringifyDetail(data),
-    updatedSeq: Number(item?.revision) || undefined
-  };
-  // 模型轮次：进程条目右侧的 R1/R2。持久条目把它写在 item 或 payload 上，
-  // 旧记录没有该字段时折叠行不印轮次。
-  const itemRound = Number(item?.model_round ?? data.model_round ?? data.modelRound);
-  if (Number.isSafeInteger(itemRound) && itemRound > 0) mapped.model_round = itemRound;
-  if (kind === 'system_message') {
-    mapped.toolName = 'context_compaction';
-    mapped.tool = 'context_compaction';
-    const summary = pickText(data, [
-      'summary_text', 'summaryText', 'summary_model_output', 'summaryModelOutput',
-      // Automatic compaction replacement rows persist the bounded summary in
-      // the system item's content field.
-      'content'
-    ]);
-    if (summary) {
-      mapped.detail = stringifyDetail({ ...data, summary_text: summary });
-    }
-  }
-  const callId = pickText(data, ['tool_call_id', 'toolCallId', 'call_id', 'callId']);
-  const persisted = callId ? persistedToolCalls.get(callId) : undefined;
-  const toolName = pickText(data, ['tool', 'name', 'tool_name', 'toolName']) || persisted?.name || '';
-  if (toolName) {
-    mapped.toolName = toolName;
-    mapped.tool = toolName;
-  }
-  const displayName = pickText(data, ['tool_display_name', 'toolDisplayName', 'display_name', 'displayName']);
-  if (displayName) {
-    mapped.toolDisplayName = displayName;
-    mapped.tool_display_name = displayName;
-  }
-  const runtimeName = pickText(data, ['tool_runtime_name', 'toolRuntimeName', 'runtime_name', 'runtimeName']);
-  if (runtimeName) {
-    mapped.toolRuntimeName = runtimeName;
-    mapped.tool_runtime_name = runtimeName;
-  }
-  const functionName = pickText(data, ['tool_function_name', 'toolFunctionName', 'function_name', 'functionName']) || persisted?.functionName || '';
-  if (functionName) {
-    mapped.toolFunctionName = functionName;
-    mapped.tool_function_name = functionName;
-  }
-  if (callId) {
-    mapped.toolCallId = callId;
-    mapped.tool_call_id = callId;
-  }
-  const commandSessionId = pickText(data, ['command_session_id', 'commandSessionId']);
-  if (commandSessionId) {
-    mapped.commandSessionId = commandSessionId;
-    mapped.command_session_id = commandSessionId;
-  }
-  // 补丁/编辑类条目需要原始调用参数（与 reducer 的 buildProjectedToolCallRawDetail 同口径）。
-  const nestedFunction = asObject(data.function);
-  const args = data.args ?? data.arguments ?? data.input ?? nestedFunction.arguments ?? persisted?.arguments;
-  if (args !== undefined && (eventType === 'tool_call' || eventType === 'tool_result')) {
-    const parsed = typeof args === 'string' ? safeJsonParse(args) : args;
-    const rawCall = stringifyDetail({ tool: toolName || functionName || runtimeName, arguments: parsed });
-    if (rawCall) {
-      mapped.toolCallRawDetail = rawCall;
-      mapped.tool_call_raw_detail = rawCall;
-    }
-  }
-  return mapped;
-};
-
 const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   const rows: ProcessRow[] = [];
   if (!Array.isArray(items) || items.length === 0) return rows;
@@ -785,37 +607,15 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
   // currently loaded page made an intermediate model print disappear whenever
   // the page was truncated or a late item arrived.
   const lastAssistantId = String(props.finalItemId || '');
-  type Slot = { type: 'message'; item: Record<string, unknown> } | { type: 'tool'; item: Record<string, unknown> };
-  const slots: Slot[] = [];
-  const mappedItems: WorkflowItem[] = [];
-  const persistedToolCalls = collectAssistantToolCalls(items);
-  for (const item of items) {
-    const kind = String(item?.kind || '');
-    if (SKIP_KINDS.has(kind) || (kind === 'system_message' && !isCompactionSystemItem(item))) continue;
-    if (kind === 'assistant_message') {
-      const payload = flattenItemPayload(item.payload);
-      const execution = String(item.turn_id || payload.turn_id || '');
-      const round = Number(item.model_round ?? payload.model_round ?? String(item.item_id).match(/:text-(\d+)$/)?.[1] ?? 0);
-      if (execution && String(item.item_id) !== `${execution}:text-${round}`) continue;
-      slots.push({ type: 'message', item });
-      continue;
-    }
-    const mapped = mapWorkflowItem(item, persistedToolCalls);
-    if (!mapped) continue;
-    // A lifecycle row can precede the decorated tool result during replay.
-    // Keep the process timeline quiet until its identity is known; otherwise
-    // the renderer turns the incomplete row into a misleading “unknown tool”.
-    if (!String(mapped.toolName || mapped.tool || mapped.tool_name || '').trim()) continue;
-    slots.push({ type: 'tool', item });
-    mappedItems.push(mapped);
-  }
+  // 条目装配（含压缩条目的身份判定）在 turnProcessRows 里，与桌面端同口径并单独测试。
+  const { slots, mappedItems } = collectProcessSlots(items);
   if (!slots.length) return rows;
   // The process endpoint can overlap a durable assistant row with the live
   // hand-off row while a model round is being committed.  Those rows have
   // different ids but represent one visible identity.  Collapse by execution
   // turn and model round before creating reasoning entries; otherwise the chat
   // area shows the same thinking step twice.
-  const selectedMessages = new Map<string, Slot>();
+  const selectedMessages = new Map<string, ProcessSlot>();
   const messageIdentity = (item: Record<string, unknown>): string => {
     const payload = flattenItemPayload(item.payload);
     const turnId = String(item.turn_id || payload.turn_id || '');

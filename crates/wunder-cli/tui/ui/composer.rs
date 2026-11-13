@@ -730,10 +730,7 @@ mod tests {
     #[test]
     fn footer_can_render_right_context_without_left_items() {
         let line = build_right_aligned_footer_line(
-            vec![Span::styled(
-                "100% context left".to_string(),
-                theme::secondary_text(),
-            )],
+            vec![Span::styled("280/1k".to_string(), theme::secondary_text())],
             32,
         )
         .expect("footer line");
@@ -742,7 +739,7 @@ mod tests {
             .iter()
             .map(|span| span.content.as_ref())
             .collect::<String>();
-        assert!(rendered.ends_with("100% context left"));
+        assert!(rendered.ends_with("280/1k"));
     }
 
     #[test]
@@ -810,18 +807,21 @@ mod tests {
         // The model id leads the right group and the context figure closes it:
         // when the terminal is too narrow for both, the head goes.
         let spans = vec![
-            Span::styled("a-very-long-model-id-2026".to_string(), theme::secondary_text()),
+            Span::styled(
+                "a-very-long-model-id-2026".to_string(),
+                theme::secondary_text(),
+            ),
             Span::raw(" · "),
-            Span::styled("72% context left".to_string(), theme::secondary_text()),
+            Span::styled("280/1k".to_string(), theme::secondary_text()),
         ];
         let fitted = fit_right_group(spans, 20);
-        assert_eq!(render_spans(fitted), "72% context left");
+        assert_eq!(render_spans(fitted), "280/1k");
         // Wide enough for everything: nothing is dropped.
         let spans = vec![
             Span::styled("demo".to_string(), theme::secondary_text()),
             Span::raw(" · "),
-            Span::styled("72% context left".to_string(), theme::secondary_text()),
+            Span::styled("280/1k".to_string(), theme::secondary_text()),
         ];
-        assert_eq!(render_spans(fit_right_group(spans, 40)), "demo · 72% context left");
+        assert_eq!(render_spans(fit_right_group(spans, 40)), "demo · 280/1k");
     }
 }

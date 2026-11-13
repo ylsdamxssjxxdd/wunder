@@ -240,6 +240,9 @@ async fn create_session(
         state
             .workspace
             .load_session_context_tokens(&resolved.user.user_id, &session_id),
+        state
+            .workspace
+            .load_session_compacted(&resolved.user.user_id, &session_id),
     );
     Ok(Json(json!({ "data": payload })))
 }
@@ -356,7 +359,14 @@ async fn fork_session(
     );
     let mut payload = session_payload(&record);
     insert_session_goal_payload(&mut payload, None);
-    insert_session_runtime_fields(&mut payload, runtime.as_ref(), context_tokens);
+    insert_session_runtime_fields(
+        &mut payload,
+        runtime.as_ref(),
+        context_tokens,
+        state
+            .workspace
+            .load_session_compacted(&resolved.user.user_id, &target_session_id),
+    );
     Ok(Json(json!({ "data": payload })))
 }
 
@@ -566,6 +576,9 @@ async fn list_sessions(
             state
                 .workspace
                 .load_session_context_tokens(&resolved.user.user_id, &record.session_id),
+            state
+                .workspace
+                .load_session_compacted(&resolved.user.user_id, &record.session_id),
         );
         items.push(payload);
     }
@@ -687,6 +700,9 @@ async fn get_session(
         .workspace
         .load_session_context_tokens(&resolved.user.user_id, &session_id)
         .max(0);
+    let context_compacted = state
+        .workspace
+        .load_session_compacted(&resolved.user.user_id, &session_id);
     let goal = state
         .kernel
         .orchestrator
@@ -734,6 +750,8 @@ async fn get_session(
             "goal": goal.as_ref().map(crate::services::goal::goal_payload),
             "context_tokens": context_tokens,
             "context_occupancy_tokens": context_tokens,
+            "context_compacted": context_compacted,
+            "contextCompacted": context_compacted,
             "log_overview": log_overview,
             "has_more": transcript_page.has_more,
             "before_seq": transcript_page.before_seq,
@@ -1332,6 +1350,9 @@ async fn update_session_title(
         state
             .workspace
             .load_session_context_tokens(&resolved.user.user_id, &session_id),
+        state
+            .workspace
+            .load_session_compacted(&resolved.user.user_id, &session_id),
     );
     Ok(Json(json!({ "data": payload })))
 }
@@ -1400,6 +1421,9 @@ async fn archive_session(
         state
             .workspace
             .load_session_context_tokens(&resolved.user.user_id, &session_id),
+        state
+            .workspace
+            .load_session_compacted(&resolved.user.user_id, &session_id),
     );
     Ok(Json(json!({ "data": payload })))
 }
@@ -1456,6 +1480,9 @@ async fn restore_session(
         state
             .workspace
             .load_session_context_tokens(&resolved.user.user_id, &session_id),
+        state
+            .workspace
+            .load_session_compacted(&resolved.user.user_id, &session_id),
     );
     insert_session_goal_payload(&mut payload, goal.as_ref());
     Ok(Json(json!({ "data": payload })))
@@ -2019,6 +2046,7 @@ fn insert_session_runtime_fields(
     payload: &mut Value,
     runtime: Option<&SessionModelRuntime>,
     context_tokens: i64,
+    compacted: bool,
 ) {
     let Value::Object(map) = payload else {
         return;
@@ -2051,6 +2079,12 @@ fn insert_session_runtime_fields(
         "context_occupancy_tokens".to_string(),
         json!(context_tokens),
     );
+    // Durable, thread-level fact: the visible history is a compaction summary.
+    // The composer paints its context gauge red from then on (same signal the
+    // desktop shell reads from the workspace), independent of which message
+    // slice the client happens to have loaded.
+    map.insert("context_compacted".to_string(), json!(compacted));
+    map.insert("contextCompacted".to_string(), json!(compacted));
 }
 
 fn resolve_session_model_runtime(
@@ -2135,7 +2169,8 @@ mod tests {
     use super::{
         apply_session_running_state, build_forked_session_record,
         build_projected_queue_assistant_message, build_projected_queue_user_message,
-        has_active_queue_task, insert_session_workspace_fields, is_session_stream_active_or_queued,
+        has_active_queue_task, insert_session_runtime_fields, insert_session_workspace_fields,
+        is_session_stream_active_or_queued,
         item_page_cursor_after_merge, merge_persisted_transcript_metrics,
         merge_visible_transcript_page, normalize_before_seq, project_queued_session_messages,
         raw_item_page_from_loaded_history, summarize_transcript_messages, RunningTurnHint,
@@ -2177,6 +2212,22 @@ mod tests {
         insert_session_workspace_fields(&mut unlabeled, None, &workspaces);
         insert_session_workspace_fields(&mut unlabeled, Some("  "), &workspaces);
         assert!(unlabeled.get("workspace_name").is_none());
+    }
+
+    /// The composer's context gauge needs the durable "this history is a
+    /// summary" fact on the session payload itself: the client cannot infer it
+    /// from the message slice it happens to have loaded.
+    #[test]
+    fn session_payload_carries_the_durable_compacted_flag() {
+        let mut compacted = json!({ "id": "sess_c" });
+        insert_session_runtime_fields(&mut compacted, None, 4096, true);
+        assert_eq!(compacted.get("context_compacted"), Some(&json!(true)));
+        assert_eq!(compacted.get("contextCompacted"), Some(&json!(true)));
+
+        let mut fresh = json!({ "id": "sess_f" });
+        insert_session_runtime_fields(&mut fresh, None, 4096, false);
+        assert_eq!(fresh.get("context_compacted"), Some(&json!(false)));
+        assert_eq!(fresh.get("context_occupancy_tokens"), Some(&json!(4096)));
     }
 
     fn build_user_store() -> UserStore {

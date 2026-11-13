@@ -73,6 +73,32 @@ mod timing_tests {
         assert!(unknown.get("started_at").is_none());
         assert!(unknown.get("completed_at").is_none());
     }
+
+    /// 消息页与上下文读取按 kind 补 message role：工具结果记录的规范 kind 是
+    /// `tool_call`（`event_type` 才是 `tool_result`），压缩摘要行是
+    /// `system_message`。缺这两个映射会让带工具调用的线程整页报错。
+    #[test]
+    fn message_pages_assign_roles_to_tool_and_system_rows() {
+        let wire = json!({
+            "item_id": "sample-item", "turn_id": "sample-turn",
+            "root_turn_id": "sample-turn", "kind": "tool_call",
+            "status": "completed", "created_seq": 3, "created_time": 1.0, "revision": 1,
+            "payload": {"event_type": "tool_result", "content": "sample output"}
+        });
+        let body = PostgresThreadLog::message_payload(wire).expect("tool rows map to a role");
+        assert_eq!(body["role"], "tool");
+        assert_eq!(body["kind"], "tool_call");
+
+        let summary = json!({
+            "item_id": "sample-system", "turn_id": "sample-turn",
+            "root_turn_id": "sample-turn", "kind": "system_message",
+            "status": "completed", "created_seq": 4, "created_time": 1.0, "revision": 1,
+            "payload": {"content": "sample compaction summary",
+                "meta": {"type": "compaction_summary", "compaction_id": "cmp-sample"}}
+        });
+        let body = PostgresThreadLog::message_payload(summary).expect("compaction rows map to a role");
+        assert_eq!(body["role"], "system");
+    }
 }
 
 impl<'a> PostgresThreadLog<'a> {
@@ -196,7 +222,10 @@ impl<'a> PostgresThreadLog<'a> {
             body["role"] = json!(match item["kind"].as_str() {
                 Some("user_message") => "user",
                 Some("assistant_message" | "agent_message") => "assistant",
-                Some("tool_result") => "tool",
+                // 工具结果记录的规范 kind 是 `tool_call`（`event_type` 才是
+                // `tool_result`）；与 SQLite 条目投影同一口径，否则带工具调用
+                // 的线程在消息页/上下文读取里会整页报错。
+                Some("tool_result" | "tool_call") => "tool",
                 Some("system_message") => "system",
                 _ => bail!("completed chat item has no message role"),
             });

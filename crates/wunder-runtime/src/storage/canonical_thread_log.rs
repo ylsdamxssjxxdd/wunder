@@ -1609,7 +1609,10 @@ impl ThreadLogStore for CanonicalThreadLog<'_> {
                     body["role"] = json!(match item["kind"].as_str() {
                         Some("user_message") => "user",
                         Some("assistant_message" | "agent_message") => "assistant",
-                        Some("tool_result") => "tool",
+                        // 工具结果记录的规范 kind 是 `tool_call`（`event_type` 才是
+                        // `tool_result`）；压缩摘要行是 `system_message`。
+                        Some("tool_result" | "tool_call") => "tool",
+                        Some("system_message") => "system",
                         _ => bail!("completed chat item has no message role"),
                     });
                 }

@@ -219,29 +219,45 @@ fn expand_large_paste_placeholders_restores_original_text() {
 }
 
 #[test]
-fn footer_context_matches_reference_style_with_max_context() {
+fn footer_context_reads_used_over_total() {
     assert_eq!(
-        format_footer_context_summary(false, 280, Some(1000)),
-        "72% context left"
+        format_footer_context_summary(280, Some(1000)),
+        Some("280/1k".to_string())
+    );
+    assert_eq!(
+        format_footer_context_summary(1234, Some(128_000)),
+        Some("1.2k/128k".to_string())
+    );
+    // Full context is a number, not a 100% badge.
+    assert_eq!(
+        format_footer_context_summary(1000, Some(1000)),
+        Some("1k/1k".to_string())
+    );
+    // Overflow keeps the real figure so the reader sees it happened.
+    assert_eq!(
+        format_footer_context_summary(1200, Some(1000)),
+        Some("1.2k/1k".to_string())
     );
 }
 
 #[test]
-fn footer_context_defaults_to_full_when_empty() {
-    assert_eq!(
-        format_footer_context_summary(false, 0, None),
-        "100% context left"
-    );
+fn footer_context_carries_no_label_in_either_language() {
+    let zh = format_footer_context_summary(280, Some(1000)).expect("figure");
+    assert_eq!(zh, "280/1k");
+    assert!(!zh.contains('上'));
 }
 
 #[test]
-fn footer_context_uses_the_short_label_in_chinese() {
+fn footer_context_degrades_to_what_is_known() {
+    // An unknown window size still reports what has been used…
     assert_eq!(
-        format_footer_context_summary(true, 280, Some(1000)),
-        "上下文 72%"
+        format_footer_context_summary(280, None),
+        Some("280".to_string())
     );
-    assert_eq!(format_footer_context_summary(true, 0, None), "上下文 100%");
-    assert_eq!(format_footer_context_summary(true, 280, None), "上下文 280");
+    // …and a session with nothing recorded leaves the figure out entirely
+    // instead of inventing a percentage.
+    assert_eq!(format_footer_context_summary(0, None), None);
+    assert_eq!(format_footer_context_summary(0, Some(0)), None);
 }
 
 #[test]

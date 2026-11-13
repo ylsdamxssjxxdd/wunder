@@ -79,7 +79,11 @@ export const mergeSessionRuntimeFields = (
     'contextTotalTokens',
     'max_context',
     'maxContext',
-    'context_window'
+    'context_window',
+    // Durable compaction flag: a thread that has been compacted stays marked
+    // even when the incoming row (or a partial refresh) omits the field.
+    'context_compacted',
+    'contextCompacted'
   ] as const;
   contextKeys.forEach((key) => {
     if (

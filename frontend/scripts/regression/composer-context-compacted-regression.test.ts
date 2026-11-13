@@ -79,3 +79,43 @@ test('a session flag from the backend is honoured', () => {
   assert.equal(resolveThreadCompacted([], { contextCompacted: '1' }), true);
   assert.equal(resolveThreadCompacted([], { context_compacted: false }), false);
 });
+
+test('the backend flag wins even when no compaction message is loaded', () => {
+  // Paged history may start after the compaction, so the durable session flag
+  // is the only signal left. The gauge must still paint red at any occupancy.
+  const source = resolveComposerContextUsageSource(
+    [{ role: 'assistant', stats: { contextTokens: 1200 } }],
+    { context_tokens: 1200, context_total_tokens: 200000, context_compacted: true },
+    false
+  );
+  assert.equal(source.compacted, true);
+  assert.equal(source.contextTokens, 1200);
+});
+
+test('a durable compaction row marks the thread without a tool identity', () => {
+  // The runtime persists the summary as its own `compaction` item, so there is
+  // no toolName/toolCallId to match and no per-item status to read.
+  const asWorkflowItem = [
+    {
+      role: 'assistant',
+      workflowItems: [{ kind: 'compaction', content: 'history' }]
+    }
+  ];
+  assert.equal(resolveThreadCompacted(asWorkflowItem, null), true);
+
+  const asOwnMessage = [{ role: 'system', kind: 'compaction_summary' }];
+  assert.equal(resolveThreadCompacted(asOwnMessage, null), true);
+
+  const asPayload = [{ role: 'system', payload: { itemType: 'compacted' } }];
+  assert.equal(resolveThreadCompacted(asPayload, null), true);
+});
+
+test('a durable compaction row marked failed is not counted', () => {
+  const messages = [
+    {
+      role: 'assistant',
+      workflowItems: [{ kind: 'compaction', status: 'failed' }]
+    }
+  ];
+  assert.equal(resolveThreadCompacted(messages, null), false);
+});

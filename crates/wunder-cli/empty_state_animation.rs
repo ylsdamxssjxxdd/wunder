@@ -1,6 +1,6 @@
 //! Colourless welcome avatar: a white/grey half-block relief painted under the
-//! brand header of a fresh thread, with the whole banner centred in the terminal
-//! it is painted in.
+//! brand header of a fresh thread. The wording keeps the terminal's left margin
+//! like any other CLI output; only the relief is centred on the terminal axis.
 //!
 //! The pixel data in `welcome_logo_art.rs` is a neutral grey ladder (slot 15 is
 //! transparent), so the head never introduces hue into the frame; the volume is
@@ -106,8 +106,8 @@ fn measured_cell_aspect(columns: u16, rows: u16, width_px: u16, height_px: u16) 
 
 /// The welcome banner a fresh thread opens with, kept as a description rather
 /// than as painted rows: the transcript paints it at whatever width it has, so
-/// the head is re-fitted and the block re-centred on every resize instead of
-/// staying at the column count of the first frame.
+/// the head is re-fitted and re-centred on every resize instead of staying at
+/// the column count of the first frame.
 #[derive(Debug, Clone)]
 pub(crate) struct Banner {
     version: String,
@@ -128,8 +128,9 @@ impl Banner {
         }
     }
 
-    /// The product text, one breathing row, then the grey avatar, centred in
-    /// `columns`. `session_header` stays the single owner of the wording.
+    /// The product text at the left margin, one breathing row, then the grey
+    /// avatar centred in `columns`. `session_header` stays the single owner of
+    /// the wording.
     pub(crate) fn lines(&self, columns: u16) -> Vec<Line<'static>> {
         banner_lines_for_cell(
             columns,
@@ -147,6 +148,11 @@ impl Banner {
 /// The wording leads and the head closes the block: the first lines a reader
 /// lands on are the brand, the directory and the hint, and the relief reads as
 /// the logo of the empty state rather than as a header pushing the text down.
+///
+/// The two parts are placed differently on purpose. The text is ordinary CLI
+/// output and stays at the left margin; the relief is a picture and sits on the
+/// terminal axis. Centring the text with the art pushed the brand a third of the
+/// screen inwards, which made the opening frame hard to scan.
 pub(crate) fn banner_lines_for_cell(
     columns: u16,
     cell_aspect: f32,
@@ -155,21 +161,20 @@ pub(crate) fn banner_lines_for_cell(
     is_zh: bool,
 ) -> Vec<Line<'static>> {
     let mut lines = crate::session_header::header_lines(version, workdir, is_zh);
-    let art = logo_lines_for_cell(columns, cell_aspect);
+    let mut art = logo_lines_for_cell(columns, cell_aspect);
     if !art.is_empty() {
+        centre_lines(art.as_mut_slice(), columns);
         lines.push(Line::default());
         lines.extend(art);
     }
-    centre_lines(lines.as_mut_slice(), columns);
     lines
 }
 
-/// Centres the banner in the terminal.
+/// Centres a block of rows in the terminal.
 ///
-/// The block is as wide as its widest row: the head on a wide terminal, but a
-/// long workdir path on a narrow one. Rows are therefore centred inside that
-/// block rather than pinned to its left edge — otherwise the wording drifts off
-/// the head's axis as soon as a path is wider than the art.
+/// The block is as wide as its widest row. Rows are then centred inside that
+/// block rather than pinned to its left edge, so a narrow row keeps the block's
+/// axis. Used for the relief, whose rows are all the same width.
 fn centre_lines(lines: &mut [Line<'static>], columns: u16) {
     let available = usize::from(columns);
     let block = lines
@@ -495,37 +500,43 @@ mod tests {
     }
 
     #[test]
-    fn the_wording_keeps_its_indent_inside_the_centred_block() {
-        // The head is the block, so the text rows are centred inside it and
-        // keep their own indent: the brand, the workdir and the hint all end up
-        // on the head's axis instead of hugging the left edge.
+    fn the_wording_keeps_the_left_margin_while_the_head_is_centred() {
+        // The text is ordinary CLI output and never moves; only the relief is
+        // placed on the terminal axis.
         let lines = banner_lines_for_cell(100, SQUARE_PIXEL_CELL, "0.4.0", "/tmp/work", true);
         let header = crate::session_header::header_lines("0.4.0", "/tmp/work", true);
         let rows = &lines[..header.len()];
-        assert_eq!(rows.len(), header.len());
+        let text = |line: &Line<'static>| -> String {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        };
         for (row, expected) in rows.iter().zip(header.iter()) {
-            if expected.width() == 0 {
-                assert_eq!(row.width(), 0, "a breathing row stays empty");
-                continue;
-            }
-            let text = |line: &Line<'static>| -> String {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.as_ref())
-                    .collect()
-            };
             assert_eq!(
-                text(row).trim_start_matches(' '),
-                text(expected).trim_start_matches(' '),
-                "the banner owns the placement, not the wording"
+                text(row),
+                text(expected),
+                "the banner must not re-place the wording"
             );
-            // 30 columns of air, then half of what the row leaves free in the
-            // 40 column block.
-            assert_eq!(
-                row.width() - expected.width(),
-                30 + (welcome_logo_art::SOURCE_WIDTH - expected.width()) / 2
-            );
+            assert_eq!(row.width(), expected.width());
         }
+        // 100 columns: the 40 column head keeps 30 columns of air either side.
+        let art_rows = lines.len() - header.len() - 1;
+        assert!(art_rows > 0);
+        for line in &lines[lines.len() - art_rows..] {
+            assert_eq!(line.width(), 30 + welcome_logo_art::SOURCE_WIDTH);
+        }
+    }
+
+    #[test]
+    fn a_narrow_welcome_still_starts_at_column_zero() {
+        let lines = banner_lines_for_cell(20, FALLBACK_CELL_ASPECT, "0.4.0", "/tmp/work", false);
+        let first: String = lines[0]
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert!(first.starts_with("  >_ "), "unexpected lead: {first:?}");
     }
 
     #[test]

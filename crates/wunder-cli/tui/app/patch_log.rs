@@ -178,8 +178,8 @@ impl ArtLogEntry {
     }
 
     /// The banner is laid out for the width it is painted at, so a resize
-    /// re-fits the head and re-centres the block instead of leaving the art
-    /// baked at the column count of the first frame.
+    /// re-fits and re-centres the head instead of leaving the art baked at the
+    /// column count of the first frame.
     fn render_lines_for_width(&self, width: u16) -> Vec<Line<'static>> {
         self.banner.lines(width)
     }

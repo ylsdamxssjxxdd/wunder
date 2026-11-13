@@ -975,10 +975,10 @@ impl TuiApp {
             crate::session_header::BRAND_MARK,
             env!("CARGO_PKG_VERSION")
         );
-        // The welcome avatar is colourless relief: the grey head sits above the
+        // The welcome avatar is colourless relief: the grey head sits under the
         // brand header, centred and re-fitted to whatever width the transcript
-        // is painted at. `session_header` stays the single owner of the text so
-        // the two never drift apart.
+        // is painted at, while the text keeps the left margin. `session_header`
+        // stays the single owner of the text so the two never drift apart.
         let banner = crate::empty_state_animation::Banner::new(
             env!("CARGO_PKG_VERSION"),
             app.runtime.launch_dir.to_string_lossy().as_ref(),
@@ -1431,11 +1431,12 @@ impl TuiApp {
 
         // Discoverability gate (plan N6): the command-center entry must stay
         // visible in the composer footer; build_footer_spans drops the
-        // description first when the terminal is narrow.
+        // description first when the terminal is narrow. The key is the arrow
+        // itself, so the label must not repeat it as a trailing glyph.
         let hint = if self.is_zh_language() {
-            "任务中心 ←"
+            "任务中心"
         } else {
-            "thread center ←"
+            "thread center"
         };
         items.push(("←".to_string(), hint.to_string()));
 
@@ -1466,11 +1467,13 @@ impl TuiApp {
     }
 
     /// Right-aligned footer context as styled spans: the model id and the
-    /// context summary keep the dim tone, while the cloud badge carries the
+    /// context figure keep the dim tone, while the cloud badge carries the
     /// warning colour when the engine reports a reconnecting connection.
     ///
     /// The model sits here rather than among the left hints because it qualifies
-    /// the context figure it precedes — "which model is this 72% for".
+    /// the figure it precedes — "which model has used this much context". Each
+    /// part is optional, so the separator is only pushed between real parts and
+    /// a footer with nothing to report yields `None` instead of an empty group.
     pub fn composer_footer_context(&mut self) -> Option<Vec<Span<'static>>> {
         let mut spans = Vec::new();
         let model = self.model_name.trim();
@@ -1479,26 +1482,25 @@ impl TuiApp {
                 self.model_name.clone(),
                 super::theme::secondary_text(),
             ));
-            spans.push(Span::raw(" · "));
         }
-        spans.push(Span::styled(
-            format_footer_context_summary(
-                self.is_zh_language(),
-                self.session_stats.context_used_tokens,
-                self.model_max_context,
-            ),
-            super::theme::secondary_text(),
-        ));
+        if let Some(summary) = format_footer_context_summary(
+            self.session_stats.context_used_tokens,
+            self.model_max_context,
+        ) {
+            push_footer_part(
+                &mut spans,
+                Span::styled(summary, super::theme::secondary_text()),
+            );
+        }
         if let Some(badge) = self.cloud_badge() {
             let style = if self.cloud_badge_reconnecting {
                 super::theme::warning_text()
             } else {
                 super::theme::secondary_text()
             };
-            spans.push(Span::raw(" · "));
-            spans.push(Span::styled(badge, style));
+            push_footer_part(&mut spans, Span::styled(badge, style));
         }
-        Some(spans)
+        (!spans.is_empty()).then_some(spans)
     }
 
     /// Status-bar cloud badge (plan §6.2), cached for one second: the footer is
@@ -10005,32 +10007,54 @@ fn stream_event_id(event: &StreamEvent) -> i64 {
         .unwrap_or(0)
 }
 
-fn format_footer_context_summary(
-    is_zh: bool,
-    used_tokens: i64,
-    max_context: Option<u32>,
-) -> String {
-    if let Some(max_context) = max_context {
-        let percent_left = crate::context_left_percent(used_tokens, Some(max_context)).unwrap_or(0);
-        if is_zh {
-            return format!("上下文 {percent_left}%");
-        }
-        return format!("{percent_left}% context left");
+/// Appends one part of the footer's right cluster, keeping the dot only between
+/// parts that actually exist.
+fn push_footer_part(spans: &mut Vec<Span<'static>>, span: Span<'static>) {
+    if !spans.is_empty() {
+        spans.push(Span::raw(" · "));
     }
+    spans.push(span);
+}
 
-    let used_tokens = used_tokens.max(0);
-    if used_tokens > 0 {
-        if is_zh {
-            return format!("上下文 {used_tokens}");
-        }
-        return format!("{used_tokens} used");
+/// The context figure the footer closes with: used over total, `1.2k/128k`.
+///
+/// The pair carries its own meaning, so no label sits beside it in either
+/// language and the footer spends its columns on the numbers instead. When the
+/// window size is unknown only what has been used is shown, and when nothing has
+/// been recorded at all the figure is left out rather than faked as a percentage.
+fn format_footer_context_summary(used_tokens: i64, max_context: Option<u32>) -> Option<String> {
+    let used = used_tokens.max(0);
+    if let Some(max) = max_context.filter(|max| *max > 0) {
+        return Some(format!(
+            "{}/{}",
+            format_compact_tokens(used),
+            format_compact_tokens(i64::from(max))
+        ));
     }
+    (used > 0).then(|| format_compact_tokens(used))
+}
 
-    if is_zh {
-        "上下文 100%".to_string()
+/// Token count in the footer's own unit: exact below a thousand, then `k` and
+/// `M`. A decimal is kept only while it carries meaning, so 1000 reads `1k` and
+/// 1200 reads `1.2k`.
+fn format_compact_tokens(tokens: i64) -> String {
+    let tokens = tokens.max(0);
+    let (value, unit) = if tokens >= 1_000_000 {
+        (tokens as f64 / 1_000_000.0, "M")
+    } else if tokens >= 1_000 {
+        (tokens as f64 / 1_000.0, "k")
     } else {
-        "100% context left".to_string()
+        return tokens.to_string();
+    };
+    let mut rounded = if value >= 10.0 {
+        format!("{:.0}", value)
+    } else {
+        format!("{:.1}", value)
+    };
+    if rounded.ends_with(".0") {
+        rounded.truncate(rounded.len() - 2);
     }
+    format!("{}{}", rounded, unit)
 }
 
 #[cfg(test)]
