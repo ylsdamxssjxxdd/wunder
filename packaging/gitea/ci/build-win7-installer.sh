@@ -18,25 +18,24 @@ if ! grep -q '^vendor_id' /proc/cpuinfo 2>/dev/null; then
     echo "NOTE: 检测到 qemu 模拟运行，ISCC 压缩会比原生慢很多；超时可设 WUNDER_INNO_COMPRESSION=zip。"
 fi
 
-# 同 build.sh：只有明确判出「已被更新的提交取代」（退出码 10）才让路，脚本自身出错照常组包。
-supersede=0
-python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/is-latest.py" || supersede=$?
-if [[ "$supersede" -eq 10 ]]; then
-    echo "SKIP: 本次运行已被更新的提交取代，不再组安装包。"
-    exit 0
-elif [[ "$supersede" -ne 0 ]]; then
-    echo "WARN: is-latest.py 以退出码 $supersede 结束，判不出新旧，照常组包。"
-fi
-
+# 这里不再按「分支头是否推进」让路：编译任务十几分钟就产出并发布了 win7 exe，
+# 组包只要两三分钟，跳过只会留下一个缺 setup.exe 的半套 release；按提交分家的交接
+# 目录已经不担心新提交覆盖输入，所以只要本次提交有输入就补齐安装包。
 cache_key="$(printf '%s' "${CI_REPOSITORY:?CI_REPOSITORY is required}" | sha256sum | cut -c 1-32)"
 cache="/ci-cache/$cache_key/win7-x86"
-inputs="$cache/installer-inputs"
+inputs="$cache/installer-inputs/${CI_COMMIT:?CI_COMMIT is required}"
 export WUNDER_OFFLINE_ROOT="${WUNDER_OFFLINE_ROOT:-/opt/offline-sdk}"
+
+if [[ ! -d "$inputs" ]]; then
+    # 编译任务开头就判出「已被更新的提交取代」时根本不会写交接目录，那一轮也没有 win7 exe 发布，
+    # 安装包无事可做。这是正常让路，不是失败。
+    echo "SKIP: 没有本次提交（${CI_COMMIT:0:12}）的 win7 构建输入，不组安装包。"
+    exit 0
+fi
 
 desktop="$(find "$inputs" -maxdepth 1 -name 'wunder-desktop-*-win7-x86.exe' -print -quit 2>/dev/null)"
 cli="$(find "$inputs" -maxdepth 1 -name 'wunder-cli-*win7-x86.exe' -print -quit 2>/dev/null)"
 pack="$WUNDER_OFFLINE_ROOT/supplement-prebuilt/win7-ia32/wunder-supplement-win7-ia32-common.zip"
-[[ -d "$inputs" ]] || { echo "交接目录不存在: $inputs（win7 构建任务未产出或缓存卷被清理）" >&2; exit 2; }
 [[ -n "$desktop" ]] || { echo "交接目录缺少桌面 exe: $inputs" >&2; exit 2; }
 [[ -n "$cli" ]] || { echo "交接目录缺少 CLI exe: $inputs" >&2; exit 2; }
 [[ -s "$pack" && -s "$pack.sha256" ]] || {
@@ -57,3 +56,5 @@ python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/verify.py" release-
 (cd release-assets; find . -maxdepth 1 -type f ! -name 'SHA256SUMS-*' -print0 | sort -z | xargs -0 sha256sum > "SHA256SUMS-win7-x86-setup.txt")
 printf '\nWin7 installer ready (host %s)\n' "$host_arch"
 ls -l release-assets
+# 安装包已落地，本次提交的输入不再有用；删掉免得缓存卷被历史提交堆满。
+rm -rf -- "$inputs"

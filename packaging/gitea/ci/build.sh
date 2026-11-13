@@ -114,14 +114,19 @@ else
     fi
     # 交接给安装包任务：Inno Setup 组包要在同一缓存卷里拿到两个 i386 PE（桌面与 CLI），
     # 那个任务跑在带 Wine 的独立镜像里，不共享本次任务的工作区。
-    # 交接目录每次重建，只留本次运行的输入，避免上一轮的版本混进组包。
-    rm -rf "$cache/installer-inputs"
-    mkdir -p "$cache/installer-inputs"
+    # 交接目录按提交分家：组包任务要等编译结束后才启动，这中间新提交可能已经在写自己的输入，
+    # 共用一个目录会互相覆盖（旧 release 混进新 exe，或刚写好的被 rm 掉）。
+    inputs="$cache/installer-inputs/${CI_COMMIT:?CI_COMMIT is required}"
+    rm -rf "$inputs"
+    mkdir -p "$inputs"
     find release-assets -maxdepth 1 -name 'wunder-desktop-*-win7-x86.exe' \
-        -exec cp -f -- {} "$cache/installer-inputs/" \;
+        -exec cp -f -- {} "$inputs/" \;
     if [[ -f "$sample" ]]; then
-        cp -f -- "$sample" "$cache/installer-inputs/wunder-cli-win7-x86.exe"
+        cp -f -- "$sample" "$inputs/wunder-cli-win7-x86.exe"
     fi
+    # 组包成功后会删掉自己的交接目录，这里只兜底清理一天前的残留（失败重试仍在窗口内）。
+    find "$cache/installer-inputs" -mindepth 1 -maxdepth 1 -type d -mtime +0 \
+        -exec rm -rf -- {} + 2>/dev/null || true
 fi
 
 python3 "$ci_dir/verify.py" release-assets "$ARCH" "$sample"
