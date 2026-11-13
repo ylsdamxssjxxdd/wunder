@@ -158,16 +158,28 @@ test('partial catalog membership cannot reject a valid thread opened by id', asy
   const { default: api } = await import('../../src/api/http');
   store.sessions = [session('session-a')];
   const original = api.defaults.adapter;
-  let detailRequests = 0;
+  let bootstrapRequests = 0;
+  // 打开线程走有界投影 bootstrap（不是目录成员判定）：目录里没有 session-b，
+  // 但只要服务端给得出这一页，就必须正常打开，并且只请求一次。
   api.defaults.adapter = async config => {
-    if (config.url === '/chat/sessions/session-b') detailRequests++;
-    return { status: 200, statusText: 'OK', headers: {}, config,
-      data: { data: config.url?.endsWith('/events') ? { events: [], rounds: [], running: false } : { ...session('session-b'), transcript: [] } } };
+    const url = String(config.url || '');
+    if (url.endsWith('/view/bootstrap')) bootstrapRequests += 1;
+    const data = url.endsWith('/view/bootstrap')
+      ? {
+          session: { ...session('session-b'), agent_id: '' },
+          page: { session_id: 'session-b', epoch: 1, view_seq: 1, projection_state: 'ready',
+            thread_empty: true, latest_round: 0, chat: [], trajectory: [], tiles: [], tile_level: 0,
+            has_more: false, next_before: null }
+        }
+      : url.endsWith('/events')
+        ? { events: [], rounds: [], running: false }
+        : { ...session('session-b'), transcript: [] };
+    return { status: 200, statusText: 'OK', headers: {}, config, data: { data } };
   };
   try {
     const result = await store.loadSessionDetail('session-b', { startWatcherAfterHydration: false });
     assert.equal(result?.id, 'session-b');
-    assert.equal(detailRequests, 1);
+    assert.equal(bootstrapRequests, 1);
   } finally { api.defaults.adapter = original; store.resetState(); }
 });
 

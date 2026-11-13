@@ -22,11 +22,8 @@
             <div class="messenger-chat-empty-title">{{ t('messenger.empty.selectConversation') }}</div>
           </div>
 
-          <div v-if="retainedMessageRenderKind === 'agent'" :class="{ 'is-empty-thread': showThreadActivityCard }">
+          <div v-if="retainedMessageRenderKind === 'agent'">
             <button v-if="!atLatest" @click="chatStore.loadSessionDetail(chatStore.activeSessionId)">回到最新消息</button>
-            <div v-if="showThreadActivityCard" class="messenger-thread-activity">
-              <SessionActivityCard />
-            </div>
             <div v-if="threadPhase === 'error'" role="alert" class="messenger-chat-empty">{{ threadError }} <button @click="chatStore.loadSessionDetail(chatStore.activeSessionId)">重试</button></div>
             <div v-else-if="threadPhase === 'opening'" class="messenger-chat-empty">{{ t('common.loading') }}</div>
             <div v-if="agentVirtualTopSpacer" class="messenger-message-virtual-spacer"
@@ -179,9 +176,7 @@ import { threadViewPhase, threadViewError, threadViewAtLatest } from '@/realtime
 import { computed, onUpdated, shallowRef, watch } from 'vue';
 import MessengerTurnRow from './MessengerTurnRow.vue';
 import MessengerAgentBubble from './MessengerAgentBubble.vue';
-import SessionActivityCard from '@/components/messenger/SessionActivityCard.vue';
 import type { MessengerControllerContext } from '../controller/messengerControllerContext';
-import { resolveShowThreadActivityCard } from '../controller/legacyTurnRowAdapter';
 import MessageMarkdownBody from '@/components/chat/MessageMarkdownBody.vue';
 import { chatPerf } from '@/utils/chatPerf';
 import { isLatestProcessTurn, resolveLatestProcessTurnKey } from '@/components/chat/timelineProcessDefault';
@@ -189,7 +184,6 @@ import { isLatestProcessTurn, resolveLatestProcessTurnKey } from '@/components/c
 // The stable controller carries refs/actions; only this subtree tracks message render dependencies.
 const props = defineProps<{ controller: MessengerControllerContext }>();
 const agentTurnSlots = props.controller.agentTurnSlots;
-const agentTurnRowsHaveContent = props.controller.agentTurnRowsHaveContent;
 const agentVirtualRows = props.controller.agentVirtualRows;
 const agentVirtualTopSpacer = props.controller.agentVirtualTopSpacer;
 const bootLoading = props.controller.bootLoading;
@@ -218,13 +212,9 @@ const toggleWorldVoicePlayback = props.controller.toggleWorldVoicePlayback;
 const worldVirtualBottomSpacer = props.controller.worldVirtualBottomSpacer;
 const worldVirtualGroups = props.controller.worldVirtualGroups;
 const worldVirtualTopSpacer = props.controller.worldVirtualTopSpacer;
-// A thread without a single user turn shows the yearly activity grid together
-// with the synthetic greeting, and the pair is vertically centered
-// (`.is-empty-thread`); the grid disappears with the first real turn.
-// History still loading must not flash the grid over a thread that has turns.
-// W2-E: any turn row hides the grid, whichever source produced it (window
-// projection or the transcript fallback), so a failed snapshot renders rows
-// instead of the grid.
+// A thread without a single user turn renders only the synthetic greeting, at
+// the normal top of the transcript (no vertical centring: an empty pane is not
+// worth half a screen of blank space above the first line).
 const chatStore = props.controller.chatStore;
 const threadPhase=computed(()=>threadViewPhase(String(chatStore?.activeSessionId??'')));
 const atLatest=computed(()=>threadViewAtLatest(String(chatStore?.activeSessionId??'')));
@@ -242,14 +232,6 @@ watch(
     if (next !== latestProcessTurnKey.value) latestProcessTurnKey.value = next;
   },
   { immediate: true }
-);
-const showThreadActivityCard = computed(() =>
-  resolveShowThreadActivityCard({
-    renderKind: retainedMessageRenderKind?.value,
-    hasTurnContent: Boolean(agentTurnRowsHaveContent?.value) || Boolean(agentTurnSlots?.value?.length),
-    sessionId: chatStore?.activeSessionId,
-    historyLoading: chatStore?.activeSessionId ? threadPhase.value !== 'verified_empty' : false
-  })
 );
 onUpdated(() => chatPerf.count('chat_message_panel_render'));
 </script>

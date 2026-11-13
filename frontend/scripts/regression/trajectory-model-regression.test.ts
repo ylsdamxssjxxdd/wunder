@@ -3,6 +3,20 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+// web/modules/trajectory-model.js 通过相对路径 import 了 shared/trajectory-axis.js；
+// 以 data: URL 载入时相对说明符无法解析（Node 报 Invalid URL），所以把轴模块也
+// 内联成绝对 data: URL 再交给 bridge 模块 import。
+const readWebModule = (relative: string) =>
+  readFileSync(resolve(__dirname, '../../web', relative), 'utf8');
+const inlineDataModule = (source: string) =>
+  `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
+const bridgeModel = async () => {
+  const axisUrl = inlineDataModule(readWebModule('shared/trajectory-axis.js'));
+  const source = readWebModule('modules/trajectory-model.js')
+    .replace(/(['"])\.\.\/shared\/trajectory-axis\.js[^'"]*\1/, JSON.stringify(axisUrl));
+  return import(inlineDataModule(source));
+};
+
 import {
   buildTrajectoryLayout,
   buildRequestNumbers,
@@ -231,8 +245,7 @@ test('assistant overview keeps response in output and never duplicates it as inp
   assert.equal(assistant?.outputDetail, 'model response');
   assert.equal(assistant?.thinkingDetail, 'model reasoning');
 
-  const bridgeSource = readFileSync(resolve(__dirname, '../../web/modules/trajectory-model.js'), 'utf8');
-  const bridge = await import(`data:text/javascript;base64,${Buffer.from(bridgeSource).toString('base64')}`);
+  const bridge = await bridgeModel();
   const bridgeCell = bridge.flattenRecords(bridge.buildTrajectoryLayout([
     { user_turn_index: 2, items: [{ kind: 'assistant_message', payload: {
       event_type: 'assistant_message', content: 'model response', reasoning_content: 'model reasoning'
@@ -262,8 +275,7 @@ test('subagent runs keep child task/report and own wall time in a separate subto
   assert.equal(hiveCell?.outputDetail, 'workspace contains two files')
   assert.equal(hiveCell?.timeSeconds, 4)
 
-  const bridgeSource = readFileSync(resolve(__dirname, '../../web/modules/trajectory-model.js'), 'utf8')
-  const bridge = await import(`data:text/javascript;base64,${Buffer.from(bridgeSource).toString('base64')}`)
+  const bridge = await bridgeModel();
   const [bridgeCell] = bridge.flattenRecords(bridge.buildTrajectoryLayout([
     { user_turn_index: 1, items },
   ], translate)).map((record: any) => record.cell)
@@ -307,8 +319,7 @@ test('cumulative user duration never stretches assistant spans in either client'
 });
 
 test('compaction uses summary_text instead of the history placeholder and ignores marker rows', async () => {
-  const bridgeSource = readFileSync(resolve(__dirname, '../../web/modules/trajectory-model.js'), 'utf8');
-  const bridge = await import(`data:text/javascript;base64,${Buffer.from(bridgeSource).toString('base64')}`);
+  const bridge = await bridgeModel();
   const turns = bridge.buildTrajectoryLayout([{ user_turn_index: 1, items: [
     { kind: 'assistant_message', payload: {
       content: 'summary marker', meta: { type: 'manual_compaction_marker', manual_compaction: true }
@@ -417,8 +428,7 @@ test('nested folds restore call folds after a turn expands and leave orphan tool
 });
 
 test('bridge and hive project identical folds for the same ledger', async () => {
-  const bridgeSource = readFileSync(resolve(__dirname, '../../web/modules/trajectory-model.js'), 'utf8');
-  const bridge = await import(`data:text/javascript;base64,${Buffer.from(bridgeSource).toString('base64')}`);
+  const bridge = await bridgeModel();
   const records = foldFixture();
   const calls = new Set(buildFoldGroups(records).assistants.keys());
   for (const turns of [new Set<number>(), new Set([7])]) {
@@ -430,11 +440,6 @@ test('bridge and hive project identical folds for the same ledger', async () => 
     }
   }
 });
-
-const bridgeModel = async () => {
-  const source = readFileSync(resolve(__dirname, '../../web/modules/trajectory-model.js'), 'utf8');
-  return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
-};
 
 const assistantItem = (step: number, status = 'completed', execution = 'execution-a') => ({
   kind: 'assistant_message', turn_id: execution, item_id: `${execution}:text-${step}`,

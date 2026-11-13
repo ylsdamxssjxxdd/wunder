@@ -9,7 +9,10 @@ test('queue handoff keeps existing output and resumes the same model turn', () =
   const projection = createChatRuntimeProjection();
   const ids = { session_id:'session-a', user_turn_id:'turn-a', model_turn_id:'model-a', message_id:'message-a', strict:false };
   applyChatRuntimeEvent(projection, { ...ids, event_type:'assistant_delta', delta:'retained' });
-  applyChatRuntimeEvent(projection, { ...ids, event_type:'queue_status', payload:{source_event_type:'queue_enter', reason:'admin_preempted', queue_state:'suspended'} });
+  // 容量等待是「已发送、尚未轮到」：会话显示排队，且该轮仍留在时间线上。
+  // 非容量等待（如 admin_preempted）按现行口径投影为 running，只是多一条排队条目，
+  // 由 queue-scheduling 的调度状态字段表达，不再把整轮降级成 queued。
+  applyChatRuntimeEvent(projection, { ...ids, event_type:'queue_status', payload:{source_event_type:'queue_enter', reason:'capacity'} });
   assert.equal(projection.sessions['session-a'].runtimeStatus, 'queued');
   applyChatRuntimeEvent(projection, { ...ids, event_type:'queue_status', payload:{source_event_type:'queue_start', resumed:true} });
   const session = projection.sessions['session-a'];

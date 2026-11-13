@@ -322,11 +322,6 @@ pub struct Timeline {
     /// The live turn ran to its end but its rows are still the only copy: the
     /// durable snapshot has not caught up with it yet.
     settled: bool,
-    /// The live turn has not been admitted yet: its bubble is a provisional
-    /// echo of a message the user is still waiting to send. Such a turn owns
-    /// no status, no process bar and no footer, and the durable snapshot may
-    /// not replace it while it waits.
-    waiting: bool,
     /// 本轮秒表起点：运行中过程条右侧的耗时按它推进，`None` 表示没有在走的轮次。
     elapsed: Option<std::time::Instant>,
     /// Whether frozen body blocks get syntax highlighting; the reducer turns
@@ -479,7 +474,6 @@ impl Timeline {
             turn: None,
             active_user_row: usize::MAX,
             settled: false,
-            waiting: false,
             elapsed: None,
             published: Cell::new(false),
             markdown_desktop: None,
@@ -640,7 +634,6 @@ impl Timeline {
         self.model.set_vec(Vec::new());
         self.marks_dirty.set(true);
         self.active_user_row = usize::MAX;
-        self.waiting = false;
 
         self.body = None;
         self.thinking = None;
@@ -658,7 +651,6 @@ impl Timeline {
         self.footer.set(usize::MAX);
         self.turn = None;
         self.settled = false;
-        self.waiting = false;
     }
 
     /// Name the model round the reducer is in. Rows created from now on carry
@@ -802,36 +794,7 @@ impl Timeline {
     /// carries the turn identity: it is the anchor the durable snapshot
     /// matches when it takes the settled turn over.
     pub fn begin_turn(&mut self, root: &str, text: &str) -> usize {
-        self.begin_turn_in(root, text, false)
-    }
-
-    /// Start a turn whose bubble is only a provisional echo: the engine has not
-    /// admitted the message yet, so it is still waiting to be sent. A waiting
-    /// turn shows the user bubble alone — no process bar, no status footer —
-    /// and [`Self::admit_turn`] turns it into a running turn the moment the
-    /// engine starts it.
-    pub fn begin_waiting_turn(&mut self, root: &str, text: &str) -> usize {
-        self.begin_turn_in(root, text, true)
-    }
-
-    /// Hand a waiting turn to the engine: it now owns the live slot, so it gets
-    /// the ordinary process bar and running status of a fresh turn.
-    pub fn admit_turn(&mut self, root: &str) {
-        if self.turn.as_deref() != Some(root) || !self.waiting {
-            return;
-        }
-        self.waiting = false;
-        // The stopwatch starts when the engine starts the turn, not when the
-        // user submitted it.
-        self.elapsed = Some(std::time::Instant::now());
-        self.open_process(root);
-        self.set_turn_status("请求中", 0);
-        self.marks_dirty.set(true);
-    }
-
-    /// Whether the live turn is still waiting for its engine admission.
-    pub fn is_waiting(&self) -> bool {
-        self.waiting
+        self.begin_turn_in(root, text)
     }
 
     /// Identity of the turn the live builder currently holds, if any.
@@ -839,7 +802,7 @@ impl Timeline {
         self.turn.as_deref()
     }
 
-    fn begin_turn_in(&mut self, root: &str, text: &str, waiting: bool) -> usize {
+    fn begin_turn_in(&mut self, root: &str, text: &str) -> usize {
         self.body = None;
         self.thinking = None;
         self.tools.clear();
@@ -850,11 +813,9 @@ impl Timeline {
         self.footer.set(usize::MAX);
         self.turn = Some(root.to_string());
         self.settled = false;
-        self.waiting = waiting;
         // 本轮秒表从用户提交这一刻起走，过程条右侧的耗时因此逐秒推进，
-        // 而不是等统计值到达后一次跳过去。等待发送的轮次还没有开始，
-        // 它的秒表由 `admit_turn` 启动。
-        self.elapsed = (!waiting).then(std::time::Instant::now);
+        // 而不是等统计值到达后一次跳过去。
+        self.elapsed = Some(std::time::Instant::now());
         let user_id = format!("user-turn-{root}");
         if let Some(index) = self.model.iter().position(|row| row.id == user_id) {
             if let Some(mut row) = self.model.row_data(index) {
@@ -866,16 +827,6 @@ impl Timeline {
             // The ruler preview reads this bubble's text, so the marks refresh
             // even though the row's own position did not move.
             self.marks_dirty.set(true);
-            if waiting {
-                // A durable anchor may already carry a process row from an
-                // earlier projection of the same turn; the waiting bubble owns
-                // nothing beyond itself.
-                self.process = NO_PROCESS;
-                self.process_bar = usize::MAX;
-                self.last_body = usize::MAX;
-                self.protected_body = usize::MAX;
-                return index;
-            }
             let process_id = format!("process-{root}");
             if let Some((bar, row)) = self
                 .model
@@ -903,13 +854,6 @@ impl Timeline {
         user.time = crate::timeline_text::clock_hhmm_now().into();
         let index = self.push(user);
         self.active_user_row = index;
-        if waiting {
-            self.process = NO_PROCESS;
-            self.process_bar = usize::MAX;
-            self.last_body = usize::MAX;
-            self.protected_body = usize::MAX;
-            return index;
-        }
         self.open_process(root);
         index
     }
@@ -1661,14 +1605,6 @@ impl Timeline {
     /// Settle the turn: the last block freezes and the tail stops spinning.
     pub fn finish(&mut self, settle: Settle) {
         let failed = settle == Settle::Failed;
-        if self.waiting {
-            // A message that never reached the engine has no process fold and
-            // no footer to settle; its bubble is simply handed back.
-            self.waiting = false;
-            self.settled = true;
-            self.elapsed = None;
-            return;
-        }
         self.close_thinking(failed);
         self.close_body();
         self.close_batch();
@@ -1864,13 +1800,6 @@ impl Timeline {
                 .is_some_and(|row| row.kind == KIND_USER && row.id == anchor)
         });
         let Some(start) = start else {
-            if self.waiting {
-                // The provisional bubble owns the tail of the transcript. A
-                // snapshot that does not carry it yet (the durable turn is
-                // written only when the engine admits the message) must not
-                // wipe it: the waiting turn would silently disappear.
-                return;
-            }
             // Either there is no live turn, or the model no longer holds its
             // rows: the snapshot owns everything either way.
             self.forget_turn();
@@ -2061,7 +1990,6 @@ impl Timeline {
         self.turn = None;
         self.active_user_row = usize::MAX;
         self.settled = false;
-        self.waiting = false;
         self.elapsed = None;
         self.body = None;
         self.thinking = None;
@@ -2305,11 +2233,6 @@ impl Timeline {
     }
 
     pub fn set_turn_status(&mut self, state: &str, round: i64) {
-        // A waiting bubble has not been admitted by the engine, so it has no
-        // status to show: its message is still only in the composer's hands.
-        if self.waiting {
-            return;
-        }
         let Some(index) = self.ensure_footer() else {
             return;
         };
@@ -2321,8 +2244,8 @@ impl Timeline {
             .iter()
             .filter(|metric| !metric.key.starts_with("status-") && metric.key != "hashtag")
             .collect();
-        // A waiting turn owns no process bar, so the scan starts at the
-        // turn's own rows instead of `usize::MAX + 1`.
+        // Scan the live turn's own rows: its process bar sits right behind
+        // the user bubble.
         let has_running_subagent = (self.process_bar.saturating_add(1)..index).any(|at| {
             self.model.row_data(at).is_some_and(|entry| {
                 entry.kind == KIND_SUBAGENT && entry.status_kind == STATUS_RUNNING

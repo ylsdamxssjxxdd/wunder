@@ -48,11 +48,6 @@ export global Theme {
     out property <color> input-readonly-bg: hover;
     out property <color> input-readonly-border: border;
     out property <color> input-readonly-text: muted;
-    // New-thread activity heatmap: the off cell. Active days ride the accent
-    // ramp below (`Theme.activity-tone`), and the not-yet-arrived days of the
-    // current week reuse `hover`.
-    out property <color> activity-off: #E9E8E5;
-
     // Accent: primary / hover / soft / tint family. The default is 橙汁
     // (#F58A24). 橙汁 is defined here and the 云端版 web shell follows it —
     // frontend/src/styles/base.css maps the same accent / deep / secondary /
@@ -72,14 +67,6 @@ export global Theme {
     out property <color> accent-soft: palette == "hula-green" ? #e7f7f2 : palette == "forest" ? #e9f2ee : palette == "honey" ? #f8f0dd : palette == "minimal" ? #f3f4f6 : palette == "tech-blue" ? #e7f7ff : #FDF0DE;
     out property <color> bubble: #ffffff;
     out property <color> mine: palette == "hula-green" ? #dbf2eb : palette == "forest" ? #dfeae4 : palette == "honey" ? #f4e8cf : palette == "minimal" ? #eceff3 : palette == "tech-blue" ? #d7eeff : #FDF0DE;
-    // Heatmap steps: `base` held at `keep` percent over the card's white
-    // surface, i.e. the same 25/50/75/100 alpha ramp the web card paints.
-    public pure function activity-tone(base: color, keep: int) -> color {
-        Colors.rgb(
-            base.red + (255 - base.red) * (100 - keep) / 100,
-            base.green + (255 - base.green) * (100 - keep) / 100,
-            base.blue + (255 - base.blue) * (100 - keep) / 100)
-    }
     // Timeline surfaces: the user bubble, the 1px connector that runs through
     // an expanded tool group, and the monospace diff card cells.
     out property <color> timeline-bubble: #F3F2F0;

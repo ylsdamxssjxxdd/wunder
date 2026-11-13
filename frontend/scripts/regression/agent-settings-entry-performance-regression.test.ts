@@ -12,7 +12,10 @@ test('agent settings renders cached form immediately and hydrates secondary data
   assert.ok(source.includes('const cachedAgent = agentStore.agentMap[normalizedAgentId.value]'));
   assert.ok(source.includes('await applyAgentToForm(cachedAgent as Record<string, unknown>, requestId);'));
   assert.ok(source.includes('agentLoading.value = false;'));
-  assert.ok(source.includes('void beeroomStore.loadGroups().catch(() => null);'));
+  // 蜂房分组已随蜂群编排移除；首屏之外的数据仍在后台补齐（工具摘要、
+  // 伙伴预览），不得阻塞表单首帧。
+  assert.ok(source.includes('void loadToolSummary({ force: true })'));
+  assert.ok(source.includes('void ensureCompanionPreviewLoaded('));
   assert.ok(source.includes('void loadModelOptions();'));
   assert.ok(source.includes('void toolSummaryPromise;'));
   assert.ok(source.includes('if (cachedAgent && hasUnsavedChanges.value)'));

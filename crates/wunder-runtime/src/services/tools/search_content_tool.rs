@@ -724,7 +724,9 @@ fn parse_search_binary(args: &Value) -> bool {
             return flag;
         }
     }
-    args.get("-a").and_then(parse_optional_bool_value).unwrap_or(false)
+    args.get("-a")
+        .and_then(parse_optional_bool_value)
+        .unwrap_or(false)
 }
 
 /// `exclude`（也接受 `excludes`）统一走 fs_walk 的解析，和 `文件名匹配` 保持同一套
@@ -1383,8 +1385,7 @@ fn build_include_filter(patterns: &[String]) -> Result<Option<GlobSet>> {
     }
     let mut builder = GlobSetBuilder::new();
     for item in patterns {
-        let glob = Glob::new(item)
-            .map_err(|err| anyhow!("invalid include pattern: {err}"))?;
+        let glob = Glob::new(item).map_err(|err| anyhow!("invalid include pattern: {err}"))?;
         builder.add(glob);
     }
     let set = builder
@@ -1413,8 +1414,8 @@ impl SearchExcludeFilter {
         let mut has_path = false;
         for item in patterns {
             let normalized = item.replace('\\', "/");
-            let glob = Glob::new(&normalized)
-                .map_err(|err| anyhow!("invalid exclude `{item}`: {err}"))?;
+            let glob =
+                Glob::new(&normalized).map_err(|err| anyhow!("invalid exclude `{item}`: {err}"))?;
             if normalized.contains('/') {
                 path_builder.add(glob);
                 has_path = true;
@@ -2670,10 +2671,7 @@ fn compact_context_lines(lines: &[ContextLine]) -> Vec<Value> {
         .collect()
 }
 
-fn compact_search_hits_for_model(
-    hits: &[SearchHit],
-    context_match_limit: usize,
-) -> Vec<Value> {
+fn compact_search_hits_for_model(hits: &[SearchHit], context_match_limit: usize) -> Vec<Value> {
     let with_context = if context_match_limit == 0 {
         usize::MAX
     } else {
@@ -2694,8 +2692,14 @@ fn compact_search_hits_for_model(
             // 超出带上下文名额的命中只保留定位信息：它们的作用是让调用方知道
             // 还有哪些位置命中，不需要再把周围代码也搬一遍。
             if index < with_context {
-                item.insert("before".to_string(), json!(compact_context_lines(&hit.before)));
-                item.insert("after".to_string(), json!(compact_context_lines(&hit.after)));
+                item.insert(
+                    "before".to_string(),
+                    json!(compact_context_lines(&hit.before)),
+                );
+                item.insert(
+                    "after".to_string(),
+                    json!(compact_context_lines(&hit.after)),
+                );
             }
             Value::Object(item)
         })
@@ -3094,7 +3098,6 @@ mod tests {
         assert!(all.iter().all(|item| item.get("after").is_some()));
     }
 
-
     #[test]
     fn expand_brace_patterns_matches_ripgrep_syntax() {
         assert_eq!(expand_brace_patterns("*.{rs,md}"), vec!["*.rs", "*.md"]);
@@ -3134,9 +3137,8 @@ mod tests {
         assert_eq!(params.file_pattern_items, vec!["*.rs".to_string()]);
         assert_eq!(params.exclude_patterns, vec!["*_test.rs".to_string()]);
 
-        let includes =
-            parse_search_params(&json!({"query": "needle", "include": "[\"src/**\"]"}))
-                .expect("params");
+        let includes = parse_search_params(&json!({"query": "needle", "include": "[\"src/**\"]"}))
+            .expect("params");
         assert_eq!(includes.include_pattern_items, vec!["src/**".to_string()]);
     }
 

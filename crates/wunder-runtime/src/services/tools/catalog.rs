@@ -3127,7 +3127,9 @@ mod tests {
         assert_eq!(item["additionalProperties"].as_bool(), Some(false));
         assert_eq!(item["required"], serde_json::json!(["step", "status"]));
         // 旧的 current 形态不再出现在 schema 里：只宣传一种写法。
-        assert!(plan_spec.input_schema["properties"].get("current").is_none());
+        assert!(plan_spec.input_schema["properties"]
+            .get("current")
+            .is_none());
         assert_eq!(
             plan_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
@@ -3405,6 +3407,7 @@ mod tests {
                     (description, "修图"),
                     (description, "input_path"),
                     (description, "不要传 size"),
+                    (description, "配图"),
                     (prompt, "只描述要改动"),
                     (input_path, "编辑模式"),
                     (property("size"), "保持原图尺寸"),
@@ -3415,6 +3418,7 @@ mod tests {
                     (description, "retouch"),
                     (description, "input_path"),
                     (description, "do not pass size"),
+                    (description, "imagery"),
                     (prompt, "describe only the change"),
                     (input_path, "image-to-image/edit"),
                     (property("size"), "keep the source dimensions"),

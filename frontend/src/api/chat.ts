@@ -82,12 +82,6 @@ export const createSession = (payload: unknown) => api.post('/chat/sessions', pa
 });
 export const listSessions = (params: QueryParams, options: { signal?: AbortSignal } = {}) =>
   api.get('/chat/sessions', { params, ...options });
-// Sparse daily buckets for the new-thread activity heatmap: only days with
-// activity come back, { data: { today, days, sessions[], credits[] } }.
-export const getDailyActivity = (
-  params: QueryParams = {},
-  options: { signal?: AbortSignal } = {}
-) => api.get('/chat/activity/daily', { params, ...options });
 export const getSession = (id: string, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}`, options);
 export const getSessionWithParams = (

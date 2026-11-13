@@ -207,114 +207,130 @@ test('repeated running transcript hydration preserves the deduplicated server ta
   store.resetState();
 });
 
-test('detail response racing live output seeds history without rolling back content or status', async () => {
-  const store = await setup();
-  const { default: api } = await import('../../src/api/http');
-  const { applyCanonicalStreamRuntimeEvent } = await import('../../src/stores/chatRuntimeState');
-  const originalAdapter = api.defaults.adapter;
-  const pending: Array<() => void> = [];
-  api.defaults.adapter = async (config) => new Promise(resolve => {
-    pending.push(() => resolve({ status: 200, statusText: 'OK', headers: {}, config, data: { data:
-      config.url?.endsWith('/thread-log/snapshot') ? null : config.url?.endsWith('/events')
-        ? { running: false, runtime: { status: 'idle' }, last_event_id: 10, events: [],
-            workflow_only: config.params?.workflow_only === true,
-            rounds: config.params?.workflow_only ? [{ user_round: 1, events: [{
-              event: 'tool_result', item_id: 'stored-tool', revision: 1,
-              data: { user_round: 1, model_round: 1, tool: 'tool_a', tool_call_id: 'stored-call', ok: true }
-            }] }] : [] }
-        : { id: 'session-1', transcript: transcript() }
-    } }));
-  });
-  try {
-    const loading = store.loadSessionDetail('session-1', { startWatcherAfterHydration: false });
-    await new Promise(resolve => setTimeout(resolve, 0));
-    assert.equal(pending.length, 4);
-    applyCanonicalStreamRuntimeEvent(store, 'session-1', 'llm_output_delta', {
-      user_round: 2, model_round: 1, delta: 'new-output'
-    }, '11');
-    pending.forEach(resolve => resolve());
-    await loading;
-    assert.deepEqual(selectVisibleMessageProjections(store.runtimeProjection, 'session-1')
-      .map(message => [message.role, message.content]),
-    [['user', 'input-1'], ['assistant', 'output-1'], ['user', 'input-2'], ['assistant', 'new-output']]);
-    assert.equal(store.isSessionBusy('session-1'), true);
-    const restored = selectVisibleMessageProjections(store.runtimeProjection, 'session-1');
-    assert.equal(restored[1].status, 'final');
-    assert.equal(restored[1].workflowItems?.[0]?.toolCallId, 'stored-call');
-  } finally {
-    pending.forEach(resolve => resolve());
-    api.defaults.adapter = originalAdapter;
-    store.resetState();
-  }
+const viewResponse = (config: any, data: any) => ({
+  status: 200, statusText: 'OK', headers: {}, config, data: { data }
 });
 
-test('cold detail restores tools from the workflow response when the event tail is empty', async () => {
+const viewSession = (overrides: Record<string, any> = {}) => ({ id: 'session-1', agent_id: '', ...overrides });
+
+const viewRow = (overrides: Record<string, any> = {}) => ({
+  root_turn_id: 'turn-1', execution_turn_id: 'turn-1', user_round: 1, revision: 3,
+  status: 'completed', user: { item_id: 'u1', content: 'input-1' },
+  assistant: { item_id: 'a1', content: 'output-1' }, workflow_count: 0, failed_count: 0,
+  ...overrides
+});
+
+const viewPage = (rows: any[], overrides: Record<string, any> = {}) => ({
+  session_id: 'session-1', epoch: 1, view_seq: 8, projection_state: 'ready',
+  thread_empty: rows.length === 0, latest_round: 1, chat: rows, trajectory: [], tiles: [],
+  tile_level: 0, next_before: 1, has_more: false, runtime_status: 'idle', ...overrides
+});
+
+// 打开线程只走有界投影 bootstrap；事件尾与 workflow 轮次已不再是历史来源。
+const mockThreadViewBootstrap = (
+  first: { page: any; session: any },
+  options: { onOpen?: (index: number) => Promise<any> | null } = {}
+) => {
+  let opens = 0;
+  return async (config: any) => {
+    const url = String(config.url || '');
+    if (url.endsWith('/view/bootstrap')) {
+      const index = opens++;
+      const pending = options.onOpen?.(index);
+      if (pending) return pending;
+      return viewResponse(config, index === 0 ? first : { page: first.page, session: first.session });
+    }
+    return viewResponse(config, { events: [], rounds: [], running: false });
+  };
+};
+
+test('an older bootstrap page cannot rewind a newer committed transcript', async () => {
+  const { beginThreadView, commitThreadView, clearThreadView, threadViewHasNewerPage, threadViewSlots } =
+    await import('../../src/realtime/chat/threadViewStore');
+  const key = 'session-1';
+  clearThreadView(key);
+  const generation = beginThreadView(key);
+  assert.equal(commitThreadView(key, viewPage([viewRow()], { view_seq: 8 }), generation), true);
+  const stale = viewPage([viewRow({ revision: 1, assistant: { item_id: 'a1', content: 'stale-output' } })], { view_seq: 4 });
+  // 旧页必须被游标守卫拒绝；打开路径靠 threadViewHasNewerPage 识别「更旧但合法」的页。
+  assert.equal(commitThreadView(key, stale, generation), false);
+  assert.equal(threadViewHasNewerPage(key, stale, generation), true);
+  assert.deepEqual((threadViewSlots(key) ?? []).map(slot => [slot.assistant.content, slot.assistant.status]),
+    [['output-1', 'completed']]);
+  clearThreadView(key);
+});
+
+test('cold detail restores history and tool counts from the bootstrap page alone', async () => {
   const store = await setup();
   const { default: api } = await import('../../src/api/http');
-  const originalAdapter = api.defaults.adapter;
-  api.defaults.adapter = async config => ({ status: 200, statusText: 'OK', headers: {}, config,
-    data: { data: config.url?.endsWith('/events')
-      ? { running: false, workflow_only: config.params?.workflow_only === true, events: [],
-          rounds: config.params?.workflow_only ? [{ user_round: 1, status: 'completed', events: [
-            { event: 'tool_result', item_id: 'tool-1', revision: 2,
-              data: { user_round: 1, model_round: 1, tool: 'read_file', tool_call_id: 'call-1',
-                status: 'completed', ok: true, request_context_tokens: 120,
-                meta: { duration_ms: 1250 } } }
-          ] }] : [] }
-      : { id: 'session-1', transcript: transcript() } }
+  const { threadViewSlots } = await import('../../src/realtime/chat/threadViewStore');
+  const original = api.defaults.adapter;
+  api.defaults.adapter = mockThreadViewBootstrap({
+    page: viewPage([viewRow({ workflow_count: 1, process_items: [{ item_id: 'tool-1', kind: 'tool',
+      status: 'completed', payload: { tool: 'read_file', tool_call_id: 'call-1', ok: true, status: 'completed' } }] })]),
+    session: viewSession({ runtime_status: 'completed' })
   });
   try {
     await store.loadSessionDetail('session-1', { startWatcherAfterHydration: false });
-    const visible = selectVisibleMessageProjections(store.runtimeProjection, 'session-1');
-    const assistant = visible.find(message => message.role === 'assistant');
-    assert.ok(assistant?.workflowItems?.some(item => item.toolCallId === 'call-1'));
-    assert.equal(visible.filter(message => message.role === 'assistant').length, 1);
+    const slots = threadViewSlots('session-1') ?? [];
+    assert.equal(slots.length, 1);
+    assert.equal(slots[0].assistant.content, 'output-1');
+    assert.equal(slots[0].assistant.status, 'completed');
+    assert.equal(slots[0].assistant.streaming, false);
+    assert.equal(slots[0].assistant.process_count, 1);
+    assert.deepEqual((slots[0].assistant.process_items ?? []).map(item => item.item_id), ['tool-1']);
+    const assistants = store.messages.filter(message => message.role === 'assistant' && !message.isGreeting);
+    assert.equal(assistants.length, 1);
     assert.equal(store.isSessionBusy('session-1'), false);
-  } finally {
-    api.defaults.adapter = originalAdapter;
-    store.resetState();
-  }
+  } finally { api.defaults.adapter = original; store.resetState(); }
 });
 
-for (const preload of [false, true]) {
-  test(`completed compaction stays idle during ${preload ? 'preload' : 'detail'} hydration with partial workflow history`, async () => {
-    const store = await setup();
-    const { default: api } = await import('../../src/api/http');
-    const originalAdapter = api.defaults.adapter;
-    const userTurn = 'user-turn:session-1:round:1';
-    const modelTurn = 'model-turn:session-1:user:1:model:1';
-    const messages = [
-      { role: 'user', content: '/compact', message_id: 'history:1', turn_index: 1,
-        user_turn_id: userTurn, user_round: 1, manual_compaction_command: true },
-      { role: 'assistant', content: '[Context summary] retained', message_id: 'history:2',
-        turn_index: 2, user_turn_id: userTurn, model_turn_id: modelTurn, user_round: 1,
-        model_round: 1, created_at: new Date().toISOString(), manual_compaction_marker: true,
-        workflowStreaming: true, stream_incomplete: true, reasoningStreaming: true,
-        workflowItems: [{ eventType: 'compaction_progress', status: 'loading',
-          detail: JSON.stringify({ trigger_mode: 'manual', status: 'loading' }) }] }
-    ];
-    api.defaults.adapter = async config => ({ status: 200, statusText: 'OK', headers: {}, config,
-      data: { data: config.url?.endsWith('/events')
-        ? { running: false, runtime: { thread_status: 'idle' }, last_event_id: 20,
-            events: [{ event: 'thread_status', event_id: 1, data: { status: 'running' } },
-              { event: 'progress', event_id: 2, data: { user_round: 1, stage: 'compacting', trigger_mode: 'manual' } },
-              { event: 'llm_request', event_id: 3, data: { user_round: 1,
-                trigger_mode: 'manual', purpose: 'compaction_summary' } }] }
-        : { id: 'session-1', transcript: messages } }
-    });
-    try {
-      if (preload) await store.preloadSessionDetail('session-1', { force: true, syncActive: true });
-      else await store.loadSessionDetail('session-1', { startWatcherAfterHydration: false });
-      assert.deepEqual(selectVisibleMessageProjections(store.runtimeProjection, 'session-1')
-        .map(message => [message.role, message.content, message.status]),
-      [['user', '/compact', 'final'], ['assistant', '[Context summary] retained', 'final']]);
-      assert.equal(store.isSessionBusy('session-1'), false);
-    } finally {
-      api.defaults.adapter = originalAdapter;
-      store.resetState();
-    }
+test('completed compaction row stays idle during detail hydration', async () => {
+  const store = await setup();
+  const { default: api } = await import('../../src/api/http');
+  const { threadViewSlots } = await import('../../src/realtime/chat/threadViewStore');
+  const original = api.defaults.adapter;
+  api.defaults.adapter = mockThreadViewBootstrap({
+    page: viewPage([viewRow({
+      workflow_count: 1,
+      assistant: { item_id: 'a1', content: '' },
+      process_items: [{ item_id: 'compaction-1', kind: 'compaction', status: 'completed',
+        payload: { trigger_mode: 'manual', status: 'completed', summary_text: '[Context summary] retained' } }]
+    })], { runtime_status: 'idle' }),
+    session: viewSession({ runtime_status: 'idle' })
   });
-}
+  try {
+    await store.loadSessionDetail('session-1', { startWatcherAfterHydration: false });
+    const slot = (threadViewSlots('session-1') ?? [])[0];
+    assert.equal(slot?.assistant.status, 'completed');
+    assert.equal(slot?.assistant.streaming, false);
+    assert.equal(store.isSessionBusy('session-1'), false);
+    assert.equal(store.messages.filter(message => message.role === 'assistant' && !message.isGreeting).length, 1);
+  } finally { api.defaults.adapter = original; store.resetState(); }
+});
+
+test('preloading an inactive thread only prefetches and never commits a view', async () => {
+  const store = await setup();
+  const { default: api } = await import('../../src/api/http');
+  const { threadViewSlots } = await import('../../src/realtime/chat/threadViewStore');
+  const original = api.defaults.adapter;
+  let bootstrapRequests = 0;
+  api.defaults.adapter = async config => {
+    if (String(config.url || '').endsWith('/view/bootstrap')) {
+      bootstrapRequests += 1;
+      return viewResponse(config, { page: viewPage([viewRow()]), session: viewSession() });
+    }
+    return viewResponse(config, { events: [], rounds: [], running: false });
+  };
+  try {
+    store.activeSessionId = 'session-2';
+    await store.preloadSessionDetail('session-1', { force: true, syncActive: false });
+    assert.equal(bootstrapRequests, 1);
+    // 预取只填缓存，不提交投影、不改变活动线程。
+    assert.equal(threadViewSlots('session-1'), null);
+    assert.equal(store.activeSessionId, 'session-2');
+  } finally { api.defaults.adapter = original; store.resetState(); }
+});
 
 test('model tool-call completion never ends the request or clears its busy state', async () => {
   const store = await setup();
@@ -356,36 +372,41 @@ test('recovery reloads a snapshot without inventing a running turn or creating a
 });
 
 for (const switching of [false, true]) {
-  test(`stale cached tools do not flash running during ${switching ? 'thread switch' : 'refresh'}`, async () => {
+  test(`a refresh never flashes a committed row back to running during ${switching ? 'thread switch' : 'refresh'}`, async () => {
     const store = await setup();
     const { default: api } = await import('../../src/api/http');
-    const { cacheSessionMessages, ensureRuntime } = await import('../../src/stores/chatRuntimeState');
+    const { threadViewSlots } = await import('../../src/realtime/chat/threadViewStore');
     const original = api.defaults.adapter;
-    const messages = [{role:'assistant',content:'answer',message_id:'item:answer',item_id:'answer',
-      user_turn_id:'user-turn:session-1:round:1',model_turn_id:'model-turn:session-1:user:1:model:1',
-      turn_index:2,status:'streaming',stream_incomplete:true,workflowStreaming:true,
-      workflowItems:[{eventType:'tool_call',status:'loading',toolCallId:'call'}]}];
-    cacheSessionMessages('session-1', messages);
-    ensureRuntime('session-1').threadStatus = 'running';
-    store.messages = switching ? [] : messages;
-    if (switching) store.activeSessionId = 'session-2';
     const pending: Array<() => void> = [];
-    api.defaults.adapter = config => new Promise(resolve => pending.push(() => resolve({
-      status:200,statusText:'OK',headers:{},config,data:{data:config.url?.endsWith('/events')
-        ? {running:false,runtime:{thread_status:'idle'},rounds:[]}
-        : {id:'session-1',running:false,runtime:{thread_status:'idle'},thread_change_cursor:8,
-          transcript:messages.map(message => ({...message,status:'final'}))}}
-    })));
+    let opens = 0;
+    api.defaults.adapter = async config => {
+      const url = String(config.url || '');
+      if (url.endsWith('/view/bootstrap')) {
+        if (opens++ === 0) return viewResponse(config, {
+          page: viewPage([viewRow()]), session: viewSession({ runtime_status: 'completed' })
+        });
+        return new Promise(resolve => pending.push(() => resolve(viewResponse(config, {
+          page: viewPage([viewRow()]), session: viewSession({ runtime_status: 'completed' })
+        }))));
+      }
+      return viewResponse(config, { events: [], rounds: [], running: false });
+    };
+    const slotStatus = () => (threadViewSlots('session-1') ?? [])[0]?.assistant.status;
     try {
-      const loading = store.loadSessionDetail('session-1', {startWatcherAfterHydration:false});
-      await new Promise(resolve => setTimeout(resolve,0));
+      await store.loadSessionDetail('session-1', { startWatcherAfterHydration: false });
       assert.equal(store.isSessionBusy('session-1'), false);
-      assert.equal(selectVisibleMessageProjections(store.runtimeProjection,'session-1')[0].status,'final');
+      assert.equal(slotStatus(), 'completed');
+      if (switching) store.activeSessionId = 'session-2';
+      const loading = store.loadSessionDetail('session-1', { startWatcherAfterHydration: false });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      // 刷新在飞行中时，已提交的行保持 settled，绝不闪回 running。
+      assert.equal(store.isSessionBusy('session-1'), false);
+      assert.equal(slotStatus(), 'completed');
       pending.splice(0).forEach(resolve => resolve());
       await loading;
       assert.equal(store.isSessionBusy('session-1'), false);
-      assert.equal(selectVisibleMessageProjections(store.runtimeProjection,'session-1')[0].status,'final');
-    } finally { api.defaults.adapter = original; store.resetState(); }
+      assert.equal(slotStatus(), 'completed');
+    } finally { pending.splice(0).forEach(resolve => resolve()); api.defaults.adapter = original; store.resetState(); }
   });
 }
 

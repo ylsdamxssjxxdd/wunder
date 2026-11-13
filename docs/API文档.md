@@ -2686,7 +2686,8 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
 - `status` 当前主要用于标识 `active / superseded` 等版本关系；云端版已移除置顶、作废、已失效等交互入口。
 - `memory_manager` 的 `list/search/get/add/update/remove/clear` 已与结构化 `memory_fragments` 共用同一条主存储链路；模型经工具写入的新记忆会直接出现在用户侧“记忆碎片”卡片页，无需再等待旧摘要表懒迁移。兼容别名 `recall -> search`、`delete -> remove` 会在工具层统一规范化。
 - 模型侧 `memory_manager` 使用 action 专属闭合字段：`list/search` 只返回索引或短片段，`get` 才读取正文，`add/update/remove/clear` 只返回 id、计数或状态；未知字段和跨 action 字段由运行时拒绝。
-- 用户侧记忆面板支持“记忆复刻”：`POST /wunder/agents/{agent_id}/memories/replicate` 会先清空目标智能体记忆，再复制当前智能体全部记忆到目标智能体；源智能体记忆保持不变。旧路由 `/memories/migrate` 仅作兼容别名保留。
+- 用户侧记忆面板提供“清空”：`DELETE /wunder/agents/{agent_id}/memories` 会删除该智能体的全部记忆碎片与历史摘要记录，返回 `data.deleted`（删除条数）；只影响当前智能体作用域。
+- 云端版记忆面板已移除“记忆复刻”入口；服务端 `POST /wunder/agents/{agent_id}/memories/replicate` 仍保留（会先清空目标智能体记忆，再复制当前智能体全部记忆，源智能体记忆不变），旧路由 `/memories/migrate` 仅作兼容别名保留。
 - `confirmed_by_user` 字段当前仅作为兼容旧数据保留，不再作为用户侧记忆碎片页面的交互入口，也不再参与 `search` 排序和提示词快照构建。
 - 自动记忆提炼能力仍可通过独立设置接口控制，但“记忆碎片”面板已不再展示最近提炼任务、召回说明等附属视图，列表接口也不再捆绑返回这些附属数据。
 - 聊天页提示词预览接口 `/wunder/chat/system-prompt` 与 `/wunder/chat/sessions/{session_id}/system-prompt` 现会额外返回 `memory_preview`、`memory_preview_mode(frozen/pending/none)`、`memory_preview_count`、`memory_preview_total_count`，用于向用户明确展示“当前线程已冻结”或“新线程将注入”的记忆快照；其中 `memory_preview_count` 表示当前提示词里实际注入的记忆条数，`memory_preview_total_count` 表示该记忆块生成时可用的长期记忆总数；新建线程在首条用户消息前应为 `pending`，首条用户消息发送后才转为 `frozen`。

@@ -596,6 +596,77 @@ async fn memory_routes_and_prompt_preview_work_end_to_end() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_collection_delete_clears_only_that_agent() {
+    let context = build_test_context("memory_clear_user").await;
+    let cleared_agent_id = seed_agent_record(
+        &context,
+        "agent_memory_cleared",
+        "Cleared Memory Agent",
+        "",
+        Vec::new(),
+    );
+    let kept_agent_id = seed_agent_record(
+        &context,
+        "agent_memory_kept",
+        "Kept Memory Agent",
+        "",
+        Vec::new(),
+    );
+
+    for agent_id in [cleared_agent_id.as_str(), kept_agent_id.as_str()] {
+        for index in 0..2 {
+            let (status, _) = send_json(
+                &context.app,
+                &context.token,
+                Method::POST,
+                &format!("/wunder/agents/{agent_id}/memories"),
+                Some(json!({
+                    "title_l0": format!("title-{}", index),
+                    "content_l2": format!("content-{}", index),
+                    "tag": "note"
+                })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+        }
+    }
+
+    let (status, cleared) = send_json(
+        &context.app,
+        &context.token,
+        Method::DELETE,
+        &format!("/wunder/agents/{cleared_agent_id}/memories"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cleared["data"]["deleted"], json!(2));
+
+    for (agent_id, expected) in [(cleared_agent_id.as_str(), 0), (kept_agent_id.as_str(), 2)] {
+        let (status, listed) = send_json(
+            &context.app,
+            &context.token,
+            Method::GET,
+            &format!("/wunder/agents/{agent_id}/memories?limit=200"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(listed["data"]["total"], json!(expected), "agent {agent_id}");
+    }
+
+    let (status, _unknown) = send_json(
+        &context.app,
+        &context.token,
+        Method::DELETE,
+        "/wunder/agents/missing-agent/memories",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn memory_routes_can_replicate_and_overwrite_target_agent_memories() {
     let context = build_test_context("memory_migration_user").await;
 

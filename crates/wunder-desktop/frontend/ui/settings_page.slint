@@ -853,6 +853,7 @@ export component SettingsPage inherits Rectangle {
     callback open-expert-memory(int);
     callback save-expert-memory();
     callback delete-expert-memory(string);
+    callback clear-expert-memories();
     callback open-expert-archive(string);
     callback restore-expert-archive(string);
     callback delete-expert-archive(string);
@@ -2023,6 +2024,7 @@ export component SettingsPage inherits Rectangle {
                         refresh => { root.refresh-expert(); }
                         save-memory => { root.save-expert-memory(); }
                         delete-memory(id) => { root.delete-expert-memory(id); }
+                        clear-memories => { root.clear-expert-memories(); }
                         open-memory(index) => { root.open-expert-memory(index); }
                     }
 

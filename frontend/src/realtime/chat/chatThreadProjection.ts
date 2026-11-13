@@ -738,7 +738,8 @@ const buildTurnTimeline = (
           itemId: event.itemId,
           text: event.text,
           streaming: event.streaming,
-          metrics: event.metrics
+          metrics: event.metrics,
+          round: event.round > 0 ? event.round : undefined
         }
       : { type: 'tool', itemId: event.itemId });
   }

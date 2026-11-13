@@ -102,7 +102,7 @@ import { completeProcessRefresh, requestProcessRefresh, type ProcessRefreshGateS
 import { resolveModelRoundMetrics } from '@/utils/modelRoundMetrics';
 
 type ProcessRow =
-  | { kind: 'reasoning'; key: string; entry: TimelineReasoningEntry; modelRound?: number }
+  | { kind: 'reasoning'; key: string; entry: TimelineReasoningEntry }
   | { kind: 'tool'; key: string; entry: TimelineToolEntry }
   | { kind: 'print'; key: string; text: string };
 
@@ -715,6 +715,10 @@ const mapWorkflowItem = (
     detail: stringifyDetail(data),
     updatedSeq: Number(item?.revision) || undefined
   };
+  // 模型轮次：进程条目右侧的 R1/R2。持久条目把它写在 item 或 payload 上，
+  // 旧记录没有该字段时折叠行不印轮次。
+  const itemRound = Number(item?.model_round ?? data.model_round ?? data.modelRound);
+  if (Number.isSafeInteger(itemRound) && itemRound > 0) mapped.model_round = itemRound;
   if (kind === 'system_message') {
     mapped.toolName = 'context_compaction';
     mapped.tool = 'context_compaction';
@@ -872,15 +876,16 @@ const buildRows = (items: Array<Record<string, unknown>>): ProcessRow[] => {
       (isCurrentReasoning ? reasoningText.value : '');
     if (reasoning) {
       const key = `reasoning:${itemId}`;
+      const round = Number(payload.model_round ?? slot.item?.model_round);
       rows.push({
         kind: 'reasoning',
         key,
-        modelRound: Number.isSafeInteger(Number(payload.model_round)) ? Number(payload.model_round) : undefined,
         entry: {
           kind: 'reasoning', key,
           streaming: isCurrentReasoning && currentReasoningStreaming.value,
           summary: reasoningPreview(reasoning), text: reasoning,
-          metrics: resolveModelRoundMetrics(slot.item) ?? undefined
+          metrics: resolveModelRoundMetrics(slot.item) ?? undefined,
+          modelRound: Number.isSafeInteger(round) && round > 0 ? round : null
         }
       });
     }

@@ -592,9 +592,12 @@ export component PageState inherits Rectangle {
 // Children are placed inside the card layout.
 export component ModalDialog inherits Rectangle {
     in property <bool> dismissable: true;
+    // Enter 确认：确认框里回车等同点确认按钮（取消仍走 Esc / 点遮罩）。
+    in property <bool> enter-confirms: false;
     in property <length> card-width: 420px;
     in property <length> card-height: 220px;
     callback dismissed();
+    callback entered();
     width: 100%; height: 100%;
     background: Theme.overlay;
     TouchArea { clicked => { if root.dismissable { root.dismissed(); } } scroll-event(event) => { return accept; } }
@@ -615,6 +618,13 @@ export component ModalDialog inherits Rectangle {
             key-pressed(event) => {
                 if event.text == Key.Escape && root.dismissable {
                     root.dismissed();
+                    return accept;
+                }
+                // 确认框里回车即确认：焦点默认落在这个 FocusScope 上，
+                // 没有这层处理的话回车会被吞掉，用户必须 Tab 到按钮。
+                if root.enter-confirms && root.dismissable
+                    && (event.text == Key.Return || event.text == "\n") {
+                    root.entered();
                     return accept;
                 }
                 return reject;
@@ -638,9 +648,11 @@ export component ConfirmDialog inherits Rectangle {
     width: 100%; height: 100%;
     ModalDialog {
         dismissable: !root.busy;
+        enter-confirms: !root.busy;
         card-width: 400px;
         card-height: 160px;
         dismissed => { root.canceled(); }
+        entered => { root.confirmed(); }
         Text { height: 22px; text: root.title; color: Theme.text; font-size: Theme.font-md; font-weight: 700; }
         Text { vertical-stretch: 1; text: root.message; color: Theme.muted; font-size: Theme.font-sm; wrap: word-wrap; }
         HorizontalLayout { height: 32px; spacing: Theme.space-2; Rectangle { horizontal-stretch: 1; }

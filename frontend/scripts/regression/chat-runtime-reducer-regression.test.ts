@@ -646,7 +646,8 @@ test('terminal turn event clears session busy state', () => {
   }));
 
   assert.equal(selectSessionBusy(projection, 'session-1'), false);
-  assert.equal(selectSessionRuntimeStatus(projection, 'session-1'), 'idle');
+  // 终态轮次保留真实的终止状态（completed），busy 另行判定。
+  assert.equal(selectSessionRuntimeStatus(projection, 'session-1'), 'completed');
 });
 
 test('local terminal events materialize assistant failure and cancellation text', () => {
@@ -3301,9 +3302,16 @@ test('manual compaction terminal event fills the assistant bubble before refresh
   const assistant = selectVisibleMessageProjections(projection, 'session-manual-live')
     .find((message) => message.role === 'assistant');
   assert.ok(assistant);
-  assert.equal(assistant.content, '[Context summary] preserved live summary');
+  // 摘要归属 compaction 工作项；assistant 气泡只是 durable 兼容标记，
+  // 绝不把摘要写进正文。
+  assert.equal(assistant.content, '');
   assert.equal(assistant.status, 'final');
   assert.equal(assistant.display?.manual_compaction_marker, true);
+  const compactionItem = assistant.workflowItems?.find((item) => item.eventType === 'compaction');
+  assert.ok(compactionItem);
+  // 实时路径把摘要放在 compaction 工作项的 detail 里，由 chatCompactionUi 解析。
+  const compactionDetail = JSON.parse(String(compactionItem.detail || '{}'));
+  assert.equal(compactionDetail.summary_text, '[Context summary] preserved live summary');
   assert.equal(selectSessionBusy(projection, 'session-manual-live'), false);
 });
 

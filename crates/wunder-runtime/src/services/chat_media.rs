@@ -1503,7 +1503,12 @@ pub(crate) async fn model_ready_data_url_from_bytes(bytes: Vec<u8>, mime: String
         let Some((width, height)) = image_dimensions(&bytes) else {
             return Ok((bytes, mime));
         };
-        if view_fits_limits(width, height, MODEL_VIEW_MAX_DIMENSION, MODEL_VIEW_MAX_PATCHES) {
+        if view_fits_limits(
+            width,
+            height,
+            MODEL_VIEW_MAX_DIMENSION,
+            MODEL_VIEW_MAX_PATCHES,
+        ) {
             return Ok((bytes, mime));
         }
         encode_model_ready_image_bytes(&bytes, &mime)
@@ -1664,8 +1669,7 @@ pub async fn restore_omitted_inline_images(
     policy: &ImageContextPolicy,
 ) -> ImageRestoreReport {
     use crate::services::chat_payload_sanitizer::{
-        image_path_marker_in_text, is_omitted_image_placeholder_text,
-        omitted_image_path_in_text,
+        image_path_marker_in_text, is_omitted_image_placeholder_text, omitted_image_path_in_text,
     };
 
     let mut candidates: Vec<(usize, usize, String)> = Vec::new();
@@ -2720,7 +2724,9 @@ mod tests {
         let public_path = attachment.public_path.as_deref().unwrap();
         // 派生产物是运行时中间文件，统一落在工作区的 temp/ 下。
         assert!(
-            public_path.replace('\\', "/").contains("temp/chat_media/derived/"),
+            public_path
+                .replace('\\', "/")
+                .contains("temp/chat_media/derived/"),
             "derived view should land under workspace temp/, got {public_path}"
         );
         let path = workspace

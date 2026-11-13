@@ -427,7 +427,8 @@ test('composer context usage and bubble stats align on observed occupancy', () =
   );
 
   assert.equal(composerSource.contextTokens, 21024);
-  assert.equal(findEntryValue(bubbleEntries, 'Context'), '21024');
+  assert.equal(findEntryValue(bubbleEntries, 'Context'), '21k');
+  // 气泡按紧凑口径显示（21k），原始观测值仍由 composer 源保留。
 });
 
 test('composer context usage keeps session max context after reload', () => {

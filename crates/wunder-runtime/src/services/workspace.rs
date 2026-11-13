@@ -822,7 +822,9 @@ impl WorkspaceManager {
 
     pub fn save_session_compacted(&self, user_id: &str, session_id: &str, compacted: bool) {
         let key = self.session_compacted_key(user_id, session_id);
-        let _ = self.storage.set_meta(&key, if compacted { "1" } else { "0" });
+        let _ = self
+            .storage
+            .set_meta(&key, if compacted { "1" } else { "0" });
     }
 
     fn session_reasoning_effort_key(&self, user_id: &str, session_id: &str) -> String {
@@ -1769,11 +1771,7 @@ impl WorkspaceManager {
 
     /// Record that a compaction actually replaced this thread's model context.
     /// Idempotent: once set, later compactions keep it set.
-    pub async fn save_session_compacted_async(
-        self: &Arc<Self>,
-        user_id: &str,
-        session_id: &str,
-    ) {
+    pub async fn save_session_compacted_async(self: &Arc<Self>, user_id: &str, session_id: &str) {
         let user_id = user_id.to_string();
         let session_id = session_id.to_string();
         let workspace = Arc::clone(self);
@@ -2283,7 +2281,11 @@ impl WorkspaceManager {
         let _ = self.storage.set_meta(&key, &count.to_string());
     }
 
-    pub fn load_session_inline_image_count(&self, user_id: &str, session_id: &str) -> Option<usize> {
+    pub fn load_session_inline_image_count(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<usize> {
         let key = format!(
             "{}:inline_images",
             self.session_sent_prefix_key(user_id, session_id)

@@ -203,6 +203,17 @@ impl WaitingTurn {
     }
 }
 
+/// The waiting turns that belong to one thread. A strip is the visible
+/// thread's own: a message held for another thread must never be listed above
+/// this thread's input box.
+pub fn waiting_for_session(waiting: &[WaitingTurn], session: &str) -> Vec<WaitingTurn> {
+    waiting
+        .iter()
+        .filter(|turn| turn.session == session)
+        .cloned()
+        .collect()
+}
+
 /// Strip projection that also carries this window's own waiting turns. They
 /// are listed first: they are the messages the user just sent and the engine
 /// has not started, while the engine's rows are turns already admitted and
@@ -241,12 +252,18 @@ pub fn publish_rows(app: &MainWindow, rows: &[NativeQueueTurn]) {
 }
 
 /// Put the engine rows and this window's waiting turns onto the strip.
+///
+/// The strip belongs to the thread on screen, so held messages are filtered by
+/// their own session here rather than at each call site: switching threads used
+/// to carry another thread's waiting rows above this thread's input box.
 pub fn publish_rows_with_waiting(
     app: &MainWindow,
     rows: &[NativeQueueTurn],
     waiting: &[WaitingTurn],
 ) {
-    let (projected, hidden) = project_rows_with_waiting(rows, waiting);
+    let session = app.get_active_session_id().to_string();
+    let here = waiting_for_session(waiting, session.as_str());
+    let (projected, hidden) = project_rows_with_waiting(rows, &here);
     app.set_queue_turns(ModelRc::from(Rc::new(VecModel::from(projected))));
     app.set_queue_overflow(hidden as i32);
 }
@@ -276,11 +293,12 @@ pub fn parked_is_full(parked: &VecDeque<ParkedTurn>) -> bool {
     parked.len() >= PARKED_LIMIT
 }
 
-/// True when this window already holds as many local waiting messages as the
-/// strip can show. Waiting turns never reach the engine, so their bound is the
-/// strip's, not the parked-channel limit.
-pub fn waiting_is_full(waiting: &[WaitingTurn]) -> bool {
-    waiting.len() >= STRIP_ROWS
+/// True when this window already holds as many local waiting messages for one
+/// thread as the strip can show. Waiting turns never reach the engine, so their
+/// bound is the strip's, not the parked-channel limit — and it is counted per
+/// thread, so messages held for another thread never eat this thread's room.
+pub fn waiting_is_full(waiting: &[WaitingTurn], session: &str) -> bool {
+    waiting.iter().filter(|turn| turn.session == session).count() >= STRIP_ROWS
 }
 
 /// Move `queue_id` by `delta` inside the current order and hand back the whole
@@ -537,5 +555,46 @@ mod tests {
         let history = vec!["甲".to_string()];
         let mut state = Recall::default();
         assert!(recall_step(&mut state, &history, 1, 0, 3, "甲乙").is_none());
+    }
+
+    fn waiting(id: &str, session: &str) -> WaitingTurn {
+        WaitingTurn {
+            client_message_id: format!("send-{}", id),
+            text: format!("消息 {id}"),
+            attachments: 0,
+            session: session.into(),
+            content: format!("消息 {id}"),
+            payload: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_strip_only_carries_its_own_threads_waiting_turns() {
+        let waiting = vec![waiting("a", "线程甲"), waiting("b", "线程乙")];
+        let here = waiting_for_session(&waiting, "线程甲");
+        assert_eq!(here.len(), 1);
+        assert_eq!(here[0].session, "线程甲");
+
+        // Switching to 线程乙 must not list 线程甲's held message above its input.
+        let (rows, _) = project_rows_with_waiting(&[], &waiting_for_session(&waiting, "线程乙"));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].queue_id.as_str(), "waiting-send-b");
+
+        let (rows, _) = project_rows_with_waiting(&[], &waiting_for_session(&waiting, "线程丙"));
+        assert!(rows.is_empty(), "a thread holds none of these messages");
+    }
+
+    #[test]
+    fn the_waiting_limit_is_counted_per_thread() {
+        let mut waiting = (0..STRIP_ROWS)
+            .map(|index| waiting(&format!("a{}", index), "线程甲"))
+            .collect::<Vec<_>>();
+        assert!(waiting_is_full(&waiting, "线程甲"));
+        assert!(
+            !waiting_is_full(&waiting, "线程乙"),
+            "another thread's holds must not block this thread's composer"
+        );
+        waiting.pop();
+        assert!(!waiting_is_full(&waiting, "线程甲"));
     }
 }

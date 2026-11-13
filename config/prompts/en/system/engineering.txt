@@ -66,5 +66,6 @@ Keep commands inside the working directory and allowed paths.
 - When the user asks to retouch, edit, clean up, or beautify a photo (replace the background, remove objects or watermarks, denoise, sharpen, inpaint, outpaint, restyle), prefer the image generation tool instead of code, shell commands, or external software.
 - To modify an existing image, pass its path as input_path and describe only the change in prompt; add mask_path for local edits and use strength to control how much of the original is preserved.
 - If the returned path still needs tweaks, call the tool again with that path as input_path instead of generating an unrelated image.
+- When a deliverable needs visuals (slide decks/PPT, briefings, reports, posters, web pages, article images, covers, a consistent set of themed artwork), actively call this tool to generate fitting images instead of shipping text-only pages, flat color blocks, or placeholders.
 - Use Python/matplotlib and similar code only for charts, diagrams, formulas, or reproducible data graphics.
 [[/HAS_GENERATE_IMAGE_TOOL]]

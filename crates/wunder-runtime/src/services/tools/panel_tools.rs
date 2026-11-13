@@ -184,13 +184,13 @@ fn recover_plan_args(args: &Value) -> PlanRecovery {
                 match embedded_json(text) {
                     // 列表字符串里其实包着整份参数：当成外层参数用，别让模型再发一次。
                     Ok(Value::Object(mut inner))
-                        if PLAN_LIST_KEYS
-                            .iter()
-                            .any(|key| inner.contains_key(*key)) =>
+                        if PLAN_LIST_KEYS.iter().any(|key| inner.contains_key(*key)) =>
                     {
                         for key in ["explanation", "note"] {
                             if let Some(value) = map.get(key) {
-                                inner.entry(key.to_string()).or_insert_with(|| value.clone());
+                                inner
+                                    .entry(key.to_string())
+                                    .or_insert_with(|| value.clone());
                             }
                         }
                         return PlanRecovery::ok(Value::Object(inner));
@@ -356,7 +356,9 @@ fn parse_plan_request(args: &Value) -> Result<PlanRequest, PlanArgError> {
     let Some(array) = map.get(list_key).and_then(Value::as_array) else {
         return Err(plan_shape_error(args));
     };
-    let current = map.get("current").and_then(|value| plan_index_hint(value, array.len()));
+    let current = map
+        .get("current")
+        .and_then(|value| plan_index_hint(value, array.len()));
     let mut steps = Vec::with_capacity(array.len());
     let mut in_progress_fields = Vec::new();
     for (index, item) in array.iter().enumerate() {
@@ -665,7 +667,8 @@ const QUESTION_PANEL_WRAPPER_KEYS: &[&str] = &[
     "content",
 ];
 /// 解不开的整份参数回给模型时，只给这一种示范形态：少一种写法就少一次重试。
-const QUESTION_PANEL_SHAPE_EXAMPLE: &str = r#"{"questions":[{"question":"要决定什么？","options":["甲","乙"]}]}"#;
+const QUESTION_PANEL_SHAPE_EXAMPLE: &str =
+    r#"{"questions":[{"question":"要决定什么？","options":["甲","乙"]}]}"#;
 
 pub(crate) async fn execute_question_panel_tool(
     context: &ToolContext<'_>,

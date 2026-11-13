@@ -34,15 +34,16 @@ test('forced lifecycle refresh bypasses the unchanged version and updates visibl
   tree.expandedPaths.add('reports'); tree.expandedPaths.add('reports/nested');
   tree.patchDirectoryEntries('hidden', []); tree.expandedPaths.add('hidden');
   tree.workspaceId.value = 'fixture-workspace'; tree.treeVersion.value = 7;
-  let stats = 0;
-  const refresh = createWorkspaceDirectoryRefresh(tree, { refreshStats: async () => { stats++; } });
+  const busyEvents: boolean[] = [];
+  const refresh = createWorkspaceDirectoryRefresh(tree, { onBusy: value => busyEvents.push(value) });
   await refresh.handleEvent({ workspaceId: 'other-workspace', forceTree: true });
   await refresh.handleEvent({ treeVersion: 7 });
   assert.equal(calls.length, 0);
   await refresh.handleEvent({ treeVersion: 7, forceTree: true });
   assert.deepEqual(calls.map(call => call.path), ['', 'reports', 'reports/nested']);
   assert.equal(scan, 1);
-  assert.equal(stats, 1);
+  // 批量扫描只占用一次 busy 周期（true -> false）。
+  assert.deepEqual(busyEvents, [true, false]);
   assert.ok(tree.rows.value.some(row => row.path === 'reports/nested/result.txt'));
   assert.equal(tree.isExpanded('reports'), true);
   refresh.dispose();
@@ -57,9 +58,7 @@ test('events arriving during a refresh are merged into one trailing forced scan'
     return page(path, [entry(scans === 1 ? 'before.txt' : 'after.txt')], scans);
   } });
   const busy: boolean[] = [];
-  const refresh = createWorkspaceDirectoryRefresh(tree, {
-    refreshStats: async () => {}, onBusy: value => busy.push(value)
-  });
+  const refresh = createWorkspaceDirectoryRefresh(tree, { onBusy: value => busy.push(value) });
   const first = refresh.request();
   await started.promise;
   for (let index = 0; index < 30; index++) void refresh.request();
@@ -78,7 +77,7 @@ test('targeted path events merge without dropping directories and rebuild only o
     return page(path, [entry(`${path}/result.txt`)]);
   } });
   tree.patchDirectoryEntries('reports', []); tree.patchDirectoryEntries('images', []);
-  const refresh = createWorkspaceDirectoryRefresh(tree, { refreshStats: async () => {} });
+  const refresh = createWorkspaceDirectoryRefresh(tree);
   await Promise.all([
     refresh.handleEvent({ paths: ['workspace/reports/result.txt'] }),
     refresh.handleEvent({ paths: ['images/result.txt'] })
@@ -95,9 +94,13 @@ test('an invalidation at the refresh completion boundary starts a new scan', asy
     scans++;
     return page(path, [entry(`result-${scans}.txt`)], scans);
   } });
-  const refresh = createWorkspaceDirectoryRefresh(tree, { refreshStats: async () => {
-    if (scans === 1) queueMicrotask(() => queueMicrotask(() => { trailing = refresh.request(); }));
-  } });
+  // onBusy(false) 就是「本次批量扫描结束、任务句柄释放」的那一刻；在这里投递
+  // 失效事件，必须还能开启下一轮扫描，不能被边界吞掉。
+  const refresh = createWorkspaceDirectoryRefresh(tree, {
+    onBusy: busy => {
+      if (!busy && scans === 1 && !trailing) trailing = refresh.request();
+    }
+  });
   await refresh.request();
   await trailing;
   assert.equal(scans, 2);
@@ -137,7 +140,7 @@ test('disposing a refresh stops follow-up directory reads', async () => {
     return page(path, [entry('reports', 'dir')]);
   } });
   tree.expandedPaths.add('reports');
-  const refresh = createWorkspaceDirectoryRefresh(tree, { refreshStats: async () => assert.fail('disposed stats') });
+  const refresh = createWorkspaceDirectoryRefresh(tree);
   const first = refresh.request();
   await started.promise;
   void refresh.request();

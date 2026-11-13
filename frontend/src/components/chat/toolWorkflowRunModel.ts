@@ -45,6 +45,9 @@ export type WorkflowItem = {
   tool_call_raw_detail?: string;
   toolResultRawDetail?: string;
   tool_result_raw_detail?: string;
+  /** 该次调用所属的模型轮次（同一用户轮次内模型第几次被请求）。 */
+  model_round?: number | string | null;
+  modelRound?: number | string | null;
   updatedSeq?: number | string;
   updated_seq?: number | string;
 };

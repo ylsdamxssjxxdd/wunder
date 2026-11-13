@@ -381,6 +381,37 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         });
     });
     let weak = app.as_weak();
+    let clear_api = api.clone();
+    app.on_clear_expert_memories(move || {
+        let Some(app) = weak.upgrade() else { return };
+        let Some(agent) = agent_id(&app) else { return };
+        if app.get_expert_saving() {
+            return;
+        }
+        app.set_expert_error("".into());
+        app.set_expert_saving(true);
+        let api = clear_api.clone();
+        let weak = app.as_weak();
+        std::thread::spawn(move || {
+            let result = api.clear_expert_memories(&agent);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                app.set_expert_saving(false);
+                if agent_id(&app).as_deref() != Some(agent.as_str()) {
+                    return;
+                }
+                match result {
+                    Ok(_) => {
+                        // The editor may be open on a fragment that no longer
+                        // exists; close it so saving cannot resurrect a row.
+                        app.set_memory_editor_open(false);
+                        app.invoke_refresh_expert();
+                    }
+                    Err(e) => app.set_expert_error(e.to_string().into()),
+                }
+            });
+        });
+    });
+    let weak = app.as_weak();
     let open_archive_api = api.clone();
     app.on_open_expert_archive(move |id| {
         let Some(app) = weak.upgrade() else { return };

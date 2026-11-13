@@ -16,8 +16,6 @@ import { Composer, GoalBanner, InquiryPanel, ModelSetupBanner, StatusDock } from
 import { TimelineView } from "timeline.slint";
 import { ChatSplitWorkspace } from "chat_split.slint";
 import { TextMenu, TextMenuState } from "text_menu.slint";
-import { ActivityMonth, ActivityWeek } from "activity_card.slint";
-export { ActivityMonth, ActivityWeek }
 import { Sidebar } from "sidebar.slint";
 import { WorkspaceVisual } from "workspace_visual.slint";
 import { SidebarMetrics, PointerChase, DragPreview } from "drag_row.slint";
@@ -169,6 +167,7 @@ export component MainWindow inherits Window {
     callback open-expert-memory(int);
     callback save-expert-memory();
     callback delete-expert-memory(string);
+    callback clear-expert-memories();
     callback open-expert-archive(string);
     callback restore-expert-archive(string);
     callback delete-expert-archive(string);
@@ -309,12 +308,6 @@ export component MainWindow inherits Window {
     in-out property <bool> threads-ready: false;
     in-out property <string> startup-note: "";
     in-out property <bool> creating-session: false;
-    // New-thread activity heatmap: sparse day buckets projected natively into
-    // weekly columns, plus the month axis and the selected series tab.
-    in-out property <[ActivityWeek]> activity-sessions: [];
-    in-out property <[ActivityWeek]> activity-credits: [];
-    in-out property <[ActivityMonth]> activity-months: [];
-    in-out property <int> activity-tab: 0;
     in-out property <bool> agents-loading: false;
     in-out property <bool> tools-loading: false;
     in-out property <bool> tools-working: false;
@@ -1446,13 +1439,6 @@ export component MainWindow inherits Window {
                                 : root.agents.length > 0 ? root.agents[0].description : "";
                             greeting-loading: root.prompt-preview-loading;
                             preview-prompt => { root.open-prompt-preview(); }
-                            show-activity: root.timeline.length == 0 && !root.chat-loading
-                                && root.threads-ready
-                                && !root.session-loading && !root.cloud-thread-busy;
-                            activity-sessions: root.activity-sessions;
-                            activity-credits: root.activity-credits;
-                            activity-months: root.activity-months;
-                            activity-tab <=> root.activity-tab;
                             turn-marks: root.turn-marks;
                             follow-output <=> root.follow-output;
                             spinning: root.busy;
@@ -1971,6 +1957,7 @@ export component MainWindow inherits Window {
         open-expert-memory(index) => { root.open-expert-memory(index); }
         save-expert-memory => { root.save-expert-memory(); }
         delete-expert-memory(id) => { root.delete-expert-memory(id); }
+        clear-expert-memories => { root.clear-expert-memories(); }
         open-expert-archive(id) => { root.open-expert-archive(id); }
         restore-expert-archive(id) => { root.restore-expert-archive(id); }
         delete-expert-archive(id) => {

@@ -272,9 +272,11 @@ test('排队让位与剪枝真的接在渲染与撤下路径上', () => {
   );
   assert.ok(slots.includes('chatQueueForSession(activeSessionId).items'), '让位判定没有读当前会话的排队投影');
 
+  // 分屏按行缓存逐条跳过停靠轮次（for + continue），不再用一次性 filter：
+  // 断言的是「同一判定函数 + 读自己会话的排队投影」，不是某一种写法。
   const split = readSource('views/messenger/sections/MessengerChatSplitPane.vue');
   assert.ok(
-    split.includes('.filter((slot) => !isParkedQueueTurn(queuedItems, slot.user, slot.assistant))'),
+    split.includes('isParkedQueueTurn(queuedItems, slot.user, slot.assistant)'),
     '分屏时间线没有按排队条让位'
   );
   assert.ok(split.includes('chatQueueForSession(props.sessionId).items'), '分屏没有读自己会话的排队投影');

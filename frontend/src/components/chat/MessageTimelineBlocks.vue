@@ -344,8 +344,9 @@ const timeline = computed<{ blocks: RenderBlock[]; fold: TimelineFold }>(() => {
               : Boolean(row.streaming),
             summary: reasoningPreview(text),
             text,
-            // 与工具行同两列：该轮请求的上下文占用 + 思考耗时。
-            metrics: row.metrics
+            // 与工具行同三列：模型轮次、该轮请求的上下文占用、思考耗时。
+            metrics: row.metrics,
+            modelRound: row.round && row.round > 0 ? row.round : null
           }
         });
         return;

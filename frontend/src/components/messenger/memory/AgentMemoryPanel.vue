@@ -13,9 +13,9 @@
           class="agent-memory-btn"
           type="button"
           :disabled="loading || saving || mutating || !items.length"
-          @click="openReplicateDialog"
+          @click="clearAllMemories"
         >
-          {{ t('messenger.memory.replicate') }}
+          {{ t('messenger.memory.clear') }}
         </button>
         <button
           class="agent-memory-btn agent-memory-btn--primary"
@@ -77,59 +77,6 @@
         </div>
       </article>
     </div>
-
-    <el-dialog
-      v-model="replicateDialogVisible"
-      :title="t('messenger.memory.replicateTitle')"
-      width="560px"
-      top="8vh"
-      append-to-body
-      destroy-on-close
-      class="messenger-dialog agent-memory-dialog"
-      :close-on-click-modal="!replicateSaving"
-      :close-on-press-escape="!replicateSaving"
-      @closed="handleReplicateDialogClosed"
-    >
-      <div class="agent-memory-dialog-body">
-        <div class="agent-memory-editor-hint">{{ t('messenger.memory.replicateHint') }}</div>
-        <div v-if="replicateErrorMessage" class="agent-memory-error agent-memory-error--dialog">
-          {{ replicateErrorMessage }}
-        </div>
-
-        <div class="agent-memory-field">
-          <label>{{ t('messenger.memory.replicateTarget') }}</label>
-          <select v-model="replicateTargetId" class="agent-memory-select" :disabled="replicateLoading || replicateSaving">
-            <option value="">{{ t('messenger.memory.replicatePlaceholder') }}</option>
-            <option v-for="target in replicateTargets" :key="target.id" :value="target.id">
-              {{ target.name }}
-            </option>
-          </select>
-        </div>
-
-        <div v-if="replicateLoading" class="agent-memory-empty agent-memory-empty--compact">{{ t('common.loading') }}</div>
-        <div v-else-if="!replicateTargets.length" class="agent-memory-empty agent-memory-empty--compact">
-          {{ t('messenger.memory.replicateNoAgents') }}
-        </div>
-      </div>
-
-      <template #footer>
-        <div class="agent-memory-dialog-footer agent-memory-dialog-footer--end">
-          <div class="agent-memory-dialog-footer-actions">
-            <button class="agent-memory-btn" type="button" :disabled="replicateSaving" @click="replicateDialogVisible = false">
-              {{ t('common.cancel') }}
-            </button>
-            <button
-              class="agent-memory-btn agent-memory-btn--primary"
-              type="button"
-              :disabled="replicateSaving || replicateLoading || !replicateTargets.length"
-              @click="submitReplicate"
-            >
-              {{ replicateSaving ? t('common.loading') : t('messenger.memory.replicate') }}
-            </button>
-          </div>
-        </div>
-      </template>
-    </el-dialog>
 
     <el-dialog
       v-model="dialogVisible"
@@ -223,9 +170,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
-import { createAgentMemory, deleteAgentMemory, listAgentMemories, replicateAgentMemories, updateAgentMemory } from '@/api/memory';
+import { clearAgentMemories, createAgentMemory, deleteAgentMemory, listAgentMemories, updateAgentMemory } from '@/api/memory';
 import { useI18n } from '@/i18n';
-import { useAgentStore } from '@/stores/agents';
 import { resolveApiError } from '@/utils/apiError';
 import { mzConfirm } from '@/utils/mzDialog';
 
@@ -239,11 +185,6 @@ type EditorState = {
   validFromText: string;
 };
 
-type MigrationTarget = {
-  id: string;
-  name: string;
-};
-
 const props = withDefaults(
   defineProps<{
     agentId: string;
@@ -255,22 +196,16 @@ const props = withDefaults(
 );
 
 const { t } = useI18n();
-const agentStore = useAgentStore();
 const isPanelActive = computed(() => props.active !== false);
 const loading = ref(false);
 const saving = ref(false);
 const mutating = ref(false);
-const replicateLoading = ref(false);
-const replicateSaving = ref(false);
 const errorMessage = ref('');
 const dialogErrorMessage = ref('');
-const replicateErrorMessage = ref('');
 const items = ref<MemoryItem[]>([]);
 const search = ref('');
 const tagFilter = ref('');
 const dialogVisible = ref(false);
-const replicateDialogVisible = ref(false);
-const replicateTargetId = ref('');
 const editingId = ref('');
 const editor = ref<EditorState>(createEmptyEditor());
 const mounted = ref(false);
@@ -317,24 +252,6 @@ const filteredItems = computed(() => {
       if (updatedDiff !== 0) return updatedDiff;
       return String(left?.memory_id || '').localeCompare(String(right?.memory_id || ''));
     });
-});
-
-const replicateTargets = computed<MigrationTarget[]>(() => {
-  const byId = new Map<string, MigrationTarget>();
-  const collect = (records: unknown[]) => {
-    records.forEach((item) => {
-      if (!item || typeof item !== 'object') return;
-      const record = item as Record<string, unknown>;
-      const id = String(record.id || '').trim();
-      if (!id || id === '__default__' || id === requestAgentId.value) return;
-      byId.set(id, {
-        id,
-        name: String(record.name || id).trim() || id
-      });
-    });
-  };
-  collect(Array.isArray(agentStore.agents) ? agentStore.agents : []);
-  return Array.from(byId.values()).sort((left, right) => left.name.localeCompare(right.name));
 });
 
 function createEmptyEditor(): EditorState {
@@ -428,12 +345,6 @@ function handleDialogClosed(): void {
   saving.value = false;
   editingId.value = '';
   editor.value = createEmptyEditor();
-}
-
-function handleReplicateDialogClosed(): void {
-  replicateErrorMessage.value = '';
-  replicateSaving.value = false;
-  replicateTargetId.value = '';
 }
 
 function resolveMemoryTag(item: MemoryItem | null | undefined): string {
@@ -538,60 +449,31 @@ async function removeCurrent(): Promise<void> {
   await removeMemory(editingId.value, getMemoryTitle(currentEditingItem.value));
 }
 
-async function openReplicateDialog(): Promise<void> {
-  if (!items.value.length) {
-    ElMessage.warning(t('messenger.memory.replicateNoSource'));
-    return;
-  }
-  replicateErrorMessage.value = '';
-  replicateLoading.value = true;
-  try {
-    await agentStore.loadAgents();
-    replicateTargetId.value = replicateTargets.value[0]?.id || '';
-    replicateDialogVisible.value = true;
-  } catch (error: any) {
-    replicateErrorMessage.value = resolveRequestError(error, 'common.loadFailed');
-    ElMessage.error(replicateErrorMessage.value);
-  } finally {
-    replicateLoading.value = false;
-  }
-}
-
-async function submitReplicate(): Promise<void> {
-  if (replicateSaving.value) return;
-  if (!replicateTargetId.value) {
-    const message = t('messenger.memory.replicateEmptyTarget');
-    replicateErrorMessage.value = message;
-    ElMessage.warning(message);
-    return;
-  }
-
-  const targetName =
-    replicateTargets.value.find((item) => item.id === replicateTargetId.value)?.name || replicateTargetId.value;
-
+async function clearAllMemories(): Promise<void> {
+  if (mutating.value || saving.value || !items.value.length) return;
+  // 清空作用于该智能体的全部记忆，与列表上的搜索/标签过滤无关。
   const confirmed = await mzConfirm({
     title: t('common.notice'),
-    message: t('messenger.memory.replicateConfirm', { name: targetName }),
-    tone: 'warning'
+    message: t('messenger.memory.clearConfirm'),
+    tone: 'danger'
   });
   if (!confirmed) return;
   try {
-    replicateSaving.value = true;
-    replicateErrorMessage.value = '';
+    mutating.value = true;
     errorMessage.value = '';
-    await replicateAgentMemories(requestAgentId.value, {
-      target_agent_id: replicateTargetId.value,
-      overwrite: true
-    });
-    replicateDialogVisible.value = false;
-    ElMessage.success(t('messenger.memory.replicateSuccess', { name: targetName }));
+    dialogErrorMessage.value = '';
+    await clearAgentMemories(requestAgentId.value);
+    editingId.value = '';
+    dialogVisible.value = false;
+    editor.value = createEmptyEditor();
+    await loadData();
+    ElMessage.success(t('messenger.memory.clearSuccess'));
   } catch (error: any) {
-    const message = resolveRequestError(error, 'common.saveFailed');
-    replicateErrorMessage.value = message;
+    const message = resolveRequestError(error, 'common.deleteFailed');
     errorMessage.value = message;
     ElMessage.error(message);
   } finally {
-    replicateSaving.value = false;
+    mutating.value = false;
   }
 }
 
@@ -629,15 +511,10 @@ watch(
     if (!wasActive && lastLoadedAgentKey === agentKey) return;
     if (agentKey === previous?.[0] && wasActive) return;
     dialogVisible.value = false;
-    replicateDialogVisible.value = false;
     dialogErrorMessage.value = '';
-    replicateErrorMessage.value = '';
     saving.value = false;
     mutating.value = false;
-    replicateSaving.value = false;
-    replicateLoading.value = false;
     editingId.value = '';
-    replicateTargetId.value = '';
     editor.value = createEmptyEditor();
     items.value = [];
     void loadData();
@@ -869,10 +746,6 @@ watch(
   color: var(--mz-text-muted);
 }
 
-.agent-memory-empty--compact {
-  margin-top: 12px;
-}
-
 .agent-memory-error {
   border-color: color-mix(in srgb, var(--mz-danger) 45%, var(--mz-border));
   background: var(--mz-danger-bg);
@@ -907,10 +780,6 @@ watch(
   padding-top: 14px;
   border-top: 1px solid var(--mz-border);
   align-items: flex-end;
-}
-
-.agent-memory-dialog-footer--end {
-  justify-content: flex-end;
 }
 
 :deep(.agent-memory-dialog.el-dialog) {

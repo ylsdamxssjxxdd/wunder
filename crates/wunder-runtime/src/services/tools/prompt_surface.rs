@@ -247,8 +247,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
         tool: "图像生成",
         // 修图入口必须写进 brief：内置工具的参数说明会被整体裁掉，模型只能
         // 从这里得知“改图传 input_path、prompt 只写改动、mask/strength 可用”。
-        brief_en: "Generate an image from prompt into path, or edit one by passing its path as input_path and describing only the change. Prefer this tool for photo retouching; mask_path marks local edits, strength controls how much changes. Enhancing clarity (HD) is not upscaling: omit size and keep the source dimensions, letting the model restore detail.",
-        brief_zh: "按 prompt 生成图片写入 path；改图时把原图路径传给 input_path，prompt 只写改动之处，修图优先用本工具。可选 mask_path 标出局部重绘区域，strength 控制改动幅度。提升清晰度/高清化不是放大尺寸：不要传 size，保持原图宽高，只让模型修复细节。",
+        brief_en: "Generate an image from prompt into path, or edit one by passing its path as input_path and describing only the change. Prefer this tool for photo retouching; mask_path marks local edits, strength controls how much changes. Enhancing clarity (HD) is not upscaling: omit size and keep the source dimensions, letting the model restore detail. Actively use it for deck/report/poster/page imagery; charts in code.",
+        brief_zh: "按 prompt 生成图片写入 path；改图时把原图路径传给 input_path，prompt 只写改动之处，修图优先用本工具。可选 mask_path 标出局部重绘区域，strength 控制改动幅度。提升清晰度/高清化不是放大尺寸：不要传 size，保持原图宽高，只让模型修复细节。PPT/幻灯片、简报、报告、海报、网页、封面等交付物需要配图时，也应主动多次调用本工具生成贴题素材，不要用纯文字或色块凑版式；图表/数据图仍用代码。",
         drop_actions: &[],
         drop_fields: &[
             "guidance_scale",
@@ -607,7 +607,9 @@ mod tests {
             .expect("plan spec");
         let projected = prompt_tool_spec(&spec, "zh-CN");
         // 只有一种形态：current 不再出现在模型看到的 schema 里。
-        assert!(projected.input_schema["properties"].get("current").is_none());
+        assert!(projected.input_schema["properties"]
+            .get("current")
+            .is_none());
         // 步骤条目 step + status 都必填，模型不会漏 status 再被提示补一次。
         assert_eq!(
             projected.input_schema["properties"]["plan"]["items"]["required"],

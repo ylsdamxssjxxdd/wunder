@@ -74,6 +74,25 @@ fn expert_memories_archives_and_runtime_are_single_agent_scoped() -> anyhow::Res
     api.delete_expert_memory("__default__", &rows[0].id)?;
     assert!(api.expert_memories("__default__", "", "")?.is_empty());
 
+    // 清空按钮覆盖整个智能体的全部碎片，而不是当前过滤后的可见项。
+    api.save_expert_memory(
+        "__default__",
+        "",
+        "sample-a",
+        "sample-a-content",
+        "preference",
+    )?;
+    api.save_expert_memory(
+        "__default__",
+        "",
+        "sample-b",
+        "sample-b-content",
+        "preference",
+    )?;
+    assert!(api.clear_expert_memories("__default__")? >= 2);
+    assert!(api.expert_memories("__default__", "", "")?.is_empty());
+    assert!(api.clear_expert_memories("missing-agent").is_err());
+
     let first = api.create_session(None)?;
     let second = api.create_session(None)?;
     api.archive_session(&first.id)?;

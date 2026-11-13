@@ -74,7 +74,14 @@ async function openThreadViewInternal(store: any, key: string, task: OpenTask) {
     store.draftAgentId=String(session.agent_id??'');persistActiveSession(key,store.draftAgentId);
     ensureRuntime(key);syncChatThreadShell(store,key);setSessionLoading(store,key,['running','queued','waiting_input','waiting_approval'].includes(threadViewStatus(key) ?? 'idle'));
     if(task.startWatcher)startSessionWatcher(store,key);
-    requestAnimationFrame(()=>requestAnimationFrame(()=>{if(store.activeSessionId===key&&threadViewGeneration(key)===generation)chatPerf.recordDuration('chat_view_content_paint',performance.now()-started,{rows:data.page.chat.length});}));
+    // 首帧计时只在浏览器里可用；非浏览器宿主（Node/CLI/回归环境）缺少
+    // requestAnimationFrame 时，不能让一次已提交成功的打开变成「补水失败」。
+    const afterPaint=(callback:()=>void)=>{if(typeof requestAnimationFrame==='function')requestAnimationFrame(()=>requestAnimationFrame(callback));else setTimeout(callback,0);};
+    afterPaint(() => {
+      if (store.activeSessionId === key && threadViewGeneration(key) === generation) {
+        chatPerf.recordDuration('chat_view_content_paint', performance.now() - started, { rows: data.page.chat.length });
+      }
+    });
     return session;
   } catch(error) {
     if(controller.signal.aborted || store.activeSessionId!==key || threadViewGeneration(key)!==generation)return null;

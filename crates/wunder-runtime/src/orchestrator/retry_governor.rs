@@ -712,9 +712,8 @@ fn normalize_detail(detail: &str) -> String {
 mod tests {
     use super::{
         RetryGovernor, SuccessProgressGovernor, ToolResultPayload, MAX_SAME_ARGUMENT_FAILURES,
-        MAX_SAME_NON_RETRYABLE_FAILURES, MAX_SAME_RETRYABLE_FAILURES,
-        MAX_SAME_SUCCESS_NO_PROGRESS, MAX_SUCCESS_NO_PROGRESS_WARNINGS,
-        SUCCESS_STALL_NO_NEW_LINE_STREAK, SUCCESS_STALL_WINDOW,
+        MAX_SAME_NON_RETRYABLE_FAILURES, MAX_SAME_RETRYABLE_FAILURES, MAX_SAME_SUCCESS_NO_PROGRESS,
+        MAX_SUCCESS_NO_PROGRESS_WARNINGS, SUCCESS_STALL_NO_NEW_LINE_STREAK, SUCCESS_STALL_WINDOW,
     };
     use crate::tools::resolve_tool_name;
     use chrono::Utc;

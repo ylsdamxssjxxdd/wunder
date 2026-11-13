@@ -353,12 +353,8 @@ mod tests {
     #[test]
     fn purge_releases_dead_same_kind_leases_but_keeps_other_clients() {
         let dir = tempdir().expect("tempdir");
-        let storage = SqliteStorage::new(
-            dir.path()
-                .join("purge.db")
-                .to_string_lossy()
-                .into_owned(),
-        );
+        let storage =
+            SqliteStorage::new(dir.path().join("purge.db").to_string_lossy().into_owned());
         for (thread, instance, kind) in [
             ("dead-desktop", "old-instance", "desktop"),
             ("live-desktop", "current-instance", "desktop"),

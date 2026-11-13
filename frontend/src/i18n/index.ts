@@ -123,14 +123,38 @@ const formatMessage = (template: string, params: Record<string, unknown>): strin
   );
 };
 
+/**
+ * This module is pulled in by stores that also load outside a DOM host (worker
+ * threads, Node regression bundles), where `localStorage` / `navigator` are
+ * absent. Reading and writing through these guards keeps language handling a
+ * no-op there instead of failing at import time.
+ */
+const readStoredLanguage = (): string => {
+  try {
+    return typeof localStorage === 'undefined' ? '' : localStorage.getItem(STORAGE_KEY) || '';
+  } catch {
+    // A blocked store reads as "no persisted choice".
+    return '';
+  }
+};
+
+const writeStoredLanguage = (language: string): void => {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(STORAGE_KEY, language);
+  } catch {
+    // A blocked or full store must not break language switching.
+  }
+};
+
 const resolveInitialLanguage = (): string => {
-  const stored = resolveLanguageCode(localStorage.getItem(STORAGE_KEY));
+  const stored = resolveLanguageCode(readStoredLanguage());
   if (stored) {
     return stored;
   }
-  const browser = resolveLanguageCode(
-    (navigator.languages && navigator.languages[0]) || navigator.language
-  );
+  const preferred = typeof navigator === 'undefined'
+    ? ''
+    : (navigator.languages && navigator.languages[0]) || navigator.language || '';
+  const browser = resolveLanguageCode(preferred);
   return browser || defaultLanguage;
 };
 
@@ -161,11 +185,11 @@ export const setLanguage = async (language: unknown, options: SetLanguageOptions
   }
   await ensureLocaleLoaded(next);
   currentLanguage.value = next;
-  if (document?.documentElement) {
+  if (typeof document !== 'undefined' && document.documentElement) {
     document.documentElement.lang = currentLanguage.value;
   }
   if (options.persist !== false) {
-    localStorage.setItem(STORAGE_KEY, currentLanguage.value);
+    writeStoredLanguage(currentLanguage.value);
   }
   if (typeof window !== 'undefined' && options.emit !== false) {
     window.dispatchEvent(

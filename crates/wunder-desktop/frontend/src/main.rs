@@ -1,7 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 slint::include_modules!();
-mod activity_ui;
 mod agent_editor;
 mod audio_recording;
 pub(crate) mod avatar_assets;

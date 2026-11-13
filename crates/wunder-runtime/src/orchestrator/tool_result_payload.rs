@@ -703,7 +703,9 @@ pub(super) fn default_observation_token_budget(tool_name: &str) -> i64 {
         // Browser action is selected at runtime from the structured response.
         // Use the document cap as the safe default before that response exists.
         "browser" => OBSERVATION_DOCUMENT_TOKEN_BUDGET,
-        "写入文件" | "write_file" | "apply_patch" | "应用补丁" => OBSERVATION_STATUS_TOKEN_BUDGET,
+        "写入文件" | "write_file" | "apply_patch" | "应用补丁" => {
+            OBSERVATION_STATUS_TOKEN_BUDGET
+        }
         // `command=view` shares the edit tool but returns line-numbered file
         // content; give it the same room as a document read.
         "编辑" | "文本编辑" => OBSERVATION_DOCUMENT_TOKEN_BUDGET,
@@ -2640,7 +2642,10 @@ pub(super) fn file_write_change(data: &Value) -> Option<FileWriteChange> {
         .get("deleted_lines")
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    let hunks = map.get("hunks_applied").and_then(Value::as_u64).unwrap_or(0);
+    let hunks = map
+        .get("hunks_applied")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     Some(FileWriteChange {
         path,
         changed: !existed || added_lines > 0 || deleted_lines > 0 || hunks > 0,

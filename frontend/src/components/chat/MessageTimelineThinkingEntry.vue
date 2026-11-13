@@ -18,8 +18,9 @@
         {{ entry.streaming ? t('chat.timeline.thinkingRunning') : t('chat.timeline.thinkingDone') }}
       </span>
       <span v-if="entry.summary" ref="summaryRef" class="tl-thinking-summary" :title="entry.summary">{{ entry.summary }}</span>
-      <!-- 与工具条目同一套右侧两列：该轮请求的上下文占用 + 思考耗时。 -->
-      <span v-if="tokenMetric || durationMetric" class="tl-thinking-metrics">
+      <!-- 与工具条目同一套右侧列：模型轮次 + 该轮请求的上下文占用 + 思考耗时。 -->
+      <span v-if="roundLabel || tokenMetric || durationMetric" class="tl-thinking-metrics">
+        <span>{{ roundLabel }}</span>
         <span>{{ tokenMetric }}</span>
         <span>{{ durationMetric }}</span>
       </span>
@@ -44,6 +45,11 @@ const props = defineProps<{
 
 const tokenMetric = computed(() => formatTokenLabel(props.entry.metrics?.tokens ?? null));
 const durationMetric = computed(() => formatDurationLabel(props.entry.metrics?.durationMs ?? null));
+/** 模型轮次与工具条目同形：R1、R2…；旧记录没有轮次时留空。 */
+const roundLabel = computed(() => {
+  const round = props.entry.modelRound ?? null;
+  return round !== null && round > 0 ? `R${round}` : '';
+});
 
 const textRef = ref<HTMLElement | null>(null);
 const summaryRef = ref<HTMLElement | null>(null);
@@ -194,11 +200,11 @@ const { t } = useI18n();
   text-overflow: clip;
 }
 
-/* 右侧两列与工具条目完全同宽同字：跨条目的数值从同一位置起排。 */
+/* 右侧三列与工具条目完全同宽同字：轮次 / token / 耗时跨条目从同一位置起排。 */
 .tl-thinking-metrics {
   flex: 0 0 auto;
   display: inline-grid;
-  grid-template-columns: 6ch 5ch;
+  grid-template-columns: 3ch 6ch 5ch;
   column-gap: 8px;
   justify-items: start;
   margin-left: auto;

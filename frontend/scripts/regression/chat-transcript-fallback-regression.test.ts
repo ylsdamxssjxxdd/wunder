@@ -143,7 +143,7 @@ test('multiple assistant records between two user inputs collapse into one slot'
   assert.equal(rows[0].assistant.message.content, 'Fixture part one\n\nFixture part two');
 });
 
-test('the grid decision keeps loading threads and other render kinds off the grid', () => {
+test('the welcome-state decision keeps loading threads and other render kinds off the welcome state', () => {
   assert.equal(resolveShowThreadActivityCard({ renderKind: 'world', hasTurnContent: false, sessionId: 'sess-1', historyLoading: false }), false);
   assert.equal(resolveShowThreadActivityCard({ renderKind: 'agent', hasTurnContent: false, sessionId: '', historyLoading: false }), true);
   assert.equal(
@@ -177,17 +177,16 @@ test('the fallback switch is fail-open and can be turned off with one key', () =
 
 const readSource = (relative: string): string => readFileSync(resolve(process.cwd(), 'src', relative), 'utf8');
 
-test('the fallback is really wired into the controller render source and the panel grid decision', () => {
+test('the render source is really wired into the controller and the panel keeps the greeting at the top', () => {
   const controller = readSource('views/messenger/controller/messengerControllerInstall.ts');
   assert.ok(controller.includes('ctx.agentThreadSlotSource = computed'), 'the raw window source is not kept');
   assert.ok(
-    controller.includes('windowAvailable: ctx.agentThreadSlotSource.value !== null'),
-    'null (failed snapshot) is not told apart from [] (real empty thread)'
+    controller.includes('buildChatThreadMaterializedSlots(ctx.chatStore.activeSessionId)'),
+    'the window projection no longer feeds the render source'
   );
   assert.ok(
-    controller.includes('isTranscriptFallbackEnabled') &&
-      controller.includes('resolveAgentTurnRenderRows({'),
-    'the controller does not arbitrate the render source'
+    controller.includes('ctx.agentTurnRenderPlan = computed') && controller.includes("source:'thread_view'"),
+    'the controller no longer declares a single render source'
   );
   assert.ok(
     controller.includes('.filter((slot) => !isParkedQueueTurn(queuedItems, slot.user, slot.assistant))'),
@@ -195,10 +194,7 @@ test('the fallback is really wired into the controller render source and the pan
   );
 
   const panel = readSource('views/messenger/sections/MessengerMessagePanel.vue');
-  const gridStart = panel.indexOf('const showThreadActivityCard');
-  const grid = gridStart < 0 ? '' : panel.slice(gridStart, panel.indexOf('onUpdated(', gridStart));
-  assert.ok(grid, 'showThreadActivityCard not found');
-  assert.ok(grid.includes('resolveShowThreadActivityCard('), 'the grid decision is not routed through the adapter');
-  assert.ok(grid.includes('agentTurnRowsHaveContent'), 'fallback rows do not hide the grid');
-  assert.ok(grid.includes('hasTurnContent'), 'the grid decision ignores turn content');
+  // 空线程不再把问候语在聊天区垂直居中（顶部空半屏）：面板不挂 is-empty-thread，
+  // 问候语与首条消息从同一条顶部基线开始排布。
+  assert.ok(!panel.includes('is-empty-thread'), 'the empty thread still centres its greeting');
 });

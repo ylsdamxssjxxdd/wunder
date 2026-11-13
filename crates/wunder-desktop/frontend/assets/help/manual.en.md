@@ -1192,7 +1192,7 @@ The settings page is organized by category; the search box at the top locates a 
 | Agent | Built-in agent prompt and behaviour |
 | Companion | Library, display mode and animation |
 | Scheduled tasks | Scheduled jobs and their runs |
-| Memories | Long-term memory entries |
+| Memories | Long-term memory entries; create, edit, delete, or clear them all |
 | Channels | Channel accounts, bindings and logs |
 | Prompts | Segment editing and final prompt preview |
 | Archives | Archived threads: review or delete |

@@ -13,7 +13,7 @@ import { ensureGreetingMessage } from './chatGreeting';
 
 import { patchSessionRuntimeFields, persistActiveSession, persistDraftSession, syncGoalFromSessionRecord, syncGoalsFromSessionList } from './chatPersist';
 import { clearDraftSessionBootstrapMarkers, clearSessionWatcher, setSessionLoading } from './chatRuntimeControls';
-import { applyLocalChatMessageRuntimeEvent, cacheSessionMessages, ensureRuntime, filterSessionsByAgent, getHistoryState, notifySessionSnapshot, readSessionListCacheEntry, resolveSessionKey, resolveSessionListCacheKey, sessionListCacheInFlight, touchSessionUpdatedAt, writeSessionListCache } from './chatRuntimeState';
+import { applyLocalChatMessageRuntimeEvent, cacheSessionMessages, ensureRuntime, filterSessionsByAgent, getHistoryState, isSessionUnavailableStatus, notifySessionSnapshot, purgeUnavailableSession, readSessionListCacheEntry, resolveChatHttpStatus, resolveSessionKey, resolveSessionListCacheKey, sessionListCacheInFlight, touchSessionUpdatedAt, writeSessionListCache } from './chatRuntimeState';
 
 import { buildMessage } from './chatStats';
 
@@ -349,7 +349,18 @@ export const chatSessionOpenLoadActions = {
     async loadSessionDetail(sessionId, options: LoadSessionDetailOptions = {}) {
       const key=resolveSessionKey(sessionId);
       if(!key || isSessionUnavailable(this,key))return null;
-      return openThreadView(this,key,options);
+      try {
+        return await openThreadView(this,key,options);
+      } catch (error) {
+        // 线程被删除或无权访问（401/403/404）不是「打开失败」：标记不可用并从目录
+        // 撤下后按既有契约返回 null。否则预加载、恢复与归档这些调用方会把一次已
+        // 消失的线程当成异常，或让随后的摘要/列表合把它重新挂回目录。
+        if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
+          purgeUnavailableSession(this, key);
+          return null;
+        }
+        throw error;
+      }
     },
     async loadNewerHistory(sessionId: string) {
       return newerThreadView(this, resolveSessionKey(sessionId || this.activeSessionId));

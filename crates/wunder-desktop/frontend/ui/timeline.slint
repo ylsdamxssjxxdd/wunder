@@ -12,19 +12,38 @@ import { ToolIcons } from "tool_icons.slint";
 import { ProcessStatusIcon } from "status_icon.slint";
 import { ToolProcess } from "tool_process.slint";
 import { ScrollView, Spinner } from "std-widgets.slint";
-import { ActivityCard, ActivityWeek, ActivityMonth } from "activity_card.slint";
 
 // Presentation only: greetings never enter the transcript or its row indices.
 export component ChatGreeting inherits Rectangle {
     in property <string> text: I18n.chat_greeting;
     in property <bool> loading: false;
     callback preview();
-    height: greeting-row.preferred-height + 12px;
+    // The eva01 head opens the greeting. No plate behind it: the artwork is cut
+    // flat where the model was cropped, so the prepared mark asset carries the
+    // air (85% fill) and fades its neckline instead of ending on a hard edge.
+    private property <length> mark: 40px;
+    private property <length> mark-gap: 10px;
+    private property <length> top: 6px;
+    // A Slint row aligns its children to the top, so the mark is placed by
+    // hand: centred on the first greeting line while the text is shorter than
+    // the mark, then top-aligned once the greeting wraps past it.
+    private property <length> mark-y: root.top + (min(root.mark, greeting-text.preferred-height) - root.mark) / 2;
+    height: max(root.top + greeting-row.preferred-height, root.mark-y + root.mark) + 6px;
+    Image {
+        x: Theme.timeline-padding;
+        y: root.mark-y;
+        width: root.mark; height: root.mark;
+        // The asset is prepared for this slot: trimmed to the artwork, 85 %
+        // fill inside its square and a faded neckline (see
+        // scripts/generate_eva01_mark.py), which is what keeps the cropped
+        // neck and fins from reading as a cut picture.
+        source: @image-url("../assets/eva01-mark.png");
+    }
     greeting-row := HorizontalLayout {
-        x: Theme.timeline-padding; y: 6px;
-        width: parent.width - 2 * Theme.timeline-padding;
+        x: Theme.timeline-padding + root.mark + root.mark-gap; y: root.top;
+        width: parent.width - 2 * Theme.timeline-padding - root.mark - root.mark-gap;
         spacing: 8px;
-        Text {
+        greeting-text := Text {
             text: root.text == "" ? I18n.chat_greeting : root.text;
             color: Theme.text; font-size: Theme.font-lg;
             wrap: word-wrap; horizontal-stretch: 1;
@@ -964,11 +983,6 @@ export component TimelineView inherits Rectangle {
     in property <bool> loading: false;
     in property <string> loading-text: I18n.st_runtime_loading;
     in property <bool> greeting-loading: false;
-    in property <bool> show-activity: false;
-    in property <[ActivityWeek]> activity-sessions;
-    in property <[ActivityWeek]> activity-credits;
-    in property <[ActivityMonth]> activity-months;
-    in-out property <int> activity-tab: 0;
     callback preview-prompt();
     // One mark per user turn: its fractional offset drives the proportional
     // jump, and its pre-bounded preview text feeds the hover card.
@@ -1116,10 +1130,13 @@ export component TimelineView inherits Rectangle {
             // which owns `padding: 18px 20px 22px`; rows only add their own 6px.
             // Without that inset the first block (the greeting on a fresh
             // thread) was pinned to the pane's top edge. Keep the top inset
-            // here so a greeting, the loading line and the activity card all
-            // start from the same optical line as the cloud client.
+            // here so a greeting and the loading line all start from the same
+            // optical line as the cloud client.
             padding-top: 18px;
-            spacing: 0px; alignment: root.show-activity || root.loading ? center : start;
+            // A fresh thread is nothing but its greeting, so it sits where the
+            // transcript starts — no vertical centring, which bought half a
+            // pane of blank space above the first line.
+            spacing: 0px; alignment: start;
             if root.loading : Rectangle {
                 height: 76px;
                 HorizontalLayout {
@@ -1134,13 +1151,6 @@ export component TimelineView inherits Rectangle {
                     }
                 }
             }
-            if root.show-activity : ActivityCard {
-                sessions: root.activity-sessions;
-                credits: root.activity-credits;
-                months: root.activity-months;
-                tab <=> root.activity-tab;
-            }
-            if root.show-activity : Rectangle { height: 18px; }
             if !root.loading : ChatGreeting {
                 text: root.greeting;
                 loading: root.greeting-loading;

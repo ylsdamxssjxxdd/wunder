@@ -10,6 +10,26 @@ pub const DEFAULT_AGENT_GREETING: &str =
     "我是 wunder 的驾驶员，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~";
 pub const DEFAULT_AGENT_EXTRA_PROMPT: &str = "你是一个乐于助人的智能体";
 
+/// Greetings shipped before the current wording. A stored greeting equal to one
+/// of these was never edited by its owner, so it is upgraded in place; any other
+/// text is left exactly as the user wrote it. Without this an existing install
+/// keeps greeting new sessions with retired copy after the constant changes —
+/// the stored description, not the constant, is what the chat renders.
+const INHERITED_AGENT_GREETINGS: &[&str] = &[
+    "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~",
+    "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧～",
+];
+
+/// Fills the greeting when it was never set and upgrades the retired default
+/// wording. One entry point so the desktop, the server and the default-agent
+/// sync cannot drift apart.
+pub fn normalize_default_agent_greeting(description: &mut String) {
+    let trimmed = description.trim();
+    if trimmed.is_empty() || INHERITED_AGENT_GREETINGS.contains(&trimmed) {
+        *description = DEFAULT_AGENT_GREETING.to_string();
+    }
+}
+
 pub const DEFAULT_AGENT_PRESET_QUESTION_DRAW_GIF: &str = "制作一个骑自行车的鹈鹕gif";
 pub const DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE: &str = "用公文写作技能写一篇广州旅游攻略";
 pub const DEFAULT_AGENT_PRESET_QUESTION_DEEPER_ISSUE: &str =
@@ -54,9 +74,7 @@ pub fn normalize_default_agent_preset_questions(questions: &mut Vec<String>) {
 }
 
 pub fn normalize_default_agent_welcome(config: &mut DefaultAgentConfig) {
-    if config.description.trim().is_empty() {
-        config.description = DEFAULT_AGENT_GREETING.to_string();
-    }
+    normalize_default_agent_greeting(&mut config.description);
     if config.system_prompt.trim().is_empty() {
         config.system_prompt = DEFAULT_AGENT_EXTRA_PROMPT.to_string();
     }
@@ -179,9 +197,9 @@ pub fn record_from_default_agent_config(
 mod tests {
     use super::{
         default_agent_config_from_record, default_agent_meta_key, default_agent_preset_questions,
-        normalize_default_agent_preset_questions, normalize_default_agent_welcome,
-        record_from_default_agent_config, DefaultAgentConfig, DEFAULT_AGENT_EXTRA_PROMPT,
-        DEFAULT_AGENT_GREETING,
+        normalize_default_agent_greeting, normalize_default_agent_preset_questions,
+        normalize_default_agent_welcome, record_from_default_agent_config, DefaultAgentConfig,
+        DEFAULT_AGENT_EXTRA_PROMPT, DEFAULT_AGENT_GREETING,
     };
     #[test]
     fn builds_trimmed_default_agent_meta_key() {
@@ -234,6 +252,38 @@ mod tests {
         normalize_default_agent_welcome(&mut config);
         assert_eq!(config.description, "自定义问候");
         assert_eq!(config.system_prompt, "自定义提示");
+    }
+
+    #[test]
+    fn retired_default_greeting_is_upgraded_but_custom_text_survives() {
+        // Stored greetings are what the chat actually renders, so an upgraded
+        // constant only reaches existing installs through this rewrite.
+        for retired in [
+            "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~",
+            "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧～",
+            "  我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~  ",
+        ] {
+            let mut description = retired.to_string();
+            normalize_default_agent_greeting(&mut description);
+            assert_eq!(description, DEFAULT_AGENT_GREETING);
+        }
+
+        // Anything the owner wrote stays byte-for-byte, including a greeting
+        // that merely resembles the shipped one.
+        for custom in [
+            "我是wunder的驾驶员，带你整理资料",
+            "我是 wunder 的驾驶员，很高兴帮助你～",
+        ] {
+            let mut description = custom.to_string();
+            normalize_default_agent_greeting(&mut description);
+            assert_eq!(description, custom);
+            let mut config = DefaultAgentConfig {
+                description: custom.to_string(),
+                ..Default::default()
+            };
+            normalize_default_agent_welcome(&mut config);
+            assert_eq!(config.description, custom);
+        }
     }
 
     #[test]

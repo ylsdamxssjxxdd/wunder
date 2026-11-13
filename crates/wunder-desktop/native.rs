@@ -685,7 +685,11 @@ impl NativeDesktop {
             // 桌面版由单实例锁保证本机只有一个桌面进程，因此上一次崩溃/强杀
             // 留下的 desktop 打开租约必然是死的。不清扫时线程要等满 15 秒
             // TTL 才能重新打开，中间每一次点击都只回 THREAD_IN_USE。
-            match desktop.state.storage.purge_thread_open_leases("desktop", &instance_id) {
+            match desktop
+                .state
+                .storage
+                .purge_thread_open_leases("desktop", &instance_id)
+            {
                 Ok(removed) if removed > 0 => {
                     tracing::info!(removed, "released stale desktop thread leases");
                 }

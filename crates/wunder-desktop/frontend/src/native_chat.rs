@@ -1065,7 +1065,6 @@ fn publish_timeline_with_follow(
         crate::chat_split::sync_live(app, app.get_active_session_id().as_str(), live.model());
         app.set_stream_updates(app.get_stream_updates().wrapping_add(1));
     }
-    crate::activity_ui::notify_timeline_rows(live.row_count());
 }
 
 /// Whether this window's foreground owns the live tail of `session`. A parked
@@ -1905,6 +1904,19 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         reset_context_usage(&app);
         refresh_context_async(&app, &state, &id);
         app.set_active_session_id(id.clone().into());
+        // The strip belongs to the thread on screen. Leaving a thread also ends
+        // this window's babysitting of its held messages: they are handed to
+        // the engine queue first, so the engine starts them as soon as that
+        // thread goes idle instead of waiting for the user to come back.
+        if previous_session != id {
+            hand_over_waiting_turns(&app, &state, &previous_session);
+            let waiting = {
+                let mut current = state.borrow_mut();
+                current.queue_cache.clear();
+                current.waiting_turns.clone()
+            };
+            queue::publish_rows_with_waiting(&app, &[], &waiting);
+        }
         // Opening the thread is what makes its settle mark old news: record
         // the mark on screen now so the sidebar drops it, and keep later
         // completions of the same thread visible as fresh news.
@@ -1926,26 +1938,13 @@ fn bind_selection(app: &MainWindow, state: Rc<RefCell<State>>) {
         refresh_queue_async(&app, &state, &id);
         let timeline = state.borrow().timeline.clone();
         {
+            // A held message is never a transcript bubble: it has not been
+            // sent, so the composer's strip is the only place it may appear.
+            // The old projection re-created it here, which is why switching
+            // away and back turned a pending message into a user bubble glued
+            // to the settled history.
             let mut live = timeline.borrow_mut();
-            // A message this window is still holding for the thread being
-            // opened belongs in the transcript too: it was echoed there the
-            // moment the user sent it, and the thread switch must not make it
-            // look unsent. It is re-attached right after the durable rows.
-            let held = state
-                .borrow()
-                .waiting_turns
-                .iter()
-                .filter(|turn| turn.session == id)
-                .cloned()
-                .collect::<Vec<_>>();
             live.clear();
-            for turn in held {
-                live.begin_waiting_turn(&turn.client_message_id, &turn.text);
-            }
-            if live.needs_publish() {
-                app.set_timeline(live.model());
-                app.set_turn_marks(live.marks_model());
-            }
         }
         // Keep MainWindow attached to the one stable VecModel owned by the
         // reducer. Replacing it with a detached empty model makes later stream
@@ -2500,7 +2499,12 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             app.set_status("等待发送的轮次已满，请先撤下几条或稍候".into());
             return;
         }
-        if hold_locally && queue::waiting_is_full(&state.borrow().waiting_turns) {
+        if hold_locally
+            && queue::waiting_is_full(
+                &state.borrow().waiting_turns,
+                app.get_active_session_id().as_str(),
+            )
+        {
             app.set_status("等待发送的消息已满，请先撤下几条或稍候".into());
             return;
         }
@@ -2869,26 +2873,7 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                     // Ordinary sends get their bubble only after the worker
                     // returns, preserving a running turn's live projection.
                     let timeline = state.borrow().timeline.clone();
-                    let mut provisional = idle_before_submit && !optimistic_visible;
-                    if provisional {
-                        // The thread looked idle but the engine parked the
-                        // message behind someone else's turn. The echo must not
-                        // pretend to be a running turn: it stays a bare user
-                        // bubble, exactly like the composer's waiting row, and
-                        // the engine's queue strip carries the waiting state.
-                        let mut live = timeline.borrow_mut();
-                        if live.is_waiting()
-                            && live.active_root() == Some(client_message_id.as_str())
-                        {
-                            live.finish(crate::timeline::Settle::Done);
-                            publish_timeline_passive(&app, &live);
-                            drop(live);
-                            forget_waiting_turn(&app, &state, &client_message_id);
-                        } else {
-                            provisional = false;
-                        }
-                    }
-                    if !optimistic_visible && !provisional {
+                    if !optimistic_visible {
                         let desktop = state.borrow().desktop.clone();
                         let mut live = timeline.borrow_mut();
                         if settles_inquiry {
@@ -2904,20 +2889,6 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                             &preview_images,
                         );
                         live.set_turn_status("请求中", 0);
-                        publish_timeline(&app, &live);
-                        app.set_busy(true);
-                        app.set_activity_running(true);
-                        app.set_stopping(false);
-                        app.set_follow_output(true);
-                        set_session_status(&app, &session, "请求中", Phase::Running);
-                    } else if provisional {
-                        // The engine started the message this window echoed
-                        // while the thread looked idle: the bubble becomes the
-                        // running turn it was waiting to be, and its strip row
-                        // goes with the waiting state.
-                        forget_waiting_turn(&app, &state, &client_message_id);
-                        let mut live = timeline.borrow_mut();
-                        live.admit_turn(&client_message_id);
                         publish_timeline(&app, &live);
                         app.set_busy(true);
                         app.set_activity_running(true);
@@ -3332,6 +3303,78 @@ pub(crate) fn hold_local_turn(app: &MainWindow, turn: queue::WaitingTurn) {
         st.waiting_turns.push(turn);
         queue::publish_rows_with_waiting(app, &st.queue_cache, &st.waiting_turns);
     });
+}
+
+/// 离开一个线程时，把本窗口替它保管的等待发送消息交给引擎队列。
+///
+/// 本地持有只为让*正在看*的线程不出现第二条气泡；用户一旦切走，这份持有
+/// 就只剩副作用——消息要等用户切回来才发得出去。交给引擎之后，该线程一
+/// 空闲就会自动开始它，条带也回到"引擎队列"这一个来源。
+fn hand_over_waiting_turns(app: &MainWindow, state: &Rc<RefCell<State>>, session: &str) {
+    if session.is_empty() {
+        return;
+    }
+    let turns: Vec<queue::WaitingTurn> = {
+        let mut st = state.borrow_mut();
+        let (here, rest) =
+            std::mem::take(&mut st.waiting_turns)
+                .into_iter()
+                .partition(|turn| turn.session == session);
+        st.waiting_turns = rest;
+        here
+    };
+    if turns.is_empty() {
+        return;
+    }
+    let desktop = state.borrow().desktop.clone();
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        for turn in turns {
+            let result = desktop.send_chat(NativeChatInput {
+                session_id: turn.session.clone(),
+                content: turn.content.clone(),
+                client_message_id: Some(turn.client_message_id.clone()),
+                reasoning_effort: None,
+                inquiry_turn_id: None,
+                attachments: turn.payload.clone(),
+            });
+            if let Err(error) = result {
+                // 引擎拒收（租约已易主、线程已消失）。把消息还给窗口，
+                // 用户回到该线程时它仍在那儿等着。
+                let message = error.to_string();
+                let _ = weak.upgrade_in_event_loop(move |app| {
+                    restore_waiting_turn(&app, turn, &message);
+                });
+            }
+        }
+    });
+}
+
+/// 引擎拒收的移交：把消息放回它自己线程的条带。投影按当前线程过滤，所以
+/// 它只会出现在该出现的地方。
+fn restore_waiting_turn(app: &MainWindow, turn: queue::WaitingTurn, error: &str) {
+    let restored = CHAT_STATE.with(|slot| {
+        let Some(state) = slot.borrow().upgrade() else {
+            return false;
+        };
+        let (waiting, cache) = {
+            let mut st = state.borrow_mut();
+            if st
+                .waiting_turns
+                .iter()
+                .any(|held| held.client_message_id == turn.client_message_id)
+            {
+                return false;
+            }
+            st.waiting_turns.push(turn);
+            (st.waiting_turns.clone(), st.queue_cache.clone())
+        };
+        queue::publish_rows_with_waiting(app, &cache, &waiting);
+        true
+    });
+    if restored {
+        app.set_status(format!("排队消息暂未发出：{error}").into());
+    }
 }
 
 /// The running turn is over: send the oldest message the user is still waiting
@@ -4352,38 +4395,16 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
         let session = entry.session.clone();
         let content = entry.content.clone();
         pending = entry.prelude.into();
-        let promoted;
         {
             let mut live = timeline.borrow_mut();
             if entry.settles_inquiry {
                 live.settle_answered_inquiry();
             }
-            // The bubble may already be on screen: a message submitted while
-            // the thread looked idle is echoed as a waiting turn until the
-            // engine starts it. Promote that echo instead of adding a second
-            // bubble for the same submission.
-            promoted =
-                live.is_waiting() && live.active_root() == Some(entry.client_message_id.as_str());
-            if promoted {
-                live.admit_turn(&entry.client_message_id);
-            } else {
-                let row = live.begin_turn(&entry.client_message_id, &content);
-                echo_image_attachments(&app, &desktop, &mut live, row, &content, &entry.images);
-                live.set_turn_status("请求中", 0);
-            }
+            let row = live.begin_turn(&entry.client_message_id, &content);
+            echo_image_attachments(&app, &desktop, &mut live, row, &content, &entry.images);
+            live.set_turn_status("请求中", 0);
             publish_timeline(&app, &live);
             drop(live);
-        }
-        if promoted {
-            // Inlined instead of `forget_waiting_turn`: this frame already
-            // holds the state guard, so re-borrowing it would panic.
-            let before = state.waiting_turns.len();
-            state
-                .waiting_turns
-                .retain(|turn| turn.client_message_id != entry.client_message_id);
-            if state.waiting_turns.len() != before {
-                queue::publish_rows_with_waiting(&app, &state.queue_cache, &state.waiting_turns);
-            }
         }
         let mut output = TurnOutput::new(session.clone(), timeline.clone());
         if let Some((explanation, steps)) = state.plans.get(&session) {
@@ -4534,26 +4555,6 @@ fn pump_stream(app: &MainWindow, state: &Rc<RefCell<State>>) {
                     state.inquiries.remove(&session);
                     if app.get_active_session_id() == session.as_str() {
                         publish_inquiry(&app, &session, &state);
-                    }
-                }
-                // Real output is proof the engine admitted the message: a turn
-                // that was only echoed (no process bar yet) is upgraded here,
-                // so the reasoning that just arrived lands in the fold instead
-                // of being dropped for a turn that has not started.
-                {
-                    let kind = event["event"].as_str().unwrap_or("");
-                    let admission_only = matches!(
-                        kind,
-                        "native_turn_identity"
-                            | "native_execution_started"
-                            | "native_execution_status"
-                            | "queue_update"
-                            | "cloud_queue"
-                    );
-                    let mut live = timeline.borrow_mut();
-                    if !admission_only && live.is_waiting() {
-                        live.admit_turn(&active.client_message_id);
-                        dirty = true;
                     }
                 }
                 let applied = {
@@ -5415,36 +5416,6 @@ mod turn_tests {
         );
     }
 
-    /// A message the user has submitted but the engine has not admitted yet is
-    /// only an echo: its bubble must not claim a status, a process fold or a
-    /// footer, and the durable snapshot must not wipe it while it waits.
-    #[test]
-    fn waiting_turn_shows_only_its_bubble_until_the_engine_admits_it() {
-        let mut timeline = crate::timeline::Timeline::new();
-        timeline.begin_waiting_turn("native-send-1", "第二个问题");
-        timeline.set_turn_status("排队中", 0);
-        timeline.flush();
-        let rows: Vec<_> = timeline.model().iter().collect();
-        assert_eq!(rows.len(), 1, "a waiting turn owns its user bubble only");
-        assert_eq!(rows[0].kind, crate::timeline::KIND_USER);
-        assert_eq!(rows[0].text.as_str(), "第二个问题");
-
-        // A durable snapshot that does not carry the turn yet must not drop it.
-        timeline.publish_history(Vec::new());
-        assert_eq!(timeline.model().row_count(), 1);
-
-        // The engine starts it: the bubble becomes an ordinary running turn.
-        timeline.admit_turn("native-send-1");
-        timeline.set_turn_status("请求中", 0);
-        let rows: Vec<_> = timeline.model().iter().collect();
-        assert_eq!(rows[0].kind, crate::timeline::KIND_USER);
-        assert!(
-            rows.iter().any(|row| row.kind == crate::timeline::KIND_PROCESS),
-            "an admitted turn gets its process bar"
-        );
-        assert!(!timeline.is_waiting());
-    }
-
     /// A message typed while the thread is busy is held in this window, not
     /// submitted: the strip lists it and the transcript shows one bare bubble
     /// for it. It is never an engine queue row, so nothing can label it
@@ -5477,23 +5448,26 @@ mod turn_tests {
         assert_eq!(rows[0].queue_id.as_str(), "waiting-native-send-7");
         assert!(rows[0].waiting, "a local hold is not an engine queue row");
         assert!(!rows[1].waiting, "engine rows keep their own identity");
-        assert!(queue::waiting_is_full(&[
-            waiting.clone(),
-            waiting.clone(),
-            waiting.clone(),
-            waiting.clone(),
-            waiting,
-        ]));
+        assert!(queue::waiting_is_full(
+            &[
+                waiting.clone(),
+                waiting.clone(),
+                waiting.clone(),
+                waiting.clone(),
+                waiting,
+            ],
+            "thread-a",
+        ));
     }
 
-    /// The durable header of an admitted-but-unstarted turn projects as a bare
-    /// user bubble: no process bar, no answer body, no footer.
+    /// The durable header of an admitted-but-unstarted turn projects as
+    /// nothing: it has not started, so it belongs to the composer's strip and
+    /// never to the transcript.
     #[test]
-    fn unstarted_durable_turn_projects_only_its_bubble() {
+    fn unstarted_durable_turn_stays_out_of_the_transcript() {
         let turn = panel_turn("root-waiting", None);
         let rows = crate::native_chat::project_history(&[turn]);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].kind, crate::timeline::KIND_USER);
+        assert!(rows.is_empty(), "a queued message is not a chat bubble yet");
     }
 
     fn panel_turn(root: &str, panel: Option<Value>) -> wunder_desktop::NativeChatTurn {

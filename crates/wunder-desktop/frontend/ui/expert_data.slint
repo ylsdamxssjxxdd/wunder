@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { ConfirmDialog } from "components.slint";
 import { ExpertButton, ExpertField } from "expert_widgets.slint";
 import { TextFieldActivation } from "text_field.slint";
 import { TextEditBase } from "textedit-base.slint";
@@ -23,15 +24,21 @@ export component ExpertData inherits Rectangle {
     callback refresh();
     callback save-memory();
     callback delete-memory(string);
+    callback clear-memories();
     callback open-memory(int);
     private property <bool> delete-open;
+    private property <bool> clear-open;
     background: white; border-radius: 12px;
     VerticalLayout { padding: 12px; spacing: 16px;
         if root.error != "" : Text { text: root.error; color: Theme.danger; wrap: word-wrap; }
-        HorizontalLayout { height: 36px;
+        HorizontalLayout { height: 36px; spacing: 8px;
             VerticalLayout { Text { text: "记忆碎片"; color: Theme.text; font-size: 16px; font-weight: 700; } Text { text: "将可复用的长期事实整理为模型友好的记忆索引与详情。"; color: Theme.muted; font-size: 12px; } }
             Rectangle { horizontal-stretch: 1; }
             ExpertButton { width: 66px; label: "刷新"; icon: @image-url("../assets/icons/rotate-right.svg"); enabled: !root.loading; clicked => { root.refresh(); } }
+            // 清空作用于当前智能体的全部记忆，与搜索/标签过滤无关：列表本身
+            // 是服务端过滤后的结果，所以过滤生效时空列表也可能藏着记忆，只有
+            // 无过滤且无数据时才真正没东西可清。
+            ExpertButton { width: 66px; label: "清空"; icon: @image-url("../assets/icons/trash.svg"); enabled: !root.loading && !root.saving && (root.memories.length > 0 || root.query != "" || root.category != "全部标签"); clicked => { root.clear-open = true; } }
             ExpertButton { width: 96px; label: "新建碎片"; icon: @image-url("../assets/icons/plus.svg"); selected: true; clicked => { root.open-memory(-1); } }
         }
         HorizontalLayout { height: 38px; spacing: 12px;
@@ -74,5 +81,16 @@ export component ExpertData inherits Rectangle {
             HorizontalLayout { height: 30px; if root.edit-id != "" : ExpertButton { label: "删除"; icon: @image-url("../assets/icons/trash.svg"); enabled: !root.saving; clicked => { root.delete-open = true; } } Rectangle { horizontal-stretch: 1; } ExpertButton { label: "取消"; enabled: !root.saving; clicked => { root.editor-open = false; } } ExpertButton { label: "保存"; icon: @image-url("../assets/icons/save.svg"); enabled: !root.saving; selected: true; clicked => { root.save-memory(); } } }
         }
     } }
-    if root.delete-open : Rectangle { background: Theme.overlay; TouchArea { scroll-event(event) => { return accept; } } Rectangle { width: 300px; height: 140px; background: white; border-radius: 12px; VerticalLayout { padding: 20px; Text { text: "确定删除此记忆碎片？"; color: Theme.text; } HorizontalLayout { ExpertButton { label: "取消"; clicked => { root.delete-open = false; } } ExpertButton { label: "删除"; clicked => { root.delete-open = false; root.delete-memory(root.edit-id); } } } } } }
+    if root.delete-open : ConfirmDialog {
+        title: "删除记忆碎片"; message: "确定删除此记忆碎片？";
+        confirm-label: "删除"; cancel-label: "取消"; danger: true; busy: root.saving;
+        confirmed => { root.delete-open = false; root.delete-memory(root.edit-id); }
+        canceled => { root.delete-open = false; }
+    }
+    if root.clear-open : ConfirmDialog {
+        title: "清空记忆碎片"; message: "将删除当前智能体的全部记忆碎片，且无法恢复。";
+        confirm-label: "清空"; cancel-label: "取消"; danger: true; busy: root.saving;
+        confirmed => { root.clear-open = false; root.clear-memories(); }
+        canceled => { root.clear-open = false; }
+    }
 }

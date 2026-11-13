@@ -240,12 +240,16 @@ test('watcher keeps projection events flowing while send or resume controllers e
   assert.ok(projectionOnlySource.includes("'compaction_progress'"));
   assert.ok(projectionOnlySource.includes("'compaction_notice'"));
   assert.ok(!watcherSource.includes('if (runtime.sendController || runtime.resumeController) return;'));
-  const canonicalIndex = watcherSource.indexOf('applyCanonicalStreamRuntimeEvent(');
+  // Watch 链路上唯一的时间线写入者是 durable thread reducer；旧的 canonical
+  // stream 入口已迁到 applyChatThreadServerEvent。
+  const canonicalIndex = watcherSource.indexOf('applyChatThreadServerEvent(');
   assert.ok(canonicalIndex >= 0);
-  assert.ok(watcherSource.includes('selectRuntimeLastAppliedEventId'));
-  assert.ok(watcherSource.includes('const runtimeRemoteLastEventId = normalizeStreamEventId(runtime?.remoteLastEventId) || 0;'));
-  assert.ok(watcherSource.includes('Math.max(projectionLastEventId, runtimeLastEventId, runtimeRemoteLastEventId, tailEventId)'));
-  assert.ok(watcherSource.includes('refreshLastAppliedEventId();'));
+  // 游标归 durable reducer（ThreadLog 的 lastSeq）；watch 只按 lastSeq 续订，不再
+  // 自行维护 lastEventId 水位运算。
+  assert.ok(watcherSource.includes('after_change_seq: getChatThreadState(key)?.lastSeq ?? 0'));
+  assert.ok(watcherSource.includes('ensureChatThreadRuntime(key)'));
+  assert.equal(watcherSource.includes('selectRuntimeLastAppliedEventId'), false);
+  assert.equal(watcherSource.includes('refreshLastAppliedEventId('), false);
   assert.equal(watcherSource.includes('lastEventId = Math.max(lastEventId, normalizedEventId)'), false);
   assert.equal(watcherSource.includes('updateRuntimeLastEventId(runtime, normalizedEventId)'), false);
   assert.equal(watcherSource.includes('const shouldUseProjectionOnlyWatch ='), false);
@@ -262,8 +266,9 @@ test('watcher keeps projection events flowing while send or resume controllers e
   // watcher. Scheduled delivery aborts the old feeder while it installs the
   // new turn feeder, so this identity guard is part of the protocol contract.
   assert.ok(watcherSource.includes('const isCurrentWatcher = Boolean(current && current.watchController === controller)'));
-  assert.ok(watcherSource.includes('if (isCurrentWatcher && !controller.signal.aborted'));
-  assert.ok(watcherSource.includes('if (latest?.watchController || store.activeSessionId !== key) return;'));
+  assert.ok(watcherSource.includes('const shouldReconnect = isCurrentWatcher && !controller.signal.aborted'));
+  assert.ok(watcherSource.includes('if (latest?.watchController) return;'));
+  assert.ok(watcherSource.includes('store.activeSessionId !== key) return;'));
 });
 
 test('send, resume, and watch no longer route realtime events through legacy processors', () => {
@@ -302,8 +307,10 @@ test('send, resume, and watch no longer route realtime events through legacy pro
   assert.equal(sendSource.includes('assistantMessage.workflowStreaming = true'), false);
   assert.equal(sendSource.includes('if (!bootstrappingDraftSession) {\n        this.messages.push(userMessage);'), false);
   assert.equal(sendSource.includes('if (!bootstrappingDraftSession) {\n        sessionMessagesRef.push(assistantMessageRaw);'), false);
-  assert.equal(sendSource.includes('scheduleSlowClientResume(this, sessionId, assistantMessage'), false);
-  assert.ok(sendSource.includes('scheduleSlowClientResume(this, sessionId, null, slowClientResumeAfterEventId)'));
+  // 慢客户端恢复已交由 durable thread view + watchdog 承担；发送路径不再调度
+  // 携带上一条 assistant 消息的 resume，只清理上一轮的过期标记。
+  assert.equal(sendSource.includes('scheduleSlowClientResume('), false);
+  assert.ok(sendSource.includes('clearSlowClientResume(runtime)'));
   assert.ok(sendSource.includes('resolveMaxProjectionUserRound(this.runtimeProjection, this.activeSessionId)'));
   assert.equal(sendSource.includes('const nextLocalStreamRound = (resolveMaxStreamRound(this.messages) || 0) + 1;'), false);
   assert.equal(runtimeControlsSource.includes('export const insertWatchUserMessage'), false);
@@ -314,8 +321,11 @@ test('send, resume, and watch no longer route realtime events through legacy pro
 test('session stop does not fan out request-scoped websocket cancels', () => {
   const stopSource = readFileSync(resolve(process.cwd(), 'src/stores/chatStopResumeActions.ts'), 'utf8');
   const watcherSource = readFileSync(resolve(process.cwd(), 'src/stores/chatWatcher.ts'), 'utf8');
-  assert.ok(stopSource.includes("type: 'cancel'"));
-  assert.ok(stopSource.includes("cancel_source: 'user_stop'"));
+  // 一次已确认的会话级 HTTP 取消独占结算；停止路径不再广播请求级 WS cancel 帧。
+  assert.equal(stopSource.includes("type: 'cancel'"), false);
+  assert.equal(stopSource.includes("cancel_source: 'user_stop'"), false);
+  assert.ok(stopSource.includes('await cancelMessageStream(targetSessionId)'));
+  assert.ok(stopSource.includes("runtime.sendAbortReason = 'user_stop'"));
   assert.equal(stopSource.includes('chatWsClient.sendCancel('), false);
   assert.ok(watcherSource.includes('cancelOnAbort: false'));
 });
@@ -404,7 +414,7 @@ test('channel messages no longer enter realtime legacy sideband writers', () => 
     assert.equal(source.includes('consumeChatWatchChannelMessage({'), false, label);
   }
 
-  assert.ok(watchSource.includes('applyCanonicalStreamRuntimeEvent('));
+  assert.ok(watchSource.includes('applyChatThreadServerEvent('));
   assert.equal(watchSource.includes('shouldUseLegacyWatchStreamFallback'), false);
   assert.equal(watchSource.includes('resolveWatchRoundNumber'), false);
   assert.equal(watchSource.includes('state.processor.handleEvent('), false);

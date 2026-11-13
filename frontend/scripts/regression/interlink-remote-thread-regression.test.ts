@@ -1,9 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { remoteThreadModel, remoteHistoryText } from '../../src/views/messenger/interlink/remoteThreadModel';
+import { remoteThreadModel, remoteHistoryItems } from '../../src/views/messenger/interlink/remoteThreadModel';
 
-test('remote history renders text and keeps markup inert', () => {
-  assert.equal(remoteHistoryText([{role:'user',content:'<sample>'},{role:'assistant',content:'reply'}]), '› <sample>\n\n◆ reply');
+// 远端历史只做数据规整（角色 / 身份 / 截断），标记由渲染层当纯文本插值，
+// 所以 '<sample>' 必须原样留在 content 里，不能在这里被当 HTML 处理。
+test('remote history normalizes rows and keeps markup inert', () => {
+  assert.deepEqual(remoteHistoryItems([{ role: 'user', content: '<sample>' }, { role: 'assistant', content: 'reply' }]), [
+    { id: 'user:0', role: 'user', content: '<sample>' },
+    { id: 'assistant:1', role: 'assistant', content: 'reply' }
+  ]);
+  // 空内容行不产生可见气泡，与渲染层「不画空行」一致。
+  assert.deepEqual(remoteHistoryItems([{ role: 'user', content: '   ' }, { role: 'assistant', content: '' }]), []);
 });
 test('remote subscription fences another thread and requests overflow recovery', () => {
   const model = remoteThreadModel('thread_fixture');

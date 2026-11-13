@@ -655,7 +655,9 @@ fn language_from_locale(raw: &str) -> Option<&'static str> {
     let first = value.split(':').next().unwrap_or("").trim();
     let code = first.split(['.', '@']).next().unwrap_or("").trim();
     let primary = code.split(['_', '-']).next().unwrap_or("").trim();
-    if primary.is_empty() || primary.eq_ignore_ascii_case("c") || primary.eq_ignore_ascii_case("posix")
+    if primary.is_empty()
+        || primary.eq_ignore_ascii_case("c")
+        || primary.eq_ignore_ascii_case("posix")
     {
         return None;
     }
@@ -2418,13 +2420,7 @@ mod tests {
     #[test]
     fn locale_maps_to_supported_language() {
         // 中文环境（含繁体、带修饰、带编码）统一落到 zh-CN。
-        for raw in [
-            "zh_CN.UTF-8",
-            "zh",
-            "zh-Hans-CN",
-            "zh_TW",
-            "zh_CN:en_US",
-        ] {
+        for raw in ["zh_CN.UTF-8", "zh", "zh-Hans-CN", "zh_TW", "zh_CN:en_US"] {
             assert_eq!(language_from_locale(raw), Some("zh-CN"), "{raw}");
         }
         // 其余语言一律 en-US：界面只有中英两套文案。

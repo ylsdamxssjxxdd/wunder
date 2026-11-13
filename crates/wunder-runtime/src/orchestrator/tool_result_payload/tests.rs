@@ -2386,21 +2386,29 @@ fn search_context_matches_widens_context_for_focused_hits() {
         if let Some(limit) = context_match_limit {
             data["context_match_limit"] = json!(limit);
         }
-        let compacted =
-            ToolResultPayload::from_value(json!({ "ok": true, "data": data }))
-                .to_compact_payload("搜索内容");
+        let compacted = ToolResultPayload::from_value(json!({ "ok": true, "data": data }))
+            .to_compact_payload("搜索内容");
         compacted["data"].clone()
     };
 
     // 给了上下文名额：单个命中可以带整段实现，不再被压成两行。
     let focused = build(Some(2));
     assert_eq!(focused["context_match_limit"], json!(2), "{focused}");
-    assert_eq!(focused["hits"][0]["after"].as_array().map(Vec::len), Some(8));
-    assert_eq!(focused["hits"][0]["before"].as_array().map(Vec::len), Some(8));
+    assert_eq!(
+        focused["hits"][0]["after"].as_array().map(Vec::len),
+        Some(8)
+    );
+    assert_eq!(
+        focused["hits"][0]["before"].as_array().map(Vec::len),
+        Some(8)
+    );
 
     // 没有名额时沿用「每处两行」的取样，避免所有命中都搬一遍同样的上下文。
     let unfocused = build(None);
-    assert!(unfocused.get("context_match_limit").is_none(), "{unfocused}");
+    assert!(
+        unfocused.get("context_match_limit").is_none(),
+        "{unfocused}"
+    );
     assert_eq!(
         unfocused["hits"][0]["after"].as_array().map(Vec::len),
         Some(2)
@@ -2440,7 +2448,6 @@ fn glob_projection_keeps_paths_clean_and_carries_paging() {
     assert_eq!(data["has_more"], json!(true));
     assert_eq!(data["offset"], json!(0));
 }
-
 
 #[test]
 fn search_focused_context_survives_the_generic_array_sampler() {

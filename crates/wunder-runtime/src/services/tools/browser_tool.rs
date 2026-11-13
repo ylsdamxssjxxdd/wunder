@@ -580,6 +580,9 @@ mod tests {
             .workspace
             .resolve_path(context.workspace_id, relative)
             .expect("resolve screenshot path");
-        assert!(resolved.is_file(), "screenshot file missing at {resolved:?}");
+        assert!(
+            resolved.is_file(),
+            "screenshot file missing at {resolved:?}"
+        );
     }
 }

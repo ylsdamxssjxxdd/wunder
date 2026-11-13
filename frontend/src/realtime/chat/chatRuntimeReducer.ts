@@ -4674,6 +4674,9 @@ const upsertToolWorkflowItem = (
     eventType === 'tool_call' &&
     existingEventType === 'tool_result' &&
     isTerminalWorkflowStatus(normalizeText(existing?.status));
+  // 该次调用属于模型第几轮请求：桌面端折叠行右侧的 R1/R2 就是它。
+  // 运行时把 `model_round` 写进工具事件载荷；旧记录没有该字段时留空。
+  const modelRound = parseNonNegativeInt(data.model_round ?? payload.model_round);
   const next: ChatRuntimeWorkflowItemProjection = {
     ...(existing || {}),
     id: itemId,
@@ -4687,6 +4690,7 @@ const upsertToolWorkflowItem = (
     sourceEventType: event.type,
     modelTurnId: modelTurn?.id || event.modelTurnId || message.modelTurnId,
     model_turn_id: modelTurn?.id || event.modelTurnId || message.modelTurnId,
+    ...(modelRound !== null ? { model_round: modelRound, modelRound } : {}),
     updatedSeq: event.eventSeq ?? message.updatedSeq
   };
   const compactionSummary = (eventType === 'compaction' || eventType === 'compaction_progress')

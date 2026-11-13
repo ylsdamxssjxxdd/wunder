@@ -17,7 +17,8 @@ use std::io::{self, Write};
 
 use crate::config::LlmModelConfig;
 use crate::services::chat_payload_sanitizer::{
-    image_path_marker_in_text, is_omitted_image_placeholder_text, omitted_image_placeholder_with_path,
+    image_path_marker_in_text, is_omitted_image_placeholder_text,
+    omitted_image_placeholder_with_path,
 };
 
 pub const DEFAULT_MAX_CONTEXT_IMAGES: usize = 16;
@@ -846,7 +847,6 @@ mod tests {
         assert_eq!(round_inline, 4, "本轮只保留最新 4 张");
         assert_eq!(inline_image_stats(&messages).0, 8);
     }
-
 
     #[test]
     fn newest_user_message_images_are_protected() {

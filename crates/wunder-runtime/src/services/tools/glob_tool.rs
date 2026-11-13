@@ -375,7 +375,6 @@ impl GlobMatcher {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,7 +399,10 @@ mod tests {
         ];
         let order = round_robin_order(&hits);
         assert_eq!(order.len(), hits.len());
-        let mut names = order.iter().map(|item| item.rel.clone()).collect::<Vec<_>>();
+        let mut names = order
+            .iter()
+            .map(|item| item.rel.clone())
+            .collect::<Vec<_>>();
         names.sort();
         assert_eq!(names, vec!["a/1", "a/2", "a/3", "b/1", "c/1", "c/2"]);
         // 一页之内就要覆盖各个顶层目录，避免整页都来自同一个子树。
@@ -409,7 +411,10 @@ mod tests {
             .take(3)
             .map(|item| item.top.clone())
             .collect::<Vec<_>>();
-        assert_eq!(tops, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        assert_eq!(
+            tops,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
     }
 
     #[test]

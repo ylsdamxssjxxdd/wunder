@@ -31,5 +31,6 @@ export const updateAgentMemory = (agentId: ApiId, memoryId: ApiId, payload: ApiP
   api.patch(`${buildAgentMemoryBasePath(agentId)}/memories/${encodeMemoryId(memoryId)}`, payload);
 export const deleteAgentMemory = (agentId: ApiId, memoryId: ApiId) =>
   api.delete(`${buildAgentMemoryBasePath(agentId)}/memories/${encodeMemoryId(memoryId)}`);
-export const replicateAgentMemories = (agentId: ApiId, payload: ApiPayload) =>
-  api.post(`${buildAgentMemoryBasePath(agentId)}/memories/replicate`, payload);
+/** 清空该智能体的全部记忆碎片（含历史摘要），返回删除条数。 */
+export const clearAgentMemories = (agentId: ApiId) =>
+  api.delete(`${buildAgentMemoryBasePath(agentId)}/memories`);

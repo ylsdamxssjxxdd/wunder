@@ -58,6 +58,8 @@ export type TimelineToolEntry = {
   toolIconClass: string;
   /** 右侧指标（token 占用 / 耗时）。 */
   metrics: TimelineToolMetrics;
+  /** 该条目所属的模型轮次（同一用户轮次内模型第几次被请求，R1/R2）；旧记录为 null。 */
+  modelRound: number | null;
   /** 一行摘要：只描述调用本身（命令 / 路径 / query 等关键参数）。 */
   summary: string;
   /** 摘要是否为命令/代码形态（用等宽字体渲染）。 */
@@ -92,6 +94,8 @@ export type TimelineReasoningEntry = {
   text: string;
   /** 右侧两列：该轮请求的上下文占用与思考耗时（缺失时不渲染）。 */
   metrics?: TimelineToolMetrics;
+  /** 该思考所属的模型轮次（R1/R2）；旧记录或缺失时为 null。 */
+  modelRound?: number | null;
 };
 
 export type TimelineEntry = TimelineToolEntry | TimelineReasoningEntry;
@@ -552,6 +556,22 @@ const resolveRunMetrics = (run: RawToolRun): TimelineToolMetrics => {
 };
 
 /**
+ * 条目所属的模型轮次：同一用户轮次里模型会被多次请求（每次带上工具结果），
+ * 折叠行右侧的 R1/R2 就是这次请求的序号。调用 / 输出 / 结果三侧写的是同一个
+ * 轮次，取第一个有值的；旧记录没有该字段（或为 0）时返回 null，行上不印 R。
+ * 与桌面端 `crates/wunder-desktop/frontend/src/timeline.rs` 的
+ * `model_round` 同一口径：只显示大于 0 的轮次。
+ */
+const resolveRunRound = (run: RawToolRun): number | null => {
+  for (const item of [run.callItem, run.outputItem, run.resultItem]) {
+    if (!item) continue;
+    const round = positiveFinite(item.model_round ?? item.modelRound);
+    if (round !== null) return Math.trunc(round);
+  }
+  return null;
+};
+
+/**
  * 输出正文与错误块的去重：命令失败时 stderr 常被同时填进错误摘要与输出正文，
  * 展开后同一份堆栈渲染两遍。判定为「同一份内容」时丢弃输出正文（错误块已覆盖）。
  * 双向各自截断到有界窗口再比较，避免大输出进入热路径。
@@ -700,6 +720,7 @@ const resolveCompactionEntry = (
     toolLabel,
     toolIconClass: 'fa-compress',
     metrics: { tokens: null, durationMs: null },
+    modelRound: resolveRunRound(run),
     summary: truncateSingleLine([instanceLabel, display.summaryTitle || display.resultSummary].filter(Boolean).join(' · ')),
     summaryMono: false,
     diffStats: null,
@@ -759,6 +780,7 @@ export const buildTimelineToolEntry = (
     toolLabel,
     toolIconClass: resolveTimelineToolIcon(run.toolName),
     metrics: resolveRunMetrics(run),
+    modelRound: resolveRunRound(run),
     summary,
     summaryMono: isExecuteCommandToolName(run.toolName),
     // +/- 统计只描述实际生效的改动：失败/取消的调用没有改出这个结果，不显示。

@@ -16,5 +16,7 @@ test('workspace file area exposes explicit upload and download controls', () => 
   assert.match(panel, /@click="enterSelectionMode"/);
   assert.match(panel, /const handleUploadInputChange =/);
   assert.match(panel, /const handleDownloadCurrentDirectory =/);
-  assert.match(panel, /downloadWorkspaceDirectoryArchive\(uploadTarget\.value\)/);
+  // 当前目录下载统一走 archiveDirectory(路径)，由它内部调用打包下载接口。
+  assert.match(panel, /archiveDirectory\(uploadTarget\.value,/);
+  assert.match(panel, /downloadWorkspaceDirectoryArchive\(path\)/);
 });

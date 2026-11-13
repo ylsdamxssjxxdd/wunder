@@ -147,6 +147,8 @@ export type ChatRuntimeTimelineActivityRow =
       streaming?: boolean;
       /** 该轮请求的上下文占用与思考耗时（与工具行同两列）。 */
       metrics?: { tokens: number | null; durationMs: number | null };
+      /** 该思考所属的模型轮次（同一用户轮次内第几次请求），行右侧的 R1/R2。 */
+      round?: number;
     }
   | { type: 'tool'; itemId: string };
 

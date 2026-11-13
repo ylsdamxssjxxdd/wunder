@@ -674,9 +674,12 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
     let mut batch = 0i32;
     let mut process = 0i32;
     for turn in turns {
-        // Queue rows are rendered by the composer. Their durable turn is only
-        // an admission placeholder and must not become a second user bubble.
-        if is_queue_only_turn(turn) {
+        // A message the engine has not started yet — parked behind a running
+        // turn or admitted and waiting — is not part of the transcript. The
+        // composer's strip is the one place a queued message may appear, so
+        // switching threads can never turn it into a user bubble glued to the
+        // settled history.
+        if is_queue_only_turn(turn) || is_waiting_turn(turn) {
             continue;
         }
         let mut user = history_user(&turn.user);
@@ -684,13 +687,6 @@ pub(crate) fn project_history(turns: &[NativeChatTurn]) -> Vec<TimelineRow> {
         // live rows are matched against when the durable snapshot takes over.
         user.id = format!("user-turn-{}", turn.root_id).into();
         rows.push(user);
-        if is_waiting_turn(turn) {
-            // The engine admitted this message but has not started it: the
-            // bubble is the whole turn. A process bar here would read as a
-            // running (or queued) turn, which is exactly what the user is not
-            // waiting for — the composer's strip owns that state.
-            continue;
-        }
         process += 1;
         let process_bar_at = rows.len();
         let mut bar = blank_row(

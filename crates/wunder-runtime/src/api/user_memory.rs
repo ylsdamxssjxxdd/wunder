@@ -30,7 +30,9 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route(
             "/wunder/agents/{agent_id}/memories",
-            get(list_memories).post(create_memory),
+            get(list_memories)
+                .post(create_memory)
+                .delete(clear_memories),
         )
         .route(
             "/wunder/agents/{agent_id}/memories/{memory_id}",
@@ -264,6 +266,21 @@ async fn delete_memory(
     ))
 }
 
+/// Deletes every memory fragment of one agent scope. Fragments are removed in
+/// batches so a large memory table never loads at once, and legacy summary
+/// records are cleared through the shared helper below.
+async fn clear_memories(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    AxumPath(agent_id): AxumPath<String>,
+    Query(query): Query<AgentUserQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    ensure_agent_access(&state, &resolved.user.user_id, &resolved.user, &agent_id)?;
+    let deleted = clear_agent_memories(&state, &resolved.user.user_id, &agent_id)?;
+    Ok(Json(json!({ "data": { "deleted": deleted } })))
+}
+
 async fn replicate_memories(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -336,7 +353,7 @@ pub fn replicate_agent_memories(
         .list_memory_fragments(user_id, &source_scope)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
-    let deleted_target = clear_agent_memories(&fragment_store, user_id, Some(target_agent_id));
+    let deleted_target = delete_all_fragments(&fragment_store, user_id, Some(target_agent_id));
     let legacy_store = MemoryStore::new(state.storage.clone());
     let deleted_legacy =
         legacy_store.clear_records(&build_agent_memory_owner(user_id, Some(target_agent_id)));
@@ -531,7 +548,23 @@ fn error_response(status: StatusCode, message: String) -> Response {
     crate::api::errors::error_response(status, message)
 }
 
-fn clear_agent_memories(store: &MemoryFragmentStore, user_id: &str, agent_id: Option<&str>) -> i64 {
+/// Clears every memory of one agent: fragments first, then the legacy summary
+/// records that predate the fragment store. Shared by the HTTP route and the
+/// desktop native façade so both paths delete exactly the same set.
+pub fn clear_agent_memories(
+    state: &AppState,
+    user_id: &str,
+    agent_id: &str,
+) -> Result<i64, Response> {
+    let store = MemoryFragmentStore::new(state.storage.clone());
+    let deleted_fragments = delete_all_fragments(&store, user_id, Some(agent_id));
+    let legacy_store = MemoryStore::new(state.storage.clone());
+    let deleted_legacy =
+        legacy_store.clear_records(&build_agent_memory_owner(user_id, Some(agent_id)));
+    Ok(deleted_fragments + deleted_legacy)
+}
+
+fn delete_all_fragments(store: &MemoryFragmentStore, user_id: &str, agent_id: Option<&str>) -> i64 {
     let mut deleted = 0i64;
     loop {
         let batch = store.list_fragments(

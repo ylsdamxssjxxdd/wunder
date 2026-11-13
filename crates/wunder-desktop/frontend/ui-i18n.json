@@ -1,23 +1,5 @@
 [
  {
-  "key": "act_tab_sessions",
-  "zh": "会话",
-  "en": "Sessions"
- },
- {
-  "key": "act_tab_credits",
-  "zh": "Credits",
-  "en": "Credits"
- },
- {
-  "key": "act_month",
-  "zh": "{}月",
-  "en": "{}",
-  "params": [
-   "month"
-  ]
- },
- {
   "key": "ag_title",
   "zh": "专家",
   "en": "Agents"

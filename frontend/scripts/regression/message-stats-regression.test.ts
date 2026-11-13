@@ -271,7 +271,8 @@ test('message stats keeps persisted aggregate duration after history refresh', (
     t
   );
 
-  assert.equal(findEntryValue(entries, 'Duration'), '3.0s');
+  // 时长统一按整秒口径展示（3.0s -> 3s）。
+  assert.equal(findEntryValue(entries, 'Duration'), '3s');
 });
 
 test('message stats context ignores final usage and round usage totals without occupancy', () => {
@@ -1395,7 +1396,7 @@ test('process duration label reuses the turn stopwatch value', () => {
       role: 'assistant',
       stats: { interaction_duration_s: 65.4 }
     }),
-    '1m 5.4s'
+    '1m 5s'
   );
   assert.equal(resolveAssistantTurnDurationLabel({ role: 'assistant', stats: {} }), '');
   assert.equal(resolveAssistantTurnDurationLabel({ role: 'user', stats: { interaction_duration_s: 65.4 } }), '');

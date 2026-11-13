@@ -102,6 +102,12 @@ impl NativeDesktop {
         Ok(())
     }
 
+    pub fn clear_expert_memories(&self, agent: &str) -> Result<i64> {
+        self.ensure_expert_access(agent)?;
+        wunder_server::api::user_memory::clear_agent_memories(self.state(), self.user_id(), agent)
+            .map_err(|_| anyhow::anyhow!("清空记忆碎片失败"))
+    }
+
     pub fn replicate_expert_memories(&self, agent: &str, target: &str) -> Result<()> {
         self.ensure_expert_access(agent)?;
         self.ensure_expert_access(target)?;

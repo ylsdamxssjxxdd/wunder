@@ -669,11 +669,7 @@ impl ThreadOpenLeaseStore for SqliteStorage {
         self.get_thread_open_lease_impl(session_id, user_id)
     }
 
-    fn purge_thread_open_leases(
-        &self,
-        client_kind: &str,
-        owner_instance_id: &str,
-    ) -> Result<i64> {
+    fn purge_thread_open_leases(&self, client_kind: &str, owner_instance_id: &str) -> Result<i64> {
         self.purge_thread_open_leases_impl(client_kind, owner_instance_id)
     }
 }

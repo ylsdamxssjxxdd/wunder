@@ -84,6 +84,14 @@
     >
       <template v-if="isGreeting">
           <div class="timeline-greeting">
+            <!-- 与桌面版同一枚 eva01 徽标：无底板，靠素材本身的留白与渐隐收边。 -->
+            <img
+              class="timeline-greeting-mark"
+              :src="greetingMarkUrl"
+              alt=""
+              aria-hidden="true"
+              draggable="false"
+            />
             <div class="timeline-greeting-text">{{ String(message.content || '') }}</div>
             <el-tooltip
               ref="agentAbilityTooltipRef"
@@ -288,6 +296,8 @@ const props = defineProps<{
 const controller = props.controller;
 const translate = controller.t;
 const t = (key: string, params?: Record<string, unknown>): string => String(translate(key, params) ?? key);
+// 问候语左侧的 eva01 头部图标（与桌面版共用同一份素材，静态放在 public 下）。
+const greetingMarkUrl = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}eva01-mark.png`;
 const chatStore = controller.chatStore;
 const message = computed<Record<string, any>>(() => props.item.message);
 
@@ -665,7 +675,19 @@ watch(
 .timeline-greeting {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 10px;
+}
+
+/* 图标与首行文字中线对齐：一行文字是 14px × 1.7 行高，40px 的图标高出部分
+   用负外边距上溢，换行时仍停在首行（与桌面版 ChatGreeting 同口径）。 */
+.timeline-greeting-mark {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  margin-top: calc((1.7 * 14px * var(--messenger-font-scale, 1) - 40px) / 2);
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
 }
 
 .timeline-greeting-text {
