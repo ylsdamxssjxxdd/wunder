@@ -717,18 +717,33 @@ impl Timeline {
         let mut entry = crate::timeline_text::process_entry(row);
         if let Some(index) = children.iter().position(|child| child.id == row.id) {
             if bar.process_paged {
-                // A live row that is still streaming is not part of any page:
-                // it is the newest step the engine is writing right now. The
-                // `process_newer` guard exists to stop live data from
-                // overwriting a page that is already loaded, and applying it to
-                // the streaming row froze that row the moment the fold grew
-                // past its first page — the thought stopped mid-sentence while
-                // the turn kept running.
-                let streaming = row.status_kind == STATUS_RUNNING;
-                if bar.process_newer && !streaming {
-                    return;
-                }
                 if let Some(previous) = children.row_data(index) {
+                    if bar.process_newer {
+                        // The page loaded behind the reader can be older than
+                        // this live row: the same step is still being written,
+                        // or has just settled while the reader sits on an older
+                        // page. Dropping the update used to freeze that thought
+                        // mid-sentence and lose its settle state and metrics.
+                        // Live stays authoritative for its own row, but never
+                        // regress a settled entry to running and never blank
+                        // the columns the page already knows.
+                        if previous.status_kind != STATUS_RUNNING
+                            && entry.status_kind == STATUS_RUNNING
+                        {
+                            return;
+                        }
+                        if entry.tokens.is_empty() && entry.duration.is_empty() {
+                            entry.tokens = previous.tokens.clone();
+                            entry.duration = previous.duration.clone();
+                        }
+                        if entry.status_kind != STATUS_RUNNING
+                            && previous.detail.len() > entry.detail.len()
+                        {
+                            entry.detail = previous.detail.clone();
+                            entry.summary = previous.summary.clone();
+                            entry.blocks = previous.blocks.clone();
+                        }
+                    }
                     entry.payload = previous.payload;
                     entry.open = previous.open;
                 }
@@ -2650,6 +2665,27 @@ mod tests {
             .find(|entry| entry.kind == KIND_REASON && entry.status_kind != STATUS_RUNNING)
             .expect("earlier thoughts settle in the page");
         assert_ne!(settled.id, tail.id);
+        // The same live row settling must reach the fold too: the reader can be
+        // sitting on an older page when the thought finishes and its usage is
+        // reported, and the tail timer does not refresh while a newer page is
+        // known. Keeping only the streaming half left a spinner behind.
+        timeline.close_thinking(false);
+        timeline.set_reason_metrics("1.2k", "0.4s");
+        let bar = timeline.model.row_data(bar_index).unwrap();
+        let children = bar
+            .process_entries
+            .as_any()
+            .downcast_ref::<VecModel<crate::ProcessEntry>>()
+            .unwrap();
+        let tail = children
+            .iter()
+            .filter(|entry| entry.kind == KIND_REASON)
+            .last()
+            .unwrap();
+        assert_eq!(tail.id, "reason-paged-stream-root:text-4");
+        assert_eq!(tail.status_kind, STATUS_DONE, "the settle reaches the fold");
+        assert_eq!(tail.tokens, "1.2k", "post-close metrics reach the fold");
+        assert_eq!(tail.duration, "0.4s");
     }
 
     #[test]

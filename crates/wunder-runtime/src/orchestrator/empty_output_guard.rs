@@ -6,10 +6,12 @@ use serde_json::{json, Value};
 #[derive(Default)]
 pub(super) struct EmptyOutputGuard {
     recovery_used: bool,
-    /// The next request only must go out with thinking off. This is the
-    /// recovery retry itself, not a property of the whole turn: latching it
-    /// until the turn ended meant one exhausted thinking budget silenced the
-    /// model's thoughts for every later round of a long tool-driven turn.
+    /// The recovery round must go out with thinking off. This is the recovery
+    /// retry itself, not a property of the whole turn: latching it until the
+    /// turn ended meant one exhausted thinking budget silenced the model's
+    /// thoughts for every later round of a long tool-driven turn. The flag is
+    /// cleared once that round is answered, so a request the round re-issues
+    /// (e.g. after context-overflow compaction) still runs with thinking off.
     thinking_override: bool,
     last_output: OutputDiagnostics,
 }
@@ -23,21 +25,22 @@ impl EmptyOutputGuard {
         // answer. The budget is deliberately turn-wide, not per layer.
         if output.transport_recovery_used {
             self.recovery_used = true;
-            // That resend already carried `thinking: none` inside its own call.
-            // The recovery is spent, but the user's reasoning setting has to
-            // apply again from the next round on.
-            self.thinking_override = false;
         }
+        // The recovery round has been answered, so the user's reasoning setting
+        // applies again from the next round on. (A transport recovery already
+        // ran without thinking inside its own call.) Clearing on the answer
+        // rather than when the override is read keeps it in force for every
+        // attempt that round re-issues.
+        self.thinking_override = false;
         self.last_output = output;
     }
 
-    /// Consulted once per model round. It answers "does the *next* request need
-    /// thinking off", never "is this turn in recovery mode".
-    pub(super) fn config_override(&mut self, config: &LlmModelConfig) -> Option<LlmModelConfig> {
+    /// Answers "does the next request need thinking off", never "is this turn
+    /// in recovery mode". The flag stays set until the round is observed.
+    pub(super) fn config_override(&self, config: &LlmModelConfig) -> Option<LlmModelConfig> {
         if !self.thinking_override {
             return None;
         }
-        self.thinking_override = false;
         let mut recovery = config.clone();
         recovery.reasoning_effort = Some("none".into());
         recovery.thinking_token_budget = None;
@@ -168,9 +171,10 @@ mod tests {
 
     /// One exhausted thinking budget used to latch `thinking: none` on every
     /// later round of the turn, so a 31-round tool run only ever thought in the
-    /// first few rounds. The override belongs to the retry it was created for.
+    /// first few rounds. The override belongs to the recovery round: every
+    /// attempt it re-issues keeps thinking off, and the answer releases it.
     #[test]
-    fn thinking_override_covers_only_the_recovery_retry() {
+    fn thinking_override_covers_only_the_recovery_round() {
         let config = LlmModelConfig {
             thinking_token_budget: Some(4096),
             ..Default::default()
@@ -182,8 +186,13 @@ mod tests {
             "the retry the recovery notice triggers runs without thinking"
         );
         assert!(
+            guard.config_override(&config).is_some(),
+            "a re-issued attempt of the recovery round still runs without thinking"
+        );
+        guard.observe(OutputDiagnostics::default());
+        assert!(
             guard.config_override(&config).is_none(),
-            "the round after the retry gets the user's reasoning setting back"
+            "the round after the answered recovery gets the user's reasoning setting back"
         );
         assert!(
             guard.recover(true, "empty_output").is_err(),

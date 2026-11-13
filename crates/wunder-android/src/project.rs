@@ -241,6 +241,9 @@ impl RowData {
                         diff_add: diff_add.as_str().into(),
                         diff_del: diff_del.as_str().into(),
                         lines_read: child.lines_read.as_str().into(),
+                        // The phone projection carries no model-round envelope;
+                        // the desktop column stays hidden for these rows.
+                        round: 0,
                         tokens: child.tokens.as_str().into(),
                         duration: child.duration.as_str().into(),
                         status_kind: child.status_kind,
@@ -281,6 +284,7 @@ fn blank(kind: i32, id: impl Into<SharedString>) -> TimelineRow {
         target: SharedString::default(),
         tokens: SharedString::default(),
         duration: SharedString::default(),
+        model_round: 0,
         read_lines: SharedString::default(),
         detail: SharedString::default(),
         reasoning_blocks: ModelRc::default(),
@@ -1545,6 +1549,7 @@ mod tests {
             preview: "src/main.rs".into(),
             detail: "fn main() {}".into(),
             state: "completed".into(),
+            round: 0,
             tokens: "1.2k".into(),
             duration: "0.3s".into(),
             read_lines: String::new(),
