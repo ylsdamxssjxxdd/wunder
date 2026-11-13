@@ -24,4 +24,4 @@ Parent–child round references are encoded as `user_round` + `model_round`, and
 ## Limits
 
 - The only collaborative form is the **subagent**. Swarm orchestration (swarm tools, hives, orchestration mode, team runs, swarm packs) has been removed from the engine and the protocol layer; it is not waiting to be implemented, nor hidden behind a switch.
-- Swarm leftovers remain in TUI prompts, front-end i18n labels, and compatibility shims, and empty directories await cleanup. Those leftovers do not mean the capability exists.
+- Swarm leftovers remain in TUI prompts, front-end i18n labels, and compatibility shims; the empty directories have been deleted. Those leftovers do not mean the capability exists.

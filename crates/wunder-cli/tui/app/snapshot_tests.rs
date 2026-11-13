@@ -777,12 +777,8 @@ async fn the_frame_composes_every_card_at_forty_eighty_and_one_hundred_twenty_co
             "the answer is on screen: {frame}"
         );
         assert!(
-            frame.contains("Ask anything"),
+            frame.contains("Type a message"),
             "the composer keeps its placeholder: {frame}"
-        );
-        assert!(
-            frame.contains('?'),
-            "footer keeps the shortcut key: {frame}"
         );
     }
 
@@ -1229,7 +1225,6 @@ async fn the_footer_names_the_task_and_sheds_it_before_the_keys() {
 
     let frame = draw_rows(&mut app, 40, 24).join("\n");
     assert!(frame.contains('\u{2190}'), "the keys stay: {frame}");
-    assert!(frame.contains('?'), "the keys stay: {frame}");
     assert!(
         !frame
             .lines()
@@ -1241,6 +1236,31 @@ async fn the_footer_names_the_task_and_sheds_it_before_the_keys() {
 
     let wide = draw_rows(&mut app, 120, 24).join("\n");
     assert!(wide.contains("summarise the flaky test"), "{wide}");
+}
+
+/// The footer's right cluster qualifies the context figure with the model it
+/// belongs to: model id first, then the percentage.
+#[tokio::test]
+async fn the_footer_puts_the_model_beside_the_context_figure() {
+    let root = TempRoot::new("footer_model");
+    let mut app = fixture_app(root.path()).await;
+    app.model_name = "demo-model".to_string();
+    app.model_max_context = Some(1000);
+    app.session_stats.context_used_tokens = 280;
+
+    let rows = draw_rows(&mut app, 100, 24);
+    let footer = rows.last().cloned().unwrap_or_default();
+    assert!(
+        footer.contains("demo-model \u{b7} 72% context left"),
+        "model qualifies the context figure: {footer:?}"
+    );
+
+    // A model id wider than the terminal gives way to the figure itself.
+    app.model_name = "an-extremely-long-model-identifier-2026".to_string();
+    let rows = draw_rows(&mut app, 40, 24);
+    let footer = rows.last().cloned().unwrap_or_default();
+    assert!(footer.ends_with("72% context left"), "{footer:?}");
+    assert!(!footer.contains("an-extremely"), "{footer:?}");
 }
 
 fn draw_buffer(app: &mut TuiApp, width: u16, height: u16) -> ratatui::buffer::Buffer {

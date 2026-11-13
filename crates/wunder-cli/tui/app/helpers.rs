@@ -401,16 +401,28 @@ pub(super) fn normalize_clipboard_text(text: String) -> Option<String> {
     if text.is_empty() {
         return None;
     }
-
-    let normalized = text
-        .replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .replace('\u{0}', "");
-    if normalized.is_empty() {
-        return None;
+    // Most pastes are already clean. The old three `replace` calls allocated a
+    // full copy of the clipboard three times even when nothing needed fixing;
+    // on a large paste that alone was visible before the text reached the draft.
+    if !text.as_bytes().contains(&b'\r') && !text.as_bytes().contains(&0) {
+        return Some(text);
     }
 
-    Some(normalized)
+    let mut normalized = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                normalized.push('\n');
+            }
+            '\u{0}' => {}
+            other => normalized.push(other),
+        }
+    }
+    (!normalized.is_empty()).then_some(normalized)
 }
 
 pub(super) fn should_store_history_entry(value: &str) -> bool {
@@ -418,13 +430,37 @@ pub(super) fn should_store_history_entry(value: &str) -> bool {
     !trimmed.is_empty() && !trimmed.trim_start().starts_with('/')
 }
 
+/// A pasted path list is short. Rejecting prose before tokenising keeps a long
+/// paste from turning into one URL parse, one String allocation and one
+/// filesystem lookup per word.
+const MAX_PASTE_PATH_TEXT_BYTES: usize = 4096;
+const MAX_PASTE_PATH_CANDIDATES: usize = 32;
+
 pub(super) fn detect_pasted_attachment_paths(base_dir: &Path, text: &str) -> Option<Vec<String>> {
-    let normalized = normalize_clipboard_text(text.to_string())?;
+    // The composer already normalised this text; borrowing it avoids copying
+    // the whole paste a second time just to look for file names in it.
+    let owned;
+    let normalized: &str = if text.as_bytes().contains(&b'\r') || text.as_bytes().contains(&0) {
+        owned = normalize_clipboard_text(text.to_string())?;
+        owned.as_str()
+    } else {
+        text
+    };
+    if normalized.is_empty() || normalized.len() > MAX_PASTE_PATH_TEXT_BYTES {
+        return None;
+    }
     let raw_has_path_syntax = normalized.contains('"')
         || normalized.contains('\'')
         || normalized.contains('\n')
         || normalized.contains('\t')
         || normalized.contains("file://");
+    let has_separator =
+        normalized.contains('/') || normalized.contains('\\') || normalized.contains("file://");
+    // With no separator the only path shape left is a handful of bare file
+    // names. A paragraph of ordinary words is dismissed by this one scan.
+    if !has_separator && normalized.split_whitespace().count() > 8 {
+        return None;
+    }
     let mut candidates = Vec::new();
     let mut current = String::new();
     let mut quoted_by = None;
@@ -455,8 +491,14 @@ pub(super) fn detect_pasted_attachment_paths(base_dir: &Path, text: &str) -> Opt
             ' ' | '\n' | '\t' => push_current(&mut current, &mut candidates),
             _ => current.push(ch),
         }
+        if candidates.len() > MAX_PASTE_PATH_CANDIDATES {
+            return None;
+        }
     }
     push_current(&mut current, &mut candidates);
+    if candidates.len() > MAX_PASTE_PATH_CANDIDATES {
+        return None;
+    }
 
     let candidates = dedupe_case_insensitive(candidates);
     if candidates.is_empty() {
@@ -482,10 +524,14 @@ fn normalize_pasted_attachment_path(raw: &str) -> Option<String> {
     if cleaned.is_empty() {
         return None;
     }
-    if let Ok(url) = url::Url::parse(cleaned) {
-        if url.scheme() == "file" {
-            if let Ok(path) = url.to_file_path() {
-                return Some(path.to_string_lossy().to_string());
+    // Parsing a URL for every word of a paste is expensive and cannot succeed
+    // unless the token actually carries a scheme.
+    if cleaned.contains("://") {
+        if let Ok(url) = url::Url::parse(cleaned) {
+            if url.scheme() == "file" {
+                if let Ok(path) = url.to_file_path() {
+                    return Some(path.to_string_lossy().to_string());
+                }
             }
         }
     }
@@ -525,62 +571,103 @@ pub(super) struct ClipboardSnapshot {
     pub(super) text: Option<String>,
 }
 
-/// Probe image and text in a single PowerShell process: a second cold start
-/// costs up to seconds on legacy Windows, and Ctrl+V used to pay it twice.
+/// Windows: read the clipboard through the OS clipboard API in one session. No
+/// PowerShell process is started for text, which is what every right-click paste
+/// and every Ctrl+V actually needs. A PowerShell probe survives only for an image
+/// (there is no text to paste) and as a fallback when the native call is refused.
+#[cfg(target_os = "windows")]
+fn read_native_clipboard_snapshot() -> Result<ClipboardSnapshot> {
+    let native = match win32_clipboard::read() {
+        Ok(native) => native,
+        Err(_) => return read_system_clipboard_snapshot_via_powershell(),
+    };
+    // Text wins when both formats are present: in a terminal a paste means the
+    // characters, and a bitmap would otherwise force a seconds-long cold start.
+    if native.text.is_some() {
+        return Ok(ClipboardSnapshot {
+            text: native.text.and_then(normalize_clipboard_text),
+            ..Default::default()
+        });
+    }
+    if native.has_image {
+        return read_system_clipboard_snapshot_via_powershell();
+    }
+    Ok(ClipboardSnapshot::default())
+}
+
+/// The legacy image/text probe. Kept as the cold path: saving a clipboard bitmap
+/// as PNG still needs System.Drawing, and it is also the fallback for sessions
+/// where the native clipboard API cannot be opened at all.
+#[cfg(target_os = "windows")]
+fn read_system_clipboard_snapshot_via_powershell() -> Result<ClipboardSnapshot> {
+    let script = concat!(
+        "$ErrorActionPreference='Stop'; ",
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ",
+        "$path=''; $imgError=''; ",
+        "try { ",
+        "Add-Type -AssemblyName System.Drawing | Out-Null; ",
+        "$img = Get-Clipboard -Format Image; ",
+        "if ($null -ne $img) { ",
+        "$path = Join-Path ([System.IO.Path]::GetTempPath()) ('wunder-clipboard-' + [Guid]::NewGuid().ToString('N') + '.png'); ",
+        "$img.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); ",
+        "if ($img -is [System.IDisposable]) { $img.Dispose() }; ",
+        "} ",
+        "} catch { $imgError = ($_.Exception.Message -replace \"`r`n|`n\", ' ') }; ",
+        "[Console]::Out.Write($path); ",
+        "[Console]::Out.Write(\"`nWUNDER-CLIPBOARD-SEP-7f3a9c1e`n\"); ",
+        "[Console]::Out.Write($imgError); ",
+        "[Console]::Out.Write(\"`nWUNDER-CLIPBOARD-SEP-7f3a9c1e`n\"); ",
+        "$value = Get-Clipboard -Raw; ",
+        "if ($null -ne $value) { [Console]::Out.Write($value) }"
+    );
+
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .output()
+        .map_err(|error| anyhow!("failed to invoke powershell clipboard reader: {error}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            return Ok(ClipboardSnapshot::default());
+        }
+        return Err(anyhow!("powershell clipboard reader failed: {stderr}"));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut parts = stdout.splitn(3, "\nWUNDER-CLIPBOARD-SEP-7f3a9c1e\n");
+    let image_path = parts.next().unwrap_or("").trim().to_string();
+    let image_error = parts.next().unwrap_or("").trim().to_string();
+    let text_raw = parts.next().unwrap_or("").to_string();
+    Ok(ClipboardSnapshot {
+        image_path: (!image_path.is_empty()).then_some(image_path),
+        image_error: (!image_error.is_empty()).then_some(image_error),
+        text: normalize_clipboard_text(text_raw),
+    })
+}
+
+/// Windows hot path: a native text read with no child process and no fallback.
+/// `None` means there is no text (or the API is unavailable), so the caller can
+/// keep the slower snapshot probe that also handles clipboard images.
+#[cfg(target_os = "windows")]
+pub(super) fn read_native_clipboard_text() -> Option<String> {
+    win32_clipboard::read()
+        .ok()?
+        .text
+        .and_then(normalize_clipboard_text)
+}
+
 pub(super) fn read_system_clipboard_snapshot() -> Result<ClipboardSnapshot> {
     #[cfg(target_os = "windows")]
     {
-        let script = concat!(
-            "$ErrorActionPreference='Stop'; ",
-            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ",
-            "$path=''; $imgError=''; ",
-            "try { ",
-            "Add-Type -AssemblyName System.Drawing | Out-Null; ",
-            "$img = Get-Clipboard -Format Image; ",
-            "if ($null -ne $img) { ",
-            "$path = Join-Path ([System.IO.Path]::GetTempPath()) ('wunder-clipboard-' + [Guid]::NewGuid().ToString('N') + '.png'); ",
-            "$img.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); ",
-            "if ($img -is [System.IDisposable]) { $img.Dispose() }; ",
-            "} ",
-            "} catch { $imgError = ($_.Exception.Message -replace \"`r`n|`n\", ' ') }; ",
-            "[Console]::Out.Write($path); ",
-            "[Console]::Out.Write(\"`nWUNDER-CLIPBOARD-SEP-7f3a9c1e`n\"); ",
-            "[Console]::Out.Write($imgError); ",
-            "[Console]::Out.Write(\"`nWUNDER-CLIPBOARD-SEP-7f3a9c1e`n\"); ",
-            "$value = Get-Clipboard -Raw; ",
-            "if ($null -ne $value) { [Console]::Out.Write($value) }"
-        );
-
-        let output = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                script,
-            ])
-            .output()
-            .map_err(|error| anyhow!("failed to invoke powershell clipboard reader: {error}"))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            if stderr.is_empty() {
-                return Ok(ClipboardSnapshot::default());
-            }
-            return Err(anyhow!("powershell clipboard reader failed: {stderr}"));
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut parts = stdout.splitn(3, "\nWUNDER-CLIPBOARD-SEP-7f3a9c1e\n");
-        let image_path = parts.next().unwrap_or("").trim().to_string();
-        let image_error = parts.next().unwrap_or("").trim().to_string();
-        let text_raw = parts.next().unwrap_or("").to_string();
-        return Ok(ClipboardSnapshot {
-            image_path: (!image_path.is_empty()).then_some(image_path),
-            image_error: (!image_error.is_empty()).then_some(image_error),
-            text: normalize_clipboard_text(text_raw),
-        });
+        return read_native_clipboard_snapshot();
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -597,27 +684,8 @@ pub(super) fn read_system_clipboard_snapshot() -> Result<ClipboardSnapshot> {
 pub(super) fn read_system_clipboard_text() -> Result<Option<String>> {
     #[cfg(target_os = "windows")]
     {
-        let output = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                "$ErrorActionPreference='Stop'; $value = Get-Clipboard -Raw; if ($null -ne $value) { [Console]::Out.Write($value) }",
-            ])
-            .output()
-            .map_err(|error| anyhow!("failed to invoke powershell clipboard reader: {error}"))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            if stderr.is_empty() {
-                return Ok(None);
-            }
-            return Err(anyhow!("powershell clipboard reader failed: {stderr}"));
-        }
-        Ok(normalize_clipboard_text(
-            String::from_utf8_lossy(&output.stdout).into_owned(),
-        ))
+        let native = win32_clipboard::read()?;
+        Ok(native.text.and_then(normalize_clipboard_text))
     }
 
     #[cfg(target_os = "macos")]
@@ -673,45 +741,18 @@ pub(super) fn read_system_clipboard_text() -> Result<Option<String>> {
     }
 }
 
-/// Put TEXT on the system clipboard (Ctrl+O). The text travels through a temp
-/// file rather than argv: a long reply would otherwise hit the command-line
-/// length limit on Windows.
+/// Put TEXT on the system clipboard. On Windows this is one native
+/// `SetClipboardData(CF_UNICODETEXT)` call: a right-click copy used to spawn a
+/// PowerShell process, write a temp file and wait for `Set-Clipboard`, which is
+/// what made copying a selection feel slow. The old path survives as a fallback.
 pub(super) fn write_system_clipboard_text(text: &str) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
-        let dir = std::env::temp_dir().join("wunder-clipboard");
-        std::fs::create_dir_all(&dir)
-            .map_err(|error| anyhow!("create clipboard temp dir failed: {error}"))?;
-        let path = dir.join(format!("copy-{}.txt", std::process::id()));
-        std::fs::write(&path, text.as_bytes())
-            .map_err(|error| anyhow!("write clipboard payload failed: {error}"))?;
-        let script = format!(
-            "$ErrorActionPreference='Stop'; $t = [IO.File]::ReadAllText('{}', [Text.Encoding]::UTF8); \
-             $ok = $false; \
-             for ($i = 0; $i -lt 12 -and -not $ok; $i++) {{ \
-                 try {{ Set-Clipboard -Value $t -ErrorAction Stop; $ok = $true }} \
-                 catch {{ Start-Sleep -Milliseconds 50 }} \
-             }}; \
-             if (-not $ok) {{ throw 'clipboard is busy' }}",
-            path.to_string_lossy().replace('\'', "''")
-        );
-        let output = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                script.as_str(),
-            ])
-            .output()
-            .map_err(|error| anyhow!("failed to invoke powershell clipboard writer: {error}"))?;
-        let _ = std::fs::remove_file(&path);
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(anyhow!("powershell clipboard writer failed: {stderr}"));
-        }
-        return Ok(());
+        return win32_clipboard::write(text).or_else(|native| {
+            write_system_clipboard_text_via_powershell(text).map_err(|legacy| {
+                anyhow!("native clipboard write failed ({native}); powershell fallback: {legacy}")
+            })
+        });
     }
 
     #[cfg(target_os = "macos")]
@@ -746,6 +787,188 @@ pub(super) fn write_system_clipboard_text(text: &str) -> Result<()> {
     {
         let _ = text;
         Err(anyhow!("clipboard copy is not supported on this platform"))
+    }
+}
+
+/// Legacy Windows writer, reached only when the native clipboard cannot be
+/// opened. The text travels through a temp file rather than argv because a long
+/// reply would otherwise hit the command-line length limit.
+#[cfg(target_os = "windows")]
+fn write_system_clipboard_text_via_powershell(text: &str) -> Result<()> {
+    let dir = std::env::temp_dir().join("wunder-clipboard");
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| anyhow!("create clipboard temp dir failed: {error}"))?;
+    let path = dir.join(format!("copy-{}.txt", std::process::id()));
+    std::fs::write(&path, text.as_bytes())
+        .map_err(|error| anyhow!("write clipboard payload failed: {error}"))?;
+    let script = format!(
+        "$ErrorActionPreference='Stop'; $t = [IO.File]::ReadAllText('{}', [Text.Encoding]::UTF8); \
+         $ok = $false; \
+         for ($i = 0; $i -lt 12 -and -not $ok; $i++) {{ \
+             try {{ Set-Clipboard -Value $t -ErrorAction Stop; $ok = $true }} \
+             catch {{ Start-Sleep -Milliseconds 50 }} \
+         }}; \
+         if (-not $ok) {{ throw 'clipboard is busy' }}",
+        path.to_string_lossy().replace('\'', "''")
+    );
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script.as_str(),
+        ])
+        .output()
+        .map_err(|error| anyhow!("failed to invoke powershell clipboard writer: {error}"))?;
+    let _ = std::fs::remove_file(&path);
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(anyhow!("powershell clipboard writer failed: {stderr}"));
+    }
+    Ok(())
+}
+
+/// Direct Win32 clipboard I/O. Hand-rolled FFI rather than a crate: the CLI
+/// targets 32-bit Win7, and a native `CF_UNICODETEXT` get/set costs microseconds
+/// where a PowerShell cold start costs hundreds of milliseconds. `isize` stands
+/// in for HWND/HANDLE so the same code is correct on x86 and x64.
+#[cfg(target_os = "windows")]
+mod win32_clipboard {
+    use std::ffi::c_void;
+    use std::ptr;
+    use std::thread;
+    use std::time::Duration;
+
+    const CF_BITMAP: u32 = 2;
+    const CF_DIB: u32 = 8;
+    const CF_UNICODETEXT: u32 = 13;
+    const CF_DIBV5: u32 = 17;
+    const GMEM_MOVEABLE: u32 = 0x0002;
+    const OPEN_ATTEMPTS: usize = 6;
+    const OPEN_RETRY: Duration = Duration::from_millis(5);
+
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn OpenClipboard(window: isize) -> i32;
+        fn CloseClipboard() -> i32;
+        fn EmptyClipboard() -> i32;
+        fn GetClipboardData(format: u32) -> isize;
+        fn SetClipboardData(format: u32, handle: isize) -> isize;
+        fn IsClipboardFormatAvailable(format: u32) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GlobalAlloc(flags: u32, bytes: usize) -> isize;
+        fn GlobalLock(handle: isize) -> *mut c_void;
+        fn GlobalUnlock(handle: isize) -> i32;
+        fn GlobalFree(handle: isize) -> isize;
+        fn GlobalSize(handle: isize) -> usize;
+    }
+
+    pub(super) struct Snapshot {
+        pub(super) text: Option<String>,
+        pub(super) has_image: bool,
+    }
+
+    /// A clipboard we opened is always handed back, even if a format is odd.
+    struct OpenGuard;
+    impl Drop for OpenGuard {
+        fn drop(&mut self) {
+            unsafe { CloseClipboard() };
+        }
+    }
+
+    /// The clipboard is a shared resource: another process may hold it for a
+    /// few milliseconds. A short bounded retry keeps a paste from failing on a
+    /// transient lock without ever blocking the loop for long.
+    fn open() -> bool {
+        for _ in 0..OPEN_ATTEMPTS {
+            if unsafe { OpenClipboard(0) } != 0 {
+                return true;
+            }
+            thread::sleep(OPEN_RETRY);
+        }
+        false
+    }
+
+    fn text_from(handle: isize) -> Option<String> {
+        let units = unsafe { GlobalLock(handle) } as *const u16;
+        if units.is_null() {
+            return None;
+        }
+        let count = unsafe { GlobalSize(handle) } / std::mem::size_of::<u16>();
+        let text = if count == 0 {
+            None
+        } else {
+            // The payload is NUL-terminated UTF-16; GlobalSize bounds the read
+            // so a malformed clipboard owner cannot make us walk off the block.
+            let slice = unsafe { std::slice::from_raw_parts(units, count) };
+            let end = slice.iter().position(|unit| *unit == 0).unwrap_or(count);
+            Some(String::from_utf16_lossy(&slice[..end]))
+        };
+        unsafe { GlobalUnlock(handle) };
+        text
+    }
+
+    pub(super) fn read() -> anyhow::Result<Snapshot> {
+        if !open() {
+            anyhow::bail!("could not open the system clipboard");
+        }
+        let _guard = OpenGuard;
+        let text = if unsafe { IsClipboardFormatAvailable(CF_UNICODETEXT) } != 0 {
+            let handle = unsafe { GetClipboardData(CF_UNICODETEXT) };
+            if handle == 0 {
+                None
+            } else {
+                text_from(handle)
+            }
+        } else {
+            None
+        };
+        let has_image = [CF_BITMAP, CF_DIB, CF_DIBV5]
+            .iter()
+            .any(|format| unsafe { IsClipboardFormatAvailable(*format) } != 0);
+        Ok(Snapshot { text, has_image })
+    }
+
+    pub(super) fn write(text: &str) -> anyhow::Result<()> {
+        let units: Vec<u16> = text.encode_utf16().collect();
+        let bytes = units
+            .len()
+            .checked_add(1)
+            .and_then(|count| count.checked_mul(2))
+            .ok_or_else(|| anyhow::anyhow!("clipboard text is too large"))?;
+        let handle = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes) };
+        if handle == 0 {
+            anyhow::bail!("could not allocate clipboard memory");
+        }
+        let target = unsafe { GlobalLock(handle) } as *mut u16;
+        if target.is_null() {
+            unsafe { GlobalFree(handle) };
+            anyhow::bail!("could not lock clipboard memory");
+        }
+        unsafe {
+            ptr::copy_nonoverlapping(units.as_ptr(), target, units.len());
+            *target.add(units.len()) = 0;
+            GlobalUnlock(handle);
+        }
+        if !open() {
+            unsafe { GlobalFree(handle) };
+            anyhow::bail!("could not open the system clipboard");
+        }
+        let _guard = OpenGuard;
+        let accepted = unsafe { EmptyClipboard() != 0 }
+            && unsafe { SetClipboardData(CF_UNICODETEXT, handle) != 0 };
+        if !accepted {
+            unsafe { GlobalFree(handle) };
+            anyhow::bail!("could not publish clipboard text");
+        }
+        // On success the system owns `handle`; freeing it here would corrupt
+        // the clipboard for every process that pastes afterwards.
+        Ok(())
     }
 }
 
@@ -2263,5 +2486,38 @@ mod url_opener_tests {
         ] {
             assert!(!is_openable_href(refused), "must refuse: {refused}");
         }
+    }
+}
+
+#[cfg(test)]
+mod clipboard_text_tests {
+    use super::*;
+
+    #[test]
+    fn normalization_matches_the_old_replace_chain_without_the_copies() {
+        assert_eq!(
+            normalize_clipboard_text("clean text".to_string()).as_deref(),
+            Some("clean text")
+        );
+        assert_eq!(
+            normalize_clipboard_text("a\r\nb\rc\u{0}d".to_string()).as_deref(),
+            Some("a\nb\ncd")
+        );
+        assert_eq!(normalize_clipboard_text("\u{0}".to_string()), None);
+        assert_eq!(normalize_clipboard_text(String::new()), None);
+    }
+
+    #[test]
+    fn prose_pastes_are_rejected_before_tokenising_every_word() {
+        let words = (0..40).map(|_| "word").collect::<Vec<_>>().join(" ");
+        assert_eq!(
+            detect_pasted_attachment_paths(Path::new("."), words.as_str()),
+            None
+        );
+        let long = "word ".repeat(2000);
+        assert_eq!(
+            detect_pasted_attachment_paths(Path::new("."), long.as_str()),
+            None
+        );
     }
 }

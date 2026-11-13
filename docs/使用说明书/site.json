@@ -148,12 +148,6 @@
                   "zh-CN/surfaces/web-admin",
                   "zh-CN/surfaces/desktop-ui"
                 ]
-              },
-              {
-                "group": "美术",
-                "pages": [
-                  "zh-CN/art/index"
-                ]
               }
             ]
           },
@@ -215,6 +209,17 @@
                   "zh-CN/capabilities/weixin-channel",
                   "zh-CN/capabilities/chat-ws",
                   "zh-CN/capabilities/mcp-endpoint"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "参考",
+            "groups": [
+              {
+                "group": "设计稿",
+                "pages": [
+                  "zh-CN/art/index"
                 ]
               }
             ]
@@ -313,7 +318,8 @@
               {
                 "group": "Multimodal",
                 "pages": [
-                  "en/tools/read-image"
+                  "en/tools/read-image",
+                  "en/tools/multimodal-generation"
                 ]
               },
               {
@@ -328,6 +334,12 @@
                 "pages": [
                   "en/tools/memory-manager",
                   "en/tools/schedule-task"
+                ]
+              },
+              {
+                "group": "Extensions",
+                "pages": [
+                  "en/tools/extensibility"
                 ]
               }
             ]
@@ -347,12 +359,6 @@
                   "en/surfaces/frontend",
                   "en/surfaces/web-admin",
                   "en/surfaces/desktop-ui"
-                ]
-              },
-              {
-                "group": "Art",
-                "pages": [
-                  "en/art/index"
                 ]
               }
             ]
@@ -415,6 +421,17 @@
                   "en/capabilities/weixin-channel",
                   "en/capabilities/chat-ws",
                   "en/capabilities/mcp-endpoint"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Reference",
+            "groups": [
+              {
+                "group": "Design drafts",
+                "pages": [
+                  "en/art/index"
                 ]
               }
             ]

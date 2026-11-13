@@ -138,11 +138,15 @@ async fn run_loop(
                         app.on_key(key).await?;
                     }
                     Event::Mouse(mouse) => {
-                        // Capture mode reports every pointer move. A blanket redraw
-                        // here repaints a full frame per move, which is the main
-                        // reason the UI feels sticky under the pointer. Handlers
-                        // that change hover state ask for their own frame.
-                        redraw = !matches!(mouse.kind, MouseEventKind::Moved);
+                        // Capture mode reports every pointer move and every drag
+                        // record. A blanket redraw repaints a full frame per
+                        // record, which is the main reason a drag selection feels
+                        // sticky. The drag handler asks for a frame only when the
+                        // marked range actually changed.
+                        redraw = !matches!(
+                            mouse.kind,
+                            MouseEventKind::Moved | MouseEventKind::Drag(_)
+                        );
                         app.on_mouse(mouse);
                     }
                     Event::Paste(text) => {

@@ -59,7 +59,7 @@ When the timeline shows tool batches, a "work process" entry for each turn, and 
 - Interactive terminal: winpty-based on Windows, PTY-based on Linux
 - Screenshot capture, voice input, tray, system notifications, and global hotkeys
 - One agent can have **several independent task threads** at once, and workspaces can be multiple too (local + cloud + remote device workspaces reached through device interlink)
-- Edit the agent directly: change the system prompt, approval mode, and tool set at any time
+- Edit the agent directly: change the system prompt and tool set at any time
 
 ## Checks for a working setup
 
@@ -75,7 +75,7 @@ When the timeline shows tool batches, a "work process" entry for each turn, and 
 | --- | --- |
 | Launch screen never finishes | [First-run troubleshooting](/docs/en/start/troubleshooting-first-run/) |
 | Model request 401/403 | Settings → Model → Test connection; [Configuration reference](/docs/en/capabilities/config/) |
-| Message during a run rejected as "user busy" | Whether the session queue was turned off |
+| Message during a run rejected as "user busy" | Only the Cloud build can hit this when the session queue is off; the Desktop uses the frontend local waiting queue |
 | Interface stutters, messages don't refresh | [Troubleshooting](/docs/en/help/troubleshooting/) |
 
 ## Other forms

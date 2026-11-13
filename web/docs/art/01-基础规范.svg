@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1760" viewBox="0 0 1600 1760" role="img" aria-label="蛹 桌面端基础设计规范">
-  <title>01 基础规范 · 蛹 Desktop UI Spec</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1760" viewBox="0 0 1600 1760" role="img" aria-label="wunder 桌面版 桌面端基础设计规范">
+  <title>01 基础规范 · wunder 桌面版 UI Spec</title>
   <style>
     svg{font-family:'Microsoft YaHei UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;fill:#1F2329}.mono{font-family:Consolas,monospace}.h1{font-size:30px;font-weight:700}.sub{font-size:13px;fill:#6F747B}.kicker{font-size:11px;font-weight:700;letter-spacing:1.4px;fill:#D87616}.sect{font-size:18px;font-weight:700}.sect-note{font-size:12px;fill:#8A8F99}.card{fill:#FFF;stroke:#DED9D1}.card-t{font-size:14px;font-weight:700}.note{font-size:12px;fill:#6F747B}.tiny{font-size:11px;fill:#8A8F99}.tok{font-size:11px;fill:#3D3D3D}.hex{font-size:10px;fill:#8A8F99}.chip{font-size:11px;font-weight:700;fill:#D87616}.ui14{font-size:14px}.ui13{font-size:13px}.ui12{font-size:12px}.ui11{font-size:11px}
   </style>
   <rect width="1600" height="1760" fill="#F5F3EF"/>
   <g id="header">
-    <text x="64" y="42" class="kicker">WUNDER / 蛹 · DESKTOP UI SPEC</text><text x="64" y="84" class="h1">01　基础规范</text>
+    <text x="64" y="42" class="kicker">WUNDER 桌面版 / DESKTOP UI SPEC</text><text x="64" y="84" class="h1">01　基础规范</text>
     <text x="64" y="114" class="sub">设计稿自身的网格与产品 token 分开管理；产品颜色、字号和尺寸以 Theme 为唯一事实来源。</text>
     <text x="1536" y="44" text-anchor="end" class="mono tiny">SHEET 01 / 09</text><text x="1536" y="84" text-anchor="end" class="mono ui12">TOKENS · TYPE · METRICS</text>
     <line x1="64" y1="140" x2="1536" y2="140" stroke="#D8D5D0"/>
@@ -44,12 +44,12 @@
     <rect x="1272" y="272" width="240" height="86" rx="8" fill="#E07A12"/><text x="1290" y="324" font-size="16" font-weight="700" fill="#FFF">accent-deep</text><text x="1272" y="380" class="mono tok">#E07A12</text>
     <rect x="1012" y="404" width="240" height="58" rx="8" fill="#FFC98A"/><text x="1030" y="439" class="ui12">accent-secondary</text><text x="1012" y="484" class="mono tok">#FFC98A</text>
     <rect x="1272" y="404" width="240" height="58" rx="8" fill="#FDF0DE" stroke="#EFDFC4"/><text x="1290" y="439" class="ui12">accent-soft / mine</text><text x="1272" y="484" class="mono tok">#FDF0DE</text>
-    <text x="1012" y="526" class="card-t">可切换色族</text><text x="1012" y="548" class="tiny">设置页展示前四项，后两项为保留项</text>
+    <text x="1012" y="526" class="card-t">可切换色族</text><text x="1012" y="548" class="tiny">设置页展示 forest / mint / honey / terracotta 四张卡；minimal、tech-blue 为保留项</text>
     <g><rect x="1012" y="566" width="72" height="34" rx="6" fill="#F58A24"/><rect x="1096" y="566" width="72" height="34" rx="6" fill="#16AD8D"/><rect x="1180" y="566" width="72" height="34" rx="6" fill="#2F7A5C"/><rect x="1264" y="566" width="72" height="34" rx="6" fill="#C08A2A"/><rect x="1348" y="566" width="72" height="34" rx="6" fill="#8F9AAD"/><rect x="1432" y="566" width="80" height="34" rx="6" fill="#38BDF8"/></g>
     <text x="1012" y="622" class="mono tiny">terracotta</text><text x="1096" y="622" class="mono tiny">hula-green</text><text x="1180" y="622" class="mono tiny">forest</text><text x="1264" y="622" class="mono tiny">honey</text><text x="1348" y="622" class="mono tiny">minimal</text><text x="1432" y="622" class="mono tiny">tech-blue</text>
     <text x="1012" y="640" class="mono hex">#F58A24</text><text x="1096" y="640" class="mono hex">#107D66</text><text x="1180" y="640" class="mono hex">#2F7A5C</text><text x="1264" y="640" class="mono hex">#8E661F</text><text x="1348" y="640" class="mono hex">#637087</text><text x="1432" y="640" class="mono hex">#0B77A7</text><text x="1512" y="640" text-anchor="end" class="mono tiny">ink</text>
     <text x="1012" y="660" class="note">主按钮 accent，悬停 accent-deep；accent 底上的文字用白。</text>
-    <text x="1012" y="682" class="tiny">浅底强调文字/图标用 accent-ink（AA 前景档，与蜂巢 base.css 同步）；焦点 1px 无外发光。</text>
+    <text x="1012" y="682" class="tiny">浅底强调文字/图标用 accent-ink（AA 前景档，与云端版 base.css 同步）；焦点 1px 无外发光。</text>
   </g>
 
   <g id="semantic-colors">
@@ -101,10 +101,10 @@
     <line x1="238" y1="1566" x2="238" y2="1676" stroke="#F58A24" stroke-dasharray="3 3"/>
     <text x="88" y="1698" class="tiny">窗口结构示意：标题栏 / 侧栏 / 居中阅读列与输入带；全部数值见右侧尺寸契约。</text>
     <text x="784" y="1552" class="card-t">尺寸契约</text>
-    <text x="784" y="1582" class="note">preferred 1180×740　·　min 1024×700</text>
+    <text x="784" y="1582" class="note">preferred 960×780　·　min 880×700</text>
     <text x="784" y="1610" class="note">标题栏 28；侧栏 240，170–420 可拖。</text>
     <text x="784" y="1638" class="note">阅读列 min(可用宽度, 1000px)，内边距 24。</text>
-    <text x="784" y="1666" class="tiny">时间线与输入带共用列宽；输入带 8+100+6+30+10 = 154px；附件 +36；分支 +22；队列有界。</text>
+    <text x="784" y="1666" class="tiny">时间线与输入带共用列宽；输入带 8+100+6+36+10 = 160px；附件 +36；分支 +22；队列有界。</text>
   </g>
-  <g id="footer"><line x1="64" y1="1730" x2="1536" y2="1730" stroke="#D8D5D0"/><text x="64" y="1750" class="tiny">唯一变量来源：crates/wunder-desktop/frontend/ui/design_tokens.slint；稿面底色 #F5F3EF 仅用于文档，不是产品 token。</text><text x="1536" y="1750" text-anchor="end" class="mono tiny">01 / 09 · 2026-10-31</text></g>
+  <g id="footer"><line x1="64" y1="1730" x2="1536" y2="1730" stroke="#D8D5D0"/><text x="64" y="1750" class="tiny">唯一变量来源：crates/wunder-desktop/frontend/ui/design_tokens.slint；稿面底色 #F5F3EF 仅用于文档，不是产品 token。</text><text x="1536" y="1750" text-anchor="end" class="mono tiny">01 / 09 · 2026-11-13</text></g>
 </svg>

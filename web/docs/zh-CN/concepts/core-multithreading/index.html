@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>多线程 | 使用说明书</title>
-  <meta name="description" content="单进程内按线程隔离的调度、锁与实时状态：引擎级会话队列、会话锁 TTL 120 秒、工具并行度 ≤ 4 与轮次上限 1000。">
-  <link rel="stylesheet" href="/docs/site.css?v=7bb890218bff">
+  <meta name="description" content="单进程内按线程隔离的调度、锁与实时状态：桌面版前端本地等待队列与云端版引擎会话队列、会话锁 TTL 120 秒、工具并行度 ≤ 4 与轮次上限 1000。">
+  <link rel="stylesheet" href="/docs/site.css?v=fb1611f43e8e">
 
-  <script type="module" src="/docs/site.js?v=7bb890218bff"></script>
+  <script type="module" src="/docs/site.js?v=fb1611f43e8e"></script>
 </head>
 <body>
   <div class="docs-app">
@@ -56,6 +56,6 @@
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/core-multithreading","language":"zh-CN","title":"多线程","summary":"单进程内按线程隔离的调度、锁与实时状态：引擎级会话队列、会话锁 TTL 120 秒、工具并行度 ≤ 4 与轮次上限 1000。","updated_at":"2026-10-16","read_when":[],"source_docs":[],"tab":"能力","group":"核心能力","group_path":["核心能力"],"url":"/docs/zh-CN/concepts/core-multithreading/","headings":[{"id":"section-1","level":1,"text":"多线程"},{"id":"section-2","level":2,"text":"并发控制"},{"id":"section-3","level":2,"text":"默认值"},{"id":"section-4","level":2,"text":"限制"}],"prev_slug":"zh-CN/concepts/core-memory","next_slug":"zh-CN/concepts/core-multi-user-management","markdown":"# 多线程\n\n单个用户可以同时持有多个任务线程，调度、锁与实时状态都按线程隔离，互不阻塞。\n\n## 并发控制\n\n- **引擎级会话队列**默认开启：运行中再发消息会排队按序执行。\n- **会话锁** TTL 120 秒并带心跳续约，持有方异常退出后由 TTL 释放。\n- **工具并行度 ≤ 4**：并行执行的工具取读锁，独占执行的工具取写锁。\n- **轮次上限、活跃会话上限、日配额、重试熔断**构成四条硬约束。\n\n## 默认值\n\n| 项 | 值 |\n| --- | --- |\n| 会话锁 TTL | 120 秒（带心跳） |\n| 工具并行度 | ≤ 4 |\n| 轮次上限 | 默认 1000 |\n\n## 限制\n\n- 关闭 `agent_queue.enabled` 后，运行中再发消息会被判「用户忙」，也不再进排队条（服务端启动时会告警）。这是配置取舍，不是故障。\n- blocking 分类配额与有界队列是硬上限，满了即报 busy，不会排队等待。\n","source_path":"使用说明书/zh-CN/concepts/core-multithreading.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/core-multithreading","language":"zh-CN","title":"多线程","summary":"单进程内按线程隔离的调度、锁与实时状态：桌面版前端本地等待队列与云端版引擎会话队列、会话锁 TTL 120 秒、工具并行度 ≤ 4 与轮次上限 1000。","updated_at":"2026-10-16","read_when":[],"source_docs":[],"tab":"能力","group":"核心能力","group_path":["核心能力"],"url":"/docs/zh-CN/concepts/core-multithreading/","headings":[{"id":"section-1","level":1,"text":"多线程"},{"id":"section-2","level":2,"text":"并发控制"},{"id":"section-3","level":2,"text":"默认值"},{"id":"section-4","level":2,"text":"限制"}],"prev_slug":"zh-CN/concepts/core-memory","next_slug":"zh-CN/concepts/core-multi-user-management","markdown":"# 多线程\n\n单个用户可以同时持有多个任务线程，调度、锁与实时状态都按线程隔离，互不阻塞。\n\n## 并发控制\n\n- **排队分两层**：桌面版 v1.0.0 起由前端本地等待队列（`waiting_turns`）承接，运行中再发的消息在输入框上方等待，轮次结束自动发出；云端版走引擎级会话队列（默认开启，按序执行）。\n- **会话锁** TTL 120 秒并带心跳续约，持有方异常退出后由 TTL 释放。\n- **工具并行度 ≤ 4**：并行执行的工具取读锁，独占执行的工具取写锁。\n- **轮次上限、活跃会话上限、日配额、重试熔断**构成四条硬约束。\n\n## 默认值\n\n| 项 | 值 |\n| --- | --- |\n| 会话锁 TTL | 120 秒（带心跳） |\n| 工具并行度 | ≤ 4 |\n| 轮次上限 | 默认 1000 |\n\n## 限制\n\n- 云端版关闭 `agent_queue.enabled` 后，运行中再发消息会被判「用户忙」，也不再进排队条（服务端启动时会告警）。这是配置取舍，不是故障；桌面版不受该开关影响。\n- blocking 分类配额与有界队列是硬上限，满了即报 busy，不会排队等待。\n","source_path":"使用说明书/zh-CN/concepts/core-multithreading.md"}</script>
 </body>
 </html>

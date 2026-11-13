@@ -1,6 +1,6 @@
 ---
 title: Desktop Interface
-summary: The local AI workbench and the default entry for individual users. Its main window has only two pages, chat and settings, with 12 categories in settings; everything else appears as panels and dialogs, including desktop-only capabilities and entries not yet wired up.
+summary: The local AI workbench and the default entry for individual users. Its main window has only two pages, chat and settings, with 11 categories in settings; everything else appears as panels and dialogs, including desktop-only capabilities and entries not yet wired up.
 read_when:
   - You use the Desktop desktop app and want to know where a capability lives
   - You cannot find the device-interconnection panel or TTS playback in the Desktop
@@ -46,28 +46,30 @@ Two columns:
   - One agent can hold **several independent task threads** at once, and there can be **several** workspaces: the local directory, a cloud workspace, and remote device workspaces reached through device interconnection; locks and realtime state are isolated per thread
 - **Right column**: top bar (workspace / thread name) + timeline + input area
   - The welcome page shows when no thread is selected
-  - The input area holds the model switch, approval mode, reasoning level, attachments, a voice-input button (when available), a screenshot button (when available), and send / stop
+  - The input area holds the model switch, reasoning level, attachments, a voice-input button (when available), a screenshot button (when available), and send / stop; the approval-mode control has been removed from the input area and the plus menu
   - Below each reply, "Work process" folds away intermediate thinking, tool batches, and interim output
 
-With the session queue on, messages sent to a new thread during a run queue up instead of being rejected as "user busy".
+Since Desktop v1.0.0 the frontend local waiting queue (`waiting_turns`) takes over: messages sent during a run wait locally and are sent when the current turn settles, with no engine-side queue state.
 
 ### Settings page
 
-**12 categories** in all:
+**11 categories** in all:
 
 | Category | Description |
 | --- | --- |
-| General | Interface language, appearance, startup behavior |
-| Account | Username, email, password, avatar |
+| General | Sending, appearance and runtime environment |
+| Local runtime | Local toolchain and runtime environment |
+| Account | Cloud account, sign-in state and usage |
 | Models | Add / edit LLM, TTS, image, and video models; TTS can be configured but not played |
 | Tools | Opens the tools dialog, grouped into built-in / MCP / skills / knowledge bases |
-| Agent | System prompt, default approval mode, default skill set |
-| Companion | Companion-package choice and floating-window size; the desktop floating window is Windows-only |
-| Scheduled | Entry to scheduled tasks |
-| Memory | Long-term memory management and hits |
-| Channels | Channel binding and status |
-| Archive | Archived thread list |
-| Help | Embedded docs and version number |
+| Agent | Built-in agent prompt and tools |
+| Companion | Companion avatar, scale and bubble hints; the desktop floating window is Windows-only |
+| Scheduled tasks | Scheduled jobs and their runs |
+| Memories | Long-term memory entries; add, edit or delete |
+| Channels | Channel accounts, bindings and logs |
+| Archived threads | Archived threads: review or delete |
+
+"Help" is not in the category list; its entry is the help button on the General page.
 
 The category bar supports search filtering; when nothing matches it shows an empty state rather than a blank area.
 
@@ -85,7 +87,7 @@ These areas live inside the two pages, not as pages of their own:
 - **Subagent details**
 - **Channels page**: channel management on the user side
 - **Scheduled page**: scheduled tasks on the user side
-- **Activity card / expert data / patch-diff card**
+- **Expert data / patch-diff card**
 - **Screenshot overlay**: a full-screen capture is pasted back into the input area
 - **Tray and system notifications**: background running and completion reminders
 - **Remote command approval pop-up**: a high-risk confirmation for interconnection commands, with a prominent border, risk level, and source details, plus a "cannot be remembered" prompt
@@ -109,9 +111,9 @@ The Cloud, the Admin, and the CLI have none of these:
 - **Voice output (TTS) is not implemented**: TTS models can be configured in settings, but there is no playback; the voice side is input-only. For spoken output, use the Cloud.
 - **The early desktop shells are no longer maintained**: the Electron / Tauri frontend shells receive no feature updates. This does not affect the Desktop's underlying engine.
 
-## Resetting the working state
+## Resetting the working state (no UI entry)
 
-When a session is stuck in the running state, a subagent's status is inconsistent, or the interface does not match reality, use **Settings → General → Reset working state**.
+Since Desktop v1.0.0 the Settings page no longer exposes a reset entry; the backend capability remains available through `POST /wunder/auth/me/reset_work_state` (or the compatible `POST /wunder/desktop/reset_work_state`).
 
 It stops running sessions, clears queued tasks, and cleans up session locks and state.
 

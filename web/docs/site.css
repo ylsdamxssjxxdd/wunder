@@ -607,6 +607,61 @@ pre {
   background: var(--docs-bg-subtle);
 }
 
+.docs-preview-hero,
+.docs-preview-grid figure {
+  margin: 0;
+}
+
+.docs-preview-hero {
+  margin: 18px 0 24px;
+}
+
+.docs-preview-hero img,
+.docs-preview-grid img {
+  margin: 0;
+}
+
+.docs-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin: 18px 0 26px;
+}
+
+.docs-preview-grid figcaption {
+  margin-top: 8px;
+  color: var(--docs-text-soft);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.docs-preview-pair {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+}
+
+.docs-preview-pair img {
+  width: calc(50% - 4px);
+  max-width: 220px;
+}
+
+.docs-art-preview {
+  cursor: zoom-in;
+}
+
+.docs-art-preview:focus-visible {
+  outline: 2px solid var(--docs-accent);
+  outline-offset: 3px;
+}
+
+@media (max-width: 760px) {
+  .docs-preview-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .docs-content .art-viewer-frame {
   margin: 22px 0 26px;
 }

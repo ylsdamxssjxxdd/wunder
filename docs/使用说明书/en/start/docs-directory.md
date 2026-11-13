@@ -1,12 +1,12 @@
 ---
 title: Documentation Directory
-summary: A guide to the repo's documentation ecosystem: how the overview and design docs, technical manual, API reference, user manual, performance standards and scoring, changelog, and lessons-learned divide the work, and how to read them.
+summary: A guide to the repo's documentation ecosystem: how the overview and design docs, technical manual, API reference, user manual, performance baselines, changelog, and lessons-learned divide the work, and how to read them.
 read_when:
   - You want to know which doc layer answers your question
   - You are about to write or update a document and need the conventions
 source_docs:
   - docs/使用说明书/site.json
-  - docs/性能标准.md
+  - docs/性能基线/README.md
   - docs/SOP.md
   - docs/功能迭代.md
 updated_at: 2026-10-16
@@ -14,7 +14,7 @@ updated_at: 2026-10-16
 
 # Documentation Directory
 
-wunder's documentation falls into seven categories, each answering a different kind of question. When writing docs, don't mix them: **design docs cover boundaries and rationale**, the **technical manual covers engineering execution** (change points, run method, verification points), the **API reference covers interface contracts**, the **user manual covers user and admin operations**, **performance standards and scoring cover conventions and quantification**, the **changelog covers the flow of changes**, and **lessons-learned covers recurring problems**.
+wunder's documentation falls into seven categories, each answering a different kind of question. When writing docs, don't mix them: **design docs cover boundaries and rationale**, the **technical manual covers engineering execution** (change points, run method, verification points), the **API reference covers interface contracts**, the **user manual covers user and admin operations**, **performance baselines cover conventions and quantification**, the **changelog covers the flow of changes**, and **lessons-learned covers recurring problems**.
 
 ## Documentation categories
 
@@ -25,7 +25,7 @@ wunder's documentation falls into seven categories, each answering a different k
 | **Technical manual** | `docs/技术说明书/` (chapters 01–13 + README) | Engineering executors | To learn **change points, run method, verification points** |
 | **API reference** | `docs/API文档.md` | Interface consumers | Concrete HTTP / WebSocket endpoint contracts |
 | **User manual** | `docs/使用说明书/zh-CN/`, `docs/使用说明书/en/` | Users and admins | Interface maps and steps for concrete operations |
-| **Performance standards and scoring** | `docs/性能标准.md`, `docs/性能评分体系.md`, `docs/性能基线/` | Operations and benchmark testers | Before/after comparison, pass/fail judgment, per-form independent scoring |
+| **Performance baselines** | `docs/性能基线/` | Operations and benchmark testers | Before/after comparison, pass/fail judgment, per-form independent scoring |
 | **Changelog / lessons-learned** | `docs/功能迭代.md`, `docs/经验教训.md` | Project maintainers | The change flow each round; recurring pitfalls |
 
 ## The user manual (this site)
@@ -49,7 +49,7 @@ wunder's documentation falls into seven categories, each answering a different k
 | Page | Content |
 | --- | --- |
 | [Surfaces overview](/docs/en/surfaces/index/) | The forms' interface division and capability matrix |
-| [Desktop interface](/docs/en/surfaces/desktop-ui/) | The main window's two pages + settings' 12 categories |
+| [Desktop interface](/docs/en/surfaces/desktop-ui/) | The main window's two pages + settings' 11 categories |
 | [Cloud interface](/docs/en/surfaces/frontend/) | The single-page app in the browser |
 | [Admin interface](/docs/en/surfaces/web-admin/) | The admin governance backend |
 
@@ -106,13 +106,11 @@ Extra: Docker acceptance for throughput tests.
 
 A single file, from the interface consumer's perspective. All HTTP endpoints use the `/wunder/*` prefix (**not `/api/*`**); error responses write back `x-trace-id` and `x-error-code` response headers. WebSocket channels include `chat/ws`, `ws`, `gateway/ws`, `interlink/ws`, `interlink/remote_ws`, `user_world/ws`, and `desktop/lan/ws` (event names are scattered rather than centrally enumerated).
 
-## Performance standards and scoring (`docs/`)
+## Performance baselines (`docs/`)
 
 | Document | Content |
 | --- | --- |
-| `docs/性能标准.md` | Same-environment, same-entry before/after comparison + standard-entry table |
-| `docs/性能评分体系.md` | Three forms scored **independently 0–100 and weighted; not summable across forms** |
-| `docs/性能基线/` | Historical baseline snapshots; the latest include `2026-10-13-server-capacity.md` and `2026-10-13-thread-view-v3.md` |
+| `docs/性能基线/` | Same-environment, same-entry before/after comparison + standard-entry table template; the three forms are scored **independently and not summable across forms**; historical baseline snapshots include `2026-10-13-server-capacity.md` and `2026-10-13-thread-view-v3.md` |
 
 **Conventions**: performance isn't an adjective. Any list, log, or panel must be able to state its paging / limit / bounded semantics; performance reviews use the fixed user `performance_admin`, the work root `.wunder_perf`, and a 5s command timeout.
 
@@ -130,6 +128,6 @@ A single file, from the interface consumer's perspective. All HTTP endpoints use
 **New users**: user manual → Quick Start → Desktop intro; when something goes wrong, first-run troubleshooting.
 **Developers getting started**: technical manual 01–03 → 02 repository structure and modules → 03 runtime and execution path; then design docs 01–02 to fill in the "why."
 **Adding an interface**: technical manual 07 → API reference → design doc 07.
-**Performance issues**: performance standards → performance scoring → performance baselines; for specific paging constants, see technical manual 03–04.
+**Performance issues**: performance baselines (report template and historical snapshots); for specific paging constants, see technical manual 03–04.
 **Operations and acceptance**: technical manual 10 → `docs/SOP.md`; `docs/功能迭代.md` for historical decisions; `docs/经验教训.md` to avoid repeating pitfalls.
 

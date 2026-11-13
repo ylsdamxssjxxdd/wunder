@@ -73,7 +73,7 @@ The button is briefly disabled while a thread is being created or switched. Thre
 
 ### Session State Completely Messed Up
 
-Use "System Settings → Reset Working State":
+Call `POST /wunder/auth/me/reset_work_state` (since v1.0.0 neither the Desktop nor the Cloud Settings page exposes this entry):
 
 - Stop running sessions and tasks
 - Rebuild clean threads

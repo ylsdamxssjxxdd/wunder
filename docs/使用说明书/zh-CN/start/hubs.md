@@ -34,7 +34,7 @@ updated_at: 2026-10-16
   </a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/desktop-ui/">
     <strong>桌面版界面</strong>
-    <span>主窗两页 + 12 个设置分类 + 面板与对话框。</span>
+    <span>主窗两页 + 11 个设置分类 + 面板与对话框。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/frontend/">
     <strong>云端版界面</strong>
@@ -81,5 +81,5 @@ updated_at: 2026-10-16
 - [故障排查](/docs/zh-CN/help/troubleshooting/)
 - [FAQ](/docs/zh-CN/help/faq/)
 - [配置说明](/docs/zh-CN/capabilities/config/)
-- [常用说明目录](/docs/zh-CN/start/docs-directory/)：说明书 / 设计文档 / 技术说明书 / API 文档 / 性能标准与评分 / 功能迭代 / 经验教训 的分工与读法
+- [常用说明目录](/docs/zh-CN/start/docs-directory/)：说明书 / 设计文档 / 技术说明书 / API 文档 / 性能基线 / 功能迭代 / 经验教训 的分工与读法
 - [API 索引](/docs/zh-CN/capabilities/api-index/)

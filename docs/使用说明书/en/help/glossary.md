@@ -12,7 +12,7 @@ updated_at: 2026-10-16
 | Core | core | The foundation: configuration, authentication, storage, and execution policy. |
 | Engine | runtime | The execution layer: task orchestration, thread runtime, tools, channels, and gateway. The Desktop, Android, and the CLI depend on the Engine directly, not on the Server. |
 | Server | server | The **user and agent management platform**: the server form, aimed at teams and organizations, handling multi-user access, permissions, and channel access, and providing the Cloud. |
-| Admin | bridge | The governance frontend: the system administrator's management interface for system configuration and for user and channel governance. |
+| Admin | admin (`web/`) | The governance frontend: the system administrator's management interface for system configuration and for user and channel governance. Do not confuse it with the bridge of a channel bridge node. |
 | Channel bridge node | bridge node | A channel bridging node: it carries channel account access and message routing and is managed uniformly by the backend, with no standalone frontend page today. Keep it distinct from the governance frontend "Admin". |
 | Cloud | web | The **cloud AI workbench**: the web form, provided with the Server and opened by users in a browser. English name wunder Cloud, formerly Hive. |
 | Desktop | desktop | The **local AI workbench**: the desktop form, the default entry point for individual users, running locally with direct access to local files. English name wunder Desktop, formerly Pupa. |
@@ -43,7 +43,7 @@ A temporary work unit the main agent creates during a task and reclaims once the
 
 ## Workspace
 
-Your persistent file space. Every user has **exactly one** workspace, which tools use as their root: in the Desktop it is a persistent directory on your own machine, with direct read and write access to local files; in a Server deployment it is the single per-user directory under the server data root, reached through the Cloud. A workspace cannot be added, deleted, or replaced.
+Your persistent file space; tool execution is bounded by the path fence. In a Server deployment every user has exactly one cloud workspace, a per-user directory under the server data root reached through the Cloud. The Desktop and Android can register several workspaces (local directories, the cloud workspace, and remote device workspaces reached through device interlink) and switch by `workspace_id`.
 
 ## Working Directory
 
@@ -67,7 +67,7 @@ Model Context Protocol. A standard interface that lets wunder connect to externa
 
 ## A2A
 
-An interoperability protocol between agents. It lets agents from different systems discover and collaborate with each other.
+An interoperability protocol between agents. **Not implemented today**: the Rust side has no A2A routes; only desktop icon mappings and an nginx reverse-proxy remnant remain, so do not treat it as a current capability.
 
 ## Channel
 
@@ -79,8 +79,8 @@ The basic unit by which a model processes text. The token count reflects the cur
 
 ## Context Compression
 
-When a conversation gets too long, the system automatically compresses the history so the model can keep working without losing key information.
+When a conversation gets too long, the system automatically compresses the history so the model can keep working without losing key information. The current main chain is full compaction (a summary model produces the replacement history); standalone micro-compaction has been removed, and old `type=microcompaction` markers are replay-compatible only.
 
 ## Long-term Memory
 
-Knowledge an agent remembers across conversations. You can add it manually, or let the system distill it automatically.
+Knowledge an agent remembers across conversations. It is injected once as an L0 index at thread creation and then frozen; the body text is pulled on demand through the memory-management tool. You can add it manually, or let the system distill it at the end of a turn. Semantic recall is currently disabled, and `recall` is only an alias of `search`.

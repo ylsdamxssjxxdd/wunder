@@ -415,8 +415,7 @@ impl TuiApp {
                 Some((whole, whole))
             }
             SelectionUnit::Word => {
-                let lines = self.transcript_window_lines();
-                let (from, to) = self.word_bounds_at(lines.as_slice(), point)?;
+                let (from, to) = self.word_bounds_at(self.transcript_window_lines(), point)?;
                 Some((
                     SelectionPoint {
                         column: Some(from),
@@ -462,14 +461,19 @@ impl TuiApp {
         let Some((low, high)) = self.pick(point, selection.unit) else {
             return false;
         };
-        selection.head = if low.order_key() < anchor.order_key() {
+        let head = if low.order_key() < anchor.order_key() {
             low
         } else {
             high
         };
+        // A drag can deliver dozens of events inside one character cell. Only a
+        // head that actually moved changes what is painted, so report that and
+        // let the caller skip the frames in between.
+        let changed = selection.head != head;
+        selection.head = head;
         selection.dragging = true;
         self.transcript_selection = Some(selection);
-        true
+        changed
     }
 
     pub(super) fn note_transcript_selection_pointer(
@@ -598,10 +602,15 @@ impl TuiApp {
             return;
         };
         let style = crate::tui::theme::selection_mark();
-        for (index, line) in lines.iter_mut().enumerate() {
-            if index < range.start_line || index > range.end_line {
-                continue;
-            }
+        // Only the marked rows need rebuilding. Walking the entire window on
+        // every drag frame was pure overhead once the projection is cached.
+        let last = range.end_line.min(lines.len().saturating_sub(1));
+        if range.start_line > last {
+            return;
+        }
+        let start = range.start_line;
+        for (relative, line) in lines[start..last + 1].iter_mut().enumerate() {
+            let index = start + relative;
             let from = if index == range.start_line {
                 range.start_column.unwrap_or(0)
             } else {

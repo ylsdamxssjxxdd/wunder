@@ -1,6 +1,6 @@
 ---
 title: wunder
-summary: The forms of wunder, its capability range, parallel tasks and the session queue, plus navigation entries into the manual.
+summary: The forms of wunder, its capability range, parallel tasks and the local waiting queue, plus navigation entries into the manual.
 read_when:
   - You are new to wunder and choosing which form to use
   - You want the entry point to the whole manual
@@ -61,7 +61,7 @@ See [Quick Start](/docs/en/start/quickstart/) and [Desktop quick start](/docs/en
 
 - One agent can carry **several independent task threads at the same time**, without interfering with each other.
 - You can also have several workspaces: a local directory, a cloud workspace, and a remote device workspace reached through device interconnection, distinguished by name in the interface.
-- Sending a message mid-run won't bounce back: the **session queue** is on by default, so new messages wait in the queue instead of hitting a "user busy" error.
+- Sending a message mid-run won't bounce back: the Desktop uses a frontend **local waiting queue** (messages wait above the input box and are sent when the current turn settles), while the Cloud build uses the engine session queue.
 
 ## Interfaces
 

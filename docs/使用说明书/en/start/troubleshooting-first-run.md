@@ -33,10 +33,10 @@ Sections are organized by form. Each section's verification points are a health 
 | The startup screen never finishes | Permissions on `~/.wunder`; work-tree scan duration (up to 4096 items) | [Desktop intro](/docs/en/start/desktop/) |
 | The window appears but the workspace is empty | Whether the working-directory area shows "offline" | [Desktop interface](/docs/en/surfaces/desktop-ui/) |
 | Model request 401/403 | Settings → Model → API key and endpoint URL; rerun "Test connection" | [Configuration reference](/docs/en/capabilities/config/) |
-| Sending a message during a run is rejected as "user busy" | The session queue is on by default; turning it off breaks the queue bar | [Quick Start](/docs/en/start/quickstart/) |
+| Sending a message during a run is rejected as "user busy" | Only the Cloud build can hit this when the session queue is off; the Desktop uses the frontend local waiting queue | [Quick Start](/docs/en/start/quickstart/) |
 | Expecting TTS playback but hearing nothing | **Desktop TTS is not implemented** — only the model can be configured; use the Cloud for TTS | [Desktop interface](/docs/en/surfaces/desktop-ui/) |
 | Can't find a "device interlink" settings category | The category isn't wired to the interface; the available surfaces are only the sidebar's cloud workspaces plus the remote command approval dialog | [Surfaces overview](/docs/en/surfaces/index/) |
-| State is a mess | Settings → General → one-click workspace state reset (keeps skills, knowledge bases, long-term memory, configuration, and workspace files) | [Desktop intro](/docs/en/start/desktop/) |
+| State is a mess | The Settings page no longer exposes a reset entry; call `POST /wunder/auth/me/reset_work_state` (keeps skills, knowledge bases, long-term memory, configuration, and workspace files) | [Desktop intro](/docs/en/start/desktop/) |
 
 ## Server
 
@@ -96,7 +96,7 @@ Sections are organized by form. Each section's verification points are a health 
 | Can't find a `/cron` command | The CLI explicitly turns scheduled tasks off; there is no channel / knowledge / memory / persona management interface either | [CLI usage](/docs/en/start/cli/) |
 | JSONL events missing fields | Event names are `thread` / `turn` / `item.*`; parse against that contract | [CLI usage](/docs/en/start/cli/) |
 | Want to run a single tool in a script | Use `wunder-cli tool ...` directly; it doesn't go through the agent loop | [CLI usage](/docs/en/start/cli/) |
-| A second message during a run is rejected as "user busy" | Expected: the CLI sets `config.agent_queue.enabled = false` (`crates/wunder-cli/runtime.rs`) — messages don't queue, they hit the session lock; use Desktop or Cloud to queue | [CLI usage](/docs/en/start/cli/) |
+| A second message during a run is rejected as "user busy" | Expected: the CLI sets `config.agent_queue.enabled = false` (`crates/wunder-cli/runtime.rs`) — messages don't queue, they hit the session lock; the Desktop uses the frontend local waiting queue, and the Cloud uses the engine queue | [CLI usage](/docs/en/start/cli/) |
 
 ## General checks
 

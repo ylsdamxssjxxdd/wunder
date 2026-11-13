@@ -82,4 +82,4 @@ The mechanisms that go with it: a write also produces a projection table and a t
 - **"The Cloud page is hosted by the Server."** No. The Server mounts only Admin and a few static directories; Cloud's build artifacts are served by a separate web service.
 - **"The front end needs several fetches to get the full history."** The front end was never meant to get the full history; it consumes a paginated view and fetches body chunks on demand.
 - **"Desktop calls its own backend over local HTTP."** By default it is a native in-process call; the standalone compatibility bridge is kept only for existing clients.
-- **"Swarm orchestration is still part of the architecture."** The engine and scheduling surface no longer have this module; only an empty directory remains, and session write permission is always writable.
+- **"Swarm orchestration is still part of the architecture."** The engine and scheduling surface no longer have this module, and the empty directories have been deleted; session write permission is always writable.

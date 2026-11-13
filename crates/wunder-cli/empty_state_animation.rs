@@ -1,5 +1,6 @@
-//! Colourless welcome avatar: a white/grey half-block relief painted above the
-//! brand header of a fresh thread.
+//! Colourless welcome avatar: a white/grey half-block relief painted under the
+//! brand header of a fresh thread, with the whole banner centred in the terminal
+//! it is painted in.
 //!
 //! The pixel data in `welcome_logo_art.rs` is a neutral grey ladder (slot 15 is
 //! transparent), so the head never introduces hue into the frame; the volume is
@@ -91,6 +92,8 @@ fn terminal_cell_aspect() -> Option<f32> {
 /// Cell aspect from a window size, `None` when the numbers cannot be trusted.
 /// VTE-based terminals (GNOME Terminal, Tilix) report zeroes here, which is why
 /// the fallback matters as much as the measurement.
+/// Windows consoles never reach this path, only the tests do.
+#[cfg_attr(all(windows, not(test)), allow(dead_code))]
 fn measured_cell_aspect(columns: u16, rows: u16, width_px: u16, height_px: u16) -> Option<f32> {
     if columns == 0 || rows == 0 || width_px == 0 || height_px == 0 {
         return None;
@@ -101,20 +104,49 @@ fn measured_cell_aspect(columns: u16, rows: u16, width_px: u16, height_px: u16) 
     CELL_ASPECT_RANGE.contains(&aspect).then_some(aspect)
 }
 
-/// The whole first-frame banner: grey avatar, one breathing row, then the
-/// product text. `session_header` stays the single owner of the wording, this
-/// module only decides whether the head fits above it.
-pub(crate) fn banner_lines(
-    columns: u16,
-    version: &str,
-    workdir: &str,
+/// The welcome banner a fresh thread opens with, kept as a description rather
+/// than as painted rows: the transcript paints it at whatever width it has, so
+/// the head is re-fitted and the block re-centred on every resize instead of
+/// staying at the column count of the first frame.
+#[derive(Debug, Clone)]
+pub(crate) struct Banner {
+    version: String,
+    workdir: String,
     is_zh: bool,
-) -> Vec<Line<'static>> {
-    banner_lines_for_cell(columns, cell_aspect(), version, workdir, is_zh)
+    cell_aspect: f32,
+}
+
+impl Banner {
+    /// The cell shape is measured once, at startup, so painting a frame never
+    /// has to ask the terminal for its pixel size again.
+    pub(crate) fn new(version: &str, workdir: &str, is_zh: bool) -> Self {
+        Self {
+            version: version.to_string(),
+            workdir: workdir.to_string(),
+            is_zh,
+            cell_aspect: cell_aspect(),
+        }
+    }
+
+    /// The product text, one breathing row, then the grey avatar, centred in
+    /// `columns`. `session_header` stays the single owner of the wording.
+    pub(crate) fn lines(&self, columns: u16) -> Vec<Line<'static>> {
+        banner_lines_for_cell(
+            columns,
+            self.cell_aspect,
+            self.version.as_str(),
+            self.workdir.as_str(),
+            self.is_zh,
+        )
+    }
 }
 
 /// The banner for an explicit cell aspect, so the geometry can be pinned in
 /// tests without a terminal.
+///
+/// The wording leads and the head closes the block: the first lines a reader
+/// lands on are the brand, the directory and the hint, and the relief reads as
+/// the logo of the empty state rather than as a header pushing the text down.
 pub(crate) fn banner_lines_for_cell(
     columns: u16,
     cell_aspect: f32,
@@ -122,12 +154,46 @@ pub(crate) fn banner_lines_for_cell(
     workdir: &str,
     is_zh: bool,
 ) -> Vec<Line<'static>> {
-    let mut lines = logo_lines_for_cell(columns, cell_aspect);
-    if !lines.is_empty() {
+    let mut lines = crate::session_header::header_lines(version, workdir, is_zh);
+    let art = logo_lines_for_cell(columns, cell_aspect);
+    if !art.is_empty() {
         lines.push(Line::default());
+        lines.extend(art);
     }
-    lines.extend(crate::session_header::header_lines(version, workdir, is_zh));
+    centre_lines(lines.as_mut_slice(), columns);
     lines
+}
+
+/// Centres the banner in the terminal.
+///
+/// The block is as wide as its widest row: the head on a wide terminal, but a
+/// long workdir path on a narrow one. Rows are therefore centred inside that
+/// block rather than pinned to its left edge — otherwise the wording drifts off
+/// the head's axis as soon as a path is wider than the art.
+fn centre_lines(lines: &mut [Line<'static>], columns: u16) {
+    let available = usize::from(columns);
+    let block = lines
+        .iter()
+        .map(Line::width)
+        .max()
+        .unwrap_or(0)
+        .min(available);
+    if block == 0 {
+        return;
+    }
+    // A block that does not fit gains nothing from an offset; it is clipped by
+    // the transcript anyway.
+    let left = (available - block) / 2;
+    for line in lines.iter_mut() {
+        let width = line.width();
+        if width == 0 {
+            continue;
+        }
+        let pad = left + block.saturating_sub(width) / 2;
+        if pad > 0 {
+            line.spans.insert(0, Span::raw(" ".repeat(pad)));
+        }
+    }
 }
 
 fn colours_enabled() -> bool {
@@ -381,18 +447,13 @@ mod tests {
     }
 
     #[test]
-    fn the_banner_stacks_the_head_above_the_brand_text() {
-        let mut expected = logo_lines_for_cell(80, FALLBACK_CELL_ASPECT);
-        let art_rows = expected.len();
+    fn the_banner_stacks_the_brand_text_above_the_head() {
+        let header = crate::session_header::header_lines("0.4.0", "/tmp/work", true);
+        let art_rows = logo_lines_for_cell(80, FALLBACK_CELL_ASPECT).len();
         assert!(art_rows > 0, "an 80 column terminal fits the head");
-        expected.push(Line::default());
-        expected.extend(crate::session_header::header_lines(
-            "0.4.0",
-            "/tmp/work",
-            true,
-        ));
         let lines = banner_lines_for_cell(80, FALLBACK_CELL_ASPECT, "0.4.0", "/tmp/work", true);
-        assert_eq!(lines.len(), expected.len());
+        // The wording leads, one breathing row follows, then the relief.
+        assert_eq!(lines.len(), header.len() + 1 + art_rows);
         let content = |index: usize| -> String {
             lines[index]
                 .spans
@@ -400,8 +461,14 @@ mod tests {
                 .map(|span| span.content.as_ref())
                 .collect()
         };
-        assert!(content(art_rows + 1).contains("wunder 命令行"));
-        assert!(content(lines.len() - 3).contains("/tmp/work"));
+        assert!(content(0).contains("wunder 命令行"));
+        assert!(content(1).contains("/tmp/work"));
+        assert_eq!(lines[header.len()].width(), 0, "a breathing row");
+        // 80 columns: the 40 column head, centred.
+        assert_eq!(
+            lines[header.len() + 1].width(),
+            20 + welcome_logo_art::SOURCE_WIDTH
+        );
     }
 
     #[test]
@@ -411,5 +478,85 @@ mod tests {
             lines.len(),
             crate::session_header::header_lines("0.4.0", "/tmp/work", false).len()
         );
+    }
+
+    #[test]
+    fn the_banner_sits_in_the_middle_of_a_wide_terminal() {
+        // 100 columns: the head caps at 40, so the block is 40 wide and 30
+        // columns of air go either side. Pinned to the left it read as a stray
+        // corner glyph rather than as a welcome.
+        let art_rows = usize::from(fit(100, SQUARE_PIXEL_CELL).expect("wide").1);
+        let lines = banner_lines_for_cell(100, SQUARE_PIXEL_CELL, "0.4.0", "/tmp/work", true);
+        // Brand, workdir, one breathing row, then the relief.
+        assert_eq!(art_rows, lines.len() - 3);
+        for line in &lines[lines.len() - art_rows..] {
+            assert_eq!(line.width(), 30 + welcome_logo_art::SOURCE_WIDTH);
+        }
+    }
+
+    #[test]
+    fn the_wording_keeps_its_indent_inside_the_centred_block() {
+        // The head is the block, so the text rows are centred inside it and
+        // keep their own indent: the brand, the workdir and the hint all end up
+        // on the head's axis instead of hugging the left edge.
+        let lines = banner_lines_for_cell(100, SQUARE_PIXEL_CELL, "0.4.0", "/tmp/work", true);
+        let header = crate::session_header::header_lines("0.4.0", "/tmp/work", true);
+        let rows = &lines[..header.len()];
+        assert_eq!(rows.len(), header.len());
+        for (row, expected) in rows.iter().zip(header.iter()) {
+            if expected.width() == 0 {
+                assert_eq!(row.width(), 0, "a breathing row stays empty");
+                continue;
+            }
+            let text = |line: &Line<'static>| -> String {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect()
+            };
+            assert_eq!(
+                text(row).trim_start_matches(' '),
+                text(expected).trim_start_matches(' '),
+                "the banner owns the placement, not the wording"
+            );
+            // 30 columns of air, then half of what the row leaves free in the
+            // 40 column block.
+            assert_eq!(
+                row.width() - expected.width(),
+                30 + (welcome_logo_art::SOURCE_WIDTH - expected.width()) / 2
+            );
+        }
+    }
+
+    #[test]
+    fn the_block_is_centred_as_one_unit_not_row_by_row() {
+        // Rows share the block's axis: the narrow ones are centred inside it
+        // rather than pinned to its left edge.
+        let wide_row = "  a row wider than the art itself";
+        let mut lines = vec![
+            Line::from("h".repeat(40)),
+            Line::from("short"),
+            Line::default(),
+            Line::from(wide_row),
+        ];
+        centre_lines(lines.as_mut_slice(), 100);
+        assert_eq!(lines[0].width(), 30 + 40);
+        assert_eq!(lines[1].width(), 30 + (40 - 5) / 2 + 5);
+        // A breathing row stays empty rather than becoming trailing padding.
+        assert_eq!(lines[2].width(), 0);
+        assert_eq!(
+            lines[3].width(),
+            30 + (40 - wide_row.len()) / 2 + wide_row.len()
+        );
+    }
+
+    #[test]
+    fn a_block_wider_than_the_terminal_is_not_pushed_off_it() {
+        let mut lines = vec![Line::from("h".repeat(120)), Line::from("tail")];
+        centre_lines(lines.as_mut_slice(), 80);
+        // The over-wide row cannot be centred, so it keeps its own left edge…
+        assert_eq!(lines[0].width(), 120);
+        // …and the short row is centred in the columns that are visible.
+        assert_eq!(lines[1].width(), 38 + 4);
     }
 }

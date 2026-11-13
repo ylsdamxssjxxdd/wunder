@@ -19,21 +19,21 @@
   @media print{.hero-open,.usage,.guide,.card-footer{display:none}.hero-preview{box-shadow:none}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.thumb{height:auto}.thumb img{height:auto}.wrap{max-width:none;padding:0}}
 </style>
 </head>
-<body data-pupa-base="" data-servo-base="servo/">
+<body data-desktop-base="" data-cli-base="cli/">
 <div class="wrap">
   <header class="masthead">
     <div>
       <div class="kicker">WUNDER / INTERFACE BASELINE</div>
       <h1>wunder 美术设计稿</h1>
-      <p class="intro">以当前实现为事实基线的界面与状态规范。先读真实界面，再看功能结构和控件状态；蛹的桌面逻辑像素与舵机的终端行列分别表达，不混用尺度。</p>
-      <div class="facts"><span class="fact"><b>16</b> 张分页</span><span class="fact">蛹 <b>10</b> 张</span><span class="fact">舵机 <b>6</b> 张</span><span class="fact">实机结构 / 控件状态 / 任务状态</span><span class="fact">更新 <b>2026-10-25</b></span></div>
+      <p class="intro">以当前实现为事实基线的界面与状态规范。先读真实界面，再看功能结构和控件状态；桌面版的逻辑像素与命令行的终端行列分别表达，不混用尺度。</p>
+      <div class="facts"><span class="fact"><b>16</b> 张分页</span><span class="fact">桌面版 <b>10</b> 张</span><span class="fact">命令行 <b>6</b> 张</span><span class="fact">实机结构 / 控件状态 / 任务状态</span><span class="fact">更新 <b>2026-11-13</b></span></div>
     </div>
-    <div class="meta">CURRENT IMPLEMENTATION<br>SVG · 1600 PX WIDE<br>DESKTOP + TERMINAL<br>OFFLINE READY</div>
+    <div class="meta">IMPLEMENTATION BASELINE<br>SVG · 1600 PX WIDE<br>DESKTOP + TERMINAL<br>OFFLINE READY</div>
   </header>
 
   <section class="hero" aria-label="总览预览与使用说明">
     <div class="hero-preview">
-      <img src="00-整体总览.svg" alt="蛹桌面端整体总览预览">
+      <img src="00-整体总览.svg" alt="wunder 桌面版整体总览实机截图">
       <button class="hero-open" type="button" data-open-index="0" aria-haspopup="dialog">打开总览并拖动查看</button>
     </div>
     <aside class="guide">
@@ -57,48 +57,47 @@
 
   <noscript>
     <section><h2>直接打开设计稿</h2><p>当前未启用 JavaScript，可使用原始 SVG 链接：</p><ul>
-      <li><a href="00-整体总览.svg">蛹 00 整体总览</a> · <a href="01-基础规范.svg">01 基础规范</a> · <a href="02-图标系统.svg">02 图标系统</a> · <a href="03-外壳与侧栏.svg">03 外壳与侧栏</a> · <a href="04-会话时间线.svg">04 会话时间线</a></li>
-      <li><a href="05-过程与工具.svg">蛹 05 过程与工具</a> · <a href="06-计划与问询.svg">06 计划与问询</a> · <a href="07-输入区.svg">07 输入区</a> · <a href="08-设置与弹窗.svg">08 设置与弹窗</a> · <a href="09-交互状态与动效.svg">09 交互状态与动效</a></li>
-      <li><a href="servo/00-整体总览.svg">舵机 00 整体总览</a> · <a href="servo/01-基础规范.svg">01 基础规范</a> · <a href="servo/02-布局与底栏.svg">02 布局与底栏</a> · <a href="servo/03-会话时间线.svg">03 会话时间线</a> · <a href="servo/04-工具与计划.svg">04 工具与计划</a> · <a href="servo/05-输入与弹层.svg">05 输入与弹层</a></li>
+      <li><a href="00-整体总览.svg">桌面版 00 整体总览</a> · <a href="01-基础规范.svg">01 基础规范</a> · <a href="02-图标系统.svg">02 图标系统</a> · <a href="03-外壳与侧栏.svg">03 外壳与侧栏</a> · <a href="04-会话时间线.svg">04 会话时间线</a></li>
+      <li><a href="05-过程与工具.svg">桌面版 05 过程与工具</a> · <a href="06-计划与问询.svg">06 计划与问询</a> · <a href="07-输入区.svg">07 输入区</a> · <a href="08-设置与弹窗.svg">08 设置与弹窗</a> · <a href="09-交互状态与动效.svg">09 交互状态与动效</a></li>
+      <li><a href="cli/00-整体总览.svg">命令行 00 整体总览</a> · <a href="cli/01-基础规范.svg">01 基础规范</a> · <a href="cli/02-布局与底栏.svg">02 布局与底栏</a> · <a href="cli/03-会话时间线.svg">03 会话时间线</a> · <a href="cli/04-工具与计划.svg">04 工具与计划</a> · <a href="cli/05-输入与弹层.svg">05 输入与弹层</a></li>
     </ul></section>
   </noscript>
 
-  <footer class="footer"><div>事实来源：<code>crates/wunder-desktop/frontend/ui</code> 与 <code>crates/wunder-cli/tui</code>。建议项不与实机状态混画。</div><div>离线可用 · 无第三方依赖 · <a href="README.md">维护说明</a></div></footer>
-</div>
+  <footer class="footer"><div>事实来源：<code>crates/wunder-desktop/frontend/ui</code> 与 <code>crates/wunder-cli/tui</code>。建议项不与实机状态混画。</div><div>离线可用 · 无第三方依赖 · <a href="README.md">维护说明</a></div></footer></div>
 <script src="assets/art-viewer.js"></script>
 <script>
 (function () {
   const groups = [
-    {form:"pupa",formTitle:"蛹 · 本地 AI 工作台",formNote:"Slint / Rust · 桌面逻辑像素",key:"foundations",title:"总览与基础",note:"真实窗口、设计 token 与生产图标资产"},
-    {form:"pupa",formTitle:"蛹 · 本地 AI 工作台",formNote:"Slint / Rust · 桌面逻辑像素",key:"conversation",title:"会话与执行",note:"外壳、时间线、工具过程、计划与问询"},
-    {form:"pupa",formTitle:"蛹 · 本地 AI 工作台",formNote:"Slint / Rust · 桌面逻辑像素",key:"system",title:"输入与系统反馈",note:"输入区、设置、弹窗与真实交互状态"},
-    {form:"servo",formTitle:"舵机 · 手工本地操作入口",formNote:"Ratatui · 终端行列与字重修饰",key:"terminal-base",title:"终端布局与基础",note:"启动帧、五段布局、颜色与底栏"},
-    {form:"servo",formTitle:"舵机 · 手工本地操作入口",formNote:"Ratatui · 终端行列与字重修饰",key:"terminal-system",title:"会话与系统",note:"转写、工具计划、输入与各类弹层"}
+    {form:"desktop",formTitle:"wunder 桌面版",formNote:"Slint / Rust · 桌面逻辑像素",key:"foundations",title:"总览与基础",note:"真实窗口、设计 token 与生产图标资产"},
+    {form:"desktop",formTitle:"wunder 桌面版",formNote:"Slint / Rust · 桌面逻辑像素",key:"conversation",title:"会话与执行",note:"外壳、时间线、工具过程、计划与问询"},
+    {form:"desktop",formTitle:"wunder 桌面版",formNote:"Slint / Rust · 桌面逻辑像素",key:"system",title:"输入与系统反馈",note:"输入区、设置、弹窗与真实交互状态"},
+    {form:"cli",formTitle:"wunder 命令行",formNote:"Ratatui · 终端行列与字重修饰",key:"terminal-base",title:"终端布局与基础",note:"启动帧、五段布局、颜色与底栏"},
+    {form:"cli",formTitle:"wunder 命令行",formNote:"Ratatui · 终端行列与字重修饰",key:"terminal-system",title:"会话与系统",note:"转写、工具计划、输入与各类弹层"}
   ];
   const sheets = [
-    ["pupa","foundations","00-整体总览.svg","整体总览","真实窗口、功能分区与状态辨析","新线程 / 完成回合 / 输入空闲"],
-    ["pupa","foundations","01-基础规范.svg","基础规范","中性色、强调色、语义色与窗口度量","色彩 / 字阶 / 间距 / 圆角 / 布局"],
-    ["pupa","foundations","02-图标系统.svg","图标系统","30 个真实生产图标，按功能与状态分类","实心 / 线性 / 着色 / 光学尺寸"],
-    ["pupa","conversation","03-外壳与侧栏.svg","外壳与侧栏","窗口控制、工作区、线程、目录与分隔柄","行交互态 / 生命周期 / 多选 / 拖拽"],
-    ["pupa","conversation","04-会话时间线.svg","会话时间线","完整回合、Markdown、页脚与滚动跟随","空态 / 加载 / 状态胶囊 / 失败"],
-    ["pupa","conversation","05-过程与工具.svg","过程与工具","过程折叠、工具行、详情、补丁与子智能体","运行 / 完成 / 失败 / 展开"],
-    ["pupa","conversation","06-计划与问询.svg","计划与问询","计划胶囊、目标横幅与问询面板","步骤 / 目标 / 选项 / 其他与无偏好"],
-    ["pupa","system","07-输入区.svg","输入区","编辑卡、动作行、附件、队列与模型菜单","发送 / 停止 / 忙碌 / 录音 / 转写"],
-    ["pupa","system","08-设置与弹窗.svg","设置与弹窗","真实设置壳、主题卡、表单与反馈层级","选择 / 聚焦 / 错误 / 停用 / busy"],
-    ["pupa","system","09-交互状态与动效.svg","交互状态与动效","真实控件矩阵、键盘、动效与无障碍","Action / FormField / ThemeCheck / Switch"],
-    ["servo","terminal-base","00-整体总览.svg","整体总览","启动实帧、欢迎像素画与五段功能栈","新线程 / 横幅让位 / 调用形态"],
-    ["servo","terminal-base","01-基础规范.svg","基础规范","命名色、Rgb 面板、修饰与显示列","NO_COLOR / 文本宽度 / 终端能力"],
-    ["servo","terminal-base","02-布局与底栏.svg","布局与底栏","五段布局、活动行、输入行预算与收缩","通知 / 运行 / 审批 / 小宽度"],
-    ["servo","terminal-system","03-会话时间线.svg","会话时间线","条目、Markdown、差异、全展开与选区","流式 / 搜索 / 复制 / NO_COLOR"],
-    ["servo","terminal-system","04-工具与计划.svg","工具与计划","工具补丁、计划卡、轨迹页签与状态符","进行中 / 待执行 / 完成 / 待确认"],
-    ["servo","terminal-system","05-输入与弹层.svg","输入与弹层","输入区、弹层带、居中选择与任务中心","聚焦 / 只读 / 选择 / 分组 / 搜索"]
+    ["desktop","foundations","00-整体总览.svg","整体总览","实机截图、功能分区与状态辨析","新线程 / 完成回合 / 输入空闲"],
+    ["desktop","foundations","01-基础规范.svg","基础规范","中性色、强调色、语义色与窗口度量","色彩 / 字阶 / 间距 / 圆角 / 布局"],
+    ["desktop","foundations","02-图标系统.svg","图标系统","47 个真实生产图标，按功能与状态分类","实心 / 线性 / 着色 / 光学尺寸"],
+    ["desktop","conversation","03-外壳与侧栏.svg","外壳与侧栏","窗口控制、工作区、线程、目录与分隔柄","行交互态 / 生命周期 / 多选 / 拖拽"],
+    ["desktop","conversation","04-会话时间线.svg","会话时间线","完整回合、Markdown、页脚与滚动跟随","空态 / 加载 / 状态胶囊 / 失败"],
+    ["desktop","conversation","05-过程与工具.svg","过程与工具","过程折叠、工具行、详情、补丁与子智能体","运行 / 完成 / 失败 / 展开"],
+    ["desktop","conversation","06-计划与问询.svg","计划与问询","计划胶囊、目标横幅与问询面板","步骤 / 目标 / 选项 / 其他与无偏好"],
+    ["desktop","system","07-输入区.svg","输入区","编辑卡、动作行、本机状态格、队列与模型菜单","发送 / 停止 / 忙碌 / 录音 / 转写"],
+    ["desktop","system","08-设置与弹窗.svg","设置与弹窗","真实设置壳、11 类导航、表单与反馈层级","选择 / 聚焦 / 错误 / 停用 / busy"],
+    ["desktop","system","09-交互状态与动效.svg","交互状态与动效","真实控件矩阵、键盘、动效与无障碍","Action / FormField / ThemeCheck / Switch"],
+    ["cli","terminal-base","00-整体总览.svg","整体总览","启动实帧、欢迎像素画与五段功能栈","新线程 / 横幅让位 / 调用形态"],
+    ["cli","terminal-base","01-基础规范.svg","基础规范","命名色、Rgb 面板、修饰与显示列","NO_COLOR / 文本宽度 / 终端能力"],
+    ["cli","terminal-base","02-布局与底栏.svg","布局与底栏","五段布局、活动行、输入行预算与收缩","通知 / 运行 / 审批 / 小宽度"],
+    ["cli","terminal-system","03-会话时间线.svg","会话时间线","条目、Markdown、差异、全展开与选区","流式 / 搜索 / 复制 / NO_COLOR"],
+    ["cli","terminal-system","04-工具与计划.svg","工具与计划","工具补丁、计划卡、轨迹页签与状态符","进行中 / 待执行 / 完成 / 待确认"],
+    ["cli","terminal-system","05-输入与弹层.svg","输入与弹层","输入区、弹层带、居中选择与任务中心","聚焦 / 只读 / 选择 / 分组 / 搜索"]
   ];
-  const pupaBase = document.body.dataset.pupaBase || "";
-  const servoBase = document.body.dataset.servoBase || "";
+  const desktopBase = document.body.dataset.desktopBase || "";
+  const cliBase = document.body.dataset.cliBase || "";
   const items = sheets.map((sheet, index) => {
     const [form, group, file, title, summary, states] = sheet;
-    const number = form === "pupa" ? index : index - 10;
-    return {index,number,form,group,file,title:`${String(number).padStart(2,"0")} ${title}`,summary,states,src:(form === "pupa" ? pupaBase : servoBase) + file};
+    const number = form === "desktop" ? index : index - 10;
+    return {index,number,form,group,file,title:`${String(number).padStart(2,"0")} ${title}`,summary,states,src:(form === "desktop" ? desktopBase : cliBase) + file};
   });
   const library = document.getElementById("library");
   const escapeHtml = (value) => String(value).replace(/[&<>"']/g,(char)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[char]);
