@@ -5583,8 +5583,8 @@
  },
  {
   "key": "st_param_image_max_size_hint",
-  "zh": "宽或高超出则退回默认尺寸",
-  "en": "Wider or taller requests use the default size"
+  "zh": "超出则按最大边等比缩小（修图同样受限）",
+  "en": "Oversized requests scale down proportionally (edits too)"
  },
  {
   "key": "st_param_image_format",

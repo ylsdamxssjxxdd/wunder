@@ -542,8 +542,8 @@ impl NativeDesktop {
             optional_choice(edit.asr_response_format, "返回格式", &ASR_FORMATS)?;
         let asr_temperature = parse_f32(edit.asr_temperature, "识别 temperature", 0.0, 2.0)?;
         let asr_prompt = optional_text(edit.asr_prompt, 4096)?;
-        let image_default_size = optional_text(edit.image_default_size, 64)?;
-        let image_max_size = optional_text(edit.image_max_size, 64)?;
+        let image_default_size = optional_image_size(edit.image_default_size, "默认尺寸")?;
+        let image_max_size = optional_image_size(edit.image_max_size, "最大尺寸")?;
         let image_output_format =
             optional_choice(edit.image_output_format, "输出格式", &IMAGE_FORMATS)?;
         let image_steps = parse_u32_range(edit.image_steps, "采样步数", 1, 200)?;
@@ -1043,6 +1043,23 @@ fn optional_text(raw: &str, limit: usize) -> Result<Option<String>> {
     Ok(Some(raw.to_string()))
 }
 
+/// 图像尺寸字段只接受 `宽x高`（如 1024x1024）；留空表示用默认值。
+/// 尺寸格式写错时引擎会静默回退默认上限，所以在保存入口就明确拒绝。
+fn optional_image_size(raw: &str, label: &str) -> Result<Option<String>> {
+    let Some(text) = optional_text(raw, 64)? else {
+        return Ok(None);
+    };
+    let normalized = text.to_ascii_lowercase().replace(' ', "");
+    let parsed = normalized.split_once('x').is_some_and(|(width, height)| {
+        width.parse::<u32>().map_or(false, |value| value > 0)
+            && height.parse::<u32>().map_or(false, |value| value > 0)
+    });
+    if !parsed {
+        bail!("{label}格式应为 宽x高，例如 1024x1024");
+    }
+    Ok(Some(text))
+}
+
 fn optional_choice(raw: &str, name: &str, allowed: &[&str]) -> Result<Option<String>> {
     let raw = raw.trim();
     if raw.is_empty() {
@@ -1163,6 +1180,37 @@ fn fallback_default(llm: &LlmConfig, kind: &str) -> Option<String> {
         .map(|(key, _)| key)
         .min()
         .cloned()
+}
+
+#[cfg(test)]
+mod image_size_field_tests {
+    use super::optional_image_size;
+
+    #[test]
+    fn accepts_width_by_height_and_allows_empty() {
+        assert_eq!(
+            optional_image_size(" 1024x1024 ", "最大尺寸").expect("valid size"),
+            Some("1024x1024".to_string())
+        );
+        assert_eq!(
+            optional_image_size("768X512", "默认尺寸").expect("valid size"),
+            Some("768X512".to_string())
+        );
+        assert_eq!(
+            optional_image_size("", "最大尺寸").expect("empty is allowed"),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_sizes_the_engine_cannot_parse() {
+        for raw in ["1024*1024", "1024", "0x1024", "auto", "1024x"] {
+            assert!(
+                optional_image_size(raw, "最大尺寸").is_err(),
+                "{raw} should be rejected"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

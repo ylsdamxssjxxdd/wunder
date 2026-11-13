@@ -246,17 +246,15 @@ const SURFACE_RULES: &[SurfaceRule] = &[
     SurfaceRule {
         tool: "图像生成",
         // 修图入口必须写进 brief：内置工具的参数说明会被整体裁掉，模型只能
-        // 从这里得知“改图传 input_path、prompt 只写改动、mask/strength 可用”。
-        brief_en: "Generate an image from prompt into path, or edit one by passing its path as input_path and describing only the change. Prefer this tool for photo retouching; mask_path marks local edits, strength controls how much changes. Enhancing clarity (HD) is not upscaling: omit size and keep the source dimensions, letting the model restore detail. Actively use it for deck/report/poster/page imagery; charts in code.",
-        brief_zh: "按 prompt 生成图片写入 path；改图时把原图路径传给 input_path，prompt 只写改动之处，修图优先用本工具。可选 mask_path 标出局部重绘区域，strength 控制改动幅度。提升清晰度/高清化不是放大尺寸：不要传 size，保持原图宽高，只让模型修复细节。PPT/幻灯片、简报、报告、海报、网页、封面等交付物需要配图时，也应主动多次调用本工具生成贴题素材，不要用纯文字或色块凑版式；图表/数据图仍用代码。",
+        // 从这里得知"改图传 input_path、prompt 只写改动、mask/strength 可用"。
+        brief_en: "Generate or edit an image into path: text-to-image, or input_path / input_paths for single and multi-image edits; prompt describes the change. Prefer it for retouching; mask_path marks local edits, strength sets how much changes, output_format picks png/jpeg/webp. Oversized sizes scale down proportionally. HD is not upscaling: omit size, keep source dimensions. Use it for deck/report/poster art; charts in code.",
+        brief_zh: "按 prompt 生成图片写入 path；改图传 input_path（多图用 input_paths），prompt 只写改动处，output_format 选 png/jpeg/webp。修图优先用本工具：mask_path 标局部重绘，strength 控改动幅度。size 如 1024x1024，超最大尺寸会按最大边等比缩小，高清化不是放大：不要传 size，保持原图宽高。交付物（PPT/报告/海报/网页/封面）配图应主动多次调用本工具；图表/数据图用代码。",
         drop_actions: &[],
         drop_fields: &[
             "guidance_scale",
-            "input_paths",
             "layers",
             "num_inference_steps",
             "output_compression",
-            "output_format",
             "resolution",
             "true_cfg_scale",
         ],
@@ -636,7 +634,15 @@ mod tests {
                 .expect("image properties");
             // 改图入口和局部重绘参数必须留在模型可见的精简 schema 里，
             // 否则模型只会把它当成文生图工具。
-            for field in ["prompt", "input_path", "mask_path", "strength", "size"] {
+            for field in [
+                "prompt",
+                "input_path",
+                "input_paths",
+                "mask_path",
+                "strength",
+                "size",
+                "output_format",
+            ] {
                 assert!(
                     props.contains_key(field),
                     "{language}: {field} should stay visible to the model"

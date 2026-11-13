@@ -421,7 +421,8 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
             "edited": edited,
             "model_name": resolved_model_name,
             "provider": normalize_provider(model_config.provider.as_deref()),
-            "size": effective_size,
+            "size": result.size.clone().or_else(|| effective_size.clone()),
+            "input_resized": result.resized_input,
             "input_paths": input_paths,
             "mask_path": normalize_optional_string(payload.mask_path.as_deref()),
             "reference_path": normalize_optional_string(payload.reference_path.as_deref()),
@@ -1126,9 +1127,10 @@ mod tests {
         );
         // 修图未指定尺寸时保持原图尺寸，交给下游 auto 处理。
         assert_eq!(resolve_requested_image_size(&config, None, true), None);
+        // 超限时按最大边等比缩到上限内（2048x2048，仍是正方形）。
         assert_eq!(
             resolve_requested_image_size(&config, Some("4096x4096"), false).as_deref(),
-            Some("1024x1024")
+            Some("2048x2048")
         );
     }
 

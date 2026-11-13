@@ -1582,7 +1582,12 @@ export component SettingsPage inherits Rectangle {
                                                     Action { y: 26px; width: 116px; height: 36px; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: I18n.model_probe_context; show-label: true; primary: true; enabled: !root.saving && !root.cloud-locked && root.model-name-draft != "" && root.model-base-url-draft != ""; clicked => { root.probe-model-context(); } }
                                                 }
                                             }
-                                            if root.model-provider-draft == "virtual_replay" && root.virtual-replay-logs.length > 0 : FormCombo { label: "回放日志"; items: root.virtual-replay-logs; value <=> root.model-name-draft; }
+                                            // 图像模型的尺寸上限决定显存与输出比例，属于基础配置：
+                                            // 常显，不埋进高级设置（与安卓版、管理端保持一致）。
+                                            if root.model-type-draft == "image" : HorizontalLayout { spacing: 10px;
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_image_default_size; placeholder: I18n.st_param_image_default_size_hint; read-only: root.cloud-locked; text <=> root.model-image-default-size-draft; }
+                                                FormField { horizontal-stretch: 1; label: I18n.st_param_image_max_size; placeholder: I18n.st_param_image_max_size_hint; read-only: root.cloud-locked; text <=> root.model-image-max-size-draft; }
+                                            }
                                         }
                                         // 高级设置：生成参数、能力与类型专属参数默认折叠。
                                         if root.model-type-draft != "embedding" : SettingsCard {
@@ -1658,10 +1663,6 @@ export component SettingsPage inherits Rectangle {
                                                 }
                                                 if root.model-type-draft == "image" : VerticalLayout {
                                                     spacing: 0px;
-                                                    HorizontalLayout { spacing: 10px;
-                                                        FormField { horizontal-stretch: 1; label: I18n.st_param_image_default_size; placeholder: I18n.st_param_image_default_size_hint; text <=> root.model-image-default-size-draft; }
-                                                        FormField { horizontal-stretch: 1; label: I18n.st_param_image_max_size; placeholder: I18n.st_param_image_max_size_hint; text <=> root.model-image-max-size-draft; }
-                                                    }
                                                     HorizontalLayout { spacing: 10px;
                                                         FormCombo {
                                                             horizontal-stretch: 1;

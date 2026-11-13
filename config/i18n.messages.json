@@ -2976,8 +2976,8 @@
     "zh-CN": "可选，图像生成模型配置名；留空使用默认图像生成模型。"
   },
   "tool.spec.generate_image.args.size": {
-    "en-US": "Optional output size, such as 1024x1024. For text-to-image, leaving it empty uses the configured default size; requests above the configured maximum fall back to that default. For edits, retouching, and clarity enhancement, omit it to keep the source dimensions instead of scaling. For some providers such as vllm-omni / Z-Image, use sizes whose width and height are both divisible by 16 and stay within the maximum size, for example 768x512 or 1024x1024.",
-    "zh-CN": "可选，输出尺寸，如 1024x1024。文生图留空时使用配置的默认尺寸；超过配置的最大尺寸时自动退回默认尺寸。修图、高清化、增强清晰度时不要传该参数，保持原图尺寸，不要放大。对于 vllm-omni / Z-Image 这类提供方，请使用宽高都能被 16 整除且不超过最大尺寸的尺寸，例如 768x512 或 1024x1024。"
+    "en-US": "Optional output size, such as 1024x1024. For text-to-image, leaving it empty uses the configured default size. Requests above the configured maximum are scaled down proportionally so the largest edge fits the limit; the aspect ratio is kept and the default size is not used. For edits, retouching, and clarity enhancement, omit it to keep the source dimensions; oversized source images are also scaled down proportionally before upload. For some providers such as vllm-omni / Z-Image, width and height must both be divisible by 16; automatic scaling rounds down to a multiple of 16.",
+    "zh-CN": "可选，输出尺寸，如 1024x1024。文生图留空时使用配置的默认尺寸；超出配置的最大尺寸时按最大边等比缩小到上限内，比例不变，不会退回默认尺寸。修图、高清化、增强清晰度时不要传该参数以保持原图尺寸；输入图自身超过上限时也会先等比缩小。对于 vllm-omni / Z-Image 这类提供方，宽高需都能被 16 整除，自动缩放会向小对齐到 16 的倍数。"
   },
   "tool.spec.generate_image.args.output_format": {
     "en-US": "Optional output image format preference.",
@@ -3000,8 +3000,8 @@
     "zh-CN": "可选，随机种子。"
   },
   "tool.spec.generate_image.args.input_path": {
-    "en-US": "Optional workspace image path to edit. Supplying it enters image-to-image/edit mode (also used for retouching such as background replacement, object removal, denoise, or sharpening); omit it for text-to-image. For clarity enhancement, keep the source dimensions and do not pass size. Pass the path returned by a previous result to keep iterating on the same image.",
-    "zh-CN": "可选，要修改的工作区图片路径。填写后进入图生图/编辑模式（换背景、去杂物、降噪、增强清晰度等修图需求也走这里）；不填则为文生图。高清化/增强清晰度时保持原图尺寸，不要传 size。可把上一次结果返回的 path 再次传入，连续改同一张图。"
+    "en-US": "Optional workspace image path to edit. Supplying it enters image-to-image/edit mode (also used for retouching such as background replacement, object removal, denoise, or sharpening); omit it for text-to-image. For clarity enhancement, keep the source dimensions and do not pass size. Pass the path returned by a previous result to keep iterating on the same image. Inputs larger than the configured maximum size are scaled down proportionally before upload, and the output keeps that ratio.",
+    "zh-CN": "可选，要修改的工作区图片路径。填写后进入图生图/编辑模式（换背景、去杂物、降噪、增强清晰度等修图需求也走这里）；不填则为文生图。高清化/增强清晰度时保持原图尺寸，不要传 size。可把上一次结果返回的 path 再次传入，连续改同一张图。输入图超过配置的最大尺寸时会先按最大边等比缩小再送入，输出沿用缩小后的比例。"
   },
   "tool.spec.generate_image.args.input_paths": {
     "en-US": "Optional list of workspace image paths for multi-image editing or reference composition. Use input_path for single-image edits.",

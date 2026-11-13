@@ -819,11 +819,12 @@ pub struct LlmModelConfig {
     pub asr_response_format: Option<String>,
     #[serde(default)]
     pub asr_temperature: Option<f32>,
-    /// 文生图的默认输出尺寸；请求尺寸超过 `image_max_size` 时也回退到这里。
+    /// 文生图的默认输出尺寸；未指定尺寸时使用。
     /// 旧配置的单尺寸字段迁移为默认尺寸。
     #[serde(default, alias = "image_size")]
     pub image_default_size: Option<String>,
-    /// 允许的请求尺寸上限，宽或高超出即整张回退到默认尺寸。
+    /// 允许的尺寸上限：宽或高超出时按最大边等比缩小到上限内（修图同理，
+    /// 输入图也会先缩到上限内），比例保持不变。
     #[serde(default)]
     pub image_max_size: Option<String>,
     #[serde(default)]

@@ -1110,7 +1110,7 @@ export global I18n {
     out property <string> st_param_image_default_size: zh ? "默认尺寸" : "Default size";
     out property <string> st_param_image_default_size_hint: zh ? "文生图默认，留空 1024x1024" : "Text-to-image default; empty uses 1024x1024";
     out property <string> st_param_image_max_size: zh ? "最大尺寸" : "Max size";
-    out property <string> st_param_image_max_size_hint: zh ? "宽或高超出则退回默认尺寸" : "Wider or taller requests use the default size";
+    out property <string> st_param_image_max_size_hint: zh ? "超出则按最大边等比缩小（修图同样受限）" : "Oversized requests scale down proportionally (edits too)";
     out property <string> st_param_image_format: zh ? "输出格式" : "Output format";
     out property <string> st_param_image_steps: zh ? "采样步数" : "Sampling steps";
     out property <string> st_param_image_guidance: zh ? "引导系数" : "Guidance scale";

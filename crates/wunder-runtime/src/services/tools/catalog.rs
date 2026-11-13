@@ -3093,8 +3093,8 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == canonical)
             .expect("search spec");
-        assert!(spec.description.contains("local filesystem text files"));
-        assert!(spec.description.contains("never the web"));
+        assert!(spec.description.contains("local workspace file contents"));
+        assert!(spec.description.contains("mode=paths"));
         assert!(spec.input_schema["properties"]["query"].is_object());
         assert!(spec.input_schema["properties"]["glob"].is_object());
         assert!(spec.input_schema["properties"]["query_mode"].is_object());

@@ -454,6 +454,9 @@ async fn admin_generate_image(
         )
     })?;
 
+    // 实际下发尺寸可能因上限限幅而与请求值不同，回执以实际值为准。
+    let applied_size = result.size.clone().or(size.clone());
+    let input_resized = result.resized_input.clone();
     let saved = persist_generated_media(
         state.as_ref(),
         &workspace_id,
@@ -478,7 +481,8 @@ async fn admin_generate_image(
                 "prompt": prompt,
                 "path": normalize_optional_string(payload.base.path.as_deref()),
                 "model_name": payload.model_name,
-                "size": size,
+                "size": applied_size,
+                "input_resized": input_resized,
                 "output_format": output_format,
                 "negative_prompt": negative_prompt,
                 "num_inference_steps": payload.num_inference_steps,
