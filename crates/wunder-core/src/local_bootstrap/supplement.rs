@@ -142,6 +142,57 @@ pub fn configure_runtime_env(roots: &[PathBuf]) {
     if let Some(pwsh) = find_tool(roots, Tool::PowerShell) {
         std::env::set_var("WUNDER_POWERSHELL_EXE", &pwsh);
     }
+    // Portable git bundles ship `bin/` + `libexec/` but keep the exec path of
+    // whatever host assembled them, so every helper loaded from disk
+    // (`git-remote-https`, `git-remote-http`, `git-submodule`) is unreachable
+    // while builtins still work — `git pull` over https dies with
+    // "'remote-https' is not a git command". Publishing the real libexec keeps
+    // the bundle relocatable; a caller-provided value always wins.
+    if let Some(exec_path) = git_exec_path(roots) {
+        if std::env::var_os("GIT_EXEC_PATH").is_none() {
+            std::env::set_var("GIT_EXEC_PATH", &exec_path);
+        }
+        if std::env::var_os("GIT_TEMPLATE_DIR").is_none() {
+            if let Some(templates) = git_template_dir(roots) {
+                std::env::set_var("GIT_TEMPLATE_DIR", &templates);
+            }
+        }
+    }
+}
+
+/// Helpers of a relocatable git live beside the binary, in `libexec/git-core`
+/// on Linux/macOS layouts and `mingw64/libexec/git-core` on Git for Windows.
+/// A root without that directory is skipped so a system git never inherits a
+/// foreign exec path.
+pub fn git_exec_path(roots: &[PathBuf]) -> Option<PathBuf> {
+    first_dir(
+        roots,
+        &[
+            "opt/git/libexec/git-core",
+            "opt/git/mingw64/libexec/git-core",
+        ],
+    )
+}
+
+/// `git init` and `git clone` copy their hooks and sample files from here;
+/// without it the bundle warns "unable to copy template" on every new repo.
+pub fn git_template_dir(roots: &[PathBuf]) -> Option<PathBuf> {
+    first_dir(
+        roots,
+        &[
+            "opt/git/share/git-core/templates",
+            "opt/git/mingw64/share/git-core/templates",
+        ],
+    )
+}
+
+fn first_dir(roots: &[PathBuf], candidates: &[&str]) -> Option<PathBuf> {
+    roots.iter().find_map(|root| {
+        candidates
+            .iter()
+            .map(|name| root.join(name))
+            .find(|path| path.is_dir())
+    })
 }
 
 /// One bounded discovery pass; repeated imports never grow PATH with duplicates.
@@ -203,6 +254,42 @@ mod tests {
         let roots = roots(&home, &home, None);
         assert_eq!(find_tool(&roots, Tool::PowerShell), Some(home.join(pwsh)));
         assert!(path_entries(&roots).contains(&home.join("opt/powershell")));
+    }
+
+    #[test]
+    fn portable_git_publishes_exec_path_and_template_dir() {
+        // A relocated bundle keeps its helpers next to the binary instead of the
+        // build host path compiled into git, so both directories must be found.
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("profile");
+        for dir in [
+            "opt/git/libexec/git-core",
+            "opt/git/share/git-core/templates",
+        ] {
+            std::fs::create_dir_all(home.join(dir)).unwrap();
+        }
+        let roots = roots(&home, &home, None);
+        assert_eq!(
+            git_exec_path(&roots),
+            Some(home.join("opt/git/libexec/git-core"))
+        );
+        assert_eq!(
+            git_template_dir(&roots),
+            Some(home.join("opt/git/share/git-core/templates"))
+        );
+    }
+
+    #[test]
+    fn git_exec_path_ignores_a_system_git_without_libexec() {
+        // Publishing an exec path for a git that has no libexec would break every
+        // subcommand, so a bare bin/ tree has to stay untouched.
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("profile");
+        std::fs::create_dir_all(home.join("opt/git/bin")).unwrap();
+        std::fs::write(home.join("opt/git/bin/git"), b"fixture").unwrap();
+        let roots = roots(&home, &home, None);
+        assert_eq!(git_exec_path(&roots), None);
+        assert_eq!(git_template_dir(&roots), None);
     }
 
     #[test]
