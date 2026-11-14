@@ -112,9 +112,6 @@ struct Editor {
     /// commit (Enter/focus loss) and by leaving the row; the debounced
     /// autosave never renames on its own.
     rename_armed: bool,
-    /// 本次保存由防抖自动保存触发：这种静默落盘不弹提示，只有用户显式点
-    /// 「保存」或提交配置名称时才回应一次。
-    auto_save: bool,
 }
 
 thread_local! {
@@ -256,18 +253,162 @@ fn finish_action(app: &MainWindow) {
     }
 }
 
+/// 保存当前模型草稿。`silent` 由防抖自动保存传入：静默落盘不弹提示；用户显式
+/// 点「保存」或提交配置名称时给一次反馈，确保按钮点下去总有回应。
+fn run_save(app: &MainWindow, api: &Arc<NativeDesktop>, silent: bool) {
+    let inflight =
+        EDITOR.with(|slot| slot.borrow().as_ref().is_some_and(|editor| editor.inflight));
+    if inflight || app.get_model_projecting() {
+        return;
+    }
+    if app.get_saving() || app.get_settings_loading() || app.get_agents_loading() {
+        schedule(app, Duration::from_millis(100));
+        return;
+    }
+    let draft = Draft::read(app);
+    if !draft.ready() {
+        // The explicit save of an incomplete new draft must say what is
+        // missing; existing rows keep the same rule as before.
+        if app.get_model_creating() || has_unsaved(app) {
+            app.set_model_save_error("请补全模型标识、提供方和模型名称".into());
+        }
+        return;
+    }
+    if !has_unsaved(app) && !app.get_model_creating() {
+        // 显式点「保存」但没有改动：也要有回应，避免按钮像没反应。
+        if !silent {
+            let message = app
+                .global::<crate::I18n>()
+                .get_st_model_unchanged()
+                .to_string();
+            app.set_status(message.as_str().into());
+            crate::native_pages::show_toast(app, message, 1);
+        }
+        finish_action(app);
+        return;
+    }
+    let creating = app.get_model_creating();
+    let rename_armed = EDITOR.with(|slot| {
+        slot.borrow_mut()
+            .as_mut()
+            .is_some_and(|editor| std::mem::take(&mut editor.rename_armed))
+    });
+    let renaming = rename_armed
+        && !creating
+        && !draft.original_key.is_empty()
+        && draft.card.key.trim() != draft.original_key;
+    if creating
+        && app.get_settings_model_key() != draft.card.key
+        && app
+            .get_models()
+            .iter()
+            .any(|model| model.key == draft.card.key)
+    {
+        app.set_model_save_error("模型标识已存在，请使用其他标识".into());
+        return;
+    }
+    EDITOR.with(|slot| {
+        if let Some(editor) = slot.borrow_mut().as_mut() {
+            editor.timer.stop();
+            editor.inflight = true;
+        }
+    });
+    app.set_saving(true);
+    let weak = app.as_weak();
+    let api = api.clone();
+    crate::native_pages::run_background(move || {
+        let result = api.save_model(draft.edit(renaming));
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            let changed = Draft::read(&app) != draft;
+            EDITOR.with(|slot| {
+                if let Some(editor) = slot.borrow_mut().as_mut() {
+                    editor.inflight = false;
+                }
+            });
+            app.set_saving(false);
+            match result {
+                Ok(settings) => {
+                    // The key actually stored: a rename lands on the typed
+                    // key, every other save addresses the existing entry.
+                    let key = if creating || renaming || draft.original_key.is_empty() {
+                        draft.card.key.to_string()
+                    } else {
+                        draft.original_key.clone()
+                    };
+                    let projecting = app.get_model_projecting();
+                    app.set_model_projecting(true);
+                    if creating {
+                        crate::entity_state::clear_model_draft();
+                        app.set_model_creating(false);
+                    }
+                    if app.get_settings_model_key() != key {
+                        app.set_settings_model_key(key.as_str().into());
+                    }
+                    if app.get_model_token_draft().trim() == draft.secret {
+                        app.set_model_token_draft("".into());
+                    }
+                    let mut clean = draft.clone();
+                    clean.secret.clear();
+                    clean.card.key = key.as_str().into();
+                    clean.original_key = key.clone();
+                    EDITOR.with(|slot| {
+                        if let Some(editor) = slot.borrow_mut().as_mut() {
+                            editor.baseline = Some(clean);
+                        }
+                    });
+                    // The composer follows the renamed model. The key it
+                    // showed has to be captured before `apply_settings`
+                    // re-projects the catalogue: by then a pin on the old
+                    // key has already been dropped to the fallback, and the
+                    // composer would keep labelling the thread with a
+                    // different model than the one it was pinned to.
+                    let composer_key = app.get_selected_model_key().to_string();
+                    crate::native_pages::apply_settings(&app, settings);
+                    if let Some(index) =
+                        app.get_models().iter().position(|model| model.key == key)
+                    {
+                        app.set_selected_model(index as i32);
+                    }
+                    if renaming
+                        && (composer_key.is_empty()
+                            || composer_key == draft.original_key.as_str())
+                    {
+                        crate::native_pages::select_model_key(&app, &key);
+                    }
+                    app.set_model_projecting(projecting);
+                    app.set_model_save_error("".into());
+                    // 显式保存（表单按钮、回车提交配置名称）和新建提交都要
+                    // 回答「点下去有没有生效」；防抖自动保存保持静默，否则
+                    // 每敲一个字段都弹提示反而变成干扰。
+                    if creating || !silent {
+                        crate::native_pages::show_toast(&app, saved_message(&app, &key), 1);
+                    }
+                    if changed {
+                        schedule(&app, Duration::from_millis(500));
+                    } else {
+                        finish_action(&app);
+                    }
+                    app.invoke_refresh_agents();
+                }
+                Err(error) => {
+                    app.set_model_save_error(format!("保存失败：{error}").into());
+                    if changed {
+                        schedule(&app, Duration::from_millis(500));
+                    }
+                }
+            }
+        });
+    });
+}
+
 pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     EDITOR.with(|slot| *slot.borrow_mut() = Some(Editor::default()));
     rebase(app);
+    let auto_api = api.clone();
     let weak = app.as_weak();
     app.on_auto_save_model(move || {
         let Some(app) = weak.upgrade() else { return };
-        EDITOR.with(|slot| {
-            if let Some(editor) = slot.borrow_mut().as_mut() {
-                editor.auto_save = true;
-            }
-        });
-        app.invoke_save_model();
+        run_save(&app, &auto_api, true);
     });
     let weak = app.as_weak();
     app.on_model_edited(move || {
@@ -295,151 +436,11 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             finish_action(&app);
         }
     });
+    let save_api = api.clone();
     let weak = app.as_weak();
     app.on_save_model(move || {
         let Some(app) = weak.upgrade() else { return };
-        // 只在本次保存时消费标记：防抖保存静默，显式保存给提示。
-        let auto_saved = EDITOR.with(|slot| {
-            slot.borrow_mut()
-                .as_mut()
-                .is_some_and(|editor| std::mem::take(&mut editor.auto_save))
-        });
-        let inflight =
-            EDITOR.with(|slot| slot.borrow().as_ref().is_some_and(|editor| editor.inflight));
-        if inflight || app.get_model_projecting() {
-            return;
-        }
-        if app.get_saving() || app.get_settings_loading() || app.get_agents_loading() {
-            schedule(&app, Duration::from_millis(100));
-            return;
-        }
-        let draft = Draft::read(&app);
-        if !draft.ready() {
-            // The explicit save of an incomplete new draft must say what is
-            // missing; existing rows keep the same rule as before.
-            if app.get_model_creating() || has_unsaved(&app) {
-                app.set_model_save_error("请补全模型标识、提供方和模型名称".into());
-            }
-            return;
-        }
-        if !has_unsaved(&app) && !app.get_model_creating() {
-            // 显式点「保存」但没有改动：给一句状态反馈，避免按钮像没反应。
-            app.set_status("模型配置已是最新".into());
-            finish_action(&app);
-            return;
-        }
-        let creating = app.get_model_creating();
-        let rename_armed = EDITOR.with(|slot| {
-            slot.borrow_mut()
-                .as_mut()
-                .is_some_and(|editor| std::mem::take(&mut editor.rename_armed))
-        });
-        let renaming = rename_armed
-            && !creating
-            && !draft.original_key.is_empty()
-            && draft.card.key.trim() != draft.original_key;
-        if creating
-            && app.get_settings_model_key() != draft.card.key
-            && app
-                .get_models()
-                .iter()
-                .any(|model| model.key == draft.card.key)
-        {
-            app.set_model_save_error("模型标识已存在，请使用其他标识".into());
-            return;
-        }
-        EDITOR.with(|slot| {
-            if let Some(editor) = slot.borrow_mut().as_mut() {
-                editor.timer.stop();
-                editor.inflight = true;
-            }
-        });
-        app.set_saving(true);
-        let weak = app.as_weak();
-        let api = api.clone();
-        crate::native_pages::run_background(move || {
-            let result = api.save_model(draft.edit(renaming));
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                let changed = Draft::read(&app) != draft;
-                EDITOR.with(|slot| {
-                    if let Some(editor) = slot.borrow_mut().as_mut() {
-                        editor.inflight = false;
-                    }
-                });
-                app.set_saving(false);
-                match result {
-                    Ok(settings) => {
-                        // The key actually stored: a rename lands on the typed
-                        // key, every other save addresses the existing entry.
-                        let key = if creating || renaming || draft.original_key.is_empty() {
-                            draft.card.key.to_string()
-                        } else {
-                            draft.original_key.clone()
-                        };
-                        let projecting = app.get_model_projecting();
-                        app.set_model_projecting(true);
-                        if creating {
-                            crate::entity_state::clear_model_draft();
-                            app.set_model_creating(false);
-                        }
-                        if app.get_settings_model_key() != key {
-                            app.set_settings_model_key(key.as_str().into());
-                        }
-                        if app.get_model_token_draft().trim() == draft.secret {
-                            app.set_model_token_draft("".into());
-                        }
-                        let mut clean = draft.clone();
-                        clean.secret.clear();
-                        clean.card.key = key.as_str().into();
-                        clean.original_key = key.clone();
-                        EDITOR.with(|slot| {
-                            if let Some(editor) = slot.borrow_mut().as_mut() {
-                                editor.baseline = Some(clean);
-                            }
-                        });
-                        // The composer follows the renamed model. The key it
-                        // showed has to be captured before `apply_settings`
-                        // re-projects the catalogue: by then a pin on the old
-                        // key has already been dropped to the fallback, and the
-                        // composer would keep labelling the thread with a
-                        // different model than the one it was pinned to.
-                        let composer_key = app.get_selected_model_key().to_string();
-                        crate::native_pages::apply_settings(&app, settings);
-                        if let Some(index) =
-                            app.get_models().iter().position(|model| model.key == key)
-                        {
-                            app.set_selected_model(index as i32);
-                        }
-                        if renaming
-                            && (composer_key.is_empty()
-                                || composer_key == draft.original_key.as_str())
-                        {
-                            crate::native_pages::select_model_key(&app, &key);
-                        }
-                        app.set_model_projecting(projecting);
-                        app.set_model_save_error("".into());
-                        // 显式保存（表单按钮、回车提交配置名称）和新建提交都要
-                        // 回答「点下去有没有生效」；防抖自动保存保持静默，否则
-                        // 每敲一个字段都弹提示反而变成干扰。
-                        if creating || !auto_saved {
-                            crate::native_pages::show_toast(&app, saved_message(&app, &key), 1);
-                        }
-                        if changed {
-                            schedule(&app, Duration::from_millis(500));
-                        } else {
-                            finish_action(&app);
-                        }
-                        app.invoke_refresh_agents();
-                    }
-                    Err(error) => {
-                        app.set_model_save_error(format!("保存失败：{error}").into());
-                        if changed {
-                            schedule(&app, Duration::from_millis(500));
-                        }
-                    }
-                }
-            });
-        });
+        run_save(&app, &save_api, false);
     });
     let weak = app.as_weak();
     app.on_commit_model_key(move || {

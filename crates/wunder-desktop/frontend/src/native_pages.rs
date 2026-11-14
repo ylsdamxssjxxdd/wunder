@@ -805,6 +805,13 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
             stashed_key.clone()
         };
         crate::entity_state::clear_model_draft();
+        let was_creating = app.get_model_creating();
+        // 先退出创建态再重建列表：`model_catalogue().set` 会把「正在创建的行」
+        // 重新插回来，顺序反了就会留下一个后端根本不存在的草稿行，之后删除它
+        // 只会得到「模型不存在」。
+        if was_creating {
+            app.set_model_creating(false);
+        }
         if let Some(row_key) = row_key {
             let rows = app
                 .get_models()
@@ -813,8 +820,7 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
                 .collect::<Vec<_>>();
             model_catalogue().set(&app, rows);
         }
-        if app.get_model_creating() {
-            app.set_model_creating(false);
+        if was_creating {
             crate::entity_state::restore_model(&app, "");
         }
     });
@@ -974,6 +980,12 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
             app.set_status("已放弃未保存的模型草稿".into());
             return;
         }
+        if app.get_model_creating() {
+            // 创建态下这一行还没有落库，删除按钮本应走「放弃」；这里兜底，
+            // 不能把草稿交给后端删除。
+            app.invoke_discard_model_draft();
+            return;
+        }
         if crate::model_editor::defer_delete(&app, key.clone()) {
             return;
         }
@@ -996,7 +1008,17 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
                         app.set_status("模型配置已删除".into());
                         app.invoke_refresh_agents();
                     }
-                    Err(error) => show_error(&app, format!("无法删除模型配置：{error}")),
+                    Err(error) => {
+                        let text = error.to_string();
+                        if text.contains("模型不存在") {
+                            // 列表里残留的未保存草稿行：移除即可，不当成删除失败。
+                            drop_local_model_row(&app, &key);
+                            app.set_status("已放弃未保存的模型草稿".into());
+                            show_toast(&app, "已放弃未保存的模型草稿".into(), 1);
+                        } else {
+                            show_error(&app, format!("无法删除模型配置：{}", error));
+                        }
+                    }
                 }
             });
         });
@@ -1399,6 +1421,28 @@ pub(crate) fn show_error(app: &MainWindow, error: String) {
 /// Show short-lived feedback through the shell-owned toast layer. Unlike the
 /// legacy info dialog this stays above the settings overlay and does not block
 /// the editor while a probe result is being read.
+/// 列表里残留的未保存草稿行不是已落库的配置：后端拒绝删除时直接移除本地行，
+/// 并顺带清掉它的草稿簿记，避免用户反复点删除却只看到「模型不存在」。
+pub(crate) fn drop_local_model_row(app: &MainWindow, key: &str) {
+    if crate::entity_state::model_draft_row_key().as_deref() == Some(key) {
+        crate::entity_state::clear_model_draft();
+    }
+    let was_creating = app.get_model_creating();
+    if was_creating {
+        // 先退出创建态，否则重建列表会把这行重新插回来。
+        app.set_model_creating(false);
+    }
+    let rows = app
+        .get_models()
+        .iter()
+        .filter(|model| model.key != key)
+        .collect::<Vec<_>>();
+    model_catalogue().set(app, rows);
+    if app.get_settings_model_key() == key || app.get_selected_model_key() == key {
+        crate::entity_state::restore_model(app, "");
+    }
+}
+
 pub(crate) fn show_toast(app: &MainWindow, message: String, kind: i32) {
     let toast = app.global::<crate::ToastState>();
     toast.set_message(message.into());
