@@ -837,6 +837,10 @@ pub struct LlmModelConfig {
     pub image_num_inference_steps: Option<u32>,
     #[serde(default)]
     pub image_guidance_scale: Option<f32>,
+    /// 图生图的默认改动幅度（0~1）。放在模型配置里而不是交给模型现填：
+    /// 调参项由部署方定，模型只描述“要改成什么”。
+    #[serde(default)]
+    pub image_strength: Option<f32>,
     #[serde(default)]
     pub video_size: Option<String>,
     #[serde(default)]

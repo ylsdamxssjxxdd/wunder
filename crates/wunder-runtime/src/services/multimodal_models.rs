@@ -178,6 +178,12 @@ pub struct ImageGenerationResponse {
     pub size: Option<String>,
     /// 输入图被等比缩小时的尺寸变化，形如 `4096x4096->1024x1024`。
     pub resized_input: Option<String>,
+    /// 蒙版随主图一起被缩放时的尺寸变化；调用方必须把它写进 warning。
+    pub resized_mask: Option<String>,
+    /// 参考图被等比缩小时的尺寸变化。
+    pub resized_reference: Option<String>,
+    /// 第二张及之后的输入图被等比缩小时的尺寸变化。
+    pub resized_extra_inputs: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -242,6 +248,9 @@ pub async fn generate_image(
     // 回执给真实输出尺寸：编辑模式未显式指定时就是输入图尺寸，不再返回 null。
     response.size = prepared.reported_size.or(prepared.size);
     response.resized_input = prepared.resized_input;
+    response.resized_mask = prepared.resized_mask;
+    response.resized_reference = prepared.resized_reference;
+    response.resized_extra_inputs = prepared.resized_extra_inputs;
     Ok(response)
 }
 
@@ -947,6 +956,9 @@ fn parse_image_generation_response(
         content_type: image_mime_type(&output_format).to_string(),
         size: None,
         resized_input: None,
+        resized_mask: None,
+        resized_reference: None,
+        resized_extra_inputs: Vec::new(),
     })
 }
 
@@ -1169,6 +1181,9 @@ struct ImageRequestPreparation {
     size: Option<String>,
     reported_size: Option<String>,
     resized_input: Option<String>,
+    resized_mask: Option<String>,
+    resized_reference: Option<String>,
+    resized_extra_inputs: Vec<String>,
 }
 
 impl ImageRequestPreparation {
@@ -1177,15 +1192,34 @@ impl ImageRequestPreparation {
             reported_size: size.clone(),
             size,
             resized_input: None,
+            resized_mask: None,
+            resized_reference: None,
+            resized_extra_inputs: Vec::new(),
         }
     }
 
     fn report_source_size(mut self, width: u32, height: u32) -> Self {
         if self.reported_size.is_none() {
-            self.reported_size = Some(format!("{}x{}", width, height));
+            self.reported_size = Some(size_label(width, height));
         }
         self
     }
+
+    fn with_resized_reference(mut self, report: Option<String>) -> Self {
+        self.resized_reference = report;
+        self
+    }
+}
+
+fn size_label(width: u32, height: u32) -> String {
+    format!("{}x{}", width, height)
+}
+
+fn size_report(from_width: u32, from_height: u32, to_width: u32, to_height: u32) -> String {
+    format!(
+        "{}x{}->{}x{}",
+        from_width, from_height, to_width, to_height
+    )
 }
 
 fn prepare_image_request(
@@ -1193,20 +1227,24 @@ fn prepare_image_request(
     request: &mut ImageGenerationRequest,
 ) -> Result<ImageRequestPreparation> {
     // 参考图不参与输出尺寸计算，但同样会进显卡，先独立限幅。
+    // 限幅结果要带回调用方：静默缩小会让模型以为上游看到的是原图。
+    let mut resized_reference = None;
     if let Some(reference) = request.reference_image.take() {
-        request.reference_image = Some(cap_image_input(config, &reference)?);
+        let (capped, report) = cap_image_input(config, &reference)?;
+        request.reference_image = Some(capped);
+        resized_reference = report;
     }
     if request.input_images.is_empty() {
         let size = resolve_requested_image_size(config, request.size.as_deref(), false);
         request.size = size.clone();
-        return Ok(ImageRequestPreparation::new(size));
+        return Ok(ImageRequestPreparation::new(size).with_resized_reference(resized_reference));
     }
     let source = request.input_images[0].clone();
     let Some((source_width, source_height)) = image_bytes_dimensions(&source.bytes) else {
         // 拿不到尺寸（例如矢量图）时保持原有语义，交给上游判断。
         let size = resolve_requested_image_size(config, request.size.as_deref(), true);
         request.size = size.clone();
-        return Ok(ImageRequestPreparation::new(size));
+        return Ok(ImageRequestPreparation::new(size).with_resized_reference(resized_reference));
     };
     // 蒙版必须与主图同尺寸：尺寸不符时上游会直接 400，或按错位区域重绘，
     // 这里提前给出明确原因，不要靠缩放把蒙版硬拉到另一个比例。
@@ -1214,7 +1252,11 @@ fn prepare_image_request(
         if let Some((mask_width, mask_height)) = image_bytes_dimensions(&mask.bytes) {
             if (mask_width, mask_height) != (source_width, source_height) {
                 return Err(anyhow!(
-                    "mask image size {mask_width}x{mask_height} must match the input image size {source_width}x{source_height}"
+                    "mask image size {}x{} must match the input image size {}x{}",
+                    mask_width,
+                    mask_height,
+                    source_width,
+                    source_height
                 ));
             }
         }
@@ -1226,12 +1268,15 @@ fn prepare_image_request(
         let size = resolve_requested_image_size(config, request.size.as_deref(), true);
         request.size = size.clone();
         return Ok(
-            ImageRequestPreparation::new(size).report_source_size(source_width, source_height)
+            ImageRequestPreparation::new(size)
+                .report_source_size(source_width, source_height)
+                .with_resized_reference(resized_reference),
         );
     }
     ensure_input_decodable(&source.filename, source_width, source_height)?;
     request.input_images[0] = resize_image_input(&source, target_width, target_height)?;
     // 其余输入图各自不超过上限即可，比例各自保持。
+    let mut resized_extra_inputs = Vec::new();
     for index in 1..request.input_images.len() {
         let input = request.input_images[index].clone();
         let Some((width, height)) = image_bytes_dimensions(&input.bytes) else {
@@ -1243,19 +1288,36 @@ fn prepare_image_request(
         }
         ensure_input_decodable(&input.filename, width, height)?;
         request.input_images[index] = resize_image_input(&input, width_target, height_target)?;
+        resized_extra_inputs.push(size_report(width, height, width_target, height_target));
     }
+    // 蒙版必须与主图同尺寸，所以主图缩小后蒙版也要跟着缩；这是隐式改写，
+    // 必须回报给调用方，否则模型会以为上游看到的还是原来那张蒙版。
+    let mut resized_mask = None;
     if let Some(mask) = request.mask_image.take() {
-        // 蒙版必须与主图同尺寸，否则局部重绘会被上游拒绝。
+        if let Some((mask_width, mask_height)) = image_bytes_dimensions(&mask.bytes) {
+            resized_mask = Some(size_report(
+                mask_width,
+                mask_height,
+                target_width,
+                target_height,
+            ));
+        }
         request.mask_image = Some(resize_image_input(&mask, target_width, target_height)?);
     }
-    let size = format!("{target_width}x{target_height}");
+    let size = size_label(target_width, target_height);
     request.size = Some(size.clone());
     Ok(ImageRequestPreparation {
         size: Some(size.clone()),
         reported_size: Some(size),
-        resized_input: Some(format!(
-            "{source_width}x{source_height}->{target_width}x{target_height}"
+        resized_input: Some(size_report(
+            source_width,
+            source_height,
+            target_width,
+            target_height,
         )),
+        resized_mask,
+        resized_reference,
+        resized_extra_inputs,
     })
 }
 
@@ -1267,16 +1329,24 @@ fn fit_size_for_provider(config: &LlmModelConfig, width: u32, height: u32) -> (u
     align_for_provider(config, width, height, max_width, max_height)
 }
 
-fn cap_image_input(config: &LlmModelConfig, input: &ImageInputFile) -> Result<ImageInputFile> {
+/// 限幅单张输入图，同时回报是否真的缩过：缩放必须能被调用方看见。
+fn cap_image_input(
+    config: &LlmModelConfig,
+    input: &ImageInputFile,
+) -> Result<(ImageInputFile, Option<String>)> {
     let Some((width, height)) = image_bytes_dimensions(&input.bytes) else {
-        return Ok(input.clone());
+        return Ok((input.clone(), None));
     };
     let (target_width, target_height) = fit_size_for_provider(config, width, height);
     if (target_width, target_height) == (width, height) {
-        return Ok(input.clone());
+        return Ok((input.clone(), None));
     }
     ensure_input_decodable(&input.filename, width, height)?;
-    resize_image_input(input, target_width, target_height)
+    let resized = resize_image_input(input, target_width, target_height)?;
+    Ok((
+        resized,
+        Some(size_report(width, height, target_width, target_height)),
+    ))
 }
 
 fn ensure_input_decodable(filename: &str, width: u32, height: u32) -> Result<()> {
@@ -1460,8 +1530,11 @@ fn build_image_edit_form(
     if let Some(seed) = request.seed {
         form = form.text("seed", seed.to_string());
     }
+    // 模型没给 strength 时用模型配置里的默认值：调参项由部署方定，
+    // 不该由模型每轮现猜一个数字。
     if let Some(strength) = request
         .strength
+        .or(config.image_strength)
         .filter(|value| value.is_finite() && *value >= 0.0)
     {
         form = form.text("strength", strength.to_string());
@@ -2311,6 +2384,11 @@ mod tests {
         let mask = request.mask_image.expect("mask");
         let mask_image = image::load_from_memory(&mask.bytes).expect("decode mask");
         assert_eq!((mask_image.width(), mask_image.height()), (1024, 512));
+        // 蒙版被隐式缩放必须回报，否则模型以为上游看到的是原尺寸蒙版。
+        assert_eq!(
+            prepared.resized_mask.as_deref(),
+            Some("3000x1500->1024x512")
+        );
     }
 
     #[test]

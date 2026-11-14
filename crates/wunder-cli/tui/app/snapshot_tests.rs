@@ -1240,6 +1240,26 @@ async fn the_footer_names_the_task_and_sheds_it_before_the_keys() {
     assert!(wide.contains("summarise the flaky test"), "{wide}");
 }
 
+/// The thread-center hint carries the action, not just the destination: the
+/// arrow is the key itself, so the label has to say what pressing it does.
+#[tokio::test]
+async fn the_footer_says_what_the_left_arrow_opens() {
+    let root = TempRoot::new("footer_thread_center_hint");
+    let mut app = fixture_app(root.path()).await;
+
+    let items = app.composer_footer_items();
+    assert!(
+        items
+            .iter()
+            .any(|(key, label)| key == "←" && label == "enter thread center"),
+        "the hint reads as an instruction beside its key: {items:?}"
+    );
+
+    let rows = draw_rows(&mut app, 120, 24);
+    let footer = rows.last().cloned().unwrap_or_default();
+    assert!(footer.contains("← enter thread center"), "{footer:?}");
+}
+
 /// The footer's right cluster qualifies the context figure with the model it
 /// belongs to: model id first, then used over total.
 #[tokio::test]

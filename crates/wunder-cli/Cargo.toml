@@ -47,6 +47,11 @@ walkdir.workspace = true
 zip.workspace = true
 wunder-runtime = { path = "../wunder-runtime", default-features = false }
 
+# The welcome avatar probes the terminal for its text-area pixel size; that
+# needs `poll(2)` on stdin.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(not(target_vendor = "win7"))'.dependencies]
 reqwest.workspace = true
 syntect.workspace = true

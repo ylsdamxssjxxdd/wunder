@@ -6,8 +6,8 @@
 //!    `seed` / `strength` 取值范围，都在调用上游之前本地校验；
 //! 2. **工具自己的改写必须可见**：被等比缩小、被补扩展名、蒙版全黑、参数已弃用
 //!    一律进 `warnings`，不再 200 OK 静默发生；
-//! 3. **失败统一成三段式**：谁错了（哪个参数/哪个上游）+ 为什么 + 怎么改，
-//!    并给出机械可读的 `code` / `retryable` / `hint`。
+//! 3. **失败统一成三段式**：`message` 说谁错了（哪个参数/哪个上游）+ 为什么，
+//!    `hint` 说怎么改，两者不重复；同时给出机械可读的 `code` / `retryable`。
 
 use crate::config::LlmModelConfig;
 use crate::llm::normalize_provider;
@@ -146,7 +146,7 @@ impl ImageLimits {
     }
 }
 
-/// 统一的图像工具失败：`message` 已是「谁错了 + 为什么 + 怎么改」三段式。
+/// 统一的图像工具失败：`message` 说「谁错了 + 为什么」，`hint` 说「怎么改」。
 #[derive(Debug, Clone)]
 pub(crate) struct ImageFailure {
     pub(crate) code: &'static str,
@@ -176,17 +176,13 @@ impl ImageFailure {
 
     /// 参数本身不合法：调用方改参数就能继续。
     pub(crate) fn request(field: &str, reason: impl Into<String>, fix: impl Into<String>) -> Self {
-        let fix = fix.into();
         Self {
             code: "IMAGE_REQUEST_INVALID",
             retryable: false,
-            message: format!(
-                "参数 `{}` 不合法：{}。{}",
-                field,
-                reason.into(),
-                fix.as_str()
-            ),
-            hint: fix,
+            // message 只说“谁错了 + 为什么”；“怎么改”只放在 hint。
+            // 早前把 fix 同时拼进 message 和 hint，工具回执会把它显示两遍。
+            message: format!("参数 `{}` 不合法：{}", field, reason.into()),
+            hint: fix.into(),
             suggested_size: None,
             field: Some(field.to_string()),
         }
@@ -194,17 +190,11 @@ impl ImageFailure {
 
     /// 输入文件（主图 / 蒙版 / 参考图）不合法：文件问题，不是模型参数问题。
     pub(crate) fn input(field: &str, reason: impl Into<String>, fix: impl Into<String>) -> Self {
-        let fix = fix.into();
         Self {
             code: "IMAGE_INPUT_INVALID",
             retryable: false,
-            message: format!(
-                "输入图 `{}` 有问题：{}。{}",
-                field,
-                reason.into(),
-                fix.as_str()
-            ),
-            hint: fix,
+            message: format!("输入图 `{}` 有问题：{}", field, reason.into()),
+            hint: fix.into(),
             suggested_size: None,
             field: Some(field.to_string()),
         }
@@ -613,6 +603,14 @@ pub(crate) fn merge_input_paths(args: &Value) -> Result<(Vec<String>, Vec<String
                     paths.push(cleaned.to_string());
                 }
             }
+            if paths.is_empty() {
+                // 空数组等价于没给输入图，但“填了空数组”和“根本没填”不是同一件事，
+                // 静默按文生图处理会让调用方以为自己在改图。
+                warnings.push(
+                    "input_paths 是空数组（或全是空字符串），本次按文生图处理；要改图请给出至少一条路径。"
+                        .to_string(),
+                );
+            }
             paths
         }
         Some(_) => {
@@ -803,6 +801,38 @@ mod tests {
         let (paths, _) =
             merge_input_paths(&json!({ "input_paths": ["b.png", "a.png", "b.png"] })).unwrap();
         assert_eq!(paths, vec!["b.png", "a.png"]);
+    }
+
+    #[test]
+    fn empty_input_paths_array_is_reported_instead_of_silently_dropped() {
+        let (paths, warnings) = merge_input_paths(&json!({ "input_paths": [] })).unwrap();
+        assert!(paths.is_empty());
+        assert_eq!(warnings.len(), 1, "空数组必须有一条说明");
+        assert!(warnings[0].contains("空数组"), "{}", warnings[0]);
+        // 全是空字符串等价于空数组，也要说。
+        let (paths, warnings) =
+            merge_input_paths(&json!({ "input_paths": ["  ", ""] })).unwrap();
+        assert!(paths.is_empty());
+        assert_eq!(warnings.len(), 1);
+        // 完全没传则不提示，避免正常文生图也带噪音。
+        let (_, warnings) = merge_input_paths(&json!({ "prompt": "a cat" })).unwrap();
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn failure_message_never_repeats_the_hint() {
+        // 回归：早前把 fix 同时拼进 message 和 hint，工具回执会把同一句显示两遍。
+        let failure = parse_strength(Some(&json!(1.5))).expect_err("out of range");
+        assert!(failure.message.contains("0 到 1"));
+        assert!(failure.hint.contains("0 到 1"));
+        assert!(
+            !failure.message.contains(failure.hint.as_str()),
+            "message 不应包含整句 hint：{}",
+            failure.message
+        );
+        let failure = ImageFailure::request("path", "指向目录", "改成 `temp/out.png`。");
+        assert_eq!(failure.message, "参数 `path` 不合法：指向目录");
+        assert_eq!(failure.hint, "改成 `temp/out.png`。");
     }
 
     #[test]

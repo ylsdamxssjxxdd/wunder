@@ -5815,6 +5815,7 @@ dependencies = [
  "clap_complete",
  "crossterm",
  "futures",
+ "libc",
  "pulldown-cmark",
  "ratatui",
  "reqwest",

@@ -502,6 +502,15 @@ struct State {
     /// after the submission lands, so the queue refresh promotes the row it
     /// finds; the deadline stops a promotion that can never happen.
     pending_interject: Option<(String, String, std::time::Instant)>,
+    /// One-shot send identity handed over by 插话 on a waiting message.
+    ///
+    /// The engine row a parked turn creates is keyed by the id its sender
+    /// submitted, so the interjection can only find the row it must promote if
+    /// the send reuses the id the waiting turn already had. Minting a fresh id
+    /// here left the promotion looking for a row no submission ever created —
+    /// the message then sat in the engine queue with a「排队中」bubble instead of
+    /// jumping to the next action boundary.
+    pending_send_id: Option<String>,
     /// Independent low-duty directory reconciliation while another local
     /// process owns one of the visible thread leases.
     lease_refresh_timer: Timer,
@@ -970,6 +979,7 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
         send_seq: 0,
         force_submit: false,
         pending_interject: None,
+        pending_send_id: None,
     }));
     observer::install(app, state.clone());
     crate::chat_split::install(app, desktop_preview.clone());
@@ -2645,6 +2655,14 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
             // state cross a worker boundary.
             let pending = state.borrow();
             if pending.cancelling_submission.is_some() {
+                drop(pending);
+                // A refused send drops the one-shot 插话 overrides it was
+                // carrying instead of leaking them onto the next click.
+                {
+                    let mut st = state.borrow_mut();
+                    st.force_submit = false;
+                    st.pending_send_id = None;
+                }
                 app.set_status("正在停止上一条请求，请稍候…".into());
                 return;
             }
@@ -2652,7 +2670,9 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                 // Drop the one-shot 插话 override with the refused send: it
                 // belongs to that click, not to whatever the user sends next.
                 drop(pending);
-                state.borrow_mut().force_submit = false;
+                let mut st = state.borrow_mut();
+                st.force_submit = false;
+                st.pending_send_id = None;
                 app.set_status("正在提交，请稍候…".into());
                 return;
             }
@@ -2704,7 +2724,16 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         // snapshot is then the only witness, and it is what the composer's
         // busy flag carries — deciding on `active` alone sent the message to
         // the engine, which parked it and painted that second bubble after all.
-        let force_submit = std::mem::take(&mut state.borrow_mut().force_submit);
+        // `force_submit` marks this click as a 插话: the message goes to the
+        // engine even though the thread looks busy, and it carries the id the
+        // waiting row already had so the engine's queue row stays findable.
+        let (force_submit, interject_id) = {
+            let mut st = state.borrow_mut();
+            (
+                std::mem::take(&mut st.force_submit),
+                st.pending_send_id.take(),
+            )
+        };
         let hold_locally = !force_submit && thread_busy(&app, &state);
         if hold_locally && queue::parked_is_full(&state.borrow().parked) {
             app.set_status("等待发送的轮次已满，请先撤下几条或稍候".into());
@@ -2788,11 +2817,13 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         let reasoning_effort = (reasoning_effort != "default").then_some(reasoning_effort);
         // Every submission carries its own id: a parked row comes back through
         // the engine projection, and this is what lets a withdraw drop exactly
-        // the subscriber that belongs to it.
+        // the subscriber that belongs to it. A 插话 reuses the id its waiting
+        // row already had, so the queue snapshot can find the row it created
+        // and promote it to an interjection.
         let client_message_id = {
+            let mut pending_id = interject_id;
             let mut st = state.borrow_mut();
-            st.send_seq += 1;
-            format!("native-send-{}-{}", std::process::id(), st.send_seq)
+            queue::submission_id(&mut pending_id, &mut st.send_seq)
         };
         // send_chat walks the thread-lease SQLite path, far too slow for the
         // click handler on a cold disk. The composer acknowledges the send at
@@ -3054,7 +3085,14 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                         // the subscriber releases only this window's channel.
                         return;
                     }
-                    if state.borrow().active.is_some() {
+                    // A 插话 is submitted into a thread that is still busy, so
+                    // it waits on its own subscriber like any other parked turn:
+                    // the engine owns its queue row, and painting a bubble now
+                    // would show a「排队中」turn the user never asked for. The
+                    // pump promotes it the moment the row actually starts.
+                    let parked_here =
+                        state.borrow().active.is_some() || (force_submit && !optimistic_visible);
+                    if parked_here {
                         // A turn already owns the live slot, so this one waits on
                         // its own subscriber: the pump promotes whichever parked
                         // stream starts, and the strip shows the engine's queue
@@ -3077,7 +3115,14 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
                             &mut state.borrow_mut().queue_due,
                             Duration::from_millis(220),
                         );
-                        app.set_status("已加入等待发送".into());
+                        app.set_status(
+                            if force_submit {
+                                "已提交，正在插话…"
+                            } else {
+                                "已加入等待发送"
+                            }
+                            .into(),
+                        );
                         return;
                     }
                     // An answered inquiry may already own the timeline.
@@ -3693,6 +3738,9 @@ fn interject_waiting_turn(
             client_message_id.to_string(),
             std::time::Instant::now(),
         ));
+        // The submission below must carry this id as well: the engine keys its
+        // queue row by it, and that row is what the promotion above promotes.
+        st.pending_send_id = Some(client_message_id.to_string());
         st.force_submit = true;
     }
     app.set_draft(turn.content.clone().into());
@@ -3811,13 +3859,30 @@ fn request_queue_refresh(
                     Some(queue_id) => {
                         st.pending_interject = None;
                         let weak = app.as_weak();
+                        let refresh_desktop = desktop.clone();
+                        let refresh_session = session.clone();
+                        let refresh_generation = st.queue_generation.clone();
                         std::thread::spawn(move || {
                             let result = desktop.interject_queue_turn(&session, &queue_id);
-                            let _ = weak.upgrade_in_event_loop(move |app| match result {
-                                Ok(()) => {
-                                    app.set_status("已插话，将在当前动作边界优先执行".into())
+                            let _ = weak.upgrade_in_event_loop(move |app| {
+                                match result {
+                                    Ok(()) => {
+                                        app.set_status("已插话，将在当前动作边界优先执行".into())
+                                    }
+                                    Err(error) => {
+                                        app.set_status(format!("插话失败：{error}").into())
+                                    }
                                 }
-                                Err(error) => app.set_status(format!("插话失败：{error}").into()),
+                                // The row reads its 已插话 state from the
+                                // engine snapshot, so the promotion has to
+                                // read it back or the strip keeps offering a
+                                // click that already landed.
+                                request_queue_refresh(
+                                    &app,
+                                    refresh_desktop,
+                                    refresh_session,
+                                    refresh_generation,
+                                );
                             });
                         });
                     }

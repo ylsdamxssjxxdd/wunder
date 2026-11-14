@@ -603,7 +603,12 @@ fn elide_long_tool_argument_strings(value: &Value, depth: usize) -> Value {
                 .chars()
                 .take(HISTORY_TOOL_ARGS_KEEP_HEAD_CHARS)
                 .collect();
-            Value::String(format!("{head}{}", history_tool_args_elision_marker(chars)))
+            let omitted = chars.saturating_sub(HISTORY_TOOL_ARGS_KEEP_HEAD_CHARS);
+            // 报“省略了多少”，不是“原本多少”：保留的头部不算省略。
+            Value::String(format!(
+                "{head}{}",
+                history_tool_args_elision_marker(omitted)
+            ))
         }
         Value::Array(items) => Value::Array(
             items
@@ -1076,6 +1081,11 @@ mod tests {
         let content = parsed["content"].as_str().expect("content field kept");
         assert!(content.starts_with(&"x".repeat(HISTORY_TOOL_ARGS_KEEP_HEAD_CHARS)));
         assert!(content.contains("characters of this argument were omitted from model history"));
+        // 报的是“省略掉的部分”，保留的头部不算在内。
+        let omitted = body.chars().count() - HISTORY_TOOL_ARGS_KEEP_HEAD_CHARS;
+        assert!(content.contains(&format!(
+            "{omitted} characters of this argument were omitted"
+        )));
         assert!(content.len() < body.len());
         // 结构不变：短字段原样保留，模型仍能知道写了哪个文件。
         assert_eq!(parsed["path"], json!("/tmp/film.js"));

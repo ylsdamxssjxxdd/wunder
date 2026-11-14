@@ -256,6 +256,8 @@ pub async fn tool_transcribe_speech(context: &ToolContext<'_>, args: &Value) -> 
 
 /// 一次图像调用的上下文：失败结果要带全这些信息，调用方才知道自己错在哪。
 struct ImageCallContext<'a> {
+    /// 工具入口时间：成功与失败回执都要给 elapsed_ms，调用方才能建性能基线。
+    started: std::time::Instant,
     model_config: Option<&'a LlmModelConfig>,
     model_name: Option<String>,
     mode: &'a str,
@@ -268,6 +270,7 @@ struct ImageCallContext<'a> {
 impl<'a> ImageCallContext<'a> {
     fn empty() -> Self {
         Self {
+            started: std::time::Instant::now(),
             model_config: None,
             model_name: None,
             mode: "unknown",
@@ -519,6 +522,30 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
         }
     };
 
+    // 任何被缩放的输入都必须说出来：模型看到的是自己给的路径，看不到里面换了尺寸。
+    if let Some(report) = result.resized_input.as_deref() {
+        warnings.push(format!(
+            "主图超出模型尺寸上限，已等比缩小 {}（输出尺寸按缩小后的图计算）。",
+            report
+        ));
+    }
+    if let Some(report) = result.resized_mask.as_deref() {
+        warnings.push(format!(
+            "蒙版已随主图缩放到 {}；蒙版必须与主图同尺寸，否则上游会拒绝。",
+            report
+        ));
+    }
+    if let Some(report) = result.resized_reference.as_deref() {
+        warnings.push(format!("参考图超出尺寸上限，已等比缩小 {}。", report));
+    }
+    for (index, report) in result.resized_extra_inputs.iter().enumerate() {
+        warnings.push(format!(
+            "第 {} 张输入图超出尺寸上限，已等比缩小 {}。",
+            index + 2,
+            report
+        ));
+    }
+
     let actual_format = ImageFormat::from_content_type(&result.content_type).unwrap_or(format);
     if actual_format != format {
         warnings.push(format!(
@@ -555,6 +582,8 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
         size_bytes: result.bytes.len(),
     };
 
+    // 计时包含参数校验、输入图缩放、上游请求与落盘，正好是调用方感知的墙钟时间。
+    let elapsed_ms = ctx.started.elapsed().as_millis() as u64;
     let edited = ctx.mode == "image_edit";
     // 编辑模式必须说清“从哪张图改的”，否则模型会把结果当成一次新的文生图。
     let summary = if edited {
@@ -599,6 +628,10 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
             "seed": effective_seed,
             "seed_source": seed_source,
             "input_resized": result.resized_input,
+            "mask_resized": result.resized_mask,
+            "reference_resized": result.resized_reference,
+            "extra_inputs_resized": result.resized_extra_inputs,
+            "elapsed_ms": elapsed_ms,
             "input_paths": input_paths,
             "mask_path": mask_path,
             "reference_path": reference_path,
@@ -671,6 +704,7 @@ fn image_failure_result(
         "failure_summary": failure.message,
         "next_step_hint": failure.hint,
         "suggested_size": failure.suggested_size,
+        "elapsed_ms": ctx.started.elapsed().as_millis() as u64,
         "warnings": warnings,
     });
     if let (Some(field), Some(map)) = (failure.field.as_deref(), data.as_object_mut()) {
@@ -762,7 +796,7 @@ fn classify_provider_failure(
         return ImageFailure::new(
             "IMAGE_SIZE_ALIGNMENT_INVALID",
             false,
-            format!("{}拒绝了请求：{}。{}", who, detail, fix),
+            format!("{}拒绝了请求：{}。", who, detail),
             fix,
         )
         .with_suggested_size(suggestion);
@@ -957,7 +991,10 @@ fn resolve_media_target(
     if absolute.exists() && !overwrite {
         return Err(ImageFailure::request(
             "path",
-            format!("`{}` 已存在，本次会覆盖它", relative_normalized),
+            format!(
+                "`{}` 已存在，为避免覆盖已有文件，本次没有写入",
+                relative_normalized
+            ),
             "换成新文件名；确实要覆盖就显式传 `overwrite: true`。",
         ));
     }
@@ -1462,9 +1499,10 @@ fn extension_from_content_type(content_type: &str, fallback: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_provider_failure, optional_f32, optional_u32, provider_http_status,
-        random_image_seed, resolve_media_target, resolve_reference_audio_path_with_roots,
-        should_resolve_ref_audio_as_path,
+        classify_provider_failure, image_failure_result, optional_f32, optional_u32,
+        provider_http_status, random_image_seed, resolve_media_target,
+        resolve_reference_audio_path_with_roots, should_resolve_ref_audio_as_path,
+        ImageCallContext, ImageFailure,
     };
     use crate::config::LlmModelConfig;
     use crate::path_utils::normalize_path_for_compare;
@@ -1536,7 +1574,26 @@ mod tests {
         assert!(!failure.retryable);
         // 建议值必须同时满足对齐与上限（`vllm_omni` 上限 1440），不能给出超限的 1920x1088。
         assert_eq!(failure.suggested_size.as_deref(), Some("1440x1088"));
-        assert!(failure.message.contains("1440x1088"));
+        // 建议只出现在 hint 里，正文不再重复同一句。
+        assert!(failure.hint.contains("1440x1088"));
+        assert!(!failure.message.contains("1440x1088"));
+        assert!(failure.message.contains("divisible by 16"));
+    }
+
+    #[test]
+    fn failure_result_reports_elapsed_ms_and_keeps_hint_out_of_the_summary() {
+        let ctx = ImageCallContext::empty();
+        let failure = ImageFailure::request("path", "指向目录", "改成 `temp/out.png`。");
+        let payload = image_failure_result(&failure, &ctx, &[]);
+        assert!(payload["data"]["elapsed_ms"].as_u64().is_some());
+        let summary = payload["data"]["failure_summary"]
+            .as_str()
+            .expect("failure_summary");
+        assert_eq!(summary, "参数 `path` 不合法：指向目录");
+        assert_eq!(
+            payload["data"]["next_step_hint"].as_str(),
+            Some("改成 `temp/out.png`。")
+        );
     }
 
     #[test]
@@ -1685,7 +1742,9 @@ mod tests {
             false,
         )
         .expect_err("existing file must be rejected");
-        assert!(blocked.message.contains("overwrite"), "{}", blocked.message);
+        assert!(blocked.message.contains("已存在"), "{}", blocked.message);
+        // 怎么改只在 hint 里说一次，正文不重复。
+        assert!(blocked.hint.contains("overwrite"), "{}", blocked.hint);
         assert!(resolve_media_target(
             workspace.as_ref(),
             "alice__c__1",

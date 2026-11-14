@@ -358,10 +358,12 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
   - 输入图：`input_paths`（数组，第一张为主图）是唯一规范参数，`input_path` 为兼容别名；两者同时给出直接报错，不再静默合并，也不再排序打乱主图。
   - 蒙版：`mask_path` 白色=重绘区域、黑色=保留；必须与主图同尺寸（尺寸不符返回 `IMAGE_INPUT_INVALID`，消息里明确写“蒙版”）；全黑/全白会写入 `warnings`；必须配合 `input_paths`。
   - `seed`：0 到 4294967295 的整数；留空时工具生成一个并回显（`seed` + `seed_source=auto`），便于复现。负数、小数、超大值返回可操作的中文错误，而不是裸 serde 报文。
-  - `strength`：0 到 1，仅编辑生效；越界报错，文生图传入会忽略并写 `warnings`。
+  - `strength`：高级参数，模型可见面已撤下（`drop_fields`），默认值由模型配置 `image_strength` 提供；仍接受显式传入并校验 0 到 1，越界报错，文生图传入会忽略并写 `warnings`。
+  - 输入图缩放可见：主图、蒙版、参考图、第二张及之后的输入图超出上限被等比缩小时，回执 `warnings` 逐条说明，并在 `data.input_resized/mask_resized/reference_resized/extra_inputs_resized` 给出 `原尺寸->新尺寸`。
+  - `input_paths: []`（或全是空字符串）按文生图处理，但会写一条 `warnings`，不与“根本没传输入图”混为一谈。
   - `overwrite`：默认 false，`path` 已存在时直接报错；目录、越出工作区、与输入图同名的输出路径一律拒绝。
-  - 成功回执新增 `seed/seed_source`、`size/size_source/requested_size`、`output_format/requested_output_format`、`limits`（默认尺寸、上限、对齐、短边下限）与 `warnings`（空数组表示没有任何隐式改写）；`workspace_relative_path` 永远是归一化的工作区相对路径。
-  - 失败统一为「谁错了 + 为什么 + 怎么改」，并如实标注 `retryable`：`TOOL_TIMEOUT`、`IMAGE_PROVIDER_BUSY`（429）、`IMAGE_PROVIDER_ERROR`（5xx/上游内部错误）为 true，参数与输入类错误为 false。
+  - 成功回执新增 `seed/seed_source`、`size/size_source/requested_size`、`output_format/requested_output_format`、`limits`（默认尺寸、上限、对齐、短边下限）、`elapsed_ms`（工具入口到落盘的墙钟耗时，含参数校验、输入图缩放与上游请求）与 `warnings`（空数组表示没有任何隐式改写）；`workspace_relative_path` 永远是归一化的工作区相对路径。失败回执同样带 `elapsed_ms`。
+  - 失败文案分工固定：`error`/`failure_summary` 只说「谁错了 + 为什么」，`next_step_hint`/`error_meta.hint` 只说「怎么改」，两者不重复同一句话；并如实标注 `retryable`：`TOOL_TIMEOUT`、`IMAGE_PROVIDER_BUSY`（429）、`IMAGE_PROVIDER_ERROR`（5xx/上游内部错误）为 true，参数与输入类错误为 false。
   - 错误码集合：`IMAGE_REQUEST_INVALID`、`IMAGE_INPUT_INVALID`、`IMAGE_SIZE_ALIGNMENT_INVALID`、`IMAGE_MODEL_NOT_CONFIGURED`、`IMAGE_PROVIDER_RESPONSE_INVALID`、`IMAGE_PROVIDER_BUSY`、`IMAGE_PROVIDER_ERROR`、`IMAGE_GENERATION_FAILED`、`TOOL_TIMEOUT`、`IMAGE_WRITE_FAILED`。
 - 新增内置工具 `计划面板`（英文别名 `update_plan`），用于更新计划看板并触发 `plan_update` 事件。
 - 新增内置工具 `问询面板`（英文别名 `question_panel`/`ask_panel`），用于提供多条路线选择并触发 `question_panel` 事件。
@@ -1353,7 +1355,7 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力；配置页只需要连接字段。
   - 说明：`model_type=asr` 表示声转文模型，按 OpenAI 兼容 `/v1/audio/transcriptions` 发起 multipart 转写；额外支持默认 `asr_language/asr_prompt/asr_response_format/asr_temperature`，请求体同名字段可临时覆盖。
   - 说明：`model_type=tts` 表示文转声模型，聊天页语音播放会经 `/wunder/chat/tts` 转发到 OpenAI 兼容 `/v1/audio/speech`；额外支持默认 `tts_voice/tts_instructions/tts_response_format/tts_speed`，请求体同名字段可临时覆盖。
-  - 说明：`model_type=image` 表示图像生成模型，配置层预留 OpenAI 兼容 `/v1/images/generations` 能力；额外支持 `image_default_size`（默认输出尺寸，留空按 1024x1024）与 `image_max_size`（请求上限，超出时按最大边等比缩小并写进工具回执的 warnings，留空按 1024x1024），以及 `image_output_format/image_negative_prompt/image_num_inference_steps/image_guidance_scale`。
+  - 说明：`model_type=image` 表示图像生成模型，配置层预留 OpenAI 兼容 `/v1/images/generations` 能力；额外支持 `image_default_size`（默认输出尺寸，留空按 1024x1024）与 `image_max_size`（请求上限，超出时按最大边等比缩小并写进工具回执的 warnings，留空按 1024x1024），以及 `image_output_format/image_negative_prompt/image_num_inference_steps/image_guidance_scale/image_strength`。
   - 说明：带原生工具调用的请求默认仍走流式；工具参数会先归一化，再进入工具 schema/admission 校验。参数缺失或格式错误直接作为短工具错误回传模型，不切换非流式，也不触发 provider 重试；真实 provider/网络失败仍按 `llm_stream_retry` 恢复。
   - 说明：`history_compaction_ratio` 默认 `0.9`，达到 `max_context * ratio` 后会优先触发预压缩。
   - 说明：当前压缩策略已对齐 Codex，不再支持 `history_compaction_reset`。压缩后统一提交 `replacement_history`，其主体为首尾归一化交互窗口与一条 `[上下文摘要]` 消息，不再依赖前后锚点与 reset mode；运行中压缩还会为当前轮追加临时 `user` 续跑指令，但该指令不会写入 `replacement_history`。压缩摘要会输出 `resume_action=final|continue|retry|ask_user`，用于指导当前轮续跑。

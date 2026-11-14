@@ -1432,11 +1432,13 @@ impl TuiApp {
         // Discoverability gate (plan N6): the command-center entry must stay
         // visible in the composer footer; build_footer_spans drops the
         // description first when the terminal is narrow. The key is the arrow
-        // itself, so the label must not repeat it as a trailing glyph.
+        // itself, so the label carries the verb ("enter") and nobody has to
+        // guess that the arrow means "press left" — and it must not repeat the
+        // key as a trailing glyph.
         let hint = if self.is_zh_language() {
-            "任务中心"
+            "进入任务中心"
         } else {
-            "thread center"
+            "enter thread center"
         };
         items.push(("←".to_string(), hint.to_string()));
 

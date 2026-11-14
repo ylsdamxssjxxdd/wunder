@@ -305,6 +305,24 @@ pub fn waiting_is_full(waiting: &[WaitingTurn], session: &str) -> bool {
         >= STRIP_ROWS
 }
 
+/// The id a submission opens with. A 插话 lifts a message that already had an
+/// id: the engine keys the queue row it creates by that id, and the promotion
+/// that turns the row into an interjection looks for exactly that key. Every
+/// other send mints a fresh one.
+///
+/// Minting a new id for an interjected send left the promotion searching the
+/// queue snapshot for a row no submission ever created, so the message stayed a
+/// plain queued turn — the「排队中」bubble the local hold exists to avoid.
+pub fn submission_id(pending: &mut Option<String>, seq: &mut u64) -> String {
+    match pending.take() {
+        Some(id) if !id.is_empty() => id,
+        _ => {
+            *seq += 1;
+            format!("native-send-{}-{}", std::process::id(), *seq)
+        }
+    }
+}
+
 /// Move `queue_id` by `delta` inside the current order and hand back the whole
 /// list, which is what the engine's reorder call wants. `None` means the drag
 /// left the list (a row that no longer exists), `Some(empty)` means it was a
@@ -586,6 +604,36 @@ mod tests {
 
         let (rows, _) = project_rows_with_waiting(&[], &waiting_for_session(&waiting, "线程丙"));
         assert!(rows.is_empty(), "a thread holds none of these messages");
+    }
+
+    #[test]
+    fn an_interjected_send_reuses_the_id_of_the_row_it_lifts() {
+        let mut pending = Some("send-a".to_string());
+        let mut seq = 4;
+        let id = submission_id(&mut pending, &mut seq);
+        assert_eq!(id, "send-a");
+        assert_eq!(seq, 4, "a reused id must not burn a sequence number");
+        assert!(pending.is_none(), "the hand-over is one-shot");
+    }
+
+    #[test]
+    fn an_ordinary_send_mints_a_fresh_id() {
+        let mut pending = None;
+        let mut seq = 0;
+        let first = submission_id(&mut pending, &mut seq);
+        let second = submission_id(&mut None, &mut seq);
+        assert_eq!(seq, 2);
+        assert_ne!(first, second);
+        assert!(first.starts_with("native-send-"));
+        assert!(first.ends_with("-1"));
+    }
+
+    #[test]
+    fn an_empty_hand_over_falls_back_to_a_new_id() {
+        let mut pending = Some(String::new());
+        let mut seq = 7;
+        let id = submission_id(&mut pending, &mut seq);
+        assert!(id.ends_with("-8"), "{id}");
     }
 
     #[test]

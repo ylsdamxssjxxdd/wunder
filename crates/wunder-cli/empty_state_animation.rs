@@ -11,10 +11,11 @@
 //! The relief is sampled per *cell*, not per character: a cell is two pixels
 //! wide and two pixels tall, and how tall it is in real pixels depends on the
 //! terminal font. A cell is never square, so the art is fitted to the cell
-//! aspect the terminal reports (`ws_xpixel`/`ws_ypixel`) and, when it reports
-//! nothing, to the aspect of a typical monospace font. Painting 1:1 pixels into
-//! cells stretches the head vertically by that same factor, which reads as a
-//! head squeezed horizontally.
+//! aspect the terminal reports: first `ws_xpixel`/`ws_ypixel`, then the reply to
+//! `CSI 14 t`/`CSI 18 t` (the only source VTE terminals give), and only when
+//! nothing answers to the aspect of a typical monospace font. Painting 1:1
+//! pixels into cells stretches the head vertically by that same factor, which
+//! reads as a head squeezed horizontally.
 
 #[path = "welcome_logo_art.rs"]
 mod welcome_logo_art;
@@ -46,6 +47,18 @@ const CELL_ASPECT_RANGE: std::ops::RangeInclusive<f32> = 1.2..=4.0;
 /// Explicit override for terminals that cannot be measured, e.g. a font whose
 /// line height is unusual.
 const CELL_ASPECT_ENV: &str = "WUNDER_CLI_CELL_ASPECT";
+/// Queries answered by xterm-compatible terminals: the text area in pixels and
+/// the same area in cells. VTE answers both; it ignores `CSI 16 t`, which would
+/// have given the cell size directly.
+#[cfg(unix)]
+const CELL_SIZE_QUERY: &[u8] = b"\x1b[14t\x1b[18t";
+/// Total time the probe waits for those replies. A terminal answers within
+/// microseconds, so a silent one only costs the user this much at startup.
+#[cfg(unix)]
+const CELL_SIZE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(120);
+/// Longest single wait inside the probe, so the loop re-checks the deadline.
+#[cfg(unix)]
+const CELL_SIZE_POLL_SLICE: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// Half-block rows for the welcome avatar, sized to the terminal width and to
 /// the cell aspect the terminal reports.
@@ -60,12 +73,150 @@ pub(crate) fn logo_lines_for_cell(columns: u16, cell_aspect: f32) -> Vec<Line<'s
 }
 
 /// How many cell-heights one cell is, and therefore how the head has to be
-/// sampled to stay round on screen: a measured pixel size wins, then an
-/// explicit override, then the font family's usual ratio.
+/// sampled to stay round on screen: an explicit override wins, then a measured
+/// pixel size, then the terminal's own answer about its cell size, then the
+/// font family's usual ratio.
 fn cell_aspect() -> f32 {
     env_cell_aspect()
         .or_else(terminal_cell_aspect)
+        .or_else(probed_cell_aspect)
         .unwrap_or(FALLBACK_CELL_ASPECT)
+}
+
+/// Cell aspect as answered by the terminal itself, `None` on platforms that are
+/// not asked (Windows consoles never answer these queries).
+#[cfg(not(unix))]
+fn probed_cell_aspect() -> Option<f32> {
+    None
+}
+
+/// Ask the terminal for its text area in pixels (`CSI 14 t`) and in cells
+/// (`CSI 18 t`); their quotient is the real cell aspect.
+///
+/// This is the only way to learn the font geometry of a VTE-based terminal
+/// (GNOME Terminal, Tilix, Terminator): those answer `TIOCGWINSZ` with zero
+/// `ws_xpixel`/`ws_ypixel`, so the measurement above never fires and the head
+/// used to be painted for a 2.1 cell — on a 10×26 cell that is a fifth too
+/// tall, which reads as a head squeezed sideways. The replies are consumed from
+/// the raw input here; unrecognised escape sequences are ignored by the event
+/// loop if one ever arrives late.
+#[cfg(unix)]
+fn probed_cell_aspect() -> Option<f32> {
+    static PROBED: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *PROBED.get_or_init(query_cell_aspect)
+}
+
+#[cfg(unix)]
+fn query_cell_aspect() -> Option<f32> {
+    use std::io::{IsTerminal, Read, Write};
+
+    // A piped or redirected run has no terminal to answer, and writing queries
+    // into someone's file would be worse than a slightly wrong head.
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        return None;
+    }
+    // `TERM=dumb` is a terminal that answers nothing by contract; waiting for it
+    // would only slow the first frame down.
+    if std::env::var("TERM").is_ok_and(|term| term.eq_ignore_ascii_case("dumb")) {
+        return None;
+    }
+    let mut stdout = std::io::stdout();
+    stdout.write_all(CELL_SIZE_QUERY).ok()?;
+    stdout.flush().ok()?;
+
+    let mut stdin = std::io::stdin();
+    let mut replies = Vec::with_capacity(48);
+    let deadline = std::time::Instant::now() + CELL_SIZE_PROBE_TIMEOUT;
+    while stdin_readable(deadline) {
+        let mut chunk = [0u8; 32];
+        match stdin.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => replies.extend_from_slice(&chunk[..read]),
+        }
+        if let Some(aspect) = cell_aspect_from_replies(&replies) {
+            return Some(aspect);
+        }
+    }
+    None
+}
+
+/// Waits for more bytes on `stdin`, never past `deadline`. Polling in slices
+/// keeps a terminal that answers only one of the two queries from stalling the
+/// whole probe.
+#[cfg(unix)]
+fn stdin_readable(deadline: std::time::Instant) -> bool {
+    use std::os::fd::AsRawFd;
+
+    let now = std::time::Instant::now();
+    if now >= deadline {
+        return false;
+    }
+    let slice = (deadline - now).min(CELL_SIZE_POLL_SLICE);
+    let mut fd = libc::pollfd {
+        fd: std::io::stdin().as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: one valid `pollfd` for the borrowed stdin descriptor, and the
+    // timeout is a plain millisecond count.
+    let ready = unsafe { libc::poll(&mut fd, 1, slice.as_millis() as libc::c_int) };
+    ready > 0 && fd.revents & libc::POLLIN != 0
+}
+
+/// The two replies as the terminal sent them: `ESC [ 4 ; height ; width t` for
+/// the text area in pixels and `ESC [ 8 ; rows ; columns t` for the grid. Both
+/// are needed; a single one is not enough to know a cell's shape.
+#[cfg(any(unix, test))]
+#[cfg_attr(all(not(unix), test), allow(dead_code))]
+fn cell_aspect_from_replies(replies: &[u8]) -> Option<f32> {
+    let (mut pixels, mut cells) = (None, None);
+    for params in csi_reports(replies) {
+        match params.as_slice() {
+            [4, height, width] => pixels = Some((*height, *width)),
+            [8, rows, columns] => cells = Some((*rows, *columns)),
+            _ => {}
+        }
+    }
+    let (height, width) = pixels?;
+    let (rows, columns) = cells?;
+    measured_cell_aspect(columns, rows, width, height)
+}
+
+/// Every `ESC [ <params> t` in `replies`, as parsed parameters. Anything that
+/// is not such a report — including half-arrived ones — is skipped instead of
+/// guessed at.
+#[cfg(any(unix, test))]
+fn csi_reports(replies: &[u8]) -> Vec<Vec<u16>> {
+    let mut reports = Vec::new();
+    let mut index = 0;
+    while index + 2 < replies.len() {
+        if replies[index] != 0x1b || replies[index + 1] != b'[' {
+            index += 1;
+            continue;
+        }
+        let start = index + 2;
+        let mut end = start;
+        while end < replies.len() && (replies[end].is_ascii_digit() || replies[end] == b';') {
+            end += 1;
+        }
+        if end < replies.len() && replies[end] == b't' {
+            if let Some(params) = parse_report_parameters(&replies[start..end]) {
+                reports.push(params);
+            }
+            index = end + 1;
+        } else {
+            index = start;
+        }
+    }
+    reports
+}
+
+#[cfg(any(unix, test))]
+fn parse_report_parameters(raw: &[u8]) -> Option<Vec<u16>> {
+    let text = std::str::from_utf8(raw).ok()?;
+    text.split(';')
+        .map(|part| part.parse::<u16>().ok())
+        .collect()
 }
 
 /// `WUNDER_CLI_CELL_ASPECT` lets a terminal that reports nothing still get the
@@ -91,7 +242,7 @@ fn terminal_cell_aspect() -> Option<f32> {
 
 /// Cell aspect from a window size, `None` when the numbers cannot be trusted.
 /// VTE-based terminals (GNOME Terminal, Tilix) report zeroes here, which is why
-/// the fallback matters as much as the measurement.
+/// the terminal query and the fallback matter as much as the measurement.
 /// Windows consoles never reach this path, only the tests do.
 #[cfg_attr(all(windows, not(test)), allow(dead_code))]
 fn measured_cell_aspect(columns: u16, rows: u16, width_px: u16, height_px: u16) -> Option<f32> {
@@ -385,6 +536,50 @@ mod tests {
         assert_eq!(measured_cell_aspect(0, 24, 800, 480), None);
         assert_eq!(measured_cell_aspect(80, 24, 800, 40), None);
         assert_eq!(measured_cell_aspect(80, 24, 800, 9600), None);
+    }
+
+    /// A VTE terminal (GNOME Terminal) answers `CSI 14 t` with its text area in
+    /// pixels and `CSI 18 t` with the same area in cells, while `TIOCGWINSZ`
+    /// keeps `ws_xpixel`/`ws_ypixel` at zero. These are the numbers a real
+    /// 80×24 window reported: 800×624 px, i.e. a 10×26 cell.
+    #[cfg(unix)]
+    const VTE_WINDOW_REPORT: &[u8] = b"\x1b[4;624;800t\x1b[8;24;80t";
+
+    #[cfg(unix)]
+    #[test]
+    fn the_terminal_itself_tells_the_cell_aspect_when_the_window_size_has_no_pixels()
+    {
+        // 26 / 10: a cell taller than any monospace font metric, which is why
+        // the 2.1 fallback painted the head with a fifth too many rows.
+        assert_eq!(cell_aspect_from_replies(VTE_WINDOW_REPORT), Some(2.6));
+        // A half-arrived reply is not a measurement; neither is a zero size nor
+        // an unrelated report.
+        assert_eq!(cell_aspect_from_replies(b"\x1b[4;624;800t"), None);
+        assert_eq!(cell_aspect_from_replies(b"\x1b[8;24;80t"), None);
+        assert_eq!(cell_aspect_from_replies(b"\x1b[4;624;0t\x1b[8;24;80t"), None);
+        assert_eq!(
+            cell_aspect_from_replies(b"\x1b[6;10;20t\x1b[4;624;800t\x1b[8;24;80t"),
+            Some(2.6)
+        );
+        // Bytes before and after the reports (a stray key, a split read) do not
+        // hide them.
+        assert_eq!(
+            cell_aspect_from_replies(b"q\x1b[4;624;800t\x1b[8;24;80t\x1b["),
+            Some(2.6)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_vte_cell_keeps_the_head_round_at_the_same_width() {
+        // 40 × 34 / (40 × 2.6) = 13.1 → 13 rows: 400 px wide by 338 px tall on
+        // screen, the 1.18 of the source. The 2.1 fallback drew 16 rows, i.e.
+        // 416 px tall, and the head read as squeezed sideways.
+        let art = logo_lines_for_cell(80, 2.6);
+        assert_eq!(art.len(), 13);
+        assert!(art
+            .iter()
+            .all(|line| line.spans.len() == welcome_logo_art::SOURCE_WIDTH));
     }
 
     #[test]

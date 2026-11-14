@@ -3016,8 +3016,8 @@
     "zh-CN": "已弃用：请改用 input_paths（单图也写成数组）。旧的单图编辑模式仍兼容，但与 input_paths 同时给出会直接报错，不再静默合并。"
   },
   "tool.spec.generate_image.args.input_paths": {
-    "en-US": "Workspace image paths to edit or reference, in order; the first one is the primary image. Cannot be combined with input_path.",
-    "zh-CN": "要修改或参考的工作区图片路径数组，保持顺序，第一张是主图；不能与 input_path 同时使用。"
+    "en-US": "Workspace image paths to edit, in order; the first one is the primary image. An empty array means text-to-image and is reported in warnings. Cannot be combined with input_path.",
+    "zh-CN": "要修改的工作区图片路径数组，保持顺序，第一张是主图；空数组按文生图处理并写入 warnings。不能与 input_path 同时使用。"
   },
   "tool.spec.generate_image.args.mask_path": {
     "en-US": "Optional inpainting mask: white (non-black) = the region to repaint, black = keep. It must be the same pixel size as the primary image, and an all-black or all-white mask is reported in warnings. Requires input_paths.",
@@ -3028,8 +3028,8 @@
     "zh-CN": "可选，编辑/合成模型使用的附加参考图；必须与 input_paths 一起用，单独给出会报错。"
   },
   "tool.spec.generate_image.args.strength": {
-    "en-US": "Optional edit strength from 0 to 1 (out-of-range values are rejected). It only applies to image-to-image/edit; for text-to-image it is ignored and noted in warnings.",
-    "zh-CN": "可选，编辑强度 0 到 1（越界直接报错），只对图生图/编辑生效；文生图传入会被忽略并写入 warnings。"
+    "en-US": "Advanced knob, normally leave it empty: the model config decides the edit strength. Pass it only when this single call needs a different amount of change. Range 0 to 1 (out of range is rejected); it applies to image-to-image/edit only and is ignored with a warning for text-to-image.",
+    "zh-CN": "高级参数，通常不用传：改动幅度由模型配置决定。只有这一次调用需要不同幅度时才显式指定。取值 0 到 1（越界直接报错），只对图生图/编辑生效；文生图传入会被忽略并写入 warnings。"
   },
   "tool.spec.generate_image.args.overwrite": {
     "en-US": "Optional, default false: an existing path is an error. Pass true to explicitly allow overwriting an existing file.",
