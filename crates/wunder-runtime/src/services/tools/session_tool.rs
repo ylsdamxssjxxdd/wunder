@@ -198,7 +198,10 @@ pub(crate) async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Re
         workspace_id: None,
         model_name: model_name.clone(),
         language: Some(i18n::get_language()),
-        config_overrides: context.request_config_overrides.cloned(),
+        // The caller's open lease and turn/resume cursors belong to the caller's
+        // own thread; handing them to another session fails that session's turn
+        // acceptance with a stale-lease error.
+        config_overrides: super::session_run_lifecycle::child_config_overrides(context),
         agent_prompt,
         preview_skill: agent_record
             .as_ref()

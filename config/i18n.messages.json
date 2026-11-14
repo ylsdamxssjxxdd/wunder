@@ -3,6 +3,10 @@
     "en-US": "Cloud workspace",
     "zh-CN": "云端工作区"
   },
+  "cron.thread_label": {
+    "en-US": "Scheduled run",
+    "zh-CN": "定时任务执行"
+  },
   "attachment.default_name": {
     "en-US": "File",
     "zh-CN": "文件"
@@ -2628,12 +2632,12 @@
     "zh-CN": "Cron 解析使用的时区，例如 Asia/Shanghai。"
   },
   "tool.spec.schedule_task.args.job.schedule_text": {
-    "en-US": "Preferred shortcut. English or Chinese natural language, or cron, such as 'every 5 minutes', '每天 09:00', '每 5 分钟', or '0 9 * * *'.",
-    "zh-CN": "推荐快捷写法。可填中文或英文自然语言、cron 文本，例如“每天 09:00”“每 5 分钟”“every 5 minutes”或“0 9 * * *”。"
+    "en-US": "Preferred shortcut. English or Chinese natural language, or cron: recurring 'every 5 minutes' / '每天 09:00' / '每 5 分钟' / '0 9 * * *'; one-shot '3 分钟后' / 'in 30 minutes' / 'after 2h' (stored as kind=at and self-deleting by default).",
+    "zh-CN": "推荐快捷写法。循环任务：“每天 09:00”“每 5 分钟”“every 5 minutes”“0 9 * * *”；一次性任务：“3 分钟后”“in 30 minutes”“after 2h”，会转成 at 调度并默认执行后自删。"
   },
   "tool.spec.schedule_task.args.job.session": {
-    "en-US": "main sends the trigger into the job's bound task thread at run time. isolated runs in a fresh child thread and publishes a completed result turn to the bound thread without another model call. Switching threads does not change the binding.",
-    "zh-CN": "main 表示触发时把消息送入该定时任务绑定的线程。isolated 表示在新子线程执行，完成后发布独立结果轮次，不再调用模型。切换线程不会改变任务绑定。"
+    "en-US": "main interrupts the bound thread and runs the trigger there. isolated runs in its own child thread (labeled, archived after the run) and posts the completed result turn to the bound thread. Switching threads does not change the binding.",
+    "zh-CN": "main 表示触发时打断任务绑定的线程并在其中执行。isolated 表示在独立子线程执行（会打上“定时任务执行”标记，跑完自动归档），完成后把结果轮次发回绑定线程。切换线程不会改变任务绑定。"
   },
   "tool.spec.schedule_task.args.job.payload": {
     "en-US": "Payload (message).",
@@ -2652,16 +2656,16 @@
     "zh-CN": "任务创建后是否立即启用。"
   },
   "tool.spec.schedule_task.args.job.delete_after_run": {
-    "en-US": "Delete after run.",
-    "zh-CN": "执行后删除。"
+    "en-US": "Remove the job after one successful run. Defaults to true for one-shot (at) schedules.",
+    "zh-CN": "执行成功后删除任务。一次性（at）调度默认开启。"
   },
   "tool.spec.schedule_task.args.job.dedupe_key": {
     "en-US": "Dedupe key.",
     "zh-CN": "去重key。"
   },
   "tool.spec.schedule_task.description": {
-    "en-US": "Create and manage scheduled jobs. Prefer flat fields (action, job_id, schedule_text, message, session, enabled). session=main injects the trigger into the job's bound thread; session=isolated runs in a fresh child thread and publishes a completed result turn. run is asynchronous: queued means accepted, not finished, so end the reply instead of polling. schedule.at must be ISO 8601.",
-    "zh-CN": "创建和管理定时任务。优先使用扁平字段（action、job_id、schedule_text、message、session、enabled）。session=main 在触发时把消息注入任务绑定的线程；session=isolated 在新子线程执行，完成后发布独立结果轮次。run 是异步触发，queued 仅代表受理，应结束当前回复而不要轮询。schedule.at 必须是 ISO 8601。"
+    "en-US": "Create and manage scheduled jobs. Prefer flat fields (action, job_id, schedule_text, message, session, enabled). session=main interrupts the bound thread and runs there; session=isolated runs in its own child thread and posts the completed result turn back. run is asynchronous: queued means accepted, not finished, so end the reply instead of polling. One-shot delays such as '3 分钟后' are supported and self-delete by default; schedule.at must be ISO 8601.",
+    "zh-CN": "创建和管理定时任务。优先使用扁平字段（action、job_id、schedule_text、message、session、enabled）。session=main 触发时打断绑定线程并在其中执行；session=isolated 在独立子线程执行，完成后把结果轮次发回绑定线程。run 是异步触发，queued 仅代表受理，应结束当前回复而不要轮询。支持“3 分钟后”这类一次性调度并默认执行后自删；schedule.at 必须是 ISO 8601。"
   },
   "tool.spec.user_world.args.action": {
     "en-US": "Action: list_users/send_message.",

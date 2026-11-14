@@ -14,6 +14,8 @@ use wunder_desktop::NativeDesktop;
 /// Refresh cadence while the dialog is open. The reload is paged and bounded,
 /// so the cadence only decides latency, never the cost shape.
 const REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
+/// One header line of task text; longer briefs elide instead of overflowing.
+const TASK_MAX_CHARS: usize = 220;
 
 struct State {
     /// The child thread the dialog shows.
@@ -245,7 +247,7 @@ fn refresh_tick(
                         .find(|turn| !turn.user.text.is_empty())
                         .map(|turn| turn.user.text.clone())
                     {
-                        app.set_subagent_task(task.into());
+                        app.set_subagent_task(single_line_task(&task).into());
                     }
                 }
                 None => {
@@ -256,6 +258,17 @@ fn refresh_tick(
             true
         });
     }
+}
+
+/// The header keeps the task on one line: the parent's brief is often
+/// multi-line, and a wrapped block would paint over the rows beside it.
+fn single_line_task(task: &str) -> String {
+    let collapsed = task.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut short: String = collapsed.chars().take(TASK_MAX_CHARS).collect();
+    if collapsed.chars().count() > TASK_MAX_CHARS {
+        short.push('…');
+    }
+    short
 }
 
 /// Project one card onto the dialog header: identity, live status and the
@@ -294,4 +307,25 @@ fn poll(mut receive: impl FnMut() -> bool + 'static) {
             poll(receive);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_line_collapses_whitespace_into_one_line() {
+        assert_eq!(
+            single_line_task("这是一个任务：\n1. 报告目录\n2. 统计数量"),
+            "这是一个任务： 1. 报告目录 2. 统计数量"
+        );
+    }
+
+    #[test]
+    fn task_line_elides_instead_of_overflowing() {
+        let long = "x".repeat(TASK_MAX_CHARS + 10);
+        let short = single_line_task(&long);
+        assert_eq!(short.chars().count(), TASK_MAX_CHARS + 1);
+        assert!(short.ends_with('…'));
+    }
 }

@@ -4726,6 +4726,30 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_editor_open(true);
             ui.set_settings_page(2);
         }
+        // 图像模型的编辑表单：提供方只有 vllm_omni，基础区还会多出默认/最大
+        // 尺寸两行，用来核对类型切换后的字段与行距。
+        "editor-image" => {
+            let mut card = preview_model_card(
+                "preview-image",
+                "image",
+                "预览图像模型",
+                "http://127.0.0.1:8000/v1",
+                false,
+            );
+            card.provider = "vllm_omni".into();
+            card.image_default_size = "1024x1024".into();
+            card.image_max_size = "1440x1440".into();
+            ui.set_settings_page(1);
+            ui.set_settings_open(true);
+            ui.set_editor_key(card.key.clone());
+            ui.set_editor_new(false);
+            ui.set_editor_default(false);
+            ui.set_editor_draft(card);
+            ui.set_editor_secret("".into());
+            ui.set_editor_probe("".into());
+            ui.set_editor_open(true);
+            ui.set_settings_page(2);
+        }
         "editor-new" => {
             let card = preview_model_card("", "llm", "", "", false);
             ui.set_settings_page(1);

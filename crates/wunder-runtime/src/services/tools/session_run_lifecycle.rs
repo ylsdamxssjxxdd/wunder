@@ -176,6 +176,14 @@ pub(crate) fn prepare_child_session(
         .as_ref()
         .and_then(|record| record.agent_id.clone())
         .or_else(|| context.agent_id.map(|value| value.to_string()));
+    // A child works on the same files as its parent: inherit the workspace so
+    // the child thread shows up beside it and its tools keep the same root.
+    let parent_workspace_id = parent_record
+        .as_ref()
+        .and_then(|record| record.workspace_id.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     let parent_agent_record = load_agent_record(
         context.storage.as_ref(),
         user_id,
@@ -228,7 +236,7 @@ pub(crate) fn prepare_child_session(
         updated_at: now,
         last_message_at: now,
         agent_id: child_agent_id.clone(),
-        workspace_id: None,
+        workspace_id: parent_workspace_id.clone(),
         tool_overrides: child_tool_names.clone(),
         parent_session_id: Some(cleaned_parent_session_id.to_string()),
         parent_message_id: parent_turn_ref.clone(),
@@ -295,8 +303,12 @@ pub(crate) fn prepare_child_session(
 /// session fails the child's turn acceptance with a stale-lease error, so a
 /// child request starts from the same configuration without the parent's
 /// turn identity.
-fn child_config_overrides(context: &ToolContext<'_>) -> Option<Value> {
-    let mut overrides = context.request_config_overrides.cloned()?;
+pub(crate) fn child_config_overrides(context: &ToolContext<'_>) -> Option<Value> {
+    strip_child_config_overrides(context.request_config_overrides.cloned())
+}
+
+fn strip_child_config_overrides(overrides: Option<Value>) -> Option<Value> {
+    let mut overrides = overrides?;
     if let Some(map) = overrides.as_object_mut() {
         for key in [
             "__local_open_lease",
@@ -793,6 +805,45 @@ mod tests {
     use super::*;
     use crate::storage::SqliteStorage;
     use std::collections::HashMap;
+
+    #[test]
+    fn child_config_overrides_drop_parent_thread_identity() {
+        let overrides = json!({
+            "__local_open_lease": {"owner": "parent-instance", "token": 7},
+            "__thread_log_turn_id": "turn-of-parent",
+            "__thread_log_user_round": 3,
+            "__thread_log_resume_from_seq": 42,
+            "__queue_task_id": "task-of-parent",
+            "__queue_priority": 5,
+            "temperature": 0.2,
+        });
+        let stripped = strip_child_config_overrides(Some(overrides)).expect("remaining keys kept");
+        let map = stripped.as_object().expect("object");
+        for key in [
+            "__local_open_lease",
+            "__thread_log_turn_id",
+            "__thread_log_user_round",
+            "__thread_log_resume_from_seq",
+            "__queue_task_id",
+            "__queue_priority",
+        ] {
+            assert!(
+                map.get(key).is_none(),
+                "{key} must not reach another session"
+            );
+        }
+        assert_eq!(map.get("temperature"), Some(&json!(0.2)));
+    }
+
+    #[test]
+    fn child_config_overrides_collapse_to_none_when_only_identity_remains() {
+        let overrides = json!({
+            "__local_open_lease": {"owner": "parent-instance", "token": 7},
+            "__thread_log_turn_id": "turn-of-parent",
+        });
+        assert!(strip_child_config_overrides(Some(overrides)).is_none());
+        assert!(strip_child_config_overrides(None).is_none());
+    }
 
     #[test]
     fn cleanup_closes_child_without_deleting_inspectable_history() {

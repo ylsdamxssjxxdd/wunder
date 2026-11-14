@@ -567,16 +567,18 @@ fn build_subagent_history_result(value: Value) -> Value {
         .get("messages")
         .cloned()
         .unwrap_or_else(|| json!([]));
-    let total = messages.as_array().map(Vec::len).unwrap_or(0);
+    let raw_total = messages.as_array().map(Vec::len).unwrap_or(0);
     let messages = messages
         .as_array()
         .map(|items| {
             items
                 .iter()
-                .map(compact_history_message)
+                .filter_map(compact_history_message)
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let total = messages.len();
+    let omitted = raw_total.saturating_sub(total);
     super::build_model_tool_success(
         "history",
         "completed",
@@ -584,13 +586,16 @@ fn build_subagent_history_result(value: Value) -> Value {
         json!({
             "session_id": session_id,
             "messages": messages,
+            "omitted_empty": omitted,
         }),
     )
 }
 
-fn compact_history_message(message: &Value) -> Value {
+/// Tool-call rounds persist an assistant message with no text; it carries
+/// nothing a reader can use, so history drops it instead of showing a blank row.
+fn compact_history_message(message: &Value) -> Option<Value> {
     let Some(object) = message.as_object() else {
-        return json!({"content": "[unsupported message]"});
+        return Some(json!({"content": "[unsupported message]"}));
     };
     let mut result = serde_json::Map::new();
     for key in ["id", "role", "type", "created_at", "status"] {
@@ -631,8 +636,23 @@ fn compact_history_message(message: &Value) -> Value {
             _ => json!("[structured message]"),
         })
         .unwrap_or_else(|| json!(""));
+    if role_is_assistant_with_empty_content(&result, &content) {
+        return None;
+    }
     result.insert("content".to_string(), content);
-    Value::Object(result)
+    Some(Value::Object(result))
+}
+
+fn role_is_assistant_with_empty_content(
+    fields: &serde_json::Map<String, Value>,
+    content: &Value,
+) -> bool {
+    let role = fields
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let is_assistant = role == "assistant" || role == "model";
+    is_assistant && content.as_str().is_some_and(|text| text.trim().is_empty())
 }
 
 fn build_subagent_update_result(action: &str, value: Value) -> Value {
@@ -1374,6 +1394,98 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::{tempdir, TempDir};
+
+    #[tokio::test]
+    async fn spawned_child_inherits_parent_workspace() {
+        let harness = SubagentTestHarness::new();
+        harness
+            .storage
+            .upsert_chat_session(&ChatSessionRecord {
+                session_id: "sess_parent_ws".into(),
+                user_id: "fixture-owner".into(),
+                title: "parent".into(),
+                status: "active".into(),
+                created_at: 1.0,
+                updated_at: 2.0,
+                last_message_at: 2.0,
+                agent_id: Some("agent_parent".into()),
+                workspace_id: Some("ws_demo".into()),
+                tool_overrides: Vec::new(),
+                parent_session_id: None,
+                parent_message_id: None,
+                spawn_label: None,
+                spawned_by: None,
+            })
+            .expect("upsert parent");
+        let context = harness.context("sess_parent_ws");
+
+        let prepared = super::super::session_run_lifecycle::prepare_child_session(
+            &context,
+            "sess_parent_ws",
+            "统计目录",
+            None,
+            None,
+            None,
+            ChildSessionToolMode::InheritParentSession,
+        )
+        .expect("prepare child session");
+        let child = harness
+            .storage
+            .get_chat_session("fixture-owner", &prepared.child_session_id)
+            .expect("read child")
+            .expect("child record exists");
+        assert_eq!(
+            child.workspace_id.as_deref(),
+            Some("ws_demo"),
+            "child must stay in the parent workspace instead of the agent default"
+        );
+    }
+
+    #[test]
+    fn history_drops_blank_assistant_placeholders() {
+        let placeholder = json!({"role": "assistant", "content": "", "status": "completed"});
+        assert!(compact_history_message(&placeholder).is_none());
+        let blank = json!({"role": "assistant", "content": "   "});
+        assert!(compact_history_message(&blank).is_none());
+
+        let user = json!({"role": "user", "content": "统计目录"});
+        assert_eq!(
+            compact_history_message(&user).expect("user text kept")["content"],
+            json!("统计目录")
+        );
+        let tool_row = json!({"role": "tool", "content": ""});
+        assert!(
+            compact_history_message(&tool_row).is_some(),
+            "non-assistant rows keep their slot even when empty"
+        );
+        let answer = json!({"role": "assistant", "content": "共 25 个"});
+        assert_eq!(
+            compact_history_message(&answer).expect("assistant text kept")["content"],
+            json!("共 25 个")
+        );
+    }
+
+    #[test]
+    fn history_result_counts_only_rendered_messages() {
+        let value = json!({
+            "data": {
+                "session_id": "sess_fixture",
+                "messages": [
+                    {"role": "user", "content": "统计目录"},
+                    {"role": "assistant", "content": ""},
+                    {"role": "assistant", "content": "共 25 个"}
+                ]
+            }
+        });
+        let result = build_subagent_history_result(value);
+        let data = &result["data"];
+        assert_eq!(data["messages"].as_array().map(Vec::len), Some(2));
+        assert_eq!(data["omitted_empty"], json!(1));
+        assert_eq!(
+            result["summary"],
+            json!("Loaded 2 messages from child session history.")
+        );
+    }
 
     pub(super) struct SubagentTestHarness {
         _dir: TempDir,

@@ -32,6 +32,10 @@ const PARENT_TURN_REF_PREFIX: &str = "subagent_turn:";
 const DEFAULT_LIST_LIMIT: i64 = 200;
 const MAX_LIST_LIMIT: i64 = 500;
 const AUTO_WAKE_OBSERVATION_MAX_CHARS: usize = 240;
+/// How many recent runs of one child thread the runtime status projection
+/// looks at before it settles on the run that describes the task. Bounded so a
+/// child with a long follow-up history never costs a full table scan.
+const RUNTIME_ITEM_RUN_SCAN_LIMIT: i64 = 8;
 
 #[derive(Debug, Clone)]
 pub struct ParentTurnRef {
@@ -1013,10 +1017,11 @@ fn build_runtime_item(
     session: ChatSessionRecord,
 ) -> Result<SubagentRuntimeItem> {
     recovery::recover(storage, user_id, &session.session_id)?;
-    let run = storage
-        .list_session_runs_by_session(user_id, &session.session_id, 1)?
-        .into_iter()
-        .next();
+    let run = select_effective_run(storage.list_session_runs_by_session(
+        user_id,
+        &session.session_id,
+        RUNTIME_ITEM_RUN_SCAN_LIMIT,
+    )?);
     let run_status = run
         .as_ref()
         .map(|record| record.status.as_str())
@@ -1081,6 +1086,43 @@ fn build_runtime_item(
         updated_time,
         progress,
     })
+}
+
+/// One child thread can accumulate follow-up runs after the task it was
+/// spawned for. A run that never got going — refused before the first model
+/// request or tool call — says nothing about the work the child already
+/// delivered, so it must not overwrite that result. Without this, a settled
+/// child flips to "failed" as soon as the next refresh reads the newest run.
+fn select_effective_run(runs: Vec<SessionRunRecord>) -> Option<SessionRunRecord> {
+    let latest = runs.first().cloned();
+    runs.into_iter()
+        .find(|run| !is_run_without_trace_failure(run))
+        .or(latest)
+}
+
+fn is_run_without_trace_failure(run: &SessionRunRecord) -> bool {
+    let status = run.status.trim().to_ascii_lowercase();
+    if !matches!(status.as_str(), "error" | "failed" | "timeout" | "cancelled") {
+        return false;
+    }
+    let progress = run
+        .metadata
+        .as_ref()
+        .and_then(|meta| meta.get("subagent_progress"));
+    let model_requests = progress
+        .and_then(|value| value.get("model_request_count"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let tool_calls = progress
+        .and_then(|value| value.get("tool_calls"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let has_result = run
+        .result
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|text| !text.is_empty());
+    model_requests == 0 && tool_calls == 0 && !has_result && run.elapsed_s < 0.5
 }
 
 fn runtime_marker_matches(value: Option<&str>, expected: &str) -> bool {

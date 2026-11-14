@@ -78,12 +78,15 @@ component SheetCard inherits Rectangle {
     background: Theme.surface;
     border-width: 1px;
     border-color: Theme.border;
+    // 卡片内字段的行距。默认 0：靠 SettingRow 自己的上下留白和分隔线排成
+    // 表格；需要堆叠 FormField 的卡片传 12px，标题才不会贴着上一个控件。
+    in property <length> row-spacing: 0px;
     VerticalLayout {
         padding-left: 14px;
         padding-right: 14px;
         padding-top: 12px;
         padding-bottom: 12px;
-        spacing: 0px;
+        spacing: root.row-spacing;
         @children
     }
 }
@@ -4430,6 +4433,9 @@ component ModelEditorPage inherits Rectangle {
                 }
 
                 SheetCard {
+                    // 模型表单字段多且连续堆叠：行距 12px 让每个标题贴着自己
+                    // 的输入框，不至于读成上一个控件的说明（与桌面版同节奏）。
+                    row-spacing: 12px;
                     CardTitle { title: I18n.st_model_section_basic; }
                     // Available while creating a model too; save applies it in
                     // one step instead of requiring a second visit.
@@ -4478,10 +4484,25 @@ component ModelEditorPage inherits Rectangle {
                         secret: true;
                         text <=> root.secret;
                     }
+                    // 图像模型的尺寸上限决定显存与输出比例，属于基础配置：常显，
+                    // 不埋进高级设置（与桌面版、管理端一致）。
+                    if root.draft.model-type == "image" : VerticalLayout {
+                        spacing: 12px;
+                        FormField {
+                            label: I18n.st_param_image_default_size;
+                            placeholder: I18n.st_param_image_default_size_hint;
+                            text <=> root.draft.image-default-size;
+                        }
+                        FormField {
+                            label: I18n.st_param_image_max_size;
+                            placeholder: I18n.st_param_image_max_size_hint;
+                            text <=> root.draft.image-max-size;
+                        }
+                    }
                     // 上下文长度与探测只对 LLM 有意义（与桌面版、管理端一致）：
                     // 图像/语音/视频模型没有窗口压缩与用量占比。
                     if root.draft.model-type == "llm" : VerticalLayout {
-                        spacing: 0px;
+                        spacing: 12px;
                         FormField {
                             label: I18n.st_param_max_context;
                             placeholder: I18n.st_param_context_hint;
@@ -4516,7 +4537,7 @@ component ModelEditorPage inherits Rectangle {
                     subtitle: I18n.st_model_advanced_hint;
                     open <=> root.advanced-open;
                     if root.draft.model-type == "llm" : VerticalLayout {
-                        spacing: 0px;
+                        spacing: 12px;
                         FormField {
                             label: "temperature";
                             placeholder: "0.7";
@@ -4589,7 +4610,7 @@ component ModelEditorPage inherits Rectangle {
                         }
                     }
                     if root.draft.model-type == "asr" : VerticalLayout {
-                        spacing: 0px;
+                        spacing: 12px;
                         FormField {
                             label: I18n.st_param_asr_language;
                             placeholder: I18n.st_param_asr_language_hint;
@@ -4614,7 +4635,7 @@ component ModelEditorPage inherits Rectangle {
                         }
                     }
                     if root.draft.model-type == "tts" : VerticalLayout {
-                        spacing: 0px;
+                        spacing: 12px;
                         FormField {
                             label: I18n.st_param_tts_voice;
                             placeholder: I18n.st_param_model_default;
@@ -4639,17 +4660,7 @@ component ModelEditorPage inherits Rectangle {
                         }
                     }
                     if root.draft.model-type == "image" : VerticalLayout {
-                        spacing: 0px;
-                        FormField {
-                            label: I18n.st_param_image_default_size;
-                            placeholder: I18n.st_param_image_default_size_hint;
-                            text <=> root.draft.image-default-size;
-                        }
-                        FormField {
-                            label: I18n.st_param_image_max_size;
-                            placeholder: I18n.st_param_image_max_size_hint;
-                            text <=> root.draft.image-max-size;
-                        }
+                        spacing: 12px;
                         SettingRow {
                             label: I18n.st_param_image_format;
                             PickerField {
@@ -4674,7 +4685,7 @@ component ModelEditorPage inherits Rectangle {
                         }
                     }
                     if root.draft.model-type == "video" : VerticalLayout {
-                        spacing: 0px;
+                        spacing: 12px;
                         FormField {
                             label: I18n.st_param_video_size;
                             placeholder: I18n.st_param_video_size_hint;
@@ -5359,8 +5370,9 @@ export component MobileSettings inherits Rectangle {
             root.picker-options = [I18n.st_type_llm, I18n.st_type_embedding, I18n.st_type_asr, I18n.st_type_tts, I18n.st_type_image, I18n.st_type_video];
             root.picker-values = ["llm", "embedding", "asr", "tts", "image", "video"];
         } else if (id == 5) {
-            root.picker-options = ModelPresets.names;
-            root.picker-values = ModelPresets.names;
+            // 提供方只列当前类型能用的预设（与管理端一致）。
+            root.picker-options = ModelPresets.for-type(root.draft.model-type);
+            root.picker-values = ModelPresets.for-type(root.draft.model-type);
         } else if (id == 6) {
             root.picker-options = [I18n.st_param_default_option, "none", "minimal", "low", "medium", "high", "xhigh"];
             root.picker-values = ["", "none", "minimal", "low", "medium", "high", "xhigh"];
@@ -5427,7 +5439,18 @@ export component MobileSettings inherits Rectangle {
     function apply-pick(id: int, value: string) {
         if (id == 1) { root.save-send-key(value); }
         else if (id == 2) { root.save-language(value); }
-        else if (id == 4) { root.draft.model-type = value; }
+        else if (id == 4) {
+            root.draft.model-type = value;
+            // 换了类型就只保留该类型支持的提供方；服务地址只在空着或还是
+            // 上一个预设地址时替换，手填的地址保留。
+            if (ModelPresets.for-type(value).index-of(root.draft.provider) < 0) {
+                let previous = root.draft.provider;
+                root.draft.provider = ModelPresets.default-provider(value);
+                if (root.draft.base-url == "" || root.draft.base-url == ModelPresets.base-url(previous)) {
+                    root.draft.base-url = ModelPresets.base-url(root.draft.provider);
+                }
+            }
+        }
         else if (id == 5) {
             root.draft.provider = value;
             root.draft.base-url = value == "virtual_replay" ? "" : ModelPresets.base-url(value);

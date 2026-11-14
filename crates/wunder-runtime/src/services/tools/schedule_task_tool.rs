@@ -352,7 +352,8 @@ fn compact_cron_job(job: &Value) -> Value {
         "last_status": job.get("last_status").cloned().unwrap_or(Value::Null),
         "last_error": job.get("last_error").cloned().unwrap_or(Value::Null),
         "session_target": job.get("session_target").cloned().unwrap_or(Value::Null),
-        "session_id": job.get("session_id").cloned().unwrap_or(Value::Null)
+        "session_id": job.get("session_id").cloned().unwrap_or(Value::Null),
+        "delete_after_run": job.get("delete_after_run").cloned().unwrap_or(Value::Null)
     })
 }
 

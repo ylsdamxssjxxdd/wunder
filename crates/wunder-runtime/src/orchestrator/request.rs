@@ -25,11 +25,37 @@ impl Orchestrator {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(|value| value.to_string());
+        // A thread already belongs to a workspace: follow-up turns and child
+        // runs often arrive without an explicit workspace, and falling back to
+        // the agent's default container would silently move the work (and the
+        // command cwd) to another directory. Only an explicit workspace or
+        // container keeps precedence over the thread's own record.
+        let session_workspace_id =
+            if request.workspace_id.is_none() && request.workspace_container_id.is_none() {
+                request
+                    .session_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .and_then(|session_id| {
+                        self.storage
+                            .get_chat_session(&user_id, session_id)
+                            .ok()
+                            .flatten()
+                            .and_then(|record| record.workspace_id)
+                    })
+                    .and_then(|value| workspace_key_from_record(&value))
+            } else {
+                None
+            };
         let workspace_id = self.resolve_workspace_id(
             &user_id,
             agent_id.as_deref(),
             request.workspace_container_id,
-            request.workspace_id.as_deref(),
+            request
+                .workspace_id
+                .as_deref()
+                .or(session_workspace_id.as_deref()),
         );
         if let Err(err) = self.workspace.ensure_user_root(&workspace_id) {
             return Err(OrchestratorError::internal(format!(
@@ -384,6 +410,20 @@ fn validate_request_text_input_size(
     ))
 }
 
+/// Records normally hold the bare workspace key, but a scoped `user__w__key`
+/// value must not be scoped a second time when it feeds workspace resolution.
+fn workspace_key_from_record(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let key = value
+        .rsplit_once(crate::services::workspace::WORKSPACE_SCOPE_SEPARATOR)
+        .map(|(_, key)| key.trim())
+        .unwrap_or(value);
+    (!key.is_empty()).then(|| key.to_string())
+}
+
 fn is_default_agent_alias(agent_id: Option<&str>) -> bool {
     let Some(cleaned) = agent_id.map(str::trim).filter(|value| !value.is_empty()) else {
         return false;
@@ -394,6 +434,20 @@ fn is_default_agent_alias(agent_id: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn record_workspace_key_is_never_scoped_twice() {
+        assert_eq!(
+            workspace_key_from_record(" ws_projects "),
+            Some("ws_projects".to_string())
+        );
+        assert_eq!(
+            workspace_key_from_record("local_user__w__ws_projects"),
+            Some("ws_projects".to_string())
+        );
+        assert_eq!(workspace_key_from_record("   "), None);
+        assert_eq!(workspace_key_from_record("local_user__w__"), None);
+    }
 
     #[tokio::test]
     async fn direct_inquiry_answer_settles_waiting_turn_and_deduplicates_other_clients() {

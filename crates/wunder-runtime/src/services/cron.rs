@@ -41,6 +41,9 @@ use uuid::Uuid;
 
 use self::policy::{compute_error_backoff_ms, compute_scheduler_sleep_ms};
 
+/// `spawned_by` marker on the private thread of an isolated scheduled run.
+const CRON_SPAWNED_BY: &str = "cron";
+
 async fn run_cron_db<T, F>(label: &'static str, task: F) -> Result<T>
 where
     T: Send + 'static,
@@ -673,13 +676,17 @@ fn build_job_record(
         normalize_schedule_input_with_text(
             input.schedule.as_ref(),
             input.schedule_text.as_deref(),
+            now,
         )?;
     let payload = input.payload.unwrap_or(Value::Null);
     let message = extract_payload_message(Some(&payload))
         .ok_or_else(|| anyhow!("payload.message required"))?;
     validate_message(&message)?;
     let enabled = input.enabled.unwrap_or(true);
-    let delete_after_run = input.delete_after_run.unwrap_or(false);
+    // A one-shot job is useless once it fired, so it defaults to self-deleting.
+    let delete_after_run = input
+        .delete_after_run
+        .unwrap_or(schedule_kind.as_str() == "at");
     let session_target = normalize_session_target(input.session.as_deref());
     let name = input
         .name
@@ -821,7 +828,7 @@ fn apply_job_patch(
         schedule_changed = true;
     } else if let Some(schedule_text) = input.schedule_text.as_deref() {
         let (kind, at, every, cron, tz) =
-            normalize_schedule_input_with_text(None, Some(schedule_text))?;
+            normalize_schedule_input_with_text(None, Some(schedule_text), now)?;
         record.schedule_kind = kind;
         record.schedule_at = at;
         record.schedule_every_ms = every;
@@ -924,6 +931,7 @@ fn normalize_schedule_input(schedule: &CronScheduleInput) -> Result<NormalizedSc
 fn normalize_schedule_input_with_text(
     schedule: Option<&CronScheduleInput>,
     schedule_text: Option<&str>,
+    now: f64,
 ) -> Result<NormalizedSchedule> {
     if let Some(schedule) = schedule {
         return normalize_schedule_input(schedule);
@@ -941,6 +949,15 @@ fn normalize_schedule_input_with_text(
         ParsedScheduleText::Cron(expr) => {
             validate_cron_expr(&expr)?;
             Ok(("cron".to_string(), None, None, Some(expr), None))
+        }
+        // A relative delay is anchored once, at creation, so the job fires at a
+        // fixed instant and never drifts with scheduler wake-ups.
+        ParsedScheduleText::AfterMs(ms) => {
+            let at_ms = ((now * 1000.0) as i64).saturating_add(ms);
+            let at = DateTime::<Utc>::from_timestamp_millis(at_ms)
+                .ok_or_else(|| anyhow!("invalid schedule delay"))?
+                .to_rfc3339();
+            Ok(("at".to_string(), Some(at), None, None, None))
         }
     }
 }
@@ -1696,6 +1713,12 @@ impl CronRuntime {
             }
         }
 
+        if is_isolated {
+            // Success and failure both leave the private thread behind; it has
+            // already served its purpose and must not linger in the thread list.
+            self.archive_run_thread(&job.user_id, &routing.run_session_id);
+        }
+
         // Execution history links to the real child thread for isolated runs.
         // The stored job binding is reloaded by finish_job and stays unchanged.
         let mut executed_job = job;
@@ -1823,6 +1846,31 @@ impl CronRuntime {
                     }
                 }
             },
+        }
+    }
+
+    /// The private thread of an isolated run only exists to hold the execution
+    /// trail. Once its result has been published into the bound thread, archive
+    /// it so the thread list does not collect one dead thread per trigger.
+    fn archive_run_thread(&self, user_id: &str, session_id: &str) {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return;
+        }
+        let Ok(Some(mut record)) = self.user_store.get_chat_session(user_id, session_id) else {
+            return;
+        };
+        if record.status.eq_ignore_ascii_case("archived") {
+            return;
+        }
+        record.status = "archived".to_string();
+        record.updated_at = now_ts();
+        if let Err(err) = self.user_store.upsert_chat_session(&record) {
+            tracing::warn!(
+                session_id,
+                error = %err,
+                "archive scheduled run thread failed"
+            );
         }
     }
 
@@ -2109,14 +2157,24 @@ impl CronRuntime {
                     .unwrap_or_default(),
                 parent_session_id: parent_session_id.map(|value| value.to_string()),
                 parent_message_id: None,
-                spawn_label: None,
-                spawned_by: None,
+                spawn_label: parent_session_id.map(|_| i18n::t("cron.thread_label")),
+                spawned_by: parent_session_id.map(|_| CRON_SPAWNED_BY.to_string()),
             });
         if record.agent_id.is_none() {
             record.agent_id = agent_id.map(|value| value.to_string());
         }
         if record.parent_session_id.is_none() && parent_session_id.is_some() {
             record.parent_session_id = parent_session_id.map(|value| value.to_string());
+        }
+        // Isolated scheduled runs are durable child threads. Mark them on every
+        // run so the thread list can separate them from user/model threads.
+        if record.parent_session_id.is_some() {
+            if record.spawn_label.is_none() {
+                record.spawn_label = Some(i18n::t("cron.thread_label"));
+            }
+            if record.spawned_by.is_none() {
+                record.spawned_by = Some(CRON_SPAWNED_BY.to_string());
+            }
         }
         if let Some(workspace_id) = record.workspace_id.as_deref() {
             self.storage
@@ -2656,6 +2714,61 @@ impl CronScheduler {
 mod tests {
     use crate::storage::*;
     use serde_json::json;
+
+    #[test]
+    fn one_shot_delay_text_becomes_a_self_deleting_at_job() {
+        let now = now_ts_test();
+        let input: super::CronJobInput = serde_json::from_value(json!({
+            "payload": {"message": "fixture one shot"},
+            "schedule_text": "3 分钟后",
+        }))
+        .expect("input");
+        let job = super::build_job_record("cron_user", "bound", None, now, input).expect("job");
+        assert_eq!(job.schedule_kind, "at");
+        assert!(job.delete_after_run, "one-shot jobs self-delete by default");
+        let at = super::parse_rfc3339(job.schedule_at.as_deref().unwrap()).expect("at");
+        let now_dt = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
+            (now * 1000.0) as i64,
+        )
+        .expect("now");
+        assert_eq!((at - now_dt).num_seconds(), 180);
+    }
+
+    #[tokio::test]
+    async fn isolated_run_thread_is_labeled_and_archived_after_delivery() {
+        let (runtime, state, _directory) = runtime_fixture().await;
+        let job = build_job("bound", "isolated", now_ts_test());
+        let routing = runtime.resolve_session_routing(&job).expect("routing");
+        runtime
+            .build_request(
+                "cron_user",
+                &routing.run_session_id,
+                None,
+                "fixture scheduled run",
+                routing.parent_session_id.as_deref(),
+            )
+            .await
+            .expect("request");
+        let record = state
+            .storage
+            .get_chat_session("cron_user", &routing.run_session_id)
+            .unwrap()
+            .expect("run session");
+        assert_eq!(record.spawned_by.as_deref(), Some("cron"));
+        assert!(record.spawn_label.is_some());
+        assert_eq!(
+            record.parent_session_id.as_deref(),
+            Some(routing.deliver_session_id.as_str())
+        );
+
+        runtime.archive_run_thread("cron_user", &routing.run_session_id);
+        let archived = state
+            .storage
+            .get_chat_session("cron_user", &routing.run_session_id)
+            .unwrap()
+            .expect("run session");
+        assert_eq!(archived.status, "archived");
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn disabling_job_preserves_active_lease_and_records_completion() {

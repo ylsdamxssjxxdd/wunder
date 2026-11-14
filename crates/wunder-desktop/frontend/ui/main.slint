@@ -973,7 +973,6 @@ export component MainWindow inherits Window {
     in-out property <string> model-video-flow-shift-draft;
     in-out property <bool> model-video-frame-interpolation-draft;
     in-out property <bool> model-video-sync-mode-draft;
-    in property <[string]> model-provider-presets: ModelPresets.names;
     in-out property <bool> model-support-vision-draft;
     in-out property <bool> model-support-hearing-draft;
     in-out property <bool> model-stream-include-usage-draft;
@@ -1790,7 +1789,6 @@ export component MainWindow inherits Window {
         model-save-error: root.model-save-error;
         model-key-draft <=> root.model-key-draft;
         model-provider-draft <=> root.model-provider-draft;
-        model-provider-presets: root.model-provider-presets;
         model-type-presets: root.model-type-presets;
         virtual-replay-logs: root.virtual-replay-logs;
         model-name-draft <=> root.model-name-draft;

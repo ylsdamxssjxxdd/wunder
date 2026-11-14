@@ -1,7 +1,31 @@
 // Provider presets mirrored from wunder-runtime PROVIDER_PRESETS so the model
 // settings form can autofill endpoints without a runtime round-trip.
+//
+// The lists follow `PROVIDER_PRESETS_BY_TYPE` in web/modules/llm.js: a
+// dropdown only offers the providers that can actually serve that model type,
+// so an image/video/tts model cannot be pointed at a chat provider.
 export global ModelPresets {
-    out property <[string]> names: ["openai_compatible", "openai", "anthropic", "openrouter", "siliconflow", "deepseek", "moonshot", "qwen", "groq", "mistral", "together", "vllm_omni", "whisper_cpp", "ollama", "lmstudio", "virtual_replay"];
+    out property <[string]> llm-presets: ["virtual_replay", "openai_compatible", "openai", "anthropic", "openrouter", "siliconflow", "deepseek", "moonshot", "qwen", "groq", "mistral", "together", "ollama", "lmstudio"];
+    out property <[string]> embedding-presets: ["vllm_omni", "openai_compatible", "siliconflow", "qwen", "ollama", "lmstudio"];
+    out property <[string]> asr-presets: ["vllm_omni", "whisper_cpp"];
+    out property <[string]> tts-presets: ["vllm_omni"];
+    out property <[string]> image-presets: ["vllm_omni"];
+    out property <[string]> video-presets: ["vllm_omni"];
+
+    // 提供方预设按模型类型收敛；空类型按语言模型处理（与后端默认一致）。
+    public pure function for-type(kind: string) -> [string] {
+        kind == "embedding" ? embedding-presets :
+        kind == "asr" ? asr-presets :
+        kind == "tts" ? tts-presets :
+        kind == "image" ? image-presets :
+        kind == "video" ? video-presets : llm-presets
+    }
+
+    // 切换模型类型时的兜底提供方：语言模型用通用兼容协议，其余只有 vllm_omni。
+    public pure function default-provider(kind: string) -> string {
+        kind == "" || kind == "llm" ? "openai_compatible" : "vllm_omni"
+    }
+
     public pure function base-url(name: string) -> string {
         name == "openai" ? "https://api.openai.com/v1" :
         name == "anthropic" ? "https://api.anthropic.com/v1" :
@@ -16,6 +40,6 @@ export global ModelPresets {
         name == "vllm_omni" ? "http://127.0.0.1:8000/v1" :
         name == "whisper_cpp" ? "http://127.0.0.1:8080/v1" :
         name == "ollama" ? "http://127.0.0.1:11434/v1" :
-        name == "lmstudio" ? "http://127.0.0.1:1234/v1" : "";
+        name == "lmstudio" ? "http://127.0.0.1:1234/v1" : ""
     }
 }

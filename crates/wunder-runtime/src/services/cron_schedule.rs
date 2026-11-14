@@ -11,6 +11,10 @@ pub const MAX_MESSAGE_LEN: usize = 16_384;
 pub enum ParsedScheduleText {
     EveryMs(i64),
     Cron(String),
+    /// One-shot delay measured from the moment the job is created, e.g.
+    /// `3 分钟后` / `in 30 minutes`. The caller converts it into an absolute
+    /// `at` time, so the parser itself stays clock-free.
+    AfterMs(i64),
 }
 
 pub fn parse_schedule_text(input: &str) -> Result<ParsedScheduleText> {
@@ -28,6 +32,12 @@ pub fn parse_schedule_text(input: &str) -> Result<ParsedScheduleText> {
         return Ok(ParsedScheduleText::Cron(effective.to_string()));
     }
 
+    // One-shot delays come first: `3 分钟后` must not be mistaken for the
+    // recurring `每 3 分钟`, and `in 30 minutes` must not reach the every-parser.
+    if let Some(ms) = parse_relative_delay(raw)? {
+        return Ok(ParsedScheduleText::AfterMs(ms));
+    }
+
     if let Some(parsed) = parse_every_expression(&lowered)? {
         return Ok(ParsedScheduleText::EveryMs(parsed));
     }
@@ -41,8 +51,63 @@ pub fn parse_schedule_text(input: &str) -> Result<ParsedScheduleText> {
     }
 
     Err(anyhow!(
-        "unsupported schedule text: {raw}. Try 'every 5 minutes', 'daily at 9am', 'weekdays at 6pm', a cron expression like '0 */5 * * *', or Chinese forms such as '每天 09:00', '每 5 分钟', '每周一 10:30'"
+        "unsupported schedule text: {raw}. Recurring: 'every 5 minutes' / '每 5 分钟' / 'daily at 9am' / '每天 09:00' / '每周一 10:30' / cron such as '0 9 * * *'. One-shot: '3 分钟后' / 'in 30 minutes' / schedule.at in ISO 8601"
     ))
+}
+
+/// Parse a one-shot delay: `3 分钟后`, `2 小时之后`, `in 30 minutes`,
+/// `after 90s`. Returns `None` when the text is not a delay expression.
+fn parse_relative_delay(input: &str) -> Result<Option<i64>> {
+    let compact: String = input.chars().filter(|ch| !ch.is_whitespace()).collect();
+    if compact.is_empty() {
+        return Ok(None);
+    }
+    if let Some(stripped) = compact
+        .strip_suffix("之后")
+        .or_else(|| compact.strip_suffix("后"))
+    {
+        if let Some(ms) = parse_delay_amount(stripped)? {
+            return Ok(Some(ms));
+        }
+    }
+    let lowered = compact.to_lowercase();
+    for prefix in ["in", "after"] {
+        let Some(rest) = lowered.strip_prefix(prefix) else {
+            continue;
+        };
+        if let Some(ms) = parse_delay_amount(rest)? {
+            return Ok(Some(ms));
+        }
+    }
+    Ok(None)
+}
+
+fn parse_delay_amount(text: &str) -> Result<Option<i64>> {
+    let digits: String = text.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return Ok(None);
+    }
+    let unit = &text[digits.len()..];
+    let unit_ms = match unit {
+        "秒" | "秒钟" | "s" | "sec" | "secs" | "second" | "seconds" => 1_000,
+        "分钟" | "分" | "m" | "min" | "mins" | "minute" | "minutes" => 60_000,
+        "小时" | "钟头" | "个小时" | "h" | "hr" | "hrs" | "hour" | "hours" => 3_600_000,
+        "天" | "日" | "d" | "day" | "days" => 86_400_000,
+        _ => return Ok(None),
+    };
+    let value: i64 = digits
+        .parse()
+        .map_err(|_| anyhow!("invalid schedule delay: {digits}"))?;
+    if value <= 0 {
+        return Err(anyhow!("schedule delay must be positive"));
+    }
+    let ms = value.saturating_mul(unit_ms);
+    if ms > MAX_AT_HORIZON_SECS * 1_000 {
+        return Err(anyhow!(
+            "schedule delay too far in the future (max {MAX_AT_HORIZON_SECS}s)"
+        ));
+    }
+    Ok(Some(ms))
 }
 
 /// Translate common Chinese schedule phrases into the English grammar the
@@ -537,6 +602,35 @@ mod tests {
         assert_eq!(
             parse_schedule_text("0 */5 * * *").unwrap(),
             ParsedScheduleText::Cron("0 */5 * * *".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_schedule_text_one_shot_delay() {
+        assert_eq!(
+            parse_schedule_text("3 分钟后").unwrap(),
+            ParsedScheduleText::AfterMs(180_000)
+        );
+        assert_eq!(
+            parse_schedule_text("2 小时之后").unwrap(),
+            ParsedScheduleText::AfterMs(7_200_000)
+        );
+        assert_eq!(
+            parse_schedule_text("in 30 minutes").unwrap(),
+            ParsedScheduleText::AfterMs(1_800_000)
+        );
+        assert_eq!(
+            parse_schedule_text("after 90s").unwrap(),
+            ParsedScheduleText::AfterMs(90_000)
+        );
+        // Recurring forms must keep their own meaning.
+        assert_eq!(
+            parse_schedule_text("每 5 分钟").unwrap(),
+            ParsedScheduleText::EveryMs(300_000)
+        );
+        assert_eq!(
+            parse_schedule_text("every 5 minutes").unwrap(),
+            ParsedScheduleText::EveryMs(300_000)
         );
     }
 

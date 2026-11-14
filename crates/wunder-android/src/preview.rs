@@ -33,9 +33,10 @@ fn main() {
         std::mem::forget(timer);
     }
     // Optional first argument opens a page for layout review: `settings`,
-    // `models`, `editor`, or the first-run setup page (`env-setup`,
-    // `env-setup-error`, `env-setup-ready`). `settings-live` opens the sheet
-    // after the event loop has started, matching the phone's dynamic path.
+    // `models`, `editor`, `editor-image`, or the first-run setup page
+    // (`env-setup`, `env-setup-error`, `env-setup-ready`). `settings-live` opens
+    // the sheet after the event loop has started, matching the phone's dynamic
+    // path.
     // `env-setup-live` additionally loops the injection animation so the liquid
     // can be watched without the engine. `env-setup-gif` runs one 4% → 100%
     // pass; with `WUNDER_PREVIEW_FRAMES=<dir>` every frame is written as PPM so

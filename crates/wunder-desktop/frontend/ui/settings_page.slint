@@ -317,7 +317,9 @@ component FormCombo inherits VerticalLayout {
     // hiding the current selection.
     in property <bool> enabled: true;
     callback selected(string);
-    spacing: 7px;
+    // 与 FormField 同节奏：标题 18px + 3px + 控件 36px + 5px 留白 = 62px，
+    // 两行并排时标题和控件都能对齐。
+    spacing: 3px;
     property <[string]> raws: root.values.length == root.items.length ? root.values : root.items;
     function label-for(raw: string) -> string {
         let index = root.raws.index-of(raw);
@@ -347,6 +349,7 @@ component FormCombo inherits VerticalLayout {
             root.selected(root.value);
         }
     }
+    Rectangle { height: 5px; }
 }
 
 // Web settings row: label (+ optional note) on the left, controls on the
@@ -647,7 +650,8 @@ export component SettingsPage inherits Rectangle {
     in-out property <string> model-video-flow-shift-draft;
     in-out property <bool> model-video-frame-interpolation-draft;
     in-out property <bool> model-video-sync-mode-draft;
-    in property <[string]> model-provider-presets;
+    // 提供方下拉只列当前类型可用的预设（与管理端 PROVIDER_PRESETS_BY_TYPE 一致）。
+    property <[string]> model-provider-options: ModelPresets.for-type(root.model-type-draft);
     in property <[string]> model-type-presets;
     in property <[string]> virtual-replay-logs;
     callback probe-model-context();
@@ -691,6 +695,23 @@ export component SettingsPage inherits Rectangle {
             + (root.settings-category-flags[8] ? 1 : 0)
             + (root.settings-category-flags[9] ? 1 : 0)
             + (root.settings-category-flags[10] ? 1 : 0);
+    }
+    // 换了模型类型后，当前提供方若不在新类型的预设里就切到该类型的默认
+    // 提供方；服务地址只在「空着」或「还是上一个预设的地址」时替换，用户
+    // 手填的地址不会被冲掉（与管理端 applyProviderDefaults 一致）。
+    function align-provider-to-type(kind: string) {
+        if ModelPresets.for-type(kind).index-of(root.model-provider-draft) >= 0 {
+            return;
+        }
+        let previous = root.model-provider-draft;
+        root.model-provider-draft = ModelPresets.default-provider(kind);
+        // Read the property back instead of reusing a local: the Slint codegen
+        // moves a local string into the property and would then borrow it.
+        let preset-url = ModelPresets.base-url(root.model-provider-draft);
+        if preset-url != ""
+            && (root.model-base-url-draft == "" || root.model-base-url-draft == ModelPresets.base-url(previous)) {
+            root.model-base-url-draft = preset-url;
+        }
     }
     // Slint cannot test a substring, so the query is projected out and the
     // matching categories come back as a bit set.
@@ -1530,54 +1551,59 @@ export component SettingsPage inherits Rectangle {
                                     VerticalLayout { alignment: start; spacing: 14px;
                                         SettingsCard {
                                             FormSectionHead { icon: @image-url("../assets/icons/gear.svg"); title: I18n.st_model_section_basic; }
-                                            Rectangle { height: 4px; }
-                                            FormField {
-                                                label: I18n.model_key_label;
-                                                placeholder: I18n.model_key_placeholder;
-                                                // The key is the stored identity. It stays
-                                                // editable for local models and is committed
-                                                // by 「保存」 or Enter/focus loss; it is
-                                                // locked only for engine-managed cloud rows.
-                                                read-only: root.cloud-locked || root.saving;
-                                                text <=> root.model-key-draft;
-                                                committed => { root.commit-model-key(); }
-                                            }
-                                            FormCombo {
-                                                label: I18n.st_model_type_label;
-                                                enabled: !root.cloud-locked;
-                                                items: [I18n.st_type_llm, I18n.st_type_embedding, I18n.st_type_asr, I18n.st_type_tts, I18n.st_type_image, I18n.st_type_video];
-                                                values: ["llm", "embedding", "asr", "tts", "image", "video"];
-                                                value <=> root.model-type-draft;
-                                            }
-                                            HorizontalLayout { spacing: 10px;
+                                            Rectangle { height: 12px; }
+                                            // 行距 12px：标题紧贴它自己的控件，才不会读成上一个
+                                            // 控件的说明；控件与下一行的标题之间由行距拉开。
+                                            VerticalLayout { spacing: 12px;
+                                                FormField {
+                                                    label: I18n.model_key_label;
+                                                    placeholder: I18n.model_key_placeholder;
+                                                    // The key is the stored identity. It stays
+                                                    // editable for local models and is committed
+                                                    // by 「保存」 or Enter/focus loss; it is
+                                                    // locked only for engine-managed cloud rows.
+                                                    read-only: root.cloud-locked || root.saving;
+                                                    text <=> root.model-key-draft;
+                                                    committed => { root.commit-model-key(); }
+                                                }
                                                 FormCombo {
-                                                    horizontal-stretch: 1;
-                                                    label: I18n.model_provider_label;
+                                                    label: I18n.st_model_type_label;
                                                     enabled: !root.cloud-locked;
-                                                    items: root.model-provider-presets;
-                                                    value <=> root.model-provider-draft;
-                                                    selected(provider) => {
-                                                        root.model-base-url-draft = provider == "virtual_replay" ? "" : ModelPresets.base-url(provider);
+                                                    items: [I18n.st_type_llm, I18n.st_type_embedding, I18n.st_type_asr, I18n.st_type_tts, I18n.st_type_image, I18n.st_type_video];
+                                                    values: ["llm", "embedding", "asr", "tts", "image", "video"];
+                                                    value <=> root.model-type-draft;
+                                                    selected(kind) => { root.align-provider-to-type(kind); }
+                                                }
+                                                HorizontalLayout { spacing: 10px;
+                                                    FormCombo {
+                                                        horizontal-stretch: 1;
+                                                        label: I18n.model_provider_label;
+                                                        enabled: !root.cloud-locked;
+                                                        items: root.model-provider-options;
+                                                        value <=> root.model-provider-draft;
+                                                        selected(provider) => {
+                                                            root.model-base-url-draft = provider == "virtual_replay" ? "" : ModelPresets.base-url(provider);
+                                                        }
+                                                    }
+                                                    FormField { horizontal-stretch: 1; label: I18n.model_name_label; placeholder: I18n.model_name_placeholder; read-only: root.cloud-locked; text <=> root.model-name-draft; }
+                                                }
+                                                FormField { label: I18n.model_base_url_label; placeholder: I18n.model_base_url_placeholder; read-only: root.cloud-locked; text <=> root.model-base-url-draft; }
+                                                FormField { label: I18n.model_token_label; placeholder: I18n.model_token_placeholder; secret: true; read-only: root.cloud-locked; text <=> root.model-token-draft; }
+                                                // 上下文长度只对 LLM 有意义（与管理端一致）：
+                                                // 图像/语音/视频模型没有窗口压缩与用量占比，
+                                                // 常显只会造成误解。
+                                                if root.model-type-draft == "llm" || root.model-type-draft == "" : HorizontalLayout { spacing: 10px;
+                                                    FormField { horizontal-stretch: 1; label: I18n.st_param_max_context; placeholder: I18n.st_param_context_hint; read-only: root.cloud-locked; text <=> root.model-max-context-draft; }
+                                                    Rectangle { width: 116px; height: 62px;
+                                                        Action { y: 26px; width: 116px; height: 36px; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: I18n.model_probe_context; show-label: true; primary: true; enabled: !root.saving && !root.cloud-locked && root.model-name-draft != "" && root.model-base-url-draft != ""; clicked => { root.probe-model-context(); } }
                                                     }
                                                 }
-                                                FormField { horizontal-stretch: 1; label: I18n.model_name_label; placeholder: I18n.model_name_placeholder; read-only: root.cloud-locked; text <=> root.model-name-draft; }
-                                            }
-                                            FormField { label: I18n.model_base_url_label; placeholder: I18n.model_base_url_placeholder; read-only: root.cloud-locked; text <=> root.model-base-url-draft; }
-                                            FormField { label: I18n.model_token_label; placeholder: I18n.model_token_placeholder; secret: true; read-only: root.cloud-locked; text <=> root.model-token-draft; }
-                                            // 上下文长度只对 LLM 有意义（与管理端一致）：
-                                            // 图像/语音/视频模型没有窗口压缩与用量占比，
-                                            // 常显只会造成误解。
-                                            if root.model-type-draft == "llm" || root.model-type-draft == "" : HorizontalLayout { spacing: 10px;
-                                                FormField { horizontal-stretch: 1; label: I18n.st_param_max_context; placeholder: I18n.st_param_context_hint; read-only: root.cloud-locked; text <=> root.model-max-context-draft; }
-                                                Rectangle { width: 116px; height: 62px;
-                                                    Action { y: 26px; width: 116px; height: 36px; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: I18n.model_probe_context; show-label: true; primary: true; enabled: !root.saving && !root.cloud-locked && root.model-name-draft != "" && root.model-base-url-draft != ""; clicked => { root.probe-model-context(); } }
+                                                // 图像模型的尺寸上限决定显存与输出比例，属于基础配置：
+                                                // 常显，不埋进高级设置（与安卓版、管理端保持一致）。
+                                                if root.model-type-draft == "image" : HorizontalLayout { spacing: 10px;
+                                                    FormField { horizontal-stretch: 1; label: I18n.st_param_image_default_size; placeholder: I18n.st_param_image_default_size_hint; read-only: root.cloud-locked; text <=> root.model-image-default-size-draft; }
+                                                    FormField { horizontal-stretch: 1; label: I18n.st_param_image_max_size; placeholder: I18n.st_param_image_max_size_hint; read-only: root.cloud-locked; text <=> root.model-image-max-size-draft; }
                                                 }
-                                            }
-                                            // 图像模型的尺寸上限决定显存与输出比例，属于基础配置：
-                                            // 常显，不埋进高级设置（与安卓版、管理端保持一致）。
-                                            if root.model-type-draft == "image" : HorizontalLayout { spacing: 10px;
-                                                FormField { horizontal-stretch: 1; label: I18n.st_param_image_default_size; placeholder: I18n.st_param_image_default_size_hint; read-only: root.cloud-locked; text <=> root.model-image-default-size-draft; }
-                                                FormField { horizontal-stretch: 1; label: I18n.st_param_image_max_size; placeholder: I18n.st_param_image_max_size_hint; read-only: root.cloud-locked; text <=> root.model-image-max-size-draft; }
                                             }
                                         }
                                         // 高级设置：生成参数、能力与类型专属参数默认折叠。
@@ -1590,10 +1616,10 @@ export component SettingsPage inherits Rectangle {
                                                 toggled => { root.model-advanced-open = !root.model-advanced-open; }
                                             }
                                             if root.model-advanced-open : VerticalLayout {
-                                                padding-top: 6px;
-                                                spacing: 0px;
+                                                padding-top: 12px;
+                                                spacing: 12px;
                                                 if root.model-type-draft == "llm" || root.model-type-draft == "" : VerticalLayout {
-                                                    spacing: 0px;
+                                                    spacing: 12px;
                                                     HorizontalLayout { spacing: 10px;
                                                         FormField { horizontal-stretch: 1; label: "temperature"; placeholder: "0.7"; read-only: root.cloud-locked; text <=> root.model-temperature-draft; }
                                                         FormField { horizontal-stretch: 1; label: I18n.st_param_timeout; placeholder: "120"; read-only: root.cloud-locked; text <=> root.model-timeout-draft; }
@@ -1616,7 +1642,7 @@ export component SettingsPage inherits Rectangle {
                                                     FormCombo { label: "工具调用方式"; items: ["tool_call", "function_call", "freeform_call"]; value <=> root.model-tool-call-mode-draft; }
                                                 }
                                                 if root.model-type-draft == "asr" : VerticalLayout {
-                                                    spacing: 0px;
+                                                    spacing: 12px;
                                                     HorizontalLayout { spacing: 10px;
                                                         FormField { horizontal-stretch: 1; label: I18n.st_param_asr_language; placeholder: I18n.st_param_asr_language_hint; text <=> root.model-asr-language-draft; }
                                                         FormCombo {
@@ -1633,7 +1659,7 @@ export component SettingsPage inherits Rectangle {
                                                     }
                                                 }
                                                 if root.model-type-draft == "tts" : VerticalLayout {
-                                                    spacing: 0px;
+                                                    spacing: 12px;
                                                     HorizontalLayout { spacing: 10px;
                                                         FormField { horizontal-stretch: 1; label: I18n.st_param_tts_voice; placeholder: I18n.st_param_model_default; text <=> root.model-tts-voice-draft; }
                                                         FormCombo {
@@ -1653,7 +1679,7 @@ export component SettingsPage inherits Rectangle {
                                                     }
                                                 }
                                                 if root.model-type-draft == "image" : VerticalLayout {
-                                                    spacing: 0px;
+                                                    spacing: 12px;
                                                     HorizontalLayout { spacing: 10px;
                                                         FormCombo {
                                                             horizontal-stretch: 1;
@@ -1670,7 +1696,7 @@ export component SettingsPage inherits Rectangle {
                                                     }
                                                 }
                                                 if root.model-type-draft == "video" : VerticalLayout {
-                                                    spacing: 0px;
+                                                    spacing: 12px;
                                                     HorizontalLayout { spacing: 10px;
                                                         FormField { horizontal-stretch: 1; label: I18n.st_param_video_size; placeholder: I18n.st_param_video_size_hint; text <=> root.model-video-size-draft; }
                                                         FormField { horizontal-stretch: 1; label: I18n.st_param_video_seconds; placeholder: "≥ 0.5"; text <=> root.model-video-seconds-draft; }

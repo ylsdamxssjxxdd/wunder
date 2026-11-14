@@ -284,6 +284,17 @@ pub fn run(
                     assert_state(app.get_selected_model_key() == "", "threadless switch left a thread pin in the label")?;
                     if app.get_selected_agent_model() != "threadless-model" { return Ok(false) }
                     crate::smoke::snapshot(&app, &directory.join("model-composer.png"))?;
+                    // 回调检查走完再演示图像模型：它的提供方下拉只有 vllm_omni，
+                    // 基础区也会出现尺寸上限。
+                    app.set_settings_open(true);
+                    app.set_settings_active_panel(1);
+                    app.set_model_type_draft("image".into());
+                    app.set_model_provider_draft("vllm_omni".into());
+                    app.set_model_base_url_draft("http://127.0.0.1:8000/v1".into());
+                    phase = 19;
+                }
+                19 => {
+                    crate::smoke::snapshot(&app, &directory.join("model-editor-image.png"))?;
                     return Ok(true);
                 }
                 _ => unreachable!(),

@@ -1417,6 +1417,44 @@ mod tests {
         assert!(app.get_selected_model_key().is_empty());
     }
 
+    /// 模型页的提供方下拉按类型收敛（对齐 web/modules/llm.js 的
+    /// PROVIDER_PRESETS_BY_TYPE）：图像/语音/视频只剩 vllm_omni，语言模型
+    /// 保留 chat 提供方，切换到非语言模型时的兜底提供方也是 vllm_omni。
+    #[test]
+    fn provider_presets_follow_the_model_type() {
+        use slint::{ComponentHandle, Model};
+        let _ui = crate::test_support::lock();
+        crate::register_bundled_font().expect("bundled font");
+        let app = crate::MainWindow::new().expect("window");
+        let presets = app.global::<crate::ModelPresets>();
+        let names = |kind: &str| {
+            presets
+                .invoke_for_type(kind.into())
+                .iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names("image"), vec!["vllm_omni".to_string()]);
+        assert_eq!(names("video"), vec!["vllm_omni".to_string()]);
+        assert_eq!(names("tts"), vec!["vllm_omni".to_string()]);
+        assert_eq!(
+            names("asr"),
+            vec!["vllm_omni".to_string(), "whisper_cpp".to_string()]
+        );
+        assert!(names("embedding").contains(&"vllm_omni".to_string()));
+        assert!(!names("embedding").contains(&"anthropic".to_string()));
+        assert!(names("llm").contains(&"deepseek".to_string()));
+        assert!(!names("llm").contains(&"vllm_omni".to_string()));
+        assert_eq!(names(""), names("llm"), "an empty type reads as llm");
+        assert_eq!(presets.invoke_default_provider("image".into()), "vllm_omni");
+        assert_eq!(presets.invoke_default_provider("asr".into()), "vllm_omni");
+        assert_eq!(
+            presets.invoke_default_provider("llm".into()),
+            "openai_compatible"
+        );
+        assert_eq!(presets.invoke_default_provider("".into()), "openai_compatible");
+    }
+
     #[test]
     fn profile_glyph_takes_the_first_name_character() {
         assert_eq!(profile_glyph("  示例用户 "), "示");
