@@ -1,6 +1,6 @@
 //! Entity actions in preview mode never persist configuration or credentials.
 use crate::{MainWindow, ModelCard};
-use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{cell::RefCell, rc::Rc};
 
 thread_local! {
@@ -85,37 +85,12 @@ fn seed_agent() -> crate::AgentCard {
 }
 
 pub fn install(app: &MainWindow) {
-    let timer = Rc::new(Timer::default());
     let weak = app.as_weak();
     app.on_model_edited(move || {
         let Some(app) = weak.upgrade() else { return };
-        // 与真实后端同一条规则：新建草稿只由显式保存落库，自动保存会让表单
-        // 刚填完模型名称就退出创建态，配置名称随之变灰。
-        if app.get_model_creating() {
-            return;
-        }
-        let mut clean = app.get_selected_model_card();
-        clean.is_default = false;
-        clean.is_cloud = false;
-        clean.disabled = false;
-        let draft =
-            crate::entity_state::draft_model_card(&app, app.get_settings_model_key().as_str());
-        if app.get_model_projecting()
-            || draft.model.trim().is_empty()
-            || (draft == clean && app.get_model_token_draft().is_empty())
-        {
-            return;
-        }
-        let weak = app.as_weak();
-        timer.start(
-            TimerMode::SingleShot,
-            std::time::Duration::from_millis(500),
-            move || {
-                if let Some(app) = weak.upgrade() {
-                    app.invoke_save_model();
-                }
-            },
-        );
+        // 与真实后端同一条规则：模型配置只在显式保存时落库，
+        // 输入过程中只清掉上一次的错误提示。
+        app.set_model_save_error("".into());
     });
     crate::entity_state::bind_selection(app);
     app.set_agents(ModelRc::new(VecModel::from(vec![seed_agent()])));

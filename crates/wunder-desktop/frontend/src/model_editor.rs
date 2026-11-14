@@ -142,36 +142,23 @@ pub(crate) fn has_unsaved(app: &MainWindow) -> bool {
     })
 }
 
-/// The config key field differs from the stored key of the selected row.
-fn key_dirty(app: &MainWindow) -> bool {
-    !app.get_model_creating()
-        && app.get_model_key_draft().trim() != app.get_settings_model_key().as_str()
-}
-
+/// 保存排队：正在保存或设置仍在加载时，把这次显式保存顺延一次。
 fn schedule(app: &MainWindow, delay: Duration) {
     let weak = app.as_weak();
     EDITOR.with(|slot| {
         if let Some(editor) = slot.borrow().as_ref() {
             editor.timer.start(TimerMode::SingleShot, delay, move || {
                 if let Some(app) = weak.upgrade() {
-                    app.invoke_auto_save_model();
+                    app.invoke_save_model();
                 }
             });
         }
     });
 }
 
-/// 编辑提交策略：只有已存在的模型才自动保存。未保存的新模型草稿一旦填完模型
-/// 名称就满足保存条件，自动保存会立刻结束创建态，把用户刚起的配置名称锁成
-/// 只读——新建只能由表单上的「保存」显式提交。
-fn edit_should_autosave(creating: bool) -> bool {
-    !creating
-}
-
 fn defer(app: &MainWindow, action: AfterSave) -> bool {
     // 未保存的新模型从不隐式落库：切走、刷新、再点「添加」都由调用方按草稿处理
-    // （停放或放弃），唯一提交入口是表单上显式点的那次保存。否则草稿刚填完模型
-    // 名称就被提交、创建态结束，配置名称随之变灰且再也改不回来。
+    // （停放或放弃），唯一提交入口是表单上显式点的那次保存。
     if app.get_model_creating() {
         return false;
     }
@@ -186,19 +173,23 @@ fn defer(app: &MainWindow, action: AfterSave) -> bool {
         rebase(app);
         return false;
     }
-    if !inflight && !Draft::read(app).ready() {
-        app.set_model_save_error("请补全模型标识、提供方和模型名称".into());
+    if inflight {
+        // 保存已经发出，落地后接着执行用户要求的动作。
+        EDITOR.with(|slot| {
+            if let Some(editor) = slot.borrow_mut().as_mut() {
+                editor.after = Some(action);
+            }
+        });
         return true;
     }
-    EDITOR.with(|slot| {
-        if let Some(editor) = slot.borrow_mut().as_mut() {
-            editor.after = Some(action);
-            // Leaving the row commits a pending key edit with the rest of the
-            // form, the same way Enter in the key field does.
-            editor.rename_armed = true;
-        }
-    });
-    app.invoke_save_model();
+    // 落库只认「保存」按钮（以及回车提交配置名称）：切换/新建/刷新/设默认
+    // 遇到未保存的改动先提示保存，不再隐式替用户保存。
+    let message = app
+        .global::<crate::I18n>()
+        .get_st_model_unsaved()
+        .to_string();
+    app.set_model_save_error(message.as_str().into());
+    crate::native_pages::show_toast(app, message, 2);
     true
 }
 
@@ -253,9 +244,9 @@ fn finish_action(app: &MainWindow) {
     }
 }
 
-/// 保存当前模型草稿。`silent` 由防抖自动保存传入：静默落盘不弹提示；用户显式
-/// 点「保存」或提交配置名称时给一次反馈，确保按钮点下去总有回应。
-fn run_save(app: &MainWindow, api: &Arc<NativeDesktop>, silent: bool) {
+/// 保存当前模型草稿。落库只有这一条路径：表单上的「保存」、回车提交配置名称，
+/// 以及保存排队后的重试；编辑器不再做防抖自动保存。
+fn run_save(app: &MainWindow, api: &Arc<NativeDesktop>) {
     let inflight =
         EDITOR.with(|slot| slot.borrow().as_ref().is_some_and(|editor| editor.inflight));
     if inflight || app.get_model_projecting() {
@@ -275,15 +266,13 @@ fn run_save(app: &MainWindow, api: &Arc<NativeDesktop>, silent: bool) {
         return;
     }
     if !has_unsaved(app) && !app.get_model_creating() {
-        // 显式点「保存」但没有改动：也要有回应，避免按钮像没反应。
-        if !silent {
-            let message = app
-                .global::<crate::I18n>()
-                .get_st_model_unchanged()
-                .to_string();
-            app.set_status(message.as_str().into());
-            crate::native_pages::show_toast(app, message, 1);
-        }
+        // 点「保存」但没有改动：也要有回应，避免按钮像没反应。
+        let message = app
+            .global::<crate::I18n>()
+            .get_st_model_unchanged()
+            .to_string();
+        app.set_status(message.as_str().into());
+        crate::native_pages::show_toast(app, message, 1);
         finish_action(app);
         return;
     }
@@ -377,24 +366,17 @@ fn run_save(app: &MainWindow, api: &Arc<NativeDesktop>, silent: bool) {
                     }
                     app.set_model_projecting(projecting);
                     app.set_model_save_error("".into());
-                    // 显式保存（表单按钮、回车提交配置名称）和新建提交都要
-                    // 回答「点下去有没有生效」；防抖自动保存保持静默，否则
-                    // 每敲一个字段都弹提示反而变成干扰。
-                    if creating || !silent {
-                        crate::native_pages::show_toast(&app, saved_message(&app, &key), 1);
-                    }
-                    if changed {
-                        schedule(&app, Duration::from_millis(500));
-                    } else {
+                    // 每次保存都要回答「点下去有没有生效」。
+                    crate::native_pages::show_toast(&app, saved_message(&app, &key), 1);
+                    // 保存期间的新输入保持未保存状态，等用户再点保存；
+                    // 不再自动落库。
+                    if !changed {
                         finish_action(&app);
                     }
                     app.invoke_refresh_agents();
                 }
                 Err(error) => {
                     app.set_model_save_error(format!("保存失败：{error}").into());
-                    if changed {
-                        schedule(&app, Duration::from_millis(500));
-                    }
                 }
             }
         });
@@ -404,43 +386,21 @@ fn run_save(app: &MainWindow, api: &Arc<NativeDesktop>, silent: bool) {
 pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     EDITOR.with(|slot| *slot.borrow_mut() = Some(Editor::default()));
     rebase(app);
-    let auto_api = api.clone();
-    let weak = app.as_weak();
-    app.on_auto_save_model(move || {
-        let Some(app) = weak.upgrade() else { return };
-        run_save(&app, &auto_api, true);
-    });
     let weak = app.as_weak();
     app.on_model_edited(move || {
         let Some(app) = weak.upgrade() else { return };
         if app.get_model_projecting() || app.get_settings_model_key().starts_with("cloud/") {
             return;
         }
-        // An unsaved new model is never auto-committed (see the rationale on
-        // `edit_should_autosave`); the explicit 保存 action commits it.
-        if !edit_should_autosave(app.get_model_creating()) {
-            app.set_model_save_error("".into());
-            return;
-        }
-        // A key rename changes an identity and rewrites every reference to it,
-        // so it commits on Enter/focus loss or when leaving the row — never
-        // from the debounced autosave, which would rename per keystroke.
-        if key_dirty(&app) {
-            app.set_model_save_error("".into());
-            return;
-        }
-        if has_unsaved(&app) {
-            app.set_model_save_error("".into());
-            schedule(&app, Duration::from_millis(500));
-        } else {
-            finish_action(&app);
-        }
+        // 模型配置只在显式保存时落库（防抖自动保存已移除）；输入过程中
+        // 只清掉上一次的错误提示。
+        app.set_model_save_error("".into());
     });
     let save_api = api.clone();
     let weak = app.as_weak();
     app.on_save_model(move || {
         let Some(app) = weak.upgrade() else { return };
-        run_save(&app, &save_api, false);
+        run_save(&app, &save_api);
     });
     let weak = app.as_weak();
     app.on_commit_model_key(move || {
@@ -462,17 +422,4 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
         });
         app.invoke_save_model();
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 回归：新建草稿不参与自动保存。缺了这条守卫，草稿在第一份完整的
-    /// 模型名称落键的瞬间就被提交、退出创建态，配置名称随之变灰。
-    #[test]
-    fn a_new_model_draft_is_never_auto_saved() {
-        assert!(!edit_should_autosave(true));
-        assert!(edit_should_autosave(false));
-    }
 }

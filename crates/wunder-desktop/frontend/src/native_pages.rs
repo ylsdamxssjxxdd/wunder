@@ -1415,12 +1415,11 @@ pub(crate) fn run_background(task: impl FnOnce() + Send + 'static) {
 }
 
 pub(crate) fn show_error(app: &MainWindow, error: String) {
-    app.set_status(format!("错误：{error}").into());
+    app.set_status(format!("错误：{}", error).into());
+    // 状态栏在设置页打开时被遮住大半，错误必须走浮层才看得见。
+    show_toast(app, error, 2);
 }
 
-/// Show short-lived feedback through the shell-owned toast layer. Unlike the
-/// legacy info dialog this stays above the settings overlay and does not block
-/// the editor while a probe result is being read.
 /// 列表里残留的未保存草稿行不是已落库的配置：后端拒绝删除时直接移除本地行，
 /// 并顺带清掉它的草稿簿记，避免用户反复点删除却只看到「模型不存在」。
 pub(crate) fn drop_local_model_row(app: &MainWindow, key: &str) {
@@ -1443,6 +1442,9 @@ pub(crate) fn drop_local_model_row(app: &MainWindow, key: &str) {
     }
 }
 
+/// Show short-lived feedback through the shell-owned toast layer. Unlike the
+/// legacy info dialog this stays above the settings overlay and does not block
+/// the editor while a probe result is being read.
 pub(crate) fn show_toast(app: &MainWindow, message: String, kind: i32) {
     let toast = app.global::<crate::ToastState>();
     toast.set_message(message.into());

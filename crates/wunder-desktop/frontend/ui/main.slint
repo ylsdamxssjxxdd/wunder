@@ -1117,8 +1117,6 @@ export component MainWindow inherits Window {
     callback discard-model-draft();
     callback move-model(int, int);
     callback save-model();
-    // 编辑后的防抖保存走这条通道：静默落盘，不弹保存提示。
-    callback auto-save-model();
     callback commit-model-key();
     callback set-default-model(string);
     callback delete-model(string);
