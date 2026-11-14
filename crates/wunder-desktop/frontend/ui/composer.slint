@@ -1369,6 +1369,10 @@ export component Composer inherits Rectangle {
     in property <bool> mobile: false;
     in property <bool> mobile-plus-open: false;
     callback mobile-plus-toggled();
+    // 手机端折叠态输入卡只是入口：开启后整张卡片不接收文字输入，点一下就
+    // 请宿主打开全屏输入页（键盘长在那一页上）。
+    in property <bool> mobile-page-trigger: false;
+    callback mobile-page-requested();
     // A live 问询面板 whose current page has an answer: the send button and the
     // send key then work with an empty draft, because the choices themselves
     // are the message.
@@ -1771,6 +1775,12 @@ export component Composer inherits Rectangle {
                 x: 0px; y: 0px; width: 100%; height: 100%;
                 can-drop(event) => { return DragAction.copy; }
                 dropped(event) => { root.file-drop(event); return DragAction.copy; }
+            }
+            // 手机端折叠态输入卡不是编辑区，而是全屏输入页的入口：这一层
+            // 盖住编辑器，点一下只转成一次 mobile-page-requested。
+            if root.mobile && root.mobile-page-trigger : TouchArea {
+                enabled: !root.mobile-plus-open;
+                clicked => { root.mobile-page-requested(); }
             }
             // While the phone function panel is open the input is a close
             // target, not a caret target: one tap puts the tray away and the

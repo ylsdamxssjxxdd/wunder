@@ -416,6 +416,26 @@ pub fn build_preview() -> MobileWindow {
     });
     ui.on_plus_panel_opened(|| {});
     ui.on_keyboard_dismiss(|| {});
+    // 预览壳没有引擎，所以"发送"在这里只做回显：清空草稿、把这句作为一条
+    // 用户行落到时间线底部，看起来就是发出去了，不会停在输入区。
+    let weak = ui.as_weak();
+    let model_for_send = model.clone();
+    let mut send_seq = 0usize;
+    ui.on_send(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        let text = ui.get_draft().trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        ui.set_draft("".into());
+        ui.set_follow_output(true);
+        send_seq += 1;
+        let mut row = RowData::new(project::KIND_USER, format!("preview-send-{send_seq}"));
+        row.text = text.into();
+        row.time = "刚刚".into();
+        let mut renderer = MarkdownRenderer::new();
+        model_for_send.push(row.to_row(&mut renderer));
+    });
     ui
 }
 
@@ -3450,6 +3470,14 @@ fn handle_back(
     shared: &Arc<Mutex<Shared>>,
     last_back: &mut Option<Instant>,
 ) -> bool {
+    // 全屏输入页：返回键直接回到聊天。这一页本身就是为键盘生的，关页即收
+    // 键盘，一次按下就够，不必让输入法先吃掉一次。
+    if ui.get_input_page_open() {
+        ui.set_input_page_open(false);
+        crate::android_host::hide_keyboard();
+        *last_back = None;
+        return true;
+    }
     // The IME owns the first Back while the keyboard is up, matching every
     // Android input surface. The UI tick keeps `ime-height` current.
     if ui.get_ime_height() > 0.5 {
@@ -4307,6 +4335,11 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
         }
         "drawer" => {
             ui.set_drawer_open(true);
+        }
+        // 全屏输入页：带一段真草稿，方便看大字号输入区的排版。
+        "compose" => {
+            ui.set_draft("把这份周报的结论改成三条要点，语气收紧一点。".into());
+            ui.set_input_page_open(true);
         }
         "workspace-sheet" => {
             ui.set_drawer_open(true);

@@ -13,6 +13,7 @@ import { TimelineView } from "../../../crates/wunder-desktop/frontend/ui/timelin
 import { Composer, CommandOptions, GoalBanner, InquiryPanel, ModelSetupBanner, StatusDock } from "../../../crates/wunder-desktop/frontend/ui/composer.slint";
 import { Action, FormField, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
 import { MobileSettings } from "settings.slint";
+import { ComposePage } from "compose_page.slint";
 import { MobileToast } from "toast.slint";
 import { EnvSetupPage } from "env_setup.slint";
 import { TrajectoryPage, TrajectoryItem, TrajectoryAudit, TrajectorySegment, TrajectoryBar } from "trajectory.slint";
@@ -485,6 +486,11 @@ export component MobileWindow inherits Window {
 
     // ---- composer ----------------------------------------------------
     in-out property <string> draft: "";
+    // 全屏输入页：聊天页底部那张输入卡点一下就进这里，键盘也长在这里。
+    in-out property <bool> input-page-open: false;
+    // 输入页发送门禁：正文或附件有其一即可发送（与折叠态一致）。
+    private property <bool> input-page-send-enabled:
+        root.draft != "" || root.attachments.length > 0;
     in property <bool> generating: false;
     in property <bool> stopping: false;
     in property <[ModelCard]> models: [];
@@ -974,6 +980,29 @@ export component MobileWindow inherits Window {
         root.close-plus();
     }
 
+    // 折叠态输入卡被点中：收起功能面板，直接进全屏输入页（编辑器在页面
+    // 自己的 init 里要焦点，键盘随之弹出）。
+    function open-input-page() {
+        root.close-plus();
+        root.input-page-open = true;
+    }
+
+    // 回到聊天：先关页再收键盘。关页会销毁获得焦点的编辑器，输入法不会
+    // 被 Slint 的焦点再顶起来。
+    function close-input-page() {
+        root.input-page-open = false;
+        root.keyboard-dismiss();
+    }
+
+    function submit-input-page() {
+        if !root.input-page-send-enabled {
+            return;
+        }
+        root.input-page-open = false;
+        root.keyboard-dismiss();
+        root.send();
+    }
+
     function show-workspace-sheet() {
         root.refresh-workspaces();
         root.workspace-delete-armed = false;
@@ -1278,6 +1307,8 @@ export component MobileWindow inherits Window {
                     mobile: true;
                     mobile-plus-open: root.plus-open;
                     mobile-plus-toggled() => { root.toggle-plus(); }
+                    mobile-page-trigger: true;
+                    mobile-page-requested() => { root.open-input-page(); }
                     draft <=> root.draft;
                     busy: root.loading;
                     // 目标续跑期间也显示停止按钮，与桌面版一致。
@@ -3210,6 +3241,23 @@ export component MobileWindow inherits Window {
         retry() => {
             root.load-trajectory(root.trajectory-session-id, root.trajectory-session-title);
         }
+    }
+
+    // ---- 全屏输入页 --------------------------------------------------
+    // 聊天页底部那张输入卡在手机上太窄，点一下就整屏进入这一页：顶部只有
+    // 返回与发送，下面全是输入区。
+    if root.input-page-open : ComposePage {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: root.height - root.ime-height;
+        inset-top: root.inset-top;
+        inset-bottom: root.inset-bottom;
+        ime-height: root.ime-height;
+        draft <=> root.draft;
+        attachments: root.attachments;
+        close() => { root.close-input-page(); }
+        send() => { root.submit-input-page(); }
     }
 
     // ---- 首次运行环境部署引导 ---------------------------------------

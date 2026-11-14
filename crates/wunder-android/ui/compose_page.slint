@@ -1,0 +1,123 @@
+// wunder 安卓版 (wunder Android) —— 全屏输入页。
+//
+// 聊天页底部那张输入卡在手机上又窄又贴边，回车、光标和选区都难命中。
+// 点一下以后整个屏幕交给这一页：顶部只有返回与发送，其余全是输入区；
+// 键盘把可用高度压低时输入区跟着缩，永远不会被键盘盖住。
+
+import { I18n } from "../../../crates/wunder-desktop/frontend/ui/i18n.slint";
+import { Theme, ChatAttachment } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
+import { Action } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
+import { TextEditBase } from "../../../crates/wunder-desktop/frontend/ui/textedit-base.slint";
+
+export component ComposePage inherits Rectangle {
+    in-out property <string> draft: "";
+    in property <[ChatAttachment]> attachments: [];
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    // 键盘高度由安卓壳每帧发布；这一页要顶在键盘上沿。
+    in property <length> ime-height: 0px;
+    // 发送门禁与折叠态一致：正文或附件有其一即可发送。
+    private property <bool> send-enabled: root.draft != "" || root.attachments.length > 0;
+
+    callback close();
+    callback send();
+
+    background: Theme.surface;
+
+    VerticalLayout {
+        spacing: 0px;
+
+        // 顶栏：只有返回与发送。输入页不需要标题，留白本身就是分隔。
+        Rectangle {
+            height: 52px + root.inset-top;
+            background: Theme.panel;
+
+            Rectangle {
+                y: root.inset-top;
+                height: 52px;
+                width: parent.width;
+
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 12px;
+                    spacing: 8px;
+                    cross-axis-alignment: center;
+
+                    Action {
+                        width: 36px;
+                        height: 36px;
+                        icon-size: 18px;
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-left.svg");
+                        label: I18n.traj_back;
+                        clicked => { root.close(); }
+                    }
+
+                    // 顶栏中段就是这一页的提示：固定写「请输入文本」，输入区
+                    // 里不再重复一遍 placeholder。
+                    Text {
+                        horizontal-stretch: 1;
+                        height: parent.height;
+                        text: I18n.cp_input_placeholder;
+                        color: Theme.muted;
+                        font-size: Theme.font-md;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    Rectangle {
+                        width: 64px;
+                        height: 34px;
+                        border-radius: 17px;
+                        background: root.send-enabled
+                            ? (send-touch.has-hover ? Theme.accent-deep : Theme.accent)
+                            : Theme.border-strong;
+                        accessible-role: button;
+                        accessible-label: I18n.cp_send;
+                        accessible-enabled: root.send-enabled;
+                        accessible-action-default => { if root.send-enabled { root.send(); } }
+                        Text {
+                            width: 100%;
+                            height: 100%;
+                            text: I18n.cp_send;
+                            color: #ffffff;
+                            font-size: Theme.font-sm;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        send-touch := TouchArea {
+                            enabled: root.send-enabled;
+                            clicked => { root.send(); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 输入区：整页剩下的空间。字号比聊天页大一档，16px 边距让长句
+        // 换行不打到屏幕边缘。
+        editor := TextEditBase {
+            vertical-stretch: 1;
+            text <=> root.draft;
+            wrap: word-wrap;
+            font-size: 16px;
+            foreground: Theme.text;
+            // 提示已经在顶栏常显，输入区留白即可，避免同一句话出现两遍。
+            placeholder-text: "";
+            selection-background-color: Theme.accent-soft;
+            selection-foreground-color: Theme.text;
+            scroll-view-padding: 16px;
+            // 进页即聚焦：键盘是这一页的常态，不该再点一次才弹出来。
+            init => { self.focus-input(); }
+        }
+
+        // 底部安全区：键盘顶上来了就不再垫一条。
+        Rectangle {
+            height: root.inset-bottom;
+            visible: root.inset-bottom > 0px && root.ime-height == 0px;
+            background: Theme.surface;
+        }
+    }
+}
