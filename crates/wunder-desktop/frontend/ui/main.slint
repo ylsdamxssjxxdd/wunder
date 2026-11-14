@@ -135,6 +135,8 @@ export component MainWindow inherits Window {
     // Settings render in an internal overlay window instead of taking over
     // the chat area; the sidebar width is user-draggable.
     in-out property <bool> settings-open: false;
+    // 模型删除确认框的开合由窗口持有：原生冒烟据此截图核对文案。
+    in-out property <bool> model-delete-open: false;
     in-out property <length> sidebar-width: Theme.sidebar-width;
 
     in-out property <bool> expert-loading;
@@ -1621,7 +1623,9 @@ export component MainWindow inherits Window {
         }
     }
 
-    if DragPreview.active && DragPreview.pointer-x >= root.sidebar-width + 6px : Rectangle {
+    // 拖拽浮标只属于侧栏会话树（scope 0）：设置页拖模型行时不该在聊天区飘
+    // 一个「任务」似的标签。
+    if DragPreview.active && DragPreview.scope == 0 && DragPreview.pointer-x >= root.sidebar-width + 6px : Rectangle {
         x: clamp(DragPreview.pointer-x + 10px, root.sidebar-width + 8px, root.width - 188px);
         y: clamp(DragPreview.pointer-y - 12px, Theme.titlebar-height + 8px, root.height - 34px);
         width: 180px; height: 26px; z: 180;
@@ -1707,6 +1711,7 @@ export component MainWindow inherits Window {
         loading: root.settings-loading; saving: root.saving;
         status: root.status;
         settings-category-flags: root.settings-category-flags;
+        model-delete-open <=> root.model-delete-open;
         models: root.models; selected-model: root.selected-model;
         workspace-root <=> root.workspace-root; language <=> root.runtime-language;
         // The profile card and its edit dialog stay on the shell (the rail's

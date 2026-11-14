@@ -1691,21 +1691,10 @@ impl CronRuntime {
 
         match run_result {
             Ok(response) => {
+                // An isolated run keeps its whole trace in its own (hidden)
+                // thread. Nothing is injected into the bound thread: a scheduled
+                // run must never fabricate a user message there.
                 summary = Some(truncate_text(&response.answer, SUMMARY_MAX_CHARS));
-                if is_isolated {
-                    let deliver_result = self
-                        .publish_isolated_result(
-                            &job,
-                            &routing,
-                            &response.answer,
-                            started.elapsed().as_secs_f64(),
-                        )
-                        .await;
-                    if let Err(err) = deliver_result {
-                        status = "error".to_string();
-                        error_msg = Some(format!("deliver failed: {err}"));
-                    }
-                }
             }
             Err(err) => {
                 status = "error".to_string();
@@ -1872,171 +1861,6 @@ impl CronRuntime {
                 "archive scheduled run thread failed"
             );
         }
-    }
-
-    async fn publish_isolated_result(
-        &self,
-        job: &CronJobRecord,
-        routing: &CronSessionRouting,
-        answer: &str,
-        elapsed_s: f64,
-    ) -> Result<()> {
-        let accepted = self
-            .orchestrator
-            .committer
-            .accept_turn(
-                &job.user_id,
-                &routing.deliver_session_id,
-                &json!({"role":"user", "content":job.payload["message"],
-                "client_message_id":format!("cron-result:{}", routing.run_session_id),
-                "meta":{"type":"scheduled_result", "job_id":job.job_id,
-                    "run_session_id":routing.run_session_id}}),
-            )
-            .await?;
-        let turn = accepted["turn_id"]
-            .as_str()
-            .ok_or_else(|| anyhow!("missing result turn"))?;
-        let copied = self
-            .copy_isolated_execution_items(job, routing, turn, elapsed_s)
-            .await?;
-        if !copied {
-            self.orchestrator
-                .committer
-                .commit_item(
-                    &job.user_id,
-                    &json!({
-                        "session_id":routing.deliver_session_id, "turn_id":turn,
-                        "item_id":format!("{turn}:text-0"), "model_round":0,
-                        "kind":"assistant_message", "role":"assistant", "status":"completed",
-                        "visibility":"user", "content":answer,
-                        "meta":{"type":"scheduled_result", "job_id":job.job_id,
-                            "run_session_id":routing.run_session_id,
-                            "message_stats":{"interaction_duration_s":elapsed_s}}
-                    }),
-                )
-                .await?;
-        }
-        self.orchestrator
-            .committer
-            .update_turn(
-                &job.user_id,
-                &routing.deliver_session_id,
-                turn,
-                "completed",
-                "",
-                &json!({"source":"scheduled_result"}),
-            )
-            .await?;
-        Ok(())
-    }
-
-    /// Isolated runs execute in a private durable thread, but their visible
-    /// execution belongs to the scheduled-result turn in the bound thread.
-    /// Copy the durable workflow items in order so the new bubble contains the
-    /// model rounds and tool calls instead of only a synthetic final sentence.
-    async fn copy_isolated_execution_items(
-        &self,
-        job: &CronJobRecord,
-        routing: &CronSessionRouting,
-        destination_turn: &str,
-        elapsed_s: f64,
-    ) -> Result<bool> {
-        let source_turns =
-            self.storage
-                .list_thread_turns(&job.user_id, &routing.run_session_id, None, 4)?;
-        let Some(source_turn) = source_turns.first() else {
-            return Ok(false);
-        };
-        let source_turn_id = source_turn
-            .get("turn_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if source_turn_id.is_empty() {
-            return Ok(false);
-        }
-        let page = self
-            .storage
-            .get_thread_turn(
-                &job.user_id,
-                &routing.run_session_id,
-                source_turn_id,
-                -1,
-                100,
-                true,
-            )?
-            .ok_or_else(|| anyhow!("isolated scheduled turn disappeared"))?;
-        let mut copied = false;
-        for source in page["items"].as_array().into_iter().flatten() {
-            let kind = source
-                .get("kind")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            if matches!(kind, "user_message" | "terminal") {
-                continue;
-            }
-            if !matches!(
-                kind,
-                "assistant_message"
-                    | "tool_call"
-                    | "tool_message"
-                    | "progress"
-                    | "model_usage"
-                    | "compaction"
-                    | "plan"
-            ) {
-                continue;
-            }
-            let Some(source_item_id) = source.get("item_id").and_then(Value::as_str) else {
-                continue;
-            };
-            let suffix = source_item_id
-                .split_once(':')
-                .map(|(_, suffix)| suffix)
-                .unwrap_or(source_item_id);
-            let mut payload = source.get("payload").cloned().unwrap_or_else(|| json!({}));
-            let Some(map) = payload.as_object_mut() else {
-                continue;
-            };
-            map.insert(
-                "session_id".into(),
-                Value::String(routing.deliver_session_id.clone()),
-            );
-            map.insert(
-                "turn_id".into(),
-                Value::String(destination_turn.to_string()),
-            );
-            map.insert(
-                "item_id".into(),
-                Value::String(format!("{destination_turn}:cron:{suffix}")),
-            );
-            map.insert("kind".into(), Value::String(kind.to_string()));
-            if let Some(status) = source.get("status").and_then(Value::as_str) {
-                map.insert("status".into(), Value::String(status.to_string()));
-            }
-            if kind == "assistant_message" {
-                let meta = map.entry("meta").or_insert_with(|| json!({}));
-                if let Some(meta) = meta.as_object_mut() {
-                    meta.insert("type".into(), Value::String("scheduled_result".into()));
-                    meta.insert("job_id".into(), Value::String(job.job_id.clone()));
-                    meta.insert(
-                        "run_session_id".into(),
-                        Value::String(routing.run_session_id.clone()),
-                    );
-                    if !meta.contains_key("message_stats") {
-                        meta.insert(
-                            "message_stats".into(),
-                            json!({"interaction_duration_s": elapsed_s}),
-                        );
-                    }
-                }
-            }
-            self.orchestrator
-                .committer
-                .commit_item(&job.user_id, &payload)
-                .await?;
-            copied = true;
-        }
-        Ok(copied)
     }
 
     async fn run_stream_request(
@@ -3635,117 +3459,56 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn cron_isolated_result_is_idempotent_completed_pair_without_model_execution() {
+    async fn isolated_run_stays_out_of_lists_and_never_writes_into_the_bound_thread() {
         let (runtime, state, _dir) = runtime_fixture().await;
         let job = build_job("bound", "isolated", now_ts_test());
         let routing = runtime.resolve_session_routing(&job).unwrap();
-        // No model configured: publication must still work and never acquire a model/session lock.
         runtime
-            .publish_isolated_result(&job, &routing, "fixture result", 0.2)
+            .build_request(
+                "cron_user",
+                &routing.run_session_id,
+                None,
+                "fixture scheduled run",
+                routing.parent_session_id.as_deref(),
+            )
             .await
             .unwrap();
-        runtime
-            .publish_isolated_result(&job, &routing, "fixture result", 0.2)
-            .await
-            .unwrap();
-        let turns = state
+        let run_session = state
             .storage
-            .list_thread_turns("cron_user", "bound", None, 10)
-            .unwrap();
-        assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0]["status"], "completed");
-        let turn = turns[0]["turn_id"].as_str().unwrap();
+            .get_chat_session("cron_user", &routing.run_session_id)
+            .unwrap()
+            .expect("run session exists");
+        assert_eq!(run_session.spawned_by.as_deref(), Some("cron"));
         assert_eq!(
-            super::read_cron_turn_answer(state.storage.as_ref(), "cron_user", "bound", turn)
-                .unwrap(),
-            "fixture result"
+            run_session.parent_session_id.as_deref(),
+            Some(routing.deliver_session_id.as_str())
         );
-        let page = state
-            .storage
-            .get_thread_turn("cron_user", "bound", turn, -1, 100, false)
-            .unwrap()
-            .unwrap();
-        assert_eq!(page["items"].as_array().unwrap().len(), 2);
-    }
-
-    #[tokio::test]
-    async fn isolated_result_copies_child_workflow_into_delivery_turn() {
-        let (runtime, state, _dir) = runtime_fixture().await;
-        let job = build_job("bound", "isolated", now_ts_test());
-        let routing = runtime.resolve_session_routing(&job).unwrap();
-        state
-            .storage
-            .upsert_chat_session(&build_chat_session(
-                &routing.run_session_id,
-                "agent_a",
-                now_ts_test(),
-            ))
-            .unwrap();
-        state
-            .kernel
-            .orchestrator
-            .committer
-            .freeze_session(
-                "cron_user",
-                &routing.run_session_id,
-                "frozen fixture instructions",
-                "fixture-workspace",
-            )
-            .await
-            .unwrap();
-        let accepted = state
-            .storage
-            .accept_thread_turn(
-                "cron_user",
-                &routing.run_session_id,
-                &json!({"role":"user","content":"child fixture"}),
-            )
-            .unwrap();
-        let source_turn = accepted["turn_id"].as_str().unwrap();
-        state
-            .storage
-            .commit_thread_item(
-                "cron_user",
-                &json!({
-                    "session_id": routing.run_session_id, "turn_id": source_turn,
-                    "item_id": format!("{source_turn}:assistant-1"), "kind": "assistant_message",
-                    "role":"assistant", "status":"completed", "visibility":"user",
-                    "content":"child answer", "model_round": 1
-                }),
-            )
-            .unwrap();
-        state
-            .storage
-            .commit_thread_item(
-                "cron_user",
-                &json!({
-                    "session_id": routing.run_session_id, "turn_id": source_turn,
-                    "item_id": format!("{source_turn}:tool-1"), "kind": "tool_message",
-                    "role":"tool", "status":"completed", "visibility":"user",
-                    "content":"tool result"
-                }),
-            )
-            .unwrap();
-        runtime
-            .publish_isolated_result(&job, &routing, "child answer", 0.4)
-            .await
-            .unwrap();
+        // A scheduled run is an execution trace, not a thread the user opened:
+        // no list surface shows it, neither as active nor as archived.
+        for status in [Some("active"), Some("archived"), None] {
+            let (rows, _) = state
+                .storage
+                .list_chat_sessions_by_status("cron_user", None, None, status, 0, 50)
+                .unwrap();
+            assert!(
+                rows.iter()
+                    .all(|record| record.session_id != routing.run_session_id),
+                "run thread must stay hidden for status {status:?}"
+            );
+        }
+        // Nothing is injected into the bound thread; the run thread owns the result.
         let turns = state
             .storage
             .list_thread_turns("cron_user", "bound", None, 10)
             .unwrap();
-        let destination = turns.first().unwrap()["turn_id"].as_str().unwrap();
-        let page = state
+        assert!(turns.is_empty(), "bound thread must not receive a synthetic turn");
+        runtime.archive_run_thread("cron_user", &routing.run_session_id);
+        let archived = state
             .storage
-            .get_thread_turn("cron_user", "bound", destination, -1, 100, true)
+            .get_chat_session("cron_user", &routing.run_session_id)
             .unwrap()
-            .unwrap();
-        let items = page["items"].as_array().unwrap();
-        assert!(items.iter().any(|item| item["kind"] == "tool_message"));
-        assert!(items
-            .iter()
-            .any(|item| item.pointer("/payload/content") == Some(&json!("child answer"))));
-        assert!(items.iter().all(|item| item["turn_id"] == destination));
+            .expect("run session still readable by id");
+        assert_eq!(archived.status, "archived");
     }
 
     fn build_chat_session(session_id: &str, agent_id: &str, now: f64) -> ChatSessionRecord {

@@ -1120,7 +1120,7 @@ export component Sidebar inherits Rectangle {
     // box highlight move), and this chip tracks the pointer one for one. Its
     // travel is clamped to the tree's own span so a drag that leaves the list
     // cannot paint over the header or the working-directory region below.
-    if DragPreview.active : Rectangle {
+    if DragPreview.active && DragPreview.scope == 0 : Rectangle {
         x: SidebarMetrics.gutter;
         y: Math.max(tree.absolute-position.y - root.absolute-position.y, Math.min(
             DragPreview.pointer-y - root.absolute-position.y - 10px,

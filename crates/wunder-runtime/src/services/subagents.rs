@@ -1644,11 +1644,8 @@ fn resolve_effective_status(
     if session_status == "closed" {
         return "closed".to_string();
     }
-    if let Some(runtime_status) = runtime_status {
-        let runtime_status = runtime_status.trim().to_ascii_lowercase();
-        if !runtime_status.is_empty() {
-            return runtime_status;
-        }
+    if let Some(runtime_status) = runtime_status.and_then(normalize_runtime_status) {
+        return runtime_status;
     }
     if run_status.is_empty() {
         if session_status == "active" {
@@ -1661,10 +1658,36 @@ fn resolve_effective_status(
     }
 }
 
+/// Monitor records speak their own vocabulary — a settled child reports
+/// `finished`, not `success`. Map the live side onto the durable turn
+/// vocabulary, otherwise a finished child stays "running" in every surface
+/// that reads terminal-ness off the status string.
+fn normalize_runtime_status(status: &str) -> Option<String> {
+    let status = status.trim().to_ascii_lowercase();
+    if status.is_empty() {
+        return None;
+    }
+    let mapped = match status.as_str() {
+        "finished" | "completed" | "complete" | "done" | "succeeded" => "success",
+        "failed" | "failure" => "error",
+        "canceled" | "aborted" => "cancelled",
+        other => other,
+    };
+    Some(mapped.to_string())
+}
+
 fn is_terminal_status(status: &str) -> bool {
     matches!(
         status,
-        "success" | "error" | "timeout" | "cancelled" | "failed" | "closed" | "idle" | "not_found"
+        "success"
+            | "error"
+            | "timeout"
+            | "cancelled"
+            | "failed"
+            | "closed"
+            | "archived"
+            | "idle"
+            | "not_found"
     )
 }
 
@@ -1823,8 +1846,9 @@ fn unmark_wake_once(key: &str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        encode_parent_turn_ref, is_auto_wake_consumed, list_parent_subagents_with_options,
-        parent_session_blocks_auto_wake, select_effective_run, suppress_auto_wake_from_wait_result,
+        encode_parent_turn_ref, is_auto_wake_consumed, is_failed_status, is_terminal_status,
+        list_parent_subagents_with_options, parent_session_blocks_auto_wake,
+        resolve_effective_status, select_effective_run, suppress_auto_wake_from_wait_result,
         suppress_auto_wake_from_wait_result_with_parent, ParentSubagentListOptions,
     };
     use crate::storage::*;
@@ -1906,6 +1930,31 @@ mod tests {
             select_effective_run(runs).map(|run| run.run_id),
             Some("run_b".to_string())
         );
+    }
+
+    #[test]
+    fn finished_runtime_status_settles_the_card() {
+        // The monitor says `finished`; the surfaces read terminal-ness off the
+        // turn vocabulary, so the live word has to be translated.
+        let status = resolve_effective_status("", Some("finished"), "archived");
+        assert_eq!(status, "success");
+        assert!(is_terminal_status(&status));
+        assert!(!is_failed_status(&status));
+        assert_eq!(
+            resolve_effective_status("", Some("failed"), "active"),
+            "error"
+        );
+    }
+
+    #[test]
+    fn archived_child_without_runs_is_done_not_failed() {
+        let status = resolve_effective_status("", None, "archived");
+        assert_eq!(status, "archived");
+        assert!(
+            is_terminal_status(&status),
+            "archived settles the indicator"
+        );
+        assert!(!is_failed_status(&status), "archived is not a failure");
     }
 
     fn build_storage() -> (tempfile::TempDir, SqliteStorage) {

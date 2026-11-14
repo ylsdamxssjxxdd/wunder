@@ -64,6 +64,14 @@ pub fn run(
                         app.get_settings_model_key() == created,
                         "the added model was not selected in the editor",
                     )?;
+                    // 新增配置排在列表最上面：刚点完「添加模型」不该让人滚到底部找。
+                    assert_state(
+                        app.get_models()
+                            .iter()
+                            .next()
+                            .is_some_and(|model| model.key == created),
+                        "the added model did not land at the top of the list",
+                    )?;
                     app.set_model_key_draft("extra-model".into());
                     app.set_model_name_draft("sample-model".into());
                     app.set_model_temperature_draft("0.6".into());
@@ -295,6 +303,13 @@ pub fn run(
                 }
                 19 => {
                     crate::smoke::snapshot(&app, &directory.join("model-editor-image.png"))?;
+                    // 删除确认框的文案：说「模型」，不是「智能体」。
+                    app.set_model_delete_open(true);
+                    phase = 20;
+                }
+                20 => {
+                    crate::smoke::snapshot(&app, &directory.join("model-delete-dialog.png"))?;
+                    app.set_model_delete_open(false);
                     return Ok(true);
                 }
                 _ => unreachable!(),

@@ -35,6 +35,10 @@ export global SidebarMetrics {
 // while every other row can still expose the insertion seam under it.
 export global DragPreview {
     in-out property <bool> active: false;
+    // 手势所属的列表：0 = 侧栏会话树，1 = 设置页模型列表。两处共用这套拖拽
+    // 状态，靠 scope 隔开——否则拖模型行会被侧栏当成在拖线程（浮标、插入缝、
+    // 落点解析全部串台）。
+    in-out property <int> scope: 0;
     in-out property <length> pointer-y: 0px;
     in-out property <length> pointer-x: 0px;
     in-out property <length> anchor-y: 0px;
@@ -82,6 +86,9 @@ export component DragRow inherits Rectangle {
     // row only has to say which row was grabbed and what it holds.
     in property <int> row-index: -1;
     in property <int> row-kind: -1;
+    // 这个行实例属于哪个拖拽列表（见 DragPreview.scope）。只有同一列表内的
+    // 行才会互相响应拖动与插入缝。
+    in property <int> drag-scope: 0;
     in property <string> workspace-id: "";
     // Tooltip is attached to the row's real pointer target below. Callers can
     // describe disclosure rows without putting a Tooltip on a visual overlay.
@@ -98,10 +105,13 @@ export component DragRow inherits Rectangle {
     // 这一行实例是否是当前手势的发起者（吸顶副本与真实行共用 row-index，
     // 只靠行号无法区分两者，收尾必须认发起者）。
     private property <bool> owns-gesture: false;
-    private property <bool> dragging: DragPreview.active && DragPreview.source-index == root.row-index;
+    private property <bool> dragging: DragPreview.active
+        && DragPreview.scope == root.drag-scope
+        && DragPreview.source-index == root.row-index;
     // Workspace headers (local and cloud) form one drag group. Threads stay
     // in their own kind and never leave the workspace they are listed under.
     private property <bool> droppable: DragPreview.active
+        && DragPreview.scope == root.drag-scope
         && root.row-index != DragPreview.source-index
         && ((root.row-kind == 0 || root.row-kind == 2)
             ? (DragPreview.source-kind == 0 || DragPreview.source-kind == 2)
@@ -147,6 +157,7 @@ export component DragRow inherits Rectangle {
     function clear-gesture() {
         root.owns-gesture = false;
         DragPreview.active = false;
+        DragPreview.scope = 0;
         DragPreview.source-index = -1;
         DragPreview.source-kind = -1;
         DragPreview.source-workspace = "";
@@ -209,6 +220,8 @@ export component DragRow inherits Rectangle {
                 DragPreview.source-kind = root.row-kind;
                 DragPreview.source-workspace = root.workspace-id;
                 DragPreview.source-label = root.label;
+                // 手势归属：只有同一列表的行会跟着这次拖动亮起或落缝。
+                DragPreview.scope = root.drag-scope;
                 DragPreview.active = false;
                 root.owns-gesture = true;
                 // 手指确实按住了：开一条不依赖事件流的追踪通道，后面事件流
@@ -235,7 +248,8 @@ export component DragRow inherits Rectangle {
         moved => {
             DragPreview.pointer-x = root.absolute-position.x + self.mouse-x;
             DragPreview.pointer-y = root.absolute-position.y + self.mouse-y;
-            if self.pressed && (abs(DragPreview.pointer-y - DragPreview.anchor-y) > 6px
+            if self.pressed && (DragPreview.scope == root.drag-scope || !DragPreview.active)
+                && (abs(DragPreview.pointer-y - DragPreview.anchor-y) > 6px
                 || abs(DragPreview.pointer-x - DragPreview.anchor-x) > 6px) {
                 DragPreview.active = true;
             }

@@ -342,6 +342,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
         let sql = format!(
             "SELECT parent_session_id, COUNT(*) FROM chat_sessions \
              WHERE user_id = ? AND parent_session_id IN ({placeholders}) \
+             AND COALESCE(spawned_by, '') <> 'cron' \
              GROUP BY parent_session_id"
         );
         let mut stmt = conn.prepare(&sql)?;
@@ -408,6 +409,9 @@ impl SqliteChatSessionStorage for SqliteStorage {
             // work-thread strip. Exclude them before pagination.
             parent_clause.push_str(" AND (COALESCE(parent_session_id, '') = '' OR COALESCE(spawned_by, '') NOT IN ('model', 'subagent_control')) AND NOT EXISTS (SELECT 1 FROM channel_sessions AS channel_session WHERE channel_session.session_id = chat_sessions.session_id AND channel_session.user_id = chat_sessions.user_id)");
         }
+        // Scheduled runs execute in a private thread that carries their trace.
+        // It is not a thread the user opened, so no list surface shows it.
+        parent_clause.push_str(" AND COALESCE(spawned_by, '') <> 'cron'");
         let (status_clause, status_params) =
             if normalized_status.is_empty() || normalized_status == "all" {
                 ("".to_string(), Vec::new())
@@ -490,6 +494,10 @@ impl SqliteChatSessionStorage for SqliteStorage {
         } else {
             "workspace_id = ?"
         };
+        // Scheduled run threads are execution traces, never user threads.
+        let workspace_clause = format!(
+            "{workspace_clause} AND COALESCE(spawned_by, '') <> 'cron'"
+        );
         let count_sql = format!(
             "SELECT COUNT(*) FROM chat_sessions WHERE user_id = ? AND {workspace_clause}{status_clause}"
         );

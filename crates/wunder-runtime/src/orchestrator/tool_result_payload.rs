@@ -1392,7 +1392,17 @@ fn project_schedule_task_success(data: &Value) -> Option<Value> {
 fn compact_schedule_job(job: &Value) -> Value {
     let map = job.as_object();
     let mut output = Map::new();
-    for key in ["job_id", "name", "enabled", "running", "last_status"] {
+    for key in [
+        "job_id",
+        "name",
+        "enabled",
+        "running",
+        "last_status",
+        // Routing and self-deletion are the two fields the model needs to
+        // reason about a job's behaviour after creation; both are tiny.
+        "session_target",
+        "delete_after_run",
+    ] {
         if let Some(value) = map
             .and_then(|m| m.get(key))
             .filter(|value| !value.is_null())

@@ -271,6 +271,7 @@ pub(crate) fn create_model_now(app: &MainWindow, api: &Arc<NativeDesktop>) {
     app.set_saving(true);
     let weak = app.as_weak();
     let api = api.clone();
+    let order_api = api.clone();
     let created_key = key;
     crate::native_pages::run_background(move || {
         let result = api.save_model(draft.edit(false));
@@ -280,6 +281,9 @@ pub(crate) fn create_model_now(app: &MainWindow, api: &Arc<NativeDesktop>) {
                 Ok(settings) => {
                     crate::native_pages::apply_settings(&app, settings);
                     crate::entity_state::restore_model(&app, &created_key);
+                    // 新加的配置排到列表最上面：刚点完「添加模型」，视线就在
+                    // 列表顶部，不该让人滚到底部去找新增的那一条。
+                    crate::native_pages::promote_model(&app, &created_key, &order_api);
                     let message = app
                         .global::<crate::I18n>()
                         .get_st_model_added()

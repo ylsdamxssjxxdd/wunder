@@ -3,7 +3,7 @@ import { Theme, ToolCard, ModelCard, ProfileCard, FileCard, WorkspaceFileRow, Cr
 import { Action, FormField, MiddleHeader, PageState, PageStateKind, ThemeCheck, ThemeSwitch, ThemeSlider } from "components.slint";
 import { TextEditBase } from "textedit-base.slint";
 import { TextFieldActivation, TextFieldMenu } from "text_field.slint";
-import { DragRow } from "drag_row.slint";
+import { DragRow, DragPreview } from "drag_row.slint";
 import { ComboBoxBase } from "combo_base.slint";
 import { ModelPresets } from "model_presets.slint";
 import { ExpertToolGroup, ExpertToolPicker } from "expert_widgets.slint";
@@ -933,7 +933,9 @@ export component SettingsPage inherits Rectangle {
     callback open-info(string, string);
 
 
-    private property <bool> model-delete-open: false;
+    // 模型删除确认框。状态由窗口持有（与 settings-open 一致），原生冒烟也
+    // 可以据此截图核对文案：模型 ≠ 智能体。
+    in-out property <bool> model-delete-open: false;
     background: Theme.chat;
 
     // Per-type list icons, mirroring the web messenger model list.
@@ -1475,10 +1477,19 @@ export component SettingsPage inherits Rectangle {
                                     VerticalLayout { alignment: start; spacing: 6px;
                                         for model[index] in root.models : DragRow {
                                             height: 58px;
+                                            // 模型列表与侧栏共用拖拽行：kind/scope 把它
+                                            // 们隔成两个拖拽组，拖模型不会被侧栏当成在拖
+                                            // 线程（浮标、插入缝、落点都不串台）。
+                                            row-index: index;
+                                            row-kind: 9;
+                                            drag-scope: 1;
                                             label: model.key;
                                             selected: root.selected-model == index;
                                             activate => { root.select-model(index); }
-                                            move-by(delta) => { root.move-model(index, delta); }
+                                            // DragRow 报的是像素位移；行高 58 + 行距 6 =
+                                            // 一格 64px，换算成槽位后由原生落位，和插入缝
+                                            // 用的是同一套几何。
+                                            move-by(delta) => { root.move-model(index, round((DragPreview.pointer-y - DragPreview.source-y) / 64px)); }
                                             clip: true;
                                             Image { x: 10px; y: (parent.height - 18px) / 2; width: 18px; height: 18px; source: root.model-icon(model.model-type); colorize: Theme.accent-ink; }
                                             // Cloud entries keep room for their badge next to the key.
@@ -2118,8 +2129,8 @@ export component SettingsPage inherits Rectangle {
     if root.model-delete-open : Rectangle { background: Theme.overlay; TouchArea { clicked => { root.model-delete-open = false; } scroll-event(event) => { return accept; } }
         Rectangle { width: min(400px, parent.width - 44px); height: 180px; border-radius: Theme.radius-lg; background: Theme.surface; border-width: 1px; border-color: Theme.border; TouchArea { }
             VerticalLayout { padding: 20px; spacing: 10px;
-                Text { height: 24px; text: I18n.ag_delete_confirm_title; color: Theme.text; font-size: Theme.font-xl; font-weight: 600; }
-                Text { vertical-stretch: 1; text: I18n.ag_delete_prefix + root.selected-key + I18n.ag_delete_suffix; color: Theme.muted; font-size: Theme.font-sm; wrap: word-wrap; }
+                Text { height: 24px; text: I18n.st_model_delete_title; color: Theme.text; font-size: Theme.font-xl; font-weight: 600; }
+                Text { vertical-stretch: 1; text: I18n.st_model_delete_prefix + root.selected-key + I18n.st_model_delete_suffix; color: Theme.muted; font-size: Theme.font-sm; wrap: word-wrap; }
                 HorizontalLayout { height: 32px; Rectangle { horizontal-stretch: 1; } Action { label: I18n.common_cancel; show-label: true; clicked => { root.model-delete-open = false; } } Action { width: 76px; label: I18n.common_delete; show-label: true; primary: true; clicked => { root.model-delete-open = false; root.delete-model(root.selected-key); } } }
             }
         }

@@ -187,6 +187,11 @@ ENTRIES = [
     ("model_token_placeholder", "仅保存到本机设置", "Saved to local settings only"),
     ("model_probe_context", "探测上下文", "Probe context"),
     ("model_probe_voices", "探测语音", "Probe voices"),
+    # 删除确认：模型配置不是智能体，文案只说模型。
+    ("st_model_delete_title", "确认删除模型", "Delete this model"),
+    ("st_model_delete_prefix", "将删除“", "This permanently deletes “"),
+    ("st_model_delete_suffix", "”，使用它的会话会回落到默认模型。",
+     "”. Conversations using it fall back to the default model."),
 
     # ---- file preview dialog ----
     ("preview_edit_toggle", "取消编辑", "Cancel editing"),

@@ -32,6 +32,10 @@ export global I18n {
     out property <string> ag_delete_confirm_title: zh ? "确认删除智能体" : "Delete this agent";
     out property <string> ag_delete_prefix: zh ? "将删除“" : "This permanently deletes “";
     out property <string> ag_delete_suffix: zh ? "”及其本地配置。已有会话不会被改写。" : "” and its local configuration. Existing conversations are not rewritten.";
+    // 模型配置的删除确认：文案要说「模型」，别借用智能体的措辞。
+    out property <string> st_model_delete_title: zh ? "确认删除模型" : "Delete this model";
+    out property <string> st_model_delete_prefix: zh ? "将删除“" : "This permanently deletes “";
+    out property <string> st_model_delete_suffix: zh ? "”，使用它的会话会回落到默认模型。" : "”. Conversations using it fall back to the default model.";
     out property <string> ag_import_title: zh ? "导入工蜂卡" : "Import worker card";
     out property <string> ag_import_hint: zh ? "卡片目录：工作区 agent-cards 目录下的导出文件" : "Card directory: exported files under the workspace agent-cards directory";
     out property <string> ag_overwrite_label: zh ? "覆盖同名专家（导入前需确认）" : "Overwrite agents with the same name (confirm before import)";

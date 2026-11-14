@@ -980,37 +980,55 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
         let Ok(from) = usize::try_from(from) else {
             return;
         };
-        let mut rows = app.get_models().iter().collect::<Vec<_>>();
-        if from >= rows.len() || rows.is_empty() {
+        let count = app.get_models().iter().count();
+        if from >= count || count == 0 {
             return;
         }
-        let to = (from as i64 + i64::from(delta)).clamp(0, rows.len() as i64 - 1) as usize;
-        if to == from {
-            return;
-        }
-        let row = rows.remove(from);
-        rows.insert(to, row);
-        // The highlight follows the model, not the slot it occupied.
-        let selected_key = app.get_settings_model_key().to_string();
-        let selected = rows
-            .iter()
-            .position(|entry| entry.key == selected_key)
-            .map(|index| index as i32)
-            .unwrap_or(-1);
-        app.set_selected_model(selected);
-        let keys: Vec<String> = rows.iter().map(|entry| entry.key.to_string()).collect();
-        model_catalogue().set(&app, rows);
-        let weak = weak.clone();
-        let api = order_api.clone();
-        run_background(move || {
-            if let Err(error) = api.save_model_order(&keys) {
-                let _ = weak.upgrade_in_event_loop(move |app| {
-                    show_error(&app, format!("无法保存模型排序：{error}"))
-                });
-            }
-        });
+        let to = (from as i64 + i64::from(delta)).clamp(0, count as i64 - 1) as usize;
+        reorder_models(&app, from, to, &order_api);
     });
 }
+
+/// 把模型从 `from` 挪到 `to`：先投影（高亮跟着模型走），再按新顺序落库。
+/// 「添加模型后排到首位」也走这里，列表顺序只有这一套写法。
+pub(crate) fn reorder_models(app: &MainWindow, from: usize, to: usize, api: &Arc<NativeDesktop>) {
+    let mut rows = app.get_models().iter().collect::<Vec<_>>();
+    if from >= rows.len() || to >= rows.len() || from == to {
+        return;
+    }
+    let row = rows.remove(from);
+    rows.insert(to, row);
+    // The highlight follows the model, not the slot it occupied.
+    let selected_key = app.get_settings_model_key().to_string();
+    let selected = rows
+        .iter()
+        .position(|entry| entry.key == selected_key)
+        .map(|index| index as i32)
+        .unwrap_or(-1);
+    app.set_selected_model(selected);
+    let keys: Vec<String> = rows.iter().map(|entry| entry.key.to_string()).collect();
+    model_catalogue().set(app, rows);
+    let weak = app.as_weak();
+    let api = api.clone();
+    run_background(move || {
+        if let Err(error) = api.save_model_order(&keys) {
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                show_error(&app, format!("无法保存模型排序：{error}"))
+            });
+        }
+    });
+}
+
+/// 新加的模型排到列表最上面：用户刚点完「添加模型」，视线就在列表顶部。
+pub(crate) fn promote_model(app: &MainWindow, key: &str, api: &Arc<NativeDesktop>) {
+    let Some(from) = app.get_models().iter().position(|entry| entry.key == key) else {
+        return;
+    };
+    if from > 0 {
+        reorder_models(app, from, 0, api);
+    }
+}
+
 fn apply_agents(app: &MainWindow, agents: Vec<AgentRecord>) {
     let selected = usize::try_from(app.get_selected_agent())
         .ok()

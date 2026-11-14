@@ -328,7 +328,7 @@ impl PostgresChatSessionStorage for PostgresStorage {
         }
         let sql = format!(
             "SELECT parent_session_id, COUNT(*) FROM chat_sessions \
-             WHERE user_id = $1 AND parent_session_id IN ({}) GROUP BY parent_session_id",
+             WHERE user_id = $1 AND parent_session_id IN ({}) AND COALESCE(spawned_by, '') <> 'cron' GROUP BY parent_session_id",
             placeholders.join(", ")
         );
         let params_ref: Vec<&(dyn ToSql + Sync)> =
@@ -414,6 +414,12 @@ impl PostgresChatSessionStorage for PostgresStorage {
         } else {
             format!(" WHERE {}", conditions.join(" AND "))
         };
+        // Scheduled run threads are execution traces, never user threads.
+        let where_clause = if where_clause.is_empty() {
+            " WHERE COALESCE(spawned_by, '') <> 'cron'".to_string()
+        } else {
+            format!("{where_clause} AND COALESCE(spawned_by, '') <> 'cron'")
+        };
         let count_sql = format!("SELECT COUNT(*) FROM chat_sessions{where_clause}");
         let params_ref: Vec<&(dyn ToSql + Sync)> =
             params.iter().map(|value| value.as_ref()).collect();
@@ -486,7 +492,10 @@ impl PostgresChatSessionStorage for PostgresStorage {
                 ));
             }
         }
-        let where_clause = format!(" WHERE {}", conditions.join(" AND "));
+        let where_clause = format!(
+            " WHERE {} AND COALESCE(spawned_by, '') <> 'cron'",
+            conditions.join(" AND ")
+        );
         let count_sql = format!("SELECT COUNT(*) FROM chat_sessions{where_clause}");
         let params_ref: Vec<&(dyn ToSql + Sync)> =
             params.iter().map(|value| value.as_ref()).collect();
