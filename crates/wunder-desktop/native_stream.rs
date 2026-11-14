@@ -214,6 +214,16 @@ async fn run(
             }
             item = stream.next() => {
                 let Some(Ok(event)) = item else { break };
+                // The desktop projects a live turn from the semantic frames
+                // alone. `thread_item_tail`, `thread_process_item` and
+                // `thread_change` are transport duplicates for other clients;
+                // forwarding them made this window decode and then ignore the
+                // majority of its frames, spending the per-frame UI budget on
+                // nothing. Filtering here keeps the bounded channel free for
+                // content the pump actually reduces.
+                if is_transport_duplicate(&event.event) {
+                    continue;
+                }
                 // Awaiting capacity yields the Tokio worker. Closing the receiver
                 // only disables delivery; the stream is still drained to settlement.
                 if !output.is_closed() {
@@ -364,4 +374,50 @@ async fn replay_queue(
         false,
     )
     .await
+}
+
+/// Frames the desktop never reduces.
+///
+/// The runtime publishes each live change three ways: `thread_item_tail` and
+/// `thread_process_item` (durable projections for other clients) and
+/// `thread_change` (a cursor notification). The desktop reducer only reads the
+/// semantic frame (`thread_item_delta` and the non-delta events), so handing it
+/// the duplicates spent most of every UI frame decoding JSON it discarded — the
+/// direct cause of a backed-up live stream. Dropping them here is also where the
+/// bounded channel keeps its capacity for real content.
+fn is_transport_duplicate(event: &str) -> bool {
+    matches!(
+        event,
+        "thread_item_tail" | "thread_process_item" | "thread_change"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_transport_duplicate;
+
+    #[test]
+    fn transport_duplicates_never_reach_the_ui_channel() {
+        for duplicate in ["thread_item_tail", "thread_process_item", "thread_change"] {
+            assert!(is_transport_duplicate(duplicate), "{duplicate} must be dropped");
+        }
+    }
+
+    #[test]
+    fn semantic_and_delta_frames_are_kept() {
+        for kept in [
+            "thread_item_delta",
+            "llm_output",
+            "final",
+            "tool_call",
+            "tool_result",
+            "reasoning_delta",
+            "native_stats",
+            "context_usage",
+            "question_panel",
+            "turn_terminal",
+        ] {
+            assert!(!is_transport_duplicate(kept), "{kept} must reach the reducer");
+        }
+    }
 }

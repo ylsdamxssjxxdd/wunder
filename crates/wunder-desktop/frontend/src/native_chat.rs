@@ -173,10 +173,11 @@ impl TurnOutput {
         timeline.upsert_tool(&projected);
     }
 
-    /// Append one command-output chunk for a session and return the retained
-    /// tail. `command_session_delta` frames arrive many times per command, so the
-    /// buffer is bounded and only its newest bytes are kept.
-    fn append_command_output(&mut self, key: &str, delta: &str) -> String {
+    /// Append one command-output chunk to the bounded tail. `command_session_delta`
+    /// frames arrive many times per command, so the buffer keeps only its newest
+    /// bytes and the caller borrows that tail when it renders — a long command
+    /// no longer copies the whole buffer on every single chunk.
+    fn append_command_output(&mut self, key: &str, delta: &str) {
         if !self.command_output.contains_key(key) && self.command_output.len() >= 8 {
             // Finished outputs already live in their workflow row. Keep only
             // a small accumulation set for commands still emitting deltas.
@@ -193,11 +194,14 @@ impl TurnOutput {
             }
             *buffer = buffer.split_off(start);
         }
-        buffer.clone()
     }
 
-    fn command_output_text(&self, key: &str) -> String {
-        self.command_output.get(key).cloned().unwrap_or_default()
+    /// Borrowed newest-bytes tail of a streaming command; never allocates.
+    fn command_output_tail(&self, key: &str) -> &str {
+        self.command_output
+            .get(key)
+            .map(String::as_str)
+            .unwrap_or_default()
     }
 }
 
@@ -4824,7 +4828,13 @@ fn drive_turn(
                 .max(active.stream.pending_events() as i32),
         );
     }
-    for _ in 0..128 {
+    // One frame spends more time only when the stream is actually backed up,
+    // and a text frame earns an extra slice on top: reasoning and the answer
+    // must never sit in the queue behind tool plumbing. The hard cap keeps
+    // input, selection and scrolling responsive through a burst.
+    let mut budget = frame_budget(active.stream.pending_events() + pending.len());
+    let mut processed = 0usize;
+    loop {
         // A promoted parked turn may already hold events; they replay
         // first so the handover never loses a token.
         let event = match pending.pop_front() {
@@ -4843,6 +4853,9 @@ fn drive_turn(
                 }
             },
         };
+        if is_text_frame(&event) {
+            budget = (budget + TEXT_FRAME_EXTENSION).min(FRAME_HARD_CAP);
+        }
         match event {
             NativeChatEvent::Event(event) => {
                 update_active_stats(active, &event);
@@ -4960,7 +4973,8 @@ fn drive_turn(
                 }
             }
         }
-        if done || started.elapsed() > Duration::from_millis(5) {
+        processed += 1;
+        if done || processed >= FRAME_EVENT_CAP || started.elapsed() >= budget {
             break;
         }
     }
@@ -5486,10 +5500,14 @@ fn apply_event(
                     .as_str()
                     .or_else(|| data["tool_runtime_name"].as_str())
                     .unwrap_or(crate::timeline_text::COMMAND_TOOL);
-                let mut output = active.command_output_text(&key);
                 if let Some(delta) = data["delta"].as_str() {
-                    output = active.append_command_output(&key, delta);
+                    active.append_command_output(&key, delta);
                 }
+                // The retained tail is borrowed, then cut once: the row text,
+                // the preview and the payload all read the same bounded excerpt
+                // instead of each re-copying the buffer.
+                let output = active.command_output_tail(&key).to_owned();
+                let bounded = bound_command_output(&output);
                 let command = data["command"].as_str().unwrap_or("");
                 let terminal = matches!(kind, "command_session_exit" | "command_session_summary");
                 let exit_code = data["exit_code"].as_i64();
@@ -5511,8 +5529,8 @@ fn apply_event(
                 if !command.is_empty() {
                     lines.push(command.chars().take(240).collect());
                 }
-                if !output.is_empty() {
-                    lines.push(bound_command_output(output.as_str()));
+                if !bounded.is_empty() {
+                    lines.push(bounded.clone());
                 }
                 if let Some(code) = exit_code {
                     lines.push(format!("exit {code}"));
@@ -5520,7 +5538,7 @@ fn apply_event(
                 let mut command_payload = data.clone();
                 command_payload["args"] = serde_json::json!({"command": command});
                 command_payload["result"] = serde_json::json!({"data": {
-                    "command": command, "stdout": bound_command_output(&output), "exit_code": exit_code
+                    "command": command, "stdout": bounded, "exit_code": exit_code
                 }});
                 active.upsert_workflow(
                     timeline,
@@ -5609,6 +5627,55 @@ fn apply_event(
 /// Live command output is retained as a bounded tail; a watcher wants the newest
 /// bytes and an unbounded buffer would keep a chatty command's row growing.
 const COMMAND_OUTPUT_LIVE_LIMIT: usize = 4096;
+
+/// Upper bound on the events one pump frame reduces, regardless of time.
+const FRAME_EVENT_CAP: usize = 256;
+/// A frame never spends longer than this, so a burst cannot stall input.
+const FRAME_HARD_CAP: Duration = Duration::from_millis(20);
+/// Extra slice granted to a text frame sitting on the budget edge.
+const TEXT_FRAME_EXTENSION: Duration = Duration::from_millis(2);
+
+/// Time one pump frame may spend reducing a stream, by queue depth.
+///
+/// A quiet stream only needs the original 5 ms slice. A backed-up one would
+/// otherwise need many ticks to drain, which is exactly what a reader sees as
+/// "nothing streams, then everything appears at once". Every tier stays well
+/// under the 33 ms frame cadence, so typing and scrolling keep their turn.
+fn frame_budget(backlog: usize) -> Duration {
+    match backlog {
+        0..=15 => Duration::from_millis(5),
+        16..=63 => Duration::from_millis(9),
+        _ => Duration::from_millis(14),
+    }
+}
+
+/// Whether this event carries text a reader is watching grow.
+///
+/// `thread_item_delta` names its semantic type in `source_event`, one level
+/// inside the stream envelope — the same unwrapping `apply_event` does. Every
+/// `*_delta` frame becomes `thread_item_delta` (command output too), so the
+/// envelope cannot decide this on its own.
+fn is_text_frame(event: &NativeChatEvent) -> bool {
+    let NativeChatEvent::Event(value) = event else {
+        return false;
+    };
+    let raw = value["event"].as_str().unwrap_or_default();
+    let envelope = &value["data"];
+    let data = if envelope.get("tool").is_some() || envelope.get("tool_name").is_some() {
+        envelope
+    } else {
+        envelope.get("data").unwrap_or(envelope)
+    };
+    let kind = if raw == "thread_item_delta" {
+        data["source_event"].as_str().unwrap_or(raw)
+    } else {
+        raw
+    };
+    matches!(
+        kind,
+        "reasoning" | "reasoning_delta" | "delta" | "llm_output_delta"
+    )
+}
 
 /// Mirror of the runtime's result preview: keep the first 16 lines under 2400
 /// chars and mark a truncation, so a live command row stays a readable excerpt.
@@ -5745,6 +5812,55 @@ pub(crate) fn format_count_i64(value: i64) -> String {
 #[cfg(test)]
 mod turn_tests {
     use super::*;
+
+    /// A backed-up stream earns a longer frame; a quiet one keeps the slice it
+    /// always had. Every tier stays under the 33 ms cadence so typing and
+    /// scrolling keep their turn.
+    #[test]
+    fn frame_budget_grows_only_with_a_backlog() {
+        assert_eq!(frame_budget(0), Duration::from_millis(5));
+        assert_eq!(frame_budget(15), Duration::from_millis(5));
+        assert_eq!(frame_budget(16), Duration::from_millis(9));
+        assert_eq!(frame_budget(63), Duration::from_millis(9));
+        assert_eq!(frame_budget(64), Duration::from_millis(14));
+        assert_eq!(frame_budget(usize::MAX), Duration::from_millis(14));
+        assert!(FRAME_HARD_CAP < Duration::from_millis(33));
+        assert!(FRAME_EVENT_CAP > 128);
+    }
+
+    /// Only reasoning and answer chunks earn the extra slice: every `*_delta`
+    /// arrives as `thread_item_delta`, so the semantic name must be read from
+    /// `source_event`. A streamed command output is a delta frame too, and it
+    /// must not be able to extend the frame it is already expensive in.
+    #[test]
+    fn only_text_frames_earn_the_extra_slice() {
+        let envelope = |source: &str, body: serde_json::Value| {
+            NativeChatEvent::Event(serde_json::json!({
+                "event": "thread_item_delta",
+                "data": {"session_id": "thread-a", "data": {
+                    "source_event": source, "body": body
+                }}
+            }))
+        };
+        assert!(is_text_frame(&envelope(
+            "llm_output_delta",
+            serde_json::json!({"reasoning_delta": "想"})
+        )));
+        assert!(is_text_frame(&envelope(
+            "llm_output_delta",
+            serde_json::json!({"delta": "答"})
+        )));
+        assert!(!is_text_frame(&envelope(
+            "command_session_delta",
+            serde_json::json!({"delta": "output"})
+        )));
+        let tool = NativeChatEvent::Event(serde_json::json!({
+            "event": "tool_result",
+            "data": {"tool": "读取文件", "tool_call_id": "call-1"}
+        }));
+        assert!(!is_text_frame(&tool));
+        assert!(!is_text_frame(&NativeChatEvent::Finished));
+    }
 
     /// Opening a finished thread must not turn its idle dot into a fresh green
     /// check. The settle time comes from storage (or, failing that, from the

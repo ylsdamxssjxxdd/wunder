@@ -1102,7 +1102,10 @@ fn select_effective_run(runs: Vec<SessionRunRecord>) -> Option<SessionRunRecord>
 
 fn is_run_without_trace_failure(run: &SessionRunRecord) -> bool {
     let status = run.status.trim().to_ascii_lowercase();
-    if !matches!(status.as_str(), "error" | "failed" | "timeout" | "cancelled") {
+    if !matches!(
+        status.as_str(),
+        "error" | "failed" | "timeout" | "cancelled"
+    ) {
         return false;
     }
     let progress = run
@@ -1821,12 +1824,89 @@ fn unmark_wake_once(key: &str) {
 mod tests {
     use super::{
         encode_parent_turn_ref, is_auto_wake_consumed, list_parent_subagents_with_options,
-        parent_session_blocks_auto_wake, suppress_auto_wake_from_wait_result,
+        parent_session_blocks_auto_wake, select_effective_run, suppress_auto_wake_from_wait_result,
         suppress_auto_wake_from_wait_result_with_parent, ParentSubagentListOptions,
     };
     use crate::storage::*;
     use serde_json::{json, Value};
     use tempfile::tempdir;
+
+    fn run_fixture(
+        run_id: &str,
+        status: &str,
+        elapsed_s: f64,
+        progress: Option<Value>,
+        result: Option<&str>,
+    ) -> SessionRunRecord {
+        SessionRunRecord {
+            run_id: run_id.to_string(),
+            session_id: "sess_child".to_string(),
+            parent_session_id: Some("sess_parent".to_string()),
+            user_id: "fixture-owner".to_string(),
+            dispatch_id: None,
+            run_kind: Some("subagent".to_string()),
+            requested_by: Some("subagent_control".to_string()),
+            agent_id: None,
+            model_name: Some("test-model".to_string()),
+            status: status.to_string(),
+            queued_time: 1.0,
+            started_time: 1.0,
+            finished_time: 1.0 + elapsed_s,
+            elapsed_s,
+            result: result.map(str::to_string),
+            error: None,
+            updated_time: 1.0 + elapsed_s,
+            metadata: progress.map(|progress| json!({"subagent_progress": progress})),
+        }
+    }
+
+    #[test]
+    fn settled_child_keeps_its_result_when_a_later_run_never_started() {
+        // Newest first, the order the storage query returns.
+        let runs = vec![
+            run_fixture("run_refused", "error", 0.02, None, None),
+            run_fixture(
+                "run_task",
+                "success",
+                2.04,
+                Some(json!({"model_request_count": 2, "tool_calls": 1})),
+                Some("25 个"),
+            ),
+        ];
+        let picked = select_effective_run(runs).expect("a run is selected");
+        assert_eq!(picked.run_id, "run_task");
+        assert_eq!(picked.status, "success");
+    }
+
+    #[test]
+    fn real_failure_still_wins_over_an_earlier_success() {
+        let runs = vec![
+            run_fixture(
+                "run_failed",
+                "error",
+                3.5,
+                Some(json!({"model_request_count": 4, "tool_calls": 2})),
+                None,
+            ),
+            run_fixture("run_task", "success", 2.0, None, Some("done")),
+        ];
+        assert_eq!(
+            select_effective_run(runs).map(|run| run.run_id),
+            Some("run_failed".to_string())
+        );
+    }
+
+    #[test]
+    fn only_refused_runs_fall_back_to_the_newest_one() {
+        let runs = vec![
+            run_fixture("run_b", "error", 0.01, None, None),
+            run_fixture("run_a", "error", 0.02, None, None),
+        ];
+        assert_eq!(
+            select_effective_run(runs).map(|run| run.run_id),
+            Some("run_b".to_string())
+        );
+    }
 
     fn build_storage() -> (tempfile::TempDir, SqliteStorage) {
         let dir = tempdir().expect("tempdir");
