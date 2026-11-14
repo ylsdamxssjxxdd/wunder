@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
-wunder-desktop = { path = "..", default-features = false, features = ["sqlite-storage", "desktop-control"] }
+wunder-desktop = { path = "..", default-features = false, features = ["sqlite-storage", "desktop-control", "web-fetch"] }
 wunder-runtime = { path = "../../wunder-runtime", default-features = false, features = ["sqlite-storage"] }
 slint = { version = "=1.18.0", default-features = false, features = [
   "backend-winit",

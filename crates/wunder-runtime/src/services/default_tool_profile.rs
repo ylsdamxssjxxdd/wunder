@@ -237,6 +237,27 @@ mod tests {
         }
     }
 
+    /// 桌面版/命令行默认工具面必须含「网页抓取」：本地形态不读
+    /// tools.builtin.enabled，能否默认挂载只取决于 feature 是否编入与
+    /// 配置开关，这里同时锁住两者，防止构建配置再把它裁掉。
+    #[cfg(feature = "web-fetch")]
+    #[test]
+    fn desktop_defaults_include_web_fetch() {
+        let mut config = Config::default();
+        config.server.mode = "desktop".to_string();
+        config.tools.web.fetch.enabled = true;
+        let skills = crate::skills::SkillRegistry::default();
+        let allowed = crate::tools::collect_available_tool_names(&config, &skills, None);
+        assert!(allowed.contains("网页抓取"), "web_fetch missing from allowed");
+        assert!(
+            default_tool_names(&allowed).contains(&"网页抓取".to_string()),
+            "web_fetch missing from default selection"
+        );
+        config.tools.web.fetch.enabled = false;
+        let allowed = crate::tools::collect_available_tool_names(&config, &skills, None);
+        assert!(!allowed.contains("网页抓取"));
+    }
+
     #[test]
     fn defaults_select_every_bundled_skill() {
         let allowed: HashSet<String> = DEFAULT_SKILL_NAMES
