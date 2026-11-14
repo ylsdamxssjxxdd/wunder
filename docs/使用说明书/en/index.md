@@ -14,7 +14,7 @@ updated_at: 2026-11-08
 
 # wunder
 
-<p class="docs-eyebrow">A general-purpose AI workbench</p>
+<p class="docs-eyebrow">A general-purpose AI operating system · model + harness + runtime</p>
 
 Give it a goal, and the agent breaks the task down on its own, calls tools, and hands the results back.
 

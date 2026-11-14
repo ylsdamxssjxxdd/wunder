@@ -1,12 +1,12 @@
 ---
 title: wunder 心舰
 summary: wunder 的多个形态、能力范围、任务并行与本地等待队列，以及说明书导航入口。
-updated_at: 2026-11-08
+updated_at: 2026-11-14
 ---
 
 # wunder 心舰
 
-<p class="docs-eyebrow">通用型人工智能工作台</p>
+<p class="docs-eyebrow">通用型人工智能操作系统 · 模型 + 驾驭框架 + 运行环境</p>
 
 给出目标后，智能体自行拆解任务、调用工具并交付结果。
 

@@ -1,10 +1,10 @@
 ---
 title: Core Concepts
 summary: The Diverse, Fast, Superior, and Efficient cores, the design philosophy with five design principles, multiple forms, deeper pages by topic, and capabilities that are removed or restricted.
-updated_at: 2026-11-08
+updated_at: 2026-11-14
 ---
 
-wunder is a general-purpose AI workbench: hand it a goal and the agent breaks the task down, calls tools, and delivers results. The feature list lives in [Tools](/docs/en/tools/) and the [Capability Quick Reference](/docs/en/capabilities/api-index/).
+wunder is a general-purpose AI operating system: everything except the model is provided by wunder — the harness (goal breakdown, model-driven tool calls, permission and context governance) and the runtime (browser, commands, files, Python, documents and other ready-made capabilities), i.e. wunder = model + harness + runtime. Hand it a goal and the agent breaks the task down, calls tools, and delivers results. The feature list lives in [Tools](/docs/en/tools/) and the [Capability Quick Reference](/docs/en/capabilities/api-index/).
 
 ## Diverse, Fast, Superior, Efficient
 

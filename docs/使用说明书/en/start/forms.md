@@ -1,12 +1,12 @@
 ---
 title: Form matrix
 summary: How the six program forms compare on tech stack, purpose, run model and OS support, plus which form to pick for your scenario.
-updated_at: 2026-11-08
+updated_at: 2026-11-14
 ---
 
 # Form matrix
 
-wunder is a general-purpose AI workbench. One engine is shipped as several program forms; the difference is only in the access layer.
+wunder is a general-purpose AI operating system (model + harness + runtime). One engine is shipped as several program forms; the difference is only in the access layer.
 
 | Icon | Form | Tech stack | Purpose | Run model | OS support |
 | :--- | :--- | :--- | :--- | :--- | :--- |

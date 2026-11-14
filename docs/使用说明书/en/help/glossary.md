@@ -1,14 +1,14 @@
 ---
 title: Glossary
 summary: Form and layer names in wunder, plus definitions for threads, turns, workspaces, and other core terms.
-updated_at: 2026-10-16
+updated_at: 2026-11-14
 ---
 
 ## Product and Form Names
 
 | Name | Short id | Meaning |
 |------|------|------|
-| wunder | wunder | The product itself, a **general-purpose AI workbench**: hand a goal to the agent, and it breaks the task down, calls tools, and delivers results. |
+| wunder | wunder | The product itself, a **general-purpose AI operating system**: wunder = model + harness + runtime — everything except the model. Hand a goal to the agent, and it breaks the task down, calls tools, and delivers results. |
 | Core | core | The foundation: configuration, authentication, storage, and execution policy. |
 | Engine | runtime | The execution layer: task orchestration, thread runtime, tools, channels, and gateway. The Desktop, Android, and the CLI depend on the Engine directly, not on the Server. |
 | Server | server | The **user and agent management platform**: the server form, aimed at teams and organizations, handling multi-user access, permissions, and channel access, and providing the Cloud. |

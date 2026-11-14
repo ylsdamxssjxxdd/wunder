@@ -1,6 +1,6 @@
 # <img src="images/eva01-head.png" alt="eva01 head" width="44" align="absmiddle"> wunder
 
-wunder is a **general-purpose AI workbench**:
+wunder is a **general-purpose AI operating system**: **wunder = model + harness + runtime**, i.e. everything except the model.
 
 - **Diverse**: multiple platforms — 32-bit Windows 7 and Ubuntu 18.04 — and multiple forms — web, local, and mobile.
 - **Fast**: starts instantly and responds without lag.
