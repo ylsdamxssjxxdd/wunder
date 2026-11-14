@@ -2286,6 +2286,11 @@ fn run(
                             state.editor_rev = state.editor_rev.wrapping_add(1);
                             state.notify(match &default_error {
                                 Some(error) => format!("模型已保存，但设为默认失败：{error}"),
+                                // 设默认是本页保存时一并完成的动作，提示里要
+                                // 明确说清楚，用户不必再回头看开关状态。
+                                None if card.is_default && actual_default => {
+                                    "模型已保存，并已设为默认".to_string()
+                                }
                                 None => "模型已保存".to_string(),
                             });
                             state.touch();
@@ -6999,8 +7004,8 @@ fn new_model_card() -> ModelCard {
         disabled: false,
         temperature: "0.7".into(),
         timeout_s: "120".into(),
-        max_output: "65536".into(),
-        thinking_token_budget: "65536".into(),
+        max_output: "32768".into(),
+        thinking_token_budget: "32768".into(),
         max_rounds: "1000".into(),
         max_context: "262144".into(),
         history_compaction_ratio: "0.9".into(),

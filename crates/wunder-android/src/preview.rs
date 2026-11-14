@@ -8,6 +8,11 @@ use slint::ComponentHandle;
 
 fn main() {
     let ui = wunder_android::build_preview();
+    // `WUNDER_PREVIEW_TOAST=<text>` paints the in-app toast so its look can be
+    // reviewed here; on the phone the engine raises it and hides it after 2.6s.
+    if let Ok(text) = std::env::var("WUNDER_PREVIEW_TOAST") {
+        ui.set_toast(text.into());
+    }
     // `WUNDER_PREVIEW_SNAPSHOT=<file.ppm>` renders one frame and quits; the
     // phone window cannot be grabbed by the desktop screenshot tools.
     if let Ok(path) = std::env::var("WUNDER_PREVIEW_SNAPSHOT") {

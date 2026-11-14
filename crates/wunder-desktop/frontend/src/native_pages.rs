@@ -966,13 +966,20 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
     let delete_api = api.clone();
     app.on_delete_model(move |key| {
         let Some(app) = weak.upgrade() else { return };
-        if crate::model_editor::defer_delete(&app, key.to_string()) {
+        let key = key.trim().to_string();
+        // 停放中的草稿行不是已落库的配置：删除它就是放弃这份草稿，
+        // 交给后端只会得到「模型不存在」的拒绝。
+        if crate::entity_state::model_draft_row_key().as_deref() == Some(key.as_str()) {
+            app.invoke_discard_model_draft();
+            app.set_status("已放弃未保存的模型草稿".into());
+            return;
+        }
+        if crate::model_editor::defer_delete(&app, key.clone()) {
             return;
         }
         if app.get_saving() || app.get_settings_loading() || app.get_agents_loading() {
             return;
         }
-        let key = key.trim().to_string();
         if key.is_empty() {
             return;
         }
@@ -1019,7 +1026,12 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
                     Ok(settings) => {
                         apply_settings(&app, settings);
                         crate::entity_state::restore_model(&app, &key);
-                        app.set_status("默认模型已更新".into());
+                        let message = app
+                            .global::<crate::I18n>()
+                            .get_st_model_default_updated()
+                            .to_string();
+                        app.set_status(message.as_str().into());
+                        show_toast(&app, message, 1);
                         app.invoke_refresh_agents();
                     }
                     Err(error) => {

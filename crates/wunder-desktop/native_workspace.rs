@@ -935,9 +935,19 @@ impl NativeDesktop {
         Ok(1)
     }
 
-    /// Read one workspace image for Markdown rendering after enforcing the
-    /// workspace path boundary. The UI receives bounded bytes instead of a
-    /// host path, so message content cannot become a local-file reader.
+    /// Read one image for Markdown rendering. Order of resolution:
+    ///
+    /// 1. `chat_attachments/` — the private attachment store, whichever
+    ///    workspace root the chat page hands in.
+    /// 2. Local single-root form only (桌面版、命令行、安卓版): an absolute
+    ///    path anywhere the process can read. The local machine has a single
+    ///    user, the agent's file tools already read those files, and the bytes
+    ///    only ever reach this screen — so a transcript may show any local
+    ///    picture. Extension and size limits below still apply, and no network
+    ///    fetch happens for `http(s)` sources.
+    /// 3. Otherwise the workspace containment check stays in force: message
+    ///    content must not become a local-file reader in the cloud form, where
+    ///    one workspace can belong to a different tenant.
     pub fn workspace_image_bytes(&self, root_path: &str, relative: &str) -> Result<Vec<u8>> {
         const MAX_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
         let root = PathBuf::from(root_path);
@@ -951,6 +961,8 @@ impl NativeDesktop {
         // root and `chat_attachments/` prefix are remapped; all other sources
         // keep the regular workspace containment check below.
         let target = if let Some(target) = self.chat_attachment_target(relative)? {
+            target
+        } else if let Some(target) = self.local_image_target(relative)? {
             target
         } else {
             if !root.is_dir() {
@@ -984,6 +996,15 @@ impl NativeDesktop {
             bail!("图片大小超出展示上限");
         }
         Ok(bytes)
+    }
+
+    /// 本地单根形态放行本机绝对图片路径；其它形态返回 `None`，交回工作区
+    /// 边界检查。
+    fn local_image_target(&self, source: &str) -> Result<Option<PathBuf>> {
+        if !self.state().workspace.is_single_root() {
+            return Ok(None);
+        }
+        local_absolute_image_path(source)
     }
 
     /// Resolve a persisted chat attachment from its public workspace path to
@@ -1309,6 +1330,42 @@ fn percent_decode_path(source: &str) -> Result<String> {
     Ok(String::from_utf8(bytes)?)
 }
 
+/// One local absolute image path, or `None` when the source is relative, a
+/// remote URL, or does not exist. Kept free of state so the boundary rule
+/// stays unit-testable: 相对路径永远按工作区解释，只有本机绝对路径走这条放行。
+fn local_absolute_image_path(source: &str) -> Result<Option<PathBuf>> {
+    let decoded = percent_decode_path(source)?.replace('\\', "/");
+    if decoded.starts_with("//") {
+        return Ok(None);
+    }
+    let candidate = if decoded.starts_with("file:") {
+        let Ok(url) = url::Url::parse(&decoded) else {
+            return Ok(None);
+        };
+        if url
+            .host_str()
+            .is_some_and(|host| !host.is_empty() && host != "localhost")
+        {
+            return Ok(None);
+        }
+        let Ok(path) = url.to_file_path() else {
+            return Ok(None);
+        };
+        path
+    } else if decoded.contains("://") {
+        return Ok(None);
+    } else {
+        PathBuf::from(&decoded)
+    };
+    if !candidate.is_absolute() {
+        return Ok(None);
+    }
+    let Ok(canonical) = candidate.canonicalize() else {
+        return Ok(None);
+    };
+    Ok(Some(workspace_canonical(&canonical)))
+}
+
 /// Convert the logical paths emitted by cloud agents back to the local
 /// workspace-relative form before applying the normal containment check.
 /// Accepted forms:
@@ -1460,6 +1517,36 @@ mod tests {
         }
         let outside = tempfile::NamedTempFile::new().unwrap();
         assert!(super::workspace_resource_target(&root, outside.path().to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn local_absolute_images_are_the_only_extra_scope() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("shot.png");
+        std::fs::write(&file, b"png").unwrap();
+        let canonical = file.canonicalize().unwrap();
+        assert_eq!(
+            super::local_absolute_image_path(file.to_str().unwrap()).unwrap(),
+            Some(canonical.clone())
+        );
+        let url = url::Url::from_file_path(&file).unwrap();
+        assert_eq!(
+            super::local_absolute_image_path(url.as_str()).unwrap(),
+            Some(canonical)
+        );
+        for rejected in [
+            "temp/shot.png",
+            "./shot.png",
+            "https://example.invalid/shot.png",
+            "//fileserver/shot.png",
+            "/definitely/missing/shot.png",
+        ] {
+            assert_eq!(
+                super::local_absolute_image_path(rejected).unwrap(),
+                None,
+                "{rejected}"
+            );
+        }
     }
 
     #[test]

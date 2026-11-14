@@ -1,0 +1,56 @@
+// 应用内提示条：浮在内容上方的半透明提示胶囊。
+//
+// 设计取舍（安卓版）：
+// - 宽度按文本收紧，长提示到 260px 就折行，不再横拉满屏；
+// - 底色是「白 0.60 + 强调色 0.30」两层叠出来的浅色半透明，下面的内容仍然透得出来，
+//   同时不会因为背景是深色卡片就把文字压掉；
+// - 文字用正文深色 + 14px / 700，比原来的白字压在浅橙上显著得多；
+// - 1px 强调色描边 + 同色光晕给浮层一个清楚的边界。
+// 显隐与停留时长由 Rust 控制（app.rs 的 toast_deadline），组件不接触摸。
+//
+// 单独成文件是为了能脱离 mobile.slint 预览：mobile.slint 依赖桌面版的
+// StyledText 补丁，本文件只依赖 Theme，可用
+// `slint-viewer --screenshot out.png` 直接核对外观。
+import { Theme } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
+
+export component MobileToast inherits Rectangle {
+    in property <string> text: "";
+
+    // 外层占满宽度负责居中；提示条不进布局触摸链。
+    width: 100%;
+    height: card.height;
+    background: transparent;
+
+    card := Rectangle {
+        x: (parent.width - self.width) / 2;
+        // 短提示收紧成小胶囊，长提示在 260px 处折行而不是横满屏。
+        width: min(parent.width - 96px, max(76px, body.preferred-width + 28px), 260px);
+        height: max(30px, body.preferred-height + 16px);
+        border-radius: Theme.radius-md;
+        background: Theme.surface.with-alpha(0.6);
+        border-width: 1px;
+        border-color: Theme.accent.with-alpha(0.55);
+        drop-shadow-color: Theme.accent.with-alpha(0.2);
+        drop-shadow-blur: 16px;
+        drop-shadow-offset-y: 4px;
+
+        Rectangle {
+            border-radius: Theme.radius-md;
+            background: Theme.accent.with-alpha(0.3);
+        }
+
+        body := Text {
+            x: 14px;
+            y: 0px;
+            width: parent.width - 28px;
+            height: parent.height;
+            text: root.text;
+            color: Theme.text;
+            font-size: Theme.font-lg;
+            font-weight: 700;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}

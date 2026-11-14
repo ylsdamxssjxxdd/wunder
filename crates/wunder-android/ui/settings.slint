@@ -4181,7 +4181,8 @@ component ModelEditorPage inherits Rectangle {
             inset-top: root.inset-top;
             back() => { root.back(); }
             Action {
-                width: 30px;
+                width: 76px;
+                show-label: true;
                 icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/save.svg");
                 label: I18n.common_save;
                 primary: true;
@@ -4274,31 +4275,36 @@ component ModelEditorPage inherits Rectangle {
                         secret: true;
                         text <=> root.secret;
                     }
-                    FormField {
-                        label: I18n.st_param_max_context;
-                        placeholder: I18n.st_param_context_hint;
-                        text <=> root.draft.max-context;
-                    }
-                    Rectangle {
-                        height: 40px;
-                        Action {
-                            x: 0px;
-                            y: 0px;
-                            width: parent.width;
-                            height: 34px;
-                            show-label: true;
-                            primary: true;
-                            icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/wand-magic-sparkles.svg");
-                            label: root.probing ? "探测中…" : I18n.model_probe_context;
-                            enabled: root.probe-ok();
-                            clicked => { root.probe-model(root.draft, root.secret); }
+                    // 上下文长度与探测只对 LLM 有意义（与桌面版、管理端一致）：
+                    // 图像/语音/视频模型没有窗口压缩与用量占比。
+                    if root.draft.model-type == "llm" : VerticalLayout {
+                        spacing: 0px;
+                        FormField {
+                            label: I18n.st_param_max_context;
+                            placeholder: I18n.st_param_context_hint;
+                            text <=> root.draft.max-context;
                         }
-                    }
-                    if root.probe != "" : Text {
-                        text: root.probe;
-                        color: root.probe.starts-with("探测失败") ? Theme.danger : Theme.muted;
-                        font-size: Theme.font-xs;
-                        wrap: word-wrap;
+                        Rectangle {
+                            height: 40px;
+                            Action {
+                                x: 0px;
+                                y: 0px;
+                                width: parent.width;
+                                height: 34px;
+                                show-label: true;
+                                primary: true;
+                                icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/wand-magic-sparkles.svg");
+                                label: root.probing ? "探测中…" : I18n.model_probe_context;
+                                enabled: root.probe-ok();
+                                clicked => { root.probe-model(root.draft, root.secret); }
+                            }
+                        }
+                        if root.probe != "" : Text {
+                            text: root.probe;
+                            color: root.probe.starts-with("探测失败") ? Theme.danger : Theme.muted;
+                            font-size: Theme.font-xs;
+                            wrap: word-wrap;
+                        }
                     }
                 }
 

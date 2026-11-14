@@ -112,6 +112,9 @@ struct Editor {
     /// commit (Enter/focus loss) and by leaving the row; the debounced
     /// autosave never renames on its own.
     rename_armed: bool,
+    /// 本次保存由防抖自动保存触发：这种静默落盘不弹提示，只有用户显式点
+    /// 「保存」或提交配置名称时才回应一次。
+    auto_save: bool,
 }
 
 thread_local! {
@@ -154,7 +157,7 @@ fn schedule(app: &MainWindow, delay: Duration) {
         if let Some(editor) = slot.borrow().as_ref() {
             editor.timer.start(TimerMode::SingleShot, delay, move || {
                 if let Some(app) = weak.upgrade() {
-                    app.invoke_save_model();
+                    app.invoke_auto_save_model();
                 }
             });
         }
@@ -179,6 +182,13 @@ fn defer(app: &MainWindow, action: AfterSave) -> bool {
         return false;
     }
     let inflight = EDITOR.with(|slot| slot.borrow().as_ref().is_some_and(|editor| editor.inflight));
+    // 删除针对的是已落库的配置：草稿里没保存的改动（哪怕模型名称还空着）
+    // 没有保留价值，直接丢弃再删，不该反过来拦下删除。保存中的请求仍等它
+    // 落地，避免删除与写入竞态。
+    if !inflight && matches!(action, AfterSave::Delete(_)) {
+        rebase(app);
+        return false;
+    }
     if !inflight && !Draft::read(app).ready() {
         app.set_model_save_error("请补全模型标识、提供方和模型名称".into());
         return true;
@@ -250,6 +260,16 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     EDITOR.with(|slot| *slot.borrow_mut() = Some(Editor::default()));
     rebase(app);
     let weak = app.as_weak();
+    app.on_auto_save_model(move || {
+        let Some(app) = weak.upgrade() else { return };
+        EDITOR.with(|slot| {
+            if let Some(editor) = slot.borrow_mut().as_mut() {
+                editor.auto_save = true;
+            }
+        });
+        app.invoke_save_model();
+    });
+    let weak = app.as_weak();
     app.on_model_edited(move || {
         let Some(app) = weak.upgrade() else { return };
         if app.get_model_projecting() || app.get_settings_model_key().starts_with("cloud/") {
@@ -278,6 +298,12 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
     let weak = app.as_weak();
     app.on_save_model(move || {
         let Some(app) = weak.upgrade() else { return };
+        // 只在本次保存时消费标记：防抖保存静默，显式保存给提示。
+        let auto_saved = EDITOR.with(|slot| {
+            slot.borrow_mut()
+                .as_mut()
+                .is_some_and(|editor| std::mem::take(&mut editor.auto_save))
+        });
         let inflight =
             EDITOR.with(|slot| slot.borrow().as_ref().is_some_and(|editor| editor.inflight));
         if inflight || app.get_model_projecting() {
@@ -297,6 +323,8 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
             return;
         }
         if !has_unsaved(&app) && !app.get_model_creating() {
+            // 显式点「保存」但没有改动：给一句状态反馈，避免按钮像没反应。
+            app.set_status("模型配置已是最新".into());
             finish_action(&app);
             return;
         }
@@ -390,11 +418,10 @@ pub(crate) fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         }
                         app.set_model_projecting(projecting);
                         app.set_model_save_error("".into());
-                        // 新建模型只能由表单上的「保存」显式提交（见
-                        // `edit_should_autosave`），所以这一次保存要回答用户
-                        // 「点下去有没有生效」；已存在的模型是边改边存，每次都
-                        // 弹提示反而变成干扰。
-                        if creating {
+                        // 显式保存（表单按钮、回车提交配置名称）和新建提交都要
+                        // 回答「点下去有没有生效」；防抖自动保存保持静默，否则
+                        // 每敲一个字段都弹提示反而变成干扰。
+                        if creating || !auto_saved {
                             crate::native_pages::show_toast(&app, saved_message(&app, &key), 1);
                         }
                         if changed {

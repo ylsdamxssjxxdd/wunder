@@ -13,6 +13,7 @@ import { TimelineView } from "../../../crates/wunder-desktop/frontend/ui/timelin
 import { Composer, CommandOptions, GoalBanner, InquiryPanel, ModelSetupBanner, StatusDock } from "../../../crates/wunder-desktop/frontend/ui/composer.slint";
 import { Action, FormField, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
 import { MobileSettings } from "settings.slint";
+import { MobileToast } from "toast.slint";
 import { EnvSetupPage } from "env_setup.slint";
 import { TrajectoryPage, TrajectoryItem, TrajectoryAudit, TrajectorySegment, TrajectoryBar } from "trajectory.slint";
 import { WorkspacePage, WorkspaceFile } from "workspace.slint";
@@ -3230,51 +3231,11 @@ export component MobileWindow inherits Window {
     }
 
     // ---- toast -------------------------------------------------------
-    // Light floating card below the header, matching 桌面版's ToastHost. The
-    // old bottom-anchored black strip read like a system error and covered the
-    // composer; short feedback belongs near the top and stays out of the way.
-    // 系统提示：屏幕正中、半透明深色，尽量不遮挡视线；卡片没有触摸区，
-    // 下层操作照常可用。
-    if root.toast != "" : Rectangle {
+    // 紧凑强调色胶囊，居中浮在内容上；显隐与停留时长由 Rust 控制
+    // （app.rs 的 toast_deadline），这里不接触摸，下层操作照常可用。
+    if root.toast != "" : MobileToast {
         x: 0px;
         y: (parent.height - self.height) / 2;
-        width: parent.width;
-        height: toast-card.height;
-        background: transparent;
-
-        toast-card := Rectangle {
-            x: (parent.width - self.width) / 2;
-            width: min(parent.width - 32px, 520px);
-            height: max(44px, toast-text.preferred-height + 24px);
-            border-radius: 12px;
-            background: #1F2329B0;
-            border-width: 1px;
-            border-color: #FFFFFF26;
-            drop-shadow-color: #00000014;
-            drop-shadow-blur: 10px;
-            drop-shadow-offset-y: 2px;
-
-            Rectangle {
-                x: 0px;
-                y: (parent.height - 18px) / 2;
-                width: 3px;
-                height: 18px;
-                border-radius: 2px;
-                background: Theme.accent;
-            }
-
-            toast-text := Text {
-                x: 16px;
-                y: 0px;
-                width: parent.width - 32px;
-                height: parent.height;
-                text: root.toast;
-                color: #FFFFFF;
-                font-size: Theme.font-sm;
-                wrap: word-wrap;
-                horizontal-alignment: left;
-                vertical-alignment: center;
-            }
-        }
+        text: root.toast;
     }
 }

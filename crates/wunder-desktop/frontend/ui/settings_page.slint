@@ -1501,24 +1501,24 @@ export component SettingsPage inherits Rectangle {
                                         Text { height: 26px; text: root.model-creating ? I18n.model_editor_add : root.selected-key; color: Theme.text; font-size: Theme.font-headline; font-weight: 700; overflow: elide; }
                                         Text { height: 17px; text: root.model-creating ? I18n.st_model_new_hint : ((root.model-editor-is-default ? I18n.st_models_default_badge + " · " : "") + I18n.st_model_colon + root.model-editor-name + " · " + root.model-editor-base-url); color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                     }
-                                    // The former page-header actions live with the
-                                    // form now that the title bar is gone. A new model
-                                    // is committed by this explicit save: auto-saving a
-                                    // draft the moment it turns valid would end the
-                                    // creation state and lock the config name mid-edit.
-                                    if root.model-creating : Action {
-                                        height: 32px; icon: @image-url("../assets/icons/save.svg");
-                                        label: I18n.common_save; primary: true;
+                                    // 保存与默认常驻：新建草稿靠显式保存提交（自动保存会
+                                    // 立刻结束创建态并锁住配置名称），既有模型平时边改边
+                                    // 存，按钮提供「立刻落盘」的确定感。两个按钮都带文字，
+                                    // 避免只有图标时无从判断。
+                                    Action {
+                                        height: 32px; width: 76px; icon: @image-url("../assets/icons/save.svg");
+                                        label: I18n.common_save; show-label: true; primary: true;
                                         enabled: !root.loading && !root.saving && !root.cloud-locked
-                                            && root.model-key-draft != "" && root.model-name-draft != "";
+                                            && (!root.model-creating || (root.model-key-draft != "" && root.model-name-draft != ""));
                                         clicked => { root.save-model(); }
                                     }
-                                    if !root.model-creating : Action {
-                                        height: 32px; icon: @image-url("../assets/icons/fa-star.svg");
-                                        label: root.selected-is-default ? I18n.st_is_default : I18n.st_set_default;
+                                    // 未保存的新模型还没有身份，默认位不适用于它。
+                                    Action {
+                                        height: 32px; width: 76px; icon: @image-url("../assets/icons/fa-star.svg");
+                                        label: I18n.common_default; show-label: true;
                                         icon-color: root.selected-is-default ? Theme.gold : Theme.muted;
                                         enabled: !root.loading && !root.saving && !root.cloud-locked
-                                            && root.selected-key != "" && !root.selected-is-default;
+                                            && !root.model-creating && root.selected-key != "" && !root.selected-is-default;
                                         clicked => { root.set-default-model(root.selected-key); }
                                     }
                                     // While a new model is being created the same slot discards
@@ -1574,9 +1574,10 @@ export component SettingsPage inherits Rectangle {
                                             }
                                             FormField { label: I18n.model_base_url_label; placeholder: I18n.model_base_url_placeholder; read-only: root.cloud-locked; text <=> root.model-base-url-draft; }
                                             FormField { label: I18n.model_token_label; placeholder: I18n.model_token_placeholder; secret: true; read-only: root.cloud-locked; text <=> root.model-token-draft; }
-                                            // 上下文长度属于基础设置：模型窗口决定压缩阈值与用量占比，
-                                            // 探测按钮就近提供，其余生成参数收进高级设置。
-                                            HorizontalLayout { spacing: 10px;
+                                            // 上下文长度只对 LLM 有意义（与管理端一致）：
+                                            // 图像/语音/视频模型没有窗口压缩与用量占比，
+                                            // 常显只会造成误解。
+                                            if root.model-type-draft == "llm" || root.model-type-draft == "" : HorizontalLayout { spacing: 10px;
                                                 FormField { horizontal-stretch: 1; label: I18n.st_param_max_context; placeholder: I18n.st_param_context_hint; read-only: root.cloud-locked; text <=> root.model-max-context-draft; }
                                                 Rectangle { width: 116px; height: 62px;
                                                     Action { y: 26px; width: 116px; height: 36px; icon: @image-url("../assets/icons/wand-magic-sparkles.svg"); label: I18n.model_probe_context; show-label: true; primary: true; enabled: !root.saving && !root.cloud-locked && root.model-name-draft != "" && root.model-base-url-draft != ""; clicked => { root.probe-model-context(); } }

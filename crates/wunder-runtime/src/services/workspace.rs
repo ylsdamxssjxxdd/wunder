@@ -455,6 +455,13 @@ impl WorkspaceManager {
         self.temp_cleanup_idle_ttl_s = effective_temp_cleanup_idle_ttl_s(enabled);
     }
 
+    /// 本地单根形态（桌面版、命令行、安卓版）：整台机器只有一个用户，工作区
+    /// 之外没有需要隔离的租户。读本机资源的能力据此放行；云端形态必须继续
+    /// 守住工作区边界。
+    pub fn is_single_root(&self) -> bool {
+        self.single_root
+    }
+
     pub fn scoped_user_id(&self, user_id: &str, agent_id: Option<&str>) -> String {
         let safe_user = self.safe_user_id(user_id);
         if self.single_root {
