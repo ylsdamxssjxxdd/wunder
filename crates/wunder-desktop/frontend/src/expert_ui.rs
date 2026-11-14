@@ -345,6 +345,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     Ok(()) => {
                         app.set_memory_editor_open(false);
                         app.invoke_refresh_expert();
+                        crate::feedback::success(&app, "记忆已保存", "Memory saved");
                     }
                     Err(e) => app.set_expert_error(e.to_string().into()),
                 }
@@ -374,6 +375,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     Ok(()) => {
                         app.set_memory_editor_open(false);
                         app.invoke_refresh_expert();
+                        crate::feedback::success(&app, "记忆已删除", "Memory deleted");
                     }
                     Err(e) => app.set_expert_error(e.to_string().into()),
                 }
@@ -405,6 +407,7 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                         // exists; close it so saving cannot resurrect a row.
                         app.set_memory_editor_open(false);
                         app.invoke_refresh_expert();
+                        crate::feedback::success(&app, "记忆已清空", "Memories cleared");
                     }
                     Err(e) => app.set_expert_error(e.to_string().into()),
                 }
@@ -437,7 +440,9 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                     );
                     app.set_archive_detail_open(true);
                 }
-                Err(e) => app.set_expert_error(e.to_string().into()),
+                // The archive tab renders no inline error slot, so the toast is
+                // the only place this failure can surface.
+                Err(e) => crate::feedback::failure(&app, e.to_string()),
             });
         });
     });
@@ -462,11 +467,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 match result {
                     Ok(()) => {
                         app.set_archive_detail_open(false);
-                        app.set_status("线程已还原".into());
+                        crate::feedback::success(&app, "线程已还原", "Thread restored");
                         app.invoke_refresh_expert();
                         app.invoke_refresh_chat();
                     }
-                    Err(error) => app.set_expert_error(error.to_string().into()),
+                    Err(error) => crate::feedback::failure(&app, error.to_string()),
                 }
             });
         });
@@ -492,11 +497,11 @@ pub fn install(app: &MainWindow, api: Arc<NativeDesktop>) {
                 match result {
                     Ok(()) => {
                         app.set_archive_detail_open(false);
-                        app.set_status("已永久删除归档线程".into());
+                        crate::feedback::success(&app, "归档线程已永久删除", "Archived thread deleted");
                         app.invoke_refresh_expert();
                         app.invoke_refresh_chat();
                     }
-                    Err(error) => app.set_expert_error(error.to_string().into()),
+                    Err(error) => crate::feedback::failure(&app, error.to_string()),
                 }
             });
         });

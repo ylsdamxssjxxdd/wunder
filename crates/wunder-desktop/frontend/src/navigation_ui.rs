@@ -1312,6 +1312,9 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 // the click-time snapshot. The user may have opened another
                 // thread while the archive transaction was on disk.
                 finish_archive(&app, std::slice::from_ref(&id));
+                // The row disappearing is the state change; the toast names it,
+                // because a thread can also vanish from an automatic refresh.
+                crate::feedback::success(&app, "工作线程已归档", "Thread archived");
             });
         });
     });
@@ -1415,9 +1418,16 @@ pub fn install(app: &MainWindow, desktop: Arc<NativeDesktop>) {
                 app.set_sidebar_selection_mode(false);
                 app.set_sidebar_selected_count(0);
                 if let Some(error) = first_error {
-                    app.set_status(format!("已归档 {archived} 个线程，其余失败：{error}").into());
+                    crate::feedback::failure(
+                        &app,
+                        format!("已归档 {archived} 个线程，其余失败：{error}"),
+                    );
                 } else {
-                    app.set_status(format!("已归档 {archived} 个线程").into());
+                    crate::feedback::success(
+                        &app,
+                        &format!("已归档 {archived} 个线程"),
+                        &format!("{archived} threads archived"),
+                    );
                 }
                 // A newer user selection wins over the old multi-select
                 // batch. Only clear the session that was actually archived.

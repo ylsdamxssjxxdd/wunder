@@ -203,11 +203,7 @@ impl ImageFailure {
         Self {
             code: "IMAGE_INPUT_INVALID",
             retryable: false,
-            message: ensure_sentence_end(format!(
-                "输入图 `{}` 有问题：{}",
-                field,
-                reason.into()
-            )),
+            message: ensure_sentence_end(format!("输入图 `{}` 有问题：{}", field, reason.into())),
             hint: fix.into(),
             suggested_size: None,
             field: Some(field.to_string()),
@@ -824,8 +820,7 @@ mod tests {
         assert_eq!(warnings.len(), 1, "空数组必须有一条说明");
         assert!(warnings[0].contains("空数组"), "{}", warnings[0]);
         // 全是空字符串等价于空数组，也要说。
-        let (paths, warnings) =
-            merge_input_paths(&json!({ "input_paths": ["  ", ""] })).unwrap();
+        let (paths, warnings) = merge_input_paths(&json!({ "input_paths": ["  ", ""] })).unwrap();
         assert!(paths.is_empty());
         assert_eq!(warnings.len(), 1);
         // 完全没传则不提示，避免正常文生图也带噪音。

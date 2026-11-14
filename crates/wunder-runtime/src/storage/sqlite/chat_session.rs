@@ -495,9 +495,7 @@ impl SqliteChatSessionStorage for SqliteStorage {
             "workspace_id = ?"
         };
         // Scheduled run threads are execution traces, never user threads.
-        let workspace_clause = format!(
-            "{workspace_clause} AND COALESCE(spawned_by, '') <> 'cron'"
-        );
+        let workspace_clause = format!("{workspace_clause} AND COALESCE(spawned_by, '') <> 'cron'");
         let count_sql = format!(
             "SELECT COUNT(*) FROM chat_sessions WHERE user_id = ? AND {workspace_clause}{status_clause}"
         );

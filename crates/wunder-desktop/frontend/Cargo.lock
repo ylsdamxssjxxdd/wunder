@@ -7970,7 +7970,6 @@ dependencies = [
  "parley",
  "png",
  "pulldown-cmark 0.10.3",
- "resvg",
  "serde",
  "serde_json",
  "sha2",
@@ -7981,9 +7980,19 @@ dependencies = [
  "windows-sys 0.59.0",
  "winit",
  "wunder-desktop",
+ "wunder-icon-builder",
  "wunder-runtime",
  "x11-dl",
  "zbus",
+]
+
+[[package]]
+name = "wunder-icon-builder"
+version = "1.0.0"
+dependencies = [
+ "png",
+ "resvg",
+ "serde_json",
 ]
 
 [[package]]

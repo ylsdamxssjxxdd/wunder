@@ -7652,6 +7652,7 @@ dependencies = [
  "slint",
  "slint-build",
  "wunder-desktop",
+ "wunder-icon-builder",
  "wunder-runtime",
 ]
 
@@ -7694,6 +7695,15 @@ dependencies = [
  "uuid",
  "windows-sys 0.52.0",
  "wunder-runtime",
+]
+
+[[package]]
+name = "wunder-icon-builder"
+version = "1.0.0"
+dependencies = [
+ "png",
+ "resvg",
+ "serde_json",
 ]
 
 [[package]]

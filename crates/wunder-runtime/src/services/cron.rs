@@ -44,6 +44,20 @@ use self::policy::{compute_error_backoff_ms, compute_scheduler_sleep_ms};
 /// `spawned_by` marker on the private thread of an isolated scheduled run.
 const CRON_SPAWNED_BY: &str = "cron";
 
+/// Config-override key carrying the job id of a scheduled delivery.
+pub(crate) const CRON_JOB_ID_OVERRIDE: &str = "__cron_job_id";
+
+/// Transcript meta for a scheduler-originated turn. A scheduled delivery is
+/// never a goal round, so callers may use this as the turn's whole meta.
+pub(crate) fn scheduled_turn_meta(overrides: Option<&Value>) -> Option<Value> {
+    overrides
+        .and_then(|value| value.get(CRON_JOB_ID_OVERRIDE))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(|id| json!({"type": "scheduled", "job_id": id}))
+}
+
 async fn run_cron_db<T, F>(label: &'static str, task: F) -> Result<T>
 where
     T: Send + 'static,
@@ -1679,13 +1693,19 @@ impl CronRuntime {
             }
         }
 
+        // A delivery into the user's own thread must announce where it came
+        // from: an unmarked injected turn is indistinguishable from something
+        // the user typed. The private thread of an isolated run is never read
+        // by the user, so it keeps the raw text.
+        let delivered_message = Self::scheduled_delivery_message(&message, is_isolated);
         let run_result = self
             .run_request_when_idle(
                 &job.user_id,
                 &routing.run_session_id,
                 job.agent_id.as_deref(),
-                &message,
+                &delivered_message,
                 routing.parent_session_id.as_deref(),
+                &job.job_id,
             )
             .await;
 
@@ -1730,7 +1750,9 @@ impl CronRuntime {
     }
 
     /// `session=main` means delivery takes precedence over the bound thread's
-    /// prior work. Isolated jobs deliberately do not use this path.
+    /// running turn. It interrupts like a user interjection: queued work stays
+    /// durable and is resumed after the delivery, so a timer never deletes a
+    /// message the user already sent. Isolated jobs do not use this path.
     async fn preempt_main_thread_for_scheduled_delivery(
         &self,
         user_id: &str,
@@ -1749,7 +1771,7 @@ impl CronRuntime {
             return Ok(());
         }
         let settlement = runtime
-            .cancel_session_activity(user_id, session_id, "scheduled_delivery")
+            .interrupt_session_for_delivery(user_id, session_id, "scheduled_delivery")
             .await?;
         tracing::info!(
             user_id,
@@ -1769,10 +1791,20 @@ impl CronRuntime {
         agent_id: Option<&str>,
         message: &str,
         parent_session_id: Option<&str>,
+        job_id: &str,
     ) -> Result<crate::schemas::WunderResponse> {
-        let request = self
+        let mut request = self
             .build_request(user_id, session_id, agent_id, message, parent_session_id)
             .await?;
+        // Tag the delivery so the durable transcript records that this turn was
+        // produced by the scheduler, not typed by the user.
+        if let Some(map) = request
+            .config_overrides
+            .get_or_insert_with(|| json!({}))
+            .as_object_mut()
+        {
+            map.insert(CRON_JOB_ID_OVERRIDE.into(), json!(job_id));
+        }
         let runtime = self
             .orchestrator
             .task_runtime
@@ -1790,51 +1822,75 @@ impl CronRuntime {
                 let _lease = lease;
                 self.run_stream_request(*request).await
             }
-            crate::services::runtime::thread::ThreadSubmitOutcome::Queued(info) => loop {
+            crate::services::runtime::thread::ThreadSubmitOutcome::Queued(info) => {
+                // A timer is an interrupting inbox event, not a chat message
+                // that waits its turn. Promote it the way a user interjection
+                // is promoted so it dispatches ahead of the thread's queued
+                // user messages, without cancelling any of them.
                 let db = self.storage.clone();
-                let id = info.task_id.clone();
-                let task = run_cron_db("cron.wait.task", move || db.get_agent_task(&id))
-                    .await?
-                    .ok_or_else(|| anyhow!("scheduled task disappeared"))?;
-                match task.status.as_str() {
-                    "success" => {
-                        let turn = task
-                            .request_payload
-                            .pointer("/config_overrides/__thread_log_turn_id")
-                            .and_then(Value::as_str)
-                            .ok_or_else(|| anyhow!("missing scheduled turn identity"))?;
-                        let db = self.storage.clone();
-                        let owner = user_id.to_string();
-                        let thread = session_id.to_string();
-                        let turn = turn.to_string();
-                        let answer = run_cron_db("cron.wait.result", move || {
-                            read_cron_turn_answer(db.as_ref(), &owner, &thread, &turn)
-                        })
-                        .await?;
-                        return Ok(crate::schemas::WunderResponse {
-                            session_id: session_id.to_string(),
-                            answer,
-                            usage: None,
-                            stop_reason: None,
-                            uid: None,
-                            a2ui: None,
-                        });
-                    }
-                    "failed" | "dead" | "cancelled" => {
-                        return Err(anyhow!(
-                            "scheduled task {}: {}",
-                            task.status,
-                            task.last_error.unwrap_or_default()
-                        ))
-                    }
-                    _ => {
-                        sleep(Duration::from_millis(
-                            self.config.cron.idle_retry_ms.max(200),
-                        ))
-                        .await
+                let promoted_id = info.task_id.clone();
+                match run_cron_db("cron.delivery.promote", move || {
+                    db.promote_agent_task(&promoted_id, now_ts())
+                })
+                .await
+                {
+                    Ok(true) => runtime.wake().await,
+                    Ok(false) => tracing::warn!(
+                        task_id = info.task_id,
+                        "scheduled delivery was no longer promotable"
+                    ),
+                    Err(err) => tracing::warn!(
+                        task_id = info.task_id,
+                        error = %err,
+                        "promote scheduled delivery failed"
+                    ),
+                }
+                loop {
+                    let db = self.storage.clone();
+                    let id = info.task_id.clone();
+                    let task = run_cron_db("cron.wait.task", move || db.get_agent_task(&id))
+                        .await?
+                        .ok_or_else(|| anyhow!("scheduled task disappeared"))?;
+                    match task.status.as_str() {
+                        "success" => {
+                            let turn = task
+                                .request_payload
+                                .pointer("/config_overrides/__thread_log_turn_id")
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| anyhow!("missing scheduled turn identity"))?;
+                            let db = self.storage.clone();
+                            let owner = user_id.to_string();
+                            let thread = session_id.to_string();
+                            let turn = turn.to_string();
+                            let answer = run_cron_db("cron.wait.result", move || {
+                                read_cron_turn_answer(db.as_ref(), &owner, &thread, &turn)
+                            })
+                            .await?;
+                            return Ok(crate::schemas::WunderResponse {
+                                session_id: session_id.to_string(),
+                                answer,
+                                usage: None,
+                                stop_reason: None,
+                                uid: None,
+                                a2ui: None,
+                            });
+                        }
+                        "failed" | "dead" | "cancelled" => {
+                            return Err(anyhow!(
+                                "scheduled task {}: {}",
+                                task.status,
+                                task.last_error.unwrap_or_default()
+                            ));
+                        }
+                        _ => {
+                            sleep(Duration::from_millis(
+                                self.config.cron.idle_retry_ms.max(200),
+                            ))
+                            .await
+                        }
                     }
                 }
-            },
+            }
         }
     }
 
@@ -1861,6 +1917,16 @@ impl CronRuntime {
                 "archive scheduled run thread failed"
             );
         }
+    }
+
+    /// Delivery text for one scheduled run. A main-thread delivery lands in the
+    /// user's own conversation, so it must announce its origin; the private thread
+    /// of an isolated run is only a trace and keeps the raw payload text.
+    fn scheduled_delivery_message(message: &str, is_isolated: bool) -> String {
+        if is_isolated {
+            return message.to_string();
+        }
+        format!("{}\n\n{message}", i18n::t("cron.delivery_prefix"))
     }
 
     async fn run_stream_request(
@@ -2551,11 +2617,231 @@ mod tests {
         assert_eq!(job.schedule_kind, "at");
         assert!(job.delete_after_run, "one-shot jobs self-delete by default");
         let at = super::parse_rfc3339(job.schedule_at.as_deref().unwrap()).expect("at");
-        let now_dt = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
-            (now * 1000.0) as i64,
-        )
-        .expect("now");
+        let now_dt = chrono::DateTime::<chrono::Utc>::from_timestamp_millis((now * 1000.0) as i64)
+            .expect("now");
         assert_eq!((at - now_dt).num_seconds(), 180);
+    }
+
+    #[test]
+    fn main_delivery_is_marked_as_a_scheduled_message() {
+        let prefix = crate::i18n::t("cron.delivery_prefix");
+        let marked = super::CronRuntime::scheduled_delivery_message("hello", false);
+        assert!(
+            marked.starts_with(&prefix),
+            "main delivery must carry the origin marker"
+        );
+        assert!(
+            marked.ends_with("hello"),
+            "payload text must survive the marker"
+        );
+        // The private trace of an isolated run is never read by the user.
+        assert_eq!(
+            super::CronRuntime::scheduled_delivery_message("hello", true),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn scheduled_turn_meta_marks_the_job_origin() {
+        let meta = super::scheduled_turn_meta(Some(&json!({"__cron_job_id": "job_1"})));
+        let meta = meta.expect("scheduled meta");
+        assert_eq!(
+            meta.get("type").and_then(super::Value::as_str),
+            Some("scheduled")
+        );
+        assert_eq!(
+            meta.get("job_id").and_then(super::Value::as_str),
+            Some("job_1")
+        );
+        assert!(super::scheduled_turn_meta(Some(&json!({}))).is_none());
+        assert!(super::scheduled_turn_meta(Some(&json!({"__cron_job_id": " "}))).is_none());
+        assert!(super::scheduled_turn_meta(None).is_none());
+    }
+
+    /// A timer interrupts the running turn, but it must never delete a message
+    /// the user already queued: interjection semantics, not thread cancel.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scheduled_preemption_keeps_queued_user_messages() {
+        let (runtime, state, _dir) = runtime_fixture().await;
+        let old = state
+            .storage
+            .accept_thread_turn("cron_user", "bound", &json!({"content":"running task"}))
+            .unwrap();
+        state
+            .storage
+            .update_thread_turn(
+                "cron_user",
+                "bound",
+                old["turn_id"].as_str().unwrap(),
+                "running",
+                "",
+                &json!({}),
+            )
+            .unwrap();
+        state
+            .storage
+            .try_acquire_session_lock("bound", "cron_user", "agent_a", 60.0, 10)
+            .unwrap();
+        let queued_request = runtime
+            .build_request(
+                "cron_user",
+                "bound",
+                Some("agent_a"),
+                "queued user text",
+                None,
+            )
+            .await
+            .unwrap();
+        let thread_runtime = state
+            .kernel
+            .orchestrator
+            .task_runtime
+            .read()
+            .upgrade()
+            .expect("thread runtime");
+        thread_runtime.clone().start();
+        let outcome = thread_runtime
+            .submit_user_request(queued_request)
+            .await
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            crate::services::runtime::thread::ThreadSubmitOutcome::Queued(_)
+        ));
+
+        runtime
+            .preempt_main_thread_for_scheduled_delivery("cron_user", "bound")
+            .await
+            .unwrap();
+
+        let pending = state
+            .user_store
+            .list_agent_tasks_by_thread("thread_bound", Some("pending"), 10)
+            .unwrap();
+        assert_eq!(pending.len(), 1, "the queued user message must survive");
+        assert_eq!(
+            pending[0]
+                .request_payload
+                .get("question")
+                .and_then(super::Value::as_str),
+            Some("queued user text")
+        );
+    }
+
+    /// A timer lands ahead of the thread's queued user messages: it is promoted
+    /// like an interjection so the interruption actually delivers now.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scheduled_delivery_jumps_ahead_of_queued_user_messages() {
+        let (runtime, state, _dir) = runtime_fixture().await;
+        let old = state
+            .storage
+            .accept_thread_turn("cron_user", "bound", &json!({"content":"running task"}))
+            .unwrap();
+        state
+            .storage
+            .update_thread_turn(
+                "cron_user",
+                "bound",
+                old["turn_id"].as_str().unwrap(),
+                "running",
+                "",
+                &json!({}),
+            )
+            .unwrap();
+        state
+            .storage
+            .try_acquire_session_lock("bound", "cron_user", "agent_a", 60.0, 10)
+            .unwrap();
+        let queued_request = runtime
+            .build_request(
+                "cron_user",
+                "bound",
+                Some("agent_a"),
+                "queued user text",
+                None,
+            )
+            .await
+            .unwrap();
+        let thread_runtime = state
+            .kernel
+            .orchestrator
+            .task_runtime
+            .read()
+            .upgrade()
+            .expect("thread runtime");
+        thread_runtime.clone().start();
+        let _ = thread_runtime
+            .submit_user_request(queued_request)
+            .await
+            .unwrap();
+        let delivery = tokio::spawn(async move {
+            runtime
+                .run_request_when_idle(
+                    "cron_user",
+                    "bound",
+                    Some("agent_a"),
+                    "scheduled fixture",
+                    None,
+                    "job_fixture",
+                )
+                .await
+        });
+        let tasks = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let tasks = state
+                    .user_store
+                    .list_agent_tasks_by_thread("thread_bound", Some("pending"), 10)
+                    .unwrap();
+                let promoted = tasks.iter().any(|task| {
+                    task.request_payload
+                        .get("question")
+                        .and_then(super::Value::as_str)
+                        == Some("scheduled fixture")
+                        && task
+                            .request_payload
+                            .get("queue_priority")
+                            .and_then(super::Value::as_i64)
+                            == Some(1)
+                });
+                if promoted && tasks.len() >= 2 {
+                    break tasks;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both deliveries enqueue and the timer is promoted");
+        let question = |task: &AgentTaskRecord| {
+            task.request_payload
+                .get("question")
+                .and_then(super::Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        let scheduled = tasks
+            .iter()
+            .find(|task| question(task) == "scheduled fixture")
+            .expect("scheduled delivery enqueued");
+        assert_eq!(
+            scheduled
+                .request_payload
+                .get("queue_priority")
+                .and_then(super::Value::as_i64),
+            Some(1),
+            "a timer delivery must dispatch ahead of queued chat messages"
+        );
+        let user = tasks
+            .iter()
+            .find(|task| question(task) == "queued user text")
+            .expect("user message stays queued");
+        assert_eq!(
+            user.request_payload
+                .get("queue_priority")
+                .and_then(super::Value::as_i64)
+                .unwrap_or(0),
+            0
+        );
+        delivery.abort();
     }
 
     #[tokio::test]
@@ -3407,6 +3693,7 @@ mod tests {
                     Some("agent_a"),
                     "scheduled fixture",
                     None,
+                    "job_fixture",
                 )
                 .await
         });
@@ -3426,6 +3713,16 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(queued.status, "pending");
+        // The delivery keeps the scheduler identity in its durable payload so
+        // the admitted turn can be attributed to the job.
+        assert_eq!(
+            queued
+                .request_payload
+                .pointer("/config_overrides/__cron_job_id")
+                .and_then(|v| v.as_str()),
+            Some("job_fixture"),
+            "scheduled delivery must record its job id"
+        );
         let accepted_turns = state
             .storage
             .list_thread_turns("cron_user", "bound", None, 10)
@@ -3501,7 +3798,10 @@ mod tests {
             .storage
             .list_thread_turns("cron_user", "bound", None, 10)
             .unwrap();
-        assert!(turns.is_empty(), "bound thread must not receive a synthetic turn");
+        assert!(
+            turns.is_empty(),
+            "bound thread must not receive a synthetic turn"
+        );
         runtime.archive_run_thread("cron_user", &routing.run_session_id);
         let archived = state
             .storage

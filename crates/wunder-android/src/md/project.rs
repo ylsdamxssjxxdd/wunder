@@ -129,7 +129,9 @@ impl MarkdownRenderer {
                 row.space_before = space_before(block::DOCUMENT, 0, *prev, false);
                 row.image_source = document.source.as_str().into();
                 let file_name = source::file_name(&document.source, "文件");
-                row.image = slint::Image::default();
+                // 桌面版 fills the card with the file-type icon; the phone card
+                // must not render an empty square where the desktop shows one.
+                row.image = crate::file_icons::workspace_file_icon(&file_name, "file");
                 row.resource_name = file_name.as_str().into();
                 let title = if document.alt.trim().is_empty() {
                     row.resource_name.clone()
@@ -548,6 +550,8 @@ mod tests {
         assert_eq!(card.plain, "季度报告");
         assert_eq!(card.resource_name, "q3.pdf");
         assert_eq!(card.image_source, "notes/q3.pdf");
+        // The card draws the file-type glyph, not an empty square.
+        assert!(card.image.size().width > 0);
     }
 
     #[test]

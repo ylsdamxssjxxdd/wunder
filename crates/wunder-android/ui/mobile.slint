@@ -7,7 +7,7 @@
 
 import { I18n } from "../../../crates/wunder-desktop/frontend/ui/i18n.slint";
 export { I18n }
-import { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion, CommandTask, SubagentItem, TurnMark, PlanStep } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
+import { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion, CommandTask, SubagentItem, TurnMark, PlanStep, QueueTurn } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
 export { Theme, TimelineRow, ChatAttachment, ModelCard, MdBlock, MdCell, Conversation, TurnStatMetric, InquiryQuestion }
 import { TimelineView } from "../../../crates/wunder-desktop/frontend/ui/timeline.slint";
 import { Composer, CommandOptions, GoalBanner, InquiryPanel, ModelSetupBanner, StatusDock } from "../../../crates/wunder-desktop/frontend/ui/composer.slint";
@@ -494,6 +494,10 @@ export component MobileWindow inherits Window {
         root.draft != "" || root.attachments.length > 0;
     in property <bool> generating: false;
     in property <bool> stopping: false;
+    // 运行中键入、还没交给引擎的消息。它们停在输入框上沿的待发条里，
+    // 当前这一轮落定后才真正发出——与桌面版同一形式，对话里不会多出
+    // 一条「排队中」气泡。
+    in property <[QueueTurn]> queue-turns: [];
     in property <[ModelCard]> models: [];
     in property <int> model-catalogue-count: 0;
     // Catalogue only holds the seeded 虚拟模型: show the first-run setup banner.
@@ -772,6 +776,11 @@ export component MobileWindow inherits Window {
     callback goal-clear();
     callback activity-plan-dismiss();
     callback remove-attachment(int);
+    // 撤下一条还在等待发送的消息（文本回到输入框）。
+    callback withdraw-waiting(string);
+    // 编辑：撤下并回填草稿；插话：立刻交给引擎并跳到下一个动作边界。
+    callback edit-waiting(string);
+    callback interject-waiting(string);
     callback copy-text(string);
     callback fork-thread(int);
     callback toggle-row(int);
@@ -1325,6 +1334,13 @@ export component MobileWindow inherits Window {
                     // 目标续跑期间也显示停止按钮，与桌面版一致。
                     generating: root.generating || root.goal-active;
                     stopping: root.stopping;
+                    // 运行中键入的消息停在输入框上沿，撤回即回到草稿；
+                    // 插话则立刻交给引擎，不再等这一轮跑完。
+                    queue-turns: root.queue-turns;
+                    queue-overflow: 0;
+                    queue-interject(queue-id) => { root.interject-waiting(queue-id); }
+                    queue-edit(queue-id) => { root.edit-waiting(queue-id); }
+                    queue-remove(queue-id) => { root.withdraw-waiting(queue-id); }
                     models: root.models;
                     model-catalogue-count: root.model-catalogue-count;
                     model-name: root.model-name;

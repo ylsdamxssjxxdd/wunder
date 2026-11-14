@@ -737,12 +737,12 @@ export component InfoDialog inherits Rectangle {
     }
 }
 
-// Transient toast feedback. Visibility and auto-hide are driven from the Rust
-// controller (ToastHost stays click-through and Slint-timer free).
+// Transient toast feedback. Rust decides what to show and when; the host owns
+// the hide countdown so every raise starts a full, uniform display window.
 export global ToastState {
     in-out property <string> message;
-    in-out property <int> kind;      // 0 info, 1 success, 2 danger
-    in-out property <int> revision;  // bumped on every show; Rust compares it before clearing
+    in-out property <int> kind;      // 0 success, 1 info, 2 danger
+    in-out property <int> revision;  // bumped on every show; Slint restarts the hide timer
 }
 
 export component ToastHost inherits Rectangle {
@@ -750,6 +750,18 @@ export component ToastHost inherits Rectangle {
     // for Slint 1.18 to resolve a percentage width against.
     width: 480px; height: 48px; x: 0px; y: 14px;
     visible: ToastState.message != "";
+    // The hide countdown belongs to the toast itself, and every raise restarts
+    // it: a second acknowledgement must stay readable for its own four seconds
+    // instead of inheriting the remainder of the previous one's timer.
+    // `revision` mirrors the global so `changed` can observe it; Slint has no
+    // change handler on another component's global property.
+    property <int> shown-revision: ToastState.revision;
+    hide-timer := Timer {
+        interval: 4200ms;
+        running: root.visible;
+        triggered => { ToastState.message = ""; }
+    }
+    changed shown-revision => { hide-timer.restart(); }
     Rectangle {
         width: min(480px, root.width - 40px, max(240px, toast-text.preferred-width + 56px));
         height: 40px;
@@ -762,8 +774,8 @@ export component ToastHost inherits Rectangle {
         drop-shadow-color: #00000018; drop-shadow-blur: 12px; drop-shadow-offset-y: 3px;
         Image {
             x: 14px; y: 12px; width: 16px; height: 16px;
-            source: ToastState.kind == 2 ? @image-url("../assets/icons/status-error.svg") : @image-url("../assets/icons/log-info.svg");
-            colorize: ToastState.kind == 2 ? Theme.danger : Theme.accent-ink;
+            source: ToastState.kind == 2 ? @image-url("../assets/icons/status-error.svg") : ToastState.kind == 0 ? @image-url("../assets/icons/status-check.svg") : @image-url("../assets/icons/log-info.svg");
+            colorize: ToastState.kind == 2 ? Theme.danger : ToastState.kind == 0 ? Theme.success : Theme.accent-ink;
         }
         toast-text := Text {
             x: 40px; y: 0px; width: parent.width - 54px; height: parent.height;

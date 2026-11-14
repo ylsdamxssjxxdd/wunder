@@ -11,6 +11,14 @@ fn main() {
             }
         }
     }
+    // File icons are generated from 桌面版's shared vscode-icons asset set, so
+    // a document card on the phone resolves the same texture as on the desktop.
+    for dir in [
+        "../../crates/wunder-desktop/frontend/assets/vscode-icons",
+        "../../crates/wunder-desktop/frontend/assets/doc-icons",
+    ] {
+        println!("cargo:rerun-if-changed={dir}");
+    }
     // 桌面版's settings dropdowns use the array search helpers, which stock Slint
     // still gates behind the experimental flag.
     std::env::set_var("SLINT_ENABLE_EXPERIMENTAL_FEATURES", "1");
@@ -31,4 +39,10 @@ fn main() {
     let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
     std::fs::write(out_dir.join("msyh.ttc.lz4"), compressed)
         .expect("write compressed Microsoft YaHei");
+    // The transcript's document cards carry the file type icon, exactly like
+    // 桌面版; both shells build that table from the same asset set.
+    wunder_icon_builder::write_workspace_icons(
+        std::path::Path::new("../../crates/wunder-desktop/frontend/assets"),
+        &out_dir,
+    );
 }

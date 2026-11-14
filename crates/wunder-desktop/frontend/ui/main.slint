@@ -221,21 +221,12 @@ export component MainWindow inherits Window {
             ToastState.revision += 1;
         }
     }
-    // Backend errors only ever land on `status`, which no chat view renders;
-    // surface error-shaped statuses as toasts so a failed runtime or storage
-    // read can never look like a dead UI again.
-    changed status => {
-        if root.status.starts-with(I18n.cp_error_prefix)
-            || root.status.starts-with(I18n.cp_fail_prefix)
-            || root.status.starts-with("错误")
-            || root.status.replace-all("失败", "") != root.status
-            || root.status.replace-all("未保存", "") != root.status
-            || root.status.starts-with("⚠") {
-            ToastState.message = root.status;
-            ToastState.kind = 2;
-            ToastState.revision += 1;
-        }
-    }
+    // Operation results only ever land on `status`, which no chat view renders.
+    // Rust decides whether a write is a result (raise the toast) or progress
+    // chatter (stay quiet), so no action can finish without an acknowledgement
+    // and the wording of an error no longer decides whether the user sees it.
+    callback status-feedback(string);
+    changed status => { root.status-feedback(root.status); }
     in-out property <bool> goal-active: false;
     // A goal remains visible while paused or blocked; this is separate from
     // `goal-active`, which controls the running composer state.
@@ -2251,6 +2242,4 @@ export component MainWindow inherits Window {
         copy-selection => { root.copy-selection(); }
         select-all => { root.select-all-text(); }
     }
-
-    Timer { interval: 4200ms; running: ToastState.message != ""; triggered => { ToastState.message = ""; } }
 }

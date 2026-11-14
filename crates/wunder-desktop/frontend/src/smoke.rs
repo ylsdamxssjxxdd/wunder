@@ -9,11 +9,32 @@ pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::erro
     let output = result.clone();
     let weak = app.as_weak();
     app.show()?;
-    slint::Timer::single_shot(std::time::Duration::from_millis(150), move || {
+    // 反馈通道：写进 `status` 的结果必须在事件循环的下一拍变成 toast。变更回调
+    // 是排队执行的，所以写入与断言分在两个 timer 里，不能同步断言。
+    let status_weak = app.as_weak();
+    slint::Timer::single_shot(std::time::Duration::from_millis(60), move || {
+        if let Some(app) = status_weak.upgrade() {
+            app.set_status("线程已还原".into());
+        }
+    });
+    slint::Timer::single_shot(std::time::Duration::from_millis(400), move || {
         let checked = weak
             .upgrade()
             .ok_or_else(|| "window closed before smoke check".to_string())
-            .and_then(|app| check(&app, &directory).map_err(|error| error.to_string()));
+            .and_then(|app| {
+                let toast = app.global::<crate::ToastState>();
+                if toast.get_message() != "线程已还原"
+                    || toast.get_kind() != crate::feedback::KIND_INFO
+                {
+                    return Err(format!(
+                        "a result written to status did not raise an info toast (got {:?}/kind {})",
+                        toast.get_message(),
+                        toast.get_kind()
+                    ));
+                }
+                toast.set_message("".into());
+                check(&app, &directory).map_err(|error| error.to_string())
+            });
         let report = match &checked {
             Ok(()) => "PASS: native rendering, send, blank/oversized input, draft isolation, task switching, bounded history, new task, fixed light theme, agent creation, model editing/default, entity pages.\n".to_string(),
             Err(error) => format!("FAIL: {error}\n"),

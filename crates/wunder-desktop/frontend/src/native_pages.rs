@@ -1334,10 +1334,7 @@ pub(crate) fn show_error(app: &MainWindow, error: String) {
 /// legacy info dialog this stays above the settings overlay and does not block
 /// the editor while a probe result is being read.
 pub(crate) fn show_toast(app: &MainWindow, message: String, kind: i32) {
-    let toast = app.global::<crate::ToastState>();
-    toast.set_message(message.into());
-    toast.set_kind(kind);
-    toast.set_revision(toast.get_revision().wrapping_add(1));
+    crate::feedback::notify(app, message, kind);
 }
 
 #[cfg(test)]

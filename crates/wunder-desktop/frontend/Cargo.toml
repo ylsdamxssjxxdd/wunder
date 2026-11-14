@@ -90,11 +90,9 @@ windows-sys-dialog = { package = "windows-sys", version = "0.59", features = [
 [build-dependencies]
 slint-build = { version = "=1.18.0" }
 lz4_flex = { version = "=0.11.6", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
-# Rasterizes the workspace file-icon SVG set at build time. resvg is already in
-# the graph through the Slint compiler, so this shares the compiled crate.
-resvg = { version = "=0.48.1", default-features = false }
-png = "=0.18.1"
-serde_json = "=1.0.151"
+# Rasterizes the workspace file-icon SVG set. The generator is shared with
+# 安卓版 so both shells resolve the same icons.
+wunder-icon-builder = { path = "../../wunder-icon-builder" }
 
 [features]
 default = ["native-runtime"]

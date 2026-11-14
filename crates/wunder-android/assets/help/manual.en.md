@@ -62,6 +62,7 @@ The local AI workbench and the default entry point for individual users: it runs
 
 ## Interface
 
+![wunder Desktop interface: the local AI workbench](art/wunder-pupa.png)
 *Desktop: the local AI workbench; the main window has only two pages, Chat and Settings.*
 
 - **Two pages only**: Chat and Settings. Every other capability is a panel or dialog on demand, and does not change the two-column layout.
@@ -185,6 +186,7 @@ The cloud AI workbench, delivered with the Server: once the Server is deployed, 
 
 ## Interface
 
+![wunder Cloud interface: the cloud AI workbench](art/wunder-hive.png)
 *Cloud: the single-page app in a browser — left column, timeline and composer.*
 
 - **Three columns**: the left column holds new tasks, search, the workspace and thread tree, the working directory and the settings entry; the right column holds the chat header, timeline and composer; overlays carry file preview, online editing and companions.
@@ -275,6 +277,7 @@ The manual local entry point: terminal-driven, scriptable and pipeline-friendly.
 
 ## Interface
 
+![wunder CLI interface: the terminal TUI](art/wunder-servo.png)
 *CLI: the manual local entry point inside a terminal.*
 
 - **Layout**: conversation area on top, composer at the bottom; `/` opens the command palette and `!` runs a shell command directly.
@@ -388,6 +391,8 @@ The Desktop's Android form: it lives on your phone, calls the same engine in-pro
 
 ## Interface
 
+![wunder Android interface: chat on the phone](art/wunder-cocoon.png)
+![wunder Android interface: settings and permissions](art/wunder-cocoon-settings.png)
 *Android: the Desktop's phone form — chat on the left, settings and permissions on the right.*
 
 - **Single column**: the session drawer and model entry at the top, the timeline in the middle, the composer and plus panel at the bottom, reusing the Desktop's interface components.
@@ -462,6 +467,7 @@ The governance and debugging backend that ships with the Server; only administra
 
 ## Interface
 
+![wunder Admin interface: the governance backend](art/wunder-bridge.png)
 *Admin: a dense, easy-to-scan governance and debugging backend.*
 
 Top-level navigation has **4 groups and 19 items**:
@@ -1447,6 +1453,7 @@ For MCP see [MCP](topic:tools-mcp); the overall name-routing rules are on [Tools
 
 All forms — Desktop, Android, Cloud, CLI, and Server — share the same core and engine, differing only at the access layer. Real execution happens inside sessions, and the interface reads a bounded display view that is paginated and carries a byte budget.
 
+![wunder layers: local forms and cloud forms share one engine, which depends on the core](art/wunder-architecture.png)
 *Layers: the three local forms call the shared engine in-process; Cloud and Admin reuse the same engine through the server. The engine depends on the core, while storage and runtime ship with each form.*
 
 ## Forms and Delivery

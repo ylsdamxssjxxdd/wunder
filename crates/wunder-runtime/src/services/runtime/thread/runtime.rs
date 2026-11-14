@@ -366,6 +366,10 @@ impl ThreadRuntime {
         let goal_meta = goal_round_tag.as_ref().map(|tag| {
             json!({"type": "goal_round", "goal_id": tag.goal_id, "revision": tag.revision, "round": tag.round})
         });
+        // A scheduled delivery is tagged by the scheduler itself; the marker
+        // keeps the durable transcript honest about who produced the turn.
+        let scheduled_meta =
+            crate::services::cron::scheduled_turn_meta(request.config_overrides.as_ref());
         let root_user_round = if goal_round_tag.is_some() {
             let storage = self.user_store.storage_backend();
             let session = session_id.clone();
@@ -385,7 +389,7 @@ impl ThreadRuntime {
         let input = json!({
             "role": "user", "content": request.question,
             "client_message_id": request.client_message_id, "attachments": request.attachments,
-            "meta": goal_meta,
+            "meta": goal_meta.or(scheduled_meta),
             "root_user_round": root_user_round,
             "inquiry_turn_id": inquiry_turn_id,
             "local_open_lease": request.config_overrides.as_ref().and_then(|v| v.get("__local_open_lease")),
@@ -709,6 +713,23 @@ impl ThreadRuntime {
             }
         }
         Ok(())
+    }
+
+    /// Interrupt the live execution of one thread without touching its queue.
+    /// A timed delivery must never delete work the user already queued, so it
+    /// interrupts the way a user interjection does: the running turn settles
+    /// itself, pending tasks stay durable, and the delivery is dispatched by
+    /// the queue once the session is idle again.
+    pub(crate) async fn interrupt_session_for_delivery(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        cancel_source: &str,
+    ) -> Result<ThreadCancelSettlement> {
+        let transition = self.transition_gate(session_id);
+        let _transition = transition.lock().await;
+        self.cancel_session_activity_inner(user_id, session_id, cancel_source, true)
+            .await
     }
 
     pub async fn cancel_session_activity(

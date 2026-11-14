@@ -7,6 +7,10 @@
     "en-US": "Scheduled run",
     "zh-CN": "定时任务执行"
   },
+  "cron.delivery_prefix": {
+    "en-US": "[Scheduled task]",
+    "zh-CN": "【定时任务】"
+  },
   "attachment.default_name": {
     "en-US": "File",
     "zh-CN": "文件"

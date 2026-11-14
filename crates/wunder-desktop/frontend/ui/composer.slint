@@ -1150,6 +1150,9 @@ component QueueTool inherits Rectangle {
 // release past the 6px threshold (same contract as the sidebar rows).
 component QueueRow inherits Rectangle {
     in property <QueueTurn> turn;
+    // 手机上没有拖动排序与「插话」，只留文本与撤回：那两枚控件在触屏上
+    // 没有对应动作，显示出来只会变成点了没反应的按钮。
+    in property <bool> mobile: false;
     callback interject(string);
     callback edit(string);
     callback remove(string);
@@ -1174,44 +1177,50 @@ component QueueRow inherits Rectangle {
         x: 0px; y: 0px; width: 22px; height: parent.height;
         mouse-cursor: root.dragging ? MouseCursor.move : MouseCursor.grab;
         pointer-event(event) => {
-            if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
-                root.drag-start = self.mouse-y;
-                root.dragging = false;
-                DragPreview.active = false;
-                DragPreview.source-y = root.absolute-position.y;
-                DragPreview.pointer-y = root.absolute-position.y + self.mouse-y;
-            }
-            if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
-                if root.dragging {
-                    root.move-by(root.turn.queue-id, round((self.mouse-y - root.drag-start) / root.height));
+            if !root.mobile {
+                if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                    root.drag-start = self.mouse-y;
+                    root.dragging = false;
+                    DragPreview.active = false;
+                    DragPreview.source-y = root.absolute-position.y;
+                    DragPreview.pointer-y = root.absolute-position.y + self.mouse-y;
                 }
-                root.dragging = false;
-                DragPreview.active = false;
-                DragPreview.source-y = -1px;
-            }
-            if event.kind == PointerEventKind.cancel {
-                root.dragging = false;
-                DragPreview.active = false;
-                DragPreview.source-y = -1px;
+                if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+                    if root.dragging {
+                        root.move-by(root.turn.queue-id, round((self.mouse-y - root.drag-start) / root.height));
+                    }
+                    root.dragging = false;
+                    DragPreview.active = false;
+                    DragPreview.source-y = -1px;
+                }
+                if event.kind == PointerEventKind.cancel {
+                    root.dragging = false;
+                    DragPreview.active = false;
+                    DragPreview.source-y = -1px;
+                }
             }
         }
         moved => {
-            DragPreview.pointer-y = root.absolute-position.y + self.mouse-y;
-            if self.pressed && abs(self.mouse-y - root.drag-start) > 6px {
-                root.dragging = true;
-                DragPreview.active = true;
+            if !root.mobile {
+                DragPreview.pointer-y = root.absolute-position.y + self.mouse-y;
+                if self.pressed && abs(self.mouse-y - root.drag-start) > 6px {
+                    root.dragging = true;
+                    DragPreview.active = true;
+                }
             }
         }
     }
     // Grip dots: no asset carries this glyph and six rects cost nothing.
+    // 触屏上没有拖动排序，这组把手在手机上不显示。
     for dot in [{x: 6px, y: 8px}, {x: 12px, y: 8px}, {x: 6px, y: 13px}, {x: 12px, y: 13px}, {x: 6px, y: 18px}, {x: 12px, y: 18px}] : Rectangle {
         x: dot.x; y: dot.y; width: 3px; height: 3px;
+        visible: !root.mobile;
         border-radius: 1.5px;
         background: grip.has-hover || root.dragging ? Theme.accent : Theme.border-strong;
     }
 
     HorizontalLayout {
-        padding-left: 24px; padding-right: 2px; spacing: 8px;
+        padding-left: root.mobile ? 10px : 24px; padding-right: 2px; spacing: 8px;
         Text {
             horizontal-stretch: 1; min-width: 0px;
             height: parent.height;
@@ -1227,9 +1236,10 @@ component QueueRow inherits Rectangle {
             vertical-alignment: center;
         }
         // 插话对两种行都成立：引擎队列里的行跳到下一个动作边界；还没发出去
-        // 的等待行则先交给引擎，再由队列刷新把它提升为插话。
+        // 的等待行则先交给引擎，再由队列刷新把它提升为插话。手机上保留文字，
+        // 只把按钮收窄，免得"点了会怎样"要靠猜。
         Action {
-            width: 76px; height: 24px; y: 2px;
+            width: root.mobile ? 68px : 76px; height: 24px; y: 2px;
             icon: @image-url("../assets/icons/arrow-up.svg");
             icon-size: 13px;
             label: root.turn.interjected ? I18n.cp_queue_interjected : I18n.cp_queue_interject;
@@ -1274,6 +1284,7 @@ component QueueRow inherits Rectangle {
 export component QueueStrip inherits Rectangle {
     in property <[QueueTurn]> turns: [];
     in property <int> overflow: 0;
+    in property <bool> mobile: false;
     callback interject(string);
     callback edit(string);
     callback remove(string);
@@ -1293,10 +1304,12 @@ export component QueueStrip inherits Rectangle {
             Text { text: I18n.cp_queue_title; color: Theme.muted; font-size: Theme.font-2xs; font-weight: 700; vertical-alignment: center; }
             Text { text: "" + root.turns.length + (root.overflow > 0 ? "+" : ""); color: Theme.text-secondary; font-size: Theme.font-2xs; vertical-alignment: center; }
             Rectangle { horizontal-stretch: 1; }
-            Text { text: I18n.cp_queue_hint; color: Theme.border-strong; font-size: Theme.font-2xs; vertical-alignment: center; }
+            // 触屏上没有拖动排序，这句提示只在桌面出现。
+            if !root.mobile : Text { text: I18n.cp_queue_hint; color: Theme.border-strong; font-size: Theme.font-2xs; vertical-alignment: center; }
         }
         for turn in root.turns : QueueRow {
             turn: turn;
+            mobile: root.mobile;
             interject(queue-id) => { root.interject(queue-id); }
             edit(queue-id) => { root.edit(queue-id); }
             remove(queue-id) => { root.remove(queue-id); }
@@ -1605,6 +1618,7 @@ export component Composer inherits Rectangle {
         if root.queue-open : QueueStrip {
             turns: root.queue-turns;
             overflow: root.queue-overflow;
+            mobile: root.mobile;
             interject(queue-id) => { root.queue-interject(queue-id); }
             edit(queue-id) => { root.queue-edit(queue-id); }
             remove(queue-id) => { root.queue-remove(queue-id); }

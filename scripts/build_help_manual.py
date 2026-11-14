@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""从使用说明书生成桌面版内嵌帮助手册。
+"""从使用说明书生成桌面版与安卓版的内嵌帮助手册。
 
 说明书（docs/使用说明书）是唯一内容源：本脚本按 site.json 的分区、分组与页面顺序
-生成 crates/wunder-desktop/frontend/assets/help/manual.zh.md 与 manual.en.md，并把页面里
-引用的截图复制到 assets/help/art/。
+生成 desktop 与 android 两份 manual.zh.md / manual.en.md，正文与配图保持一致；
+页面里引用的截图同时复制到两端的 assets/help/art/，手机端不再缺图。
 
 用法：
     python3 scripts/build_help_manual.py           # 生成
@@ -26,6 +26,7 @@ IMAGES_DIR = REPO_ROOT / "docs" / "images"
 HELP_DIR = REPO_ROOT / "crates" / "wunder-desktop" / "frontend" / "assets" / "help"
 ART_DIR = HELP_DIR / "art"
 ANDROID_HELP_DIR = REPO_ROOT / "crates" / "wunder-android" / "assets" / "help"
+ANDROID_ART_DIR = ANDROID_HELP_DIR / "art"
 
 # 说明书页签 -> 帮助手册分区键。
 BLOCK_KEYS = {
@@ -46,8 +47,7 @@ FIGCAPTION = re.compile(r"<figcaption>(.*?)</figcaption>", re.S)
 STRUCTURE_TAG = re.compile(r"^\s*</?(?:div|figure|span|p)(?:\s[^>]*)?>\s*$")
 LINK = re.compile(r"\]\((/docs/[^)\s]+)\)")
 TAG = re.compile(r"<[^>]+>")
-# 手机端不嵌图册：生成时把图片行去掉，图注保留。
-IMAGE_LINE = re.compile(r"^!\[[^\]]*\]\(art/[^)]*\)[ \t]*\n?", re.M)
+# 安卓版与桌面版共用同一套配图，正文的图片行原样保留。
 BLANK_RUN = re.compile("\n" + chr(123) + "3," + chr(125))
 
 
@@ -219,7 +219,7 @@ def main() -> int:
         pages = collect_pages(config, language)
         text = build_manual(language, pages, art_needed)
         outputs[HELP_DIR / filename] = text
-        outputs[ANDROID_HELP_DIR / filename] = IMAGE_LINE.sub("", text)
+        outputs[ANDROID_HELP_DIR / filename] = text
 
     stale = [
         str(path.relative_to(REPO_ROOT))
@@ -231,6 +231,9 @@ def main() -> int:
         for name in art_needed
         if not (ART_DIR / name).exists()
         or (ART_DIR / name).stat().st_mtime < (IMAGES_DIR / name).stat().st_mtime
+        # 手机端内嵌同一套配图，缺一张就与说明书不一致。
+        or not (ANDROID_ART_DIR / name).exists()
+        or (ANDROID_ART_DIR / name).stat().st_mtime < (IMAGES_DIR / name).stat().st_mtime
     )
 
     if check:
@@ -240,14 +243,17 @@ def main() -> int:
         print("帮助手册已与说明书同步")
         return 0
 
-    ART_DIR.mkdir(parents=True, exist_ok=True)
-    for name in sorted(art_needed):
-        source = IMAGES_DIR / name
-        if source.is_file():
-            shutil.copy2(source, ART_DIR / name)
-    kept = {p.name for p in ART_DIR.glob("*.png")} - art_needed
-    for name in kept:
-        (ART_DIR / name).unlink()
+    removed: set[str] = set()
+    for art_dir in (ART_DIR, ANDROID_ART_DIR):
+        art_dir.mkdir(parents=True, exist_ok=True)
+        for name in sorted(art_needed):
+            source = IMAGES_DIR / name
+            if source.is_file():
+                shutil.copy2(source, art_dir / name)
+        kept = {p.name for p in art_dir.glob("*.png")} - art_needed
+        for name in kept:
+            (art_dir / name).unlink()
+        removed |= kept
     for path, content in outputs.items():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
@@ -262,8 +268,8 @@ def main() -> int:
         + str(len(art_needed))
         + " 张配图"
     )
-    if kept:
-        print("已移除不再引用的配图: " + ", ".join(sorted(kept)))
+    if removed:
+        print("已移除不再引用的配图: " + ", ".join(sorted(removed)))
     return 0
 
 

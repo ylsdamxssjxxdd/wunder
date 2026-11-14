@@ -1499,6 +1499,22 @@ fn wire_callbacks(
     });
     ui.on_remove_attachment(|_index| {});
 
+    // 撤下一条还在等待发送的消息：文本由引擎退回草稿，这一帧只发命令。
+    let sender = commands.clone();
+    ui.on_withdraw_waiting(move |queue_id| {
+        let _ = sender.send(Command::WithdrawWaiting(queue_id.to_string()));
+    });
+
+    // 编辑＝撤回并回填草稿；插话＝立刻交给引擎，跳下一个动作边界执行。
+    let sender = commands.clone();
+    ui.on_edit_waiting(move |queue_id| {
+        let _ = sender.send(Command::EditWaiting(queue_id.to_string()));
+    });
+    let sender = commands.clone();
+    ui.on_interject_waiting(move |queue_id| {
+        let _ = sender.send(Command::InterjectWaiting(queue_id.to_string()));
+    });
+
     let sender = commands.clone();
     let weak = ui.as_weak();
     ui.on_open_model_settings(move || {
@@ -2097,6 +2113,10 @@ fn start_tick(
     let mut ubuntu_ticks = 0u32;
     let mut cache = RowCache::default();
     let mut last_rev = 0u64;
+    // 待发条的键：(修订号, 当前线程, 本机/云端)。切线程或切到云端时即使
+    // 没有新消息也要重投影，否则会把上一个线程（或本机会话）的等待行留在
+    // 这一屏的输入框上沿。
+    let mut last_waiting: (u64, String, i32) = (0, String::new(), 0);
     let mut last_rows = 0u64;
     let mut last_live = 0u64;
     let mut last_live_active = false;
@@ -2379,6 +2399,16 @@ fn start_tick(
             ui.set_plus_open(false);
             ui.set_plus_view(0);
         }
+        // 待发消息只在当前这一轮结束后出发：正常收尾由直播流自己做，这里
+        // 低频兜底一次，覆盖停止、发送失败与后台目标结束这些没有直播流收尾
+        // 的路径。引擎侧对空队列是幂等的，重复调用不会多发一条。
+        if host_ticks % 30 == 0
+            && ui.get_settings_chat_target() == 0
+            && ui.get_queue_turns().row_count() > 0
+            && !ui.get_generating()
+        {
+            let _ = commands.send(Command::ReleaseWaiting);
+        }
         // Cloud session polling and approval intake run at background cadence,
         // not at the 30 fps render tick.
         if host_ticks % 45 == 0 && ui.get_settings_chat_target() == 1 {
@@ -2395,6 +2425,31 @@ fn start_tick(
             let _ = commands.send(Command::RefreshCloudRemote);
         }
         let Ok(state) = shared.lock() else { return };
+
+        // 运行中键入的消息只停在输入框上沿：对话里不会有第二条气泡，也
+        // 不会出现用户没要求的「排队中」状态。待发条属于本机会话，切到
+        // 云端时必须清空，否则本地线程的等待行会挂在云端会话的输入框上。
+        let waiting_key = (state.waiting_rev, state.session_id.clone(), state.target);
+        if waiting_key != last_waiting {
+            last_waiting = waiting_key;
+            let rows: Vec<crate::QueueTurn> = if state.target == 0 {
+                state
+                    .waiting_turns
+                    .iter()
+                    .filter(|turn| turn.session == state.session_id)
+                    .map(|turn| crate::QueueTurn {
+                        queue_id: turn.queue_id.as_str().into(),
+                        text: turn.text.as_str().into(),
+                        attachments: 0,
+                        interjected: false,
+                        waiting: true,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            ui.set_queue_turns(ModelRc::from(Rc::new(VecModel::from(rows))));
+        }
 
         if state.rev != last_rev {
             ui.set_send_key(state.send_key.as_str().into());
@@ -4231,7 +4286,9 @@ pub fn install_preview_data(
     rows.push(process);
 
     let mut body = RowData::new(KIND_BODY, "p-body");
-    let text = "聊天区现在复用了桌面版的同一套组件：\n\n- `TimelineView` 负责消息流\n- `Composer` 负责输入与模型选择\n\n| 文件 | 行数 | 修改类型 | 说明 | 状态 | 最后提交 |\n| --- | --- | --- | --- | --- | --- |\n| crates/wunder-desktop/frontend/ui/timeline.slint | 1284 | 修改 | 时间线组件与折叠交互调整 | 已提交 | 2026-11-08 18:00:00 |\n| crates/wunder-desktop/frontend/src/timeline.rs | 3315 | 修改 | 实时投影与视图缓存同步 | 待验证 | 2026-11-08 17:42:11 |\n| crates/wunder-android/src/project.rs | 1306 | 新增 | 手机端行数据投影 | 已提交 | 2026-11-08 16:20:33 |\n\n代码块样式也保持一致：\n\n```rust\nlet rows = project::project_turn(&turn);\n```\n\n> 手机上只保留单窗口与抽屉。";
+    let text = "聊天区现在复用了桌面版的同一套组件：\n\n- `TimelineView` 负责消息流\n- `Composer` 负责输入与模型选择\n\n| 文件 | 行数 | 修改类型 | 说明 | 状态 | 最后提交 |\n| --- | --- | --- | --- | --- | --- |\n| crates/wunder-desktop/frontend/ui/timeline.slint | 1284 | 修改 | 时间线组件与折叠交互调整 | 已提交 | 2026-11-08 18:00:00 |\n| crates/wunder-desktop/frontend/src/timeline.rs | 3315 | 修改 | 实时投影与视图缓存同步 | 待验证 | 2026-11-08 17:42:11 |\n| crates/wunder-android/src/project.rs | 1306 | 新增 | 手机端行数据投影 | 已提交 | 2026-11-08 16:20:33 |\n\n代码块样式也保持一致：\n\n```rust\nlet rows = project::project_turn(&turn);\n```\n\n> 手机上只保留单窗口与抽屉。
+
+交付物见 [季度评估报告](documents/quarterly-report.pdf) 与 [核对清单](notes/checklist.md)。";
     body.text = text.into();
     body.blocks_src = text.into();
     rows.push(body);
@@ -4393,6 +4450,7 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_settings_page(0);
             ui.set_settings_open(true);
         }
+
         "toast" => {
             ui.set_toast("已复制到剪贴板".into());
         }
@@ -4490,6 +4548,12 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_settings_open(true);
             ui.invoke_settings_help_toggle(0);
             ui.invoke_settings_help_open(0);
+        }
+        // `help-art` 翻开带截图的主题，核对配图像素与图注排版。
+        "help-art" => {
+            ui.set_settings_page(16);
+            ui.set_settings_open(true);
+            crate::help::open_topic_id(ui, "forms-desktop-ui");
         }
         // `help-table` 翻开一篇以宽表开头的主题，用来核对触屏上的横向平移。
         "help-table" => {

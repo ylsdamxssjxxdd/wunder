@@ -62,6 +62,81 @@ fn decode_entities(value: &str) -> String {
         .replace("&amp;", "&")
 }
 
+// ---------------------------------------------------------------------------
+// 手册配图：与桌面版内嵌同一套截图
+// ---------------------------------------------------------------------------
+
+/// 配图由 `scripts/build_help_manual.py` 同步到 `assets/help/art/`，正文里
+/// 写成 `![说明](art/<slug>.png)`。清单必须与桌面版帮助窗口一致。
+fn help_image(slug: &str) -> Option<&'static [u8]> {
+    Some(match slug {
+        "wunder-pupa" => include_bytes!("../assets/help/art/wunder-pupa.png"),
+        "wunder-hive" => include_bytes!("../assets/help/art/wunder-hive.png"),
+        "wunder-servo" => include_bytes!("../assets/help/art/wunder-servo.png"),
+        "wunder-bridge" => include_bytes!("../assets/help/art/wunder-bridge.png"),
+        "wunder-cocoon" => include_bytes!("../assets/help/art/wunder-cocoon.png"),
+        "wunder-cocoon-settings" => {
+            include_bytes!("../assets/help/art/wunder-cocoon-settings.png")
+        }
+        "wunder-architecture" => include_bytes!("../assets/help/art/wunder-architecture.png"),
+        _ => return None,
+    })
+}
+
+/// Decode one screenshot into display pixels. The help page is full-width on a
+/// phone, so the bitmap keeps 1024px of detail instead of the transcript
+/// thumbnail's 640; anything wider is scaled down proportionally.
+fn decode_art(bytes: &[u8]) -> Option<(slint::Image, f32, f32)> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(4096);
+    limits.max_image_height = Some(4096);
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    reader.limits(limits);
+    let decoded = reader.decode().ok()?;
+    let decoded = if decoded.width() > 1024 {
+        decoded.thumbnail(1024, 4096)
+    } else {
+        decoded
+    };
+    let rgba = decoded.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+        rgba.as_raw(),
+        width,
+        height,
+    );
+    Some((slint::Image::from_rgba8(buffer), width as f32, height as f32))
+}
+
+/// Fill the pixels for every `art/` image row of one topic. The caller keeps
+/// only the open topic, so the bitmaps are dropped when the reader goes back —
+/// same memory stance as the desktop help window.
+fn hydrate_art(blocks: &mut [crate::MdBlock]) {
+    for row in blocks.iter_mut() {
+        if row.kind != crate::md::block::IMAGE || row.image_source.is_empty() {
+            continue;
+        }
+        let decoded = row
+            .image_source
+            .as_str()
+            .strip_prefix("art/")
+            .and_then(|rest| rest.strip_suffix(".png"))
+            .and_then(help_image)
+            .and_then(decode_art);
+        match decoded {
+            Some((image, width, height)) => {
+                row.image = image;
+                row.image_width = width;
+                row.image_height = height;
+            }
+            None => row.image_error = true,
+        }
+    }
+}
+
 impl Manual {
     fn load(zh: bool) -> Self {
         let raw = if zh {
@@ -222,7 +297,8 @@ impl Help {
         {
             *slot = true;
         }
-        let blocks = self.renderer.render(&topic.body);
+        let mut blocks = self.renderer.render(&topic.body);
+        hydrate_art(&mut blocks);
         self.open = Some(index);
         ui.set_settings_help_topic_title(topic.title.as_str().into());
         ui.set_settings_help_blocks(model(blocks));
@@ -310,6 +386,19 @@ pub fn attach(ui: &MobileWindow) {
     });
 }
 
+/// 桌面预览用：按主题 id 打开一篇手册，检查正文与配图排版。
+pub fn open_topic_id(ui: &MobileWindow, id: &str) {
+    STATE.with(|slot| {
+        let Some(state) = slot.borrow().clone() else {
+            return;
+        };
+        let index = state.borrow_mut().manual().topic_index(id);
+        if let Some(index) = index {
+            state.borrow_mut().open(ui, index);
+        }
+    });
+}
+
 /// 界面语言变了就换一份手册；主题下标按当前语言重建。
 pub fn set_language(ui: &MobileWindow, zh: bool) {
     STATE.with(|slot| {
@@ -335,6 +424,26 @@ mod tests {
         assert!(!first.body.contains("<!-- topic "));
         assert!(manual.topic_index(&first.id).is_some());
         assert!(manual.topics.iter().all(|topic| !topic.body.is_empty()));
+    }
+
+    #[test]
+    fn embedded_screenshots_are_decoded() {
+        let mut help = Help::new(true);
+        let manual = help.manual();
+        let topic = manual
+            .topics
+            .iter()
+            .find(|topic| topic.body.contains("(art/wunder-pupa.png)"))
+            .expect("手册里应有一篇带截图的主题");
+        let mut blocks = help.renderer.render(&topic.body);
+        hydrate_art(&mut blocks);
+        let image = blocks
+            .iter()
+            .find(|row| row.kind == crate::md::block::IMAGE)
+            .expect("截图应投影成图片块");
+        assert!(!image.image_error, "配图必须能解码");
+        assert!(image.image.size().width > 0);
+        assert!(image.image_width > 0.0 && image.image_height > 0.0);
     }
 
     #[test]

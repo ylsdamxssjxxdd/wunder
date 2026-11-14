@@ -804,7 +804,11 @@ impl Timeline {
 
     fn begin_turn_in(&mut self, root: &str, text: &str) -> usize {
         self.body = None;
-        self.thinking = None;
+        // A previous attempt at this same turn — a re-submitted waiting
+        // message, an interjection that reuses the row, or a snapshot handoff —
+        // must settle its own thought first. Dropping the slot outright left
+        // that row spinning with no remaining path to close it.
+        self.close_thinking(false);
         self.tools.clear();
         self.bars.clear();
         self.group = NO_GROUP;
@@ -1240,6 +1244,23 @@ impl Timeline {
 
     pub fn append_reasoning_item(&mut self, item_id: &str, delta: &str) -> Result<(), String> {
         let stable_id = (!item_id.is_empty()).then(|| format!("reason-{item_id}"));
+        // A late chunk can arrive after its round's row already settled (an
+        // out-of-order, retried or replayed frame). It belongs to that row: a
+        // second row with the same identity would sit behind the newer steps
+        // and spin forever, which is exactly the orphan "thinking…" entry the
+        // reader saw between two finished tools.
+        if let Some(identity) = stable_id.as_deref() {
+            let current = self.thinking.as_ref().map(|thinking| thinking.index);
+            let existing = (0..self.model.row_count()).find(|index| {
+                self.model
+                    .row_data(*index)
+                    .is_some_and(|row| row.kind == KIND_REASON && row.id == identity)
+            });
+            if let Some(index) = existing.filter(|index| Some(*index) != current) {
+                self.append_settled_reasoning(index, delta)?;
+                return Ok(());
+            }
+        }
         if let Some(thinking) = self.thinking.as_ref() {
             if stable_id.as_ref().is_some_and(|identity| {
                 self.model
@@ -1290,6 +1311,26 @@ impl Timeline {
         }
         thinking.text.push_str(delta);
         thinking.pending = true;
+        Ok(())
+    }
+
+    /// Extend a thought row that already settled. Only the text arrives late:
+    /// its status, metrics and fold position stay exactly as they were, so a
+    /// late chunk can never reopen a finished thought.
+    fn append_settled_reasoning(&mut self, index: usize, delta: &str) -> Result<(), String> {
+        let Some(row) = self.model.row_data(index) else {
+            return Ok(());
+        };
+        if row.detail.len().saturating_add(delta.len()) > crate::message_blocks::MAX_TEXT_BYTES {
+            return Err("思考内容超过显示容量".into());
+        }
+        let mut text = row.detail.to_string();
+        text.push_str(delta);
+        let summary = crate::message_blocks::reasoning_preview(&text);
+        self.patch(index, |row| {
+            row.detail = text.as_str().into();
+            row.summary = summary;
+        });
         Ok(())
     }
 
@@ -1440,8 +1481,25 @@ impl Timeline {
         let label = crate::timeline_text::tool_label(&entry.title);
         let pending = status_kind(&entry.state) == STATUS_RUNNING;
         let (target, _) = crate::timeline_text::tool_target(entry);
-        if let Some(tool) = self.tools.iter().find(|tool| tool.id == entry.id) {
-            let index = tool.index;
+        // A tool frame is proof that the round's thought is over. That holds for
+        // a brand-new call, for a result that overtook its call, and for a late
+        // duplicate of a call whose row already settled. Settling only on "a
+        // brand-new call id" left the thought of that round spinning forever:
+        // when the result arrived first it created the row, and the call that
+        // followed found it and returned early — before `close_thinking`.
+        let existing = (!entry.id.is_empty())
+            .then(|| {
+                self.tools
+                    .iter()
+                    .find(|tool| tool.id == entry.id)
+                    .map(|tool| (tool.index, tool.group))
+            })
+            .flatten();
+        if existing.is_none() || pending {
+            self.include_active_body_in_process(true);
+            self.close_thinking(false);
+        }
+        if let Some((index, group)) = existing {
             // A tool entry settles once. Trailing frames of a command that was
             // handed to the background, or an out-of-order replay, must not pull
             // a settled entry back into the running state.
@@ -1453,7 +1511,6 @@ impl Timeline {
             {
                 return;
             }
-            let group = tool.group;
             let summary = crate::timeline_text::tool_summary(entry);
             let row_summary = crate::timeline_text::tool_row_summary(entry, &target);
             let copy = crate::timeline_text::copy_text(&entry.sections, entry.detail.as_str());
@@ -2001,7 +2058,7 @@ impl Timeline {
         self.settled = false;
         self.elapsed = None;
         self.body = None;
-        self.thinking = None;
+        self.close_thinking(false);
         self.tools.clear();
         self.bars.clear();
         self.discarded_steps = 0;
@@ -3640,6 +3697,100 @@ mod tests {
         assert_eq!(child.patch.row_count(), 1);
         assert_eq!(child.diff_add.as_str(), "2");
         assert!(child.diff_del.is_empty());
+    }
+
+    /// A result that overtakes its own call must still settle the round's
+    /// thought. The reducer used to return early once the row existed, so the
+    /// thought stayed "思考中" behind an already finished tool.
+    #[test]
+    fn a_result_that_overtakes_its_call_still_settles_the_thought() {
+        use slint::Model;
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("overtake", "Fixture input");
+        timeline.set_process_root("overtake");
+        timeline.append_reasoning_item("overtake:text-1", "思考").unwrap();
+        timeline.flush();
+        let args = serde_json::json!({"args": {"path": "a.txt"}});
+        // The result arrives first and creates the row.
+        timeline.upsert_tool(&NativeWorkflowEntry::from_payload(
+            "call-late",
+            "read_file",
+            "done".into(),
+            "completed",
+            &args,
+        ));
+        // The call for the same id arrives afterwards.
+        timeline.upsert_tool(&NativeWorkflowEntry::from_payload(
+            "call-late",
+            "read_file",
+            "call".into(),
+            "running",
+            &args,
+        ));
+        let reason = timeline
+            .model
+            .iter()
+            .find(|row| row.kind == KIND_REASON)
+            .expect("thought row exists");
+        assert_ne!(
+            reason.status_kind, STATUS_RUNNING,
+            "the round's thought must settle even when the result came first"
+        );
+    }
+
+    /// A late chunk for a thought that already settled extends that row instead
+    /// of spawning a second one, which would spin forever behind newer steps.
+    #[test]
+    fn a_late_thought_chunk_extends_its_settled_row() {
+        use slint::Model;
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("late-chunk", "Fixture input");
+        timeline.set_process_root("late-chunk");
+        timeline
+            .append_reasoning_item("late-chunk:text-1", "前半")
+            .unwrap();
+        timeline.flush();
+        timeline.close_segments();
+        let before = timeline
+            .model
+            .iter()
+            .filter(|row| row.kind == KIND_REASON)
+            .count();
+        timeline
+            .append_reasoning_item("late-chunk:text-1", "后半")
+            .unwrap();
+        timeline.flush();
+        let rows: Vec<_> = timeline
+            .model
+            .iter()
+            .filter(|row| row.kind == KIND_REASON)
+            .collect();
+        assert_eq!(rows.len(), before, "no duplicate thought row");
+        let row = rows.last().unwrap();
+        assert_eq!(row.detail.as_str(), "前半后半");
+        assert_ne!(row.status_kind, STATUS_RUNNING);
+    }
+
+    /// Re-beginning the same turn — a re-submitted waiting message, an
+    /// interjection that reuses the row — must settle the previous attempt's
+    /// thought instead of orphaning it in a running state.
+    #[test]
+    fn rebeginning_a_turn_settles_its_previous_thought() {
+        use slint::Model;
+        let mut timeline = Timeline::new();
+        timeline.begin_turn("rebegin", "Fixture input");
+        timeline.set_process_root("rebegin");
+        timeline
+            .append_reasoning_item("rebegin:text-1", "第一遍")
+            .unwrap();
+        timeline.flush();
+        timeline.begin_turn("rebegin", "Fixture input");
+        let reason = timeline
+            .model
+            .iter()
+            .find(|row| row.kind == KIND_REASON)
+            .expect("the earlier thought row is still on screen");
+        assert_ne!(reason.status_kind, STATUS_RUNNING);
     }
 
     #[test]

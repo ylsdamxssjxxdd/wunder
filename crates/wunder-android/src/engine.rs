@@ -35,6 +35,15 @@ pub enum Command {
     NewThread,
     Fork(i32),
     Send(String),
+    /// 撤下一条还在本地等待发送的消息（queue id 形如 `waiting-<seq>`）。
+    WithdrawWaiting(String),
+    /// 编辑一条待发消息：撤下并把文本退回输入框。
+    EditWaiting(String),
+    /// 插话：不再等这一轮结束，立刻交给引擎并跳到下一个动作边界执行。
+    InterjectWaiting(String),
+    /// 线程空下来时把最早的一条待发消息发出去。UI 侧按低频兜底调用，
+    /// 覆盖停止、失败和后台目标结束这些没有直播流收尾的路径。
+    ReleaseWaiting,
     Stop,
     SelectModel(String),
     /// 目标横幅的编辑/暂停/恢复/清除，复用斜杠命令管线。
@@ -1047,8 +1056,32 @@ pub struct Shared {
     pub generating: bool,
     pub stopping: bool,
     pub loading: bool,
+    /// 运行中键入、还没交给引擎的消息（见 `WaitingTurn`），按提交顺序排列。
+    /// 它们只属于各自线程，因此输入框上沿的待发条只投影当前线程的几条。
+    pub waiting_turns: Vec<WaitingTurn>,
+    pub waiting_rev: u64,
+    /// 生成待发条行 id 的单调计数，撤回时用它精确命中一行。
+    pub waiting_seq: u64,
     pub toast: String,
     pub stream_revision: i32,
+}
+
+/// 运行中键入的消息：先在本地持有，等这一轮结束再交给引擎。
+///
+/// 桌面版就是这样做的（`WaitingTurn`）：直接提交会让引擎把消息排进线程
+/// 队列，对话里随之出现第二条气泡和用户没要求的「排队中」状态。安卓版沿用
+/// 同一形式——消息先出现在输入框上沿的待发条里，当前回合落定后才真正发出。
+#[derive(Clone)]
+pub struct WaitingTurn {
+    /// 待发条行的 id（`waiting-<seq>`），也是撤回时唯一的匹配键。
+    pub queue_id: String,
+    /// 交给引擎时携带的消息 id。插话要靠它找回引擎刚建的那条队列行，
+    /// 所以本地持有阶段就先生成好，而不是等发送时再临时编号。
+    pub client_message_id: String,
+    pub session: String,
+    pub text: String,
+    /// 回答问询面板的消息要带着原回合 id，释放时才能落到同一轮次上。
+    pub inquiry_turn_id: Option<String>,
 }
 
 impl Shared {
@@ -1588,7 +1621,7 @@ fn run(
                 // the waiting turn; settle it with the same inquiry identity.
                 let inquiry_turn_id = take_inquiry_answer(&shared, &session, false)
                     .and_then(|(_text, turn_id)| turn_id);
-                start_stream(
+                submit_or_hold(
                     desktop.clone(),
                     shared.clone(),
                     session,
@@ -1844,12 +1877,18 @@ fn run(
                     continue;
                 }
                 let answer = take_inquiry_answer(&shared, &session, true);
-                match answer {
-                    Some((text, turn_id)) => {
-                        start_stream(desktop.clone(), shared.clone(), session, text, turn_id);
-                    }
-                    None => {}
+                if let Some((text, turn_id)) = answer {
+                    submit_or_hold(desktop.clone(), shared.clone(), session, text, turn_id);
                 }
+            }
+            Command::WithdrawWaiting(queue_id) => withdraw_waiting(&shared, &queue_id, false),
+            Command::EditWaiting(queue_id) => withdraw_waiting(&shared, &queue_id, true),
+            Command::InterjectWaiting(queue_id) => {
+                interject_waiting(&desktop, &shared, &queue_id)
+            }
+            Command::ReleaseWaiting => {
+                let session = shared.lock().unwrap().session_id.clone();
+                release_next_waiting(&desktop, &shared, &session);
             }
             Command::SavePreferences {
                 theme,
@@ -3314,6 +3353,9 @@ fn select_session(
     refresh_context_usage(desktop, shared, session);
     let active = shared.lock().unwrap().session_id.clone();
     refresh_sessions(desktop, shared, Some(&active));
+
+    // 用户切回一个有等待消息、而引擎已空闲的线程：这些消息不该再等下去。
+    release_next_waiting(desktop, shared, session);
 
     let epoch = generation.fetch_add(1, Ordering::SeqCst) + 1;
     let desktop = desktop.clone();
@@ -7157,6 +7199,149 @@ impl Drop for InstallGuard {
 /// tool admissions and question panels never wait for the frame budget.
 const LIVE_PUBLISH_FRAME: Duration = Duration::from_millis(33);
 
+/// 待发条最多列出并保存几条消息；再多就提示用户先撤下几条。与桌面版
+/// `QueueStrip` 的行数上限一致，避免一条看不见的等待队列无限增长。
+const WAITING_LIMIT: usize = 5;
+
+/// 当前线程是否还有一轮正在执行。
+///
+/// `generating` 由本机直播流和打开线程时的快照共同维护，覆盖「刚提交」
+/// 「正在流式输出」两种前台情形；目标在跑时即使没有直播流也还会自己续跑，
+/// 所以一并算作忙，新消息不能插队。
+fn thread_busy(shared: &Arc<Mutex<Shared>>, session: &str) -> bool {
+    let state = shared.lock().unwrap();
+    state.session_id == session && (state.generating || state.goal.active())
+}
+
+/// 把一条消息交给引擎；线程正在运行时改为本地持有。
+///
+/// 这是安卓版对桌面版 `hold_locally` 那段的等价实现：运行中提交会被引擎排
+/// 进线程队列，对话里随之多出一条「排队中」气泡和用户没要求的排队状态。消息
+/// 先留在输入框上沿的待发条里，等当前回合落定后按普通发送发出。
+fn submit_or_hold(
+    desktop: Arc<NativeDesktop>,
+    shared: Arc<Mutex<Shared>>,
+    session: String,
+    text: String,
+    inquiry_turn_id: Option<String>,
+) {
+    if !thread_busy(&shared, &session) {
+        start_stream(desktop, shared, session, text, inquiry_turn_id);
+        return;
+    }
+    let mut state = shared.lock().unwrap();
+    let held = state
+        .waiting_turns
+        .iter()
+        .filter(|turn| turn.session == session)
+        .count();
+    if held >= WAITING_LIMIT {
+        drop(state);
+        notify(&shared, "等待发送的消息已满，请先撤下几条或稍候");
+        return;
+    }
+    state.waiting_seq = state.waiting_seq.wrapping_add(1);
+    let seq = state.waiting_seq;
+    state.waiting_turns.push(WaitingTurn {
+        queue_id: format!("waiting-{seq}"),
+        client_message_id: format!("native-send-android-{seq}"),
+        session,
+        text,
+        inquiry_turn_id,
+    });
+    state.waiting_rev = state.waiting_rev.wrapping_add(1);
+    state.touch();
+}
+
+/// 从待发条取走一条消息。所有等待行的离开都走这里，保证 id 匹配与
+/// 修订号自增只有一份实现。
+fn take_waiting(shared: &Arc<Mutex<Shared>>, queue_id: &str) -> Option<WaitingTurn> {
+    let mut state = shared.lock().unwrap();
+    let index = state
+        .waiting_turns
+        .iter()
+        .position(|turn| turn.queue_id == queue_id)?;
+    let turn = state.waiting_turns.remove(index);
+    state.waiting_rev = state.waiting_rev.wrapping_add(1);
+    state.touch();
+    Some(turn)
+}
+
+/// 撤下一条还没发出的消息。`refill` 为真时把文本退回输入框（编辑），
+/// 否则直接丢弃（删除）。
+fn withdraw_waiting(shared: &Arc<Mutex<Shared>>, queue_id: &str, refill: bool) {
+    let Some(turn) = take_waiting(shared, queue_id) else {
+        return;
+    };
+    if !refill {
+        return;
+    }
+    let mut state = shared.lock().unwrap();
+    if state.session_id == turn.session {
+        state.pending_draft = Some(turn.text);
+        state.touch();
+    }
+}
+
+/// 插话：用户不再等这一轮结束。消息立刻交给引擎，并在引擎的队列行上提到
+/// 下一个动作边界——与桌面版 `interject_waiting_turn` 同一语义。真正的提升
+/// 发生在 `NativeChatEvent::Queued`，因为队列行要等引擎受理后才存在。
+fn interject_waiting(
+    desktop: &Arc<NativeDesktop>,
+    shared: &Arc<Mutex<Shared>>,
+    queue_id: &str,
+) {
+    let Some(turn) = take_waiting(shared, queue_id) else {
+        return;
+    };
+    start_stream_with_id(
+        desktop.clone(),
+        shared.clone(),
+        turn.session,
+        turn.text,
+        turn.inquiry_turn_id,
+        Some(turn.client_message_id),
+        true,
+    );
+}
+
+/// 线程空闲下来时，把最早的一条待发消息真正发出去。
+///
+/// 只在消息所属线程就是当前线程时释放：窗口只有一个直播槽位，替用户没在看
+/// 的线程启动回合会盖掉正在显示的这一屏。那条消息会等用户切回去时再发。
+fn release_next_waiting(
+    desktop: &Arc<NativeDesktop>,
+    shared: &Arc<Mutex<Shared>>,
+    session: &str,
+) {
+    let next = {
+        let mut state = shared.lock().unwrap();
+        if state.session_id != session || state.generating || state.goal.active() {
+            return;
+        }
+        let Some(index) = state
+            .waiting_turns
+            .iter()
+            .position(|turn| turn.session == session)
+        else {
+            return;
+        };
+        let turn = state.waiting_turns.remove(index);
+        state.waiting_rev = state.waiting_rev.wrapping_add(1);
+        state.touch();
+        turn
+    };
+    start_stream_with_id(
+        desktop.clone(),
+        shared.clone(),
+        session.to_string(),
+        next.text,
+        next.inquiry_turn_id,
+        Some(next.client_message_id),
+        false,
+    );
+}
+
 fn start_stream(
     desktop: Arc<NativeDesktop>,
     shared: Arc<Mutex<Shared>>,
@@ -7164,10 +7349,32 @@ fn start_stream(
     text: String,
     inquiry_turn_id: Option<String>,
 ) {
+    start_stream_with_id(desktop, shared, session, text, inquiry_turn_id, None, false);
+}
+
+/// 带提交 id 与插话标记的发送。
+///
+/// 插话需要两件事同时成立：这次提交带着自己的 `client_message_id`（引擎用它
+/// 命名队列行），以及受理后立刻把那一行提到下一个动作边界。所以 id 必须一路
+/// 传到 `NativeChatEvent::Queued` 才能完成提升。
+fn start_stream_with_id(
+    desktop: Arc<NativeDesktop>,
+    shared: Arc<Mutex<Shared>>,
+    session: String,
+    text: String,
+    inquiry_turn_id: Option<String>,
+    client_message_id: Option<String>,
+    interject: bool,
+) {
+    let interject_id = if interject {
+        client_message_id.clone()
+    } else {
+        None
+    };
     let input = NativeChatInput {
         session_id: session.clone(),
         content: text.clone(),
-        client_message_id: None,
+        client_message_id,
         reasoning_effort: None,
         inquiry_turn_id,
         attachments: Vec::new(),
@@ -7285,7 +7492,18 @@ fn start_stream(
                             pending = false;
                         }
                     }
-                    Some(NativeChatEvent::Queued) => {}
+                    Some(NativeChatEvent::Queued) => {
+                        // 插话：引擎已经把这次提交排进线程队列，现在把它的
+                        // 队列行提到下一个动作边界。行是受理后才存在的，所以
+                        // 提升只能放在这里，而不是发送之前。
+                        if let Some(id) = interject_id.as_deref() {
+                            if let Err(error) = desktop.interject_queue_turn(&session, id) {
+                                log::warn!(
+                                    "interject queue turn failed session={session}: {error}"
+                                );
+                            }
+                        }
+                    }
                     Some(NativeChatEvent::Finished) => {
                         log::info!("chat stream finished session={session}");
                         if pending {
@@ -7402,6 +7620,10 @@ fn start_stream(
                     state.touch();
                 }
             }
+            // 这一轮落定后，本窗口替它保管的下一条消息可以出发了。放在清理
+            // 之后，`generating` 已经归位；若投递失败又把它还回了草稿，这里的
+            // 判断依然成立，用户按发送即可重发。
+            release_next_waiting(&desktop, &shared, &session);
             refresh_context_usage(&desktop, &shared, &session);
             let active = shared
                 .lock()
@@ -8092,6 +8314,74 @@ fn command_tail(output: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_running_thread_counts_as_busy_only_for_its_own_session() {
+        let mut state = Shared::default();
+        state.session_id = "s".into();
+        state.generating = true;
+        let shared = Arc::new(Mutex::new(state));
+        assert!(thread_busy(&shared, "s"));
+        assert!(!thread_busy(&shared, "other"));
+        shared.lock().unwrap().generating = false;
+        assert!(!thread_busy(&shared, "s"));
+    }
+
+    #[test]
+    fn a_running_goal_keeps_the_thread_busy_without_a_local_stream() {
+        let mut state = Shared::default();
+        state.session_id = "s".into();
+        state.goal.phase = "active".into();
+        state.goal.activation = "armed".into();
+        let shared = Arc::new(Mutex::new(state));
+        assert!(thread_busy(&shared, "s"));
+    }
+
+    #[test]
+    fn withdrawing_a_waiting_message_puts_it_back_into_the_draft() {
+        let mut state = Shared::default();
+        state.session_id = "s".into();
+        state.waiting_turns.push(WaitingTurn {
+            queue_id: "waiting-1".into(),
+            client_message_id: "native-send-1".into(),
+            session: "s".into(),
+            text: "第二条".into(),
+            inquiry_turn_id: None,
+        });
+        state.waiting_turns.push(WaitingTurn {
+            queue_id: "waiting-2".into(),
+            client_message_id: "native-send-2".into(),
+            session: "other".into(),
+            text: "别处的消息".into(),
+            inquiry_turn_id: None,
+        });
+        let shared = Arc::new(Mutex::new(state));
+        withdraw_waiting(&shared, "waiting-1", true);
+        let state = shared.lock().unwrap();
+        assert_eq!(state.waiting_turns.len(), 1);
+        assert_eq!(state.waiting_turns[0].queue_id, "waiting-2");
+        assert_eq!(state.pending_draft.as_deref(), Some("第二条"));
+        assert_eq!(state.waiting_rev, 1);
+    }
+
+    #[test]
+    fn deleting_a_waiting_message_does_not_touch_the_draft() {
+        let mut state = Shared::default();
+        state.session_id = "s".into();
+        state.waiting_turns.push(WaitingTurn {
+            queue_id: "waiting-1".into(),
+            client_message_id: "native-send-1".into(),
+            session: "s".into(),
+            text: "不要了".into(),
+            inquiry_turn_id: None,
+        });
+        let shared = Arc::new(Mutex::new(state));
+        withdraw_waiting(&shared, "waiting-1", false);
+        let state = shared.lock().unwrap();
+        assert!(state.waiting_turns.is_empty());
+        assert!(state.pending_draft.is_none());
+        assert_eq!(state.waiting_rev, 1);
+    }
 
     #[test]
     fn trajectory_rows_group_turns_and_localize_status() {

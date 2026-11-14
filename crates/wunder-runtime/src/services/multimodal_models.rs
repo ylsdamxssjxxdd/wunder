@@ -1209,10 +1209,7 @@ fn size_label(width: u32, height: u32) -> String {
 }
 
 fn size_report(from_width: u32, from_height: u32, to_width: u32, to_height: u32) -> String {
-    format!(
-        "{}x{}->{}x{}",
-        from_width, from_height, to_width, to_height
-    )
+    format!("{}x{}->{}x{}", from_width, from_height, to_width, to_height)
 }
 
 fn prepare_image_request(
@@ -1265,8 +1262,8 @@ fn prepare_image_request(
             u64::from(*width) * u64::from(*height)
                 <= u64::from(source_width) * u64::from(source_height)
         });
-    let (target_width, target_height) =
-        explicit_canvas.unwrap_or_else(|| fit_size_for_provider(config, source_width, source_height));
+    let (target_width, target_height) = explicit_canvas
+        .unwrap_or_else(|| fit_size_for_provider(config, source_width, source_height));
     let mut resized_input = None;
     if (target_width, target_height) != (source_width, source_height) {
         ensure_input_decodable(&source.filename, source_width, source_height)?;
@@ -1322,7 +1319,9 @@ fn prepare_image_request(
         requested_size
     };
     request.size = size.clone();
-    let reported_size = size.clone().or_else(|| Some(size_label(source_width, source_height)));
+    let reported_size = size
+        .clone()
+        .or_else(|| Some(size_label(source_width, source_height)));
     Ok(ImageRequestPreparation {
         size,
         reported_size,
@@ -2651,10 +2650,7 @@ mod tests {
             prepared.resized_input.as_deref(),
             Some("1024x1024->768x768")
         );
-        assert_eq!(
-            prepared.resized_mask.as_deref(),
-            Some("1024x1024->768x768")
-        );
+        assert_eq!(prepared.resized_mask.as_deref(), Some("1024x1024->768x768"));
         let mask = request.mask_image.expect("mask");
         let decoded = image::load_from_memory(&mask.bytes).expect("decode mask");
         assert_eq!((decoded.width(), decoded.height()), (768, 768));

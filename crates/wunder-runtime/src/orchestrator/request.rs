@@ -150,7 +150,8 @@ impl Orchestrator {
             let input = json!({"role":"user", "content":question, "attachments":attachments,
                 "client_message_id":client_message_id,
                 "inquiry_turn_id":request.config_overrides.as_ref().and_then(|fields| fields.get("__inquiry_turn_id")),
-                "local_open_lease":request.config_overrides.as_ref().and_then(|v| v.get("__local_open_lease"))});
+                "local_open_lease":request.config_overrides.as_ref().and_then(|v| v.get("__local_open_lease")),
+                "meta":crate::services::cron::scheduled_turn_meta(request.config_overrides.as_ref())});
             let accepted = self
                 .committer
                 .accept_turn(user_id.as_str(), session_id.as_str(), &input)

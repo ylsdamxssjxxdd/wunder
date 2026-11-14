@@ -21,6 +21,7 @@ mod demo_entities;
 mod entity_state;
 mod error_card;
 mod expert_ui;
+mod feedback;
 mod file_dialog;
 mod file_icons;
 mod help_browser;
@@ -131,6 +132,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 界面语言：窗口把 `runtime-language` 派生成 `ui-zh` 后回传，这里落到
     // `I18n.zh`。先装回调，任何设置投影（启动加载 / 设置页保存）都会即时生效。
     ui_language::install(&app);
+    // 操作结果只有 `status` 一个落点，而没有任何视图渲染它：这里把每次写入
+    // 交给 Rust 分类后再决定是否弹提示，成功和失败都不会再悄无声息。
+    feedback::install(&app);
     // 语言投影探针（`WUNDER_LANG_PROBE=<dir> --demo`）：强制一次英文/中文投影并
     // 截图退出，用于人工复核两套文案，不进入发布路径。
     if ui_language::probe::run(&app) {

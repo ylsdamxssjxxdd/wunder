@@ -1166,6 +1166,7 @@ pub(crate) fn archive(app: &MainWindow, api: Arc<NativeDesktop>, id: String) {
                         crate::native_chat::replace_external_timeline(&app, Vec::new(), true);
                     }
                     refresh(&app, api, None);
+                    crate::feedback::success(&app, "云端线程已归档", "Cloud thread archived");
                 }
                 Err(error) => app.set_status(format!("无法归档云端线程：{error}").into()),
             }

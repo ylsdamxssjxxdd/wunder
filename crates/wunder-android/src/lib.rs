@@ -20,6 +20,7 @@ mod companion;
 #[cfg(target_os = "android")]
 mod crash;
 mod engine;
+mod file_icons;
 mod fonts;
 mod help;
 #[cfg(target_os = "android")]
