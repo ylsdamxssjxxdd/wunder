@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cloud Runtime | 使用说明书</title>
+  <meta name="description" content="The services and containers Cloud depends on, the port map, database and memory floor, and what the client browser has to be.">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/forms/cloud-runtime","language":"en","title":"Cloud Runtime","summary":"The services and containers Cloud depends on, the port map, database and memory floor, and what the client browser has to be.","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"Forms","group":"Cloud","group_path":["Cloud"],"url":"/docs/en/forms/cloud-runtime/","headings":[{"id":"section-1","level":1,"text":"Cloud Runtime"},{"id":"section-2","level":2,"text":"What it is made of"},{"id":"section-3","level":2,"text":"Resource floor"},{"id":"section-4","level":2,"text":"Database"},{"id":"section-5","level":2,"text":"Client requirements"},{"id":"section-6","level":2,"text":"How it relates to the other forms"}],"prev_slug":"en/forms/cloud-deploy","next_slug":"en/forms/cloud-usage","markdown":"# Cloud Runtime\n\nCloud is the workbench in a browser and is not a process of its own: the pages are served read-only by a separate web container, while data, models and tool execution live in the Server. Its runtime is therefore \"one Server deployment\".\n\n## What it is made of\n\n| Service | Default port | Role |\n| --- | --- | --- |\n| Server | 18000 | Agent scheduling, tool execution, API (`/wunder/*`) |\n| Cloud pages | 18001 | Static pages served by the dedicated web container |\n| Sandbox | 9001 | Isolated environment for commands and code |\n| PostgreSQL | 5432 | Business data; SQLite is an option for single-host setups |\n| OnlyOffice | 18080 | In-browser document editing |\n| drawio | 18081 | In-browser diagrams |\n| extra-mcp | 18004 | Additional MCP service entry |\n\nPorts can be overridden: server `WUNDER_HOST` / `WUNDER_PORT`, cloud pages `NGINX_PORT`.\n\n## Resource floor\n\n- At least 4 GB of free memory: the server, the database and the document services run together, and the headroom decides whether concurrency queues.\n- Disk follows session and workspace size; attachments, screenshots and document caches all sit server-side.\n- Timezone defaults to `Asia/Shanghai`; change it to match the deployment.\n\n## Database\n\nPostgreSQL by default, started with the compose file. Small single-host deployments can switch to SQLite and drop one container, at the cost of different concurrent-write and backup behaviour.\n\n## Client requirements\n\n- Browsers: current Chrome, Edge, Firefox or Safari; the pages are a plain Vue 3 + TypeScript SPA.\n- No plugin or client program, and no local Python or browser engine — those live in the server and the sandbox.\n- Device interlink, voice and screenshot capture depend on browser APIs; see [Cloud Usage](/docs/en/forms/cloud-usage/) for the boundaries.\n\n## How it relates to the other forms\n\n- The Admin shares the server port; see [Admin Runtime](/docs/en/forms/admin-runtime/).\n- Commands and file access in the sandbox reuse the engine, so tool semantics match Desktop; the difference is that execution happens inside a server container, not on the user's machine.\n","source_path":"使用说明书/en/forms/cloud-runtime.md"}</script>
+</body>
+</html>

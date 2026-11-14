@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Runtime | 使用说明书</title>
+  <meta name="description" content="The Admin has no process of its own: static pages served by the Server, API and MCP entry points on the same port, plus the browser and account it requires.">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/forms/admin-runtime","language":"en","title":"Admin Runtime","summary":"The Admin has no process of its own: static pages served by the Server, API and MCP entry points on the same port, plus the browser and account it requires.","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"Forms","group":"Admin","group_path":["Admin"],"url":"/docs/en/forms/admin-runtime/","headings":[{"id":"section-1","level":1,"text":"Admin Runtime"},{"id":"section-2","level":2,"text":"What it is made of"},{"id":"section-3","level":2,"text":"Prerequisites"},{"id":"section-4","level":2,"text":"How it behaves"},{"id":"section-5","level":2,"text":"When it does not load"}],"prev_slug":"en/forms/admin-deploy","next_slug":"en/forms/admin-usage","markdown":"# Admin Runtime\n\nThe Admin is not a program you start separately: it is a set of static pages (plain HTML plus JS modules) shipped by the Server. Its runtime is the Server itself.\n\n## What it is made of\n\n| Part | Where | Notes |\n| --- | --- | --- |\n| Pages | the Server's static directory | Entry `http://<host>:18000/`, no build step — an edit is live on reload |\n| API | same port, `/wunder/*` | The governance and debugging endpoints the pages call |\n| MCP endpoint | same port | For external tools to connect |\n| External workflow entry | same port | For external flows to trigger |\n\nNo separate process, no separate port, no database of its own: reads and writes go through the Server's existing storage.\n\n## Prerequisites\n\n- A working Server deployment, see [Cloud Runtime](/docs/en/forms/cloud-runtime/).\n- A recent Chrome, Edge, Firefox, or Safari. The pages are dense with tables, logs, and monitoring panels: they stay readable on a narrow screen but are slow to work in.\n- An administrator account, or a unit owner (who manages only their own unit and its users). Change the default password right after the first login.\n\n## How it behaves\n\n- Data-dense by design: tables, logs, and monitoring panels are paginated, filtered, or capped, so no view dumps the whole dataset at once.\n- High-risk actions expect a clear confirmation boundary, and a front-end confirmation never replaces back-end authorization.\n- There is no goal editor and no end-user chat: goals are handled in Cloud, Desktop, and the CLI.\n\n## When it does not load\n\nIf the page will not open, check whether the Server is listening on 18000. If it opens but calls fail, read the Server log for authorization and routing entries — the pages hold no cache and do not hide API errors.\n","source_path":"使用说明书/en/forms/admin-runtime.md"}</script>
+</body>
+</html>

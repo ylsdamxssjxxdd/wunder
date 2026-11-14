@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WeChat iLink Channel | 使用说明书</title>
-  <meta name="description" content="How `weixin` compares with the legacy WeChat channels, QR-code sign-in, required and optional configuration, media and inbound troubleshooting, and migration steps.">
-  <link rel="stylesheet" href="/docs/site.css?v=1ced23dfa9d8">
+  <meta name="description" content="Choosing between `weixin` and the older WeChat channels, QR onboarding, required and optional settings, and the order to debug missing messages.">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
 
-  <script type="module" src="/docs/site.js?v=1ced23dfa9d8"></script>
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
 </head>
 <body>
   <div class="docs-app">
@@ -20,7 +20,8 @@
           </a>
           <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
-        <div class="docs-topbar-center">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
           <label class="docs-search">
             <span class="docs-search-icon" aria-hidden="true">
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -32,13 +33,8 @@
             <span class="docs-search-shortcut">Ctrl K</span>
             <div class="docs-search-results" id="docs-search-results" hidden></div>
           </label>
-        </div>
-        <div class="docs-topbar-end">
           <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
         </div>
-      </div>
-      <div class="docs-nav-row">
-        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
       </div>
     </header>
     <div class="docs-layout">
@@ -56,6 +52,6 @@
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"en/capabilities/weixin-channel","language":"en","title":"WeChat iLink Channel","summary":"How `weixin` compares with the legacy WeChat channels, QR-code sign-in, required and optional configuration, media and inbound troubleshooting, and migration steps.","updated_at":"2026-10-16","read_when":[],"source_docs":[],"tab":"Capabilities","group":"Deep Dives","group_path":["Deep Dives"],"url":"/docs/en/capabilities/weixin-channel/","headings":[{"id":"section-1","level":2,"text":"Channel Selection"},{"id":"section-2","level":2,"text":"QR-Code Sign-In"},{"id":"section-3","level":2,"text":"Settings and Troubleshooting"},{"id":"section-4","level":2,"text":"Migration Steps"}],"prev_slug":"en/capabilities/admin-panels","next_slug":"en/capabilities/chat-ws","markdown":"`weixin` is an independent channel; it is not the same set of parameters as `wechat` or `wechat_mp`. Pick the channel by scenario before integrating.\n\n## Channel Selection\n\n| Scenario | Choose |\n| --- | --- |\n| Enterprise WeChat app callback | `wechat` (legacy) |\n| WeChat Official Account callback | `wechat_mp` (legacy) |\n| WeChat capability over the iLink protocol | `weixin` (new) |\n\nThe main differences between new and old:\n\n- Inbound: `weixin` pulls updates by long polling; the legacy version uses Webhook callbacks.\n- Reply requirement: a `weixin` reply must carry the context identifier of the current session; the legacy version does not depend on it.\n- Login: `weixin` scans a QR code to obtain the bot token; the legacy version uses traditional enterprise / Official Account parameters.\n- Media: `weixin` goes through a CDN and handles encryption and decryption itself; the legacy version goes through the platform's native interface.\n- Status: new integrations use `weixin`; the legacy version is in maintenance / compatibility mode for existing deployments.\n\n## QR-Code Sign-In\n\nAfter choosing `weixin` in the channel settings:\n\n1. Click \"Generate QR code\";\n2. Scan it with WeChat;\n3. Click \"Wait for confirmation\";\n4. The system fills in the bot token, bot ID, user ID, and interface address automatically;\n5. Save the account configuration.\n\nAfter the auto-fill you **must save**, or long polling does not actually take effect. The QR code has a validity period and must be regenerated once it expires.\n\n## Settings and Troubleshooting\n\n- Three required fields: interface address, bot token, and bot ID; then turn on the long-connection switch.\n- Optional enhancements: CDN address, bot type, allowed caller range, polling and interface timeouts, backoff after consecutive failures, and route tag.\n- Media-link troubleshooting order: whether media is enabled, whether the CDN address is reachable, whether the decryption key is correct, and whether the attachment exceeds the size limit.\n- A reply reporting \"missing session context identifier\" means the reply did not receive the context identifier from the previous inbound message. Confirm the reply goes through the same session and that the inbound message preserved it.\n- Not receiving messages for a long time: check in order whether the account is active, whether the long connection is on, whether the token and bot ID are valid, and whether the session has expired in the Admin runtime view.\n- Sessions expiring frequently: usually the login state is lost; scan again for a new token and save.\n\n## Migration Steps\n\n1. Run in parallel first: keep the old channel and let new traffic prefer `weixin`;\n2. Switch over by account, in batches;\n3. Watch inbound success rate, outbound success rate, first-packet latency, and the failure ranking;\n4. Once stable, mark the old channel as maintenance mode.\n","source_path":"使用说明书/en/capabilities/weixin-channel.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"en/capabilities/weixin-channel","language":"en","title":"WeChat iLink Channel","summary":"Choosing between `weixin` and the older WeChat channels, QR onboarding, required and optional settings, and the order to debug missing messages.","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"Capabilities","group":"Integration","group_path":["Integration"],"url":"/docs/en/capabilities/weixin-channel/","headings":[{"id":"section-1","level":1,"text":"WeChat iLink Channel"},{"id":"section-2","level":2,"text":"Choosing"},{"id":"section-3","level":2,"text":"QR onboarding"},{"id":"section-4","level":2,"text":"Settings"},{"id":"section-5","level":2,"text":"Debugging"},{"id":"section-6","level":2,"text":"Relationship to other channels"}],"prev_slug":"en/capabilities/mcp-endpoint","next_slug":"en/capabilities/interlink","markdown":"# WeChat iLink Channel\n\n`weixin` is its own channel and its parameters are not interchangeable with the earlier two. Pick by scenario first.\n\n## Choosing\n\n| Scenario | Channel |\n| --- | --- |\n| WeCom app callback | `wechat` |\n| WeChat official-account callback | `wechat_mp` |\n| iLink-protocol WeChat capabilities | `weixin` |\n\nThe differences: `weixin` long-polls for updates, must echo the conversation identifier on each reply, gets its bot token by QR scan, and handles media through a CDN with its own encryption; the other two use webhook callbacks and platform-native media.\n\n## QR onboarding\n\n1. Pick `weixin` in channel settings and generate a QR code.\n2. Scan it with WeChat.\n3. Wait for confirmation.\n4. The bot token, bot id, user id and endpoint are filled in automatically.\n5. **Save the account** — without saving, long polling never starts.\n\nQR codes expire; regenerate if needed.\n\n## Settings\n\n- **Required**: endpoint, bot token, bot id, plus the long-connection switch.\n- **Optional**: CDN address, bot type, allowed caller scope, polling and request timeouts, backoff after repeated failures, routing tag.\n\n## Debugging\n\n| Symptom | Check first |\n| --- | --- |\n| No messages arrive | Account active, long connection on, token and bot id valid, runtime session not expired |\n| Reply rejected for a missing conversation identifier | This reply lost the inbound message's identifier; confirm the reply goes to the same conversation and the identifier was kept |\n| Media missing | Media enabled, CDN reachable, decryption key correct, attachment under the size limit |\n| Session expiring constantly | Usually a stale login: rescan for a new token and save |\n\n## Relationship to other channels\n\nSame engine, same tools and permissions; a channel is just an entry point. Bindings and logs live in Settings → Channels, and the Admin only reflects channel configuration inside preset agent templates.\n","source_path":"使用说明书/en/capabilities/weixin-channel.md"}</script>
 </body>
 </html>

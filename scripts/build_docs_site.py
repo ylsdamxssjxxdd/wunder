@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import html
 import json
 import re
@@ -35,8 +34,6 @@ LOGO_SOURCE_PATH = REPO_ROOT / "images" / "eva01-head.svg"
 LOGO_TARGET_PATH = Path("assets") / "eva01-head.svg"
 DOCS_ASSET_SOURCE_DIR = DOCS_SOURCE_DIR / "assets"
 DOCS_ASSET_TARGET_PATH = Path("assets") / "manual"
-DESIGN_SOURCE_DIR = REPO_ROOT / "docs" / "wunder美术设计稿" / "desktop"
-DESIGN_TARGET_PATH = Path("art")
 PREVIEW_SOURCE_DIR = REPO_ROOT / "docs" / "images"
 PREVIEW_TARGET_PATH = Path("images")
 PREVIEW_FILES = (
@@ -46,6 +43,7 @@ PREVIEW_FILES = (
     "wunder-servo.png",
     "wunder-cocoon.png",
     "wunder-cocoon-settings.png",
+    "wunder-architecture.png",
 )
 FENCE_PATTERN = re.compile(r"^(```|~~~)")
 HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
@@ -240,7 +238,7 @@ def resolve_output(slug: str, home_slug: str) -> tuple[Path, str]:
     if slug == home_slug:
         return Path("index.html"), "/docs/"
     if slug.endswith("/index"):
-        prefix = slug.removesuffix("/index")
+        prefix = slug[: -len("/index")]
         return Path(prefix) / "index.html", f"/docs/{prefix}/"
     return Path(slug) / "index.html", f"/docs/{slug}/"
 
@@ -292,12 +290,14 @@ def load_pages(site_config: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], 
         metadata, markdown = parse_frontmatter(read_text(source_path))
         headings = extract_headings(markdown)
         title = str(metadata.get("title") or extract_first_heading(markdown) or slug.split("/")[-1]).strip()
+        nav_title = str(metadata.get("nav_title") or "").strip() or title
         summary = str(metadata.get("summary") or extract_summary(markdown)).strip()
         output_path, page_url = resolve_output(slug, home_slug)
         pages[slug] = {
             **page_context[slug],
             "slug": slug,
             "title": title,
+            "nav_title": nav_title,
             "summary": summary,
             "updated_at": resolve_updated_at(source_path, metadata),
             "read_when": ensure_list(metadata.get("read_when")),
@@ -330,6 +330,7 @@ def load_pages(site_config: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], 
                         {
                             "slug": page["slug"],
                             "title": page["title"],
+                            "nav_title": page["nav_title"],
                             "summary": page["summary"],
                             "url": page["url"],
                         }
@@ -409,7 +410,8 @@ def render_page_html(site_meta: dict[str, Any], page: dict[str, Any], asset_vers
           </a>
           <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
-        <div class="docs-topbar-center">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
           <label class="docs-search">
             <span class="docs-search-icon" aria-hidden="true">
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -421,13 +423,8 @@ def render_page_html(site_meta: dict[str, Any], page: dict[str, Any], asset_vers
             <span class="docs-search-shortcut">Ctrl K</span>
             <div class="docs-search-results" id="docs-search-results" hidden></div>
           </label>
-        </div>
-        <div class="docs-topbar-end">
           <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
         </div>
-      </div>
-      <div class="docs-nav-row">
-        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
       </div>
     </header>
     <div class="docs-layout">
@@ -519,55 +516,6 @@ def copy_preview_images() -> None:
         if source_path.is_file():
             shutil.copy2(source_path, target / name)
 
-def copy_design_assets() -> None:
-    """Publish both sheet sets, their shared gallery and the pan/zoom viewer.
-
-    External app icons are embedded in the published SVGs because browsers do
-    not load nested resources from an SVG used as an image. The gallery itself
-    stays dependency-free and also works from file:// in the source directory.
-    """
-    source_root = DESIGN_SOURCE_DIR.parent
-    if not DESIGN_SOURCE_DIR.exists():
-        raise FileNotFoundError(f"缺少美术设计稿目录: {DESIGN_SOURCE_DIR}")
-    icon_path = DESIGN_SOURCE_DIR / "assets" / "app-icon.png"
-    if not icon_path.is_file():
-        raise FileNotFoundError(f"缺少设计稿应用图标: {icon_path}")
-    icon_uri = "data:image/png;base64," + base64.b64encode(icon_path.read_bytes()).decode("ascii")
-    target_root = OUTPUT_DIR / DESIGN_TARGET_PATH
-    target_root.mkdir(parents=True, exist_ok=True)
-
-    for source_path in DESIGN_SOURCE_DIR.glob("*.svg"):
-        content = read_text(source_path).replace('href="assets/app-icon.png"', f'href="{icon_uri}"')
-        (target_root / source_path.name).write_text(content, encoding="utf-8", newline="\n")
-
-    cli_source_dir = source_root / "cli"
-    if cli_source_dir.is_dir():
-        cli_target = target_root / "cli"
-        cli_target.mkdir(parents=True, exist_ok=True)
-        for source_path in cli_source_dir.glob("*.svg"):
-            content = read_text(source_path).replace('href="assets/app-icon.png"', f'href="{icon_uri}"')
-            (cli_target / source_path.name).write_text(content, encoding="utf-8", newline="\n")
-
-    gallery_assets = source_root / "assets"
-    if gallery_assets.is_dir():
-        shutil.copytree(gallery_assets, target_root / "assets", dirs_exist_ok=True)
-
-    index_path = source_root / "index.html"
-    if not index_path.is_file():
-        raise FileNotFoundError(f"缺少设计稿画廊: {index_path}")
-    gallery = read_text(index_path)
-    for source, target in (
-        ('data-desktop-base="desktop/"', 'data-desktop-base=""'),
-        ('data-cli-base="cli/"', 'data-cli-base="cli/"'),
-        ('src="desktop/', 'src="'),
-        ('src="cli/', 'src="cli/'),
-        ('href="desktop/', 'href="'),
-        ('href="cli/', 'href="cli/'),
-    ):
-        gallery = gallery.replace(source, target)
-    (target_root / "index.html").write_text(gallery, encoding="utf-8", newline="\n")
-
-
 def build() -> None:
     site_config = load_json(SITE_CONFIG_PATH)
     pages, page_order, resolved_languages = load_pages(site_config)
@@ -588,12 +536,9 @@ def build() -> None:
     copy_site_assets()
     copy_docs_assets()
     copy_preview_images()
-    copy_design_assets()
     asset_version = compute_asset_version(
         OUTPUT_DIR / "site.js",
         OUTPUT_DIR / "site.css",
-        OUTPUT_DIR / "art" / "assets" / "art-viewer.js",
-        OUTPUT_DIR / "art" / "assets" / "art-viewer.css",
     )
 
     for page in pages.values():

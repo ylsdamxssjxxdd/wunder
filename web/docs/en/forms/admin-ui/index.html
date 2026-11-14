@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin Interface | 使用说明书</title>
+  <meta name="description" content="Admin interface: the 4-group, 19-item governance and debugging backend.">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/forms/admin-ui","language":"en","title":"Admin Interface","summary":"Admin interface: the 4-group, 19-item governance and debugging backend.","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"Forms","group":"Admin","group_path":["Admin"],"url":"/docs/en/forms/admin-ui/","headings":[{"id":"section-1","level":1,"text":"Admin Interface"},{"id":"section-2","level":2,"text":"Interface"}],"prev_slug":"en/forms/android-usage","next_slug":"en/forms/admin-deploy","markdown":"# Admin Interface\n\nThe governance and debugging backend that ships with the Server; only administrators get in, and day-to-day chat happens in Desktop or Cloud. It starts together with the Server and has no separate installer or build step.\n\n## Interface\n\n<figure class=\"docs-preview-hero\">\n  <img src=\"/docs/images/wunder-bridge.png\" alt=\"wunder Admin interface: the governance backend\">\n  <figcaption><strong>Admin<\/strong>: a dense, easy-to-scan governance and debugging backend.<\/figcaption>\n<\/figure>\n\nTop-level navigation has **4 groups and 19 items**:\n\n- **System (7)**: internal state, system settings, system messages, org units, users, threads, online update\n- **Agents (5)**: model config, preset agents, companions, tool management, system prompts\n- **Debug (5)**: debug panel, throughput test, performance test, capability evaluation, multimodal debug\n- **Docs (2)**: manual, API\n\nTables, logs and monitoring panels are paginated, filtered or capped instead of rendering everything at once; the debug panel's right side is the thread trajectory view.\n","source_path":"使用说明书/en/forms/admin-ui.md"}</script>
+</body>
+</html>

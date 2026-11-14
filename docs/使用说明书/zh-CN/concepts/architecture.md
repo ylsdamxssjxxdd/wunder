@@ -8,6 +8,11 @@ updated_at: 2026-11-08
 
 桌面版、安卓版、云端版、命令行、服务端多个形态共用同一份核心与引擎，差别只在接入层。执行发生在会话内部，界面读到的是分页且带字节预算的展示视图。
 
+<figure class="docs-preview-hero">
+  <img src="/docs/images/wunder-architecture.png" alt="wunder 分层：本地形态与云端形态共用一份引擎，引擎依赖核心">
+  <figcaption><strong>分层</strong>：本地三个形态同进程调用共享引擎，云端版与管理端经服务端复用同一引擎；引擎依赖核心，存储与运行环境随形态就地提供。</figcaption>
+</figure>
+
 ## 形态与交付
 
 | 形态 | 怎么交付 | 界面 |

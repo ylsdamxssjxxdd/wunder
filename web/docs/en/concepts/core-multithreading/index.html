@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Multi-threading | 使用说明书</title>
   <meta name="description" content="Scheduling, locks, and realtime state isolated per thread inside one process: the Desktop frontend&#x27;s local waiting queue and the Cloud engine session queue, a 120-second session lock TTL, tool parallelism ≤ 4, and a round cap of 1000.">
-  <link rel="stylesheet" href="/docs/site.css?v=1ced23dfa9d8">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
 
-  <script type="module" src="/docs/site.js?v=1ced23dfa9d8"></script>
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
 </head>
 <body>
   <div class="docs-app">
@@ -20,7 +20,8 @@
           </a>
           <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
-        <div class="docs-topbar-center">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
           <label class="docs-search">
             <span class="docs-search-icon" aria-hidden="true">
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -32,13 +33,8 @@
             <span class="docs-search-shortcut">Ctrl K</span>
             <div class="docs-search-results" id="docs-search-results" hidden></div>
           </label>
-        </div>
-        <div class="docs-topbar-end">
           <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
         </div>
-      </div>
-      <div class="docs-nav-row">
-        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
       </div>
     </header>
     <div class="docs-layout">
@@ -56,6 +52,6 @@
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"en/concepts/core-multithreading","language":"en","title":"Multi-threading","summary":"Scheduling, locks, and realtime state isolated per thread inside one process: the Desktop frontend's local waiting queue and the Cloud engine session queue, a 120-second session lock TTL, tool parallelism ≤ 4, and a round cap of 1000.","updated_at":"2026-10-16","read_when":[],"source_docs":[],"tab":"Capabilities","group":"Core Capabilities","group_path":["Core Capabilities"],"url":"/docs/en/concepts/core-multithreading/","headings":[{"id":"section-1","level":1,"text":"Multi-threading"},{"id":"section-2","level":2,"text":"Concurrency control"},{"id":"section-3","level":2,"text":"Defaults"},{"id":"section-4","level":2,"text":"Limits"}],"prev_slug":"en/concepts/core-memory","next_slug":"en/concepts/core-multi-user-management","markdown":"# Multi-threading\n\nA single user can hold several task threads at once, and scheduling, locks, and realtime state are isolated per thread so the threads do not block one another.\n\n## Concurrency control\n\n- **Queueing has two layers**: since Desktop v1.0.0 the frontend local waiting queue (`waiting_turns`) holds messages sent during a run above the input box and sends them when the current turn settles; the Cloud build still uses the engine-level session queue (on by default, in-order execution).\n- A **session lock** has a TTL of 120 seconds with heartbeat renewal; when its holder exits abnormally, the TTL releases it.\n- **Tool parallelism ≤ 4**: tools that run in parallel take a read lock, and tools that run exclusively take a write lock.\n- **Round caps, active-session caps, daily quotas, and retry circuit breaking** form four hard constraints.\n\n## Defaults\n\n| Item | Value |\n| --- | --- |\n| Session lock TTL | 120 seconds (with heartbeat) |\n| Tool parallelism | ≤ 4 |\n| Round cap | 1000 by default |\n\n## Limits\n\n- With `agent_queue.enabled` turned off, the Cloud build judges a message sent during a run as \"user busy\" and no longer shows it in the queue bar (the Server warns about this at startup). This is a configuration choice, not a fault; the Desktop build is unaffected and uses the frontend local waiting queue.\n- Blocking category quotas and bounded queues are hard caps: when full, the system reports busy and does not wait in a queue.\n","source_path":"使用说明书/en/concepts/core-multithreading.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"en/concepts/core-multithreading","language":"en","title":"Multi-threading","summary":"Scheduling, locks, and realtime state isolated per thread inside one process: the Desktop frontend's local waiting queue and the Cloud engine session queue, a 120-second session lock TTL, tool parallelism ≤ 4, and a round cap of 1000.","updated_at":"2026-10-16","read_when":[],"source_docs":[],"tab":"Capabilities","group":"Features","group_path":["Features"],"url":"/docs/en/concepts/core-multithreading/","headings":[{"id":"section-1","level":1,"text":"Multi-threading"},{"id":"section-2","level":2,"text":"Concurrency control"},{"id":"section-3","level":2,"text":"Defaults"},{"id":"section-4","level":2,"text":"Limits"}],"prev_slug":"en/concepts/core-memory","next_slug":"en/concepts/core-multi-user-management","markdown":"# Multi-threading\n\nA single user can hold several task threads at once, and scheduling, locks, and realtime state are isolated per thread so the threads do not block one another.\n\n## Concurrency control\n\n- **Queueing has two layers**: since Desktop v1.0.0 the frontend local waiting queue (`waiting_turns`) holds messages sent during a run above the input box and sends them when the current turn settles; the Cloud build still uses the engine-level session queue (on by default, in-order execution).\n- A **session lock** has a TTL of 120 seconds with heartbeat renewal; when its holder exits abnormally, the TTL releases it.\n- **Tool parallelism ≤ 4**: tools that run in parallel take a read lock, and tools that run exclusively take a write lock.\n- **Round caps, active-session caps, daily quotas, and retry circuit breaking** form four hard constraints.\n\n## Defaults\n\n| Item | Value |\n| --- | --- |\n| Session lock TTL | 120 seconds (with heartbeat) |\n| Tool parallelism | ≤ 4 |\n| Round cap | 1000 by default |\n\n## Limits\n\n- With `agent_queue.enabled` turned off, the Cloud build judges a message sent during a run as \"user busy\" and no longer shows it in the queue bar (the Server warns about this at startup). This is a configuration choice, not a fault; the Desktop build is unaffected and uses the frontend local waiting queue.\n- Blocking category quotas and bounded queues are hard caps: when full, the system reports busy and does not wait in a queue.\n","source_path":"使用说明书/en/concepts/core-multithreading.md"}</script>
 </body>
 </html>

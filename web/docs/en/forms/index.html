@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>wunder | 使用说明书</title>
+  <meta name="description" content="A general-purpose AI operating system">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/forms/index","language":"en","title":"wunder","summary":"A general-purpose AI operating system","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"Forms","group":"Overview","group_path":["Overview"],"url":"/docs/en/forms/","headings":[{"id":"section-1","level":1,"text":"wunder"},{"id":"section-2","level":2,"text":"Where to start"},{"id":"section-3","level":2,"text":"What it can do"},{"id":"section-4","level":2,"text":"The five forms"},{"id":"section-5","level":2,"text":"Keep reading"}],"prev_slug":"zh-CN/capabilities/interlink","next_slug":"en/forms/desktop-ui","markdown":"# wunder\n\nwunder = model + harness + runtime\n\n- **Harness**: the model's constraint layer — supplies tools and interfaces to the outside world, drives the model into action, and governs permissions and context.\n- **Runtime**: browser, shell, files, Python, documents — prebuilt and ready once installed.\n\n> **Read before use**\n>\n> - **Broad permissions**: wunder holds file read/write, command execution and network access on this machine. A wrong step can delete files, damage system configuration or break the runtime. Back up important data first, and confirm before anything that deletes, overwrites or touches system-level settings.\n> - **Verify the output**: a model can produce wrong, outdated or harmful information. Check facts, figures, regulations and safety-related conclusions yourself before acting on them.\n\nIts core function: the user issues instructions, and the agent completes long-running, complex tasks. The UI is radically minimal: solve the problem fast instead of showing off complexity — only what the current task needs, with deeper abilities expanded on demand.\n\n## Where to start\n\nIndividual users start with Desktop: install it and you have a local AI workbench.\n\n```text\nDownload Desktop → configure a model → describe a goal → get results\n```\n\nTeams use Cloud: deploy the Server once, then members open it in a browser. Use the CLI for hands-on and scripted work, Android on a phone, and the Admin for governance and debugging.\n\n## What it can do\n\n- **Files and code**: read, edit, run commands, refactor a project\n- **Office automation**: organize documents, generate reports, process spreadsheets, take meeting notes\n- **Long-running work**: attach a goal to a session so it keeps going when idle, see [Goal State System](/docs/en/concepts/goal-mode/)\n- **Parallel subtasks**: spin up subagents when several threads must advance at once, then merge their results\n- **Scheduled tasks**: periodic checks, recurring reminders, cross-channel messages\n- **External services**: turn repeated flows into skills, or connect MCP tools\n- **Device interlink**: once a local device joins Cloud, Cloud can send it commands with your approval\n\n## The five forms\n\nOne engine (wunder-runtime) and one core (wunder-core) ship as five forms; the difference is only the access layer, since threads, tools, storage, realtime events and permission semantics are one body of code.\n\n| Form | Purpose | Who it's for | How to reach it |\n| --- | --- | --- | --- |\n| [Desktop](/docs/en/forms/desktop-ui/) | Local AI workbench, installed on your own computer | Individual users (the default entry point) | Installer |\n| [Cloud](/docs/en/forms/cloud-ui/) | Cloud AI workbench | Teams and multi-user setups | Browser |\n| [CLI](/docs/en/forms/cli-ui/) | Manual local entry point | Command-line users / automation scripts | Terminal |\n| [Android](/docs/en/forms/android-ui/) | The Desktop's phone form | Phone users | APK |\n| [Admin](/docs/en/forms/admin-ui/) | Governance and debugging backend | Administrators | Browser |\n\nDesktop, Android and the CLI are local forms that run on their own without the Server; Cloud ships with the Server; the Admin is the Server's own governance UI. Each form has four pages: **Interface**, **Deployment**, **Runtime** and **Usage**.\n\n## Keep reading\n\n- What the agent can call: [Tools](/docs/en/tools/)\n- How the system is assembled: [Architecture](/docs/en/concepts/architecture/)\n- Key mechanics: [Agent Loop](/docs/en/concepts/core-agent-loop/)\n","source_path":"使用说明书/en/forms/index.md"}</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+// 使用手册的目录行：分区标题、分区内二级分组、主题。
+//
+// 手册正文由 `scripts/build_help_manual.py` 从 `docs/使用说明书` 生成，
+// Rust 侧切成主题后压平成一列行模型交给设置页，和桌面版帮助窗口同构。
+
+export struct MobileHelpRow {
+    /// 0 分区 / 1 分组 / 2 主题。
+    kind: int,
+    /// 主题行是主题下标；分区行是分区下标；分组行为 -1。
+    topic: int,
+    title: string,
+    expanded: bool,
+    count: int,
+}

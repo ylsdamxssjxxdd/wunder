@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>云端版使用 | 使用说明书</title>
+  <meta name="description" content="云端版使用：登录、实时状态、后台运行与附件上限，以及边界。">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/forms/cloud-usage","language":"zh-CN","title":"云端版使用","summary":"云端版使用：登录、实时状态、后台运行与附件上限，以及边界。","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"形态","group":"云端版","group_path":["云端版"],"url":"/docs/zh-CN/forms/cloud-usage/","headings":[{"id":"section-1","level":1,"text":"云端版使用"},{"id":"section-2","level":2,"text":"使用"},{"id":"section-3","level":2,"text":"边界"}],"prev_slug":"zh-CN/forms/cloud-runtime","next_slug":"zh-CN/forms/cli-ui","markdown":"# 云端版使用\n\n## 使用\n\n- **登录**：用服务端账号登录，未登录会跳到登录页，也可以直接注册；登录后进入你的智能体对话页。\n- **实时状态**：新消息、执行进度与审批提示走一条长连接；断线重连后用普通请求把状态补齐，不需要重开页面。\n- **后台运行**：切换、新建、刷新或短暂离线都不会取消正在跑的线程，重新连上后从已保存的事件恢复状态与待审批项。\n- **附件**：临时附件上限 200 MB，持久附件 10 MB；附件处理中发送按钮会被禁用。\n- **长线程**：时间线按窗口加载、滚到哪加载哪，解析与渲染放在后台线程里做。\n\n## 边界\n\n- **没有交互式终端**：想在界面里直接敲命令请用桌面版。\n- **云端版与管理端不是同一套界面**：云端版面向使用者，管理端面向管理员，路由与视觉规范都不同；普通用户看不到管理端。\n- **超大数据量线程仍可能卡顿**：渲染优化方案还没有完全落地。\n","source_path":"使用说明书/zh-CN/forms/cloud-usage.md"}</script>
+</body>
+</html>

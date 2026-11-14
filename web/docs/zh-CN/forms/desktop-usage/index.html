@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>桌面版使用 | 使用说明书</title>
+  <meta name="description" content="桌面版使用：第一次启动、模型配置、发消息与执行过程，以及独有能力与边界。">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/forms/desktop-usage","language":"zh-CN","title":"桌面版使用","summary":"桌面版使用：第一次启动、模型配置、发消息与执行过程，以及独有能力与边界。","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"形态","group":"桌面版","group_path":["桌面版"],"url":"/docs/zh-CN/forms/desktop-usage/","headings":[{"id":"section-1","level":1,"text":"桌面版使用"},{"id":"section-2","level":2,"text":"使用"},{"id":"section-3","level":3,"text":"第一次启动"},{"id":"section-4","level":3,"text":"执行过程"},{"id":"section-5","level":3,"text":"常用入口"},{"id":"section-6","level":2,"text":"独有能力"},{"id":"section-7","level":2,"text":"边界"}],"prev_slug":"zh-CN/forms/desktop-runtime","next_slug":"zh-CN/forms/cloud-ui","markdown":"# 桌面版使用\n\n## 使用\n\n### 第一次启动\n\n1. 启动页结束、工作目录与会话就绪后进入工作台。\n2. **设置 → 模型 → 添加**：填 API Key、接口地址（形如 `https://example.com/v1`）、模型名与参数，保存前点「测试连接」。\n3. **设置 → 账号**：填用户名、邮箱、头像；长期使用请设置登录密码。\n4. 回对话页输入「帮我列出当前工作目录的文件」，看到思考 → 工具批次 → 最终回复就说明跑通了。\n\n### 执行过程\n\n- 每轮回复下方的「工作过程」把中间思考、工具批次与中间打印折叠起来。\n- 一次执行按用户轮次 / 模型轮次展示，细节见[会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)。\n- 运行中再发消息会排在输入框上方，当前轮次结束后自动发出，不会被打回。\n\n### 常用入口\n\n| 想做的事 | 去哪 |\n| --- | --- |\n| 跑命令 | 对话页的终端视图（Windows 用 winpty，Linux 用 PTY） |\n| 换模型 / 调思考等级 | 输入区 |\n| 管工具、MCP、技能、知识库 | 设置 → 工具管理 |\n| 看某条线程怎么跑的 | 线程轨迹 |\n| 定时巡检、周期提醒 | 设置 → 定时任务 |\n| 长期记忆条目 | 设置 → 记忆碎片 |\n| 渠道账号与日志 | 设置 → 渠道设置 |\n\n## 独有能力\n\n以下能力云端版、管理端与命令行上都没有：\n\n- **交互式终端**：可以像在终端里一样敲命令。\n- **托盘与系统通知**：后台运行、任务完成时提醒。\n- **全局热键**：用系统快捷键唤起。\n- **截图采集**：全屏截图后回填到输入区。\n- **语音输入**：用麦克风说话转成文字。\n- **本地文件与桌面控制**：直接读写本机文件、操作桌面（桌面控制需要视觉模型）。\n\n## 边界\n\n- **没有「设备互通」设置面板**：设置页 11 个分类里不含互通；能用的互通只有侧栏「工作目录」里的云端工作区，以及远端命令审批弹窗。\n- **不能播放语音（TTS）**：语音输入可用，设置里也能配 TTS 模型，但没有播放；要听语音输出请用[云端版](/docs/zh-CN/forms/cloud-ui/)。\n- **重置工作状态没有界面入口**：调用 `POST /wunder/auth/me/reset_work_state`，它会停止运行中的会话、清空排队任务、清理会话锁，保留技能、知识库、长期记忆、配置与会话历史。\n- **另有一个兼容端口**（默认 18123），只给少数既有客户端用，日常使用不涉及。\n","source_path":"使用说明书/zh-CN/forms/desktop-usage.md"}</script>
+</body>
+</html>

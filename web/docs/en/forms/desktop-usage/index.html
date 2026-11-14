@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Desktop Usage | 使用说明书</title>
+  <meta name="description" content="Desktop usage: first launch, model setup, sending messages and reading a run, plus capabilities and boundaries.">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/forms/desktop-usage","language":"en","title":"Desktop Usage","summary":"Desktop usage: first launch, model setup, sending messages and reading a run, plus capabilities and boundaries.","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"Forms","group":"Desktop","group_path":["Desktop"],"url":"/docs/en/forms/desktop-usage/","headings":[{"id":"section-1","level":1,"text":"Desktop Usage"},{"id":"section-2","level":2,"text":"Usage"},{"id":"section-3","level":3,"text":"First launch"},{"id":"section-4","level":3,"text":"Runs and turns"},{"id":"section-5","level":2,"text":"Desktop-only capabilities"},{"id":"section-6","level":2,"text":"Boundaries"}],"prev_slug":"en/forms/desktop-runtime","next_slug":"en/forms/cloud-ui","markdown":"# Desktop Usage\n\n## Usage\n\n### First launch\n\n- A lightweight splash page appears first while the working directory, configuration and sessions are prepared; the window being up does not mean the session is ready.\n- Settings → Models → Add: API Key, endpoint (`https://example.com/v1` style), model name and parameters; verify with Test connection before saving.\n- Settings → Account: user name, e-mail, avatar; set a login password if you plan to use it long term.\n- Back on the chat page, send `List the files in the current working directory` and watch the tool batches, the process log and the final reply.\n\n### Runs and turns\n\n- The composer carries model switching, thinking level, attachments, voice input, screenshot and send / stop.\n- Each reply has a Process section that folds the intermediate thinking, tool batches and intermediate output; the latest turn stays expanded.\n- Sending another message while a turn runs queues it above the composer and sends it once the current turn settles.\n- Trajectory, working directory, terminal view, tool management and subagent details are all separate panels, opened from the chat page.\n\n## Desktop-only capabilities\n\n| Capability | What it is |\n| --- | --- |\n| Interactive terminal | Run commands in a real terminal view (winpty on Windows, PTY on Linux) |\n| Screenshot capture | Capture the screen and drop it back into the composer |\n| Tray and notifications | Keep running in the background and get told when a task finishes |\n| Global hotkey | Wake the window from anywhere |\n| Voice input | Dictate instead of typing |\n| Local files and desktop control | Read and write local files, drive the desktop (needs a vision model) |\n\n## Boundaries\n\n- **No device-interlink settings panel**: the 11 settings categories do not include it; the usable parts are the cloud workspaces in the sidebar's working directory and the remote-command approval dialog.\n- **No TTS playback**: voice input works and TTS models can be configured, but nothing plays; use [Cloud](/docs/en/forms/cloud-ui/) for spoken output.\n- **No UI entry for resetting the working state**: call `POST /wunder/auth/me/reset_work_state`; it stops running sessions, clears queued tasks and locks, and keeps skills, knowledge base, long-term memory, configuration and history.\n- **A compatibility bridge port** (18123 by default) serves legacy clients only.\n- **Electron / Tauri shells are no longer maintained**; that does not affect the engine or the native desktop app.\n","source_path":"使用说明书/en/forms/desktop-usage.md"}</script>
+</body>
+</html>

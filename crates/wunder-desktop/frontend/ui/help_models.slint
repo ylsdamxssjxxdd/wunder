@@ -72,7 +72,7 @@ export struct HelpImage {
 }
 
 export global HelpDocs {
-    // 左侧目录：四个分区按展开状态压平成一行行导航项。
+    // 左侧目录：各分区按展开状态压平成一行行导航项。
     in property <[HelpNavRow]> nav-rows;
     in property <[HelpEntry]> keyword-index;
     in property <[HelpEntry]> search-results;
@@ -101,7 +101,7 @@ export global HelpDocs {
     in-out property <int> reveal-request: 0;
     in-out property <float> reveal-y: 0;
     callback topic-opened(int);
-    // 展开/收起左侧目录的四个分区之一。
+    // 展开/收起左侧目录的一个分区。
     callback block-toggled(int);
     callback history-requested(int);
     callback search-changed(string);

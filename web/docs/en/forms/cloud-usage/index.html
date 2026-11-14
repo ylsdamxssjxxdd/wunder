@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cloud Usage | 使用说明书</title>
+  <meta name="description" content="Cloud usage: sign-in, realtime state, running in the background and attachment limits.">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/forms/cloud-usage","language":"en","title":"Cloud Usage","summary":"Cloud usage: sign-in, realtime state, running in the background and attachment limits.","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"Forms","group":"Cloud","group_path":["Cloud"],"url":"/docs/en/forms/cloud-usage/","headings":[{"id":"section-1","level":1,"text":"Cloud Usage"},{"id":"section-2","level":2,"text":"Usage"},{"id":"section-3","level":2,"text":"Boundaries"}],"prev_slug":"en/forms/cloud-runtime","next_slug":"en/forms/cli-ui","markdown":"# Cloud Usage\n\n## Usage\n\n- **Sign-in**: use a Server account; an unauthenticated visit lands on the login page, and self-registration is available. After signing in you land on your agent's chat page.\n- **Realtime state**: new messages, progress and approvals ride one long connection; after a reconnect, ordinary requests backfill the state without reloading the page.\n- **Background runs**: switching, creating, refreshing or briefly going offline does not cancel a running thread; on reconnect the state and pending approvals are restored from saved events.\n- **Attachments**: 200 MB for temporary attachments, 10 MB for persistent ones; the send button is disabled while an attachment is processed.\n- **Long threads**: the timeline loads in windows as you scroll, with parsing and rendering off the main thread.\n\n## Boundaries\n\n- **No interactive terminal**: use Desktop if you want to type commands inside the interface.\n- **Cloud and the Admin are different interfaces**: Cloud serves users, the Admin serves administrators, with different routing and visual rules; ordinary users never see the Admin.\n- **Very large threads can still stutter**: the high-volume rendering plan has not fully landed.\n","source_path":"使用说明书/en/forms/cloud-usage.md"}</script>
+</body>
+</html>

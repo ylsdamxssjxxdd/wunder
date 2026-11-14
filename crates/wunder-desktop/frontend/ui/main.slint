@@ -662,12 +662,6 @@ export component MainWindow inherits Window {
     callback pick-shell-path();
     // The settings page's active category, shared with the smoke harness.
     in-out property <int> settings-active-panel: 0;
-    // Leaving the settings page abandons the unsaved new-model draft (selected
-    // or parked behind another row); the native handler no-ops when there is
-    // nothing to discard. Switching entries inside the page keeps it.
-    changed settings-open => {
-        if !root.settings-open { root.discard-model-draft(); }
-    }
     // Memory, usage and archive data are pulled on demand: the old expert page's
     // own tab strip is gone, so the active category is what selects the view.
     changed settings-active-panel => {
@@ -889,9 +883,7 @@ export component MainWindow inherits Window {
     in-out property <string> settings-model-base-url;
     in-out property <string> settings-model-type;
     in-out property <bool> settings-model-is-default: false;
-    // The models settings tab edits the selected model in place; `creating`
-    // marks the unsaved new-model draft where the config key stays editable.
-    in-out property <bool> model-creating: false;
+    // The models settings tab edits the selected model in place.
     in-out property <bool> model-projecting: false;
     in-out property <string> model-save-error;
     callback model-edited();
@@ -1114,7 +1106,6 @@ export component MainWindow inherits Window {
     callback select-model(int);
     callback create-model();
     callback setup-first-model();
-    callback discard-model-draft();
     callback move-model(int, int);
     callback save-model();
     callback commit-model-key();
@@ -1753,7 +1744,6 @@ export component MainWindow inherits Window {
         delete-model(key) => { root.delete-model(key); }
         select-model(index) => { root.select-model(index); }
         create-model => { root.create-model(); }
-        discard-model-draft => { root.discard-model-draft(); }
         save-model => { root.save-model(); }
         commit-model-key => { root.commit-model-key(); }
         move-model(from, delta) => { root.move-model(from, delta); }
@@ -1797,7 +1787,6 @@ export component MainWindow inherits Window {
         run-update => { root.run-update(); }
         open-wunder-model => { root.open-wunder-model(); }
         cloud-toggle-sync(enabled) => { root.cloud-toggle-sync(enabled); }
-        model-creating <=> root.model-creating;
         model-save-error: root.model-save-error;
         model-key-draft <=> root.model-key-draft;
         model-provider-draft <=> root.model-provider-draft;

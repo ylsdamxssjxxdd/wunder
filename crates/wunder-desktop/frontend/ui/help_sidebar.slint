@@ -6,8 +6,8 @@ import { HelpButton, HelpInput } from "help_controls.slint";
 // Contents / index / search sidebar of the help browser, bound to the
 // HelpDocs global so the reading state survives tab switches.
 //
-// The contents tab is a four-block accordion, mirroring the Cloud manual:
-// 开始 / 工具 / 界面 / 能力. Each block expands to its groups and topics;
+// The contents tab is a three-block accordion mirroring the manual site:
+// 形态 / 工具 / 能力. Each block expands to its groups and topics;
 // index and search remain flat result lists.
 export component HelpSidebar inherits Rectangle {
     background: #ffffff;
@@ -61,7 +61,7 @@ export component HelpSidebar inherits Rectangle {
         accessible-label: I18n.hp_search_placeholder;
         edited(text) => { HelpDocs.search-changed(text); }
     }
-    // 目录：四个分区标题 + 展开后的分组标题与主题。
+    // 目录：分区标题 + 展开后的分组标题与主题。
     if root.active-tab == 0 : nav-list := ListView {
         x: 4px;
         y: 67px;

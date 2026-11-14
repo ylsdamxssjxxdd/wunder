@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Android Runtime | 使用说明书</title>
+  <meta name="description" content="What actually ships inside the APK: the bundled Ubuntu rootfs and its tool list, the two browser engines, the permission it needs, and what proot cannot do.">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/forms/android-runtime","language":"en","title":"Android Runtime","summary":"What actually ships inside the APK: the bundled Ubuntu rootfs and its tool list, the two browser engines, the permission it needs, and what proot cannot do.","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"Forms","group":"Android","group_path":["Android"],"url":"/docs/en/forms/android-runtime/","headings":[{"id":"section-1","level":1,"text":"Android Runtime"},{"id":"section-2","level":2,"text":"Parts"},{"id":"section-3","level":2,"text":"Bundled tools"},{"id":"section-4","level":2,"text":"Two browser engines"},{"id":"section-5","level":2,"text":"Boundaries"}],"prev_slug":"en/forms/android-deploy","next_slug":"en/forms/android-usage","markdown":"# Android Runtime\n\nAndroid packs the Desktop engine together with an Ubuntu environment into the APK: after installing you can run commands, read and write files, and call tools on the phone with no root and no download of a runtime.\n\n## Parts\n\n| Part | Notes |\n| --- | --- |\n| OS requirement | Android 8.0 (API 26) and up, arm64-v8a; the x86_64 slice is for emulator checks only |\n| UI | Single-column phone workbench, reusing the Desktop Slint UI code |\n| Command environment | A bundled Ubuntu arm64 rootfs run by proot inside the app's private directory, without requesting root |\n| Data | Entirely in the app's private directory; uninstalling clears it |\n\n## Bundled tools\n\nThe rootfs ships the usual tools, ready for the agent:\n\n- **Development**: python, git, ripgrep, 7zip, static ffmpeg, binutils, patchelf, upx, sqlite3\n- **System**: curl, wget, zip/unzip, procps, psmisc, lsof, bc, bzip2, time, iproute2, rsync, tmux\n- **Fonts**: fontconfig plus DejaVu, Liberation, Noto Color Emoji and WenQuanYi Micro Hei, covering Latin, monospace, Chinese and emoji\n- **Phone image and recovery toolbox**: adb, simg2img, erofs-utils, debugfs, squashfs-tools, mtools/dosfstools/exfatprogs/ntfs-3g, testdisk/photorec, ddrescue, binwalk, foremost, nmap\n\nThese tools work at file level only: proot has no block devices, no FUSE and no raw sockets, so `fastboot`, `mount`, `tcpdump`, USB and Bluetooth control are unavailable.\n\n## Two browser engines\n\n| Case | What runs | Requirement |\n| --- | --- | --- |\n| Ordinary web work | The system WebView, hosted in a floating window | Grant \"display over other apps\" on first use |\n| Frame-by-frame rendering skills (e.g. knowledge shorts) | Playwright 1.40 with Chromium 1091, installed at `/opt/browser/chrome-linux` | Shipped inside the release APK, works offline |\n\nDevelopment builds may omit the browser pack; the WebView path still works, but rendering skills report a missing runtime.\n\n## Boundaries\n\n- No ports, no background service, and no inbound access.\n- Tool semantics match Desktop, but system-level abilities (tray, global hotkeys, desktop control) do not exist on a phone.\n- Terminal key bindings follow phone input; see [Android Usage](/docs/en/forms/android-usage/).\n","source_path":"使用说明书/en/forms/android-runtime.md"}</script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Desktop Interface | 使用说明书</title>
+  <meta name="description" content="Desktop interface: two pages, Chat and Settings, with everything else as panels and dialogs.">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/forms/desktop-ui","language":"en","title":"Desktop Interface","summary":"Desktop interface: two pages, Chat and Settings, with everything else as panels and dialogs.","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"Forms","group":"Desktop","group_path":["Desktop"],"url":"/docs/en/forms/desktop-ui/","headings":[{"id":"section-1","level":1,"text":"Desktop Interface"},{"id":"section-2","level":2,"text":"Interface"}],"prev_slug":"en/forms/index","next_slug":"en/forms/desktop-deploy","markdown":"# Desktop Interface\n\nThe local AI workbench and the default entry point for individual users: it runs on your own computer, calls the engine natively in-process, occupies no port and needs no local HTTP/WebSocket hop — and no Server has to be deployed first.\n\n## Interface\n\n<figure class=\"docs-preview-hero\">\n  <img src=\"/docs/images/wunder-pupa.png\" alt=\"wunder Desktop interface: the local AI workbench\">\n  <figcaption><strong>Desktop<\/strong>: the local AI workbench; the main window has only two pages, Chat and Settings.<\/figcaption>\n<\/figure>\n\n- **Two pages only**: Chat and Settings. Every other capability is a panel or dialog on demand, and does not change the two-column layout.\n- **Chat page**: the left column holds the task and thread tree, the working directory (local file tree, usage bar, cloud workspaces) and the settings entry; the right column holds the header (workspace / thread name), the timeline and the composer. With no thread selected the right side shows a welcome page.\n- **Settings, 11 categories**: General, Local runtime, Account, Models, Tool management, Agent settings, Companions, Scheduled tasks, Memory fragments, Channels, Archived threads. Help sits inside General; the category list is searchable.\n- **Panels and dialogs**: interactive terminal, tool management (built-in / MCP / skills / knowledge base), companions, workspaces, working directory, thread trajectory, subagent details, channels, schedules, expert data, patch diff cards, screenshot overlay, tray and notifications, remote-command approval.\n","source_path":"使用说明书/en/forms/desktop-ui.md"}</script>
+</body>
+</html>

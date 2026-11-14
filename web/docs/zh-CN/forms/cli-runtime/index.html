@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>命令行运行环境 | 使用说明书</title>
+  <meta name="description" content="命令行要什么才能跑：单二进制、终端与编码要求、与桌面版共用的 opt 组件、数据位置，以及 doctor 自检。">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/forms/cli-runtime","language":"zh-CN","title":"命令行运行环境","summary":"命令行要什么才能跑：单二进制、终端与编码要求、与桌面版共用的 opt 组件、数据位置，以及 doctor 自检。","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"形态","group":"命令行","group_path":["命令行"],"url":"/docs/zh-CN/forms/cli-runtime/","headings":[{"id":"section-1","level":1,"text":"命令行运行环境"},{"id":"section-2","level":2,"text":"组成"},{"id":"section-3","level":2,"text":"系统与终端"},{"id":"section-4","level":2,"text":"自检"},{"id":"section-5","level":2,"text":"没有的东西"}],"prev_slug":"zh-CN/forms/cli-deploy","next_slug":"zh-CN/forms/cli-usage","markdown":"# 命令行运行环境\n\n命令行是同一套引擎的终端入口：一个可执行文件，没有界面进程，也不需要本机服务。它轻，但要求终端可交互、编码正确，脚本类能力仍要补充组件。\n\n## 组成\n\n| 部分 | 位置 | 说明 |\n| --- | --- | --- |\n| 程序 | `<安装根>/bin/wunder-cli` | Windows 为 `wunder-cli.exe`；Linux 下 `bin/wunder` 是兼容符号链接 |\n| 配置 | `<安装根>/config.toml` | 与桌面版共用同一份引擎配置 |\n| 运行状态 | `<安装根>/cli/WUNDER_TEMP/` | 会话与 SQLite |\n| 工作区 | 启动命令时所在的目录 | `-C/--cd` 可指定别的目录 |\n| 补充组件 | `<安装根>/opt/` | 与桌面版同一份，见[桌面版运行环境](/docs/zh-CN/forms/desktop-runtime/) |\n\n独立安装时可自行构建（`cargo build --release -p wunder-cli`），但那时 `opt/` 是空的——命令、Git、搜索、Python 这些能力要另外导入补充包。\n\n## 系统与终端\n\n- Windows 7 起（GNU 工具链）；Linux x64 / arm64，ubuntu 18.04 为基线。\n- 终端要有 UTF-8 与宽字符支持，中文与 emoji 才不错位；`TERM` 缺失或过简时颜色与边框会退化成纯文本。\n- 运行形态由 TTY 决定：stdin / stdout / stderr 都是 TTY 时进交互界面；被重定向或进管道时自动降级为一次性执行，脚本与 `curl … |` 这类调用走这条。\n- 不监听端口，也没有常驻后台服务；互通隧道与云端相关子命令是出站连接。\n\n## 自检\n\n`wunder-cli doctor` 检查本地运行环境：安装根、配置可读写、补充组件是否齐全、模型端点能否连通。它只读检查，不改配置。\n\n出问题时按顺序看：先确认解析到的安装根（`WUNDER_HOME` 非空时以它为准），再看 `opt/` 下对应组件目录在不在，最后看模型配置是否可用。\n\n## 没有的东西\n\n- 没有图形界面、托盘与系统通知。\n- 没有语音识别，只能粘贴或拖拽图片。\n- 知识库在命令行上未实现，长期记忆也不在命令行里管。\n","source_path":"使用说明书/zh-CN/forms/cli-runtime.md"}</script>
+</body>
+</html>

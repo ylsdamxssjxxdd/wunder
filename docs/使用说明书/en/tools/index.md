@@ -1,6 +1,6 @@
 ---
 title: Tools Overview
-summary: Canonical names and English aliases of the built-in tools, the doc pages for each of the eight categories, situations mapped to tools, and the shared result shell plus the exceptions that skip it.
+summary: Canonical names and English aliases of the built-in tools, the doc pages for each of the eight categories, situations mapped to tools, how names are routed, and the shared result shell plus the exceptions that skip it.
 updated_at: 2026-11-08
 ---
 
@@ -33,7 +33,7 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | 会话线程控制 | `thread_control` | 管理任务线程 / 分支线程（桌面端不开放） | 线程与子智能体 |
 | 记忆管理 | `memory_manager` | 读写长期记忆 | 系统与记忆 |
 | 定时任务 | `schedule_task` | 创建与管理定时 / 周期任务 | 系统与记忆 |
-| `goal` | `action=get|edit|pause|resume|complete|blocked` | Goal-state tool, auto-injected per session by the runtime; not selectable on desktop; only the user can create a goal | 目标态 |
+| `goal` | `get` / `edit` / `pause` / `resume` / `complete` / `blocked` | Goal-state tool, auto-injected per session by the runtime; not selectable on desktop; only the user can create a goal | 目标态 |
 
 `网页搜索` is retained in code but currently **temporarily delisted** — invisible to the model and to the user (see `default_tool_profile.rs`). Removed entirely: `ptc`, channel tools, user-world tools, `a2a_*` tools, `final_response`, `a2ui`, the standalone "sleep and wait" tool, `会话让出`, LSP query tools.
 
@@ -64,7 +64,32 @@ Canonical tool names the model sees are mostly Chinese, each paired with an Engl
 | Desktop | Desktop control: [Desktop Control](/docs/en/tools/desktop-control/) |
 | Threads and subagents | Subagent control: [Subagent Control](/docs/en/tools/subagent-control/); thread control: [Thread Control](/docs/en/tools/thread-control/) |
 | System and memory | memory manager: [Memory Manager](/docs/en/tools/memory-manager/); schedule task: [Schedule Task](/docs/en/tools/schedule-task/) |
-| Goal state | `goal` (`action=get|edit|pause|resume|complete|blocked`) is injected by the runtime per session and is not offered for selection on the desktop endpoint; only the user can create a goal |
+| Goal state | `goal` reads, edits, pauses, resumes, completes, or reports blocked: [Goal State](/docs/en/tools/goal/); injected by the runtime per session and not offered for selection on the desktop endpoint, and only the user can start a goal |
+| Extensions | MCP: [MCP](/docs/en/tools/mcp/); skills: [Skills](/docs/en/tools/skills/) (both registered from configuration, so neither is in the table above) |
+
+## How names are routed
+
+Some tool names the model sees come from the built-in table; others are registered from configuration at runtime. Dispatch works across four layers: tools, skills, abilities, and user tools.
+
+| Layer | What it is | Who uses it |
+| --- | --- | --- |
+| **Tool** | An executor: argument schema, dispatch branch, side effects or data reads | Called by the model, run by the runtime |
+| **Skill** | Knowledge + scripts: a directory with `SKILL.md` and an entry script | Called as a tool, or read as reference material |
+| **Ability** | An entry in the administrator's selection layer, not an executor: folds tools and skills into selectable, grantable items | Checked, granted, shared in the Admin / Cloud |
+| **User tool** | A user-supplied extension: MCP / skill / knowledge base, routed by alias | Configured by the user, matched by name at runtime |
+
+Hit order is fixed:
+
+1. Normalize the English alias to the canonical Chinese name.
+2. **User tool alias hit** → routed straight to your user MCP, user skill, or user knowledge base.
+3. **Skill name hit** → run the skill's entry script.
+4. **Name contains `@`** → treat as MCP.
+5. **Knowledge base name hit** → run retrieval against that base.
+6. Everything else uses the built-in tools.
+
+Step 2 outranks built-ins: when a user tool shares a name with a built-in tool, the user tool wins — that is intended.
+
+Knowledge bases travel the same path: an enabled base's name is a tool name and yields to a skill of the same name; bases come in three kinds (literal, built-in vector, external RAGFlow), and vector search falls back to literal search, which the result reports.
 
 ## Result shell
 

@@ -1,105 +1,73 @@
 ---
-title: Interlink
-summary: Device management, workspace access, and thread control after a local workbench signs in to the cloud.
-updated_at: 2026-10-17
+title: Multi-Device Interlink
+summary: Device states after signing in to the Server, the workspace shadow projection, tiered approval for cross-device control, and the drop and permission boundaries.
+updated_at: 2026-11-14
 ---
 
-Desktop remains a local AI workbench that works offline. After it signs in to the Server, it can use cloud agents and threads without opening a local port. If the user explicitly enables local sharing, Cloud can access the device's authorized workspaces and threads through the Server. CLI exposes the same operations for manual and scripted use.
+# Multi-Device Interlink
 
-## Sign-in and sharing
+Desktop and Android are first of all local workbenches that run offline. After signing in to the Server you can reach cloud agents and threads without opening a local port; once the user enables local sharing, Cloud can go through the Server relay to view and operate that device's workspaces and threads within the granted scope. The CLI exposes the same ability for hands-on and scripted use.
 
-The first Desktop or CLI sign-in creates an independent device session. It does not automatically expose local files or threads. The user can select off, summary sharing, or full sharing in account settings, and Admin policy can further restrict every device.
+## Three states, not one
 
-“Signed in”, “tunnel online”, and “this operation is authorized” are separate states. Sign-in permits cloud access; an online tunnel is required to operate a local device; mutations and execution also require capability, policy, and approval checks.
+| State | Meaning |
+| --- | --- |
+| Signed in | Cloud resources are reachable |
+| Tunnel online | Cloud can operate this local device |
+| This operation is authorized | The specific write or exec is allowed |
 
-## Prerequisites
+The first sign-in only yields a separate device session; local files and threads are not opened automatically. The sharing level (off, summary, full) is chosen in account settings, and the Admin can tighten it further.
 
-1. Desktop or CLI is signed in to the Server.
-2. To access a local device, that device is online and its owner enabled sharing.
-3. The Server is the authority for accounts, devices, quota, and policy.
+## Device states
+
+`online` (idle), `busy` (running), `away` (online but idle for a while), `reconnecting`, `offline`. The Server records the signed-in session, the tunnel connection and the available capabilities separately, so the three can disagree.
 
 ## Capabilities
 
-| ID | Capability | What it means |
-|------|------|------|
-| R1 | Device state | The Server distinguishes a valid sign-in, a live tunnel, and effective capabilities; it presents `online` / `away` / `busy` / `reconnecting` / `offline` |
-| R2 | Workspace visibility | The local workspace appears in the Cloud as a **shadow projection**, projecting metadata summaries (thread directory, directory-tree summary, scheduled tasks, usage); **file contents are not mirrored**, and are pulled on demand over the interlink tunnel as the user acts |
-| R3 | Cloud controlling local | The Cloud can issue graded operations to online local nodes (query / session control / workspace write / tool execution); sensitive operations go through local **human-in-the-loop approval**, and everything is audited |
-| R4 | Local controlling cloud | The Desktop and the CLI treat the cloud as a symmetric node — browse the cloud workspace, send messages to cloud threads, read thread event streams; the CLI provides a scriptable command group |
+| Capability | What it means |
+| --- | --- |
+| Mutual workspace view | A local workspace appears in Cloud as a shadow projection of metadata (thread index, directory summary, scheduled tasks, usage); file contents are not mirrored and are pulled on demand over the tunnel |
+| Cloud controls local | Queries, session control, workspace writes and tool execution are opened in tiers; sensitive ones go through a local human-in-the-loop approval and are audited |
+| Local controls Cloud | Desktop, Android and the CLI treat Cloud as a peer node: switch device, browse Cloud threads, send messages, read the event stream |
+| Several devices | The device directory distinguishes desktop, phone, CLI and web; a signed-in phone appears as a phone node that Cloud can drive under capability and approval |
 
-The unified state model:
+## Entry points
 
-| State | Meaning |
-|------|------|
-| `online` | Online and idle |
-| `busy` | Online and executing |
-| `away` | Online but inactive |
-| `reconnecting` | Recovering from a dropped connection |
-| `offline` | Offline |
+| Form | Entry |
+| --- | --- |
+| Desktop | Account settings (sign-in and sharing level), cloud agents and threads, local approval dialog |
+| Cloud | Sidebar lists local and cloud workspaces together: the default directory as "device name - local workspace", named ones as "device name - workspace name" |
+| CLI | `cloud` subcommands: `devices`, `ws`, `threads`, `thread`, `send`, `watch`, `audit`, `approve`; `cloud status` summarises tunnel, pending approvals, other devices and usage |
 
-## Entry Points
+## Tiers and approval
 
-### Desktop
+| Tier | Operations | Approval |
+| --- | --- | --- |
+| Read-only | device summary, shadow refresh, workspace list / search / read, thread list and detail | none |
+| Read-only (binary) | reading binary files | none, audited |
+| Session | create thread, send message, cancel, answer | local approval when acting on a local device; account auth when acting on your own cloud thread |
+| Workspace write | write, mkdir, move, copy, delete | forced, cannot be lowered |
+| Execution | allow-listed command exec, spawning subagents | forced, disabled by default in the device capability set, can be enabled |
 
-| Entry point | What it does |
-|------|------|
-| Account settings | Sign-in state, local sharing permission, and sharing level |
-| Cloud agents and threads | Agents, recent threads, send, stop, tool approval, live status, history pages, and full-text copy |
-| Local approval | Controlled requests from Cloud to this machine |
+Workspace writes back up first to `workspace/.interlink_backup/<command id>/` (last 50 generations) and report checksums before and after. Execution is off by default and approvals are never remembered.
 
-### Cloud (web)
+## Boundaries
 
-| Entry point | What it does |
-|------|------|
-| Sidebar | Local workspaces sit beside the cloud workspace: the default root is “device name-Local workspace”, named roots are “device name-workspace name”, and selecting one expands that workspace’s local threads beneath it |
-| The "cloud / device" dropdown switcher | Removed |
+- **No public entry**: a reverse tunnel; the local side only makes an outbound connection and never listens.
+- **Least capability**: each remote operation must be declared, read-only by default.
+- **One switch**: the user holds the kill switch; the Admin can narrow it further.
 
-### CLI
+## Drops and recovery
 
-| Entry point | What it does |
-|------|------|
-| The `cloud` subcommand group | `devices` / `ws` / `threads` / `thread` / `send` / `watch` / `audit` / `approve` |
-| `cloud status` | Combines four sections: interlink tunnel, pending approvals, other devices, cloud workspace usage |
-| `cloud watch` | Frame types are `snapshot` / `delta` / `command` / `error` / `close` |
+Desktop reconnects with backoff. While the Server stays up, an unsent bounded queue is delivered after reconnect; commands already sent, running or awaiting approval fail explicitly when the old connection ends, so nothing runs twice.
 
-## Security Boundary
+After a Server restart, leftover commands settle as "server restarted" instead of waiting forever; command bodies are not persisted, so parameters are never rebuilt from a summary and writes are never redone automatically. Queries can be reissued; verify the actual result before reissuing a write.
 
-| Boundary | Meaning |
-|------|------|
-| No public inbound entry point | Reverse tunnel: the local side only makes outbound connections, opens no listening port, and control traffic is delivered over the already-established link |
-| Least capability | Each class of remote operation is a declarative capability, read-only by default |
-| Explicit authorization | Write and execution classes require local user authorization, and an administrator can tighten it further in the Admin |
-| Graded approval | Risk tiers L0–L3, see the table below |
-| Complete audit | Every remote operation forms a chain that can be inspected |
-| One-click shutdown | The kill switch is held by the user |
+## What it deliberately does not do
 
-Risk tiers:
+- Local and cloud threads are not merged: this is remote operation, not sync.
+- No full workspace mirroring or two-way sync, only metadata projection plus on-demand pulls.
+- No graphical remote control; the granularity stops at the engine and file APIs.
+- No NAT traversal; all traffic is relayed by the Server, and Desktop and the CLI never talk to each other directly.
 
-| Level | Operations covered | Approval |
-|------|------|------|
-| L0 read-only | `node.summary` / `shadow.refresh` / `workspace.list\|search\|stat\|read` / `threads.list\|get` | No approval needed |
-| L0+ | `workspace.read:binary` | No approval needed + audited |
-| L1 session | `thread.create` / `thread.message` / `thread.cancel` / `thread.answer` | Local-device operations normally need local approval; a user's own cloud threads use account authorization |
-| L2 workspace write | `workspace.write\|mkdir\|move\|copy\|delete` | Approval mandatory, cannot be lowered |
-| L3 execution | `tool.exec` (allow-listed commands) / `agent.spawn` | Approval mandatory + disabled for administrators by default, can be enabled |
-
-- **L3 is off by default**: `tool.exec` and `agent.spawn` are not in a device's capability set by default; approvals are never remembered; only a summary of the execution result is returned.
-- **L2 writes are backed up first**: write operations are backed up to `工作区/.interlink_backup/<command_id>/` (the most recent 50 generations are kept), and the result reports the SHA256 before and after.
-
-## Constraints
-
-### Disconnection and recovery
-
-The Desktop reconnects with backoff. While the Server process remains running, its bounded queue retains commands that have not been sent and delivers them after reconnection. Commands already sent, executing, or awaiting approval on the device fail explicitly when their connection ends, avoiding duplicate operations.
-
-After a Server restart, unfinished commands are settled in bounded batches with `SERVER_RESTARTED`. Command bodies are not persisted, so arguments are never reconstructed from digests and writes are not replayed automatically. Queries can be submitted again; check the actual outcome of a write before resubmitting it through the normal approval flow. Remote thread views obtain a new snapshot after reconnecting.
-
-### Boundaries
-
-- Local and cloud threads are not merged. Interlink is remote operation, not data synchronization.
-- No full mirroring or two-way synchronization of workspace files — only metadata projection plus on-demand pull.
-- No graphical remote control; control granularity stops at the engine and file APIs.
-- No NAT hole-punching; all traffic is relayed through the Server.
-- The Desktop and the CLI do not interlink directly; local-to-local access always goes through the Server.
-
-Remote file reads use a 256 KiB inline-result boundary; larger device files use bounded chunks. Cloud-direct execution has no device data channel, so larger reads and writes must be split. Cloud does not offer binary upload, archive, or batch file operations.
+Remote reads return up to 256 KiB inline, with bounded chunking beyond that; direct Cloud execution has no device data channel, so larger reads and writes must be split. Cloud offers no binary upload, archive or batch file operations.

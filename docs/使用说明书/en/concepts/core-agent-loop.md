@@ -60,5 +60,5 @@ While it waits for your input or for an approval, the thread is not in a termina
 - The claim that every tool call counts as a round is wrong — a tool batch belongs to the same model round.
 - The loop does not retry without limit; repeated failures, progress-free successes, overruns, and empty output all have circuit breakers.
 - A still interface does not mean the loop has stopped; waiting for approval, waiting for input, and queued are all still within the lifetime.
-- Streaming output is only a way of presenting things; the truth of the loop is in the thread ledger — see [Streaming Execution](/docs/en/concepts/streaming/).
+- Streaming output is only a way of presenting things; the truth of the loop is in the thread ledger.
 - A subagent does not share the parent thread's context; it is an independent thread with an independent loop, interacting only through callbacks and a mailbox.

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>云端版界面 | 使用说明书</title>
+  <meta name="description" content="云端版界面：浏览器里的三栏对话工作区、10 个设置分类与斜杠命令。">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/forms/cloud-ui","language":"zh-CN","title":"云端版界面","summary":"云端版界面：浏览器里的三栏对话工作区、10 个设置分类与斜杠命令。","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"形态","group":"云端版","group_path":["云端版"],"url":"/docs/zh-CN/forms/cloud-ui/","headings":[{"id":"section-1","level":1,"text":"云端版界面"},{"id":"section-2","level":2,"text":"界面"}],"prev_slug":"zh-CN/forms/desktop-usage","next_slug":"zh-CN/forms/cloud-deploy","markdown":"# 云端版界面\n\n云端 AI 工作台，随服务端提供：部署好服务端之后，成员用浏览器打开就能用。它本身没有独立进程，构建产物由网页服务容器下发；数据存在服务端。\n\n## 界面\n\n<figure class=\"docs-preview-hero\">\n  <img src=\"/docs/images/wunder-hive.png\" alt=\"wunder 云端版界面：云端 AI 工作台\">\n  <figcaption><strong>云端版<\/strong>：浏览器里的单页应用，左栏 + 时间线 + 输入区。<\/figcaption>\n<\/figure>\n\n- **主区三栏**：左栏是新任务、搜索、工作区与线程树、工作目录、设置入口；右栏是聊天顶栏 + 时间线 + 输入区；浮层放文件预览、在线编辑与形象。\n- **设置 10 个分类**：常规、账号、工具管理、智能体设置、伙伴、定时任务、记忆碎片、渠道设置、我的设备、归档线程。工具管理分内置 / MCP / 技能 / 知识库四个标签页；「我的设备」是设备互通入口，命令审批在时间线里内联弹出。\n- **输入区**：消息输入（也可以输入斜杠命令）、附件、发送 / 停止、模型切换、审批模式（建议 / 自动编辑 / 完全自动，默认完全自动）、思考等级（灰色跟随模型，空 / 半满 / 全满）。\n- **时间线**：每轮回复下方的「工作过程」折叠中间思考、工具批次与中间打印，最近一轮默认展开；状态为运行中 / 等待（需要你输入或审批）/ 已完成。\n- **斜杠命令**：`/new` 新建线程、`/stop` 停止、`/compact` 压缩对话、`/help` 帮助、`/goal` 目标管理。\n- **语音**：输入与 TTS 双向可用；没有交互式终端。\n","source_path":"使用说明书/zh-CN/forms/cloud-ui.md"}</script>
+</body>
+</html>

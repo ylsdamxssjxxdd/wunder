@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MCP | 使用说明书</title>
+  <meta name="description" content="MCP 两个方向：外部服务接进来后的 `服务器@工具` 注册与路由、打包折叠与 streamable-http 限制，以及对外的 `/wunder/mcp` 端点与常见失败。">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/mcp","language":"zh-CN","title":"MCP","summary":"MCP 两个方向：外部服务接进来后的 `服务器@工具` 注册与路由、打包折叠与 streamable-http 限制，以及对外的 `/wunder/mcp` 端点与常见失败。","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"工具","group":"扩展","group_path":["扩展"],"url":"/docs/zh-CN/tools/mcp/","headings":[{"id":"section-1","level":1,"text":"MCP"},{"id":"section-2","level":2,"text":"接入外部服务"},{"id":"section-3","level":2,"text":"对外暴露"},{"id":"section-4","level":2,"text":"常见失败"},{"id":"section-5","level":2,"text":"边界"}],"prev_slug":"zh-CN/tools/goal","next_slug":"zh-CN/tools/skills","markdown":"# MCP\n\nMCP 是 wunder 与外部工具服务之间的通用协议。它有两个方向，入口和配置互不相同：把外部服务接进来给模型用，和把 wunder 暴露出去给外部系统调用。\n\n## 接入外部服务\n\n在配置里声明服务名、地址和传输方式，打开开关，外部工具就出现在工具目录里。\n\n- **只支持一种传输**：streamable-http。stdio 在 wunder 侧不支持，旧传输类型会在列工具或调用时被直接拒绝。\n- **注册成 `服务器名@工具名`**：每个被放行的工具都按这个名字出现；名字里带 `@` 的调用按 MCP 处理。\n- **打包模式**：把服务器标成打包后，它整体折成**一个**工具，动作只有三个——列出可用工具、取某个工具的说明、调用某个工具。这样几十个工作细节不会一次性塞进上下文。\n- **列表缓存**：30 秒内有效，最多 128 条。\n- **参数只接受对象**：非对象会被当成无参数。\n- **返回形态**：直连调用返回 MCP 自己的结果结构；经用户工具别名路由的调用会再包一层统一外壳。\n\n放行名单逐次校验，打包折叠后也一样；没被放行的工具既不出现也调不到。\n\n## 对外暴露\n\nwunder 自己也能当 MCP 服务：服务端与桌面版在 `/wunder/mcp` 上挂一个端点，走 Streamable HTTP，协议版本协商由 wunder 自动完成。\n\n| 工具 | 作用 |\n| --- | --- |\n| `excute` | 执行一个智能体任务并返回最终回复（工具名就是这个拼写，对接时照抄） |\n| `doc2md` | 解析文档并返回 Markdown |\n\n端点跑任务时会现算给智能体的工具集，并显式移除自己——避免端点驱动的智能体回调端点本身。对外接入的具体地址与验证方式见[MCP 入口](/docs/zh-CN/capabilities/mcp-endpoint/)。\n\n## 常见失败\n\n| 症状 | 先查什么 |\n| --- | --- |\n| 配了服务却没有工具 | 服务是否启用、放行名单是否拦截、传输类型是否为旧值 |\n| 提示不再支持旧版传输类型 | 改成 streamable-http |\n| 调用报未知内置工具 | 名字既不是规范名 / 别名，也不带 `@`、不是技能名、不是库名 |\n| 用户工具「抢」了内置名 | 别名路由优先于内置分派，属预期行为 |\n\n## 边界\n\n- MCP 工具不是旁路：它和内置工具、技能、知识库工具汇总进同一个工具视图，进入模型上下文前同样要过能力选择与模型可用性过滤（视觉类、多模态类、桌面类的门槛各不相同）。\n- 动态注册的名字和内置名共用一张表，给服务与工具起名时避开内置规范名与别名，否则语义会被别名改写。\n- 知识库同样按名字动态注册，规则见[工具总览](/docs/zh-CN/tools/)；技能见[技能](/docs/zh-CN/tools/skills/)。\n","source_path":"使用说明书/zh-CN/tools/mcp.md"}</script>
+</body>
+</html>

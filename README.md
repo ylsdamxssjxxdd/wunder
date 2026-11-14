@@ -1,6 +1,6 @@
 # <img src="images/eva01-head.png" alt="eva01 头像" width="44" align="absmiddle"> wunder 心舰
 
-wunder 是一个泛用型人工智能操作系统：**wunder = 模型 + 驾驭框架 + 运行环境**，即模型之外的一切。
+wunder 是一个泛用型人工智能操作系统：**wunder = 模型 + 拘束器 + 运行环境**，即模型之外的一切。
 
 - 多：支持多平台，32位win7/ubuntu18.04；支持多形态，网页版本/本地版本/移动版本
 - 快：启动速度快，秒开，响应速度快不卡顿
@@ -97,7 +97,7 @@ wunder 是一个泛用型人工智能操作系统：**wunder = 模型 + 驾驭�
 | 会话线程控制 | `thread_control` | 管理任务线程 / 分支线程（桌面端不开放） | 线程与子智能体 |
 | 记忆管理 | `memory_manager` | 读写长期记忆 | 系统与记忆 |
 | 定时任务 | `schedule_task` | 创建与管理定时 / 周期任务 | 系统与记忆 |
-| `goal` | `get / create / edit / pause / resume / complete / blocked` | 目标态工具，由运行时按会话自动注入，不对桌面端开放选择 | 目标态 |
+| `goal` | `get / edit / pause / resume / complete / blocked` | 目标态工具，由运行时按会话自动注入，不对桌面端开放选择；目标只能由用户创建 | 目标态 |
 
 
 ## 吞噬矩阵

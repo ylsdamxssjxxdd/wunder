@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Skills | 使用说明书</title>
+  <meta name="description" content="What a skill is (a directory, `SKILL.md`, an entry script), its two uses, skill names and the `owner@skill` form, mounting and ability selection, and the 60-second subprocess boundary.">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/skills","language":"en","title":"Skills","summary":"What a skill is (a directory, `SKILL.md`, an entry script), its two uses, skill names and the `owner@skill` form, mounting and ability selection, and the 60-second subprocess boundary.","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"Tools","group":"Extensions","group_path":["Extensions"],"url":"/docs/en/tools/skills/","headings":[{"id":"section-1","level":1,"text":"Skills"},{"id":"section-2","level":2,"text":"Two uses"},{"id":"section-3","level":2,"text":"Names and ownership"},{"id":"section-4","level":2,"text":"Entry script"},{"id":"section-5","level":2,"text":"Mounting and selection"},{"id":"section-6","level":2,"text":"Execution boundary"}],"prev_slug":"en/tools/mcp","next_slug":"en/concepts/architecture","markdown":"# Skills\n\nA skill packages knowledge and scripts: one directory, a `SKILL.md` with frontmatter (name, description), and an entry script looked up in a fixed order. It works both as a callable tool and as reference material you only read.\n\n## Two uses\n\n| Use | Path | Good for |\n| --- | --- | --- |\n| Call it as a tool | The skill name is itself a callable tool name | You already know which skill to use |\n| Read its body | `技能调用` (alias `skill_call`) returns name, description, path, root, and body | You want the workflow or only its knowledge before deciding |\n\n`技能调用` replaces skill-root placeholders in the body with real paths, so the model can read files and run scripts with what it gets back. It does not run the entry script — execution is a separate call.\n\n## Names and ownership\n\n- A bare name (`文稿校对`) is a skill you have.\n- A skill shared by someone else is written `owner@skill`.\n- On a name collision wunder does not guess: it reports the ambiguity and lists the candidates.\n\n## Entry script\n\nLooked up in order `run.py` → `skill.py` → `main.py`, first hit wins. Importing a skill package (archives and collisions included) is the platform's job, so a script never has to unpack itself.\n\nThe global skill directory comes from configuration, and the script executor path can be overridden.\n\n## Mounting and selection\n\n- Built-in skills ship with the package and are marked apart from your own; user skills route by name like MCP servers and knowledge bases.\n- \"Selecting an ability\" only puts a tool or skill name into that agent's selection set; the skill layer still does the executing.\n- Model availability filters apply before anything reaches the context, and thresholds differ per capability.\n\n## Execution boundary\n\nA skill runs as a **subprocess executing a script**, with a 60-second timeout, inheriting the platform's path and permission boundary. Do not put privileged operations in a skill script. If it will not run, first check that the entry script exists, then whether `技能调用` can read the body at all — if it cannot, the directory or the frontmatter is usually the problem.\n\nFor MCP see [MCP](/docs/en/tools/mcp/); the overall name-routing rules are on [Tools Overview](/docs/en/tools/).\n","source_path":"使用说明书/en/tools/skills.md"}</script>
+</body>
+</html>

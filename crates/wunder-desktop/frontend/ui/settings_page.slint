@@ -567,9 +567,8 @@ export component SettingsPage inherits Rectangle {
         : "";
     property <bool> update-busy: root.update-phase == "checking" || root.update-phase == "downloading" || root.update-phase == "applying";
     // Engine-managed cloud entries (`cloud/<id>`): the editor locks them and
-    // removes the delete shortcut; logout clears them in one go. Guards
-    // against the new-model draft inheriting a previously selected cloud key.
-    property <bool> cloud-locked: root.selected-key.starts-with("cloud/") && !root.model-creating;
+    // removes the delete shortcut; logout clears them in one go.
+    property <bool> cloud-locked: root.selected-key.starts-with("cloud/");
     // Status row projection: dot color and copy per engine connection state.
     property <color> cloud-dot-color: root.cloud-connection == "online" ? Theme.success
         : root.cloud-connection == "reconnecting" ? Theme.warning
@@ -592,18 +591,14 @@ export component SettingsPage inherits Rectangle {
     in property <bool> model-editor-is-default;
     callback select-model(int);
     callback create-model();
-    callback discard-model-draft();
-    // Commits the unsaved new-model draft. Creation never auto-saves: the
-    // config name stays editable until this runs.
+    // 「添加模型」已经落库，保存按钮只提交对当前配置的编辑。
     callback save-model();
-    // Renames the selected model. The config key is an identity, so it commits
-    // on Enter/focus loss instead of every keystroke.
+    // Renames the selected model on commit instead of every keystroke, then
+    // saves through the same path as 「保存」.
     callback commit-model-key();
     callback move-model(int, int);
     callback set-default-model(string);
-    // The models tab edits the selected model in place: every editor draft
-    // lives here and is wired two-way to the shell by main.slint.
-    in-out property <bool> model-creating: false;
+    // 模型页直接编辑选中项：草稿字段都在这里，由 main.slint 与外壳双向绑定。
     // 生成参数默认折叠：基础设置只留连接与上下文，类型专属参数按需展开。
     private property <bool> model-advanced-open: false;
     in property <string> model-save-error;
@@ -1494,44 +1489,39 @@ export component SettingsPage inherits Rectangle {
                             }
                         }
                         Rectangle { horizontal-stretch: 1; border-radius: Theme.radius-md; background: Theme.panel; border-width: 1px; border-color: Theme.border;
-                            if root.selected-key == "" && !root.model-creating : PageState { kind: PageStateKind.empty; message: I18n.st_pick_model; }
-                            if root.selected-key != "" || root.model-creating : VerticalLayout { padding: 16px; spacing: 12px;
+                            if root.selected-key == "" : PageState { kind: PageStateKind.empty; message: I18n.st_pick_model; }
+                            if root.selected-key != "" : VerticalLayout { padding: 16px; spacing: 12px;
                                 HorizontalLayout { height: 46px; spacing: 8px;
                                     VerticalLayout { horizontal-stretch: 1; spacing: 2px;
-                                        Text { height: 26px; text: root.model-creating ? I18n.model_editor_add : root.selected-key; color: Theme.text; font-size: Theme.font-headline; font-weight: 700; overflow: elide; }
-                                        Text { height: 17px; text: root.model-creating ? I18n.st_model_new_hint : ((root.model-editor-is-default ? I18n.st_models_default_badge + " · " : "") + I18n.st_model_colon + root.model-editor-name + " · " + root.model-editor-base-url); color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
+                                        Text { height: 26px; text: root.selected-key; color: Theme.text; font-size: Theme.font-headline; font-weight: 700; overflow: elide; }
+                                        Text { height: 17px; text: ((root.model-editor-is-default ? I18n.st_models_default_badge + " · " : "") + I18n.st_model_colon + root.model-editor-name + " · " + root.model-editor-base-url); color: Theme.muted; font-size: Theme.font-xs; overflow: elide; }
                                     }
-                                    // 保存与默认常驻：新建草稿靠显式保存提交（自动保存会
-                                    // 立刻结束创建态并锁住配置名称），既有模型平时边改边
-                                    // 存，按钮提供「立刻落盘」的确定感。两个按钮都带文字，
-                                    // 避免只有图标时无从判断。
+                                    // 保存与默认常驻：配置只在点「保存」时落库（以及
+                                    // 回车提交配置名称），按钮提供「立刻生效」的确定感。
+                                    // 两个按钮都带文字，避免只有图标时无从判断。
                                     Action {
                                         height: 32px; width: 76px; icon: @image-url("../assets/icons/save.svg");
                                         label: I18n.common_save; show-label: true; primary: true;
-                                        enabled: !root.loading && !root.saving && !root.cloud-locked
-                                            && (!root.model-creating || (root.model-key-draft != "" && root.model-name-draft != ""));
+                                        enabled: !root.loading && !root.saving && !root.cloud-locked;
                                         clicked => { root.save-model(); }
                                     }
-                                    // 未保存的新模型还没有身份，默认位不适用于它。
                                     Action {
                                         height: 32px; width: 76px; icon: @image-url("../assets/icons/fa-star.svg");
                                         label: I18n.common_default; show-label: true;
                                         icon-color: root.selected-is-default ? Theme.gold : Theme.muted;
                                         enabled: !root.loading && !root.saving && !root.cloud-locked
-                                            && !root.model-creating && root.selected-key != "" && !root.selected-is-default;
+                                            && root.selected-key != "" && !root.selected-is-default;
                                         clicked => { root.set-default-model(root.selected-key); }
                                     }
-                                    // While a new model is being created the same slot discards
-                                    // the unsaved draft; a saved row keeps the delete confirmation.
-                                    // Cloud entries stay visible but inert (the engine clears them
-                                    // together on logout).
+                                    // Cloud entries stay visible but inert (the engine
+                                    // clears them together on logout).
                                     Action {
                                         height: 32px;
-                                        icon: root.model-creating ? @image-url("../assets/icons/xmark.svg") : @image-url("../assets/icons/trash.svg");
-                                        label: root.model-creating ? I18n.common_discard : (root.cloud-locked ? I18n.st_cl_remove : I18n.common_delete);
+                                        icon: @image-url("../assets/icons/trash.svg");
+                                        label: root.cloud-locked ? I18n.st_cl_remove : I18n.common_delete;
                                         danger: true;
-                                        enabled: !root.loading && !root.saving && !root.cloud-locked && (root.selected-key != "" || root.model-creating);
-                                        clicked => { if root.model-creating { root.discard-model-draft(); } else { root.model-delete-open = true; } }
+                                        enabled: !root.loading && !root.saving && !root.cloud-locked && root.selected-key != "";
+                                        clicked => { root.model-delete-open = true; }
                                     }
                                 }
                                 if root.model-save-error != "" : Text { text: root.model-save-error; color: Theme.danger; font-size: Theme.font-sm; wrap: word-wrap; }
@@ -1545,8 +1535,8 @@ export component SettingsPage inherits Rectangle {
                                                 label: I18n.model_key_label;
                                                 placeholder: I18n.model_key_placeholder;
                                                 // The key is the stored identity. It stays
-                                                // editable for local models — a rename is
-                                                // committed on Enter/focus loss — and is
+                                                // editable for local models and is committed
+                                                // by 「保存」 or Enter/focus loss; it is
                                                 // locked only for engine-managed cloud rows.
                                                 read-only: root.cloud-locked || root.saving;
                                                 text <=> root.model-key-draft;

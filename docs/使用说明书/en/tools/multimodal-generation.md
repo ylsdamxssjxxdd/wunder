@@ -24,7 +24,7 @@ These four are **not members of the default tool set**. Whether they appear on t
 | `图像生成` | Image generation |
 | `视频生成` | Video generation |
 
-You can name a specific model profile or use the default for that type; if neither resolves, the tool is unavailable. See the [configuration reference](/docs/en/capabilities/config/) for profiles and types.
+You can name a specific model profile or use the default for that type; if neither resolves, the tool is unavailable. See the model configuration in settings for profiles and types.
 
 ## Arguments
 
@@ -86,4 +86,4 @@ All four tools use the shared envelope on success, with artifact paths, byte cou
 
 - [Tools](/docs/en/tools/index/) — the built-in tool matrix and shared result shell
 - [Read image](/docs/en/tools/read-image/) — how images and video enter the context
-- [Configuration reference](/docs/en/capabilities/config/) — model profiles and types
+- Model configuration in settings — profiles and types

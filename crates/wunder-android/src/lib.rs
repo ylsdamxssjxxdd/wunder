@@ -21,6 +21,7 @@ mod companion;
 mod crash;
 mod engine;
 mod fonts;
+mod help;
 #[cfg(target_os = "android")]
 mod intent;
 mod md;

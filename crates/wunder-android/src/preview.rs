@@ -146,9 +146,19 @@ fn main() {
         }
     }
     // A portrait phone body; the window manager may resize it, but the first
-    // frame should read at the target aspect ratio.
-    ui.window()
-        .set_size(slint::PhysicalSize::new(412, 915));
+    // frame should read at the target aspect ratio. `WUNDER_PREVIEW_SIZE=WxH`
+    // renders one long frame instead, so a whole list or document can be
+    // reviewed in a single snapshot without a gesture.
+    let mut size = slint::PhysicalSize::new(412, 915);
+    if let Ok(value) = std::env::var("WUNDER_PREVIEW_SIZE") {
+        if let Some((width, height)) = value
+            .split_once('x')
+            .and_then(|(w, h)| Some((w.trim().parse().ok()?, h.trim().parse().ok()?)))
+        {
+            size = slint::PhysicalSize::new(width, height);
+        }
+    }
+    ui.window().set_size(size);
     // `run()` does not map the window on the desktop backend; without an
     // explicit show the process renders offscreen and the screen stays empty.
     ui.show().expect("show the mobile preview");

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>管理端使用 | 使用说明书</title>
+  <meta name="description" content="管理端使用：各组面板的用途与操作约束，以及边界。">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/forms/admin-usage","language":"zh-CN","title":"管理端使用","summary":"管理端使用：各组面板的用途与操作约束，以及边界。","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"形态","group":"管理端","group_path":["管理端"],"url":"/docs/zh-CN/forms/admin-usage/","headings":[{"id":"section-1","level":1,"text":"管理端使用"},{"id":"section-2","level":2,"text":"使用"},{"id":"section-3","level":2,"text":"边界"}],"prev_slug":"zh-CN/forms/admin-runtime","next_slug":"zh-CN/tools/index","markdown":"# 管理端使用\n\n## 使用\n\n- **系统组**：看进程健康、锁与队列、运行时指标；热更新系统设置；编辑并推送系统消息；维护单位组织树（最深 4 级）与用户账号、配额、在线状态；查看跨用户线程列表（只读）；上传更新包并发布版本清单。\n- **智能体组**：配 LLM / TTS / 图像 / 视频模型；建预设智能体模板并声明哪些字段允许用户自定义；管理全局形象包；把内置工具、MCP、知识库、技能与工具可见范围归在同一处；维护系统提示词模板。\n- **调试组**：线程列表 + 线程详情与轨迹；吞吐量测试（输入 1024 至 1 MiB、输出 1024 至 8192，最大并发 1024）；性能测试（固定测试用户与独立数据根，命令超时 5 秒）；能力评估打分；图像 / 视频 / 转写 / 语音合成直连测试。\n- **文档组**：站内嵌整个说明书与 API 文档入口。\n- 关键动作都有明确状态、错误反馈与确认边界；前端的确认不替代后端的权限校验。\n\n## 边界\n\n- **不做聊天**：它是治理与调试后台，普通用户登录后看不到。\n- **没有用户级定时任务、渠道管理、长期记忆与互通治理面板**：定时与渠道只作为「预设智能体」里的模板存在。\n- **线程管理只读**：能看到跨用户的线程与状态，但没有目标编辑器；目标入口在用户端（云端版时间线、桌面版输入区、命令行 `/goal`）。\n","source_path":"使用说明书/zh-CN/forms/admin-usage.md"}</script>
+</body>
+</html>

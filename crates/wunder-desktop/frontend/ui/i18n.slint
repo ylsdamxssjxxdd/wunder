@@ -891,6 +891,9 @@ export global I18n {
     out property <string> st_model_default_updated: zh ? "已设为默认模型" : "Default model updated";
     out property <string> st_model_unchanged: zh ? "模型配置已是最新" : "Model settings are up to date";
     out property <string> st_model_unsaved: zh ? "当前有未保存的修改，请先保存" : "Unsaved changes; save first";
+    // 安卓版的新建模型编辑器仍以「未保存」表单开场，桌面版新增即落库不再使用。
+    out property <string> st_model_new_hint: zh ? "填写基础设置后保存即可生效。" : "Fill in the basic settings and save to apply.";
+    out property <string> st_model_added: zh ? "已添加模型配置" : "Model config added";
     out property <string> st_model_saved_default: zh ? "模型配置已保存，并已设为默认模型" : "Model settings saved and set as the default";
     out property <string> st_default_model_updated: zh ? "默认模型已更新" : "Default model updated";
     out property <string> st_channel_saved: zh ? "渠道账号已保存" : "Channel account saved";
@@ -1080,7 +1083,6 @@ export global I18n {
     out property <string> st_models_no_info: zh ? "暂无信息" : "No info";
     out property <string> st_models_default_badge: zh ? "默认" : "Default";
     out property <string> st_pick_model: zh ? "选择左侧模型查看配置" : "Pick a model on the left to view its settings";
-    out property <string> st_model_new_hint: zh ? "填写基础设置后保存即可生效。" : "Fill in the basic settings and save to apply.";
     out property <string> st_model_colon: zh ? "模型：" : "Model: ";
     out property <string> st_is_default: zh ? "当前默认" : "Current default";
     out property <string> st_set_default: zh ? "设为默认" : "Set as default";

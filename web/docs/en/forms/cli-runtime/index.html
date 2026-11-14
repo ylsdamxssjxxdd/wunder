@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CLI Runtime | 使用说明书</title>
+  <meta name="description" content="What the CLI needs: a single binary, terminal and encoding requirements, the opt components it shares with Desktop, where its data lives, and the doctor check.">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/forms/cli-runtime","language":"en","title":"CLI Runtime","summary":"What the CLI needs: a single binary, terminal and encoding requirements, the opt components it shares with Desktop, where its data lives, and the doctor check.","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"Forms","group":"CLI","group_path":["CLI"],"url":"/docs/en/forms/cli-runtime/","headings":[{"id":"section-1","level":1,"text":"CLI Runtime"},{"id":"section-2","level":2,"text":"Parts"},{"id":"section-3","level":2,"text":"OS and terminal"},{"id":"section-4","level":2,"text":"Self-check"},{"id":"section-5","level":2,"text":"What it does not have"}],"prev_slug":"en/forms/cli-deploy","next_slug":"en/forms/cli-usage","markdown":"# CLI Runtime\n\nThe CLI is the terminal entry to the same engine: one executable, no UI process, no local service. It is light, but it wants an interactive terminal with sane encoding, and script-facing abilities still need the supplement components.\n\n## Parts\n\n| Part | Location | Notes |\n| --- | --- | --- |\n| Program | `<root>/bin/wunder-cli` | `wunder-cli.exe` on Windows; `bin/wunder` is a compatibility symlink on Linux |\n| Config | `<root>/config.toml` | The same engine config Desktop uses |\n| Run state | `<root>/cli/WUNDER_TEMP/` | Sessions and SQLite |\n| Workspace | The directory you start it from | `-C/--cd` points elsewhere |\n| Components | `<root>/opt/` | Shared with Desktop, see [Desktop Runtime](/docs/en/forms/desktop-runtime/) |\n\nA standalone build (`cargo build --release -p wunder-cli`) starts with an empty `opt/`: commands, Git, search and Python need the supplement imported separately.\n\n## OS and terminal\n\n- Windows 7 and up (GNU toolchain); Linux x64 / arm64 on an ubuntu 18.04 baseline.\n- The terminal needs UTF-8 and wide-character support so Chinese and emoji stay aligned; a missing or minimal `TERM` degrades colors and borders to plain text.\n- TTY decides the mode: with stdin / stdout / stderr all TTYs you get the interactive UI; redirected or piped, it degrades to a one-shot run, which is what scripts and `curl … |` use.\n- No listening port and no background service; interlink tunnels and cloud subcommands are outbound connections.\n\n## Self-check\n\n`wunder-cli doctor` inspects the local runtime: install root, config readability, whether the supplement components are present, and whether the model endpoint answers. It is read-only and changes nothing.\n\nWhen something fails, check in order: the resolved install root (a non-empty `WUNDER_HOME` wins), then whether `opt/<component>` exists, then whether the model config works.\n\n## What it does not have\n\n- No GUI, tray, or system notifications.\n- No speech recognition; images come from paste or drag-and-drop.\n- Knowledge bases are not implemented in the CLI, and long-term memory is not managed there.\n","source_path":"使用说明书/en/forms/cli-runtime.md"}</script>
+</body>
+</html>

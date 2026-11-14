@@ -23,8 +23,12 @@ pub fn run(
     // may seed extra models (e.g. the virtual replay entry), so the count is
     // relative rather than a fixed one.
     let mut baseline_models = 0;
+    // 运行前是否已有默认模型：全新运行时默认位是空的，新增的第一条真实配置
+    // 接管它是预期行为。
+    let mut had_default = false;
     timer.start(TimerMode::Repeated, Duration::from_millis(40), move || {
         let Some(app) = weak.upgrade() else { return };
+        let saved = app.get_models().iter().find(|model| model.key == "extra-model");
         let checked = (|| -> Result<bool, Box<dyn std::error::Error>> {
             if started.elapsed() > Duration::from_secs(60) {
                 return Err(format!("model smoke timed out in phase {phase}: {}", app.get_model_save_error()).into());
@@ -32,78 +36,141 @@ pub fn run(
             if app.get_chat_loading() || app.get_saving() || app.get_settings_loading() || app.get_agents_loading() || app.get_creating_session() || app.get_session_loading() {
                 return Ok(false);
             }
-            let saved = app.get_models().iter().find(|model| model.key == "extra-model");
             match phase {
                 0 => {
                     app.set_settings_open(true);
                     app.set_settings_active_panel(1);
                     baseline_models = app.get_composer_models().row_count();
+                    // 预置的「虚拟模型」占着默认位不算真实默认：第一条真实配置
+                    // 接管它是预期行为。
+                    had_default = app
+                        .get_models()
+                        .iter()
+                        .any(|model| model.is_default && model.provider != "virtual_replay");
+                    // 「添加模型」立即写出一条完整配置；接下来只需改名并保存。
                     app.invoke_create_model();
-                    app.set_model_key_draft("extra-model".into());
-                    app.set_model_name_draft("sample-model".into());
-                    // 新建草稿不再自动保存，这里显式提交（表单上的「保存」）。
-                    app.invoke_save_model();
+                    // 线程模型钉选需要一条真实会话。
                     app.invoke_new_thread();
                     phase = 1;
                 }
                 1 => {
-                    let Some(model) = saved.filter(|_| !app.get_model_creating()) else { return Ok(false) };
-                    assert_state(!model.is_default, "new model changed the default")?;
-                    assert_state(app.get_composer_models().iter().any(|model| model.key == "extra-model"), "new model missing from composer")?;
-                    app.invoke_select_thread_model("extra-model".into());
+                    let created = app
+                        .get_models()
+                        .iter()
+                        .find(|model| model.key.starts_with("新模型"))
+                        .map(|model| model.key.to_string());
+                    let Some(created) = created else { return Ok(false) };
+                    assert_state(
+                        app.get_settings_model_key() == created,
+                        "the added model was not selected in the editor",
+                    )?;
+                    app.set_model_key_draft("extra-model".into());
+                    app.set_model_name_draft("sample-model".into());
                     app.set_model_temperature_draft("0.6".into());
                     app.invoke_save_model();
                     assert_state(app.get_saving(), "save did not begin")?;
-                    app.set_model_temperature_draft("0.8".into());
-                    app.invoke_refresh_settings();
                     phase = 2;
                 }
                 2 => {
-                    if !saved.is_some_and(|model| model.temperature == "0.8") { return Ok(false) }
-                    let session = api.get_session(app.get_active_session_id().as_str())?.0;
-                    assert_state(session.session_model_name.as_deref() == Some("extra-model"), "nondefault model was not selectable for the thread")?;
-                    assert_state(app.get_model_temperature_draft() == "0.8", "save acknowledgement overwrote newer input")?;
-                    app.set_model_temperature_draft("0.9".into());
-                    crate::entity_state::restore_model(&app, "test-model");
+                    if !saved.as_ref().is_some_and(|model| model.temperature == "0.6") { return Ok(false) }
+                    if app.get_settings_model_key() != "extra-model" { return Ok(false) }
+                    assert_state(
+                        saved.as_ref().is_some_and(|model| model.is_default) == !had_default,
+                        "a saved model took over an existing default seat",
+                    )?;
+                    assert_state(app.get_composer_models().iter().any(|model| model.key == "extra-model"), "new model missing from composer")?;
+                    app.invoke_select_thread_model("extra-model".into());
+                    // 未保存的改动不再自动落库：切到另一行会被拦下并提示保存。
+                    app.set_model_temperature_draft("0.8".into());
+                    let other = app
+                        .get_models()
+                        .iter()
+                        .find(|model| model.key != "extra-model")
+                        .map(|model| model.key.to_string());
+                    if let Some(other) = other {
+                        crate::entity_state::restore_model(&app, &other);
+                        assert_state(
+                            app.get_settings_model_key() == "extra-model",
+                            "switching rows silently dropped the unsaved edit",
+                        )?;
+                        assert_state(
+                            !app.get_model_save_error().is_empty(),
+                            "blocked switch did not explain what to do",
+                        )?;
+                    }
+                    app.invoke_save_model();
+                    assert_state(app.get_saving(), "save did not begin")?;
                     phase = 3;
                 }
                 3 => {
-                    if app.get_settings_model_key() != "test-model" || !saved.is_some_and(|model| model.temperature == "0.9") { return Ok(false) }
-                    crate::entity_state::restore_model(&app, "extra-model");
+                    if !saved.as_ref().is_some_and(|model| model.temperature == "0.8") { return Ok(false) }
+                    assert_state(app.get_model_temperature_draft() == "0.8", "save acknowledgement overwrote newer input")?;
+                    let session = api.get_session(app.get_active_session_id().as_str())?.0;
+                    assert_state(session.session_model_name.as_deref() == Some("extra-model"), "nondefault model was not selectable for the thread")?;
+                    assert_state(app.get_model_save_error().is_empty(), "successful save retained an error")?;
                     app.set_model_max_output_draft("invalid".into());
+                    app.invoke_save_model();
                     phase = 4;
                 }
                 4 => {
                     if app.get_model_save_error().is_empty() { return Ok(false) }
                     assert_state(app.get_model_max_output_draft() == "invalid", "failed save discarded input")?;
                     app.set_model_max_output_draft("4096".into());
+                    app.invoke_save_model();
                     phase = 5;
                 }
                 5 => {
-                    if !saved.is_some_and(|model| model.max_output == "4096") { return Ok(false) }
+                    if !saved.as_ref().is_some_and(|model| model.max_output == "4096") { return Ok(false) }
                     assert_state(app.get_model_save_error().is_empty(), "successful retry retained an error")?;
-                    crate::native_pages::select_model_key(&app, "test-model");
-                    app.invoke_delete_model("test-model".into());
+                    // 再添加一条：它就是后文的「默认位被删后该由谁接管」的被删方。
+                    app.invoke_create_model();
                     phase = 6;
                 }
                 6 => {
-                    if app.get_models().iter().any(|model| model.key == "test-model") { return Ok(false) }
-                    assert_state(saved.is_some_and(|model| model.is_default), "default was not promoted")?;
-                    assert_state(app.get_selected_model_key() == "extra-model", "composer retained the deleted model")?;
+                    let created = app
+                        .get_models()
+                        .iter()
+                        .find(|model| model.key.starts_with("新模型"))
+                        .map(|model| model.key.to_string());
+                    let Some(created) = created else { return Ok(false) };
                     assert_state(
-                        app.get_composer_models().row_count() == baseline_models
-                            && !app.get_composer_models().iter().any(|model| model.key == "test-model")
-                            && app.get_composer_models().iter().any(|model| model.key == "extra-model"),
-                        "composer catalogue did not reconcile deletion",
+                        app.get_settings_model_key() == created,
+                        "the second added model was not selected",
                     )?;
-                    // Rename the remaining row from the key field. The commit
-                    // callback (Enter/focus loss in the real UI) is what arms
-                    // the rename; typing alone must never move the config.
-                    app.set_model_key_draft("renamed-extra".into());
-                    app.invoke_commit_model_key();
+                    app.set_model_key_draft("test-model".into());
+                    app.set_model_name_draft("sample-other".into());
+                    app.invoke_save_model();
+                    assert_state(app.get_saving(), "second model save did not begin")?;
                     phase = 7;
                 }
                 7 => {
+                    let other = app.get_models().iter().find(|model| model.key == "test-model");
+                    if other.is_none() { return Ok(false) }
+                    app.invoke_set_default_model("test-model".into());
+                    assert_state(app.get_saving(), "set-default did not begin")?;
+                    phase = 8;
+                }
+                8 => {
+                    let other = app.get_models().iter().find(|model| model.key == "test-model");
+                    let Some(other) = other else { return Ok(false) };
+                    if !other.is_default { return Ok(false) }
+                    assert_state(!saved.as_ref().is_some_and(|model| model.is_default), "old default survived the switch")?;
+                    crate::entity_state::restore_model(&app, "test-model");
+                    app.invoke_delete_model("test-model".into());
+                    phase = 9;
+                }
+                9 => {
+                    if app.get_models().iter().any(|model| model.key == "test-model") { return Ok(false) }
+                    assert_state(saved.as_ref().is_some_and(|model| model.is_default), "default was not promoted")?;
+                    assert_state(app.get_composer_models().iter().any(|model| model.key == "extra-model"), "composer lost the surviving model")?;
+                    assert_state(!app.get_composer_models().iter().any(|model| model.key == "test-model"), "composer retained the deleted model")?;
+                    // 改名只能在选中该行时提交。
+                    crate::entity_state::restore_model(&app, "extra-model");
+                    app.set_model_key_draft("renamed-extra".into());
+                    app.invoke_commit_model_key();
+                    phase = 10;
+                }
+                10 => {
                     let renamed = app.get_models().iter().find(|model| model.key == "renamed-extra");
                     if renamed.is_none() { return Ok(false) }
                     assert_state(!app.get_models().iter().any(|model| model.key == "extra-model"), "old key survived the rename")?;
@@ -119,34 +186,51 @@ pub fn run(
                                 .collect::<Vec<_>>()
                         ),
                     )?;
-                    assert_state(renamed.is_some_and(|model| model.is_default), "rename dropped the default badge")?;
+                    assert_state(renamed.as_ref().is_some_and(|model| model.is_default), "rename dropped the default badge")?;
                     let session = api.get_session(app.get_active_session_id().as_str())?.0;
                     assert_state(session.session_model_name.as_deref() == Some("renamed-extra"), "thread pin lost on rename")?;
                     // A second model makes the picker's row click meaningful:
                     // the pinned row and this one are different keys.
                     app.invoke_create_model();
+                    phase = 11;
+                }
+                11 => {
+                    let created = app
+                        .get_models()
+                        .iter()
+                        .find(|model| model.key.starts_with("新模型"))
+                        .map(|model| model.key.to_string());
+                    let Some(created) = created else { return Ok(false) };
+                    assert_state(
+                        app.get_settings_model_key() == created,
+                        "the third added model was not selected",
+                    )?;
                     app.set_model_key_draft("threadless-model".into());
                     app.set_model_name_draft("sample-alt".into());
                     app.invoke_save_model();
-                    phase = 8;
+                    assert_state(app.get_saving(), "third model save did not begin")?;
+                    phase = 12;
                 }
-                8 => {
+                12 => {
                     let alt = app.get_models().iter().find(|model| model.key == "threadless-model");
-                    if alt.is_none() || app.get_model_creating() { return Ok(false) }
-                    assert_state(!alt.is_some_and(|model| model.is_default), "second model unexpectedly became the default")?;
+                    let Some(alt) = alt else { return Ok(false) };
+                    assert_state(!alt.is_default, "an added model unexpectedly became the default")?;
+                    // 新增后仍停在设置页：留一张编辑器截图（保存/默认/删除三个
+                    // 常驻按钮与当前配置）。
+                    crate::smoke::snapshot(&app, &directory.join("model-editor.png"))?;
                     // Close the settings overlay on its own tick so the next
                     // pointer press cannot land on the panel that still owns
                     // the window this frame.
                     app.set_settings_open(false);
-                    phase = 9;
+                    phase = 13;
                 }
-                9 => {
+                13 => {
                     let x = app.get_composer_model_trigger_x() + app.get_composer_model_trigger_width() / 2.0;
                     let y = app.get_composer_model_trigger_y() + app.get_composer_model_trigger_height() / 2.0;
                     crate::smoke::click(&app, x, y)?;
-                    phase = 10;
+                    phase = 14;
                 }
-                10 => {
+                14 => {
                     assert_state(app.get_composer_model_open(), "composer model trigger did not open the picker")?;
                     let menu_x = app.get_composer_model_menu_x();
                     let menu_y = app.get_composer_model_menu_y();
@@ -164,9 +248,9 @@ pub fn run(
                         .position(|model| model.key == "threadless-model")
                         .ok_or("second model missing from the composer catalogue")?;
                     crate::smoke::click(&app, menu_x + 150.0, menu_y + 61.0 + 40.0 * index as f32)?;
-                    phase = 11;
+                    phase = 15;
                 }
-                11 => {
+                15 => {
                     assert_state(!app.get_composer_model_open(), "model picker stayed open after selecting a row")?;
                     let session = api.get_session(app.get_active_session_id().as_str())?.0;
                     if session.session_model_name.as_deref() != Some("threadless-model") { return Ok(false) }
@@ -176,15 +260,15 @@ pub fn run(
                     // lands there instead of dying silently.
                     app.set_active_session_id("".into());
                     app.set_selected_model_key("".into());
-                    phase = 12;
+                    phase = 16;
                 }
-                12 => {
+                16 => {
                     let x = app.get_composer_model_trigger_x() + app.get_composer_model_trigger_width() / 2.0;
                     let y = app.get_composer_model_trigger_y() + app.get_composer_model_trigger_height() / 2.0;
                     crate::smoke::click(&app, x, y)?;
-                    phase = 13;
+                    phase = 17;
                 }
-                13 => {
+                17 => {
                     assert_state(app.get_composer_model_open(), "threadless model trigger did not open the picker")?;
                     let menu_x = app.get_composer_model_menu_x();
                     let menu_y = app.get_composer_model_menu_y();
@@ -192,11 +276,11 @@ pub fn run(
                         .position(|model| model.key == "threadless-model")
                         .ok_or("second model missing from the composer catalogue")?;
                     crate::smoke::click(&app, menu_x + 150.0, menu_y + 61.0 + 40.0 * index as f32)?;
-                    phase = 14;
+                    phase = 18;
                 }
-                14 => {
+                18 => {
                     let alt = app.get_models().iter().find(|model| model.key == "threadless-model");
-                    if !alt.is_some_and(|model| model.is_default) { return Ok(false) }
+                    if !alt.as_ref().is_some_and(|model| model.is_default) { return Ok(false) }
                     assert_state(app.get_selected_model_key() == "", "threadless switch left a thread pin in the label")?;
                     if app.get_selected_agent_model() != "threadless-model" { return Ok(false) }
                     crate::smoke::snapshot(&app, &directory.join("model-composer.png"))?;
@@ -208,7 +292,7 @@ pub fn run(
         })();
         if matches!(checked, Ok(false)) { return; }
         let report = match &checked {
-            Ok(_) => "PASS: model autosave/catalogue/inflight-edit/switch-flush/validation/default-fallback/rename/picker-click/threadless-default\n".to_owned(),
+            Ok(_) => "PASS: model add-persists/catalogue/unsaved-guard/validation/default-promotion/rename/picker-click/threadless-default\n".to_owned(),
             Err(error) => format!("FAIL: {error}\n"),
         };
         *output.borrow_mut() = Some(std::fs::write(directory.join("smoke.txt"), report)

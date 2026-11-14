@@ -3,8 +3,10 @@
 // and every control (FormField, Action, ThemeSwitch, ConfirmDialog) come from
 // 桌面版's shared UI, so the mobile sheet never grows a second visual vocabulary.
 
-import { Theme, ModelCard } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
+import { Theme, ModelCard, MdBlock } from "../../../crates/wunder-desktop/frontend/ui/theme.slint";
 import { I18n } from "../../../crates/wunder-desktop/frontend/ui/i18n.slint";
+import { BlockView } from "../../../crates/wunder-desktop/frontend/ui/markdown-rich.slint";
+import { MobileHelpRow } from "help_model.slint";
 import { Action, FormField, ThemeSwitch, ConfirmDialog } from "../../../crates/wunder-desktop/frontend/ui/components.slint";
 import { ModelPresets } from "../../../crates/wunder-desktop/frontend/ui/model_presets.slint";
 import { TextEditBase } from "../../../crates/wunder-desktop/frontend/ui/textedit-base.slint";
@@ -3516,6 +3518,196 @@ component UpdateSourcePill inherits Rectangle {
     }
 }
 
+// 使用手册的一行：分区标题（折叠/展开）、分区内的分组、主题。
+component HelpRow inherits Rectangle {
+    in property <string> title;
+    // 0 分区标题 / 1 分组 / 2 主题
+    in property <int> kind: 2;
+    in property <bool> expanded: true;
+    in property <int> count: 0;
+    in property <bool> last: false;
+    callback clicked();
+
+    height: root.kind == 0 ? 48px : root.kind == 1 ? 32px : 46px;
+    background: root.kind == 2 && (touch.has-hover || touch.pressed) ? Theme.hover : transparent;
+    touch := TouchArea {
+        enabled: root.kind != 1;
+        clicked => { root.clicked(); }
+    }
+
+    if root.kind == 1 : Text {
+        x: 6px;
+        height: 100%;
+        text: root.title;
+        color: Theme.muted;
+        font-size: Theme.font-xs;
+        font-weight: 700;
+        vertical-alignment: center;
+    }
+
+    if root.kind == 0 : HorizontalLayout {
+        padding-left: 4px;
+        padding-right: 6px;
+        spacing: 8px;
+        cross-axis-alignment: center;
+        Text {
+            text: root.title;
+            color: Theme.text;
+            font-size: Theme.font-sm;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.count + " 项";
+            color: Theme.muted;
+            font-size: Theme.font-2xs;
+            vertical-alignment: center;
+        }
+        Rectangle { horizontal-stretch: 1; }
+        if root.expanded : Image {
+            width: 12px;
+            height: 12px;
+            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-down.svg");
+            colorize: Theme.border-strong;
+        }
+        if !root.expanded : Image {
+            width: 12px;
+            height: 12px;
+            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-right.svg");
+            colorize: Theme.border-strong;
+        }
+    }
+
+    if root.kind == 2 : HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 6px;
+        spacing: 10px;
+        cross-axis-alignment: center;
+        Text {
+            horizontal-stretch: 1;
+            text: root.title;
+            color: Theme.text;
+            font-size: Theme.font-sm;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Image {
+            width: 12px;
+            height: 12px;
+            source: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/chevron-right.svg");
+            colorize: Theme.border-strong;
+        }
+    }
+
+    if !root.last && root.kind != 1 : Rectangle {
+        y: parent.height - 1px;
+        x: root.kind == 0 ? 0px : 14px;
+        width: root.kind == 0 ? parent.width : parent.width - 14px;
+        height: 1px;
+        background: Theme.border;
+    }
+}
+
+// 一篇主题的正文：Markdown 由宿主投影成 `[MdBlock]`，这里交给聊天同一个
+// `BlockView`，所以标题、列表、引用、代码和表格和回答里长得一样；宽表按
+// 触屏规则横向平移而不是被裁掉。
+component HelpTopicView inherits Rectangle {
+    in property <[MdBlock]> blocks: [];
+    in property <int> open-request: 0;
+    callback link(string);
+
+    changed open-request => { scroll.content-y = 0px; }
+
+    scroll := ScrollView {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: 100%;
+        horizontal-scrollbar-policy: always-off;
+        content-width: self.visible-width;
+        content-height: max(self.visible-height, body.preferred-height);
+
+        body := VerticalLayout {
+            width: scroll.visible-width;
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-top: 12px;
+            padding-bottom: 28px;
+            alignment: start;
+            for block in root.blocks : BlockView {
+                block: block;
+                column-width: scroll.visible-width - 32px;
+                mobile: true;
+                link-clicked(url) => { root.link(url); }
+            }
+        }
+    }
+}
+
+// 使用手册：目录与正文同页两层。手机没有侧栏，目录按 形态 / 工具 / 能力
+// 三个分区折叠，点开分区才铺开主题；读一篇时列表收起、正文占满整屏。
+component HelpPage inherits Rectangle {
+    in property <length> inset-top: 0px;
+    in property <length> inset-bottom: 0px;
+    in property <[MobileHelpRow]> rows: [];
+    in property <bool> topic-open: false;
+    in property <string> topic-title: "";
+    in property <[MdBlock]> blocks: [];
+    in property <int> open-request: 0;
+    callback back();
+    callback back-topic();
+    callback open-topic(int);
+    callback toggle(int);
+    callback link(string);
+
+    VerticalLayout {
+        if root.topic-open : SheetHeader {
+            title: root.topic-title;
+            subtitle: "使用手册";
+            inset-top: root.inset-top;
+            back() => { root.back-topic(); }
+        }
+
+        if !root.topic-open : SheetHeader {
+            title: "使用手册";
+            subtitle: "形态、工具与能力的完整说明";
+            inset-top: root.inset-top;
+            back() => { root.back(); }
+        }
+
+        if root.topic-open : HelpTopicView {
+            vertical-stretch: 1;
+            blocks: root.blocks;
+            open-request: root.open-request;
+            link(url) => { root.link(url); }
+        }
+
+        if !root.topic-open : ScrollView {
+            vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 8px;
+                padding-bottom: 16px + root.inset-bottom;
+                spacing: 0px;
+                alignment: start;
+
+                for row in root.rows : HelpRow {
+                    title: row.title;
+                    kind: row.kind;
+                    expanded: row.expanded;
+                    count: row.count;
+                    clicked => {
+                        if (row.kind == 0) { root.toggle(row.topic); }
+                        if (row.kind == 2) { root.open-topic(row.topic); }
+                    }
+                }
+            }
+        }
+    }
+}
+
 component AboutPage inherits Rectangle {
     in property <length> inset-top: 0px;
     in property <length> inset-bottom: 0px;
@@ -3536,6 +3728,7 @@ component AboutPage inherits Rectangle {
     callback download-update();
     callback install-update();
     callback select-update-source(string);
+    callback open-help();
     private property <bool> update-busy: root.update-phase == "checking"
         || root.update-phase == "downloading"
         || root.update-phase == "installing";
@@ -3558,6 +3751,16 @@ component AboutPage inherits Rectangle {
                 padding-bottom: 16px + root.inset-bottom;
                 spacing: 12px;
                 alignment: start;
+
+                NavCard {
+                    NavRow {
+                        icon: @image-url("../../../crates/wunder-desktop/frontend/assets/icons/fa-book-open.svg");
+                        label: "使用手册";
+                        detail: "形态、工具与能力的完整说明";
+                        last: true;
+                        clicked => { root.open-help(); }
+                    }
+                }
 
                 SheetCard {
                     CardTitle { title: "关于安卓版"; subtitle: "本地 AI 工作台"; }
@@ -5030,6 +5233,13 @@ export component MobileSettings inherits Rectangle {
     in-out property <ModelCard> draft;
     in-out property <string> secret: "";
 
+    // 使用手册：目录行、正文块与「打开新主题」信号都由宿主投影。
+    in property <[MobileHelpRow]> help-rows: [];
+    in property <bool> help-topic-open: false;
+    in property <string> help-topic-title: "";
+    in property <[MdBlock]> help-blocks: [];
+    in property <int> help-open-request: 0;
+
     callback close();
     callback save-theme(string);
     callback save-font-size(int);
@@ -5045,6 +5255,10 @@ export component MobileSettings inherits Rectangle {
     callback download-update();
     callback install-update();
     callback select-update-source(string);
+    callback help-toggle(int);
+    callback help-open-topic(int);
+    callback help-back-topic();
+    callback help-link(string);
     callback open-model-editor(string);
     callback close-model-editor();
     callback save-model(ModelCard, string);
@@ -5415,6 +5629,22 @@ export component MobileSettings inherits Rectangle {
             download-update() => { root.download-update(); }
             install-update() => { root.install-update(); }
             select-update-source(source) => { root.select-update-source(source); }
+            open-help() => { root.page = 16; }
+        }
+
+        if root.page == 16 : HelpPage {
+            inset-top: root.inset-top;
+            inset-bottom: root.inset-bottom;
+            rows: root.help-rows;
+            topic-open: root.help-topic-open;
+            topic-title: root.help-topic-title;
+            blocks: root.help-blocks;
+            open-request: root.help-open-request;
+            back() => { root.page = 6; }
+            back-topic() => { root.help-back-topic(); }
+            open-topic(topic) => { root.help-open-topic(topic); }
+            toggle(block) => { root.help-toggle(block); }
+            link(url) => { root.help-link(url); }
         }
 
         if root.page == 7 : ToolsPage {

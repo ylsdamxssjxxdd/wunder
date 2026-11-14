@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>桌面版部署 | 使用说明书</title>
+  <meta name="description" content="桌面版部署：系统要求、安装包、安装根与本地数据位置。">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/forms/desktop-deploy","language":"zh-CN","title":"桌面版部署","summary":"桌面版部署：系统要求、安装包、安装根与本地数据位置。","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"形态","group":"桌面版","group_path":["桌面版"],"url":"/docs/zh-CN/forms/desktop-deploy/","headings":[{"id":"section-1","level":1,"text":"桌面版部署"},{"id":"section-2","level":2,"text":"部署"},{"id":"section-3","level":3,"text":"系统与安装包"},{"id":"section-4","level":3,"text":"本地数据"}],"prev_slug":"zh-CN/forms/desktop-ui","next_slug":"zh-CN/forms/desktop-runtime","markdown":"# 桌面版部署\n\n## 部署\n\n### 系统与安装包\n\n- 系统：Windows 7 x86 起；Linux（ubuntu 18.04 基线）x64 / arm64；现代 Windows / Linux 同样可运行。\n- Windows：下载 `wunder-desktop-*-win7-x86-setup.exe`，向导默认全选，本机已有的组件可以取消。\n- Linux：下载 `wunder-desktop-*-linux-*.run`，全程没有提问，桌面版、命令行与补充组件（Python / Git / rg / ffmpeg 等）一次装好，并自动创建应用菜单项与桌面图标，不需要 FUSE 或管理员权限。\n- 另提供 `.tar.gz` 与 `.portable` 产物。\n- 安装根默认 `~/.wunder`，Linux 可用 `--home=PATH` 改到任意可写目录；装好后可执行文件在 `bin/wunder-desktop`，安装器会把 `bin` 加入 PATH（Windows）或在 `~/.local/bin` 建命令链接（Linux）。\n\n### 本地数据\n\n| 内容 | 位置 |\n| --- | --- |\n| 根目录 | 安装根（`WUNDER_HOME`，默认 `~/.wunder`） |\n| 工作区 | `<根目录>/workspace` |\n| 临时目录 | `WUNDER_DESKTOP_TEMP_ROOT` |\n| 桌面设置 | `<temp>/config/desktop.settings.json` |\n| 会话与工具日志 | 本地 SQLite |\n\n迁到新机器：复制整个安装根即可。启动时会扫描工作树（最多 4096 项），恢复上次没跑完的任务状态，并清理会话锁与残留任务。\n","source_path":"使用说明书/zh-CN/forms/desktop-deploy.md"}</script>
+</body>
+</html>

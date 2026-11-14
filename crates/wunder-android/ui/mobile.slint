@@ -24,6 +24,7 @@ import { WorkspaceVisual } from "../../../crates/wunder-desktop/frontend/ui/work
 export { TrajectoryItem, TrajectoryAudit, TrajectorySegment, MobileWorkspace }
 import { MobileSession, MobilePermission } from "session_model.slint";
 export { MobileSession, MobilePermission }
+import { MobileHelpRow } from "help_model.slint";
 import { MobileTool, MobileToolGroup, MobileToolResource, MobileToolFile, MobileMcpDraft, MobileKnowledgeDraft } from "tools_model.slint";
 export { MobileTool, MobileToolGroup, MobileToolResource, MobileToolFile, MobileMcpDraft, MobileKnowledgeDraft }
 import { MobileCronJob, MobileCronDraft, MobileCronRun, MobileMemory, MobileMemoryDraft, MobileDevice } from "automation_model.slint";
@@ -551,6 +552,16 @@ export component MobileWindow inherits Window {
     changed ui-zh => { root.ui-language-changed(root.ui-zh); }
     in property <string> settings-workspace: "";
     in property <string> settings-version: "";
+    // 使用手册：目录行、正文块与「打开新主题」信号都由 src/help.rs 投影。
+    in property <[MobileHelpRow]> settings-help-rows: [];
+    in property <bool> settings-help-topic-open: false;
+    in property <string> settings-help-topic-title: "";
+    in property <[MdBlock]> settings-help-blocks: [];
+    in property <int> settings-help-open-request: 0;
+    callback settings-help-toggle(int);
+    callback settings-help-open(int);
+    callback settings-help-back();
+    callback settings-help-link(string);
     // 数据与恢复页
     in property <string> settings-backup-status: "";
     in property <string> settings-backup-path: "";
@@ -2019,6 +2030,15 @@ export component MobileWindow inherits Window {
         model-count: root.model-catalogue-count;
         workspace: root.settings-workspace;
         version: root.settings-version;
+        help-rows: root.settings-help-rows;
+        help-topic-open: root.settings-help-topic-open;
+        help-topic-title: root.settings-help-topic-title;
+        help-blocks: root.settings-help-blocks;
+        help-open-request: root.settings-help-open-request;
+        help-toggle(block) => { root.settings-help-toggle(block); }
+        help-open-topic(topic) => { root.settings-help-open(topic); }
+        help-back-topic() => { root.settings-help-back(); }
+        help-link(url) => { root.settings-help-link(url); }
         ubuntu-state: root.settings-ubuntu-state;
         ubuntu-progress: root.settings-ubuntu-progress;
         ubuntu-stage: root.settings-ubuntu-stage;

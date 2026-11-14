@@ -1,9 +1,9 @@
 {
   "site": {
     "name": "使用说明书",
-    "description": "wunder is a general-purpose AI operating system (wunder = model + harness + runtime, i.e. everything except the model): Desktop is the local AI workbench, Android is the Desktop's phone form, Cloud (web) is the cloud AI workbench, CLI is the manual local entry point, and the Server is the user and agent management platform. / wunder 是泛用型人工智能操作系统（wunder = 模型 + 驾驭框架 + 运行环境，即模型之外的一切）：桌面版（desktop）是本地 AI 工作台，安卓版（android）是桌面版的手机形态，云端版（web）是云端 AI 工作台，命令行（cli）是手工本地操作入口，服务端（server）是用户与智能体管理平台。",
+    "description": "wunder is a general-purpose AI operating system: Desktop is the local AI workbench, Android is the Desktop's phone form, Cloud (web) is the cloud AI workbench, CLI is the manual local entry point, and the Admin is the governance backend. / wunder 是泛用型人工智能操作系统：桌面版（desktop）是本地 AI 工作台，安卓版（android）是桌面版的手机形态，云端版（web）是云端 AI 工作台，命令行（cli）是手工本地操作入口，管理端是治理后台。",
     "default_language": "zh-CN",
-    "home_page": "zh-CN/index",
+    "home_page": "zh-CN/forms/index",
     "logo": "/docs/assets/eva01-head.svg",
     "header_links": [
       {
@@ -19,50 +19,57 @@
         "label": "简体中文",
         "tabs": [
           {
-            "tab": "开始",
+            "tab": "形态",
             "groups": [
               {
-                "group": "首页",
+                "group": "概览",
                 "pages": [
-                  "zh-CN/index"
+                  "zh-CN/forms/index"
                 ]
               },
               {
-                "group": "入门",
+                "group": "桌面版",
                 "pages": [
-                  "zh-CN/start/quickstart",
-                  "zh-CN/start/desktop",
-                  "zh-CN/start/forms"
+                  "zh-CN/forms/desktop-ui",
+                  "zh-CN/forms/desktop-deploy",
+                  "zh-CN/forms/desktop-runtime",
+                  "zh-CN/forms/desktop-usage"
                 ]
               },
               {
-                "group": "四个核心",
+                "group": "云端版",
                 "pages": [
-                  "zh-CN/concepts/index"
+                  "zh-CN/forms/cloud-ui",
+                  "zh-CN/forms/cloud-deploy",
+                  "zh-CN/forms/cloud-runtime",
+                  "zh-CN/forms/cloud-usage"
                 ]
               },
               {
-                "group": "进阶（可选形态）",
+                "group": "命令行",
                 "pages": [
-                  "zh-CN/start/server",
-                  "zh-CN/start/cli"
+                  "zh-CN/forms/cli-ui",
+                  "zh-CN/forms/cli-deploy",
+                  "zh-CN/forms/cli-runtime",
+                  "zh-CN/forms/cli-usage"
                 ]
               },
               {
-                "group": "导航与排障",
+                "group": "安卓版",
                 "pages": [
-                  "zh-CN/start/hubs",
-                  "zh-CN/start/docs-directory",
-                  "zh-CN/start/troubleshooting-first-run"
+                  "zh-CN/forms/android-ui",
+                  "zh-CN/forms/android-deploy",
+                  "zh-CN/forms/android-runtime",
+                  "zh-CN/forms/android-usage"
                 ]
               },
               {
-                "group": "帮助",
+                "group": "管理端",
                 "pages": [
-                  "zh-CN/help/index",
-                  "zh-CN/help/troubleshooting",
-                  "zh-CN/help/faq",
-                  "zh-CN/help/glossary"
+                  "zh-CN/forms/admin-ui",
+                  "zh-CN/forms/admin-deploy",
+                  "zh-CN/forms/admin-runtime",
+                  "zh-CN/forms/admin-usage"
                 ]
               }
             ]
@@ -125,28 +132,16 @@
                 ]
               },
               {
-                "group": "扩展",
+                "group": "目标态",
                 "pages": [
-                  "zh-CN/tools/extensibility"
-                ]
-              }
-            ]
-          },
-          {
-            "tab": "界面",
-            "groups": [
-              {
-                "group": "概览",
-                "pages": [
-                  "zh-CN/surfaces/index"
+                  "zh-CN/tools/goal"
                 ]
               },
               {
-                "group": "前端与桌面",
+                "group": "扩展",
                 "pages": [
-                  "zh-CN/surfaces/frontend",
-                  "zh-CN/surfaces/web-admin",
-                  "zh-CN/surfaces/desktop-ui"
+                  "zh-CN/tools/mcp",
+                  "zh-CN/tools/skills"
                 ]
               }
             ]
@@ -157,69 +152,42 @@
               {
                 "group": "概览",
                 "pages": [
-                  "zh-CN/capabilities/index",
-                  "zh-CN/capabilities/api-index"
+                  "zh-CN/concepts/architecture"
                 ]
               },
               {
-                "group": "核心能力",
+                "group": "功能",
                 "pages": [
                   "zh-CN/concepts/core-goal",
-                  "zh-CN/concepts/core-compatibility",
                   "zh-CN/concepts/core-context-compression",
                   "zh-CN/concepts/core-subagent",
                   "zh-CN/concepts/core-scheduled-tasks",
                   "zh-CN/concepts/core-channels",
                   "zh-CN/concepts/core-memory",
                   "zh-CN/concepts/core-multithreading",
-                  "zh-CN/concepts/core-multi-user-management"
-                ]
-              },
-              {
-                "group": "多端互通",
-                "pages": [
-                  "zh-CN/capabilities/interlink"
-                ]
-              },
-              {
-                "group": "深入了解",
-                "pages": [
-                  "zh-CN/concepts/architecture",
+                  "zh-CN/concepts/core-multi-user-management",
+                  "zh-CN/concepts/core-compatibility",
                   "zh-CN/concepts/core-agent-loop",
                   "zh-CN/concepts/core-tools",
                   "zh-CN/concepts/tools",
-                  "zh-CN/concepts/core-realtime",
-                  "zh-CN/concepts/core-stability",
-                  "zh-CN/concepts/core-observability",
                   "zh-CN/concepts/workspaces",
                   "zh-CN/concepts/sessions-and-rounds",
-                  "zh-CN/concepts/streaming",
                   "zh-CN/concepts/presence-and-runtime",
                   "zh-CN/concepts/prompt-and-skills",
                   "zh-CN/concepts/memory",
                   "zh-CN/concepts/quota-and-token-usage",
                   "zh-CN/concepts/goal-mode",
                   "zh-CN/concepts/companion",
-                  "zh-CN/concepts/boundary-handling",
-                  "zh-CN/capabilities/stream-events",
-                  "zh-CN/capabilities/prompt-templates",
-                  "zh-CN/capabilities/config",
-                  "zh-CN/capabilities/workspace-routing",
-                  "zh-CN/capabilities/admin-panels",
-                  "zh-CN/capabilities/weixin-channel",
-                  "zh-CN/capabilities/chat-ws",
-                  "zh-CN/capabilities/mcp-endpoint"
+                  "zh-CN/concepts/boundary-handling"
                 ]
-              }
-            ]
-          },
-          {
-            "tab": "参考",
-            "groups": [
+              },
               {
-                "group": "设计稿",
+                "group": "接入与集成",
                 "pages": [
-                  "zh-CN/art/index"
+                  "zh-CN/capabilities/chat-ws",
+                  "zh-CN/capabilities/mcp-endpoint",
+                  "zh-CN/capabilities/weixin-channel",
+                  "zh-CN/capabilities/interlink"
                 ]
               }
             ]
@@ -231,50 +199,57 @@
         "label": "English",
         "tabs": [
           {
-            "tab": "Getting Started",
+            "tab": "Forms",
             "groups": [
               {
-                "group": "Home",
+                "group": "Overview",
                 "pages": [
-                  "en/index"
+                  "en/forms/index"
                 ]
               },
               {
-                "group": "Onboarding",
+                "group": "Desktop",
                 "pages": [
-                  "en/start/quickstart",
-                  "en/start/desktop",
-                  "en/start/forms"
+                  "en/forms/desktop-ui",
+                  "en/forms/desktop-deploy",
+                  "en/forms/desktop-runtime",
+                  "en/forms/desktop-usage"
                 ]
               },
               {
-                "group": "The Four Cores",
+                "group": "Cloud",
                 "pages": [
-                  "en/concepts/index"
+                  "en/forms/cloud-ui",
+                  "en/forms/cloud-deploy",
+                  "en/forms/cloud-runtime",
+                  "en/forms/cloud-usage"
                 ]
               },
               {
-                "group": "Advanced (Optional Forms)",
+                "group": "CLI",
                 "pages": [
-                  "en/start/server",
-                  "en/start/cli"
+                  "en/forms/cli-ui",
+                  "en/forms/cli-deploy",
+                  "en/forms/cli-runtime",
+                  "en/forms/cli-usage"
                 ]
               },
               {
-                "group": "Navigation and Troubleshooting",
+                "group": "Android",
                 "pages": [
-                  "en/start/hubs",
-                  "en/start/docs-directory",
-                  "en/start/troubleshooting-first-run"
+                  "en/forms/android-ui",
+                  "en/forms/android-deploy",
+                  "en/forms/android-runtime",
+                  "en/forms/android-usage"
                 ]
               },
               {
-                "group": "Help",
+                "group": "Admin",
                 "pages": [
-                  "en/help/index",
-                  "en/help/troubleshooting",
-                  "en/help/faq",
-                  "en/help/glossary"
+                  "en/forms/admin-ui",
+                  "en/forms/admin-deploy",
+                  "en/forms/admin-runtime",
+                  "en/forms/admin-usage"
                 ]
               }
             ]
@@ -289,7 +264,7 @@
                 ]
               },
               {
-                "group": "Wrapping and Front-end Coordination",
+                "group": "Turn Finishing and Frontend Coordination",
                 "pages": [
                   "en/tools/panels"
                 ]
@@ -310,16 +285,16 @@
                 ]
               },
               {
-                "group": "Desktop",
-                "pages": [
-                  "en/tools/desktop-control"
-                ]
-              },
-              {
                 "group": "Multimodal",
                 "pages": [
                   "en/tools/read-image",
                   "en/tools/multimodal-generation"
+                ]
+              },
+              {
+                "group": "Desktop",
+                "pages": [
+                  "en/tools/desktop-control"
                 ]
               },
               {
@@ -337,28 +312,16 @@
                 ]
               },
               {
-                "group": "Extensions",
+                "group": "Goal State",
                 "pages": [
-                  "en/tools/extensibility"
-                ]
-              }
-            ]
-          },
-          {
-            "tab": "Surfaces",
-            "groups": [
-              {
-                "group": "Overview",
-                "pages": [
-                  "en/surfaces/index"
+                  "en/tools/goal"
                 ]
               },
               {
-                "group": "Frontend and Desktop",
+                "group": "Extensions",
                 "pages": [
-                  "en/surfaces/frontend",
-                  "en/surfaces/web-admin",
-                  "en/surfaces/desktop-ui"
+                  "en/tools/mcp",
+                  "en/tools/skills"
                 ]
               }
             ]
@@ -369,69 +332,42 @@
               {
                 "group": "Overview",
                 "pages": [
-                  "en/capabilities/index",
-                  "en/capabilities/api-index"
+                  "en/concepts/architecture"
                 ]
               },
               {
-                "group": "Core Capabilities",
+                "group": "Features",
                 "pages": [
                   "en/concepts/core-goal",
-                  "en/concepts/core-compatibility",
                   "en/concepts/core-context-compression",
                   "en/concepts/core-subagent",
                   "en/concepts/core-scheduled-tasks",
                   "en/concepts/core-channels",
                   "en/concepts/core-memory",
                   "en/concepts/core-multithreading",
-                  "en/concepts/core-multi-user-management"
-                ]
-              },
-              {
-                "group": "Three-endpoint Interop",
-                "pages": [
-                  "en/capabilities/interlink"
-                ]
-              },
-              {
-                "group": "Deep Dives",
-                "pages": [
-                  "en/concepts/architecture",
+                  "en/concepts/core-multi-user-management",
+                  "en/concepts/core-compatibility",
                   "en/concepts/core-agent-loop",
                   "en/concepts/core-tools",
                   "en/concepts/tools",
-                  "en/concepts/core-realtime",
-                  "en/concepts/core-stability",
-                  "en/concepts/core-observability",
                   "en/concepts/workspaces",
                   "en/concepts/sessions-and-rounds",
-                  "en/concepts/streaming",
                   "en/concepts/presence-and-runtime",
                   "en/concepts/prompt-and-skills",
                   "en/concepts/memory",
                   "en/concepts/quota-and-token-usage",
                   "en/concepts/goal-mode",
                   "en/concepts/companion",
-                  "en/concepts/boundary-handling",
-                  "en/capabilities/stream-events",
-                  "en/capabilities/prompt-templates",
-                  "en/capabilities/config",
-                  "en/capabilities/workspace-routing",
-                  "en/capabilities/admin-panels",
-                  "en/capabilities/weixin-channel",
-                  "en/capabilities/chat-ws",
-                  "en/capabilities/mcp-endpoint"
+                  "en/concepts/boundary-handling"
                 ]
-              }
-            ]
-          },
-          {
-            "tab": "Reference",
-            "groups": [
+              },
               {
-                "group": "Design drafts",
+                "group": "Integration",
                 "pages": [
-                  "en/art/index"
+                  "en/capabilities/chat-ws",
+                  "en/capabilities/mcp-endpoint",
+                  "en/capabilities/weixin-channel",
+                  "en/capabilities/interlink"
                 ]
               }
             ]

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>目标态 | 使用说明书</title>
+  <meta name="description" content="`goal` 的六个动作与必填字段、版本号并发控制、按轮次来源判定的权限，以及创建目标只能由用户发起的边界与常见失败判定。">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/goal","language":"zh-CN","title":"目标态","summary":"`goal` 的六个动作与必填字段、版本号并发控制、按轮次来源判定的权限，以及创建目标只能由用户发起的边界与常见失败判定。","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"工具","group":"目标态","group_path":["目标态"],"url":"/docs/zh-CN/tools/goal/","headings":[{"id":"section-1","level":1,"text":"目标态"},{"id":"section-2","level":2,"text":"动作"},{"id":"section-3","level":2,"text":"版本号并发"},{"id":"section-4","level":2,"text":"权限"},{"id":"section-5","level":2,"text":"失败判定"},{"id":"section-6","level":2,"text":"与其他页面的分工"}],"prev_slug":"zh-CN/tools/schedule-task","next_slug":"zh-CN/tools/mcp","markdown":"# 目标态\n\n目标是把一件事挂在会话上，让智能体空闲后自己接着往下推。目标由用户发起，模型侧只有 `goal` 一个工具，用来读取和推进已经存在的目标。\n\n## 动作\n\n| 动作 | 作用 | 必填字段 |\n| --- | --- | --- |\n| `get` | 读出当前目标、相位与版本号 | `action` |\n| `edit` | 改目标描述或延续轮次上限 | `action`、`goal_id`、`revision`、`objective` |\n| `pause` | 暂停，停止自动延续 | `action`、`goal_id`、`revision` |\n| `resume` | 恢复，重新激活 | 同上 |\n| `complete` | 标为已完成 | 同上 |\n| `blocked` | 报告受阻 | 同上，另加 `blocked_reason` |\n\n没有创建动作。创建或替换目标只能由用户发起——`/goal`、目标条或目标接口；模型就算按旧客户端发来创建请求，运行时也会直接拒绝，并提示改由用户发起。\n\n```json\n{\n  \"action\": \"edit\",\n  \"goal_id\": \"goal_20261114\",\n  \"revision\": 4,\n  \"objective\": \"把说明书工具分区按工具矩阵重建，并补齐目标态页\",\n  \"max_goal_rounds\": 12\n}\n```\n\n## 版本号并发\n\n每次变更都会让版本号加一。所有改动动作都必须带上 `get` 返回的 `goal_id` 与当时的 `revision`，对不上就拒绝，这样自动延续和人的介入不会互相覆盖。改之前先 `get`，不要沿用上一轮记下的版本号。\n\n`edit` 的目标描述上限 4000 字符；`max_goal_rounds` 可改范围 1 到 10000，且不能低于已经启动的轮次。\n\n## 权限\n\n能不能动，看这一轮是谁发起的：\n\n| 轮次来源 | 可用的动作 |\n| --- | --- |\n| 人直接发起 | `get`、`edit`、`pause`、`resume`、`complete`、`blocked` |\n| 本目标的自动延续轮次 | `get`、`complete`、`blocked` |\n\n也就是说，改目标、暂停、恢复这类由人决定的事，只在人的轮次里做得成；自动延续轮到点只能收尾或报阻塞。\n\n## 失败判定\n\n- 版本号过期：重新 `get` 取最新值再试，不要原参数重试。\n- 在自动延续轮次里调 `edit` / `pause` / `resume`：权限不足，等用户回话。\n- `blocked` 在轮次不足时被拒：同一个阻塞条件要跨至少 3 个延续轮次才算受阻。任务难、不确定、还有活没干完都不是受阻理由。\n- 目标不动了：先看相位和激活状态。激活只在进程内生效，重启或会话恢复后即使相位仍是活跃，也要一次 `resume` 才会继续。\n\n## 与其他页面的分工\n\n相位、轮次预算与延续门闸的设计见[目标态系统](/docs/zh-CN/concepts/goal-mode/)；目标横幅、目标条与 `/goal` 命令的用法见各形态的使用页。这里只讲这个工具怎么调。\n","source_path":"使用说明书/zh-CN/tools/goal.md"}</script>
+</body>
+</html>

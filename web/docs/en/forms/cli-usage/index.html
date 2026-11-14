@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CLI Usage | 使用说明书</title>
+  <meta name="description" content="CLI usage: subcommands, slash commands and keys, plus what only the CLI can do.">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/forms/cli-usage","language":"en","title":"CLI Usage","summary":"CLI usage: subcommands, slash commands and keys, plus what only the CLI can do.","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"Forms","group":"CLI","group_path":["CLI"],"url":"/docs/en/forms/cli-usage/","headings":[{"id":"section-1","level":1,"text":"CLI Usage"},{"id":"section-2","level":2,"text":"Usage"},{"id":"section-3","level":3,"text":"Subcommands"},{"id":"section-4","level":3,"text":"Slash commands"},{"id":"section-5","level":3,"text":"Keys"},{"id":"section-6","level":2,"text":"CLI-only and missing"}],"prev_slug":"en/forms/cli-runtime","next_slug":"en/forms/android-ui","markdown":"# CLI Usage\n\n## Usage\n\n### Subcommands\n\n| Subcommand | Alias | What it does |\n| --- | --- | --- |\n| `exec` | `e` | run one agent task non-interactively; `--json` gives a JSONL event stream |\n| `resume` | — | resume a previous session |\n| `trajectory` | — | view, search and export thread trajectories (JSON, bidirectional cursors) |\n| `tool` | — | run a built-in / MCP / skill tool directly |\n| `mcp` | — | manage local MCP servers |\n| `skills` | — | manage the current user's local skills |\n| `config` | — | read and change runtime configuration |\n| `stress-thread` | — | generate a synthetic local thread for rendering stress |\n| `doctor` | — | diagnose the local runtime |\n| `cloud` | — | manage the local cloud connection and device interlink |\n| `completion` | — | generate shell completion |\n\n### Slash commands\n\n22 in total: `/help` `/status` `/resume` `/trajectory` `/new` `/clear` `/model` `/permissions` `/plan` `/goal` `/edit` `/init` `/attach` `/diff` `/review` `/skills` `/rename` `/compact` `/mcp` `/config` `/exit` `/quit`.\n\nThere are **no** `cloud`, `cron`, `channel`, `memory` or `knowledge` slash commands: `cloud` is a subcommand, and the other four have no management UI in the CLI.\n\n### Keys\n\n| Key | Action |\n| --- | --- |\n| `/` | open the command palette |\n| `Enter` | send |\n| `!` | run a shell command |\n| `Shift+Enter` / `Ctrl+J` | newline |\n| `Tab` | completion |\n| `@` / `#` / `$` | mention a file / skill / tool |\n| `Ctrl+V`, drag and drop | attach an image or file |\n| `Alt+,` / `Alt+.` | lower / raise reasoning effort |\n| `Ctrl+R` / `Ctrl+S` | search input history |\n| `Ctrl+G` | external editor |\n| `Ctrl+O` | copy the last reply |\n| `Ctrl+T` | full transcript |\n| `Ctrl+L` | clear the screen and start a new session |\n| `Esc` | interrupt the current turn; clear the draft when idle |\n| `F4` | switch mouse mode (capture ↔ native) |\n| `←` | task center |\n| `?` | shortcut panel |\n| `Ctrl+C` | quit |\n\n## CLI-only and missing\n\n- **Only the CLI**: the `exec --json` script contract, the full `cloud` subcommand set, `doctor`, `stress-thread`, `completion`, and running `tool` / `mcp` / `skills` outside the agent loop.\n- **Not in the CLI**: scheduled tasks are switched off (old tasks stay visible, new ones are never queued); channels, knowledge base, long-term memory and companions have no management UI; no voice input, no screenshot capture, no tray or global hotkey; the host is already a terminal, so there is no interactive terminal panel.\n","source_path":"使用说明书/en/forms/cli-usage.md"}</script>
+</body>
+</html>

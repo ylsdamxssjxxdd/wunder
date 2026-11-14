@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MCP Endpoint | 使用说明书</title>
-  <meta name="description" content="The address and transport of the MCP service wunder exposes, the built-in `excute` and `doc2md` tools, and how to configure an external MCP service.">
-  <link rel="stylesheet" href="/docs/site.css?v=1ced23dfa9d8">
+  <meta name="description" content="The two directions — the address and two built-in tools when exposing wunder, and the configuration order when connecting an external MCP service.">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
 
-  <script type="module" src="/docs/site.js?v=1ced23dfa9d8"></script>
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
 </head>
 <body>
   <div class="docs-app">
@@ -20,7 +20,8 @@
           </a>
           <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
-        <div class="docs-topbar-center">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
           <label class="docs-search">
             <span class="docs-search-icon" aria-hidden="true">
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -32,13 +33,8 @@
             <span class="docs-search-shortcut">Ctrl K</span>
             <div class="docs-search-results" id="docs-search-results" hidden></div>
           </label>
-        </div>
-        <div class="docs-topbar-end">
           <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
         </div>
-      </div>
-      <div class="docs-nav-row">
-        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
       </div>
     </header>
     <div class="docs-layout">
@@ -56,6 +52,6 @@
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"en/capabilities/mcp-endpoint","language":"en","title":"MCP Endpoint","summary":"The address and transport of the MCP service wunder exposes, the built-in `excute` and `doc2md` tools, and how to configure an external MCP service.","updated_at":"2026-10-16","read_when":[],"source_docs":[],"tab":"Capabilities","group":"Deep Dives","group_path":["Deep Dives"],"url":"/docs/en/capabilities/mcp-endpoint/","headings":[{"id":"section-1","level":2,"text":"Two Directions"},{"id":"section-2","level":2,"text":"Exposing wunder"},{"id":"section-3","level":2,"text":"Connecting an External Service"},{"id":"section-4","level":2,"text":"Settings and Limits"}],"prev_slug":"en/capabilities/chat-ws","next_slug":"en/art/index","markdown":"wunder can expose itself as an MCP service and act as an MCP client to connect to external services. The two directions have separate entry points and configurations.\n\n## Two Directions\n\n| Direction | Purpose |\n| --- | --- |\n| Expose | Let external systems call wunder's capabilities over MCP |\n| Connect external | Bring external capabilities in for the model to use |\n\n## Exposing wunder\n\nThe outward entry is a single address, served over Streamable HTTP.\n\nThe order in which it comes together:\n\n1. The external system connects to that address following the MCP protocol;\n2. wunder negotiates the protocol version automatically; when it interoperates with an older service it settles on a version both sides support, so the initialization step does not have to be written by hand;\n3. Call the specific tools.\n\nTwo tools are built in for external callers: `excute` (execute) and `doc2md` (document to Markdown). The tool name is literally `excute`; call it by exactly that name.\n\n## Connecting an External Service\n\nDeclare the MCP service you want to connect in the configuration — give it a name, an address, and a transport — then switch it on. Once enabled, wunder treats it as a callable service. External services also use Streamable HTTP; when a service is written in Python, it negotiates according to the Python side's protocol version and may not carry every latest capability.\n\nA typical example is the external service often mentioned in the documentation, which usually hosts tools such as database query, database export, and knowledge-base query.\n\n## Settings and Limits\n\n- Integration order: declare the service in the configuration → confirm in Admin that the tool list can be fetched → then expose it to the model.\n- Admin has MCP configuration and debugging entries where you can refresh the tool list and call remote tools directly to verify them.\n- MCP tools are not a side channel: they are aggregated with built-in tools, A2A tools, skills, knowledge-base tools, and self-built tools into one tool view. To the model, MCP is just part of the tool catalog.\n","source_path":"使用说明书/en/capabilities/mcp-endpoint.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"en/capabilities/mcp-endpoint","language":"en","title":"MCP Endpoint","summary":"The two directions — the address and two built-in tools when exposing wunder, and the configuration order when connecting an external MCP service.","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"Capabilities","group":"Integration","group_path":["Integration"],"url":"/docs/en/capabilities/mcp-endpoint/","headings":[{"id":"section-1","level":1,"text":"MCP Endpoint"},{"id":"section-2","level":2,"text":"Exposing wunder"},{"id":"section-3","level":2,"text":"Connecting an external service"},{"id":"section-4","level":2,"text":"Debug order"}],"prev_slug":"en/capabilities/chat-ws","next_slug":"en/capabilities/weixin-channel","markdown":"# MCP Endpoint\n\nwunder can expose itself as an MCP service and act as an MCP client for external services. The two directions have different entry points and settings; tool-level registration, packing and routing are on [MCP](/docs/en/tools/mcp/).\n\n## Exposing wunder\n\nThe outward entry is one address over Streamable HTTP.\n\n1. An external system connects with the MCP protocol.\n2. wunder negotiates the protocol version automatically, picking a range both sides support when talking to older servers.\n3. The system calls a specific tool.\n\nTwo tools are built in: `excute` (run an agent task and return the final reply — the name really is spelled this way) and `doc2md` (parse a document and return Markdown). While running a task the endpoint computes the tool set fresh and removes itself, so an endpoint-driven agent cannot call back into it.\n\n## Connecting an external service\n\n1. Declare the service name, address and transport (Streamable HTTP only).\n2. Switch it on and confirm in the Admin that the tool list can be fetched.\n3. Grant the tools to the agents that need them.\n\nExternal services usually carry database queries, exports, or knowledge retrieval. Tools register as `server@tool`, or collapse into one tool when the server is marked as packed — see [MCP](/docs/en/tools/mcp/).\n\n## Debug order\n\nIf the tool list will not load, check the address and transport first, then whether the service is enabled and whether an allow-list blocks it. If the list loads but the model cannot call the tools, check ability selection and model capability filtering.\n","source_path":"使用说明书/en/capabilities/mcp-endpoint.md"}</script>
 </body>
 </html>

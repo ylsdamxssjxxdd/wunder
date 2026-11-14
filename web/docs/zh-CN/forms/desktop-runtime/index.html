@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>桌面版运行环境 | 使用说明书</title>
+  <meta name="description" content="桌面版跑起来靠什么：单进程内置引擎、安装根下的 opt 预置组件与版本、系统依赖、数据库和端口情况。">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/forms/desktop-runtime","language":"zh-CN","title":"桌面版运行环境","summary":"桌面版跑起来靠什么：单进程内置引擎、安装根下的 opt 预置组件与版本、系统依赖、数据库和端口情况。","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"形态","group":"桌面版","group_path":["桌面版"],"url":"/docs/zh-CN/forms/desktop-runtime/","headings":[{"id":"section-1","level":1,"text":"桌面版运行环境"},{"id":"section-2","level":2,"text":"组成"},{"id":"section-3","level":2,"text":"预置组件"},{"id":"section-4","level":2,"text":"系统依赖"},{"id":"section-5","level":2,"text":"数据库、端口与网络"},{"id":"section-6","level":2,"text":"装好之后先自检"}],"prev_slug":"zh-CN/forms/desktop-deploy","next_slug":"zh-CN/forms/desktop-usage","markdown":"# 桌面版运行环境\n\n桌面版把引擎装进同一个进程：界面、智能体调度、工具执行都在本机跑，不经本机 HTTP/WebSocket 中转，就不需要另外起服务。它需要的运行环境只有两块——程序本体，和安装根下的预置组件。\n\n## 组成\n\n| 部分 | 在哪 | 作用 |\n| --- | --- | --- |\n| 程序本体 | `<安装根>/app/desktop` | 界面（Slint）与引擎，自带所需运行库 |\n| 启动器 | `<安装根>/bin/wunder-desktop` | 导出 `WUNDER_HOME` 后拉起本体 |\n| 预置组件 | `<安装根>/opt/` | Python、Git、ripgrep、FFmpeg、7-Zip、浏览器、字体 |\n| 本地状态 | `<安装根>/cli/WUNDER_TEMP/` | 会话、工具日志与 SQLite |\n\n## 预置组件\n\n桌面版与命令行共用同一份 `opt/`，装桌面版就等于装好了命令行的运行环境。\n\n| 组件 | 版本 | 给谁用 |\n| --- | --- | --- |\n| `opt/python` | Windows 3.8.10；Linux 3.8.18 | 智能体写脚本、跑 Python 工具 |\n| `opt/git` | MinGit 2.46.2（Windows）/ 2.46.2 源码编译（Linux） | clone、补丁、仓库操作 |\n| `opt/rg` | Windows 14.1.0；Linux 14.1.1 | 搜索内容与命令行检索 |\n| `opt/ffmpeg` | 静态 4.4.1 | 抽帧、抽音轨、转码（不含 `ffprobe`） |\n| `opt/7zip` | 25.01 | 压缩包打包与解压 |\n| `opt/browser` | Windows 内置 Chrome 109（win32）；Linux amd64 为 Chrome for Testing 122，arm64 为 Chromium 120 | 浏览器工具的离线内核 |\n| `opt/fonts` | 公文常用字体 + 短片字体 | 文档排版、绘图与短片渲染 |\n| `opt/powershell` | PowerShell 7（仅 Windows） | 命令执行 |\n\n组件版本跟随补充包走，不随程序本体升级；换机器时整个安装根一起复制即可，`opt/` 会跟过去。\n\n## 系统依赖\n\n- Windows 7 x86 起；Linux 以 ubuntu 18.04 为基线（glibc 2.27），更老的 glibc 不行，更新的发行版可用。\n- 界面与运行库都打进 `app/desktop`，系统不需要另装 GTK、Python 或浏览器。\n- 安装 `.run` 时需要系统有 `xz`（Ubuntu 18.04 及更新版本默认自带；最小化系统补 `xz-utils`）。装好之后运行不再依赖它。\n\n## 数据库、端口与网络\n\n- 状态存在本地 SQLite，没有外部数据库，也不需要单独备份数据库服务。\n- 默认不监听任何端口，没有可供外部访问的管理地址；需要跨机能力时走互通隧道或云端工作区。\n- 连模型、抓网页、访问网盘这类动作由一次性的出站请求完成，不常驻端口。\n\n## 装好之后先自检\n\n1. 设置里能打开「工具管理」，说明组件目录被识别到。\n2. 对话里让它跑一句 `python -V` 或 `git --version`，版本对得上上表就是通的。\n3. 跑不起来时先确认进程是否用了预期的安装根——设置了非空的 `WUNDER_HOME` 时以它为准，会绕过安装根标记。\n\n命令行的 `wunder-cli doctor` 能做更细的检查，见[命令行运行环境](/docs/zh-CN/forms/cli-runtime/)。\n","source_path":"使用说明书/zh-CN/forms/desktop-runtime.md"}</script>
+</body>
+</html>

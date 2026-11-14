@@ -250,66 +250,18 @@ pub fn install(app: &MainWindow) {
     let weak = app.as_weak();
     app.on_create_model(move || {
         let Some(app) = weak.upgrade() else { return };
-        // Resume the parked or in-edit unsaved draft instead of stacking a
-        // second row.
-        if let Some(row_key) = crate::entity_state::active_model_draft_key(&app) {
-            if let Some(index) = app
-                .get_models()
-                .iter()
-                .position(|entry| entry.key == row_key.as_str())
-            {
-                app.set_selected_model(index as i32);
-                if crate::entity_state::restore_model_draft(&app, index as i32, &row_key) {
-                    app.set_status("已回到未保存的模型草稿 · 仅本次演示有效".into());
-                } else {
-                    app.set_status("当前正在编辑未保存的模型草稿 · 仅本次演示有效".into());
-                }
-                return;
-            }
-        }
+        // 演示目录是纯内存列表：新增即插入一条完整配置，与真实界面一样
+        // 不存在「未保存的草稿行」。
         let mut models: Vec<_> = app.get_models().iter().collect();
-        let mut key = "新模型".to_string();
-        let mut suffix = 1usize;
-        while models.iter().any(|entry| entry.key == key) {
-            key = format!("新模型{suffix}");
-            suffix += 1;
-        }
-        let entry = crate::entity_state::new_model_card(key);
-        models.insert(0, entry.clone());
+        let key = crate::model_editor::next_model_key(
+            models.iter().map(|entry| entry.key.as_str()),
+        );
+        let mut entry = crate::entity_state::new_model_card(key.clone());
+        entry.model = "new-model".into();
+        models.insert(0, entry);
         store_models(&app, models);
-        app.set_selected_model(0);
-        crate::entity_state::apply_new_model_draft(&app, entry);
-        app.set_status("已创建新的模型草稿 · 仅本次演示有效".into());
-    });
-    let weak = app.as_weak();
-    app.on_discard_model_draft(move || {
-        let Some(app) = weak.upgrade() else { return };
-        let stashed_key = crate::entity_state::model_draft_row_key();
-        if !app.get_model_creating() && stashed_key.is_none() {
-            return;
-        }
-        let selected_key = usize::try_from(app.get_selected_model())
-            .ok()
-            .and_then(|index| app.get_models().row_data(index))
-            .map(|row| row.key.to_string());
-        let row_key = if app.get_model_creating() {
-            selected_key.clone()
-        } else {
-            stashed_key.clone()
-        };
-        crate::entity_state::clear_model_draft();
-        if let Some(row_key) = row_key {
-            let models: Vec<_> = app
-                .get_models()
-                .iter()
-                .filter(|entry| entry.key != row_key.as_str())
-                .collect();
-            store_models(&app, models);
-        }
-        if app.get_model_creating() {
-            app.set_model_creating(false);
-            crate::entity_state::restore_model(&app, "");
-        }
+        crate::entity_state::restore_model(&app, &key);
+        app.set_status("已添加模型配置 · 仅本次演示有效".into());
     });
     let weak = app.as_weak();
     app.on_save_model(move || {
@@ -330,16 +282,13 @@ pub fn install(app: &MainWindow) {
             app.set_status("请填写模型配置，并选择有效的模型类型".into());
             return;
         }
+        // 保存时改了标识就是改名：替换原行而不是新增一条。
+        let stored = app.get_settings_model_key().to_string();
         let mut models: Vec<_> = app.get_models().iter().collect();
-        // The saved row replaces the unsaved draft; drop the parked row so it
-        // does not linger under its temporary key.
-        if let Some(row_key) = crate::entity_state::model_draft_row_key() {
-            if row_key != key {
-                models.retain(|entry| entry.key != row_key.as_str());
-            }
-        }
-        crate::entity_state::clear_model_draft();
-        let index = models.iter().position(|entry| entry.key == key);
+        let index = models
+            .iter()
+            .position(|entry| entry.key == key)
+            .or_else(|| models.iter().position(|entry| entry.key == stored));
         let entry = ModelCard {
             key: key.clone().into(),
             provider: provider.into(),
@@ -442,10 +391,10 @@ pub fn install(app: &MainWindow) {
 mod tests {
     use slint::Model;
 
-    /// 回归：查看既有模型后再点「添加模型」，新卡片的编辑草稿必须是默认模板，
+    /// 回归：查看既有模型后再点「添加模型」，新卡片的配置必须是默认模板，
     /// 不得沿用上一个打开/查看过的模型的配置（提供方、工具调用方式、参数）。
     #[test]
-    fn created_model_draft_does_not_inherit_the_viewed_model() {
+    fn created_model_does_not_inherit_the_viewed_model() {
         let _ui = crate::test_support::lock();
         crate::register_bundled_font().expect("注册内嵌字体");
         let app = crate::MainWindow::new().expect("创建主窗口");
@@ -462,7 +411,8 @@ mod tests {
 
         app.invoke_create_model();
 
-        assert!(app.get_model_creating(), "新建后应处于创建态");
+        // 新增即是一条完整配置：直接选中它，不需要再保存。
+        assert_eq!(app.get_settings_model_key().as_str(), "新模型");
         assert_eq!(app.get_model_key_draft().as_str(), "新模型");
         assert_eq!(app.get_model_provider_draft().as_str(), "openai_compatible");
         assert_eq!(app.get_model_type_draft().as_str(), "llm");
@@ -470,74 +420,52 @@ mod tests {
             app.get_model_tool_call_mode_draft().as_str(),
             "function_call"
         );
-        assert_eq!(app.get_model_name_draft().as_str(), "");
+        assert_eq!(app.get_model_name_draft().as_str(), "new-model");
         assert_eq!(app.get_model_temperature_draft().as_str(), "0.7");
+        assert_eq!(app.get_model_max_output_draft().as_str(), "32768");
         assert_eq!(app.get_model_tts_speed_draft().as_str(), "1");
         assert_eq!(app.get_model_asr_temperature_draft().as_str(), "0");
         assert_eq!(app.get_model_image_steps_draft().as_str(), "30");
         assert_eq!(app.get_model_video_seconds_draft().as_str(), "4");
         let first = app.get_models().row_data(0).expect("新卡片缺席");
         assert_eq!(first.key.as_str(), "新模型");
+        assert_eq!(first.model.as_str(), "new-model");
         assert_eq!(first.provider.as_str(), "openai_compatible");
         assert_eq!(first.model_type.as_str(), "llm");
         assert_eq!(first.tool_call_mode.as_str(), "function_call");
     }
 
-    /// 回归：未保存的新模型切换到其它条目后不丢弃——草稿行保留在列表里并
-    /// 显示已编辑的值，切回该行恢复编辑草稿；再次「添加模型」恢复而非新建。
+    /// 回归：连续两次「添加模型」得到两条独立的真实配置，标识不重复，
+    /// 各自的编辑互不串味；删除任意一条都只影响它自己。
     #[test]
-    fn unsaved_model_draft_survives_switching_entries() {
+    fn adding_twice_creates_two_independent_rows() {
         let _ui = crate::test_support::lock();
         crate::register_bundled_font().expect("注册内嵌字体");
         let app = crate::MainWindow::new().expect("创建主窗口");
         super::install(&app);
+        let baseline = app.get_models().row_count();
+
         app.invoke_create_model();
-        assert!(app.get_model_creating(), "新建后应处于创建态");
         app.set_model_provider_draft("deepseek".into());
         app.set_model_name_draft("draft-model".into());
-        app.set_model_base_url_draft("https://example.invalid/v1".into());
+        app.invoke_save_model();
+        app.invoke_create_model();
 
-        let existing = app
-            .get_models()
-            .iter()
-            .position(|entry| entry.key == "demo-voice")
-            .expect("演示目录缺少 asr 模型");
-        app.invoke_select_model(existing as i32);
-        assert!(!app.get_model_creating(), "切走后应退出创建态");
-        let draft = app
+        assert_eq!(app.get_settings_model_key().as_str(), "新模型1");
+        assert_eq!(app.get_model_name_draft().as_str(), "new-model");
+        assert_eq!(app.get_model_provider_draft().as_str(), "openai_compatible");
+        assert_eq!(app.get_models().row_count(), baseline + 2);
+
+        let saved = app
             .get_models()
             .iter()
             .find(|entry| entry.key == "新模型")
-            .expect("草稿行应保留在列表中");
-        assert_eq!(draft.provider.as_str(), "deepseek");
-        assert_eq!(draft.model.as_str(), "draft-model");
-        assert_eq!(draft.base_url.as_str(), "https://example.invalid/v1");
+            .expect("第一条配置应保留");
+        assert_eq!(saved.provider.as_str(), "deepseek");
+        assert_eq!(saved.model.as_str(), "draft-model");
 
-        let draft_index = app
-            .get_models()
-            .iter()
-            .position(|entry| entry.key == "新模型")
-            .expect("草稿行缺席");
-        app.invoke_select_model(draft_index as i32);
-        assert!(app.get_model_creating(), "切回应恢复创建态");
-        assert_eq!(app.get_model_provider_draft().as_str(), "deepseek");
-        assert_eq!(app.get_model_name_draft().as_str(), "draft-model");
-        assert_eq!(
-            app.get_model_base_url_draft().as_str(),
-            "https://example.invalid/v1"
-        );
-
-        app.invoke_select_model(existing as i32);
-        app.invoke_create_model();
-        assert!(app.get_model_creating(), "再次添加应恢复草稿");
-        assert_eq!(app.get_model_name_draft().as_str(), "draft-model");
-        assert_eq!(
-            app.get_models()
-                .iter()
-                .filter(|entry| entry.key == "新模型")
-                .count(),
-            1,
-            "不得出现第二张新模型卡片"
-        );
+        app.invoke_delete_model("新模型".into());
+        assert_eq!(app.get_models().row_count(), baseline + 1);
+        assert!(app.get_models().iter().any(|entry| entry.key == "新模型1"));
     }
 }

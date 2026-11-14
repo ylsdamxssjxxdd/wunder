@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>桌面版界面 | 使用说明书</title>
+  <meta name="description" content="桌面版界面：主窗只有对话与设置两页，其余能力以面板和对话框按需展开。">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/forms/desktop-ui","language":"zh-CN","title":"桌面版界面","summary":"桌面版界面：主窗只有对话与设置两页，其余能力以面板和对话框按需展开。","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"形态","group":"桌面版","group_path":["桌面版"],"url":"/docs/zh-CN/forms/desktop-ui/","headings":[{"id":"section-1","level":1,"text":"桌面版界面"},{"id":"section-2","level":2,"text":"界面"}],"prev_slug":"zh-CN/forms/index","next_slug":"zh-CN/forms/desktop-deploy","markdown":"# 桌面版界面\n\n本地 AI 工作台，个人用户的默认入口：装在自己的电脑上，同进程原生调用引擎，不占端口、不经本机 HTTP/WebSocket 中转，也不需要先部署服务端。\n\n## 界面\n\n<figure class=\"docs-preview-hero\">\n  <img src=\"/docs/images/wunder-pupa.png\" alt=\"wunder 桌面版界面：本地 AI 工作台\">\n  <figcaption><strong>桌面版<\/strong>：主窗只有「对话」与「设置」两页，其余能力以面板和对话框展开。<\/figcaption>\n<\/figure>\n\n主窗只有**对话页**和**设置页**两个可切换页面，其余能力都挂在两页之内。\n\n- **对话页**：左栏是任务与线程树、工作目录（本地文件树 + 用量条 + 云端工作区）、底部设置入口；右栏是顶栏（工作区 / 线程名）、时间线、输入区。没选中线程时显示欢迎页。\n- **输入区**：模型切换、思考等级、附件、语音输入、截图、发送 / 停止。\n- **设置页 11 个分类**：常规、本地运行时、账号、模型设置、工具管理、智能体设置、伙伴、定时任务、记忆碎片、渠道设置、归档线程；帮助入口在「常规」页内，分类导航支持搜索过滤。\n- **面板与对话框**：交互式终端、工具管理、形象、工作区、工作目录、线程轨迹、子智能体详情、渠道页、定时页、专家数据、补丁差异卡、截图遮罩、托盘与系统通知、远端命令审批弹窗。\n","source_path":"使用说明书/zh-CN/forms/desktop-ui.md"}</script>
+</body>
+</html>

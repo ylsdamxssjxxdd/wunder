@@ -17,16 +17,16 @@ fn model<T: Clone + 'static>(rows: Vec<T>) -> ModelRc<T> {
 }
 
 // ---------------------------------------------------------------------------
-// 左侧目录的四个分区
+// 左侧目录的分区
 // ---------------------------------------------------------------------------
 
-/// 手册左侧目录按云端版手册的四块组织：开始 / 工具 / 界面 / 能力。
-/// 主题用 `block="start|tools|interface|capabilities"` 归入其中一块；
-/// `group` 仍是块内的二级分组。
-const BLOCKS: [(&str, &str, &str); 4] = [
-    ("start", "开始", "Getting Started"),
+/// 手册左侧目录与使用说明书同构：形态 / 工具 / 能力三个分区。
+/// 主题用 `block="forms|tools|capabilities"` 归入其中一块；
+/// `group` 仍是分区内的二级分组。手册正文由 `scripts/build_help_manual.py`
+/// 从 `docs/使用说明书` 生成，分区名与分组名随说明书同步。
+const BLOCKS: [(&str, &str, &str); 3] = [
+    ("forms", "形态", "Forms"),
     ("tools", "工具", "Tools"),
-    ("interface", "界面", "Surfaces"),
     ("capabilities", "能力", "Capabilities"),
 ];
 
@@ -43,9 +43,9 @@ const ROW_TOPIC: i32 = 2;
 pub struct Topic {
     pub id: String,
     pub title: String,
-    /// 侧栏一级分区：start / tools / interface / capabilities。
+    /// 侧栏一级分区：forms / tools / capabilities。
     pub block: String,
-    /// 侧栏二级分组名（入门 / 核心能力 / 界面 / 参考 …）。
+    /// 侧栏二级分组名（概览 / 桌面版 / 核心能力 …）。
     pub group: String,
     pub keywords: Vec<String>,
     /// 主题的 Markdown 正文，不含元数据行。
@@ -184,7 +184,13 @@ fn searchable_text(topic: &Topic) -> String {
 /// 手册只放真实界面截图，不再内嵌美术设计稿预览。
 fn help_image(slug: &str) -> Option<&'static [u8]> {
     Some(match slug {
-        "ui-overview" => include_bytes!("../assets/help/art/ui-overview.png"),
+        "wunder-pupa" => include_bytes!("../assets/help/art/wunder-pupa.png"),
+        "wunder-hive" => include_bytes!("../assets/help/art/wunder-hive.png"),
+        "wunder-servo" => include_bytes!("../assets/help/art/wunder-servo.png"),
+        "wunder-bridge" => include_bytes!("../assets/help/art/wunder-bridge.png"),
+        "wunder-cocoon" => include_bytes!("../assets/help/art/wunder-cocoon.png"),
+        "wunder-cocoon-settings" => include_bytes!("../assets/help/art/wunder-cocoon-settings.png"),
+        "wunder-architecture" => include_bytes!("../assets/help/art/wunder-architecture.png"),
         _ => return None,
     })
 }
@@ -286,7 +292,7 @@ struct Controller {
     art: ArtCache,
     blocks: Vec<MdBlock>,
     layout_key: Option<(bool, usize)>,
-    /// 四个分区的展开状态；当前主题所在分区始终展开。
+    /// 各分区的展开状态；当前主题所在分区始终展开。
     expanded: [bool; BLOCKS.len()],
 }
 
@@ -385,7 +391,7 @@ impl Controller {
         }
     }
 
-    /// 把四个分区、块内分组和主题压平成一列导航行。
+    /// 把各分区、块内分组和主题压平成一列导航行。
     fn rebuild_nav(&self, docs: &HelpDocs) {
         let rows = nav_rows(&self.manuals[self.lang()], self.zh, &self.expanded);
         docs.set_nav_rows(model(rows));
@@ -694,14 +700,14 @@ mod tests {
             for topic in &manual.topics {
                 assert!(
                     BLOCKS.iter().any(|entry| entry.0 == topic.block),
-                    "主题 {} 的分区 {} 不在四块之内",
+                    "主题 {} 的分区 {} 不在分区表之内",
                     topic.id,
                     topic.block
                 );
                 assert!(!topic.group.is_empty(), "主题 {} 缺少分组", topic.id);
                 assert!(!topic.body.is_empty(), "主题 {} 没有正文", topic.id);
             }
-            // 四块都要有内容，空块不该出现在左侧目录里。
+            // 每个分区都要有内容，空分区不该出现在左侧目录里。
             for (key, _, _) in BLOCKS {
                 assert!(
                     manual.topics.iter().any(|topic| topic.block == key),
@@ -734,13 +740,13 @@ mod tests {
         }
     }
 
-    /// 左侧目录始终是四块；折叠时只留分区标题，展开后按分组投影主题。
+    /// 左侧目录按分区表组织；折叠时只留分区标题，展开后按分组投影主题。
     #[test]
-    fn nav_rows_fold_into_four_blocks() {
+    fn nav_rows_fold_into_blocks() {
         for zh in [true, false] {
             let manual = Manual::load(zh);
             let collapsed = nav_rows(&manual, zh, &[false; BLOCKS.len()]);
-            assert_eq!(collapsed.len(), 4, "折叠时应只剩四个分区标题");
+            assert_eq!(collapsed.len(), BLOCKS.len(), "折叠时应只剩分区标题");
             assert!(collapsed.iter().all(|row| row.kind == ROW_BLOCK));
             let counts: i32 = collapsed.iter().map(|row| row.count).sum();
             assert_eq!(
@@ -794,7 +800,7 @@ mod tests {
         let topic = manual
             .topics
             .iter()
-            .find(|topic| topic.id == "ui-screenshot")
+            .find(|topic| topic.id == "forms-desktop-ui")
             .expect("缺少界面实拍主题");
         let mut art = ArtCache::default();
         let rows = project_topic(topic, &mut art);
@@ -806,7 +812,7 @@ mod tests {
         assert!(images[0].image.size().width > 700);
         assert!(images[0].image_height > 500.0);
         assert!(
-            rows.iter().any(|row| row.plain.contains("侧栏")),
+            rows.iter().any(|row| row.plain.contains("对话页")),
             "正文文本应完整进入块的纯文本投影"
         );
     }

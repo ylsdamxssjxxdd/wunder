@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MCP | 使用说明书</title>
+  <meta name="description" content="The two MCP directions — `server@tool` registration and routing for external servers, packing mode and the streamable-http limit, plus the outgoing `/wunder/mcp` endpoint and common failures.">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/mcp","language":"en","title":"MCP","summary":"The two MCP directions — `server@tool` registration and routing for external servers, packing mode and the streamable-http limit, plus the outgoing `/wunder/mcp` endpoint and common failures.","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"Tools","group":"Extensions","group_path":["Extensions"],"url":"/docs/en/tools/mcp/","headings":[{"id":"section-1","level":1,"text":"MCP"},{"id":"section-2","level":2,"text":"Pulling in an external service"},{"id":"section-3","level":2,"text":"Exposing wunder"},{"id":"section-4","level":2,"text":"Common failures"},{"id":"section-5","level":2,"text":"Boundaries"}],"prev_slug":"en/tools/goal","next_slug":"en/tools/skills","markdown":"# MCP\n\nMCP is the common protocol between wunder and external tool services. It runs in two directions with separate entry points and configuration: pulling an external service in for the model, and exposing wunder to an outside system.\n\n## Pulling in an external service\n\nDeclare a name, an address, and a transport in configuration, switch it on, and its tools appear in the tool catalog.\n\n- **One transport only**: streamable-http. stdio is not supported on the wunder side, and older transport values are rejected when listing or calling tools.\n- **Registered as `server@tool`**: every allowed tool appears under that name, and any name containing `@` is treated as MCP.\n- **Packing mode**: mark a server as packed and it folds into **one** tool with three actions — list available tools, read one tool's description, call one tool. Dozens of details stay out of the context until asked for.\n- **List cache**: valid for 30 seconds, at most 128 entries.\n- **Object arguments only**: a non-object argument is treated as no arguments.\n- **Result shape**: a direct call returns the MCP service's own result; a call routed through a user-tool alias gets the shared shell wrapped around it.\n\nThe allow list is checked on every call, packed or not: a tool that is not allowed never appears and cannot be called.\n\n## Exposing wunder\n\nwunder is also an MCP server: the Server and Desktop mount an endpoint at `/wunder/mcp` over Streamable HTTP, and wunder negotiates the protocol version itself.\n\n| Tool | What it does |\n| --- | --- |\n| `excute` | Runs one agent task and returns the final reply (the name really is spelled this way) |\n| `doc2md` | Parses a document and returns Markdown |\n\nWhen the endpoint runs a task it computes the tool set for that agent and removes itself from it, so an endpoint-driven agent cannot call the endpoint back. Address and verification details are on [MCP Endpoint](/docs/en/capabilities/mcp-endpoint/).\n\n## Common failures\n\n| Symptom | Check first |\n| --- | --- |\n| Server configured, no tools | Whether it is enabled, whether the allow list blocks it, whether the transport value is stale |\n| \"Old transport type no longer supported\" | Switch to streamable-http |\n| \"Unknown built-in tool\" | The name is not a canonical name or alias, has no `@`, is not a skill, and is not a knowledge base |\n| A user tool \"took over\" a built-in name | Alias routing wins over built-in dispatch; this is expected |\n\n## Boundaries\n\n- MCP tools get no bypass: they join built-in tools, skills, and knowledge bases in one tool view, and pass the ability selection set and model availability filters like everything else.\n- Dynamically registered names share one table with built-ins — avoid built-in canonical names and aliases when naming servers and tools.\n- Knowledge bases register by name too; see [Tools Overview](/docs/en/tools/). Skills live on [Skills](/docs/en/tools/skills/).\n","source_path":"使用说明书/en/tools/mcp.md"}</script>
+</body>
+</html>

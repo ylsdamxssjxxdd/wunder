@@ -1,6 +1,7 @@
 //! First-run model setup smoke check: a fresh runtime holds only the seeded
 //! 虚拟模型, so the chat surface must offer the setup banner; one real click
-//! opens the model panel with a fresh draft, and saving it clears the banner.
+//! opens the model panel with a freshly stored config, and saving its real
+//! model name clears the banner.
 
 use crate::MainWindow;
 use slint::{ComponentHandle, Model, Timer, TimerMode};
@@ -63,13 +64,18 @@ pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::erro
                         app.get_settings_active_panel() == 1,
                         "banner click did not land on the model panel",
                     )?;
+                    // 「添加模型」已经落库：一条完整配置出现并被选中。
+                    let created = app
+                        .get_models()
+                        .iter()
+                        .find(|model| model.key.starts_with("新模型"))
+                        .map(|model| model.key.to_string());
+                    let Some(created) = created else {
+                        return Ok(false);
+                    };
                     assert_state(
-                        app.get_model_creating(),
-                        "banner click did not create a model draft",
-                    )?;
-                    assert_state(
-                        app.get_settings_model_key() == "新模型",
-                        "the auto-created draft is not a fresh model",
+                        app.get_settings_model_key() == created,
+                        "the added model was not selected in the editor",
                     )?;
                     app.set_model_key_draft("first-model".into());
                     app.set_model_name_draft("sample-model".into());
@@ -81,7 +87,7 @@ pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::erro
                         .get_models()
                         .iter()
                         .any(|model| model.key == "first-model");
-                    if app.get_model_creating() || !saved {
+                    if !saved {
                         return Ok(false);
                     }
                     assert_state(
@@ -109,7 +115,7 @@ pub fn run(app: &MainWindow, directory: PathBuf) -> Result<(), Box<dyn std::erro
             return;
         }
         let report = match &checked {
-            Ok(_) => "PASS: model-setup banner/click-opens-draft/save-clears-banner\n".to_owned(),
+            Ok(_) => "PASS: model-setup banner/click-adds-config/save-clears-banner\n".to_owned(),
             Err(error) => format!("FAIL: {error}\n"),
         };
         *output.borrow_mut() = Some(

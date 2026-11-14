@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>云端版部署 | 使用说明书</title>
+  <meta name="description" content="云端版部署：随服务端部署，compose 启动、端口分布与部署后清单。">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/forms/cloud-deploy","language":"zh-CN","title":"云端版部署","summary":"云端版部署：随服务端部署，compose 启动、端口分布与部署后清单。","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"形态","group":"云端版","group_path":["云端版"],"url":"/docs/zh-CN/forms/cloud-deploy/","headings":[{"id":"section-1","level":1,"text":"云端版部署"},{"id":"section-2","level":2,"text":"部署"}],"prev_slug":"zh-CN/forms/cloud-ui","next_slug":"zh-CN/forms/cloud-runtime","markdown":"# 云端版部署\n\n## 部署\n\n云端版不单独安装，跟着服务端一起部署。服务端是云端版与管理端共用的运行前提，部署一次即可。\n\n```bash\n# x86 架构\ndocker compose -f docker-compose-x86.yml up -d\n\n# ARM 架构\ndocker compose -f docker-compose-arm.yml up -d\n```\n\n- **前提**：Docker 与 Docker Compose（推荐方式）、至少 4 GB 可用内存、PostgreSQL（compose 已内置，单机也可改用 SQLite）；时区默认 `Asia/Shanghai`。\n- **访问**：成员用浏览器打开 `http://<host>:18001/`；管理员用同一台机器的 `http://<host>:18000/` 进管理端。\n- **端口**：服务端 API 与管理端 **18000**（`WUNDER_HOST` / `WUNDER_PORT` 可覆盖）、云端版 **18001**（`NGINX_PORT` 可覆盖）、沙箱 9001、onlyoffice 18080、drawio 18081、extra-mcp 18004、PostgreSQL 5432。\n- 云端版的构建产物由独立的网页服务容器只读下发，**不由服务端托管**。\n- **部署后先做这几件事**：改管理员口令 → 管理端「模型配置」加 LLM / TTS / 图像 / 视频模型 → 确认「单位管理」组织树 → 「预设智能体」建模板 → 「用户管理」加人或开放自助注册。需要飞书、企业微信、QQ Bot 等渠道时再在渠道里接入。\n","source_path":"使用说明书/zh-CN/forms/cloud-deploy.md"}</script>
+</body>
+</html>

@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MCP 入口 | 使用说明书</title>
-  <meta name="description" content="对外暴露的 MCP 服务地址与内置的 `excute` / `doc2md` 两个工具，以及接入外部 MCP 服务的配置方式。">
-  <link rel="stylesheet" href="/docs/site.css?v=1ced23dfa9d8">
+  <meta name="description" content="两个方向的入口：对外暴露的地址与两个内置工具，以及接入外部 MCP 服务的配置顺序。">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
 
-  <script type="module" src="/docs/site.js?v=1ced23dfa9d8"></script>
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
 </head>
 <body>
   <div class="docs-app">
@@ -20,7 +20,8 @@
           </a>
           <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
-        <div class="docs-topbar-center">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
           <label class="docs-search">
             <span class="docs-search-icon" aria-hidden="true">
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -32,13 +33,8 @@
             <span class="docs-search-shortcut">Ctrl K</span>
             <div class="docs-search-results" id="docs-search-results" hidden></div>
           </label>
-        </div>
-        <div class="docs-topbar-end">
           <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
         </div>
-      </div>
-      <div class="docs-nav-row">
-        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
       </div>
     </header>
     <div class="docs-layout">
@@ -56,6 +52,6 @@
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/capabilities/mcp-endpoint","language":"zh-CN","title":"MCP 入口","summary":"对外暴露的 MCP 服务地址与内置的 `excute` / `doc2md` 两个工具，以及接入外部 MCP 服务的配置方式。","updated_at":"2026-10-16","read_when":[],"source_docs":[],"tab":"能力","group":"深入了解","group_path":["深入了解"],"url":"/docs/zh-CN/capabilities/mcp-endpoint/","headings":[{"id":"section-1","level":1,"text":"MCP 入口"},{"id":"section-2","level":2,"text":"两个方向"},{"id":"section-3","level":2,"text":"对外暴露"},{"id":"section-4","level":2,"text":"接入外部服务"},{"id":"section-5","level":2,"text":"设置与限制"}],"prev_slug":"zh-CN/capabilities/chat-ws","next_slug":"zh-CN/art/index","markdown":"# MCP 入口\n\nwunder 既能把自己暴露为 MCP 服务，也能作为 MCP 客户端接入外部服务。两个方向的入口与配置互不相同。\n\n## 两个方向\n\n| 方向 | 用途 |\n| --- | --- |\n| 对外暴露 | 让外部系统用 MCP 协议调用 wunder 的能力 |\n| 接入外部 | 把外部能力接进来给模型使用 |\n\n## 对外暴露\n\n对外入口是一个地址，走 Streamable HTTP。\n\n接通顺序：\n\n1. 外部系统按 MCP 协议连上这个地址；\n2. wunder 自动完成协议版本协商，与旧服务互通时按双方都支持的范围协商，不用手写初始化步骤；\n3. 调用具体工具。\n\n目前内置对外提供两个工具：`excute`（执行）和 `doc2md`（文档转 Markdown）。工具名就是 `excute`，照这个名字调用。\n\n## 接入外部服务\n\n在配置里声明要接的 MCP 服务，给它名字、地址和传输方式，然后打开开关。启用后 wunder 把它当成一个可调用的服务。外部服务同样用 Streamable HTTP；服务是 Python 写的时按 Python 侧的协议版本协商，不一定具备最新的全部能力。\n\n文档里常提到的外部服务通常承载数据库查询、数据库导出、知识库查询这类工具。\n\n## 设置与限制\n\n- 接入顺序：先在配置里声明服务 → 在管理端确认工具清单能拉到 → 再开放给模型使用。\n- 管理端里有 MCP 的配置和调试入口，可以刷新工具清单、直接调远端工具验证。\n- MCP 工具不是旁路：它与内置工具、A2A 工具、技能、知识库工具、自建工具汇总进同一个工具视图。对模型来说，MCP 只是工具目录的一部分。\n","source_path":"使用说明书/zh-CN/capabilities/mcp-endpoint.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/capabilities/mcp-endpoint","language":"zh-CN","title":"MCP 入口","summary":"两个方向的入口：对外暴露的地址与两个内置工具，以及接入外部 MCP 服务的配置顺序。","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"能力","group":"接入与集成","group_path":["接入与集成"],"url":"/docs/zh-CN/capabilities/mcp-endpoint/","headings":[{"id":"section-1","level":1,"text":"MCP 入口"},{"id":"section-2","level":2,"text":"对外暴露"},{"id":"section-3","level":2,"text":"接入外部服务"},{"id":"section-4","level":2,"text":"排错顺序"}],"prev_slug":"zh-CN/capabilities/chat-ws","next_slug":"zh-CN/capabilities/weixin-channel","markdown":"# MCP 入口\n\nwunder 既能把自己暴露成 MCP 服务，也能作为 MCP 客户端接入外部服务。两个方向的入口和配置互不相同；工具层面的注册、打包与路由规则在[MCP](/docs/zh-CN/tools/mcp/)。\n\n## 对外暴露\n\n对外入口是一个地址，走 Streamable HTTP。\n\n1. 外部系统按 MCP 协议连上地址；\n2. wunder 自动完成协议版本协商，与旧服务互通时按双方都支持的范围协商；\n3. 调用具体工具。\n\n内置两个工具：`excute`（执行一个智能体任务并返回最终回复，名字就是这个拼写）和 `doc2md`（解析文档返回 Markdown）。端点跑任务时会现算工具集并移除自己，避免端点驱动的智能体回调端点本身。\n\n## 接入外部服务\n\n1. 在配置里声明服务名、地址与传输方式（只支持 Streamable HTTP）；\n2. 打开开关，在管理端确认能拉到工具清单；\n3. 把工具放行给需要的智能体。\n\n外部服务通常承载数据库查询、导出、知识库检索这类能力。工具名会注册成 `服务器名@工具名`，也可能被标成打包模式折成一个工具，细节见[MCP](/docs/zh-CN/tools/mcp/)。\n\n## 排错顺序\n\n拉不到工具清单，先看地址与传输方式，再看服务是否开启、放行名单是否拦截；能拉到但模型调不到，看能力选择与模型可用性过滤是否把这批工具挡在外面。\n","source_path":"使用说明书/zh-CN/capabilities/mcp-endpoint.md"}</script>
 </body>
 </html>

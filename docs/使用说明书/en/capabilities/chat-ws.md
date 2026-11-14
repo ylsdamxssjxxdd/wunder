@@ -1,80 +1,56 @@
 ---
 title: Chat WebSocket
-summary: The handshake flow, client message types, server returns, and reconnect behavior of `/wunder/chat/ws`.
-updated_at: 2026-10-16
+summary: The `/wunder/chat/ws` handshake, client message kinds, server replies, and how to reconnect.
+updated_at: 2026-11-14
 ---
 
-`/wunder/chat/ws` is both the event-push channel and the control channel for a session: starting an execution, resuming after a disconnect, watching, canceling, and returning approvals all happen on the same connection. Chat and desktop real-time sessions both use it, and there is no SSE fallback.
+# Chat WebSocket
 
-## Use Cases
+`/wunder/chat/ws` is both the event stream and the control channel: starting a run, resuming after a drop, watching, cancelling and returning approvals all happen on one connection. Chat and the desktop live session share it.
 
-- Chat workbenches and desktop sessions;
-- Starting, resuming, watching, and canceling an execution on the same connection;
-- Long-lived connection keepalive and consistent real-time state.
+## Handshake
 
-## Handshake Flow
-
-1. Create a session and take its ID.
-2. Open the WebSocket connection.
-3. Send the `connect` handshake.
+1. Create a session and keep its id.
+2. Open the WebSocket.
+3. Send `connect` to shake hands.
 4. Receive `ready`.
-5. Send `start` to begin an execution.
-6. Keep consuming `event` until this round's terminal state, `turn_terminal`.
-
-Handshake example:
+5. Send `start` to begin a run.
+6. Consume `event` until the turn's terminal signal.
 
 ```json
 {
   "kind": "connect",
   "request_id": "req_connect_01",
-  "payload": {
-    "protocol_version": "1.0",
-    "client_name": "my-chat-ui"
-  }
+  "payload": { "protocol_version": "1.0", "client_name": "my-chat-ui" }
 }
 ```
-
-Starting an execution:
 
 ```json
 {
   "kind": "start",
   "request_id": "req_start_01",
   "session_id": "sess_xxx",
-  "payload": {
-    "content": "Continue helping me organize that weekly report from earlier",
-    "stream": true
-  }
+  "payload": { "content": "Continue with the weekly report", "stream": true }
 }
 ```
 
-## Message Types
+## Message kinds
 
-Client to server:
-
-| kind | Effect |
+| kind | Purpose |
 | --- | --- |
 | `connect` | Handshake and protocol negotiation |
-| `start` | Begin an execution |
-| `resume` | Catch up on events missed after a disconnect |
-| `watch` | Observe a session without driving it |
-| `cancel` | Cancel the current execution |
+| `start` | Begin one run |
+| `resume` | Replay events missed during a drop |
+| `watch` | Observe a session only |
+| `cancel` | Cancel the current run |
 | `approval` | Return an approval decision |
 | `ping` | Keepalive |
 
-The server mainly returns `ready`, `event`, `error`, and `pong`.
+The server replies with `ready`, `event`, `error`, `pong`. `turn_terminal` is the terminal signal of a single turn and works well as the client's settling condition.
 
-## Settings and Limits
+## Conventions
 
-- Event categories to consume: queued, approval resolved, error, and end of turn. `turn_terminal` is the terminal signal for a single execution round and works as the frontend's convergence condition.
-- `start` must explicitly carry the session ID.
-- The body text uses `content`, not `/wunder`'s `question`.
-- `resume` (catching up on events) and `watch` (observing the runtime state) are two different actions.
-- Approvals on this connection only handle approval items that come from the WebSocket.
-
-## Disconnect and Reconnect
-
-Do not fall back to SSE. Reconnect to `/wunder/chat/ws`, then send as the situation requires:
-
-- `resume`: carry the position of the last handled event to fill in the events missed during the disconnect.
-- `watch`: observe the current session's runtime state again.
+- `start` must carry the session id; the body field is `content`, not the HTTP endpoint's `question`.
+- `resume` (replay) and `watch` (observe) are different actions; one does not replace the other.
+- Only approvals delivered over this connection are handled on it.
+- After a drop, reconnect to the same URL and send `resume` or `watch`. The desktop reconnects automatically.

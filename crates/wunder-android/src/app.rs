@@ -30,6 +30,8 @@ pub fn build() -> MobileWindow {
     let shared = handle.shared.clone();
     let commands = handle.command_sender();
     wire_callbacks(&ui, &commands, &shared);
+    // 内嵌使用手册：目录与正文都由 CPU 侧投影，跟引擎无关，窗口一建好就绑上。
+    crate::help::attach(&ui);
     start_tick(&ui, &shared, &model, commands);
     ui
 }
@@ -436,6 +438,7 @@ pub fn build_preview() -> MobileWindow {
         let mut renderer = MarkdownRenderer::new();
         model_for_send.push(row.to_row(&mut renderer));
     });
+    crate::help::attach(&ui);
     ui
 }
 
@@ -647,6 +650,7 @@ fn wire_callbacks(
             if i18n.get_zh() != zh {
                 i18n.set_zh(zh);
             }
+            crate::help::set_language(&ui, zh);
         }
     });
     let sender = commands.clone();
@@ -3554,6 +3558,13 @@ fn handle_back(
             ui.invoke_close_cron_runs();
         } else if ui.get_settings_page() == 10 && ui.get_settings_memory_editor_open() {
             ui.invoke_close_memory_editor();
+        } else if ui.get_settings_page() == 16 {
+            // 使用手册：读一篇时先回目录，目录再回「帮助与关于」。
+            if ui.get_settings_help_topic_open() {
+                ui.invoke_settings_help_back();
+            } else {
+                ui.set_settings_page(6);
+            }
         } else if ui.get_settings_page() == 8 {
             // The on-screen back button flushes the agent form; hardware Back
             // bypasses Slint and must land the same pending text.
@@ -4466,6 +4477,26 @@ pub fn open_preview_page(ui: &MobileWindow, page: &str) {
             ui.set_settings_open(true);
             ui.set_update_channel("cloud".into());
             ui.set_update_source("云端更新源".into());
+        }
+        // 使用手册：`help` 只展开形态分区，`help-topic` 直接翻开第一篇
+        // （含五个形态的表格，用来核对宽表在手机上的横向平移）。
+        "help" => {
+            ui.set_settings_page(16);
+            ui.set_settings_open(true);
+            ui.invoke_settings_help_toggle(0);
+        }
+        "help-topic" => {
+            ui.set_settings_page(16);
+            ui.set_settings_open(true);
+            ui.invoke_settings_help_toggle(0);
+            ui.invoke_settings_help_open(0);
+        }
+        // `help-table` 翻开一篇以宽表开头的主题，用来核对触屏上的横向平移。
+        "help-table" => {
+            ui.set_settings_page(16);
+            ui.set_settings_open(true);
+            ui.invoke_settings_help_toggle(1);
+            ui.invoke_settings_help_open(29);
         }
         "env-setup" => {
             ui.set_settings_ubuntu_state("installing".into());

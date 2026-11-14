@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>云端版运行环境 | 使用说明书</title>
+  <meta name="description" content="云端版依赖哪些服务与容器、各端口分配、数据库与资源下限，以及客户端浏览器要求。">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/forms/cloud-runtime","language":"zh-CN","title":"云端版运行环境","summary":"云端版依赖哪些服务与容器、各端口分配、数据库与资源下限，以及客户端浏览器要求。","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"形态","group":"云端版","group_path":["云端版"],"url":"/docs/zh-CN/forms/cloud-runtime/","headings":[{"id":"section-1","level":1,"text":"云端版运行环境"},{"id":"section-2","level":2,"text":"组成"},{"id":"section-3","level":2,"text":"资源下限"},{"id":"section-4","level":2,"text":"数据库"},{"id":"section-5","level":2,"text":"客户端要求"},{"id":"section-6","level":2,"text":"与另外两个形态的关系"}],"prev_slug":"zh-CN/forms/cloud-deploy","next_slug":"zh-CN/forms/cloud-usage","markdown":"# 云端版运行环境\n\n云端版是浏览器里的工作台，本身不是一个独立进程：页面由单独的网页服务容器只读下发，数据、模型与工具执行都在服务端。因此它的运行环境就是「一套服务端部署」。\n\n## 组成\n\n| 服务 | 默认端口 | 作用 |\n| --- | --- | --- |\n| 服务端 | 18000 | 智能体调度、工具执行、接口（`/wunder/*`）与 API |\n| 云端版页面 | 18001 | 静态页面，由独立网页容器提供 |\n| 沙箱 | 9001 | 执行命令、跑代码的隔离环境 |\n| PostgreSQL | 5432 | 业务数据；单机可改用 SQLite |\n| OnlyOffice | 18080 | 在线文档编辑 |\n| drawio | 18081 | 在线绘图 |\n| extra-mcp | 18004 | 额外的 MCP 服务入口 |\n\n端口都可用环境变量覆盖：服务端 `WUNDER_HOST` / `WUNDER_PORT`，云端版页面 `NGINX_PORT`。\n\n## 资源下限\n\n- 至少 4 GB 可用内存：服务端、数据库与文档服务同时跑，留出的余量决定并发时是否排队。\n- 磁盘按会话与工作区规模估算；附件、截图和文档缓存都在服务端侧。\n- 时区默认 `Asia/Shanghai`，部署时按实际改。\n\n## 数据库\n\n默认 PostgreSQL，随 compose 一起启动；单机小规模部署可以切到 SQLite，省掉一个容器，代价是并发写入与备份方式跟着变。\n\n## 客户端要求\n\n- 浏览器：Chrome、Edge、Firefox、Safari 的近年版本即可，页面是 Vue 3 + TypeScript 构建的常规 SPA。\n- 不需要装插件或客户端程序，也不需要本机跑 Python、浏览器内核之类的组件——这些都在服务端与沙箱里。\n- 设备互通、语音与截图采集这类能力依赖浏览器提供的接口，能力边界见[云端版使用](/docs/zh-CN/forms/cloud-usage/)。\n\n## 与另外两个形态的关系\n\n- 管理端与服务端同端口，见[管理端运行环境](/docs/zh-CN/forms/admin-runtime/)。\n- 沙箱里的命令与文件能力复用引擎，工具语义与桌面版一致；区别是执行发生在服务端容器内，不碰用户本机。\n","source_path":"使用说明书/zh-CN/forms/cloud-runtime.md"}</script>
+</body>
+</html>

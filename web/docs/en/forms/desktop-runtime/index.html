@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Desktop Runtime | 使用说明书</title>
+  <meta name="description" content="What the desktop needs to run: an in-process engine, the opt components under the install root with their versions, system dependencies, storage and ports.">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/forms/desktop-runtime","language":"en","title":"Desktop Runtime","summary":"What the desktop needs to run: an in-process engine, the opt components under the install root with their versions, system dependencies, storage and ports.","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"Forms","group":"Desktop","group_path":["Desktop"],"url":"/docs/en/forms/desktop-runtime/","headings":[{"id":"section-1","level":1,"text":"Desktop Runtime"},{"id":"section-2","level":2,"text":"What it is made of"},{"id":"section-3","level":2,"text":"Bundled components"},{"id":"section-4","level":2,"text":"System dependencies"},{"id":"section-5","level":2,"text":"Database, ports and network"},{"id":"section-6","level":2,"text":"Checking it after install"}],"prev_slug":"en/forms/desktop-deploy","next_slug":"en/forms/desktop-usage","markdown":"# Desktop Runtime\n\nDesktop puts the engine in the same process: UI, agent scheduling and tool execution all run locally, with no local HTTP/WebSocket hop and no separate service. So its runtime is two things — the program itself and the bundled components under the install root.\n\n## What it is made of\n\n| Part | Location | Role |\n| --- | --- | --- |\n| Program | `<install root>/app/desktop` | Slint UI plus engine, with its own runtime libraries |\n| Launcher | `<install root>/bin/wunder-desktop` | Exports `WUNDER_HOME` and starts the program |\n| Bundled components | `<install root>/opt/` | Python, Git, ripgrep, FFmpeg, 7-Zip, browser, fonts |\n| Local state | `<install root>/cli/WUNDER_TEMP/` | Sessions, tool logs and SQLite |\n\n## Bundled components\n\nDesktop and CLI share one `opt/`, so installing Desktop also provides the CLI runtime.\n\n| Component | Version | Used for |\n| --- | --- | --- |\n| `opt/python` | 3.8.10 (Windows); 3.8.18 (Linux) | Agent-written scripts and Python tools |\n| `opt/git` | MinGit 2.46.2 (Windows) / 2.46.2 built from source (Linux) | Clone, patches, repository work |\n| `opt/rg` | 14.1.0 (Windows); 14.1.1 (Linux) | Content search and terminal search |\n| `opt/ffmpeg` | static 4.4.1 | Frame and audio extraction, transcoding (no `ffprobe`) |\n| `opt/7zip` | 25.01 | Archive packing and unpacking |\n| `opt/browser` | bundled Chrome 109 (win32) on Windows; Chrome for Testing 122 (amd64) or Chromium 120 (arm64) on Linux | Offline engine for the browser tool |\n| `opt/fonts` | Office fonts plus short-video fonts | Document layout, drawing, video rendering |\n| `opt/powershell` | PowerShell 7 (Windows only) | Command execution |\n\nComponents follow the supplement, not the app version. Moving machines means copying the whole install root; `opt/` travels with it.\n\n## System dependencies\n\n- Windows 7 x86 and up; Linux with ubuntu 18.04 as the baseline (glibc 2.27). Older glibc will not do; newer distributions are fine.\n- The UI and its libraries ship inside `app/desktop`; the system needs no GTK, Python or browser of its own.\n- Installing the `.run` needs `xz` (present by default on ubuntu 18.04 and later; minimal images need `xz-utils`). Running afterwards does not.\n\n## Database, ports and network\n\n- State lives in local SQLite; there is no external database and no database service to back up.\n- Nothing listens on any port by default, and there is no externally reachable admin address. Cross-machine features go through the interlink tunnel or a cloud workspace.\n- Calling a model, fetching a page or reaching a drive is a one-off outbound request, not a resident port.\n\n## Checking it after install\n\n1. Settings opens the tool manager, which means the component directory was found.\n2. Ask for `python -V` or `git --version` in a chat; matching the table above means the path is wired.\n3. If it will not run, check which install root the process used — a non-empty `WUNDER_HOME` wins over the install-root marker.\n\n`wunder-cli doctor` does a deeper check; see [CLI Runtime](/docs/en/forms/cli-runtime/).\n","source_path":"使用说明书/en/forms/desktop-runtime.md"}</script>
+</body>
+</html>

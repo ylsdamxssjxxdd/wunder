@@ -307,12 +307,58 @@ const resolveHeadingPayload = (value, level, parser) => {
   };
 };
 
+const CHROME_TEXT = {
+  "zh-CN": {
+    tocTitle: "在此页面",
+    tocEmpty: "当前页没有目录",
+    prev: "上一篇",
+    next: "下一篇",
+    searchPlaceholder: "搜索...",
+    searchEmpty: "没有找到匹配页面",
+    themeToLight: "切换到浅色模式",
+    themeToDark: "切换到深色模式",
+  },
+  en: {
+    tocTitle: "On this page",
+    tocEmpty: "No sections on this page",
+    prev: "Previous",
+    next: "Next",
+    searchPlaceholder: "Search...",
+    searchEmpty: "No matching pages",
+    themeToLight: "Switch to light mode",
+    themeToDark: "Switch to dark mode",
+  },
+};
+
+const chromeText = () => {
+  const language = state.pageData?.language;
+  return CHROME_TEXT[language] || CHROME_TEXT["zh-CN"];
+};
+
+const t = (key) => {
+  const texts = chromeText();
+  return texts[key] ?? CHROME_TEXT["zh-CN"][key] ?? "";
+};
+
+const applyChromeText = () => {
+  const texts = chromeText();
+  if (elements.searchInput) {
+    elements.searchInput.placeholder = texts.searchPlaceholder;
+    elements.searchInput.setAttribute("aria-label", texts.searchPlaceholder);
+  }
+  const tocTitle = document.querySelector(".docs-toc-title");
+  if (tocTitle) {
+    tocTitle.textContent = texts.tocTitle;
+  }
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+};
+
 const applyTheme = (theme) => {
   const nextTheme = theme === "dark" ? "dark" : "light";
   document.documentElement.dataset.theme = nextTheme;
   if (elements.themeToggle) {
     elements.themeToggle.innerHTML = nextTheme === "dark" ? THEME_ICONS.dark : THEME_ICONS.light;
-    const label = nextTheme === "dark" ? "切换到浅色模式" : "切换到深色模式";
+    const label = nextTheme === "dark" ? t("themeToLight") : t("themeToDark");
     elements.themeToggle.setAttribute("aria-label", label);
     elements.themeToggle.setAttribute("title", label);
     elements.themeToggle.setAttribute("aria-pressed", String(nextTheme === "dark"));
@@ -382,7 +428,7 @@ const renderSidebar = () => {
           const isActive = page.slug === state.pageData.slug;
           const className = isActive ? "docs-sidebar-link is-active" : "docs-sidebar-link";
           const href = decorateDocsHref(page.url);
-          return `<a class="${className}" href="${escapeHtml(href)}"${isActive ? ' aria-current="page"' : ""}>${escapeHtml(page.title)}</a>`;
+          return `<a class="${className}" href="${escapeHtml(href)}"${isActive ? ' aria-current="page"' : ""}>${escapeHtml(page.nav_title || page.title)}</a>`;
         })
         .join("");
       return `
@@ -441,9 +487,7 @@ const renderPageHeader = () => {
     return;
   }
   elements.pageHeader.innerHTML = `
-    <div class="docs-page-kicker">${escapeHtml(state.pageData.tab)}</div>
     <h1>${escapeHtml(state.pageData.title)}</h1>
-    ${state.pageData.updated_at ? `<div class="docs-page-updated">最后更新：${escapeHtml(state.pageData.updated_at)}</div>` : ""}
     ${state.pageData.summary ? `<p class="docs-page-summary">${escapeHtml(state.pageData.summary)}</p>` : ""}
   `;
 };
@@ -520,7 +564,7 @@ const renderToc = () => {
   }
   const headings = (state.pageData.headings || []).filter((item) => Number(item.level) <= 3);
   if (!headings.length) {
-    elements.toc.innerHTML = '<div class="docs-toc-empty">当前页没有目录</div>';
+    elements.toc.innerHTML = `<div class="docs-toc-empty">${escapeHtml(t("tocEmpty"))}</div>`;
     return;
   }
   elements.toc.innerHTML = headings
@@ -652,7 +696,7 @@ const renderPageFooter = () => {
     const previousHref = decorateDocsHref(previousPage.url);
     cards.push(`
       <a class="docs-pagination-card is-prev" href="${escapeHtml(previousHref)}">
-        <span class="docs-pagination-label">上一篇</span>
+        <span class="docs-pagination-label">${escapeHtml(t("prev"))}</span>
         <strong>${escapeHtml(previousPage.title)}</strong>
       </a>
     `);
@@ -661,7 +705,7 @@ const renderPageFooter = () => {
     const nextHref = decorateDocsHref(nextPage.url);
     cards.push(`
       <a class="docs-pagination-card is-next" href="${escapeHtml(nextHref)}">
-        <span class="docs-pagination-label">下一篇</span>
+        <span class="docs-pagination-label">${escapeHtml(t("next"))}</span>
         <strong>${escapeHtml(nextPage.title)}</strong>
       </a>
     `);
@@ -673,6 +717,7 @@ const renderPage = async () => {
   renderTabs();
   renderSidebar();
   renderLanguageSwitcher();
+  applyChromeText();
   renderPageHeader();
   await renderContent();
   renderToc();
@@ -815,7 +860,7 @@ const renderSearchResults = async (keyword) => {
     .slice(0, 8);
   if (!results.length) {
     elements.searchResults.hidden = false;
-    elements.searchResults.innerHTML = '<div class="docs-search-empty">没有找到匹配页面</div>';
+    elements.searchResults.innerHTML = `<div class="docs-search-empty">${escapeHtml(t("searchEmpty"))}</div>`;
     return;
   }
   elements.searchResults.hidden = false;

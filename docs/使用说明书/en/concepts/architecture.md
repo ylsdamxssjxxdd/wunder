@@ -6,6 +6,11 @@ updated_at: 2026-11-08
 
 All forms — Desktop, Android, Cloud, CLI, and Server — share the same core and engine, differing only at the access layer. Real execution happens inside sessions, and the interface reads a bounded display view that is paginated and carries a byte budget.
 
+<figure class="docs-preview-hero">
+  <img src="/docs/images/wunder-architecture.png" alt="wunder layers: local forms and cloud forms share one engine, which depends on the core">
+  <figcaption><strong>Layers</strong>: the three local forms call the shared engine in-process; Cloud and Admin reuse the same engine through the server. The engine depends on the core, while storage and runtime ship with each form.</figcaption>
+</figure>
+
 ## Forms and Delivery
 
 | Form | How it is delivered | Interface |

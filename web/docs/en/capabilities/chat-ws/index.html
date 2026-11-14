@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Chat WebSocket | 使用说明书</title>
-  <meta name="description" content="The handshake flow, client message types, server returns, and reconnect behavior of `/wunder/chat/ws`.">
-  <link rel="stylesheet" href="/docs/site.css?v=1ced23dfa9d8">
+  <meta name="description" content="The `/wunder/chat/ws` handshake, client message kinds, server replies, and how to reconnect.">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
 
-  <script type="module" src="/docs/site.js?v=1ced23dfa9d8"></script>
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
 </head>
 <body>
   <div class="docs-app">
@@ -20,7 +20,8 @@
           </a>
           <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
-        <div class="docs-topbar-center">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
           <label class="docs-search">
             <span class="docs-search-icon" aria-hidden="true">
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -32,13 +33,8 @@
             <span class="docs-search-shortcut">Ctrl K</span>
             <div class="docs-search-results" id="docs-search-results" hidden></div>
           </label>
-        </div>
-        <div class="docs-topbar-end">
           <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
         </div>
-      </div>
-      <div class="docs-nav-row">
-        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
       </div>
     </header>
     <div class="docs-layout">
@@ -56,6 +52,6 @@
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"en/capabilities/chat-ws","language":"en","title":"Chat WebSocket","summary":"The handshake flow, client message types, server returns, and reconnect behavior of `/wunder/chat/ws`.","updated_at":"2026-10-16","read_when":[],"source_docs":[],"tab":"Capabilities","group":"Deep Dives","group_path":["Deep Dives"],"url":"/docs/en/capabilities/chat-ws/","headings":[{"id":"section-1","level":2,"text":"Use Cases"},{"id":"section-2","level":2,"text":"Handshake Flow"},{"id":"section-3","level":2,"text":"Message Types"},{"id":"section-4","level":2,"text":"Settings and Limits"},{"id":"section-5","level":2,"text":"Disconnect and Reconnect"}],"prev_slug":"en/capabilities/weixin-channel","next_slug":"en/capabilities/mcp-endpoint","markdown":"`/wunder/chat/ws` is both the event-push channel and the control channel for a session: starting an execution, resuming after a disconnect, watching, canceling, and returning approvals all happen on the same connection. Chat and desktop real-time sessions both use it, and there is no SSE fallback.\n\n## Use Cases\n\n- Chat workbenches and desktop sessions;\n- Starting, resuming, watching, and canceling an execution on the same connection;\n- Long-lived connection keepalive and consistent real-time state.\n\n## Handshake Flow\n\n1. Create a session and take its ID.\n2. Open the WebSocket connection.\n3. Send the `connect` handshake.\n4. Receive `ready`.\n5. Send `start` to begin an execution.\n6. Keep consuming `event` until this round's terminal state, `turn_terminal`.\n\nHandshake example:\n\n```json\n{\n  \"kind\": \"connect\",\n  \"request_id\": \"req_connect_01\",\n  \"payload\": {\n    \"protocol_version\": \"1.0\",\n    \"client_name\": \"my-chat-ui\"\n  }\n}\n```\n\nStarting an execution:\n\n```json\n{\n  \"kind\": \"start\",\n  \"request_id\": \"req_start_01\",\n  \"session_id\": \"sess_xxx\",\n  \"payload\": {\n    \"content\": \"Continue helping me organize that weekly report from earlier\",\n    \"stream\": true\n  }\n}\n```\n\n## Message Types\n\nClient to server:\n\n| kind | Effect |\n| --- | --- |\n| `connect` | Handshake and protocol negotiation |\n| `start` | Begin an execution |\n| `resume` | Catch up on events missed after a disconnect |\n| `watch` | Observe a session without driving it |\n| `cancel` | Cancel the current execution |\n| `approval` | Return an approval decision |\n| `ping` | Keepalive |\n\nThe server mainly returns `ready`, `event`, `error`, and `pong`.\n\n## Settings and Limits\n\n- Event categories to consume: queued, approval resolved, error, and end of turn. `turn_terminal` is the terminal signal for a single execution round and works as the frontend's convergence condition.\n- `start` must explicitly carry the session ID.\n- The body text uses `content`, not `/wunder`'s `question`.\n- `resume` (catching up on events) and `watch` (observing the runtime state) are two different actions.\n- Approvals on this connection only handle approval items that come from the WebSocket.\n\n## Disconnect and Reconnect\n\nDo not fall back to SSE. Reconnect to `/wunder/chat/ws`, then send as the situation requires:\n\n- `resume`: carry the position of the last handled event to fill in the events missed during the disconnect.\n- `watch`: observe the current session's runtime state again.\n","source_path":"使用说明书/en/capabilities/chat-ws.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"en/capabilities/chat-ws","language":"en","title":"Chat WebSocket","summary":"The `/wunder/chat/ws` handshake, client message kinds, server replies, and how to reconnect.","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"Capabilities","group":"Integration","group_path":["Integration"],"url":"/docs/en/capabilities/chat-ws/","headings":[{"id":"section-1","level":1,"text":"Chat WebSocket"},{"id":"section-2","level":2,"text":"Handshake"},{"id":"section-3","level":2,"text":"Message kinds"},{"id":"section-4","level":2,"text":"Conventions"}],"prev_slug":"en/concepts/boundary-handling","next_slug":"en/capabilities/mcp-endpoint","markdown":"# Chat WebSocket\n\n`/wunder/chat/ws` is both the event stream and the control channel: starting a run, resuming after a drop, watching, cancelling and returning approvals all happen on one connection. Chat and the desktop live session share it.\n\n## Handshake\n\n1. Create a session and keep its id.\n2. Open the WebSocket.\n3. Send `connect` to shake hands.\n4. Receive `ready`.\n5. Send `start` to begin a run.\n6. Consume `event` until the turn's terminal signal.\n\n```json\n{\n  \"kind\": \"connect\",\n  \"request_id\": \"req_connect_01\",\n  \"payload\": { \"protocol_version\": \"1.0\", \"client_name\": \"my-chat-ui\" }\n}\n```\n\n```json\n{\n  \"kind\": \"start\",\n  \"request_id\": \"req_start_01\",\n  \"session_id\": \"sess_xxx\",\n  \"payload\": { \"content\": \"Continue with the weekly report\", \"stream\": true }\n}\n```\n\n## Message kinds\n\n| kind | Purpose |\n| --- | --- |\n| `connect` | Handshake and protocol negotiation |\n| `start` | Begin one run |\n| `resume` | Replay events missed during a drop |\n| `watch` | Observe a session only |\n| `cancel` | Cancel the current run |\n| `approval` | Return an approval decision |\n| `ping` | Keepalive |\n\nThe server replies with `ready`, `event`, `error`, `pong`. `turn_terminal` is the terminal signal of a single turn and works well as the client's settling condition.\n\n## Conventions\n\n- `start` must carry the session id; the body field is `content`, not the HTTP endpoint's `question`.\n- `resume` (replay) and `watch` (observe) are different actions; one does not replace the other.\n- Only approvals delivered over this connection are handled on it.\n- After a drop, reconnect to the same URL and send `resume` or `watch`. The desktop reconnects automatically.\n","source_path":"使用说明书/en/capabilities/chat-ws.md"}</script>
 </body>
 </html>

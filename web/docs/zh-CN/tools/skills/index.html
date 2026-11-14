@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>技能 | 使用说明书</title>
+  <meta name="description" content="技能是什么（目录 + SKILL.md + 入口脚本）、两种用法、技能名与「主人@技能名」的写法、挂载与能力选择，以及脚本执行的超时与权限边界。">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
+
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/skills","language":"zh-CN","title":"技能","summary":"技能是什么（目录 + SKILL.md + 入口脚本）、两种用法、技能名与「主人@技能名」的写法、挂载与能力选择，以及脚本执行的超时与权限边界。","updated_at":"2026-11-14","read_when":[],"source_docs":[],"tab":"工具","group":"扩展","group_path":["扩展"],"url":"/docs/zh-CN/tools/skills/","headings":[{"id":"section-1","level":1,"text":"技能"},{"id":"section-2","level":2,"text":"两种用法"},{"id":"section-3","level":2,"text":"命名与归属"},{"id":"section-4","level":2,"text":"入口脚本"},{"id":"section-5","level":2,"text":"挂载与选择"},{"id":"section-6","level":2,"text":"执行边界"}],"prev_slug":"zh-CN/tools/mcp","next_slug":"zh-CN/concepts/architecture","markdown":"# 技能\n\n技能是「知识 + 脚本」的打包单位：一个目录，`SKILL.md` 带 frontmatter（名字、描述），入口脚本按固定顺序探测。它既可以当工具调用，也可以只读正文当资料。\n\n## 两种用法\n\n| 用法 | 怎么走 | 适合 |\n| --- | --- | --- |\n| 当工具调用 | 技能名本身就是可调用的工具名，直接调用即可 | 已经知道该用哪个技能 |\n| 读正文 | 走 `技能调用`（别名 `skill_call`），返回名字、描述、路径、根目录与正文 | 先看流程再决定怎么调，或只要其中的知识与清单 |\n\n`技能调用` 会把正文里的技能根占位符替换成真实路径，模型拿到的路径可以直接用来读文件、跑脚本。它不执行入口脚本——执行是另一次调用的事。\n\n## 命名与归属\n\n- 裸技能名（`文稿校对`）：自己有的技能。\n- 别人共享的技能写成 `主人@技能名`。\n- 重名时不猜，直接报歧义并列出候选，由调用方指定。\n\n## 入口脚本\n\n顺序探测 `run.py` → `skill.py` → `main.py`，命中即用。技能包导入（含压缩档案与重名处理）由平台负责，不需要自己在脚本里解压。\n\n全局技能目录来自配置，脚本执行器路径可以覆盖。\n\n## 挂载与选择\n\n- 内置技能随包挂载，与自建技能区分标注；用户技能和 MCP、知识库一样按名字路由。\n- 「选了一个能力」只是把工具名或技能名放进该智能体的选择集，真正的执行仍由技能层完成。\n- 进入模型上下文前还要过模型可用性过滤，不同能力的门槛不一样。\n\n## 执行边界\n\n技能执行是**子进程跑脚本**，超时 60 秒；它继承平台的路径与权限边界，不要把特权操作写进技能脚本。跑不起来时先确认入口脚本存在且能非零退出的地方没有踩坑，再看 `技能调用` 能不能正常读到正文——读不到多半是目录或 frontmatter 有问题。\n\n与 MCP 的关系见[MCP](/docs/zh-CN/tools/mcp/)，名字路由的整体规则见[工具总览](/docs/zh-CN/tools/)。\n","source_path":"使用说明书/zh-CN/tools/skills.md"}</script>
+</body>
+</html>

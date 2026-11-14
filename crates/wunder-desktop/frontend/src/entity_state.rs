@@ -1,111 +1,6 @@
 //! Shared view projections for live data and the in-memory preview.
 use crate::{AgentCard, MainWindow, ModelCard};
 use slint::{ComponentHandle, Model};
-use std::cell::RefCell;
-
-/// The one unsaved new-model row. The catalogue keeps the row visible while
-/// the user inspects other models; the editor drafts travel with it and are
-/// restored when the row is selected again.
-pub(crate) struct ModelDraft {
-    /// Catalogue identity (the temporary "新模型" key), which stays stable
-    /// even while the user edits the config key field.
-    pub(crate) row_key: String,
-    /// Latest editor drafts, with `key` holding the user-typed config key.
-    pub(crate) card: ModelCard,
-}
-
-thread_local! {
-    static MODEL_DRAFT: RefCell<Option<ModelDraft>> = const { RefCell::new(None) };
-}
-
-pub(crate) fn model_draft_row_key() -> Option<String> {
-    MODEL_DRAFT.with(|slot| slot.borrow().as_ref().map(|draft| draft.row_key.clone()))
-}
-
-/// The catalogue key of the draft row the user is editing right now: the parked
-/// draft when one exists, otherwise the row selected while `model-creating` is
-/// set. `on_create_model` uses it to re-open the single unsaved model instead of
-/// stacking a second "新模型" row.
-pub(crate) fn active_model_draft_key(app: &MainWindow) -> Option<String> {
-    if let Some(key) = model_draft_row_key() {
-        return Some(key);
-    }
-    if !app.get_model_creating() {
-        return None;
-    }
-    usize::try_from(app.get_selected_model())
-        .ok()
-        .and_then(|index| app.get_models().row_data(index))
-        .map(|row| row.key.to_string())
-}
-
-pub(crate) fn clear_model_draft() {
-    MODEL_DRAFT.with(|slot| {
-        slot.borrow_mut().take();
-    });
-}
-
-/// Snapshot the editor drafts of the unsaved row: write the projection back
-/// into its catalogue entry so the list reflects the edits, and park the full
-/// draft until the row is selected again.
-pub(crate) fn stash_model_draft(app: &MainWindow) -> bool {
-    if !app.get_model_creating() {
-        return false;
-    }
-    let Some(index) = usize::try_from(app.get_selected_model()).ok() else {
-        return false;
-    };
-    let Some(row) = app.get_models().row_data(index) else {
-        return false;
-    };
-    let row_key = row.key.to_string();
-    let card = draft_model_card(app, &row_key);
-    let mut row_card = card.clone();
-    row_card.key = row_key.clone().into();
-    let mut rows: Vec<ModelCard> = app.get_models().iter().collect();
-    if index < rows.len() {
-        rows[index] = row_card;
-    }
-    crate::native_pages::model_catalogue().set(app, rows);
-    MODEL_DRAFT.with(|slot| {
-        *slot.borrow_mut() = Some(ModelDraft { row_key, card });
-    });
-    true
-}
-
-/// Re-apply a parked draft when its catalogue row is selected. The row keeps
-/// its temporary key as the selection identity; the typed config key returns
-/// to the key field.
-pub(crate) fn restore_model_draft(app: &MainWindow, row_index: i32, row_key: &str) -> bool {
-    let matches = MODEL_DRAFT.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .is_some_and(|draft| draft.row_key == row_key)
-    });
-    if !matches {
-        return false;
-    }
-    let card = MODEL_DRAFT.with(|slot| slot.borrow().as_ref().map(|draft| draft.card.clone()));
-    let Some(card) = card else {
-        return false;
-    };
-    apply_model_with_creation_state(app, card, true);
-    app.set_settings_model_key(row_key.into());
-    app.set_selected_model(row_index);
-    true
-}
-
-/// Re-insert the parked draft row after a catalogue rebuild, so a settings
-/// refresh cannot silently drop the unsaved model.
-pub(crate) fn model_draft_row() -> Option<ModelCard> {
-    MODEL_DRAFT.with(|slot| {
-        slot.borrow().as_ref().map(|draft| {
-            let mut row = draft.card.clone();
-            row.key = draft.row_key.clone().into();
-            row
-        })
-    })
-}
 
 /// The editor drafts projected onto a card. `fallback_key` keeps the list
 /// identity when the key field is blank.
@@ -217,19 +112,6 @@ pub fn bind_selection(app: &MainWindow) {
         {
             return;
         }
-        if app.get_model_creating() {
-            // Re-selecting the draft row keeps its live edits.
-            if index == app.get_selected_model() {
-                return;
-            }
-            // Park the unsaved row with its drafts instead of discarding it;
-            // selecting it again restores the configuration.
-            stash_model_draft(&app);
-            app.set_model_creating(false);
-        }
-        if restore_model_draft(&app, index, model.key.as_str()) {
-            return;
-        }
         app.set_selected_model(index);
         apply_model(&app, model);
     });
@@ -300,12 +182,6 @@ pub(crate) fn new_model_card(key: String) -> ModelCard {
     }
 }
 
-/// Project a freshly-created card without losing its creation state. Both
-/// production and demo creation paths use this after inserting the card.
-pub(crate) fn apply_new_model_draft(app: &MainWindow, model: ModelCard) {
-    apply_model_with_creation_state(app, model, true);
-}
-
 pub fn restore_model(app: &MainWindow, key: &str) {
     let index = app.get_models().iter().position(|model| model.key == key);
     if app.get_models().row_count() > 0 {
@@ -357,10 +233,6 @@ pub(crate) fn sync_tool_selection(app: &MainWindow) {
 }
 
 fn apply_model(app: &MainWindow, model: ModelCard) {
-    apply_model_with_creation_state(app, model, false);
-}
-
-fn apply_model_with_creation_state(app: &MainWindow, model: ModelCard, creating: bool) {
     let projecting = app.get_model_projecting();
     app.set_model_projecting(true);
     app.set_selected_model_card(model.clone());
@@ -373,7 +245,6 @@ fn apply_model_with_creation_state(app: &MainWindow, model: ModelCard, creating:
     // The settings page edits the selected model in place, so every selection
     // projects straight into the editor drafts (secrets stay empty: an empty
     // key field means "keep the stored secret" on save).
-    app.set_model_creating(creating);
     app.set_model_key_draft(model.key.clone());
     app.set_model_provider_draft(model.provider.clone());
     app.set_model_name_draft(model.model.clone());

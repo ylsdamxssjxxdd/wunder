@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Read Image | 使用说明书</title>
   <meta name="description" content="The `read_image` path and frame-sampling arguments, how static images, GIFs, and video enter context, and the returned fields.">
-  <link rel="stylesheet" href="/docs/site.css?v=1ced23dfa9d8">
+  <link rel="stylesheet" href="/docs/site.css?v=e1a09d3046f7">
 
-  <script type="module" src="/docs/site.js?v=1ced23dfa9d8"></script>
+  <script type="module" src="/docs/site.js?v=e1a09d3046f7"></script>
 </head>
 <body>
   <div class="docs-app">
@@ -20,7 +20,8 @@
           </a>
           <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
-        <div class="docs-topbar-center">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-topbar-end">
           <label class="docs-search">
             <span class="docs-search-icon" aria-hidden="true">
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -32,13 +33,8 @@
             <span class="docs-search-shortcut">Ctrl K</span>
             <div class="docs-search-results" id="docs-search-results" hidden></div>
           </label>
-        </div>
-        <div class="docs-topbar-end">
           <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
         </div>
-      </div>
-      <div class="docs-nav-row">
-        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
       </div>
     </header>
     <div class="docs-layout">
@@ -56,6 +52,6 @@
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"en/tools/read-image","language":"en","title":"Read Image","summary":"The `read_image` path and frame-sampling arguments, how static images, GIFs, and video enter context, and the returned fields.","updated_at":"2026-10-16","read_when":[],"source_docs":[],"tab":"Tools","group":"Multimodal","group_path":["Multimodal"],"url":"/docs/en/tools/read-image/","headings":[{"id":"section-1","level":1,"text":"Read Image"},{"id":"section-2","level":2,"text":"Arguments"},{"id":"section-3","level":2,"text":"Handling by material type"},{"id":"section-4","level":2,"text":"Return value"},{"id":"section-5","level":2,"text":"Errors"}],"prev_slug":"en/tools/desktop-control","next_slug":"en/tools/multimodal-generation","markdown":"# Read Image\n\nRead Image sends local material into the current conversation by path: screenshots, photos, and design drafts, as well as animated GIFs and local video.\n\n## Arguments\n\nPass a file path:\n\n```json\n{\n  \"path\": \"screenshots/demo.png\"\n}\n```\n\nFor a GIF you can add a frame interval; for a video you can set how many frames to take per second:\n\n```json\n{\n  \"path\": \"captures/demo.gif\",\n  \"frame_step\": 2\n}\n```\n\n```json\n{\n  \"path\": \"captures/demo.mp4\",\n  \"frame_rate\": 1\n}\n```\n\n## Handling by material type\n\n- A static image enters the context as image input unchanged; the model only needs the path, and the intent to look comes from the current conversation.\n- A GIF is not handed to the model whole: by default only the first frame is taken, and if you give a frame interval it samples frames at that interval.\n- A video is organized into a series of image frames; if the video has an audio track, the transcript is attached as well.\n\n## Return value\n\nThe result states the material's type and size, but that only means the material is ready, not that the model has analyzed it: once it is ready, ask about it.\n\n## Errors\n\nLook at the result first: whether the path resolved to a real file, whether the material type is right, and whether the byte size is what you expect. A wrong path or an unsupported material type reports an error directly.\n","source_path":"使用说明书/en/tools/read-image.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/read-image","language":"en","title":"Read Image","summary":"The `read_image` path and frame-sampling arguments, how static images, GIFs, and video enter context, and the returned fields.","updated_at":"2026-10-16","read_when":[],"source_docs":[],"tab":"Tools","group":"Multimodal","group_path":["Multimodal"],"url":"/docs/en/tools/read-image/","headings":[{"id":"section-1","level":1,"text":"Read Image"},{"id":"section-2","level":2,"text":"Arguments"},{"id":"section-3","level":2,"text":"Handling by material type"},{"id":"section-4","level":2,"text":"Return value"},{"id":"section-5","level":2,"text":"Errors"}],"prev_slug":"en/tools/browser","next_slug":"en/tools/multimodal-generation","markdown":"# Read Image\n\nRead Image sends local material into the current conversation by path: screenshots, photos, and design drafts, as well as animated GIFs and local video.\n\n## Arguments\n\nPass a file path:\n\n```json\n{\n  \"path\": \"screenshots/demo.png\"\n}\n```\n\nFor a GIF you can add a frame interval; for a video you can set how many frames to take per second:\n\n```json\n{\n  \"path\": \"captures/demo.gif\",\n  \"frame_step\": 2\n}\n```\n\n```json\n{\n  \"path\": \"captures/demo.mp4\",\n  \"frame_rate\": 1\n}\n```\n\n## Handling by material type\n\n- A static image enters the context as image input unchanged; the model only needs the path, and the intent to look comes from the current conversation.\n- A GIF is not handed to the model whole: by default only the first frame is taken, and if you give a frame interval it samples frames at that interval.\n- A video is organized into a series of image frames; if the video has an audio track, the transcript is attached as well.\n\n## Return value\n\nThe result states the material's type and size, but that only means the material is ready, not that the model has analyzed it: once it is ready, ask about it.\n\n## Errors\n\nLook at the result first: whether the path resolved to a real file, whether the material type is right, and whether the byte size is what you expect. A wrong path or an unsupported material type reports an error directly.\n","source_path":"使用说明书/en/tools/read-image.md"}</script>
 </body>
 </html>

@@ -45,8 +45,7 @@ fn bind_model_probes(app: &MainWindow, api: Arc<NativeDesktop>) {
         let model = app.get_model_name_draft().trim().to_string();
         let base_url = app.get_model_base_url_draft().trim().to_string();
         let token = app.get_model_token_draft().trim().to_string();
-        let known_key = !app.get_model_creating()
-            && !key.is_empty()
+        let known_key = !key.is_empty()
             && app.get_models().iter().any(|entry| entry.key == key);
         let token_override = (!token.is_empty()).then(|| token.clone());
         let weak = app.as_weak();
@@ -61,7 +60,7 @@ fn bind_model_probes(app: &MainWindow, api: Arc<NativeDesktop>) {
             let _ = weak.upgrade_in_event_loop(move |app| match result {
                 Ok(outcome) => {
                     // 探测成功时把上下文长度直接写回编辑草稿，免得用户再手动抄写；
-                    // 对已存在的模型，写入草稿会触发 model-edited 自动保存，从而落库。
+                    // 探测不落库，用户点「保存」后生效。
                     if let Some(value) = outcome.max_context {
                         app.set_model_max_context_draft(value.to_string().into());
                     }
@@ -88,8 +87,7 @@ fn bind_model_probes(app: &MainWindow, api: Arc<NativeDesktop>) {
         let model = app.get_model_name_draft().trim().to_string();
         let base_url = app.get_model_base_url_draft().trim().to_string();
         let token = app.get_model_token_draft().trim().to_string();
-        let known_key = !app.get_model_creating()
-            && !key.is_empty()
+        let known_key = !key.is_empty()
             && app.get_models().iter().any(|entry| entry.key == key);
         let token_override = (!token.is_empty()).then(|| token.clone());
         let weak = app.as_weak();
@@ -724,48 +722,16 @@ fn bind_agents(app: &MainWindow, api: Arc<NativeDesktop>) {
 fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
     // 线程渲染压测：解析规模和个数后由 facade 顺序写入。每个完整线程提交后才会
     // 出现在当前工作区，进度更新留在工作线程之外以保持 Slint 流畅。
+    let create_api = api.clone();
     let weak = app.as_weak();
     app.on_create_model(move || {
         let Some(app) = weak.upgrade() else { return };
-        if crate::model_editor::defer_creation(&app) {
-            return;
-        }
         if app.get_saving() || app.get_settings_loading() {
             return;
         }
-        // Only one unsaved draft exists; "添加模型" while the draft is on screen
-        // (or parked behind another selection) re-opens it instead of stacking a
-        // second "新模型" row.
-        if let Some(row_key) = crate::entity_state::active_model_draft_key(&app) {
-            if let Some(index) = app
-                .get_models()
-                .iter()
-                .position(|entry| entry.key == row_key.as_str())
-            {
-                app.set_selected_model(index as i32);
-                if crate::entity_state::restore_model_draft(&app, index as i32, &row_key) {
-                    app.set_status("已回到未保存的模型草稿".into());
-                } else {
-                    // Already editing this row: keep the live drafts untouched.
-                    app.set_status("当前正在编辑未保存的模型草稿".into());
-                }
-                return;
-            }
-        }
-        let mut rows = app.get_models().iter().collect::<Vec<_>>();
-        let mut key = "新模型".to_string();
-        let mut suffix = 1usize;
-        while rows.iter().any(|entry| entry.key == key) {
-            key = format!("新模型{suffix}");
-            suffix += 1;
-        }
-        let entry = crate::entity_state::new_model_card(key);
-        rows.insert(0, entry.clone());
-        model_catalogue().set(&app, rows);
-        app.set_selected_model(0);
-        crate::entity_state::apply_new_model_draft(&app, entry);
-        // 新建草稿不自动保存：填完基础设置后由表单上的「保存」提交。
-        app.set_status("已创建模型草稿，填写基础设置后保存".into());
+        // 添加即落盘：生成一条完整配置并保存，成功后再选中它。新模型
+        // 从第一条起就是真实配置，能正常保存/删除，不存在前端草稿行。
+        crate::model_editor::create_model_now(&app, &create_api);
     });
     let weak = app.as_weak();
     app.on_setup_first_model(move || {
@@ -783,45 +749,9 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
         if app.get_settings_loading() {
             FIRST_MODEL_PENDING.with(|flag| flag.set(true));
         } else {
-            // The pull was deferred (unsaved editor draft) or blocked by a
-            // save; the create path parks/reopens the draft on its own.
+            // 首次引导就是一次「添加模型」：立即落库一条完整配置。若刷新
+            // 被未保存的改动拦下，这里只留下页面，用户保存后再点。
             app.invoke_create_model();
-        }
-    });
-    let weak = app.as_weak();
-    app.on_discard_model_draft(move || {
-        let Some(app) = weak.upgrade() else { return };
-        let stashed_key = crate::entity_state::model_draft_row_key();
-        if !app.get_model_creating() && stashed_key.is_none() {
-            return;
-        }
-        let selected_key = usize::try_from(app.get_selected_model())
-            .ok()
-            .and_then(|index| app.get_models().row_data(index))
-            .map(|row| row.key.to_string());
-        let row_key = if app.get_model_creating() {
-            selected_key.clone()
-        } else {
-            stashed_key.clone()
-        };
-        crate::entity_state::clear_model_draft();
-        let was_creating = app.get_model_creating();
-        // 先退出创建态再重建列表：`model_catalogue().set` 会把「正在创建的行」
-        // 重新插回来，顺序反了就会留下一个后端根本不存在的草稿行，之后删除它
-        // 只会得到「模型不存在」。
-        if was_creating {
-            app.set_model_creating(false);
-        }
-        if let Some(row_key) = row_key {
-            let rows = app
-                .get_models()
-                .iter()
-                .filter(|entry| entry.key != row_key.as_str())
-                .collect::<Vec<_>>();
-            model_catalogue().set(&app, rows);
-        }
-        if was_creating {
-            crate::entity_state::restore_model(&app, "");
         }
     });
     let weak = app.as_weak();
@@ -973,19 +903,6 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
     app.on_delete_model(move |key| {
         let Some(app) = weak.upgrade() else { return };
         let key = key.trim().to_string();
-        // 停放中的草稿行不是已落库的配置：删除它就是放弃这份草稿，
-        // 交给后端只会得到「模型不存在」的拒绝。
-        if crate::entity_state::model_draft_row_key().as_deref() == Some(key.as_str()) {
-            app.invoke_discard_model_draft();
-            app.set_status("已放弃未保存的模型草稿".into());
-            return;
-        }
-        if app.get_model_creating() {
-            // 创建态下这一行还没有落库，删除按钮本应走「放弃」；这里兜底，
-            // 不能把草稿交给后端删除。
-            app.invoke_discard_model_draft();
-            return;
-        }
         if crate::model_editor::defer_delete(&app, key.clone()) {
             return;
         }
@@ -1009,15 +926,7 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
                         app.invoke_refresh_agents();
                     }
                     Err(error) => {
-                        let text = error.to_string();
-                        if text.contains("模型不存在") {
-                            // 列表里残留的未保存草稿行：移除即可，不当成删除失败。
-                            drop_local_model_row(&app, &key);
-                            app.set_status("已放弃未保存的模型草稿".into());
-                            show_toast(&app, "已放弃未保存的模型草稿".into(), 1);
-                        } else {
-                            show_error(&app, format!("无法删除模型配置：{}", error));
-                        }
+                        show_error(&app, format!("无法删除模型配置：{}", error));
                     }
                 }
             });
@@ -1068,9 +977,6 @@ fn bind_settings(app: &MainWindow, api: Arc<NativeDesktop>) {
     let order_api = api.clone();
     app.on_move_model(move |from, delta| {
         let Some(app) = weak.upgrade() else { return };
-        if app.get_model_creating() {
-            return;
-        }
         let Ok(from) = usize::try_from(from) else {
             return;
         };
@@ -1219,8 +1125,7 @@ pub(crate) fn apply_settings(app: &MainWindow, settings: DesktopSettings) {
         settings.models.into_iter().map(to_model_card).collect(),
     );
     if !crate::model_editor::has_unsaved(app)
-        || (!app.get_model_creating()
-            && !app.get_models().iter().any(|model| model.key == selected))
+        || !app.get_models().iter().any(|model| model.key == selected)
     {
         crate::entity_state::restore_model(app, &selected);
     }
@@ -1358,31 +1263,18 @@ pub(crate) fn model_catalogue() -> Rc<ModelCatalogue> {
 }
 
 impl ModelCatalogue {
-    /// Replaces the catalogue and projects the composer's full view. The
-    /// unsaved new-model row is re-inserted so a settings refresh cannot
-    /// silently drop it; callers that mean to discard it clear the draft
-    /// before rebuilding.
+    /// Replaces the catalogue and projects the composer's full view. Every row
+    /// here is a stored config: there is no front-end-only draft to keep.
     pub(crate) fn set(&self, app: &MainWindow, models: Vec<crate::ModelCard>) {
-        let mut rows = models;
-        let active = app
-            .get_model_creating()
-            .then(|| app.get_selected_model_card());
-        if let Some(draft) = crate::entity_state::model_draft_row().or(active) {
-            if !rows.iter().any(|entry| entry.key == draft.key) {
-                rows.insert(0, draft);
-            }
-        }
-        let draft_key = crate::entity_state::active_model_draft_key(app);
+        let rows = models;
         let selectable = rows
             .iter()
             .filter(|model| {
-                // Only the type, the disabled flag and an unsaved draft keep a
-                // row out of the picker. A blank model name is still a usable
-                // chat entry — the seeded 虚拟模型 carries no name and the
-                // runtime resolves it from the provider.
-                model.model_type.eq_ignore_ascii_case("llm")
-                    && !model.disabled
-                    && draft_key.as_deref() != Some(model.key.as_str())
+                // Only the type and the disabled flag keep a row out of the
+                // picker. A blank model name is still a usable chat entry —
+                // the seeded 虚拟模型 carries no name and the runtime resolves
+                // it from the provider.
+                model.model_type.eq_ignore_ascii_case("llm") && !model.disabled
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -1418,28 +1310,6 @@ pub(crate) fn show_error(app: &MainWindow, error: String) {
     app.set_status(format!("错误：{}", error).into());
     // 状态栏在设置页打开时被遮住大半，错误必须走浮层才看得见。
     show_toast(app, error, 2);
-}
-
-/// 列表里残留的未保存草稿行不是已落库的配置：后端拒绝删除时直接移除本地行，
-/// 并顺带清掉它的草稿簿记，避免用户反复点删除却只看到「模型不存在」。
-pub(crate) fn drop_local_model_row(app: &MainWindow, key: &str) {
-    if crate::entity_state::model_draft_row_key().as_deref() == Some(key) {
-        crate::entity_state::clear_model_draft();
-    }
-    let was_creating = app.get_model_creating();
-    if was_creating {
-        // 先退出创建态，否则重建列表会把这行重新插回来。
-        app.set_model_creating(false);
-    }
-    let rows = app
-        .get_models()
-        .iter()
-        .filter(|model| model.key != key)
-        .collect::<Vec<_>>();
-    model_catalogue().set(app, rows);
-    if app.get_settings_model_key() == key || app.get_selected_model_key() == key {
-        crate::entity_state::restore_model(app, "");
-    }
 }
 
 /// Show short-lived feedback through the shell-owned toast layer. Unlike the
@@ -1494,7 +1364,7 @@ mod tests {
     }
 
     #[test]
-    fn composer_catalogue_includes_nondefault_llms_and_excludes_drafts_and_disabled_models() {
+    fn composer_catalogue_includes_nondefault_llms_and_excludes_disabled_models() {
         use slint::Model;
         let _ui = crate::test_support::lock();
         crate::register_bundled_font().expect("bundled font");
@@ -1513,10 +1383,9 @@ mod tests {
         let mut nameless = card("虚拟模型");
         nameless.model = "".into();
         let draft = card("draft-model");
-        app.set_model_creating(true);
-        app.set_selected_model_card(draft.clone());
+        app.set_selected_model_card(draft);
         app.set_selected_model(0);
-        app.set_models(super::model_from(vec![draft]));
+        app.set_models(super::model_from(vec![card("extra-model")]));
         super::model_catalogue().set(
             &app,
             vec![card("extra-model"), disabled, embedding, nameless],
@@ -1532,7 +1401,7 @@ mod tests {
             "a blank model name does not hide the entry"
         );
         assert_eq!(app.get_model_catalogue_count(), 2);
-        assert_eq!(app.get_models().row_count(), 5);
+        assert_eq!(app.get_models().row_count(), 4);
         assert!(!app.get_needs_model_setup());
         // Only the seeded virtual replay model: the first-run setup banner
         // turns on; any real chat entry turns it back off.
