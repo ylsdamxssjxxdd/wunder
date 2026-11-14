@@ -352,7 +352,17 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
 - `读取文件` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_files`（也可放入 `budget`）；结果在 `meta.read` 返回 `timeout_hit/output_budget_hit/budget_file_limit_hit`。当本次只返回了默认大窗口前缀、文件安全截断前缀，或读取结果在外层继续可细化续取时，数据体会显式补 `continuation_required/continuation_hint`，提示模型应先 `search_content` 定位标题或改读更窄的行范围，而不是反复整篇重读。
 - 基础工具失败结果统一补充 `error_meta`：`code/hint/retryable/retry_after_ms`，并保证同时落入 `data.error_meta`，便于前端、结果归一化和重试治理统一按错误码做自动恢复。
 - 外层工具超时不再只返回笼统字符串；`tool_result` 会补充 `data.failure_summary/error_detail_head/next_step_hint/timeout_s/timeout_ms` 与 `error_meta.code=TOOL_TIMEOUT`，前端工作流可直接显示失败原因与下一步建议。
-- 图像生成工具现在会尽量把上游显式失败转换为结构化工具失败：例如 `vllm-omni / Z-Image` 的尺寸不合法会返回 `error_meta.code=IMAGE_SIZE_ALIGNMENT_INVALID`、`retryable=false`、`data.suggested_size` 与 `data.next_step_hint`，而不是等到外层统一超时。
+- 图像生成工具（`generate_image` / `绘图生成`）的参数契约已显式化，不再靠试错推断：
+  - 尺寸：`size` 为 `宽x高`；硬约束是宽高都能被 16 整除（对齐型提供方如 vllm-omni）、短边不小于 32、长边不超过模型 `image_max_size`（未配置时按默认尺寸兜底，默认 1024x1024）。超上限按比例缩小，并通过 `data.warnings` 明确告知缩小前后的值；非法尺寸直接返回 `error_meta.code`（对齐类为 `IMAGE_SIZE_ALIGNMENT_INVALID`、其余参数问题为 `IMAGE_REQUEST_INVALID`）与 `data.suggested_size`。
+  - `output_format`：只接受 `png/jpeg/webp`，且必须与 `path` 后缀一致，冲突直接报错；留空时由后缀决定，默认 png。上游忽略该格式时按真实字节格式落盘，并在 `warnings` 里说明。
+  - 输入图：`input_paths`（数组，第一张为主图）是唯一规范参数，`input_path` 为兼容别名；两者同时给出直接报错，不再静默合并，也不再排序打乱主图。
+  - 蒙版：`mask_path` 白色=重绘区域、黑色=保留；必须与主图同尺寸（尺寸不符返回 `IMAGE_INPUT_INVALID`，消息里明确写“蒙版”）；全黑/全白会写入 `warnings`；必须配合 `input_paths`。
+  - `seed`：0 到 4294967295 的整数；留空时工具生成一个并回显（`seed` + `seed_source=auto`），便于复现。负数、小数、超大值返回可操作的中文错误，而不是裸 serde 报文。
+  - `strength`：0 到 1，仅编辑生效；越界报错，文生图传入会忽略并写 `warnings`。
+  - `overwrite`：默认 false，`path` 已存在时直接报错；目录、越出工作区、与输入图同名的输出路径一律拒绝。
+  - 成功回执新增 `seed/seed_source`、`size/size_source/requested_size`、`output_format/requested_output_format`、`limits`（默认尺寸、上限、对齐、短边下限）与 `warnings`（空数组表示没有任何隐式改写）；`workspace_relative_path` 永远是归一化的工作区相对路径。
+  - 失败统一为「谁错了 + 为什么 + 怎么改」，并如实标注 `retryable`：`TOOL_TIMEOUT`、`IMAGE_PROVIDER_BUSY`（429）、`IMAGE_PROVIDER_ERROR`（5xx/上游内部错误）为 true，参数与输入类错误为 false。
+  - 错误码集合：`IMAGE_REQUEST_INVALID`、`IMAGE_INPUT_INVALID`、`IMAGE_SIZE_ALIGNMENT_INVALID`、`IMAGE_MODEL_NOT_CONFIGURED`、`IMAGE_PROVIDER_RESPONSE_INVALID`、`IMAGE_PROVIDER_BUSY`、`IMAGE_PROVIDER_ERROR`、`IMAGE_GENERATION_FAILED`、`TOOL_TIMEOUT`、`IMAGE_WRITE_FAILED`。
 - 新增内置工具 `计划面板`（英文别名 `update_plan`），用于更新计划看板并触发 `plan_update` 事件。
 - 新增内置工具 `问询面板`（英文别名 `question_panel`/`ask_panel`），用于提供多条路线选择并触发 `question_panel` 事件。
 - 新增内置工具 `技能调用`（英文别名 `skill_call`/`skill_get`），传入技能名返回完整 SKILL.md 与技能目录结构。
@@ -1343,7 +1353,7 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力；配置页只需要连接字段。
   - 说明：`model_type=asr` 表示声转文模型，按 OpenAI 兼容 `/v1/audio/transcriptions` 发起 multipart 转写；额外支持默认 `asr_language/asr_prompt/asr_response_format/asr_temperature`，请求体同名字段可临时覆盖。
   - 说明：`model_type=tts` 表示文转声模型，聊天页语音播放会经 `/wunder/chat/tts` 转发到 OpenAI 兼容 `/v1/audio/speech`；额外支持默认 `tts_voice/tts_instructions/tts_response_format/tts_speed`，请求体同名字段可临时覆盖。
-  - 说明：`model_type=image` 表示图像生成模型，配置层预留 OpenAI 兼容 `/v1/images/generations` 能力；额外支持 `image_default_size`（默认输出尺寸，留空按 1024x1024）与 `image_max_size`（请求上限，宽或高超出时整张退回默认尺寸，留空按 1024x1024），以及 `image_output_format/image_negative_prompt/image_num_inference_steps/image_guidance_scale`。
+  - 说明：`model_type=image` 表示图像生成模型，配置层预留 OpenAI 兼容 `/v1/images/generations` 能力；额外支持 `image_default_size`（默认输出尺寸，留空按 1024x1024）与 `image_max_size`（请求上限，超出时按最大边等比缩小并写进工具回执的 warnings，留空按 1024x1024），以及 `image_output_format/image_negative_prompt/image_num_inference_steps/image_guidance_scale`。
   - 说明：带原生工具调用的请求默认仍走流式；工具参数会先归一化，再进入工具 schema/admission 校验。参数缺失或格式错误直接作为短工具错误回传模型，不切换非流式，也不触发 provider 重试；真实 provider/网络失败仍按 `llm_stream_retry` 恢复。
   - 说明：`history_compaction_ratio` 默认 `0.9`，达到 `max_context * ratio` 后会优先触发预压缩。
   - 说明：当前压缩策略已对齐 Codex，不再支持 `history_compaction_reset`。压缩后统一提交 `replacement_history`，其主体为首尾归一化交互窗口与一条 `[上下文摘要]` 消息，不再依赖前后锚点与 reset mode；运行中压缩还会为当前轮追加临时 `user` 续跑指令，但该指令不会写入 `replacement_history`。压缩摘要会输出 `resume_action=final|continue|retry|ask_user`，用于指导当前轮续跑。

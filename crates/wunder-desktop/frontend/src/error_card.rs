@@ -85,8 +85,16 @@ pub fn from_parts(code: &str, message: &str) -> Option<ErrorCard> {
         }
         "LLM_UNAVAILABLE"
             if has(&[
-                "http 5", "500", "502", "503", "504", "550", "bad gateway",
-                "gateway timeout", "internal server error", "服务端",
+                "http 5",
+                "500",
+                "502",
+                "503",
+                "504",
+                "550",
+                "bad gateway",
+                "gateway timeout",
+                "internal server error",
+                "服务端",
             ]) =>
         {
             ErrorCard::new(

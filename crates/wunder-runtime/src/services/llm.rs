@@ -211,6 +211,44 @@ fn disable_thinking_requested(config: &LlmModelConfig) -> bool {
     )
 }
 
+/// DeepSeek 思考模式把 `reasoning_content` 当成历史契约：请求里每条带
+/// `tool_calls` 的 assistant 消息都必须带上该字段，缺字段整条请求 400
+/// （`The reasoning_content in the thinking mode must be passed back to the
+/// API`），空字符串可以通过；请求显式 `reasoning_effort: "none"` 时服务端跳过
+/// 校验。空输出恢复轮正好会关思考、不产生推理文本，若再被历史重建丢掉空字段，
+/// 恢复轮之后第一个重新开思考的请求就会整条被拒。
+fn requires_reasoning_content_passthrough(config: &LlmModelConfig) -> bool {
+    if normalize_provider(config.provider.as_deref()) == "deepseek" {
+        return true;
+    }
+    // 中转与自建网关常把 provider 写成 openai_compatible，只能靠地址或模型名识别。
+    let deepseek_hosted = |value: Option<&str>| {
+        value
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .contains("deepseek")
+    };
+    deepseek_hosted(config.base_url.as_deref()) || deepseek_hosted(config.model.as_deref())
+}
+
+/// 只补空字段，不伪造内容：这类提供方要的是“字段在场”，空字符串即可通过。
+fn backfill_reasoning_content(messages: &mut [ChatMessage], config: &LlmModelConfig) {
+    if !requires_reasoning_content_passthrough(config) {
+        return;
+    }
+    for message in messages {
+        if message.role == "assistant"
+            && message
+                .tool_calls
+                .as_ref()
+                .is_some_and(|calls| !calls.is_null())
+            && message.reasoning_content.is_none()
+        {
+            message.reasoning_content = Some(String::new());
+        }
+    }
+}
+
 // Detect provider-side rejection of the requested reasoning effort. vLLM
 // answers 422 for values outside its protocol vocabulary and 400 for values
 // outside the model chat template vocabulary; both bodies name the effort.
@@ -1737,7 +1775,8 @@ impl LlmClient {
         include_usage: bool,
         tools: Option<&[Value]>,
     ) -> Value {
-        let messages = sanitize_chat_messages(messages);
+        let mut messages = sanitize_chat_messages(messages);
+        backfill_reasoning_content(&mut messages, &self.config);
         let openai_top_level_schema_guard =
             should_strip_openai_tool_schema(self.config.provider.as_deref());
         let temperature = round_f32(self.config.temperature.unwrap_or(0.7));
@@ -4827,6 +4866,66 @@ mod tests {
         )
         .build_request_payload(&messages, false);
         assert_eq!(openrouter["reasoning"]["max_tokens"], 2_048);
+    }
+
+    /// 空输出恢复轮会关思考、不产生推理文本；这类 assistant 消息回放时必须带上
+    /// 空的 `reasoning_content`，否则 DeepSeek 在思考模式下把整条请求 400
+    /// （`reasoning_content ... must be passed back`）。空字符串是服务端接受的
+    /// 最小占位，不伪造任何推理内容。
+    #[test]
+    fn deepseek_replay_backfills_empty_reasoning_content() {
+        let messages = vec![
+            ChatMessage {
+                role: "user".to_string(),
+                content: Value::String("go".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: Value::String(String::new()),
+                reasoning_content: None,
+                tool_calls: Some(json!([{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": { "name": "execute_command", "arguments": "{}" }
+                }])),
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: Value::String("answer".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+        ];
+        let deepseek = LlmModelConfig {
+            base_url: Some("https://api.deepseek.com".to_string()),
+            ..thinking_budget_config("openai_compatible", "chat_completions")
+        };
+        let payload =
+            LlmClient::new(Client::new(), deepseek).build_request_payload(&messages, false);
+        assert_eq!(payload["messages"][1]["reasoning_content"], json!(""));
+        // 没有 tool_calls 的 assistant 消息不补，请求体保持最小。
+        assert!(payload["messages"][2].get("reasoning_content").is_none());
+
+        // provider 直接写成 deepseek 时同样生效。
+        let payload = LlmClient::new(
+            Client::new(),
+            thinking_budget_config("deepseek", "chat_completions"),
+        )
+        .build_request_payload(&messages, false);
+        assert_eq!(payload["messages"][1]["reasoning_content"], json!(""));
+
+        // 其它提供方保持原样：严格校验未知字段的服务端不该收到该键。
+        let payload = LlmClient::new(
+            Client::new(),
+            thinking_budget_config("openai", "chat_completions"),
+        )
+        .build_request_payload(&messages, false);
+        assert!(payload["messages"][1].get("reasoning_content").is_none());
     }
 
     #[test]

@@ -1198,6 +1198,10 @@ impl Orchestrator {
                         }
                     }
                 };
+                // 本轮是否是“思考预算触顶→断流→关思考重发”。它会让重发请求的
+                // 提示词不再包含此前的思考内容，是上下文数字骤降的已知成因，
+                // 必须在 observe 消费 output 之前留下。
+                let transport_recovery_used = output.transport_recovery_used;
                 empty_output_guard.observe(output);
                 last_response = Some((content.clone(), reasoning.clone()));
                 turn_decode_speed.record_summary(&round_speed);
@@ -1228,9 +1232,20 @@ impl Orchestrator {
                         && !compaction_result.model_context_replaced
                     {
                         let delta = context_tokens_before_request.saturating_sub(tokens);
-                        let mut shrink_payload = json!({
-                            "stage": "context_shrink",
-                            "summary": i18n::t_with_params(
+                        // 只知道“少了”帮不上人：把本轮能判定的成因一起写进去。
+                        // 思考预算重发会让提示词丢掉此前的思考文本；内联图占位
+                        // 会让图片 token 不再计入；两者都不成立时才是服务端口径。
+                        let inline_images_omitted =
+                            super::execute_support::messages_omitted_inline_images(&messages);
+                        let likely_cause = super::execute_support::classify_context_shrink_cause(
+                            transport_recovery_used,
+                            inline_images_omitted,
+                        );
+                        let local_estimate_tokens =
+                            crate::token_utils::estimate_messages_tokens(&messages);
+                        let summary = format!(
+                            "{} {}",
+                            i18n::t_with_params(
                                 "context_shrink.summary",
                                 &std::collections::HashMap::from([
                                     ("before".to_string(), context_tokens_before_request.to_string()),
@@ -1238,9 +1253,18 @@ impl Orchestrator {
                                     ("delta".to_string(), delta.to_string()),
                                 ]),
                             ),
+                            i18n::t(&format!("context_shrink.cause.{likely_cause}")),
+                        );
+                        let mut shrink_payload = json!({
+                            "stage": "context_shrink",
+                            "summary": summary,
+                            "likely_cause": likely_cause,
                             "context_tokens_before": context_tokens_before_request,
                             "context_tokens_after": tokens,
                             "delta_tokens": delta,
+                            "local_estimate_tokens": local_estimate_tokens,
+                            "transport_recovery_used": transport_recovery_used,
+                            "inline_images_omitted": inline_images_omitted,
                             "context_usage_source": "provider_observed",
                         });
                         round_info.insert_into(shrink_payload.as_object_mut().expect("shrink object"));

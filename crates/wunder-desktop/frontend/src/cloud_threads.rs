@@ -634,7 +634,8 @@ pub(crate) fn merge_live_process(row: &mut crate::TimelineRow) {
             if !row.process_paged && entries.len() >= 201 {
                 entries.remove(0);
             }
-            entry.payload = -1 - row.process_idx * crate::chat_process::PROCESS_SLOT - entries.len() as i32;
+            entry.payload =
+                -1 - row.process_idx * crate::chat_process::PROCESS_SLOT - entries.len() as i32;
             entries.push(entry);
         }
     }

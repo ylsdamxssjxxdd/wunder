@@ -6537,6 +6537,60 @@ mod turn_tests {
         );
     }
 
+    /// The work process states a compaction by what it left behind: the
+    /// occupancy after the summary replaced the earlier turns, and how long
+    /// the compaction itself took. The model round alone says nothing about
+    /// either, so the row and its fold entry must carry both columns.
+    #[test]
+    fn compaction_entry_states_after_occupancy_and_elapsed_time() {
+        let timeline = Rc::new(RefCell::new(crate::timeline::Timeline::new()));
+        let mut output = TurnOutput::new("fixture-session".into(), timeline.clone());
+        timeline
+            .borrow_mut()
+            .begin_turn("fixture-root", "Fixture input");
+        let reduce = |output: &mut TurnOutput, event: Value| {
+            let mut live = timeline.borrow_mut();
+            apply_event(output, &mut live, &event).unwrap()
+        };
+        reduce(
+            &mut output,
+            json!({"event":"compaction","data":{
+                "item_id":"fixture-root:compaction-fixture",
+                "status":"done","model_round":1,
+                "context_tokens":48000,
+                "context_tokens_after":12000,
+                "duration_ms":7420,
+                "summary_text":"Fixture summary"
+            }}),
+        );
+        let live = timeline.borrow();
+        let rows: Vec<_> = live.model().iter().collect();
+        let row = rows
+            .iter()
+            .find(|row| row.kind == crate::timeline::KIND_TOOL)
+            .expect("the compaction row");
+        assert_eq!(row.tool_name, "上下文压缩");
+        assert_eq!(row.model_round, 1);
+        assert_eq!(
+            (row.tokens.as_str(), row.duration.as_str()),
+            ("12k", "7.4s")
+        );
+        let bar = rows
+            .iter()
+            .find(|row| row.kind == crate::timeline::KIND_PROCESS)
+            .expect("the work process bar");
+        let entry = bar
+            .process_entries
+            .iter()
+            .find(|entry| entry.id == row.id)
+            .expect("the compaction fold entry");
+        assert_eq!(
+            (entry.tokens.as_str(), entry.duration.as_str()),
+            ("12k", "7.4s"),
+            "the fold prints the same two columns as the row"
+        );
+    }
+
     /// A stopped turn keeps the partial answer and marks the tail, and later
     /// events never reopen it.
     #[test]

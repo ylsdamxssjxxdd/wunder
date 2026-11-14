@@ -96,7 +96,8 @@ mod timing_tests {
             "payload": {"content": "sample compaction summary",
                 "meta": {"type": "compaction_summary", "compaction_id": "cmp-sample"}}
         });
-        let body = PostgresThreadLog::message_payload(summary).expect("compaction rows map to a role");
+        let body =
+            PostgresThreadLog::message_payload(summary).expect("compaction rows map to a role");
         assert_eq!(body["role"], "system");
     }
 }

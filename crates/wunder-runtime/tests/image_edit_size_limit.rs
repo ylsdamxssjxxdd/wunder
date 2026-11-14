@@ -10,9 +10,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use wunder_server::config::{Config, LlmModelConfig};
-use wunder_server::multimodal_models::{
-    generate_image, ImageGenerationRequest, ImageInputFile,
-};
+use wunder_server::multimodal_models::{generate_image, ImageGenerationRequest, ImageInputFile};
 
 struct CapturedRequest {
     content_type: String,
@@ -84,10 +82,7 @@ async fn spawn_mock_edit_server() -> (String, tokio::sync::oneshot::Receiver<Cap
             buf.extend_from_slice(&chunk[..read]);
         }
         let body = buf[header_end + 4..].to_vec();
-        let _ = tx.send(CapturedRequest {
-            content_type,
-            body,
-        });
+        let _ = tx.send(CapturedRequest { content_type, body });
 
         let payload = format!(
             "{{\"data\":[{{\"b64_json\":\"{}\"}}]}}",
@@ -115,7 +110,10 @@ fn solid_png(width: u32, height: u32) -> Vec<u8> {
     ));
     let mut bytes = Vec::new();
     image
-        .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
         .expect("encode png");
     bytes
 }

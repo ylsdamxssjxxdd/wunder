@@ -1,12 +1,14 @@
+use super::image_tool_contract::{self, ImageFailure, ImageFormat, ImageLimits};
 use super::tool_error::{build_failed_tool_result, ToolErrorMeta};
 use super::{build_model_tool_success, collect_read_roots, ToolContext};
 use crate::config::LlmModelConfig;
 use crate::llm::normalize_provider;
-use crate::path_utils::{is_within_root, normalize_target_path};
+use crate::path_utils::{is_within_root, normalize_path_for_compare, normalize_target_path};
 use crate::services::multimodal_models::{
     self, AudioTranscriptionRequest, ImageGenerationRequest, SpeechSynthesisRequest,
     VideoGenerationRequest,
 };
+use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -27,8 +29,6 @@ pub const TOOL_GENERATE_IMAGE_ALIAS: &str = "generate_image";
 pub const TOOL_GENERATE_VIDEO_ALIAS: &str = "generate_video";
 
 const GENERATED_MEDIA_DIR: &str = "generated_media";
-const VLLM_OMNI_PROVIDER: &str = "vllm_omni";
-const VLLM_OMNI_IMAGE_ALIGNMENT: u32 = 16;
 
 #[derive(Debug, Deserialize)]
 pub struct GenerateSpeechArgs {
@@ -75,45 +75,6 @@ pub struct TranscribeSpeechArgs {
     pub filename: Option<String>,
     #[serde(default)]
     pub content_type: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct GenerateImageArgs {
-    pub prompt: String,
-    #[serde(default)]
-    pub path: Option<String>,
-    #[serde(default)]
-    pub model_name: Option<String>,
-    #[serde(default)]
-    pub size: Option<String>,
-    #[serde(default)]
-    pub output_format: Option<String>,
-    #[serde(default)]
-    pub negative_prompt: Option<String>,
-    #[serde(default)]
-    pub num_inference_steps: Option<u32>,
-    #[serde(default)]
-    pub guidance_scale: Option<f32>,
-    #[serde(default)]
-    pub seed: Option<u64>,
-    #[serde(default)]
-    pub input_path: Option<String>,
-    #[serde(default)]
-    pub input_paths: Option<Vec<String>>,
-    #[serde(default)]
-    pub mask_path: Option<String>,
-    #[serde(default)]
-    pub reference_path: Option<String>,
-    #[serde(default)]
-    pub strength: Option<f32>,
-    #[serde(default)]
-    pub true_cfg_scale: Option<f32>,
-    #[serde(default)]
-    pub output_compression: Option<u32>,
-    #[serde(default)]
-    pub layers: Option<u32>,
-    #[serde(default)]
-    pub resolution: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -289,114 +250,318 @@ pub async fn tool_transcribe_speech(context: &ToolContext<'_>, args: &Value) -> 
     ))
 }
 
-pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let payload: GenerateImageArgs =
-        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
-    let prompt = payload.prompt.trim();
-    if prompt.is_empty() {
-        return Err(anyhow!("prompt is required"));
+// ---------------------------------------------------------------------------
+// 图像生成
+// ---------------------------------------------------------------------------
+
+/// 一次图像调用的上下文：失败结果要带全这些信息，调用方才知道自己错在哪。
+struct ImageCallContext<'a> {
+    model_config: Option<&'a LlmModelConfig>,
+    model_name: Option<String>,
+    mode: &'a str,
+    size: Option<String>,
+    input_paths: Vec<String>,
+    mask_path: Option<String>,
+    reference_path: Option<String>,
+}
+
+impl<'a> ImageCallContext<'a> {
+    fn empty() -> Self {
+        Self {
+            model_config: None,
+            model_name: None,
+            mode: "unknown",
+            size: None,
+            input_paths: Vec::new(),
+            mask_path: None,
+            reference_path: None,
+        }
     }
-    let (resolved_model_name, model_config) =
-        match multimodal_models::resolve_image_model(context.config, payload.model_name.as_deref())
-        {
-            Some(model) => model,
-            None => {
-                return Ok(build_image_generation_failure_result(
-                    None,
-                    None,
-                    "text_to_image",
-                    payload.size.as_deref(),
-                    None,
-                    payload.mask_path.as_deref(),
-                    payload.reference_path.as_deref(),
-                    "image model is not configured",
-                ));
-            }
-        };
-    let input_paths = collect_image_input_paths(&payload);
-    let mode = if input_paths.is_empty() {
+}
+
+pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let mut ctx = ImageCallContext::empty();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // 1) 不需要模型就能判定的参数错误，先挡在调用上游之前。
+    let prompt = args
+        .get("prompt")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    if prompt.is_empty() {
+        let failure = ImageFailure::request(
+            "prompt",
+            "prompt 为空",
+            "用一句话写清要生成或要改的画面，例如「把背景换成夜景」。",
+        );
+        return Ok(image_failure_result(&failure, &ctx, &warnings));
+    }
+    let (input_paths, input_warnings) = match image_tool_contract::merge_input_paths(args) {
+        Ok(value) => value,
+        Err(failure) => return Ok(image_failure_result(&failure, &ctx, &warnings)),
+    };
+    warnings.extend(input_warnings);
+    ctx.input_paths = input_paths.clone();
+    ctx.mode = if input_paths.is_empty() {
         "text_to_image"
     } else {
         "image_edit"
     };
-    // 修图未指定尺寸时保持原图尺寸（下游传 auto），高清化不会被悄悄改成默认尺寸。
-    let effective_size = multimodal_models::resolve_requested_image_size(
-        &model_config,
-        payload.size.as_deref(),
-        mode == "image_edit",
-    );
-    if let Some(result) =
-        validate_image_generation_request(&model_config, effective_size.as_deref(), mode)
-    {
-        return Ok(build_image_generation_failure_result(
-            Some(&model_config),
-            Some(resolved_model_name.as_str()),
-            mode,
-            effective_size.as_deref(),
-            Some(&input_paths),
-            payload.mask_path.as_deref(),
-            payload.reference_path.as_deref(),
-            &result,
+
+    let requested_path = normalize_optional_string(args.get("path").and_then(Value::as_str));
+    let requested_format =
+        normalize_optional_string(args.get("output_format").and_then(Value::as_str));
+    let format = match image_tool_contract::resolve_output_format(
+        requested_format.as_deref(),
+        requested_path.as_deref(),
+    ) {
+        Ok(format) => format,
+        Err(failure) => return Ok(image_failure_result(&failure, &ctx, &warnings)),
+    };
+    let seed = match image_tool_contract::parse_seed(args.get("seed")) {
+        Ok(seed) => seed,
+        Err(failure) => return Ok(image_failure_result(&failure, &ctx, &warnings)),
+    };
+    let strength = match image_tool_contract::parse_strength(args.get("strength")) {
+        Ok(strength) => strength,
+        Err(failure) => return Ok(image_failure_result(&failure, &ctx, &warnings)),
+    };
+    let overwrite = args
+        .get("overwrite")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let mask_path = normalize_optional_string(args.get("mask_path").and_then(Value::as_str));
+    let reference_path =
+        normalize_optional_string(args.get("reference_path").and_then(Value::as_str));
+    ctx.mask_path = mask_path.clone();
+    ctx.reference_path = reference_path.clone();
+
+    if mask_path.is_some() && input_paths.is_empty() {
+        let failure = ImageFailure::request(
+            "mask_path",
+            "蒙版只用于局部重绘，本次没有给主图（input_paths）",
+            "同时传 `input_paths` 指向要改的那张图；纯文生图请去掉 mask_path。",
+        );
+        return Ok(image_failure_result(&failure, &ctx, &warnings));
+    }
+    if reference_path.is_some() && input_paths.is_empty() {
+        let failure = ImageFailure::request(
+            "reference_path",
+            "参考图只在编辑/合成时作为附加输入，单独给它没有主图可编辑",
+            "同时传 `input_paths`（主图）；只想指定风格时删掉 reference_path，把风格写进 prompt。",
+        );
+        return Ok(image_failure_result(&failure, &ctx, &warnings));
+    }
+    if strength.is_some() && input_paths.is_empty() {
+        warnings.push("strength 只对图生图/编辑生效，本次是文生图，已忽略该参数。".to_string());
+    }
+
+    // 2) 模型与尺寸约束：上限、对齐、短边都在本地先判，不再靠上游报错。
+    let model_name_arg = args.get("model_name").and_then(Value::as_str);
+    let (resolved_model_name, model_config) =
+        match multimodal_models::resolve_image_model(context.config, model_name_arg) {
+            Some(model) => model,
+            None => {
+                let failure = ImageFailure::new(
+                    "IMAGE_MODEL_NOT_CONFIGURED",
+                    false,
+                    "图像模型（未配置）：当前没有可用的图像生成模型，本次请求没有发出去。",
+                    "先在系统设置里配置默认图像模型，或为本次调用显式指定可用的 `model_name`。",
+                );
+                return Ok(image_failure_result(&failure, &ctx, &warnings));
+            }
+        };
+    let provider = normalize_provider(model_config.provider.as_deref());
+    let limits = ImageLimits::for_model(&model_config);
+    ctx.model_config = Some(&model_config);
+    ctx.model_name = Some(resolved_model_name.clone());
+
+    let size = match image_tool_contract::decide_size(
+        args.get("size").and_then(Value::as_str),
+        &limits,
+        !input_paths.is_empty(),
+    ) {
+        Ok(size) => size,
+        Err(failure) => return Ok(image_failure_result(&failure, &ctx, &warnings)),
+    };
+    ctx.size = size.effective.clone().or_else(|| size.requested.clone());
+    warnings.extend(size.warnings);
+
+    // 3) 输出路径：越界、目录、覆盖、与输入同名，都在生成之前拦住。
+    let pre_target = match resolve_media_target(
+        context.workspace.as_ref(),
+        context.workspace_id,
+        requested_path.as_deref(),
+        format.extension(),
+        "image",
+        overwrite,
+        false,
+    ) {
+        Ok(target) => target,
+        Err(failure) => return Ok(image_failure_result(&failure, &ctx, &warnings)),
+    };
+    if let Some(warning) = pre_target.warning.clone() {
+        warnings.push(warning);
+    }
+    if let Some(clash) = conflicting_source(
+        context.workspace.as_ref(),
+        context.workspace_id,
+        &pre_target,
+        &input_paths,
+        mask_path.as_deref(),
+        reference_path.as_deref(),
+    ) {
+        let failure = ImageFailure::request(
+            "path",
+            format!(
+                "与 `{}` 指向同一个文件（`{}`），写入会把源文件覆盖掉",
+                clash, pre_target.relative
+            ),
+            "换一个输出名，例如 `temp/out.png`；源图应保持只读。",
+        );
+        return Ok(image_failure_result(&failure, &ctx, &warnings));
+    }
+
+    // 4) 载入输入文件，顺带校验蒙版。
+    let input_images = match load_image_input_files(context, &input_paths, "input_paths").await {
+        Ok(files) => files,
+        Err(failure) => return Ok(image_failure_result(&failure, &ctx, &warnings)),
+    };
+    let mask_image =
+        match load_optional_image_input_file(context, mask_path.as_deref(), "mask_path").await {
+            Ok(file) => file,
+            Err(failure) => return Ok(image_failure_result(&failure, &ctx, &warnings)),
+        };
+    let reference_image =
+        match load_optional_image_input_file(context, reference_path.as_deref(), "reference_path")
+            .await
+        {
+            Ok(file) => file,
+            Err(failure) => return Ok(image_failure_result(&failure, &ctx, &warnings)),
+        };
+    if let (Some(mask), Some(first)) = (mask_image.as_ref(), input_images.first()) {
+        if let Some(info) = image_tool_contract::inspect_mask(&mask.bytes) {
+            if let Some((input_width, input_height)) =
+                image_tool_contract::image_dimensions(&first.bytes)
+            {
+                if (info.width, info.height) != (input_width, input_height) {
+                    let failure = ImageFailure::input(
+                        "mask_path",
+                        format!(
+                            "蒙版尺寸 {}x{} 与主输入图 {}x{} 不一致，上游要求两者同尺寸",
+                            info.width, info.height, input_width, input_height
+                        ),
+                        "用与原图同尺寸的蒙版；需要改区域大小就重新导出一张同尺寸蒙版。",
+                    );
+                    return Ok(image_failure_result(&failure, &ctx, &warnings));
+                }
+            }
+            if info.scanned && info.all_black {
+                warnings.push(
+                    "蒙版全黑：没有任何白色重绘区域，按约定等于不做修改，上游可能返回原图或直接拒绝。把要改的区域涂白后重试。"
+                        .to_string(),
+                );
+            }
+            if info.scanned && info.all_white {
+                warnings.push(
+                    "蒙版全白：等于整图重绘，局部编辑会退化成整图重绘。只想改局部时把保留区域涂黑。"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    // 5) seed：总是显式下发并回显，否则这张图以后无法复现。
+    let seed_source = if seed.is_some() { "explicit" } else { "auto" };
+    let effective_seed = seed.unwrap_or_else(random_image_seed);
+    if seed.is_none() {
+        warnings.push(format!(
+            "未指定 seed，本次使用随机 seed {}；要复现这张图，下次显式传 `seed: {}`。",
+            effective_seed, effective_seed
         ));
     }
-    let input_images = load_image_input_files(context, &input_paths).await?;
-    let mask_image = load_optional_image_input_file(context, payload.mask_path.as_deref()).await?;
-    let reference_image =
-        load_optional_image_input_file(context, payload.reference_path.as_deref()).await?;
+
     let result = match multimodal_models::generate_image(
         context.config,
         ImageGenerationRequest {
             prompt: prompt.to_string(),
             model_name: Some(resolved_model_name.clone()),
-            size: effective_size.clone(),
-            output_format: normalize_optional_string(payload.output_format.as_deref()),
-            negative_prompt: normalize_optional_string(payload.negative_prompt.as_deref()),
-            num_inference_steps: payload.num_inference_steps,
-            guidance_scale: payload.guidance_scale,
-            seed: payload.seed,
+            size: size.effective.clone(),
+            output_format: Some(format.as_str().to_string()),
+            negative_prompt: normalize_optional_string(
+                args.get("negative_prompt").and_then(Value::as_str),
+            ),
+            num_inference_steps: optional_u32(args, "num_inference_steps"),
+            guidance_scale: optional_f32(args, "guidance_scale"),
+            seed: Some(effective_seed),
             input_images,
             mask_image,
             reference_image,
-            strength: payload.strength,
-            true_cfg_scale: payload.true_cfg_scale,
-            output_compression: payload.output_compression,
-            layers: payload.layers,
-            resolution: payload.resolution,
+            strength,
+            true_cfg_scale: optional_f32(args, "true_cfg_scale"),
+            output_compression: optional_u32(args, "output_compression"),
+            layers: optional_u32(args, "layers"),
+            resolution: optional_u32(args, "resolution"),
         },
     )
     .await
     {
         Ok(result) => result,
         Err(err) => {
-            return Ok(build_image_generation_failure_result(
-                Some(&model_config),
-                Some(resolved_model_name.as_str()),
-                mode,
-                effective_size.as_deref(),
-                Some(&input_paths),
-                payload.mask_path.as_deref(),
-                payload.reference_path.as_deref(),
+            let failure = classify_provider_failure(
+                provider.as_str(),
+                size.effective.as_deref(),
+                &limits,
                 &err.to_string(),
-            ));
+            );
+            return Ok(image_failure_result(&failure, &ctx, &warnings));
         }
     };
-    let extension = extension_from_content_type(&result.content_type, "png");
-    let saved = persist_generated_media(
-        context,
-        payload.path.as_deref(),
-        "image",
-        &extension,
-        &result.bytes,
-    )
-    .await?;
-    let edited = mode == "image_edit";
-    // 编辑模式必须说清“从哪张图改的”，否则模型会把结果当成一次新的文生图，
-    // 后续用户要求继续修图时又回到重新生成。
+
+    let actual_format = ImageFormat::from_content_type(&result.content_type).unwrap_or(format);
+    if actual_format != format {
+        warnings.push(format!(
+            "请求的输出格式是 {}，上游实际返回 {}；已按真实格式保存为 .{}。",
+            format.as_str(),
+            actual_format.as_str(),
+            actual_format.extension()
+        ));
+    }
+    let target = if actual_format == format {
+        pre_target
+    } else {
+        match resolve_media_target(
+            context.workspace.as_ref(),
+            context.workspace_id,
+            requested_path.as_deref(),
+            actual_format.extension(),
+            "image",
+            overwrite,
+            true,
+        ) {
+            Ok(target) => target,
+            Err(failure) => return Ok(image_failure_result(&failure, &ctx, &warnings)),
+        }
+    };
+    if let Err(failure) = write_media_bytes(context, &target, &result.bytes).await {
+        return Ok(image_failure_result(&failure, &ctx, &warnings));
+    }
+    let saved = PersistedMediaFile {
+        public_path: context
+            .workspace
+            .display_path(context.workspace_id, &target.absolute),
+        workspace_relative_path: target.relative.clone(),
+        size_bytes: result.bytes.len(),
+    };
+
+    let edited = ctx.mode == "image_edit";
+    // 编辑模式必须说清“从哪张图改的”，否则模型会把结果当成一次新的文生图。
     let summary = if edited {
         match input_paths.as_slice() {
             [source] => format!(
-                "Edited image from {source} and saved it to {}.",
-                saved.public_path
+                "Edited image from {} and saved it to {}.",
+                source, saved.public_path
             ),
             sources => format!(
                 "Edited image from {} input images and saved it to {}.",
@@ -407,6 +572,11 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
     } else {
         format!("Generated image and saved it to {}.", saved.public_path)
     };
+    let reported_size = result
+        .size
+        .clone()
+        .or_else(|| size.effective.clone())
+        .or_else(|| size.requested.clone());
     Ok(build_model_tool_success(
         "generate_image",
         "completed",
@@ -417,148 +587,223 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
             "path": saved.public_path,
             "workspace_relative_path": saved.workspace_relative_path,
             "bytes": saved.size_bytes,
-            "mode": mode,
+            "mode": ctx.mode,
             "edited": edited,
             "model_name": resolved_model_name,
-            "provider": normalize_provider(model_config.provider.as_deref()),
-            "size": result.size.clone().or_else(|| effective_size.clone()),
+            "provider": provider,
+            "size": reported_size,
+            "size_source": size.source,
+            "requested_size": size.requested,
+            "output_format": actual_format.as_str(),
+            "requested_output_format": format.as_str(),
+            "seed": effective_seed,
+            "seed_source": seed_source,
             "input_resized": result.resized_input,
             "input_paths": input_paths,
-            "mask_path": normalize_optional_string(payload.mask_path.as_deref()),
-            "reference_path": normalize_optional_string(payload.reference_path.as_deref()),
+            "mask_path": mask_path,
+            "reference_path": reference_path,
+            "limits": {
+                "default_size": format!("{}x{}", limits.default_size.0, limits.default_size.1),
+                "max_size": limits.max_label(),
+                "alignment": limits.alignment,
+                "min_short_edge": limits.min_short_edge,
+                "summary": limits.describe(),
+            },
+            "warnings": warnings,
         }),
     ))
 }
 
-fn validate_image_generation_request(
-    model_config: &LlmModelConfig,
-    requested_size: Option<&str>,
-    mode: &str,
-) -> Option<String> {
-    let provider = normalize_provider(model_config.provider.as_deref());
-    if provider != VLLM_OMNI_PROVIDER {
-        return None;
+fn optional_u32(args: &Value, key: &str) -> Option<u32> {
+    let value = args.get(key)?;
+    match value {
+        Value::Number(number) => number
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .or_else(|| number.as_f64().map(|value| value.max(0.0) as u32)),
+        Value::String(text) => text.trim().parse::<u32>().ok(),
+        _ => None,
     }
-    let size = requested_size?.trim();
-    if size.is_empty() {
-        return None;
-    }
-    let (width, height) = multimodal_models::parse_image_dimensions(size)?;
-    if width % VLLM_OMNI_IMAGE_ALIGNMENT == 0 && height % VLLM_OMNI_IMAGE_ALIGNMENT == 0 {
-        return None;
-    }
-    let mode_hint = if mode == "image_edit" {
-        "图生图/编辑"
-    } else {
-        "文生图"
-    };
-    Some(format!(
-        "vllm-omni {mode_hint} size `{size}` is invalid: width and height must both be divisible by {VLLM_OMNI_IMAGE_ALIGNMENT}."
-    ))
 }
 
-fn build_image_generation_failure_result(
-    model_config: Option<&LlmModelConfig>,
-    model_name: Option<&str>,
-    mode: &str,
-    size: Option<&str>,
-    input_paths: Option<&[String]>,
-    mask_path: Option<&str>,
-    reference_path: Option<&str>,
-    error_text: &str,
+fn optional_f32(args: &Value, key: &str) -> Option<f32> {
+    let value = args.get(key)?;
+    match value {
+        Value::Number(number) => number.as_f64().map(|value| value as f32),
+        Value::String(text) => text.trim().parse::<f32>().ok(),
+        _ => None,
+    }
+}
+
+fn random_image_seed() -> u64 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(0);
+    let mixed = nanos ^ (nanos >> 29) ^ u64::from(std::process::id());
+    let value = mixed % (u64::from(u32::MAX) + 1);
+    if value == 0 {
+        1
+    } else {
+        value
+    }
+}
+
+fn image_failure_result(
+    failure: &ImageFailure,
+    ctx: &ImageCallContext<'_>,
+    warnings: &[String],
 ) -> Value {
-    let provider = model_config
+    let provider = ctx
+        .model_config
         .map(|config| normalize_provider(config.provider.as_deref()))
         .unwrap_or_else(|| "unknown".to_string());
-    let detail = summarize_image_error_detail(error_text);
-    let (code, retryable, next_step_hint, alignment_suggestion) =
-        classify_image_generation_failure(provider.as_str(), size, detail.as_str());
-    let summary = if detail.is_empty() {
-        "图像生成失败。".to_string()
-    } else {
-        format!("图像生成失败：{detail}")
-    };
+    let mut data = json!({
+        "tool": "generate_image",
+        "phase": "execution",
+        "provider": provider,
+        "model_name": ctx.model_name,
+        "mode": ctx.mode,
+        "size": ctx.size,
+        "input_paths": ctx.input_paths,
+        "mask_path": ctx.mask_path,
+        "reference_path": ctx.reference_path,
+        "failure_summary": failure.message,
+        "next_step_hint": failure.hint,
+        "suggested_size": failure.suggested_size,
+        "warnings": warnings,
+    });
+    if let (Some(field), Some(map)) = (failure.field.as_deref(), data.as_object_mut()) {
+        map.insert("field".to_string(), json!(field));
+    }
     build_failed_tool_result(
-        summary,
-        json!({
-            "tool": "generate_image",
-            "phase": "execution",
-            "provider": provider,
-            "model_name": model_name,
-            "mode": mode,
-            "size": size,
-            "input_paths": input_paths,
-            "mask_path": normalize_optional_string(mask_path),
-            "reference_path": normalize_optional_string(reference_path),
-            "failure_summary": detail,
-            "error_detail_head": detail,
-            "next_step_hint": next_step_hint,
-            "suggested_size": alignment_suggestion,
-        }),
-        ToolErrorMeta::new(code, Some(next_step_hint), retryable, None),
+        failure.message.clone(),
+        data,
+        ToolErrorMeta::new(
+            failure.code,
+            Some(failure.hint.clone()),
+            failure.retryable,
+            None,
+        ),
         false,
     )
 }
 
-fn classify_image_generation_failure(
+/// 上游失败的分类：只在这里决定 code / retryable / 怎么改。
+fn classify_provider_failure(
     provider: &str,
     size: Option<&str>,
+    limits: &ImageLimits,
     detail: &str,
-) -> (&'static str, bool, String, Option<String>) {
+) -> ImageFailure {
+    let detail = summarize_image_error_detail(detail);
+    let who = if provider.trim().is_empty() || provider == "unknown" {
+        "上游图像服务".to_string()
+    } else {
+        format!("上游图像服务（{}）", provider)
+    };
     let lower = detail.to_ascii_lowercase();
-    if contains_timeout_hint(detail) {
-        return (
+    let status = provider_http_status(&detail);
+
+    if contains_timeout_hint(&detail) {
+        return ImageFailure::new(
             "TOOL_TIMEOUT",
             true,
-            "缩小生成范围、降低推理步数，或改成可拆分的生成流程后重试。".to_string(),
-            None,
+            format!("{}等待超时：{}。这是耗时问题，不是参数问题。", who, detail),
+            "先确认是否已经产出图片（检查目标目录），再原样重试或降低尺寸/推理步数。",
         );
     }
-    if lower.contains("429")
-        || lower.contains("too many requests")
-        || lower.contains("temporarily unavailable")
-        || lower.contains("service unavailable")
-    {
-        return (
+    if status == Some(429) || lower.contains("too many requests") || lower.contains("busy") {
+        return ImageFailure::new(
             "IMAGE_PROVIDER_BUSY",
             true,
-            "上游图像服务当前繁忙，稍后重试，或降低并发与推理步数。".to_string(),
-            None,
+            format!(
+                "{}当前繁忙：{}。这是服务侧限流，不是参数问题。",
+                who, detail
+            ),
+            "稍后原样重试，或降低并发与推理步数；不要为了绕过限流去改参数。",
         );
     }
-    if provider == VLLM_OMNI_PROVIDER && lower.contains("divisible by 16") {
-        let suggested_size = size
-            .and_then(multimodal_models::parse_image_dimensions)
-            .map(|(width, height)| suggest_aligned_image_size(width, height));
-        let hint = match suggested_size.as_deref() {
-            Some(candidate) => format!(
-                "改用宽高都能被 16 整除且不超过最大尺寸的尺寸后重试，例如 `{candidate}`、`1024x1024` 或 `1344x768`。"
+    if status.is_some_and(|status| status >= 500)
+        || lower.contains("internal server error")
+        || lower.contains("bytearray index out of range")
+    {
+        return ImageFailure::new(
+            "IMAGE_PROVIDER_ERROR",
+            true,
+            format!(
+                "{}内部出错：{}。这是上游服务的临时故障，不是参数问题。",
+                who, detail
             ),
-            None => {
-                "改用宽高都能被 16 整除且不超过最大尺寸的尺寸后重试，例如 `1024x1024`、`1344x768` 或 `1920x1088`。"
-                    .to_string()
-            }
+            "原样重试；连续多次失败请查看上游日志，而不是反复调整 prompt 或 size。",
+        );
+    }
+    if provider == "vllm_omni"
+        && (lower.contains("divisible by 16") || lower.contains("divisible by"))
+    {
+        let suggestion = size
+            .and_then(image_tool_contract::parse_size)
+            .map(|(width, height)| {
+                image_tool_contract::suggest_aligned_size(width, height, limits)
+            });
+        let fix = match suggestion.as_deref() {
+            Some(candidate) => format!(
+                "改用宽高都是 {} 的倍数、且不超过上限 {} 的尺寸，例如 `{}`、`1024x1024` 或 `1344x768`。",
+                image_tool_contract::IMAGE_ALIGNMENT_UNIT,
+                limits.max_label(),
+                candidate
+            ),
+            None => format!(
+                "改用宽高都是 {} 的倍数、且不超过上限 {} 的尺寸，例如 `1024x1024` 或 `1344x768`。",
+                image_tool_contract::IMAGE_ALIGNMENT_UNIT,
+                limits.max_label()
+            ),
         };
-        return ("IMAGE_SIZE_ALIGNMENT_INVALID", false, hint, suggested_size);
+        return ImageFailure::new(
+            "IMAGE_SIZE_ALIGNMENT_INVALID",
+            false,
+            format!("{}拒绝了请求：{}。{}", who, detail, fix),
+            fix,
+        )
+        .with_suggested_size(suggestion);
     }
     if lower.contains("image model is not configured") {
-        return (
+        return ImageFailure::new(
             "IMAGE_MODEL_NOT_CONFIGURED",
             false,
-            "先在系统设置中配置默认图像模型，或为本次调用显式指定可用的 `model_name`。".to_string(),
-            None,
+            format!("图像模型（未配置）：{}。", detail),
+            "先在系统设置里配置默认图像模型，或显式指定可用的 `model_name`。",
         );
     }
     if lower.contains("missing b64_json")
         || lower.contains("parse image response json")
         || lower.contains("provider response")
     {
-        return (
+        return ImageFailure::new(
             "IMAGE_PROVIDER_RESPONSE_INVALID",
             false,
-            "上游图像服务返回了非预期响应格式；请检查 vllm-omni 日志，并确认接口兼容 `/v1/images/generations` 或 `/v1/images/edits`。"
-                .to_string(),
-            None,
+            format!("{}返回了无法解析的响应：{}。", who, detail),
+            "检查上游是否兼容 `/v1/images/generations` 或 `/v1/images/edits`，并查看其日志。",
+        );
+    }
+    if status == Some(413) {
+        return ImageFailure::new(
+            "IMAGE_REQUEST_INVALID",
+            false,
+            format!("{}拒绝了请求：{}。请求体过大。", who, detail),
+            format!(
+                "降低尺寸或改用更小的输入图：当前上限是 {}，短边不小于 {}。",
+                limits.max_label(),
+                limits.min_short_edge
+            ),
+        );
+    }
+    if status == Some(400) && lower.contains("mask") {
+        return ImageFailure::new(
+            "IMAGE_INPUT_INVALID",
+            false,
+            format!("{}拒绝了蒙版：{}。", who, detail),
+            "按约定白色=要重绘的区域、黑色=保留，且蒙版必须与主图同尺寸。",
         );
     }
     if lower.contains("invalid")
@@ -566,19 +811,314 @@ fn classify_image_generation_failure(
         || lower.contains("must be")
         || lower.contains("is required")
     {
-        return (
+        return ImageFailure::new(
             "IMAGE_REQUEST_INVALID",
             false,
-            "调整图像生成参数后重试，尤其检查 `size`、输入图、蒙版图和参考图。".to_string(),
-            None,
+            format!("{}认为参数不合法：{}。", who, detail),
+            "按提示修正对应参数后重试；尺寸规则见 `limits`（宽高对齐、短边下限、上限）。",
         );
     }
-    (
+    ImageFailure::new(
         "IMAGE_GENERATION_FAILED",
         false,
-        "根据失败原因调整图像生成参数，必要时检查上游图像服务日志。".to_string(),
-        None,
+        format!("{}执行失败：{}。", who, detail),
+        "先看失败详情定位是参数还是服务问题；参数类按提示修正，服务类稍后重试。",
     )
+}
+
+/// 从 `... failed: 500 Internal Server Error ...` 这类文本里取出 HTTP 状态码。
+fn provider_http_status(detail: &str) -> Option<u16> {
+    let tokens = detail
+        .split(|ch: char| !ch.is_ascii_digit())
+        .filter(|token| !token.is_empty());
+    tokens
+        .filter_map(|token| token.parse::<u16>().ok())
+        .find(|status| (400..=599).contains(status))
+}
+
+/// 解析并校验输出位置：越界、目录、覆盖、隐藏扩展名补全都在这里。
+#[derive(Debug)]
+struct MediaTarget {
+    relative: String,
+    absolute: PathBuf,
+    warning: Option<String>,
+}
+
+fn resolve_media_target(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    requested_path: Option<&str>,
+    extension: &str,
+    prefix: &str,
+    overwrite: bool,
+    rewrite_extension: bool,
+) -> Result<MediaTarget, ImageFailure> {
+    let root = normalize_target_path(&workspace.user_root(workspace_id));
+    let mut warning = None;
+    let relative = match requested_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(text) => {
+            let normalized = text.replace('\\', "/");
+            // 目录判断必须在补扩展名之前：`shots` 指向已有文件夹时不能被悄悄改成 `shots.png`。
+            let raw_target = normalized.trim_end_matches('/');
+            if probe_directory(workspace, workspace_id, raw_target) {
+                return Err(ImageFailure::request(
+                    "path",
+                    format!("`{}` 是已存在的目录", raw_target),
+                    "把 path 指向具体文件，例如 `temp/out.png`。",
+                ));
+            }
+            let current_ext = Path::new(&normalized)
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("")
+                .to_string();
+            if current_ext.is_empty() {
+                let with_extension = [normalized.trim_end_matches('/'), ".", extension].concat();
+                warning = Some(format!("path 未写扩展名，已补成 `{}`。", with_extension));
+                with_extension
+            } else if rewrite_extension && !current_ext.eq_ignore_ascii_case(extension) {
+                let replaced = Path::new(&normalized).with_extension(extension);
+                let replaced = replaced.to_string_lossy().replace('\\', "/");
+                warning = Some(format!("输出文件名按真实格式改成 `{}`。", replaced));
+                replaced
+            } else {
+                normalized
+            }
+        }
+        None => {
+            let stamp = chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f").to_string();
+            [
+                GENERATED_MEDIA_DIR,
+                "/",
+                prefix,
+                "_",
+                stamp.as_str(),
+                ".",
+                extension,
+            ]
+            .concat()
+        }
+    };
+    let absolute = workspace
+        .resolve_path(workspace_id, &relative)
+        .map_err(|err| {
+            ImageFailure::request(
+                "path",
+                format!("无法解析 `{}`：{}", relative, err),
+                "改用工作区内的相对路径，例如 `temp/out.png`。",
+            )
+        })?;
+    if !is_within_root(&root, &absolute) {
+        return Err(ImageFailure::request(
+            "path",
+            format!(
+                "`{}` 解析到工作区之外（`{}`）",
+                relative,
+                absolute.display()
+            ),
+            format!(
+                "只允许写工作区内的文件，例如 `temp/out.png`；工作区根目录是 `{}`。",
+                root.display()
+            ),
+        ));
+    }
+    // strip_prefix 保留原始字节切片，`temp/./out.png` 会带着 `./` 出来；
+    // 逐段归一化，保证 workspace_relative_path 是唯一形态。
+    let relative_normalized = match absolute.strip_prefix(&root) {
+        Ok(path) => normalize_relative_components(path),
+        Err(_) => {
+            return Err(ImageFailure::request(
+                "path",
+                format!("`{}` 无法映射为工作区相对路径", relative),
+                "改用工作区内的相对路径，例如 `temp/out.png`。",
+            ))
+        }
+    };
+    if relative_normalized.trim().is_empty() {
+        return Err(ImageFailure::request(
+            "path",
+            "指向工作区根目录本身，不是文件",
+            "补上文件名，例如 `out.png`。",
+        ));
+    }
+    if absolute.is_dir() || probe_directory(workspace, workspace_id, &relative) {
+        return Err(ImageFailure::request(
+            "path",
+            format!(
+                "`{}` 是已存在的目录；工具不会把图片写进目录，也不会改写到目录旁边",
+                relative_normalized
+            ),
+            "把 path 指向具体文件，例如 `temp/out.png`。",
+        ));
+    }
+    if absolute.exists() && !overwrite {
+        return Err(ImageFailure::request(
+            "path",
+            format!("`{}` 已存在，本次会覆盖它", relative_normalized),
+            "换成新文件名；确实要覆盖就显式传 `overwrite: true`。",
+        ));
+    }
+    Ok(MediaTarget {
+        relative: relative_normalized,
+        absolute,
+        warning,
+    })
+}
+
+/// 请求路径本身（补扩展名之前）就是目录：例如 path=shots/ 指向已有文件夹。
+fn probe_directory(workspace: &WorkspaceManager, workspace_id: &str, raw: &str) -> bool {
+    workspace
+        .resolve_path(workspace_id, raw)
+        .map(|path| path.is_dir())
+        .unwrap_or(false)
+}
+
+fn normalize_relative_components(path: &Path) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy().to_string()),
+            Component::ParentDir => parts.push("..".to_string()),
+            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    parts.join("/")
+}
+
+/// 输出路径不能和任何输入图重合，否则生成完就把源文件写坏了。
+fn conflicting_source(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    target: &MediaTarget,
+    input_paths: &[String],
+    mask_path: Option<&str>,
+    reference_path: Option<&str>,
+) -> Option<String> {
+    let target_key = normalize_path_for_compare(&target.absolute);
+    let candidates: Vec<(&str, &str)> = input_paths
+        .iter()
+        .map(|path| ("input_paths", path.as_str()))
+        .chain(mask_path.map(|path| ("mask_path", path)))
+        .chain(reference_path.map(|path| ("reference_path", path)))
+        .collect();
+    for (field, raw) in candidates {
+        let Ok(resolved) = workspace.resolve_path(workspace_id, raw) else {
+            continue;
+        };
+        if normalize_path_for_compare(&resolved) == target_key {
+            return Some(format!("{} 里的 `{}`", field, raw));
+        }
+    }
+    None
+}
+
+async fn write_media_bytes(
+    context: &ToolContext<'_>,
+    target: &MediaTarget,
+    bytes: &[u8],
+) -> Result<(), ImageFailure> {
+    if let Some(parent) = target.absolute.parent() {
+        fs::create_dir_all(parent).await.map_err(|err| {
+            ImageFailure::new(
+                "IMAGE_WRITE_FAILED",
+                false,
+                format!("写入 {} 失败：无法创建目录（{}）。", target.relative, err),
+                "检查工作区目录是否有写权限，或换一个输出路径。",
+            )
+        })?;
+    }
+    fs::write(&target.absolute, bytes).await.map_err(|err| {
+        ImageFailure::new(
+            "IMAGE_WRITE_FAILED",
+            false,
+            format!("写入 {} 失败：{}。", target.relative, err),
+            "换一个有写权限的输出路径后重试。",
+        )
+    })?;
+    context.workspace.mark_tree_dirty(context.workspace_id);
+    Ok(())
+}
+
+async fn load_image_input_files(
+    context: &ToolContext<'_>,
+    paths: &[String],
+    field: &str,
+) -> Result<Vec<multimodal_models::ImageInputFile>, ImageFailure> {
+    let mut files = Vec::with_capacity(paths.len());
+    for path in paths {
+        files.push(load_image_input_file(context, path, field).await?);
+    }
+    Ok(files)
+}
+
+async fn load_optional_image_input_file(
+    context: &ToolContext<'_>,
+    path: Option<&str>,
+    field: &str,
+) -> Result<Option<multimodal_models::ImageInputFile>, ImageFailure> {
+    let Some(path) = normalize_optional_string(path) else {
+        return Ok(None);
+    };
+    Ok(Some(load_image_input_file(context, &path, field).await?))
+}
+
+async fn load_image_input_file(
+    context: &ToolContext<'_>,
+    public_or_relative_path: &str,
+    field: &str,
+) -> Result<multimodal_models::ImageInputFile, ImageFailure> {
+    let label = match field {
+        "mask_path" => "蒙版",
+        "reference_path" => "参考图",
+        _ => "输入图",
+    };
+    let resolved = context
+        .workspace
+        .resolve_path(context.workspace_id, public_or_relative_path)
+        .map_err(|err| {
+            ImageFailure::input(
+                field,
+                format!("路径 `{}` 无法解析：{}", public_or_relative_path, err),
+                "改用工作区内的相对路径，例如 `temp/source.png`。",
+            )
+        })?;
+    if !resolved.exists() || !resolved.is_file() {
+        return Err(ImageFailure::input(
+            field,
+            format!("{}文件不存在：`{}`", label, public_or_relative_path),
+            "先确认文件在工作区里（可用「列出文件」核对），再把正确路径传进来。",
+        ));
+    }
+    let bytes = fs::read(&resolved).await.map_err(|err| {
+        ImageFailure::input(
+            field,
+            format!(
+                "{}读取失败：`{}`（{}）",
+                label, public_or_relative_path, err
+            ),
+            "检查文件权限后重试。",
+        )
+    })?;
+    if bytes.is_empty() {
+        return Err(ImageFailure::input(
+            field,
+            format!("{}文件是空的：`{}`", label, public_or_relative_path),
+            "换成一张有内容的图片。",
+        ));
+    }
+    let filename = resolved
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "image.png".to_string());
+    Ok(multimodal_models::image_input_file_from_bytes(
+        bytes.into(),
+        filename,
+        None,
+    ))
 }
 
 fn summarize_image_error_detail(error_text: &str) -> String {
@@ -620,89 +1160,6 @@ fn contains_timeout_hint(message: &str) -> bool {
     let lower = message.trim().to_ascii_lowercase();
     lower.contains("timeout") || lower.contains("timed out") || lower.contains("time out")
 }
-
-fn suggest_aligned_image_size(width: u32, height: u32) -> String {
-    let suggested_width = align_up_to_unit(width, VLLM_OMNI_IMAGE_ALIGNMENT);
-    let suggested_height = align_up_to_unit(height, VLLM_OMNI_IMAGE_ALIGNMENT);
-    format!("{suggested_width}x{suggested_height}")
-}
-
-fn align_up_to_unit(value: u32, unit: u32) -> u32 {
-    if value % unit == 0 {
-        value
-    } else {
-        value + (unit - value % unit)
-    }
-}
-
-fn collect_image_input_paths(payload: &GenerateImageArgs) -> Vec<String> {
-    let mut paths = Vec::new();
-    if let Some(path) = normalize_optional_string(payload.input_path.as_deref()) {
-        paths.push(path);
-    }
-    if let Some(items) = &payload.input_paths {
-        paths.extend(
-            items
-                .iter()
-                .filter_map(|item| normalize_optional_string(Some(item))),
-        );
-    }
-    paths.sort();
-    paths.dedup();
-    paths
-}
-
-async fn load_image_input_files(
-    context: &ToolContext<'_>,
-    paths: &[String],
-) -> Result<Vec<multimodal_models::ImageInputFile>> {
-    let mut files = Vec::with_capacity(paths.len());
-    for path in paths {
-        files.push(load_image_input_file(context, path).await?);
-    }
-    Ok(files)
-}
-
-async fn load_optional_image_input_file(
-    context: &ToolContext<'_>,
-    path: Option<&str>,
-) -> Result<Option<multimodal_models::ImageInputFile>> {
-    let Some(path) = normalize_optional_string(path) else {
-        return Ok(None);
-    };
-    Ok(Some(load_image_input_file(context, &path).await?))
-}
-
-async fn load_image_input_file(
-    context: &ToolContext<'_>,
-    public_or_relative_path: &str,
-) -> Result<multimodal_models::ImageInputFile> {
-    let resolved = context
-        .workspace
-        .resolve_path(context.workspace_id, public_or_relative_path)?;
-    if !resolved.exists() || !resolved.is_file() {
-        return Err(anyhow!(
-            "image input file not found: {public_or_relative_path}"
-        ));
-    }
-    let bytes = fs::read(&resolved).await?;
-    if bytes.is_empty() {
-        return Err(anyhow!(
-            "image input file is empty: {public_or_relative_path}"
-        ));
-    }
-    let filename = resolved
-        .file_name()
-        .and_then(|value| value.to_str())
-        .map(ToString::to_string)
-        .unwrap_or_else(|| "image.png".to_string());
-    Ok(multimodal_models::image_input_file_from_bytes(
-        bytes.into(),
-        filename,
-        None,
-    ))
-}
-
 async fn resolve_reference_audio(
     context: &ToolContext<'_>,
     reference_path: Option<&str>,
@@ -935,13 +1392,14 @@ pub async fn tool_generate_video(context: &ToolContext<'_>, args: &Value) -> Res
         }),
     ))
 }
-
 struct PersistedMediaFile {
     public_path: String,
     workspace_relative_path: String,
     size_bytes: usize,
 }
 
+/// 语音/视频产物落盘：与图像共用同一套输出路径规则（工作区内、目录拒绝、
+/// 归一化相对路径），但不改它们原先“同名覆盖”的行为。
 async fn persist_generated_media(
     context: &ToolContext<'_>,
     requested_path: Option<&str>,
@@ -949,28 +1407,24 @@ async fn persist_generated_media(
     extension: &str,
     bytes: &[u8],
 ) -> Result<PersistedMediaFile> {
-    let relative = requested_path
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-        .unwrap_or_else(|| {
-            let stamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-            format!("{GENERATED_MEDIA_DIR}/{prefix}_{stamp}.{extension}")
-        });
-    let relative = ensure_extension(relative, extension);
-    let target = context
-        .workspace
-        .resolve_path(context.workspace_id, &relative)?;
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).await?;
-    }
-    fs::write(&target, bytes).await?;
-    context.workspace.mark_tree_dirty(context.workspace_id);
+    let target = resolve_media_target(
+        context.workspace.as_ref(),
+        context.workspace_id,
+        requested_path,
+        extension,
+        prefix,
+        true,
+        false,
+    )
+    .map_err(|failure| anyhow!(failure.message))?;
+    write_media_bytes(context, &target, bytes)
+        .await
+        .map_err(|failure| anyhow!(failure.message))?;
     Ok(PersistedMediaFile {
         public_path: context
             .workspace
-            .display_path(context.workspace_id, &target),
-        workspace_relative_path: relative.replace('\\', "/"),
+            .display_path(context.workspace_id, &target.absolute),
+        workspace_relative_path: target.relative,
         size_bytes: bytes.len(),
     })
 }
@@ -980,23 +1434,6 @@ fn normalize_optional_string(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
-}
-
-fn ensure_extension(path: String, extension: &str) -> String {
-    let normalized = path.replace('\\', "/");
-    let current_ext = std::path::Path::new(&normalized)
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    if current_ext == extension.to_ascii_lowercase() {
-        normalized
-    } else if current_ext.is_empty() {
-        format!("{normalized}.{extension}")
-    } else {
-        normalized
-    }
 }
 
 fn extension_from_content_type(content_type: &str, fallback: &str) -> String {
@@ -1025,113 +1462,240 @@ fn extension_from_content_type(content_type: &str, fallback: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_image_generation_failure_result, resolve_reference_audio_path_with_roots,
-        should_resolve_ref_audio_as_path, suggest_aligned_image_size,
-        validate_image_generation_request, VLLM_OMNI_PROVIDER,
+        classify_provider_failure, optional_f32, optional_u32, provider_http_status,
+        random_image_seed, resolve_media_target, resolve_reference_audio_path_with_roots,
+        should_resolve_ref_audio_as_path,
     };
     use crate::config::LlmModelConfig;
     use crate::path_utils::normalize_path_for_compare;
-    use crate::services::multimodal_models::{
-        parse_image_dimensions, resolve_requested_image_size,
-    };
+    use crate::services::tools::image_tool_contract::ImageLimits;
     use crate::storage::SqliteStorage;
-    use serde_json::Value;
+    use serde_json::json;
     use std::collections::HashMap;
     use std::fs;
     use std::sync::Arc;
     use tempfile::tempdir;
 
     fn image_model(provider: &str) -> LlmModelConfig {
-        LlmModelConfig {
+        let mut config = LlmModelConfig {
             enable: Some(true),
             provider: Some(provider.to_string()),
             model: Some("demo-image".to_string()),
             model_type: Some("image".to_string()),
             ..Default::default()
-        }
+        };
+        config.image_default_size = Some("1024x1024".to_string());
+        config.image_max_size = Some("1440x1440".to_string());
+        config
     }
 
     #[test]
-    fn parse_image_size_accepts_common_format() {
-        assert_eq!(parse_image_dimensions("1920x1080"), Some((1920, 1080)));
-        assert_eq!(parse_image_dimensions(" 1024 x 1024 "), Some((1024, 1024)));
+    fn transient_provider_failures_are_retryable() {
+        let config = image_model("vllm_omni");
+        let limits = ImageLimits::for_model(&config);
+        let busy = classify_provider_failure(
+            "vllm_omni",
+            Some("1024x1024"),
+            &limits,
+            "image request failed: 429 Too Many Requests",
+        );
+        assert_eq!(busy.code, "IMAGE_PROVIDER_BUSY");
+        assert!(busy.retryable);
+        assert!(!busy.message.contains("调整图像生成参数"));
+
+        let broken = classify_provider_failure(
+            "vllm_omni",
+            Some("1024x1024"),
+            &limits,
+            "image request failed: 500 Internal Server Error: bytearray index out of range",
+        );
+        assert_eq!(broken.code, "IMAGE_PROVIDER_ERROR");
+        assert!(broken.retryable);
+
+        let timeout = classify_provider_failure(
+            "vllm_omni",
+            Some("1024x1024"),
+            &limits,
+            "send image request: operation timed out",
+        );
+        assert_eq!(timeout.code, "TOOL_TIMEOUT");
+        assert!(timeout.retryable);
     }
 
     #[test]
-    fn vllm_omni_validation_rejects_unaligned_size() {
-        let config = image_model(VLLM_OMNI_PROVIDER);
-        let failure =
-            validate_image_generation_request(&config, Some("1920x1080"), "text_to_image")
-                .expect("expected validation failure");
-        assert!(failure.contains("divisible by 16"));
-    }
-
-    #[test]
-    fn aligned_size_suggestion_rounds_up() {
-        assert_eq!(suggest_aligned_image_size(1920, 1080), "1920x1088");
-    }
-
-    #[test]
-    fn structured_failure_marks_alignment_error_non_retryable() {
-        let config = image_model(VLLM_OMNI_PROVIDER);
-        let payload = build_image_generation_failure_result(
-            Some(&config),
-            Some("demo-image"),
-            "text_to_image",
+    fn alignment_failure_keeps_actionable_suggestion() {
+        let config = image_model("vllm_omni");
+        let limits = ImageLimits::for_model(&config);
+        let failure = classify_provider_failure(
+            "vllm_omni",
             Some("1920x1080"),
-            None,
-            None,
-            None,
+            &limits,
             "Diffusion generation failed: Height must be divisible by 16 (got 1080).",
         );
-        assert_eq!(payload.get("ok").and_then(Value::as_bool), Some(false));
-        assert_eq!(
-            payload.pointer("/error_meta/code").and_then(Value::as_str),
-            Some("IMAGE_SIZE_ALIGNMENT_INVALID")
+        assert_eq!(failure.code, "IMAGE_SIZE_ALIGNMENT_INVALID");
+        assert!(!failure.retryable);
+        // 建议值必须同时满足对齐与上限（`vllm_omni` 上限 1440），不能给出超限的 1920x1088。
+        assert_eq!(failure.suggested_size.as_deref(), Some("1440x1088"));
+        assert!(failure.message.contains("1440x1088"));
+    }
+
+    #[test]
+    fn argument_errors_are_not_marked_retryable() {
+        let config = image_model("vllm_omni");
+        let limits = ImageLimits::for_model(&config);
+        let failure = classify_provider_failure(
+            "vllm_omni",
+            Some("1024x1024"),
+            &limits,
+            "image request failed: 400 Bad Request: size is invalid",
         );
+        assert_eq!(failure.code, "IMAGE_REQUEST_INVALID");
+        assert!(!failure.retryable);
+    }
+
+    #[test]
+    fn provider_status_is_extracted_from_failure_text() {
         assert_eq!(
-            payload
-                .pointer("/error_meta/retryable")
-                .and_then(Value::as_bool),
-            Some(false)
+            provider_http_status("image request failed: 503 Service Unavailable"),
+            Some(503)
         );
+        assert_eq!(provider_http_status("no status here"), None);
         assert_eq!(
-            payload
-                .pointer("/data/suggested_size")
-                .and_then(Value::as_str),
-            Some("1920x1088")
+            provider_http_status("image request failed: 400 Bad Request"),
+            Some(400)
         );
     }
 
     #[test]
-    fn non_vllm_provider_skips_alignment_validation() {
-        let config = image_model("openai_compatible");
+    fn numeric_args_accept_strings_and_reject_garbage() {
+        let args = json!({ "steps": 12, "scale": "3.5", "bad": "x" });
+        assert_eq!(optional_u32(&args, "steps"), Some(12));
+        assert_eq!(optional_u32(&args, "bad"), None);
+        assert_eq!(optional_f32(&args, "scale"), Some(3.5));
+        assert_eq!(optional_f32(&args, "bad"), None);
+    }
+
+    #[test]
+    fn random_seed_is_a_positive_u32() {
+        let seed = random_image_seed();
+        assert!(seed > 0);
+        assert!(seed <= u64::from(u32::MAX));
+    }
+
+    fn workspace_fixture() -> (tempfile::TempDir, Arc<crate::workspace::WorkspaceManager>) {
+        let temp = tempdir().expect("tempdir");
+        let workspace_root = temp.path().join("workspace");
+        let storage = Arc::new(SqliteStorage::new(
+            temp.path()
+                .join("state.sqlite3")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let workspace = Arc::new(crate::workspace::WorkspaceManager::new(
+            &workspace_root.to_string_lossy(),
+            storage,
+            0,
+            &HashMap::new(),
+        ));
+        (temp, workspace)
+    }
+
+    #[test]
+    fn media_target_normalizes_relative_paths() {
+        let (_temp, workspace) = workspace_fixture();
+        let target = resolve_media_target(
+            workspace.as_ref(),
+            "alice__c__1",
+            Some("temp/./out.png"),
+            "png",
+            "image",
+            false,
+            false,
+        )
+        .expect("target");
+        assert_eq!(target.relative, "temp/out.png");
+        assert!(target.warning.is_none());
+    }
+
+    #[test]
+    fn media_target_appends_missing_extension_with_a_warning() {
+        let (_temp, workspace) = workspace_fixture();
+        let target = resolve_media_target(
+            workspace.as_ref(),
+            "alice__c__1",
+            Some("temp/out"),
+            "png",
+            "image",
+            false,
+            false,
+        )
+        .expect("target");
+        assert_eq!(target.relative, "temp/out.png");
+        assert!(target.warning.is_some());
+    }
+
+    #[test]
+    fn media_target_rejects_directories_and_outside_paths() {
+        let (_temp, workspace) = workspace_fixture();
+        let root = workspace.user_root("alice__c__1");
+        fs::create_dir_all(root.join("shots")).expect("mkdir");
+        let directory = resolve_media_target(
+            workspace.as_ref(),
+            "alice__c__1",
+            Some("shots"),
+            "png",
+            "image",
+            false,
+            false,
+        )
+        .expect_err("directory must be rejected");
+        assert_eq!(directory.code, "IMAGE_REQUEST_INVALID");
+        assert!(directory.message.contains("目录"), "{}", directory.message);
+
+        let outside = resolve_media_target(
+            workspace.as_ref(),
+            "alice__c__1",
+            Some("../escape.png"),
+            "png",
+            "image",
+            false,
+            false,
+        )
+        .expect_err("outside must be rejected");
         assert!(
-            validate_image_generation_request(&config, Some("1920x1080"), "text_to_image")
-                .is_none()
+            outside.message.contains("工作区之外"),
+            "{}",
+            outside.message
         );
     }
 
     #[test]
-    fn image_size_resolution_prefers_request_then_default_and_caps_at_max() {
-        let mut config = image_model(VLLM_OMNI_PROVIDER);
-        config.image_default_size = Some("1024x1024".to_string());
-        config.image_max_size = Some("2048x2048".to_string());
-        assert_eq!(
-            resolve_requested_image_size(&config, Some("1536x864"), false).as_deref(),
-            Some("1536x864")
-        );
-        assert_eq!(
-            resolve_requested_image_size(&config, None, false).as_deref(),
-            Some("1024x1024")
-        );
-        // 修图未指定尺寸时保持原图尺寸，交给下游 auto 处理。
-        assert_eq!(resolve_requested_image_size(&config, None, true), None);
-        // 超限时按最大边等比缩到上限内（2048x2048，仍是正方形）。
-        assert_eq!(
-            resolve_requested_image_size(&config, Some("4096x4096"), false).as_deref(),
-            Some("2048x2048")
-        );
+    fn media_target_requires_overwrite_for_existing_files() {
+        let (_temp, workspace) = workspace_fixture();
+        let root = workspace.user_root("alice__c__1");
+        fs::create_dir_all(root.join("temp")).expect("mkdir");
+        fs::write(root.join("temp/out.png"), b"old").expect("write");
+        let blocked = resolve_media_target(
+            workspace.as_ref(),
+            "alice__c__1",
+            Some("temp/out.png"),
+            "png",
+            "image",
+            false,
+            false,
+        )
+        .expect_err("existing file must be rejected");
+        assert!(blocked.message.contains("overwrite"), "{}", blocked.message);
+        assert!(resolve_media_target(
+            workspace.as_ref(),
+            "alice__c__1",
+            Some("temp/out.png"),
+            "png",
+            "image",
+            true,
+            false,
+        )
+        .is_ok());
     }
 
     #[test]

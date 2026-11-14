@@ -534,13 +534,14 @@ mod tests {
         assert!(recent_settle_active(session));
         let (expired, pending) = expire_recent_settles();
         assert!(expired.is_empty(), "a fresh outcome is not expired yet");
-        assert!(pending, "the notice timer stays alive while news is pending");
+        assert!(
+            pending,
+            "the notice timer stays alive while news is pending"
+        );
 
         RECENT_SETTLES.with(|slot| {
-            slot.borrow_mut().insert(
-                session.to_string(),
-                Instant::now() - Duration::from_secs(1),
-            );
+            slot.borrow_mut()
+                .insert(session.to_string(), Instant::now() - Duration::from_secs(1));
         });
         let (expired, pending) = expire_recent_settles();
         assert_eq!(expired, vec![session.to_string()]);

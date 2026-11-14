@@ -82,19 +82,21 @@ impl NativeWorkflowEntry {
         .take(640)
         .map(|c| if c.is_whitespace() { ' ' } else { c })
         .collect();
-        let tokens = request_context_tokens(data)
-            .map(compact)
-            .unwrap_or_default();
-        let duration = number(data, &["duration_ms"], 0)
-            .or_else(|| {
-                number(
-                    data.get("meta").unwrap_or(&Value::Null),
-                    &["duration_ms"],
-                    0,
-                )
-            })
-            .map(format_duration_ms)
-            .unwrap_or_default();
+        // A compaction call acts on the thread's context instead of a file or
+        // command, so its right-hand columns answer "what is left" and "how
+        // long the summary took" rather than the triggering request's usage.
+        let (tokens, duration) = if compaction {
+            compaction_metrics(data)
+        } else {
+            (
+                request_context_tokens(data)
+                    .map(compact)
+                    .unwrap_or_default(),
+                number(data, &["duration_ms"], 0)
+                    .map(format_duration_ms)
+                    .unwrap_or_default(),
+            )
+        };
         let sections = sections::project(title, data, state, &detail);
         let patch_files = patch::project(title, data, args.unwrap_or(&Value::Null));
         let read_lines = read_line_label(title, state, data);
@@ -117,6 +119,29 @@ impl NativeWorkflowEntry {
             patch_files,
         }
     }
+}
+
+/// Folded metrics of a compaction entry: the context occupancy the summary
+/// left behind, then how long the compaction itself took. Only values that
+/// describe the state *after* the rebuild are read — a running or skipped
+/// compaction has no "after" yet, so its columns stay empty instead of
+/// repeating the usage that triggered it.
+fn compaction_metrics(data: &Value) -> (String, String) {
+    let tokens = [
+        "context_tokens_after",
+        "observed_context_tokens_after",
+        "estimated_message_tokens_after",
+        "projected_request_tokens_after",
+        "total_tokens_after",
+    ]
+    .iter()
+    .find_map(|key| data.get(*key).and_then(positive_count))
+    .map(compact)
+    .unwrap_or_default();
+    let duration = number(data, &["duration_ms"], 0)
+        .map(format_duration_ms)
+        .unwrap_or_default();
+    (tokens, duration)
 }
 
 /// The read tool already reports how many lines it returned; the folded row
@@ -722,6 +747,46 @@ mod tests {
             );
             assert_eq!((row.tokens.as_str(), row.duration.as_str()), expected);
         }
+    }
+    /// A compaction entry states what the summary left behind and how long the
+    /// compaction took, never the usage of the request that triggered it.
+    #[test]
+    fn compaction_metrics_use_after_occupancy_and_elapsed_time() {
+        let done = json!({
+            "status":"done",
+            "context_tokens":48000,
+            "request_context_tokens":48000,
+            "context_tokens_after":12000,
+            "projected_request_tokens_after":12000,
+            "duration_ms":7420,
+        });
+        let row = NativeWorkflowEntry::from_payload(
+            "fixture-compaction",
+            "上下文压缩",
+            String::new(),
+            "completed",
+            &done,
+        );
+        assert_eq!(
+            (row.tokens.as_str(), row.duration.as_str()),
+            ("12k", "7.4s")
+        );
+        // A skipped guard has no rebuilt context yet: the columns stay empty
+        // rather than echoing the pre-compaction usage.
+        let skipped = json!({
+            "status":"skipped",
+            "context_tokens":48000,
+            "context_guard_tokens_after":45000,
+            "duration_ms":12,
+        });
+        let row = NativeWorkflowEntry::from_payload(
+            "fixture-compaction",
+            "上下文压缩",
+            String::new(),
+            "completed",
+            &skipped,
+        );
+        assert_eq!((row.tokens.as_str(), row.duration.as_str()), ("", "12ms"));
     }
     /// A thinking row has no tool payload: its two columns come from the
     /// assistant item of the round — the prompt actually sent and the span

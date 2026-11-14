@@ -181,8 +181,7 @@ mod tests {
         let mut projection = StatusProjection::default();
         let read_revision = projection.revision();
         projection.record_local("fixture-local", "请求中");
-        let reconciled =
-            projection.reconcile("fixture-background", "done", read_revision, None);
+        let reconciled = projection.reconcile("fixture-background", "done", read_revision, None);
         assert_eq!(reconciled.status, "done");
         assert!(reconciled.accepted);
     }
@@ -297,8 +296,7 @@ mod tests {
                 .reconcile("fixture-session", "completed", read_revision, None)
                 .accepted
         );
-        let reconciled =
-            projection.reconcile("fixture-session", "running", read_revision, None);
+        let reconciled = projection.reconcile("fixture-session", "running", read_revision, None);
         assert!(reconciled.accepted, "a new remote run must not be fenced");
         assert_eq!(reconciled.status, "running");
     }

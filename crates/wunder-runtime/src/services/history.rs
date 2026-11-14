@@ -484,8 +484,9 @@ pub(crate) fn build_message_from_item(item: &Value, include_reasoning: bool) -> 
         }
     }
     if role == "assistant" {
-        if let Some(tool_calls) =
-            extract_tool_calls_payload(item).and_then(filter_replay_tool_calls_payload)
+        if let Some(tool_calls) = extract_tool_calls_payload(item)
+            .and_then(filter_replay_tool_calls_payload)
+            .map(|payload| project_tool_calls_for_history(&payload))
         {
             if let Value::Object(ref mut map) = message {
                 map.insert("tool_calls".to_string(), tool_calls);
@@ -522,6 +523,113 @@ fn extract_tool_calls_payload(item: &Value) -> Option<Value> {
     } else {
         Some(value.clone())
     }
+}
+
+/// 工具调用参数里的大块正文（整份文件、长脚本）只在执行与落盘时需要：模型
+/// 历史再带一遍会按轮次重复计费——一次 35k 字符的写入，之后每一轮请求都要
+/// 多付约 16k tokens。
+///
+/// 这里把超长字符串参数投影成“前若干字符 + 省略说明”，参数结构不变、仍是
+/// 合法 JSON。投影只取决于参数本身（纯函数、幂等），实时请求与历史重建得到
+/// 字节一致的结果，因此不破坏 append-only 前缀与 KV 缓存复用；完整的原始参数
+/// 仍留在持久化记录与落盘文件里，需要时可用读取文件重取。
+pub(crate) const HISTORY_TOOL_ARGS_MAX_STRING_CHARS: usize = 2_000;
+pub(crate) const HISTORY_TOOL_ARGS_KEEP_HEAD_CHARS: usize = 320;
+const HISTORY_TOOL_ARGS_MAX_DEPTH: usize = 6;
+
+pub(crate) fn project_tool_calls_for_history(tool_calls: &Value) -> Value {
+    match tool_calls {
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(project_tool_call_for_history)
+                .collect::<Vec<_>>(),
+        ),
+        Value::Object(_) => project_tool_call_for_history(tool_calls),
+        other => other.clone(),
+    }
+}
+
+fn project_tool_call_for_history(call: &Value) -> Value {
+    let Some(map) = call.as_object() else {
+        return call.clone();
+    };
+    let Some(function) = map.get("function").and_then(Value::as_object) else {
+        return call.clone();
+    };
+    let Some(projected_arguments) =
+        project_tool_arguments_for_history(function.get("arguments").unwrap_or(&Value::Null))
+    else {
+        return call.clone();
+    };
+    let mut projected_function = function.clone();
+    projected_function.insert("arguments".to_string(), projected_arguments);
+    let mut projected = map.clone();
+    projected.insert("function".to_string(), Value::Object(projected_function));
+    Value::Object(projected)
+}
+
+/// 参数既可能是 JSON 字符串（OpenAI 风格），也可能是已经展开的对象。返回
+/// `None` 表示“无需投影”，调用方保留原值以维持字节稳定。
+fn project_tool_arguments_for_history(arguments: &Value) -> Option<Value> {
+    match arguments {
+        Value::String(raw) => {
+            let parsed = serde_json::from_str::<Value>(raw).ok()?;
+            let projected = elide_long_tool_argument_strings(&parsed, 0);
+            if projected == parsed {
+                return None;
+            }
+            serde_json::to_string(&projected).ok().map(Value::String)
+        }
+        Value::Null => None,
+        other => {
+            let projected = elide_long_tool_argument_strings(other, 0);
+            (projected != *other).then_some(projected)
+        }
+    }
+}
+
+fn elide_long_tool_argument_strings(value: &Value, depth: usize) -> Value {
+    if depth > HISTORY_TOOL_ARGS_MAX_DEPTH {
+        return value.clone();
+    }
+    match value {
+        Value::String(text) => {
+            let chars = text.chars().count();
+            if chars <= HISTORY_TOOL_ARGS_MAX_STRING_CHARS {
+                return value.clone();
+            }
+            let head: String = text
+                .chars()
+                .take(HISTORY_TOOL_ARGS_KEEP_HEAD_CHARS)
+                .collect();
+            Value::String(format!("{head}{}", history_tool_args_elision_marker(chars)))
+        }
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| elide_long_tool_argument_strings(item, depth + 1))
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, item)| {
+                    (
+                        key.clone(),
+                        elide_long_tool_argument_strings(item, depth + 1),
+                    )
+                })
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+fn history_tool_args_elision_marker(chars: usize) -> String {
+    format!(
+        "\n…[wunder] {chars} characters of this argument were omitted from model history. \
+The value was already applied (file on disk or tool record); re-read it if you need the exact text."
+    )
 }
 
 fn extract_tool_call_id(item: &Value) -> Option<String> {
@@ -947,6 +1055,88 @@ mod tests {
     use std::sync::Arc;
     use tempfile::tempdir;
     use tokio::runtime::Builder;
+
+    #[test]
+    fn history_projection_elides_oversized_tool_arguments_only() {
+        let body = "x".repeat(HISTORY_TOOL_ARGS_MAX_STRING_CHARS + 500);
+        let payload = json!([{
+            "id": "call_1",
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "arguments": json!({ "path": "/tmp/film.js", "content": body }).to_string()
+            }
+        }]);
+        let projected = project_tool_calls_for_history(&payload);
+        let arguments = projected[0]["function"]["arguments"]
+            .as_str()
+            .expect("arguments stay a JSON string");
+        let parsed: Value =
+            serde_json::from_str(arguments).expect("projected arguments stay valid JSON");
+        let content = parsed["content"].as_str().expect("content field kept");
+        assert!(content.starts_with(&"x".repeat(HISTORY_TOOL_ARGS_KEEP_HEAD_CHARS)));
+        assert!(content.contains("characters of this argument were omitted from model history"));
+        assert!(content.len() < body.len());
+        // 结构不变：短字段原样保留，模型仍能知道写了哪个文件。
+        assert_eq!(parsed["path"], json!("/tmp/film.js"));
+        // 幂等：再次投影不会二次裁剪，前缀因此保持稳定。
+        assert_eq!(project_tool_calls_for_history(&projected), projected);
+    }
+
+    #[test]
+    fn live_and_rebuilt_tool_call_projections_match_byte_for_byte() {
+        let body = "z".repeat(HISTORY_TOOL_ARGS_MAX_STRING_CHARS + 200);
+        let calls = json!([{
+            "id": "call_live",
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "arguments": json!({ "path": "/tmp/a.js", "content": body }).to_string()
+            }
+        }]);
+        // 实时请求走 project_tool_calls_for_history，历史重建走 build_message_from_item；
+        // 两者必须得到完全相同的文本，否则 append-only 前缀与提示词缓存会被改写。
+        let live = project_tool_calls_for_history(&calls);
+        let item = json!({ "role": "assistant", "content": "", "tool_calls": calls });
+        let rebuilt = build_message_from_item(&item, true).expect("assistant message");
+        assert_eq!(rebuilt["tool_calls"], live);
+    }
+
+    #[test]
+    fn history_projection_keeps_small_tool_arguments_untouched() {
+        let payload = json!([{
+            "id": "call_2",
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "arguments": json!({ "path": "/tmp/a.md", "limit": 40 }).to_string()
+            }
+        }]);
+        assert_eq!(project_tool_calls_for_history(&payload), payload);
+    }
+
+    #[test]
+    fn rebuilt_assistant_history_uses_projected_tool_arguments() {
+        let body = "y".repeat(HISTORY_TOOL_ARGS_MAX_STRING_CHARS + 10);
+        let item = json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call_3",
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "arguments": json!({ "path": "/tmp/a.js", "content": body }).to_string()
+                }
+            }],
+        });
+        let message = build_message_from_item(&item, true).expect("assistant message");
+        let arguments = message["tool_calls"][0]["function"]["arguments"]
+            .as_str()
+            .expect("arguments");
+        assert!(arguments.contains("characters of this argument were omitted"));
+        assert!(arguments.len() < body.len());
+    }
 
     fn with_language<T>(language: &str, f: impl FnOnce() -> T) -> T {
         Builder::new_current_thread()

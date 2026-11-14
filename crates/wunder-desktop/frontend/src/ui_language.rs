@@ -67,7 +67,8 @@ pub(crate) mod probe {
         else {
             return false;
         };
-        let language = std::env::var("WUNDER_LANG_PROBE_LANGUAGE").unwrap_or_else(|_| "en-US".into());
+        let language =
+            std::env::var("WUNDER_LANG_PROBE_LANGUAGE").unwrap_or_else(|_| "en-US".into());
         app.set_runtime_language(language.into());
         apply(app);
         let weak = app.as_weak();

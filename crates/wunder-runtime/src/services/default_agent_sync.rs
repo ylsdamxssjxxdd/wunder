@@ -587,13 +587,21 @@ pub async fn sync_default_agent_across_users(
             let context = context_base.context_for(state, &user.user_id);
             let allowed = compute_allowed_tool_names(&user, &context);
             let current_skill_name_keys = collect_context_skill_names(&context);
-            let current_config =
-                resolve_effective_default_agent_config(state, &user, &allowed, &current_skill_name_keys)
-                    .await?;
+            let current_config = resolve_effective_default_agent_config(
+                state,
+                &user,
+                &allowed,
+                &current_skill_name_keys,
+            )
+            .await?;
             let current_record = record_from_config(&user.user_id, &current_config);
             let current = snapshot_from_default_record(&current_record, &current_skill_name_keys);
-            let target =
-                build_target_snapshot_from_context(&user, &template_config, &current_record, &context);
+            let target = build_target_snapshot_from_context(
+                &user,
+                &template_config,
+                &current_record,
+                &context,
+            );
             let binding = load_sync_binding(state, &user.user_id)?;
             let binding_matches = binding
                 .as_ref()

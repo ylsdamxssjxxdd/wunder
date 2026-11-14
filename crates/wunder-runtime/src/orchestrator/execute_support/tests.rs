@@ -1238,3 +1238,61 @@ fn persisted_tool_call_id_accepts_string_and_numeric_ids() {
     assert_eq!(persisted_tool_call_id(&json!({"id": "  "})), None);
     assert_eq!(persisted_tool_call_id(&json!({"name": "x"})), None);
 }
+
+#[test]
+fn context_shrink_cause_prefers_the_thinking_budget_resend() {
+    assert_eq!(
+        classify_context_shrink_cause(true, false),
+        "thinking_budget_resend"
+    );
+    assert_eq!(
+        classify_context_shrink_cause(true, true),
+        "thinking_budget_resend"
+    );
+    assert_eq!(
+        classify_context_shrink_cause(false, true),
+        "inline_images_omitted"
+    );
+    assert_eq!(
+        classify_context_shrink_cause(false, false),
+        "provider_accounting"
+    );
+}
+
+#[test]
+fn omitted_inline_image_placeholders_are_detected_in_request_messages() {
+    let marker = crate::services::chat_payload_sanitizer::INLINE_IMAGE_OMITTED_TEXT;
+    assert!(messages_omitted_inline_images(&[json!({
+        "role": "user",
+        "content": format!("look at this {marker}"),
+    })]));
+    assert!(!messages_omitted_inline_images(&[json!({
+        "role": "user",
+        "content": "plain text only",
+    })]));
+}
+
+#[test]
+fn assistant_history_snapshot_projects_model_copy_but_keeps_full_arguments() {
+    let allowed = HashSet::from([resolve_tool_name("write_file")]);
+    let body = "z".repeat(crate::services::history::HISTORY_TOOL_ARGS_MAX_STRING_CHARS + 200);
+    let payload = json!([{
+        "id": "call_write",
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "arguments": json!({ "path": "film.js", "content": body }).to_string()
+        }
+    }]);
+    let snapshot = build_assistant_history_snapshot(Some(&payload), &allowed);
+    let persisted = snapshot
+        .persisted_tool_calls
+        .expect("persisted tool calls should remain");
+    assert_eq!(persisted, payload, "落盘参数必须保留完整正文供重放");
+    let model_calls = snapshot.tool_calls.expect("model copy");
+    let arguments = model_calls[0]["function"]["arguments"]
+        .as_str()
+        .expect("arguments");
+    assert!(arguments.contains("characters of this argument were omitted"));
+    assert!(arguments.len() < body.len());
+}

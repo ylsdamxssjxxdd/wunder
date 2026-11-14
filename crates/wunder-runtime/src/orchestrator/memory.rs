@@ -228,6 +228,11 @@ impl Orchestrator {
         if !should_compact {
             return Ok(CompactionResult::unchanged(messages));
         }
+        // The compaction entry reports how long the whole operation took
+        // (summary generation plus context rebuild), so the clock starts when
+        // the decision admits a compaction and every result payload below
+        // carries the elapsed milliseconds.
+        let compaction_started = std::time::Instant::now();
         let compaction_id = new_compaction_id(compaction_profile.run_mode);
         let compaction_id_ref = Some(compaction_id.as_str());
 
@@ -397,6 +402,7 @@ impl Orchestrator {
                 "trigger": compaction_trigger,
                 "status": if guard_stats.applied { "guard_only" } else { "skipped" },
                 "skip_reason": if has_candidates { "no_candidates" } else { "no_history" },
+                "duration_ms": compaction_started.elapsed().as_millis() as i64,
                 "fresh_memory_injected": false,
                 "fresh_memory_count": 0,
                 "history_usage": history_usage,
@@ -604,6 +610,7 @@ impl Orchestrator {
                 "trigger": compaction_trigger,
                 "status": if guard_stats.applied { "guard_only" } else { "skipped" },
                 "skip_reason": "invalid_summary_commit",
+                "duration_ms": compaction_started.elapsed().as_millis() as i64,
                 "summary_fallback": true,
                 "summary_model_output": summary_model_output,
                 "fresh_memory_injected": false,
@@ -877,6 +884,10 @@ impl Orchestrator {
             Value::String(if summary_fallback { "fallback" } else { "done" }.to_string()),
         );
         compaction_payload_map.insert("summary_fallback".to_string(), json!(summary_fallback));
+        compaction_payload_map.insert(
+            "duration_ms".to_string(),
+            json!(compaction_started.elapsed().as_millis() as i64),
+        );
         compaction_payload_map.insert(
             "summary_model_output".to_string(),
             json!(summary_model_output),

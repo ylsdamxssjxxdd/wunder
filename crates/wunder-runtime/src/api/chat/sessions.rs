@@ -2170,10 +2170,10 @@ mod tests {
         apply_session_running_state, build_forked_session_record,
         build_projected_queue_assistant_message, build_projected_queue_user_message,
         has_active_queue_task, insert_session_runtime_fields, insert_session_workspace_fields,
-        is_session_stream_active_or_queued,
-        item_page_cursor_after_merge, merge_persisted_transcript_metrics,
-        merge_visible_transcript_page, normalize_before_seq, project_queued_session_messages,
-        raw_item_page_from_loaded_history, summarize_transcript_messages, RunningTurnHint,
+        is_session_stream_active_or_queued, item_page_cursor_after_merge,
+        merge_persisted_transcript_metrics, merge_visible_transcript_page, normalize_before_seq,
+        project_queued_session_messages, raw_item_page_from_loaded_history,
+        summarize_transcript_messages, RunningTurnHint,
     };
     use crate::storage::{AgentTaskRecord, SqliteStorage, StorageBackend};
     use crate::user_store::UserStore;

@@ -239,7 +239,8 @@ pub async fn generate_image(
     .await
     .context("prepare image request")??;
     let mut response = generate_image_with_model(&model_config, &request).await?;
-    response.size = prepared.size;
+    // 回执给真实输出尺寸：编辑模式未显式指定时就是输入图尺寸，不再返回 null。
+    response.size = prepared.reported_size.or(prepared.size);
     response.resized_input = prepared.resized_input;
     Ok(response)
 }
@@ -935,17 +936,28 @@ fn parse_image_generation_response(
     if bytes.is_empty() {
         return Err(anyhow!("image response is empty"));
     }
-    let response_output_format = value
-        .get("output_format")
-        .and_then(Value::as_str)
-        .or(requested_output_format);
-    let output_format = normalize_image_output_format(response_output_format);
+    // 以真实字节为准：上游可能忽略 output_format 仍返回 PNG，此时按请求格式贴
+    // MIME 会把 PNG 存成 .webp。先嗅探魔数，探测不出才退回请求格式。
+    let detected = detect_image_output_format(&bytes);
+    let output_format = detected
+        .map(ToString::to_string)
+        .unwrap_or_else(|| normalize_image_output_format(requested_output_format));
     Ok(ImageGenerationResponse {
         bytes,
         content_type: image_mime_type(&output_format).to_string(),
         size: None,
         resized_input: None,
     })
+}
+
+/// 从图片字节嗅探真实格式；只认本工具会写出的三种。
+fn detect_image_output_format(bytes: &[u8]) -> Option<&'static str> {
+    match image::guess_format(bytes).ok()? {
+        image::ImageFormat::Png => Some("png"),
+        image::ImageFormat::Jpeg => Some("jpeg"),
+        image::ImageFormat::WebP => Some("webp"),
+        _ => None,
+    }
 }
 
 fn format_image_http_error(prefix: &str, status: reqwest::StatusCode, body: &str) -> String {
@@ -1146,19 +1158,33 @@ pub(crate) fn parse_image_dimensions(size: &str) -> Option<(u32, u32)> {
 /// 统一尺寸策略：文生图按请求/默认尺寸限幅；编辑先把输入图等比缩到上限内，
 /// 再把缩小后的尺寸作为请求尺寸，输出比例与输入一致且不会突破显存上限。
 ///
-/// 尺寸准备结果：真正下发的尺寸，以及输入图被等比缩小时的尺寸变化。
+/// 尺寸准备结果：真正下发的尺寸、可以对外回报的输出尺寸，以及输入图被等比
+/// 缩小时的尺寸变化。
+///
+/// 编辑链路未显式给尺寸时 `size=None`（下发 `auto`），但输出尺寸其实等于输入图
+/// 尺寸；`reported_size` 就是给回执用的真实值，避免同一个字段在两种模式下
+/// 一会儿有值一会儿是 null。
 #[derive(Debug)]
 struct ImageRequestPreparation {
     size: Option<String>,
+    reported_size: Option<String>,
     resized_input: Option<String>,
 }
 
 impl ImageRequestPreparation {
     fn new(size: Option<String>) -> Self {
         Self {
+            reported_size: size.clone(),
             size,
             resized_input: None,
         }
+    }
+
+    fn report_source_size(mut self, width: u32, height: u32) -> Self {
+        if self.reported_size.is_none() {
+            self.reported_size = Some(format!("{}x{}", width, height));
+        }
+        self
     }
 }
 
@@ -1196,9 +1222,12 @@ fn prepare_image_request(
     let (target_width, target_height) = fit_size_for_provider(config, source_width, source_height);
     if (target_width, target_height) == (source_width, source_height) {
         // 输入图本来就在上限内：保留 auto 语义，除非调用方显式指定了尺寸。
+        // 回执仍要说出真实输出尺寸——它就是输入图尺寸。
         let size = resolve_requested_image_size(config, request.size.as_deref(), true);
         request.size = size.clone();
-        return Ok(ImageRequestPreparation::new(size));
+        return Ok(
+            ImageRequestPreparation::new(size).report_source_size(source_width, source_height)
+        );
     }
     ensure_input_decodable(&source.filename, source_width, source_height)?;
     request.input_images[0] = resize_image_input(&source, target_width, target_height)?;
@@ -1222,7 +1251,8 @@ fn prepare_image_request(
     let size = format!("{target_width}x{target_height}");
     request.size = Some(size.clone());
     Ok(ImageRequestPreparation {
-        size: Some(size),
+        size: Some(size.clone()),
+        reported_size: Some(size),
         resized_input: Some(format!(
             "{source_width}x{source_height}->{target_width}x{target_height}"
         )),
@@ -1268,11 +1298,7 @@ fn image_bytes_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
 }
 
 /// 重编码为 PNG：扩展名与 MIME 一起换掉，避免上游按原扩展名解析出错。
-fn resize_image_input(
-    input: &ImageInputFile,
-    width: u32,
-    height: u32,
-) -> Result<ImageInputFile> {
+fn resize_image_input(input: &ImageInputFile, width: u32, height: u32) -> Result<ImageInputFile> {
     let decoded = image::load_from_memory(&input.bytes)
         .with_context(|| format!("decode image input {}", input.filename))?;
     let resized = decoded.resize_exact(width, height, image::imageops::FilterType::CatmullRom);
@@ -1313,6 +1339,18 @@ fn build_image_payload(
     if let Some(map) = payload.as_object_mut() {
         if let Some(size) = resolve_requested_image_size(config, request.size.as_deref(), false) {
             map.insert("size".to_string(), json!(size));
+        }
+        // 文生图以前完全不转发 output_format，导致“要 webp 拿到 png”只能靠猜。
+        if let Some(output_format) = request
+            .output_format
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            map.insert(
+                "output_format".to_string(),
+                json!(normalize_image_output_format(Some(output_format))),
+            );
         }
         if let Some(negative_prompt) = request
             .negative_prompt
@@ -2195,10 +2233,22 @@ mod tests {
 
     #[test]
     fn image_size_scaling_keeps_aspect_and_never_upscales() {
-        assert_eq!(super::fit_image_size_within(1536, 864, 1024, 1024), (1024, 576));
-        assert_eq!(super::fit_image_size_within(800, 600, 1024, 1024), (800, 600));
-        assert_eq!(super::fit_image_size_within(4096, 4096, 1024, 1024), (1024, 1024));
-        assert_eq!(super::fit_image_size_within(2000, 400, 1024, 1024), (1024, 205));
+        assert_eq!(
+            super::fit_image_size_within(1536, 864, 1024, 1024),
+            (1024, 576)
+        );
+        assert_eq!(
+            super::fit_image_size_within(800, 600, 1024, 1024),
+            (800, 600)
+        );
+        assert_eq!(
+            super::fit_image_size_within(4096, 4096, 1024, 1024),
+            (1024, 1024)
+        );
+        assert_eq!(
+            super::fit_image_size_within(2000, 400, 1024, 1024),
+            (1024, 205)
+        );
     }
 
     #[test]
@@ -2388,7 +2438,10 @@ mod tests {
         ));
         let mut bytes = Vec::new();
         image
-            .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
             .expect("encode png");
         bytes
     }

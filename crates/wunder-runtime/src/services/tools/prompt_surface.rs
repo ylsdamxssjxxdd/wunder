@@ -247,8 +247,8 @@ const SURFACE_RULES: &[SurfaceRule] = &[
         tool: "图像生成",
         // 修图入口必须写进 brief：内置工具的参数说明会被整体裁掉，模型只能
         // 从这里得知"改图传 input_path、prompt 只写改动、mask/strength 可用"。
-        brief_en: "Generate or edit an image into path: text-to-image, or input_path / input_paths for single and multi-image edits; prompt describes the change. Prefer it for retouching; mask_path marks local edits, strength sets how much changes, output_format picks png/jpeg/webp. Oversized sizes scale down proportionally. HD is not upscaling: omit size, keep source dimensions. Use it for deck/report/poster art; charts in code.",
-        brief_zh: "按 prompt 生成图片写入 path；改图传 input_path（多图用 input_paths），prompt 只写改动处，output_format 选 png/jpeg/webp。修图优先用本工具：mask_path 标局部重绘，strength 控改动幅度。size 如 1024x1024，超最大尺寸会按最大边等比缩小，高清化不是放大：不要传 size，保持原图宽高。交付物（PPT/报告/海报/网页/封面）配图应主动多次调用本工具；图表/数据图用代码。",
+        brief_en: "Generate/edit into path. Edits: input_paths (array, first = primary; input_path deprecated). size WxH: /16, short >= 32, <= model limit (default 1024x1024); omit size for HD. mask_path: white = repaint, black = keep, same size as source. strength 0-1 (edits). output_format must match suffix. seed omitted = auto + echoed. Existing path needs overwrite:true. Prefer for retouching.",
+        brief_zh: "生成或修图写入 path。改图用 input_paths（数组，首张为主图；input_path 已弃用），prompt 只写改动。size 宽x高：须为 16 的倍数、短边≥32、不超模型上限（默认 1024x1024）；高清化不要传 size。mask_path：白=重绘、黑=保留，须与主图同尺寸。strength 0~1 仅编辑。output_format 须与后缀一致。seed 留空会自动生成并回显。path 已存在需 overwrite:true。修图优先用它。",
         drop_actions: &[],
         drop_fields: &[
             "guidance_scale",

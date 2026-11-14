@@ -821,7 +821,12 @@ fn set_context(app: &MainWindow, slot: usize, usage: wunder_desktop::NativeConte
 /// Read one pane's context snapshot off the UI thread. The reply is dropped if
 /// the pane was reassigned meanwhile, so a slow read can never paint another
 /// thread's numbers into this pane.
-fn refresh_pane_context(app: &MainWindow, desktop: Arc<NativeDesktop>, slot: usize, session_id: &str) {
+fn refresh_pane_context(
+    app: &MainWindow,
+    desktop: Arc<NativeDesktop>,
+    slot: usize,
+    session_id: &str,
+) {
     let target = session_id.trim().to_string();
     if target.is_empty() {
         return;

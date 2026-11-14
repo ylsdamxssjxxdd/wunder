@@ -328,6 +328,34 @@ pub(super) fn rejected_tool_calls_event_payload(rejected: &[RejectedToolCall]) -
     )
 }
 
+/// 请求上下文在两次调用之间缩水时，给轨迹一个可判定的成因，而不是让用户
+/// 自己猜。优先级：本轮确实发生过“思考预算触顶重发”就先报它；其次是历史
+/// 重建把内联图换成占位；都不成立时只能是服务端截断/用量口径变化。
+pub(super) fn classify_context_shrink_cause(
+    transport_recovery_used: bool,
+    inline_images_omitted: bool,
+) -> &'static str {
+    if transport_recovery_used {
+        "thinking_budget_resend"
+    } else if inline_images_omitted {
+        "inline_images_omitted"
+    } else {
+        "provider_accounting"
+    }
+}
+
+/// 本次请求的消息里是否带内联图省略占位：占位意味着这些图不再上传，图片
+/// token 自然不计入提示。占位是纯文本，只扫字符串内容即可，避免序列化大消息。
+pub(super) fn messages_omitted_inline_images(messages: &[Value]) -> bool {
+    let marker = crate::services::chat_payload_sanitizer::INLINE_IMAGE_OMITTED_TEXT;
+    messages.iter().any(|message| {
+        message
+            .get("content")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.contains(marker))
+    })
+}
+
 pub(super) fn build_assistant_history_snapshot(
     tool_calls_payload: Option<&Value>,
     allowed_tool_names: &HashSet<String>,
@@ -340,8 +368,13 @@ pub(super) fn build_assistant_history_snapshot(
     };
     let persisted = extract_replayable_tool_call_payloads(&payload, allowed_tool_names);
     let persisted_tool_calls = (!persisted.is_empty()).then_some(Value::Array(persisted));
+    // 模型看到的参数走历史投影（大块正文省略，见 history::project_tool_calls_for_history），
+    // 落盘/重放用的 persisted_tool_calls 保留完整参数。
+    let tool_calls = persisted_tool_calls
+        .as_ref()
+        .map(crate::services::history::project_tool_calls_for_history);
     AssistantHistorySnapshot {
-        tool_calls: persisted_tool_calls.clone(),
+        tool_calls,
         persisted_tool_calls,
     }
 }

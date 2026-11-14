@@ -298,7 +298,11 @@ pub fn parked_is_full(parked: &VecDeque<ParkedTurn>) -> bool {
 /// bound is the strip's, not the parked-channel limit — and it is counted per
 /// thread, so messages held for another thread never eat this thread's room.
 pub fn waiting_is_full(waiting: &[WaitingTurn], session: &str) -> bool {
-    waiting.iter().filter(|turn| turn.session == session).count() >= STRIP_ROWS
+    waiting
+        .iter()
+        .filter(|turn| turn.session == session)
+        .count()
+        >= STRIP_ROWS
 }
 
 /// Move `queue_id` by `delta` inside the current order and hand back the whole

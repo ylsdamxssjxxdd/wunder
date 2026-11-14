@@ -163,11 +163,7 @@ fn short(value: &str, limit: usize) -> String {
 /// names the same file in another form.
 fn file_name(value: &str) -> &str {
     let trimmed = value.trim().trim_end_matches(['/', '\\']);
-    trimmed
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(trimmed)
-        .trim()
+    trimmed.rsplit(['/', '\\']).next().unwrap_or(trimmed).trim()
 }
 
 /// The folded row prints only the file name of the call target. A full path
@@ -572,7 +568,8 @@ pub fn merge_reasoning_tail(bar: &TimelineRow, mut entry: ProcessEntry) {
         if !bar.process_paged && children.row_count() >= 201 {
             children.remove(200);
         }
-        entry.payload = -1 - bar.process_idx * crate::chat_process::PROCESS_SLOT - children.row_count() as i32;
+        entry.payload =
+            -1 - bar.process_idx * crate::chat_process::PROCESS_SLOT - children.row_count() as i32;
         children.push(entry);
     }
 }
@@ -701,7 +698,9 @@ pub fn restore_folds(rows: &mut [TimelineRow], previous: &VecModel<TimelineRow>)
                 if row.process_paged {
                     for index in 0..row.process_entries.row_count() {
                         if let Some(mut entry) = row.process_entries.row_data(index) {
-                            let payload = -1 - row.process_idx * crate::chat_process::PROCESS_SLOT - index as i32;
+                            let payload = -1
+                                - row.process_idx * crate::chat_process::PROCESS_SLOT
+                                - index as i32;
                             if entry.payload != payload {
                                 entry.payload = payload;
                                 row.process_entries.set_row_data(index, entry);
@@ -967,7 +966,10 @@ mod tests {
         assert!(fitted.ends_with('…'), "{fitted}");
         assert!(fitted.chars().count() <= 14, "{fitted}");
         // A phone row hands part of the chip to the change size.
-        assert!(fit_chip_label(long, true).chars().count() < fit_chip_label(long, false).chars().count());
+        assert!(
+            fit_chip_label(long, true).chars().count()
+                < fit_chip_label(long, false).chars().count()
+        );
     }
 
     #[test]

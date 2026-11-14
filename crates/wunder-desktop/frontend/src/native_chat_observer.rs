@@ -343,10 +343,10 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
             || !current.parked.is_empty()
             || any_live_row(&app)
         {
-                Duration::from_millis(500)
-            } else {
-                Duration::from_secs(3)
-            };
+            Duration::from_millis(500)
+        } else {
+            Duration::from_secs(3)
+        };
         let refresh = current
             .observation
             .list_refreshed
@@ -358,8 +358,9 @@ pub(super) fn install(app: &MainWindow, state: Rc<RefCell<State>>) {
         // them while a foreground or parked turn exists so an interject
         // and its successor are reflected even when the durable turn
         // watcher has not emitted a new history row yet.
-        let queue_active =
-            current.active.is_some() || !current.background.is_empty() || !current.parked.is_empty();
+        let queue_active = current.active.is_some()
+            || !current.background.is_empty()
+            || !current.parked.is_empty();
         if queue_active {
             queue::schedule_due(&mut current.queue_due, Duration::from_millis(500));
         }

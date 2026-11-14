@@ -820,9 +820,7 @@ pub(crate) fn mark_settle_seen(app: &MainWindow, session: &str) {
         .unwrap_or(0.0);
     SEEN_SETTLES.with(|slot| {
         let mut seen = slot.borrow_mut();
-        let entry = seen
-            .entry(session.to_string())
-            .or_insert(UNKNOWN_SETTLE);
+        let entry = seen.entry(session.to_string()).or_insert(UNKNOWN_SETTLE);
         // A known mark supersedes an unknown one; an unknown visit never
         // rewrites a mark already recorded.
         if ended_at > 0.0 && ended_at as f64 > *entry {
@@ -1510,7 +1508,10 @@ mod tests {
             let mut seen = slot.borrow_mut();
             seen.insert(id.to_string(), 1_800_000_000.0);
         });
-        assert!(seen_settle(id, 1_800_000_000.0), "the same mark is old news");
+        assert!(
+            seen_settle(id, 1_800_000_000.0),
+            "the same mark is old news"
+        );
         assert!(
             !seen_settle(id, 1_800_000_100.0),
             "a newer settle is a new completion"
@@ -1552,7 +1553,13 @@ mod tests {
         });
         let rows = ModelRc::new(VecModel::from(vec![thread_row(id, "请求中")]));
         let done = crate::runtime_phase::Phase::of("任务完成");
-        assert!(patch_thread_status(&rows, id, "任务完成", done, 1_800_000_500.0));
+        assert!(patch_thread_status(
+            &rows,
+            id,
+            "任务完成",
+            done,
+            1_800_000_500.0
+        ));
         let row = rows.row_data(0).unwrap();
         assert!(!row.visited, "a newer settle is unseen");
         assert!(patch_thread_status(&rows, id, "任务完成", done, 1_800_000_500.0) == false);
@@ -1602,14 +1609,32 @@ mod tests {
         assert_eq!(rows.row_data(2).unwrap().status, "idle");
         // A repeated or unknown update changes nothing and reports so.
         assert!(!patch_thread_status(&rows, "a", "正在生成…", running, 0.0));
-        assert!(!patch_thread_status(&rows, "gone", "正在生成…", running, 0.0));
+        assert!(!patch_thread_status(
+            &rows,
+            "gone",
+            "正在生成…",
+            running,
+            0.0
+        ));
         // A settle stamps the row with when it happened, so the view can keep
         // the mark until the user has seen it.
         let done = crate::runtime_phase::Phase::Done;
-        assert!(patch_thread_status(&rows, "a", "任务完成", done, 1_800_000_000.0));
+        assert!(patch_thread_status(
+            &rows,
+            "a",
+            "任务完成",
+            done,
+            1_800_000_000.0
+        ));
         assert_eq!(rows.row_data(0).unwrap().phase, done.code());
         assert_eq!(rows.row_data(0).unwrap().ended_at, 1_800_000_000.0);
-        assert!(!patch_thread_status(&rows, "a", "任务完成", done, 1_800_000_000.0));
+        assert!(!patch_thread_status(
+            &rows,
+            "a",
+            "任务完成",
+            done,
+            1_800_000_000.0
+        ));
     }
 
     /// The diff commit lands the rebuilt tree in the model instance itself:
@@ -1851,7 +1876,13 @@ mod tests {
     #[test]
     fn only_a_workspace_without_threads_autostarts_one() {
         assert!(workspace_is_empty(0, false));
-        assert!(!workspace_is_empty(3, false), "the counter says it has threads");
-        assert!(!workspace_is_empty(0, true), "a visible row contradicts the counter");
+        assert!(
+            !workspace_is_empty(3, false),
+            "the counter says it has threads"
+        );
+        assert!(
+            !workspace_is_empty(0, true),
+            "a visible row contradicts the counter"
+        );
     }
 }

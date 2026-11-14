@@ -1471,8 +1471,17 @@ impl Timeline {
                 row.summary = row_summary.as_str().into();
                 row.detail = copy.clone();
                 row.sections = sections;
-                row.tokens = entry.tokens.as_str().into();
-                row.duration = entry.duration.as_str().into();
+                // Right-hand metrics are reported by one frame only (a call
+                // frame has none). A later trailing frame of the same call
+                // must not blank the numbers already shown — a compaction, for
+                // instance, reports its elapsed time after the summary while a
+                // recovery frame repeats the same id without it.
+                if !entry.tokens.is_empty() {
+                    row.tokens = entry.tokens.as_str().into();
+                }
+                if !entry.duration.is_empty() {
+                    row.duration = entry.duration.as_str().into();
+                }
                 row.read_lines = entry.read_lines.as_str().into();
                 row.status_kind = status;
                 row.patch = cards.clone();

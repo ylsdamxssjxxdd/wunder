@@ -248,7 +248,10 @@ mod tests {
         config.tools.web.fetch.enabled = true;
         let skills = crate::skills::SkillRegistry::default();
         let allowed = crate::tools::collect_available_tool_names(&config, &skills, None);
-        assert!(allowed.contains("网页抓取"), "web_fetch missing from allowed");
+        assert!(
+            allowed.contains("网页抓取"),
+            "web_fetch missing from allowed"
+        );
         assert!(
             default_tool_names(&allowed).contains(&"网页抓取".to_string()),
             "web_fetch missing from default selection"

@@ -829,6 +829,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .optional(),
                 super::schema::integer("seed")
                     .desc(t("tool.spec.generate_image.args.seed"))
+                    .min(0)
+                    .max(4_294_967_295)
                     .optional(),
                 super::schema::string("input_path")
                     .desc(t("tool.spec.generate_image.args.input_path"))
@@ -845,6 +847,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     .optional(),
                 super::schema::number("strength")
                     .desc(t("tool.spec.generate_image.args.strength"))
+                    .min(0)
+                    .max(1)
+                    .optional(),
+                super::schema::boolean("overwrite")
+                    .desc(t("tool.spec.generate_image.args.overwrite"))
                     .optional(),
                 super::schema::number("true_cfg_scale")
                     .desc(t("tool.spec.generate_image.args.true_cfg_scale"))
@@ -2406,13 +2413,15 @@ mod tests {
             // add another few thousand tokens to every first turn.
             // 图像生成在精简面暴露 mask_path/strength 两个修图参数后突破 20k，
             // 这是有意增加的改图入口，故把总预算上调到 20.2k 而不是裁掉参数。
+            // 之后又把尺寸/蒙版/seed/覆盖这些硬约束写进 brief（原先只能靠试错），
+            // 再上调到 20.5k：这是替代“反复浪费调用”的确定性信息，不是装饰。
             let largest = rows.first().map(|row| row.0).unwrap_or(0);
             assert!(
                 largest < 2_500,
                 "largest model-facing tool spec is {largest} chars in {language}"
             );
             assert!(
-                total < 20_200,
+                total < 20_500,
                 "model-facing tool catalogue grew to {total} chars in {language}"
             );
             let authoritative_chars: usize = authoritative

@@ -19,7 +19,9 @@ use crate::storage::{
     normalize_sandbox_container_id, UserAccountRecord, UserAgentPresetBinding,
     UserAgentPresetSnapshot, UserAgentRecord,
 };
-use crate::user_access::{build_user_tool_context, compute_allowed_tool_names, UserToolContextBase};
+use crate::user_access::{
+    build_user_tool_context, compute_allowed_tool_names, UserToolContextBase,
+};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use serde_json::Value;

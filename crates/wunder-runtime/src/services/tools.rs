@@ -27,6 +27,7 @@ mod file_tool;
 mod freeform;
 mod fs_walk;
 mod glob_tool;
+mod image_tool_contract;
 mod knowledge_tool;
 mod line_diff;
 mod lsp_support;

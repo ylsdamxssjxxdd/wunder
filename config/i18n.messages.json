@@ -280,8 +280,20 @@
     "zh-CN": "，路径：{path}"
   },
   "context_shrink.summary": {
-    "en-US": "Request context dropped from {before} to {after} tokens (-{delta}); no local compaction was recorded. Rebuilt history omitted inline images, or the provider truncated the prompt / changed usage accounting.",
-    "zh-CN": "请求上下文从 {before} 降到 {after} tokens（-{delta}），本轮未记录本地压缩；常见原因是历史重建时省略了内联图片，或模型服务端截断/用量口径变化。"
+    "en-US": "Request context dropped from {before} to {after} tokens (-{delta}); no local compaction was recorded.",
+    "zh-CN": "请求上下文从 {before} 降到 {after} tokens（-{delta}），本轮未记录本地压缩。"
+  },
+  "context_shrink.cause.thinking_budget_resend": {
+    "en-US": "Cause: the thinking budget was exhausted, so the stream was aborted and resent with thinking disabled; the resent prompt no longer counts earlier thinking text. Message history is intact.",
+    "zh-CN": "成因：本轮思考预算触顶，断流后关思考重发，重发请求不再计入此前的思考文本，属提示构成变化，历史消息没有丢失。"
+  },
+  "context_shrink.cause.inline_images_omitted": {
+    "en-US": "Cause: rebuilt history replaced inline images with placeholders, so image tokens are no longer counted.",
+    "zh-CN": "成因：历史重建把内联图片替换为占位符，图片 token 不再计入提示。"
+  },
+  "context_shrink.cause.provider_accounting": {
+    "en-US": "Cause: the provider truncated the prompt or changed usage accounting; the local message history did not shrink.",
+    "zh-CN": "成因：模型服务端截断提示词或用量口径变化，本地消息历史并未缩短。"
   },
   "virtual_llm.random.reasoning": {
     "zh-CN": "这是模拟思考阶段：检查输入结构，整理回复要点，然后生成正文。此内容仅用于验证流式显示与计时，不代表真实模型推理。",
@@ -2840,8 +2852,8 @@
     "zh-CN": "本地视觉媒体路径，可使用工作区相对路径或允许的绝对路径。"
   },
   "tool.spec.read_image.description": {
-    "en-US": "Read a local image, GIF, or video into the current model context; not a web image-search tool. The default view is auto-fitted for the model (long side <=2048px, ~2500 patches); use crop=x,y,w,h plus scale to inspect original-resolution details. stats returns region numbers (mean luma, non-background/edge pixel ratios); stats_only returns numbers without pixels. Videos use frame_rate to extract frames. Images stay in context across rounds; re-read the path only when you need the pixels again (e.g. after compaction). To edit or retouch this image, pass its path to the image generation tool as input_path; for clarity enhancement keep the source dimensions and do not pass size.",
-    "zh-CN": "读取本地图片、GIF 或视频并送入当前模型上下文，不是联网看图工具。默认视图会自动压到适合模型的尺寸（长边 ≤2048px、约 2500 个 32px patch）；要看清原尺寸小字细节，用 crop=x,y,w,h 指定区域再配合 scale 放大。stats 附带区域平均亮度、非背景/边缘像素占比等数值，stats_only 只返回数值不回图。视频用 frame_rate 抽帧。图像随上下文保留，不必每轮重读；确实需要再看像素时（如压缩清退后）再按路径重读。需要修改或修图（换背景、去杂物、降噪、增强清晰度等）时，把这张图的路径交给图像生成工具的 input_path；高清化保持原图尺寸，不要传 size。"
+    "en-US": "Read a local image, GIF, or video into the current model context; not a web image-search tool. The default view is auto-fitted for the model (long side <=2048px, ~2500 patches); use crop=x,y,w,h plus scale to inspect original-resolution details. stats returns region numbers (mean luma, non-background/edge pixel ratios); stats_only returns numbers without pixels. Videos use frame_rate to extract frames. Images stay in context across rounds; re-read the path only when you need the pixels again (e.g. after compaction). To edit or retouch this image, pass its path in the image generation tool's input_paths array; for clarity enhancement keep the source dimensions and do not pass size.",
+    "zh-CN": "读取本地图片、GIF 或视频并送入当前模型上下文，不是联网看图工具。默认视图会自动压到适合模型的尺寸（长边 ≤2048px、约 2500 个 32px patch）；要看清原尺寸小字细节，用 crop=x,y,w,h 指定区域再配合 scale 放大。stats 附带区域平均亮度、非背景/边缘像素占比等数值，stats_only 只返回数值不回图。视频用 frame_rate 抽帧。图像随上下文保留，不必每轮重读；确实需要再看像素时（如压缩清退后）再按路径重读。需要修改或修图（换背景、去杂物、降噪、增强清晰度等）时，把这张图的路径放进图像生成工具的 input_paths 数组；高清化保持原图尺寸，不要传 size。"
   },
   "tool.spec.read_image.args.crop": {
     "en-US": "Optional still-image crop in source pixels: \"x,y,w,h\". Applied before scale; stats are computed on this region.",
@@ -2968,20 +2980,20 @@
     "zh-CN": "提示词。文生图时描述目标画面；编辑或修图时只描述要改动的内容，例如“把背景换成夜景”“去掉右下角的路人”，不要重新描述整张图。"
   },
   "tool.spec.generate_image.args.path": {
-    "en-US": "Optional workspace-relative output path. Empty means auto-generate under generated_media/.",
-    "zh-CN": "可选，工作区相对输出路径；留空则自动生成到 generated_media/。"
+    "en-US": "Optional output path inside the workspace; empty auto-generates under generated_media/. Existing files are not overwritten unless you pass overwrite:true; a directory target, a path outside the workspace, or a path equal to an input image is rejected. workspace_relative_path in the reply is always a normalized workspace-relative path.",
+    "zh-CN": "可选，工作区内的输出路径；留空自动生成到 generated_media/。已存在的文件默认不覆盖（需显式传 overwrite:true）；指向目录、落到工作区之外、与输入图同路径都会被拒绝。回执里的 workspace_relative_path 永远是归一化的相对路径。"
   },
   "tool.spec.generate_image.args.model_name": {
     "en-US": "Optional image model config name. Empty uses the default image model.",
     "zh-CN": "可选，图像生成模型配置名；留空使用默认图像生成模型。"
   },
   "tool.spec.generate_image.args.size": {
-    "en-US": "Optional output size, such as 1024x1024. For text-to-image, leaving it empty uses the configured default size. Requests above the configured maximum are scaled down proportionally so the largest edge fits the limit; the aspect ratio is kept and the default size is not used. For edits, retouching, and clarity enhancement, omit it to keep the source dimensions; oversized source images are also scaled down proportionally before upload. For some providers such as vllm-omni / Z-Image, width and height must both be divisible by 16; automatic scaling rounds down to a multiple of 16.",
-    "zh-CN": "可选，输出尺寸，如 1024x1024。文生图留空时使用配置的默认尺寸；超出配置的最大尺寸时按最大边等比缩小到上限内，比例不变，不会退回默认尺寸。修图、高清化、增强清晰度时不要传该参数以保持原图尺寸；输入图自身超过上限时也会先等比缩小。对于 vllm-omni / Z-Image 这类提供方，宽高需都能被 16 整除，自动缩放会向小对齐到 16 的倍数。"
+    "en-US": "Optional size as WxH, e.g. 1024x1024. Hard rules: both edges divisible by 16, short edge >= 32, long edge <= the model limit (default 1024x1024, raised by the model image_max_size). Oversized requests scale down proportionally and report it in warnings. Empty means the default size for text-to-image and keep the source dimensions for edits (do not pass size just to make an image HD). The reply reports the actual size and size_source.",
+    "zh-CN": "可选，宽x高，如 1024x1024。硬约束：宽高都须为 16 的倍数、短边不小于 32、长边不超过模型上限（默认 1024x1024，可由模型配置 image_max_size 提高）；超出上限会等比缩小并写入 warnings。留空时文生图用默认尺寸、修图保持原图尺寸（不要为了高清化传 size）。回执给出实际 size 与 size_source。"
   },
   "tool.spec.generate_image.args.output_format": {
-    "en-US": "Optional output image format preference.",
-    "zh-CN": "可选，输出图片格式偏好。"
+    "en-US": "Optional png/jpeg/webp. It must match the path suffix (a conflict is an error). Empty means the path suffix decides, defaulting to png. If the provider ignores it, the file is saved in the real format and the mismatch is reported in warnings.",
+    "zh-CN": "可选，png/jpeg/webp，必须与 path 后缀一致，冲突直接报错；留空由 path 后缀决定，默认 png。上游若忽略该格式，会按真实格式保存并把差异写进 warnings。"
   },
   "tool.spec.generate_image.args.negative_prompt": {
     "en-US": "Optional negative prompt.",
@@ -2996,28 +3008,32 @@
     "zh-CN": "可选，引导系数。"
   },
   "tool.spec.generate_image.args.seed": {
-    "en-US": "Optional random seed.",
-    "zh-CN": "可选，随机种子。"
+    "en-US": "Optional integer from 0 to 4294967295. When omitted, the tool generates one and returns it in the reply; pass it back to reproduce the same image. Negative or fractional values are rejected with a fix hint.",
+    "zh-CN": "可选，0 到 4294967295 的整数。留空时工具随机生成一个并随回执返回；要复现同一张图，下次把这个 seed 传回来。负数或小数会直接报错并给出改法。"
   },
   "tool.spec.generate_image.args.input_path": {
-    "en-US": "Optional workspace image path to edit. Supplying it enters image-to-image/edit mode (also used for retouching such as background replacement, object removal, denoise, or sharpening); omit it for text-to-image. For clarity enhancement, keep the source dimensions and do not pass size. Pass the path returned by a previous result to keep iterating on the same image. Inputs larger than the configured maximum size are scaled down proportionally before upload, and the output keeps that ratio.",
-    "zh-CN": "可选，要修改的工作区图片路径。填写后进入图生图/编辑模式（换背景、去杂物、降噪、增强清晰度等修图需求也走这里）；不填则为文生图。高清化/增强清晰度时保持原图尺寸，不要传 size。可把上一次结果返回的 path 再次传入，连续改同一张图。输入图超过配置的最大尺寸时会先按最大边等比缩小再送入，输出沿用缩小后的比例。"
+    "en-US": "Deprecated: use input_paths (an array, even for one image). The image-to-image/edit mode still accepts this alias, but supplying both input_path and input_paths is an error instead of a silent merge.",
+    "zh-CN": "已弃用：请改用 input_paths（单图也写成数组）。旧的单图编辑模式仍兼容，但与 input_paths 同时给出会直接报错，不再静默合并。"
   },
   "tool.spec.generate_image.args.input_paths": {
-    "en-US": "Optional list of workspace image paths for multi-image editing or reference composition. Use input_path for single-image edits.",
-    "zh-CN": "可选，多图编辑或参考合成模型使用的工作区输入图片路径列表；需要同时参考多张图时使用，单图编辑用 input_path。"
+    "en-US": "Workspace image paths to edit or reference, in order; the first one is the primary image. Cannot be combined with input_path.",
+    "zh-CN": "要修改或参考的工作区图片路径数组，保持顺序，第一张是主图；不能与 input_path 同时使用。"
   },
   "tool.spec.generate_image.args.mask_path": {
-    "en-US": "Optional workspace mask image path for inpainting; use it with input_path when only part of the image should change. The mask marks the region to repaint (provider conventions apply).",
-    "zh-CN": "可选，局部重绘用的蒙版图片路径；只想改画面某一部分时配合 input_path 使用，蒙版标出允许重绘的区域（具体约定以模型提供方为准）。"
+    "en-US": "Optional inpainting mask: white (non-black) = the region to repaint, black = keep. It must be the same pixel size as the primary image, and an all-black or all-white mask is reported in warnings. Requires input_paths.",
+    "zh-CN": "可选，局部重绘蒙版：白色（非黑）=要重绘的区域，黑色=保留；必须与主图同尺寸；全黑或全白会写入 warnings。只能配合 input_paths 使用。"
   },
   "tool.spec.generate_image.args.reference_path": {
-    "en-US": "Optional workspace reference image path for models that support an additional reference image.",
-    "zh-CN": "可选，支持参考图模型使用的工作区参考图片路径。"
+    "en-US": "Optional extra reference image for edit/composite models. It only works together with input_paths; on its own it is an error.",
+    "zh-CN": "可选，编辑/合成模型使用的附加参考图；必须与 input_paths 一起用，单独给出会报错。"
   },
   "tool.spec.generate_image.args.strength": {
-    "en-US": "Optional edit strength: lower values stay closer to the source image, higher values change more. Use it to control how much of the original is preserved.",
-    "zh-CN": "可选，编辑强度：数值越小越贴近原图，越大改动越明显；修图时用来控制保留原图的程度。"
+    "en-US": "Optional edit strength from 0 to 1 (out-of-range values are rejected). It only applies to image-to-image/edit; for text-to-image it is ignored and noted in warnings.",
+    "zh-CN": "可选，编辑强度 0 到 1（越界直接报错），只对图生图/编辑生效；文生图传入会被忽略并写入 warnings。"
+  },
+  "tool.spec.generate_image.args.overwrite": {
+    "en-US": "Optional, default false: an existing path is an error. Pass true to explicitly allow overwriting an existing file.",
+    "zh-CN": "可选，默认 false：path 已存在就报错。确实要覆盖已有文件时显式传 true。"
   },
   "tool.spec.generate_image.args.true_cfg_scale": {
     "en-US": "Optional true CFG scale for compatible image models.",
