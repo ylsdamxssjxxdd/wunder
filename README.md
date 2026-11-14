@@ -1,6 +1,6 @@
 # <img src="images/eva01-head.png" alt="eva01 头像" width="44" align="absmiddle"> wunder 心舰
 
-wunder 是一个通用型人工智能操作系统：**wunder = 模型 + 驾驭框架 + 运行环境**，即模型之外的一切。
+wunder 是一个泛用型人工智能操作系统：**wunder = 模型 + 驾驭框架 + 运行环境**，即模型之外的一切。
 
 - 多：支持多平台，32位win7/ubuntu18.04；支持多形态，网页版本/本地版本/移动版本
 - 快：启动速度快，秒开，响应速度快不卡顿

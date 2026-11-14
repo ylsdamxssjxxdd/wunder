@@ -1,9 +1,9 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-11-14T06:01:20.691166+00:00",
+  "generated_at": "2026-11-14T08:43:25.317207+00:00",
   "site": {
     "name": "使用说明书",
-    "description": "wunder is a general-purpose AI operating system (wunder = model + harness + runtime, i.e. everything except the model): Desktop is the local AI workbench, Android is the Desktop's phone form, Cloud (web) is the cloud AI workbench, CLI is the manual local entry point, and the Server is the user and agent management platform. / wunder 是通用型人工智能操作系统（wunder = 模型 + 驾驭框架 + 运行环境，即模型之外的一切）：桌面版（desktop）是本地 AI 工作台，安卓版（android）是桌面版的手机形态，云端版（web）是云端 AI 工作台，命令行（cli）是手工本地操作入口，服务端（server）是用户与智能体管理平台。",
+    "description": "wunder is a general-purpose AI operating system (wunder = model + harness + runtime, i.e. everything except the model): Desktop is the local AI workbench, Android is the Desktop's phone form, Cloud (web) is the cloud AI workbench, CLI is the manual local entry point, and the Server is the user and agent management platform. / wunder 是泛用型人工智能操作系统（wunder = 模型 + 驾驭框架 + 运行环境，即模型之外的一切）：桌面版（desktop）是本地 AI 工作台，安卓版（android）是桌面版的手机形态，云端版（web）是云端 AI 工作台，命令行（cli）是手工本地操作入口，服务端（server）是用户与智能体管理平台。",
     "default_language": "zh-CN",
     "home_page": "zh-CN/index",
     "home_url": "/docs/",

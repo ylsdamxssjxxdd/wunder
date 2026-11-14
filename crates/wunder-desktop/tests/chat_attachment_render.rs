@@ -156,3 +156,39 @@ fn image_attachment_round_trip_reaches_a_resolvable_public_path() {
         "the resolved bytes are the persisted png"
     );
 }
+
+/// The renderer keys decoded pixels by source path, so a picture rewritten in
+/// place has to change its file version; otherwise the transcript keeps the
+/// pixels of the bytes that used to live at that path.
+#[test]
+fn rewritten_image_changes_its_stamp() {
+    let _guard = serial();
+    let (desktop, home) = start_isolated().expect("desktop starts");
+    let workspace = home.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    std::fs::write(workspace.join("shot.png"), png_bytes()).expect("first write");
+    let root = workspace.to_str().unwrap();
+    let first = desktop
+        .workspace_image_stamp(root, "shot.png")
+        .expect("stamp of the first file");
+    assert_eq!(
+        first,
+        desktop
+            .workspace_image_stamp(root, "shot.png")
+            .expect("stable stamp"),
+        "an untouched file keeps its version"
+    );
+    std::fs::write(
+        workspace.join("shot.png"),
+        [png_bytes(), vec![0u8; 64]].concat(),
+    )
+    .expect("rewrite");
+    let second = desktop
+        .workspace_image_stamp(root, "shot.png")
+        .expect("stamp of the rewritten file");
+    assert_ne!(first, second, "a rewritten file changes its version");
+    assert!(
+        second.0 > first.0,
+        "the version carries the new byte length"
+    );
+}

@@ -11,7 +11,7 @@ use crate::{message_blocks::Blocks, MdBlock};
 use slint::{Model, ModelRc, VecModel};
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     sync::{mpsc, Arc, OnceLock},
     time::Duration,
 };
@@ -31,6 +31,7 @@ const GIF_MAX_HEIGHT: u32 = 360;
 const GIF_FRAME_BUDGET: usize = 24 * 1024 * 1024;
 /// Full worker queues are retried on a slow tick; a permanently saturated
 /// worker releases the subscribers instead of parking them forever.
+const VERSION_CAPACITY: usize = 512;
 const RETRY_DELAY: Duration = Duration::from_millis(100);
 const RETRY_LIMIT: u32 = 50;
 
@@ -54,25 +55,55 @@ struct DecodedImage {
     delays: Vec<u32>,
 }
 
+/// Version of the file a still was decoded from: `(byte length, modified
+/// nanos)`. A picture replaced in place keeps its path, so cached pixels are
+/// only valid while this stamp matches.
+type Stamp = (u64, u128);
+
 struct Job {
     desktop: Arc<NativeDesktop>,
     agent: String,
-    sources: Vec<String>,
-    result: mpsc::SyncSender<Vec<(String, Option<Decoded>)>>,
+    sources: Vec<(String, Option<Stamp>)>,
+    result: mpsc::SyncSender<Vec<(String, Option<Stamp>, Option<Decoded>)>>,
+}
+
+struct CacheEntry {
+    image: DecodedImage,
+    stamp: Option<Stamp>,
+}
+
+struct Inflight {
+    stamp: Option<Stamp>,
+    models: Vec<ModelRc<MdBlock>>,
 }
 
 /// The loader's UI-thread state: pixel cache, LRU order and the models
 /// waiting on each in-flight source.
 #[derive(Default)]
 struct Loader {
-    cache: HashMap<String, DecodedImage>,
+    cache: HashMap<String, CacheEntry>,
     order: VecDeque<String>,
-    inflight: HashMap<String, Vec<ModelRc<MdBlock>>>,
+    inflight: HashMap<String, Inflight>,
+    /// File version each source was decoded from, kept after the pixels are
+    /// evicted: an already painted block can still be recognized as stale
+    /// without holding its megabytes of RGBA.
+    versions: HashMap<String, Option<Stamp>>,
 }
 
 impl Loader {
-    fn cached(&mut self, source: &str) -> Option<DecodedImage> {
-        let image = self.cache.get(source)?.clone();
+    /// Cache hit for exactly this file version. A changed stamp drops the
+    /// entry, so the caller decodes the new bytes instead of showing the
+    /// picture that used to live at that path.
+    fn cached(&mut self, source: &str, stamp: Option<&Stamp>) -> Option<DecodedImage> {
+        let entry = self.cache.get(source)?;
+        if entry.stamp.as_ref() != stamp {
+            self.cache.remove(source);
+            if let Some(position) = self.order.iter().position(|key| key == source) {
+                self.order.remove(position);
+            }
+            return None;
+        }
+        let image = entry.image.clone();
         if let Some(position) = self.order.iter().position(|key| key == source) {
             self.order.remove(position);
         }
@@ -80,7 +111,17 @@ impl Loader {
         Some(image)
     }
 
-    fn remember(&mut self, source: String, image: DecodedImage) {
+    /// True when the cached pixels belong to an older version of the file.
+    /// Sources without a cache entry claim nothing, so an evicted entry never
+    /// forces a needless decode of an already painted block.
+    fn stale(&self, source: &str, stamp: Option<&Stamp>) -> bool {
+        match self.versions.get(source) {
+            Some(known) => known.as_ref() != stamp,
+            None => false,
+        }
+    }
+
+    fn remember(&mut self, source: String, image: DecodedImage, stamp: Option<Stamp>) {
         // The composer's data-URL echo is replaced by the durable stored path
         // at the next history refresh; caching megabytes of URL text would
         // only bloat the key space.
@@ -91,7 +132,7 @@ impl Loader {
         let held: usize = self
             .cache
             .values()
-            .map(decoded_bytes)
+            .map(|entry| decoded_bytes(&entry.image))
             .fold(0usize, usize::saturating_add);
         if held.saturating_add(bytes) > CACHE_BYTE_BUDGET {
             // Block models already hold their own image handles; dropping the
@@ -99,7 +140,15 @@ impl Loader {
             self.cache.clear();
             self.order.clear();
         }
-        if self.cache.insert(source.clone(), image).is_some() {
+        self.versions.insert(source.clone(), stamp.clone());
+        if self.versions.len() > VERSION_CAPACITY {
+            self.versions.clear();
+        }
+        if self
+            .cache
+            .insert(source.clone(), CacheEntry { image, stamp })
+            .is_some()
+        {
             if let Some(position) = self.order.iter().position(|key| *key == source) {
                 self.order.remove(position);
             }
@@ -160,6 +209,15 @@ fn inline_data_bytes(source: &str) -> Option<Vec<u8>> {
         .ok()
 }
 
+/// File version for one source. The composer's data URLs decode inline and
+/// carry no file, so they never age out.
+fn image_stamp(desktop: &NativeDesktop, agent: &str, source: &str) -> Option<Stamp> {
+    if source.starts_with("data:") {
+        return None;
+    }
+    desktop.workspace_image_stamp(agent, source).ok()
+}
+
 fn worker() -> &'static mpsc::SyncSender<Job> {
     static QUEUE: OnceLock<mpsc::SyncSender<Job>> = OnceLock::new();
     QUEUE.get_or_init(|| {
@@ -169,9 +227,9 @@ fn worker() -> &'static mpsc::SyncSender<Job> {
                 let result = job
                     .sources
                     .into_iter()
-                    .map(|source| {
+                    .map(|(source, stamp)| {
                         let pixels = load(&job.desktop, &job.agent, &source);
-                        (source, pixels)
+                        (source, stamp, pixels)
                     })
                     .collect();
                 let _ = job.result.send(result);
@@ -274,15 +332,19 @@ pub fn hydrate(blocks: &mut Blocks, desktop: Arc<NativeDesktop>, agent: String) 
 
 /// Hydrate an already projected block model. History rows are projected as
 /// `TextBlock` models directly, so they cannot retain the temporary `Blocks`
-/// builder used by streaming output. Blocks that already hold pixels are left
-/// alone, cached sources apply synchronously, and only the remaining sources
-/// queue a decode — repeated publishes of the same history are therefore
-/// free and never blank a loaded image.
+/// builder used by streaming output. Cached sources apply synchronously and
+/// only the remaining sources queue a decode. A picture whose file changed on
+/// disk is dropped and decoded again: the cache is keyed by path, so without
+/// the version check an image replaced in place kept showing the pixels that
+/// used to live at that path for the rest of the session.
+///
+/// Versions come from file metadata only and each source is stat'ed once per
+/// call, so repeated publishes of the same history stay cheap.
 pub fn hydrate_model(model: slint::ModelRc<MdBlock>, desktop: Arc<NativeDesktop>, agent: String) {
-    let mut to_fetch = Vec::new();
+    let mut to_fetch: Vec<(String, Option<Stamp>)> = Vec::new();
+    let mut stamps: HashMap<String, Option<Stamp>> = HashMap::new();
     LOADER.with(|loader| {
         let mut loader = loader.borrow_mut();
-        let mut seen = HashSet::new();
         for index in 0..model.row_count() {
             let Some(mut block) = model.row_data(index) else {
                 continue;
@@ -290,30 +352,47 @@ pub fn hydrate_model(model: slint::ModelRc<MdBlock>, desktop: Arc<NativeDesktop>
             if block.kind != crate::message_blocks::KIND_IMAGE || block.image_source.is_empty() {
                 continue;
             }
-            if block.image.size().width > 0 || block.image_error {
-                continue;
-            }
             let source = block.image_source.to_string();
-            if let Some(image) = loader.cached(&source) {
+            let stamp = stamps
+                .entry(source.clone())
+                .or_insert_with(|| image_stamp(&desktop, &agent, &source))
+                .clone();
+            if block.image.size().width > 0 {
+                // Painted already: only a newer version of the file replaces
+                // it, so a steady history keeps its textures untouched.
+                if block.image_error || !loader.stale(&source, stamp.as_ref()) {
+                    continue;
+                }
+                block.image = slint::Image::default();
+                block.image_width = 0.0;
+                block.image_height = 0.0;
+                block.image_frames = ModelRc::default();
+                block.frame_delays = ModelRc::default();
+                model.set_row_data(index, block.clone());
+            }
+            if let Some(image) = loader.cached(&source, stamp.as_ref()) {
                 fill(&mut block, &image);
                 model.set_row_data(index, block);
                 continue;
             }
-            if !seen.insert(source.clone()) {
-                // One subscription per model and source; the delivery pass
-                // patches every matching row of the subscriber.
-                continue;
-            }
             match loader.inflight.entry(source.clone()) {
                 std::collections::hash_map::Entry::Occupied(mut entry) => {
-                    let subscribers = entry.get_mut();
-                    if !subscribers.iter().any(|held| same_model(held, &model)) {
-                        subscribers.push(model.clone());
+                    let inflight = entry.get_mut();
+                    if inflight.stamp.as_ref() != stamp.as_ref() {
+                        // The file moved on while the old bytes were decoding.
+                        inflight.stamp = stamp.clone();
+                        to_fetch.push((source.clone(), stamp.clone()));
+                    }
+                    if !inflight.models.iter().any(|held| same_model(held, &model)) {
+                        inflight.models.push(model.clone());
                     }
                 }
                 std::collections::hash_map::Entry::Vacant(entry) => {
-                    entry.insert(vec![model.clone()]);
-                    to_fetch.push(source);
+                    entry.insert(Inflight {
+                        stamp: stamp.clone(),
+                        models: vec![model.clone()],
+                    });
+                    to_fetch.push((source.clone(), stamp.clone()));
                 }
             }
         }
@@ -321,7 +400,7 @@ pub fn hydrate_model(model: slint::ModelRc<MdBlock>, desktop: Arc<NativeDesktop>
     dispatch(desktop, agent, to_fetch);
 }
 
-fn dispatch(desktop: Arc<NativeDesktop>, agent: String, sources: Vec<String>) {
+fn dispatch(desktop: Arc<NativeDesktop>, agent: String, sources: Vec<(String, Option<Stamp>)>) {
     if sources.is_empty() {
         return;
     }
@@ -335,7 +414,7 @@ fn dispatch(desktop: Arc<NativeDesktop>, agent: String, sources: Vec<String>) {
     send(job, rx, 0);
 }
 
-fn send(job: Job, rx: mpsc::Receiver<Vec<(String, Option<Decoded>)>>, attempt: u32) {
+fn send(job: Job, rx: mpsc::Receiver<Vec<(String, Option<Stamp>, Option<Decoded>)>>, attempt: u32) {
     match worker().try_send(job) {
         Ok(()) => poll(rx),
         Err(mpsc::TrySendError::Full(job)) if attempt < RETRY_LIMIT => {
@@ -357,10 +436,10 @@ fn send(job: Job, rx: mpsc::Receiver<Vec<(String, Option<Decoded>)>>, attempt: u
 
 /// Deliver one finished job: fill the cache, then patch every subscribed
 /// model. Runs on the UI thread through the polling timer.
-fn deliver(images: Vec<(String, Option<Decoded>)>) {
+fn deliver(images: Vec<(String, Option<Stamp>, Option<Decoded>)>) {
     LOADER.with(|loader| {
         let mut loader = loader.borrow_mut();
-        for (source, decoded) in images {
+        for (source, stamp, decoded) in images {
             let image = decoded.map(|decoded| DecodedImage {
                 frames: decoded
                     .frames
@@ -374,10 +453,19 @@ fn deliver(images: Vec<(String, Option<Decoded>)>) {
                 delays: decoded.delays,
             });
             if let Some(image) = &image {
-                loader.remember(source.clone(), image.clone());
+                loader.remember(source.clone(), image.clone(), stamp.clone());
             }
-            let subscribers = loader.inflight.remove(&source).unwrap_or_default();
-            for model in subscribers {
+            let Some(inflight) = loader.inflight.remove(&source) else {
+                continue;
+            };
+            if inflight.stamp != stamp {
+                // The file changed again while these bytes decoded: keep the
+                // subscribers for the newer request instead of painting stale
+                // pixels over the fresh ones.
+                loader.inflight.insert(source.clone(), inflight);
+                continue;
+            }
+            for model in inflight.models {
                 apply(&model, &source, image.as_ref());
             }
         }
@@ -386,10 +474,10 @@ fn deliver(images: Vec<(String, Option<Decoded>)>) {
 
 /// A source whose job never ran frees its subscribers; they stay on their
 /// label until a later hydration re-queues the decode.
-fn release(sources: &[String]) {
+fn release(sources: &[(String, Option<Stamp>)]) {
     LOADER.with(|loader| {
         let mut loader = loader.borrow_mut();
-        for source in sources {
+        for (source, _) in sources {
             loader.inflight.remove(source);
         }
     });
@@ -441,7 +529,7 @@ fn apply(model: &ModelRc<MdBlock>, source: &str, image: Option<&DecodedImage>) {
     }
 }
 
-fn poll(rx: mpsc::Receiver<Vec<(String, Option<Decoded>)>>) {
+fn poll(rx: mpsc::Receiver<Vec<(String, Option<Stamp>, Option<Decoded>)>>) {
     slint::Timer::single_shot(Duration::from_millis(33), move || match rx.try_recv() {
         Ok(images) => deliver(images),
         Err(mpsc::TryRecvError::Empty) => poll(rx),
@@ -508,14 +596,44 @@ mod tests {
             delays: Vec::new(),
         };
         for index in 0..CACHE_CAPACITY + 4 {
-            loader.remember(format!("workspaces/pic-{index}.png"), pixel());
+            loader.remember(format!("workspaces/pic-{index}.png"), pixel(), Some((1, 0)));
         }
         assert_eq!(loader.cache.len(), CACHE_CAPACITY);
-        assert!(loader.cached("workspaces/pic-0.png").is_none());
         assert!(loader
-            .cached(&format!("workspaces/pic-{}.png", CACHE_CAPACITY + 3))
+            .cached("workspaces/pic-0.png", Some(&(1, 0)))
+            .is_none());
+        assert!(loader
+            .cached(
+                &format!("workspaces/pic-{}.png", CACHE_CAPACITY + 3),
+                Some(&(1, 0))
+            )
             .is_some());
-        loader.remember("data:image/png;base64,AAAA".into(), pixel());
-        assert!(loader.cached("data:image/png;base64,AAAA").is_none());
+        loader.remember("data:image/png;base64,AAAA".into(), pixel(), None);
+        assert!(loader.cached("data:image/png;base64,AAAA", None).is_none());
+    }
+
+    #[test]
+    fn a_changed_file_version_invalidates_cached_pixels() {
+        let mut loader = Loader::default();
+        let pixel = DecodedImage {
+            frames: vec![slint::Image::from_rgba8(
+                slint::SharedPixelBuffer::clone_from_slice(&[255, 0, 0, 255], 1, 1),
+            )],
+            delays: Vec::new(),
+        };
+        loader.remember("workspaces/pic.png".into(), pixel, Some((10, 1)));
+        // Same file version: the cached pixels are reused.
+        assert!(loader
+            .cached("workspaces/pic.png", Some(&(10, 1)))
+            .is_some());
+        assert!(!loader.stale("workspaces/pic.png", Some(&(10, 1))));
+        // Rewritten file: the entry is reported stale and dropped.
+        assert!(loader.stale("workspaces/pic.png", Some(&(11, 1))));
+        assert!(loader
+            .cached("workspaces/pic.png", Some(&(11, 1)))
+            .is_none());
+        assert!(loader.cache.is_empty());
+        // A source without a cached entry never claims to be stale.
+        assert!(!loader.stale("workspaces/other.png", Some(&(1, 1))));
     }
 }

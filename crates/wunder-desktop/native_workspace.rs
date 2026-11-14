@@ -935,6 +935,51 @@ impl NativeDesktop {
         Ok(1)
     }
 
+    /// Resolve one Markdown image reference to the file it reads.
+    ///
+    /// Chat attachments are persisted in the private user workspace, while
+    /// their message-facing path uses the public `/workspaces/<scope>/…`
+    /// namespace (or, in the local single-root form, an absolute path inside
+    /// the private workspace). The active thread can belong to a user-selected
+    /// workspace, so resolving that path against `root` would point at the
+    /// wrong folder and leave the image stuck at "暂未加载". Only the exact
+    /// private public root / private absolute root and `chat_attachments/`
+    /// prefix are remapped; all other sources keep the regular workspace
+    /// containment check.
+    fn resolve_image_target(&self, root_path: &str, relative: &str) -> Result<PathBuf> {
+        let root = PathBuf::from(root_path);
+        if let Some(target) = self.chat_attachment_target(relative)? {
+            return Ok(target);
+        }
+        if let Some(target) = self.local_image_target(relative)? {
+            return Ok(target);
+        }
+        if !root.is_dir() {
+            bail!(WORKSPACE_ROOT_MISSING);
+        }
+        workspace_resource_target(&root, relative)
+    }
+
+    /// Version of one Markdown image: `(byte length, modified nanos)`.
+    ///
+    /// The renderer caches decoded pixels by source path; a file replaced in
+    /// place keeps the same path, so the cache has to be validated against the
+    /// file version before reuse. Only metadata is read here — no image bytes.
+    pub fn workspace_image_stamp(&self, root_path: &str, relative: &str) -> Result<(u64, u128)> {
+        let target = self.resolve_image_target(root_path, relative)?;
+        let metadata = target.metadata()?;
+        if !metadata.is_file() {
+            bail!("请选择工作目录中的图片文件");
+        }
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        Ok((metadata.len(), modified))
+    }
+
     /// Read one image for Markdown rendering. Order of resolution:
     ///
     /// 1. `chat_attachments/` — the private attachment store, whichever
@@ -950,26 +995,7 @@ impl NativeDesktop {
     ///    one workspace can belong to a different tenant.
     pub fn workspace_image_bytes(&self, root_path: &str, relative: &str) -> Result<Vec<u8>> {
         const MAX_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
-        let root = PathBuf::from(root_path);
-        // Chat attachments are persisted in the private user workspace, while
-        // their message-facing path uses the public `/workspaces/<scope>/…`
-        // namespace (or, in the local single-root form, an absolute path
-        // inside the private workspace).  The active thread can belong to a
-        // user-selected workspace, so resolving that path against `root`
-        // would point at the wrong folder and leave the image stuck at
-        // "暂未加载".  Only the exact private public root / private absolute
-        // root and `chat_attachments/` prefix are remapped; all other sources
-        // keep the regular workspace containment check below.
-        let target = if let Some(target) = self.chat_attachment_target(relative)? {
-            target
-        } else if let Some(target) = self.local_image_target(relative)? {
-            target
-        } else {
-            if !root.is_dir() {
-                bail!(WORKSPACE_ROOT_MISSING);
-            }
-            workspace_resource_target(&root, relative)?
-        };
+        let target = self.resolve_image_target(root_path, relative)?;
         let metadata = target.metadata()?;
         if !metadata.is_file() {
             bail!("请选择工作目录中的图片文件");
