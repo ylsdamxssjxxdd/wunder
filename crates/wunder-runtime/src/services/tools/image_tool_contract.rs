@@ -146,6 +146,16 @@ impl ImageLimits {
     }
 }
 
+/// 拼句的人不用记标点：正文和提示都要以句末标点收尾，否则回执里
+/// 「…本次没有写入」和下一段建议会粘成一句。
+fn ensure_sentence_end(text: String) -> String {
+    let trimmed = text.trim_end();
+    if trimmed.ends_with(['。', '！', '？', '.', '!', '?']) {
+        return trimmed.to_string();
+    }
+    format!("{}。", trimmed)
+}
+
 /// 统一的图像工具失败：`message` 说「谁错了 + 为什么」，`hint` 说「怎么改」。
 #[derive(Debug, Clone)]
 pub(crate) struct ImageFailure {
@@ -181,7 +191,7 @@ impl ImageFailure {
             retryable: false,
             // message 只说“谁错了 + 为什么”；“怎么改”只放在 hint。
             // 早前把 fix 同时拼进 message 和 hint，工具回执会把它显示两遍。
-            message: format!("参数 `{}` 不合法：{}", field, reason.into()),
+            message: ensure_sentence_end(format!("参数 `{}` 不合法：{}", field, reason.into())),
             hint: fix.into(),
             suggested_size: None,
             field: Some(field.to_string()),
@@ -193,7 +203,11 @@ impl ImageFailure {
         Self {
             code: "IMAGE_INPUT_INVALID",
             retryable: false,
-            message: format!("输入图 `{}` 有问题：{}", field, reason.into()),
+            message: ensure_sentence_end(format!(
+                "输入图 `{}` 有问题：{}",
+                field,
+                reason.into()
+            )),
             hint: fix.into(),
             suggested_size: None,
             field: Some(field.to_string()),
@@ -831,7 +845,7 @@ mod tests {
             failure.message
         );
         let failure = ImageFailure::request("path", "指向目录", "改成 `temp/out.png`。");
-        assert_eq!(failure.message, "参数 `path` 不合法：指向目录");
+        assert_eq!(failure.message, "参数 `path` 不合法：指向目录。");
         assert_eq!(failure.hint, "改成 `temp/out.png`。");
     }
 

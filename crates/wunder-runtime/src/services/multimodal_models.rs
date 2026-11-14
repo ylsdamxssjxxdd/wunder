@@ -1198,13 +1198,6 @@ impl ImageRequestPreparation {
         }
     }
 
-    fn report_source_size(mut self, width: u32, height: u32) -> Self {
-        if self.reported_size.is_none() {
-            self.reported_size = Some(size_label(width, height));
-        }
-        self
-    }
-
     fn with_resized_reference(mut self, report: Option<String>) -> Self {
         self.resized_reference = report;
         self
@@ -1261,21 +1254,32 @@ fn prepare_image_request(
             }
         }
     }
-    let (target_width, target_height) = fit_size_for_provider(config, source_width, source_height);
-    if (target_width, target_height) == (source_width, source_height) {
-        // 输入图本来就在上限内：保留 auto 语义，除非调用方显式指定了尺寸。
-        // 回执仍要说出真实输出尺寸——它就是输入图尺寸。
-        let size = resolve_requested_image_size(config, request.size.as_deref(), true);
-        request.size = size.clone();
-        return Ok(
-            ImageRequestPreparation::new(size)
-                .report_source_size(source_width, source_height)
-                .with_resized_reference(resized_reference),
-        );
+    // 画布尺寸决定所有图片的落点：显式 size 优先（只在缩小时生效，放大交给上游），
+    // 否则按主图的上限钳位结果。
+    let requested_size = resolve_requested_image_size(config, request.size.as_deref(), true);
+    let explicit_canvas = request
+        .size
+        .as_deref()
+        .and_then(parse_image_dimensions)
+        .filter(|(width, height)| {
+            u64::from(*width) * u64::from(*height)
+                <= u64::from(source_width) * u64::from(source_height)
+        });
+    let (target_width, target_height) =
+        explicit_canvas.unwrap_or_else(|| fit_size_for_provider(config, source_width, source_height));
+    let mut resized_input = None;
+    if (target_width, target_height) != (source_width, source_height) {
+        ensure_input_decodable(&source.filename, source_width, source_height)?;
+        request.input_images[0] = resize_image_input(&source, target_width, target_height)?;
+        resized_input = Some(size_report(
+            source_width,
+            source_height,
+            target_width,
+            target_height,
+        ));
     }
-    ensure_input_decodable(&source.filename, source_width, source_height)?;
-    request.input_images[0] = resize_image_input(&source, target_width, target_height)?;
-    // 其余输入图各自不超过上限即可，比例各自保持。
+    // 附加输入必须和主图走同一套钳位：只处理主图会把几千像素的附加图原样丢给上游，
+    // 一次调用就从 1.6 秒变成十几秒甚至一分钟。
     let mut resized_extra_inputs = Vec::new();
     for index in 1..request.input_images.len() {
         let input = request.input_images[index].clone();
@@ -1290,31 +1294,39 @@ fn prepare_image_request(
         request.input_images[index] = resize_image_input(&input, width_target, height_target)?;
         resized_extra_inputs.push(size_report(width, height, width_target, height_target));
     }
-    // 蒙版必须与主图同尺寸，所以主图缩小后蒙版也要跟着缩；这是隐式改写，
-    // 必须回报给调用方，否则模型会以为上游看到的还是原来那张蒙版。
+    // 蒙版永远跟随画布：主图被钳位、或显式 size 改变了画布，蒙版都要跟着缩。
     let mut resized_mask = None;
     if let Some(mask) = request.mask_image.take() {
-        if let Some((mask_width, mask_height)) = image_bytes_dimensions(&mask.bytes) {
-            resized_mask = Some(size_report(
-                mask_width,
-                mask_height,
-                target_width,
-                target_height,
-            ));
+        let mask_before = image_bytes_dimensions(&mask.bytes);
+        let needs_resize = mask_before
+            .map(|(width, height)| (width, height) != (target_width, target_height))
+            .unwrap_or(false);
+        if needs_resize {
+            if let Some((mask_width, mask_height)) = mask_before {
+                resized_mask = Some(size_report(
+                    mask_width,
+                    mask_height,
+                    target_width,
+                    target_height,
+                ));
+            }
+            request.mask_image = Some(resize_image_input(&mask, target_width, target_height)?);
+        } else {
+            request.mask_image = Some(mask);
         }
-        request.mask_image = Some(resize_image_input(&mask, target_width, target_height)?);
     }
-    let size = size_label(target_width, target_height);
-    request.size = Some(size.clone());
+    // 主图被改写过就以画布尺寸下发；否则保留显式 size 或 auto 语义。
+    let size = if resized_input.is_some() {
+        Some(size_label(target_width, target_height))
+    } else {
+        requested_size
+    };
+    request.size = size.clone();
+    let reported_size = size.clone().or_else(|| Some(size_label(source_width, source_height)));
     Ok(ImageRequestPreparation {
-        size: Some(size.clone()),
-        reported_size: Some(size),
-        resized_input: Some(size_report(
-            source_width,
-            source_height,
-            target_width,
-            target_height,
-        )),
+        size,
+        reported_size,
+        resized_input,
         resized_mask,
         resized_reference,
         resized_extra_inputs,
@@ -2551,5 +2563,135 @@ mod tests {
             "Traceback...\nRuntimeError: Diffusion generation failed: Height must be divisible by 16 (got 1080).",
         );
         assert!(message.contains("Height must be divisible by 16"));
+    }
+
+    #[test]
+    fn prepare_image_request_downsamples_extra_inputs_even_when_primary_is_small() {
+        let mut config = model("image");
+        config.image_max_size = Some("1440x1440".to_string());
+        let primary = image_input_file_from_bytes(
+            Bytes::from(encode_solid_png(1024, 1024)),
+            "primary.png",
+            Some("image/png"),
+        );
+        let extra = image_input_file_from_bytes(
+            Bytes::from(encode_solid_png(2000, 2000)),
+            "extra.png",
+            Some("image/png"),
+        );
+        let mut request = super::ImageGenerationRequest {
+            prompt: "combine".to_string(),
+            model_name: None,
+            size: None,
+            output_format: None,
+            negative_prompt: None,
+            num_inference_steps: None,
+            guidance_scale: None,
+            seed: None,
+            input_images: vec![primary, extra],
+            mask_image: None,
+            reference_image: None,
+            strength: None,
+            true_cfg_scale: None,
+            output_compression: None,
+            layers: None,
+            resolution: None,
+        };
+
+        let prepared = super::prepare_image_request(&config, &mut request).expect("prepare");
+
+        // 主图在限内、没有整体缩放，但附加图仍然是 2000x2000，必须单独钳位。
+        assert_eq!(prepared.resized_input, None);
+        assert_eq!(
+            prepared.resized_extra_inputs,
+            vec!["2000x2000->1440x1440".to_string()]
+        );
+        let extra = image::load_from_memory(&request.input_images[1].bytes).expect("decode extra");
+        assert_eq!((extra.width(), extra.height()), (1440, 1440));
+    }
+
+    #[test]
+    fn prepare_image_request_scales_mask_when_explicit_size_shrinks_canvas() {
+        let mut config = model("image");
+        config.image_max_size = Some("1440x1440".to_string());
+        let source = image_input_file_from_bytes(
+            Bytes::from(encode_solid_png(1024, 1024)),
+            "source.png",
+            Some("image/png"),
+        );
+        let mask = image_input_file_from_bytes(
+            Bytes::from(encode_solid_png(1024, 1024)),
+            "mask.png",
+            Some("image/png"),
+        );
+        let mut request = super::ImageGenerationRequest {
+            prompt: "replace the sky".to_string(),
+            model_name: None,
+            size: Some("768x768".to_string()),
+            output_format: None,
+            negative_prompt: None,
+            num_inference_steps: None,
+            guidance_scale: None,
+            seed: None,
+            input_images: vec![source],
+            mask_image: Some(mask),
+            reference_image: None,
+            strength: None,
+            true_cfg_scale: None,
+            output_compression: None,
+            layers: None,
+            resolution: None,
+        };
+
+        let prepared = super::prepare_image_request(&config, &mut request).expect("prepare");
+
+        // 显式 size 把画布改小，主图和蒙版都要跟着缩，并且都要记录。
+        assert_eq!(prepared.size.as_deref(), Some("768x768"));
+        assert_eq!(
+            prepared.resized_input.as_deref(),
+            Some("1024x1024->768x768")
+        );
+        assert_eq!(
+            prepared.resized_mask.as_deref(),
+            Some("1024x1024->768x768")
+        );
+        let mask = request.mask_image.expect("mask");
+        let decoded = image::load_from_memory(&mask.bytes).expect("decode mask");
+        assert_eq!((decoded.width(), decoded.height()), (768, 768));
+    }
+
+    #[test]
+    fn prepare_image_request_does_not_upscale_inputs_for_a_larger_explicit_size() {
+        let mut config = model("image");
+        config.image_max_size = Some("1440x1440".to_string());
+        let source = image_input_file_from_bytes(
+            Bytes::from(encode_solid_png(768, 768)),
+            "source.png",
+            Some("image/png"),
+        );
+        let mut request = super::ImageGenerationRequest {
+            prompt: "enlarge".to_string(),
+            model_name: None,
+            size: Some("1280x1280".to_string()),
+            output_format: None,
+            negative_prompt: None,
+            num_inference_steps: None,
+            guidance_scale: None,
+            seed: None,
+            input_images: vec![source],
+            mask_image: None,
+            reference_image: None,
+            strength: None,
+            true_cfg_scale: None,
+            output_compression: None,
+            layers: None,
+            resolution: None,
+        };
+
+        let prepared = super::prepare_image_request(&config, &mut request).expect("prepare");
+
+        // 放大留给上游：本地不额外放大输入图，避免白烧 CPU 与画质。
+        assert_eq!(prepared.resized_input, None);
+        assert_eq!(request.size.as_deref(), Some("1280x1280"));
     }
 }

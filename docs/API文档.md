@@ -359,7 +359,7 @@ wunder 是一个**通用型人工智能工作台**：桌面版（desktop）是�
   - 蒙版：`mask_path` 白色=重绘区域、黑色=保留；必须与主图同尺寸（尺寸不符返回 `IMAGE_INPUT_INVALID`，消息里明确写“蒙版”）；全黑/全白会写入 `warnings`；必须配合 `input_paths`。
   - `seed`：0 到 4294967295 的整数；留空时工具生成一个并回显（`seed` + `seed_source=auto`），便于复现。负数、小数、超大值返回可操作的中文错误，而不是裸 serde 报文。
   - `strength`：高级参数，模型可见面已撤下（`drop_fields`），默认值由模型配置 `image_strength` 提供；仍接受显式传入并校验 0 到 1，越界报错，文生图传入会忽略并写 `warnings`。
-  - 输入图缩放可见：主图、蒙版、参考图、第二张及之后的输入图超出上限被等比缩小时，回执 `warnings` 逐条说明，并在 `data.input_resized/mask_resized/reference_resized/extra_inputs_resized` 给出 `原尺寸->新尺寸`。
+  - 输入图缩放可见：主图、蒙版、参考图、第二张及之后的输入图被等比缩小时，回执 `warnings` 逐条说明，并在 `data.input_resized/mask_resized/reference_resized/extra_inputs_resized` 给出 `原尺寸->新尺寸`。钳位规则对所有输入图一致生效：主图在限内时附加图也会各自钳位到上限；显式 `size` 小于源图时，主图与蒙版一起缩到该画布（放大仍交给上游，本地不放大）。
   - `input_paths: []`（或全是空字符串）按文生图处理，但会写一条 `warnings`，不与“根本没传输入图”混为一谈。
   - `overwrite`：默认 false，`path` 已存在时直接报错；目录、越出工作区、与输入图同名的输出路径一律拒绝。
   - 成功回执新增 `seed/seed_source`、`size/size_source/requested_size`、`output_format/requested_output_format`、`limits`（默认尺寸、上限、对齐、短边下限）、`elapsed_ms`（工具入口到落盘的墙钟耗时，含参数校验、输入图缩放与上游请求）与 `warnings`（空数组表示没有任何隐式改写）；`workspace_relative_path` 永远是归一化的工作区相对路径。失败回执同样带 `elapsed_ms`。

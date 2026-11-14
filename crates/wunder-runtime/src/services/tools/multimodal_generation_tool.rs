@@ -525,13 +525,13 @@ pub async fn tool_generate_image(context: &ToolContext<'_>, args: &Value) -> Res
     // 任何被缩放的输入都必须说出来：模型看到的是自己给的路径，看不到里面换了尺寸。
     if let Some(report) = result.resized_input.as_deref() {
         warnings.push(format!(
-            "主图超出模型尺寸上限，已等比缩小 {}（输出尺寸按缩小后的图计算）。",
+            "主图已缩放到画布 {}（输出尺寸按缩放后的图计算，避免上游再缩一遍）。",
             report
         ));
     }
     if let Some(report) = result.resized_mask.as_deref() {
         warnings.push(format!(
-            "蒙版已随主图缩放到 {}；蒙版必须与主图同尺寸，否则上游会拒绝。",
+            "蒙版已随画布缩放到 {}；蒙版必须与主图同尺寸，否则上游会拒绝。",
             report
         ));
     }
@@ -1589,7 +1589,7 @@ mod tests {
         let summary = payload["data"]["failure_summary"]
             .as_str()
             .expect("failure_summary");
-        assert_eq!(summary, "参数 `path` 不合法：指向目录");
+        assert_eq!(summary, "参数 `path` 不合法：指向目录。");
         assert_eq!(
             payload["data"]["next_step_hint"].as_str(),
             Some("改成 `temp/out.png`。")
