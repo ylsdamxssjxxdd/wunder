@@ -276,8 +276,10 @@ export component MainWindow inherits Window {
     in-out property <int> inquiry-page: 0;
     in-out property <int> inquiry-total: 1;
     in-out property <bool> inquiry-expanded: false;
-    // The composer's send button unlocks with an answer in hand, even with an
-    // empty draft, because the choices themselves are the message.
+    // The composer's send button unlocks as soon as the panel carries one
+    // answer — even a free-text one, and even with an empty draft — because the
+    // answers themselves are the message. Questions the user skipped go out as
+    // 未作答, so a panel can be answered in one line and sent.
     in-out property <bool> inquiry-ready: false;
     callback inquiry-option-clicked(int, int);
     callback inquiry-other-edited(int, string);

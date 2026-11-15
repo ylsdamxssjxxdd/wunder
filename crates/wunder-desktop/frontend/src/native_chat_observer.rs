@@ -674,6 +674,18 @@ fn sync_durable_inquiry(app: &MainWindow, state: &mut State, session: &str) {
     if next_key == current_key {
         return;
     }
+    // The same waiting panel, already opened here: ticks, free text and the
+    // page cursor belong to this window, so a durable refresh may not rebuild
+    // the card under the user's hands. Replacing it is how an answer typed in
+    // the free-text row could vanish from Rust's copy while the row still
+    // showed it, leaving send disabled. Only a panel answered or dismissed
+    // elsewhere (no pending durable panel at all) closes the card; a different
+    // turn or a different question set opens a new one.
+    if let (Some(local), Some(fresh)) = (state.inquiries.get(session), next.as_ref()) {
+        if local.same_panel(fresh) {
+            return;
+        }
+    }
     match next {
         Some(panel) => {
             state.inquiries.insert(session.to_string(), panel);

@@ -1431,9 +1431,10 @@ export component Composer inherits Rectangle {
     // 请宿主打开全屏输入页（键盘长在那一页上）。
     in property <bool> mobile-page-trigger: false;
     callback mobile-page-requested();
-    // A live 问询面板 whose current page has an answer: the send button and the
-    // send key then work with an empty draft, because the choices themselves
-    // are the message.
+    // A live 问询面板 that already carries an answer unlocks the send button and
+    // the send key with an empty draft: the answers themselves are the message.
+    // One answered question is enough (the web client's gate) — a user may type
+    // their own answer in the free-text row, leave the rest, and send.
     in property <bool> inquiry-ready: false;
     in property <bool> generating;
     in property <bool> stopping;

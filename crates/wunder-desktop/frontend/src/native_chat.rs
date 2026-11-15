@@ -257,19 +257,26 @@ impl InquiryState {
     }
 
     /// A question counts as answered by a tick, the free text or the 无偏好
-    /// shortcut; the send button unlocks only once every question is.
+    /// shortcut. Typing one's own wording is an answer in its own right — the
+    /// free-text row is not a note attached to a tick.
     fn is_answered(question: &InquiryQuestionState) -> bool {
         question.no_preference
             || !question.other.trim().is_empty()
             || question.options.iter().any(|option| option.selected)
     }
 
-    fn ready(&self) -> bool {
-        !self.questions.is_empty()
-            && self
-                .questions
-                .iter()
-                .all(|question| Self::is_answered(question))
+    /// The panel already *is* a message once one question carries an answer:
+    /// this is the web client's composer gate, and it is what lets a user
+    /// answer a single question in their own words, skip the rest and send.
+    /// The unanswered ones travel as 未作答 (`reply`), never as an empty line.
+    fn has_answer(&self) -> bool {
+        self.questions.iter().any(Self::is_answered)
+    }
+
+    /// Every question answered. Only the guided single-choice flow needs this,
+    /// to know that the last pick completes the whole panel.
+    fn all_answered(&self) -> bool {
+        !self.questions.is_empty() && self.questions.iter().all(Self::is_answered)
     }
 
     /// Stable client-side identity for one published panel. A late durable
@@ -290,6 +297,34 @@ impl InquiryState {
         key
     }
 
+    /// Whether two projections describe the same waiting panel. Identity is the
+    /// waiting turn plus the questions it asks — *not* the user's ticks, page
+    /// or free text, which belong to this window and must survive a durable
+    /// refresh. A different turn id or a different question set is a new panel.
+    /// Either side may lack the turn id (a live event and a durable row fill it
+    /// from different places), so a missing one falls back to the questions.
+    fn same_panel(&self, other: &InquiryState) -> bool {
+        let same_turn = self.inquiry_turn_id.is_empty()
+            || other.inquiry_turn_id.is_empty()
+            || self.inquiry_turn_id == other.inquiry_turn_id;
+        same_turn
+            && self.questions.len() == other.questions.len()
+            && self
+                .questions
+                .iter()
+                .zip(other.questions.iter())
+                .all(|(mine, theirs)| {
+                    mine.question == theirs.question
+                        && mine.multiple == theirs.multiple
+                        && mine.options.len() == theirs.options.len()
+                        && mine
+                            .options
+                            .iter()
+                            .zip(theirs.options.iter())
+                            .all(|(a, b)| a.label == b.label)
+                })
+    }
+
     /// Advance the guided single-choice flow. Multiple-choice questions stay
     /// on the current page so the user can finish the combination; the final
     /// completed single-choice answer asks the caller to submit exactly once.
@@ -307,7 +342,7 @@ impl InquiryState {
             self.expanded = false;
             return false;
         }
-        self.ready()
+        self.all_answered()
     }
 
     fn toggle_option(&mut self, index: usize, option: usize) {
@@ -401,7 +436,13 @@ impl InquiryState {
                 if !other.is_empty() {
                     parts.push(other.to_string());
                 }
-                parts.join("、")
+                // A panel may go out with questions the user skipped; they say
+                // so explicitly instead of printing an empty answer line.
+                if parts.is_empty() {
+                    "未作答".to_string()
+                } else {
+                    parts.join("、")
+                }
             };
             lines.push(format!("答案：{answer}"));
         }
@@ -1590,7 +1631,7 @@ fn publish_inquiry(app: &MainWindow, session: &str, state: &State) {
     app.set_inquiry_page(panel.current_index() as i32);
     app.set_inquiry_total(panel.questions.len() as i32);
     app.set_inquiry_expanded(panel.expanded);
-    app.set_inquiry_ready(panel.ready());
+    app.set_inquiry_ready(panel.has_answer());
     app.set_inquiry_questions(ModelRc::new(VecModel::from(rows)));
 }
 
@@ -1648,9 +1689,9 @@ fn inquiry_question_index(panel: &InquiryState, row: i32) -> usize {
     }
 }
 
-/// One panel interaction: apply `change` to the addressed question, then
-/// republish the rows. The card owns nothing, so a republish is the whole
-/// update path; free text reaches here on every keystroke and never republishes.
+/// One answer interaction: apply `change` to the addressed question, let the
+/// guided flow advance (or complete), then republish the rows. The card owns
+/// nothing, so a republish is the whole update path.
 fn inquiry_interaction(
     weak: &slint::Weak<MainWindow>,
     state: &RefCell<State>,
@@ -1670,6 +1711,29 @@ fn inquiry_interaction(
     let submit = panel.advance_after_answer(index);
     publish_inquiry(&app, &session, &current);
     submit
+}
+
+/// A view-only interaction: paging and the expand toggle move the cursor over
+/// the same answers. They must not run the guided flow — that flow answers the
+/// question under the cursor and, on the last one, submits the panel — so a
+/// click on ‹ used to be pulled forward to the question just left (and could
+/// even send the whole panel). Here the page the user picked is the page they
+/// get, and nothing is admitted behind the click.
+fn inquiry_view_change(
+    weak: &slint::Weak<MainWindow>,
+    state: &RefCell<State>,
+    change: &dyn Fn(&mut InquiryState),
+) {
+    let Some(app) = weak.upgrade() else {
+        return;
+    };
+    let session = app.get_active_session_id().to_string();
+    let mut current = state.borrow_mut();
+    let Some(panel) = current.inquiries.get_mut(&session) else {
+        return;
+    };
+    change(panel);
+    publish_inquiry(&app, &session, &current);
 }
 
 fn bind_inquiry(app: &MainWindow, state: Rc<RefCell<State>>) {
@@ -1736,7 +1800,7 @@ fn bind_inquiry(app: &MainWindow, state: Rc<RefCell<State>>) {
                 }
                 // Ready state moves with every keystroke, but the rows model is
                 // left alone so the caret and the input method never reset.
-                app.set_inquiry_ready(panel.ready());
+                app.set_inquiry_ready(panel.has_answer());
             }
         }
     });
@@ -1744,18 +1808,14 @@ fn bind_inquiry(app: &MainWindow, state: Rc<RefCell<State>>) {
         let weak = weak.clone();
         let state = state.clone();
         move |delta| {
-            inquiry_interaction(&weak, &state, -1, &move |panel, _| {
-                panel.move_page(delta);
-            });
+            inquiry_view_change(&weak, &state, &move |panel| panel.move_page(delta));
         }
     });
     app.on_inquiry_expanded_toggle({
         let weak = weak.clone();
         let state = state.clone();
         move || {
-            inquiry_interaction(&weak, &state, -1, &move |panel, _| {
-                panel.expanded = !panel.expanded;
-            });
+            inquiry_view_change(&weak, &state, &|panel| panel.expanded = !panel.expanded);
         }
     });
 }
@@ -2843,15 +2903,17 @@ fn bind_send(app: &MainWindow, state: Rc<RefCell<State>>) {
         }
         let session = app.get_active_session_id().to_string();
         let draft_content = app.get_draft().trim().to_string();
-        // A fully answered 问询面板 *is* the message: the choices go out first
-        // and the draft follows as the user's own note. An unanswered card is
-        // left alone, so a plain message cannot silently consume a question the
-        // user has not answered yet.
+        // A 问询面板 that carries an answer *is* the message: the answers go
+        // out first and the draft follows as the user's own note. One answered
+        // question is enough — the same gate the web client's composer uses —
+        // so typing a free-text answer and sending immediately works even when
+        // the panel asked several questions. An untouched card is left alone,
+        // so a plain message cannot silently consume it.
         let answered = state
             .borrow()
             .inquiries
             .get(&session)
-            .filter(|panel| panel.ready())
+            .filter(|panel| panel.has_answer())
             .cloned();
         let inquiry_key = answered
             .as_ref()
@@ -7211,17 +7273,28 @@ mod turn_tests {
         assert!(inquiry_from_payload(&json!({"questions": [{"question": "x"}]})).is_none());
     }
 
-    /// The send button unlocks only when every question has an answer, and the
-    /// answers become one message in the shape the model is fed.
+    /// One answered question already unlocks the send (the web client's gate:
+    /// a user may answer in their own words and skip the rest), the answers
+    /// become one message in the shape the model is fed, and the questions the
+    /// user left alone say 未作答 instead of printing an empty answer.
     #[test]
     fn inquiry_answers_gate_the_send_and_compose_one_message() {
         let mut panel = fixture_panel();
-        assert!(!panel.ready(), "an untouched panel is not an answer");
+        assert!(!panel.has_answer(), "an untouched panel is not an answer");
+        assert!(!panel.all_answered());
 
         panel.move_page(1);
         panel.toggle_option(1, 1);
         assert!(!panel.questions[0].options.iter().any(|o| o.selected));
-        assert!(!panel.ready(), "the first question is still unanswered");
+        assert!(
+            panel.has_answer(),
+            "one answered question is already a sendable answer"
+        );
+        assert!(!panel.all_answered(), "the first question is still open");
+        assert_eq!(
+            panel.reply(),
+            "【问询面板选择】\n问题 1/2：Fixture question one\n答案：未作答\n问题 2/2：Fixture question two\n答案：Beta"
+        );
 
         panel.move_page(-1);
         panel.toggle_option(0, 0);
@@ -7230,19 +7303,69 @@ mod turn_tests {
             panel.questions[0].options.iter().all(|o| o.selected),
             "a multi choice keeps both ticks"
         );
-        assert!(panel.ready());
+        assert!(panel.all_answered());
         assert_eq!(
             panel.reply(),
             "【问询面板选择】\n问题 1/2：Fixture question one\n答案：First、Second\n问题 2/2：Fixture question two\n答案：Beta"
         );
 
-        // Re-picking the only single choice takes the answer back off.
+        // Re-picking the only single choice takes that question's answer back
+        // off; the panel stays sendable because the other one is answered.
         panel.move_page(1);
         panel.toggle_option(1, 1);
-        assert!(!panel.ready());
+        assert!(!panel.all_answered());
+        assert!(panel.has_answer());
         panel.toggle_option(1, 0);
         assert!(panel.questions[1].options[0].selected);
         assert!(!panel.questions[1].options[1].selected);
+    }
+
+    /// 翻页只是移动光标：它既不会顺手推进/提交面板，也不会被「当前这一页已答」
+    /// 拉走。之前翻页走的是答题流程，点 ‹ 要么被 `advance_after_answer` 推到
+    /// 更后面一页，要么（最后一页时）直接把整块面板提交掉，用户因此回不到第一题。
+    #[test]
+    fn inquiry_paging_never_advances_or_submits_by_itself() {
+        let mut panel = inquiry_from_payload(&json!({
+            "questions": [
+                {"question": "Fixture one", "options": [{"label": "A"}, {"label": "B"}]},
+                {"question": "Fixture two", "options": [{"label": "C"}, {"label": "D"}]},
+                {"question": "Fixture three", "options": [{"label": "E"}, {"label": "F"}]},
+            ]
+        }))
+        .expect("a three-question panel");
+        panel.toggle_option(0, 0);
+        assert!(!panel.advance_after_answer(0), "the flow moves to question 2");
+        assert_eq!(panel.page, 1);
+        panel.questions[1].other = "fixture note".into();
+
+        // The old handler: move the page, then run the answer flow for the
+        // question just left. Its answer pushes the cursor off the page the
+        // user picked.
+        let mut wrong = panel.clone();
+        let left = wrong.current_index();
+        wrong.move_page(-1);
+        wrong.advance_after_answer(left);
+        assert_ne!(wrong.page, 0, "this is the ‹ that would not go back");
+
+        // On the last question the same composition submits the whole panel.
+        let mut last = fixture_panel();
+        last.questions[0].options[0].selected = true;
+        last.move_page(1);
+        last.questions[1].other = "fixture note".into();
+        let mut wrong = last.clone();
+        let left = wrong.current_index();
+        wrong.move_page(-1);
+        assert!(
+            wrong.advance_after_answer(left),
+            "the old ‹ sent the panel instead of going back"
+        );
+
+        // The view path only moves the cursor.
+        panel.move_page(-1);
+        assert_eq!(panel.page, 0, "‹ lands on the previous question");
+        assert!(panel.questions[0].options[0].selected, "answers survive");
+        assert_eq!(panel.questions[1].other, "fixture note");
+        assert!(panel.has_answer());
     }
 
     /// The expanded stack answers by question ordinal, not by page position,
@@ -7296,7 +7419,7 @@ mod turn_tests {
         assert!(panel.questions[0].other.is_empty());
         panel.move_page(1);
         panel.toggle_option(1, 0);
-        assert!(panel.ready());
+        assert!(panel.all_answered());
         assert_eq!(
             panel.reply(),
             "【问询面板选择】\n问题 1/2：Fixture question one\n答案：无偏好\n问题 2/2：Fixture question two\n答案：Alpha"
@@ -7304,7 +7427,7 @@ mod turn_tests {
         panel.move_page(-1);
         panel.toggle_no_preference(0);
         assert!(!panel.questions[0].no_preference);
-        assert!(!panel.ready());
+        assert!(!panel.all_answered());
     }
 
     /// Paging is a cursor, not a reset: each question keeps what was chosen and
